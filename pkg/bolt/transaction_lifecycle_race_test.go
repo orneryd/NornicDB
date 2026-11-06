@@ -79,8 +79,8 @@ func testBoltCommitWinsBeforeTransactionTimeout(t *testing.T) {
 	}, transactionLifecycleRaceCleanup, 10*time.Millisecond)
 
 	fresh := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (r:Repository {repo_id: 'commit-wins'}) RETURN count(r)")
+	records := runBoltQueryWithParams(t, fresh,
+		"MATCH (r:Repository {repo_id: 'commit-wins'}) RETURN count(r)", nil)
 	require.Equal(t, [][]any{{int64(1)}}, records)
 }
 
@@ -116,7 +116,7 @@ func testBoltTransactionTimeoutWinsBeforeCommit(t *testing.T) {
 	require.Equal(t, "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration", code)
 
 	fresh := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (r:Repository {repo_id: 'timeout-wins'}) RETURN count(r)")
+	records := runBoltQueryWithParams(t, fresh,
+		"MATCH (r:Repository {repo_id: 'timeout-wins'}) RETURN count(r)", nil)
 	require.Equal(t, [][]any{{int64(0)}}, records)
 }

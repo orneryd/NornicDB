@@ -24,7 +24,7 @@ func TestBoltCountSubqueryCommentGap(t *testing.T) {
 	})
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "neo4j"))
+	_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "neo4j"), boltIntegrationExplicitTx)
 	for _, parser := range []string{"nornic", "antlr"} {
 		for _, normalize := range []bool{false, true} {
 			for _, explicit := range []bool{false, true} {
@@ -42,7 +42,7 @@ func TestBoltCountSubqueryCommentGap(t *testing.T) {
 						if comment {
 							gap = " /*gap*/ "
 						}
-						records := runBoltQueryAndCollectRecords(t, conn, "RETURN (COUNT"+gap+"{ LIMIT 1 RETURN 1 AS x }) AS v")
+						records := runBoltQueryWithParams(t, conn, "RETURN (COUNT"+gap+"{ LIMIT 1 RETURN 1 AS x }) AS v", nil)
 						require.Equal(t, [][]any{{int64(1)}}, records)
 						if explicit {
 							require.NoError(t, SendRollback(t, conn))

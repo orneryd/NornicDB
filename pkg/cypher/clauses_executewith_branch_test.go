@@ -22,7 +22,7 @@ func TestExecuteWith_Branches(t *testing.T) {
 
 	t.Run("WITH requires a continuation", func(t *testing.T) {
 		res, err := exec.Execute(ctx, "WITH 7 AS x, 'v' AS y", nil)
-		requireSyntaxErrorStatus(t, err, "WITH 7 AS x, 'v' AS y")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "WITH 7 AS x, 'v' AS y")
 		require.Nil(t, res)
 	})
 

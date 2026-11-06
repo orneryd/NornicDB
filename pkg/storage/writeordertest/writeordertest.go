@@ -1654,6 +1654,16 @@ func minimizedSchedules() []Schedule {
 	}
 	de := func(edge string) Op { return Op{Kind: DeleteEdge, Edge: edge} }
 	out := []Schedule{
+		// CI seeds 68 and 73: an unrelated buffered write must not make a
+		// stale cascade apply its already-removed relationship delta again.
+		{Name: "StaleCascadeAfterUnrelatedBufferedNodeWrite", Steps: []Step{
+			direct(cn(1)), direct(cn(2)), direct(cn(3)), direct(ce("r1", 1, 2)),
+			begin(2, false), stage(2, dn(1)), direct(de("r1")),
+			implicit(un(3)), commit(2), flush}},
+		{Name: "StaleCascadeAfterUnrelatedBufferedEdgeWrite", Steps: []Step{
+			direct(cn(0)), direct(cn(1)), direct(cn(2)), direct(cn(3)), direct(ce("r1", 1, 2)),
+			begin(2, false), stage(2, dn(1)), direct(de("r1")),
+			implicit(ce("r2", 0, 3)), commit(2), flush}},
 		// A restore brings back the backup's counters with its graph.
 		{Name: "RestoredCountersSurviveDelete", Steps: []Step{
 			direct(cn(2)), direct(cn(3)), direct(ce("r2", 2, 3)),

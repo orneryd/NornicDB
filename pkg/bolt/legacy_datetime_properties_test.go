@@ -43,7 +43,7 @@ func TestLegacyDateTimeGraphPropertiesNeo4j526(t *testing.T) {
 					require.NoError(t, err)
 				}
 				require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "DATETIME", Properties: map[string]any{"t": value}}))
-				_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+				_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 				conn := dateTimeWireConnect(t, fmt.Sprintf("127.0.0.1:%d", port), protocol.version, protocol.patch, false)
 				ref := dateTimeWireConnect(t, reference, protocol.version, protocol.patch, true)
 				// Roll back the reference fixture after reading it.

@@ -83,8 +83,8 @@ func TestCompositeExplicitTx_FailureRollsBackRemoteParticipant(t *testing.T) {
 				config.SetParserType(mode)
 				t.Cleanup(func() { config.SetParserType(previous) })
 
-				_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"))
-				runBoltQueryAndCollectRecords(t, openBoltTestConn(t, port), "CREATE CONSTRAINT rk_u FOR (u:U) REQUIRE u.k IS UNIQUE")
+				_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"), boltIntegrationExplicitTx)
+				runBoltQueryWithParams(t, openBoltTestConn(t, port), "CREATE CONSTRAINT rk_u FOR (u:U) REQUIRE u.k IS UNIQUE", nil)
 
 				mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 					DefaultDatabase: "nornic",
@@ -143,7 +143,7 @@ func TestCompositeExplicitTx_FailureRollsBackRemoteParticipant(t *testing.T) {
 					t.Fatal("a remote MERGE of the key waits after its holder committed")
 				}
 
-				rows := runBoltQueryAndCollectRecords(t, openBoltTestConn(t, port), "MATCH (u:U {k: 1}) RETURN count(u) AS c")
+				rows := runBoltQueryWithParams(t, openBoltTestConn(t, port), "MATCH (u:U {k: 1}) RETURN count(u) AS c", nil)
 				require.Equal(t, [][]any{{int64(1)}}, rows)
 			})
 		}
@@ -257,7 +257,7 @@ func TestCompositeExplicitTx_FailureDoesNotWaitOnUnresponsiveRemote(t *testing.T
 			t.Cleanup(func() { config.SetParserType(previous) })
 			ctx := context.Background()
 
-			_, remotePort := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"))
+			_, remotePort := startBoltIntegrationServer(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"), boltIntegrationExplicitTx)
 			proxy, port := startStallingProxy(t, remotePort)
 			mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 				DefaultDatabase: "nornic",

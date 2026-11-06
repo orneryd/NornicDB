@@ -42,19 +42,19 @@ func TestCypherMutationLocalizedErrors(t *testing.T) {
 		ctx := context.Background()
 
 		_, err := exec.Execute(ctx, "DELETE n", getParamsFromContext(ctx))
-		requireSyntaxErrorStatus(t, err, "DELETE n")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "DELETE n")
 
 		_, err = exec.Execute(ctx, "SET n.value = 1", getParamsFromContext(ctx))
-		requireSyntaxErrorStatus(t, err, "SET n.value = 1")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "SET n.value = 1")
 
 		_, err = exec.Execute(ctx, "REMOVE n.value", getParamsFromContext(ctx))
-		requireSyntaxErrorStatus(t, err, "REMOVE n.value")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "REMOVE n.value")
 
 		_, err = exec.Execute(ctx, "UNWIND [1] RETURN 1", nil)
-		requireSyntaxErrorStatus(t, err, "UNWIND [1] RETURN 1")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "UNWIND [1] RETURN 1")
 
 		_, err = exec.Execute(ctx, "FOREACH value", nil)
-		requireSyntaxErrorStatus(t, err, "FOREACH value")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "FOREACH value")
 	})
 
 	t.Run("nested wrappers retain outer and inner IDs plus sentinel cause", func(t *testing.T) {

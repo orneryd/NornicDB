@@ -367,7 +367,7 @@ func (b *BadgerEngine) getNodeSnapshotForRead(ctx context.Context, id NodeID, fo
 // GetQueryNode implements QueryNodeReader with GetNode's reads (the
 // write-behind overlay, the node cache, the stored body) and its embedding
 // metadata, without reading separately stored chunk vectors. In-memory
-// vectors are shared with the returned copy, not copied. The vector-free
+// vectors belong to the returned caller-owned copy. The vector-free
 // node is cached apart from the node cache (queryNodeCache), so full reads
 // never see it and still hydrate.
 func (b *BadgerEngine) GetQueryNode(ctx context.Context, id NodeID) (*Node, error) {
@@ -378,7 +378,7 @@ func (b *BadgerEngine) GetQueryNode(ctx context.Context, id NodeID) (*Node, erro
 // Query metadata keeps its own cache and caller-owned view; body-only reads
 // strip vectors from overlay/cache hits and never publish partial bodies.
 func (b *BadgerEngine) readNodeMetadata(ctx context.Context, id NodeID, v readVisibility, hydration nodeItemHydration) (*Node, error) {
-	copyImage, cache := copyNodeForCaller, nodeReadCacheQuery
+	copyImage, cache := copyNode, nodeReadCacheQuery
 	if hydration == nodeItemBodyOnly {
 		copyImage, cache = copyNodeWithoutEmbeddings, nodeReadCacheProjection
 	}

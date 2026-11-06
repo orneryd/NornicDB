@@ -3,7 +3,6 @@ package bolt
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
-	"net"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -31,23 +30,23 @@ func TestMergeAdmissionFamilyAfterPriorWrite(t *testing.T) {
 			t.Run(constraint.name+"/"+route.name, func(t *testing.T) {
 				base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 				t.Cleanup(func() { _ = base.Close() })
-				_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
+				_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "test"), boltIntegrationExplicitTx)
 				peer := openBoltTestConn(t, port)
 				defer peer.Close()
-				runBoltQueryAndCollectRecords(t, peer, "CREATE CONSTRAINT admission_key FOR (k:AdmissionKey) REQUIRE "+constraint.expression)
-				runBoltQueryAndCollectRecords(t, peer, "CREATE (:AdmissionAnchor {id:0})")
+				runBoltQueryWithParams(t, peer, "CREATE CONSTRAINT admission_key FOR (k:AdmissionKey) REQUIRE "+constraint.expression, nil)
+				runBoltQueryWithParams(t, peer, "CREATE (:AdmissionAnchor {id:0})", nil)
 				loser := openBoltTestConn(t, port)
 				defer loser.Close()
 				requireNoError(t, SendBegin(t, loser, nil))
 				requireNoError(t, ReadSuccess(t, loser))
-				runBoltQueryAndCollectRecords(t, loser, "CREATE (:AdmissionAudit {id:'loser'})")
-				runBoltQueryAndCollectRecords(t, peer, route.query)
+				runBoltQueryWithParams(t, loser, "CREATE (:AdmissionAudit {id:'loser'})", nil)
+				runBoltQueryWithParams(t, peer, route.query, nil)
 				code, message := runBoltQueryExpectFailure(t, loser, route.query)
 				if code != "Neo.TransientError.Transaction.Outdated" {
 					t.Errorf("same committed pattern: got %s (%s), want retryable Outdated", code, message)
 				}
-				runBoltQueryAndCollectRecords(t, peer, route.query)
-				records := runBoltQueryAndCollectRecords(t, peer, "MATCH (k:AdmissionKey) RETURN count(k)")
+				runBoltQueryWithParams(t, peer, route.query, nil)
+				records := runBoltQueryWithParams(t, peer, "MATCH (k:AdmissionKey) RETURN count(k)", nil)
 				if len(records) != 1 || len(records[0]) != 1 || records[0][0] != int64(1) {
 					t.Errorf("fresh retry must match one key, got %v", records)
 				}
@@ -65,10 +64,10 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
-			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
+			_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "test"), boltIntegrationExplicitTx)
 			peer := openBoltTestConn(t, port)
 			defer peer.Close()
-			runBoltQueryAndCollectRecords(t, peer, "CREATE CONSTRAINT precise_tuple FOR (k:PreciseTuple) REQUIRE (k.tenant, k.id) IS "+kind)
+			runBoltQueryWithParams(t, peer, "CREATE CONSTRAINT precise_tuple FOR (k:PreciseTuple) REQUIRE (k.tenant, k.id) IS "+kind, nil)
 			older := map[string]any{"tenant": int64(7), "id": int64(9007199254740992)}
 			params := map[string]any{"tenant": int64(7), "id": int64(9007199254740993)}
 			runBoltQueryWithParams(t, peer, "CREATE (:PreciseTuple {tenant:$tenant, id:$id})", older)
@@ -76,7 +75,7 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 			defer loser.Close()
 			requireNoError(t, SendBegin(t, loser, nil))
 			requireNoError(t, ReadSuccess(t, loser))
-			runBoltQueryAndCollectRecords(t, loser, "CREATE (:AdmissionAudit {id:'loser'})")
+			runBoltQueryWithParams(t, loser, "CREATE (:AdmissionAudit {id:'loser'})", nil)
 			// The adjacent tuple is not a duplicate of the older one.
 			runBoltQueryWithParams(t, peer, "CREATE (:PreciseTuple {tenant:$tenant, id:$id})", params)
 			merge := "MERGE (k:PreciseTuple {tenant:$tenant, id:$id}) RETURN k.id"
@@ -90,32 +89,10 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 			if len(records) != 1 || len(records[0]) != 1 || records[0][0] != int64(9007199254740993) {
 				t.Errorf("fresh retry must match the exact tuple, got %v", records)
 			}
-			records = runBoltQueryAndCollectRecords(t, peer, "MATCH (k:PreciseTuple) RETURN count(k)")
+			records = runBoltQueryWithParams(t, peer, "MATCH (k:PreciseTuple) RETURN count(k)", nil)
 			if len(records) != 1 || len(records[0]) != 1 || records[0][0] != int64(2) {
 				t.Errorf("both adjacent tuples must exist once, got %v", records)
 			}
 		})
-	}
-}
-
-func runBoltQueryWithParams(t *testing.T, conn net.Conn, query string, params map[string]any) [][]any {
-	t.Helper()
-	requireNoError(t, SendRun(t, conn, query, params, nil))
-	requireNoError(t, ReadSuccess(t, conn))
-	requireNoError(t, SendPull(t, conn, nil))
-	var records [][]any
-	for {
-		msgType, msgData, err := ReadMessage(conn)
-		requireNoError(t, err)
-		switch msgType {
-		case MsgRecord:
-			fields, _, err := decodePackStreamList(msgData, 0)
-			requireNoError(t, err)
-			records = append(records, fields)
-		case MsgSuccess:
-			return records
-		default:
-			t.Fatalf("unexpected Bolt message type 0x%02X for query %q", msgType, query)
-		}
 	}
 }

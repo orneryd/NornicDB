@@ -275,8 +275,8 @@
       "Reason": "post-acceptance commit completion and derived-count repair after data is durable.",
       "Approver": "orneryd (2 November 2026)",
       "Occurrences": [
-        "call context.Background (+200 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)",
-        "call context.Background (+448 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)"
+        "call context.Background (+236 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)",
+        "call context.Background (+457 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)"
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication": {

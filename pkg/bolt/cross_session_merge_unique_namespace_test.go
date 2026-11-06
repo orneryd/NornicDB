@@ -15,63 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestBoltCrossSessionMergeUniqueConflict_EshuDefaultNamespaceExplicitTx pins
-// the explicit transaction shape Eshu uses with DEFAULT_DATABASE=nornic.
-// Retried MERGE attempts must observe a peer transaction's committed UNIQUE
-// value through the nornic schema cache, not repeatedly choose CREATE and
-// surface commit-time UNIQUE violations.
-func TestBoltCrossSessionMergeUniqueConflict_EshuDefaultNamespaceExplicitTx(t *testing.T) {
-	baseStore := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() {
-		_ = baseStore.Close()
-	})
-	store := storage.NewNamespacedEngine(baseStore, "nornic")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
-
-	setup := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, setup,
-		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE")
-	require.NoError(t, setup.Close())
-
-	const concurrency = 8
-	var wg sync.WaitGroup
-	failures := make([]string, concurrency)
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			err := runBoltExplicitMergeTx(t, port,
-				"TerraformResource", "uid", "eshu-same-uid",
-				fmt.Sprintf("session%d", idx))
-			if err != nil {
-				failures[idx] = err.Error()
-			}
-		}(i)
-	}
-	wg.Wait()
-
-	for idx, msg := range failures {
-		if msg != "" {
-			t.Errorf("session %d failed: %s", idx, msg)
-		}
-	}
-
-	check := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, check,
-		"MATCH (r:TerraformResource {uid: 'eshu-same-uid'}) RETURN count(r)")
-	if len(records) != 1 || len(records[0]) < 1 {
-		t.Fatalf("expected one count row, got %v", records)
-	}
-	count, ok := records[0][0].(int64)
-	if !ok {
-		t.Fatalf("expected int64 count, got %T (value=%v)", records[0][0], records[0][0])
-	}
-	if count != 1 {
-		t.Errorf("expected exactly one TerraformResource node, got %d", count)
-	}
-}
-
 // The default-namespace population exercises the
 // real database-manager Bolt path used by Eshu's NornicDB deployment. A
 // commit-time UNIQUE conflict must become a successful retry because the next
@@ -138,7 +81,7 @@ func TestBoltDatabaseManagerExecuteWriteUniqueMerge_BackendPopulations(t *testin
 				ReadBufferSize:  8192,
 				WriteBufferSize: 8192,
 			}, &mockExecutor{}, mgr)
-			port := startBoltTestServer(t, server)
+			port := serveBoltIntegrationServer(t, server)
 
 			ctx := context.Background()
 			driver, err := neo4jdriver.NewDriverWithContext(
@@ -251,7 +194,7 @@ func TestBoltDatabaseManagerMergeExistingNodeAfterLateSchemaBootstrap(t *testing
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, &mockExecutor{}, mgr)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(

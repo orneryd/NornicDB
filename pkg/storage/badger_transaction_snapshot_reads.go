@@ -390,7 +390,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(ctx context.Context
 	if tx.snapshotDeregister != nil {
 		return tx.readCachedSnapshotAdjacentEdgesLocked(ctx, nodeID, direction, false)
 	}
-	return tx.engine.readAdjacentEdgesAtWithView(ctx, nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
+	return tx.engine.readAdjacentEdgesAtWithView(ctx, nodeID, tx.readTS, direction, "", tx.withSnapshotViewLocked)
 }
 
 // readCachedSnapshotAdjacentEdgesLocked reads nodeID's relationships visible at

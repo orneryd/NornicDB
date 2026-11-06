@@ -746,12 +746,12 @@ func TestExecuteSetMergeRejectsMalformedInlineMap(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}", nil)
-	requireSyntaxErrorStatus(t, err, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
 	result, err := exec.Execute(ctx, "MATCH (n:SetMergeMalformed) RETURN n.a", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{nil}}, result.Rows)
 	_, err = exec.Execute(ctx, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}", getParamsFromContext(ctx))
-	requireSyntaxErrorStatus(t, err, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
 }
 
 func TestExecuteAggregationCountStar(t *testing.T) {

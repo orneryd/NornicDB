@@ -12,13 +12,13 @@ func TestBoltTransactionalCallKeepsCommittedBatches(t *testing.T) {
 	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "tenant"))
+	_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "tenant"), boltIntegrationExplicitTx)
 	writer := openBoltTestConn(t, port)
 	require.NoError(t, SendRun(t, writer, "UNWIND [1,2,0] AS x CALL { WITH x CREATE (:B {v: 10/x}) } IN TRANSACTIONS OF 1 ROW", nil, nil))
 	_, _, err = AssertFailure(t, writer)
 	require.NoError(t, err)
 	reader := openBoltTestConn(t, port)
-	rows := runBoltQueryAndCollectRecords(t, reader, "MATCH (n:B) RETURN n.v ORDER BY n.v")
+	rows := runBoltQueryWithParams(t, reader, "MATCH (n:B) RETURN n.v ORDER BY n.v", nil)
 	require.Equal(t, [][]interface{}{{int64(5)}, {int64(10)}}, rows)
 }
 
@@ -51,7 +51,7 @@ func TestBoltTransactionalCallBatchSizeExpressionContract(t *testing.T) {
 			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
-			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "tenant"))
+			_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "tenant"), boltIntegrationExplicitTx)
 			writer := openBoltTestConn(t, port)
 			input := "[1,2,0,4]"
 			code := "Neo.ClientError.Statement.ArithmeticError"
@@ -69,7 +69,7 @@ func TestBoltTransactionalCallBatchSizeExpressionContract(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, code, actualCode)
 			reader := openBoltTestConn(t, port)
-			rows := runBoltQueryAndCollectRecords(t, reader, "MATCH (n:BatchSizeRecord) RETURN n.v ORDER BY n.v")
+			rows := runBoltQueryWithParams(t, reader, "MATCH (n:BatchSizeRecord) RETURN n.v ORDER BY n.v", nil)
 			if sample.invalid {
 				require.Empty(t, rows)
 			} else {

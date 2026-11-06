@@ -335,11 +335,13 @@ func TestExecuteCreateDropAndShowCompositeDatabase_DirectHandlers(t *testing.T) 
 		res, err := exec.executeCompositeCommand(ctx, "CREATE COMPOSITE DATABASE c1 ALIAS a1 FOR DATABASE db1 ALIAS a2 FOR DATABASE db2", compositeCreateCommand)
 		require.NoError(t, err)
 		require.NotNil(t, res)
-		require.Equal(t, [][]interface{}{{"c1"}}, res.Rows)
+		require.Empty(t, res.Columns, "CREATE COMPOSITE DATABASE declares no result columns")
+		require.Empty(t, res.Rows, "CREATE COMPOSITE DATABASE returns no records")
 
 		res, err = exec.executeCompositeCommand(ctx, "CREATE COMPOSITE DATABASE c_remote ALIAS tr FOR DATABASE nornic_tr AT 'https://shard-a.example/nornic-db' SECRET REF 'spn-a' TYPE remote ACCESS read ALIAS txt FOR DATABASE nornic_txt AT 'https://shard-b.example/nornic-db' SECRET REF 'spn-b' TYPE remote ACCESS read_write", compositeCreateCommand)
 		require.NoError(t, err)
-		require.Equal(t, [][]interface{}{{"c_remote"}}, res.Rows)
+		require.Empty(t, res.Columns, "CREATE COMPOSITE DATABASE declares no result columns")
+		require.Empty(t, res.Rows, "CREATE COMPOSITE DATABASE returns no records")
 		createdRefs, err := adapter.GetCompositeConstituents("c_remote")
 		require.NoError(t, err)
 		require.Len(t, createdRefs, 2)
@@ -352,7 +354,8 @@ func TestExecuteCreateDropAndShowCompositeDatabase_DirectHandlers(t *testing.T) 
 
 		res, err = exec.executeCompositeCommand(ctx, "CREATE COMPOSITE DATABASE c_remote_basic ALIAS tr FOR DATABASE nornic_tr AT 'https://shard-a.example/nornic-db' USER 'svc-user' PASSWORD 'svc-pass' TYPE remote ACCESS read", compositeCreateCommand)
 		require.NoError(t, err)
-		require.Equal(t, [][]interface{}{{"c_remote_basic"}}, res.Rows)
+		require.Empty(t, res.Columns, "CREATE COMPOSITE DATABASE declares no result columns")
+		require.Empty(t, res.Rows, "CREATE COMPOSITE DATABASE returns no records")
 		createdRefs, err = adapter.GetCompositeConstituents("c_remote_basic")
 		require.NoError(t, err)
 		require.Len(t, createdRefs, 1)
@@ -362,7 +365,8 @@ func TestExecuteCreateDropAndShowCompositeDatabase_DirectHandlers(t *testing.T) 
 		// Flexible whitespace parsing branch.
 		res, err = exec.executeCompositeCommand(ctx, "CREATE\tCOMPOSITE\tDATABASE\tc_ws ALIAS a1 FOR DATABASE db1", compositeCreateCommand)
 		require.NoError(t, err)
-		require.Equal(t, [][]interface{}{{"c_ws"}}, res.Rows)
+		require.Empty(t, res.Columns, "CREATE COMPOSITE DATABASE declares no result columns")
+		require.Empty(t, res.Rows, "CREATE COMPOSITE DATABASE returns no records")
 
 		// Invalid alias/database extraction branches.
 		_, err = exec.executeCompositeCommand(ctx, "CREATE COMPOSITE DATABASE c_bad ALIAS   FOR DATABASE db1", compositeCreateCommand)
@@ -388,17 +392,20 @@ func TestExecuteCreateDropAndShowCompositeDatabase_DirectHandlers(t *testing.T) 
 		// IF NOT EXISTS: existing composite — should succeed silently.
 		res, err = exec.executeCompositeCommand(ctx, "CREATE COMPOSITE DATABASE c1 IF NOT EXISTS ALIAS a1 FOR DATABASE db1", compositeCreateCommand)
 		require.NoError(t, err)
-		require.Equal(t, [][]interface{}{{"c1"}}, res.Rows)
+		require.Empty(t, res.Columns, "CREATE COMPOSITE DATABASE declares no result columns")
+		require.Empty(t, res.Rows, "CREATE COMPOSITE DATABASE returns no records")
 
 		// IF NOT EXISTS: existing standard database — should succeed silently.
 		res, err = exec.executeCompositeCommand(ctx, "CREATE COMPOSITE DATABASE db1 IF NOT EXISTS ALIAS a1 FOR DATABASE db2", compositeCreateCommand)
 		require.NoError(t, err)
-		require.Equal(t, [][]interface{}{{"db1"}}, res.Rows)
+		require.Empty(t, res.Columns, "CREATE COMPOSITE DATABASE declares no result columns")
+		require.Empty(t, res.Rows, "CREATE COMPOSITE DATABASE returns no records")
 
 		// IF NOT EXISTS: new database — should create normally.
 		res, err = exec.executeCompositeCommand(ctx, "CREATE COMPOSITE DATABASE c_ifne IF NOT EXISTS ALIAS a1 FOR DATABASE db1", compositeCreateCommand)
 		require.NoError(t, err)
-		require.Equal(t, [][]interface{}{{"c_ifne"}}, res.Rows)
+		require.Empty(t, res.Columns, "CREATE COMPOSITE DATABASE declares no result columns")
+		require.Empty(t, res.Rows, "CREATE COMPOSITE DATABASE returns no records")
 		require.True(t, adapter.IsCompositeDatabase("c_ifne"))
 
 		// Without IF NOT EXISTS: duplicate — should fail.

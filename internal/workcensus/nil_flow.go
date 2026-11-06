@@ -1508,7 +1508,7 @@ func edgeContradictsStableUse(pred, succ, origin *ssa.BasicBlock) bool {
 		return false
 	}
 	value, nilIndex, ok := NilComparison(iff.Cond)
-	if !ok || !stableGuardValue(value) {
+	if !ok || !StableGuardValue(value) {
 		return false
 	}
 	nilKnown, nonNilKnown := NilAt(value, origin), NonNilAt(value, origin)
@@ -1523,7 +1523,11 @@ func edgeContradictsStableUse(pred, succ, origin *ssa.BasicBlock) bool {
 	return succ == pred.Succs[1-nilIndex] && nilKnown
 }
 
-func stableGuardValue(value ssa.Value) bool {
+// StableGuardValue reports whether an SSA value has one definition throughout
+// this function frame. Parameters stay fixed; definitions in cyclic blocks may
+// denote different values on successive iterations and remain unproven.
+// Repeated-guard proofs must also require the exact same SSA value.
+func StableGuardValue(value ssa.Value) bool {
 	if _, ok := value.(*ssa.Parameter); ok {
 		return true
 	}

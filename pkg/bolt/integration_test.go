@@ -131,52 +131,79 @@ func (e *txCapableCypherQueryExecutor) RollbackTransaction(ctx context.Context) 
 	return err
 }
 
-func startBoltIntegrationServer(t *testing.T, store storage.Engine) (*Server, int) {
+// boltIntegrationMode selects the QueryExecutor and connection budget the Bolt
+// integration server under test is wired with.
+type boltIntegrationMode int
+
+const (
+	// boltIntegrationAutocommit wires the plain cypherQueryExecutor with the
+	// auto-commit connection budget.
+	boltIntegrationAutocommit boltIntegrationMode = iota
+	// boltIntegrationExplicitTx wires a SessionExecutorFactory +
+	// TransactionalExecutor (txCapableCypherQueryExecutor) so BEGIN/RUN/COMMIT
+	// messages route to a real explicit transaction instead of being
+	// protocol-acknowledged-but-ignored. This matches the runtime shape
+	// neo4j-go-driver session.ExecuteWrite emits from Eshu.
+	boltIntegrationExplicitTx
+)
+
+// startBoltIntegrationServer is the one constructor for Bolt integration
+// servers: it selects the QueryExecutor and connection budget from mode, and
+// serves each server it builds through serveBoltIntegrationServer.
+func startBoltIntegrationServer(t testing.TB, store storage.Engine, mode boltIntegrationMode) (*Server, int) {
 	t.Helper()
-	executor := &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)}
+	var executor QueryExecutor
+	maxConnections := 0
+	switch mode {
+	case boltIntegrationAutocommit:
+		executor = &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)}
+		maxConnections = 10
+	case boltIntegrationExplicitTx:
+		executor = newTxCapableCypherQueryExecutor(store)
+		maxConnections = 32
+	default:
+		t.Fatalf("unknown bolt integration mode %d", mode)
+	}
 	server := New(&Config{
 		Port:            0,
-		MaxConnections:  10,
+		MaxConnections:  maxConnections,
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
+	return server, serveBoltIntegrationServer(t, server)
+}
 
+// serveBoltIntegrationServer owns bind, public Serve and joined cleanup for
+// Bolt test servers. An optional shutdown observer preserves deliberate close
+// failure assertions; ordinary callers require a clean shutdown.
+func serveBoltIntegrationServer(t testing.TB, server *Server, shutdownChecks ...func(error)) int {
+	t.Helper()
+	if len(shutdownChecks) > 1 {
+		t.Fatal("at most one shutdown observer is supported")
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	requireNoError(t, err)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
 	addr, ok := listener.Addr().(*net.TCPAddr)
 	if !ok || addr.Port == 0 {
 		t.Fatalf("expected TCP listener with assigned port, got %T %v", listener.Addr(), listener.Addr())
 	}
-	server.listener = listener
-
-	errCh := make(chan error, 1)
-	t.Cleanup(func() {
-		if err := server.Close(); err != nil {
-			t.Fatalf("close server: %v", err)
-		}
-		if err := <-errCh; err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	})
-
-	go func() {
-		errCh <- server.serve()
-	}()
-	return server, addr.Port
-}
-
-func serveBoltIntegrationServer(t *testing.T, server *Server) int {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	requireNoError(t, err)
-	port := listener.Addr().(*net.TCPAddr).Port
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	t.Cleanup(func() {
-		_ = server.Close()
-		requireNoError(t, <-done)
+		closeErr := server.Close()
+		serveErr := <-done
+		if len(shutdownChecks) == 1 {
+			shutdownChecks[0](closeErr)
+		} else if closeErr != nil {
+			t.Errorf("close server: %v", closeErr)
+		}
+		if serveErr != nil {
+			t.Errorf("serve: %v", serveErr)
+		}
 	})
-	return port
+	return addr.Port
 }
 
 func openBoltTestConn(t *testing.T, port int) net.Conn {
@@ -199,9 +226,12 @@ func requireNoError(t *testing.T, err error) {
 	}
 }
 
-func runBoltQueryAndCollectRecords(t *testing.T, conn net.Conn, query string) [][]any {
+// runBoltQueryWithParams runs query with params and collects every RECORD
+// until the statement SUCCESS. It is the one run-and-collect owner for Bolt
+// test statements.
+func runBoltQueryWithParams(t *testing.T, conn net.Conn, query string, params map[string]any) [][]any {
 	t.Helper()
-	requireNoError(t, SendRun(t, conn, query, nil, nil))
+	requireNoError(t, SendRun(t, conn, query, params, nil))
 	requireNoError(t, ReadSuccess(t, conn))
 	requireNoError(t, SendPull(t, conn, nil))
 
@@ -236,44 +266,11 @@ func TestBoltCypherIntegration(t *testing.T) {
 	// Wrap with NamespacedEngine to handle ID prefixing (required by BadgerEngine)
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	cypherExec := cypher.NewStorageExecutor(store)
-	executor := &cypherQueryExecutor{executor: cypherExec}
 
-	// Start Bolt server on random port
-	config := &Config{
-		Port:            0, // Random port
-		MaxConnections:  10,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}
-
-	server := New(config, executor)
-	defer server.Close()
-
-	port := serveBoltIntegrationServer(t, server)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 
 	t.Run("create_and_query_node", func(t *testing.T) {
-		// Connect to server
-		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-		if err != nil {
-			t.Fatalf("Failed to connect: %v", err)
-		}
-		defer conn.Close()
-
-		// Perform handshake
-		if err := PerformHandshakeWithTesting(t, conn); err != nil {
-			t.Fatalf("Handshake failed: %v", err)
-		}
-
-		// Send HELLO
-		if err := SendHello(t, conn, nil); err != nil {
-			t.Fatalf("HELLO failed: %v", err)
-		}
-
-		// Wait for SUCCESS response
-		if err := ReadSuccess(t, conn); err != nil {
-			t.Fatalf("Expected SUCCESS after HELLO: %v", err)
-		}
+		conn := openBoltTestConn(t, port)
 
 		// Send CREATE query
 		createQuery := "CREATE (n:Person {name: 'Alice', age: 30}) RETURN n"
@@ -313,27 +310,7 @@ func TestBoltCypherIntegration(t *testing.T) {
 	})
 
 	t.Run("match_query", func(t *testing.T) {
-		// Connect to server
-		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-		if err != nil {
-			t.Fatalf("Failed to connect: %v", err)
-		}
-		defer conn.Close()
-
-		// Perform handshake
-		if err := PerformHandshakeWithTesting(t, conn); err != nil {
-			t.Fatalf("Handshake failed: %v", err)
-		}
-
-		// Send HELLO
-		if err := SendHello(t, conn, nil); err != nil {
-			t.Fatalf("HELLO failed: %v", err)
-		}
-
-		// Wait for SUCCESS
-		if err := ReadSuccess(t, conn); err != nil {
-			t.Fatalf("Expected SUCCESS: %v", err)
-		}
+		conn := openBoltTestConn(t, port)
 
 		// Send MATCH query
 		matchQuery := "MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.name, n.age"
@@ -372,17 +349,7 @@ func TestBoltCypherIntegration(t *testing.T) {
 	})
 
 	t.Run("parameterized_query", func(t *testing.T) {
-		// Connect to server
-		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-		if err != nil {
-			t.Fatalf("Failed to connect: %v", err)
-		}
-		defer conn.Close()
-
-		// Perform handshake and HELLO
-		PerformHandshakeWithTesting(t, conn)
-		SendHello(t, conn, nil)
-		ReadSuccess(t, conn)
+		conn := openBoltTestConn(t, port)
 
 		// Send parameterized query
 		query := "CREATE (n:Person {name: $name, age: $age}) RETURN n"
@@ -414,17 +381,7 @@ func TestBoltCypherIntegration(t *testing.T) {
 	})
 
 	t.Run("transaction_flow", func(t *testing.T) {
-		// Connect to server
-		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-		if err != nil {
-			t.Fatalf("Failed to connect: %v", err)
-		}
-		defer conn.Close()
-
-		// Handshake and HELLO
-		PerformHandshakeWithTesting(t, conn)
-		SendHello(t, conn, nil)
-		ReadSuccess(t, conn)
+		conn := openBoltTestConn(t, port)
 
 		// Send BEGIN
 		if err := SendBegin(t, conn, nil); err != nil {
@@ -454,173 +411,183 @@ func TestBoltCypherIntegration(t *testing.T) {
 
 }
 
-func TestBoltConstraintIntegration_NewerConstraintTypes(t *testing.T) {
-	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServer(t, store)
-	conn := openBoltTestConn(t, port)
-
-	queries := []string{
-		"CREATE CONSTRAINT person_name_required IF NOT EXISTS FOR (p:Person) REQUIRE p.name IS NOT NULL",
-		"CREATE CONSTRAINT user_key IF NOT EXISTS FOR (u:User) REQUIRE (u.username, u.domain) IS NODE KEY",
-		"CREATE CONSTRAINT fact_temporal IF NOT EXISTS FOR (v:FactVersion) REQUIRE (v.fact_key, v.valid_from, v.valid_to) IS TEMPORAL NO OVERLAP",
-		"CREATE CONSTRAINT rel_exists IF NOT EXISTS FOR ()-[r:FOLLOWS]-() REQUIRE r.since IS NOT NULL",
-		"CREATE CONSTRAINT rel_key IF NOT EXISTS FOR ()-[r:KNOWS]-() REQUIRE (r.since, r.how) IS RELATIONSHIP KEY",
-	}
-
-	for _, query := range queries {
-		records := runBoltQueryAndCollectRecords(t, conn, query)
-		if len(records) != 0 {
-			t.Fatalf("expected no records for schema mutation %q, got %d", query, len(records))
-		}
-	}
-
-	showRecords := runBoltQueryAndCollectRecords(t, conn, "SHOW CONSTRAINTS")
-	if len(showRecords) < len(queries) {
-		t.Fatalf("expected at least %d constraints, got %d", len(queries), len(showRecords))
-	}
-
-	typesByName := map[string]string{}
-	entityTypesByName := map[string]string{}
-	for _, row := range showRecords {
-		if len(row) < 4 {
-			continue
-		}
-		name, _ := row[1].(string)
-		constraintType, ok := row[2].(string)
-		if ok && name != "" {
-			typesByName[name] = constraintType
-		}
-		entityType, ok := row[3].(string)
-		if ok && name != "" {
-			entityTypesByName[name] = entityType
-		}
-	}
-
-	wantTypes := map[string]string{
-		"person_name_required": "NODE_PROPERTY_EXISTENCE",
-		"user_key":             "NODE_KEY",
-		"fact_temporal":        "TEMPORAL_NO_OVERLAP",
-		"rel_exists":           "RELATIONSHIP_PROPERTY_EXISTENCE",
-		"rel_key":              "RELATIONSHIP_KEY",
-	}
-	for name, want := range wantTypes {
-		if got := typesByName[name]; got != want {
-			t.Fatalf("expected SHOW CONSTRAINTS type %q for %q, got %q (all=%v)", want, name, got, typesByName)
-		}
-	}
-
-	if entityTypesByName["person_name_required"] != "NODE" ||
-		entityTypesByName["user_key"] != "NODE" ||
-		entityTypesByName["fact_temporal"] != "NODE" {
-		t.Fatalf("unexpected node entity types in SHOW CONSTRAINTS: %v", entityTypesByName)
-	}
-	if entityTypesByName["rel_exists"] != "RELATIONSHIP" ||
-		entityTypesByName["rel_key"] != "RELATIONSHIP" {
-		t.Fatalf("unexpected relationship entity types in SHOW CONSTRAINTS: %v", entityTypesByName)
-	}
+// boltConstraintFamilyRow is one CREATE CONSTRAINT statement and the
+// SHOW CONSTRAINTS row shape the created constraint must report.
+type boltConstraintFamilyRow struct {
+	name         string
+	create       string
+	wantType     string
+	wantEntity   string
+	wantPropType string // empty when the family reports no property type
 }
 
-func TestBoltConstraintIntegration_AllConstraintFamilies(t *testing.T) {
-	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServer(t, store)
-	conn := openBoltTestConn(t, port)
+// boltNewerConstraintRows is the newer constraint-type population. It is the
+// single owner of these rows: boltAllConstraintFamilyRows is a strict
+// superset that reuses them unchanged.
+var boltNewerConstraintRows = []boltConstraintFamilyRow{
+	{
+		name:       "person_name_required",
+		create:     "CREATE CONSTRAINT person_name_required IF NOT EXISTS FOR (p:Person) REQUIRE p.name IS NOT NULL",
+		wantType:   "NODE_PROPERTY_EXISTENCE",
+		wantEntity: "NODE",
+	},
+	{
+		name:       "user_key",
+		create:     "CREATE CONSTRAINT user_key IF NOT EXISTS FOR (u:User) REQUIRE (u.username, u.domain) IS NODE KEY",
+		wantType:   "NODE_KEY",
+		wantEntity: "NODE",
+	},
+	{
+		name:       "fact_temporal",
+		create:     "CREATE CONSTRAINT fact_temporal IF NOT EXISTS FOR (v:FactVersion) REQUIRE (v.fact_key, v.valid_from, v.valid_to) IS TEMPORAL NO OVERLAP",
+		wantType:   "TEMPORAL_NO_OVERLAP",
+		wantEntity: "NODE",
+	},
+	{
+		name:       "rel_exists",
+		create:     "CREATE CONSTRAINT rel_exists IF NOT EXISTS FOR ()-[r:FOLLOWS]-() REQUIRE r.since IS NOT NULL",
+		wantType:   "RELATIONSHIP_PROPERTY_EXISTENCE",
+		wantEntity: "RELATIONSHIP",
+	},
+	{
+		name:       "rel_key",
+		create:     "CREATE CONSTRAINT rel_key IF NOT EXISTS FOR ()-[r:KNOWS]-() REQUIRE (r.since, r.how) IS RELATIONSHIP KEY",
+		wantType:   "RELATIONSHIP_KEY",
+		wantEntity: "RELATIONSHIP",
+	},
+}
 
-	queries := []string{
-		"CREATE CONSTRAINT person_email_unique IF NOT EXISTS FOR (p:Person) REQUIRE p.email IS UNIQUE",
-		"CREATE CONSTRAINT person_name_required IF NOT EXISTS FOR (p:Person) REQUIRE p.name IS NOT NULL",
-		"CREATE CONSTRAINT user_key IF NOT EXISTS FOR (u:User) REQUIRE (u.username, u.domain) IS NODE KEY",
-		"CREATE CONSTRAINT person_age_type IF NOT EXISTS FOR (p:Person) REQUIRE p.age IS :: INTEGER",
-		"CREATE CONSTRAINT person_status_domain IF NOT EXISTS FOR (p:Person) REQUIRE p.status IN ['active', 'inactive']",
-		"CREATE CONSTRAINT fact_temporal IF NOT EXISTS FOR (v:FactVersion) REQUIRE (v.fact_key, v.valid_from, v.valid_to) IS TEMPORAL NO OVERLAP",
-		"CREATE CONSTRAINT rel_exists IF NOT EXISTS FOR ()-[r:FOLLOWS]-() REQUIRE r.since IS NOT NULL",
-		"CREATE CONSTRAINT rel_key IF NOT EXISTS FOR ()-[r:KNOWS]-() REQUIRE (r.since, r.how) IS RELATIONSHIP KEY",
-		"CREATE CONSTRAINT rel_order_type IF NOT EXISTS FOR ()-[r:PART_OF]-() REQUIRE r.order IS :: INTEGER",
-		"CREATE CONSTRAINT rel_role_domain IF NOT EXISTS FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager']",
-		"CREATE CONSTRAINT max_jobs IF NOT EXISTS FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2",
-		"CREATE CONSTRAINT works_at_allowed IF NOT EXISTS FOR (:Person)-[r:WORKS_AT]->(:Company) REQUIRE ALLOWED",
-		"CREATE CONSTRAINT no_intern_exec IF NOT EXISTS FOR (:Intern)-[r:REPORTS_TO]->(:Executive) REQUIRE DISALLOWED",
-	}
+// boltAllConstraintFamilyRows is the complete constraint-family population:
+// the newer rows followed by the families that predate them.
+var boltAllConstraintFamilyRows = append(append([]boltConstraintFamilyRow{}, boltNewerConstraintRows...),
+	boltConstraintFamilyRow{
+		name:       "person_email_unique",
+		create:     "CREATE CONSTRAINT person_email_unique IF NOT EXISTS FOR (p:Person) REQUIRE p.email IS UNIQUE",
+		wantType:   "UNIQUENESS",
+		wantEntity: "NODE",
+	},
+	boltConstraintFamilyRow{
+		name:         "person_age_type",
+		create:       "CREATE CONSTRAINT person_age_type IF NOT EXISTS FOR (p:Person) REQUIRE p.age IS :: INTEGER",
+		wantType:     "NODE_PROPERTY_TYPE",
+		wantEntity:   "NODE",
+		wantPropType: "INTEGER",
+	},
+	boltConstraintFamilyRow{
+		name:       "person_status_domain",
+		create:     "CREATE CONSTRAINT person_status_domain IF NOT EXISTS FOR (p:Person) REQUIRE p.status IN ['active', 'inactive']",
+		wantType:   "DOMAIN",
+		wantEntity: "NODE",
+	},
+	boltConstraintFamilyRow{
+		name:         "rel_order_type",
+		create:       "CREATE CONSTRAINT rel_order_type IF NOT EXISTS FOR ()-[r:PART_OF]-() REQUIRE r.order IS :: INTEGER",
+		wantType:     "RELATIONSHIP_PROPERTY_TYPE",
+		wantEntity:   "RELATIONSHIP",
+		wantPropType: "INTEGER",
+	},
+	boltConstraintFamilyRow{
+		name:       "rel_role_domain",
+		create:     "CREATE CONSTRAINT rel_role_domain IF NOT EXISTS FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager']",
+		wantType:   "DOMAIN",
+		wantEntity: "RELATIONSHIP",
+	},
+	boltConstraintFamilyRow{
+		name:       "max_jobs",
+		create:     "CREATE CONSTRAINT max_jobs IF NOT EXISTS FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2",
+		wantType:   "CARDINALITY",
+		wantEntity: "RELATIONSHIP",
+	},
+	boltConstraintFamilyRow{
+		name:       "works_at_allowed",
+		create:     "CREATE CONSTRAINT works_at_allowed IF NOT EXISTS FOR (:Person)-[r:WORKS_AT]->(:Company) REQUIRE ALLOWED",
+		wantType:   "RELATIONSHIP_POLICY",
+		wantEntity: "RELATIONSHIP",
+	},
+	boltConstraintFamilyRow{
+		name:       "no_intern_exec",
+		create:     "CREATE CONSTRAINT no_intern_exec IF NOT EXISTS FOR (:Intern)-[r:REPORTS_TO]->(:Executive) REQUIRE DISALLOWED",
+		wantType:   "RELATIONSHIP_POLICY",
+		wantEntity: "RELATIONSHIP",
+	},
+)
 
-	for _, query := range queries {
-		records := runBoltQueryAndCollectRecords(t, conn, query)
+// runBoltConstraintFamilyMatrix creates every row's constraint over conn and
+// asserts the SHOW CONSTRAINTS row shape each row requires. It is the one
+// create-and-assert owner for the Bolt constraint-family integration tests.
+func runBoltConstraintFamilyMatrix(t *testing.T, conn net.Conn, rows []boltConstraintFamilyRow) {
+	t.Helper()
+	for _, row := range rows {
+		records := runBoltQueryWithParams(t, conn, row.create, nil)
 		if len(records) != 0 {
-			t.Fatalf("expected no records for schema mutation %q, got %d", query, len(records))
+			t.Fatalf("expected no records for schema mutation %q, got %d", row.create, len(records))
 		}
 	}
 
-	showRecords := runBoltQueryAndCollectRecords(t, conn, "SHOW CONSTRAINTS")
-	if len(showRecords) < len(queries) {
-		t.Fatalf("expected at least %d constraints, got %d", len(queries), len(showRecords))
+	showRecords := runBoltQueryWithParams(t, conn, "SHOW CONSTRAINTS", nil)
+	if len(showRecords) < len(rows) {
+		t.Fatalf("expected at least %d constraints, got %d", len(rows), len(showRecords))
 	}
 
 	typesByName := map[string]string{}
 	entityTypesByName := map[string]string{}
 	propertyTypeByName := map[string]string{}
-	for _, row := range showRecords {
-		if len(row) < 8 {
+	for _, record := range showRecords {
+		if len(record) < 8 {
 			continue
 		}
-		name, _ := row[1].(string)
-		constraintType, _ := row[2].(string)
-		entityType, _ := row[3].(string)
-		propType, _ := row[7].(string)
-		if name != "" {
-			typesByName[name] = constraintType
-			entityTypesByName[name] = entityType
-			if propType != "" {
-				propertyTypeByName[name] = propType
-			}
+		name, _ := record[1].(string)
+		constraintType, _ := record[2].(string)
+		entityType, _ := record[3].(string)
+		propertyType, _ := record[7].(string)
+		if name == "" {
+			continue
+		}
+		typesByName[name] = constraintType
+		entityTypesByName[name] = entityType
+		if propertyType != "" {
+			propertyTypeByName[name] = propertyType
 		}
 	}
 
-	wantTypes := map[string]string{
-		"person_email_unique":  "UNIQUENESS",
-		"person_name_required": "NODE_PROPERTY_EXISTENCE",
-		"user_key":             "NODE_KEY",
-		"person_age_type":      "NODE_PROPERTY_TYPE",
-		"person_status_domain": "DOMAIN",
-		"fact_temporal":        "TEMPORAL_NO_OVERLAP",
-		"rel_exists":           "RELATIONSHIP_PROPERTY_EXISTENCE",
-		"rel_key":              "RELATIONSHIP_KEY",
-		"rel_order_type":       "RELATIONSHIP_PROPERTY_TYPE",
-		"rel_role_domain":      "DOMAIN",
-		"max_jobs":             "CARDINALITY",
-		"works_at_allowed":     "RELATIONSHIP_POLICY",
-		"no_intern_exec":       "RELATIONSHIP_POLICY",
-	}
-	for name, want := range wantTypes {
-		if got := typesByName[name]; got != want {
-			t.Fatalf("expected SHOW CONSTRAINTS type %q for %q, got %q (all=%v)", want, name, got, typesByName)
+	for _, row := range rows {
+		if got := typesByName[row.name]; got != row.wantType {
+			t.Fatalf("expected SHOW CONSTRAINTS type %q for %q, got %q (all=%v)", row.wantType, row.name, got, typesByName)
+		}
+		if got := entityTypesByName[row.name]; got != row.wantEntity {
+			t.Fatalf("expected %s entity type for %q, got %q", row.wantEntity, row.name, got)
+		}
+		if row.wantPropType == "" {
+			continue
+		}
+		if got := propertyTypeByName[row.name]; got != row.wantPropType {
+			t.Fatalf("expected property type %q for %q, got %q", row.wantPropType, row.name, got)
 		}
 	}
+}
 
-	if propertyTypeByName["person_age_type"] != "INTEGER" {
-		t.Fatalf("expected property type INTEGER for person_age_type, got %q", propertyTypeByName["person_age_type"])
-	}
-	if propertyTypeByName["rel_order_type"] != "INTEGER" {
-		t.Fatalf("expected property type INTEGER for rel_order_type, got %q", propertyTypeByName["rel_order_type"])
-	}
+func TestBoltConstraintIntegration_NewerConstraintTypes(t *testing.T) {
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
+	conn := openBoltTestConn(t, port)
 
-	nodeNames := []string{"person_email_unique", "person_name_required", "user_key", "person_age_type", "person_status_domain", "fact_temporal"}
-	for _, name := range nodeNames {
-		if entityTypesByName[name] != "NODE" {
-			t.Fatalf("expected NODE entity type for %q, got %q", name, entityTypesByName[name])
-		}
-	}
-	relNames := []string{"rel_exists", "rel_key", "rel_order_type", "rel_role_domain", "max_jobs", "works_at_allowed", "no_intern_exec"}
-	for _, name := range relNames {
-		if entityTypesByName[name] != "RELATIONSHIP" {
-			t.Fatalf("expected RELATIONSHIP entity type for %q, got %q", name, entityTypesByName[name])
-		}
-	}
+	runBoltConstraintFamilyMatrix(t, conn, boltNewerConstraintRows)
+}
+
+func TestBoltConstraintIntegration_AllConstraintFamilies(t *testing.T) {
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
+	conn := openBoltTestConn(t, port)
+
+	runBoltConstraintFamilyMatrix(t, conn, boltAllConstraintFamilyRows)
 }
 
 func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
 	createContract := `
@@ -637,12 +604,12 @@ func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
 		  NOT EXISTS { (n)-[:FORBIDDEN_REL]->() }
 		}`
 
-	records := runBoltQueryAndCollectRecords(t, conn, createContract)
+	records := runBoltQueryWithParams(t, conn, createContract, nil)
 	if len(records) != 0 {
 		t.Fatalf("expected no records creating contract, got %d", len(records))
 	}
 
-	contracts := runBoltQueryAndCollectRecords(t, conn, "SHOW CONSTRAINT CONTRACTS")
+	contracts := runBoltQueryWithParams(t, conn, "SHOW CONSTRAINT CONTRACTS", nil)
 	if len(contracts) != 1 {
 		t.Fatalf("expected 1 contract row, got %d", len(contracts))
 	}
@@ -661,7 +628,7 @@ func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
 		t.Fatalf("expected non-empty contract definition, got %v", row[6])
 	}
 
-	records = runBoltQueryAndCollectRecords(t, conn, `
+	records = runBoltQueryWithParams(t, conn, `
 		CREATE CONSTRAINT works_at_contract
 		FOR ()-[r:WORKS_AT]-()
 		REQUIRE {
@@ -673,12 +640,12 @@ func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
 		  startNode(r).tenant = endNode(r).tenant
 		  r.status IN ['active', 'inactive']
 		  r.hoursPerWeek > 0
-		}`)
+		}`, nil)
 	if len(records) != 0 {
 		t.Fatalf("expected no records creating relationship contract, got %d", len(records))
 	}
 
-	contracts = runBoltQueryAndCollectRecords(t, conn, "SHOW CONSTRAINT CONTRACTS")
+	contracts = runBoltQueryWithParams(t, conn, "SHOW CONSTRAINT CONTRACTS", nil)
 	if len(contracts) != 2 {
 		t.Fatalf("expected 2 contract rows, got %d", len(contracts))
 	}
@@ -688,10 +655,10 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("domain", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT person_status_domain FOR (n:Person) REQUIRE n.status IN ['active', 'inactive']")
+		runBoltQueryWithParams(t, conn, "CREATE CONSTRAINT person_status_domain FOR (n:Person) REQUIRE n.status IN ['active', 'inactive']", nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "CREATE (:Person {id:'p1', status:'paused'})")
 		if !strings.Contains(msg, "allowed") && !strings.Contains(msg, "DOMAIN") && !strings.Contains(msg, "active") {
 			t.Fatalf("expected domain violation message, got %q", msg)
@@ -701,13 +668,13 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("cardinality", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT max_jobs FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2")
-		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Person {id:'p1'}), (:Company {id:'c1'}), (:Company {id:'c2'}), (:Company {id:'c3'})")
-		runBoltQueryAndCollectRecords(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c1'}) CREATE (p)-[:WORKS_AT]->(c)")
-		runBoltQueryAndCollectRecords(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c2'}) CREATE (p)-[:WORKS_AT]->(c)")
+		runBoltQueryWithParams(t, conn, "CREATE CONSTRAINT max_jobs FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2", nil)
+		runBoltQueryWithParams(t, conn, "CREATE (:Person {id:'p1'}), (:Company {id:'c1'}), (:Company {id:'c2'}), (:Company {id:'c3'})", nil)
+		runBoltQueryWithParams(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c1'}) CREATE (p)-[:WORKS_AT]->(c)", nil)
+		runBoltQueryWithParams(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c2'}) CREATE (p)-[:WORKS_AT]->(c)", nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c3'}) CREATE (p)-[:WORKS_AT]->(c)")
 		if !strings.Contains(msg, "max count") && !strings.Contains(msg, "exceed") {
 			t.Fatalf("expected cardinality violation message, got %q", msg)
@@ -717,11 +684,11 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("policy", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT works_at_allowed FOR (:Person)-[r:WORKS_AT]->(:Company) REQUIRE ALLOWED")
-		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Robot {id:'r1'}), (:Company {id:'c1'})")
+		runBoltQueryWithParams(t, conn, "CREATE CONSTRAINT works_at_allowed FOR (:Person)-[r:WORKS_AT]->(:Company) REQUIRE ALLOWED", nil)
+		runBoltQueryWithParams(t, conn, "CREATE (:Robot {id:'r1'}), (:Company {id:'c1'})", nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "MATCH (r:Robot {id:'r1'}), (c:Company {id:'c1'}) CREATE (r)-[:WORKS_AT]->(c)")
 		if !strings.Contains(msg, "ALLOWED") {
 			t.Fatalf("expected ALLOWED policy violation message, got %q", msg)
@@ -731,11 +698,11 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("policy_disallowed", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT no_intern_exec FOR (:Intern)-[r:REPORTS_TO]->(:Executive) REQUIRE DISALLOWED")
-		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Intern {id:'i1'}), (:Executive {id:'e1'})")
+		runBoltQueryWithParams(t, conn, "CREATE CONSTRAINT no_intern_exec FOR (:Intern)-[r:REPORTS_TO]->(:Executive) REQUIRE DISALLOWED", nil)
+		runBoltQueryWithParams(t, conn, "CREATE (:Intern {id:'i1'}), (:Executive {id:'e1'})", nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "MATCH (i:Intern {id:'i1'}), (e:Executive {id:'e1'}) CREATE (i)-[:REPORTS_TO]->(e)")
 		if !strings.Contains(msg, "DISALLOWED") {
 			t.Fatalf("expected DISALLOWED policy violation message, got %q", msg)
@@ -745,11 +712,11 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("relationship_domain", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT rel_role_domain FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager']")
-		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Person {id:'p1'}), (:Company {id:'c1'})")
+		runBoltQueryWithParams(t, conn, "CREATE CONSTRAINT rel_role_domain FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager']", nil)
+		runBoltQueryWithParams(t, conn, "CREATE (:Person {id:'p1'}), (:Company {id:'c1'})", nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c1'}) CREATE (p)-[:WORKS_AT {role:'director'}]->(c)")
 		if !strings.Contains(msg, "allowed") && !strings.Contains(msg, "DOMAIN") && !strings.Contains(msg, "engineer") {
 			t.Fatalf("expected relationship domain violation message, got %q", msg)
@@ -759,10 +726,10 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("contract_runtime", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, `
+		runBoltQueryWithParams(t, conn, `
 			CREATE CONSTRAINT person_contract
 			FOR (n:Person)
 			REQUIRE {
@@ -771,7 +738,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 			  n.age IS :: INTEGER
 			  n.status IN ['active', 'inactive']
 			  (n.tenant, n.externalId) IS NODE KEY
-			}`)
+			}`, nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "CREATE (:Person {id:'bad', name:'Bob', age:40, status:'paused', tenant:'t1', externalId:'u2'})")
 		if !strings.Contains(msg, "constraint contract person_contract violated") {
 			t.Fatalf("expected contract violation message, got %q", msg)
@@ -781,11 +748,11 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("contract_relationship_runtime", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Person {id:'p1', tenant:'t1'}), (:Person {id:'p2', tenant:'t2'}), (:Person {id:'p3', tenant:'t1'})")
-		runBoltQueryAndCollectRecords(t, conn, `
+		runBoltQueryWithParams(t, conn, "CREATE (:Person {id:'p1', tenant:'t1'}), (:Person {id:'p2', tenant:'t2'}), (:Person {id:'p3', tenant:'t1'})", nil)
+		runBoltQueryWithParams(t, conn, `
 			CREATE CONSTRAINT works_at_contract
 			FOR ()-[r:WORKS_AT]-()
 			REQUIRE {
@@ -797,7 +764,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 			  startNode(r).tenant = endNode(r).tenant
 			  r.status IN ['active', 'inactive']
 			  r.hoursPerWeek > 0
-			}`)
+			}`, nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, `
 			MATCH (a:Person {id:'p1'}), (b:Person {id:'p2'})
 			CREATE (a)-[:WORKS_AT {id:'w2', startedAt:'2024-01-01', role:'Engineer', tenant:'t1', externalId:'rel-2', status:'active', hoursPerWeek:40}]->(b)`)
@@ -824,7 +791,7 @@ func TestBoltIntegration_G2GVersionNodesFallbackRowShape_ServerStack(t *testing.
 		requireNoError(t, baseStore.Close())
 	})
 
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
 	bootstrap := []string{
@@ -838,7 +805,7 @@ func TestBoltIntegration_G2GVersionNodesFallbackRowShape_ServerStack(t *testing.
 		"CREATE CONSTRAINT g2g_factversion_valid_from_exists IF NOT EXISTS FOR (fv:FactVersion) REQUIRE fv.valid_from IS NOT NULL",
 	}
 	for _, query := range bootstrap {
-		records := runBoltQueryAndCollectRecords(t, conn, query)
+		records := runBoltQueryWithParams(t, conn, query, nil)
 		if len(records) != 0 {
 			t.Fatalf("expected no records for schema mutation %q, got %d", query, len(records))
 		}
@@ -951,7 +918,7 @@ FOREACH (_ IN CASE WHEN row.target_entity_id IS NULL OR row.target_entity_id = '
 		}
 	}
 
-	records := runBoltQueryAndCollectRecords(t, conn, "MATCH (:FactVersion:CodeState {state_id: 'cs-g2g-bolt-single'})-[:SOURCE]->(:Entity:CodeEntity {entity_id: 'symbol::repo::function::caller'}) RETURN count(*)")
+	records := runBoltQueryWithParams(t, conn, "MATCH (:FactVersion:CodeState {state_id: 'cs-g2g-bolt-single'})-[:SOURCE]->(:Entity:CodeEntity {entity_id: 'symbol::repo::function::caller'}) RETURN count(*)", nil)
 	if len(records) != 1 || len(records[0]) != 1 || records[0][0] != int64(1) {
 		t.Fatalf("expected exactly one SOURCE relationship, got %v", records)
 	}
@@ -962,26 +929,16 @@ func TestBoltExplicitTransactionRollbackRevertsCreate(t *testing.T) {
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	executor := newTxCapableCypherQueryExecutor(store)
 
-	config := &Config{
+	// This scenario keeps its own connection budget instead of the shared
+	// explicit-transaction mode's larger one.
+	server := New(&Config{
 		Port:            0,
 		MaxConnections:  10,
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
-	}
-
-	server := New(config, executor)
-	defer server.Close()
-
+	}, executor)
 	port := serveBoltIntegrationServer(t, server)
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
+	conn := openBoltTestConn(t, port)
 
 	// Cleanup old test data outside transaction.
 	if err := SendRun(t, conn, "MATCH (n:Test {name: 'Transaction Test'}) DETACH DELETE n", nil, nil); err != nil {
@@ -1051,7 +1008,6 @@ func TestBoltServerStress(t *testing.T) {
 	// Start server
 	config := &Config{Port: 0, MaxConnections: 50}
 	server := New(config, executor)
-	defer server.Close()
 
 	port := serveBoltIntegrationServer(t, server)
 
@@ -1138,68 +1094,115 @@ func TestBoltServerStress(t *testing.T) {
 	}
 }
 
+// boltSeedPropertyShape selects the property population the create/delete
+// relationship benchmark fixtures write on each seeded node.
+type boltSeedPropertyShape int
+
+const (
+	// boltSeedNameOnly seeds Actor{name} / Movie{title} only.
+	boltSeedNameOnly boltSeedPropertyShape = iota
+	// boltSeedBornReleased also seeds Actor{born} / Movie{released}.
+	boltSeedBornReleased
+)
+
+// boltBenchmarkSeed is the node population and property shape a
+// TestBoltBenchmarkCreateDeleteRelationship variant starts from.
+type boltBenchmarkSeed struct {
+	actors int
+	movies int
+	shape  boltSeedPropertyShape
+}
+
+// seedBoltCreateDeleteNodes writes seed's Actor/Movie population over conn and
+// requires every CREATE to complete its full RUN/PULL exchange.
+func seedBoltCreateDeleteNodes(t *testing.T, conn net.Conn, seed boltBenchmarkSeed) {
+	t.Helper()
+	t.Logf("Creating %d actors and %d movies...", seed.actors, seed.movies)
+	for i := 0; i < seed.actors; i++ {
+		properties := fmt.Sprintf("name: 'Actor_%d'", i)
+		if seed.shape == boltSeedBornReleased {
+			properties += fmt.Sprintf(", born: %d", 1950+i%50)
+		}
+		runBoltQueryWithParams(t, conn, fmt.Sprintf("CREATE (a:Actor {%s})", properties), nil)
+	}
+	for i := 0; i < seed.movies; i++ {
+		properties := fmt.Sprintf("title: 'Movie_%d'", i)
+		if seed.shape == boltSeedBornReleased {
+			properties += fmt.Sprintf(", released: %d", 1980+i%44)
+		}
+		runBoltQueryWithParams(t, conn, fmt.Sprintf("CREATE (m:Movie {%s})", properties), nil)
+	}
+}
+
+// requireBoltCount fails unless query's single count row equals want.
+func requireBoltCount(t *testing.T, conn net.Conn, query string, want int64) {
+	t.Helper()
+	records := runBoltQueryWithParams(t, conn, query, nil)
+	if len(records) != 1 || len(records[0]) != 1 {
+		t.Fatalf("expected exactly one count row for %q, got %v", query, records)
+	}
+	count, ok := records[0][0].(int64)
+	if !ok {
+		t.Fatalf("expected int64 count for %q, got %T (%v)", query, records[0][0], records[0][0])
+	}
+	if count != want {
+		t.Fatalf("expected %q count %d, got %d", query, want, count)
+	}
+}
+
+// requireBoltSeedPopulation fails unless conn observes exactly seed's
+// Actor/Movie population and no TEMP_REL relationship left by a prior run.
+func requireBoltSeedPopulation(t *testing.T, conn net.Conn, seed boltBenchmarkSeed) {
+	t.Helper()
+	requireBoltCount(t, conn, "MATCH (a:Actor) RETURN count(a)", int64(seed.actors))
+	requireBoltCount(t, conn, "MATCH (m:Movie) RETURN count(m)", int64(seed.movies))
+	requireBoltCount(t, conn, boltTemporaryRelationshipCountQuery, 0)
+}
+
+// boltCreateDeleteRelationshipQuery is the timed statement shared by every
+// TestBoltBenchmarkCreateDeleteRelationship variant.
+const boltTemporaryRelationshipCountQuery = "MATCH ()-[r:TEMP_REL]->() RETURN count(r)"
+
+const boltCreateDeleteRelationshipQuery = `MATCH (a:Actor), (m:Movie)
+			WITH a, m LIMIT 1
+			CREATE (a)-[r:TEMP_REL]->(m)
+			DELETE r`
+
+// runBoltCreateDeleteRelationshipIterations runs iterations of the shared
+// create/delete statement over conn and returns their elapsed time. Every wire
+// exchange is checked, so a failed exchange fails the test instead of
+// producing a throughput log.
+func runBoltCreateDeleteRelationshipIterations(t *testing.T, conn net.Conn, iterations int) time.Duration {
+	t.Helper()
+	start := time.Now()
+	for i := 0; i < iterations; i++ {
+		runBoltQueryWithParams(t, conn, boltCreateDeleteRelationshipQuery, nil)
+	}
+	return time.Since(start)
+}
+
 // TestBoltBenchmarkCreateDeleteRelationship measures real Bolt network performance
 // KEEP THIS TEST - this is the actual Bolt layer benchmark
 func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 	// Create storage chain matching production: base -> async -> namespaced.
 	// AsyncEngine requires fully-qualified IDs; NamespacedEngine provides that for Cypher-generated IDs.
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	asyncBase := baseStore
-	store := storage.NewNamespacedEngine(asyncBase, "test")
-	cypherExec := cypher.NewStorageExecutor(store)
-	executor := &cypherQueryExecutor{executor: cypherExec}
+	store := storage.NewNamespacedEngine(baseStore, "test")
 
-	config := &Config{
-		Port:            0,
-		MaxConnections:  10,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
+	conn := openBoltTestConn(t, port)
 
-	server := New(config, executor)
-	defer server.Close()
+	seed := boltBenchmarkSeed{actors: 1, movies: 1, shape: boltSeedNameOnly}
+	// Preserve the original fixed small fixture; indexed multi-node inputs
+	// use the shared seed loop below.
+	runBoltQueryWithParams(t, conn, "CREATE (a:Actor {name: 'Test'})", nil)
+	runBoltQueryWithParams(t, conn, "CREATE (m:Movie {title: 'Test'})", nil)
+	requireBoltSeedPopulation(t, conn, seed)
 
-	port := serveBoltIntegrationServer(t, server)
-
-	// Connect
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	// Handshake and HELLO
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
-
-	// Create test nodes
-	SendRun(t, conn, "CREATE (a:Actor {name: 'Test'})", nil, nil)
-	ReadSuccess(t, conn)
-	SendPull(t, conn, nil)
-	ReadSuccess(t, conn) // SUCCESS after PULL
-
-	SendRun(t, conn, "CREATE (m:Movie {title: 'Test'})", nil, nil)
-	ReadSuccess(t, conn)
-	SendPull(t, conn, nil)
-	ReadSuccess(t, conn)
-
-	// Benchmark the slow query
 	iterations := 100
 	t.Logf("Running %d iterations over Bolt (small dataset)", iterations)
 
-	start := time.Now()
-	for i := 0; i < iterations; i++ {
-		query := `MATCH (a:Actor), (m:Movie)
-			WITH a, m LIMIT 1
-			CREATE (a)-[r:TEMP_REL]->(m)
-			DELETE r`
-		SendRun(t, conn, query, nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-	elapsed := time.Since(start)
+	elapsed := runBoltCreateDeleteRelationshipIterations(t, conn, iterations)
 
 	opsPerSec := float64(iterations) / elapsed.Seconds()
 	avgMs := elapsed.Seconds() * 1000 / float64(iterations)
@@ -1210,69 +1213,32 @@ func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 	if opsPerSec < 500 {
 		t.Logf("WARNING: Bolt performance %.2f ops/sec is below 500 target", opsPerSec)
 	}
+
+	requireBoltCount(t, conn, boltTemporaryRelationshipCountQuery, 0)
 }
 
 // TestBoltBenchmarkCreateDeleteRelationship_LargeDataset simulates real benchmark conditions
 // KEEP THIS TEST - this shows performance with realistic data volume (100 actors, 150 movies)
 func TestBoltBenchmarkCreateDeleteRelationship_LargeDataset(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	asyncBase := baseStore
-	store := storage.NewNamespacedEngine(asyncBase, "test")
-	cypherExec := cypher.NewStorageExecutor(store)
-	executor := &cypherQueryExecutor{executor: cypherExec}
+	store := storage.NewNamespacedEngine(baseStore, "test")
 
-	config := &Config{Port: 0, MaxConnections: 10}
-	server := New(config, executor)
-	defer server.Close()
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
+	conn := openBoltTestConn(t, port)
 
-	port := serveBoltIntegrationServer(t, server)
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
+	seed := boltBenchmarkSeed{actors: 100, movies: 150, shape: boltSeedBornReleased}
+	seedBoltCreateDeleteNodes(t, conn, seed)
+	requireBoltSeedPopulation(t, conn, seed)
 
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
-
-	// Create 100 actors
-	t.Log("Creating 100 actors...")
-	for i := 0; i < 100; i++ {
-		SendRun(t, conn, fmt.Sprintf("CREATE (a:Actor {name: 'Actor_%d', born: %d})", i, 1950+i%50), nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-
-	// Create 150 movies
-	t.Log("Creating 150 movies...")
-	for i := 0; i < 150; i++ {
-		SendRun(t, conn, fmt.Sprintf("CREATE (m:Movie {title: 'Movie_%d', released: %d})", i, 1980+i%44), nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-
-	// Benchmark
 	iterations := 100
 	t.Logf("Running %d iterations over Bolt (Memory, 100 actors + 150 movies)", iterations)
 
-	start := time.Now()
-	for i := 0; i < iterations; i++ {
-		query := `MATCH (a:Actor), (m:Movie)
-			WITH a, m LIMIT 1
-			CREATE (a)-[r:TEMP_REL]->(m)
-			DELETE r`
-		SendRun(t, conn, query, nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-	elapsed := time.Since(start)
+	elapsed := runBoltCreateDeleteRelationshipIterations(t, conn, iterations)
 
 	opsPerSec := float64(iterations) / elapsed.Seconds()
 	t.Logf("Bolt Performance (Memory, large dataset): %.2f ops/sec, %.3f ms/op", opsPerSec, elapsed.Seconds()*1000/float64(iterations))
+
+	requireBoltCount(t, conn, boltTemporaryRelationshipCountQuery, 0)
 }
 
 // TestBoltBenchmarkCreateDeleteRelationship_Badger tests with BadgerDB (realistic)
@@ -1287,47 +1253,16 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
-	defer badgerEngine.Close()
 
-	asyncBase := badgerEngine
-	store := storage.NewNamespacedEngine(asyncBase, "test")
-	cypherExec := cypher.NewStorageExecutor(store)
-	executor := &cypherQueryExecutor{executor: cypherExec}
+	store := storage.NewNamespacedEngine(badgerEngine, "test")
 
-	config := &Config{Port: 0, MaxConnections: 10}
-	server := New(config, executor)
-	defer server.Close()
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
+	conn := openBoltTestConn(t, port)
 
-	port := serveBoltIntegrationServer(t, server)
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
+	seed := boltBenchmarkSeed{actors: 100, movies: 150, shape: boltSeedNameOnly}
+	seedBoltCreateDeleteNodes(t, conn, seed)
+	requireBoltSeedPopulation(t, conn, seed)
 
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
-
-	// Create 100 actors
-	t.Log("Creating 100 actors (BadgerDB)...")
-	for i := 0; i < 100; i++ {
-		SendRun(t, conn, fmt.Sprintf("CREATE (a:Actor {name: 'Actor_%d'})", i), nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-
-	// Create 150 movies
-	t.Log("Creating 150 movies (BadgerDB)...")
-	for i := 0; i < 150; i++ {
-		SendRun(t, conn, fmt.Sprintf("CREATE (m:Movie {title: 'Movie_%d'})", i), nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-
-	// Benchmark
 	iterations := 100
 	if v := os.Getenv("BOLT_PROFILE_ITERATIONS"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
@@ -1350,18 +1285,7 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 		}
 	}
 
-	start := time.Now()
-	for i := 0; i < iterations; i++ {
-		query := `MATCH (a:Actor), (m:Movie)
-			WITH a, m LIMIT 1
-			CREATE (a)-[r:TEMP_REL]->(m)
-			DELETE r`
-		SendRun(t, conn, query, nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-	elapsed := time.Since(start)
+	elapsed := runBoltCreateDeleteRelationshipIterations(t, conn, iterations)
 
 	if cpuFile != nil {
 		pprof.StopCPUProfile()
@@ -1383,6 +1307,8 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 
 	opsPerSec := float64(iterations) / elapsed.Seconds()
 	t.Logf("Bolt Performance (BadgerDB, large dataset): %.2f ops/sec, %.3f ms/op", opsPerSec, elapsed.Seconds()*1000/float64(iterations))
+
+	requireBoltCount(t, conn, boltTemporaryRelationshipCountQuery, 0)
 }
 
 // TestBoltResponseMetadata verifies Neo4j-compatible metadata in responses
@@ -1396,23 +1322,9 @@ func TestBoltResponseMetadata(t *testing.T) {
 
 	config := &Config{Port: 0, MaxConnections: 10}
 	server := New(config, executor)
-	defer server.Close()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	go func() { _ = server.Serve(listener) }()
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
+	port := serveBoltIntegrationServer(t, server)
+	conn := openBoltTestConn(t, port)
 
 	// Test write query returns proper metadata
 	SendRun(t, conn, "CREATE (n:TestNode {name: 'test'})", nil, nil)
@@ -1439,23 +1351,9 @@ func TestBoltLatencyBreakdown(t *testing.T) {
 
 	config := &Config{Port: 0, MaxConnections: 10}
 	server := New(config, executor)
-	defer server.Close()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	go func() { _ = server.Serve(listener) }()
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
+	port := serveBoltIntegrationServer(t, server)
+	conn := openBoltTestConn(t, port)
 
 	// Create test data
 	SendRun(t, conn, "CREATE (a:Actor {name: 'Keanu'})", nil, nil)

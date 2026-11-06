@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -53,15 +54,27 @@ func (e *failingRunTransactionalExecutor) RollbackTransaction(ctx context.Contex
 	return e.adapter.RollbackTransaction(ctx)
 }
 
-func TestBoltTimeoutCleanupIsNotOwnedByPreExecutionFailurePath(t *testing.T) {
-	rollbackRelease := make(chan struct{})
-	executor := &blockingRollbackExecutor{
-		rollbackEntered: make(chan struct{}),
-		rollbackRelease: rollbackRelease,
-	}
+// startResolverBarrierTransaction owns the pre-claim access-check barrier shared
+// by the transaction ownership tests: the same 8-connection server, fresh
+// resolver channels, the caller's executor and resolved auth mode, and the
+// shared serve/open/BEGIN-timeout/RUN owners. It returns once RUN is parked
+// inside the resolver so the caller can drive timeout and cleanup ordering.
+//
+// The returned release unblocks the resolver. It is idempotent and registered
+// for cleanup before the server teardown, so a failed assertion cannot leave a
+// blocked access check (and its Bolt handler) behind.
+func startResolverBarrierTransaction(
+	t *testing.T,
+	executor QueryExecutor,
+	mode auth.DatabaseAccessMode,
+	releaseRollback func(),
+) (net.Conn, func()) {
+	t.Helper()
 	resolverEntered := make(chan struct{})
 	resolverRelease := make(chan struct{})
 	var resolverOnce sync.Once
+	var resolverReleaseOnce sync.Once
+	release := func() { resolverReleaseOnce.Do(func() { close(resolverRelease) }) }
 	server := New(&Config{
 		Port:            0,
 		MaxConnections:  8,
@@ -71,9 +84,17 @@ func TestBoltTimeoutCleanupIsNotOwnedByPreExecutionFailurePath(t *testing.T) {
 	server.databaseAccessModeResolver = func([]string) auth.DatabaseAccessMode {
 		resolverOnce.Do(func() { close(resolverEntered) })
 		<-resolverRelease
-		return auth.DenyAllDatabaseAccessMode
+		return mode
 	}
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
+	t.Cleanup(func() {
+		release()
+		// Register before any assertion in this helper can abort. Registering
+		// in its caller after return is too late if BEGIN/RUN itself fails.
+		if releaseRollback != nil {
+			releaseRollback()
+		}
+	})
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{
 		"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),
@@ -82,8 +103,20 @@ func TestBoltTimeoutCleanupIsNotOwnedByPreExecutionFailurePath(t *testing.T) {
 	select {
 	case <-resolverEntered:
 	case <-time.After(time.Second):
-		t.Fatal("RUN did not reach the pre-execution access check")
+		t.Fatal("RUN did not reach the resolver barrier")
 	}
+	return conn, release
+}
+
+func TestBoltTimeoutCleanupIsNotOwnedByPreExecutionFailurePath(t *testing.T) {
+	rollbackRelease := make(chan struct{})
+	var rollbackReleaseOnce sync.Once
+	releaseRollback := func() { rollbackReleaseOnce.Do(func() { close(rollbackRelease) }) }
+	executor := &blockingRollbackExecutor{
+		rollbackEntered: make(chan struct{}),
+		rollbackRelease: rollbackRelease,
+	}
+	conn, releaseResolver := startResolverBarrierTransaction(t, executor, auth.DenyAllDatabaseAccessMode, releaseRollback)
 
 	cleanupStartedBeforeFailure := false
 	select {
@@ -92,13 +125,13 @@ func TestBoltTimeoutCleanupIsNotOwnedByPreExecutionFailurePath(t *testing.T) {
 	case <-time.After(2 * transactionLifecycleShortTimeout):
 	}
 	if cleanupStartedBeforeFailure {
-		close(rollbackRelease)
+		releaseRollback()
 	}
-	close(resolverRelease)
+	releaseResolver()
 	if !cleanupStartedBeforeFailure {
 		select {
 		case <-executor.rollbackEntered:
-			close(rollbackRelease)
+			releaseRollback()
 		case <-time.After(time.Second):
 			t.Fatal("timeout cleanup never started")
 		}
@@ -112,37 +145,14 @@ func TestBoltTimeoutCleanupIsNotOwnedByPreExecutionFailurePath(t *testing.T) {
 
 func TestBoltExpiryBeforeRunClaimNeverExecutesAndResetRecovers(t *testing.T) {
 	executor := &sharedSingleTransactionExecutor{}
-	resolverEntered := make(chan struct{})
-	resolverRelease := make(chan struct{})
-	var resolverOnce sync.Once
-	server := New(&Config{
-		Port:            0,
-		MaxConnections:  8,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	server.databaseAccessModeResolver = func([]string) auth.DatabaseAccessMode {
-		resolverOnce.Do(func() { close(resolverEntered) })
-		<-resolverRelease
-		return auth.FullDatabaseAccessMode
-	}
-	port := startBoltTestServer(t, server)
-	conn := openBoltTestConn(t, port)
-	beginExplicitTransaction(t, conn, map[string]any{
-		"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),
-	})
-	require.NoError(t, SendRun(t, conn, "RETURN 1", nil, nil))
-	select {
-	case <-resolverEntered:
-	case <-time.After(time.Second):
-		t.Fatal("RUN did not reach the pre-claim resolver barrier")
-	}
+	conn, releaseResolver := startResolverBarrierTransaction(t, executor, auth.FullDatabaseAccessMode, nil)
+
 	require.Eventually(t, func() bool {
 		executor.mu.Lock()
 		defer executor.mu.Unlock()
 		return executor.rollbackCalls == 1
 	}, time.Second, time.Millisecond, "timeout cleanup did not finish before resolver release")
-	close(resolverRelease)
+	releaseResolver()
 	code, _, err := AssertFailure(t, conn)
 	require.NoError(t, err)
 	require.Equal(t, transactionTimedOutCode, code)
@@ -162,42 +172,18 @@ func TestBoltExpiryBeforeRunClaimJoinsCleanupBeforeFailure(t *testing.T) {
 	rollbackRelease := make(chan struct{})
 	var releaseOnce sync.Once
 	releaseRollback := func() { releaseOnce.Do(func() { close(rollbackRelease) }) }
-	t.Cleanup(releaseRollback)
 	executor := &blockingRollbackExecutor{
 		rollbackEntered: make(chan struct{}),
 		rollbackRelease: rollbackRelease,
 	}
-	resolverEntered := make(chan struct{})
-	resolverRelease := make(chan struct{})
-	var resolverOnce sync.Once
-	server := New(&Config{
-		Port:            0,
-		MaxConnections:  8,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	server.databaseAccessModeResolver = func([]string) auth.DatabaseAccessMode {
-		resolverOnce.Do(func() { close(resolverEntered) })
-		<-resolverRelease
-		return auth.FullDatabaseAccessMode
-	}
-	port := startBoltTestServer(t, server)
-	conn := openBoltTestConn(t, port)
-	beginExplicitTransaction(t, conn, map[string]any{
-		"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),
-	})
-	require.NoError(t, SendRun(t, conn, "RETURN 1", nil, nil))
-	select {
-	case <-resolverEntered:
-	case <-time.After(time.Second):
-		t.Fatal("RUN did not reach pre-claim resolver barrier")
-	}
+	conn, releaseResolver := startResolverBarrierTransaction(t, executor, auth.FullDatabaseAccessMode, releaseRollback)
+
 	select {
 	case <-executor.rollbackEntered:
 	case <-time.After(time.Second):
 		t.Fatal("idle timeout cleanup did not enter rollback")
 	}
-	close(resolverRelease)
+	releaseResolver()
 
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(100*time.Millisecond)))
 	_, _, err := ReadMessage(conn)
@@ -209,66 +195,57 @@ func TestBoltExpiryBeforeRunClaimJoinsCleanupBeforeFailure(t *testing.T) {
 	require.Equal(t, transactionTimedOutCode, code)
 }
 
-func TestBoltFactoryTransactionPinsBeginDatabaseAndRejectsCrossDatabaseRun(t *testing.T) {
-	executor := &sharedSingleTransactionExecutor{}
-	var logs bytes.Buffer
-	server := New(&Config{
-		Port:            0,
-		MaxConnections:  8,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-		Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		})),
-	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	port := startBoltTestServer(t, server)
-	conn := openBoltTestConn(t, port)
-	beginExplicitTransaction(t, conn, map[string]any{"db": "alpha"})
+func TestBoltTransactionPinsBeginDatabaseAndRejectsCrossDatabaseRun(t *testing.T) {
+	for _, testCase := range []struct {
+		name           string
+		maxConnections int
+		factory        bool
+	}{
+		{
+			name:           "factory",
+			maxConnections: 8,
+			factory:        true,
+		},
+		{
+			name:           "raw",
+			maxConnections: 1,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			executor := &sharedSingleTransactionExecutor{}
+			var logs bytes.Buffer
+			var boundExecutor QueryExecutor = executor
+			if testCase.factory {
+				boundExecutor = fixedSessionExecutorFactory{QueryExecutor: executor}
+			}
+			server := New(&Config{
+				Port:            0,
+				MaxConnections:  testCase.maxConnections,
+				ReadBufferSize:  8192,
+				WriteBufferSize: 8192,
+				Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{
+					Level: slog.LevelDebug,
+				})),
+			}, boundExecutor)
+			port := serveBoltIntegrationServer(t, server)
+			conn := openBoltTestConn(t, port)
+			beginExplicitTransaction(t, conn, map[string]any{"db": "alpha"})
 
-	require.NoError(t, SendRun(t, conn, "RETURN 1", nil, map[string]any{"db": "beta"}))
-	code, _, err := AssertFailure(t, conn)
-	require.NoError(t, err)
-	require.Equal(t, "Neo.ClientError.Transaction.InvalidBookmark", code)
-	require.Zero(t, executor.executeCalls.Load())
-	require.NoError(t, SendCommit(t, conn))
-	_, err = AssertMessageType(t, conn, MsgIgnored)
-	require.NoError(t, err)
-	require.NoError(t, SendReset(t, conn))
-	require.NoError(t, ReadSuccess(t, conn))
+			require.NoError(t, SendRun(t, conn, "RETURN 1", nil, map[string]any{"db": "beta"}))
+			code, _, err := AssertFailure(t, conn)
+			require.NoError(t, err)
+			require.Equal(t, "Neo.ClientError.Transaction.InvalidBookmark", code)
+			require.Zero(t, executor.executeCalls.Load())
+			require.NoError(t, SendCommit(t, conn))
+			_, err = AssertMessageType(t, conn, MsgIgnored)
+			require.NoError(t, err)
+			require.NoError(t, SendReset(t, conn))
+			require.NoError(t, ReadSuccess(t, conn))
 
-	require.Contains(t, logs.String(), "database=alpha")
-	require.True(t, strings.Contains(logs.String(), "reason=reset"))
-}
-
-func TestBoltRawTransactionPinsBeginDatabaseAndRejectsCrossDatabaseRun(t *testing.T) {
-	executor := &sharedSingleTransactionExecutor{}
-	var logs bytes.Buffer
-	server := New(&Config{
-		Port:            0,
-		MaxConnections:  1,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-		Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		})),
-	}, executor)
-	port := startBoltTestServer(t, server)
-	conn := openBoltTestConn(t, port)
-	beginExplicitTransaction(t, conn, map[string]any{"db": "alpha"})
-
-	require.NoError(t, SendRun(t, conn, "RETURN 1", nil, map[string]any{"db": "beta"}))
-	code, _, err := AssertFailure(t, conn)
-	require.NoError(t, err)
-	require.Equal(t, "Neo.ClientError.Transaction.InvalidBookmark", code)
-	require.Zero(t, executor.executeCalls.Load())
-	require.NoError(t, SendCommit(t, conn))
-	_, err = AssertMessageType(t, conn, MsgIgnored)
-	require.NoError(t, err)
-	require.NoError(t, SendReset(t, conn))
-	require.NoError(t, ReadSuccess(t, conn))
-
-	require.Contains(t, logs.String(), "database=alpha")
-	require.True(t, strings.Contains(logs.String(), "reason=reset"))
+			require.Contains(t, logs.String(), "database=alpha")
+			require.True(t, strings.Contains(logs.String(), "reason=reset"))
+		})
+	}
 }
 
 func TestBoltFailedRunIgnoresCommitUntilResetAndRollsBack(t *testing.T) {
@@ -291,8 +268,8 @@ func TestBoltFailedRunIgnoresCommitUntilResetAndRollsBack(t *testing.T) {
 	require.NoError(t, ReadSuccess(t, conn))
 
 	fresh := openBoltTestConn(t, port)
-	require.Equal(t, [][]any{{int64(0)}}, runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (n:TxFailedRunProbe {id: 'must-rollback'}) RETURN count(n)"))
+	require.Equal(t, [][]any{{int64(0)}}, runBoltQueryWithParams(t, fresh,
+		"MATCH (n:TxFailedRunProbe {id: 'must-rollback'}) RETURN count(n)", nil))
 }
 
 func TestBoltReturnRuntimeFailureKeepsConnectionAfterReset(t *testing.T) {
@@ -317,7 +294,7 @@ func TestBoltReturnRuntimeFailureKeepsConnectionAfterReset(t *testing.T) {
 			require.Equal(t, testCase.code, code)
 			require.NoError(t, SendReset(t, conn))
 			require.NoError(t, ReadSuccess(t, conn))
-			require.Equal(t, [][]any{{int64(1)}}, runBoltQueryAndCollectRecords(t, conn, "RETURN 1"))
+			require.Equal(t, [][]any{{int64(1)}}, runBoltQueryWithParams(t, conn, "RETURN 1", nil))
 		})
 	}
 }

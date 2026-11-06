@@ -208,6 +208,42 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
 		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff)
 
+	// A commit the buffer does not take writes Badger itself: it is ordered
+	// after the commits acknowledged before it (orderAfterBufferedCommits), and
+	// that ordering owns every rejection it can surface: its drain, the rebase
+	// onto the drained heads, and the snapshot-isolation and endpoint
+	// revalidation that follow it. It therefore runs before the accepted-commit
+	// handoff below, which owns the durable record: a conflict found here is a
+	// definite rejection of a commit nothing has journaled, so the caller
+	// retries it as an ordinary conflict. Ordering after that handoff turned the
+	// same rejection into a post-journal discard, which retains the accepted
+	// command's entity authority as recovery-pending and blocks every later
+	// writer of those entities.
+	var order orderHold
+	if !bufferedCommit && tx.engine.writeBehindEnabled() {
+		entities, err := operationEntities(ctx, tx.operations)
+		if err != nil {
+			return tx.abortCommitLocked(err)
+		}
+		drained, err := tx.engine.orderAfterBufferedCommits(ctx, &order, entities)
+		if err != nil {
+			return tx.abortCommitLocked(err)
+		}
+		defer order.release()
+		if (drained || tx.replayedSinceBeginLocked()) && tx.schemaRuntime == nil && !tx.knowledgeSchemaDirty {
+			if err := tx.rebaseBadgerAfterDrainLocked(ctx); err != nil {
+				tx.closeLocked(TxStatusRolledBack, true, nil)
+				return err
+			}
+		}
+		// Commits of its endpoints or of a deleted node's relationships,
+		// drained or committed directly, may have landed after this commit
+		// staged and validated them.
+		if err := tx.revalidateEndpointsLocked(ctx); err != nil {
+			return tx.abortCommitLocked(err)
+		}
+	}
+
 	// Preparation hands immutable semantic images to the accepted command owner
 	// only after the normal validation/order pipeline, before any commit bytes.
 	if prepare != nil {
@@ -247,33 +283,6 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// events are written in the same commit as the data (#937).
 	if bufferedCommit {
 		return tx.commitBufferedLocked(ctx)
-	}
-
-	// A commit the buffer does not take writes Badger itself: it is ordered
-	// after the commits acknowledged before it (orderAfterBufferedCommits).
-	var order orderHold
-	if tx.engine.writeBehindEnabled() {
-		entities, err := operationEntities(ctx, tx.operations)
-		if err != nil {
-			return tx.abortCommitLocked(err)
-		}
-		drained, err := tx.engine.orderAfterBufferedCommits(ctx, &order, entities)
-		if err != nil {
-			return tx.abortCommitLocked(err)
-		}
-		defer order.release()
-		if (drained || tx.replayedSinceBeginLocked()) && tx.schemaRuntime == nil && !tx.knowledgeSchemaDirty {
-			if err := tx.rebaseBadgerAfterDrainLocked(ctx); err != nil {
-				tx.closeLocked(TxStatusRolledBack, true, nil)
-				return err
-			}
-		}
-		// Commits of its endpoints or of a deleted node's relationships,
-		// drained or committed directly, may have landed after this commit
-		// staged and validated them.
-		if err := tx.revalidateEndpointsLocked(ctx); err != nil {
-			return tx.abortCommitLocked(err)
-		}
 	}
 
 	physicalOperations := tx.physicalOperationsLocked()
@@ -537,7 +546,7 @@ func (tx *BadgerTransaction) validateCommitLocked(ctx context.Context) error {
 		return err
 	}
 
-	if err := tx.validateNodeClaimPreimagesLocked(ctx); err != nil {
+	if err := tx.validateNodeMutationPreimagesLocked(ctx); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
 	}

@@ -32,7 +32,7 @@ func TestBoltDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 			"loader": {"nornic"}, "observer": {"nornic"}, "blocked": {"nornic"},
 		}, roles)
 	})
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	for _, access := range []struct {
 		role        string
 		read, write bool

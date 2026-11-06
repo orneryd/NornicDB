@@ -11,7 +11,7 @@ import (
 func TestBoltRowVariableMatchMaterialization(t *testing.T) {
 	_, port := startTransactionLifecycleServer(t)
 	seed := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, seed, "CREATE (a:CodeIntel {id:0,uuid:'b0'})-[:T {w:1}]->(b:CodeIntel {id:1,uuid:'b1'}), (b)-[:T {w:21}]->(a)")
+	runBoltQueryWithParams(t, seed, "CREATE (a:CodeIntel {id:0,uuid:'b0'})-[:T {w:1}]->(b:CodeIntel {id:1,uuid:'b1'}), (b)-[:T {w:21}]->(a)", nil)
 	require.NoError(t, seed.Close())
 	for _, explicit := range []bool{false, true} {
 		mode := "autocommit"
@@ -43,7 +43,7 @@ func TestBoltRowVariableMatchMaterialization(t *testing.T) {
 				if explicit {
 					beginExplicitTransaction(t, conn, nil)
 				}
-				require.Equal(t, [][]any{{tc.want}}, runBoltQueryAndCollectRecords(t, conn, tc.query))
+				require.Equal(t, [][]any{{tc.want}}, runBoltQueryWithParams(t, conn, tc.query, nil))
 				if explicit {
 					require.NoError(t, SendCommit(t, conn))
 					require.NoError(t, ReadSuccess(t, conn))

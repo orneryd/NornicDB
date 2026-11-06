@@ -56,6 +56,28 @@ type boundClause struct {
 	transparent         bool // an unbound WITH EMBEDDING candidate
 }
 
+type commandScopeTransfer uint8
+
+const (
+	commandResultScope commandScopeTransfer = iota
+	commandRetainInputScope
+)
+
+// fixedCommandScopeFacts binds a typed command's declared result schema without
+// executing the command. Composite writes, administration creation and fixed
+// SHOW results use one metadata constructor; each command declares its effect
+// and whether its existing scope contract retains incoming execution names.
+func fixedCommandScopeFacts(start, end int, incoming, retained resultmetadata.Names, columns []string, kind resultmetadata.ClauseKind, transfer commandScopeTransfer) *projectedScopeFacts {
+	names := resultmetadata.Known(columns)
+	before := projectionScope(incoming)
+	after, afterNames := before, incoming
+	if transfer == commandResultScope {
+		after, afterNames = projectionScope(names), names
+	}
+	statement := resultmetadata.Statement{Start: start, End: end, Incoming: before, Retained: projectionScope(retained), After: after, Columns: resultmetadata.KnownColumns(columns), Clauses: []resultmetadata.Clause{{Kind: kind, Start: start, End: end, Before: before, After: after}}}
+	return &projectedScopeFacts{after: afterNames, outputs: names, statement: &statement}
+}
+
 func (compiler *projectionCompilation) compileBound(ctx context.Context, incoming, retained resultmetadata.Names) *projectedScopeFacts {
 	if compiler.cypher25 {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
@@ -64,10 +86,7 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		if err != nil {
 			return programFailure(resultmetadata.ReasonUnsupportedSyntax, 0, err)
 		}
-		names := resultmetadata.Known(command.columns())
-		scope := projectionScope(names)
-		statement := resultmetadata.Statement{Start: 0, End: len(compiler.source), Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(command.columns()), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseWrite, Start: 0, End: len(compiler.source), Before: projectionScope(incoming), After: scope}}}
-		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
+		return fixedCommandScopeFacts(0, len(compiler.source), incoming, retained, command.columns(), resultmetadata.ClauseWrite, commandResultScope)
 	}
 	syntax, err := cypherantlr.ParseSyntax(ctx, compiler.source, cypherantlr.StatementEntry, compiler.cypher25, cypherantlr.AcceptedSource)
 	if ctx.Err() != nil {
@@ -86,19 +105,22 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		if failure != nil {
 			return programFailure(resultmetadata.ReasonUnsupportedSyntax, start, failure)
 		}
-		scope := projectionScope(incoming)
-		statement := resultmetadata.Statement{Start: start, End: end, Incoming: scope, Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(nil), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseWrite, Start: start, End: end, Before: scope, After: scope}}}
-		return &projectedScopeFacts{after: incoming, outputs: resultmetadata.Known(nil), statement: &statement}
+		return fixedCommandScopeFacts(start, end, incoming, retained, nil, resultmetadata.ClauseWrite, commandRetainInputScope)
 	}
 	// These commands already declare their fixed schema in the typed SHOW
 	// owner. EXPLAIN reads that declaration without enumerating users.
 	show := query.ChildRule(cypherantlr.CypherParserRULE_showCommand)
 	if show.Valid() && !show.ChildRule(cypherantlr.CypherParserRULE_showTail).Valid() &&
 		(startsWithKeywords(ctx, show.Code(), "SHOW", "USERS") || startsWithKeywords(ctx, show.Code(), "SHOW", "CURRENT USER")) {
-		names := resultmetadata.Known(showUsersColumns)
-		scope := projectionScope(names)
-		statement := resultmetadata.Statement{Start: start, End: end, Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(showUsersColumns), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseOther, Start: start, End: end, Before: projectionScope(incoming), After: scope}}}
-		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
+		return fixedCommandScopeFacts(start, end, incoming, retained, showUsersColumns, resultmetadata.ClauseOther, commandResultScope)
+	}
+	// A database creation command declares an empty result schema in its execute
+	// owner: as in Neo4j, it returns no columns and no records. The command's
+	// native syntax has no graph body to compose, so EXPLAIN reads that
+	// declaration instead.
+	if administration := query.ChildRule(cypherantlr.CypherParserRULE_administrationCommand); administration.Valid() &&
+		(startsWithKeywords(ctx, administration.Code(), "CREATE", "DATABASE") || isCreateOrReplaceDatabaseQuery(ctx, administration.Code())) {
+		return fixedCommandScopeFacts(start, end, incoming, retained, nil, resultmetadata.ClauseWrite, commandResultScope)
 	}
 	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}, columns: map[int]resultmetadata.Columns{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
 	body := compilation.prepareBody(ctx, queryBodyFromSyntax(query), query, start, end)

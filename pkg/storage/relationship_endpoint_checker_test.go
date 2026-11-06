@@ -115,16 +115,16 @@ func TestBadgerTransactionRelationshipEndpointVisible(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.DeleteGraphNode(t.Context(), "ns:gone", CascadeEdges))
 
+	// The answered-check/GetNode agreement is endpointCheckMatchesGetNode's
+	// assertion; each scenario states only its own expectations on top of it.
 	check := func(id NodeID, wantVisible, wantAnswered bool) {
 		t.Helper()
-		visible, answered := tx.RelationshipEndpointVisible(id)
+		visible, answered, _ := endpointCheckMatchesGetNode(t, tx, id)
 		require.Equal(t, wantAnswered, answered, id)
 		if !answered {
 			return
 		}
 		require.Equal(t, wantVisible, visible, id)
-		_, getErr := tx.GetNode(t.Context(), id)
-		require.Equal(t, visible, getErr == nil, id)
 	}
 	check("ns:kept", true, true)
 	check("ns:new", true, true)
@@ -142,7 +142,13 @@ func TestBadgerTransactionRelationshipEndpointVisible(t *testing.T) {
 
 	engine.SetDecayEnabled(true)
 	check("ns:kept", false, false)
-	check("ns:new", true, true)
+	// A filtered capability may defer even for a readable pending image.
+	// Preserve readability and require any actual answer to match GetNode.
+	visible, answered, getErr := endpointCheckMatchesGetNode(t, tx, "ns:new")
+	require.NoError(t, getErr)
+	if answered {
+		require.True(t, visible)
+	}
 	engine.SetDecayEnabled(false)
 
 	// A read version older than the node's head, or none, reads the node.

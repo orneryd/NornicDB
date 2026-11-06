@@ -12,47 +12,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// startBoltIntegrationServerWithExplicitTx wires the test Bolt server with a
-// SessionExecutorFactory + TransactionalExecutor (txCapableCypherQueryExecutor)
-// so BEGIN/RUN/COMMIT messages route to a real explicit BadgerTransaction
-// instead of being protocol-acknowledged-but-ignored. This matches the
-// runtime shape neo4j-go-driver session.ExecuteWrite emits from Eshu.
-func startBoltIntegrationServerWithExplicitTx(t *testing.T, store storage.Engine) (*Server, int) {
-	t.Helper()
-	executor := newTxCapableCypherQueryExecutor(store)
-	server := New(&Config{
-		Port:            0,
-		MaxConnections:  32,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}, executor)
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	addr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok || addr.Port == 0 {
-		t.Fatalf("expected TCP listener with assigned port, got %T %v", listener.Addr(), listener.Addr())
-	}
-	server.listener = listener
-
-	errCh := make(chan error, 1)
-	t.Cleanup(func() {
-		if err := server.Close(); err != nil {
-			t.Fatalf("close server: %v", err)
-		}
-		if err := <-errCh; err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	})
-
-	go func() {
-		errCh <- server.serve()
-	}()
-	return server, addr.Port
-}
-
 // driverRetryBudget mirrors neo4j-go-driver's default session.ExecuteWrite
 // retry budget. The driver retries TransientError-coded failures with
 // exponential backoff and bounded jitter for ~30s cumulative before
@@ -82,22 +41,13 @@ func isTransientCommitCode(failureBody []byte) bool {
 	return bytes.Contains(failureBody, []byte("Neo.TransientError."))
 }
 
-// runBoltExplicitMergeTx runs MERGE (label {uid:"X"}) SET name='sessionN'
-// inside an explicit BEGIN/RUN/PULL/COMMIT envelope over a single Bolt
-// connection. Returns the first error encountered. This is the wire shape
-// Eshu produces through neo4j-go-driver's session.ExecuteWrite.
-func runBoltExplicitMergeTx(t *testing.T, port int, label, prop, value string, sessionTag string) error {
-	t.Helper()
-	return runBoltExplicitTxWithRetry(t, port, fmt.Sprintf("MERGE (r:%s {%s: %q}) SET r.name = %q", label, prop, value, sessionTag))
-}
-
 // runBoltExplicitTxWithRetry runs query in BEGIN/RUN/PULL/COMMIT, retrying
 // while the server answers with a Neo.TransientError.* status, as
 // neo4j-go-driver's ExecuteWrite does.
-func runBoltExplicitTxWithRetry(t *testing.T, port int, query string) error {
+func runBoltExplicitTxWithRetry(t *testing.T, port int, query string, params map[string]any) error {
 	t.Helper()
 	for attempt := 0; attempt < driverRetryBudget; attempt++ {
-		err, transient := runBoltExplicitTxAttempt(t, port, query)
+		err, transient := runBoltExplicitTxAttempt(t, port, query, params)
 		if err == nil {
 			return nil
 		}
@@ -106,13 +56,46 @@ func runBoltExplicitTxWithRetry(t *testing.T, port int, query string) error {
 		}
 		time.Sleep(driverRetryBackoff(attempt, attempt*7919+int(time.Now().UnixNano()&0xffff)))
 	}
-	return fmt.Errorf("explicit-tx MERGE exhausted %d retries", driverRetryBudget)
+	return fmt.Errorf("explicit-tx statement exhausted %d retries", driverRetryBudget)
+}
+
+// runBoltExplicitTxSessions is the one concurrent scheduling and error
+// collection owner for the explicit-transaction race reproductions: it runs
+// one retry-aware transaction per session concurrently and reports
+// every session that failed. statement builds that session's query and params,
+// so each caller keeps its own statement shape and graph oracle. scope, when
+// set, prefixes the failure message, for example "round 3".
+func runBoltExplicitTxSessions(t *testing.T, port, concurrency int, scope string, statement func(idx int) (string, map[string]any)) {
+	t.Helper()
+	var wg sync.WaitGroup
+	failures := make([]string, concurrency)
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			query, params := statement(idx)
+			if err := runBoltExplicitTxWithRetry(t, port, query, params); err != nil {
+				failures[idx] = err.Error()
+			}
+		}(i)
+	}
+	wg.Wait()
+	for idx, msg := range failures {
+		if msg == "" {
+			continue
+		}
+		if scope == "" {
+			t.Errorf("session %d failed: %s", idx, msg)
+			continue
+		}
+		t.Errorf("%s session %d failed: %s", scope, idx, msg)
+	}
 }
 
 // runBoltExplicitTxAttempt runs query in one BEGIN/RUN/PULL/COMMIT attempt
 // and returns (err, transient). transient=true means a Neo.TransientError
 // surfaced and the caller should retry (mimics neo4j-go-driver behavior).
-func runBoltExplicitTxAttempt(t *testing.T, port int, query string) (error, bool) {
+func runBoltExplicitTxAttempt(t *testing.T, port int, query string, params map[string]any) (error, bool) {
 	t.Helper()
 	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
@@ -138,7 +121,7 @@ func runBoltExplicitTxAttempt(t *testing.T, port int, query string) (error, bool
 	} else if mt == MsgFailure {
 		return fmt.Errorf("BEGIN failure: %s", string(md)), isTransientCommitCode(md)
 	}
-	if err := SendRun(t, conn, query, nil, nil); err != nil {
+	if err := SendRun(t, conn, query, params, nil); err != nil {
 		return fmt.Errorf("run: %w", err), false
 	}
 	if mt, md, err := ReadMessage(conn); err != nil {
@@ -206,14 +189,14 @@ func runBoltExplicitTxAttempt(t *testing.T, port int, query string) (error, bool
 func TestBoltCrossSessionMergeUniqueConflict_Sequential(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 
 	// Session 1: declare constraint, create the node, then disconnect.
 	session1 := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, session1,
-		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE")
-	runBoltQueryAndCollectRecords(t, session1,
-		"MERGE (r:TerraformResource {uid: 'X'}) SET r.name = 'session1'")
+	runBoltQueryWithParams(t, session1,
+		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE", nil)
+	runBoltQueryWithParams(t, session1,
+		"MERGE (r:TerraformResource {uid: 'X'}) SET r.name = 'session1'", nil)
 	if err := session1.Close(); err != nil {
 		t.Fatalf("close session1: %v", err)
 	}
@@ -221,12 +204,12 @@ func TestBoltCrossSessionMergeUniqueConflict_Sequential(t *testing.T) {
 	// Session 2: fresh connection. The MERGE on the same uid must MATCH the
 	// committed node, not CREATE+UNIQUE-fail.
 	session2 := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, session2,
-		"MERGE (r:TerraformResource {uid: 'X'}) SET r.name = 'session2'")
+	runBoltQueryWithParams(t, session2,
+		"MERGE (r:TerraformResource {uid: 'X'}) SET r.name = 'session2'", nil)
 
 	// Verify the final state: one node, name updated by session 2.
-	records := runBoltQueryAndCollectRecords(t, session2,
-		"MATCH (r:TerraformResource {uid: 'X'}) RETURN r.name, count(r)")
+	records := runBoltQueryWithParams(t, session2,
+		"MATCH (r:TerraformResource {uid: 'X'}) RETURN r.name, count(r)", nil)
 	if len(records) != 1 {
 		t.Fatalf("expected one row, got %d (records=%v)", len(records), records)
 	}
@@ -247,12 +230,12 @@ func TestBoltCrossSessionMergeUniqueConflict_Sequential(t *testing.T) {
 func TestBoltCrossSessionMergeUniqueConflict_Concurrent(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 
 	// Schema setup on a throwaway connection.
 	setup := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, setup,
-		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE")
+	runBoltQueryWithParams(t, setup,
+		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE", nil)
 	if err := setup.Close(); err != nil {
 		t.Fatalf("close setup: %v", err)
 	}
@@ -348,8 +331,8 @@ func TestBoltCrossSessionMergeUniqueConflict_Concurrent(t *testing.T) {
 
 	// Verify exactly one node exists.
 	check := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, check,
-		"MATCH (r:TerraformResource {uid: 'X'}) RETURN count(r)")
+	records := runBoltQueryWithParams(t, check,
+		"MATCH (r:TerraformResource {uid: 'X'}) RETURN count(r)", nil)
 	if len(records) != 1 || len(records[0]) < 1 {
 		t.Fatalf("expected one count row, got %v", records)
 	}
@@ -362,147 +345,60 @@ func TestBoltCrossSessionMergeUniqueConflict_Concurrent(t *testing.T) {
 	}
 }
 
-// runBoltUnwindMergeExplicitTx runs the exact query shape Eshu emits from
-// its projector and resolution-engine workers:
-//
-//	UNWIND $rows AS row MERGE (r:Label {uid: row.uid}) SET r.name = row.name
-//
-// inside an explicit BEGIN/RUN/PULL/COMMIT envelope. rows is a list of {uid,
-// name} maps. This is what neo4j-go-driver session.ExecuteWrite emits in
-// the v2.5 tfstate drift verifier path.
-func runBoltUnwindMergeExplicitTx(t *testing.T, port int, label string, rows []map[string]any) error {
-	t.Helper()
-	for attempt := 0; attempt < driverRetryBudget; attempt++ {
-		err, transient := runBoltUnwindMergeExplicitTxAttempt(t, port, label, rows)
-		if err == nil {
-			return nil
-		}
-		if !transient {
-			return err
-		}
-		time.Sleep(driverRetryBackoff(attempt, attempt*7919+int(time.Now().UnixNano()&0xffff)))
-	}
-	return fmt.Errorf("UNWIND explicit-tx MERGE exhausted %d retries", driverRetryBudget)
-}
-
-func runBoltUnwindMergeExplicitTxAttempt(t *testing.T, port int, label string, rows []map[string]any) (error, bool) {
-	t.Helper()
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		return fmt.Errorf("dial: %w", err), false
-	}
-	defer func() {
-		_ = conn.Close()
-	}()
-	if err := PerformHandshakeWithTesting(t, conn); err != nil {
-		return fmt.Errorf("handshake: %w", err), false
-	}
-	if err := SendHello(t, conn, nil); err != nil {
-		return fmt.Errorf("hello: %w", err), false
-	}
-	if _, _, err := ReadMessage(conn); err != nil {
-		return fmt.Errorf("hello-ack: %w", err), false
-	}
-	if err := SendBegin(t, conn, nil); err != nil {
-		return fmt.Errorf("begin: %w", err), false
-	}
-	if mt, md, err := ReadMessage(conn); err != nil {
-		return fmt.Errorf("begin-resp: %w", err), false
-	} else if mt == MsgFailure {
-		return fmt.Errorf("BEGIN failure: %s", string(md)), isTransientCommitCode(md)
-	}
-	query := fmt.Sprintf("UNWIND $rows AS row MERGE (r:%s {uid: row.uid}) SET r.name = row.name", label)
-	params := map[string]any{"rows": rows}
-	if err := SendRun(t, conn, query, params, nil); err != nil {
-		return fmt.Errorf("run: %w", err), false
-	}
-	if mt, md, err := ReadMessage(conn); err != nil {
-		return fmt.Errorf("run-resp: %w", err), false
-	} else if mt == MsgFailure {
-		return fmt.Errorf("RUN failure: %s", string(md)), isTransientCommitCode(md)
-	}
-	if err := SendPull(t, conn, nil); err != nil {
-		return fmt.Errorf("pull: %w", err), false
-	}
-	for {
-		mt, md, err := ReadMessage(conn)
-		if err != nil {
-			return fmt.Errorf("pull-read: %w", err), false
-		}
-		if mt == MsgFailure {
-			return fmt.Errorf("PULL failure: %s", string(md)), isTransientCommitCode(md)
-		}
-		if mt == MsgSuccess {
-			break
-		}
-	}
-	if err := SendCommit(t, conn); err != nil {
-		return fmt.Errorf("commit: %w", err), false
-	}
-	mt, md, err := ReadMessage(conn)
-	if err != nil {
-		return fmt.Errorf("commit-resp: %w", err), false
-	}
-	if mt == MsgFailure {
-		return fmt.Errorf("COMMIT failure: %s", string(md)), isTransientCommitCode(md)
-	}
-	return nil, false
-}
-
-// TestBoltCrossSessionMergeUniqueConflict_Concurrent_ExplicitTx reproduces
-// the same race as the *_Concurrent test inside explicit BEGIN/RUN/PULL/
-// COMMIT envelopes. The helper retries only when the server returns a
+// TestBoltCrossSessionMergeUniqueConflict_Concurrent_ExplicitTx reproduces the
+// same race as the *_Concurrent test inside explicit BEGIN/RUN/PULL/COMMIT
+// envelopes. The helper retries only when the server returns a
 // Neo.TransientError.* response, mirroring neo4j-go-driver ExecuteWrite.
+//
+// Two populations share that scenario. "test-namespace" is the original
+// two-session population on uid X. "eshu-default-namespace" pins the explicit
+// transaction shape Eshu uses with DEFAULT_DATABASE=nornic: eight sessions
+// race one uid there, and the retried MERGE attempts must observe a peer
+// transaction's committed UNIQUE value through the nornic schema cache, not
+// repeatedly choose CREATE and surface commit-time UNIQUE violations.
 func TestBoltCrossSessionMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T) {
-	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	for _, population := range []struct {
+		name        string
+		namespace   string
+		concurrency int
+		uid         string
+	}{
+		{"test-namespace", "test", 2, "X"},
+		{"eshu-default-namespace", "nornic", 8, "eshu-same-uid"},
+	} {
+		t.Run(population.name, func(t *testing.T) {
+			baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			store := storage.NewNamespacedEngine(baseStore, population.namespace)
+			_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
-	// Schema setup on a throwaway connection.
-	setup := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, setup,
-		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE")
-	if err := setup.Close(); err != nil {
-		t.Fatalf("close setup: %v", err)
-	}
-
-	const concurrency = 2
-	var wg sync.WaitGroup
-	failures := make([]string, concurrency)
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			err := runBoltExplicitMergeTx(t, port,
-				"TerraformResource", "uid", "X",
-				fmt.Sprintf("session%d", idx))
-			if err != nil {
-				failures[idx] = err.Error()
+			// Schema setup on a throwaway connection.
+			setup := openBoltTestConn(t, port)
+			runBoltQueryWithParams(t, setup,
+				"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE", nil)
+			if err := setup.Close(); err != nil {
+				t.Fatalf("close setup: %v", err)
 			}
-		}(i)
-	}
-	wg.Wait()
 
-	for idx, msg := range failures {
-		if msg != "" {
-			t.Errorf("session %d failed: %s", idx, msg)
-		}
-	}
+			runBoltExplicitTxSessions(t, port, population.concurrency, "", func(idx int) (string, map[string]any) {
+				return fmt.Sprintf("MERGE (r:TerraformResource {uid: %q}) SET r.name = %q",
+					population.uid, fmt.Sprintf("session%d", idx)), nil
+			})
 
-	// Verify exactly one node exists.
-	check := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, check,
-		"MATCH (r:TerraformResource {uid: 'X'}) RETURN count(r)")
-	if len(records) != 1 || len(records[0]) < 1 {
-		t.Fatalf("expected one count row, got %v", records)
-	}
-	count, ok := records[0][0].(int64)
-	if !ok {
-		t.Fatalf("expected int64 count, got %T (value=%v)", records[0][0], records[0][0])
-	}
-	if count != 1 {
-		t.Errorf("expected exactly one TerraformResource node, got %d", count)
+			// Verify exactly one node exists.
+			check := openBoltTestConn(t, port)
+			records := runBoltQueryWithParams(t, check,
+				fmt.Sprintf("MATCH (r:TerraformResource {uid: '%s'}) RETURN count(r)", population.uid), nil)
+			if len(records) != 1 || len(records[0]) < 1 {
+				t.Fatalf("expected one count row, got %v", records)
+			}
+			count, ok := records[0][0].(int64)
+			if !ok {
+				t.Fatalf("expected int64 count, got %T (value=%v)", records[0][0], records[0][0])
+			}
+			if count != 1 {
+				t.Errorf("expected exactly one TerraformResource node, got %d", count)
+			}
+		})
 	}
 }
 
@@ -515,41 +411,26 @@ func TestBoltCrossSessionMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T)
 func TestBoltCrossSessionMultiMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	setup := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, setup, "CREATE CONSTRAINT o_hash IF NOT EXISTS FOR (o:O) REQUIRE o.hash IS UNIQUE")
-	runBoltQueryAndCollectRecords(t, setup, "CREATE CONSTRAINT v_id IF NOT EXISTS FOR (v:V) REQUIRE v.id IS UNIQUE")
+	runBoltQueryWithParams(t, setup, "CREATE CONSTRAINT o_hash IF NOT EXISTS FOR (o:O) REQUIRE o.hash IS UNIQUE", nil)
+	runBoltQueryWithParams(t, setup, "CREATE CONSTRAINT v_id IF NOT EXISTS FOR (v:V) REQUIRE v.id IS UNIQUE", nil)
 	if err := setup.Close(); err != nil {
 		t.Fatalf("close setup: %v", err)
 	}
 
 	const concurrency = 2
-	var wg sync.WaitGroup
-	failures := make([]string, concurrency)
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			query := fmt.Sprintf("MERGE (o:O {hash: 'h1'}) ON CREATE SET o.id = 'sha256:' + o.hash "+
-				"MERGE (v:V {id: 'v1'}) ON CREATE SET v.original_id = o.id "+
-				"MERGE (v)-[:HAS_ORIGINAL]->(o) "+
-				"MERGE (u:U {id: 'u%d'}) MERGE (u)-[:OF_VERSION]->(v) RETURN v.id", idx)
-			if err := runBoltExplicitTxWithRetry(t, port, query); err != nil {
-				failures[idx] = err.Error()
-			}
-		}(i)
-	}
-	wg.Wait()
-	for idx, msg := range failures {
-		if msg != "" {
-			t.Errorf("session %d failed: %s", idx, msg)
-		}
-	}
+	runBoltExplicitTxSessions(t, port, concurrency, "", func(idx int) (string, map[string]any) {
+		return fmt.Sprintf("MERGE (o:O {hash: 'h1'}) ON CREATE SET o.id = 'sha256:' + o.hash "+
+			"MERGE (v:V {id: 'v1'}) ON CREATE SET v.original_id = o.id "+
+			"MERGE (v)-[:HAS_ORIGINAL]->(o) "+
+			"MERGE (u:U {id: 'u%d'}) MERGE (u)-[:OF_VERSION]->(v) RETURN v.id", idx), nil
+	})
 
 	check := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, check,
-		"MATCH (v:V {id: 'v1'})-[:HAS_ORIGINAL]->(o:O {hash: 'h1'}) MATCH (u:U)-[:OF_VERSION]->(v) RETURN count(DISTINCT v), count(DISTINCT o), count(u)")
+	records := runBoltQueryWithParams(t, check,
+		"MATCH (v:V {id: 'v1'})-[:HAS_ORIGINAL]->(o:O {hash: 'h1'}) MATCH (u:U)-[:OF_VERSION]->(v) RETURN count(DISTINCT v), count(DISTINCT o), count(u)", nil)
 	if len(records) != 1 || len(records[0]) != 3 {
 		t.Fatalf("expected one count row, got %v", records)
 	}
@@ -565,11 +446,11 @@ func TestBoltCrossSessionMultiMergeUniqueConflict_Concurrent_ExplicitTx(t *testi
 func TestBoltCrossSessionMergeUniqueConflict_Concurrent_UnwindExplicitTx(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	setup := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, setup,
-		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE")
+	runBoltQueryWithParams(t, setup,
+		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE", nil)
 	if err := setup.Close(); err != nil {
 		t.Fatalf("close setup: %v", err)
 	}
@@ -584,36 +465,21 @@ func TestBoltCrossSessionMergeUniqueConflict_Concurrent_UnwindExplicitTx(t *test
 		uids[i] = fmt.Sprintf("res-%03d", i)
 	}
 
-	var wg sync.WaitGroup
-	failures := make([]string, concurrency)
-
-	for s := 0; s < concurrency; s++ {
-		wg.Add(1)
-		go func(sessionIdx int) {
-			defer wg.Done()
-			rows := make([]map[string]any, batchSize)
-			for i, uid := range uids {
-				rows[i] = map[string]any{
-					"uid":  uid,
-					"name": fmt.Sprintf("session%d-%s", sessionIdx, uid),
-				}
+	runBoltExplicitTxSessions(t, port, concurrency, "", func(sessionIdx int) (string, map[string]any) {
+		rows := make([]map[string]any, batchSize)
+		for i, uid := range uids {
+			rows[i] = map[string]any{
+				"uid":  uid,
+				"name": fmt.Sprintf("session%d-%s", sessionIdx, uid),
 			}
-			if err := runBoltUnwindMergeExplicitTx(t, port, "TerraformResource", rows); err != nil {
-				failures[sessionIdx] = err.Error()
-			}
-		}(s)
-	}
-	wg.Wait()
-
-	for idx, msg := range failures {
-		if msg != "" {
-			t.Errorf("session %d failed: %s", idx, msg)
 		}
-	}
+		return "UNWIND $rows AS row MERGE (r:TerraformResource {uid: row.uid}) SET r.name = row.name",
+			map[string]any{"rows": rows}
+	})
 
 	check := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, check,
-		"MATCH (r:TerraformResource) RETURN count(r)")
+	records := runBoltQueryWithParams(t, check,
+		"MATCH (r:TerraformResource) RETURN count(r)", nil)
 	if len(records) != 1 || len(records[0]) < 1 {
 		t.Fatalf("expected one count row, got %v", records)
 	}
@@ -639,12 +505,12 @@ func TestBoltExplicitTxStatementUniqueViolationCode(t *testing.T) {
 		_ = baseStore.Close()
 	})
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	setup := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, setup,
-		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE")
-	runBoltQueryAndCollectRecords(t, setup, "CREATE (:TerraformResource {uid: 'stored'})")
+	runBoltQueryWithParams(t, setup,
+		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE", nil)
+	runBoltQueryWithParams(t, setup, "CREATE (:TerraformResource {uid: 'stored'})", nil)
 
 	// A transaction that read through its snapshot keeps it: a MERGE of a
 	// key a peer committed afterwards loses the race.
@@ -652,13 +518,13 @@ func TestBoltExplicitTxStatementUniqueViolationCode(t *testing.T) {
 		conn := openBoltTestConn(t, port)
 		requireNoError(t, SendBegin(t, conn, nil))
 		requireNoError(t, ReadSuccess(t, conn))
-		runBoltQueryAndCollectRecords(t, conn, "MATCH (r:TerraformResource) RETURN r.uid")
+		runBoltQueryWithParams(t, conn, "MATCH (r:TerraformResource) RETURN r.uid", nil)
 		return conn
 	}
 	const merge = "MERGE (r:TerraformResource {uid: 'peer'}) SET r.name = 'second'"
 
 	conn := begin()
-	runBoltQueryAndCollectRecords(t, setup, "CREATE (:TerraformResource {uid: 'peer'})")
+	runBoltQueryWithParams(t, setup, "CREATE (:TerraformResource {uid: 'peer'})", nil)
 	if code, _ := runBoltQueryExpectFailure(t, conn, merge); code != "Neo.TransientError.Transaction.Outdated" {
 		t.Errorf("MERGE losing a race: got %s, want Neo.TransientError.Transaction.Outdated", code)
 	}
@@ -669,13 +535,13 @@ func TestBoltExplicitTxStatementUniqueViolationCode(t *testing.T) {
 	counted := openBoltTestConn(t, port)
 	requireNoError(t, SendBegin(t, counted, nil))
 	requireNoError(t, ReadSuccess(t, counted))
-	runBoltQueryAndCollectRecords(t, counted, "MATCH (r:TerraformResource) RETURN count(r)")
-	runBoltQueryAndCollectRecords(t, setup, "CREATE (:TerraformResource {uid: 'counted'})")
-	runBoltQueryAndCollectRecords(t, counted, "MERGE (r:TerraformResource {uid: 'counted'}) RETURN r.uid")
+	runBoltQueryWithParams(t, counted, "MATCH (r:TerraformResource) RETURN count(r)", nil)
+	runBoltQueryWithParams(t, setup, "CREATE (:TerraformResource {uid: 'counted'})", nil)
+	runBoltQueryWithParams(t, counted, "MERGE (r:TerraformResource {uid: 'counted'}) RETURN r.uid", nil)
 	requireNoError(t, SendCommit(t, counted))
 	requireNoError(t, ReadSuccess(t, counted))
 	retry := begin()
-	runBoltQueryAndCollectRecords(t, retry, merge)
+	runBoltQueryWithParams(t, retry, merge, nil)
 	requireNoError(t, SendCommit(t, retry))
 	requireNoError(t, ReadSuccess(t, retry))
 
@@ -690,8 +556,8 @@ func TestBoltExplicitTxStatementUniqueViolationCode(t *testing.T) {
 		}
 	}
 
-	records := runBoltQueryAndCollectRecords(t, setup,
-		"MATCH (r:TerraformResource) RETURN r.uid AS uid, r.name AS name ORDER BY uid")
+	records := runBoltQueryWithParams(t, setup,
+		"MATCH (r:TerraformResource) RETURN r.uid AS uid, r.name AS name ORDER BY uid", nil)
 	if got := fmt.Sprint(records); got != "[[counted <nil>] [peer second] [stored <nil>]]" {
 		t.Errorf("stored nodes: got %s, want [[counted <nil>] [peer second] [stored <nil>]]", got)
 	}

@@ -51,7 +51,7 @@ func TestStatementBoltUseAndFabric(t *testing.T) {
 	server.SetDatabaseAccessModeResolver(func(roles []string) auth.DatabaseAccessMode {
 		return auth.NewAllowlistDatabaseAccessMode(map[string][]string{"r2loader": {"nornic", "other", "r2cmp", "r2source", "r2target"}}, roles)
 	})
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.BasicAuth("r2loader", "password123", ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = driver.Close(context.Background()) })

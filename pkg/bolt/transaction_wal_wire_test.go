@@ -27,7 +27,7 @@ func TestBoltWALTerminalAdmissionCleanup(t *testing.T) {
 				mgr := &mockDBManager{stores: map[string]storage.Engine{"nornic": storage.NewNamespacedEngine(engine, "nornic")}, defaultDB: "nornic"}
 				server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, mgr)
 				server.SetMemoryPolicy(policy)
-				conn := openBoltTestConn(t, startBoltTestServer(t, server))
+				conn := openBoltTestConn(t, serveBoltIntegrationServer(t, server))
 				beginExplicitTransaction(t, conn, nil)
 				require.NoError(t, SendRun(t, conn, "CREATE (:WalWire)", nil, nil))
 				require.NoError(t, ReadSuccess(t, conn))

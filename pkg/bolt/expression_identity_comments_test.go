@@ -26,7 +26,7 @@ func runExpressionIdentityBolt(t *testing.T, cases []expressionidentitymatrix.Ca
 	t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(prior) })
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "neo4j"))
+	_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "neo4j"), boltIntegrationExplicitTx)
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = driver.Close(context.Background()) })

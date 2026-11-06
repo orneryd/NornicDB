@@ -61,12 +61,12 @@ func TestBoltExplicitTransactionTerminalPathsReleaseResources(t *testing.T) {
 				"%s must roll back and release the transaction reader", tt.name)
 
 			fresh := openBoltTestConn(t, port)
-			records := runBoltQueryAndCollectRecords(t, fresh,
-				"MATCH (r:Repository {repo_id: 'terminal-abandoned'}) RETURN count(r)")
+			records := runBoltQueryWithParams(t, fresh,
+				"MATCH (r:Repository {repo_id: 'terminal-abandoned'}) RETURN count(r)", nil)
 			require.Equal(t, [][]any{{int64(0)}}, records,
 				"%s must not persist the abandoned write", tt.name)
-			runBoltQueryAndCollectRecords(t, fresh,
-				"CREATE (r:Repository {repo_id: 'terminal-fresh'})")
+			runBoltQueryWithParams(t, fresh,
+				"CREATE (r:Repository {repo_id: 'terminal-fresh'})", nil)
 		})
 	}
 }
@@ -141,8 +141,8 @@ func TestBoltExplicitTransactionTerminalPathsRecordSinglePersistentWALAbort(t *t
 				"%s must release the persistent Badger transaction reader", tt.name)
 
 			fresh := openBoltTestConn(t, port)
-			records := runBoltQueryAndCollectRecords(t, fresh,
-				"MATCH (r:Repository {repo_id: 'persistent-terminal-abandoned'}) RETURN count(r)")
+			records := runBoltQueryWithParams(t, fresh,
+				"MATCH (r:Repository {repo_id: 'persistent-terminal-abandoned'}) RETURN count(r)", nil)
 			require.Equal(t, [][]any{{int64(0)}}, records)
 
 			require.NoError(t, wal.Sync())

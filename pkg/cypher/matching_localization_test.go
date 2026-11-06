@@ -26,7 +26,7 @@ func TestCypherMatchingLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 
 	t.Run("MATCH validation", func(t *testing.T) {
 		_, err := exec.Execute(context.Background(), "MATCH RETURN n", getParamsFromContext(context.Background()))
-		requireSyntaxErrorStatus(t, err, "MATCH RETURN n")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH RETURN n")
 	})
 
 	t.Run("optional endpoint validation", func(t *testing.T) {

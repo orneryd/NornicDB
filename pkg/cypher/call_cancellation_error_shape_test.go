@@ -137,9 +137,9 @@ func TestCallCancellationKeepsCallerErrorShape(t *testing.T) {
 							require.False(t, nornicerrors.HasStatusDiagnostic(err),
 								"the caller's error keeps the protocol's ordinary policy instead of a synthetic status")
 							require.Nil(t, result, "a statement whose caller context ended publishes no result")
-							require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, exec, indexDropNamesQuery),
+							require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, exec, indexDropNamesQuery),
 								"the statement published nothing in its own namespace")
-							require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, other, indexDropNamesQuery),
+							require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, other, indexDropNamesQuery),
 								"the statement published nothing in the other namespace")
 
 							// Healthy control: the same statement through the same
@@ -163,8 +163,8 @@ func TestCallCancellationKeepsCallerErrorShape(t *testing.T) {
 								require.NoError(t, err)
 								require.Equal(t, [][]interface{}{{int64(1)}}, count.Rows,
 									"the healthy retry creates its node exactly once")
-								require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, exec, indexDropNamesQuery))
-								require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, other, indexDropNamesQuery))
+								require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, exec, indexDropNamesQuery))
+								require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, other, indexDropNamesQuery))
 								return
 							}
 							require.Equal(t, [][]interface{}{{subject.dropped, true}}, retry.Rows)
@@ -175,9 +175,9 @@ func TestCallCancellationKeepsCallerErrorShape(t *testing.T) {
 									break
 								}
 							}
-							require.Equal(t, remaining, readIndexNames(t, healthy, exec, indexDropNamesQuery),
+							require.Equal(t, remaining, readSchemaNames(t, healthy, exec, indexDropNamesQuery),
 								"the healthy retry drops only the kind its own procedure names")
-							require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, other, indexDropNamesQuery))
+							require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, other, indexDropNamesQuery))
 						})
 					}
 				})

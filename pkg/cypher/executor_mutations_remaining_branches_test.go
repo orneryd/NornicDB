@@ -110,10 +110,10 @@ func TestExecuteSet_MergeAssignmentErrorAndFallbackBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET += {a:1}", getParamsFromContext(ctx))
-	requireSyntaxErrorStatus(t, err, "MATCH (n:P) SET += {a:1}")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH (n:P) SET += {a:1}")
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += $", getParamsFromContext(ctx))
-	requireSyntaxErrorStatus(t, err, "MATCH (n:P) SET n += $")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH (n:P) SET n += $")
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += $props", getParamsFromContext(ctx))
 	require.Error(t, err)

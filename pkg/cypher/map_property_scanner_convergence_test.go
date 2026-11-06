@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -167,7 +168,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 	require.NoError(t, err)
 	seenAllowlist := make(map[string]bool, len(quoteMechanismAllowlist))
 	var violations []string
-	err = filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
+	err = fixtureowner.WalkRepositoryTree(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}

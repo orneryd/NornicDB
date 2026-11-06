@@ -81,12 +81,7 @@ func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node, mode nodeReadCacheM
 	if node == nil {
 		return
 	}
-	var cached *Node
-	if mode == nodeReadCacheQuery {
-		cached = copyNodeForCaller(node)
-	} else {
-		cached = copyNode(node)
-	}
+	cached := copyNode(node)
 	b.durableCaches.mu.Lock()
 	defer b.durableCaches.mu.Unlock()
 	if source < b.durableCaches.nodeFloor(node.ID) {
@@ -128,8 +123,8 @@ func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
 	delete(b.queryNodeCache, copied.ID)
 }
 
-// cacheLoadQueryNode returns a copy of id's GetQueryNode entry, sharing its
-// in-memory vectors.
+// cacheLoadQueryNode returns a caller-owned copy of id's GetQueryNode entry,
+// including any in-memory vectors.
 // Cached query images are immutable, so their copies can be made after the
 // map lookup releases its read lock.
 func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
@@ -139,7 +134,7 @@ func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
 	if !ok {
 		return nil, false
 	}
-	return copyNodeForCaller(cached), true
+	return copyNode(cached), true
 }
 
 func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properties []string, access nodeBodyAccess) (*Node, bool) {

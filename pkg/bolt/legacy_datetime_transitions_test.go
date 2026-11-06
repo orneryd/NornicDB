@@ -1,21 +1,11 @@
 package bolt
 
 import (
-	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
-
-func TestLegacyDateTimeWireNamedZoneTransitions(t *testing.T) {
-	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
-	testDateTimeWireNamedZoneTransitions(t, fmt.Sprintf("127.0.0.1:%d", port), false)
-}
 
 func TestLegacyDateTimeWireNamedZoneTransitionsNeo4j526(t *testing.T) {
 	testDateTimeWireNamedZoneTransitions(t, dateTimeReferenceAddress(t), true)

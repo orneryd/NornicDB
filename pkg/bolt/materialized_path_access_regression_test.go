@@ -48,13 +48,13 @@ func TestMaterializedPathAccessBolt(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "MATERIALIZED_PATH_ACCESS"}))
 
-			_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+			_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 			conn := openBoltTestConn(t, port)
 			if explicit {
 				require.NoError(t, SendBegin(t, conn, nil))
 				require.NoError(t, ReadSuccess(t, conn))
 			}
-			rows := runBoltQueryAndCollectRecords(t, conn, "MATCH p=(:MaterializedPathAccess {id:'a'})-[:MATERIALIZED_PATH_ACCESS]->(:MaterializedPathAccess {id:'b'}) RETURN p")
+			rows := runBoltQueryWithParams(t, conn, "MATCH p=(:MaterializedPathAccess {id:'a'})-[:MATERIALIZED_PATH_ACCESS]->(:MaterializedPathAccess {id:'b'}) RETURN p", nil)
 			require.Len(t, rows, 1)
 			require.Equal(t, []string{"materialized:a", "materialized:b", "materialized:e"}, inner.take())
 			if explicit {

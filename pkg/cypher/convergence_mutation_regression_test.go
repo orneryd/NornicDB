@@ -1120,7 +1120,7 @@ func TestSetRejectsEmptyCommaSegmentsBeforeWrites(t *testing.T) {
 	} {
 		t.Run(query, func(t *testing.T) {
 			_, err := exec.Execute(ctx, query, nil)
-			requireSyntaxErrorStatus(t, err, query)
+			requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
 		})
 	}
 

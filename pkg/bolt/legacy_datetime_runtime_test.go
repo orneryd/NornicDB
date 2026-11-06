@@ -29,11 +29,23 @@ func dateTimeReferenceAddress(t *testing.T) string {
 	return parsed.Host
 }
 
-func TestLegacyDateTimeWire(t *testing.T) {
-	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
-	testDateTimeWire(t, fmt.Sprintf("127.0.0.1:%d", port), false)
+// TestLegacyDateTimeLocalServer shares fixture construction while retaining a
+// fresh store/server and checked cleanup for each independent oracle population.
+func TestLegacyDateTimeLocalServer(t *testing.T) {
+	for _, scenario := range []struct {
+		name, prefix string
+		run          func(t *testing.T, uri string, reference bool)
+	}{
+		{"wire", "", testDateTimeWire},
+		{"real-driver", "bolt://", testLegacyDateTimeDriver},
+		{"named-zone-transitions", "", testDateTimeWireNamedZoneTransitions},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			store := fixtureowner.OwnChecked(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
+			scenario.run(t, scenario.prefix+fmt.Sprintf("127.0.0.1:%d", port), false)
+		})
+	}
 }
 
 func TestLegacyDateTimeWireNeo4j526(t *testing.T) {
@@ -141,15 +153,6 @@ func dateTimeWireQuery(t *testing.T, conn net.Conn, query string, params []byte)
 	return record
 }
 
-// v4.4.0 is deliberately pinned: it implements Bolt 4.4 before the utc patch
-// was added. No driver code or HELLO message is modified for these tests.
-func TestLegacyDateTimeRealDriver(t *testing.T) {
-	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
-	testLegacyDateTimeDriver(t, fmt.Sprintf("bolt://127.0.0.1:%d", port), false)
-}
-
 func TestLegacyDateTimeRealDriverNeo4j526(t *testing.T) {
 	testLegacyDateTimeDriver(t, "bolt://"+dateTimeReferenceAddress(t), true)
 }
@@ -176,6 +179,8 @@ func (l *dateTimeDriverLog) LogServerMessage(_ string, format string, args ...in
 	}
 }
 
+// v4.4.0 is deliberately pinned: it implements Bolt 4.4 before the utc patch
+// was added. No driver code or HELLO message is modified for these tests.
 func testLegacyDateTimeDriver(t *testing.T, uri string, reference bool) {
 	t.Helper()
 	log := &dateTimeDriverLog{}

@@ -38,7 +38,7 @@ func TestCypherTransactionsLocalizedErrorsHaveTypedIdentityAndExactEnglish(t *te
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "transaction_localization"))
 		query := "MATCH (n) MATCH (m)"
 		_, err := exec.Execute(context.Background(), query, nil)
-		requireSyntaxErrorStatus(t, err, query)
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
 	})
 
 	t.Run("delete guard", func(t *testing.T) {

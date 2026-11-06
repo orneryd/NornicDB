@@ -119,7 +119,7 @@ func TestBoltExplicitTerminalNeverFlushesPendingResult(t *testing.T) {
 				ReadBufferSize:  8192,
 				WriteBufferSize: 8192,
 			}, fixedSessionExecutorFactory{QueryExecutor: executor})
-			port := startBoltTestServer(t, server)
+			port := serveBoltIntegrationServer(t, server)
 			conn := openBoltTestConn(t, port)
 			beginExplicitTransaction(t, conn, nil)
 			require.NoError(t, SendRun(t, conn, "CREATE (:PendingTerminalFlush)", nil, nil))

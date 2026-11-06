@@ -103,12 +103,23 @@ func TestUndirectedMatchEmitsSelfRelationshipOnce(t *testing.T) {
 	require.Equal(t, [][]interface{}{{"LOOP"}}, result.Rows)
 }
 
-func TestMatchRejectsRelationshipReuseWithinOnePattern(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_relationship_uniqueness"))
-	ctx := context.Background()
-
-	_, err := exec.Execute(ctx, "MATCH (a)-[r]->()-[r]->(a) RETURN r", nil)
-	requireMatchSemanticDetail(t, err, "RelationshipUniquenessViolation")
+// TestMalformedMatchStatementsRejectedLikeNeo4j shares query admission and
+// fixture ownership while retaining syntax-only and semantic-detail contracts.
+func TestMalformedMatchStatementsRejectedLikeNeo4j(t *testing.T) {
+	for _, test := range []struct{ name, namespace, query, detail string }{
+		{"dangling comparison", "where_reject", "MATCH (n) WHERE n.x = RETURN n", ""},
+		{"relationship reuse", "match_relationship_uniqueness", "MATCH (a)-[r]->()-[r]->(a) RETURN r", "RelationshipUniquenessViolation"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			exec, _ := newTestExecutor(t, test.namespace)
+			_, err := exec.Execute(context.Background(), test.query, nil)
+			if test.detail != "" {
+				requireMatchSemanticDetail(t, err, test.detail)
+			} else {
+				requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", test.query)
+			}
+		})
+	}
 }
 
 func TestMatchRejectsPathVariableAlreadyBoundByAnotherEntity(t *testing.T) {
