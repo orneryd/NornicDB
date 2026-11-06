@@ -109,18 +109,18 @@ func benchmarkPublicCypherManagedEntitySettlement(b *testing.B, explicit, writeB
 
 	// Warm the statement/analysis cache, the one-time quota census and the
 	// namespace's read views before the timer starts; the warm write itself is
-	// not measured.
+	// not measured. It uses the opposite value from the first timed update.
 	if explicit {
 		if _, err := exec.Execute(control, "BEGIN", nil); err != nil {
 			b.Fatalf("warm begin: %v", err)
 		}
-		if _, err := exec.Execute(ctx, settlementSetStatement, params[0]); err != nil {
+		if _, err := exec.Execute(ctx, settlementSetStatement, params[1]); err != nil {
 			b.Fatalf("warm set: %v", err)
 		}
 		if _, err := exec.Execute(control, "COMMIT", nil); err != nil {
 			b.Fatalf("warm commit: %v", err)
 		}
-	} else if _, err := exec.Execute(ctx, settlementSetStatement, params[0]); err != nil {
+	} else if _, err := exec.Execute(ctx, settlementSetStatement, params[1]); err != nil {
 		b.Fatalf("warm set: %v", err)
 	}
 	// The fixture's own records and the warm write are already journaled; only
