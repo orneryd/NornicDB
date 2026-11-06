@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -20,18 +21,11 @@ type malformedSearchReranker struct {
 	err     error
 }
 
-type fixedSearchEmbedder struct{}
+type fixedSearchEmbedder struct {
+	fixtureowner.FixedEmbedding2D
+	fixtureowner.FixedBatchEmbedding2D
+}
 
-func (fixedSearchEmbedder) Embed(context.Context, string) ([]float32, error) {
-	return []float32{1, 0}, nil
-}
-func (fixedSearchEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float32, error) {
-	results := make([][]float32, len(texts))
-	for index := range results {
-		results[index] = []float32{1, 0}
-	}
-	return results, nil
-}
 func (fixedSearchEmbedder) ChunkText(text string, _, _ int) ([]string, error) {
 	return []string{text}, nil
 }

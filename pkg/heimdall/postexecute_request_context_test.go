@@ -38,6 +38,8 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,12 +85,6 @@ func (r *postExecuteProbeRouter) Query(ctx context.Context, database, query stri
 	r.queries = append(r.queries, query)
 	r.mu.Unlock()
 	return []map[string]interface{}{{"summary": "ok"}}, nil
-}
-
-func (r *postExecuteProbeRouter) recordedQueries() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]string(nil), r.queries...)
 }
 
 // hookRequestObservation is the request a lifecycle hook callback was handed and
@@ -441,7 +437,7 @@ func TestStreamingPostExecuteHookCarriesRequestPrincipal(t *testing.T) {
 			assert.Empty(t, observation.persistErr)
 			assert.True(t, observation.persisted, "the coding plugin's session memory write must reach the database")
 
-			queries := router.recordedQueries()
+			queries := fixtureowner.Snapshot(&router.mu, &router.queries)
 			require.Len(t, queries, 1)
 			assert.Contains(t, queries[0], "HeimdallSessionMemory")
 		})
@@ -458,7 +454,7 @@ func TestStreamingPostExecuteHookCarriesAuthenticationDisabledMark(t *testing.T)
 
 	assertHookCarriesAuthenticationDisabledMark(t, "PostExecute", observation)
 	assert.True(t, observation.persisted, "the session memory write must run on an authentication-disabled deployment")
-	assert.Len(t, router.recordedQueries(), 1)
+	assert.Len(t, fixtureowner.Snapshot(&router.mu, &router.queries), 1)
 }
 
 // Carrying the request must not loosen it: a principal without write on the
@@ -474,7 +470,7 @@ func TestStreamingPostExecuteHookKeepsDeniedRequestsOut(t *testing.T) {
 		assert.True(t, observation.allowsAccess)
 		assert.False(t, observation.allowsWrite)
 		assert.False(t, observation.persisted, "a principal without write must not persist session memory")
-		assert.Empty(t, router.recordedQueries())
+		assert.Empty(t, fixtureowner.Snapshot(&router.mu, &router.queries))
 	})
 
 	t.Run("no principal and no authentication-disabled mark", func(t *testing.T) {
@@ -485,7 +481,7 @@ func TestStreamingPostExecuteHookKeepsDeniedRequestsOut(t *testing.T) {
 		assert.False(t, observation.resolverPresent)
 		assert.False(t, observation.authenticationDisabled)
 		assert.False(t, observation.persisted, "an unattributed request must not persist session memory")
-		assert.Empty(t, router.recordedQueries())
+		assert.Empty(t, fixtureowner.Snapshot(&router.mu, &router.queries))
 	})
 }
 

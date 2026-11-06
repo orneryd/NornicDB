@@ -9,7 +9,7 @@ principal, and canonical database.
 
 | Operation | Fields                 | Result                                       |
 | --------- | ---------------------- | -------------------------------------------- |
-| START     | query/options plus `n` | First page and a qid when more results exist |
+| START     | query/options plus `n` | First page and a qid while more work may remain |
 | PULL      | `qid`, `n`             | Deterministic page at the token position     |
 | DISCARD   | `qid`, `discard: true` | Releases the retained stream                 |
 
@@ -18,6 +18,17 @@ not a lifetime ceiling. `max_results` is the optional explicit lifetime
 ceiling. A terminal response has `has_more: false` and no next qid; inspect
 `completion` to distinguish true exhaustion from a configured candidate budget
 or a requested result ceiling.
+
+In progressive ranked mode, a full buffered page returns immediately without
+searching ahead to prove that another row exists. `has_more: true` means the
+cursor is not known to be finished; it does not promise another nonempty page.
+A later pull may return zero rows with `has_more: false`. Clients continue using
+the returned qid until that terminal response, or explicitly discard it.
+
+When fewer than `n` rows are buffered, a pull retrieves more until it can return
+`n` rows or the search finishes. Expansion is demand driven; this does not add
+a background population worker. Repeated tokens retain the same row positions,
+although exhaustion and discovered-count metadata can advance as work finishes.
 
 ## Modes
 

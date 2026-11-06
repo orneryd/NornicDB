@@ -5,16 +5,15 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-type fixedQueryEmbedder struct{}
-
-func (fixedQueryEmbedder) Embed(context.Context, string) ([]float32, error) {
-	return []float32{1, 0}, nil
+type fixedQueryEmbedder struct {
+	fixtureowner.FixedEmbedding2D
 }
 
 func (fixedQueryEmbedder) ChunkText(text string, _, _ int) ([]string, error) {

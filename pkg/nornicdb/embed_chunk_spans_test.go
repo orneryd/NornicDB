@@ -16,23 +16,16 @@ import (
 // tilingDocumentEmbedder chunks a document on its side, as Voyage's
 // contextualized auto-chunking does: verbatim chunks that tile the text,
 // whitespace kept, with a chunker version (so the chunk texts are kept too).
-type tilingDocumentEmbedder struct{}
+type tilingDocumentEmbedder struct {
+	fixtureowner.FixedEmbedding2D
+	fixtureowner.FixedBatchEmbedding2D
+}
 
 func tileAtNotices(text string) []string {
 	at := strings.Index(text, "Notices")
 	return []string{text[:at], text[at:]}
 }
 
-func (tilingDocumentEmbedder) Embed(context.Context, string) ([]float32, error) {
-	return []float32{1, 0}, nil
-}
-func (tilingDocumentEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float32, error) {
-	out := make([][]float32, len(texts))
-	for index := range out {
-		out[index] = []float32{1, 0}
-	}
-	return out, nil
-}
 func (tilingDocumentEmbedder) ChunkText(text string, _, _ int) ([]string, error) {
 	return tileAtNotices(text), nil
 }
@@ -54,14 +47,11 @@ func (e tilingDocumentEmbedder) EmbedDocumentBatchChunks(ctx context.Context, te
 
 // localChunkEmbedder has only NornicDB's deterministic chunking, whose
 // chunks are trimmed.
-type localChunkEmbedder struct{}
+type localChunkEmbedder struct {
+	fixtureowner.FixedEmbedding2D
+	fixtureowner.FixedBatchEmbedding2D
+}
 
-func (localChunkEmbedder) Embed(context.Context, string) ([]float32, error) {
-	return []float32{1, 0}, nil
-}
-func (localChunkEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	return tilingDocumentEmbedder{}.EmbedBatch(ctx, texts)
-}
 func (localChunkEmbedder) Dimensions() int { return 2 }
 func (localChunkEmbedder) Model() string   { return "local-model" }
 func (localChunkEmbedder) Backend() string { return "cpu" }

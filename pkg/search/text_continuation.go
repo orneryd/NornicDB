@@ -269,12 +269,14 @@ func (s *Service) SearchTextContinuation(
 	initialRows := continuationRows(state.results)
 	rows := initialRows
 	expand := func(expandCtx context.Context, requested int) ([][]any, bool, error) {
-		state.mu.Lock()
-		defer state.mu.Unlock()
+		// Progressive serializes expansions. Keep retrieval outside the metadata
+		// lock so a concurrent pull can deliver rows already in its buffer.
 		response, step, err := searchStep(expandCtx, requested)
 		if err != nil {
 			return nil, false, err
 		}
+		state.mu.Lock()
+		defer state.mu.Unlock()
 		work := newSearchBatch(expandCtx)
 		for index := range response.Results {
 			if work.boundary() {
