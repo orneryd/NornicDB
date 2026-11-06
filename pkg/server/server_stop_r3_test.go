@@ -104,10 +104,10 @@ func (p *stopR3Plugin) Actions() map[string]heimdall.ActionFunc {
 			if p.cancelDriven {
 				select {
 				case <-c.Done():
-				case <-p.held.release:
+				case <-p.held.release.Done():
 				}
 			} else {
-				<-p.signal.release
+				p.signal.release.Wait()
 			}
 			return &heimdall.ActionResult{Success: true}, nil
 		}},
@@ -213,7 +213,7 @@ func TestServerStopR3BackgroundLineage(t *testing.T) {
 					select {
 					case <-ctx.Done():
 						close(canceled)
-					case <-gate.release:
+					case <-gate.release.Done():
 					}
 				}))
 			}

@@ -9,6 +9,7 @@ package resultstream
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testlatch"
 	"sync"
 	"testing"
 	"time"
@@ -33,16 +34,15 @@ func probeRows(depth int) [][]any {
 // leaves a pull blocked inside the expander.
 type probeGate struct {
 	entered chan struct{}
-	release chan struct{}
+	release *testlatch.Latch
 	once    sync.Once
-	open    sync.Once
 }
 
 func newProbeGate(t *testing.T) *probeGate {
 	t.Helper()
 	gate := &probeGate{
 		entered: make(chan struct{}),
-		release: make(chan struct{}),
+		release: testlatch.New(),
 	}
 	t.Cleanup(gate.releaseGate)
 	return gate
@@ -53,7 +53,7 @@ func newProbeGate(t *testing.T) *probeGate {
 func (g *probeGate) wait(ctx context.Context) error {
 	g.once.Do(func() { close(g.entered) })
 	select {
-	case <-g.release:
+	case <-g.release.Done():
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -63,7 +63,7 @@ func (g *probeGate) wait(ctx context.Context) error {
 // releaseGate unblocks the gated expansion. Repeated calls are no-ops, so the
 // test may release explicitly and the cleanup release stays safe.
 func (g *probeGate) releaseGate() {
-	g.open.Do(func() { close(g.release) })
+	g.release.Release()
 }
 
 // waitEntered blocks until an expansion is provably parked at the gate.
