@@ -94,8 +94,14 @@ func parseCreateLookupIndex(cypher string) (name string, ifNotExists bool, entit
 // cutSchemaName reads a leading plain or backtick-quoted schema object name.
 func cutSchemaName(text string) (string, string, bool) {
 	name, ok := cyphertext.ScanIdentifier(text, 0)
-	if !ok || name.Value == "" {
+	if !ok {
 		return "", "", false
 	}
-	return name.Value, strings.TrimSpace(text[name.End:]), true
+	// Schema object names follow Neo4j's creation-time normalization. Graph
+	// labels, relationship types and property names retain their exact spaces.
+	value := strings.TrimSpace(name.Value)
+	if value == "" {
+		return "", "", false
+	}
+	return value, strings.TrimSpace(text[name.End:]), true
 }

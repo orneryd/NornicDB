@@ -56,8 +56,8 @@
     "sha256": "7eac9aae7e6f9c95ea6b254ad49911d1e25557c4fe99019fe808c6d659864d8e"
   },
   "pkg/cypher/call_rag.go:parseRetrievalFilters": {
-    "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
-    "sha256": "d132a26b16128deba2ef26dd30b29901eb354f6ea874e151260db418a6e8214b"
+    "reason": "Retrieval request token formatting, not numeric-coordinate conversion: []string values are retained, boxed DTO lists format non-null members with fmt.Sprint, and scalars retain whole-token formatting. Review of the NOR-46 diff confirms only exact nonempty property-key admission changed; every carrier branch and empty-list/no-match rule is unchanged. ReadList would expand the carrier set and promote float32 members before formatting, changing tokens. TestParseRetrievalFiltersEdgeCases pins these boundaries; TestQuotedRetrievalFilterKeepsExactPropertyIdentity exercises both public procedures and parsers.",
+    "sha256": "e429664007c5e80a80b0aacb5ebc3ceee13675de36b9b35dde41a03048e5cbcb"
   },
   "pkg/cypher/call_shared_utils.go:toStringSlice": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",

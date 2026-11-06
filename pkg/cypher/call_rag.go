@@ -742,7 +742,11 @@ func parseRetrievalFilters(raw interface{}) map[string][]string {
 	}
 	parsed := make(map[string][]string, len(filters))
 	for property, rawValues := range filters {
-		if strings.TrimSpace(property) == "" {
+		// A property name is the node's key exactly, whitespace included: " ",
+		// "  " and "key " name properties of their own (search.nodeMatchesFilters
+		// compares exact keys, #938), so only a truly empty name is dropped
+		// (NOR46).
+		if property == "" {
 			continue
 		}
 		var values []string

@@ -18,9 +18,66 @@ import (
 // shapes of TestSolR12GuardBypasses are fixtures of
 // TestClusterGenerationOwnerAllowList.
 
+// cgAxis is the dimension of vec's largest coordinate: the fixture topic a
+// vector is built around.
+func cgAxis(vec []float32) int {
+	axis := 0
+	for d := range vec {
+		if vec[d] > vec[axis] {
+			axis = d
+		}
+	}
+	return axis
+}
+
+// cgSquaredEuclidean is the distance the generation's nearest-centroid rules
+// compare.
+func cgSquaredEuclidean(a, b []float32) float64 {
+	var sum float64
+	for i := range a {
+		diff := float64(a[i] - b[i])
+		sum += diff * diff
+	}
+	return sum
+}
+
+// cgClusterPoint returns new coordinates for a member of cluster cid: the
+// published centroid of cid displaced a quarter of the distance to the nearest
+// other centroid, away from it. The generation therefore places them in cid by
+// a margin under both of its nearest rules — routing (nearest populated
+// cluster) and admission (nearest centroid, which may target an unused one) —
+// while coordinates built by hand inside the member's own blob are not
+// guaranteed to: k-means can converge with a blob split across two centroids,
+// or leave a centroid at its seed point
+// (TestClusterGenerationMoveCoordinatesFollowTheGeneration).
+func cgClusterPoint(t *testing.T, routing *gpu.Clustering, cid int, current []float32) []float32 {
+	t.Helper()
+	centroids := routing.Centroids()
+	require.GreaterOrEqual(t, cid, 0)
+	require.Less(t, cid, len(centroids))
+	require.GreaterOrEqual(t, len(centroids), 2, "the probe keeps clear of a second centroid")
+	other := -1
+	for c := range centroids {
+		if c == cid {
+			continue
+		}
+		if other < 0 || cgSquaredEuclidean(centroids[cid], centroids[c]) < cgSquaredEuclidean(centroids[cid], centroids[other]) {
+			other = c
+		}
+	}
+	vec := make([]float32, len(centroids[cid]))
+	for d := range vec {
+		vec[d] = centroids[cid][d] + 0.25*(centroids[cid][d]-centroids[other][d])
+	}
+	require.NotEmpty(t, vec)
+	require.NotEqual(t, current, vec, "the move changes the member's coordinates")
+	return vec
+}
+
 // moveClusterMember updates the first sorted member through the public write
-// path. A same-cluster move changes its coordinates without changing its owner;
-// a cross-cluster move uses the destination's published centroid.
+// path, with new coordinates the generation's own routing places in `to`. A
+// same-cluster move changes its coordinates without changing its owner; a
+// cross-cluster move moves it to the destination.
 func moveClusterMember(t *testing.T, f *cgFixture, from, to int) (string, []float32) {
 	t.Helper()
 	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(from)
@@ -30,25 +87,12 @@ func moveClusterMember(t *testing.T, f *cgFixture, from, to int) (string, []floa
 	id := ids[0]
 	routing := f.svc.clusterIndex.PublishedClustering()
 	require.NotNil(t, routing)
-	centroids := routing.Centroids()
-	require.GreaterOrEqual(t, to, 0)
-	require.Less(t, to, len(centroids))
-	vec := append([]float32(nil), centroids[to]...)
-	if from == to {
-		old, found := f.svc.getVectorLookup()(id)
-		require.True(t, found)
-		require.NotEmpty(t, old)
-		topic := 0
-		for d := range old {
-			if old[d] > old[topic] {
-				topic = d
-			}
-		}
-		vec = []float32{0.55, 0.55, 0.55, 0.55}
-		vec[topic] = 1
-	}
-	require.NotEmpty(t, vec)
-	require.Equal(t, to, routing.NearestClusters(vec, 1)[0])
+	current, found := f.svc.getVectorLookup()(id)
+	require.True(t, found)
+	require.NotEmpty(t, current)
+	vec := cgClusterPoint(t, routing, to, current)
+	require.Equal(t, []int{to}, routing.NearestClusters(vec, 1), "routing places the new coordinates in the destination cluster")
+	require.Equal(t, to, f.svc.clusterIndex.FindNearestCentroid(vec), "an admission places the new coordinates in the destination cluster")
 	node, err := f.engine.GetNode(t.Context(), storage.NodeID(vectorOwnerForTest(t, id)))
 	require.NoError(t, err)
 	node.ChunkEmbeddings = [][]float32{vec}
@@ -89,16 +133,17 @@ func TestClusterGenerationRestoreRefreshesRetainedCoordinates(t *testing.T) {
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
 	path := filepath.Join(t.TempDir(), "hnsw")
 	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	id, vec := moveClusterMember(t, f, 0, 0)
+	cid := cgPopulatedClusters(t, f, 1)[0]
+	id, vec := moveClusterMember(t, f, cid, cid)
 	before, err := f.svc.VectorQueryNodesWithOptions(context.Background(), vec, VectorQuerySpec{Limit: 1}, nil)
 	require.NoError(t, err)
 	require.Len(t, before, 1)
 	require.Equal(t, vectorOwnerForTest(t, id), before[0].ID)
 
 	r11Restore(t, f, path)
-	cid, ok := f.svc.clusterGen.routing.ClusterOf(id)
+	moved, ok := f.svc.clusterGen.routing.ClusterOf(id)
 	require.True(t, ok)
-	require.Equal(t, 0, cid)
+	require.Equal(t, cid, moved)
 	stored, canonical := r12StoredCode(t, f, id)
 	require.Equal(t, canonical, stored, "the restored code encodes the member's current coordinates")
 	after, err := f.svc.VectorQueryNodesWithOptions(context.Background(), vec, VectorQuerySpec{Limit: 1}, nil)
@@ -113,13 +158,137 @@ func TestClusterGenerationRestoreKeepsUnchangedMembers(t *testing.T) {
 	f := newCGFixture(t, 20, false)
 	path := filepath.Join(t.TempDir(), "hnsw")
 	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	id, _ := moveClusterMember(t, f, 0, 0)
+	cid := cgPopulatedClusters(t, f, 1)[0]
+	id, _ := moveClusterMember(t, f, cid, cid)
 	saved, err := readIVFHNSWManifest(ivfHNSWDir(path))
 	require.NoError(t, err)
-	savedGraph, err := saved.loadCluster(0, f.svc.getVectorLookup())
+	savedGraph, err := saved.loadCluster(cid, f.svc.getVectorLookup())
 	require.NoError(t, err)
 	stale := savedGraph.staleMembers(f.svc.getVectorLookup())
 	require.Equal(t, []string{id}, stale, "only the moved member's saved coordinates are stale")
+}
+
+// The probes above move a member with coordinates the generation places in the
+// destination cluster, under its routing rule and under the nearest-centroid
+// rule an admission applies. That contract is what lets a probe assert the
+// member's cluster after a write: k-means does not guarantee one centroid per
+// blob, so coordinates built by hand inside the member's own blob can be placed
+// in another cluster.
+func TestClusterGenerationMoveCoordinatesFollowTheGeneration(t *testing.T) {
+	f := newCGFixture(t, 20, false)
+	routing := f.svc.clusterIndex.PublishedClustering()
+	require.NotNil(t, routing)
+	for cid := 0; cid < routing.NumClusters(); cid++ {
+		ids := routing.MemberIDs(cid)
+		if len(ids) == 0 {
+			continue // an unused centroid owns no coordinates to move
+		}
+		current, found := f.svc.getVectorLookup()(ids[0])
+		require.True(t, found)
+		vec := cgClusterPoint(t, routing, cid, current)
+		require.Equal(t, []int{cid}, routing.NearestClusters(vec, 1), "routing places a move's coordinates in its destination cluster")
+		require.Equal(t, cid, routing.NearestCentroid(vec), "an admission places a move's coordinates in its destination cluster")
+	}
+
+	// A generation k-means can converge to: cluster 1 is a second centroid
+	// inside cluster 0's blob (a split). Coordinates built by hand inside that
+	// blob are placed in cluster 1, which is why the probes derive the
+	// destination coordinates from the generation instead.
+	crafted, err := f.svc.clusterIndex.AssignedClustering(context.Background(), cgSplitCentroids(t, f, routing))
+	require.NoError(t, err)
+	own := crafted.MemberIDs(0)
+	require.NotEmpty(t, own, "the crafted generation keeps cluster 0 populated")
+	sort.Strings(own)
+	current, found := f.svc.getVectorLookup()(own[0])
+	require.True(t, found)
+	built := make([]float32, len(current))
+	for d := range built {
+		built[d] = 0.55
+	}
+	built[cgAxis(current)] = 1
+	require.Equal(t, []int{1}, crafted.NearestClusters(built, 1),
+		"the split centroid owns coordinates built inside cluster 0's blob")
+	vec := cgClusterPoint(t, crafted, 0, current)
+	require.Equal(t, []int{0}, crafted.NearestClusters(vec, 1))
+	require.Equal(t, 0, crafted.NearestCentroid(vec))
+}
+
+// cgSplitCentroids derives, from the fixture's own vectors, the centroids of a
+// generation k-means can converge to: cluster 0 is the blob on axis 0, cluster
+// 1 is that blob's most off-axis member (a split), and clusters 2 and 3 are the
+// blobs on those axes. The fixture seeds its vectors, so the shape is
+// deterministic.
+func cgSplitCentroids(t *testing.T, f *cgFixture, routing *gpu.Clustering) [][]float32 {
+	t.Helper()
+	lookup := f.svc.getVectorLookup()
+	blobs := make(map[int][]string)
+	for cid := 0; cid < routing.NumClusters(); cid++ {
+		for _, id := range routing.MemberIDs(cid) {
+			vec, found := lookup(id)
+			require.True(t, found)
+			axis := cgAxis(vec)
+			blobs[axis] = append(blobs[axis], id)
+		}
+	}
+	for axis := range blobs {
+		sort.Strings(blobs[axis])
+	}
+	require.Len(t, blobs, 4, "the fixture builds one blob per topic")
+	for _, axis := range []int{0, 1, 2, 3} {
+		require.NotEmpty(t, blobs[axis], "blob %d is populated", axis)
+	}
+	split := blobs[0][0]
+	for _, id := range blobs[0][1:] {
+		if cgOffAxis(t, lookup, id, 0) > cgOffAxis(t, lookup, split, 0) {
+			split = id
+		}
+	}
+	return [][]float32{
+		cgBlobCentroid(t, lookup, blobs[0]),
+		cgVectorOf(t, lookup, split),
+		cgBlobCentroid(t, lookup, blobs[2]),
+		cgBlobCentroid(t, lookup, blobs[3]),
+	}
+}
+
+// cgOffAxis is the sum of vec's coordinates off axis: how far it leans towards
+// the other blobs.
+func cgOffAxis(t *testing.T, lookup VectorLookup, id string, axis int) float64 {
+	t.Helper()
+	vec := cgVectorOf(t, lookup, id)
+	sum := 0.0
+	for d := range vec {
+		if d != axis {
+			sum += float64(vec[d])
+		}
+	}
+	return sum
+}
+
+func cgVectorOf(t *testing.T, lookup VectorLookup, id string) []float32 {
+	t.Helper()
+	vec, found := lookup(id)
+	require.True(t, found)
+	require.NotEmpty(t, vec)
+	return append([]float32(nil), vec...)
+}
+
+// cgBlobCentroid is the mean of ids' vectors.
+func cgBlobCentroid(t *testing.T, lookup VectorLookup, ids []string) []float32 {
+	t.Helper()
+	require.NotEmpty(t, ids)
+	var centroid []float32
+	for _, id := range ids {
+		vec := cgVectorOf(t, lookup, id)
+		if centroid == nil {
+			centroid = make([]float32, len(vec))
+		}
+		require.Len(t, vec, len(centroid))
+		for d := range vec {
+			centroid[d] += vec[d] / float32(len(ids))
+		}
+	}
+	return centroid
 }
 
 // A graph saved without coordinate fingerprints is rebuilt rather than

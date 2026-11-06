@@ -739,11 +739,8 @@ func parseOptionalDDLName(ctx context.Context, segment string) (string, error) {
 
 	ifPos := keywordIndexFrom(ctx, segment, "IF NOT EXISTS", 0, defaultKeywordScanOpts())
 	if ifPos < 0 {
-		if !isValidDDLIdentifierSegment(segment) {
-			return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
-		}
-		name := normalizeIdentifierToken(segment)
-		if name == "" {
+		name, rest, ok := cutSchemaName(segment)
+		if !ok || rest != "" {
 			return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
 		}
 		return name, nil
@@ -758,28 +755,11 @@ func parseOptionalDDLName(ctx context.Context, segment string) (string, error) {
 	if namePart == "" {
 		return "", nil
 	}
-	if !isValidDDLIdentifierSegment(namePart) {
-		return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
-	}
-	name := normalizeIdentifierToken(namePart)
-	if name == "" {
+	name, rest, ok := cutSchemaName(namePart)
+	if !ok || rest != "" {
 		return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
 	}
 	return name, nil
-}
-
-func isValidDDLIdentifierSegment(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	if strings.HasPrefix(s, "`") {
-		if !strings.HasSuffix(s, "`") {
-			return false
-		}
-		return normalizeIdentifierToken(s) != ""
-	}
-	return len(strings.Fields(s)) == 1
 }
 
 // propertySyntax is the property-list syntax an index ON clause family admits.
@@ -842,56 +822,84 @@ func propertiesSegment(ctx context.Context, onClause string, syntax propertySynt
 	return props, tail, nil
 }
 
+// schemaPatternTarget retains entity identity and borrowed source spans.
+// Variable decoding is paid only by consumers that need its identity.
+// Fulltext lists need source provenance before interpreting pipe separators.
+type schemaPatternTarget struct {
+	isRelationship bool
+	variableSource string
+	name           string
+	// nameSource retains quote and separator provenance for fulltext type lists.
+	nameSource string
+	// direction reads the connector immediately beside the relationship bracket:
+	// OUTGOING for "->", INCOMING for "<-", empty when the pattern is
+	// undirected. Only a caller whose contract is directional requires one.
+	direction string
+}
+
 // parseForPatternTarget reads the entity a FOR pattern names and its
 // <variable>:<labelOrType> interior: a node pattern's (var:Label), or a
 // relationship pattern's (a)-[var:TYPE]-(b), whose label or type is the
-// bracketed section's. It is the one owner of that reading: the index pattern
-// parser, the constraint contract's FOR clause and the relationship-key DDL all
-// take the label, type and variable from it, and each keeps its own
+// bracketed section's. A relationship pattern also carries the direction its
+// connectors spell: a leading "->" suffix is OUTGOING and takes precedence,
+// otherwise a trailing "<-" prefix is INCOMING. Arrows inside quoted endpoint
+// names are data, and an undirected pattern has no direction. It is the one
+// owner of that reading: the index pattern parser, the constraint contract's
+// FOR clause, the relationship-key DDL and the directional cardinality DDL all
+// take the label, type, variable and direction from it, and each keeps its own
 // statement-specific admission and error around it.
-func parseForPatternTarget(forClause string) (isRelationship bool, variable string, labelOrType string, ok bool) {
+func parseForPatternTarget(forClause string) (target schemaPatternTarget, ok bool) {
 	forClause = strings.TrimSpace(forClause)
 	if forClause == "" {
-		return false, "", "", false
+		return schemaPatternTarget{}, false
 	}
 
 	if strings.Contains(forClause, "[") {
 		bracketStart := strings.Index(forClause, "[")
 		inside, rest, bracketed := extractBracketSection(forClause[bracketStart:])
 		if !bracketed {
-			return false, "", "", false
+			return schemaPatternTarget{}, false
 		}
 		prefix := strings.TrimSpace(forClause[:bracketStart])
 		suffix := strings.TrimSpace(rest)
 		if !strings.Contains(prefix, "(") || !strings.Contains(suffix, "(") {
-			return false, "", "", false
+			return schemaPatternTarget{}, false
 		}
 		colon := strings.Index(inside, ":")
 		if colon < 0 {
-			return false, "", "", false
+			return schemaPatternTarget{}, false
 		}
-		variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
-		labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
-		if labelOrType == "" {
-			return false, "", "", false
+		target.variableSource = strings.TrimSpace(inside[:colon])
+		target.nameSource = strings.TrimSpace(inside[colon+1:])
+		target.name = cyphertext.SymbolicNameValue(target.nameSource)
+		if target.name == "" {
+			return schemaPatternTarget{}, false
 		}
-		return true, variable, labelOrType, true
+		target.isRelationship = true
+		switch {
+		case strings.HasPrefix(suffix, "->"):
+			target.direction = "OUTGOING"
+		case strings.HasSuffix(prefix, "<-"):
+			target.direction = "INCOMING"
+		}
+		return target, true
 	}
 
 	inside, rest, matched := extractParenSection(forClause)
 	if !matched || strings.TrimSpace(rest) != "" {
-		return false, "", "", false
+		return schemaPatternTarget{}, false
 	}
 	colon := strings.Index(inside, ":")
 	if colon < 0 {
-		return false, "", "", false
+		return schemaPatternTarget{}, false
 	}
-	variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
-	labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
-	if labelOrType == "" {
-		return false, "", "", false
+	target.variableSource = strings.TrimSpace(inside[:colon])
+	target.nameSource = strings.TrimSpace(inside[colon+1:])
+	target.name = cyphertext.SymbolicNameValue(target.nameSource)
+	if target.name == "" {
+		return schemaPatternTarget{}, false
 	}
-	return false, variable, labelOrType, true
+	return target, true
 }
 
 func parseCreateIndexForPattern(forClause string) (label string, relationshipType string, isRelationship bool, err error) {
@@ -900,7 +908,7 @@ func parseCreateIndexForPattern(forClause string) (label string, relationshipTyp
 		return "", "", false, localizedError(localization.CypherSchemaEmptyClause("FOR"), nil)
 	}
 
-	isRelationship, _, labelOrType, ok := parseForPatternTarget(forClause)
+	target, ok := parseForPatternTarget(forClause)
 	if !ok {
 		clause := "node FOR"
 		if strings.Contains(forClause, "[") {
@@ -908,10 +916,10 @@ func parseCreateIndexForPattern(forClause string) (label string, relationshipTyp
 		}
 		return "", "", false, localizedError(localization.CypherSchemaInvalidClause(clause), nil)
 	}
-	if isRelationship {
-		return "", labelOrType, true, nil
+	if target.isRelationship {
+		return "", target.name, true, nil
 	}
-	return labelOrType, "", false, nil
+	return target.name, "", false, nil
 }
 
 func (e *StorageExecutor) parseCreateIndexDDL(ctx context.Context, cypher string, prefixKeyword string) (parsedCreateIndexDDL, error) {
@@ -1027,7 +1035,7 @@ func (e *StorageExecutor) parseCreateIndexLegacyDDL(ctx context.Context, cypher,
 	if openParen < 0 {
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
 	}
-	label := normalizeIdentifierToken(strings.TrimSpace(onClause[:openParen]))
+	label := cyphertext.SymbolicNameValue(strings.TrimSpace(onClause[:openParen]))
 	if label == "" {
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
 	}
@@ -1066,24 +1074,25 @@ type parsedCreateFulltextIndexDDL struct {
 }
 
 func parseCreateFulltextForPattern(forClause string) (label string, relationshipTypes []string, isRelationship bool, err error) {
-	label, relTypeRaw, isRelationship, err := parseCreateIndexForPattern(forClause)
-	if err != nil {
+	target, ok := parseForPatternTarget(forClause)
+	if !ok {
 		// Neo4j compatibility: allow non-parenthesized node pattern `n:Label`.
 		if !strings.Contains(forClause, "[") {
 			parts := strings.SplitN(strings.TrimSpace(forClause), ":", 2)
 			if len(parts) == 2 {
-				compatLabel := normalizeIdentifierToken(strings.TrimSpace(parts[1]))
+				compatLabel := cyphertext.SymbolicNameValue(strings.TrimSpace(parts[1]))
 				if compatLabel != "" {
 					return compatLabel, nil, false, nil
 				}
 			}
 		}
+		_, _, _, err = parseCreateIndexForPattern(forClause)
 		return "", nil, false, err
 	}
-	if !isRelationship {
-		return label, nil, false, nil
+	if !target.isRelationship {
+		return target.name, nil, false, nil
 	}
-	relTypes, err := parseFulltextRelationshipTypes(relTypeRaw)
+	relTypes, err := parseFulltextRelationshipTypes(target.nameSource)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -1276,7 +1285,7 @@ func parseConstraintQualifiedProperty(expr string) (string, string, bool) {
 		return "", "", false
 	}
 	left := strings.TrimSpace(expr[:dot])
-	right := normalizeIdentifierToken(expr[dot+1:])
+	right := cyphertext.SymbolicNameValue(strings.TrimSpace(expr[dot+1:]))
 	if left == "" || right == "" {
 		return "", "", false
 	}
@@ -1602,41 +1611,6 @@ func (e *StorageExecutor) parseCreateConstraintDomainDDL(ctx context.Context, cy
 	return parsedDomainConstraintDDL{name: parsed.name, label: parsed.label, isRelationship: parsed.isRelationship, property: property, allowedRaw: allowedRaw, options: parsed.options}, nil
 }
 
-func parseRelationshipForDirection(forClause string) (relType string, direction string, ok bool) {
-	forClause = strings.TrimSpace(forClause)
-	if forClause == "" {
-		return "", "", false
-	}
-	bracketStart := strings.Index(forClause, "[")
-	if bracketStart < 0 {
-		return "", "", false
-	}
-	inside, rest, ok := extractBracketSection(forClause[bracketStart:])
-	if !ok {
-		return "", "", false
-	}
-	prefix := strings.TrimSpace(forClause[:bracketStart])
-	suffix := strings.TrimSpace(rest)
-
-	colon := strings.Index(inside, ":")
-	if colon < 0 {
-		return "", "", false
-	}
-	relType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
-	if relType == "" {
-		return "", "", false
-	}
-
-	if strings.Contains(suffix, "->") {
-		direction = "OUTGOING"
-	} else if strings.Contains(prefix, "<-") {
-		direction = "INCOMING"
-	} else {
-		return "", "", false
-	}
-	return relType, direction, true
-}
-
 func parseCardinalityRequireExpr(ctx context.Context, requireExpr string) (int, bool) {
 	requireExpr = strings.TrimSpace(requireExpr)
 	idx := keywordIndexFrom(ctx, requireExpr, "MAX COUNT", 0, defaultKeywordScanOpts())
@@ -1663,8 +1637,11 @@ func (e *StorageExecutor) parseCreateConstraintCardinalityDDL(ctx context.Contex
 	if err != nil {
 		return parsedCardinalityConstraintDDL{}, err
 	}
-	relType, direction, ok := parseRelationshipForDirection(patternSpan)
-	if !ok {
+	target, ok := parseForPatternTarget(patternSpan)
+	// The shared reader also admits a node pattern and an undirected
+	// relationship; a cardinality contract is directional, so it requires a
+	// relationship whose arrows spell one.
+	if !ok || !target.isRelationship || target.direction == "" {
 		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("cardinality FOR"), nil)
 	}
 	maxCount, ok := parseCardinalityRequireExpr(ctx, requireExpr)
@@ -1687,7 +1664,7 @@ func (e *StorageExecutor) parseCreateConstraintCardinalityDDL(ctx context.Contex
 		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidClause("cardinality require"), nil)
 	}
 
-	return parsedCardinalityConstraintDDL{name: name, relType: relType, direction: direction, maxCount: maxCount, options: options}, nil
+	return parsedCardinalityConstraintDDL{name: name, relType: target.name, direction: target.direction, maxCount: maxCount, options: options}, nil
 }
 
 func parseNodeLabelOnlyPattern(inner string) (string, bool) {
@@ -1698,7 +1675,7 @@ func parseNodeLabelOnlyPattern(inner string) (string, bool) {
 	if !strings.HasPrefix(inner, ":") {
 		return "", false
 	}
-	label := normalizeIdentifierToken(strings.TrimSpace(inner[1:]))
+	label := cyphertext.SymbolicNameValue(strings.TrimSpace(inner[1:]))
 	if label == "" {
 		return "", false
 	}
@@ -1735,7 +1712,7 @@ func parsePolicyForClause(forClause string) (sourceLabel string, relType string,
 	if colon < 0 {
 		return "", "", "", false
 	}
-	relType = normalizeIdentifierToken(strings.TrimSpace(relInside[colon+1:]))
+	relType = cyphertext.SymbolicNameValue(strings.TrimSpace(relInside[colon+1:]))
 	if relType == "" {
 		return "", "", "", false
 	}
@@ -1799,21 +1776,18 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, err
 	}
 
-	label, relType, isRelationship, err := parseCreateIndexForPattern(patternSpan)
-	if err != nil {
+	target, patternOK := parseForPatternTarget(patternSpan)
+	if !patternOK {
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("relationship FOR"), nil)
 	}
 
 	kind, props, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(ctx, requireExpr)
-	if !ok || (!isRelationship && kind != "unique") {
+	if !ok || (!target.isRelationship && kind != "unique") {
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("relationship key/unique"), nil)
 	}
-	// The FOR pattern reader is the one owner of the variable's position in the
-	// pattern; the label or type it also returns is the one read above.
-	_, variable, _, patternOK := parseForPatternTarget(patternSpan)
-	if !patternOK {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("constraint FOR"), nil)
-	}
+	// Use the same parsed target for identity and qualifier validation; the
+	// immutable FOR span needs reading only once.
+	variable := cyphertext.SymbolicNameValue(target.variableSource)
 	propertyExpr := requireExpr
 	if inside, _, wrapped := extractParenSection(requireExpr); wrapped {
 		propertyExpr = inside
@@ -1826,16 +1800,13 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 	seen := make(map[string]bool, len(props))
 	for _, reference := range strings.Split(propertyExpr, ",") {
 		qualifier, property, valid := parseConstraintQualifiedProperty(reference)
-		if !valid || normalizeIdentifierToken(qualifier) != variable || seen[property] {
+		if !valid || cyphertext.SymbolicNameValue(qualifier) != variable || seen[property] {
 			return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)
 		}
 		seen[property] = true
 	}
 
-	if isRelationship {
-		label = relType
-	}
-	return parsedRelationshipKeyOrCompositeUniqueDDL{name: name, label: label, properties: props, kind: kind, isRelationship: isRelationship, options: options}, nil
+	return parsedRelationshipKeyOrCompositeUniqueDDL{name: name, label: target.name, properties: props, kind: kind, isRelationship: target.isRelationship, options: options}, nil
 }
 
 func (e *StorageExecutor) parseCreateConstraintTypeDDL(ctx context.Context, cypher string) (parsedTypeConstraintDDL, error) {
@@ -2086,6 +2057,9 @@ func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher
 
 	parsed, err := e.parseCreateFulltextIndexDDL(ctx, cypher)
 	if err != nil {
+		if errors.Is(err, nerrors.ErrInvalidFulltextRelationshipTypes) {
+			return nil, &classifiedCypherError{cause: err, code: "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax"}
+		}
 		return nil, err
 	}
 	if _, err := e.schemaOptionMap(ctx, parsed.options, "fulltext index"); err != nil {
@@ -2170,12 +2144,12 @@ func parseFulltextRelationshipTypes(raw string) ([]string, error) {
 	var cur strings.Builder
 
 	flush := func() error {
-		part := normalizeIdentifierToken(strings.TrimSpace(cur.String()))
+		name, ok := isOneSymbolicName(cur.String())
 		cur.Reset()
-		if part == "" {
+		if !ok || name == "" {
 			return nerrors.ErrInvalidFulltextRelationshipTypes
 		}
-		types = append(types, part)
+		types = append(types, name)
 		return nil
 	}
 
@@ -2202,13 +2176,4 @@ func parseFulltextRelationshipTypes(raw string) ([]string, error) {
 		return nil, err
 	}
 	return types, nil
-}
-
-func normalizeIdentifierToken(v string) string {
-	s := strings.TrimSpace(v)
-	if len(s) >= 2 && strings.HasPrefix(s, "`") && strings.HasSuffix(s, "`") {
-		s = s[1 : len(s)-1]
-		s = strings.ReplaceAll(s, "``", "`")
-	}
-	return strings.TrimSpace(s)
 }

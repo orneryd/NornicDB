@@ -371,29 +371,30 @@
       "path": "pkg/cypher/subquery_value_expression.go",
       "function": "boundDegreePattern",
       "class": "owned by #1486 (relationship declaration owner)",
-      "reason": "Concatenated regexp global used by the bound-degree relationship-type shortcut; recording this mechanism does not correct quoted type splitting in this lane.",
+      "reason": "Degree-shortcut framing screen captures bracket text verbatim; canonical relationshipDeclarationOf owns decoded type identity.",
       "branch_review": [
-        "Global regexp definition, not a function; constructed by concatenated source patterns.",
-        "Required fix and consumer proof belong to #1486 relationship declaration/provenance ownership."
+        "The constant regexp only identifies the supported bound-node, direction and anonymous-endpoint envelope.",
+        "Types are decoded by the shared declaration owner, not raw-split or quote-trimmed here; unsupported shortcut shapes still use the existing traversal kernel."
       ]
     },
     {
       "path": "pkg/cypher/subquery_value_expression.go",
       "function": "parseBoundDegreeShapeText",
       "class": "owned by #1486 (relationship declaration owner)",
-      "reason": "Contextual degree/EXISTS eligibility reads relationship type source through boundDegreePattern; its raw type splitting is delegated to #1486 for correction.",
+      "reason": "Degree eligibility reuses relationshipDeclarationOf for exact quoted names; it owns only shortcut admissibility and direction.",
       "branch_review": [
-        "Relationship type source must retain decoded quoted delimiter-bearing identity under the relationship declaration owner.",
-        "No implementation change here; Case A is explicitly assigned to the upper #1486 lane."
+        "Public both-parser COUNT/EXISTS tests distinguish literal pipes and escaped backticks from unquoted alternatives.",
+        "Dynamic types, lengths, properties and invalid declarations do not use adjacency-degree evaluation."
       ]
     },
     {
       "path": "pkg/cypher/subquery_value_expression.go",
       "function": "parseBoundDegreeShape",
       "class": "owned by #1486 (relationship declaration owner)",
-      "reason": "Cached adapter to parseBoundDegreeShapeText; same relationship-type provenance ownership, recorded so caching does not hide the reader.",
+      "reason": "The existing bounded cache retains the canonical decoded degree shape; no additional relationship reader is introduced.",
       "branch_review": [
-        "Cached adapter retains the same contextual shape; #1486 owns correction and COUNT/EXISTS behavioral evidence."
+        "The cache is keyed by original body text, so distinct quoted identities do not collide.",
+        "Public both-parser quoted-type and ordinary-alternation controls exercise its consumers."
       ]
     },
     {

@@ -215,15 +215,24 @@ func TestSchemaForPatternReaderOwnsTheForClause(t *testing.T) {
 	cases := []struct {
 		clause         string
 		isRelationship bool
-		variable       string
+		variableSource string
 		labelOrType    string
+		direction      string
 		ok             bool
 	}{
-		{clause: "(n:Person)", variable: "n", labelOrType: "Person", ok: true},
-		{clause: "  (n:Person)  ", variable: "n", labelOrType: "Person", ok: true},
-		{clause: "(n:`Weird Label`)", variable: "n", labelOrType: "Weird Label", ok: true},
-		{clause: "()-[r:KNOWS]-()", isRelationship: true, variable: "r", labelOrType: "KNOWS", ok: true},
-		{clause: "(a)-[`r x`:`KNOWS TYPE`]-(b)", isRelationship: true, variable: "r x", labelOrType: "KNOWS TYPE", ok: true},
+		{clause: "(n:Person)", variableSource: "n", labelOrType: "Person", ok: true},
+		{clause: "  (n:Person)  ", variableSource: "n", labelOrType: "Person", ok: true},
+		{clause: "(n:`Weird Label`)", variableSource: "n", labelOrType: "Weird Label", ok: true},
+		{clause: "()-[r:KNOWS]-()", isRelationship: true, variableSource: "r", labelOrType: "KNOWS", ok: true},
+		{clause: "(a)-[`r x`:`KNOWS TYPE`]-(b)", isRelationship: true, variableSource: "`r x`", labelOrType: "KNOWS TYPE", ok: true},
+		{clause: "()-[r:KNOWS]->()", isRelationship: true, variableSource: "r", labelOrType: "KNOWS", direction: "OUTGOING", ok: true},
+		{clause: "()<-[r:KNOWS]-()", isRelationship: true, variableSource: "r", labelOrType: "KNOWS", direction: "INCOMING", ok: true},
+		{clause: "(:User)-[:FOLLOWS]->(:User)", isRelationship: true, labelOrType: "FOLLOWS", direction: "OUTGOING", ok: true},
+		{clause: "(:User)<-[:FOLLOWS]-(:User)", isRelationship: true, labelOrType: "FOLLOWS", direction: "INCOMING", ok: true},
+		{clause: "(:User)-[:FOLLOWS]-(:User)", isRelationship: true, labelOrType: "FOLLOWS", ok: true},
+		{clause: "(a)<-[r:TYPE]->(b)", isRelationship: true, variableSource: "r", labelOrType: "TYPE", direction: "OUTGOING", ok: true},
+		{clause: "()-[r:`a b|c `]->()", isRelationship: true, variableSource: "r", labelOrType: "a b|c ", direction: "OUTGOING", ok: true},
+		{clause: "(a)-[`r x`:`KNOWS TYPE`]->(b)", isRelationship: true, variableSource: "`r x`", labelOrType: "KNOWS TYPE", direction: "OUTGOING", ok: true},
 		{clause: ""},
 		{clause: "(n)"},
 		{clause: ":Person"},
@@ -232,11 +241,12 @@ func TestSchemaForPatternReaderOwnsTheForClause(t *testing.T) {
 		{clause: "(n:Person) trailing"},
 	}
 	for _, testCase := range cases {
-		isRelationship, variable, labelOrType, ok := parseForPatternTarget(testCase.clause)
+		target, ok := parseForPatternTarget(testCase.clause)
 		require.Equal(t, testCase.ok, ok, testCase.clause)
-		require.Equal(t, testCase.isRelationship, isRelationship, testCase.clause)
-		require.Equal(t, testCase.variable, variable, testCase.clause)
-		require.Equal(t, testCase.labelOrType, labelOrType, testCase.clause)
+		require.Equal(t, testCase.isRelationship, target.isRelationship, testCase.clause)
+		require.Equal(t, testCase.variableSource, target.variableSource, testCase.clause)
+		require.Equal(t, testCase.labelOrType, target.name, testCase.clause)
+		require.Equal(t, testCase.direction, target.direction, testCase.clause)
 	}
 }
 
@@ -428,4 +438,96 @@ func TestSchemaContractRelationshipKeyAdmissionUnchanged(t *testing.T) {
 	constraints, err = unparenthesized.Execute(ctx, "SHOW CONSTRAINTS", nil)
 	require.NoError(t, err)
 	require.Empty(t, constraints.Rows)
+}
+
+// TestSchemaCardinalityDDLUsesTheSharedForPatternReading records the cardinality
+// contract's reading of that target: the type and direction are the FOR
+// pattern's own, the directional admission still rejects the node and
+// undirected shapes with the error it always produced, and the MAX COUNT
+// admission is unchanged.
+func TestSchemaCardinalityDDLUsesTheSharedForPatternReading(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+
+	outgoing, err := exec.parseCreateConstraintCardinalityDDL(ctx,
+		"CREATE CONSTRAINT card_out FOR ()-[r:KNOWS]->() REQUIRE MAX COUNT 2")
+	require.NoError(t, err)
+	require.Equal(t, "card_out", outgoing.name)
+	require.Equal(t, "KNOWS", outgoing.relType)
+	require.Equal(t, "OUTGOING", outgoing.direction)
+	require.Equal(t, 2, outgoing.maxCount)
+
+	incoming, err := exec.parseCreateConstraintCardinalityDDL(ctx,
+		"CREATE CONSTRAINT card_in FOR ()<-[r:`a b|c `]-() REQUIRE MAX COUNT 3")
+	require.NoError(t, err)
+	require.Equal(t, "card_in", incoming.name)
+	require.Equal(t, "a b|c ", incoming.relType)
+	require.Equal(t, "INCOMING", incoming.direction)
+	require.Equal(t, 3, incoming.maxCount)
+
+	for _, statement := range []string{
+		"CREATE CONSTRAINT card_undirected FOR ()-[r:KNOWS]-() REQUIRE MAX COUNT 2",
+		"CREATE CONSTRAINT card_node FOR (n:Person) REQUIRE MAX COUNT 2",
+		"CREATE CONSTRAINT card_untyped FOR ()-[r]->() REQUIRE MAX COUNT 2",
+	} {
+		_, err := exec.parseCreateConstraintCardinalityDDL(ctx, statement)
+		require.EqualError(t, err, "invalid cardinality FOR pattern", statement)
+	}
+
+	_, err = exec.parseCreateConstraintCardinalityDDL(ctx,
+		"CREATE CONSTRAINT card_zero FOR ()-[r:KNOWS]->() REQUIRE MAX COUNT 0")
+	require.ErrorContains(t, err, "MAX COUNT must be a positive integer")
+}
+
+// TestSchemaCardinalityDirectionOnPublicDDL proves the public CREATE CONSTRAINT
+// path stores the direction and type the shared reading derived - outgoing and
+// incoming, a quoted pipe and space type kept exactly - and that a rejected
+// directional statement publishes no schema object.
+func TestSchemaCardinalityDirectionOnPublicDDL(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
+		exec, store := newTestExecutor(t)
+		ctx := context.Background()
+
+		_, err := exec.Execute(ctx, "CREATE CONSTRAINT card_out FOR ()-[r:KNOWS]->() REQUIRE MAX COUNT 2", nil)
+		require.NoError(t, err)
+		_, err = exec.Execute(ctx, "CREATE CONSTRAINT card_in FOR ()<-[r:`a b|c `]-() REQUIRE MAX COUNT 3", nil)
+		require.NoError(t, err)
+
+		stored := map[string]storage.Constraint{}
+		for _, constraint := range store.GetSchema().GetAllConstraints() {
+			stored[constraint.Name] = constraint
+		}
+		require.Len(t, stored, 2)
+		require.Equal(t, storage.ConstraintCardinality, stored["card_out"].Type)
+		require.Equal(t, storage.ConstraintEntityRelationship, stored["card_out"].EntityType)
+		require.Equal(t, "KNOWS", stored["card_out"].Label)
+		require.Equal(t, "OUTGOING", stored["card_out"].Direction)
+		require.Equal(t, 2, stored["card_out"].MaxCount)
+		require.Equal(t, "a b|c ", stored["card_in"].Label)
+		require.Equal(t, "INCOMING", stored["card_in"].Direction)
+		require.Equal(t, 3, stored["card_in"].MaxCount)
+
+		reported, err := exec.Execute(ctx, "SHOW CONSTRAINTS YIELD name, labelsOrTypes, createStatement", nil)
+		require.NoError(t, err)
+		statements := map[string]string{}
+		for _, row := range reported.Rows {
+			require.Len(t, row, 3)
+			name := row[0].(string)
+			statements[name] = row[2].(string)
+			if name == "card_in" {
+				require.Equal(t, []string{"a b|c "}, row[1])
+			}
+		}
+		require.Equal(t, "CREATE CONSTRAINT `card_out` FOR ()-[r:`KNOWS`]->() REQUIRE MAX COUNT 2", statements["card_out"])
+		require.Equal(t, "CREATE CONSTRAINT `card_in` FOR ()<-[r:`a b|c `]-() REQUIRE MAX COUNT 3", statements["card_in"])
+
+		// The undirected pattern the retired reader rejected stays rejected on
+		// the public path, keeps its error, and publishes nothing.
+		before := readSchemaNames(t, ctx, exec, "SHOW CONSTRAINTS YIELD name RETURN name ORDER BY name")
+		require.Equal(t, []string{"card_in", "card_out"}, before)
+		_, err = exec.Execute(ctx, "CREATE CONSTRAINT card_undirected FOR ()-[r:KNOWS]-() REQUIRE MAX COUNT 2", nil)
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "undirected cardinality")
+		require.EqualError(t, err, "invalid cardinality FOR pattern")
+		require.Equal(t, before, readSchemaNames(t, ctx, exec, "SHOW CONSTRAINTS YIELD name RETURN name ORDER BY name"))
+	})
 }
