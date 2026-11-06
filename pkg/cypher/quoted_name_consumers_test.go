@@ -2,9 +2,11 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -164,7 +166,8 @@ func TestQuotedRelationshipTypeCachedReadsFollowEdits(t *testing.T) {
 // Leading, trailing and whitespace-only spaces are part of a quoted name, so
 // the created index reports that name in labelsOrTypes and in a
 // createStatement that recreates it, and two names that differ only by
-// surrounding space stay two schema objects. Both parser paths run the same
+// surrounding space stay distinct graph identities. Schema object names follow
+// their creation-time normalization policy. Both parser paths run the same
 // statements.
 func TestQuotedIndexNamesKeepWhitespaceOnPublicDDL(t *testing.T) {
 	withCypherParsers(t, func(t *testing.T) {
@@ -238,7 +241,7 @@ func TestQuotedIndexNamesKeepWhitespaceOnPublicDDL(t *testing.T) {
 			{"qs_one_space", "RELATIONSHIP", []string{" "}, "CREATE RANGE INDEX `qs_one_space` FOR ()-[r:` `]-() ON (r.`v`)"},
 			{"qs_two_spaces", "RELATIONSHIP", []string{"  "}, "CREATE RANGE INDEX `qs_two_spaces` FOR ()-[r:`  `]-() ON (r.`v`)"},
 			{"qs_node_label", "NODE", []string{"L "}, "CREATE RANGE INDEX `qs_node_label` FOR (n:`L `) ON (n.`v`)"},
-			{"qs ddl ", "RELATIONSHIP", []string{"q"}, "CREATE RANGE INDEX `qs ddl ` FOR ()-[r:`q`]-() ON (r.`v`)"},
+			{"qs ddl", "RELATIONSHIP", []string{"q"}, "CREATE RANGE INDEX `qs ddl` FOR ()-[r:`q`]-() ON (r.`v`)"},
 			{"qs_unquoted", "RELATIONSHIP", []string{"qs_unquoted_type"}, "CREATE RANGE INDEX `qs_unquoted` FOR ()-[r:`qs_unquoted_type`]-() ON (r.`v`)"},
 		} {
 			require.Equal(t, []interface{}{want.entityType, want.labelsOrTypes, want.createStatement}, reported[want.name], want.name)
@@ -307,5 +310,47 @@ func TestQuotedConstraintNamesKeepWhitespaceOnPublicDDL(t *testing.T) {
 		// The supported empty-name rejection is unchanged here as well.
 		_, err = exec.Execute(ctx, "CREATE CONSTRAINT qs_empty FOR (n:`L `) REQUIRE n.`` IS NOT NULL", nil)
 		require.Error(t, err, "a quoted property name that decodes to nothing is rejected")
+	})
+}
+
+// Schema rule names are not graph names: Neo4j trims them on creation and
+// rejects whitespace-only rule names, while DROP addresses the stored name.
+func TestQuotedSchemaObjectNamesFollowReferenceCreationPolicy(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "schema_object_names"))
+		for _, kind := range []string{"INDEX", "CONSTRAINT"} {
+			for _, name := range []string{"ordinary_rule", " padded_rule ", "tick`rule"} {
+				source := cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource)
+				canonical := strings.TrimSpace(name)
+				command := "CREATE INDEX " + source + " FOR (n:DropRule) ON (n.v)"
+				show := "SHOW INDEXES YIELD name RETURN name"
+				if kind == "CONSTRAINT" {
+					command = "CREATE CONSTRAINT " + source + " FOR (n:DropRule) REQUIRE n.v IS UNIQUE"
+					show = "SHOW CONSTRAINTS YIELD name RETURN name"
+				}
+				_, err := exec.Execute(t.Context(), command, nil)
+				require.NoError(t, err, command)
+				result, err := exec.Execute(t.Context(), show, nil)
+				require.NoError(t, err)
+				require.Contains(t, result.Rows, []any{canonical})
+				if canonical != name {
+					_, err = exec.Execute(t.Context(), "DROP "+kind+" "+source, nil)
+					require.Error(t, err, "DROP addresses the normalized stored name, as the reference does")
+				}
+				_, err = exec.Execute(t.Context(), "DROP "+kind+" "+cyphertext.PrintIdentifier(canonical, nil, cyphertext.RawSource), nil)
+				require.NoError(t, err)
+				result, err = exec.Execute(t.Context(), show, nil)
+				require.NoError(t, err)
+				require.NotContains(t, result.Rows, []any{canonical})
+			}
+		}
+		for _, q := range []string{
+			"CREATE INDEX ` ` FOR (n:BadRule) ON (n.v)",
+			"CREATE CONSTRAINT ` ` FOR (n:BadRule) REQUIRE n.v IS UNIQUE",
+			"CREATE LOOKUP INDEX ` ` FOR (n) ON EACH labels(n)",
+		} {
+			_, err := exec.Execute(t.Context(), q, nil)
+			require.Error(t, err, q)
+		}
 	})
 }

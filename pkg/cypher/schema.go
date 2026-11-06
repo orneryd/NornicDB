@@ -739,11 +739,8 @@ func parseOptionalDDLName(ctx context.Context, segment string) (string, error) {
 
 	ifPos := keywordIndexFrom(ctx, segment, "IF NOT EXISTS", 0, defaultKeywordScanOpts())
 	if ifPos < 0 {
-		if !isValidDDLIdentifierSegment(segment) {
-			return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
-		}
-		name := cyphertext.SymbolicNameValue(segment)
-		if name == "" {
+		name, rest, ok := cutSchemaName(segment)
+		if !ok || rest != "" {
 			return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
 		}
 		return name, nil
@@ -758,28 +755,11 @@ func parseOptionalDDLName(ctx context.Context, segment string) (string, error) {
 	if namePart == "" {
 		return "", nil
 	}
-	if !isValidDDLIdentifierSegment(namePart) {
-		return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
-	}
-	name := cyphertext.SymbolicNameValue(namePart)
-	if name == "" {
+	name, rest, ok := cutSchemaName(namePart)
+	if !ok || rest != "" {
 		return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
 	}
 	return name, nil
-}
-
-func isValidDDLIdentifierSegment(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	if strings.HasPrefix(s, "`") {
-		if !strings.HasSuffix(s, "`") {
-			return false
-		}
-		return cyphertext.SymbolicNameValue(s) != ""
-	}
-	return len(strings.Fields(s)) == 1
 }
 
 // propertySyntax is the property-list syntax an index ON clause family admits.
@@ -2101,6 +2081,9 @@ func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher
 
 	parsed, err := e.parseCreateFulltextIndexDDL(ctx, cypher)
 	if err != nil {
+		if errors.Is(err, nerrors.ErrInvalidFulltextRelationshipTypes) {
+			return nil, &classifiedCypherError{cause: err, code: "Neo.ClientError.Statement.SyntaxError", detail: "InvalidRelationshipType"}
+		}
 		return nil, err
 	}
 	if _, err := e.schemaOptionMap(ctx, parsed.options, "fulltext index"); err != nil {
@@ -2185,12 +2168,13 @@ func parseFulltextRelationshipTypes(raw string) ([]string, error) {
 	var cur strings.Builder
 
 	flush := func() error {
-		part := cyphertext.SymbolicNameValue(strings.TrimSpace(cur.String()))
+		part := strings.TrimSpace(cur.String())
 		cur.Reset()
-		if part == "" {
+		name, ok := cyphertext.ScanIdentifier(part, 0)
+		if !ok || name.End != len(part) || name.Value == "" {
 			return nerrors.ErrInvalidFulltextRelationshipTypes
 		}
-		types = append(types, part)
+		types = append(types, name.Value)
 		return nil
 	}
 

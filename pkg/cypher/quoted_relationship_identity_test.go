@@ -98,3 +98,33 @@ func TestComputedRelationshipTypeRetainsDecodedIdentity(t *testing.T) {
 		require.Equal(t, [][]any{{int64(1), true}}, result.Rows)
 	})
 }
+
+// Neo4j 5.26 allows the deprecated alternate-type separator without a
+// relationship binding. Colon conjunctions remain syntax errors on both routes.
+func TestDegreeSubqueryRelationshipSeparatorAdmission(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "separator_admission"))
+		_, err := exec.Execute(t.Context(), "CREATE (s:SeparatorStart)-[:A]->(e), (s)-[:B]->(e)", nil)
+		require.NoError(t, err)
+		for _, q := range []string{
+			"MATCH (:SeparatorStart)-[:A|:B]->() RETURN count(*) AS c",
+			"MATCH (n:SeparatorStart) RETURN COUNT { (n)-[:A|:B]->() } AS c",
+		} {
+			res, err := exec.Execute(t.Context(), q, nil)
+			require.NoError(t, err, q)
+			require.Equal(t, [][]any{{int64(2)}}, res.Rows, q)
+		}
+		for _, q := range []string{
+			"MATCH (:SeparatorStart)-[:A:B]->() RETURN count(*) AS c",
+			"MATCH (n:SeparatorStart) RETURN COUNT { (n)-[:A:B]->() } AS c",
+			"CREATE FULLTEXT INDEX invalid_separator FOR ()-[r:A|:B]-() ON EACH [r.name]",
+		} {
+			_, err := exec.Execute(t.Context(), q, nil)
+			require.Error(t, err, q)
+			requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+		}
+		indexes, err := exec.Execute(t.Context(), "SHOW INDEXES YIELD name RETURN name", nil)
+		require.NoError(t, err)
+		require.NotContains(t, indexes.Rows, []any{"invalid_separator"}, "a rejected fulltext declaration must not install an index")
+	})
+}
