@@ -1857,7 +1857,7 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "MATCH (a:Person) MATCH (b:Person) WHERE a <> b", getParamsFromContext(ctx))
-	requireSyntaxErrorStatus(t, err, "MATCH (a:Person) MATCH (b:Person) WHERE a <> b")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH (a:Person) MATCH (b:Person) WHERE a <> b")
 
 	matched, err := exec.Execute(ctx, "MATCH (a:Person) RETURN a", getParamsFromContext(ctx))
 	require.NoError(t, err)
@@ -1889,10 +1889,10 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 	assert.False(t, isSystemNode(&storage.Node{Labels: []string{"Person"}}))
 
 	_, err = exec.Execute(ctx, "MATCH (n:Person) UNWIND n.items RETURN n", getParamsFromContext(ctx))
-	requireSyntaxErrorStatus(t, err, "MATCH (n:Person) UNWIND n.items RETURN n")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH (n:Person) UNWIND n.items RETURN n")
 
 	_, err = exec.Execute(ctx, "MATCH (n:Person) UNWIND n.items AS item WHERE item <> 'y' RETURN item", nil)
-	requireSyntaxErrorStatus(t, err, "WHERE directly after UNWIND")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "WHERE directly after UNWIND")
 
 	unwindRes, err := exec.Execute(ctx, "MATCH (n:Person) UNWIND n.items AS item WITH item WHERE item <> 'y' RETURN item ORDER BY item DESC SKIP 1 LIMIT 2", getParamsFromContext(ctx))
 	require.NoError(t, err)

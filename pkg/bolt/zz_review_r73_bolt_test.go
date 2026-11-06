@@ -8,7 +8,7 @@ import (
 func TestReviewR73BoltEmptyUnwindWrite(t *testing.T) {
 	_, port := startTransactionLifecycleServer(t)
 	seed := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, seed, "CREATE (:ReviewR73Seed)")
+	runBoltQueryWithParams(t, seed, "CREATE (:ReviewR73Seed)", nil)
 	require.NoError(t, seed.Close())
 	for _, explicit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "auto", true: "explicit"}[explicit], func(t *testing.T) {
@@ -17,7 +17,7 @@ func TestReviewR73BoltEmptyUnwindWrite(t *testing.T) {
 			if explicit {
 				beginExplicitTransaction(t, conn, nil)
 			}
-			r := runBoltQueryAndCollectRecords(t, conn, "MATCH (n:ReviewR73Seed) UNWIND [] AS x CREATE (:ReviewR73Unexpected) RETURN count(*)")
+			r := runBoltQueryWithParams(t, conn, "MATCH (n:ReviewR73Seed) UNWIND [] AS x CREATE (:ReviewR73Unexpected) RETURN count(*)", nil)
 			require.Equal(t, [][]any{{int64(0)}}, r)
 			if explicit {
 				require.NoError(t, SendRollback(t, conn))

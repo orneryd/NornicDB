@@ -37,7 +37,7 @@ func TestBoltDeadlineStatus(t *testing.T) {
 					<-ctx.Done()
 					return nil, ctx.Err()
 				}}
-				port := startBoltTestServer(t, New(config, executor))
+				port := serveBoltIntegrationServer(t, New(config, executor))
 				conn := openBoltTestConn(t, port)
 				require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
 				require.NoError(t, SendRun(t, conn, query, nil, test.metadata))
@@ -59,11 +59,11 @@ func TestBoltLazyResultClientTimeoutStatus(t *testing.T) {
 	require.NoError(t, SendRun(t, conn, "MATCH (n:Item) RETURN n.k AS k", nil, map[string]any{"tx_timeout": int64(100)}))
 	_, err := AssertSuccess(t, conn)
 	require.NoError(t, err)
-	records, success, failure := pullBatch(t, conn, 10)
+	records, success, failure := pullBatch(t, conn, map[string]any{"n": int64(10)})
 	require.Empty(t, failure)
 	require.Len(t, records, 10)
 	require.Equal(t, true, success["has_more"], "the result is streamed")
 	time.Sleep(300 * time.Millisecond)
-	_, _, failure = pullBatch(t, conn, -1)
+	_, _, failure = pullBatch(t, conn, map[string]any{"n": int64(-1)})
 	require.Equal(t, nornicerrors.TransactionTimedOutClientConfiguration, failure)
 }

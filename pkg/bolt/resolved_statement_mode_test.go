@@ -15,7 +15,7 @@ func TestRemoteDynamicModeUsesBoltSuccessType(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": storage.NewNamespacedEngine(base, "nornic")}, defaultDB: "nornic"}
 	server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	for _, tc := range []struct {
 		name, body string
 		write      bool
@@ -48,7 +48,7 @@ func TestRemotePeriodicCoordinatorMetadataBolt(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "nornic")
 	manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": store}, defaultDB: "nornic"}
 	server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	for _, procedure := range []string{"apoc.periodic.iterate", "apoc.periodic.commit"} {
 		for _, clearMetadata := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/clear=%v", procedure, clearMetadata), func(t *testing.T) {

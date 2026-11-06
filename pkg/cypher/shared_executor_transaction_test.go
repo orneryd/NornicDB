@@ -12,17 +12,9 @@ import (
 	"sync"
 	"testing"
 
-	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
-
-func requireTransactionCommandRejected(t *testing.T, err error, query string) {
-	t.Helper()
-	require.Error(t, err, query)
-	code, _ := nornicerrors.Neo4jStatus(err)
-	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
-}
 
 func TestSharedExecutorRejectsBareTransactionCommands(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "shared_tx_cmd"))
@@ -31,13 +23,13 @@ func TestSharedExecutorRejectsBareTransactionCommands(t *testing.T) {
 
 	for _, query := range []string{"BEGIN", "begin", "BEGIN TRANSACTION", "COMMIT", "commit transaction", "ROLLBACK", "rollback TRANSACTION"} {
 		_, err := exec.Execute(ctx, query, nil)
-		requireTransactionCommandRejected(t, err, query)
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
 		require.False(t, exec.HasActiveTransaction(), query)
 	}
 
 	// A transaction-owner marker does not override the shared boundary.
 	_, err := exec.Execute(WithTransactionControl(ctx), "BEGIN", nil)
-	requireTransactionCommandRejected(t, err, "WithTransactionControl BEGIN")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "WithTransactionControl BEGIN")
 	require.False(t, exec.HasActiveTransaction())
 
 	// Auto-commit statements keep working on the shared executor afterwards.
@@ -128,7 +120,7 @@ func TestClientStatementBareTransactionCommandRejectedOnAnyExecutor(t *testing.T
 	ctx := WithClientStatement(context.Background())
 	for _, query := range []string{"BEGIN", "COMMIT", "ROLLBACK"} {
 		_, err := exec.Execute(ctx, query, nil)
-		requireTransactionCommandRejected(t, err, query)
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
 		require.False(t, exec.HasActiveTransaction(), query)
 	}
 }

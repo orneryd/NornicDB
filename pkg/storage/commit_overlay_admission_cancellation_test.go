@@ -15,27 +15,41 @@ import (
 )
 
 func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
-	for _, plain := range []bool{false, true} {
-		t.Run(map[bool]string{false: "prepare", true: "plain"}[plain], func(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		plain, create bool
+		phase         string
+	}{
+		{name: "prepare-receipt", phase: ".observeBufferedCommitReceipt"},
+		{name: "plain-preimage", plain: true, phase: ".validateNodeMutationPreimagesLocked"},
+		{name: "plain-conflict", plain: true, create: true, phase: ".commitsSince"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			plain := testCase.plain
 			b := newWriteBehindTestEngine(t, time.Hour)
 			_, err := b.CreateNode(t.Context(), &Node{ID: "test:target", Properties: map[string]any{"payload": "before"}})
 			require.NoError(t, err)
 			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
-			node, err := tx.GetNode(t.Context(), "test:target")
-			require.NoError(t, err)
-			before := CopyNode(node)
-			node.Properties["payload"] = "unaccepted"
-			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
+			if testCase.create {
+				// A CREATE has no committed-node preimage. It reaches the
+				// original buffered-conflict admission rather than the earlier
+				// update-preimage read, so both public phases remain covered.
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "test:unaccepted", Properties: map[string]any{"payload": "unaccepted"}})
+				require.NoError(t, err)
+			} else {
+				node, readErr := tx.GetNode(t.Context(), "test:target")
+				require.NoError(t, readErr)
+				before := CopyNode(node)
+				node.Properties["payload"] = "unaccepted"
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
+			}
 			// A real later acknowledged native commit keeps the buffered conflict reader
 			// active. Its unrelated identity cannot legitimately conflict with target.
 			bufferedCreate(t, b, &Node{ID: "test:acknowledged", Properties: map[string]any{"payload": "peer"}})
 			require.Equal(t, uint64(1), b.writeBehind.readEpoch.Load()&1)
-			expectedPhase := ".observeBufferedCommitReceipt"
-			if plain {
-				expectedPhase = ".commitsSince"
-			}
+			expectedPhase := testCase.phase
 			ctx, cancel := context.WithCancel(t.Context())
 			type admission struct {
 				exact bool
@@ -96,7 +110,7 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 			}()
 			select {
 			case event := <-entered:
-				require.True(t, event.exact, "must reach the exact receipt or conflict admission owner, not a later storage read")
+				require.True(t, event.exact, "must reach the selected receipt, preimage or conflict admission owner")
 			case <-time.After(5 * time.Second):
 				t.Fatal("buffered conflict reader did not reach held admission")
 			}
@@ -122,12 +136,18 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 			actual, err := b.GetNode(t.Context(), "test:target")
 			require.NoError(t, err)
 			assert.Equal(t, "before", actual.Properties["payload"])
+			_, err = b.GetNode(t.Context(), "test:unaccepted")
+			assert.ErrorIs(t, err, ErrNotFound, "canceled CREATE must not publish")
 			peer, err := b.GetNode(t.Context(), "test:acknowledged")
 			require.NoError(t, err)
 			assert.Equal(t, "peer", peer.Properties["payload"])
 			retry, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = retry.Rollback() })
+			if testCase.create {
+				_, err = retry.CreateNode(t.Context(), &Node{ID: "test:unaccepted", Properties: map[string]any{"payload": "healthy-buffered"}})
+				require.NoError(t, err, "canceled identity remains available to a healthy retry")
+			}
 			retryNode, err := retry.GetNode(t.Context(), "test:target")
 			require.NoError(t, err)
 			retryBefore := CopyNode(retryNode)
@@ -146,6 +166,11 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 			actual, err = b.GetNode(t.Context(), "test:target")
 			require.NoError(t, err)
 			require.Equal(t, "healthy-buffered", actual.Properties["payload"])
+			if testCase.create {
+				created, readErr := b.GetNode(t.Context(), "test:unaccepted")
+				require.NoError(t, readErr)
+				require.Equal(t, "healthy-buffered", created.Properties["payload"])
+			}
 		})
 	}
 }

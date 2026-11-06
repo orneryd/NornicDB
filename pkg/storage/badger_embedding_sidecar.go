@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -292,6 +293,19 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(ctx context.Context, txn *badge
 // sameStoredValue compares two property values as stored values: numbers by
 // value, lists and maps element by element, times as instants.
 func sameStoredValue(a, b any) bool {
+	// A stored NaN remains the same image when its bits have not changed.
+	// Ordinary numeric comparison is deliberately unordered for NaNs, which
+	// must not make an unchanged property look like a concurrent mutation.
+	switch x := a.(type) {
+	case float64:
+		if y, ok := b.(float64); ok && math.IsNaN(x) && math.IsNaN(y) {
+			return math.Float64bits(x) == math.Float64bits(y)
+		}
+	case float32:
+		if y, ok := b.(float32); ok && math.IsNaN(float64(x)) && math.IsNaN(float64(y)) {
+			return math.Float32bits(x) == math.Float32bits(y)
+		}
+	}
 	if _, ok := numericConstraintValue(a); ok {
 		// Exactly, so an edit between integers beyond 2^53 is a change.
 		order, numeric, ordered := compareConstraintNumbers(reflect.ValueOf(a), reflect.ValueOf(b))

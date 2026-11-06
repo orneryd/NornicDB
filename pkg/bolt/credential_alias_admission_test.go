@@ -44,7 +44,7 @@ func TestCredentialCompositeAliasBoltAdmission(t *testing.T) {
 				admitted = append(admitted, owner)
 				return multidb.ErrConnectionLimitExceeded
 			}, func(string) {})
-			port := startBoltTestServer(t, server)
+			port := serveBoltIntegrationServer(t, server)
 			selections := []string{"comp.Winner", "comp.winner", "comp.WINNER", "comp.wInNeR", "spacedcomp. r ", "spacedcomp.r"}
 			for _, selection := range selections {
 				ctx := context.Background()

@@ -124,8 +124,8 @@ func TestQueryNodeScanBufferedCallerCopy(t *testing.T) {
 						require.Empty(t, got.ChunkEmbeddings)
 						require.Empty(t, got.NamedEmbeddings)
 					} else {
-						require.Same(t, &resident.ChunkEmbeddings[0][0], &got.ChunkEmbeddings[0][0], "query reads must not copy resident vectors")
-						require.Same(t, &resident.NamedEmbeddings["named"][0], &got.NamedEmbeddings["named"][0])
+						require.NotSame(t, &resident.ChunkEmbeddings[0][0], &got.ChunkEmbeddings[0][0], "returned resident vectors are caller-owned")
+						require.NotSame(t, &resident.NamedEmbeddings["named"][0], &got.NamedEmbeddings["named"][0])
 					}
 					got.Properties["title"] = "caller"
 					require.Equal(t, "original", resident.Properties["title"], "caller properties must be isolated")
@@ -223,7 +223,7 @@ func TestQueryNodeScanLogicalSnapshotsSkipStoredVectors(t *testing.T) {
 						require.Equal(t, tc.chunks, chunkCountFromMeta(got.EmbedMeta))
 					} else {
 						require.NotNil(t, resident)
-						require.Same(t, &resident.ChunkEmbeddings[0][0], &got.ChunkEmbeddings[0][0], "only resident vectors may be shared")
+						require.NotSame(t, &resident.ChunkEmbeddings[0][0], &got.ChunkEmbeddings[0][0], "returned resident vectors are caller-owned")
 					}
 				}
 			})

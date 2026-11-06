@@ -26,7 +26,7 @@ func TestPeriodicNativeDriverCompatibility(t *testing.T) {
 				store := storage.NewNamespacedEngine(base, "test")
 				manager := &mockDBManager{stores: map[string]storage.Engine{"test": store}, defaultDB: "test"}
 				server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
-				port := startBoltTestServer(t, server)
+				port := serveBoltIntegrationServer(t, server)
 				driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
 				require.NoError(t, err)
 				defer driver.Close(ctx)

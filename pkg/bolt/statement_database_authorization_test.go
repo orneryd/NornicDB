@@ -59,7 +59,7 @@ func TestBoltEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
 	server.SetResolvedAccessResolver(func(roles []string, _ string) auth.ResolvedAccess {
 		return auth.ResolvedAccess{Read: true, Write: true}
 	})
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	ctx := context.Background()
 
 	connect := func(user, password string) neo4jdriver.DriverWithContext {

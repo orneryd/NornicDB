@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 type jsonDataPath struct {
@@ -63,7 +65,7 @@ func inspectNumericWire(root string, paths map[string]jsonDataPath, exceptions m
 	var violations []string
 	seenPaths, seenExceptions := map[string]bool{}, map[string]bool{}
 	ownerFiles := map[string]bool{"pkg/convert/json.go": true, "pkg/convert/json_encode.go": true, "pkg/convert/json_domains.go": true, "pkg/convert/float_text.go": true}
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	err := fixtureowner.WalkRepositoryTree(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

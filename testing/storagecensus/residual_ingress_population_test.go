@@ -53,7 +53,7 @@ func residualIngressQuery(p *program) []residualIngressRow {
 	// Exact existing ownership calls terminate a borrowed-image flow. Every
 	// such boundary is still emitted, so it cannot silently approve an API.
 	owners := map[string]bool{}
-	for _, name := range []string{"copyNode", "copyEdge", "CopyNode", "CopyEdge", "copyNodeWithoutEmbeddings", "copyNodeProjectedWithoutEmbeddings", "ownedProperties", "ownedMetadataValue", "canonicalPropertyValue", "codecImageProperties", "marshalWALRecoveryPayload", "encodeValue"} {
+	for _, name := range []string{"copyNode", "copyEdge", "CopyNode", "CopyEdge", "copyNodeWithoutEmbeddings", "copyNodeProjectedWithoutEmbeddings", "ownedMetadataValue", "ownRetainedValue", "ownRetainedMap", "marshalWALRecoveryPayload", "encodeValue"} {
 		owners["pkg/storage."+name] = true
 	}
 	var mutable func(types.Type, map[types.Type]bool) bool

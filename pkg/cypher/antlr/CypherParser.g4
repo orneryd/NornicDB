@@ -173,13 +173,13 @@ compositeConstituents : {p.compositeKeyword("CONSTITUENTS")}? ID;
 // Schema commands (DROP INDEX, CREATE INDEX, etc.)
 schemaCommand
     : DROP INDEX name? (IF EXISTS)?
-    | CREATE (RANGE_INDEX | TEXT | POINT)? INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS mapLit)?
-    | CREATE FULLTEXT INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? EACH? LBRACK expressionChain RBRACK (OPTIONS mapLit)?
-    | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS mapLit)?
+    | CREATE (RANGE_INDEX | TEXT | POINT)? INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS (mapLit | parameter))?
+    | CREATE FULLTEXT INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? EACH? LBRACK expressionChain RBRACK (OPTIONS (mapLit | parameter))?
+    | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS (mapLit | parameter))?
     | CREATE LOOKUP INDEX name? (IF NOT EXISTS)? FOR (nodePattern | relationshipsChainPattern) ON EACH functionInvocation
     | DROP CONSTRAINT name? (IF EXISTS)?
-    | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE constraintRequirement (OPTIONS mapLit)?
-    | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS ((NODE | RELATIONSHIP | REL)? (UNIQUE | KEY) | NOT NULL_W | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS mapLit)?
+    | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE constraintRequirement (OPTIONS (mapLit | parameter))?
+    | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS ((NODE | RELATIONSHIP | REL)? (UNIQUE | KEY) | NOT NULL_W | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS (mapLit | parameter))?
     ;
 
 constraintRequirement

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/config"
 	"os"
 	"os/exec"
 	"regexp"
@@ -18,4 +19,24 @@ func runCypherTestProcess(t *testing.T, name string, environment ...string) ([]b
 	command := exec.CommandContext(t.Context(), binary, "-test.run=^"+regexp.QuoteMeta(name)+"$", "-test.count=1", "-test.timeout=30s", "-test.v")
 	command.Env = append(os.Environ(), environment...)
 	return command.CombinedOutput()
+}
+
+// withCypherParsers runs assertions under each process-wide parser selection.
+// The existing process owner bounds child lifetime and preserves its output.
+func withCypherParsers(t *testing.T, body func(*testing.T)) {
+	t.Helper()
+	const marker = "NORNIC_CYPHER_TEST_PARSER_VARIANT"
+	if expected := os.Getenv(marker); expected != "" {
+		require.Equal(t, expected, config.GetParserType())
+		body(t)
+		return
+	}
+	name := t.Name()
+	for _, parser := range []string{config.ParserTypeNornic, config.ParserTypeANTLR} {
+		t.Run(parser, func(t *testing.T) {
+			output, err := runCypherTestProcess(t, name, marker+"="+parser, config.EnvParserType+"="+parser)
+			require.NoError(t, err, string(output))
+			t.Log(string(output))
+		})
+	}
 }

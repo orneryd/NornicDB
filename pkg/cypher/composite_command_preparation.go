@@ -17,6 +17,7 @@ const (
 
 // preparedCompositeCommand owns native command validation and its declared result
 // schema. Metadata reads this plan; only execute applies its catalog mutation.
+// Creation declares an empty schema, as in Neo4j: no columns and no records.
 type preparedCompositeCommand struct {
 	database     string
 	action       compositeCommandAction
@@ -29,7 +30,7 @@ type preparedCompositeCommand struct {
 func (command *preparedCompositeCommand) columns() []string {
 	switch command.action {
 	case compositeCreate:
-		return []string{"name"}
+		return []string{}
 	case compositeAdd:
 		return []string{"composite_database", "action", "alias", "database", "type", "uri", "secret_ref", "auth_mode", "user"}
 	default:
@@ -45,7 +46,7 @@ func (command *preparedCompositeCommand) execute(ctx context.Context, e *Storage
 				return nil, localizedError(localization.CypherCompositeCreateDatabaseFailed(command.database, err), err)
 			}
 		}
-		result := &ExecuteResult{Columns: command.columns(), Rows: [][]interface{}{{command.database}}}
+		result := &ExecuteResult{Columns: command.columns()}
 		if !command.noOp {
 			result.Administration = &AdministrationOutcome{CreatedDatabase: command.database}
 		}

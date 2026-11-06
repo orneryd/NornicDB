@@ -22,7 +22,7 @@ var constraintRequirementSpelling = regexp.MustCompile(`(?is)^(.*?)\s+IS\s+(?:(N
 // SyntaxError ('IS NODE KEY' does not allow relationship patterns). Any
 // other statement is returned as it is.
 func (e *StorageExecutor) canonicalConstraintRequirement(ctx context.Context, cypher string) (string, error) {
-	_, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(ctx, cypher)
+	_, patternSpan, requireExpr, _, err := e.parseCreateConstraintForRequireHead(ctx, cypher)
 	if err != nil {
 		return cypher, nil
 	}

@@ -113,7 +113,7 @@ func boltLoadBinaryServer(t *testing.T) int {
 		boltLoadBinaryDatabase,
 	)
 	t.Cleanup(func() { _ = store.Close() })
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	return port
 }
 

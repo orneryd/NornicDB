@@ -180,7 +180,11 @@ func TestCLISecretFamilyConfigAndDebug(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	exited := make(chan struct{})
+	go func() {
+		done <- cmd.Wait()
+		close(exited)
+	}()
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		<-done
@@ -194,24 +198,13 @@ func TestCLISecretFamilyConfigAndDebug(t *testing.T) {
 	})
 	client := &http.Client{Timeout: time.Second}
 	base := "http://127.0.0.1:" + httpPort
-	deadline := time.Now().Add(25 * time.Second)
-	for {
-		resp, err := client.Get(base + "/admin/databases/nornic/config")
-		if err == nil {
-			output, readErr := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if readErr == nil && resp.StatusCode == http.StatusOK {
-				assertCLISecretAbsent(t, "GET effective config", output)
-				if !bytes.Contains(output, []byte("<REDACTED>")) && !bytes.Contains(output, []byte("\\u003cREDACTED\\u003e")) {
-					t.Error("config did not show a redaction placeholder")
-				}
-				break
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("disposable CLI server did not become ready (output withheld)")
-		}
-		time.Sleep(100 * time.Millisecond)
+	configBody, readiness := cliProbeServer(t, client, cmd, exited, base+"/admin/databases/nornic/config", http.StatusOK, 25*time.Second)
+	if !readiness.Ready {
+		t.Fatalf("disposable CLI server did not become ready (output withheld; %s)", readiness.describe())
+	}
+	assertCLISecretAbsent(t, "GET effective config", configBody)
+	if !bytes.Contains(configBody, []byte("<REDACTED>")) && !bytes.Contains(configBody, []byte("\\u003cREDACTED\\u003e")) {
+		t.Error("config did not show a redaction placeholder")
 	}
 	request := func(t *testing.T, method, url, body string) []byte {
 		t.Helper()

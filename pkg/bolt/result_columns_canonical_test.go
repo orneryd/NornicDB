@@ -19,7 +19,7 @@ func TestBoltCanonicalStatementMatrix(t *testing.T) {
 	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "tenant"))
+	_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "tenant"), boltIntegrationExplicitTx)
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, driver.Close(ctx)) })

@@ -41,7 +41,17 @@ func(b *BadgerEngine)censusBypassSuppressionInTxn(txn *badger.Txn,input suppress
 	base, err := Census(root, nil)
 	require.NoError(t, err)
 	require.Empty(t, base.Violations)
-	require.Contains(t, strings.Join(report.Violations, "\n"), "hidden decision outside the disposition owner: pkg/cypher.StorageExecutor.executeCreateConstraint")
+	// The current constraint path no longer owns this decision. Check the
+	// renamed decision itself, independently of which public caller reaches it,
+	// and prove the replacement's actual entity write was analyzed as well.
+	require.Contains(t, strings.Join(report.Violations, "\n"), "hidden decision outside the disposition owner: pkg/storage.BadgerEngine.retiredSuppressionInTxn")
+	foundBypassWrite := false
+	for _, write := range report.Writes {
+		if write.Space == "prefixEdge" && strings.HasPrefix(write.Func, "pkg/storage.BadgerEngine.censusBypassSuppressionInTxn ") {
+			foundBypassWrite = true
+		}
+	}
+	require.True(t, foundBypassWrite, "must analyze the injected replacement's entity-body write")
 	require.Contains(t, strings.Join(report.Violations, "\n"), "stale: decision owner pkg/storage.BadgerEngine.evaluateSuppressionInTxn")
 }
 

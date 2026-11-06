@@ -110,7 +110,7 @@ func (b *BadgerEngine) writtenNodeImage(data []byte, node *Node) (*Node, error) 
 
 // writtenEdgeImage is writtenNodeImage for a relationship.
 func (b *BadgerEngine) writtenEdgeImage(data []byte, edge *Edge) (*Edge, error) {
-	if properties, ok := codecImageProperties(edge.Properties); ok {
+	if properties, ok := ownRetainedMap(edge.Properties); ok {
 		setEdgeImage(edge, properties)
 		return edge, nil
 	}
@@ -217,14 +217,14 @@ func writtenNodeSource(node *Node) (*Node, bool) {
 
 // codecNodeProperties returns node's properties as a stored read decodes
 // them, when the codec's image of every value is known without decoding
-// (codecImageProperties) and node carries no embedding state the body stores
+// (ownRetainedMap) and node carries no embedding state the body stores
 // apart, types anew or hydrates from elsewhere.
 func codecNodeProperties(node *Node) (map[string]any, bool) {
 	if node.NamedEmbeddings != nil || node.ChunkEmbeddings != nil || node.EmbedMeta != nil ||
 		node.RuntimeMetadata().EmbeddingsStoredSeparately {
 		return nil, false
 	}
-	return codecImageProperties(node.Properties)
+	return ownRetainedMap(node.Properties)
 }
 
 // setNodeImage gives node the image's properties and the timestamps the
@@ -237,7 +237,7 @@ func setNodeImage(node *Node, properties map[string]any) {
 
 // writtenEdgeSource is writtenNodeSource for a relationship.
 func writtenEdgeSource(edge *Edge) (*Edge, bool) {
-	properties, ok := codecImageProperties(edge.Properties)
+	properties, ok := ownRetainedMap(edge.Properties)
 	if !ok {
 		return nil, false
 	}
@@ -252,12 +252,6 @@ func setEdgeImage(edge *Edge, properties map[string]any) {
 	edge.Properties = properties
 	edge.CreatedAt = compactEdgeTime(edge.CreatedAt)
 	edge.UpdatedAt = compactEdgeTime(edge.UpdatedAt)
-}
-
-// codecImageProperties adapts the shared owned-property representation for
-// written images. The codec remains the owner of the envelope and wire format.
-func codecImageProperties(properties map[string]any) (map[string]any, bool) {
-	return ownPropertyMap(properties)
 }
 
 // envelopeTime is t as the node body envelope's msgpack time extension
