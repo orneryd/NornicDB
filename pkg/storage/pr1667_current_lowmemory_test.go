@@ -30,6 +30,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testlatch"
 	"log/slog"
 	"strings"
 	"sync"
@@ -229,8 +230,7 @@ func pr1667WaitBackfill(t *testing.T, capture *pr1667LogCapture, done <-chan str
 type pr1667ChunkGate struct {
 	paused  chan int
 	release chan struct{}
-	dead    chan struct{}
-	stopMu  sync.Once
+	dead    *testlatch.Latch
 	mu      sync.Mutex
 	chunks  int
 }
@@ -239,7 +239,7 @@ func newPR1667ChunkGate() *pr1667ChunkGate {
 	return &pr1667ChunkGate{
 		paused:  make(chan int, 1),
 		release: make(chan struct{}),
-		dead:    make(chan struct{}),
+		dead:    testlatch.New(),
 	}
 }
 
@@ -254,12 +254,12 @@ func (g *pr1667ChunkGate) hook(point string) {
 	g.mu.Unlock()
 	select {
 	case g.paused <- chunk:
-	case <-g.dead:
+	case <-g.dead.Done():
 		return
 	}
 	select {
 	case <-g.release:
-	case <-g.dead:
+	case <-g.dead.Done():
 	}
 }
 
@@ -271,13 +271,13 @@ func (g *pr1667ChunkGate) arm() func() { return setMaintenancePauseHook(g.hook) 
 func (g *pr1667ChunkGate) releaseOne() {
 	select {
 	case g.release <- struct{}{}:
-	case <-g.dead:
+	case <-g.dead.Done():
 	}
 }
 
 // stop unblocks a held rebuild so engine cleanup cannot wait on this gate.
 func (g *pr1667ChunkGate) stop() {
-	g.stopMu.Do(func() { close(g.dead) })
+	g.dead.Release()
 }
 
 func (g *pr1667ChunkGate) observedChunks() int {

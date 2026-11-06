@@ -13,12 +13,12 @@ import (
 )
 
 type boltRerankFailureProvider struct {
+	runtimeFixtureOwner.AlwaysEnabled
 	results []search.RerankResult
 	err     error
 }
 
 func (*boltRerankFailureProvider) Name() string                     { return "bolt_failure" }
-func (*boltRerankFailureProvider) Enabled() bool                    { return true }
 func (*boltRerankFailureProvider) IsAvailable(context.Context) bool { return true }
 func (p *boltRerankFailureProvider) Rerank(context.Context, string, []search.RerankCandidate) ([]search.RerankResult, error) {
 	return append([]search.RerankResult(nil), p.results...), p.err
