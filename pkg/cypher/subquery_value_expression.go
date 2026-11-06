@@ -955,18 +955,27 @@ func parseBoundDegreeShapeText(body string) boundDegreeShape {
 	if len(trimmed) == 0 || strings.ContainsAny(trimmed, "{*,") {
 		return boundDegreeShape{}
 	}
-	match := boundDegreePattern.FindStringSubmatch(trimmed)
+	match := boundDegreePattern.FindStringSubmatchIndex(trimmed)
 	if match == nil {
 		return boundDegreeShape{}
 	}
-	variable, declaration := match[1], match[3]
-	outgoing := match[2] == "" && match[4] == ">"
-	incoming := match[2] == "<" && match[4] == ""
+	// Keep captures as source spans: materializing the regexp's string-slice
+	// duplicates every capture even though the degree shape retains only two.
+	capture := func(group int) string {
+		start, end := match[2*group], match[2*group+1]
+		if start < 0 {
+			return ""
+		}
+		return trimmed[start:end]
+	}
+	variable, declaration := capture(1), capture(3)
+	outgoing := capture(2) == "" && capture(4) == ">"
+	incoming := capture(2) == "<" && capture(4) == ""
 	if variable == "" {
 		// ()-[:T]->(v) is an incoming hop of v.
-		variable, declaration = match[8], match[6]
-		outgoing = match[5] == "<" && match[7] == ""
-		incoming = match[5] == "" && match[7] == ">"
+		variable, declaration = capture(8), capture(6)
+		outgoing = capture(5) == "<" && capture(7) == ""
+		incoming = capture(5) == "" && capture(7) == ">"
 	}
 	if outgoing == incoming {
 		return boundDegreeShape{}

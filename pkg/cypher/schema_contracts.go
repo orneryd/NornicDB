@@ -22,14 +22,14 @@ type parsedCreateConstraintContractDDL struct {
 // contract's entity type: the contract owns that mapping and its own rejection,
 // while the pattern reading itself stays in one place.
 func parseConstraintContractForClause(forClause string) (entityType storage.ConstraintEntityType, variable string, labelOrType string, ok bool) {
-	isRelationship, variable, labelOrType, ok := parseForPatternTarget(forClause)
+	target, ok := parseForPatternTarget(forClause)
 	if !ok {
 		return "", "", "", false
 	}
-	if isRelationship {
-		return storage.ConstraintEntityRelationship, variable, labelOrType, true
+	if target.isRelationship {
+		return storage.ConstraintEntityRelationship, target.variable, target.name, true
 	}
-	return storage.ConstraintEntityNode, variable, labelOrType, true
+	return storage.ConstraintEntityNode, target.variable, target.name, true
 }
 
 func (e *StorageExecutor) parseCreateConstraintContractDDL(ctx context.Context, cypher string) (parsedCreateConstraintContractDDL, error) {

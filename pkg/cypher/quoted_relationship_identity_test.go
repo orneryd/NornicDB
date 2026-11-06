@@ -13,7 +13,7 @@ import (
 // type, not an alternation. MATCH, COUNT { } and EXISTS { } must read that
 // identity, on both parsers.
 func TestQuotedRelationshipTypeCountAndExists(t *testing.T) {
-	forEachParser(t, func(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
 		for _, typeName := range []struct {
 			written string // the type as quoted in Cypher
 			decoded string // its name, as stored
@@ -53,7 +53,7 @@ func TestQuotedRelationshipTypeCountAndExists(t *testing.T) {
 // part of the type's name: both readings hold through MATCH and through the
 // COUNT / EXISTS shortcuts, in both directions.
 func TestQuotedRelationshipAlternationAndIdentity(t *testing.T) {
-	forEachParser(t, func(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
 		ex := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "quoted_alternation"))
 		ctx := context.Background()
 		_, err := ex.Execute(ctx, "CREATE (s:ReviewStart), (e:ReviewEnd), (s)-[:A]->(e), (s)-[:B]->(e), "+
@@ -85,5 +85,16 @@ func TestQuotedRelationshipAlternationAndIdentity(t *testing.T) {
 				}
 			})
 		}
+	})
+}
+
+func TestComputedRelationshipTypeRetainsDecodedIdentity(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "computed_identity"))
+		_, err := exec.Execute(t.Context(), "CREATE (s:ComputedStart)-[:`A|B`]->(e), (s)-[:A]->(e), (s)-[:B]->(e)", nil)
+		require.NoError(t, err)
+		result, err := exec.Execute(t.Context(), "MATCH (n:ComputedStart) RETURN COUNT { (n)-[:$($type)]->() } AS c, EXISTS { (n)-[:$($type)]->() } AS e", map[string]any{"type": "A|B"})
+		require.NoError(t, err)
+		require.Equal(t, [][]any{{int64(1), true}}, result.Rows)
 	})
 }

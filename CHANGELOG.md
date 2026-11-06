@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Preserve quoted relationship type identity in correlated COUNT and EXISTS
-  subqueries, including literal pipes and escaped backticks.
+  subqueries, including literal pipes and escaped backticks. Keep quoted spaces
+  in schema declarations and full-text type filters, and retain whitespace-only
+  property keys in retrieval filters instead of dropping their constraints.
 
 - Reject a node cascade when a peer has already deleted one of its staged
   relationships, including after the peer's write-behind generation is flushed.

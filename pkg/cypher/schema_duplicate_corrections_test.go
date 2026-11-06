@@ -232,11 +232,11 @@ func TestSchemaForPatternReaderOwnsTheForClause(t *testing.T) {
 		{clause: "(n:Person) trailing"},
 	}
 	for _, testCase := range cases {
-		isRelationship, variable, labelOrType, ok := parseForPatternTarget(testCase.clause)
+		target, ok := parseForPatternTarget(testCase.clause)
 		require.Equal(t, testCase.ok, ok, testCase.clause)
-		require.Equal(t, testCase.isRelationship, isRelationship, testCase.clause)
-		require.Equal(t, testCase.variable, variable, testCase.clause)
-		require.Equal(t, testCase.labelOrType, labelOrType, testCase.clause)
+		require.Equal(t, testCase.isRelationship, target.isRelationship, testCase.clause)
+		require.Equal(t, testCase.variable, target.variable, testCase.clause)
+		require.Equal(t, testCase.labelOrType, target.name, testCase.clause)
 	}
 }
 
