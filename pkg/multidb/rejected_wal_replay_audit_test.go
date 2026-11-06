@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -35,7 +36,7 @@ func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
 				err = view.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": "small"}})
 			}
 			require.NoError(t, err)
-			before, _, _ := manager.GetStorageSize(db)
+			before, _, _ := manager.GetStorageSize(context.Background(), db)
 			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxBytes: before}}))
 			if entity == "node" {
 				err = view.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}}})

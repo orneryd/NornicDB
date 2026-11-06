@@ -37,6 +37,12 @@ func RecoverBufferedCommitsAtOpen(engine Engine, wal *WAL) (int, error) {
 	return recoverAcceptedCommits(engine, wal, walOwnDirectoryAtOpen)
 }
 
+// recoverAcceptedCommits runs every phase step on the engine's own work
+// context: that is the lifetime which owns recovery, it is alive for as long as
+// the engine admits helpers (the lease below proves it), and only BeginStop
+// cancels it. A stopping engine therefore ends recovery visibly instead of
+// letting it outlive its owner on an unowned root, while ordinary open-time
+// recovery keeps the same unbounded completion it always had.
 func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthority) (int, error) {
 	b, ok := engine.(*BadgerEngine)
 	if !ok || b == nil || wal == nil {
@@ -52,7 +58,11 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		return 0, err
 	}
 	defer b.work.Leave()
-	if err := b.FlushWriteBehind(context.Background()); err != nil {
+	// The acknowledged writes this recovery must complete keep the engine
+	// owner's context without its cancellation: an accepted write is drained
+	// by this uncancellable waiter, not by a flusher that may already have
+	// returned.
+	if err := b.FlushWriteBehind(context.WithoutCancel(b.work.Context())); err != nil {
 		return 0, fmt.Errorf("wal: complete preceding writes before recovery: %w", err)
 	}
 
@@ -97,7 +107,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 			}
 			// Both reads below are physical-only: the record's own marker,
 			// never the pending generations, which replay does not consult.
-			receipt, err := b.observeBufferedCommitReceipt(context.Background(), bufferedReceiptRead{namespace: envelope.Namespace, logicalID: envelope.LogicalTxID})
+			receipt, err := b.observeBufferedCommitReceipt(b.work.Context(), bufferedReceiptRead{namespace: envelope.Namespace, logicalID: envelope.LogicalTxID})
 			if err != nil {
 				return err
 			}
@@ -108,11 +118,11 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 			// existing buffered replay does; it must not emit a fresh ACK or
 			// append another buffered record while visiting this WAL.
 			envelope.Mode = CommitModeDirect
-			accepted, err := SubmitAcceptedEntityTransaction(context.Background(), b, envelope, ops, nil)
+			accepted, err := SubmitAcceptedEntityTransaction(b.work.Context(), b, envelope, ops, nil)
 			if err != nil {
 				return err
 			}
-			if outcome := accepted.WaitOutcome(context.Background()); outcome.Err != nil {
+			if outcome := accepted.WaitOutcome(b.work.Context()); outcome.Err != nil {
 				return outcome.Err
 			}
 			replayed++
@@ -128,7 +138,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		if data.TxID == "" {
 			return nil
 		}
-		marker, err := b.observeBufferedCommitReceipt(context.Background(), bufferedReceiptRead{namespace: data.Namespace, txID: data.TxID, logicalID: data.LogicalTxID})
+		marker, err := b.observeBufferedCommitReceipt(b.work.Context(), bufferedReceiptRead{namespace: data.Namespace, txID: data.TxID, logicalID: data.LogicalTxID})
 		if err != nil {
 			return fmt.Errorf("wal: failed to check flush marker for %q: %w", data.TxID, err)
 		}
@@ -141,7 +151,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 			}
 			data.numericAliases = historicalNumericAliases
 		}
-		c, err := b.importBufferedWALRecord(&data, authority)
+		c, err := b.importBufferedWALRecord(b.work.Context(), &data, authority)
 		if err != nil {
 			return err
 		}
@@ -164,7 +174,10 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	if replayed == 0 {
 		return 0, err
 	}
-	return replayed, b.completeRecoveredCounts(context.Background(), err)
+	// Count repair is the recovery boundary's own completion: it must finish
+	// for the batches already applied, so it keeps the owner context without
+	// its cancellation.
+	return replayed, b.completeRecoveredCounts(context.WithoutCancel(b.work.Context()), err)
 }
 
 // completeRecoveredCounts is the completion owner for physical WAL recovery.

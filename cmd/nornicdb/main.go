@@ -1108,7 +1108,7 @@ func runServe(cmd *cobra.Command, args []string) (runErr error) {
 		}
 		bytesSweeper = storage.NewBytesMetricsSweeper(
 			storageMetrics,
-			badgerEngine.DB(),
+			badgerEngine,
 			nil, /* search size callback — Plan 04-05 wires */
 			interval,
 		)

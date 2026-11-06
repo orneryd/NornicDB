@@ -39,7 +39,7 @@ func TestManagedBulkPreservesReplacementContract(t *testing.T) {
 								require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, string(db+":e"), true))
 							}
 						}
-						before, _, _ := manager.GetStorageSize(db)
+						before, _, _ := manager.GetStorageSize(context.Background(), db)
 						limits := &Limits{Storage: StorageLimits{MaxNodes: 3, MaxEdges: 1}}
 						if quota == "bytes" {
 							limits = &Limits{Storage: StorageLimits{MaxBytes: before}}
@@ -62,9 +62,9 @@ func TestManagedBulkPreservesReplacementContract(t *testing.T) {
 							if replay == 1 {
 								require.NoError(t, base.FlushWriteBehind(context.Background()))
 							}
-							nodes, edges, err := manager.calculateStorageSizeFromEngine(engine)
+							nodes, edges, err := manager.calculateStorageSizeFromEngine(context.Background(), engine)
 							require.NoError(t, err)
-							after, _, _ := manager.GetStorageSize(db)
+							after, _, _ := manager.GetStorageSize(context.Background(), db)
 							require.Equal(t, nodes+edges, after)
 							nc, err := engine.NodeCount(t.Context())
 							require.NoError(t, err)

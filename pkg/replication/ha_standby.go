@@ -644,7 +644,7 @@ func (r *HAStandbyReplicator) Promote(ctx context.Context) error {
 // promote runs one promotion; Promote ensures only one runs at a time.
 func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 	// Flush any pending WAL
-	if err := r.walApplier.Flush(); err != nil {
+	if err := r.walApplier.Flush(ctx); err != nil {
 		return localizedError(localization.ReplicationHAFlushWALFailed(err), err)
 	}
 
@@ -936,7 +936,7 @@ func (r *HAStandbyReplicator) HandleWALBatch(entries []*WALEntry) (*WALBatchResp
 	r.primaryHealthy.Store(true)
 	r.mu.Unlock()
 
-	lastApplied, err := r.walApplier.ApplyBatch(entries)
+	lastApplied, err := r.walApplier.ApplyBatch(r.work.Context(), entries)
 	if err != nil {
 		return nil, err
 	}
@@ -1051,8 +1051,8 @@ func NewWALApplier(storage Storage) *WALApplier {
 	return &WALApplier{storage: storage}
 }
 
-// ApplyBatch applies a batch of WAL entries.
-func (a *WALApplier) ApplyBatch(entries []*WALEntry) (uint64, error) {
+// ApplyBatch applies a batch of WAL entries; ctx is the caller's work context.
+func (a *WALApplier) ApplyBatch(ctx context.Context, entries []*WALEntry) (uint64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -1075,8 +1075,9 @@ func (a *WALApplier) ApplyBatch(entries []*WALEntry) (uint64, error) {
 	return lastApplied, nil
 }
 
-// Flush ensures all pending entries are applied.
-func (a *WALApplier) Flush() error {
+// Flush ensures all pending entries are applied; ctx is the caller's work
+// context.
+func (a *WALApplier) Flush(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

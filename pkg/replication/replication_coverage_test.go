@@ -905,7 +905,13 @@ func TestRaftReplicator_ApplyBranchCoverage(t *testing.T) {
 
 	fwdConn.forwardErr = errors.New("leader rejected")
 	err = r.Apply(t.Context(), cmd, 10*time.Millisecond)
-	require.ErrorContains(t, err, "leader rejected")
+	// Author: NOR-288 lane (Claude), 2026-10-30. Once forwarded, a failed reply
+	// cannot establish that the leader did not apply the command: the outcome is
+	// committed-pending or unknown, and the reply error stays its cause.
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, err, &accepted)
+	require.Equal(t, storage.CommitRecoveryPending, accepted.State)
+	require.ErrorContains(t, accepted.Err, "leader rejected")
 
 	r.state = StateLeader
 	r.applyCh = make(chan *applyFuture)

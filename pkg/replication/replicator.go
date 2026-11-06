@@ -8,6 +8,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Replicator is the unified interface for all replication modes.
@@ -82,7 +83,7 @@ type Replicator interface {
 
 // Command represents a write operation to be replicated.
 type Command struct {
-	accepted *acceptedEntityCommand
+	accepted *storage.AcceptedEntityCommitHandle
 	// Type identifies the operation type.
 	Type CommandType
 
@@ -397,12 +398,19 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 
 // Apply applies a command directly to storage.
 func (r *StandaloneReplicator) Apply(ctx context.Context, cmd *Command, timeout time.Duration) error {
-	// The application is accepted work: Shutdown waits for it to return.
-	_, release, accepted := r.work.Acquire(r.work.Context())
-	if !accepted {
+	// Enroll the request without replacing its preparation/admission context.
+	// Accepted submission selects its separate completion lifetime at handoff.
+	if !r.work.Enter() {
 		return ErrClosed
 	}
-	defer release()
+	defer r.work.Leave()
+	return r.applyEnrolled(ctx, cmd, timeout)
+}
+
+// applyEnrolled is the shared command body for work already enrolled with
+// this owner. Admission keeps the request context; accepted submission passes
+// its independently owned completion context.
+func (r *StandaloneReplicator) applyEnrolled(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	r.mu.RLock()
 	if err := checkApplyReadiness(r.work.Closing(), r.started); err != nil {
 		r.mu.RUnlock()
@@ -418,9 +426,7 @@ func (r *StandaloneReplicator) Apply(ctx context.Context, cmd *Command, timeout 
 			return err
 		}
 	}
-	// Standalone retains the nonwaiting asynchronous contract: the accepted
-	// application owner's context is passed and the receipt is discarded.
-	_, err := r.storage.ApplyCommand(r.work.Context(), cmd, WALQueued)
+	_, err := r.storage.ApplyCommand(ctx, cmd, WALQueued)
 	return err
 }
 

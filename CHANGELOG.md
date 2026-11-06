@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject a node cascade when a peer has already deleted one of its staged
+  relationships, including after the peer's write-behind generation is flushed.
+  Prevent duplicate relationship-count decrements that made valid backups fail
+  restore with a derived-count underflow.
+
 - Reduce continued retrieval scratch allocations by reusing the exact-stage
   membership proof during HNSW candidate selection. Retain repeated bound-chain
   predicate syntax per statement while rebinding current parameter values.
@@ -397,6 +402,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   combined failure keeps its own status in the message (previously, for example,
   `Neo.TransientError.General.DatabaseUnavailable`, so a managed transaction
   repeated stored work).
+
+- Finish native application of accepted entity commands after transient commit
+  conflicts, without another log entry. Release entity authority at successful
+  publication and preserve explicit pending outcomes for recovery when native
+  completion is unavailable. Keep pending replication work attached to its
+  original receipt after uncertain WAL acknowledgement. Accepted errors expose
+  their cause separately from their non-retryable public outcome. (Author:
+  NOR-288 implementation lane, Codex.)
+- Accepted native replay materializes stored timestamp images without stamping
+  new creation times or normalizing the Unix epoch. Semantic transaction version 3
+  preserves unset and real epoch timestamps separately for nodes and relationships,
+  including nanosecond precision and instants outside the UnixNano range. Version 2
+  payloads retain their existing decoding. New compact V2 relationship bodies
+  preserve unset creation/update times with reserved flag bits; existing bodies
+  retain their meaning and header size. No storage key change or in-place
+  migration is required; readers must be upgraded before writing the new flags.
+  (Author: NOR-288/NOR-292/NOR-303 implementation lane, Codex.)
+- DROP DATABASE whose intent was accepted but whose acknowledgement failed
+  now reports its applied or recovery-pending state as a non-retryable outcome, and
+  the server finishes the drop itself, also when the client stopped waiting
+  (timeout, disconnect, replication wait). Drivers honoring the non-retryable
+  status no longer automatically replay the accepted DROP by name against a
+  replacement database; an explicitly submitted new DROP remains a new command. Every DROP
+  form, CREATE OR REPLACE and Qdrant collection delete finish a drop left pending
+  by a failed final sync.
+  (Author: NOR-288 implementation lane, Claude.)
 
 - Keep typed relationship counts scoped through WAL, tracing, replication and
   managed database views. Journal catalog DROP intent before deleting data;

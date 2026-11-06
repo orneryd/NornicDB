@@ -45,8 +45,6 @@ func (w *WALEngine) logger() *slog.Logger {
 //     unbounded WAL growth.
 type WALEngine struct {
 	pendingEntityCommits sync.Map
-	entityWaitCtx        context.Context
-	stopEntityWait       context.CancelFunc
 	engine               Engine
 	// keyRegistry is engine's PropertyKeyRegistry, nil when it keeps none.
 	keyRegistry PropertyKeyRegistry
@@ -301,12 +299,10 @@ func (w *WALEngine) GetEdgeCurrentHead(ctx context.Context, id EdgeID) (MVCCHead
 
 // NewWALEngine creates a WAL-backed storage engine.
 func NewWALEngine(engine Engine, wal *WAL) *WALEngine {
-	waitCtx, stopWait := context.WithCancel(context.Background())
 	w := &WALEngine{
-		mutationMu:    trackedRWMutex{crossGoroutine: true},
-		entityWaitCtx: waitCtx, stopEntityWait: stopWait,
-		engine: engine,
-		wal:    wal,
+		mutationMu: trackedRWMutex{crossGoroutine: true},
+		engine:     engine,
+		wal:        wal,
 	}
 	w.keyRegistry, _ = engine.(PropertyKeyRegistry)
 	// Give write-behind enabled engines the WAL so buffered commits can be
@@ -433,7 +429,9 @@ func (w *WALEngine) autoSnapshotLoop(ctx context.Context, ticker *time.Ticker) {
 // engine owner: the snapshot stops when the owner closes or compaction is
 // disabled.
 func (w *WALEngine) createSnapshotAndCompact(ctx context.Context) error {
-	w.mutationMu.Lock()
+	if err := w.mutationMu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer w.mutationMu.Unlock()
 
 	if w.wal.work.Closing() {
@@ -988,12 +986,13 @@ func (w *WALEngine) Close() error {
 // underneath closes.
 func (w *WALEngine) signalStop() {
 	w.work.RecordError("", w.wal.Close())
-	w.stopEntityWait()
 	w.pendingEntityCommits.Range(func(_, value any) bool {
 		accepted := value.(*walAcceptedEntityCommit)
-		accepted.prepared.CloseNative()
 		accepted.releaseMutation()
-		_ = accepted.resolve.Resolve(CommitOutcome{State: CommitRecoveryPending, Err: ErrStorageClosed})
+		// Author: NOR-288 lane (Codex), 2026-10-27. Closing staging cannot
+		// certify rejection of a command already recorded in this WAL; its
+		// accepted owner releases its staging and keeps it pending.
+		accepted.handle.Close(accepted.resolve, ErrStorageClosed)
 		return true
 	})
 	w.DisableAutoCompaction()

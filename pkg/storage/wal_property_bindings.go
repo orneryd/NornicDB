@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -23,7 +24,7 @@ type walPropertyToken struct {
 // physical body and a locally applicable commit. Complete tables belong to one
 // record or its explicit immutable epoch. Unstamped legacy bytes need the
 // own-WAL constructor authority; no matching token establishes that authority.
-func (b *BadgerEngine) importBufferedWALRecord(data *WALBufferedCommitData, authority walPropertyAuthority) (bufferedCommit, error) {
+func (b *BadgerEngine) importBufferedWALRecord(ctx context.Context, data *WALBufferedCommitData, authority walPropertyAuthority) (bufferedCommit, error) {
 	db, err := b.beginHelperTxn()
 	if err != nil {
 		return bufferedCommit{}, err
@@ -47,7 +48,7 @@ func (b *BadgerEngine) importBufferedWALRecord(data *WALBufferedCommitData, auth
 	s.Lock()
 	defer s.Unlock()
 	if authority == walForeignImport || data.PropertyDictionaryID != "" && data.PropertyDictionaryID != s.identity {
-		if err := b.markPropertySourceForeignLocked(db); err != nil {
+		if err := b.markPropertySourceForeignLocked(ctx, db); err != nil {
 			return bufferedCommit{}, err
 		}
 	}
@@ -192,7 +193,7 @@ func (b *BadgerEngine) importBufferedWALRecord(data *WALBufferedCommitData, auth
 		// Re-allocation changes the physical dictionary domain even during an
 		// original-directory import of an older self-contained record. Persist
 		// that fact before any remapped body or destination drain can apply.
-		if err := b.markPropertySourceForeignLocked(db); err != nil {
+		if err := b.markPropertySourceForeignLocked(ctx, db); err != nil {
 			return bufferedCommit{}, err
 		}
 	}

@@ -18,7 +18,11 @@ issuing a new, non-idempotent request after an uncertain outcome.
 
 Direct Go writes expose errors after acceptance as `*storage.AcceptedCommitError`.
 Use `errors.As` to inspect `State` (`CommitApplied` or `CommitRecoveryPending`)
-and `LogicalID` when available. `errors.Is` still reaches the original error.
+and `LogicalID` when available. Identify `*storage.AcceptedCommitError` with
+`errors.As`, then inspect its `Err` field for diagnostics. Ordinary `errors.Is`
+traversal stops at this accepted-outcome boundary: an underlying conflict or
+cancellation must not make a committed or recovery-pending command look like a
+fresh rejection that a driver can safely resubmit.
 An error from a failed forwarded reply is recovery-pending because the leader
 may have accepted the request. A definite pre-admission rejection remains an
 ordinary error. Do not roll back catalog admission on an accepted error.
@@ -52,6 +56,20 @@ those writes correctly. Do not downgrade a store containing those records to a
 version that cannot read them. Before upgrading an installation with outstanding
 retired raw-command records, drain them using the old version and verify its state;
 keep a backup. The new version does not automatically translate those records.
+
+This release emits semantic entity-transaction format 3. Its timestamp encoding
+keeps an unset time distinct from the Unix epoch, and its embedding metadata
+encoding preserves absent versus explicitly empty maps. The reader still accepts
+format-2 records with their original interpretation; format 2 cannot distinguish
+an epoch timestamp from its historical zero/unset encoding. No stored Badger key
+or node/relationship payload migration is introduced by this wire change.
+
+Every reader of new records, including replicas and recovery tools, must support
+format 3 before writes resume. This is an operator-coordinated upgrade requirement,
+not automatic peer-version negotiation. Do not run mixed format-2-only and
+format-3 writers/readers, or downgrade a WAL containing format-3 records to an
+older reader. Restore using a compatible binary and retain a pre-upgrade backup.
+
 
 ## Custom Go storage adapters
 
@@ -90,6 +108,25 @@ operations, settle)`. This replaces the former byte-payload parameter and lets
 the replication owner reject malformed data before recording it without decoding
 the same transaction twice. Accepted transactions that later fail locally remain
 available for recovery.
+
+## Compact relationship timestamps
+
+New compact V2 relationship bodies use previously unused flag bits 2 and 3 to
+mark unset `CreatedAt` and `UpdatedAt`. The format byte, key layout, field offsets,
+header length, property encoding and raw nanosecond fields stay unchanged. An
+epoch value remains a real instant; only an explicit unset flag selects the zero
+time. Normal nonzero images retain their existing bytes.
+
+Existing writers used only flag bits 0 and 1. Existing valid bodies therefore
+keep their original interpretation, and the V1 migration reader is unchanged.
+No existing body is rewritten and no in-place migration or storage-version bump
+is required. Previously lost unset times cannot be inferred from old wrapped
+nanoseconds and are not backfilled.
+
+All readers of newly written unset-time bodies must include this correction.
+Older binaries ignore the new flags and misread those new unset values; downgrade
+is unsupported without restoring a pre-upgrade backup. This is a reader rollout
+constraint, not a claim that old binaries can understand the added semantics.
 
 ## Native image interpretation
 

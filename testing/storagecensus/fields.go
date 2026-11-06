@@ -70,6 +70,13 @@ var fieldClasses = map[string]fieldRow{
 
 	// Runtime publication order is assigned only by stage registration, not an entity MVCC field.
 	"pkg/storage.commitPublication.ts": {class: "publication-order", owners: []string{"pkg/storage.publicationStage.register"}},
+	// An accepted command's pending reports reach its outer receipt in the
+	// order their cause arose: ObservePending sequences a cause, and
+	// publishPending keeps the highest sequence already reported under
+	// pendingMu, so an asynchronous join cannot report an earlier cause over a
+	// later one. That is runtime report ordering, not an entity count, quota or
+	// suppression field, so only publishPending changes it.
+	"pkg/storage.AcceptedEntityCommitHandle.pendingTop": {class: "publication-order", owners: []string{"pkg/storage.AcceptedEntityCommitHandle.publishPending"}},
 	// A reserved commit notification is unready from its reservation until it is
 	// made ready: reserveCommitNotification increments and readyCommitNotification
 	// decrements it under notificationMu, and ReadPublicationSettled reads it under
@@ -125,7 +132,6 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/multidb.storageUsage.nodeBytes":       {class: "local stored-image accounting delta"},
 	"pkg/multidb.storageUsage.edgeBytes":       {class: "local stored-image accounting delta"},
 	"pkg/storage.BadgerTransaction.commitMode": {class: "transaction producer durability and ACK policy"},
-	"pkg/storage.CommitOutcome.State":          {class: "accepted command outcome value"},
 
 	// The bulk read owns this stack-local polling countdown. It controls only
 	// when ctx.Err is observed; it is neither an entity count nor a persisted,
@@ -164,9 +170,7 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.uniqueConstraintSeenTable.keys":    {class: "constraint lock request scratch"},
 	// The operation kind belongs to a newly encoded transaction image, not
 	// the stored entity or its publication-order state.
-	"pkg/storage.semanticTransactionChange.Type":          {class: "semantic transaction serialization kind"},
-	"pkg/storage.semanticTransactionNode.CreatedAtUnixNs": {class: "semantic transaction serialized timestamp"},
-	"pkg/storage.semanticTransactionNode.UpdatedAtUnixNs": {class: "semantic transaction serialized timestamp"},
+	"pkg/storage.semanticTransactionChange.Type": {class: "semantic transaction serialization kind"},
 	// QueryCypher owns the resolved mode; Fabric consumes it to claim writes.
 	"pkg/storage.remoteCypherTx.resolvedMode": {class: "resolved remote query mode"},
 

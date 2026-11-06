@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -25,7 +26,7 @@ func (m *DatabaseManager) storageSizeInitialized(databaseName string) (bool, err
 
 // ensureStorageSizeInitialized performs one-time exact size calculation from storage
 // and caches the result for O(1) future reads.
-func (m *DatabaseManager) ensureStorageSizeInitialized(databaseName string, engine storage.Engine) error {
+func (m *DatabaseManager) ensureStorageSizeInitialized(ctx context.Context, databaseName string, engine storage.Engine) error {
 	m.mu.RLock()
 	info := m.databases[databaseName]
 	var limits *Limits
@@ -56,7 +57,7 @@ func (m *DatabaseManager) ensureStorageSizeInitialized(databaseName string, engi
 	if ready {
 		return nil
 	}
-	nodes, edges, err := m.calculateStorageSizeFromEngine(engine)
+	nodes, edges, err := m.calculateStorageSizeFromEngine(ctx, engine)
 	if err != nil {
 		return err
 	}
@@ -114,11 +115,11 @@ func (m *DatabaseManager) applyStorageSizeDelta(databaseName string, nodeDelta, 
 	}
 }
 
-func (m *DatabaseManager) calculateStorageSizeFromEngine(engine storage.Engine) (int64, int64, error) {
+func (m *DatabaseManager) calculateStorageSizeFromEngine(ctx context.Context, engine storage.Engine) (int64, int64, error) {
 	var nodeSize int64
 	var edgeSize int64
 
-	err := storage.StreamStoredNodes(m.lifetime().Context(), engine, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
+	err := storage.StreamStoredNodes(ctx, engine, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 		size, sizeErr := calculateNodeSize(node)
 		if sizeErr != nil {
 			return localizedError(localization.MultidbStorageCalculateNodeSizeFailed(sizeErr), sizeErr)
@@ -129,7 +130,7 @@ func (m *DatabaseManager) calculateStorageSizeFromEngine(engine storage.Engine) 
 	if err != nil {
 		return 0, 0, localizedError(localization.MultidbStorageGetAllNodesForSizeCalculationFailed(err), err)
 	}
-	err = storage.StreamStoredEdgesByType(m.lifetime().Context(), engine, "", func(edge *storage.Edge) error {
+	err = storage.StreamStoredEdgesByType(ctx, engine, "", func(edge *storage.Edge) error {
 		size, sizeErr := calculateEdgeSize(edge)
 		if sizeErr != nil {
 			return localizedError(localization.MultidbStorageCalculateEdgeSizeFailed(sizeErr), sizeErr)

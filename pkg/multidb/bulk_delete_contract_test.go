@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -18,7 +19,7 @@ func TestManagedBulkMissingDeleteRejectsAtomically(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, view.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "R"}))
-			before, _, _ := manager.GetStorageSize(database)
+			before, _, _ := manager.GetStorageSize(context.Background(), database)
 			node, err := storage.GetStoredNode(t.Context(), view, "a")
 			require.NoError(t, err)
 			edge, err := storage.GetStoredEdge(t.Context(), view, "e")
@@ -41,7 +42,7 @@ func TestManagedBulkMissingDeleteRejectsAtomically(t *testing.T) {
 			edges, err := view.EdgeCount(t.Context())
 			require.NoError(t, err)
 			require.EqualValues(t, 1, edges)
-			after, _, _ := manager.GetStorageSize(database)
+			after, _, _ := manager.GetStorageSize(context.Background(), database)
 			require.Equal(t, before, after)
 		})
 	}

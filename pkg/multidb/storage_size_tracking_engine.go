@@ -538,6 +538,8 @@ func (t *sizeTrackingEngine) qualifyEntityOperations(ctx context.Context, ops []
 
 // prepareManagedDirect is also registered for leader raw-command admission.
 // It stages and admits once; its caller owns submission and terminal settlement.
+// The caller's required context owns admission. Accepted work transfers to
+// its existing receipt/lifetime owner after submission.
 func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []storage.Operation, mode storage.EntityCommitMode) (prepared *storage.PreparedEntityCommit, settle func(storage.CommitOutcome), prepareErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, nornicerrors.MarkCommitRolledBack(err)
@@ -567,6 +569,9 @@ func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []sto
 			prepareErr = nornicerrors.MarkCommitRolledBack(prepareErr)
 		}
 	}()
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if err := tx.SetNamespace(t.dbName); err != nil {
 		return nil, nil, err
 	}

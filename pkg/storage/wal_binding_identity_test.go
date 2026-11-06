@@ -57,6 +57,7 @@ func TestWALPropertyOriginalImportAllocationBounds(t *testing.T) {
 	for _, count := range []int{1, 160} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			source, data := r2BindingData(t, count)
+			ctx := source.work.Context()
 			data.PropertyBindings = nil
 			for _, stamped := range []bool{false, true} {
 				data.PropertyDictionaryID = ""
@@ -64,7 +65,7 @@ func TestWALPropertyOriginalImportAllocationBounds(t *testing.T) {
 					data.PropertyDictionaryID = source.walPropertySource.identity
 				}
 				allocs := testing.AllocsPerRun(32, func() {
-					commit, err := source.importBufferedWALRecord(&data, walOwnDirectoryAtOpen)
+					commit, err := source.importBufferedWALRecord(ctx, &data, walOwnDirectoryAtOpen)
 					if err != nil {
 						t.Fatal(err)
 					}

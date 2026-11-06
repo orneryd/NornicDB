@@ -19,7 +19,7 @@ func TestHiddenNodeIDRemainsOccupiedAtAndBelowQuota(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, string(db+":hidden"), true))
-	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(db)
+	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(context.Background(), db)
 	require.Positive(t, beforeNodes)
 
 	// Below a quota, physical identity still wins over query visibility.
@@ -35,7 +35,7 @@ func TestHiddenNodeIDRemainsOccupiedAtAndBelowQuota(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "fresh", Labels: []string{"Fresh"}})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded, "the hidden stored node consumes count and byte quota")
 
-	total, nodes, edges := manager.GetStorageSize(db)
+	total, nodes, edges := manager.GetStorageSize(context.Background(), db)
 	require.Equal(t, beforeTotal, total)
 	require.Equal(t, beforeNodes, nodes)
 	require.Equal(t, beforeEdges, edges)
@@ -66,7 +66,7 @@ func TestBulkRollbackDoesNotDeleteIdenticalHiddenEdgeNoOp(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(t.Context(), original))
 	require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, string(db+":hidden"), true))
 	storedBefore := mustStoredEdge(t, engine, "hidden")
-	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(db)
+	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(context.Background(), db)
 
 	err = engine.BulkCreateEdges(t.Context(), []*storage.Edge{
 		{ID: "hidden", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"key": "same"}},
@@ -79,7 +79,7 @@ func TestBulkRollbackDoesNotDeleteIdenticalHiddenEdgeNoOp(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrNotFound, "only the genuinely created batch member is compensated")
 	edgeCount, err := engine.EdgeCount(t.Context())
 	require.EqualValues(t, 1, mustCountValue(t, edgeCount, err))
-	total, nodes, edges := manager.GetStorageSize(db)
+	total, nodes, edges := manager.GetStorageSize(context.Background(), db)
 	require.Equal(t, beforeTotal, total)
 	require.Equal(t, beforeNodes, nodes)
 	require.Equal(t, beforeEdges, edges)
@@ -99,7 +99,7 @@ func TestHiddenEdgeIDAtQuotaDefersToStorage(t *testing.T) {
 	}))
 	require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, string(db+":hidden"), true))
 	storedBefore := mustStoredEdge(t, engine, "hidden")
-	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(db)
+	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(context.Background(), db)
 	edgeCount, err := engine.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxEdges: edgeCount}}))
@@ -118,7 +118,7 @@ func TestHiddenEdgeIDAtQuotaDefersToStorage(t *testing.T) {
 	require.ErrorIs(t, err, ErrStorageLimitExceeded, "the hidden stored relationship consumes the edge quota")
 
 	require.Equal(t, storedBefore, mustStoredEdge(t, engine, "hidden"))
-	total, nodes, edges := manager.GetStorageSize(db)
+	total, nodes, edges := manager.GetStorageSize(context.Background(), db)
 	require.Equal(t, beforeTotal, total)
 	require.Equal(t, beforeNodes, nodes)
 	require.Equal(t, beforeEdges, edges)
