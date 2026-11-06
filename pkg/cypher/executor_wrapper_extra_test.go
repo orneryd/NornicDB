@@ -338,7 +338,7 @@ func TestExecuteSetTrailingUnwind_ErrorAndProjectionBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = exec.Execute(context.Background(), "UNWIND [1,2,3] RETURN 1", nil)
-	requireSyntaxErrorStatus(t, err, "UNWIND [1,2,3] RETURN 1")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "UNWIND [1,2,3] RETURN 1")
 
 	_, err = exec.sharedTrailingRowsForTest(context.Background(), "UNWIND [1,2,3] AS item", matchResult, &ExecuteResult{})
 	require.NoError(t, err)

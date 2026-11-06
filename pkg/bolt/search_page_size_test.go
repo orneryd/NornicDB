@@ -22,7 +22,7 @@ func TestSearchContinuationPageSizeBolt(t *testing.T) {
 				_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("page-%04d", i))})
 				require.NoError(t, err)
 			}
-			server, port := startBoltIntegrationServer(t, store)
+			server, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 			svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			maxPageSize := limit

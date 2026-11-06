@@ -210,7 +210,7 @@ func TestBoltIdleTimeoutCleanupFailureImmediatelyClosesAndQuarantines(t *testing
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
-	port := startBoltTestServer(t, server, rollbackShutdownCheck(t, executor.rollbackErr, nil))
+	port := serveBoltIntegrationServer(t, server, rollbackShutdownCheck(t, executor.rollbackErr, nil))
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{"tx_timeout": int64(25)})
 
@@ -269,8 +269,8 @@ func TestBoltTimeoutCannotAutocommitRunWaitingBeforeAdapterAdmission(t *testing.
 	}
 
 	fresh := openBoltTestConn(t, port)
-	require.Equal(t, [][]any{{int64(0)}}, runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (n:TxAdmissionProbe {id: 'must-rollback'}) RETURN count(n)"),
+	require.Equal(t, [][]any{{int64(0)}}, runBoltQueryWithParams(t, fresh,
+		"MATCH (n:TxAdmissionProbe {id: 'must-rollback'}) RETURN count(n)", nil),
 		"a RUN admitted after timeout rollback must never auto-commit")
 }
 
@@ -395,7 +395,7 @@ func TestBoltDisconnectWaitsForAdmittedTimeoutCleanup(t *testing.T) {
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{
 		"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),

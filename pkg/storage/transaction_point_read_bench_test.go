@@ -65,4 +65,22 @@ func BenchmarkNativeTransactionPointRead(b *testing.B) {
 			}
 		})
 	}
+	b.Run("cold-node", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			reader, err := engine.BeginTransaction(b.Context())
+			if err != nil {
+				b.Fatal(err)
+			}
+			node, readErr := reader.GetNode(b.Context(), "point:a")
+			closeErr := reader.Rollback()
+			if readErr != nil || node == nil || node.Properties["name"] != "point" {
+				b.Fatalf("cold point read: %v, %v", node, readErr)
+			}
+			if closeErr != nil {
+				b.Fatal(closeErr)
+			}
+		}
+	})
+
 }

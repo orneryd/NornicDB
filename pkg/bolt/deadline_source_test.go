@@ -30,21 +30,21 @@ func TestBoltLazyResultTimeoutSource(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = mgr.Close() })
 			server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 32, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, mgr)
-			port := startBoltTestServer(t, server)
+			port := serveBoltIntegrationServer(t, server)
 			conn := openBoltTestConn(t, port)
-			runBoltQueryAndCollectRecords(t, conn, fmt.Sprintf("UNWIND range(0, %d) AS i CREATE (:Item {k: i})", 2999))
+			runBoltQueryWithParams(t, conn, fmt.Sprintf("UNWIND range(0, %d) AS i CREATE (:Item {k: i})", 2999), nil)
 			limits := multidb.DefaultLimits()
 			limits.Query.MaxQueryTime = test.limit
 			require.NoError(t, mgr.SetDatabaseLimits(t.Context(), "nornic", limits))
 			require.NoError(t, SendRun(t, conn, "MATCH (n:Item) RETURN n.k AS k", nil, map[string]any{"tx_timeout": test.txTimeoutMs}))
 			_, err = AssertSuccess(t, conn)
 			require.NoError(t, err)
-			records, success, failure := pullBatch(t, conn, 10)
+			records, success, failure := pullBatch(t, conn, map[string]any{"n": int64(10)})
 			require.Empty(t, failure)
 			require.Len(t, records, 10)
 			require.Equal(t, true, success["has_more"], "the result is streamed")
 			time.Sleep(400 * time.Millisecond)
-			_, _, failure = pullBatch(t, conn, -1)
+			_, _, failure = pullBatch(t, conn, map[string]any{"n": int64(-1)})
 			require.Equal(t, test.want, failure)
 		})
 	}
@@ -81,7 +81,7 @@ func (engine expiredDatabaseLimitEngine) GetQueryLimitChecker() interface {
 // that won, the server's, with its message (sol-r2-1392 P2).
 func TestBoltDatabaseDeadlineWinsAfterBothExpired(t *testing.T) {
 	store := expiredDatabaseLimitEngine{storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "deadline_winner")}
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
 	require.NoError(t, SendRun(t, conn, "UNWIND range(1, 100000000) AS x WITH x WHERE x < 0 RETURN count(x) AS c", nil, map[string]any{"tx_timeout": int64(2000)}))

@@ -12,7 +12,7 @@ import (
 func TestLegacyDateTimeWireSignatureFailurePreservesState(t *testing.T) {
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 	for _, target := range []struct {
 		name, address string
 		reference     bool

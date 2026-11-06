@@ -18,44 +18,11 @@ type OwnedPropertyValue interface {
 	StoragePropertyValue() (value any, exact bool)
 }
 
-// canonicalPropertyValue owns retained property data at ingress and decode.
-// Numeric interpretation belongs to convert; typed scalars retain their codec
-// owner's representation, including pointer and timezone semantics.
-func canonicalPropertyValue(value any) any {
-	owned, _ := ownPropertyValue(value)
-	return owned
-}
-
-func ownPropertyValue(value any) (any, bool) {
-	return ownRetainedValue(value, true)
-}
-
-// ownedValueCopy detaches an in-memory value without applying durable property
-// normalization. Generic entity copies, metadata and diagnostic images retain
-// their Go scalar/list types; durable ingress uses canonicalPropertyValue.
-func ownedValueCopy(value any) any {
-	owned, exact := ownRetainedValue(value, false)
-	if exact {
-		return owned
-	}
-	// Uncommon metadata containers use the existing named-value codec's
-	// representation. Invalid images retain their existing serializer error
-	// point; no new metadata value format or admission policy is introduced.
-	data, err := EncodeNamedProperties(map[string]any{"value": value})
-	if err != nil {
-		return owned
-	}
-	decoded, err := DecodeNamedMetadata(data)
-	if err != nil {
-		return owned
-	}
-	return decoded["value"]
-}
-
 // ownedEntries copies src entries into dst, taking ownership of every value
-// through ownedValueCopy. A nil dst is allocated with room for src, so callers
-// that return an independent image always get a non-nil map, while callers that
-// must keep an absent map absent check the nil before the call.
+// through ownedValueCopy (property_copy.go, the generic copy owner). A nil dst
+// is allocated with room for src, so callers that return an independent image
+// always get a non-nil map, while callers that must keep an absent map absent
+// check the nil before the call.
 func ownedEntries(dst, src map[string]any) map[string]any {
 	if dst == nil {
 		dst = make(map[string]any, len(src))
@@ -66,7 +33,9 @@ func ownedEntries(dst, src map[string]any) map[string]any {
 	return dst
 }
 
-func ownRetainedValue(value any, propertyImage bool) (any, bool) {
+// ownRetainedValue returns value in the representation the durable decoder
+// returns, and whether that image is exact (see OwnedPropertyValue).
+func ownRetainedValue(value any) (any, bool) {
 	// These immutable scalar images already match the durable decoder. Keep
 	// their existing interface boxes instead of allocating a replacement on
 	// every cache copy. Other numeric types still require codec normalization.
@@ -75,9 +44,6 @@ func ownRetainedValue(value any, propertyImage bool) (any, bool) {
 		return value, true
 	}
 	if number, ok := convert.ReadNumber(value); ok {
-		if !propertyImage {
-			return value, true
-		}
 		switch number.Kind() {
 		case convert.SignedNumber:
 			v, _ := number.Signed()
@@ -101,17 +67,8 @@ func ownRetainedValue(value any, propertyImage bool) (any, bool) {
 		if rv.Kind() == reflect.Pointer && rv.IsNil() {
 			return nil, true
 		}
-		owned, exact := v.StoragePropertyValue()
-		if !propertyImage && rv.Kind() == reflect.Pointer && owned != nil && reflect.TypeOf(owned) == rv.Type().Elem() {
-			pointer := reflect.New(rv.Type().Elem())
-			pointer.Elem().Set(reflect.ValueOf(owned))
-			return pointer.Interface(), exact
-		}
-		return owned, exact
+		return v.StoragePropertyValue()
 	case time.Time:
-		if !propertyImage {
-			return v, true
-		}
 		location := v.Location()
 		if strings.Contains(location.String(), "/") {
 			var err error
@@ -126,61 +83,32 @@ func ownRetainedValue(value any, propertyImage bool) (any, bool) {
 		return time.Unix(v.Unix(), int64(v.Nanosecond())).In(location), true
 	case map[string]any:
 		if v == nil {
-			if !propertyImage {
-				return v, true
-			}
 			return nil, true
 		}
-		return ownRetainedMap(v, propertyImage)
+		return ownRetainedMap(v)
 	case []byte:
 		if v == nil {
-			if !propertyImage {
-				return v, true
-			}
 			return nil, true
 		}
 		return slices.Clone(v), true
 	case []float32:
-		return retainedTypedPropertyList(v, propertyImage), true
+		return retainedTypedPropertyList(v), true
 	case []float64:
-		return retainedTypedPropertyList(v, propertyImage), true
+		return retainedTypedPropertyList(v), true
 	case []int64:
-		return retainedTypedPropertyList(v, propertyImage), true
+		return retainedTypedPropertyList(v), true
 	case []string:
-		return retainedTypedPropertyList(v, propertyImage), true
+		return retainedTypedPropertyList(v), true
 	case []bool:
-		return retainedTypedPropertyList(v, propertyImage), true
+		return retainedTypedPropertyList(v), true
 	}
 	if list, ok := convert.ReadList(value); ok {
 		if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice && rv.IsNil() {
-			if !propertyImage {
-				return value, true
-			}
 			return nil, true
-		}
-		if !propertyImage {
-			original := reflect.ValueOf(value)
-			var owned reflect.Value
-			if original.Kind() == reflect.Array {
-				owned = reflect.New(original.Type()).Elem()
-			} else {
-				owned = reflect.MakeSlice(original.Type(), list.Len(), list.Len())
-			}
-			exact := true
-			for i := 0; i < list.Len(); i++ {
-				// The numeric list reader intentionally normalizes Go integers.
-				// Generic copies preserve the source element's concrete type.
-				item, ok := ownRetainedValue(original.Index(i).Interface(), false)
-				exact = exact && ok
-				if item != nil {
-					owned.Index(i).Set(reflect.ValueOf(item))
-				}
-			}
-			return owned.Interface(), exact
 		}
 		exact := true
 		result, _ := canonicalPropertyList(list.Len(), func(i int) (any, error) {
-			owned, ok := ownPropertyValue(list.At(i))
+			owned, ok := ownRetainedValue(list.At(i))
 			exact = exact && ok
 			return owned, nil
 		})
@@ -189,30 +117,18 @@ func ownRetainedValue(value any, propertyImage bool) (any, bool) {
 	return value, false
 }
 
-func ownedProperties(properties map[string]any) map[string]any {
-	owned, _ := ownPropertyMap(properties)
-	return owned
-}
-
-func ownPropertyMap(properties map[string]any) (map[string]any, bool) {
-	return ownRetainedMap(properties, true)
-}
-
-func ownRetainedMap(properties map[string]any, propertyImage bool) (map[string]any, bool) {
+func ownRetainedMap(properties map[string]any) (map[string]any, bool) {
 	result := make(map[string]any, len(properties))
 	exact := true
 	for key, value := range properties {
-		owned, ok := ownRetainedValue(value, propertyImage)
+		owned, ok := ownRetainedValue(value)
 		result[key] = owned
 		exact = exact && ok
 	}
 	return result, exact
 }
 
-func retainedTypedPropertyList[T any](values []T, propertyImage bool) any {
-	if !propertyImage {
-		return slices.Clone(values)
-	}
+func retainedTypedPropertyList[T any](values []T) any {
 	if values == nil {
 		return nil
 	}

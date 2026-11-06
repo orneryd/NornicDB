@@ -48,7 +48,7 @@ func TestCompositeAlterPublicAdmission(t *testing.T) {
 				query   string
 				columns []string
 			}{
-				{"CREATE COMPOSITE DATABASE explain_admission ALIAS r FOR DATABASE nornic AT '" + endpoint + "' TYPE remote ACCESS read", []string{"name"}},
+				{"CREATE COMPOSITE DATABASE explain_admission ALIAS r FOR DATABASE nornic AT '" + endpoint + "' TYPE remote ACCESS read", []string{}},
 				{"ALTER COMPOSITE DATABASE alter_admission ADD ALIAS explained FOR DATABASE nornic AT '" + endpoint + "' TYPE remote ACCESS read", []string{"composite_database", "action", "alias", "database", "type", "uri", "secret_ref", "auth_mode", "user"}},
 			} {
 				plan, err := executor.Execute(ctx, "EXPLAIN "+explain.query, nil)
@@ -99,10 +99,13 @@ func TestCompositePreparedCommandExplain(t *testing.T) {
 				query   string
 				columns []string
 				count   int
+				// rows is the declared record count: creation returns no
+				// records, ALTER reports the constituent it changed.
+				rows int
 			}{
-				{create, []string{"name"}, 0},
-				{add, []string{"composite_database", "action", "alias", "database", "type", "uri", "secret_ref", "auth_mode", "user"}, 1},
-				{drop, []string{"composite_database", "action", "alias"}, 2},
+				{create, []string{}, 0, 0},
+				{add, []string{"composite_database", "action", "alias", "database", "type", "uri", "secret_ref", "auth_mode", "user"}, 1, 1},
+				{drop, []string{"composite_database", "action", "alias"}, 2, 1},
 			} {
 				result, err := executor.Execute(ctx, "EXPLAIN "+entry.query, nil)
 				require.NoError(t, err)
@@ -121,7 +124,7 @@ func TestCompositePreparedCommandExplain(t *testing.T) {
 				result, err = executor.Execute(ctx, entry.query, nil)
 				require.NoError(t, err)
 				require.Equal(t, entry.columns, result.Columns)
-				require.Len(t, result.Rows, 1)
+				require.Len(t, result.Rows, entry.rows)
 			}
 			refs, err := manager.GetCompositeConstituents("prepared_composite")
 			require.NoError(t, err)
@@ -138,7 +141,8 @@ func TestCompositePreparedCommandExplain(t *testing.T) {
 			require.Error(t, err)
 			result, err := executor.Execute(ctx, "CREATE COMPOSITE DATABASE prepared_composite IF NOT EXISTS ALIAS unused FOR DATABASE missing_runtime_target", nil)
 			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{"prepared_composite"}}, result.Rows)
+			require.Equal(t, []string{}, result.Columns)
+			require.Empty(t, result.Rows)
 			require.Nil(t, result.Administration)
 
 		})

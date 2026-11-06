@@ -26,11 +26,11 @@ func TestNumericZeroAndNaNIndexKeys(t *testing.T) {
 		t.Run(index.name, func(t *testing.T) {
 			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
-			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
+			_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "test"), boltIntegrationExplicitTx)
 			conn := openBoltTestConn(t, port)
 			defer conn.Close()
 			if index.ddl != "" {
-				runBoltQueryAndCollectRecords(t, conn, index.ddl)
+				runBoltQueryWithParams(t, conn, index.ddl, nil)
 			}
 			for k, value := range values {
 				runBoltQueryWithParams(t, conn, "CREATE (:ZeroKey {k:$k, tenant:7, v:$v})", map[string]any{"k": int64(k), "v": value})
@@ -66,15 +66,15 @@ func TestCompositeKeyZeroSigns(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
-			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
+			_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "test"), boltIntegrationExplicitTx)
 			peer := openBoltTestConn(t, port)
 			defer peer.Close()
-			runBoltQueryAndCollectRecords(t, peer, "CREATE CONSTRAINT zero_tuple FOR (n:ZeroTuple) REQUIRE (n.tenant, n.v) IS "+kind)
+			runBoltQueryWithParams(t, peer, "CREATE CONSTRAINT zero_tuple FOR (n:ZeroTuple) REQUIRE (n.tenant, n.v) IS "+kind, nil)
 			loser := openBoltTestConn(t, port)
 			defer loser.Close()
 			requireNoError(t, SendBegin(t, loser, nil))
 			requireNoError(t, ReadSuccess(t, loser))
-			runBoltQueryAndCollectRecords(t, loser, "CREATE (:AdmissionAudit {id:'loser'})")
+			runBoltQueryWithParams(t, loser, "CREATE (:AdmissionAudit {id:'loser'})", nil)
 			runBoltQueryWithParams(t, peer, "CREATE (:ZeroTuple {tenant:$a, v:$v, tag:7})", map[string]any{"a": negativeZero, "v": large})
 			merge := "MERGE (n:ZeroTuple {tenant:$a, v:$v}) RETURN n.tag"
 			requireNoError(t, SendRun(t, loser, merge, map[string]any{"a": int64(0), "v": large}, nil))
@@ -92,7 +92,7 @@ func TestCompositeKeyZeroSigns(t *testing.T) {
 					t.Errorf("MERGE with tenant %v (%T): got %v, want the stored tag 7", tenant, tenant, records)
 				}
 			}
-			if records := runBoltQueryAndCollectRecords(t, peer, "MATCH (n:ZeroTuple) RETURN count(n)"); len(records) != 1 || records[0][0] != int64(1) {
+			if records := runBoltQueryWithParams(t, peer, "MATCH (n:ZeroTuple) RETURN count(n)", nil); len(records) != 1 || records[0][0] != int64(1) {
 				t.Errorf("MERGE must not create a second zero tuple, got %v", records)
 			}
 			duplicate := openBoltTestConn(t, port)

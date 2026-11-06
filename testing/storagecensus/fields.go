@@ -132,6 +132,9 @@ var fieldClasses = map[string]fieldRow{
 	// quota, suppression or publication-order value. Classify the exact field,
 	// so new state on the type still requires its own census decision.
 	"pkg/storage.bulkReadCancellation.remaining": {class: "request-local cancellation polling progress"},
+	// A fresh walker owns this bounded cursor for one caller-copy traversal;
+	// it is neither retained engine state nor a stored entity/accounting count.
+	"pkg/storage.callerCopyWalker.count": {class: "caller-copy traversal progress"},
 	// These offsets delimit equal-value groups in the privately owned ID result
 	// of readPropertyIndexSnapshot. They are query-result metadata, created by
 	// snapshotPropertyIndexLocked and consumed after the source leases end; they

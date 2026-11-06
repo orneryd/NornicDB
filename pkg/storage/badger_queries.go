@@ -488,7 +488,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			if !ok || b.writeBehind != nil {
 				return nil, false
 			}
-			return projectCachedNodeForRead(cached, properties, false, queryNodes), true
+			return projectCachedNodeForRead(cached, properties, false), true
 		}
 		readPoint := func(nodeID NodeID) error {
 			node, cached := cachedNode(nodeID)
@@ -606,7 +606,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 		if !nodeIDInScope(n.ID, scope) {
 			continue
 		}
-		if err := visit(projectCachedNodeForRead(n, properties, false, queryNodes)); err != nil {
+		if err := visit(projectCachedNodeForRead(n, properties, false)); err != nil {
 			return err
 		}
 	}
@@ -634,14 +634,11 @@ func mergeWriteBehindEntities[T any, K comparable](committed, overlay []*T, touc
 	return out
 }
 
-func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings bool, queryRead ...bool) *Node {
+func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings bool) *Node {
 	if node == nil {
 		return nil
 	}
 	if properties == nil {
-		if len(queryRead) > 0 && queryRead[0] && !stripEmbeddings {
-			return copyNodeForCaller(node)
-		}
 		if stripEmbeddings {
 			return copyNodeWithoutEmbeddings(node)
 		}
@@ -661,7 +658,7 @@ func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings b
 	projected.Properties = make(map[string]any, len(properties))
 	for _, property := range properties {
 		if value, ok := node.Properties[property]; ok {
-			projected.Properties[property] = canonicalPropertyValue(value)
+			projected.Properties[property], _ = ownRetainedValue(value)
 		}
 	}
 	return projected
@@ -1415,8 +1412,11 @@ func (b *BadgerEngine) edgeHeaders(ctx context.Context, nodeID NodeID, outgoing 
 			committed = filtered
 		}
 		for _, e := range live {
-			copyEdge := *e
-			committed = append(committed, &copyEdge)
+			header := *e
+			// This capability promises ID/type/endpoints, not properties.
+			// Do not let a header expose the overlay's retained property map.
+			header.Properties = nil
+			committed = append(committed, &header)
 		}
 		return committed, true, nil
 	}
@@ -1582,14 +1582,7 @@ func (b *BadgerEngine) GetStoredIncomingEdges(ctx context.Context, nodeID NodeID
 
 // GetEdgesBetween returns all edges between two nodes.
 func (b *BadgerEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if err := b.pendingNamespaceConflict(namespaceForNodeID(startID)); err != nil {
-		return nil, err
-	}
-
-	if err := b.pendingNamespaceConflict(namespaceForNodeID(endID)); err != nil {
+	if err := b.pendingReadConflict(readNodePairScope, "", []NodeID{startID, endID}, ctx); err != nil {
 		return nil, err
 	}
 
@@ -1648,8 +1641,9 @@ func (b *BadgerEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeI
 			if err := cancel.check(ctx); err != nil {
 				return nil, err
 			}
-			copyEdge := *e
-			result = append(result, &copyEdge)
+			// The overlay retains e until replay. Detach its properties as well
+			// as its header before a mutable caller can observe the result.
+			result = append(result, copyEdge(e))
 		}
 		return result, nil
 	}
@@ -1687,14 +1681,7 @@ func (b *BadgerEngine) committedEdgesBetween(ctx context.Context, startID, endID
 func (b *BadgerEngine) GetEdgeBetween(ctx context.Context, source, target NodeID, edgeType string) (*Edge, error) {
 	// The caller's request owns this read: a cancelled or expired request
 	// resolves no relationship, whichever index answers it.
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if err := b.pendingNamespaceConflict(namespaceForNodeID(source)); err != nil {
-		return nil, err
-	}
-
-	if err := b.pendingNamespaceConflict(namespaceForNodeID(target)); err != nil {
+	if err := b.pendingReadConflict(readNodePairScope, "", []NodeID{source, target}, ctx); err != nil {
 		return nil, err
 	}
 
@@ -1742,8 +1729,7 @@ func (b *BadgerEngine) GetEdgeBetween(ctx context.Context, source, target NodeID
 		if edgeType != "" && e.Type != edgeType {
 			continue
 		}
-		copyEdge := *e
-		return &copyEdge, nil
+		return copyEdge(e), nil
 	}
 	return nil, nil
 }

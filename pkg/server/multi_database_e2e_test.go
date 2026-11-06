@@ -391,7 +391,7 @@ func TestMultiDatabase_E2E_FullSequence(t *testing.T) {
 			t.Fatalf("CREATE COMPOSITE DATABASE failed: %v", createResult.Errors)
 		}
 		require.Len(t, createResult.Results, 1, "should have one result")
-		// CREATE COMPOSITE DATABASE returns the database name, but it might be empty if command succeeded without returning data
+		// CREATE COMPOSITE DATABASE declares no result columns and returns no records.
 
 		// Verify composite database was created
 		resp = makeRequest(t, server, "POST", "/db/nornic/tx/commit", map[string]interface{}{
@@ -910,11 +910,8 @@ func TestMultiDatabase_E2E_DiscoveryAndCreateDatabaseScenarios_SharedFixture(t *
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 		require.Empty(t, result.Errors)
 		require.Len(t, result.Results, 1)
-		require.NotEmpty(t, result.Results[0].Columns)
-		require.NotEmpty(t, result.Results[0].Data)
-		assert.Equal(t, "name", result.Results[0].Columns[0])
-		require.Len(t, result.Results[0].Data[0].Row, 1)
-		assert.Equal(t, "animals", result.Results[0].Data[0].Row[0])
+		require.Equal(t, []string{}, result.Results[0].Columns)
+		require.Empty(t, result.Results[0].Data)
 
 		_ = makeRequest(t, server, "POST", "/db/nornic/tx/commit", map[string]interface{}{
 			"statements": []map[string]interface{}{{"statement": "DROP DATABASE animals"}},

@@ -25,7 +25,7 @@ func newBoltQuotaFixture(t *testing.T, limits *multidb.Limits, decorate func(*st
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "quota"}))
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", limits))
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, nil, manager)
-	return manager, startBoltTestServer(t, server)
+	return manager, serveBoltIntegrationServer(t, server)
 }
 
 // requireQuotaResetCountsZero checks recovery on the original connection.

@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// rawVersionRecord returns the stored bytes of a node or relationship version
-// record.
+// rawVersionRecord returns physical record bytes, including entity versions
+// and embedding chunks, without hydration or buffered-image projection.
 func rawVersionRecord(t *testing.T, eng *BadgerEngine, key []byte) []byte {
 	t.Helper()
 	require.NotNil(t, key)

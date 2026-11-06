@@ -861,12 +861,16 @@ func (w *transactionStorageWrapper) toUserEdge(edge *storage.Edge) *storage.Edge
 	if edge == nil {
 		return nil
 	}
-	out := storage.CopyEdge(edge)
+	// Every source is a native transaction read: freshly decoded or detached
+	// from its retained/pending image before delivery. As with toUserNode,
+	// namespace projection needs only a private header, not a second deep
+	// copy of the already-owned properties.
+	out := *edge
 	out.ID = w.unprefixEdgeID(out.ID)
 	out.Database = w.namespace
 	out.StartNode = w.unprefixNodeID(out.StartNode)
 	out.EndNode = w.unprefixNodeID(out.EndNode)
-	return out
+	return &out
 }
 
 func (w *transactionStorageWrapper) underlyingIsNamespaced() bool {

@@ -1560,7 +1560,7 @@ func TestCallSubqueryWithOrderByOnly(t *testing.T) {
 		}
 		ORDER BY age ASC
 	`, nil)
-	requireSyntaxErrorStatus(t, err, "CALL subquery followed by bare ORDER BY")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "CALL subquery followed by bare ORDER BY")
 	result, err := exec.Execute(ctx, `
 		CALL {
 			MATCH (p:Person)
@@ -2480,7 +2480,7 @@ func TestSubqueryHelpers_ExecuteMatchWithCallSubquery_Branches(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(1)}}, standalone.Rows)
 
 	_, err = exec.Execute(ctx, "MATCH (:Person) CALL { WITH seed RETURN seed } RETURN seed", nil)
-	requireSyntaxErrorStatus(t, err, "anonymous MATCH does not declare seed")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "anonymous MATCH does not declare seed")
 
 	// No seed nodes branch.
 	emptyRes, err := exec.Execute(ctx, "MATCH (seed:Person) WHERE seed.name = 'none' CALL { WITH seed RETURN seed } RETURN seed", nil)
@@ -2495,7 +2495,7 @@ func TestSubqueryHelpers_ExecuteMatchWithCallSubquery_Branches(t *testing.T) {
 
 	// Empty CALL body branch.
 	_, err = exec.Execute(ctx, "MATCH (seed:Person) CALL { } RETURN seed", nil)
-	requireSyntaxErrorStatus(t, err, "CALL with an empty body")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "CALL with an empty body")
 
 	noWithRes, err := exec.Execute(ctx, "MATCH (seed:Person) CALL { RETURN 1 AS x } RETURN x", nil)
 	require.NoError(t, err)
@@ -2524,7 +2524,7 @@ func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_Branches(t *testing.T) {
 	require.Len(t, standalone.Rows, 1)
 
 	_, err = exec.Execute(ctx, "MATCH (:Person) CALL db.info()", nil)
-	requireSyntaxErrorStatus(t, err, "non-void procedure without YIELD")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "non-void procedure without YIELD")
 
 	// No matched nodes -> columns from YIELD.
 	emptyYieldRes, err := exec.Execute(ctx, "MATCH (n:Person {name: 'none'}) CALL db.info() YIELD name RETURN name", nil)
@@ -3568,7 +3568,7 @@ func TestExecuteMatchWithCallProcedure_ParseAndExecErrors(t *testing.T) {
 	require.Contains(t, statusText(err), "Neo.ClientError.Procedure.ProcedureNotFound")
 
 	_, err = exec.Execute(ctx, "MATCH (n:Person {name:'none'}) CALL db.info()", nil)
-	requireSyntaxErrorStatus(t, err, "empty input still requires YIELD for non-void procedures")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "empty input still requires YIELD for non-void procedures")
 
 	emptyRelVectorRes, err := exec.Execute(
 		ctx,
