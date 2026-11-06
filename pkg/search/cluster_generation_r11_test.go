@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -205,31 +206,45 @@ func r11Restore(t *testing.T, f *cgFixture, path string) {
 	assertClusterGenerationCoherent(t, f.svc, cgAllChecks)
 }
 
-// F2 (TestSolR11RestoreNewCanonicalVector): a vector newer than the saved
-// generation is placed at its nearest restored centroid, not in cluster 0.
-func TestClusterGenerationRestorePlacesNewCanonicalVector(t *testing.T) {
-	f := newCGFixture(t, 20, false)
-	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
-	populated := cgPopulatedClusters(t, f, 2)
-	target := populated[len(populated)-1]
-	require.NotZero(t, target, "the probe must reject default-cluster-zero placement")
-	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(target)
-	require.NotEmpty(t, ids)
-	routing := f.svc.clusterIndex.PublishedClustering()
-	require.NotNil(t, routing)
-	vec := routing.Centroids()[target]
-	path := filepath.Join(t.TempDir(), "hnsw")
-	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	node := &storage.Node{ID: "late-restored", Properties: map[string]any{"text": "newcomer"}, ChunkEmbeddings: [][]float32{append([]float32(nil), vec...)}}
-	require.NoError(t, f.write(node))
-	before, found := f.svc.clusterIndex.ClusterOf("late-restored")
-	require.True(t, found)
-	require.Equal(t, target, before)
-	r11Restore(t, f, path)
-	after, found := f.svc.clusterIndex.ClusterOf("late-restored")
-	require.True(t, found)
-	require.Equal(t, target, after, "placed at its nearest restored centroid")
-	require.True(t, r11PublicSelfHit(t, f, vec, "late-restored"))
+// Both post-save histories use the same restore contract: an absent vector is
+// added at its current centroid, and a saved vector is moved out of its old
+// cluster. Keep both mutations explicit while sharing every restore assertion.
+func TestClusterGenerationRestorePlacesPostSaveVectors(t *testing.T) {
+	for _, history := range []string{"created after save", "updated after save"} {
+		t.Run(history, func(t *testing.T) {
+			f := newCGFixture(t, 20, false)
+			t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
+			populated := cgPopulatedClusters(t, f, 2)
+			from, target := populated[0], populated[len(populated)-1]
+			require.NotZero(t, target, "the probe must reject default-cluster-zero placement")
+			require.NotEmpty(t, f.svc.clusterIndex.GetClusterMemberIDsForCluster(target))
+			routing := f.svc.clusterIndex.PublishedClustering()
+			require.NotNil(t, routing)
+			path := filepath.Join(t.TempDir(), "hnsw")
+			require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
+			var id string
+			var vec []float32
+			if history == "created after save" {
+				id = "late-restored"
+				vec = append([]float32(nil), routing.Centroids()[target]...)
+				node := &storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": "newcomer"}, ChunkEmbeddings: [][]float32{append([]float32(nil), vec...)}}
+				require.NoError(t, f.write(node))
+			} else {
+				id, vec = moveClusterMember(t, f, from, target)
+			}
+			canonical, found := f.svc.getVectorLookup()(id)
+			require.True(t, found)
+			require.Equal(t, vector.Normalize(vec), canonical, "the vector owner stores normalized current coordinates")
+			before, found := f.svc.clusterIndex.ClusterOf(id)
+			require.True(t, found)
+			require.Equal(t, target, before)
+			r11Restore(t, f, path)
+			after, found := f.svc.clusterIndex.ClusterOf(id)
+			require.True(t, found)
+			require.Equal(t, target, after, "placed by current coordinates, not missing or saved membership")
+			require.True(t, r11PublicSelfHit(t, f, vec, vectorOwnerForTest(t, id)))
+		})
+	}
 }
 
 // F2 (TestSolR11RestoreMovedPublicQuery): a vector moved before the save is
@@ -248,27 +263,6 @@ func TestClusterGenerationRestoreMovedPublicQuery(t *testing.T) {
 	cid, found := f.svc.clusterIndex.ClusterOf(moved)
 	require.True(t, found)
 	require.Equal(t, to, cid)
-	require.True(t, r11PublicSelfHit(t, f, vec, vectorOwnerForTest(t, moved)))
-}
-
-// A vector moved after the save (the store is newer than the saved
-// generation) is placed by its current coordinates, so a query for it finds
-// it, and its old cluster's saved graph no longer holds it.
-func TestClusterGenerationRestorePlacesVectorsUpdatedAfterSave(t *testing.T) {
-	f := newCGFixture(t, 20, false)
-	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
-	path := filepath.Join(t.TempDir(), "hnsw")
-	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	populated := cgPopulatedClusters(t, f, 2)
-	from, to := populated[0], populated[len(populated)-1]
-	require.NotZero(t, to, "the probe must reject default-cluster-zero placement")
-	moved, _ := moveClusterMember(t, f, from, to)
-	vec, ok := f.svc.getVectorLookup()(moved)
-	require.True(t, ok)
-	r11Restore(t, f, path)
-	cid, found := f.svc.clusterIndex.ClusterOf(moved)
-	require.True(t, found)
-	require.Equal(t, to, cid, "placed by its current coordinates, not its saved cluster")
 	require.True(t, r11PublicSelfHit(t, f, vec, vectorOwnerForTest(t, moved)))
 }
 
