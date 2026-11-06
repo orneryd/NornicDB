@@ -25,17 +25,17 @@ func TestExecuteCreate_BranchCoverage(t *testing.T) {
 
 	t.Run("empty label name is rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (n:)", getParamsFromContext(ctx))
-		requireSyntaxErrorStatus(t, err, "CREATE (n:)")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "CREATE (n:)")
 	})
 
 	t.Run("invalid label identifier is rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (n:Bad-Label)", getParamsFromContext(ctx))
-		requireSyntaxErrorStatus(t, err, "CREATE (n:Bad-Label)")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "CREATE (n:Bad-Label)")
 	})
 
 	t.Run("invalid relationship type is rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (a:Person)-[:BAD-TYPE]->(b:Person)", getParamsFromContext(ctx))
-		requireSyntaxErrorStatus(t, err, "CREATE (a:Person)-[:BAD-TYPE]->(b:Person)")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "CREATE (a:Person)-[:BAD-TYPE]->(b:Person)")
 		nodes, err := store.GetNodesByLabel(ctx, "Person")
 		require.NoError(t, err)
 		require.Empty(t, nodes)

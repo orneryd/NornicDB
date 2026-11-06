@@ -13,7 +13,7 @@ import (
 func TestRuntimeMapWireContract(t *testing.T) {
 	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "r73wire")
 	defer store.Close()
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 	ctx := context.Background()
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
 	if err != nil {

@@ -17,10 +17,26 @@ func (tx *BadgerTransaction) edgeReadState() transactionEntityState[EdgeID, Edge
 	return transactionEntityState[EdgeID, Edge]{pending: tx.pendingEdges, deleted: tx.deletedEdges}
 }
 
-// readTransactionEntity owns the native point-read lifecycle and overlay order.
-// Typed decoders retain node hydration/projection and relationship semantics;
-// neither state maps nor post-read filtering escape the operation lock.
-func readTransactionEntity[ID ~string, T Node | Edge, P any](ctx context.Context, tx *BadgerTransaction, id ID, state func(*BadgerTransaction) transactionEntityState[ID, T], clone func(*T, P) *T, load func(context.Context, *BadgerTransaction, ID, P) (*T, error), finish func(*BadgerTransaction, *T, P, error) (*T, error), policy P) (*T, error) {
+// transactionPointPolicy is the one visibility contract a native point read
+// carries into readTransactionEntity. A node read's policy exposes its existing
+// visibility field; a bare readVisibility is its own policy. Both are small
+// value types, so no boxed policy object is built per read and the completion
+// step stays a typed method call rather than a runtime type switch.
+type transactionPointPolicy interface {
+	pointVisibility() readVisibility
+}
+
+// pointVisibility exposes a bare visibility policy as itself.
+func (v readVisibility) pointVisibility() readVisibility { return v }
+
+// pointVisibility exposes the node read's existing visibility.
+func (p transactionNodeRead) pointVisibility() readVisibility { return p.visibility }
+
+// readTransactionEntity owns the native point-read lifecycle, the overlay
+// order and the one visible/stored completion decision. Typed decoders retain
+// node hydration/projection and relationship semantics; neither state maps nor
+// post-read filtering escape the operation lock.
+func readTransactionEntity[ID ~string, T Node | Edge, P transactionPointPolicy](ctx context.Context, tx *BadgerTransaction, id ID, state func(*BadgerTransaction) transactionEntityState[ID, T], clone func(*T, P) *T, load func(context.Context, *BadgerTransaction, ID, P) (*T, error), policy P) (*T, error) {
 	if err := tx.mu.LockContext(ctx); err != nil {
 		return nil, err
 	}
@@ -43,10 +59,20 @@ func readTransactionEntity[ID ~string, T Node | Edge, P any](ctx context.Context
 	} else {
 		entity, err = load(ctx, tx, id, policy)
 	}
-	if finish != nil {
-		return finish(tx, entity, policy, err)
+	if err != nil {
+		return entity, err
 	}
-	return entity, err
+	// Live visibility completion, decided once for every source: overlay images
+	// (pending writes, connected deletes) and cached snapshots never reach a
+	// loader, so this read exit applies the same filter the committed loaders
+	// apply. A stored policy keeps its intentional bypass inside that filter.
+	// Stored entity reads deliberately bypass visibility. With no active
+	// policy, avoid reading the scoring clock for every point lookup.
+	if policy.pointVisibility() == visibleRead && tx.engine.visibilityFiltered() &&
+		tx.engine.filterEntityByDecay(visibleRead, entity, DecayScoringTime()) {
+		return nil, ErrNotFound
+	}
+	return entity, nil
 }
 
 type transactionNodeRead struct {
@@ -58,9 +84,6 @@ type transactionNodeRead struct {
 func cloneTransactionNode(node *Node, policy transactionNodeRead) *Node {
 	if policy.projected {
 		return projectCachedNodeForRead(node, policy.properties, true)
-	}
-	if !policy.vectors {
-		return copyNodeForCaller(node)
 	}
 	return copyNode(node)
 }

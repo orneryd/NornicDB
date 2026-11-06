@@ -3,6 +3,7 @@ package storagecensus
 import (
 	"go/constant"
 	"go/token"
+	"go/types"
 
 	"github.com/orneryd/nornicdb/internal/workcensus"
 	"golang.org/x/tools/go/ssa"
@@ -15,9 +16,19 @@ type selectorFact struct {
 	number int64
 	op     token.Token
 }
+
+// booleanFact is the value of one actual SSA boolean at a queried
+// instruction, taken from a branch that fixes it there. It is never a
+// comparison of two values, two loads or two calls.
+type booleanFact struct {
+	value ssa.Value
+	truth bool
+}
+
 type flowAssumption struct {
 	nonEmpty *ssa.Parameter
 	selector selectorFact
+	boolean  booleanFact
 }
 
 // conditionPredicate keeps the comparison and, for a type-assertion success
@@ -37,6 +48,142 @@ func integerConstant(value ssa.Value) (number int64, integer, fits bool) {
 	}
 	number, fits = constant.Int64Val(literal.Value)
 	return number, true, fits
+}
+
+// booleanConstant reads a boolean literal, and no other value: nothing else is
+// a known boolean constant.
+func booleanConstant(value ssa.Value) (truth, literal bool) {
+	known, ok := value.(*ssa.Const)
+	if !ok || known == nil || known.Value == nil || known.Value.Kind() != constant.Bool {
+		return false, false
+	}
+	return constant.BoolVal(known.Value), true
+}
+
+// booleanType reports whether t is a boolean, so only an actual boolean can
+// become a boolean fact.
+func booleanType(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	basic, ok := t.Underlying().(*types.Basic)
+	return ok && basic.Info()&types.IsBoolean != 0
+}
+
+// booleanTest reads the boolean SSA value a branch condition tests: it
+// normalizes NOT and a comparison with a boolean literal, and reports whether
+// the condition is true exactly when that value is true. Every other
+// condition stays unknown, so no two loads, calls or names are ever assumed
+// to be the same value.
+func booleanTest(condition ssa.Value) (value ssa.Value, positive, ok bool) {
+	if condition == nil {
+		return nil, false, false
+	}
+	if negated, isNot := condition.(*ssa.UnOp); isNot && negated.Op == token.NOT {
+		value, positive, ok = booleanTest(negated.X)
+		return value, !positive, ok
+	}
+	if comparison, isCompare := condition.(*ssa.BinOp); isCompare {
+		if comparison.Op != token.EQL && comparison.Op != token.NEQ {
+			return nil, false, false
+		}
+		value, literal := comparison.X, comparison.Y
+		truth, isLiteral := booleanConstant(literal)
+		if !isLiteral {
+			value, literal = comparison.Y, comparison.X
+			truth, isLiteral = booleanConstant(literal)
+		}
+		if !isLiteral || value == nil || !booleanType(value.Type()) {
+			return nil, false, false
+		}
+		return value, truth == (comparison.Op == token.EQL), true
+	}
+	if !booleanType(condition.Type()) {
+		return nil, false, false
+	}
+	return condition, true, true
+}
+
+// reachesBlock reports whether to can run after from in the same function.
+func reachesBlock(from, to *ssa.BasicBlock) bool {
+	if from == nil || to == nil {
+		return false
+	}
+	seen := map[*ssa.BasicBlock]bool{}
+	work := []*ssa.BasicBlock{from}
+	for len(work) > 0 {
+		block := work[len(work)-1]
+		work = work[:len(work)-1]
+		if block == to {
+			return true
+		}
+		if seen[block] {
+			continue
+		}
+		seen[block] = true
+		work = append(work, block.Succs...)
+	}
+	return false
+}
+
+// immutableBoolean reports whether v is a boolean every use in one invocation
+// of its function observes with the same value. Reuse the context census
+// owner for parameter and noncyclic-definition stability; repeated loads and
+// loop definitions gain no new equivalence or lifetime exception.
+func (q *acquirer) immutableBoolean(v ssa.Value) bool {
+	if v == nil || !booleanType(v.Type()) {
+		return false
+	}
+	if known, ok := q.immutable[v]; ok {
+		return known
+	}
+	immutable := workcensus.StableGuardValue(v)
+	if q.immutable == nil {
+		q.immutable = map[ssa.Value]bool{}
+	}
+	q.immutable[v] = immutable
+	return immutable
+}
+
+// blockBooleans records the booleans reaching block is fixed to, one per
+// dominating branch: the branch decides block's side and its other successor
+// cannot reach block, so every path to block took the same side of one
+// immutable value. A branch whose successors both reach block, and a value a
+// loop computes again, fix nothing.
+func (q *acquirer) blockBooleans(fn *ssa.Function, block *ssa.BasicBlock) []booleanFact {
+	if block == nil {
+		return nil
+	}
+	var out []booleanFact
+	for _, candidate := range fn.Blocks {
+		if candidate == block || len(candidate.Instrs) == 0 || !candidate.Dominates(block) {
+			continue
+		}
+		branch, ok := candidate.Instrs[len(candidate.Instrs)-1].(*ssa.If)
+		if !ok {
+			continue
+		}
+		left, right := candidate.Succs[0].Dominates(block), candidate.Succs[1].Dominates(block)
+		if left == right {
+			continue
+		}
+		other := candidate.Succs[0]
+		if left {
+			other = candidate.Succs[1]
+		}
+		if reachesBlock(other, block) {
+			continue
+		}
+		value, positive, ok := booleanTest(branch.Cond)
+		if !ok || !q.immutableBoolean(value) {
+			continue
+		}
+		if !left {
+			positive = !positive
+		}
+		out = append(out, booleanFact{value: value, truth: positive})
+	}
+	return out
 }
 
 // readOnlyCellValue follows a value read out of a local cell to the value the

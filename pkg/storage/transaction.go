@@ -119,8 +119,10 @@ type Operation struct {
 // Transaction is the public closure-facing transaction type used by DB.Update and DB.View.
 type Transaction = BadgerTransaction
 
-// copyNode creates a deep copy of a node.
-// Used by transactions to preserve state for rollback.
+// copyNode creates a deep copy of a node that the caller owns: label, property,
+// embedding-metadata and embedding-vector images are all its own. Used by
+// transactions to preserve state for rollback, by the exported CopyNode, and by
+// a query read whose delivered node belongs to the caller.
 func copyNode(node *Node) *Node {
 	nodeCopy := copyNodeWithoutEmbeddings(node)
 	if nodeCopy == nil {
@@ -144,22 +146,6 @@ func copyNode(node *Node) *Node {
 		}
 	}
 
-	return nodeCopy
-}
-
-// copyNodeForCaller is a copy of a node the transaction keeps in its snapshot
-// caches, for a caller that may change it: its labels, properties and
-// embedding metadata are its own, so a caller writing the node (a Cypher SET)
-// leaves the cached snapshot copy, and the old version an update compares
-// against, unchanged (#963). The embedding vectors, which callers replace
-// rather than modify, are shared.
-func copyNodeForCaller(node *Node) *Node {
-	nodeCopy := copyNodeWithoutEmbeddings(node)
-	if nodeCopy == nil {
-		return nil
-	}
-	nodeCopy.ChunkEmbeddings = node.ChunkEmbeddings
-	nodeCopy.NamedEmbeddings = node.NamedEmbeddings
 	return nodeCopy
 }
 

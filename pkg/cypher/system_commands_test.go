@@ -234,9 +234,8 @@ func TestSystemCommands_CreateDatabase(t *testing.T) {
 	t.Run("create new database", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "CREATE DATABASE tenant_a", nil)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"name"}, result.Columns)
-		assert.Len(t, result.Rows, 1)
-		assert.Equal(t, "tenant_a", result.Rows[0][0])
+		assert.Empty(t, result.Columns, "CREATE DATABASE declares no result columns")
+		assert.Empty(t, result.Rows, "CREATE DATABASE returns no records")
 		assert.True(t, mockDBM.Exists("tenant_a"))
 	})
 
@@ -244,12 +243,12 @@ func TestSystemCommands_CreateDatabase(t *testing.T) {
 		// Create first time
 		result1, err := exec.Execute(ctx, "CREATE DATABASE tenant_b IF NOT EXISTS", nil)
 		require.NoError(t, err)
-		assert.Len(t, result1.Rows, 1)
+		assert.Empty(t, result1.Rows, "a creation reports no records")
 
 		// Create again with IF NOT EXISTS - should succeed
 		result2, err := exec.Execute(ctx, "CREATE DATABASE tenant_b IF NOT EXISTS", nil)
 		require.NoError(t, err)
-		assert.Len(t, result2.Rows, 1)
+		assert.Empty(t, result2.Rows, "an IF NOT EXISTS no-op reports no records")
 		assert.True(t, mockDBM.Exists("tenant_b"))
 	})
 
@@ -276,8 +275,8 @@ func TestSystemCommands_CreateDatabase(t *testing.T) {
 			t.Run(tc.dbName, func(t *testing.T) {
 				result, err := exec.Execute(ctx, tc.query, nil)
 				require.NoError(t, err, "Query failed: %s", tc.query)
-				require.Len(t, result.Rows, 1, "Should return one row")
-				assert.Equal(t, tc.dbName, result.Rows[0][0])
+				require.Empty(t, result.Columns, "Should return no columns: %s", tc.query)
+				require.Empty(t, result.Rows, "Should return no rows: %s", tc.query)
 				assert.True(t, mockDBM.Exists(tc.dbName))
 			})
 		}

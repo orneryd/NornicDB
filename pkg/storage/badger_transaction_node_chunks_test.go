@@ -11,14 +11,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTransactionNodeUpdateChunkPersistence(t *testing.T) {
-	vector := func(value float32) []float32 {
-		v := make([]float32, 16000)
-		for i := range v {
-			v[i] = value
-		}
-		return v
+// makeStoredChunkVector constructs a chunk larger than the inline node budget.
+func makeStoredChunkVector(value float32) []float32 {
+	v := make([]float32, 16000)
+	for i := range v {
+		v[i] = value
 	}
+	return v
+}
+
+func TestTransactionNodeUpdateChunkPersistence(t *testing.T) {
 	for _, outcome := range []string{"grow", "shrink", "invalidate"} {
 		for _, rollback := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/rollback=%v", outcome, rollback), func(t *testing.T) {
@@ -31,7 +33,7 @@ func TestTransactionNodeUpdateChunkPersistence(t *testing.T) {
 					return b
 				}
 				b := open()
-				original := &Node{ID: "test:chunks", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same"}, CreatedAt: time.Unix(1700000000, 0).UTC(), UpdatedAt: time.Unix(1700000000, 1).UTC(), ChunkEmbeddings: [][]float32{vector(0.25), vector(0.5)}, EmbedMeta: map[string]any{"embedding_model": "original", "chunk_count": 2}}
+				original := &Node{ID: "test:chunks", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same"}, CreatedAt: time.Unix(1700000000, 0).UTC(), UpdatedAt: time.Unix(1700000000, 1).UTC(), ChunkEmbeddings: [][]float32{makeStoredChunkVector(0.25), makeStoredChunkVector(0.5)}, EmbedMeta: map[string]any{"embedding_model": "original", "chunk_count": 2}}
 				_, err := b.CreateNode(t.Context(), original)
 				require.NoError(t, err)
 				originalStored, err := b.GetStoredNode(t.Context(), original.ID)
@@ -45,14 +47,14 @@ func TestTransactionNodeUpdateChunkPersistence(t *testing.T) {
 				}
 
 				first := CopyNode(originalStored)
-				first.ChunkEmbeddings = [][]float32{vector(1), vector(2)}
+				first.ChunkEmbeddings = [][]float32{makeStoredChunkVector(1), makeStoredChunkVector(2)}
 				first.EmbedMeta = map[string]any{"embedding_model": "first", "chunk_count": 2}
 				require.NoError(t, update(first))
 				final := CopyNode(first)
 				final.EmbedMeta = map[string]any{"embedding_model": "final", "chunk_count": 1}
 				switch outcome {
 				case "grow":
-					final.ChunkEmbeddings = [][]float32{vector(3)}
+					final.ChunkEmbeddings = [][]float32{makeStoredChunkVector(3)}
 				case "shrink":
 					final.ChunkEmbeddings = [][]float32{{4, 5}}
 				case "invalidate":
@@ -125,5 +127,67 @@ func BenchmarkTransactionNodeUpdateWithoutVectors(b *testing.B) {
 		if err := tx.Commit(); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// BenchmarkTransactionNodeUpdateSeparateEmbeddings measures one public
+// write-behind update whose node keeps its vectors in the embedding sidecar,
+// with the buffer drained between updates so the predecessor comes from
+// storage. It extends the update owner's bounded allocation reference
+// (BenchmarkTransactionNodeUpdateWithoutVectors) to separately stored
+// embeddings in a small and a large payload. The operation covers the whole
+// public update (staging, validation, publication and flushing). Compare
+// revisions with identical fixtures; this does not isolate validation latency.
+func BenchmarkTransactionNodeUpdateSeparateEmbeddings(b *testing.B) {
+	for _, fixture := range []struct {
+		name   string
+		chunks [][]float32
+	}{
+		{name: "small", chunks: [][]float32{make([]float32, 8)}},
+		{name: "large", chunks: [][]float32{makeStoredChunkVector(0.25), makeStoredChunkVector(0.5)}},
+	} {
+		b.Run(fixture.name, func(b *testing.B) {
+			ctx := context.Background()
+			engine := newWriteBehindTestEngine(b, time.Hour, writeBehindTestOptions{manualDrain: true})
+			engine.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
+			node := &Node{ID: "test:bench-preimage", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same", "n": int64(0)}}
+			if _, err := engine.CreateNode(ctx, node); err != nil {
+				b.Fatal(err)
+			}
+			if err := engine.FlushWriteBehind(ctx); err != nil {
+				b.Fatal(err)
+			}
+			embedded := embeddingWriteback(b, engine, node.ID, fixture.chunks, map[string]any{"chunk_count": len(fixture.chunks)}, time.Time{})
+			if err := engine.UpdateNodeEmbeddingSidecar(ctx, embedded); err != nil {
+				b.Fatal(err)
+			}
+			if err := engine.FlushWriteBehind(ctx); err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tx, err := engine.BeginTransaction(ctx)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if err := tx.SetImplicit(true); err != nil {
+					b.Fatal(err)
+				}
+				if err := tx.SetNamespace("test"); err != nil {
+					b.Fatal(err)
+				}
+				after := &Node{ID: node.ID, Labels: []string{"Doc"}, Properties: map[string]any{"text": "same", "n": int64(i + 1)}}
+				if err := tx.UpdateGraphNode(ctx, NodeUpdateRequest{After: after, Policy: ClientNodeEdits}); err != nil {
+					b.Fatal(err)
+				}
+				if err := tx.Commit(); err != nil {
+					b.Fatal(err)
+				}
+				if err := engine.FlushWriteBehind(ctx); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

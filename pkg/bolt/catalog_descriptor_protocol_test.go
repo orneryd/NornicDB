@@ -14,7 +14,7 @@ func TestBoltCatalogDescriptorPublicViewsAndFabric(t *testing.T) {
 	manager, peer := remotegraph.New(t)
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, nil, manager)
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, driver.Close(context.Background())) })

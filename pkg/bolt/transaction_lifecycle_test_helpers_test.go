@@ -29,7 +29,7 @@ func startTransactionLifecycleServerWithStore(t *testing.T, store storage.Engine
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, &mockExecutor{}, mgr)
-	return startBoltTestServer(t, server)
+	return serveBoltIntegrationServer(t, server)
 }
 
 // countingTransactionEngine keeps the real MemoryEngine behavior while making
@@ -147,7 +147,7 @@ func startControlledTransactionServer(t *testing.T, executor QueryExecutor, shut
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	return startBoltTestServer(t, server, shutdownChecks...)
+	return serveBoltIntegrationServer(t, server, shutdownChecks...)
 }
 
 // rollbackShutdownCheck verifies that retirement retains the exact failure the

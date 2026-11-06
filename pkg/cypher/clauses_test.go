@@ -863,7 +863,7 @@ func TestCallApocPathSubgraphNodes(t *testing.T) {
 
 	// Call subgraph nodes procedure
 	_, err := e.Execute(ctx, "CALL apoc.path.subgraphNodes(start, {maxLevel: 2, relationshipFilter: 'KNOWS'})", nil)
-	requireSyntaxErrorStatus(t, err, "standalone CALL does not declare start")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "standalone CALL does not declare start")
 	result, err := e.Execute(ctx, "CALL apoc.path.subgraphNodes('alice', {maxLevel: 2, relationshipFilter: 'KNOWS'})", nil)
 	if err != nil {
 		t.Fatalf("APOC subgraph query failed: %v", err)
@@ -3248,7 +3248,7 @@ func TestOptionalMatch_AdditionalBranches(t *testing.T) {
 	require.Empty(t, res.Rows)
 
 	_, err = e.Execute(ctx, "OPTIONAL MATCH (n RETURN n", getParamsFromContext(ctx))
-	requireSyntaxErrorStatus(t, err, "OPTIONAL MATCH (n RETURN n")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "OPTIONAL MATCH (n RETURN n")
 
 	// Empty optional result should preserve columns with nil row.
 	res, err = e.Execute(ctx, "OPTIONAL MATCH (n:Missing) RETURN n.name", nil)

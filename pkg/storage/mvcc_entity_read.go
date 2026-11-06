@@ -44,7 +44,7 @@ func readEntityAtWithView[I ~string, T Node | Edge, P any](ctx context.Context, 
 // readAdjacentEdgesAtWithView owns the two directional MVCC traversals. Pinned
 // transactions already use their registered cached reader before reaching this
 // fallback, while public/fallback requests register for this complete view.
-func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, nodeID NodeID, version MVCCVersion, direction EdgeDirection, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
+func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, nodeID NodeID, version MVCCVersion, direction EdgeDirection, other NodeID, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -86,7 +86,11 @@ func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, nodeID N
 			if e != nil {
 				return e
 			}
-			if edge != nil && ((direction == Outgoing && edge.StartNode == nodeID) || (direction == Incoming && edge.EndNode == nodeID)) {
+			if edge == nil {
+				continue
+			}
+			if direction == Outgoing && edge.StartNode == nodeID && (other == "" || edge.EndNode == other) ||
+				direction == Incoming && edge.EndNode == nodeID && (other == "" || edge.StartNode == other) {
 				edges = append(edges, edge)
 			}
 		}

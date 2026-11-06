@@ -160,6 +160,10 @@ var exemptOwners = map[string]string{
 type acquirer struct {
 	p     *program
 	cache map[flowKey]*flow
+	// immutable records, per boolean SSA value, whether every use in one
+	// invocation of its function observes the same value, so a branch on it
+	// fixes every other use.
+	immutable map[ssa.Value]bool
 }
 
 type flowKey struct {
@@ -200,6 +204,15 @@ func (q *acquirer) flow(fn *ssa.Function, kind int, assumption flowAssumption) *
 						index = 1
 					}
 					impossible[[2]*ssa.BasicBlock{b, b.Succs[index]}] = true
+				}
+				if fact := assumption.boolean; fact.value != nil {
+					if value, positive, ok := booleanTest(ins.Cond); ok && value == fact.value {
+						index := 0
+						if positive == fact.truth {
+							index = 1
+						}
+						impossible[[2]*ssa.BasicBlock{b, b.Succs[index]}] = true
+					}
 				}
 				if kind != 0 {
 					continue
@@ -446,10 +459,24 @@ func (q *acquirer) covers(fn *ssa.Function, ins ssa.Instruction, facts ...flowAs
 			}
 		}
 	}
+	// A boolean a branch fixes at this instruction is a fact at this
+	// instruction only: each dominating fact is analyzed on its own, so no
+	// unrelated guard can stand in for the one that prunes the paths the
+	// acquisition needs.
+	assumptions := []flowAssumption{assumption}
+	if assumption.boolean.value == nil {
+		for _, fact := range q.blockBooleans(fn, ins.Block()) {
+			next := assumption
+			next.boolean = fact
+			assumptions = append(assumptions, next)
+		}
+	}
 	var c cover
-	for kind := 0; kind <= len(lockNames); kind++ {
-		if q.held(q.flow(fn, kind, assumption), ins) {
-			c |= 1 << kind
+	for _, known := range assumptions {
+		for kind := 0; kind <= len(lockNames); kind++ {
+			if q.held(q.flow(fn, kind, known), ins) {
+				c |= 1 << kind
+			}
 		}
 	}
 	return c
@@ -473,37 +500,6 @@ func (q *acquirer) held(f *flow, ins ssa.Instruction) bool {
 		}
 	}
 	return false
-}
-
-// reaches reports whether, in one function, to can run after from.
-func reaches(from, to ssa.Instruction) bool {
-	if from.Block() == to.Block() && index(from) < index(to) {
-		return true
-	}
-	seen := map[*ssa.BasicBlock]bool{}
-	stack := append([]*ssa.BasicBlock(nil), from.Block().Succs...)
-	for len(stack) > 0 {
-		b := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if seen[b] {
-			continue
-		}
-		seen[b] = true
-		if b == to.Block() {
-			return true
-		}
-		stack = append(stack, b.Succs...)
-	}
-	return false
-}
-
-func index(ins ssa.Instruction) int {
-	for i, x := range ins.Block().Instrs {
-		if x == ins {
-			return i
-		}
-	}
-	return -1
 }
 
 // asyncCallees are functions outside the module that run a function they

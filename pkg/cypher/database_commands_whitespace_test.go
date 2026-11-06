@@ -84,17 +84,9 @@ func TestDatabaseCommands_CreateDatabase_WhitespacePermutations(t *testing.T) {
 
 					result, err := exec.Execute(ctx, testQuery, nil)
 					require.NoError(t, err, "Query must succeed with whitespace permutation: %q", testQuery)
-					require.NotEmpty(t, result.Columns, "Query must return columns: %q", testQuery)
-					assert.Equal(t, []string{"name"}, result.Columns)
-
-					// IF NOT EXISTS on existing database returns success but may have empty rows
-					if strings.Contains(baseQuery, "IF NOT EXISTS") && mockDBM.Exists(uniqueDB) {
-						// Already exists - query succeeds but may return empty or existing row
-					} else {
-						require.Len(t, result.Rows, 1, "Query must return one row: %q", testQuery)
-						assert.Equal(t, uniqueDB, result.Rows[0][0])
-						assert.True(t, mockDBM.Exists(uniqueDB), "Database should exist: %q", testQuery)
-					}
+					require.Empty(t, result.Columns, "Query must return no columns: %q", testQuery)
+					require.Empty(t, result.Rows, "Query must return no records: %q", testQuery)
+					assert.True(t, mockDBM.Exists(uniqueDB), "Database should exist: %q", testQuery)
 				})
 			}
 		})
@@ -229,9 +221,8 @@ func TestDatabaseCommands_ComplexWhitespacePatterns(t *testing.T) {
 
 				result, err := exec.Execute(ctx, query, nil)
 				require.NoError(t, err, "Complex query must succeed: %q", query)
-				if len(result.Rows) > 0 {
-					assert.Equal(t, dbName, result.Rows[0][0])
-				}
+				assert.Empty(t, result.Columns, "CREATE DATABASE declares no result columns: %q", query)
+				assert.Empty(t, result.Rows, "CREATE DATABASE returns no records: %q", query)
 			} else if strings.Contains(query, "DROP DATABASE") {
 				// Extract database name
 				parts := strings.Fields(query)

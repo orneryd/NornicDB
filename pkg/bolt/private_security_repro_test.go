@@ -28,7 +28,7 @@ func TestPrivateReproBoltBareBeginPoolReuse(t *testing.T) {
 	manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": store}, defaultDB: "nornic"}
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	t.Cleanup(func() { _ = server.Close() })
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth(), func(c *neo4jdriver.Config) {
 		c.MaxConnectionPoolSize = 1
@@ -70,7 +70,7 @@ func TestPrivateReproBoltConstituentAccess(t *testing.T) {
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	server.SetDatabaseAccessModeResolver(func([]string) auth.DatabaseAccessMode { return privateReproAccessMode{} })
 	t.Cleanup(func() { _ = server.Close() })
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
 	require.NoError(t, err)

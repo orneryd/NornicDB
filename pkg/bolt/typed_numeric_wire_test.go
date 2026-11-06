@@ -19,7 +19,7 @@ func TestTypedNumericBoltBoundaries(t *testing.T) {
 		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericWireProperty"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
 		require.NoError(t, err)
 	}
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 	ctx := context.Background()
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
 	require.NoError(t, err)

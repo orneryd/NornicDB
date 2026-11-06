@@ -36,7 +36,7 @@ func TestBoltExecuteWriteConcurrentRelationshipPropertyIdentityPersists(t *testi
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, &mockExecutor{}, mgr)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(
@@ -177,7 +177,7 @@ func TestBoltProcedureWriteCommitInvalidatesSharedReadCache(t *testing.T) {
 	})
 
 	server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 8}, &mockExecutor{}, mgr)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	driver, err := neo4jdriver.NewDriverWithContext(

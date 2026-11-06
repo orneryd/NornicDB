@@ -14,11 +14,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Consolidate schema DDL readers and transaction property ownership without
+  changing admitted syntax or storage formats. Preserve parser-specific
+  rejection boundaries and command-specific result scope.
+
+- Reject stale write-behind node updates when a peer reserved its version before
+  BEGIN but published its image afterward, preserving acknowledged increments.
+  Unchanged stored NaN properties remain valid mutation preimages. Settle
+  direct-commit replay ordering before WAL acceptance so rejected mixed-mode
+  writes remain retryable without stranding later writers. Preserve the existing
+  snapshot/rebase criteria and cascade relationship counters. Property/label
+  preimage validation avoids loading separately stored embedding chunks.
+
 - Preserve acknowledged write-behind updates and increments by validating
   unflushed competing writes. Complete snapshot/semantic WAL writes before
   physical replay and reconcile recovered label/relationship counts, preventing
   stale restore images and a later delete from making the database unreopenable.
   Preserve UNIQUE, deletion and restart behavior without a storage format change.
+- Reuse bounded complete node snapshots for repeated explicit-transaction reads,
+  and avoid copying already-owned relationship properties twice during namespace
+  projection. Preserve caller-owned storage values and vectors; buffered
+  relationship reads no longer expose acknowledged mutable property maps.
+- Align CREATE DATABASE and EXPLAIN CREATE DATABASE with Neo4j's empty result
+  schema, including replacement and supported composite forms. EXPLAIN returns
+  a plan without catalog changes. Reject bare schema OPTIONS consistently,
+  bind map parameters, and apply typed vector options without substring parsing.
 - Maintain scoped full-text scoring documents between queries instead of rebuilding
   the entire corpus. Preserve exact case-sensitive indexed fields, deterministic
   relationship-property order, per-field phrase matching, committed snapshots and

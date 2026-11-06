@@ -13,6 +13,7 @@ const (
 	readNamespaceScope readScopeKind = iota
 	readPrefixScope
 	readNodeIDsScope
+	readNodePairScope // preserve ordered admission, including invalid empty endpoints
 )
 
 // readViewOptions is private to the storage owner. cached must have no externally
@@ -238,7 +239,7 @@ func (b *BadgerEngine) pendingReadConflict(kind readScopeKind, scope string, ids
 	switch kind {
 	case readPrefixScope:
 		return b.pendingPrefixConflict(scope)
-	case readNodeIDsScope:
+	case readNodeIDsScope, readNodePairScope:
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -250,7 +251,7 @@ func (b *BadgerEngine) pendingReadConflict(kind readScopeKind, scope string, ids
 			if err := cancel.check(ctx); err != nil {
 				return err
 			}
-			if id != "" {
+			if id != "" || kind == readNodePairScope {
 				if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
 					return err
 				}

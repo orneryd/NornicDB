@@ -60,7 +60,7 @@ func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 	rows := []pipelineRow{{"x": int64(1)}}
 
 	out, _, ok, err := exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x)", nil)
-	requireSyntaxErrorStatus(t, err, "non-void procedure without explicit YIELD")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "non-void procedure without explicit YIELD")
 	require.True(t, ok)
 	require.Nil(t, out)
 

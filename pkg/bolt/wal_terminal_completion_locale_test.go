@@ -24,7 +24,7 @@ func TestBoltWALTerminalCompletionLocales(t *testing.T) {
 				store := storage.NewNamespacedEngine(engine, "nornic")
 				mgr := &mockDBManager{stores: map[string]storage.Engine{"nornic": store}, defaultDB: "nornic"}
 				server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192, Localizer: manager}, &mockExecutor{}, mgr)
-				port := startBoltTestServer(t, server)
+				port := serveBoltIntegrationServer(t, server)
 				conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = conn.Close() })

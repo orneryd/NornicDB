@@ -63,15 +63,7 @@ func filterEdgesBetween(edges []*Edge, startID, endID NodeID, edgeType string, p
 func (b *BadgerEngine) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	// ctx is the caller's read context: it owns admission and the read capture,
 	// so a canceled MERGE identity read never answers with candidates.
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	if err := b.pendingNamespaceConflict(namespaceForNodeID(endID)); err != nil {
-		return nil, err
-	}
-
-	if err := b.pendingNamespaceConflict(namespaceForNodeID(startID)); err != nil {
+	if err := b.pendingReadConflict(readNodePairScope, "", []NodeID{endID, startID}, ctx); err != nil {
 		return nil, err
 	}
 
