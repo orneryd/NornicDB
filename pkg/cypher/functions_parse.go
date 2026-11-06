@@ -161,15 +161,29 @@ func callableReceiverStart(expression string, open int) int {
 	if end < 0 || !isRowReceiverIdentifierAt(expression, end) {
 		return open
 	}
+	last := end
 	start := end
-	if quoted >= 0 && isCypherBacktickByte(expression[quoted]) {
-		start = quoted
-	} else {
-		for start > 0 && isRowReceiverIdentifierAt(expression, start-1) {
-			start--
+	qualified := false
+	for {
+		if quoted >= 0 && isCypherBacktickByte(expression[quoted]) {
+			start = quoted
+		} else {
+			for start > 0 && cyphertext.NamePartAt(expression, start-1) {
+				start--
+			}
 		}
+		before, _ := expressionPredecessor(expression, start)
+		if before < 0 || expression[before] != '.' || before > 0 && expression[before-1] == '.' {
+			break
+		}
+		end, quoted = expressionPredecessor(expression, before)
+		if end < 0 || !isRowReceiverIdentifierAt(expression, end) {
+			return open
+		}
+		qualified = true
+		start = end
 	}
-	if isNonFunctionSemanticKeyword(lowerASCII(expression[start : end+1])) {
+	if !qualified && isNonFunctionSemanticKeyword(lowerASCII(expression[start:last+1])) {
 		return open
 	}
 	return start

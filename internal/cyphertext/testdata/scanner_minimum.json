@@ -233,8 +233,7 @@
   "pkg/cypher/deleted_entity_projection.go": [
     "deletedEntityReadsIn",
     "iterationSourceVariable",
-    "propertyNullTestFollows",
-    "skipSpaceIndex"
+    "propertyNullTestFollows"
   ],
   "pkg/cypher/dynamic_tokens.go": [
     "hasDynamicToken",

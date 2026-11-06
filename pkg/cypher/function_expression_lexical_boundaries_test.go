@@ -29,6 +29,11 @@ func TestFunctionAndSubqueryPostfixLexicalBoundaries(t *testing.T) {
 			{"whitespace-before-paren-list-access", "RETURN keys ({a:1})[0] AS v", [][]interface{}{{"a"}}, false},
 			{"line-comment-before-paren", "RETURN keys // c\n({a:1})[0] AS v", [][]interface{}{{"a"}}, false},
 			{"quoted-paren-grouped", "RETURN (toUpper(')')) AS v", [][]interface{}{{")"}}, false},
+			{"spaced-variable-receiver", "WITH [5] AS x RETURN x [0] AS v", [][]interface{}{{int64(5)}}, false},
+			{"commented-map-receiver", "WITH {a:7} AS m RETURN m /* gap */ ['a'] AS v", [][]interface{}{{int64(7)}}, false},
+			{"spaced-literal-receiver", "RETURN [5] [0] AS v", [][]interface{}{{int64(5)}}, false},
+			{"spaced-invalid-list-index", "RETURN [1] ['a'] AS v", nil, true},
+			{"spaced-invalid-map-index", "WITH {a:7} AS m RETURN m [1] AS v", nil, true},
 			{"keyword-named-receiver", "WITH [5] AS count RETURN count[0] AS v", [][]interface{}{{int64(5)}}, false},
 			{"prefix-not-integer-empty-input", "UNWIND [] AS r MATCH (n) WITH n, 1 AS v RETURN NOT v AS a", nil, true},
 		}
