@@ -319,7 +319,7 @@ func TestQuotedSchemaObjectNamesFollowReferenceCreationPolicy(t *testing.T) {
 	withCypherParsers(t, func(t *testing.T) {
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "schema_object_names"))
 		for _, kind := range []string{"INDEX", "CONSTRAINT"} {
-			for _, name := range []string{"ordinary_rule", " padded_rule ", "tick`rule"} {
+			for _, name := range []string{"ordinary_rule", " padded_rule ", "tick`rule", "café_规则", "odd-name.with$punctuation"} {
 				source := cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource)
 				canonical := strings.TrimSpace(name)
 				command := "CREATE INDEX " + source + " FOR (n:DropRule) ON (n.v)"
@@ -336,6 +336,11 @@ func TestQuotedSchemaObjectNamesFollowReferenceCreationPolicy(t *testing.T) {
 				if canonical != name {
 					_, err = exec.Execute(t.Context(), "DROP "+kind+" "+source, nil)
 					require.Error(t, err, "DROP addresses the normalized stored name, as the reference does")
+					code := "Neo.DatabaseError.Schema.IndexDropFailed"
+					if kind == "CONSTRAINT" {
+						code = "Neo.DatabaseError.Schema.ConstraintDropFailed"
+					}
+					requireStatusCode(t, err, code)
 				}
 				_, err = exec.Execute(t.Context(), "DROP "+kind+" "+cyphertext.PrintIdentifier(canonical, nil, cyphertext.RawSource), nil)
 				require.NoError(t, err)

@@ -51,10 +51,10 @@ func TestClusterGenerationFirstPersistentBuildKeepsLexicalProfiles(t *testing.T)
 	}
 }
 
-// r11ClusterPair chooses distinct populated clusters in label order. K-means
+// cgPopulatedClusters chooses populated clusters in label order. K-means
 // may leave a numbered centroid empty; these probes test cross-cluster state,
 // not a requirement that every requested centroid own a document.
-func r11ClusterPair(t *testing.T, f *cgFixture) (int, int) {
+func cgPopulatedClusters(t *testing.T, f *cgFixture, minimum int) []int {
 	t.Helper()
 	var populated []int
 	for cid := 0; cid < f.svc.clusterIndex.NumClusters(); cid++ {
@@ -62,8 +62,8 @@ func r11ClusterPair(t *testing.T, f *cgFixture) (int, int) {
 			populated = append(populated, cid)
 		}
 	}
-	require.GreaterOrEqual(t, len(populated), 2, "the probe requires two distinct live populations")
-	return populated[0], populated[len(populated)-1]
+	require.GreaterOrEqual(t, len(populated), minimum, "the probe requires enough distinct live populations")
+	return populated
 }
 
 // r11Context runs fn at its at-th Err call.
@@ -101,7 +101,8 @@ func TestClusterGenerationPersistenceSnapshotsOnePopulation(t *testing.T) {
 			f.t = t
 			before := cgView(f.svc).membership
 			var moved string
-			from, to := r11ClusterPair(t, f)
+			populated := cgPopulatedClusters(t, f, 2)
+			from, to := populated[0], populated[len(populated)-1]
 			ctx := &r11Context{Context: context.Background(), at: 4, fn: func() { moved, _ = moveClusterMember(t, f, from, to) }}
 			dir := t.TempDir()
 			path.save(f, ctx, filepath.Join(dir, "hnsw"))
@@ -139,7 +140,8 @@ func TestClusterGenerationRestoreUsesLiveMembership(t *testing.T) {
 				}
 				require.Empty(t, f.svc.clusterIndex.GetClusterMemberIDsForCluster(emptyCID))
 			}
-			to, from := r11ClusterPair(t, f)
+			populated := cgPopulatedClusters(t, f, 2)
+			to, from := populated[0], populated[len(populated)-1]
 			moved, _ := moveClusterMember(t, f, from, to)
 			path := filepath.Join(t.TempDir(), "hnsw")
 			require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
@@ -155,7 +157,8 @@ func TestClusterGenerationRestoreUsesLiveMembership(t *testing.T) {
 // population: it is rejected, not made authoritative.
 func TestClusterGenerationRestoreRejectsDuplicateMembers(t *testing.T) {
 	f := newCGFixture(t, 20, false)
-	source, target := r11ClusterPair(t, f)
+	populated := cgPopulatedClusters(t, f, 2)
+	source, target := populated[0], populated[len(populated)-1]
 	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(source)
 	require.NotEmpty(t, ids)
 	vec, ok := f.svc.getVectorLookup()(ids[0])
@@ -207,7 +210,8 @@ func r11Restore(t *testing.T, f *cgFixture, path string) {
 func TestClusterGenerationRestorePlacesNewCanonicalVector(t *testing.T) {
 	f := newCGFixture(t, 20, false)
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
-	_, target := r11ClusterPair(t, f)
+	populated := cgPopulatedClusters(t, f, 2)
+	target := populated[len(populated)-1]
 	require.NotZero(t, target, "the probe must reject default-cluster-zero placement")
 	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(target)
 	require.NotEmpty(t, ids)
@@ -233,7 +237,8 @@ func TestClusterGenerationRestorePlacesNewCanonicalVector(t *testing.T) {
 func TestClusterGenerationRestoreMovedPublicQuery(t *testing.T) {
 	f := newCGFixture(t, 20, false)
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
-	to, from := r11ClusterPair(t, f)
+	populated := cgPopulatedClusters(t, f, 2)
+	to, from := populated[0], populated[len(populated)-1]
 	moved, _ := moveClusterMember(t, f, from, to)
 	vec, ok := f.svc.getVectorLookup()(moved)
 	require.True(t, ok)
@@ -254,7 +259,8 @@ func TestClusterGenerationRestorePlacesVectorsUpdatedAfterSave(t *testing.T) {
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
 	path := filepath.Join(t.TempDir(), "hnsw")
 	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	from, to := r11ClusterPair(t, f)
+	populated := cgPopulatedClusters(t, f, 2)
+	from, to := populated[0], populated[len(populated)-1]
 	require.NotZero(t, to, "the probe must reject default-cluster-zero placement")
 	moved, _ := moveClusterMember(t, f, from, to)
 	vec, ok := f.svc.getVectorLookup()(moved)

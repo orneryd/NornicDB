@@ -41,22 +41,6 @@ func cgSquaredEuclidean(a, b []float32) float64 {
 	return sum
 }
 
-// cgPopulatedCluster is the lowest cluster the published generation populated.
-// k-means can leave a numbered centroid unused (r11ClusterPair skips those
-// too), and a probe that assumes cluster 0 has members has nothing to move.
-func cgPopulatedCluster(t *testing.T, f *cgFixture) int {
-	t.Helper()
-	routing := f.svc.clusterIndex.PublishedClustering()
-	require.NotNil(t, routing)
-	for cid := 0; cid < routing.NumClusters(); cid++ {
-		if len(routing.MemberIDs(cid)) > 0 {
-			return cid
-		}
-	}
-	t.Fatal("the published generation populated no cluster")
-	return -1
-}
-
 // cgClusterPoint returns new coordinates for a member of cluster cid: the
 // published centroid of cid displaced a quarter of the distance to the nearest
 // other centroid, away from it. The generation therefore places them in cid by
@@ -149,7 +133,7 @@ func TestClusterGenerationRestoreRefreshesRetainedCoordinates(t *testing.T) {
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
 	path := filepath.Join(t.TempDir(), "hnsw")
 	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	cid := cgPopulatedCluster(t, f)
+	cid := cgPopulatedClusters(t, f, 1)[0]
 	id, vec := moveClusterMember(t, f, cid, cid)
 	before, err := f.svc.VectorQueryNodesWithOptions(context.Background(), vec, VectorQuerySpec{Limit: 1}, nil)
 	require.NoError(t, err)
@@ -174,7 +158,7 @@ func TestClusterGenerationRestoreKeepsUnchangedMembers(t *testing.T) {
 	f := newCGFixture(t, 20, false)
 	path := filepath.Join(t.TempDir(), "hnsw")
 	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	cid := cgPopulatedCluster(t, f)
+	cid := cgPopulatedClusters(t, f, 1)[0]
 	id, _ := moveClusterMember(t, f, cid, cid)
 	saved, err := readIVFHNSWManifest(ivfHNSWDir(path))
 	require.NoError(t, err)

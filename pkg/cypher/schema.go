@@ -2082,7 +2082,7 @@ func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher
 	parsed, err := e.parseCreateFulltextIndexDDL(ctx, cypher)
 	if err != nil {
 		if errors.Is(err, nerrors.ErrInvalidFulltextRelationshipTypes) {
-			return nil, &classifiedCypherError{cause: err, code: "Neo.ClientError.Statement.SyntaxError", detail: "InvalidRelationshipType"}
+			return nil, &classifiedCypherError{cause: err, code: "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax"}
 		}
 		return nil, err
 	}
@@ -2168,13 +2168,12 @@ func parseFulltextRelationshipTypes(raw string) ([]string, error) {
 	var cur strings.Builder
 
 	flush := func() error {
-		part := strings.TrimSpace(cur.String())
+		name, ok := isOneSymbolicName(cur.String())
 		cur.Reset()
-		name, ok := cyphertext.ScanIdentifier(part, 0)
-		if !ok || name.End != len(part) || name.Value == "" {
+		if !ok || name == "" {
 			return nerrors.ErrInvalidFulltextRelationshipTypes
 		}
-		types = append(types, name.Value)
+		types = append(types, name)
 		return nil
 	}
 

@@ -118,6 +118,8 @@ func TestDegreeSubqueryRelationshipSeparatorAdmission(t *testing.T) {
 			"MATCH (:SeparatorStart)-[:A:B]->() RETURN count(*) AS c",
 			"MATCH (n:SeparatorStart) RETURN COUNT { (n)-[:A:B]->() } AS c",
 			"CREATE FULLTEXT INDEX invalid_separator FOR ()-[r:A|:B]-() ON EACH [r.name]",
+			"CREATE FULLTEXT INDEX invalid_separator FOR (n:A|:B) ON EACH [n.name]",
+			"CREATE FULLTEXT INDEX invalid_separator FOR (n:A B) ON EACH [n.name]",
 		} {
 			_, err := exec.Execute(t.Context(), q, nil)
 			require.Error(t, err, q)
@@ -127,4 +129,32 @@ func TestDegreeSubqueryRelationshipSeparatorAdmission(t *testing.T) {
 		require.NoError(t, err)
 		require.NotContains(t, indexes.Rows, []any{"invalid_separator"}, "a rejected fulltext declaration must not install an index")
 	})
+}
+
+func TestSingleSymbolicNameAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		source string
+		value  string
+		valid  bool
+	}{
+		{" ordinary ", "ordinary", true},
+		{" café_规则 ", "café_规则", true},
+		{"`a``b`", "a`b", true},
+		{"`a|b`", "a|b", true},
+		{"` `", " ", true},
+		{"``", "", true}, // Empty-name admission belongs to the caller.
+		{"a b", "", false},
+		{"a.b", "", false},
+		{"a-b", "", false},
+		{"1bad", "", false},
+		{"$bad", "", false},
+		{"`unterminated", "", false},
+		{"", "", false},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			value, valid := isOneSymbolicName(tc.source)
+			require.Equal(t, tc.valid, valid)
+			require.Equal(t, tc.value, value)
+		})
+	}
 }
