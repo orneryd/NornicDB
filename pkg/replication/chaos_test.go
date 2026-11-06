@@ -1077,7 +1077,7 @@ func TestSecurity_ReplayProtection(t *testing.T) {
 		{Position: 2, Command: &Command{Type: CmdCreateNode, Data: []byte("2")}},
 	}
 
-	lastPos, err := applier.ApplyBatch(entries)
+	lastPos, err := applier.ApplyBatch(context.Background(), entries)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(2), lastPos)
 
@@ -1087,7 +1087,7 @@ func TestSecurity_ReplayProtection(t *testing.T) {
 		{Position: 2, Command: &Command{Type: CmdCreateNode, Data: []byte("replay2")}},
 	}
 
-	replayPos, err := applier.ApplyBatch(replayedEntries)
+	replayPos, err := applier.ApplyBatch(context.Background(), replayedEntries)
 	require.NoError(t, err)
 
 	// Replayed entries should be skipped (lastApplied already at 2)

@@ -160,12 +160,12 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_Branches(t *testing.T) {
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
 	require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(2)}}}))
 
-	err := tx.checkNodeAdjacencyConflict(context.Background(), "test:a")
+	err := tx.checkNodeAdjacencyConflict(context.Background(), "test:a", nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
 	// Node without dictionary/index entries uses empty-prefix path and should not fail.
-	require.NoError(t, tx.checkNodeAdjacencyConflict(context.Background(), "test:missing"))
+	require.NoError(t, tx.checkNodeAdjacencyConflict(context.Background(), "test:missing", nil))
 }
 
 func TestBadgerTransaction_CheckNodeAdjacencyConflict_IgnoresStaleIndexEntries(t *testing.T) {
@@ -192,7 +192,7 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_IgnoresStaleIndexEntries(t
 	}))
 
 	tx := beginAdjacencyConflict(t, engine)
-	require.NoError(t, tx.checkNodeAdjacencyConflict(context.Background(), "test:a"))
+	require.NoError(t, tx.checkNodeAdjacencyConflict(context.Background(), "test:a", nil))
 }
 
 func TestBadgerTransaction_CheckNodeAdjacencyConflict_HeadDecodeErrorBranch(t *testing.T) {
@@ -210,7 +210,7 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_HeadDecodeErrorBranch(t *t
 	tx := beginAdjacencyConflict(t, engine)
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
 
-	err := tx.checkNodeAdjacencyConflict(context.Background(), "test:a")
+	err := tx.checkNodeAdjacencyConflict(context.Background(), "test:a", nil)
 	require.Error(t, err)
 }
 

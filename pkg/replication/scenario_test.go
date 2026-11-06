@@ -599,7 +599,7 @@ func TestScenario_HAStandby_Standby_B_WALReplication(t *testing.T) {
 			{Position: 3, Command: &Command{Type: CmdCreateNode, Data: []byte("3")}},
 		}
 
-		lastPos, err := applier.ApplyBatch(entries)
+		lastPos, err := applier.ApplyBatch(context.Background(), entries)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3), lastPos)
 		assert.Equal(t, 3, standbyStorage.GetApplyCount())
@@ -616,14 +616,14 @@ func TestScenario_HAStandby_Standby_B_WALReplication(t *testing.T) {
 			{Position: 2, Command: &Command{Type: CmdCreateNode, Data: []byte("2")}},
 			{Position: 3, Command: &Command{Type: CmdCreateNode, Data: []byte("3")}},
 		}
-		_, err := applier.ApplyBatch(entries1)
+		_, err := applier.ApplyBatch(context.Background(), entries1)
 		require.NoError(t, err)
 
 		// Skip to position 10 (gap from 4-9)
 		entries2 := []*WALEntry{
 			{Position: 10, Command: &Command{Type: CmdCreateNode, Data: []byte("10")}},
 		}
-		_, err = applier.ApplyBatch(entries2)
+		_, err = applier.ApplyBatch(context.Background(), entries2)
 		require.NoError(t, err)
 	})
 
@@ -974,7 +974,7 @@ func TestScenario_Raft_Follower_B_LogReplication(t *testing.T) {
 			{Position: 2, Command: &Command{Type: CmdCreateNode, Data: []byte("2")}},
 		}
 
-		lastPos, err := applier.ApplyBatch(entries)
+		lastPos, err := applier.ApplyBatch(context.Background(), entries)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(2), lastPos)
 	})

@@ -247,8 +247,19 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// Preparation hands immutable semantic images to the accepted command owner
 	// only after the normal validation/order pipeline, before any commit bytes.
 	if prepare != nil {
-		if !bufferedCommit {
+		// Body-conflict admission applies to new client decisions only.
+		// Accepted replay already owns its validated image; concurrent copies
+		// converge on the logical receipt instead of rejecting one another.
+		if !bufferedCommit && !tx.acceptedApplication {
 			if err := tx.validatePreparedBodyConflictsLocked(ctx, entityKeys); err != nil {
+				return tx.abortCommitLocked(err)
+			}
+		}
+		// Direct commits already validated endpoints under their retained
+		// exclusive ordering lease above. Only buffered admission needs the
+		// mixed stripe decision here; reacquiring direct stripes would deadlock.
+		if bufferedCommit {
+			if err := tx.revalidateEndpointsBeforeDecisionLocked(ctx); err != nil {
 				return tx.abortCommitLocked(err)
 			}
 		}
@@ -541,6 +552,11 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 // validateCommitLocked keeps both optimistic and protected validation on the
 // same constraint/conflict and consumer error-classification owner.
 func (tx *BadgerTransaction) validateCommitLocked(ctx context.Context) error {
+	// Accepted commands were validated before their durable decision.
+	// Native application retries do not re-admit user constraints.
+	if tx.acceptedApplication {
+		return nil
+	}
 	if err := tx.resolveConnectedDeletesLocked(ctx); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err

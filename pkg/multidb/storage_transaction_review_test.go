@@ -39,7 +39,7 @@ func TestTransactionQuotaListenerReentry(t *testing.T) {
 					return
 				}
 				go func() {
-					size, _, _ := manager.GetStorageSize(db)
+					size, _, _ := manager.GetStorageSize(context.Background(), db)
 					if size <= 0 {
 						completed <- fmt.Errorf("listener saw stale byte accounting: %d", size)
 						return

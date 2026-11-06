@@ -91,7 +91,7 @@ func TestBufferedWALBindingOwner(t *testing.T) {
 	}
 	for name, source := range map[string]string{
 		"captured_reader": `func allowed(c *bufferedCommit) int { w := c.writes; return func() int { return len(w) }() }`,
-		"delegate":        `func delegate(b *BadgerEngine, d *WALBufferedCommitData) (bufferedCommit,error) { return b.importBufferedWALRecord(d, walForeignImport) }`,
+		"delegate":        `func delegate(b *BadgerEngine, d *WALBufferedCommitData) (bufferedCommit,error) { return b.importBufferedWALRecord(b.work.Context(), d, walForeignImport) }`,
 		"unrelated":       `type unrelated struct { writes map[string][]byte }; func allowed(c *unrelated) { c.writes = nil }`,
 	} {
 		t.Run(name, func(t *testing.T) {

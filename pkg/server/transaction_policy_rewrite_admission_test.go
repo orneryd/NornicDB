@@ -38,7 +38,7 @@ func TestTransactionPolicyRewriteRejectsBeforeAcceptanceAndNextCleanupSucceeds(t
 					_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b"})
 					require.NoError(t, err)
 					require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "STALE", Properties: map[string]any{"payload": "original"}, CreatedAt: old, UpdatedAt: old}))
-					before, beforeNodes, beforeEdges := h.server.dbManager.GetStorageSize("nornic")
+					before, beforeNodes, beforeEdges := h.server.dbManager.GetStorageSize(t.Context(), "nornic")
 					var rewrites int
 					h.beforeCommit = func() {
 						id := "nornic:a"
@@ -68,7 +68,7 @@ func TestTransactionPolicyRewriteRejectsBeforeAcceptanceAndNextCleanupSucceeds(t
 					edge, err := storage.GetStoredEdge(t.Context(), store, "r")
 					require.NoError(t, err)
 					require.Equal(t, "original", edge.Properties["payload"])
-					after, afterNodes, afterEdges := h.server.dbManager.GetStorageSize("nornic")
+					after, afterNodes, afterEdges := h.server.dbManager.GetStorageSize(t.Context(), "nornic")
 					require.Equal(t, afterNodes+afterEdges, after)
 					require.GreaterOrEqual(t, after, before, "only the independent suppression flag may add stored bytes")
 					if isEdge {
@@ -85,7 +85,7 @@ func TestTransactionPolicyRewriteRejectsBeforeAcceptanceAndNextCleanupSucceeds(t
 					edges, err = store.EdgeCount(t.Context())
 					require.NoError(t, err)
 					require.Zero(t, edges)
-					total, nodeBytes, edgeBytes := h.server.dbManager.GetStorageSize("nornic")
+					total, nodeBytes, edgeBytes := h.server.dbManager.GetStorageSize(t.Context(), "nornic")
 					require.Zero(t, total)
 					require.Zero(t, nodeBytes)
 					require.Zero(t, edgeBytes)

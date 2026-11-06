@@ -28,7 +28,7 @@ func (b *BadgerEngine) Backup(path string) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if b.work.Closing() {
+	if b.ensureOpenLocked(false) != nil {
 		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
 
@@ -140,7 +140,7 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	}
 	b.idDict.replaceWith(ids)
 	b.propKeyDict.replaceWith(keys)
-	if err := b.initializeWALPropertyIdentity(db, true, true); err != nil {
+	if err := b.initializeWALPropertyIdentity(ctx, db, true, true); err != nil {
 		return err
 	}
 	if err := b.loadManualSuppressions(loader); err != nil {
