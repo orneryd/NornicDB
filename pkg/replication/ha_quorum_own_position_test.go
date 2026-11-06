@@ -101,8 +101,7 @@ func TestHAQuorumAcknowledgesItsOwnNormalizedRecord(t *testing.T) {
 			}
 			select {
 			case err := <-result:
-				require.ErrorIs(t, err, context.DeadlineExceeded,
-					"quorum reported success while its own record was unpublished")
+				requireAcceptedDiagnosticCause(t, err, context.DeadlineExceeded)
 			case <-time.After(5 * time.Second):
 				t.Fatal("the quorum caller did not return")
 			}

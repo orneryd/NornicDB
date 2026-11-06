@@ -429,7 +429,9 @@ func (w *WALEngine) autoSnapshotLoop(ctx context.Context, ticker *time.Ticker) {
 // engine owner: the snapshot stops when the owner closes or compaction is
 // disabled.
 func (w *WALEngine) createSnapshotAndCompact(ctx context.Context) error {
-	w.mutationMu.Lock()
+	if err := w.mutationMu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer w.mutationMu.Unlock()
 
 	if w.wal.work.Closing() {

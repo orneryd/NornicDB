@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +17,7 @@ import (
 // submission. The committed entry must park the original frame and join its
 // receipt to serialized recovery, exactly as the Standalone transport does.
 func TestAcceptedRaftCommittedPreNativeFailureRecovery(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	fixture := setupTestAdapter(t, adapterFixtureOptions{backing: base, standalone: true, timeout: time.Second})
 	a := fixture.adapter

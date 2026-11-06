@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -20,7 +21,7 @@ func TestAcceptedEnvelopeMetadataNilEmptyImages(t *testing.T) {
 		for _, shape := range []string{"nil", "empty", "populated"} {
 			t.Run(field+"/"+shape, func(t *testing.T) {
 				t.Cleanup(config.WithWALEnabled())
-				base, err := storage.NewBadgerEngine(t.TempDir())
+				base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
 				dir := t.TempDir()
 				wal, err := storage.NewWAL(dir, &storage.WALConfig{Dir: dir, SyncMode: "immediate"})
@@ -83,7 +84,7 @@ func TestAcceptedEnvelopeMetadataNilEmptyImages(t *testing.T) {
 				live := image(base)
 				liveBytes, liveNodes, liveEdges := manager.GetStorageSize(context.Background(), name)
 				require.NoError(t, manager.Close())
-				cold, replay, err := storage.RecoverFromWALWithResult(dir, "")
+				cold, replay, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(dir, ""))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = cold.Close() })
 				require.Empty(t, replay.Errors)

@@ -140,7 +140,7 @@ func TestNodeEnvelopeWALRebinding(t *testing.T) {
 			} else {
 				data.PropertyBindings = bindings
 			}
-			commit, err := destination.importBufferedWALRecord(data, walForeignImport)
+			commit, err := destination.importBufferedWALRecord(destination.work.Context(), data, walForeignImport)
 			require.NoError(t, err)
 			got, err := SplitNodeEnvelope(commit.writes[string(nodeKey("test:wal"))])
 			require.NoError(t, err)

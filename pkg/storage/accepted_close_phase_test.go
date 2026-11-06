@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +48,7 @@ func requireWithin[T any](t *testing.T, what string, ch <-chan T) T {
 
 func TestAcceptedDirectReplayIntoClosedEnginePhaseBefore(t *testing.T) {
 	dir := t.TempDir()
-	base, err := NewBadgerEngine(dir)
+	base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	p, payload := acceptedClosePhaseFrame(t, base, "test:before")
 	logicalID := p.LogicalID()
@@ -83,7 +84,7 @@ func TestAcceptedDirectReplayIntoClosedEnginePhaseBefore(t *testing.T) {
 	require.Equal(t, CommitRecoveryPending, accepted.State)
 	require.Equal(t, logicalID, accepted.LogicalID)
 	require.ErrorIs(t, accepted.Err, ErrStorageClosed)
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	_, err = reopened.GetStoredNode(t.Context(), "test:before")
@@ -92,7 +93,7 @@ func TestAcceptedDirectReplayIntoClosedEnginePhaseBefore(t *testing.T) {
 
 func TestAcceptedDirectApplicationSurvivesClosePhaseAfter(t *testing.T) {
 	dir := t.TempDir()
-	base, err := NewBadgerEngine(dir)
+	base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	p, payload := acceptedClosePhaseFrame(t, base, "test:after")
 	p.Abort()
@@ -106,7 +107,7 @@ func TestAcceptedDirectApplicationSurvivesClosePhaseAfter(t *testing.T) {
 	closed := make(chan error, 1)
 	go func() { closed <- base.Close() }()
 	require.NoError(t, requireWithin(t, "Close after an applied accepted command", closed))
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	node, err := reopened.GetStoredNode(t.Context(), "test:after")
@@ -116,7 +117,7 @@ func TestAcceptedDirectApplicationSurvivesClosePhaseAfter(t *testing.T) {
 
 func TestAcceptedWALApplicationSurvivesClosePhaseAfter(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	base, err := NewBadgerEngine(t.TempDir())
+	base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	dir := t.TempDir()
 	wal, err := NewWAL(dir, &WALConfig{Dir: dir, SyncMode: "immediate"})

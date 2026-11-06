@@ -40,15 +40,15 @@ publication decision. Conflict classification, temporal buffering, constraint
 adjacency, change-image capture, observer preparation, publication dependency
 keys, and change-event key discovery use the current phase's lifetime. Errors
 before publication abort the transaction and do not invoke publication callbacks.
-Native point reads and context-free staging APIs retain their existing ownership;
-request operation lists poll between those staging operations.
+Pass the explicit preparation context to native point reads, staging APIs and
+request operation lists as well.
 
-After a prepared command is accepted, its existing nil `commitCtx` contract means
-detached completion. The publication phase selects `context.Background()` for
-private preparation helpers at that handoff, independently of both the original
-caller cancellation and the engine stop signal. Receipt waiting does not cancel
-that accepted continuation. No transaction context field or storage format was
-added.
+After a prepared command is accepted, its immutable image belongs to the applying
+engine's accepted-work owner. Caller cancellation can stop receipt waiting but
+cannot retract the accepted command or turn it into a retryable rejection. Engine
+shutdown may leave accepted work recovery-pending; its record remains available
+for recovery. This completion phase does not reuse the original request lifetime
+or a nil-context fallback. No storage-format change is required.
 
 
 ## UNIQUE cache preparation measurement

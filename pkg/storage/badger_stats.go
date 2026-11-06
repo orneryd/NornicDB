@@ -288,9 +288,13 @@ func (b *BadgerEngine) sealAdmission() {
 	b.stopCountDeltaFoldWorker()
 
 	// Drain acknowledged write-behind commits before tearing down Badger so
-	// a shutdown never loses writes that were acknowledged to clients.
+	// a shutdown never loses writes that were acknowledged to clients. The
+	// drain keeps the engine's own work context without its cancellation:
+	// Close seals admission before BeginStop cancels that context, and the
+	// final drain must stay the uncancellable waiter that performs the drain
+	// instead of depending on a background flusher that may already be gone.
 	if b.writeBehind != nil {
-		drainErr := b.FlushWriteBehind(context.Background())
+		drainErr := b.FlushWriteBehind(context.WithoutCancel(b.work.Context()))
 		if drainErr != nil && b.log != nil {
 			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", drainErr)
 		}
@@ -299,10 +303,16 @@ func (b *BadgerEngine) sealAdmission() {
 		b.writeBehind.releaseTransactionBegins()
 	}
 	// The suppressions the deletes so far ended are deleted before the store
-	// closes (forgetManualSuppression).
-	b.writeBarrier.RLock()
-	b.work.RecordError("", b.endSuppressions(&entityWriteContext{ctx: b.work.Context(), engine: b, owner: newEngineWriteLockOwner()}))
-	b.writeBarrier.RUnlock()
+	// closes (forgetManualSuppression). The read hold is taken through the same
+	// engine work context this phase already runs on, so a stopping owner ends
+	// the pass instead of leaving it on an unowned root; the error stays visible
+	// in the owner's outcomes and the ends are not deleted without the barrier.
+	if err := b.writeBarrier.RLockContext(b.work.Context()); err != nil {
+		b.work.RecordError("", fmt.Errorf("suppression ends before the write barrier: %w", err))
+	} else {
+		b.work.RecordError("", b.endSuppressions(&entityWriteContext{ctx: b.work.Context(), engine: b, owner: newEngineWriteLockOwner()}))
+		b.writeBarrier.RUnlock()
+	}
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call

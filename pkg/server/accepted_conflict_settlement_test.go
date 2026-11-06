@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -47,7 +48,7 @@ func TestAcceptedConflictSettlesThroughPublicCypher(t *testing.T) {
 		t.Run(mutation, func(t *testing.T) {
 			t.Cleanup(config.WithWALEnabled())
 			dir := t.TempDir()
-			base, err := storage.NewBadgerEngine(filepath.Join(dir, "data"))
+			base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "data")))
 			require.NoError(t, err)
 			base.SetDecayEnabled(true)
 			native := &acceptedConflictNative{BadgerEngine: base}
@@ -135,7 +136,7 @@ func TestAcceptedConflictSettlesThroughPublicCypher(t *testing.T) {
 			t.Run("cold-replay", func(t *testing.T) {
 				// Cold WAL replay has no old native frame: it must reproduce exactly
 				// the success returned by the accepted request, with no duplicate rows.
-				recovered, replay, err := storage.RecoverFromWALWithResult(walDir, "")
+				recovered, replay, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(walDir, ""))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = recovered.Close() })
 				require.Empty(t, replay.Errors)

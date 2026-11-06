@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -54,7 +55,7 @@ func (s *acceptedFenceStorage) ApplyCommand(waitCtx context.Context, command *Co
 }
 
 func TestAcceptedConcurrentApplyJoinsInitialNativePublication(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	native := &acceptedFenceNative{MemoryEngine: base}
 	fixture := setupTestAdapter(t, adapterFixtureOptions{backing: native})
@@ -111,7 +112,7 @@ func TestAcceptedConcurrentApplyJoinsInitialNativePublication(t *testing.T) {
 }
 
 func TestAcceptedNativeSubmissionCanReenterCompletion(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	native := &acceptedFenceNative{MemoryEngine: base}
 	fixture := setupTestAdapter(t, adapterFixtureOptions{backing: native})

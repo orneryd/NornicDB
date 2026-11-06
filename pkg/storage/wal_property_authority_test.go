@@ -54,7 +54,7 @@ func TestWALPropertyOwnLegacyStagedDrain(t *testing.T) {
 	data.PropKeys = legacyBindingEntries(t, data.PropertyBindings)
 	data.PropertyBindings = nil
 	data.PropertyDictionaryID = b.walPropertySource.identity
-	c, err := b.importBufferedWALRecord(&data, walOwnDirectoryAtOpen)
+	c, err := b.importBufferedWALRecord(b.work.Context(), &data, walOwnDirectoryAtOpen)
 	require.NoError(t, err)
 	require.Len(t, c.propKeyDrain.pending, 1)
 	require.Equal(t, data.PropKeys[0].ID, c.propKeyDrain.pending[0].id)

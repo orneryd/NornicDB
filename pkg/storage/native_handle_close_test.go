@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,7 +57,7 @@ func nativeHandleEntries(engine *BadgerEngine) map[string]func() error {
 // Author: NOR-288 lane (Claude), 2026-10-31. After Close each entry answers
 // "closed" or an empty result. None reaches the retired handle.
 func TestNativeHandleEntriesAreRefusedAfterClose(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 	valueless := map[string]bool{"Size": true, "EstimateSize": true, "persistMVCCSequence": true}
@@ -79,7 +80,7 @@ func TestNativeHandleEntriesAreRefusedAfterClose(t *testing.T) {
 // the engine closes. A read of the handle Close releases is a data race under
 // -race and a nil dereference without it.
 func TestNativeHandleEntriesRaceClose(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	failures := make(chan string, 64)
 	var running sync.WaitGroup

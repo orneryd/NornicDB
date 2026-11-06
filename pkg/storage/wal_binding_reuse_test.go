@@ -94,12 +94,13 @@ func TestWALBindingRepeatedCompleteImportAllocationBounds(t *testing.T) {
 	for _, count := range []int{1, 160} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			source, data := r2BindingData(t, count)
+			ctx := source.work.Context()
 			for i := 0; i < 2; i++ {
-				_, err := source.importBufferedWALRecord(&data, walForeignImport)
+				_, err := source.importBufferedWALRecord(ctx, &data, walForeignImport)
 				require.NoError(t, err)
 			}
 			allocs := testing.AllocsPerRun(32, func() {
-				_, err := source.importBufferedWALRecord(&data, walForeignImport)
+				_, err := source.importBufferedWALRecord(ctx, &data, walForeignImport)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -119,7 +120,7 @@ func TestWALBindingReuseRetentionBound(t *testing.T) {
 	_, data := r2BindingData(t, walBindingCacheKeys+1)
 	require.Len(t, legacyBindingEntries(t, data.PropertyBindings), walBindingCacheKeys+1)
 	destination := reviewBindingEngine(t, t.TempDir())
-	commit, err := destination.importBufferedWALRecord(&data, walForeignImport)
+	commit, err := destination.importBufferedWALRecord(destination.work.Context(), &data, walForeignImport)
 	require.NoError(t, err)
 	require.Len(t, commit.propKeyDrain.pending, walBindingCacheKeys+1)
 	require.Empty(t, destination.walPropertySource.bindings.table, "large remap plans must not be retained")

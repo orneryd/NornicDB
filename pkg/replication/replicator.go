@@ -398,17 +398,18 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 
 // Apply applies a command directly to storage.
 func (r *StandaloneReplicator) Apply(ctx context.Context, cmd *Command, timeout time.Duration) error {
-	// Enroll accepted application on the existing lifetime without allocating
-	// another child context. Close joins this same owner.
+	// Enroll the request without replacing its preparation/admission context.
+	// Accepted submission selects its separate completion lifetime at handoff.
 	if !r.work.Enter() {
 		return ErrClosed
 	}
 	defer r.work.Leave()
-	return r.applyEnrolled(r.work.Context(), cmd, timeout)
+	return r.applyEnrolled(ctx, cmd, timeout)
 }
 
-// applyEnrolled is Apply for work already enrolled with this owner; ctx is
-// that work's context.
+// applyEnrolled is the shared command body for work already enrolled with
+// this owner. Admission keeps the request context; accepted submission passes
+// its independently owned completion context.
 func (r *StandaloneReplicator) applyEnrolled(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	r.mu.RLock()
 	if err := checkApplyReadiness(r.work.Closing(), r.started); err != nil {

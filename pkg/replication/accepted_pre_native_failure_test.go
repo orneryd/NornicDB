@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,7 +45,7 @@ func (s *preNativeWALFaultStorage) ApplyCommand(ctx context.Context, cmd *Comman
 }
 
 func TestAcceptedPreNativeWALFailureRetiresStaging(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	fixture := setupTestAdapter(t, adapterFixtureOptions{backing: base, standalone: true, timeout: time.Second})
 	fixture.engine.replicator.(*StandaloneReplicator).storage = &preNativeWALFaultStorage{Storage: fixture.adapter, adapter: fixture.adapter}
 	require.NoError(t, fixture.adapter.wal.Close())
@@ -79,7 +80,7 @@ func TestAcceptedPreNativeWALFailureRetiresStaging(t *testing.T) {
 }
 
 func TestAcceptedPreNativeDurableWALAcknowledgementRecovery(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	fixture := setupTestAdapter(t, adapterFixtureOptions{backing: base, standalone: true, timeout: time.Second})
 	a := fixture.adapter
@@ -111,7 +112,7 @@ func TestAcceptedPreNativeDurableWALAcknowledgementRecovery(t *testing.T) {
 	require.Len(t, entries, 1, "the transport storage really recorded the accepted command")
 	require.Equal(t, p.LogicalID(), entries[0].Command.RequestID)
 	require.Nil(t, entries[0].Command.accepted, "persistent replay cannot retain the local native handle")
-	peer := storage.NewMemoryEngine()
+	peer := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = peer.Close() })
 	peerAdapter := setupTestAdapter(t, adapterFixtureOptions{backing: peer}).adapter
 	require.NoError(t, applyQueued(t, peerAdapter, entries[0].Command), "a replica applies the durable command independently of its failed acknowledgement")

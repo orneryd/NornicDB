@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -36,7 +37,7 @@ func TestAcceptedEpochImageMatchesColdReplay(t *testing.T) {
 func testAcceptedTimeLiveAndCold(t *testing.T, epoch time.Time) {
 	t.Helper()
 	t.Cleanup(config.WithWALEnabled())
-	base, err := storage.NewBadgerEngine(t.TempDir())
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	dir := t.TempDir()
 	wal, err := storage.NewWAL(dir, &storage.WALConfig{Dir: dir, SyncMode: "immediate"})
@@ -97,7 +98,7 @@ func testAcceptedTimeLiveAndCold(t *testing.T, epoch time.Time) {
 	// The semantic codec must retain the same stored timestamps as native
 	// application, including unset and the real Unix epoch (NOR-303).
 	t.Run("cold-replay", func(t *testing.T) {
-		cold, replay, err := storage.RecoverFromWALWithResult(dir, "")
+		cold, replay, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(dir, ""))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = cold.Close() })
 		require.Empty(t, replay.Errors)
@@ -175,7 +176,7 @@ func TestAcceptedTimeCompatibilityRead(t *testing.T) {
 				require.NoError(t, reader.Close())
 				path := filepath.Join(t.TempDir(), "time.backup")
 				require.NoError(t, os.WriteFile(path, data, 0600))
-				base, err := storage.NewBadgerEngine(t.TempDir())
+				base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = base.Close() })
 				require.NoError(t, base.Restore(path))
@@ -185,7 +186,7 @@ func TestAcceptedTimeCompatibilityRead(t *testing.T) {
 				t.Run("semantic-reapply", func(t *testing.T) {
 					payload, err := base64.StdEncoding.DecodeString(frame.Payload)
 					require.NoError(t, err)
-					base, err := storage.NewBadgerEngine(t.TempDir())
+					base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = base.Close() })
 					require.NoError(t, storage.ApplyAcceptedEntityTransaction(base, payload))

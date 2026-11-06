@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +15,7 @@ import (
 func TestAcceptedDecodedTimestampsSurviveNativeRestore(t *testing.T) {
 	for _, at := range []time.Time{{}, time.Unix(0, 0).UTC(), time.Unix(0, -1).UTC(), time.Unix(0, 1).UTC()} {
 		t.Run(at.Format(time.RFC3339Nano), func(t *testing.T) {
-			base, err := storage.NewBadgerEngine(t.TempDir())
+			base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = base.Close() })
 			edgeTime := at
@@ -42,7 +43,7 @@ func TestAcceptedDecodedTimestampsSurviveNativeRestore(t *testing.T) {
 			check(base)
 			backup := filepath.Join(t.TempDir(), "timestamps.backup")
 			require.NoError(t, base.Backup(backup))
-			restored, err := storage.NewBadgerEngine(t.TempDir())
+			restored, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = restored.Close() })
 			require.NoError(t, restored.Restore(backup))

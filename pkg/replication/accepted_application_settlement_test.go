@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAcceptedForeignApplyPublishesBeforeListenerDelivery(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	adapter := setupTestAdapter(t, adapterFixtureOptions{backing: base}).adapter
 	entered, release, delivered, returned := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan error, 1)
@@ -69,7 +70,7 @@ func TestAcceptedForeignApplyPublishesBeforeListenerDelivery(t *testing.T) {
 func TestAcceptedReplicaPendingApplicationRecovery(t *testing.T) {
 	for _, transport := range []string{"standalone", "raft"} {
 		t.Run(transport, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			fixture := setupTestAdapter(t, adapterFixtureOptions{backing: base, standalone: true, timeout: time.Second})
 			engine := fixture.engine
@@ -105,7 +106,7 @@ func TestAcceptedReplicaPendingApplicationRecovery(t *testing.T) {
 			require.NoError(t, err)
 			// A peer is permitted to apply the durable command before the
 			// leader's native attempt. It cannot roll this decision back.
-			peer := storage.NewMemoryEngine()
+			peer := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = peer.Close() })
 			require.NoError(t, storage.ApplyAcceptedEntityTransaction(peer, payload))
 			reject.Store(true)

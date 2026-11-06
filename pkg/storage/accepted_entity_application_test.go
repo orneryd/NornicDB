@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/require"
@@ -81,7 +82,7 @@ func TestAcceptedSettlementCallbackCanCloseEngine(t *testing.T) {
 	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "close-settlement", Operations: []Operation{{Type: OpCreateNode, Node: &Node{ID: "test:accepted", Properties: map[string]any{"v": "committed"}}}}})
 	require.NoError(t, err)
 	require.NoError(t, wal.AppendWithDatabase(OpEntityCommit, walEntityCommitData{Payload: payload}, "test"))
-	base, err := NewBadgerEngine(t.TempDir())
+	base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	closed := make(chan error, 1)
 	replayEnvelope, replayOperations, err := DecodeEntityTransaction(payload)
@@ -97,7 +98,7 @@ func TestAcceptedSettlementCallbackCanCloseEngine(t *testing.T) {
 		return
 	}
 	require.NoError(t, <-closed)
-	recovered, replay, err := RecoverFromWALWithResult(walDir, "")
+	recovered, replay, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(walDir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	require.Empty(t, replay.Errors)
@@ -133,7 +134,7 @@ func TestAcceptedApplicationPendingRecoverySettlesOnce(t *testing.T) {
 	for _, scenario := range []string{"conflict-budget", "permanent-error", "restart", "outer-submit", "uncertain-append"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Cleanup(config.WithWALEnabled())
-			base, err := NewBadgerEngine(t.TempDir())
+			base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			walDir := t.TempDir()
 			wal, err := NewWAL(walDir, &WALConfig{Dir: walDir, SyncMode: "immediate"})
@@ -204,7 +205,7 @@ func TestAcceptedApplicationPendingRecoverySettlesOnce(t *testing.T) {
 			unavailable.unavailable.Store(false)
 			if scenario == "restart" {
 				require.NoError(t, owner.Close())
-				recovered, result, err := RecoverFromWALWithResult(walDir, "")
+				recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(walDir, ""))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = recovered.Close() })
 				require.Empty(t, result.Errors)

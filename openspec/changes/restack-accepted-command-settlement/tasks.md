@@ -43,3 +43,38 @@ Checkpoint update: candidate commit88b8fe766 rebased cleanly onto release60ff9d6
 The fresh release60ff Raft pre-native fault reproduction fails because its returned error does not retain an AcceptedCommitError boundary. Source and log remain in the external release-red-reproductions evidence; the candidate equivalent is included in focused replication tests.
 
 Err-field proposal integrated focused run passed: storage, replication, multidb, Cypher, server, Qdrant, Bolt, errors and northwind_power; storagefault compiled but selected no tests. Log: external err-field-integrated-focused.log. This is focused validation, not full make test. API compatibility approval, paired cost qualification and full CI remain pending.
+
+## Release and CI failure correction
+
+- [x] Capture full failed release verification42175360279 logs and per-job outcomes.
+- [x] Identify release storage regression: TestWriteOrderModel/writeBehind=true seed19 fails rejected backup restore with derived count underflow for test:LINK. No assertion waiver.
+- [x] Identify runner shutdowns in release Cypher/conformance jobs (exit143); no assertion failure established by their incomplete logs.
+- [x] Correct parent CI dispatch: c40d10504 was incorrectly treated as a branch by checkout; restart42219227768 with full c40d10504f21392188c6e3a48f3ed30b5e6860d7. Checkout/planning now passes, shards running. No workflow relaxation.
+- [x] DeepSeek604db97c460749f080eec7ee54bfc73f supplies the count/restore correction; parent independently reproduces the exact underflow and verifies the candidate.
+- [x] Independently review integrated storage correction and run focused affected checks, including three combined race repetitions.
+- [ ] Push correction, update AC evidence and rerun exact-head CI.
+
+Remote Graphify lookup still returns HTTP400 plain HTTP sent to HTTPS; source inspection is the fallback, not a clean duplicate result.
+
+Current CI42219227768 checked out the full immutable c40d10504f21392188c6e3a48f3ed30b5e6860d7 (verified checkout log), passed planning/lint and exposed two additional failing shards:
+- stored-entity census: retired field rows plus missing pendingTop writer classification and stale generated inventory; DeepSeekfc0008033b0a418682fbfcadc17f85db owns source-verified reconciliation, not rule changes.
+- capture census: changed compensation closure proof, obsolete cross-unit acceptedEntityCommand.apply row, and changed calculateStorageSizeFromEngine reconciliation source; DeepSeek779b5b1696394912bf0d69126162d6ba owns source comparison and controls. No human approval is inferred from a digest refresh.
+
+Independent unchanged-release60ff reproduction attempts: seed19/writeBehind=true count40 passed; three complete TestWriteOrderModel runs passed in153.039s. The CI failure remains established but not reproduced under these local schedules. Preserve this distinction until deterministic ownership is proven.
+
+## Integrated correction progress
+
+- [x] Deterministic unchanged-release reproduction of stale cascade ACK and exact LINK count underflow on Backup/Restore; candidate backup probe passes three repeats and conflict regressions pass five parent race repetitions.
+- [x] Preserve both observed-update preparation contracts: caller cancellation and Close cancellation/join before acceptance. The original Close assertion remains. A deterministic automatic-snapshot admission deadlock was reproduced and corrected with the existing cancellable mutex API; combined race checks pass.
+- [x] Fix real standalone replication caller-context loss before leader normalization; accepted submission still uses its completion owner. Adapt HA deadline diagnostics to the opaque accepted-error boundary with the existing typed diagnostic assertion. Parent replication race checks pass.
+- [x] Review six moved/changed catalog error exits and five new DROP lexical-population members plus the moved DropDatabase classification; unchanged structural/credential output checks pass.
+- [x] Register all52 missing fixture constructor sites with canonical ownership APIs, preserving explicit close/reopen/callback phases. Strong typed fixture inventory and allocator mutation controls pass after building UI assets for its untagged go-list child (72.573s).
+- [x] Complete runtime engine-phase context threading and source-verified stale record retirement; preserve the two previously approved independent publication-completion boundaries. Full capturecensus package passes on the integrated source (251.810s), without census rule or assertion changes.
+- [x] Independently inspect cascade validation-boundary coverage: retained entity-authority locks prevent the alleged overlap; deterministic public native-commit ordering controls pass under race.
+- [ ] Freeze source, regenerate stored-entity inventory and reverify census controls; then commit/push and run new exact-head CI.
+
+Current old-head CI42219227768 is complete and failed; all seven shard results were captured. No full pass is claimed.
+
+Release verification42175360279 attempt3 completed: interrupted Cypher and conformance checks passed on rerun; storage count-underflow remains the actual release failure, corrected here. New CI-head verification remains required.
+
+Frozen-source correction checks: full capturecensus PASS251.810s; read-only storagecensus package PASS244.043s (mutant subpackages still running); all packages compile with zero selected tests; focused replication/server/multidb PASS7.010s/5.994s/5.259s; combined storage race PASS9.838s, three repetitions. Full CI make-test gate remains pending on the next pushed SHA.

@@ -1090,7 +1090,10 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to load property key dictionary: %w", err)
 	}
-	if err := engine.initializeWALPropertyIdentity(engine.db, false, false); err != nil {
+	// Opening is this constructor's non-cancellable phase. No caller context
+	// is supplied by the exported API; preserve that lifetime until the fully
+	// initialized engine can be published.
+	if err := engine.initializeWALPropertyIdentity(context.Background(), engine.db, false, false); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize property dictionary identity: %w", err)
 	}
@@ -1244,7 +1247,7 @@ func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Option
 	// it before calling them.
 	b.db = newDB
 	newDB.cacheOwner = b
-	if err := b.initializeWALPropertyIdentity(newDB, false, false); err != nil {
+	if err := b.initializeWALPropertyIdentity(b.work.Context(), newDB, false, false); err != nil {
 		newDB.Close()
 		return nil, err
 	}

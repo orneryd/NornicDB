@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,7 +18,7 @@ import (
 func TestAcceptedReplayTakesApplyingEngineLifetime(t *testing.T) {
 	t.Run("open", func(t *testing.T) {
 		dir := t.TempDir()
-		base, err := NewBadgerEngine(dir)
+		base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 		require.NoError(t, err)
 		p, payload := acceptedClosePhaseFrame(t, base, "test:open")
 		p.Abort()
@@ -28,7 +29,7 @@ func TestAcceptedReplayTakesApplyingEngineLifetime(t *testing.T) {
 		go func() { done <- ReplayWALEntry(base, entry) }()
 		require.NoError(t, requireWithin(t, "replay into an open engine", done))
 		require.NoError(t, base.Close())
-		reopened, err := NewBadgerEngine(dir)
+		reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = reopened.Close() })
 		_, err = reopened.GetStoredNode(t.Context(), "test:open")
@@ -36,7 +37,7 @@ func TestAcceptedReplayTakesApplyingEngineLifetime(t *testing.T) {
 	})
 	t.Run("closed", func(t *testing.T) {
 		dir := t.TempDir()
-		base, err := NewBadgerEngine(dir)
+		base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 		require.NoError(t, err)
 		p, payload := acceptedClosePhaseFrame(t, base, "test:closed")
 		logicalID := p.LogicalID()
@@ -51,7 +52,7 @@ func TestAcceptedReplayTakesApplyingEngineLifetime(t *testing.T) {
 		require.Equal(t, logicalID, accepted.LogicalID)
 		require.ErrorIs(t, accepted.Err, ErrStorageClosed)
 		require.False(t, errors.Is(accepted.Err, context.Canceled), "the closed store, not its cancelled work context, is the cause")
-		reopened, err := NewBadgerEngine(dir)
+		reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = reopened.Close() })
 		_, err = reopened.GetStoredNode(t.Context(), "test:closed")

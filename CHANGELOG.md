@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject a node cascade when a peer has already deleted one of its staged
+  relationships, including after the peer's write-behind generation is flushed.
+  Prevent duplicate relationship-count decrements that made valid backups fail
+  restore with a derived-count underflow.
+
 - Reduce continued retrieval scratch allocations by reusing the exact-stage
   membership proof during HNSW candidate selection. Retain repeated bound-chain
   predicate syntax per statement while rebinding current parameter values.

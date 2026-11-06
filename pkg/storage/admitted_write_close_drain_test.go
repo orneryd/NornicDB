@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +28,7 @@ func TestAdmittedWriteCompletesDuringCloseDrain(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			b, err := NewBadgerEngine(dir)
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
 			require.NoError(t, b.BulkCreateNodes(t.Context(), []*Node{{ID: "test:a"}, {ID: "test:b"}}))
 			require.NoError(t, b.BulkCreateEdges(t.Context(), []*Edge{{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R"}}))
@@ -108,7 +109,7 @@ func TestAdmittedWriteCompletesDuringCloseDrain(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("Close did not return after the drain")
 			}
-			reopened, err := NewBadgerEngine(dir)
+			reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = reopened.Close() })
 			if tc.edge {
@@ -169,7 +170,7 @@ func TestAdmittedUniqueValueWriteCompletesDuringCloseDrain(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			b, err := NewBadgerEngine(dir)
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
 			schema := b.GetSchemaForNamespace("test")
 			require.NoError(t, schema.AddConstraint(Constraint{Name: "doc_uid", Type: ConstraintUnique, EntityType: ConstraintEntityNode, Label: "Doc", Properties: []string{"uid"}}))
@@ -235,7 +236,7 @@ func TestAdmittedUniqueValueWriteCompletesDuringCloseDrain(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("Close did not return after the drain")
 			}
-			reopened, err := NewBadgerEngine(dir)
+			reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = reopened.Close() })
 			require.NoError(t, tc.check(reopened), "the drained write is durable")
@@ -249,7 +250,7 @@ func TestAdmittedUniqueValueWriteCompletesDuringCloseDrain(t *testing.T) {
 // reopened store keeps neither the node nor its suppression.
 func TestCloseFinishesEndedSuppressionsThroughDrain(t *testing.T) {
 	dir := t.TempDir()
-	b, err := NewBadgerEngine(dir)
+	b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	_, err = b.CreateNode(t.Context(), &Node{ID: "test:c", Labels: []string{"Doc"}})
 	require.NoError(t, err)
@@ -264,7 +265,7 @@ func TestCloseFinishesEndedSuppressionsThroughDrain(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Close did not finish the ended suppression")
 	}
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	require.False(t, reopened.HasManualSuppressions(), "the ended suppression was retired")

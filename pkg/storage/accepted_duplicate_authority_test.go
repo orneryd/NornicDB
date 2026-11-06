@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAcceptedDuplicateReplayReleasesBothPreparedAuthorities(t *testing.T) {
-	base := NewMemoryEngine()
+	base := fixtureowner.Track(t, NewMemoryEngine(), ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	_, err := base.CreateNode(t.Context(), &Node{ID: "test:n", Properties: map[string]any{"v": "before"}})
 	require.NoError(t, err)

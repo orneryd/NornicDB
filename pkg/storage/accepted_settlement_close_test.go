@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,7 +16,7 @@ import (
 // Badger handle, so a Sync that passed its open check must be joined. Without
 // that, this Sync reads the released handle after Close returned.
 func TestCloseJoinsSyncInProgress(t *testing.T) {
-	base, err := NewBadgerEngine(t.TempDir())
+	base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	entered, permit := make(chan struct{}), make(chan struct{})
 	base.nativeSyncHook = func() {
@@ -51,7 +52,7 @@ func TestCloseJoinsSyncInProgress(t *testing.T) {
 // constraint on settlement: a callback that syncs and then closes its own engine
 // finishes, because nothing it holds is what Close waits for.
 func TestAcceptedSettlementCanSyncAndCloseItsEngine(t *testing.T) {
-	base, err := NewBadgerEngine(t.TempDir())
+	base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	p, payload := acceptedClosePhaseFrame(t, base, "test:settled")
 	p.Abort()

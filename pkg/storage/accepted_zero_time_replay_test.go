@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,7 +69,7 @@ func TestAcceptedReplayMaterializesDecodedTimestampImages(t *testing.T) {
 	assertImages(base)
 	require.EqualValues(t, 1, wal.Sequence(), "accepted application never records a new command")
 	require.NoError(t, owner.Close())
-	recovered, replay, err := RecoverFromWALWithResult(dir, "")
+	recovered, replay, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	require.Empty(t, replay.Errors)
@@ -78,7 +79,7 @@ func TestAcceptedReplayMaterializesDecodedTimestampImages(t *testing.T) {
 
 func TestNativeEdgeEpochTimeSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
-	base, err := NewBadgerEngine(dir)
+	base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	for _, id := range []NodeID{"test:a", "test:b"} {
@@ -88,7 +89,7 @@ func TestNativeEdgeEpochTimeSurvivesRestart(t *testing.T) {
 	epoch := time.Unix(0, 0).UTC()
 	require.NoError(t, base.CreateEdge(t.Context(), &Edge{ID: "test:epoch", StartNode: "test:a", EndNode: "test:b", Type: "LINK", CreatedAt: epoch, UpdatedAt: epoch}))
 	require.NoError(t, base.Close())
-	base, err = NewBadgerEngine(dir)
+	base, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	edge, err := base.GetStoredEdge(t.Context(), "test:epoch")
 	require.NoError(t, err)

@@ -63,27 +63,24 @@
       "proof": {
         "present": true,
         "file": "pkg/multidb/storage_size_cache.go",
-        "sourceSHA256": "f16bd6ffe8e9040c119efddb2951fcfeb02eb6f21d75cef6d9ed816701cb84a9",
+        "sourceSHA256": "ff5a7b967fd113821cd13eb04f42886aeb2ed387b3aedab0ba544e5fb95ca455",
         "directCalls": [
           "storage.StreamStoredNodes",
-          "m.lifetime().Context",
-          "m.lifetime",
           "calculateNodeSize",
           "localizedError",
           "localization.MultidbStorageCalculateNodeSizeFailed",
           "localizedError",
           "localization.MultidbStorageGetAllNodesForSizeCalculationFailed",
           "storage.StreamStoredEdgesByType",
-          "m.lifetime().Context",
-          "m.lifetime",
           "calculateEdgeSize",
           "localizedError",
           "localization.MultidbStorageCalculateEdgeSizeFailed",
           "localizedError",
           "localization.MultidbStorageGetAllEdgesForSizeCalculationFailed"
-        ]
+        ],
+        "freshContextCalls": []
       },
-      "reason": "No fresh context creation remains in this exact function; its current callers and replacement lifetime paths remain subject to the normal census."
+      "reason": "No fresh context creation remains in this exact function; its current callers and replacement lifetime paths remain subject to the normal census. Re-reviewed 2026-11-06 against head c40d10504f21392188c6e3a48f3ed30b5e6860d7: the function now takes the caller context and passes it to both stream readers instead of borrowing a lifetime context, so the two former m.lifetime() calls are gone and the compiled census judges its callers (ensureStorageSizeInitialized, readStorageSize) and nil flows at its own ctx parameter. Retiring this entry grants no acceptance to any context, lifetime or route."
     },
     "(*github.com/orneryd/nornicdb/pkg/multidb.DatabaseManager).cleanupLeakedSystemNodes": {
       "proof": {
@@ -346,6 +343,31 @@
         "directCalls": []
       },
       "reason": "This exact function is absent from current product source; no replacement is exempted."
+    },
+    "(*github.com/orneryd/nornicdb/pkg/replication.acceptedEntityCommand).apply": {
+      "proof": {
+        "present": false,
+        "directCalls": [],
+        "freshContextCalls": []
+      },
+      "reason": "This exact function is absent from current product source: 88b8fe766 (fix(storage): restack accepted entity settlement for v1.4.4) removed type acceptedEntityCommand and its apply method. Accepted entity settlement now enters through storage.AcceptEntityCommit and settles through the storage accepted owner, inside the policy package, so the ordinary in-package census judges those functions and their request, nil and lifetime flows; no replacement is exempted here, and this retirement grants no acceptance to any lifetime, context or route."
+    },
+    "github.com/orneryd/nornicdb/pkg/storage.NewWALEngine": {
+      "proof": {
+        "present": true,
+        "file": "pkg/storage/wal_engine.go",
+        "sourceSHA256": "98bda03f697c1c8794470eff72dda4dd533bc11eac608d3979cf2c560af8e97d",
+        "directCalls": [
+          "engine.(PropertyKeyRegistry)",
+          "engine.(interface SetBufferedCommitWAL)",
+          "setter.SetBufferedCommitWAL",
+          "wal.sequence.Load",
+          "w.compactedSequence.Store",
+          "w.hasCompacted.Store"
+        ],
+        "freshContextCalls": []
+      },
+      "reason": "The engine wait lifetime this substitution described no longer exists here: 88b8fe766 removed the entityWaitCtx field and its WithCancel(context.Background()) creation from NewWALEngine, and the accepted-outcome waits now take the engine WorkLifetime context (wal_entity_commit.go). This exact function creates no fresh context, so the entry matches no site; retiring it grants no acceptance to the engine lifetime or to any wait path, which remain subject to the ordinary census."
     }
   },
   "retiredContextSources": {

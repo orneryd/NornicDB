@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +17,7 @@ import (
 func acceptedCloseFixture(t *testing.T) (*BadgerEngine, *WAL, *WALEngine, string) {
 	t.Helper()
 	t.Cleanup(config.WithWALEnabled())
-	base, err := NewBadgerEngine(t.TempDir())
+	base, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	dir := t.TempDir()
 	wal, err := NewWAL(dir, &WALConfig{Dir: dir, SyncMode: "immediate"})
@@ -47,7 +48,7 @@ func waitAcceptedEngineClosing(t *testing.T, base *BadgerEngine) {
 
 func requireAcceptedCloseReplay(t *testing.T, dir string) {
 	t.Helper()
-	recovered, result, err := RecoverFromWALWithResult(dir, "")
+	recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	require.Empty(t, result.Errors)

@@ -313,17 +313,18 @@ func TestWALPropertyEpochMatchingPrefixCannotAuthorizeLegacyAfterReopen(t *testi
 func TestWALPropertyEpochOwnDirectoryAllocationBounds(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	source, wal, commit := bindingCostFixture(t, 1)
+	ctx := source.work.Context()
 	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
 	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
 	require.NoError(t, err)
 	data, err := decodeBufferedWALRecord(entries[0])
 	require.NoError(t, err)
-	imported, err := source.importBufferedWALRecord(&data, walOwnDirectoryAtOpen)
+	imported, err := source.importBufferedWALRecord(ctx, &data, walOwnDirectoryAtOpen)
 	require.NoError(t, err)
 	require.Empty(t, imported.propKeyDrain.pending)
 	data.PropKeys = nil
 	require.Zero(t, testing.AllocsPerRun(32, func() {
-		_, err := source.importBufferedWALRecord(&data, walOwnDirectoryAtOpen)
+		_, err := source.importBufferedWALRecord(ctx, &data, walOwnDirectoryAtOpen)
 		if err != nil {
 			t.Fatal(err)
 		}
