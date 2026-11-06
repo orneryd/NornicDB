@@ -217,6 +217,7 @@ func TestSchemaForPatternReaderOwnsTheForClause(t *testing.T) {
 		isRelationship bool
 		variableSource string
 		labelOrType    string
+		direction      string
 		ok             bool
 	}{
 		{clause: "(n:Person)", variableSource: "n", labelOrType: "Person", ok: true},
@@ -224,6 +225,14 @@ func TestSchemaForPatternReaderOwnsTheForClause(t *testing.T) {
 		{clause: "(n:`Weird Label`)", variableSource: "n", labelOrType: "Weird Label", ok: true},
 		{clause: "()-[r:KNOWS]-()", isRelationship: true, variableSource: "r", labelOrType: "KNOWS", ok: true},
 		{clause: "(a)-[`r x`:`KNOWS TYPE`]-(b)", isRelationship: true, variableSource: "`r x`", labelOrType: "KNOWS TYPE", ok: true},
+		{clause: "()-[r:KNOWS]->()", isRelationship: true, variableSource: "r", labelOrType: "KNOWS", direction: "OUTGOING", ok: true},
+		{clause: "()<-[r:KNOWS]-()", isRelationship: true, variableSource: "r", labelOrType: "KNOWS", direction: "INCOMING", ok: true},
+		{clause: "(:User)-[:FOLLOWS]->(:User)", isRelationship: true, labelOrType: "FOLLOWS", direction: "OUTGOING", ok: true},
+		{clause: "(:User)<-[:FOLLOWS]-(:User)", isRelationship: true, labelOrType: "FOLLOWS", direction: "INCOMING", ok: true},
+		{clause: "(:User)-[:FOLLOWS]-(:User)", isRelationship: true, labelOrType: "FOLLOWS", ok: true},
+		{clause: "(a)<-[r:TYPE]->(b)", isRelationship: true, variableSource: "r", labelOrType: "TYPE", direction: "OUTGOING", ok: true},
+		{clause: "()-[r:`a b|c `]->()", isRelationship: true, variableSource: "r", labelOrType: "a b|c ", direction: "OUTGOING", ok: true},
+		{clause: "(a)-[`r x`:`KNOWS TYPE`]->(b)", isRelationship: true, variableSource: "`r x`", labelOrType: "KNOWS TYPE", direction: "OUTGOING", ok: true},
 		{clause: ""},
 		{clause: "(n)"},
 		{clause: ":Person"},
@@ -237,6 +246,7 @@ func TestSchemaForPatternReaderOwnsTheForClause(t *testing.T) {
 		require.Equal(t, testCase.isRelationship, target.isRelationship, testCase.clause)
 		require.Equal(t, testCase.variableSource, target.variableSource, testCase.clause)
 		require.Equal(t, testCase.labelOrType, target.name, testCase.clause)
+		require.Equal(t, testCase.direction, target.direction, testCase.clause)
 	}
 }
 
@@ -428,47 +438,6 @@ func TestSchemaContractRelationshipKeyAdmissionUnchanged(t *testing.T) {
 	constraints, err = unparenthesized.Execute(ctx, "SHOW CONSTRAINTS", nil)
 	require.NoError(t, err)
 	require.Empty(t, constraints.Rows)
-}
-
-// TestSchemaForPatternTargetOwnsRelationshipDirection pins the direction the one
-// FOR pattern reader derives from a relationship pattern's arrows: a "->" suffix
-// is OUTGOING and takes precedence, otherwise a "<-" prefix is INCOMING, and an
-// undirected pattern carries no direction for its callers to judge.
-func TestSchemaForPatternTargetOwnsRelationshipDirection(t *testing.T) {
-	cases := []struct {
-		clause         string
-		variableSource string
-		relType        string
-		direction      string
-	}{
-		{clause: "()-[r:KNOWS]->()", variableSource: "r", relType: "KNOWS", direction: "OUTGOING"},
-		{clause: "()<-[r:KNOWS]-()", variableSource: "r", relType: "KNOWS", direction: "INCOMING"},
-		{clause: "()-[r:KNOWS]-()", variableSource: "r", relType: "KNOWS"},
-		{clause: "(:User)-[:FOLLOWS]->(:User)", relType: "FOLLOWS", direction: "OUTGOING"},
-		{clause: "(:User)<-[:FOLLOWS]-(:User)", relType: "FOLLOWS", direction: "INCOMING"},
-		{clause: "(:User)-[:FOLLOWS]-(:User)", relType: "FOLLOWS"},
-		// The arrows keep the precedence the directional reader always had: a
-		// "->" suffix decides before a "<-" prefix.
-		{clause: "(a)<-[r:TYPE]->(b)", variableSource: "r", relType: "TYPE", direction: "OUTGOING"},
-		// Quoted type identity is the reader's: its pipe, space and trailing
-		// whitespace survive decoding unchanged.
-		{clause: "()-[r:`a b|c `]->()", variableSource: "r", relType: "a b|c ", direction: "OUTGOING"},
-		{clause: "(a)-[`r x`:`KNOWS TYPE`]->(b)", variableSource: "`r x`", relType: "KNOWS TYPE", direction: "OUTGOING"},
-	}
-	for _, testCase := range cases {
-		target, ok := parseForPatternTarget(testCase.clause)
-		require.True(t, ok, testCase.clause)
-		require.True(t, target.isRelationship, testCase.clause)
-		require.Equal(t, testCase.variableSource, target.variableSource, testCase.clause)
-		require.Equal(t, testCase.relType, target.name, testCase.clause)
-		require.Equal(t, testCase.direction, target.direction, testCase.clause)
-	}
-
-	// A node pattern has no arrows, so the shared reader reports none.
-	nodeTarget, ok := parseForPatternTarget("(n:Person)")
-	require.True(t, ok)
-	require.False(t, nodeTarget.isRelationship)
-	require.Empty(t, nodeTarget.direction)
 }
 
 // TestSchemaCardinalityDDLUsesTheSharedForPatternReading records the cardinality
