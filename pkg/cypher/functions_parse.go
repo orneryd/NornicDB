@@ -93,7 +93,7 @@ func expressionPredecessor(expression string, limit int) (last, quotedStart int)
 	// Horizontal ASCII gaps cannot terminate a line comment. Resolve this
 	// common boundary without entering the full lexical-span walk; a slash,
 	// quote, line break or Unicode gap still goes through that owner.
-	for last >= 0 && (expression[last] == ' ' || expression[last] == '\t') {
+	for last >= 0 && cyphertext.IsHorizontalASCIIWhitespace(expression[last]) {
 		last--
 	}
 	if last < 0 {
