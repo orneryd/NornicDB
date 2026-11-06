@@ -622,6 +622,61 @@ func TestParseRetrievalFiltersEdgeCases(t *testing.T) {
 	}, parseRetrievalFilters(map[string]interface{}{
 		"bool": true, "float": 1.5, "mixed": []interface{}{int64(3), nil, "active"},
 	}))
+
+	// A filter value becomes a request token through fmt.Sprint, never through
+	// per-member numeric coercion: []string keeps its members exactly,
+	// []interface{} skips nil and Sprints each non-nil member, a scalar is one
+	// Sprint token, and every other concrete slice keeps its old whole-slice
+	// scalar token. convert.ReadList cannot substitute for that: it widens the
+	// carrier set and promotes numeric members ([]int to int64, []float32 to
+	// float64) before formatting, yielding individual promoted tokens instead
+	// of the contract's whole-slice token for a concrete numeric slice.
+	for _, testCase := range []struct {
+		name string
+		raw  map[string]interface{}
+		want map[string][]string
+	}{
+		{
+			name: "string list keeps members exactly",
+			raw:  map[string]interface{}{"tag": []string{" padded ", "0.10", ""}},
+			want: map[string][]string{"tag": {" padded ", "0.10", ""}},
+		},
+		{
+			name: "boxed list skips nil and Sprints non-nil members",
+			raw:  map[string]interface{}{"tag": []interface{}{float32(0.1), int64(7), true, nil, "text"}},
+			want: map[string][]string{"tag": {"0.1", "7", "true", "text"}},
+		},
+		{
+			name: "scalars are one Sprint token each",
+			raw:  map[string]interface{}{"int": int64(42), "float": float32(0.1), "bool": false, "string": "text"},
+			want: map[string][]string{"int": {"42"}, "float": {"0.1"}, "bool": {"false"}, "string": {"text"}},
+		},
+		{
+			name: "nil value is kept and matches nothing",
+			raw:  map[string]interface{}{"tag": nil},
+			want: map[string][]string{"tag": nil},
+		},
+		{
+			name: "typed empty string list is kept and matches nothing",
+			raw:  map[string]interface{}{"tag": []string{}},
+			want: map[string][]string{"tag": {}},
+		},
+		{
+			name: "other concrete slices keep the whole-slice scalar token",
+			raw: map[string]interface{}{
+				"ints":   []int64{3, 4},
+				"floats": []float32{0.1, 0.2},
+			},
+			want: map[string][]string{
+				"ints":   {"[3 4]"},
+				"floats": {"[0.1 0.2]"},
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.want, parseRetrievalFilters(testCase.raw))
+		})
+	}
 }
 
 func TestCallDbInfer(t *testing.T) {
