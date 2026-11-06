@@ -321,6 +321,8 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info.FirstClause = detectFirstClause(upper)
 
 	// Derive compound flags
+	// SUSPECTED ISSUE (NOR-300, PR #1699): write/read-only derived from keywords only;
+	// registered WRITE procedures are not considered.
 	info.IsWriteQuery = info.HasCreate || info.HasMerge || info.HasDelete ||
 		info.HasSet || info.HasRemove
 	// For CALL, only "CALL db." procedures are read-only (schema introspection).

@@ -505,6 +505,8 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 	return inner, nil
 }
 
+// SUSPECTED ISSUE (NOR-300, PR #1699): keyword-only write hint; ignores registered
+// WRITE procedures (e.g. kp.suppress). See TestNOR300_RegisteredWriteProcedureCallTail.
 func isPotentialWriteTail(ctx context.Context, tail string) bool {
 	t := upperASCII(strings.TrimSpace(tail))
 	return findKeywordIndexInContext(ctx, t, "CREATE") >= 0 ||

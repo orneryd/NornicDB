@@ -1072,6 +1072,8 @@ func findMatchingBrace(s string, pos int) (int, error) {
 	return -1, fmt.Errorf("unmatched brace (depth=%d remaining)", depth)
 }
 
+// SUSPECTED ISSUE (NOR-300, PR #1699): keyword-only; a registered WRITE procedure
+// yields IsWrite=false. See TestNOR300_FabricFragmentRegisteredWriteProcedure.
 // queryIsWrite performs a simple heuristic check for write operations.
 // Strings, quoted names and comments are skipped; keywords there are text.
 func queryIsWrite(query string) bool {
