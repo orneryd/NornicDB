@@ -255,12 +255,12 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if err != nil {
 				return nil, err
 			}
-			opts.Where = e.compileNodeWhereFilter(context.WithoutCancel(ctx), "node", where)
+			opts.Where = e.compileNodeWhereFilter(withPipelineClausePlans(context.WithoutCancel(ctx)), "node", where)
 			if opts.Graph || opts.Relationships {
 				// One predicate serves both kinds: a node candidate reads
 				// relationship, start and end as null, a relationship
 				// candidate reads node as null.
-				whereCtx := context.WithoutCancel(ctx)
+				whereCtx := withPipelineClausePlans(context.WithoutCancel(ctx))
 				nodeScope := valueBindingsLayer(whereCtx, 3)
 				nodeScope["relationship"], nodeScope["start"], nodeScope["end"] = nil, nil, nil
 				opts.Where = e.compileNodeWhereFilter(withValueBindings(whereCtx, nodeScope), "node", where)

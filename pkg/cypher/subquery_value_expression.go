@@ -612,6 +612,15 @@ func parseBoundNodeShape(ctx context.Context, body string) boundNodeShape {
 	return shape
 }
 
+// boundChainReadPlan retains only syntax. Traversal state, graph reads and
+// row/parameter-dependent property maps remain owned by each evaluation.
+type boundChainReadPlan struct {
+	pattern  string
+	where    string
+	matches  *TraversalMatch
+	admitted bool
+}
+
 // boundChainCount counts the rows of a body that is one relationship chain,
 // with an optional WHERE, starting at a node bound in values: it traverses
 // from that node and keeps the paths that agree with the row's other nodes
@@ -621,31 +630,45 @@ func parseBoundNodeShape(ctx context.Context, body string) boundNodeShape {
 // of the row that isn't a node or relationship, a property map reading the
 // row, a shortest path, or no bound start node.
 func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
-	pattern := strings.TrimSpace(body)
-	if hasPrefixFold(pattern, "MATCH ") {
-		pattern = strings.TrimSpace(pattern[len("MATCH"):])
-	}
-	// One MATCH clause, its WHERE included: a RETURN or any other clause is
-	// the kernel's or the pipeline's.
-	if clauses, ok := splitPipelineClauses(ctx, "MATCH "+pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	shape := clauseAnalysisFor(ctx, clauseAnalysisBoundChain, body, func(text string) boundChainReadPlan {
+		pattern := strings.TrimSpace(text)
+		if hasPrefixFold(pattern, "MATCH ") {
+			pattern = strings.TrimSpace(pattern[len("MATCH"):])
+		}
+		if clauses, ok := splitPipelineClauses(ctx, "MATCH "+pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+			return boundChainReadPlan{}
+		}
+		where := ""
+		if index := topLevelKeywordIndex(ctx, pattern, "WHERE"); index >= 0 {
+			where = strings.TrimSpace(pattern[index+len("WHERE"):])
+			pattern = strings.TrimSpace(pattern[:index])
+		}
+		if !strings.HasPrefix(pattern, "(") || len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) ||
+			extractPathAssignmentVariable(pattern) != "" || !patternMapsAreConstant(pattern) ||
+			indexASCIIFold(text, "shortestpath") >= 0 || indexASCIIFold(text, repeatableElementsFunction) >= 0 {
+			return boundChainReadPlan{}
+		}
+		shape := boundChainReadPlan{pattern: pattern, where: where, admitted: true}
+		// Property maps and dynamic syntax must bind the current parameters,
+		// including rewritten parameters of correlated internal statements.
+		// Only value-free structure is immutable across this statement's rows.
+		if !strings.ContainsAny(pattern, "{$") {
+			shape.matches = e.parseTraversalPattern(ctx, pattern)
+			shape.admitted = shape.matches != nil
+		}
+		return shape
+	})
+	if !shape.admitted {
 		return 0, false
 	}
-	where := ""
-	if index := topLevelKeywordIndex(ctx, pattern, "WHERE"); index >= 0 {
-		where = strings.TrimSpace(pattern[index+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:index])
+	matches := shape.matches
+	if matches == nil {
+		matches = e.parseTraversalPattern(ctx, shape.pattern)
 	}
-	// A match mode or path selector (REPEATABLE ELEMENTS, ANY SHORTEST)
-	// precedes the pattern; only the pipeline's MATCH runs those.
-	if !strings.HasPrefix(pattern, "(") || len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) ||
-		extractPathAssignmentVariable(pattern) != "" || !patternMapsAreConstant(pattern) ||
-		indexASCIIFold(body, "shortestpath") >= 0 || indexASCIIFold(body, repeatableElementsFunction) >= 0 {
-		return 0, false
-	}
-	matches := e.parseTraversalPattern(ctx, pattern)
 	if matches == nil || !chainVariablesBindEntities(matches, values) {
 		return 0, false
 	}
+	where := shape.where
 	seed, _ := values[matches.StartNode.variable].(*storage.Node)
 	if seed == nil {
 		return 0, false

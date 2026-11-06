@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reduce continued retrieval scratch allocations by reusing the exact-stage
+  membership proof during HNSW candidate selection. Retain repeated bound-chain
+  predicate syntax per statement while rebinding current parameter values.
+
 - Consolidate schema DDL readers and transaction property ownership without
   changing admitted syntax or storage formats. Preserve parser-specific
   rejection boundaries and command-specific result scope.
