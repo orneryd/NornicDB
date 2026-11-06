@@ -40,11 +40,11 @@ func symbolicNameValue(written string) string {
 // exactly one symbolic name, plain or backtick-quoted, and returns its value.
 func isOneSymbolicName(text string) (string, bool) {
 	text = strings.TrimSpace(text)
-	written, end, ok := scanSymbolicName(text, 0)
-	if !ok || end != len(text) {
+	name, ok := cyphertext.ScanIdentifier(text, 0)
+	if !ok || name.End != len(text) {
 		return "", false
 	}
-	return symbolicNameValue(written), true
+	return name.Value, true
 }
 
 // isBacktickQuotedName reports whether name is one backtick-quoted name

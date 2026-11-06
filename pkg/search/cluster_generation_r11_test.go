@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -51,10 +52,10 @@ func TestClusterGenerationFirstPersistentBuildKeepsLexicalProfiles(t *testing.T)
 	}
 }
 
-// r11ClusterPair chooses distinct populated clusters in label order. K-means
+// cgPopulatedClusters chooses populated clusters in label order. K-means
 // may leave a numbered centroid empty; these probes test cross-cluster state,
 // not a requirement that every requested centroid own a document.
-func r11ClusterPair(t *testing.T, f *cgFixture) (int, int) {
+func cgPopulatedClusters(t *testing.T, f *cgFixture, minimum int) []int {
 	t.Helper()
 	var populated []int
 	for cid := 0; cid < f.svc.clusterIndex.NumClusters(); cid++ {
@@ -62,8 +63,8 @@ func r11ClusterPair(t *testing.T, f *cgFixture) (int, int) {
 			populated = append(populated, cid)
 		}
 	}
-	require.GreaterOrEqual(t, len(populated), 2, "the probe requires two distinct live populations")
-	return populated[0], populated[len(populated)-1]
+	require.GreaterOrEqual(t, len(populated), minimum, "the probe requires enough distinct live populations")
+	return populated
 }
 
 // r11Context runs fn at its at-th Err call.
@@ -101,7 +102,8 @@ func TestClusterGenerationPersistenceSnapshotsOnePopulation(t *testing.T) {
 			f.t = t
 			before := cgView(f.svc).membership
 			var moved string
-			from, to := r11ClusterPair(t, f)
+			populated := cgPopulatedClusters(t, f, 2)
+			from, to := populated[0], populated[len(populated)-1]
 			ctx := &r11Context{Context: context.Background(), at: 4, fn: func() { moved, _ = moveClusterMember(t, f, from, to) }}
 			dir := t.TempDir()
 			path.save(f, ctx, filepath.Join(dir, "hnsw"))
@@ -139,7 +141,8 @@ func TestClusterGenerationRestoreUsesLiveMembership(t *testing.T) {
 				}
 				require.Empty(t, f.svc.clusterIndex.GetClusterMemberIDsForCluster(emptyCID))
 			}
-			to, from := r11ClusterPair(t, f)
+			populated := cgPopulatedClusters(t, f, 2)
+			to, from := populated[0], populated[len(populated)-1]
 			moved, _ := moveClusterMember(t, f, from, to)
 			path := filepath.Join(t.TempDir(), "hnsw")
 			require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
@@ -155,7 +158,8 @@ func TestClusterGenerationRestoreUsesLiveMembership(t *testing.T) {
 // population: it is rejected, not made authoritative.
 func TestClusterGenerationRestoreRejectsDuplicateMembers(t *testing.T) {
 	f := newCGFixture(t, 20, false)
-	source, target := r11ClusterPair(t, f)
+	populated := cgPopulatedClusters(t, f, 2)
+	source, target := populated[0], populated[len(populated)-1]
 	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(source)
 	require.NotEmpty(t, ids)
 	vec, ok := f.svc.getVectorLookup()(ids[0])
@@ -202,30 +206,45 @@ func r11Restore(t *testing.T, f *cgFixture, path string) {
 	assertClusterGenerationCoherent(t, f.svc, cgAllChecks)
 }
 
-// F2 (TestSolR11RestoreNewCanonicalVector): a vector newer than the saved
-// generation is placed at its nearest restored centroid, not in cluster 0.
-func TestClusterGenerationRestorePlacesNewCanonicalVector(t *testing.T) {
-	f := newCGFixture(t, 20, false)
-	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
-	_, target := r11ClusterPair(t, f)
-	require.NotZero(t, target, "the probe must reject default-cluster-zero placement")
-	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(target)
-	require.NotEmpty(t, ids)
-	routing := f.svc.clusterIndex.PublishedClustering()
-	require.NotNil(t, routing)
-	vec := routing.Centroids()[target]
-	path := filepath.Join(t.TempDir(), "hnsw")
-	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	node := &storage.Node{ID: "late-restored", Properties: map[string]any{"text": "newcomer"}, ChunkEmbeddings: [][]float32{append([]float32(nil), vec...)}}
-	require.NoError(t, f.write(node))
-	before, found := f.svc.clusterIndex.ClusterOf("late-restored")
-	require.True(t, found)
-	require.Equal(t, target, before)
-	r11Restore(t, f, path)
-	after, found := f.svc.clusterIndex.ClusterOf("late-restored")
-	require.True(t, found)
-	require.Equal(t, target, after, "placed at its nearest restored centroid")
-	require.True(t, r11PublicSelfHit(t, f, vec, "late-restored"))
+// Both post-save histories use the same restore contract: an absent vector is
+// added at its current centroid, and a saved vector is moved out of its old
+// cluster. Keep both mutations explicit while sharing every restore assertion.
+func TestClusterGenerationRestorePlacesPostSaveVectors(t *testing.T) {
+	for _, history := range []string{"created after save", "updated after save"} {
+		t.Run(history, func(t *testing.T) {
+			f := newCGFixture(t, 20, false)
+			t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
+			populated := cgPopulatedClusters(t, f, 2)
+			from, target := populated[0], populated[len(populated)-1]
+			require.NotZero(t, target, "the probe must reject default-cluster-zero placement")
+			require.NotEmpty(t, f.svc.clusterIndex.GetClusterMemberIDsForCluster(target))
+			routing := f.svc.clusterIndex.PublishedClustering()
+			require.NotNil(t, routing)
+			path := filepath.Join(t.TempDir(), "hnsw")
+			require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
+			var id string
+			var vec []float32
+			if history == "created after save" {
+				id = "late-restored"
+				vec = append([]float32(nil), routing.Centroids()[target]...)
+				node := &storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": "newcomer"}, ChunkEmbeddings: [][]float32{append([]float32(nil), vec...)}}
+				require.NoError(t, f.write(node))
+			} else {
+				id, vec = moveClusterMember(t, f, from, target)
+			}
+			canonical, found := f.svc.getVectorLookup()(id)
+			require.True(t, found)
+			require.Equal(t, vector.Normalize(vec), canonical, "the vector owner stores normalized current coordinates")
+			before, found := f.svc.clusterIndex.ClusterOf(id)
+			require.True(t, found)
+			require.Equal(t, target, before)
+			r11Restore(t, f, path)
+			after, found := f.svc.clusterIndex.ClusterOf(id)
+			require.True(t, found)
+			require.Equal(t, target, after, "placed by current coordinates, not missing or saved membership")
+			require.True(t, r11PublicSelfHit(t, f, vec, vectorOwnerForTest(t, id)))
+		})
+	}
 }
 
 // F2 (TestSolR11RestoreMovedPublicQuery): a vector moved before the save is
@@ -233,7 +252,8 @@ func TestClusterGenerationRestorePlacesNewCanonicalVector(t *testing.T) {
 func TestClusterGenerationRestoreMovedPublicQuery(t *testing.T) {
 	f := newCGFixture(t, 20, false)
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
-	to, from := r11ClusterPair(t, f)
+	populated := cgPopulatedClusters(t, f, 2)
+	to, from := populated[0], populated[len(populated)-1]
 	moved, _ := moveClusterMember(t, f, from, to)
 	vec, ok := f.svc.getVectorLookup()(moved)
 	require.True(t, ok)
@@ -243,26 +263,6 @@ func TestClusterGenerationRestoreMovedPublicQuery(t *testing.T) {
 	cid, found := f.svc.clusterIndex.ClusterOf(moved)
 	require.True(t, found)
 	require.Equal(t, to, cid)
-	require.True(t, r11PublicSelfHit(t, f, vec, vectorOwnerForTest(t, moved)))
-}
-
-// A vector moved after the save (the store is newer than the saved
-// generation) is placed by its current coordinates, so a query for it finds
-// it, and its old cluster's saved graph no longer holds it.
-func TestClusterGenerationRestorePlacesVectorsUpdatedAfterSave(t *testing.T) {
-	f := newCGFixture(t, 20, false)
-	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
-	path := filepath.Join(t.TempDir(), "hnsw")
-	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	from, to := r11ClusterPair(t, f)
-	require.NotZero(t, to, "the probe must reject default-cluster-zero placement")
-	moved, _ := moveClusterMember(t, f, from, to)
-	vec, ok := f.svc.getVectorLookup()(moved)
-	require.True(t, ok)
-	r11Restore(t, f, path)
-	cid, found := f.svc.clusterIndex.ClusterOf(moved)
-	require.True(t, found)
-	require.Equal(t, to, cid, "placed by its current coordinates, not its saved cluster")
 	require.True(t, r11PublicSelfHit(t, f, vec, vectorOwnerForTest(t, moved)))
 }
 

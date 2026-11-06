@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report WAL snapshot admission interrupted by shutdown as a closed WAL,
+  consistently with snapshots that acquire the barrier during shutdown.
+  Cancellation on an open engine still returns the caller cancellation error.
+
+- Preserve quoted relationship type identity in correlated COUNT and EXISTS
+  subqueries, including literal pipes and escaped backticks. Keep quoted spaces
+  in graph identifiers used by schema declarations and full-text type filters, and retain whitespace-only
+  property keys in retrieval filters instead of dropping their constraints.
+  Ignore arrow spellings inside quoted endpoint names when determining
+  relationship-cardinality constraint direction.
+
 - Reject a node cascade when a peer has already deleted one of its staged
   relationships, including after the peer's write-behind generation is flushed.
   Prevent duplicate relationship-count decrements that made valid backups fail
