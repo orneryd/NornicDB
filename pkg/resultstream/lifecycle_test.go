@@ -153,7 +153,7 @@ func TestStreamLifecycleDiscardDuringExpansion(t *testing.T) {
 	first, err := r.Start(context.Background(), scope, s, 1)
 	require.NoError(t, err)
 	done := make(chan error, 1)
-	go func() { _, err := r.Pull(context.Background(), scope, first.QID, 1); done <- err }()
+	go func() { _, err := r.Pull(context.Background(), scope, first.QID, 2); done <- err }()
 	<-entered
 	require.NoError(t, r.Discard(scope, first.QID))
 	close(resume)

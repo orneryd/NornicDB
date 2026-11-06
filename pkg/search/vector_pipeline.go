@@ -412,11 +412,32 @@ func (h *HNSWCandidateGen) searchCandidatesWithEntryEvidence(ctx context.Context
 	// selection only: every vector the beam surfaced for a selected node is
 	// kept, and the exact stage scores all of the node's vectors before it
 	// decides the node's score.
-	candidates := make([]Candidate, 0, min(candidateLimit, len(results)))
-	selected := make(map[string]struct{}, min(candidateLimit, len(results)))
+	capacity := min(candidateLimit, len(results))
+	var indexed map[string][]string
+	var expanded map[string]struct{}
+	if index, ok := ctx.Value(vectorMemberIndexKey{}).(*vectorMemberIndex); ok && vectorMembersFromContext(ctx) == nil {
+		index.mu.RLock()
+		defer index.mu.RUnlock()
+		indexed, expanded = index.nodes, index.expanded
+		if !math.IsInf(bound, 1) {
+			// Results are in descending score order. Size selection scratch for
+			// plausible qualifiers; weak multi-member nodes remain admissible
+			// below and can grow the slices when their hidden vectors need scoring.
+			slack := bound + exactScoreSlack(len(query))
+			prefix := sort.Search(len(results), func(i int) bool {
+				return float64(results[i].Score)+slack < minSimilarity
+			})
+			capacity = min(capacity, max(prefix, len(expanded)))
+		}
+	}
+	candidates := make([]Candidate, 0, capacity)
+	selected := make(map[string]struct{}, capacity)
 	for _, r := range results {
 		nodeID, ok := vectorEntryOwner(r.ID)
 		if !ok {
+			continue
+		}
+		if indexed != nil && float64(r.Score)+bound+exactScoreSlack(len(query)) < minSimilarity && candidateNodeBoundIsComplete(r.ID, nodeID, indexed, expanded, false) {
 			continue
 		}
 		if _, ok := selected[nodeID]; !ok {
@@ -795,7 +816,7 @@ func (p *VectorSearchPipeline) scoreNodes(ctx context.Context, query []float32, 
 		return nil, false, err
 	}
 	slices.SortStableFunc(nodes, func(a, b *stageNode) int { return cmp.Compare(b.upper, a.upper) })
-	qualifying := make([]float64, 0, max(k, 0)) // min-heap of the best k qualifying scores
+	qualifying := make([]float64, 0, min(len(nodes), max(k, 0))) // at most one qualifying score per node
 	next := 0
 	for next < len(nodes) {
 		bar := minSimilarity
@@ -899,7 +920,6 @@ func (p *VectorSearchPipeline) scoreAllNodes(ctx context.Context, query []float3
 // The first candidate is inline; extra candidates allocate only for shared nodes.
 func groupCandidatesByNode(ctx context.Context, candidates []Candidate, bound, minSimilarity float64, k int, members vectorMemberResolver, indexed map[string][]string, expanded map[string]struct{}, mainKeysOnly bool) ([]*stageNode, map[string][]string, error) {
 	work := newSearchBatch(ctx)
-	completeMainKeys := mainKeysOnly && len(expanded) == 0
 	eligible := 0
 	for _, candidate := range candidates {
 		if work.boundary() {
@@ -928,17 +948,8 @@ func groupCandidatesByNode(ctx context.Context, candidates []Candidate, bound, m
 		if !valid {
 			continue
 		}
-		if upper < minSimilarity && members == nil {
-			if indexed == nil || completeMainKeys {
-				continue
-			}
-			if mainKeysOnly || candidate.ID == nodeMainVectorKey(nodeID) {
-				if _, needsExpansion := expanded[nodeID]; !needsExpansion {
-					continue
-				}
-			}
-			// Encoded aliases can name a node whose current main member is
-			// different, even when every live node has only one vector.
+		if upper < minSimilarity && members == nil && candidateNodeBoundIsComplete(candidate.ID, nodeID, indexed, expanded, mainKeysOnly) {
+			continue
 		}
 		if i, ok := position[nodeID]; ok {
 			n := &storage[i]
@@ -975,6 +986,20 @@ func groupCandidatesByNode(ctx context.Context, candidates []Candidate, bound, m
 		return nil, nil, err
 	}
 	return nodes, byNode, nil
+}
+
+// candidateNodeBoundIsComplete proves that one surfaced score bounds its
+// entire node. Encoded aliases and multi-member nodes still need expansion:
+// their other vectors may qualify even when this candidate cannot.
+func candidateNodeBoundIsComplete(vectorID, nodeID string, indexed map[string][]string, expanded map[string]struct{}, mainKeysOnly bool) bool {
+	if indexed == nil || (mainKeysOnly && len(expanded) == 0) {
+		return true
+	}
+	if mainKeysOnly || vectorID == nodeMainVectorKey(nodeID) {
+		_, needsExpansion := expanded[nodeID]
+		return !needsExpansion
+	}
+	return false
 }
 
 // A vector bound covers a node only when every indexed member surfaced for

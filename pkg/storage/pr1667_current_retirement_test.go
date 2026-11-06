@@ -44,6 +44,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"github.com/orneryd/nornicdb/internal/testlatch"
 	"os"
 	"path/filepath"
 	"sort"
@@ -117,19 +118,18 @@ func pr1667Wait(t *testing.T, c <-chan struct{}, name string) {
 // pr1667PausedLabelStream is one public label-id stream held open inside its
 // own visit callback after its first after IDs.
 type pr1667PausedLabelStream struct {
-	paused      chan struct{}
-	resume      chan struct{}
-	releaseOnce sync.Once
-	done        chan struct{}
-	got         []NodeID
-	err         error
+	paused chan struct{}
+	resume *testlatch.Latch
+	done   chan struct{}
+	got    []NodeID
+	err    error
 }
 
 func pr1667StartPausedLabelStream(t *testing.T, b *BadgerEngine, after int) *pr1667PausedLabelStream {
 	t.Helper()
 	s := &pr1667PausedLabelStream{
 		paused: make(chan struct{}),
-		resume: make(chan struct{}),
+		resume: testlatch.New(),
 		done:   make(chan struct{}),
 	}
 	go func() {
@@ -138,27 +138,23 @@ func pr1667StartPausedLabelStream(t *testing.T, b *BadgerEngine, after int) *pr1
 			s.got = append(s.got, id)
 			if len(s.got) == after {
 				close(s.paused)
-				<-s.resume
+				s.resume.Wait()
 			}
 			return true
 		})
 	}()
 	t.Cleanup(func() {
-		s.release()
+		s.resume.Release()
 		<-s.done
 	})
 	pr1667Wait(t, s.paused, "the admitted label stream to reach its pause")
 	return s
 }
 
-func (s *pr1667PausedLabelStream) release() {
-	s.releaseOnce.Do(func() { close(s.resume) })
-}
-
 // finish releases the stream, joins it, and returns the IDs it visited.
 func (s *pr1667PausedLabelStream) finish(t *testing.T, when string) []string {
 	t.Helper()
-	s.release()
+	s.resume.Release()
 	pr1667Wait(t, s.done, "the admitted label stream to finish ("+when+")")
 	require.NoError(t, s.err, "label stream across %s", when)
 	ids := make([]string, 0, len(s.got))
@@ -195,18 +191,17 @@ func pr1667DropPrefix(t *testing.T, b *BadgerEngine, prefix string) {
 // pr1667PausedBackup parks the managed handle's Backup stream in its writer, so
 // the snapshot it reads stays in flight while drops run.
 type pr1667PausedBackup struct {
-	once        sync.Once
-	started     chan struct{}
-	resume      chan struct{}
-	releaseOnce sync.Once
-	done        chan struct{}
-	buf         bytes.Buffer
-	err         error
+	once    sync.Once
+	started chan struct{}
+	resume  *testlatch.Latch
+	done    chan struct{}
+	buf     bytes.Buffer
+	err     error
 }
 
 func (w *pr1667PausedBackup) Write(p []byte) (int, error) {
 	w.once.Do(func() { close(w.started) })
-	<-w.resume
+	w.resume.Wait()
 	return w.buf.Write(p)
 }
 
@@ -214,7 +209,7 @@ func pr1667StartPausedBackup(t *testing.T, b *BadgerEngine) *pr1667PausedBackup 
 	t.Helper()
 	w := &pr1667PausedBackup{
 		started: make(chan struct{}),
-		resume:  make(chan struct{}),
+		resume:  testlatch.New(),
 		done:    make(chan struct{}),
 	}
 	go func() {
@@ -222,22 +217,18 @@ func pr1667StartPausedBackup(t *testing.T, b *BadgerEngine) *pr1667PausedBackup 
 		_, w.err = b.db.Backup(w, 0)
 	}()
 	t.Cleanup(func() {
-		w.release()
+		w.resume.Release()
 		<-w.done
 	})
 	pr1667Wait(t, w.started, "the backup stream to start")
 	return w
 }
 
-func (w *pr1667PausedBackup) release() {
-	w.releaseOnce.Do(func() { close(w.resume) })
-}
-
 // finish releases the backup stream, joins it and returns the restored label
 // IDs of a fresh engine loaded with what it wrote.
 func (w *pr1667PausedBackup) finish(t *testing.T, when string) []string {
 	t.Helper()
-	w.release()
+	w.resume.Release()
 	pr1667Wait(t, w.done, "the backup stream to finish ("+when+")")
 	require.NoError(t, w.err, "backup stream across %s", when)
 	path := filepath.Join(t.TempDir(), "backup.bin")

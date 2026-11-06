@@ -336,7 +336,7 @@ func TestServerStopR4StartLoggerReentry(t *testing.T) {
 			go func() { _ = s.Addr(); close(read) }()
 			select {
 			case <-read:
-			case <-callback.release:
+			case <-callback.release.Done():
 			}
 		})
 	})
@@ -691,7 +691,7 @@ func TestServerStopR4TransactionCallbackReentry(t *testing.T) {
 		go func() { session.ExpiresAt(); close(read) }()
 		select {
 		case <-read:
-		case <-gate.release:
+		case <-gate.release.Done():
 		}
 		return &cypher.ExecuteResult{Columns: []string{"ok"}, Rows: [][]interface{}{{true}}}, nil
 	}))

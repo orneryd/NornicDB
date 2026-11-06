@@ -447,7 +447,12 @@ func TestStreamNodesWithOptionsFilteredLabelScanHydrationModes(t *testing.T) {
 // A dense filtered label uses the shared sequential scanner, and an early
 // stop must also stop before the acknowledged write-behind overlay is visited.
 func TestStreamNodesWithOptionsDenseFilteredLabelStopsBeforeOverlay(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	// The manual drain owner keeps the acknowledged create pending in the
+	// overlay for the whole scan; the explicit flush is a non-cancellable waiter
+	// (the fixture stopped the worker), so it still lands the committed rows,
+	// and no background flush can retire the pending one before the early stop
+	// reaches it.
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	for _, name := range []string{"a", "b", "c", "other"} {
 		label := "Common"
 		if name == "other" {
@@ -455,7 +460,7 @@ func TestStreamNodesWithOptionsDenseFilteredLabelStopsBeforeOverlay(t *testing.T
 		}
 		bufferedCreate(t, engine, &Node{ID: NodeID("test:" + name), Labels: []string{label}, Properties: map[string]any{"keep": "yes"}})
 	}
-	require.NoError(t, engine.FlushWriteBehind(t.Context()))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	bufferedCreate(t, engine, &Node{ID: "test:pending", Labels: []string{"Common"}, Properties: map[string]any{"keep": "yes"}})
 	require.Greater(t, engine.writeBehind.PendingOps(), 0)
 	opts := StreamNodesOptions{Label: "Common", Prefix: "test:", QueryNodes: true, PropertyFilter: func(properties map[string]interface{}) bool { return properties["keep"] == "yes" }, PropertyFilterProjection: []string{"keep"}}
