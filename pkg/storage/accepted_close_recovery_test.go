@@ -82,7 +82,7 @@ func TestAcceptedCloseBeforeNativeSubmissionPreservesRecovery(t *testing.T) {
 	require.Equal(t, CommitRecoveryPending, outcome.State)
 	var accepted *AcceptedCommitError
 	require.ErrorAs(t, outcome.Err, &accepted)
-	require.ErrorIs(t, accepted.Cause(), ErrStorageClosed)
+	require.ErrorIs(t, accepted.Err, ErrStorageClosed)
 	select {
 	case err := <-closed:
 		require.NoError(t, err)
@@ -163,7 +163,7 @@ func TestAcceptedRecoveryCannotRestartWhileEngineCloses(t *testing.T) {
 	defer cancel()
 	var firstAccepted *AcceptedCommitError
 	require.ErrorAs(t, r.WaitOutcome(ctx).Err, &firstAccepted)
-	require.ErrorIs(t, firstAccepted.Cause(), ErrInvalidData)
+	require.ErrorIs(t, firstAccepted.Err, ErrInvalidData)
 	// This unrelated admitted frame holds the lifecycle barrier so Close can
 	// seal admission before the recovery call reaches the existing owner.
 	guard, err := base.BeginTransaction(t.Context())
@@ -184,7 +184,7 @@ func TestAcceptedRecoveryCannotRestartWhileEngineCloses(t *testing.T) {
 	var accepted *AcceptedCommitError
 	require.ErrorAs(t, outcome.Err, &accepted)
 	require.Equal(t, p.LogicalID(), accepted.LogicalID, "recovery keeps the accepted command identity")
-	require.ErrorIs(t, accepted.Cause(), ErrStorageClosed)
+	require.ErrorIs(t, accepted.Err, ErrStorageClosed)
 	require.EqualValues(t, 1, wal.Sequence(), "closing recovery cannot append a new command")
 	held.Abort()
 	select {

@@ -82,7 +82,7 @@ func TestAcceptedDirectReplayIntoClosedEnginePhaseBefore(t *testing.T) {
 	require.ErrorAs(t, reported, &accepted)
 	require.Equal(t, CommitRecoveryPending, accepted.State)
 	require.Equal(t, logicalID, accepted.LogicalID)
-	require.ErrorIs(t, accepted.Cause(), ErrStorageClosed)
+	require.ErrorIs(t, accepted.Err, ErrStorageClosed)
 	reopened, err := NewBadgerEngine(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })

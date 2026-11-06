@@ -77,7 +77,7 @@ func TestAcceptedInnerWALRejectionReleasesNativeFrameKeepsLogicalPending(t *test
 	require.Equal(t, storage.CommitRecoveryPending, outcome.State)
 	var accepted *storage.AcceptedCommitError
 	require.ErrorAs(t, outcome.Err, &accepted)
-	require.ErrorIs(t, accepted.Cause(), storage.ErrWALClosed)
+	require.ErrorIs(t, accepted.Err, storage.ErrWALClosed)
 	select {
 	case <-receipt.Done():
 		t.Fatal("recorded command falsely discarded")

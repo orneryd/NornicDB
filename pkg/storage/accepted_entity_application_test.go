@@ -184,7 +184,7 @@ func TestAcceptedApplicationPendingRecoverySettlesOnce(t *testing.T) {
 			var accepted *AcceptedCommitError
 			require.ErrorAs(t, outcome.Err, &accepted)
 			require.NotErrorIs(t, outcome.Err, ErrConflict)
-			require.ErrorIs(t, accepted.Cause(), failure)
+			require.ErrorIs(t, accepted.Err, failure)
 			require.True(t, strings.Contains(outcome.Err.Error(), "committed-pending or unknown"))
 			want := int32(1)
 			if scenario == "outer-submit" || scenario == "uncertain-append" {

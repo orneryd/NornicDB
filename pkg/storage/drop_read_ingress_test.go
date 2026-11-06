@@ -95,7 +95,7 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 					err = manager.DropDatabase(t.Context(), "tenant")
 					var accepted *storage.AcceptedCommitError
 					require.ErrorAs(t, err, &accepted)
-					require.ErrorIs(t, accepted.Cause(), failure)
+					require.ErrorIs(t, accepted.Err, failure)
 				} else {
 					_, _, err = b.DeleteByPrefix("tenant:")
 					require.ErrorIs(t, err, failure)

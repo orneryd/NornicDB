@@ -21,7 +21,7 @@ func TestAcceptedOutcomeDoesNotResubmitSeedCommand(t *testing.T) {
 			outcome := receipt.WaitOutcome(t.Context())
 			var accepted *storage.AcceptedCommitError
 			require.ErrorAs(t, outcome.Err, &accepted)
-			require.True(t, errors.Is(accepted.Cause(), storage.ErrConflict))
+			require.True(t, errors.Is(accepted.Err, storage.ErrConflict))
 			code, message := nornicerrors.Neo4jStatus(outcome.Err)
 			require.Equal(t, nornicerrors.DatabaseTransactionCommitFailed, code)
 			wireError := &neo4j.Neo4jError{Code: code, Msg: message}

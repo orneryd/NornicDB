@@ -437,7 +437,7 @@ func catalogAcceptedDiagnosticContains(root error, target error) bool {
 			continue
 		}
 		if accepted, ok := err.(*storage.AcceptedCommitError); ok {
-			pending = append(pending, accepted.Cause())
+			pending = append(pending, accepted.Err)
 			continue
 		}
 		if errors.Is(err, target) {

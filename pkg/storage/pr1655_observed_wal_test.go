@@ -110,13 +110,13 @@ func TestObservedWALPreservesAcceptedFailure(t *testing.T) {
 	var accepted *AcceptedCommitError
 	require.ErrorAs(t, err, &accepted)
 	require.NotErrorIs(t, err, physicalErr, "accepted uncertainty is not a fresh physical rejection")
-	diagnostic := accepted.Cause()
+	diagnostic := accepted.Err
 	for {
 		var nested *AcceptedCommitError
 		if !errors.As(diagnostic, &nested) {
 			break
 		}
-		diagnostic = nested.Cause()
+		diagnostic = nested.Err
 	}
 	require.ErrorIs(t, diagnostic, physicalErr)
 	require.Equal(t, CommitRecoveryPending, accepted.State)

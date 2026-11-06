@@ -911,7 +911,7 @@ func TestRaftReplicator_ApplyBranchCoverage(t *testing.T) {
 	var accepted *storage.AcceptedCommitError
 	require.ErrorAs(t, err, &accepted)
 	require.Equal(t, storage.CommitRecoveryPending, accepted.State)
-	require.ErrorContains(t, accepted.Cause(), "leader rejected")
+	require.ErrorContains(t, accepted.Err, "leader rejected")
 
 	r.state = StateLeader
 	r.applyCh = make(chan *applyFuture)

@@ -26,8 +26,13 @@ type CommitOutcome struct {
 // not be treated as a definite rejection or used to roll back an admission.
 // State preserves an applied acknowledgement failure versus recovery-pending
 // work. A native cause must never classify this outcome as a rejection.
-// Cause retains native diagnostics; public text describes the accepted outcome
-// without republishing a rejection phrase that text-based clients would retry.
+//
+// Identify an accepted outcome with errors.As, then read Err for the native
+// diagnostic. Err retains that diagnostic while public text describes only the
+// accepted outcome, without republishing a rejection phrase that text-based
+// clients would retry. AcceptedCommitError has no Unwrap: errors.Is, errors.As
+// and errors.Unwrap stop at this durable acceptance boundary, so the enclosed
+// diagnostic never confers a retryable rejection identity on the outcome.
 type AcceptedCommitError struct {
 	State     CommitOutcomeState
 	LogicalID string
@@ -47,15 +52,6 @@ func (e *AcceptedCommitError) Error() string {
 	}
 	return fmt.Sprintf("%s is %s", command, state)
 }
-
-// Unwrap keeps the existing method available without exposing a retry sentinel.
-// Author: NOR-288 lane (Codex), 2026-10-27. Inspect Cause after identifying this
-// accepted outcome; errors.Is/As must not erase its durable acceptance boundary.
-func (e *AcceptedCommitError) Unwrap() error { return nil }
-
-// Cause exposes diagnostics after the caller has identified an accepted outcome.
-// It is intentionally separate from errors.Is/As, including wait cancellation.
-func (e *AcceptedCommitError) Cause() error { return e.Err }
 
 // AcceptedOutcome is the one constructor of the accepted-outcome barrier. An
 // error that already is this barrier, in the same state and for the same (or

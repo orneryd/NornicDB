@@ -23,6 +23,6 @@ func TestAcceptedOutcomeCannotBecomeBoltMergeRetry(t *testing.T) {
 	require.NotErrorAs(t, err, &violation)
 	var accepted *storage.AcceptedCommitError
 	require.ErrorAs(t, err, &accepted)
-	require.True(t, nornicerrors.IsMergeCommitTimeUniqueConflict(accepted.Cause()))
-	require.ErrorAs(t, accepted.Cause(), &violation)
+	require.True(t, nornicerrors.IsMergeCommitTimeUniqueConflict(accepted.Err))
+	require.ErrorAs(t, accepted.Err, &violation)
 }

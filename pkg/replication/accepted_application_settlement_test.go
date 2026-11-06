@@ -170,7 +170,7 @@ func requireAcceptedDiagnosticCause(t *testing.T, err, target error) {
 		}
 		require.False(t, seen[accepted], "accepted diagnostic chain cannot cycle")
 		seen[accepted] = true
-		err = accepted.Cause()
+		err = accepted.Err
 	}
 	require.NotEmpty(t, seen)
 	require.ErrorIs(t, err, target)

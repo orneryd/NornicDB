@@ -417,8 +417,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DROP DATABASE whose intent was accepted but whose acknowledgement failed
   now reports its applied or recovery-pending state as a non-retryable outcome, and
   the server finishes the drop itself, also when the client stopped waiting
-  (timeout, disconnect, replication wait). A driver no longer retries it by name,
-  so a late retry can never delete a newer database of the same name. Every DROP
+  (timeout, disconnect, replication wait). Drivers honoring the non-retryable
+  status no longer automatically replay the accepted DROP by name against a
+  replacement database; an explicitly submitted new DROP remains a new command. Every DROP
   form, CREATE OR REPLACE and Qdrant collection delete finish a drop left pending
   by a failed final sync.
   (Author: NOR-288 implementation lane, Claude.)

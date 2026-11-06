@@ -125,7 +125,7 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 					var accepted *AcceptedCommitError
 					require.ErrorAs(t, err, &accepted)
 					require.Equal(t, CommitRecoveryPending, accepted.State)
-					require.ErrorIs(t, accepted.Cause(), ErrConflict)
+					require.ErrorIs(t, accepted.Err, ErrConflict)
 					_, err = b.CreateNode(t.Context(), &Node{ID: "peer:after"})
 					require.NoError(t, err)
 					b.dropPrefixTailHook = nil

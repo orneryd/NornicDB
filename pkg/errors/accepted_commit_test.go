@@ -20,7 +20,11 @@ func TestAcceptedCommitFailureIsNotRetryableRejection(t *testing.T) {
 	require.NotErrorIs(t, err, ErrTransactionConflict)
 	var accepted *storage.AcceptedCommitError
 	require.ErrorAs(t, err, &accepted)
-	require.ErrorIs(t, accepted.Cause(), storage.ErrConflict)
+	// Author: NOR-288 lane (Codex), 2026-10-30. Generic unwrapping must stay
+	// opaque for an accepted outcome; the diagnostic cause is only reached
+	// through the typed Err field, never through a compatibility forwarder.
+	require.NoError(t, stderrors.Unwrap(accepted), "accepted outcome must be opaque to generic unwrapping")
+	require.ErrorIs(t, accepted.Err, storage.ErrConflict)
 	transient := IsTransientTransactionError(err)
 	require.False(t, transient)
 }
@@ -37,10 +41,10 @@ func TestAcceptedOutcomeContainsEveryJoinedCause(t *testing.T) {
 		require.ErrorAs(t, outcome.Err, &accepted)
 		require.Equal(t, state, accepted.State)
 		require.Equal(t, "joined-accepted", accepted.LogicalID)
-		require.ErrorIs(t, accepted.Cause(), storage.ErrConflict)
+		require.ErrorIs(t, accepted.Err, storage.ErrConflict)
 		var nested *storage.AcceptedCommitError
-		require.ErrorAs(t, accepted.Cause(), &nested)
-		require.ErrorIs(t, nested.Cause(), context.Canceled)
+		require.ErrorAs(t, accepted.Err, &nested)
+		require.ErrorIs(t, nested.Err, context.Canceled)
 	}
 }
 
@@ -51,7 +55,7 @@ func TestAcceptedWaitCancellationPreservesUnknownOutcome(t *testing.T) {
 	for _, err := range []error{r.Wait(ctx), r.WaitOutcome(ctx).Err, r.WaitPhysicalOutcome(ctx).Err} {
 		var accepted *storage.AcceptedCommitError
 		require.ErrorAs(t, err, &accepted)
-		require.ErrorIs(t, accepted.Cause(), context.Canceled)
+		require.ErrorIs(t, accepted.Err, context.Canceled)
 		code, message := Neo4jStatus(err)
 		require.Equal(t, DatabaseTransactionCommitFailed, code)
 		require.Contains(t, message, "committed-pending or unknown")
@@ -60,7 +64,7 @@ func TestAcceptedWaitCancellationPreservesUnknownOutcome(t *testing.T) {
 	err := r.Wait(context.Background())
 	var accepted *storage.AcceptedCommitError
 	require.ErrorAs(t, err, &accepted)
-	require.ErrorIs(t, accepted.Cause(), context.DeadlineExceeded)
+	require.ErrorIs(t, accepted.Err, context.DeadlineExceeded)
 	code, message := Neo4jStatus(err)
 	require.Equal(t, DatabaseTransactionCommitFailed, code)
 	require.Contains(t, message, "committed; acknowledgement failed")
@@ -86,7 +90,7 @@ func TestAcceptedReceiptCannotBecomeRejectedOrSkippedByCause(t *testing.T) {
 			require.NotErrorIs(t, err, cause, "accepted outcome must not inherit a rejection/skip identity")
 			var accepted *storage.AcceptedCommitError
 			require.ErrorAs(t, err, &accepted)
-			require.ErrorIs(t, accepted.Cause(), cause)
+			require.ErrorIs(t, accepted.Err, cause)
 			code, _ := Neo4jStatus(err)
 			require.Equal(t, DatabaseTransactionCommitFailed, code)
 		})

@@ -51,7 +51,7 @@ func TestReview1406FailedDropTailRetainsNamespaceFence(t *testing.T) {
 				err = manager.DropDatabase(t.Context(), "tenant")
 				var accepted *storage.AcceptedCommitError
 				require.ErrorAs(t, err, &accepted)
-				require.ErrorIs(t, accepted.Cause(), injected)
+				require.ErrorIs(t, accepted.Err, injected)
 			} else {
 				_, _, err = base.DeleteByPrefix("tenant:")
 				require.ErrorIs(t, err, injected)

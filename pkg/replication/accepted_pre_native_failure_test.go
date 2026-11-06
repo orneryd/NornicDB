@@ -102,7 +102,7 @@ func TestAcceptedPreNativeDurableWALAcknowledgementRecovery(t *testing.T) {
 	var accepted *storage.AcceptedCommitError
 	require.ErrorAs(t, outcome.Err, &accepted)
 	require.Equal(t, p.LogicalID(), accepted.LogicalID)
-	require.ErrorIs(t, accepted.Cause(), failure)
+	require.ErrorIs(t, accepted.Err, failure)
 	require.Zero(t, settled.Load())
 	_, err = base.GetStoredNode(t.Context(), "test:durable-pre-native")
 	require.ErrorIs(t, err, storage.ErrNotFound, "uncertain I/O must park, not apply")

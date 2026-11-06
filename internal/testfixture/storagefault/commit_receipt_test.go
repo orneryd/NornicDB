@@ -11,7 +11,7 @@ import (
 
 // requireReceiptOutcome compares an outcome a receipt's waits return with the
 // published one by state and cause: a wait presents an accepted (non-discarded)
-// outcome as an AcceptedCommitError whose cause is reached through Cause().
+// outcome as an AcceptedCommitError whose cause is reached through its Err field.
 func requireReceiptOutcome(t *testing.T, want, got storage.CommitOutcome) {
 	t.Helper()
 	require.Equal(t, want.State, got.State)
@@ -21,7 +21,7 @@ func requireReceiptOutcome(t *testing.T, want, got storage.CommitOutcome) {
 	}
 	var accepted *storage.AcceptedCommitError
 	require.ErrorAs(t, got.Err, &accepted)
-	require.ErrorIs(t, accepted.Cause(), want.Err)
+	require.ErrorIs(t, accepted.Err, want.Err)
 }
 
 func TestFinishPreparedReceipt(t *testing.T) {
@@ -69,7 +69,7 @@ func TestFinishPreparedReceipt(t *testing.T) {
 				cancel()
 				var accepted *storage.AcceptedCommitError
 				require.ErrorAs(t, receipt.Wait(ctx), &accepted)
-				require.ErrorIs(t, accepted.Cause(), context.Canceled)
+				require.ErrorIs(t, accepted.Err, context.Canceled)
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, outcome, receipt.Outcome()) // Outcome and settle carry the published outcome itself
