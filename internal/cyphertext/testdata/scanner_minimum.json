@@ -356,6 +356,7 @@
   ],
   "pkg/cypher/functions_parse.go": [
     "canonicalCallableName",
+    "expressionPredecessor",
     "functionNameStartsAt",
     "inspectFunctionCall"
   ],
@@ -778,7 +779,6 @@
   ],
   "pkg/cypher/row_subscript_validation.go": [
     "isRowReceiverIdentifierAt",
-    "quotedRowReceiverStart",
     "rowSubscriptReceiverStart",
     "validateStaticPropertySubscripts"
   ],
