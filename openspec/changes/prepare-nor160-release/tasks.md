@@ -199,3 +199,15 @@ review CI request is superseded by the following pushed head.
 - [x] Prove both audits pass for the foreign checkout and reject its same-path contents when owned by the current checkout; preserve frozen numeric ownership inventories.
 - [x] Complete clean-tree audit and stored-census freshness checks (0.606s/0.642s/1.297s/11.317s); remove all temporary fixture files.
 - [ ] Replace the superseded CI run with complete parallel CI on the final immutable head.
+
+## bbd4208d parallel CI failure inventory
+
+- [x] Preserve command and Cypher logs from run 42129453479 against bbd4208d92367cdac94734a936c0acba07cd2a43.
+- [x] Identify command assertion: TestSolReviewRealBinaries/live-config-and-pprof did not observe a ready disposable CLI server within its readiness window; child output remains withheld to protect the secret probes.
+- [x] Distinguish the Cypher runner shutdown/exit 143 from an asserted product failure: no test failure or OOM cause is established by that log.
+- [x] Finish the remaining CI shard and record all additional failures before replacing this run: other passes, including storagecensusmutants (1496.164s). No additional named failures; command and the terminated Cypher shard are the complete failure inventory.
+- [ ] Reproduce and correct the CLI startup cause without weakening secret-redaction assertions.
+- [x] Independently pass integrated real-binary and occupied-port diagnostic tests (37.934s). Preserve the readiness budget and credential assertions; classify child exit/transport/HTTP status without exposing child logs. This diagnostic correction does not establish the original CI startup cause.
+- [ ] Complete local Cypher checks and requalify the entire shard in CI; local tags and any cached results must be reported explicitly.
+- [x] Complete all six local Cypher packages with `-tags noui,nolocalllm -p 1 -parallel 4 -timeout 30m` (exit 0): Cypher 463.060s, ANTLR 77.698s, fn 0.555s, internal/text 0.272s, resultmetadata 0.261s, testutil 0.728s. No package reported cached results. This does not establish the CI shutdown cause or replace native CI qualification.
+- [ ] Push integrated corrections and obtain a complete exact-head make-test result.
