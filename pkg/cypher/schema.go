@@ -822,22 +822,31 @@ func propertiesSegment(ctx context.Context, onClause string, syntax propertySynt
 	return props, tail, nil
 }
 
-// schemaPatternTarget retains decoded identity and the original name source.
+// schemaPatternTarget retains entity identity and borrowed source spans.
+// Variable decoding is paid only by consumers that need its identity.
 // Fulltext lists need source provenance before interpreting pipe separators.
 type schemaPatternTarget struct {
 	isRelationship bool
-	variable       string
+	variableSource string
 	name           string
 	// nameSource retains quote and separator provenance for fulltext type lists.
 	nameSource string
+	// direction reads the connector immediately beside the relationship bracket:
+	// OUTGOING for "->", INCOMING for "<-", empty when the pattern is
+	// undirected. Only a caller whose contract is directional requires one.
+	direction string
 }
 
 // parseForPatternTarget reads the entity a FOR pattern names and its
 // <variable>:<labelOrType> interior: a node pattern's (var:Label), or a
 // relationship pattern's (a)-[var:TYPE]-(b), whose label or type is the
-// bracketed section's. It is the one owner of that reading: the index pattern
-// parser, the constraint contract's FOR clause and the relationship-key DDL all
-// take the label, type and variable from it, and each keeps its own
+// bracketed section's. A relationship pattern also carries the direction its
+// connectors spell: a leading "->" suffix is OUTGOING and takes precedence,
+// otherwise a trailing "<-" prefix is INCOMING. Arrows inside quoted endpoint
+// names are data, and an undirected pattern has no direction. It is the one
+// owner of that reading: the index pattern parser, the constraint contract's
+// FOR clause, the relationship-key DDL and the directional cardinality DDL all
+// take the label, type, variable and direction from it, and each keeps its own
 // statement-specific admission and error around it.
 func parseForPatternTarget(forClause string) (target schemaPatternTarget, ok bool) {
 	forClause = strings.TrimSpace(forClause)
@@ -860,13 +869,19 @@ func parseForPatternTarget(forClause string) (target schemaPatternTarget, ok boo
 		if colon < 0 {
 			return schemaPatternTarget{}, false
 		}
-		target.variable = cyphertext.SymbolicNameValue(strings.TrimSpace(inside[:colon]))
+		target.variableSource = strings.TrimSpace(inside[:colon])
 		target.nameSource = strings.TrimSpace(inside[colon+1:])
 		target.name = cyphertext.SymbolicNameValue(target.nameSource)
 		if target.name == "" {
 			return schemaPatternTarget{}, false
 		}
 		target.isRelationship = true
+		switch {
+		case strings.HasPrefix(suffix, "->"):
+			target.direction = "OUTGOING"
+		case strings.HasSuffix(prefix, "<-"):
+			target.direction = "INCOMING"
+		}
 		return target, true
 	}
 
@@ -878,7 +893,7 @@ func parseForPatternTarget(forClause string) (target schemaPatternTarget, ok boo
 	if colon < 0 {
 		return schemaPatternTarget{}, false
 	}
-	target.variable = cyphertext.SymbolicNameValue(strings.TrimSpace(inside[:colon]))
+	target.variableSource = strings.TrimSpace(inside[:colon])
 	target.nameSource = strings.TrimSpace(inside[colon+1:])
 	target.name = cyphertext.SymbolicNameValue(target.nameSource)
 	if target.name == "" {
@@ -1596,41 +1611,6 @@ func (e *StorageExecutor) parseCreateConstraintDomainDDL(ctx context.Context, cy
 	return parsedDomainConstraintDDL{name: parsed.name, label: parsed.label, isRelationship: parsed.isRelationship, property: property, allowedRaw: allowedRaw, options: parsed.options}, nil
 }
 
-func parseRelationshipForDirection(forClause string) (relType string, direction string, ok bool) {
-	forClause = strings.TrimSpace(forClause)
-	if forClause == "" {
-		return "", "", false
-	}
-	bracketStart := strings.Index(forClause, "[")
-	if bracketStart < 0 {
-		return "", "", false
-	}
-	inside, rest, ok := extractBracketSection(forClause[bracketStart:])
-	if !ok {
-		return "", "", false
-	}
-	prefix := strings.TrimSpace(forClause[:bracketStart])
-	suffix := strings.TrimSpace(rest)
-
-	colon := strings.Index(inside, ":")
-	if colon < 0 {
-		return "", "", false
-	}
-	relType = cyphertext.SymbolicNameValue(strings.TrimSpace(inside[colon+1:]))
-	if relType == "" {
-		return "", "", false
-	}
-
-	if strings.Contains(suffix, "->") {
-		direction = "OUTGOING"
-	} else if strings.Contains(prefix, "<-") {
-		direction = "INCOMING"
-	} else {
-		return "", "", false
-	}
-	return relType, direction, true
-}
-
 func parseCardinalityRequireExpr(ctx context.Context, requireExpr string) (int, bool) {
 	requireExpr = strings.TrimSpace(requireExpr)
 	idx := keywordIndexFrom(ctx, requireExpr, "MAX COUNT", 0, defaultKeywordScanOpts())
@@ -1657,8 +1637,11 @@ func (e *StorageExecutor) parseCreateConstraintCardinalityDDL(ctx context.Contex
 	if err != nil {
 		return parsedCardinalityConstraintDDL{}, err
 	}
-	relType, direction, ok := parseRelationshipForDirection(patternSpan)
-	if !ok {
+	target, ok := parseForPatternTarget(patternSpan)
+	// The shared reader also admits a node pattern and an undirected
+	// relationship; a cardinality contract is directional, so it requires a
+	// relationship whose arrows spell one.
+	if !ok || !target.isRelationship || target.direction == "" {
 		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("cardinality FOR"), nil)
 	}
 	maxCount, ok := parseCardinalityRequireExpr(ctx, requireExpr)
@@ -1681,7 +1664,7 @@ func (e *StorageExecutor) parseCreateConstraintCardinalityDDL(ctx context.Contex
 		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidClause("cardinality require"), nil)
 	}
 
-	return parsedCardinalityConstraintDDL{name: name, relType: relType, direction: direction, maxCount: maxCount, options: options}, nil
+	return parsedCardinalityConstraintDDL{name: name, relType: target.name, direction: target.direction, maxCount: maxCount, options: options}, nil
 }
 
 func parseNodeLabelOnlyPattern(inner string) (string, bool) {
@@ -1793,22 +1776,18 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, err
 	}
 
-	label, relType, isRelationship, err := parseCreateIndexForPattern(patternSpan)
-	if err != nil {
+	target, patternOK := parseForPatternTarget(patternSpan)
+	if !patternOK {
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("relationship FOR"), nil)
 	}
 
 	kind, props, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(ctx, requireExpr)
-	if !ok || (!isRelationship && kind != "unique") {
+	if !ok || (!target.isRelationship && kind != "unique") {
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("relationship key/unique"), nil)
 	}
-	// The FOR pattern reader is the one owner of the variable's position in the
-	// pattern; the label or type it also returns is the one read above.
-	target, patternOK := parseForPatternTarget(patternSpan)
-	variable := target.variable
-	if !patternOK {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("constraint FOR"), nil)
-	}
+	// Use the same parsed target for identity and qualifier validation; the
+	// immutable FOR span needs reading only once.
+	variable := cyphertext.SymbolicNameValue(target.variableSource)
 	propertyExpr := requireExpr
 	if inside, _, wrapped := extractParenSection(requireExpr); wrapped {
 		propertyExpr = inside
@@ -1827,10 +1806,7 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 		seen[property] = true
 	}
 
-	if isRelationship {
-		label = relType
-	}
-	return parsedRelationshipKeyOrCompositeUniqueDDL{name: name, label: label, properties: props, kind: kind, isRelationship: isRelationship, options: options}, nil
+	return parsedRelationshipKeyOrCompositeUniqueDDL{name: name, label: target.name, properties: props, kind: kind, isRelationship: target.isRelationship, options: options}, nil
 }
 
 func (e *StorageExecutor) parseCreateConstraintTypeDDL(ctx context.Context, cypher string) (parsedTypeConstraintDDL, error) {

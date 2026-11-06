@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -26,10 +27,11 @@ func parseConstraintContractForClause(forClause string) (entityType storage.Cons
 	if !ok {
 		return "", "", "", false
 	}
+	variable = cyphertext.SymbolicNameValue(target.variableSource)
 	if target.isRelationship {
-		return storage.ConstraintEntityRelationship, target.variable, target.name, true
+		return storage.ConstraintEntityRelationship, variable, target.name, true
 	}
-	return storage.ConstraintEntityNode, target.variable, target.name, true
+	return storage.ConstraintEntityNode, variable, target.name, true
 }
 
 func (e *StorageExecutor) parseCreateConstraintContractDDL(ctx context.Context, cypher string) (parsedCreateConstraintContractDDL, error) {
