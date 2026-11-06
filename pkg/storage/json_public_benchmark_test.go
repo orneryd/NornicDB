@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -101,7 +102,7 @@ func jsonPublicBufferedSource(b *testing.B, root string, nodes []*storage.Node) 
 	// gives recovery the original dictionary without any of the 64 flush markers.
 	_, err := store.CreateNode(ctx, &storage.Node{ID: "jsonbench:seed", Properties: nodes[0].Properties})
 	jsonPublicStorageCheck(b, err)
-	jsonPublicStorageCheck(b, store.FlushWriteBehind(nil))
+	jsonPublicStorageCheck(b, store.FlushWriteBehind(context.Background()))
 	backup := filepath.Join(root, "before-wal.backup")
 	jsonPublicStorageCheck(b, store.Backup(backup))
 	walDir := filepath.Join(root, "wal")
@@ -120,7 +121,7 @@ func jsonPublicBufferedSource(b *testing.B, root string, nodes []*storage.Node) 
 			b.Fatal("fixture commit bypassed write-behind")
 		}
 	}
-	jsonPublicStorageCheck(b, store.FlushWriteBehind(nil))
+	jsonPublicStorageCheck(b, store.FlushWriteBehind(context.Background()))
 	jsonPublicStorageValidate(b, store, nodes)
 	jsonPublicStorageCheck(b, wal.Sync())
 	entries, err := storage.ReadWALEntriesFromDir(walDir)

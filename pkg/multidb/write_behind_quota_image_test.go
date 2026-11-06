@@ -33,9 +33,9 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 					tracker := engine.(*sizeTrackingEngine)
 					requireRecount := func(step string) {
 						t.Helper()
-						wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(tracker.Engine)
+						wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(context.Background(), tracker.Engine)
 						require.NoError(t, err)
-						total, nodes, edges := manager.GetStorageSize("nornic")
+						total, nodes, edges := manager.GetStorageSize(context.Background(), "nornic")
 						require.Equal(t, []int64{wantNodes + wantEdges, wantNodes, wantEdges}, []int64{total, nodes, edges}, step)
 					}
 					// write stages one change to the entity through an implicit

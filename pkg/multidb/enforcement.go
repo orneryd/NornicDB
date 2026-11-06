@@ -24,7 +24,7 @@
 //	}
 //
 //	// Check if creating this node would exceed limits
-//	if err := checker.CheckStorageLimits("create_node", node, nil); err != nil {
+//	if err := checker.CheckStorageLimits(ctx, "create_node", node, nil); err != nil {
 //		return fmt.Errorf("cannot create node: %w", err)
 //	}
 //
@@ -123,7 +123,7 @@ func (c *databaseLimitChecker) policy() *databaseLimitPolicy {
 //		Labels: []string{"User"},
 //		Properties: map[string]any{"name": "Alice", "email": "alice@example.com"},
 //	}
-//	if err := checker.CheckStorageLimits("create_node", node, nil); err != nil {
+//	if err := checker.CheckStorageLimits(ctx, "create_node", node, nil); err != nil {
 //		// Error message: "storage limit exceeded: database 'tenant_a' would exceed
 //		// max_bytes limit (current: 500 bytes, limit: 1024 bytes, new entity: 600 bytes)"
 //		return err
@@ -177,7 +177,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(ctx context.Context, operation
 
 	// Check MaxBytes limit if set
 	if storageLimits.MaxBytes > 0 {
-		currentSize, _, _, err := c.manager.readStorageSize(c.databaseName, engine, sizeForAdmission)
+		currentSize, _, _, err := c.manager.readStorageSize(ctx, c.databaseName, engine, sizeForAdmission)
 		if err != nil {
 			return localizedError(localization.MultidbStorageGetSizeFailed(err), err)
 		}

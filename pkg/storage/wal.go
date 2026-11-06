@@ -2478,7 +2478,9 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 				return fmt.Errorf("wal: complete preceding writes before buffered replay: %w", err)
 			}
 		}
-		c, err := b.importBufferedWALRecord(&data, walForeignImport)
+		// Physical replay has no caller context at this exported entry.
+		// Preserve its non-cancellable phase through provenance admission.
+		c, err := b.importBufferedWALRecord(context.Background(), &data, walForeignImport)
 		if err != nil {
 			return err
 		}

@@ -1871,6 +1871,10 @@ func bootstrapMVCCFromCurrentStateInTxn[E any, ID ~string, M mvccBootstrapKind[E
 }
 
 func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
+	if !b.work.Enter() {
+		return 0, ErrStorageClosed
+	}
+	defer b.work.Leave()
 	if err := b.mvccPruneMu.LockContext(ctx); err != nil {
 		return 0, err
 	}

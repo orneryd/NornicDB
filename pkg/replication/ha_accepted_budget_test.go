@@ -216,7 +216,9 @@ func TestHAAcceptedExpiredPublicationBudgetStillCompletesNative(t *testing.T) {
 	defer stopWait()
 	outcome := receipt.WaitOutcome(waitCtx)
 	require.Equal(t, storage.CommitApplied, outcome.State, "deadline expiry never discards accepted native work")
-	require.ErrorIs(t, outcome.Err, context.DeadlineExceeded)
+	// Accepted commands are not retryable: errors.Is stops at the accepted
+	// boundary, so the diagnostic cause is traversed explicitly.
+	requireAcceptedDiagnosticCause(t, outcome.Err, context.DeadlineExceeded)
 	require.NoError(t, fixture.adapter.FlushWAL())
 	primary.streamPendingWAL(t.Context())
 	assertHABudgetRecord(t, fixture.adapter, primary, "test:expired-budget")
@@ -231,11 +233,12 @@ func TestHAAcceptedPublicationFailureKeepsNativeResult(t *testing.T) {
 			require.NoError(t, fixture.adapter.wal.Close())
 			_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "test:publication-failure", Labels: []string{"Budget"}})
 			if mode == SyncQuorum {
-				require.ErrorIs(t, err, storage.ErrWALClosed)
 				var accepted *storage.AcceptedCommitError
 				require.ErrorAs(t, err, &accepted)
 				require.Equal(t, storage.CommitApplied, accepted.State)
 				require.NotEmpty(t, accepted.LogicalID)
+				// Accepted publication failure is not a retryable WAL rejection.
+				requireAcceptedDiagnosticCause(t, err, storage.ErrWALClosed)
 			} else {
 				require.NoError(t, err, "async reports native success, not asynchronous publication failure")
 			}

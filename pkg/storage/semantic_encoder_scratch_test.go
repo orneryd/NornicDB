@@ -48,15 +48,15 @@ func requireClearedSemanticScratch(t *testing.T, s *semanticTransactionScratch) 
 	require.Empty(t, s.nodes)
 	require.Empty(t, s.edges)
 	require.Empty(t, s.changes)
-	require.Equal(t, semanticTransactionWire{}, s.wire)
+	require.Equal(t, semanticTransactionWire[semanticTransactionTimestamp]{}, s.wire)
 	for _, n := range s.nodes[:cap(s.nodes)] {
-		require.Equal(t, semanticTransactionNode{}, n)
+		require.Equal(t, semanticTransactionNode[semanticTransactionTimestamp]{}, n)
 	}
 	for _, e := range s.edges[:cap(s.edges)] {
-		require.Equal(t, semanticTransactionEdge{}, e)
+		require.Equal(t, semanticTransactionEdge[semanticTransactionTimestamp]{}, e)
 	}
 	for _, c := range s.changes[:cap(s.changes)] {
-		require.Equal(t, semanticTransactionChange{}, c)
+		require.Equal(t, semanticTransactionChange[semanticTransactionTimestamp]{}, c)
 	}
 }
 

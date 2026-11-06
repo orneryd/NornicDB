@@ -26,7 +26,7 @@ func TestReviewR2RemapCrashBeforeApply(t *testing.T) {
 	dest := reviewBindingEngine(t, dir)
 	_, err := dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"unrelated": "keep"}})
 	require.NoError(t, err)
-	c, err := dest.importBufferedWALRecord(&data, walForeignImport)
+	c, err := dest.importBufferedWALRecord(dest.work.Context(), &data, walForeignImport)
 	require.NoError(t, err)
 	require.NotEmpty(t, c.propKeyDrain.pending)
 	// Crash boundary before the imported body or its destination drain applies.
@@ -35,7 +35,7 @@ func TestReviewR2RemapCrashBeforeApply(t *testing.T) {
 
 	require.True(t, dest.walPropertySource.foreign)
 	data.PropertyBindings = nil
-	_, err = dest.importBufferedWALRecord(&data, walForeignImport)
+	_, err = dest.importBufferedWALRecord(dest.work.Context(), &data, walForeignImport)
 	require.ErrorContains(t, err, "missing property name binding")
 	assertPropertyDictionaryBijection(t, dest)
 }
@@ -53,7 +53,7 @@ func TestReviewR2ConcurrentAllocation(t *testing.T) {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
-			c, e := dest.importBufferedWALRecord(&data, walForeignImport)
+			c, e := dest.importBufferedWALRecord(dest.work.Context(), &data, walForeignImport)
 			if e == nil {
 				drains <- c.propKeyDrain
 			}
@@ -172,16 +172,17 @@ func BenchmarkReviewR2OriginalImport(b *testing.B) {
 	for _, count := range []int{1, 160} {
 		b.Run(fmt.Sprint(count), func(b *testing.B) {
 			source, data := r2BindingData(b, count)
+			ctx := source.work.Context()
 			// Simulate loaded provenance; no writes or dictionary changes occur in sample.
 			data.PropertyDictionaryID = source.walPropertySource.identity
 
 			data.PropertyBindings = nil
-			_, err := source.importBufferedWALRecord(&data, walOwnDirectoryAtOpen)
+			_, err := source.importBufferedWALRecord(ctx, &data, walOwnDirectoryAtOpen)
 			require.NoError(b, err)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, err = source.importBufferedWALRecord(&data, walOwnDirectoryAtOpen)
+				_, err = source.importBufferedWALRecord(ctx, &data, walOwnDirectoryAtOpen)
 				if err != nil {
 					b.Fatal(err)
 				}

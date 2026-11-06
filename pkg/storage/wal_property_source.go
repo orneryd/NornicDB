@@ -36,7 +36,10 @@ type walPropertySource struct {
 // Native replacement and dictionary re-allocation explicitly rotate identity.
 // The constructor has not published the engine; offline restore holds its
 // exclusive barrier. Both pass their already protected handle explicitly.
-func (b *BadgerEngine) initializeWALPropertyIdentity(db *managedBadgerDB, replaced, held bool) error {
+// ctx is that same phase's own non-nil lifetime: the constructor's open
+// lifetime, the engine work context that follows the engine, or the offline
+// restore the caller already holds.
+func (b *BadgerEngine) initializeWALPropertyIdentity(ctx context.Context, db *managedBadgerDB, replaced, held bool) error {
 	s := &b.walPropertySource
 	s.Lock()
 	defer s.Unlock()
@@ -77,7 +80,7 @@ func (b *BadgerEngine) initializeWALPropertyIdentity(db *managedBadgerDB, replac
 		return err
 	}
 	if identity == "" || replaced {
-		return b.persistPropertyIdentityLocked(db, uuid.NewString(), foreign || replaced, held)
+		return b.persistPropertyIdentityLocked(ctx, db, uuid.NewString(), foreign || replaced, held)
 	}
 	s.identity, s.foreign = identity, foreign
 	s.clean = cleanIdentity == identity
@@ -86,7 +89,12 @@ func (b *BadgerEngine) initializeWALPropertyIdentity(db *managedBadgerDB, replac
 	return nil
 }
 
-func (b *BadgerEngine) persistPropertyIdentityLocked(db *managedBadgerDB, identity string, foreign, held bool) error {
+// persistPropertyIdentityLocked stores the dictionary identity and its foreign
+// marker. ctx is the phase's own non-nil lifetime: the constructor's open
+// lifetime, the engine work context for import and recovery, or the offline
+// restore the caller holds. A request lifetime never reaches it, and none is
+// substituted.
+func (b *BadgerEngine) persistPropertyIdentityLocked(ctx context.Context, db *managedBadgerDB, identity string, foreign, held bool) error {
 	if foreign && b.bufferedCommitWAL != nil {
 		if err := b.bufferedCommitWAL.invalidateCleanPropertyEpoch(); err != nil {
 			return err
@@ -101,6 +109,13 @@ func (b *BadgerEngine) persistPropertyIdentityLocked(db *managedBadgerDB, identi
 		}
 		return nil
 	}
+	// This marker is the admitted operation's own durable completion: the
+	// admission lease that reached this helper keeps Close waiting for it, so
+	// the engine's stop signal must not turn the marker into a cancellation
+	// while the store is still open, and a store that did close reports its own
+	// closure instead. ctx is that operation's phase lifetime; only its
+	// cancellation is dropped, never its values.
+	writeCtx := context.WithoutCancel(ctx)
 	var err error
 	if held {
 		// Restore already excludes readers. Use its held timestamp rather than
@@ -110,10 +125,12 @@ func (b *BadgerEngine) persistPropertyIdentityLocked(db *managedBadgerDB, identi
 		tx := db.newTxnAt(ts, true)
 		defer tx.Discard()
 		if err = write(tx); err == nil {
-			err = db.commit(context.Background(), tx, nil)
+			err = db.commit(writeCtx, tx, nil)
 		}
 	} else {
-		err = db.Update(write)
+		// Preserve the existing ordinary publication scope while passing the
+		// admitted phase lifetime explicitly.
+		err = db.update(writeCtx, write, nil)
 	}
 	if err != nil {
 		return err
@@ -128,11 +145,11 @@ func (b *BadgerEngine) persistPropertyIdentityLocked(db *managedBadgerDB, identi
 // Foreign provenance is durable before ANY imported body can apply, even if
 // every observed name happens to have the same ID. The foreign marker stays;
 // any later clean ownership proof is invalidated by another import or restore.
-func (b *BadgerEngine) markPropertySourceForeignLocked(db *managedBadgerDB) error {
+func (b *BadgerEngine) markPropertySourceForeignLocked(ctx context.Context, db *managedBadgerDB) error {
 	if b.walPropertySource.foreign && !b.walPropertySource.clean {
 		return nil
 	}
-	return b.persistPropertyIdentityLocked(db, uuid.NewString(), true, false)
+	return b.persistPropertyIdentityLocked(ctx, db, uuid.NewString(), true, false)
 }
 
 func (b *BadgerEngine) beginSemanticPropertyRestore() error {
@@ -143,7 +160,7 @@ func (b *BadgerEngine) beginSemanticPropertyRestore() error {
 	defer b.work.Leave()
 	b.walPropertySource.Lock()
 	defer b.walPropertySource.Unlock()
-	return b.persistPropertyIdentityLocked(db, uuid.NewString(), true, false)
+	return b.persistPropertyIdentityLocked(b.work.Context(), db, uuid.NewString(), true, false)
 }
 
 func beginRecoveryPropertyRestore(destination Engine) error {
@@ -162,7 +179,7 @@ func markRecoveryPropertyForeign(destination Engine) error {
 		defer b.work.Leave()
 		b.walPropertySource.Lock()
 		defer b.walPropertySource.Unlock()
-		return b.markPropertySourceForeignLocked(db)
+		return b.markPropertySourceForeignLocked(b.work.Context(), db)
 	}
 	return nil
 }

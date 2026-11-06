@@ -177,14 +177,14 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 	}
 }
 
-func TestBadgerEngine_RebuildMVCCHeads_NilContext(t *testing.T) {
+func TestBadgerEngine_RebuildMVCCHeads_NonCancellableContext(t *testing.T) {
 	engine := newRebuildHeadsFixture(t, 100)
 
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:nx", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
 	require.NoError(t, err)
 	require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:nx", Labels: []string{"Doc"}, Properties: map[string]any{"v": 2}}}))
 
-	// nil context branch should default to Background and succeed.
+	// A caller-owned non-cancellable context permits the full rebuild.
 	require.NoError(t, engine.RebuildMVCCHeads(context.Background()))
 	_, err = engine.GetNodeCurrentHead(context.Background(), "test:nx")
 	require.NoError(t, err)

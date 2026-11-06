@@ -40,7 +40,7 @@ func TestPR1655ObservedWALRejectsBeforeJournaling(t *testing.T) {
 	}
 }
 
-func TestPR1655ObservedWALAcceptedSemanticReplay(t *testing.T) {
+func TestObservedWALAcceptedSemanticReplay(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	b := newTestEngine(t)
 	destination := newTestEngine(t)
@@ -94,7 +94,7 @@ func (e *pr1655RejectedPhysicalSubmitter) SubmitEntityCommit(context.Context, *P
 	return nil, e.failure
 }
 
-func TestPR1655ObservedWALPreservesAcceptedFailure(t *testing.T) {
+func TestObservedWALPreservesAcceptedFailure(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	b := newTestEngine(t)
 	_, err := b.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]any{"v": "before"}})
@@ -109,7 +109,16 @@ func TestPR1655ObservedWALPreservesAcceptedFailure(t *testing.T) {
 	err = owner.UpdateNode(t.Context(), NodeUpdateRequest{Before: before, After: &Node{ID: before.ID, Properties: map[string]any{"v": "accepted"}}})
 	var accepted *AcceptedCommitError
 	require.ErrorAs(t, err, &accepted)
-	require.ErrorIs(t, accepted, physicalErr)
+	require.NotErrorIs(t, err, physicalErr, "accepted uncertainty is not a fresh physical rejection")
+	diagnostic := accepted.Err
+	for {
+		var nested *AcceptedCommitError
+		if !errors.As(diagnostic, &nested) {
+			break
+		}
+		diagnostic = nested.Err
+	}
+	require.ErrorIs(t, diagnostic, physicalErr)
 	require.Equal(t, CommitRecoveryPending, accepted.State)
 	require.NotEmpty(t, accepted.LogicalID)
 	_, pending := owner.pendingEntityCommits.Load(accepted.LogicalID)

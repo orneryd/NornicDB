@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -118,7 +119,7 @@ func TestManagedUsagePublicationUpdatesCanonicalByteCache(t *testing.T) {
 	manager := &DatabaseManager{databases: map[string]*DatabaseInfo{"test": info}}
 	require.NoError(t, info.reserveStorageUsage("test", "accepted", storageUsage{nodeBytes: 40}, StorageLimits{MaxBytes: 458}))
 	info.publishStorageUsage("accepted", storageUsage{nodeBytes: 40})
-	total, nodes, edges := manager.GetStorageSize("test")
+	total, nodes, edges := manager.GetStorageSize(context.Background(), "test")
 	require.Equal(t, int64(458), total)
 	require.Equal(t, int64(458), nodes)
 	require.Zero(t, edges)
@@ -126,7 +127,7 @@ func TestManagedUsagePublicationUpdatesCanonicalByteCache(t *testing.T) {
 	require.Equal(t, reservedUsage{}, info.reserved)
 	// A peer publication has no local reservation and is nevertheless actual usage.
 	info.publishStorageUsage("peer", storageUsage{nodes: 1, edges: 1, nodeBytes: 10, edgeBytes: 20})
-	total, nodes, edges = manager.GetStorageSize("test")
+	total, nodes, edges = manager.GetStorageSize(context.Background(), "test")
 	require.Equal(t, int64(488), total)
 	require.Equal(t, int64(468), nodes)
 	require.Equal(t, int64(20), edges)

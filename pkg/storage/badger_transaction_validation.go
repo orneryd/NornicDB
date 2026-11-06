@@ -52,7 +52,12 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Cont
 				return err
 			}
 			if op.Type == OpDeleteNode {
-				if err := tx.checkNodeAdjacencyConflict(ctx, op.NodeID); err != nil {
+				// The relationships a deletion cascades are this commit's write
+				// set: each carries a derived per-type count delta, and one a
+				// concurrent commit already removed is a conflict on a
+				// relationship this commit writes (see
+				// checkNodeAdjacencyConflict).
+				if err := tx.checkNodeAdjacencyConflict(ctx, op.NodeID, op.DeletedEdgeIDs); err != nil {
 					return err
 				}
 			}
@@ -316,7 +321,7 @@ func (tx *BadgerTransaction) checkEdgeWriteConflict(ctx context.Context, edgeID 
 }
 
 func (tx *BadgerTransaction) checkEdgeEndpointConflicts(ctx context.Context, edge *Edge) error {
-	if edge == nil {
+	if edge == nil || !tx.revalidatesEndpoints() {
 		return nil
 	}
 	// Staging validates both endpoints. Validate the final staged image,
@@ -393,7 +398,24 @@ func (tx *BadgerTransaction) endpointHead(ctx context.Context, nodeID NodeID) (M
 	return head, err
 }
 
-func (tx *BadgerTransaction) checkNodeAdjacencyConflict(ctx context.Context, nodeID NodeID) error {
+// checkNodeAdjacencyConflict validates the relationships adjacent to a node a
+// deletion removes: each may not have changed since this transaction read it.
+// cascaded is the relationship set the deletion removes (its Op.DeletedEdgeIDs,
+// empty for a check that owns no cascade).
+//
+// The index walk sees only relationships the committed adjacency index still
+// holds. A relationship a concurrent commit removed since this transaction read
+// it no longer has an entry there, so it is checked by its own head, which that
+// commit left as a tombstone newer than this transaction's snapshot. It is a
+// write conflict on a relationship this commit writes, exactly the rejection
+// Badger's conflict detection raises for the same commit on the synchronous
+// path. Accepting it would apply this commit's derived per-type count delta for
+// a relationship an earlier commit already deleted and counted, driving the
+// persisted counter below the relationships it counts; a restore or read that
+// folds the deltas then reports the counter underflow.
+func (tx *BadgerTransaction) checkNodeAdjacencyConflict(ctx context.Context, nodeID NodeID, cascaded []EdgeID) error {
+	// seen: the cascaded relationships the index walk validated.
+	var seen map[EdgeID]struct{}
 	err := tx.engine.withView(func(viewTx *badger.Txn) error {
 		var prefixes [][]byte
 		if outPrefix := tx.engine.outgoingIndexPrefixString(nodeID); outPrefix != nil {
@@ -415,6 +437,12 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(ctx context.Context, nod
 				if !ok {
 					continue
 				}
+				if cascaded != nil {
+					if seen == nil {
+						seen = make(map[EdgeID]struct{}, len(cascaded))
+					}
+					seen[edgeID] = struct{}{}
+				}
 				head, physicalVersion, err := tx.engine.loadEdgeMVCCHeadByNumRawWithPhysicalVersionInTxn(viewTx, edgeNum)
 				if err == ErrNotFound {
 					continue
@@ -432,10 +460,24 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(ctx context.Context, nod
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, ErrConflict) {
-		return &CommitFailureError{Cause: err}
+	if err != nil {
+		if !errors.Is(err, ErrConflict) {
+			return &CommitFailureError{Cause: err}
+		}
+		return err
 	}
-	return err
+	for _, edgeID := range cascaded {
+		if _, indexed := seen[edgeID]; indexed {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := tx.checkEdgeWriteConflict(ctx, edgeID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // shouldSkipCreateExistenceCheck is the legacy name of the UUID predicate now

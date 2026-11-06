@@ -760,20 +760,18 @@ func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(ctx context.Context, la
 // once it released it, so no listener runs while a barrier waiter waits for
 // it.
 // Cancellation ends this wait; independently accepted replay retains its
-// terminal and settlement ownership. A nil context waits non-cancellably:
-// this boundary selects a nonnil waiting context once. Accepted replay
-// retains its separate completion waitCtx.
+// terminal and settlement ownership. Callers supply a non-nil context;
+// context.Background selects a non-cancellable flush. Accepted replay retains
+// its separate completion lifetime.
 func (b *BadgerEngine) FlushWriteBehind(ctx context.Context) error {
 	if b.writeBehind == nil {
 		return nil
 	}
-	// Normalize the optional waiting context, without changing replay ownership.
-	waitCtx := ctx
-	if err := b.writeBarrier.RLockContext(waitCtx); err != nil {
+	if err := b.writeBarrier.RLockContext(ctx); err != nil {
 		return err
 	}
 	b.mu.RLock()
-	closed := b.work.Closing()
+	closed := b.ensureOpenLocked(false) != nil
 	b.mu.RUnlock()
 	if closed {
 		b.writeBarrier.RUnlock()
@@ -782,7 +780,7 @@ func (b *BadgerEngine) FlushWriteBehind(ctx context.Context) error {
 		}
 		return nil
 	}
-	gens, rotationErr := b.writeBehind.rotate(waitCtx, true)
+	gens, rotationErr := b.writeBehind.rotate(ctx, true)
 	// Every commit acknowledged before the flush is captured; the barrier
 	// goes before they are applied. The background worker applies a
 	// generation it claimed holding no barrier and then delivers its
@@ -795,8 +793,8 @@ func (b *BadgerEngine) FlushWriteBehind(ctx context.Context) error {
 	// Rotation handed acknowledged work to the existing replay owner. Wake it
 	// even if cancellation prevents this caller from entering its wait.
 	b.writeBehind.signal()
-	err := b.writeBehind.flushContext(waitCtx, false, false)
-	if ctxErr := waitCtx.Err(); ctxErr != nil {
+	err := b.writeBehind.flushContext(ctx, false, false)
+	if ctxErr := ctx.Err(); ctxErr != nil {
 		// Retain any real apply failure already returned.
 		if err != nil {
 			return err
@@ -814,7 +812,7 @@ func (b *BadgerEngine) FlushWriteBehind(ctx context.Context) error {
 	// that flushes cannot wait on its own generation: it left the queue
 	// before its notifications were delivered.
 	for _, g := range gens {
-		if waitCtx.Done() == nil {
+		if ctx.Done() == nil {
 			// A request that cannot cancel waits on the generation alone: no
 			// timer and no allocation per wait.
 			<-g.Settled()
@@ -822,8 +820,8 @@ func (b *BadgerEngine) FlushWriteBehind(ctx context.Context) error {
 		}
 		select {
 		case <-g.Settled():
-		case <-waitCtx.Done():
-			return waitCtx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 	return nil

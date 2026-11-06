@@ -60,6 +60,11 @@ func (b *BadgerEngine) SubmitEntityCommit(ctx context.Context, prepared *Prepare
 	if prepared == nil || prepared.engine != b {
 		return nil, ErrInvalidData
 	}
+	// A durable outer owner accepted this command. Native application may
+	// retry the accepted image; it cannot reject that durable decision.
+	if prepared.accepted.Load() {
+		return b.submitAcceptedEntityApplication(prepared, settle), nil
+	}
 	if ctx.Err() != nil {
 		prepared.Abort()
 		return nil, ctx.Err()

@@ -13,13 +13,6 @@
         "call context.Background (+26 in github.com/orneryd/nornicdb/pkg/lifecycle.Run)"
       ]
     },
-    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistMVCCSequence": {
-      "Reason": "MVCC sequence persistence after the commit point: a request cancellation must not cut it short, and no request context is replaced.",
-      "Approver": "Nornic2 ruling (31 October 2026)",
-      "Occurrences": [
-        "call context.Background (+15 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistMVCCSequence)"
-      ]
-    },
     "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).updateMetadata": {
       "Reason": "ID counter persistence after the commit point: a request cancellation must not cut it short, and no request context is replaced.",
       "Approver": "Nornic2 ruling (31 October 2026)",
@@ -272,11 +265,11 @@
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit": {
-      "Reason": "post-acceptance commit completion and derived-count repair after data is durable.",
+      "Reason": "post-acceptance commit completion and derived-count repair after data is durable. Re-reviewed 2026-11-06 against release base 60ff9d644d0c75b0d1b67154c4662321f9d9dd7f and this head c40d10504f21392188c6e3a48f3ed30b5e6860d7: the function still creates exactly these two fresh contexts, and only their source offsets moved, +236/+457 to +247/+468, because earlier lines of the same function grew by eleven. The first is still the private preparation continuation handoff after its terminal owner accepted the command and before the plain-commit client check; the second is still completionContext for the positional (label, type) count tail, retained after the entity and index writes are durable so caller cancellation cannot veto counts or their repair. Neither site is the accepted-completion boundary itself, and neither changed it, creates a new boundary, or reuses a request or engine-stop lifetime. The existing approval is re-pinned to the moved sites; this review claims no fresh human approval.",
       "Approver": "orneryd (2 November 2026)",
       "Occurrences": [
-        "call context.Background (+236 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)",
-        "call context.Background (+457 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)"
+        "call context.Background (+247 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)",
+        "call context.Background (+468 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)"
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication": {
@@ -441,13 +434,6 @@
       "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md): the row-evaluation fallback (temporal_values.go)",
       "Approver": "Nornic2 (31 October 2026)"
     },
-    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).endSuppressions": {
-      "Reason": "owned by #1691 obligation 3; the decision lands with #1691 in the stack.",
-      "Approver": "Nornic2 (31 October 2026)",
-      "Occurrences": [
-        "call context.Background (+17 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).endSuppressions)"
-      ]
-    },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition": {
       "Reason": "#1548's context.Background() on ReconcileDecaySuppression's path; kept as merged. It is the same never-cancelled value as namespaceMaintenanceContext, and its owner context arrives with U-1636.",
       "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
@@ -500,7 +486,7 @@
         "github.com/orneryd/nornicdb/pkg/localization.storageValidationMessage": "990e006cdab070bd32672fc600fc66523cbc03ff3cffccfe48fdfc34109a9b98",
         "github.com/orneryd/nornicdb/pkg/math/libm.Float64frombits": "24f405596402e464051c8ad40a4db07d999ea97c63c8fc036aa8dc90edeea498"
       },
-      "Closure": "d21df8a61ebaa59ee6082bf578cdb26772a83a7a5e9d2fe797360dde19c82777",
+      "Closure": "1ce7896cf62919fbe0bf2c55ab86cbda0d04148e279892da4d2c3212a1c9a1bd",
       "Modules": null,
       "Callers": {
         "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort": [
@@ -517,7 +503,7 @@
       },
       "FieldWriters": null,
       "Methods": null,
-      "Reason": "Maintainer-approved compensation-only completion: rollback of previously written unpublished batches and startup crash repair finish independently of canceled request work. Intent and restore batches pass a nil journal to commitDurableWrite, so compensation neither repeats WAL admission nor inherits the failed request. The exact two caller edges, held value, thirteen source pins and caller sets remain the approved boundary; ordinary preparation and any new caller remain unapproved. Re-reviewed 2026-11-04 against parent 2d0362da48a87a0069b47c1ed185ad14cbc67e65 and candidate 34614a39e467b5be66c1245067b24220f572bf19: compiled static closure comparison preserves all 197 members, adds/removes none, and changes only physicalCacheProjection.add. That function now retains the same ordered key facts in a compact private representation; VisitAffectedFacts reconstructs the original public facts, including relationship endpoints, before durable cache invalidation. It creates no context, performs no I/O or write admission, and does not change compensation completion, WAL, publication or rollback callers. All thirteen pinned sources and both compensation edges remain unchanged. The exact current closure is d21df8a61ebaa59ee6082bf578cdb26772a83a7a5e9d2fe797360dde19c82777. TestInstalledRollbackPhaseRecord retains the positive two-route proof plus source/body/helper mutations and added-caller rejection. Any later encoding/source/caller change stales this record and requires renewed source review.",
+      "Reason": "Maintainer-approved compensation-only completion: rollback of previously written unpublished batches and startup crash repair finish independently of canceled request work. Intent and restore batches pass a nil journal to commitDurableWrite, so compensation neither repeats WAL admission nor inherits the failed request. The exact two caller edges, held value, thirteen source pins and caller sets remain the approved boundary; ordinary preparation and any new caller remain unapproved. Re-reviewed 2026-11-04 against parent 2d0362da48a87a0069b47c1ed185ad14cbc67e65 and candidate 34614a39e467b5be66c1245067b24220f572bf19: compiled static closure comparison preserves all 197 members, adds/removes none, and changes only physicalCacheProjection.add. That function now retains the same ordered key facts in a compact private representation; VisitAffectedFacts reconstructs the original public facts, including relationship endpoints, before durable cache invalidation. It creates no context, performs no I/O or write admission, and does not change compensation completion, WAL, publication or rollback callers. All thirteen pinned sources and both compensation edges remain unchanged. The exact current closure is d21df8a61ebaa59ee6082bf578cdb26772a83a7a5e9d2fe797360dde19c82777. TestInstalledRollbackPhaseRecord retains the positive two-route proof plus source/body/helper mutations and added-caller rejection. Any later encoding/source/caller change stales this record and requires renewed source review. Re-reviewed 2026-11-06 against release base 60ff9d644d0c75b0d1b67154c4662321f9d9dd7f and this head c40d10504f21392188c6e3a48f3ed30b5e6860d7: the compiled static closure of the thirteen pinned sources has 198 members, and all 198 exist at the base revision with byte-identical bodies except two, both changed by 88b8fe766 (fix(storage): restack accepted entity settlement for v1.4.4). (*pkg/storage.semanticTransactionScratch).clear now zeroes the version-selected generic wire (semanticTransactionWire[semanticTransactionTimestamp]) instead of the former non-generic struct, and (*pkg/storage.decodeEdgeCompactHeaderInto) also decodes the two V2 reserved flag bits that preserve unset CreatedAt/UpdatedAt. Neither adds or removes a function-valued operand, creates a context, performs I/O, admits a write, or changes a caller, so the reachable member set is unchanged; the earlier 197-member comparison described candidate 34614a39e467b5be66c1245067b24220f572bf19 and parent 2d0362da48a87a0069b47c1ed185ad14cbc67e65, neither an ancestor of this release base. All thirteen source pins, both compensation caller edges (largeCommit.abort, recoverInterruptedLargeCommit) and every caller set still match, and badger_managed.go and durable_cache_scope.go are unchanged from the base. rollbackSince still selects exactly one context.Background compensation lifetime. The exact current closure is 1ce7896cf62919fbe0bf2c55ab86cbda0d04148e279892da4d2c3212a1c9a1bd.",
       "Approver": "Tim Sweet (OrneryD), explicit approval 2026-11-01; principal-agent source review and public/mutation controls in rollback-phase-current-review"
     }
   }

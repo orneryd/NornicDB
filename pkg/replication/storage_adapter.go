@@ -183,7 +183,7 @@ func (a *StorageAdapter) ApplyCommand(waitCtx context.Context, cmd *Command, pub
 	var err error
 	switch cmd.Type {
 	case CmdCommitTransaction:
-		if cmd.accepted == nil || cmd.accepted.owner != a.engine {
+		if !cmd.accepted.AppliesTo(a.engine) {
 			envelope, operations, err = storage.DecodeEntityTransaction(cmd.Data)
 		}
 	case CmdCreateNode, CmdUpdateNode, CmdDeleteNode, CmdCreateEdge, CmdUpdateEdge,
@@ -223,8 +223,8 @@ func (a *StorageAdapter) ApplyCommand(waitCtx context.Context, cmd *Command, pub
 	var execErr error
 	switch cmd.Type {
 	case CmdCommitTransaction:
-		if cmd.accepted != nil && cmd.accepted.owner == a.engine {
-			execErr = cmd.accepted.apply()
+		if cmd.accepted.AppliesTo(a.engine) {
+			execErr = cmd.accepted.ApplyContext(completionCtx, cmd.Data)
 			break
 		}
 		receipt, err := storage.SubmitAcceptedEntityTransaction(completionCtx, a.engine, envelope, operations, nil)

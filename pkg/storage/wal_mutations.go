@@ -2,10 +2,12 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // beginNativeMutation joins wrapper admission to the native writer's existing
@@ -72,59 +74,87 @@ func (w *WALEngine) entityPreparationRoute(id string, observed bool) (EntityComm
 }
 
 func (w *WALEngine) submitRoutedMutations(ctx context.Context, admission *nativeWALAdmission, route EntityCommitRoute, namespace string, scope *NamespacedEngine, operations []Operation, mode EntityCommitMode) (NodeID, error) {
-	if route.CheckAdmission != nil {
-		if err := route.CheckAdmission(); err != nil {
-			return "", err
-		}
-	}
-	if scope != nil {
-		for i := range operations {
-			op := &operations[i]
-			var err error
-			if op.Node != nil {
-				op.Node, err = scope.NodeWriteInput(ctx, op.Node)
-			}
-			if err != nil {
-				return "", err
-			}
-			if op.Edge != nil {
-				op.Edge, err = scope.EdgeWriteInput(ctx, op.Edge)
-			}
-			if err != nil {
-				return "", err
-			}
-			if op.Type == OpDeleteNode {
-				op.NodeID = scope.PrefixNodeID(op.NodeID)
-			}
-			if op.Type == OpDeleteEdge {
-				op.EdgeID = scope.PrefixEdgeID(op.EdgeID)
-			}
-		}
-	}
-	prepared, settle, err := PrepareEntityChanges(ctx, w.engine, namespace, operations, mode)
-	if err != nil || prepared == nil {
-		return "", err
-	}
+	var prepared *PreparedEntityCommit
+	var receipt *CommitReceipt
 	var created NodeID
-	if len(operations) > 0 && operations[0].Type == OpCreateNode {
-		for _, op := range prepared.operations {
-			if op.Type == OpCreateNode {
-				created = op.Node.ID
-				break
+	// Preparation and submission observe both caller cancellation and wrapper
+	// shutdown. Join only this pre-acceptance phase: holding it while waiting
+	// on the accepted receipt would let a stopped waiter delay engine shutdown.
+	err := func() (err error) {
+		if !w.work.Enter() {
+			return ErrStorageClosed
+		}
+		defer w.work.Leave()
+		preparation, cancel := context.WithCancelCause(ctx)
+		defer cancel(nil)
+		stop := lifecycle.AfterFuncJoined(w.work.Context(), func() { cancel(ErrStorageClosed) })
+		defer stop()
+		defer func() {
+			if errors.Is(err, context.Canceled) && context.Cause(preparation) == ErrStorageClosed {
+				err = ErrStorageClosed
+			}
+		}()
+		if route.CheckAdmission != nil {
+			if err := route.CheckAdmission(); err != nil {
+				return err
 			}
 		}
 		if scope != nil {
-			created = NodeID(StripDatabasePrefix(namespace, string(created)))
+			for i := range operations {
+				op := &operations[i]
+				if op.Node != nil {
+					op.Node, err = scope.NodeWriteInput(preparation, op.Node)
+				}
+				if err != nil {
+					return err
+				}
+				if op.Edge != nil {
+					op.Edge, err = scope.EdgeWriteInput(preparation, op.Edge)
+				}
+				if err != nil {
+					return err
+				}
+				if op.Type == OpDeleteNode {
+					op.NodeID = scope.PrefixNodeID(op.NodeID)
+				}
+				if op.Type == OpDeleteEdge {
+					op.EdgeID = scope.PrefixEdgeID(op.EdgeID)
+				}
+			}
 		}
-	}
-	receipt, err := admission.transfer(ctx, prepared, settle)
+		var settle func(CommitOutcome)
+		prepared, settle, err = PrepareEntityChanges(preparation, w.engine, namespace, operations, mode)
+		if err != nil || prepared == nil {
+			return err
+		}
+		if len(operations) > 0 && operations[0].Type == OpCreateNode {
+			for _, op := range prepared.operations {
+				if op.Type == OpCreateNode {
+					created = op.Node.ID
+					break
+				}
+			}
+			if scope != nil {
+				created = NodeID(StripDatabasePrefix(namespace, string(created)))
+			}
+		}
+		receipt, err = admission.transfer(preparation, prepared, settle)
+		if err != nil {
+			prepared.Abort()
+			if settle != nil {
+				settle(CommitOutcome{State: CommitDiscarded, Err: err})
+			}
+		}
+		return err
+	}()
 	if err != nil {
-		prepared.Abort()
-		if settle != nil {
-			settle(CommitOutcome{State: CommitDiscarded, Err: err})
-		}
 		return "", err
 	}
+	if receipt == nil {
+		return created, nil
+	}
+	// The accepted owner has its own completion lifetime. Neither the stopped
+	// preparation context nor its shutdown callback owns this receipt wait.
 	outcome := receipt.WaitOutcome(ctx)
 	if outcome.Err == nil || outcome.State == CommitDiscarded {
 		return created, outcome.Err
