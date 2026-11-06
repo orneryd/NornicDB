@@ -50,6 +50,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/voyage"
@@ -610,12 +611,12 @@ func (f *nor406RetrievalFixture) population() int {
 // controlledRetrievalReranker keeps qualification network-free and makes
 // actual provider dispatch visible without duplicating result conversion.
 type controlledRetrievalReranker struct {
+	fixtureowner.AlwaysEnabled
 	calls atomic.Int64
 	nanos atomic.Int64
 }
 
 func (*controlledRetrievalReranker) Name() string                         { return "controlled-retrieval" }
-func (*controlledRetrievalReranker) Enabled() bool                        { return true }
 func (*controlledRetrievalReranker) IsAvailable(ctx context.Context) bool { return ctx.Err() == nil }
 func (r *controlledRetrievalReranker) Rerank(ctx context.Context, _ string, candidates []search.RerankCandidate) ([]search.RerankResult, error) {
 	if err := ctx.Err(); err != nil {

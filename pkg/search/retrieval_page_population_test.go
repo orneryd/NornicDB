@@ -125,10 +125,10 @@ func newNOR406Population(tb testing.TB, docs, eligible int) *nor406Population {
 	return &nor406Population{service: service, docs: docs, eligible: eligible, threshold: nor406Threshold(docs, eligible)}
 }
 
-// nor406StubEmbed is the only embedding source in these probes: no provider.
-func nor406StubEmbed(context.Context, string) ([]float32, error) {
-	return []float32{1, 0}, nil
-}
+// fixedQueryEmbedding2D is the only embedding source in these probes: no
+// provider. The bound package-level value keeps one Embed function for every
+// search instead of building a method value per request.
+var fixedQueryEmbedding2D = fixtureowner.FixedEmbedding2D{}.Embed
 
 // nor406Step is one actual retrieval the continuation stream issued.
 type nor406Step struct {
@@ -147,28 +147,18 @@ type nor406Step struct {
 	method        string
 }
 
-// nor406Recorder keeps every issued step of one measured operation.
+// nor406Recorder keeps every issued step of one measured operation. The steps
+// are recorded with fixtureowner.Append and read with fixtureowner.Snapshot on
+// the recorder's own lock; reset drains in place under that same lock.
 type nor406Recorder struct {
 	mu    sync.Mutex
 	steps []nor406Step
-}
-
-func (r *nor406Recorder) add(step nor406Step) {
-	r.mu.Lock()
-	r.steps = append(r.steps, step)
-	r.mu.Unlock()
 }
 
 func (r *nor406Recorder) reset() {
 	r.mu.Lock()
 	r.steps = r.steps[:0]
 	r.mu.Unlock()
-}
-
-func (r *nor406Recorder) snapshot() []nor406Step {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]nor406Step(nil), r.steps...)
 }
 
 // searchFunc records the issued depth and candidate evidence of every search
@@ -199,7 +189,7 @@ func (p *nor406Population) searchFunc(recorder *nor406Recorder) SearchQueryFunc 
 			}
 		}
 		if recorder != nil {
-			recorder.add(step)
+			fixtureowner.Append(&recorder.mu, &recorder.steps, step)
 		}
 		return response, err
 	}
@@ -213,7 +203,7 @@ func (p *nor406Population) initialOptions() *SearchOptions {
 }
 
 func (p *nor406Population) start(ctx context.Context, recorder *nor406Recorder, request SearchContinuationRequest, options *SearchOptions) (*SearchContinuationPage, error) {
-	return p.service.SearchTextContinuation(ctx, nor406QueryText, options, request, nil, nor406StubEmbed, p.searchFunc(recorder), ChunkedSearchErrorPolicy{Transport: "nor406-probe"})
+	return p.service.SearchTextContinuation(ctx, nor406QueryText, options, request, nil, fixedQueryEmbedding2D, p.searchFunc(recorder), ChunkedSearchErrorPolicy{Transport: "nor406-probe"})
 }
 
 func (p *nor406Population) pull(ctx context.Context, recorder *nor406Recorder, owner, qid string, n int) (*SearchContinuationPage, error) {
@@ -283,7 +273,7 @@ func TestSearchContinuationFirstPageAwaitsItsIssuedDepthPool(t *testing.T) {
 	}
 	published := make(chan startOutcome, 1)
 	go func() {
-		page, err := population.service.SearchTextContinuation(ctx, nor406QueryText, options, request, nil, nor406StubEmbed, gatedSearch, ChunkedSearchErrorPolicy{})
+		page, err := population.service.SearchTextContinuation(ctx, nor406QueryText, options, request, nil, fixedQueryEmbedding2D, gatedSearch, ChunkedSearchErrorPolicy{})
 		published <- startOutcome{page: page, err: err}
 	}()
 
@@ -309,7 +299,7 @@ func TestSearchContinuationFirstPageAwaitsItsIssuedDepthPool(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("searches executed before the first page = %d, want 1 (no background producer owns the first page)", calls.Load())
 	}
-	steps := recorder.snapshot()
+	steps := fixtureowner.Snapshot(&recorder.mu, &recorder.steps)
 	if len(steps) != 1 {
 		t.Fatalf("recorded steps before the first page = %d, want 1", len(steps))
 	}
@@ -343,8 +333,8 @@ func TestSearchContinuationFirstPageAwaitsItsIssuedDepthPool(t *testing.T) {
 			t.Fatalf("discard: %v", err)
 		}
 	}
-	depths := make([]int, 0, len(recorder.snapshot()))
-	for _, step := range recorder.snapshot() {
+	depths := make([]int, 0, len(fixtureowner.Snapshot(&recorder.mu, &recorder.steps)))
+	for _, step := range fixtureowner.Snapshot(&recorder.mu, &recorder.steps) {
 		depths = append(depths, step.depth)
 	}
 	t.Logf("drained: pulls=%d rows=%d issuedDepths=%v searches=%d", drains, totalRows, depths, calls.Load())
@@ -367,7 +357,7 @@ func TestSearchContinuationPullLookaheadIssuesDeeperDepth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start continuation: %v", err)
 	}
-	steps := recorder.snapshot()
+	steps := fixtureowner.Snapshot(&recorder.mu, &recorder.steps)
 	if len(steps) != 1 {
 		t.Fatalf("steps after start = %d, want 1", len(steps))
 	}
@@ -387,8 +377,8 @@ func TestSearchContinuationPullLookaheadIssuesDeeperDepth(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buffered pull: %v", err)
 		}
-		if len(recorder.snapshot()) != 1 {
-			t.Fatalf("a pull inside the %d-row buffer issued a search: %+v", buffered, recorder.snapshot())
+		if len(fixtureowner.Snapshot(&recorder.mu, &recorder.steps)) != 1 {
+			t.Fatalf("a pull inside the %d-row buffer issued a search: %+v", buffered, fixtureowner.Snapshot(&recorder.mu, &recorder.steps))
 		}
 		position += page.Returned
 		bufferedPulls++
@@ -403,7 +393,7 @@ func TestSearchContinuationPullLookaheadIssuesDeeperDepth(t *testing.T) {
 	if _, err := population.pull(ctx, recorder, nor406ProbeOwner, qid, nor406PageSize); err != nil {
 		t.Fatalf("edge pull: %v", err)
 	}
-	steps = recorder.snapshot()
+	steps = fixtureowner.Snapshot(&recorder.mu, &recorder.steps)
 	if len(steps) != 2 {
 		t.Fatalf("searches after the edge pull = %d, want 2: %+v", len(steps), steps)
 	}
@@ -478,7 +468,7 @@ func benchmarkNOR406Continuation(b *testing.B, population *nor406Population, cac
 		if page.HasMore {
 			qid = page.QID
 		}
-		steps := recorder.snapshot()
+		steps := fixtureowner.Snapshot(&recorder.mu, &recorder.steps)
 		if len(steps) == 0 {
 			b.Fatal("start issued no search")
 		}
@@ -507,7 +497,7 @@ func benchmarkNOR406Continuation(b *testing.B, population *nor406Population, cac
 				b.Fatal(err)
 			}
 		}
-		steps = recorder.snapshot()
+		steps = fixtureowner.Snapshot(&recorder.mu, &recorder.steps)
 		searchesTotal += len(steps)
 		if deepest := nor406DeepestDepth(steps); deepest > deepestDepth {
 			deepestDepth = deepest
@@ -614,7 +604,7 @@ func TestSearchContinuationSearchPhaseCPUProfile(t *testing.T) {
 	}
 	pprof.StopCPUProfile()
 	elapsed := time.Since(profiled)
-	steps := recorder.snapshot()
+	steps := fixtureowner.Snapshot(&recorder.mu, &recorder.steps)
 	depths := make([]int, 0, len(steps))
 	for _, step := range steps {
 		depths = append(depths, step.depth)

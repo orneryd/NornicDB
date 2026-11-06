@@ -8,21 +8,33 @@ import (
 	"sync"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
+// materializedPathAccessRecorder observes the read paths' access
+// acknowledgements. IncrementAccess is a required interface method, not a
+// compatibility wrapper: the production engine calls it through
+// storage.accessIncrementor (BadgerEngine.SetAccessAccumulator), so the fixture
+// cannot drop it. The adapter owns only that required method name; the recorded
+// append itself is the canonical fixtureowner.Append on the same lock.
 type materializedPathAccessRecorder struct {
 	mu       sync.Mutex
 	accessed []string
 }
 
+// IncrementAccess is the storage.accessIncrementor callback the read path
+// invokes once per accessed entity, so the record order is the engine's call
+// order.
 func (r *materializedPathAccessRecorder) IncrementAccess(entityID string) {
-	r.mu.Lock()
-	r.accessed = append(r.accessed, entityID)
-	r.mu.Unlock()
+	fixtureowner.Append(&r.mu, &r.accessed, entityID)
 }
 
+// take drains every record and sorts it. It holds the producer lock across the
+// drain, so records appended during a drain stay for the next take; a
+// fixtureowner.Snapshot followed by a reset would drop them.
 func (r *materializedPathAccessRecorder) take() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

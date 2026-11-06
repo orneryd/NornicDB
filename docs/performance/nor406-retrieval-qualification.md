@@ -37,6 +37,23 @@ Both executor-result and search-response caches are disabled. Requests explicitl
 
 CPU profiles from `-cpuprofile` include corpus/index setup. Attribute request costs using the `runSearchRequest` call tree; do not describe whole-process samples as search-only. The small probe's optional search-phase profile starts after fixture construction and warm-up. Neither profile proves external provider latency.
 
+## Paired public workload results
+
+Both complete 72-case matrices passed their result/eligibility checks, using the same generated harness against release `69115e8a2` and candidate `b7f79b193`. Each case ran 16 operations once; these are workload-scoped observations, not statistical qualification of latency differences. Provider time was measured separately with controlled, network-free inference.
+
+| 49K workload | Release mean initial latency | Candidate mean initial latency | Allocated bytes change | Allocation count change |
+| --- | ---: | ---: | ---: | ---: |
+| retrieve, one-shot, EXISTS, concurrency 1 | 1,599.12 ms | 1,381.16 ms | −6.9% | −17.9% |
+| retrieve, one-shot, EXISTS, concurrency 16 | 3,493.52 ms | 3,108.10 ms | −10.5% | −19.0% |
+| rretrieve, one-shot, EXISTS, concurrency 1 | 1,608.59 ms | 1,392.39 ms | −6.9% | −17.9% |
+| rretrieve, one-shot, EXISTS, concurrency 16 | 3,483.02 ms | 3,118.20 ms | −9.7% | −18.8% |
+| retrieve, first page, EXISTS, concurrency 1 | 1,601.22 ms | 1,375.85 ms | −6.9% | −17.9% |
+| retrieve, first page, EXISTS, concurrency 16 | 3,430.42 ms | 3,098.58 ms | −8.7% | −18.6% |
+
+No case increased allocated bytes or allocation counts by more than 5%. Two unfiltered latency observations need repetition before a no-regression claim: 12.5K first-page retrieve at concurrency 16 increased throughput-derived ns/op by 5.06%, and 49K five-page rretrieve at concurrency 16 increased it by 10.79%. Their allocated bytes/counts stayed approximately flat or fell. Necessary follow-up measurements must not be hidden by the improvements above.
+
+The boundary-page lookahead remains expensive in this pushed candidate. For example, release 49K filtered five-page retrieve at concurrency 1 spent about 1.616 s on initial execution and 3.969 s on subsequent pulls, allocating 5.028 GB per complete operation. Returning the last buffered page currently asks the engine to discover whether another row exists first. A separate local ready-page proposal is under contract review; these numbers do not qualify that proposal or prove background population.
+
 ## Source review and rejected experiments
 
 The membership-completeness rule is shared by the candidate generator and exact grouping; no copied ownership rule remains. The statement parse uses `pipelineClausePlans` and its existing `clauseAnalysisBoundChain` slot, rather than another cache implementation. Canonical traversal and predicate evaluation remain unchanged.
