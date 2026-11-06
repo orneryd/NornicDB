@@ -430,11 +430,16 @@ func (w *WALEngine) autoSnapshotLoop(ctx context.Context, ticker *time.Ticker) {
 // disabled.
 func (w *WALEngine) createSnapshotAndCompact(ctx context.Context) error {
 	if err := w.mutationMu.LockContext(ctx); err != nil {
+		// Owner shutdown or a sealed journal is terminal regardless of
+		// whether cancellation or barrier admission wakes the snapshot.
+		if w.work.Closing() || w.wal.work.Closing() {
+			return ErrWALClosed
+		}
 		return err
 	}
 	defer w.mutationMu.Unlock()
 
-	if w.wal.work.Closing() {
+	if w.work.Closing() || w.wal.work.Closing() {
 		return ErrWALClosed
 	}
 	if err := checkNativeSnapshotPublication(w.engine); err != nil {
