@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve quoted relationship type identity in correlated COUNT and EXISTS
+  subqueries, including literal pipes and escaped backticks.
+
 - Reject a node cascade when a peer has already deleted one of its staged
   relationships, including after the peer's write-behind generation is flushed.
   Prevent duplicate relationship-count decrements that made valid backups fail
