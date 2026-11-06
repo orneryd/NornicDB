@@ -193,3 +193,56 @@ the per-package timeout are unchanged. Integrated assignment controls pass
 artifact/ordering checks pass (12.908 seconds). These are not a full matrix
 or full-suite pass; complete partition execution and replacement CI remain
 required.
+
+## Embedding-free mutation preimage validation
+
+Write-behind full-property validation left its projection nil, causing the
+projected reader to select full embedding hydration. The comparison uses only
+properties and labels. Its physical read now uses the existing
+`nodeItemBodyOnly` mode; constraint-only validation retains the existing
+borrowed projected read. Buffer selection, record versions, conflict equality,
+error classification, public full reads and storage formats are unchanged.
+
+The clean pushed baseline fails a public commit after a test-owned embedding
+chunk is made undecodable. The regression also proves ordinary full reads
+reject the malformed chunk. It establishes warm/cold body-cache states after
+the fault write, verifies the predecessor is physical and the result is an
+acknowledged buffered update, restores the chunk, then checks every vector
+value through full reads before and after flushing and clearing caches.
+Stale property/label images and changed constraint keys remain conflicts.
+The constraint control changes a key outside the embedding text source, so
+it retains the vector-preservation oracle rather than testing invalidation.
+
+Fixture construction reuses the existing write-behind/manual-drain owner,
+embedding writeback builder, raw-record read/write helpers and large-vector
+fixture. The constant-vector builder is shared with the existing chunk-update
+test and new benchmark; no forwarding helper or production test hook is added.
+Tests are named for their behavior, not a PR identifier.
+
+### Scoped benchmark
+
+Apple M2 Max, darwin/arm64, Go 1.27.3; three runs of 1,000 public write-behind
+updates per payload, with CPU and allocation profiles for both variants.
+Background replay is stopped and each iteration explicitly flushes, making
+the next predecessor physical. Time includes staging, validation, publication
+and flushing. The baseline uses the unchanged `3cdd2049` validation function;
+both variants use the same benchmark and fixtures. Medians:
+
+| Sidecar payload | ns/op before → after | B/op before → after | allocations/op before → after |
+| --- | ---: | ---: | ---: |
+| 1 × 8 float32 values | 41,265 → 39,756 | 27,628 → 26,548 | 450 → 428 |
+| 2 × 16,000 float32 values | 2,119,438 → 1,287,829 | 3,564,119 → 2,548,002 | 842 → 682 |
+
+The large workload reduces time by 39.2%, bytes by 28.5% and allocation count
+by 19.0% in this bounded comparison. The focused allocation profile attributes
+vector reads/decoding to validation before the change; those vector-loading
+frames disappear from the validation profile afterward. Remaining staging
+and persistence costs are included, so these results do not imply vector-free
+work across the whole update or a release-wide throughput qualification.
+
+Final focused race checks cover the new regressions, existing chunk persistence
+and cancellation controls (three repetitions, 8.064 seconds). Fresh blocking
+stored/context census checks pass (19.956/82.463 seconds), as does go vet. A
+delegated full storage-package run passed before final test-only integration
+refinements (499.887 seconds); its redundant repeat was canceled, not passed.
+Complete make-test CI on the resulting pushed head remains required.

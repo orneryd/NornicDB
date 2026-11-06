@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Unchanged stored NaN properties remain valid mutation preimages. Settle
   direct-commit replay ordering before WAL acceptance so rejected mixed-mode
   writes remain retryable without stranding later writers. Preserve the existing
-  snapshot/rebase criteria and cascade relationship counters.
+  snapshot/rebase criteria and cascade relationship counters. Property/label
+  preimage validation avoids loading separately stored embedding chunks.
 
 - Preserve acknowledged write-behind updates and increments by validating
   unflushed competing writes. Complete snapshot/semantic WAL writes before

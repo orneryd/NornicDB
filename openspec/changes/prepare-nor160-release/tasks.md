@@ -219,3 +219,13 @@ review CI request is superseded by the following pushed head.
 - [x] Refresh final-head NOR-211 public HTTP controls in separate native/ANTLR processes (1.593s/2.248s), without cache reuse.
 - [x] Partition all 37 unchanged mutant cases into four bounded test packages with one canonical runner; preserve every input, expectation, short-mode condition and the original per-package timeout. AST source hashes match for the full case literal and per-case assertion callback. Partition control passes (0.322s), and all four entry packages compile; this is not full matrix execution.
 - [ ] Verify exact matrix preservation, complete all partitions and blocking censuses, then push and obtain a full exact-head CI pass.
+
+## Copilot: property-only preimage hydration
+
+- [x] Confirm unresolved thread PRRT_kwDOQjyHhc60N0A3 against pushed 3cdd2049: write-behind full-property validation passes a nil projection into the full-embedding hydration path, although comparisons use only properties and labels.
+- [x] Preserve a clean-baseline public commit failure on a malformed embedding chunk; full reads still reject it. Force physical predecessors and establish warm/cold cache states after fault-write invalidation; no production instrumentation is retained.
+- [x] Use existing nodeItemBodyOnly for full-property validation and retain borrowed projected reads for constraint-only validation.
+- [x] Verify final regressions, chunk persistence and cancellation under race (three repetitions, 8.064s), blocking stored/context censuses (19.956s/82.463s) and go vet. Reuse existing raw-value, write-behind, sidecar and vector-fixture owners; name tests by behavior.
+- [x] Profile matched public-update benchmarks: large sidecars reduce median bytes from 3,564,119 to 2,548,002 and allocations from 842 to 682; scoped latency and small-payload results are recorded in the performance report.
+- [ ] Push the correction and resolve the tested review thread.
+- [ ] Complete full CI on the resulting head; earlier-head or incomplete runs are not final qualification.

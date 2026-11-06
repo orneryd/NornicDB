@@ -183,7 +183,12 @@ func (tx *BadgerTransaction) validateNodeMutationPreimagesLocked(ctx context.Con
 					return &CommitFailureError{Cause: err}
 				}
 				if err == nil {
-					current, err = tx.engine.readProjectedNodeItemInTxn(view, item, id, properties, include, nodeBodyBorrowed)
+					if validateBody {
+						// Preimage equality needs all properties and labels, not vectors.
+						current, err = tx.engine.readNodeItemInTxn(view, item, id, nodeItemBodyOnly)
+					} else {
+						current, err = tx.engine.readProjectedNodeItemInTxn(view, item, id, properties, include, nodeBodyBorrowed)
+					}
 					if err != nil {
 						return &CommitFailureError{Cause: err}
 					}
