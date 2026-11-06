@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/internal/testlatch"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,17 +31,18 @@ import (
 )
 
 type stopR2Gate struct {
-	entered, release chan struct{}
-	enter, exit      sync.Once
+	entered chan struct{}
+	release *testlatch.Latch
+	enter   sync.Once
 }
 
 func newStopR2Gate(t *testing.T) *stopR2Gate {
-	g := &stopR2Gate{entered: make(chan struct{}), release: make(chan struct{})}
+	g := &stopR2Gate{entered: make(chan struct{}), release: testlatch.New()}
 	t.Cleanup(g.open)
 	return g
 }
-func (g *stopR2Gate) block() { g.enter.Do(func() { close(g.entered) }); <-g.release }
-func (g *stopR2Gate) open()  { g.exit.Do(func() { close(g.release) }) }
+func (g *stopR2Gate) block() { g.enter.Do(func() { close(g.entered) }); g.release.Wait() }
+func (g *stopR2Gate) open()  { g.release.Release() }
 func stopR2Await(t *testing.T, done <-chan struct{}) {
 	t.Helper()
 	select {

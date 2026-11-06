@@ -17,10 +17,12 @@ var (
 // Page is an immutable view of one stream position. Rows must be treated as
 // read-only by adapters.
 type Page struct {
-	Rows      [][]any
-	QID       string
-	Position  uint64
-	Next      uint64
+	Rows     [][]any
+	QID      string
+	Position uint64
+	Next     uint64
+	// HasMore includes unfinished progressive retrieval. It does not guarantee
+	// that the next page is nonempty.
 	HasMore   bool
 	Total     *uint64
 	ExpiresAt time.Time

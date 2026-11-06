@@ -8,6 +8,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testlatch"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -26,7 +27,7 @@ type rebuildGateContext struct {
 	blockAt int32
 	polls   atomic.Int32
 	reached chan struct{}
-	release chan struct{}
+	release *testlatch.Latch
 }
 
 func newRebuildGateContext(parent context.Context, blockAt int32) *rebuildGateContext {
@@ -34,14 +35,14 @@ func newRebuildGateContext(parent context.Context, blockAt int32) *rebuildGateCo
 		Context: parent,
 		blockAt: blockAt,
 		reached: make(chan struct{}),
-		release: make(chan struct{}),
+		release: testlatch.New(),
 	}
 }
 
 func (c *rebuildGateContext) Err() error {
 	if c.polls.Add(1) == c.blockAt {
 		close(c.reached)
-		<-c.release
+		c.release.Wait()
 	}
 	return c.Context.Err()
 }
@@ -123,13 +124,11 @@ type gatedHandoff struct {
 	readerOwnsHold atomic.Bool   // the successful call returned a read hold
 
 	writerAcquired chan struct{} // closed when the queued writer holds the lock
-	writerRelease  chan struct{}
+	writerRelease  *testlatch.Latch
 	writerJoined   chan struct{}
 	writerStarted  bool
 
-	gateOnce   sync.Once
-	writerOnce sync.Once
-	holdOnce   sync.Once
+	holdOnce sync.Once
 }
 
 // newGatedHandoff prepares a handoff over idx and registers its teardown before
@@ -143,7 +142,7 @@ func newGatedHandoff(t *testing.T, idx *PropertyIndex, gate *rebuildGateContext)
 		readerJoined:   make(chan struct{}),
 		readerResult:   make(chan error, 1),
 		writerAcquired: make(chan struct{}),
-		writerRelease:  make(chan struct{}),
+		writerRelease:  testlatch.New(),
 		writerJoined:   make(chan struct{}),
 	}
 	t.Cleanup(func() { h.teardown(t) })
@@ -175,17 +174,17 @@ func (h *gatedHandoff) queueWriter() {
 		h.idx.mu.Lock()
 		h.idx.keysDirty = true
 		close(h.writerAcquired)
-		<-h.writerRelease
+		h.writerRelease.Wait()
 		h.idx.mu.Unlock()
 	}()
 }
 
 func (h *gatedHandoff) releaseGate() {
-	h.gateOnce.Do(func() { close(h.gate.release) })
+	h.gate.release.Release()
 }
 
 func (h *gatedHandoff) releaseWriter() {
-	h.writerOnce.Do(func() { close(h.writerRelease) })
+	h.writerRelease.Release()
 }
 
 // releaseHold gives back the read hold a successful call returned, at most
