@@ -211,3 +211,11 @@ review CI request is superseded by the following pushed head.
 - [ ] Complete local Cypher checks and requalify the entire shard in CI; local tags and any cached results must be reported explicitly.
 - [x] Complete all six local Cypher packages with `-tags noui,nolocalllm -p 1 -parallel 4 -timeout 30m` (exit 0): Cypher 463.060s, ANTLR 77.698s, fn 0.555s, internal/text 0.272s, resultmetadata 0.261s, testutil 0.728s. No package reported cached results. This does not establish the CI shutdown cause or replace native CI qualification.
 - [ ] Push integrated corrections and obtain a complete exact-head make-test result.
+
+## Complete 1f84a988 CI inventory
+
+- [x] Collect complete run 42137139063: command and Cypher now pass; lint, storage, server and both censuses pass. The only failure is the 30-minute cumulative storagecensusmutants package timeout.
+- [x] Preserve the active-case trace: unresolved_write_callback was running for 44 seconds when the package budget expired. No named assertion failure is reported. The prior full matrix passed in 1496.164s; that does not waive this timeout.
+- [x] Refresh final-head NOR-211 public HTTP controls in separate native/ANTLR processes (1.593s/2.248s), without cache reuse.
+- [x] Partition all 37 unchanged mutant cases into four bounded test packages with one canonical runner; preserve every input, expectation, short-mode condition and the original per-package timeout. AST source hashes match for the full case literal and per-case assertion callback. Partition control passes (0.322s), and all four entry packages compile; this is not full matrix execution.
+- [ ] Verify exact matrix preservation, complete all partitions and blocking censuses, then push and obtain a full exact-head CI pass.

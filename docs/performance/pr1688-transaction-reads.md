@@ -167,3 +167,29 @@ caller directory policy, and traversal/visitor errors. Temporary fixture files
 are removed. Fresh clean-tree checks pass: fixture traversal 0.606 seconds, numeric audit
 0.642 seconds, scanner audit 1.297 seconds, and census freshness/ordering
 11.317 seconds. Complete exact-head CI remains required.
+
+## Cumulative mutant-package budget
+
+Complete CI run 42137139063 at `1f84a988` passed command, Cypher, storage,
+server, both censuses and lint. Its remaining package,
+`testing/storagecensusmutants`, reached the original 30-minute cumulative
+budget. The final `unresolved_write_callback` case had run for 44 seconds;
+the log reports no assertion failure before the timeout. The same complete
+matrix passed the preceding run in 1496.164 seconds. That pass does not waive
+the later timeout or establish an individual case defect.
+
+The matrix now lives once in `testing/storagecensus/internal/mutanttest`.
+Four test entry packages under `testing/storagecensus/mutants` select original
+indices modulo four, giving 10/9/9/9 cases. Each partition checks the clean
+baseline and runs its cases sequentially with their original assertions.
+The complete case literal is byte-identical, and the formatted assertion
+callback has the same source hash. A partition control checks distinct names,
+complete assignment and nonempty partitions. The existing CI helper routes
+these packages to the storage-census shard without workflow changes.
+
+Analyzer rules, fixture edits, expected violations, short-mode behavior and
+the per-package timeout are unchanged. Integrated assignment controls pass
+(0.322 seconds); all four entry packages compile. Fresh integrated census
+artifact/ordering checks pass (12.908 seconds). These are not a full matrix
+or full-suite pass; complete partition execution and replacement CI remain
+required.

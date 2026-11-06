@@ -1,15 +1,12 @@
-package storagecensusmutants
+// Package mutanttest holds the storage census mutant matrix and the runner
+// that applies it.
+//
+// The matrix is one literal: each mutant rewrites or adds one module file and
+// names the violation the census must report for it. run.go executes those
+// cases one partition at a time, so the four test packages under
+// testing/storagecensus/mutants share this only copy of them.
 
-import (
-	"os"
-	"path/filepath"
-	"slices"
-	"strings"
-	"testing"
-
-	"github.com/orneryd/nornicdb/testing/storagecensus"
-	"github.com/stretchr/testify/require"
-)
+package mutanttest
 
 // mutant is a change to the module, applied as an overlay: a new file, or a
 // rewrite of an existing one. want is the violation it must produce: the
@@ -358,67 +355,4 @@ func (b *BadgerEngine) CensusMutantUnresolved() error {
 `,
 		want: []string{"unresolved write callback: pkg/storage.BadgerEngine.CensusMutantUnresolved$1"},
 	},
-}
-
-// TestCensusRejectsMutants applies each mutant to the module as an overlay
-// and requires the census to report the violation it introduces, for the
-// intended reason. It runs the full census once per mutant.
-func TestCensusRejectsMutants(t *testing.T) {
-	if testing.Short() {
-		t.Skip("one full census per mutant")
-	}
-	root := filepath.Join("..", "..")
-	abs, err := filepath.Abs(root)
-	require.NoError(t, err)
-	base, err := storagecensus.Census(root, nil)
-	require.NoError(t, err)
-	require.Empty(t, base.Violations)
-	for _, m := range mutants {
-		t.Run(m.name, func(t *testing.T) {
-			path := filepath.Join(abs, filepath.FromSlash(m.file))
-			src := []byte(m.src)
-			if m.src == "" {
-				orig, err := os.ReadFile(path)
-				require.NoError(t, err)
-				text := strings.ReplaceAll(string(orig), "\r\n", "\n")
-				for _, e := range m.edits {
-					require.Equal(t, 1, strings.Count(text, e[0]), "mutation anchor in %s", m.file)
-					text = strings.Replace(text, e[0], e[1], 1)
-				}
-				src = []byte(text)
-			}
-			r, err := storagecensus.Census(root, map[string][]byte{path: src})
-			require.NoError(t, err)
-			// The violation must be the mutant's: absent from the census of
-			// the unchanged module.
-			inBase := map[string]bool{}
-			for _, v := range base.Violations {
-				inBase[v] = true
-			}
-			baseRow := func(u storagecensus.UnorderedRow) bool {
-				for _, b := range base.Unordered {
-					if b.Origin == u.Origin && b.Space == u.Space && slices.Contains(b.Entries, m.entry) {
-						return true
-					}
-				}
-				return false
-			}
-			found := false
-			if m.entry != "" {
-				// An unordered write the entry point reaches, of the space wanted.
-				for _, u := range r.Unordered {
-					found = found || (slices.Contains(u.Entries, m.entry) && strings.Contains(u.Space, m.want[len(m.want)-1]) && !baseRow(u))
-				}
-			} else {
-				for _, v := range r.Violations {
-					all := !inBase[v]
-					for _, w := range m.want {
-						all = all && strings.Contains(v, w)
-					}
-					found = found || all
-				}
-			}
-			require.True(t, found, "the census did not reject the mutant %q for its reason %q; violations:\n  %s", m.name, m.want, strings.Join(r.Violations, "\n  "))
-		})
-	}
 }
