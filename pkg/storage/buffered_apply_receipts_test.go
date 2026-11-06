@@ -110,7 +110,7 @@ func TestBufferedReplayMixedDuplicateAndNewUsesOneApplyOwner(t *testing.T) {
 	for _, index := range []int{0, 1, 0, 1} {
 		data, err := decodeBufferedWALRecord(entries[index])
 		require.NoError(t, err)
-		commit, err := dest.importBufferedWALRecord(&data, walForeignImport)
+		commit, err := dest.importBufferedWALRecord(dest.work.Context(), &data, walForeignImport)
 		require.NoError(t, err)
 		applied = append(applied, commit)
 	}
@@ -187,7 +187,7 @@ func TestBufferedReplaySameLogicalMarkerAcrossPhysicalIDs(t *testing.T) {
 		data, err := decodeBufferedWALRecord(entry)
 		require.NoError(t, err)
 		data.LogicalTxID = "one-accepted-logical-receipt"
-		commit, err := dest.importBufferedWALRecord(&data, walForeignImport)
+		commit, err := dest.importBufferedWALRecord(dest.work.Context(), &data, walForeignImport)
 		require.NoError(t, err)
 		commits = append(commits, commit)
 	}

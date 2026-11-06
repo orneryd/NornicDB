@@ -1271,7 +1271,7 @@ func TestWALApplier_ApplyBatch(t *testing.T) {
 		{Position: 3, Command: &Command{Type: CmdCreateNode, Data: []byte("3")}},
 	}
 
-	lastApplied, err := applier.ApplyBatch(entries)
+	lastApplied, err := applier.ApplyBatch(t.Context(), entries)
 	require.NoError(t, err)
 
 	assert.Equal(t, uint64(3), lastApplied)
@@ -1288,7 +1288,7 @@ func TestWALApplier_ApplyBatch_SkipAlreadyApplied(t *testing.T) {
 		{Position: 2, Command: &Command{Type: CmdCreateNode, Data: []byte("2")}},
 	}
 
-	_, err := applier.ApplyBatch(entries1)
+	_, err := applier.ApplyBatch(t.Context(), entries1)
 	require.NoError(t, err)
 	assert.Equal(t, 2, storage.GetApplyCount())
 
@@ -1298,7 +1298,7 @@ func TestWALApplier_ApplyBatch_SkipAlreadyApplied(t *testing.T) {
 		{Position: 3, Command: &Command{Type: CmdCreateNode, Data: []byte("3")}},
 	}
 
-	_, err = applier.ApplyBatch(entries2)
+	_, err = applier.ApplyBatch(t.Context(), entries2)
 	require.NoError(t, err)
 	assert.Equal(t, 3, storage.GetApplyCount()) // Only one new command applied
 }

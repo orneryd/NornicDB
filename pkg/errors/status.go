@@ -167,6 +167,13 @@ func neo4jStatusPlain(err error) (code, message string, classified bool) {
 		return StatementSyntaxError, "", false
 	}
 	message = err.Error()
+	// An accepted command's outcome contains committed (or possibly
+	// committed) work: it takes the COMMIT operation's own status from the
+	// terminal-outcome owner, which drivers never retry.
+	var accepted *storage.AcceptedCommitError
+	if stderrors.As(err, &accepted) {
+		return TerminalCommit.fallbackStatus(), accepted.Error(), true
+	}
 	var coded statusCoder
 	if stderrors.As(err, &coded) {
 		if code = coded.BoltErrorCode(); code != "" {

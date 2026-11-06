@@ -84,7 +84,10 @@ func TestWALStatementOwnedMutations(t *testing.T) {
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, wal.Close()) })
 					decorator := NewWALEngine(view, wal)
-					t.Cleanup(decorator.stopEntityWait)
+					t.Cleanup(func() {
+						decorator.work.BeginStop(nil)
+						require.NoError(t, decorator.work.JoinStopped())
+					})
 					view = decorator
 					journals = append(journals, wal)
 				}
@@ -120,7 +123,10 @@ func TestWALUnownedRemoteHasNoNativePublicationAuthority(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, wal.Close()) })
 	view := NewWALEngine(NewTracedEngine(remote), wal)
-	t.Cleanup(view.stopEntityWait)
+	t.Cleanup(func() {
+		view.work.BeginStop(nil)
+		require.NoError(t, view.work.JoinStopped())
+	})
 	for _, operation := range walMutationOperations() {
 		require.ErrorIs(t, operation.run(t.Context(), view), ErrInvalidData, operation.name+": remote storage without an issuing owner is not a native WAL publication route")
 		require.True(t, view.mutationMu.TryLock(), "refused admission releases its lease")
@@ -153,7 +159,10 @@ func TestWALMutationCanceledAdmissionStopsEveryConsumer(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, wal.Close()) })
 			view := NewWALEngine(inner, wal)
-			t.Cleanup(view.stopEntityWait)
+			t.Cleanup(func() {
+				view.work.BeginStop(nil)
+				require.NoError(t, view.work.JoinStopped())
+			})
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			for _, operation := range walMutationOperations() {

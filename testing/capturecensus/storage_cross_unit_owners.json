@@ -1,6 +1,6 @@
 {
   "author": "storage-format-owners lane (Claude), #1693, 30 October 2026",
-  "note": "Substitutions, owned lifetime sources, nil-context witness roots and call sites still in this tree whose lifetime a named merge unit takes over on its own owner. Key: the function creating the fresh context, the named source, the nil witness root, or a call site \"caller -> callee\". Listed and counted as cross-unit-owner (never silent, never a disposition); an entry that matches nothing fails. Each entry is approved by Nornic2. PrepareEntityCommit is removed: it matches nothing since #1548. Sixteen former exact records are retired with current source-pinned evidence in storage_reconciliation.json. This does not qualify any replacement lifetime, fresh context, or request route; those remain subject to the compiled census.",
+  "note": "Substitutions, owned lifetime sources, nil-context witness roots and call sites still in this tree whose lifetime a named merge unit takes over on its own owner. Key: the function creating the fresh context, the named source, the nil witness root, or a call site \"caller -> callee\". Listed and counted as cross-unit-owner (never silent, never a disposition); an entry that matches nothing fails. Each entry is approved by Nornic2. PrepareEntityCommit is removed: it matches nothing since #1548. Eighteen former exact records are retired with current source-pinned evidence in storage_reconciliation.json. This does not qualify any replacement lifetime, fresh context, or request route; those remain subject to the compiled census.",
   "owners": {
     "(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).submitEntityCommit": {
       "Unit": "U-1636",
@@ -30,12 +30,6 @@
       "Unit": "U-1636",
       "FixingPR": "#1691 (S2 engine WorkLifetime)",
       "Reason": "Raft apply of replicated entity commands; #1691 owns the replication engine lifetime",
-      "Approver": "Nornic2 (30 October 2026)"
-    },
-    "github.com/orneryd/nornicdb/pkg/storage.NewWALEngine": {
-      "Unit": "U-1636",
-      "FixingPR": "#1691/#1636 (S2 engine WorkLifetime)",
-      "Reason": "the WAL engine's entity wait lifetime: NewWALEngine creates entityWaitCtx (WithCancel(Background())), held in the field WALEngine.entityWaitCtx and used for the accepted-outcome waits (wal_entity_commit.go WaitPhysicalOutcome, WaitOutcome, Done); an engine lifetime, owned by U-1636's engine WorkLifetime. No owner added in #1693",
       "Approver": "Nornic2 (30 October 2026)"
     },
     "github.com/orneryd/nornicdb/pkg/nornicdb.Open": {
@@ -132,12 +126,6 @@
       "Unit": "U-1636",
       "FixingPR": "#1636 (server background lifetime)",
       "Reason": "the embedding worker's own lifetime, created at construction. No product change in #1693",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
-    "(*github.com/orneryd/nornicdb/pkg/replication.acceptedEntityCommand).apply": {
-      "Unit": "U-1636",
-      "FixingPR": "#1691 (accepted-entity lifetime)",
-      "Reason": "applies an accepted replicated entity command; accepted work survives the caller. No product change in #1693",
       "Approver": "Nornic2 (31 October 2026)"
     },
     "(*github.com/orneryd/nornicdb/pkg/replication.StorageAdapter).ApplyCommand": {
