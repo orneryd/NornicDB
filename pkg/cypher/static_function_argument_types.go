@@ -442,7 +442,7 @@ func forEachStaticFunctionArgument(ctx context.Context, text string, check func(
 			continue
 		}
 		// A qualified name has one canonical identity in validation and dispatch.
-		parts, end := dottedNameParts(text, name.End, true)
+		parts, end := dottedNameParts(text, name.End, true, dottedNameIdentity)
 		name.Value, name.End = name.Value+parts, end
 
 		// Comments between a name and its argument list are trivia too, so

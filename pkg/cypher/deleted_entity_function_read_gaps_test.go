@@ -35,7 +35,7 @@ func TestDeletedEntityFunctionReadGapsMatchNeo4j(t *testing.T) {
 		// another function reads nothing by itself.
 		{"RETURN 'labels /* gap */ (n)'", nil},
 		{"RETURN labels(' n ')", nil},
-		{"RETURN db.labels()", []deletedEntityRead{{variable: "db"}}},
+		{"RETURN db.labels()", nil},
 		{"RETURN size(n)", nil},
 		{"RETURN range(1..2)", nil},
 	} {

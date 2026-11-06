@@ -225,7 +225,14 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 		word := name.Value
 		next := queryGapEnd(expression, index)
 		switch {
-		case next < len(expression) && expression[next] == '.' && next+1 < len(expression) && expression[next+1] != '.':
+		case isPropertyDotAt(expression, next):
+			// A qualified function namespace is not a row variable. Keep
+			// scanning the argument body so actual deleted reads still fail.
+			_, end := dottedNameParts(expression, index, true, dottedNameExtent)
+			if open := queryGapEnd(expression, end); open < len(expression) && expression[open] == '(' {
+				index = end
+				continue
+			}
 			if !propertyNullTestFollows(expression, next+1) {
 				reads = append(reads, deletedEntityRead{variable: word})
 			}

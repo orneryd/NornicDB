@@ -39,6 +39,7 @@ func TestLabelExpressionRewriterReadsMapEntries(t *testing.T) {
 		{"RETURN head([null]):A AS v", "RETURN " + hasLabels("head([null])") + " AS v"},
 		{"RETURN head /* gap */ ([null]):A AS v", "RETURN " + hasLabels("head /* gap */ ([null])") + " AS v"},
 		{"RETURN `head`([null]):A AS v", "RETURN " + hasLabels("`head`([null])") + " AS v"},
+		{"RETURN duration /* ns */ . `between`(date('2020-01-01'),date('2020-01-02')):A AS v", "RETURN " + hasLabels("duration /* ns */ . `between`(date('2020-01-01'),date('2020-01-02'))") + " AS v"},
 		// A backtick-quoted key.
 		{"RETURN {`odd key`:head([null]):A} AS v", "RETURN {`odd key`:" + hasLabels("head([null])") + "} AS v"},
 		// Block comments around the key, its colon and the call-to-colon gap.

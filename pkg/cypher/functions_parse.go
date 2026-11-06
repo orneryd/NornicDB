@@ -57,6 +57,13 @@ func inspectFunctionCall(source string, purpose functionCallPurpose, expectedNam
 	return true
 }
 
+// isPropertyDotAt distinguishes a qualification/property separator from a
+// slice/range token. Callers retain their own forward or predecessor extents.
+func isPropertyDotAt(text string, at int) bool {
+	return at >= 0 && at < len(text) && text[at] == '.' &&
+		(at == 0 || text[at-1] != '.') && (at+1 == len(text) || text[at+1] != '.')
+}
+
 // functionNameStartsAt prevents a builtin scanner from matching only the last
 // component of a qualified function name (custom.range is not range).
 func functionNameStartsAt(text string, at int) bool {
@@ -66,7 +73,7 @@ func functionNameStartsAt(text string, at int) bool {
 	previous, _ := expressionPredecessor(text, at)
 	// A single dot continues a qualified name; the adjacent '..' token
 	// introduces a slice bound instead, where a builtin starts normally.
-	if previous >= 0 && text[previous] == '.' && (previous == 0 || text[previous-1] != '.') {
+	if isPropertyDotAt(text, previous) {
 		return false
 	}
 	return text[at-1] != '$' && !cyphertext.NamePartAt(text, at-1)
@@ -173,7 +180,7 @@ func callableReceiverStart(expression string, open int) int {
 			}
 		}
 		before, _ := expressionPredecessor(expression, start)
-		if before < 0 || expression[before] != '.' || before > 0 && expression[before-1] == '.' {
+		if !isPropertyDotAt(expression, before) {
 			break
 		}
 		end, quoted = expressionPredecessor(expression, before)
@@ -219,7 +226,7 @@ func canonicalCallableName(text string) (string, bool) {
 	if name.End == len(text) {
 		return name.Value, true
 	}
-	parts, end := dottedNameParts(text, name.End, true)
+	parts, end := dottedNameParts(text, name.End, true, dottedNameIdentity)
 	if end != len(text) && queryGapEnd(text, end) != len(text) {
 		return "", false
 	}

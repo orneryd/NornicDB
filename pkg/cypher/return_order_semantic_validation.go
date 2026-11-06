@@ -358,7 +358,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 // a namespace path (.name …) that a call's '(' follows, and where the path
 // ends.
 func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
-	parts, end := dottedNameParts(expression, at, true)
+	parts, end := dottedNameParts(expression, at, true, dottedNameIdentity)
 	cursor := queryGapEnd(expression, end)
 	if parts == "" || cursor >= len(expression) || expression[cursor] != '(' {
 		return at, false
