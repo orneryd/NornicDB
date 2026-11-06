@@ -244,7 +244,8 @@ python scripts/validate_dataset.py data/your_dataset.jsonl
 - Duplicates
 - Length distribution
 - Category balance
-- Syntax validation (for Cypher)
+- Syntax validation (for Cypher, `--check-cypher`): unbalanced `()` `[]` `{}`
+  counts outside quoted strings, quoted identifiers and `//` or `/* */` comments
 
 ## Cypher Query Training
 

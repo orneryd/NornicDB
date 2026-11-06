@@ -11,6 +11,11 @@ on:
         description: "Branch, tag, or commit SHA to check out"
         required: true
         type: string
+      test_only:
+        description: "Run the complete make test suite only"
+        required: false
+        default: false
+        type: boolean
     secrets:
       COVERALLS_REPO_TOKEN:
         required: false
@@ -22,7 +27,7 @@ on:
         default: ""
         type: string
       test_only:
-        description: "Run the exact make test gate against the selected candidate"
+        description: "Run the complete make test suite only"
         required: false
         default: false
         type: boolean
@@ -32,27 +37,27 @@ permissions:
 
 # A newer request for the same pull request or ref replaces a running one.
 concurrency:
-  group: ci-${{ inputs.ref || github.event.pull_request.number || github.ref }}
+  group: ci-${{ inputs.ref || inputs.branch || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
     name: Build
+    needs: coverage-plan
     if: ${{ inputs.test_only != true }}
     # Manual and reusable runs wait for an administrator before allocating a runner.
-    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || inputs.branch || github.ref }}
+          ref: ${{ needs.coverage-plan.outputs.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.27.3"
+          go-version-file: go.mod
           cache: true
 
       - name: Install dependencies
@@ -84,124 +89,170 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Build local GGUF provider with yzma
-        run: CGO_ENABLED=0 go build -tags 'noui,localllm,yzma' -o /tmp/nornicdb-yzma ./cmd/nornicdb
-
-  coverage:
-    name: Test and Coverage
-    if: ${{ inputs.test_only != true }}
-    # Manual and reusable runs wait for an administrator before allocating a runner.
+  coverage-plan:
     environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
-    needs: test
-    env:
-      COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
-
+    outputs:
+      groups: ${{ steps.groups.outputs.groups }}
+      sha: ${{ steps.groups.outputs.sha }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || inputs.branch || github.ref }}
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: "1.27.3"
-          cache: true
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: ui/package-lock.json
-
-      - name: Build UI assets
-        run: |
-          cd ui
-          npm ci
-          npm run build
-
-      - name: Prepare llama CPU libs
-        run: bash scripts/hydrate-llama-cpu-libs.sh
-
-      - name: Test and Generate coverage report
-        # The groups live in scripts/ci/test-groups.sh so `make verify` runs
-        # exactly the same suite locally. It stops at the first failing group
-        # and writes coverage.out for goveralls.
-        run: bash scripts/ci/test-groups.sh coverage.raw.out coverage.out
-
-      - name: Install goveralls
-        run: go install github.com/mattn/goveralls@latest
-
-      - name: Upload coverage to Coveralls
-        if: ${{ env.COVERALLS_REPO_TOKEN != '' }}
-        run: |
-          "$(go env GOPATH)/bin/goveralls" \
-            -coverprofile=coverage.out \
-            -service=github \
-            -repotoken="$COVERALLS_REPO_TOKEN"
-
-  make-test:
-    name: make test
-    if: ${{ inputs.test_only == true }}
-    environment: admin-approved-actions
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    steps:
-      - name: Checkout exact candidate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.branch || github.ref }}
-          fetch-depth: 0
           persist-credentials: false
-      - name: Record checked revision
-        run: git rev-parse HEAD | tee -a "$GITHUB_STEP_SUMMARY"
+      - id: groups
+        env:
+          TEST_ONLY: ${{ inputs.test_only }}
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [[ "$TEST_ONLY" == 'true' ]]; then
+            echo 'groups=[]' >> "$GITHUB_OUTPUT"
+          else
+            bash scripts/ci/test-groups.sh --list > groups.txt
+            python3 -c 'import json,pathlib; g=pathlib.Path("groups.txt").read_text().splitlines(); assert g and len(g)==len(set(g)); print("groups="+json.dumps(g,separators=(",",":")))' >> "$GITHUB_OUTPUT"
+          fi
+  coverage-groups:
+    env:
+      CGO_ENABLED: "1"
+    needs: coverage-plan
+    if: ${{ inputs.test_only != true }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        group: ${{ fromJSON(needs.coverage-plan.outputs.groups) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.coverage-plan.outputs.sha }}
+          persist-credentials: false
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
+      - run: go mod download
       - uses: actions/setup-node@v7
         with:
           node-version: "20"
-          cache: "npm"
+          cache: npm
           cache-dependency-path: ui/package-lock.json
       - name: Build UI assets
-        run: npm ci --prefix ui && npm run build --prefix ui
+        run: cd ui && npm ci && npm run build
       - name: Prepare llama CPU libs
         run: bash scripts/hydrate-llama-cpu-libs.sh
-      - name: Run make test
-        run: |
-          set -o pipefail
-          # Preserve package/process RSS and cgroup OOM counters alongside the
-          # unchanged gate, including when the test process is terminated.
-          (
-            while true; do
-              date -u
-              free -m
-              ps -eo pid,ppid,rss,args --sort=-rss | sed -n '1,12p'
-              for metric in memory.current memory.peak memory.max memory.events; do
-                if [ -r "/sys/fs/cgroup/$metric" ]; then
-                  printf '%s: ' "$metric"
-                  cat "/sys/fs/cgroup/$metric"
-                fi
-              done
-              sleep 15
-            done
-          ) > make-test-resources.log 2>&1 &
-          monitor_pid=$!
-          trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true' EXIT
-          make test 2>&1 | tee make-test.log
-      - name: Upload test log
-        if: ${{ always() }}
+      - name: Test and generate coverage for group
+        env:
+          TEST_GROUPS_ONLY: ${{ matrix.group }}
+        run: bash scripts/ci/test-groups.sh coverage.raw.out coverage.out
+      - name: Upload coverage profile
         uses: actions/upload-artifact@v4
         with:
-          name: make-test-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            make-test.log
-            make-test-raw.log
-            make-test-resources.log
-          if-no-files-found: warn
+          name: coverage-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage.raw.out
+          if-no-files-found: error
+  coverage:
+    name: Test and Coverage
+    needs: [coverage-plan, coverage-groups, test]
+    if: ${{ always() && inputs.test_only != true }}
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: ubuntu-latest
+    env:
+      COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+      PLAN_RESULT: ${{ needs.coverage-plan.result }}
+      GROUP_RESULT: ${{ needs.coverage-groups.result }}
+      BUILD_RESULT: ${{ needs.test.result }}
+    steps:
+      - name: Require every coverage group
+        run: test "$PLAN_RESULT" = success && test "$GROUP_RESULT" = success && test "$BUILD_RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.coverage-plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage-parts
+      - name: Merge and filter coverage profiles
+        run: |
+          set -euo pipefail
+          printf 'mode: set\n' > coverage.raw.out
+          for profile in coverage-parts/*/coverage.raw.out; do
+            test "$(head -n 1 "$profile")" = 'mode: set'
+            tail -n +2 "$profile" >> coverage.raw.out
+          done
+          bash scripts/generate-coverage.sh --filter coverage.raw.out coverage.out
+      - name: Install goveralls
+        if: ${{ env.COVERALLS_REPO_TOKEN != '' }}
+        run: go install github.com/mattn/goveralls@latest
+      - name: Upload coverage to Coveralls
+        if: ${{ env.COVERALLS_REPO_TOKEN != '' }}
+        run: '"$(go env GOPATH)/bin/goveralls" -coverprofile=coverage.out -service=github -repotoken="$COVERALLS_REPO_TOKEN"'
+  make-test-shards:
+    env:
+      CGO_ENABLED: "1"
+    needs: coverage-plan
+    if: ${{ inputs.test_only == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        shard: [cypher, storage, server, storagecensus, capturecensus, command, other]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.coverage-plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go mod download
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build UI assets
+        run: cd ui && npm ci && npm run build
+      - name: Prepare llama CPU libs
+        run: bash scripts/hydrate-llama-cpu-libs.sh
+      - name: Check out trusted sharding helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-workflow-tools
+          persist-credentials: false
+      - name: Run package shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: bash .ci-workflow-tools/scripts/ci/make-test-shard.sh "$SHARD"
+  make-test-lint:
+    needs: coverage-plan
+    if: ${{ inputs.test_only == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.coverage-plan.outputs.sha }}
+          persist-credentials: false
+      - run: make lint-slog lint-cardinality
+  make-test:
+    name: make test
+    needs: [coverage-plan, make-test-shards, make-test-lint]
+    if: ${{ always() && inputs.test_only == true }}
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all shards and lint
+        env:
+          SHARD_RESULT: ${{ needs.make-test-shards.result }}
+          LINT_RESULT: ${{ needs.make-test-lint.result }}
+        run: test "$SHARD_RESULT" = success && test "$LINT_RESULT" = success
