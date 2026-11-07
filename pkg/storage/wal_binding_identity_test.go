@@ -17,7 +17,7 @@ func TestWALPropertyIdentityForeignAndRestoreRotation(t *testing.T) {
 	for _, mode := range []string{"matching-import", "snapshot", "native-restore"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
-			b := reviewBindingEngine(t, dir)
+			b := reviewBindingEngine(t, dir, nil)
 			_, err := b.CreateNode(t.Context(), &Node{ID: "perf:seed", Properties: map[string]any{"property_000": int64(0)}})
 			require.NoError(t, err)
 			before := b.walPropertySource.identity
@@ -45,7 +45,7 @@ func TestWALPropertyIdentityForeignAndRestoreRotation(t *testing.T) {
 			require.True(t, b.walPropertySource.foreign)
 			assertPropertyDictionaryBijection(t, b)
 			require.NoError(t, b.Close())
-			b = reviewBindingEngine(t, dir)
+			b = reviewBindingEngine(t, dir, nil)
 			require.Equal(t, after, b.walPropertySource.identity)
 			require.True(t, b.walPropertySource.foreign)
 			assertPropertyDictionaryBijection(t, b)

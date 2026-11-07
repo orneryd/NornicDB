@@ -595,7 +595,7 @@ func (tx *BadgerTransaction) bufferedWriteConflictLocked(ctx context.Context) er
 	var node NodeID
 	var edge EdgeID
 	var version MVCCVersion
-	err := w.commitsSince(ctx, tx.readTS, func(ctx context.Context, v MVCCVersion, ops []Operation) (bool, error) {
+	err := w.commitsAfterBegin(ctx, tx.beginPresence, func(ctx context.Context, v MVCCVersion, ops []Operation) (bool, error) {
 		if nodes == nil {
 			if err := written(ctx); err != nil {
 				return false, err

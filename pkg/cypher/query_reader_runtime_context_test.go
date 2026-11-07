@@ -6,6 +6,7 @@ import (
 
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,14 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+var readerCacheFixtureSequence atomic.Uint64
+
+// Each cold-cache assertion owns a distinct identifier, including repeated
+// runs in the same process. Do not clear shared caches used by other tests.
+func nextReaderCacheColumn() string {
+	return fmt.Sprintf("reader_cache_%d", readerCacheFixtureSequence.Add(1))
+}
 
 func TestStatementResultColumnsContextCancellationAndLiveContinuation(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
@@ -52,7 +61,7 @@ func TestCanceledRuntimeReaderCachesDoNotPoisonPublicExecute(t *testing.T) {
 	for _, owner := range []string{"return plan", "execution policy", "analyzer"} {
 		t.Run(owner, func(t *testing.T) {
 			executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "reader_cache"), QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
-			query := "RETURN 5 AS " + map[string]string{"return plan": "return_plan_recovery", "execution policy": "policy_recovery", "analyzer": "analyzer_recovery"}[owner]
+			query := "RETURN 5 AS " + nextReaderCacheColumn()
 			canceled, cancel := context.WithCancel(t.Context())
 			cancel()
 			switch owner {

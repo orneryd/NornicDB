@@ -51,11 +51,11 @@ func TestBadgerTransaction_ConflictHelpers(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
-	err = tx.checkEdgeWriteConflict(context.Background(), "test:e1")
+	err = tx.checkEdgeWriteConflict(context.Background(), "test:e1", true)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
-	err = tx.checkEdgeWriteConflict(context.Background(), "test:e1")
+	err = tx.checkEdgeWriteConflict(context.Background(), "test:e1", true)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
@@ -100,10 +100,10 @@ func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
 
 	// Missing entities on create-conflict checks are non-conflicting.
 	require.NoError(t, tx.checkNodeCreateConflict(context.Background(), "test:missing"))
-	require.NoError(t, tx.checkEdgeWriteConflict(context.Background(), "test:missing"))
+	require.NoError(t, tx.checkEdgeWriteConflict(context.Background(), "test:missing", true))
 	// Existing heads already visible to this transaction are also non-conflicting.
 	require.NoError(t, tx.checkNodeCreateConflict(context.Background(), "test:n1"))
-	require.NoError(t, tx.checkEdgeWriteConflict(context.Background(), "test:e"))
+	require.NoError(t, tx.checkEdgeWriteConflict(context.Background(), "test:e", true))
 
 	// snapshotIsolationConflict orders by timestamp first: same sequence
 	// with a newer timestamp is a conflict.
@@ -427,4 +427,23 @@ func TestBadgerTransaction_Commit_WritesWithoutNamespaceBranch(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no pinned namespace")
 	require.Equal(t, TxStatusRolledBack, tx.Status)
+}
+
+func TestAdjacencyConflictIgnoresPreviouslyDeletedUnstagedRelationship(t *testing.T) {
+	engine := adjacencyConflictFixture(t, "test:stale", nil)
+	key := append([]byte(nil), engine.outgoingIndexKeyStringLookup("test:a", "test:stale")...)
+	require.NotEmpty(t, key)
+	require.NoError(t, engine.DeleteEdge(t.Context(), "test:stale"))
+	// Retain an obsolete index entry, not a relationship body. Integrity
+	// enumeration must not turn this into a predecessor the frame removes.
+	require.NoError(t, engine.withUpdate(t.Context(), updateRequest{}, func(view *badger.Txn) error {
+		return view.Set(key, nil)
+	}))
+	tx := beginAdjacencyConflict(t, engine)
+	require.NoError(t, tx.checkNodeAdjacencyConflict(t.Context(), "test:a", nil))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
+	require.NoError(t, tx.Commit())
+	count, err := engine.EdgeCountByType(t.Context(), "REL")
+	require.NoError(t, err)
+	require.Zero(t, count)
 }

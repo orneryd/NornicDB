@@ -178,6 +178,12 @@ func variableSyntaxRead(node cypherantlr.SyntaxNode) bool {
 				if ancestor.Rule() == cypherantlr.CypherParserRULE_functionInvocation {
 					if invocation := ancestor.ChildRule(cypherantlr.CypherParserRULE_invocationName); invocation.Valid() && strings.EqualFold(invocation.QualifiedName(), "normalize") {
 						chain := ancestor.ChildRule(cypherantlr.CypherParserRULE_expressionChain)
+						// Zero-argument calls have no expression chain. They have
+						// no normal-form keyword to classify; arity validation
+						// owns their insufficient-parameters diagnostic.
+						if !chain.Valid() {
+							break
+						}
 						argument := 0
 						for index := 0; index < chain.ChildCount(); index++ {
 							child := chain.Child(index)
@@ -220,6 +226,29 @@ func (compilation *boundCompilation) bindSymbol(ctx context.Context, clause *bou
 	scope, identities, restricted := compilation.expressionBindings(clause, node)
 	if _, found := scope[name]; !found {
 		if _, previous := clause.before[name]; restricted && previous {
+			for parent, ok := node.Parent(); ok && parent.ID() != clause.source.syntax.ID(); parent, ok = parent.Parent() {
+				if parent.Rule() != cypherantlr.CypherParserRULE_orderSt {
+					continue
+				}
+				// Binding rejects removed grouping inputs before the semantic walk.
+				// Preserve the canonical ORDER BY aggregation diagnostic rather
+				// than replacing an ambiguous grouping expression with a generic
+				// undefined-variable error. Other scope errors keep their owned
+				// message below. Retained imports remain constants.
+				retained := make(typeScope, len(clause.branch.retainedIDs))
+				for name := range clause.branch.retainedIDs {
+					retained[name] = staticOperand{}
+				}
+				keyword := "RETURN"
+				if clause.source.kind == pipelineClauseWith {
+					keyword = "WITH"
+				}
+				if err, ok := validateReturnOrderBySemanticScopeIn(ctx, "RETURN "+strings.TrimSpace(clause.source.text[len(keyword):]), retained).(*SemanticError); ok && err.Detail == "AmbiguousAggregationExpression" {
+					compilation.fail(resultmetadata.ReasonUnsupportedSyntax, start, err)
+					return
+				}
+				break
+			}
 			compilation.fail(resultmetadata.ReasonUndefinedVariable, start, localizedStatusError(
 				"Neo.ClientError.Statement.SyntaxError", "UndefinedVariable", localization.CypherMatchingAggregationScopeVariable(name)))
 			return

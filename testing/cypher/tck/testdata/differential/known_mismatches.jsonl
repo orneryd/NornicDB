@@ -1,4 +1,3 @@
-{"id":"2986985a5e95","route":"bolt-auto","issue":256,"intended":true}
 {"id":"09200ed0088a","route":"bolt-auto","issue":500,"unstable":true}
 {"id":"a48830af2d26","route":"bolt-auto","issue":530,"intended":true}
 {"id":"e855aeb0a053","route":"bolt-auto","issue":530,"intended":true}
@@ -25,7 +24,6 @@
 {"id":"d4dc399225b1","route":"bolt-auto","issue":907,"intended":true}
 {"id":"d59853814a3f","route":"bolt-auto","issue":907,"intended":true}
 {"id":"fde24ed5419a","route":"bolt-auto","issue":907,"intended":true}
-{"id":"2986985a5e95","route":"bolt-tx","issue":256,"intended":true}
 {"id":"09200ed0088a","route":"bolt-tx","issue":500,"unstable":true}
 {"id":"a48830af2d26","route":"bolt-tx","issue":530,"intended":true}
 {"id":"e855aeb0a053","route":"bolt-tx","issue":530,"intended":true}

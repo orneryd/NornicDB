@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Return the normal syntax error for zero-argument `normalize()` calls instead
+  of closing the Bolt connection. Preserve ambiguous-aggregation diagnostics
+  for invalid ORDER BY expressions following RETURN or WITH grouping.
+- Reject repeated relationship removals when a peer reserved its version before
+  BEGIN but published its deletion afterward, preserving write-behind counts.
+  Report invalid nested CALL composition before Fabric participant execution.
+
 - Keep composite query parameters separate from same-named imported variables,
   including dynamic graph selection. Preserve keyword-named imports through
   graph routing and type validation without rewriting them into parameters.

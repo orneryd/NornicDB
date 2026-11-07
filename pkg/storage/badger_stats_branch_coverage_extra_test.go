@@ -114,10 +114,11 @@ func TestBadgerStats_StreamNodesByPrefixAndClosedBranchCoverage(t *testing.T) {
 
 func TestBadgerStats_UnexpectedClosedDBErrorBranches(t *testing.T) {
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
-	if engine != nil {
-		fixtureowner.Own(t, engine)
-	}
 	require.NoError(t, err)
+	var finalOutcome error
+	fixtureowner.OwnWithCloseAssertion(t, engine, func(err error) bool {
+		return finalOutcome != nil && err == finalOutcome
+	})
 
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}})
 	require.NoError(t, err)
@@ -131,6 +132,12 @@ func TestBadgerStats_UnexpectedClosedDBErrorBranches(t *testing.T) {
 	_, _ = engine.NodeCountByPrefix(context.Background(), "test:")
 	_, _ = engine.EdgeCountByPrefix(context.Background(), "test:")
 	_, _ = engine.ClearAllEmbeddingsForPrefix("test:")
+
+	// The injected state is the closed native handle: retirement reports the
+	// handle it lost, and repeated Close retains that same outcome.
+	finalOutcome = engine.Close()
+	require.ErrorIs(t, finalOutcome, badger.ErrDBClosed)
+	require.EqualError(t, finalOutcome, "label-count final fold: DB Closed\nedge-type-count final fold: DB Closed")
 }
 
 func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {

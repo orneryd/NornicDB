@@ -269,7 +269,7 @@ func TestWALPropertyEpochCannotAcknowledgeUnboundOrFailedHeader(t *testing.T) {
 	wal.mu.Unlock()
 	require.ErrorIs(t, err, io.ErrClosedPipe)
 	require.Nil(t, previous)
-	closed := reviewBindingEngine(t, t.TempDir())
+	closed := reviewBindingEngine(t, t.TempDir(), nil)
 	require.NoError(t, closed.Close())
 	closed.SetBufferedCommitWAL(wal)
 	require.ErrorIs(t, closed.beginSemanticPropertyRestore(), ErrStorageClosed)
@@ -313,19 +313,28 @@ func TestWALPropertyEpochPlanSurvivesPartialDrainPersistence(t *testing.T) {
 
 func TestWALPropertyEpochUnappliedLogCannotGainCleanProof(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	for _, record := range []map[string]any{{}, {"tx_id": "never-applied"}, {"tx_id": []string{"invalid"}}} {
+	for _, tc := range []struct {
+		record     map[string]any
+		closeError string
+	}{
+		{map[string]any{}, "wal: cannot seal buffered record without transaction identity"},
+		{map[string]any{"tx_id": "never-applied"}, `wal: cannot seal unapplied buffered commit "never-applied": Key not found`},
+		{map[string]any{"tx_id": []string{"invalid"}}, "json: cannot unmarshal array into Go struct field .tx_id of type string"},
+	} {
 		dir := t.TempDir()
-		dest := reviewBindingEngine(t, dir)
+		var closeErr error
+		dest := reviewBindingEngine(t, dir, func(err error) bool { return closeErr != nil && err == closeErr })
 		require.NoError(t, dest.beginSemanticPropertyRestore())
 		wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
 		require.NoError(t, err)
 		dest.SetBufferedCommitWAL(wal)
-		require.NoError(t, wal.Append(OpBufferedCommit, record))
-		require.Error(t, dest.Close())
+		require.NoError(t, wal.Append(OpBufferedCommit, tc.record))
+		closeErr = dest.Close()
+		require.EqualError(t, closeErr, tc.closeError)
 		require.NoError(t, wal.Close())
 		_, _, controls := walEpochRawBodies(t, walActivePath(wal.Config().Dir))
 		require.NotZero(t, controls, "failed clean shutdown preserves the unapplied authority control")
-		dest = reviewBindingEngine(t, dir)
+		dest = reviewBindingEngine(t, dir, nil)
 		require.True(t, dest.walPropertySource.foreign)
 		require.False(t, dest.walPropertySource.clean)
 	}
