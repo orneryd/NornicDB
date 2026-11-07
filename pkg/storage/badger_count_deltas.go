@@ -332,6 +332,90 @@ func (b *BadgerEngine) foldCountDeltasChunked(ctx context.Context, kind byte, ba
 	return b.foldCountDeltasOn(ctx, countFoldSource{}, kind, baseKey, namespace, name)
 }
 
+// discardCountDeltas removes every persisted delta of one kind in bounded
+// transactions without folding it into its base count. The recovery completion
+// owner uses it when the committed bodies, not the replayed delta set, are the
+// accounting authority: a transported record carries entity bodies but no
+// destination-local count deltas, so a semantic record replayed beside it
+// appends deltas whose sibling deltas were never applied. That set cannot be
+// folded (it underflows); the authoritative recount that follows supersedes it.
+//
+// Only one chunk of keys is held at a time and each chunk is deleted in its own
+// metadata transaction, so the walk costs countDeltaFoldChunk keys of memory
+// whatever the backlog is, and ctx is polled while the chunk is scanned. The
+// walk resumes at the last key it deleted, so a chunk that fails to commit
+// leaves its own keys and every later key for the next attempt, exactly as the
+// chunked fold owner leaves the chunks it has not folded.
+//
+// Superseding a delta set is sound only where the recount that follows owns the
+// count family: recovery completes on a quiescent destination, before it serves
+// traffic, with no concurrent writer appending a delta this walk has already
+// passed. That is the precondition here, not a claim of concurrent writer
+// safety.
+func (b *BadgerEngine) discardCountDeltas(ctx context.Context, kind byte) error {
+	mu := b.namedCountMutex(kind)
+	mu.Lock()
+	defer mu.Unlock()
+	var cursor []byte
+	for {
+		keys, err := b.countDeltaKeyChunkFrom(ctx, kind, cursor)
+		if err != nil {
+			return err
+		}
+		if len(keys) == 0 {
+			return nil
+		}
+		if err := b.discardCountDeltaKeys(ctx, keys); err != nil {
+			return err
+		}
+		cursor = keys[len(keys)-1]
+	}
+}
+
+// countDeltaKeyChunkFrom reads at most countDeltaFoldChunk delta keys of one
+// kind in key order, starting at cursor (the first delta of the kind when
+// cursor is empty), and polls ctx while it scans.
+func (b *BadgerEngine) countDeltaKeyChunkFrom(ctx context.Context, kind byte, cursor []byte) ([][]byte, error) {
+	prefix := countDeltaAllPrefix(kind)
+	var keys [][]byte
+	var cancel bulkReadCancellation
+	err := b.withView(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		defer it.Close()
+		start := prefix
+		if len(cursor) > 0 {
+			start = cursor
+		}
+		for it.Seek(start); it.ValidForPrefix(prefix); it.Next() {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
+			keys = append(keys, it.Item().KeyCopy(nil))
+			if len(keys) == countDeltaFoldChunk {
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+// discardCountDeltaKeys deletes one bounded set of delta keys in one metadata
+// transaction.
+func (b *BadgerEngine) discardCountDeltaKeys(ctx context.Context, keys [][]byte) error {
+	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+		for _, key := range keys {
+			if err := txn.Delete(key); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // foldRestoredCountDeltas folds every derived-count delta a restore loaded,
 // past the restore's read hold.
 func (b *BadgerEngine) foldRestoredCountDeltas(ctx context.Context, db *managedBadgerDB) error {

@@ -415,14 +415,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:243",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:243",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:339"
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:423"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCountDelta",
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:243",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:243",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:346"
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:430"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
@@ -457,14 +457,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:260",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:260",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:339"
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:423"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:260",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:260",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:346"
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:430"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
@@ -499,14 +499,22 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:263",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:263",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:339"
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:423"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:263",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:263",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:346"
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:430"
+    },
+    {
+      "space": "",
+      "class": "unclassified",
+      "origin": "pkg/storage/badger_count_deltas.go:411",
+      "func": "pkg/storage.BadgerEngine.discardCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:411",
+      "where": "pkg/storage.BadgerEngine.discardCountDeltas pkg/storage/badger_count_deltas.go:368",
+      "why": "slice of keys *ssa.Extract at -"
     },
     {
       "space": "prefixEdge",
@@ -4584,6 +4592,8 @@
     }
   ],
   "pending": null,
-  "violations": null,
+  "violations": [
+    "unclassified key: pkg/storage/badger_count_deltas.go:411 in pkg/storage.BadgerEngine.discardCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:411 (resolved at pkg/storage.BadgerEngine.discardCountDeltas pkg/storage/badger_count_deltas.go:368): slice of keys *ssa.Extract at -"
+  ],
   "unordered": null
 }
