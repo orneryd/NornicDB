@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1801,8 +1800,16 @@ func (tx *BadgerTransaction) sameEdgeCreateIdentityLocked(stored, candidate *Edg
 	if err != nil {
 		return false, err
 	}
-	return (len(stored.Properties) == 0 && len(image.Properties) == 0) ||
-		reflect.DeepEqual(stored.Properties, image.Properties), nil
+	return sameStoredEdgeIdentity(stored, image), nil
+}
+
+// sameStoredEdgeIdentity compares decoded user images. Storage-normalized
+// numeric/list values share the existing equality owner; generated timestamps
+// and internal metadata do not turn a no-change property write into a conflict.
+func sameStoredEdgeIdentity(before, current *Edge) bool {
+	return before != nil && current != nil && before.Type == current.Type &&
+		before.StartNode == current.StartNode && before.EndNode == current.EndNode &&
+		sameStoredValue(before.Properties, current.Properties)
 }
 
 // bufferNewEdgeLocked buffers a validated new edge: its record, its
@@ -1918,6 +1925,10 @@ func (tx *BadgerTransaction) UpdateEdge(ctx context.Context, updateRequest EdgeU
 		if err := tx.enrollCommittedWriteLocked(edgeKey(edge.ID), "edge"); err != nil {
 			return err
 		}
+	}
+
+	if updateRequest.Before != nil && !sameStoredEdgeIdentity(updateRequest.Before, oldEdge) {
+		return localizedError(localization.StorageTransactionEdgeChanged(string(edge.ID)), ErrConflict)
 	}
 
 	// If endpoints changed, verify they exist and update outgoing/incoming indexes.

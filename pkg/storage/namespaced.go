@@ -340,7 +340,7 @@ func (n *NamespacedEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpd
 		return err
 	}
 	updateRequest.After = input
-	return n.inner.UpdateEdge(ctx, updateRequest)
+	return n.inner.UpdateEdge(ctx, updateRequest.InNamespace(n.namespace))
 }
 
 func (n *NamespacedEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
