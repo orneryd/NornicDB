@@ -42,6 +42,31 @@ func (t *TracedEngine) getCtx() context.Context {
 // through the tracing decorator via the canonical EngineUnwrapper accessor.
 func (t *TracedEngine) GetInnerEngine() Engine { return t.Engine }
 
+// tracedStreamingEngine is exposed only through capability resolution when
+// the decorated view itself supports streaming.
+type tracedStreamingEngine struct {
+	*TracedEngine
+	inner StreamingEngine
+}
+
+func (t *tracedStreamingEngine) StreamNodes(ctx context.Context, fn func(*Node) error) error {
+	span := t.startOperation("nornicdb.storage.StreamNodes", "node")
+	defer span.End()
+	return t.inner.StreamNodes(ctx, fn)
+}
+
+func (t *tracedStreamingEngine) StreamEdges(ctx context.Context, fn func(*Edge) error) error {
+	span := t.startOperation("nornicdb.storage.StreamEdges", "edge")
+	defer span.End()
+	return t.inner.StreamEdges(ctx, fn)
+}
+
+func (t *tracedStreamingEngine) StreamNodeChunks(ctx context.Context, size int, fn func([]*Node) error) error {
+	span := t.startOperation("nornicdb.storage.StreamNodeChunks", "node")
+	defer span.End()
+	return t.inner.StreamNodeChunks(ctx, size, fn)
+}
+
 // startOperation is the single owner of storage span construction. It starts a
 // nornicdb.storage.<op> span of kind SpanKindInternal parented by the context
 // installed via SetContext, tagged with the entity kind. The caller owns the
