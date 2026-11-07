@@ -6,54 +6,69 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-// nodeMutationPreimagesLocked folds only staged mutations. Reads retain no
-// observation state, and a create/delete starts a new incarnation of a claim.
-func (tx *BadgerTransaction) nodeMutationPreimagesLocked(ctx context.Context) (map[NodeID]*Node, bool, error) {
+// mutationPreimagesLocked folds the first staged predecessor of each live
+// incarnation. Pure distinct updates use their ordered operation images without
+// a map; CREATE-only ingestion and ordinary reads retain no preimage state.
+func mutationPreimagesLocked[ID comparable, Image any](ctx context.Context, operations []Operation, pending int, updateType OperationType, project func(*Operation) (ID, Image)) (map[ID]Image, bool, error) {
+	if pending == 0 {
+		return nil, false, nil
+	}
+	// A single staged identity needs neither a fold nor a bulk poller. Its
+	// one admission check is already the final record check.
+	if len(operations) == 1 && pending == 1 {
+		return nil, operations[0].Type == updateType, ctx.Err()
+	}
 	updates := 0
-	for index := range tx.operations {
-		if err := ctx.Err(); err != nil {
+	var cancellation bulkReadCancellation
+	for i := range operations {
+		if err := cancellation.check(ctx); err != nil {
 			return nil, false, err
 		}
-		operation := &tx.operations[index]
-		if operation.Type == OpUpdateNode {
+		if operations[i].Type == updateType {
 			updates++
 		}
 	}
 	if updates == 0 {
-		return nil, false, nil
+		return nil, false, ctx.Err()
 	}
-	// A pure update batch with one operation per pending identity already
-	// carries its ordered first images. No fold map is needed in this case.
-	if updates == len(tx.operations) && updates == len(tx.pendingNodes) {
-		return nil, true, nil
+	if updates == len(operations) && updates == pending {
+		return nil, true, ctx.Err()
 	}
-	before := make(map[NodeID]*Node, min(updates, len(tx.pendingNodes)))
-	for index := range tx.operations {
-		if err := ctx.Err(); err != nil {
+	createType, deleteType := OpCreateNode, OpDeleteNode
+	if updateType == OpUpdateEdge {
+		createType, deleteType = OpCreateEdge, OpDeleteEdge
+	}
+	before := make(map[ID]Image, min(updates, pending))
+	for i := range operations {
+		if err := cancellation.check(ctx); err != nil {
 			return nil, false, err
 		}
-		operation := &tx.operations[index]
-		switch operation.Type {
-		case OpCreateNode, OpDeleteNode:
-			// Updates to an in-frame CREATE are coalesced into that create
-			// by UpdateGraphNode, so they retain no committed preimage.
-			delete(before, operation.NodeID)
-		case OpUpdateNode:
-			if _, seen := before[operation.NodeID]; !seen {
-				before[operation.NodeID] = operation.nodeClaimPreimage()
+		op := &operations[i]
+		switch op.Type {
+		case createType:
+			id, _ := project(op)
+			var empty Image
+			before[id] = empty
+		case deleteType:
+			id, _ := project(op)
+			delete(before, id)
+		case updateType:
+			id, image := project(op)
+			if _, seen := before[id]; !seen {
+				before[id] = image
 			}
 		}
 	}
-	return before, false, nil
+	return before, false, ctx.Err()
 }
 
 // nodeClaimPreimage selects the caller's immutable observation when supplied,
 // otherwise the stored predecessor captured by native staging.
-func (operation *Operation) nodeClaimPreimage() *Node {
+func nodeClaimPreimage(operation *Operation) (NodeID, *Node) {
 	if operation.nodeObservedBefore != nil {
-		return operation.nodeObservedBefore
+		return operation.NodeID, operation.nodeObservedBefore
 	}
-	return operation.OldNode
+	return operation.NodeID, operation.OldNode
 }
 
 // sameNodeUniqueClaim compares the semantic key, including label membership
@@ -83,28 +98,40 @@ func sameNodeUniqueClaim(ctx context.Context, before, after *Node, label, proper
 	return old == next, nil
 }
 
-// validateNodeMutationPreimagesLocked rejects a stale full image before it can
+// validateMutationPreimagesLocked rejects a stale full image before it can
 // overwrite an acknowledged predecessor or constraint key change. Entity
 // authority is already held by PublishCommit. The current read bypasses unversioned caches and shares the
 // existing buffered/storage read cut and projected body decoder.
-func (tx *BadgerTransaction) validateNodeMutationPreimagesLocked(ctx context.Context) error {
-	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	if len(tx.pendingNodes) == 0 {
-		return nil
-	}
-	constraints, err := schema.GetConstraints(ctx)
-	if err != nil {
-		return err
-	}
+func (tx *BadgerTransaction) validateMutationPreimagesLocked(ctx context.Context) error {
 	validateBody := tx.engine.writeBehind != nil
-	if len(constraints) == 0 && !validateBody {
+	if len(tx.pendingNodes) == 0 && (!validateBody || len(tx.pendingEdges) == 0) {
 		return nil
 	}
-	preimages, distinctUpdates, err := tx.nodeMutationPreimagesLocked(ctx)
+	preimages, distinctUpdates, err := mutationPreimagesLocked(ctx, tx.operations, len(tx.pendingNodes), OpUpdateNode, nodeClaimPreimage)
 	if err != nil {
 		return err
 	}
-	if len(preimages) == 0 && !distinctUpdates {
+	var edgePreimages map[EdgeID]*Edge
+	var distinctEdgeUpdates bool
+	if validateBody {
+		edgePreimages, distinctEdgeUpdates, err = mutationPreimagesLocked(ctx, tx.operations, len(tx.pendingEdges), OpUpdateEdge, func(op *Operation) (EdgeID, *Edge) { return op.EdgeID, op.OldEdge })
+	}
+	if err != nil {
+		return err
+	}
+	if len(preimages) == 0 && !distinctUpdates && len(edgePreimages) == 0 && !distinctEdgeUpdates {
+		return nil
+	}
+	// Relationship-only updates have no node constraint projection. A create-only
+	// batch has already returned without copying the schema's constraint slice.
+	var constraints []UniqueConstraint
+	if len(preimages) != 0 || distinctUpdates {
+		constraints, err = tx.engine.GetSchemaForNamespace(tx.namespace).GetConstraints(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	if len(constraints) == 0 && !validateBody {
 		return nil
 	}
 	var properties []string
@@ -128,6 +155,7 @@ func (tx *BadgerTransaction) validateNodeMutationPreimagesLocked(ctx context.Con
 	// matching buffered bodies; the usual physical-only case allocates no
 	// overlay map and opens one Badger read transaction rather than one per node.
 	var buffered map[NodeID]*Node
+	var bufferedEdges map[EdgeID]*Edge
 	entered := false
 	err = tx.engine.withReadView(ctx, func(buffer *WriteBehindBuffer) {
 		if buffer == nil {
@@ -147,6 +175,29 @@ func (tx *BadgerTransaction) validateNodeMutationPreimagesLocked(ctx context.Con
 				buffered[id] = state.node
 			}
 		}
+		captureEdge := func(id EdgeID) {
+			state := buffer.entityStateLocked(bufferedEdgeEntity, string(id), bufferedReadVisibility{engine: tx.engine, visibility: storedRead})
+			if !state.found {
+				return
+			}
+			if bufferedEdges == nil {
+				bufferedEdges = make(map[EdgeID]*Edge)
+			}
+			if state.deleted {
+				bufferedEdges[id] = nil
+			} else {
+				bufferedEdges[id] = state.edge
+			}
+		}
+		if distinctEdgeUpdates {
+			for index := range tx.operations {
+				captureEdge(tx.operations[index].EdgeID)
+			}
+		} else {
+			for id := range edgePreimages {
+				captureEdge(id)
+			}
+		}
 		if distinctUpdates {
 			for index := range tx.operations {
 				operation := &tx.operations[index]
@@ -164,7 +215,7 @@ func (tx *BadgerTransaction) validateNodeMutationPreimagesLocked(ctx context.Con
 		for index := range tx.operations {
 			operation := &tx.operations[index]
 			id := operation.NodeID
-			before := operation.nodeClaimPreimage()
+			_, before := nodeClaimPreimage(operation)
 			if !distinctUpdates {
 				var exists bool
 				before, exists = preimages[id]
@@ -214,6 +265,36 @@ func (tx *BadgerTransaction) validateNodeMutationPreimagesLocked(ctx context.Con
 					return err
 				}
 				return localizedError(localization.StorageTransactionNodeChanged(string(id)), ErrConflict)
+			}
+		}
+		for index := range tx.operations {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			operation := &tx.operations[index]
+			id := operation.EdgeID
+			before := operation.OldEdge
+			if !distinctEdgeUpdates {
+				var exists bool
+				before, exists = edgePreimages[id]
+				if !exists {
+					continue
+				}
+				delete(edgePreimages, id)
+			}
+			if before == nil || tx.pendingEdges[id] == nil {
+				continue
+			}
+			current, found := bufferedEdges[id]
+			if !found {
+				var err error
+				current, _, err = tx.engine.readEdgeBodyInTxn(view, id, storedRead)
+				if err != nil && err != ErrNotFound {
+					return &CommitFailureError{Cause: err}
+				}
+			}
+			if !sameStoredEdgeIdentity(before, current) {
+				return localizedError(localization.StorageTransactionEdgeChanged(string(id)), ErrConflict)
 			}
 		}
 		return nil

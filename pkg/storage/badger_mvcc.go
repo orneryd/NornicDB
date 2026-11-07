@@ -1655,7 +1655,7 @@ func (b *BadgerEngine) bootstrapMVCCHeadsFromCurrentState(ctx context.Context) e
 // mvccBootstrapKind is the per-entity-kind specialization for seeding MVCC
 // heads from the materialized current state. The methods select the node or
 // edge body decoder, head loader/writer and timestamp/namespace source; the
-// batching, cancellation-checked scan, nil skip and existing-head skip in the
+// batching, cancellation-checked scan, nil skip and live-head repair in the
 // functions below are shared by both kinds.
 type mvccBootstrapKind[E any, ID ~string] interface {
 	entityKeyspacePrefix() byte
@@ -1804,10 +1804,12 @@ func applyMVCCBootstrapBatch[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *B
 				continue
 			}
 			id := kind.entityID(entity)
-			if _, err := kind.loadHead(b, txn, id); err == nil {
-				continue
-			} else if err != ErrNotFound {
+			pending, err := mvccBootstrapHeadPending[E, ID, M](b, txn, id)
+			if err != nil {
 				return err
+			}
+			if !pending {
+				continue
 			}
 			if err := writeMVCCBootstrapHead[E, ID, M](b, txn, id, entity); err != nil {
 				return err
@@ -1817,9 +1819,28 @@ func applyMVCCBootstrapBatch[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *B
 	})
 }
 
+// mvccBootstrapHeadPending reports whether the bootstrap must write a live
+// entity's head: none exists yet, or the stored head reports the entity as
+// deleted. A stored body is the entity's current state, so a tombstoned head
+// beside it is stale; keeping it would let pruning reclaim the recreated
+// entity's identity, removing the ID dictionary entry that its compact
+// relationship bodies address.
+func mvccBootstrapHeadPending[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, txn *badger.Txn, id ID) (bool, error) {
+	var kind M
+	head, err := kind.loadHead(b, txn, id)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return true, nil
+	case err != nil:
+		return false, err
+	}
+	return head.Tombstoned, nil
+}
+
 // writeMVCCBootstrapHead seeds one entity's head after the caller has
-// established that no head exists. Version allocation keeps the existing
-// per-namespace sequence and the body's timestamps.
+// established that no head exists, or that the stored head reports the live
+// body as deleted. Version allocation keeps the existing per-namespace
+// sequence and the body's timestamps.
 func writeMVCCBootstrapHead[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, txn *badger.Txn, id ID, entity E) error {
 	var kind M
 	createdAt, updatedAt := kind.entityTimes(entity)
@@ -1831,9 +1852,9 @@ func writeMVCCBootstrapHead[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *Ba
 }
 
 // bootstrapMVCCFromCurrentStateInTxn is the single-transaction form used by
-// callers that already own a write transaction. It keeps the head-presence
-// read before body decoding, matching the batched collector's skip behavior
-// without opening a second transaction.
+// callers that already own a write transaction. It keeps the head-repair
+// decision before body decoding, matching the batched collector's skip
+// behavior without opening a second transaction.
 func bootstrapMVCCFromCurrentStateInTxn[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, txn *badger.Txn) error {
 	var kind M
 	opts := badgerIteratorOptions()
@@ -1846,10 +1867,12 @@ func bootstrapMVCCFromCurrentStateInTxn[E any, ID ~string, M mvccBootstrapKind[E
 			continue
 		}
 		id := ID(key[1:])
-		if _, err := kind.loadHead(b, txn, id); err == nil {
-			continue
-		} else if err != ErrNotFound {
+		pending, err := mvccBootstrapHeadPending[E, ID, M](b, txn, id)
+		if err != nil {
 			return err
+		}
+		if !pending {
+			continue
 		}
 		var entity E
 		var skip bool

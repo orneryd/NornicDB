@@ -1,7 +1,7 @@
 package storage
 
 // With write-behind enabled,
-// validateNodeMutationPreimagesLocked compares the caller's observed
+// validateMutationPreimagesLocked compares the caller's observed
 // predecessor with the current stored body: properties and labels only. It
 // passed a nil property projection to readProjectedNodeItemInTxn, which is the
 // full-embedding reader, so the comparison decoded this node's separately
