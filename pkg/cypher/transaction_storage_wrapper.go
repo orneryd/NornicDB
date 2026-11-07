@@ -717,6 +717,10 @@ func (w *transactionStorageWrapper) createNodes(ctx context.Context, nodes []*st
 		if err != nil {
 			return "", err
 		}
+		// The transaction stamps creation times on the image it stages. Every
+		// later edit in this transaction sends the caller's image back as the
+		// complete image, so it must carry the same times (NOR-295).
+		node.CreatedAt, node.UpdatedAt = body.CreatedAt, body.UpdatedAt
 		logicalID = w.unprefixNodeID(id)
 		w.markMutatedNodeID(logicalID)
 	}
@@ -755,16 +759,26 @@ func (w *transactionStorageWrapper) createEdges(ctx context.Context, edges []*st
 			namespaced[i] = cp
 		}
 	}
-	if len(namespaced) == 1 {
-		if minted {
-			return w.tx.CreateMintedEdge(ctx, namespaced[0])
-		}
-		return w.tx.CreateEdge(ctx, namespaced[0])
+	var err error
+	switch {
+	case len(namespaced) == 1 && minted:
+		err = w.tx.CreateMintedEdge(ctx, namespaced[0])
+	case len(namespaced) == 1:
+		err = w.tx.CreateEdge(ctx, namespaced[0])
+	case minted:
+		err = w.tx.BulkCreateMintedEdges(ctx, namespaced)
+	default:
+		err = w.tx.BulkCreateEdges(ctx, namespaced)
 	}
-	if minted {
-		return w.tx.BulkCreateMintedEdges(ctx, namespaced)
+	if err != nil || w.namespace == "" {
+		return err
 	}
-	return w.tx.BulkCreateEdges(ctx, namespaced)
+	// The caller's images carry the times stamped on their namespaced copies,
+	// as createNodes keeps them for nodes.
+	for i, edge := range edges {
+		edge.CreatedAt, edge.UpdatedAt = namespaced[i].CreatedAt, namespaced[i].UpdatedAt
+	}
+	return nil
 }
 
 func (w *transactionStorageWrapper) BulkDeleteNodes(ctx context.Context, ids []storage.NodeID) error {

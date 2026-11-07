@@ -93,7 +93,9 @@ func TestAcceptedConflictSettlesThroughPublicCypher(t *testing.T) {
 			if mutation == "delete-recreate-set" {
 				query = "MATCH (n:Doc {id: 'n'}) DELETE n CREATE (m:Doc {id: 'n'}) SET m.payload = 'after' RETURN m.payload"
 			}
+			requested := time.Now()
 			result, err := exec.Execute(ctx, query, nil)
+			answered := time.Now()
 			assert.NoError(t, err, "accepted command must finish native application before reporting success")
 			wantInjections := int32(1)
 			if mutation == "control" {
@@ -112,7 +114,10 @@ func TestAcceptedConflictSettlesThroughPublicCypher(t *testing.T) {
 					}
 				}
 				require.NotNil(t, accepted)
-				require.True(t, accepted.CreatedAt.IsZero(), "accepted unset timestamp must not be normalized to another instant")
+				// The recreated node keeps the creation time its transaction
+				// stamped, through the same-statement SET (NOR-295).
+				require.False(t, accepted.CreatedAt.Before(requested) || accepted.CreatedAt.After(answered),
+					"accepted CreatedAt %s must lie in the request interval [%s, %s]", accepted.CreatedAt, requested, answered)
 				stored, err := storage.GetStoredNodesByLabel(ctx, store, "Doc")
 				require.NoError(t, err)
 				require.Len(t, stored, 1)
@@ -132,7 +137,7 @@ func TestAcceptedConflictSettlesThroughPublicCypher(t *testing.T) {
 			assert.NoError(t, manager.Close())
 
 			// Native success and semantic replay must retain the same timestamp
-			// image, including the accepted unset CreatedAt (NOR-303).
+			// image, including the accepted CreatedAt (NOR-303).
 			t.Run("cold-replay", func(t *testing.T) {
 				// Cold WAL replay has no old native frame: it must reproduce exactly
 				// the success returned by the accepted request, with no duplicate rows.
