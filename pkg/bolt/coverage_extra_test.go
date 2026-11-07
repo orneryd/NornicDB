@@ -290,7 +290,7 @@ func TestBoltCoverage_PackStreamPathAndWrapperHelpers(t *testing.T) {
 		Properties: map[string]any{"since": int64(2020)},
 	}
 
-	t.Run("map encoding skips internal path sentinel", func(t *testing.T) {
+	t.Run("map encoding preserves user path key", func(t *testing.T) {
 		data := encodePackStreamMapInto(nil, map[string]any{
 			"_pathResult": true,
 			"name":        "Alice",
@@ -298,7 +298,7 @@ func TestBoltCoverage_PackStreamPathAndWrapperHelpers(t *testing.T) {
 
 		decoded, _, err := decodePackStreamMap(data, 0)
 		require.NoError(t, err)
-		assert.Equal(t, map[string]any{"name": "Alice"}, decoded)
+		assert.Equal(t, map[string]any{"_pathResult": true, "name": "Alice"}, decoded)
 	})
 
 	t.Run("direct wrappers match into variants", func(t *testing.T) {
@@ -340,7 +340,7 @@ func TestBoltCoverage_PackStreamPathAndWrapperHelpers(t *testing.T) {
 		assert.Equal(t, []byte{0xB3, 0x50, 0x90, 0x90, 0x90}, emptyPath)
 	})
 
-	t.Run("extracts and coerces path maps", func(t *testing.T) {
+	t.Run("extracts only typed path carriers", func(t *testing.T) {
 		path, ok := extractPathFromMap(map[string]any{"_pathResult": cypher.PathResult{
 			Nodes:         []*storage.Node{nodeA, nodeB},
 			Relationships: []*storage.Edge{edge},
@@ -350,36 +350,26 @@ func TestBoltCoverage_PackStreamPathAndWrapperHelpers(t *testing.T) {
 		require.NotNil(t, path)
 		assert.Len(t, path.Nodes, 2)
 
-		path, ok = extractPathFromMap(map[string]any{
+		_, ok = extractPathFromMap(map[string]any{
 			"_pathResult":   true,
 			"nodes":         []any{*nodeA, nodeB},
 			"relationships": []any{*edge},
 		})
-		require.True(t, ok)
-		require.NotNil(t, path)
-		assert.Len(t, path.Nodes, 2)
-		assert.Len(t, path.Relationships, 1)
+		require.False(t, ok)
 
-		path, ok = extractPathFromMap(map[string]any{
+		_, ok = extractPathFromMap(map[string]any{
 			"_pathResult": true,
 			"nodes":       []storage.Node{*nodeA},
 			"rels":        []storage.Edge{*edge},
 		})
-		require.True(t, ok)
-		require.NotNil(t, path)
-		assert.Len(t, path.Relationships, 1)
+		require.False(t, ok)
 
 		_, ok = extractPathFromMap(map[string]any{"_pathResult": true})
 		assert.False(t, ok)
 
-		assert.Len(t, coercePathNodes([]any{*nodeA, nodeB, "skip"}), 2)
-		assert.Len(t, coercePathRels([]any{*edge, edge, "skip"}), 2)
-		assert.Len(t, coercePathNodes([]*storage.Node{nodeA}), 1)
-		assert.Len(t, coercePathNodes([]storage.Node{*nodeA}), 1)
-		assert.Len(t, coercePathRels([]*storage.Edge{edge}), 1)
-		assert.Len(t, coercePathRels([]storage.Edge{*edge}), 1)
-		assert.Nil(t, coercePathNodes("not-a-list"))
-		assert.Nil(t, coercePathRels("not-a-list"))
+		path, ok = extractPathFromMap(map[string]any{"_pathResult": &cypher.PathResult{Nodes: []*storage.Node{nodeA}}})
+		require.True(t, ok)
+		require.Len(t, path.Nodes, 1)
 	})
 }
 
