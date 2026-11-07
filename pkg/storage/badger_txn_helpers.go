@@ -221,6 +221,9 @@ func (b *BadgerEngine) commitEngineWrite(ctx context.Context, write func(cw *com
 			return err
 		}
 		defer db.endRead(readTs)
+		// Every version the write reserves under txn is published with its
+		// commit, or abandoned with its failure.
+		defer b.mvccReservations.publishTxn(txn)
 		cw := b.newCommitWriter(ctx, db, txn)
 		defer cw.discard()
 		fail := func(err error) error {
