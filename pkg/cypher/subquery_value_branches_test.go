@@ -113,9 +113,31 @@ func TestSubqueryBodiesWithCallSubqueries(t *testing.T) {
 	matched, err := exec.Execute(ctx, "MATCH (a:SC {v: 1})-[r:R]->(b:SC) RETURN a, r", nil)
 	require.NoError(t, err)
 	a, r := matched.Rows[0][0].(*storage.Node), matched.Rows[0][1].(*storage.Edge)
-	result, err := exec.executeCorrelatedSubqueryBody(ctx, "MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e", map[string]interface{}{
+	result, err := exec.correlatedSubqueryExecutor(ctx, map[string]interface{}{
 		"a": a, "r": r, "k": int64(10), "m": (*storage.Node)(nil), "e": (*storage.Edge)(nil), "$ignored": 1,
-	})
+	}).executeInternal(ctx, "MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(12), nil, nil}}, result.Rows)
+}
+
+func TestCollectProjectionContractPreservesDeclaredAndObservedDiagnostics(t *testing.T) {
+	for _, origin := range []collectProjectionOrigin{declaredCollectProjection, observedCollectProjection} {
+		require.NoError(t, collectProjectionError(1, false, origin))
+		for _, columns := range []int{0, 3} {
+			err := collectProjectionError(columns, false, origin)
+			require.Error(t, err)
+			var classified interface {
+				BoltErrorCode() string
+				BoltErrorDetail() string
+			}
+			require.ErrorAs(t, err, &classified)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode())
+			require.Equal(t, "InvalidCollectSubquery", classified.BoltErrorDetail())
+			if origin == observedCollectProjection && columns == 3 {
+				require.Contains(t, err.Error(), "3", "an observed-width diagnostic retains the actual width")
+			}
+		}
+	}
+	// Wildcard syntax is rejected even if it would expand to one column.
+	require.Error(t, collectProjectionError(1, true, declaredCollectProjection))
 }

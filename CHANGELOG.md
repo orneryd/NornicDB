@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep CALL import visibility separate from wildcard output membership across
+  UNION branches, nested scalar subqueries, and empty results. Preserve implicit
+  input values through updates, sequential LET dependencies, and DISTINCT/ORDER
+  BY followed by CALL when a column is named `next`.
+
 - Read comments and quoted names consistently across function calls, indexed
   receivers, aggregate map values and native vector expressions. Preserve
   predicate precedence and DISTINCT grouping while avoiding repeated prefix

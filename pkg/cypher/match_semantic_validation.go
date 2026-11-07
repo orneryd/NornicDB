@@ -36,7 +36,7 @@ func (e *StorageExecutor) validateMatchSemanticScopes(ctx context.Context, cyphe
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	cacheable := len(e.fabricRecordBindings) == 0
+	cacheable := len(e.fabricRecordBindings) == 0 && len(valueBindingsFromContext(ctx)) == 0 && e.inputBindingRole == boundOrdinaryBody
 	key := semanticCacheKey(cypher, cypher25)
 	if cacheable && e.matchSemanticValidationCache.contains(key) {
 		return nil
@@ -90,7 +90,14 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(ctx context.Contex
 	for name := range e.fabricRecordBindings {
 		types[name] = staticOperand{}
 	}
-	_, _, err := e.semanticScopeWalk(ctx, clauses, types, cypher25, subqueryScope{})
+	for name := range valueBindingsFromContext(ctx) {
+		types[name] = staticOperand{}
+	}
+	enclosing := subqueryScope{}
+	if e.inputBindingRole == boundScalarBody {
+		enclosing = subqueryScope{visible: maps.Clone(types), outer: true}
+	}
+	_, _, err := e.semanticScopeWalk(ctx, clauses, types, cypher25, enclosing)
 	return err
 }
 
@@ -108,31 +115,6 @@ type subqueryScope struct {
 	// that ("is shadowing an imported variable"); NornicDB keeps it as an
 	// extension (#907).
 	outer bool
-}
-
-// callBodyReturnStarError is Neo4j's error for RETURN * in a CALL
-// subquery's body that declares no variable of its own: the variables it
-// imports (CALL (*), CALL (x), or NornicDB's implicit imports of a CALL
-// { … }) are the enclosing query's, so RETURN * has none to return, even
-// beside other items (RETURN *, 2 AS y). nil outside a CALL body, or when
-// the body binds a variable (WITH 1 AS y, UNWIND, MATCH (n)).
-func callBodyReturnStarError(ctx context.Context, scope matchSemanticScope, clause string, enclosing subqueryScope) error {
-	if enclosing.outer || enclosing.visible == nil {
-		return nil
-	}
-	if !returnsStar(ctx, clause) {
-		return nil
-	}
-	for name := range scope {
-		if _, imported := enclosing.visible[name]; !imported {
-			return nil
-		}
-	}
-	return &classifiedCypherError{
-		cause:  localizedError(localization.CypherMatchingReturnStarNoVariables(), nil),
-		code:   "Neo.ClientError.Statement.SyntaxError",
-		detail: "NoVariablesInScope",
-	}
 }
 
 // validateQueryBodyComposition is Neo4j 5.26's rules for what a query body
@@ -341,6 +323,13 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 				return types, false, err
 			}
 		}
+		mutationScope := func() *semanticBindingScope {
+			bound := newSemanticBindingScope()
+			for name := range types {
+				bound.bind(name)
+			}
+			return bound
+		}
 		switch clause.kind {
 		case pipelineClauseLet, pipelineClauseFilter:
 			if err := e.validateSharedClause(ctx, scope, valueTypes, clause, cypher25); err != nil {
@@ -373,6 +362,17 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 			if err != nil {
 				return types, false, err
 			}
+			reserved := scope
+			if program, bound := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); bound && boundStatementAddresses(program, clause.syntax) {
+				if call, found := program.calls[clause.syntax.ID()]; found {
+					reserved = matchSemanticScope{}
+					call.reserved.Visit(func(names []string) {
+						for _, name := range names {
+							reserved[name] = scope[name]
+						}
+					}, func() {})
+				}
+			}
 			if returnClause != "" {
 				columns := pipelineReturnSourceColumns(ctx, returnClause)
 				if columns == nil || slices.Contains(columns, "*") {
@@ -386,6 +386,9 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 						return types, false, nil
 					}
 					for name, operand := range returned {
+						if _, bound := reserved[name]; bound && !callSubqueryReturnsOuterUnchanged(ctx, body.branches, name) {
+							return types, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound", localization.CypherCoreVariableDeclaredInOuterScope(name))
+						}
 						if _, bound := scope[name]; !bound {
 							types[name] = operand
 							scope[name] = operand.bindingKind()
@@ -399,7 +402,7 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 					// (Neo4j 5.26.30's VariableAlreadyBound), unless every
 					// branch returns that outer variable itself, unchanged
 					// (callSubqueryReturnsOuterUnchanged).
-					if _, bound := scope[name]; bound && !callSubqueryReturnsOuterUnchanged(ctx, body.branches, name) {
+					if _, bound := reserved[name]; bound && !callSubqueryReturnsOuterUnchanged(ctx, body.branches, name) {
 						return types, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
 							localization.CypherCoreVariableDeclaredInOuterScope(name))
 					}
@@ -572,14 +575,38 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 			if err := validateReturnSemanticScopeIn(ctx, scope, clause.text, enclosing.visible); err != nil {
 				return types, false, err
 			}
-			if err := callBodyReturnStarError(ctx, scope, clause.text, enclosing); err != nil {
+			if err := e.validateStaticClauseTypes(ctx, clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25}); err != nil {
 				return types, false, err
 			}
-			if err := e.validateStaticClauseTypes(ctx, clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25}); err != nil {
+		case pipelineClauseSet:
+			if err := e.validateSetClauseScope(ctx, mutationScope(), clause.text); err != nil {
+				return types, false, err
+			}
+			if err := e.validateStaticClauseTypes(ctx, clause, view); err != nil {
+				return types, false, err
+			}
+		case pipelineClauseRemove:
+			if err := validateRemoveClauseScope(ctx, mutationScope(), clause.text); err != nil {
+				return types, false, err
+			}
+			if err := e.validateStaticClauseTypes(ctx, clause, view); err != nil {
+				return types, false, err
+			}
+		case pipelineClauseForeach:
+			body := queryBodyFromSyntax(clause.syntax)
+			if body.foreach == nil {
+				return types, false, invalidForeachError()
+			}
+			inner := maps.Clone(types)
+			inner[body.foreach.variable] = staticOperand{}
+			if _, _, err := e.semanticScopeWalk(ctx, body.foreach.updates, inner, cypher25, enclosing); err != nil {
 				return types, false, err
 			}
 		case pipelineClauseDelete:
 			stale = false
+			if err := validateDeleteClauseScope(mutationScope(), clause.text); err != nil {
+				return types, false, err
+			}
 			if err := deleteTargetTypeError(clause.text, scope); err != nil {
 				return types, false, err
 			}
@@ -663,13 +690,8 @@ func validateOrderByReferences(ctx context.Context, input, output matchSemanticS
 	return nil
 }
 
-func validateReturnSemanticScope(ctx context.Context, scope matchSemanticScope, clause string) error {
-	return validateReturnSemanticScopeIn(ctx, scope, clause, nil)
-}
-
-// validateReturnSemanticScopeIn is validateReturnSemanticScope in an EXISTS /
-// COUNT / COLLECT body, whose enclosing query's variables (outer) are
-// constants there, not grouping keys: COLLECT { … RETURN count(*) + g }.
+// validateReturnSemanticScopeIn treats enclosing subquery variables as constants,
+// rather than grouping keys. A nil outer scope validates a top-level RETURN.
 func validateReturnSemanticScopeIn(ctx context.Context, scope matchSemanticScope, clause string, outer typeScope) error {
 	if err := validateReturnOrderBySemanticScopeIn(ctx, clause, outer); err != nil {
 		return err
@@ -716,13 +738,6 @@ func validateReturnSemanticScopeIn(ctx context.Context, scope matchSemanticScope
 			return err
 		}
 		if expression == "*" {
-			if len(scope) == 0 {
-				return &classifiedCypherError{
-					cause:  localizedError(localization.CypherMatchingReturnStarNoVariables(), nil),
-					code:   "Neo.ClientError.Statement.SyntaxError",
-					detail: "NoVariablesInScope",
-				}
-			}
 			continue
 		}
 		if _, literal := parseLiteralValueFromComputedRow(expression); literal {
@@ -1759,6 +1774,9 @@ func withPatternComprehensionBindings(ctx context.Context, scope staticTypeScope
 // Any other clause's subqueries read the incoming scope.
 func (e *StorageExecutor) validateClauseSubqueries(ctx context.Context, clause pipelineClause, types typeScope, view staticTypeScope, projected typeScope, cypher25 bool) error {
 	switch clause.kind {
+	case pipelineClauseLet:
+		// The LET owner validates each item after its predecessors bind.
+		return nil
 	case pipelineClauseWith, pipelineClauseCall:
 	case pipelineClauseReturn:
 		projected = projectTypeScopeIn(ctx, types, view, clause)
@@ -1779,4 +1797,12 @@ func (e *StorageExecutor) validateClauseSubqueries(ctx context.Context, clause p
 	tail := merged.static(cypher25)
 	tail.params = view.params
 	return e.validateSubqueryPatternBindings(ctx, tail, rest)
+}
+
+func returnStarWithoutVariablesError() error {
+	return &classifiedCypherError{
+		cause:  localizedError(localization.CypherMatchingReturnStarNoVariables(), nil),
+		code:   "Neo.ClientError.Statement.SyntaxError",
+		detail: "NoVariablesInScope",
+	}
 }

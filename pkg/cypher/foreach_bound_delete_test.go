@@ -63,8 +63,8 @@ func TestForeach_BoundStandaloneDelete(t *testing.T) {
 	// Unbound standalone DELETE is rejected by shared statement admission.
 	_, err = exec.Execute(ctx, "DELETE n", getParamsFromContext(ctx))
 	require.Error(t, err)
-	require.ErrorContains(t, err, "Neo.ClientError.Statement.SyntaxError")
-	require.ErrorContains(t, err, "undefined variable")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	require.EqualError(t, err, "Variable `n` not defined")
 }
 
 // TestForeach_BoundStandaloneDelete_StringIDs pins the string-ID bound target.

@@ -338,7 +338,8 @@ RETURN count(*) AS c
 
 func TestRewriteUnwindCorrelationToIn(t *testing.T) {
 	in := "MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey AND t.joinKey = joinKey CREATE (o)-[:TRANSLATES_TO]->(t) RETURN count(*) AS c"
-	got, ok := rewriteUnwindCorrelationToIn(in, "joinKey", "__unwind_items")
+	exec, base := newUnitExecutor(t)
+	_, _, got, ok := admitUnwindStatement(t, exec, base, "UNWIND ['k1'] AS joinKey "+in)
 	require.True(t, ok)
 	require.True(t, regexp.MustCompile(`o\.joinKey\s+IN\s+\$__unwind_items`).MatchString(got))
 	require.True(t, regexp.MustCompile(`t\.joinKey\s*=\s*o\.joinKey`).MatchString(got))
