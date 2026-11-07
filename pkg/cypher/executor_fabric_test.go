@@ -12,23 +12,39 @@ import (
 func TestStripLeadingWithImportsForFabricRecord_MatchIsStripped(t *testing.T) {
 	query := "WITH textKey128 MATCH (tt) WHERE tt.textKey128 = textKey128 RETURN collect(tt) AS texts"
 	got := stripLeadingWithImportsForFabricRecord(t.Context(), query, map[string]interface{}{"textKey128": "h1"})
-	want := "MATCH (tt) WHERE tt.textKey128 = $textKey128 RETURN collect(tt) AS texts"
+	want := "MATCH (tt) WHERE tt.textKey128 = textKey128 RETURN collect(tt) AS texts"
 	if got != want {
 		t.Fatalf("expected stripped query %q, got %q", want, got)
+	}
+}
+
+func TestFabricRecordImportPreparationAvoidsCopies(t *testing.T) {
+	ctx := t.Context()
+	bindings := map[string]interface{}{"value": int64(9)}
+	const query = "WITH value MATCH (n) WHERE n.id = value RETURN n"
+	var prepared string
+	allocations := testing.AllocsPerRun(100, func() {
+		prepared = stripLeadingWithImportsForFabricRecord(ctx, query, bindings)
+	})
+	if allocations != 0 {
+		t.Fatalf("import preparation allocated %v times; record references need no parameter copies", allocations)
+	}
+	if prepared != "MATCH (n) WHERE n.id = value RETURN n" {
+		t.Fatalf("record variable was rewritten: %q", prepared)
 	}
 }
 
 func TestStripLeadingWithImportsForFabricRecord_UnwindPipelineIsStripped(t *testing.T) {
 	query := "WITH rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
 	got := stripLeadingWithImportsForFabricRecord(t.Context(), query, map[string]interface{}{"rows": []interface{}{}})
-	// Parameter names remain valid without quoting, including rows.
-	want := "UNWIND $rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
+	// Imported rows remain variables; caller parameters are a separate namespace.
+	want := "UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
 	if got != want {
 		t.Fatalf("expected stripped query %q, got %q", want, got)
 	}
 }
 
-func TestStrippedImportsExecuteWithTypedParameterBindings(t *testing.T) {
+func TestStrippedImportsExecuteWithTypedRecordBindings(t *testing.T) {
 	exec, _ := newTestExecutor(t)
 	bindings := map[string]interface{}{"rows": []interface{}{
 		map[string]interface{}{"textKey128": "a"},
@@ -37,7 +53,8 @@ func TestStrippedImportsExecuteWithTypedParameterBindings(t *testing.T) {
 	}}
 	query := "WITH rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
 	generated := stripLeadingWithImportsForFabricRecord(t.Context(), query, bindings)
-	result, err := exec.Execute(context.Background(), generated, bindings)
+	exec.fabricRecordBindings = bindings
+	result, err := exec.Execute(context.Background(), generated, map[string]interface{}{"rows": "caller parameter"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,18 +67,13 @@ func TestStrippedImportsExecuteWithTypedParameterBindings(t *testing.T) {
 func TestStripLeadingWithImportsForFabricRecord_UseClauseIsStripped(t *testing.T) {
 	query := "WITH textKey128 USE translations.txr MATCH (tt) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts"
 	got := stripLeadingWithImportsForFabricRecord(t.Context(), query, map[string]interface{}{"textKey128": "abc"})
-	want := "USE translations.txr MATCH (tt) WHERE tt.translationId = $textKey128 RETURN collect(tt) AS texts"
+	want := "USE translations.txr MATCH (tt) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts"
 	if got != want {
 		t.Fatalf("expected stripped query %q, got %q", want, got)
 	}
 }
 
-func TestFindLeadingWithEndLocalAndSplitCommaTopLevelLocal(t *testing.T) {
-	query := "WITH a, collect({k: b, t: c}) AS rows USE translations.txr MATCH (n) RETURN n"
-	idx := findLeadingWithEndLocal(t.Context(), query)
-	if idx <= 0 {
-		t.Fatalf("expected positive with-end index, got %d", idx)
-	}
+func TestFabricImportCommaListUsesSharedReader(t *testing.T) {
 	parts := splitTopLevelComma("a, collect({k: b, t: c}) AS rows, `quoted`")
 	if len(parts) != 3 {
 		t.Fatalf("expected 3 top-level parts, got %#v", parts)

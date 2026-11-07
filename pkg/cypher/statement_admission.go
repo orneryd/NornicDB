@@ -39,23 +39,21 @@ func (deferredParticipantSignatureError) Error() string {
 	return "the selected participant owns this procedure's signature"
 }
 
-// fabricAdmission carries the Fabric preflight's additional admission inputs:
-// typesSource is the single-graph statement whose semantic and type rules are
-// checked (the one statement the engine validates a composite statement as),
-// and schema is the participant schema resolver of the statement's selected
-// graphs. The zero value keeps the statement itself and the local registry.
+// fabricAdmission supplies the selected participant's schema resolver. Binding
+// and type validation both consume the original statement, preserving USE
+// boundaries and the exact syntax addressed by its retained binding program.
+// The zero value uses the local registry.
 type fabricAdmission struct {
-	typesSource string
-	schema      resultmetadata.ParticipantSchema
+	schema resultmetadata.ParticipantSchema
 }
 
 // admitStatement is execution's adapter into the shared scope program.
 // Administrative commands have a typed command continuation; graph statements
 // cannot decline binding or substitute successful empty facts.
 func (e *StorageExecutor) admitStatement(ctx context.Context, source string, fabric fabricAdmission) (admission boundScopeAdmission, err error) {
-	typesSource, schema := source, e.participantSchemaForStatement(ctx, source)
+	schema := e.participantSchemaForStatement(ctx, source)
 	if fabric.schema != nil {
-		typesSource, schema = fabric.typesSource, fabric.schema
+		schema = fabric.schema
 	}
 	// Binding establishes exact membership and headers before type validation.
 	// Both phases finish before any execution owner can perform effects. A
@@ -69,7 +67,7 @@ func (e *StorageExecutor) admitStatement(ctx context.Context, source string, fab
 		if admission.program != nil {
 			ctx = withBoundStatementProgram(ctx, admission.program)
 		}
-		if typeErr := e.validateStatementTypes(ctx, typesSource); typeErr != nil {
+		if typeErr := e.validateStatementTypes(ctx, source); typeErr != nil {
 			err = typeErr
 		}
 	}()
