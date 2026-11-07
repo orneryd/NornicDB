@@ -46,7 +46,7 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 	// statement's validation reports the SyntaxError.
 	distinct, err := projectionBodyDistinct(body)
 	if err != nil {
-		return &returnProjectionPlan{}
+		return &returnProjectionPlan{err: err}
 	}
 	plan.distinct = distinct
 	var modifiers []string
@@ -78,7 +78,7 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 		}
 		target.addProjection(itemSource.expression, itemSource.alias)
 		projection := &target.projections[len(target.projections)-1]
-		projection.variable, projection.direct = projectionVariableFromSyntax(expression)
+		projection.variable, projection.direct, projection.grouped = projectionVariableFromSyntax(expression)
 		for _, visit := range expressions {
 			visit(expression)
 		}
@@ -99,23 +99,24 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 // retain their original expression text, including internal comments. Code is
 // the separate evaluation view; using it as a label loses source information.
 func projectionNameFromSyntax(expression cypherantlr.SyntaxNode) string {
-	if name, variable := projectionVariableFromSyntax(expression); variable {
+	if name, variable, grouped := projectionVariableFromSyntax(expression); variable && !grouped {
 		return name
 	}
 	return expression.Text()
 }
 
-func projectionVariableFromSyntax(expression cypherantlr.SyntaxNode) (string, bool) {
-	for node := expression; node.Valid(); {
-		if name, symbol := node.Name(); symbol {
-			return name, true
-		}
-		if node.ChildCount() != 1 {
-			break
-		}
-		node = node.Child(0)
+// projectionVariableFromSyntax distinguishes binding identity from presentation:
+// grouping preserves the binding, while its written parentheses remain part of
+// an unaliased result column's expression name.
+func projectionVariableFromSyntax(expression cypherantlr.SyntaxNode) (name string, variable, grouped bool) {
+	core := projectionSyntaxCore(expression)
+	if !core.Valid() {
+		return "", false, false
 	}
-	return "", false
+	name, variable = core.Name()
+	start, end := expression.Span()
+	at, until := core.Span()
+	return name, variable, variable && (start != at || end != until)
 }
 
 // column is the one decoded output identity used by scope, validation and

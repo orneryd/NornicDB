@@ -215,7 +215,7 @@ func requireLoadCSVReadForwarded(t *testing.T, executor *StorageExecutor, remote
 	require.NoError(t, err, "remote statement policy: %s", query)
 	require.False(t, policy.Uncertain, "the shared grammar reads the forwarded statement: %s", query)
 	require.Equal(t, storage.RemoteAccessRead, policy.AccessMode, "a read LOAD CSV tail forwards a read: %s", query)
-	admission, err := executor.admitBoundStatement(ctx, query)
+	admission, err := executor.admitStatement(ctx, query, fabricAdmission{})
 	require.NoError(t, err, "statement scope and result columns: %s", query)
 	require.True(t, admission.graph, "a LOAD CSV statement is a graph statement with columns: %s", query)
 	require.NoError(t, admission.verifyColumns([]string{"k"}), "the projected column is the statement's: %s", query)

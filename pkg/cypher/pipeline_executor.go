@@ -506,17 +506,6 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 		}
 	}()
 	hasCallSubquery := firstTopLevelCallSubquery(ctx, cypher) >= 0
-	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") {
-		if !pipelineUnwindUsesRange(ctx, cypher) {
-			plan, err := e.prepareTopLevelUnwind(ctx, cypher)
-			if err != nil {
-				return newPipelineDispatchOutcome(nil, true, err)
-			}
-			if result, handled, err := e.executeUnwindBatchOperator(ctx, plan); handled || err != nil {
-				return newPipelineDispatchOutcome(result, handled, err)
-			}
-		}
-	}
 	clauses, ok := canExecuteAsPipeline(ctx, cypher)
 	if !ok {
 		return newPipelineDispatchOutcome(nil, false, nil)
@@ -530,13 +519,54 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 		}
 	}
 
+	// Admit before physical shortcuts so dependencies include wildcard reads
+	// and preserve the same binding identities as the row continuation.
+	var scope map[string]struct{}
+	for name := range e.fabricRecordBindings {
+		if !strings.HasPrefix(name, "$") {
+			if scope == nil {
+				scope = make(map[string]struct{})
+			}
+			scope[name] = struct{}{}
+		}
+	}
+	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {
+		for name := range valueBindingsFromContext(ctx) {
+			if !strings.HasPrefix(name, "$") {
+				if scope == nil {
+					scope = make(map[string]struct{})
+				}
+				scope[name] = struct{}{}
+			}
+		}
+	}
+	var bindingErr error
+	ctx, bindingErr = e.bindPipelineProgram(ctx, clauses, scope)
+	if bindingErr != nil {
+		return newPipelineDispatchOutcome(nil, true, bindingErr)
+	}
+	readsInput, bindingErr := e.pipelineReadsImportedBinding(ctx, clauses)
+	if bindingErr != nil {
+		return newPipelineDispatchOutcome(nil, true, bindingErr)
+	}
+	if !hasCallSubquery && !readsInput && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") {
+		if !pipelineUnwindUsesRange(ctx, cypher) {
+			plan, err := e.prepareTopLevelUnwind(ctx, cypher)
+			if err != nil {
+				return newPipelineDispatchOutcome(nil, true, err)
+			}
+			if result, handled, err := e.executeUnwindBatchOperator(ctx, plan); handled || err != nil {
+				return newPipelineDispatchOutcome(result, handled, err)
+			}
+		}
+	}
 	// Parameters remain typed bindings through every clause.
 	params := getParamsFromContext(ctx)
 	// The statement shortcuts read the store as if every variable were
 	// unbound, so a correlated body (EXISTS / COUNT / COLLECT over an
 	// imported variable) takes the row pipeline, which is seeded with the
 	// imports below.
-	if !hasCallSubquery && !e.pipelineReadsImportedBinding(ctx, clauses) {
+	if !hasCallSubquery && !readsInput {
 		if result, handled, err := e.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, params); handled || err != nil {
 			return newPipelineDispatchOutcome(result, handled, err)
 		}
@@ -561,12 +591,8 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	}
 	bindParameterRow(ctx, initialRow)
 	rows := []pipelineRow{initialRow}
-	scope := make(map[string]struct{})
-	for name := range initialRow {
-		if strings.HasPrefix(name, "$") {
-			continue
-		}
-		scope[name] = struct{}{}
+	if scope == nil {
+		scope = make(map[string]struct{})
 	}
 
 	stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
@@ -1170,36 +1196,40 @@ func pipelineDecline(ctx context.Context, wrote bool, clause string) (*ExecuteRe
 	return nil, false, nil
 }
 
-// pipelineReadsImportedBinding reports whether a clause mentions a variable
-// the pipeline's first row imports: a correlated subquery body's outer row
-// (fabricRecordBindings) or an enclosing value scope. Parameters are not
-// imports. It uses isIdentifierReferenced, the reader unscoped CALL imports
-// use, so a body that only names its own variables keeps the shortcuts.
-func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
-	references := func(name string) bool {
-		if strings.HasPrefix(name, "$") {
-			return false
-		}
-		for _, clause := range clauses {
-			if isIdentifierReferenced(clause.text, name) {
-				return true
-			}
-		}
-		return false
+// pipelineReadsImportedBinding consumes the admitted program's binding uses,
+// including expanded wildcard reads. A local declaration does not become an
+// input dependency merely because its spelling matches an enclosing variable.
+func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) (bool, error) {
+	contextBindings := valueBindingsFromContext(ctx)
+	if len(e.fabricRecordBindings) == 0 && len(contextBindings) == 0 || len(clauses) == 0 {
+		return false, nil
 	}
-	for name := range e.fabricRecordBindings {
-		if references(name) {
-			return true
+	program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram)
+	if !ok || !boundStatementAddresses(program, clauses[0].syntax) {
+		return false, unresolvedStatementError()
+	}
+	first, _ := clauses[0].syntax.Span()
+	_, last := clauses[len(clauses)-1].syntax.Span()
+	for _, use := range program.uses {
+		if use.clauseStart < first || use.clauseEnd > last || strings.HasPrefix(use.name, "$") {
+			continue
+		}
+		_, imported := e.fabricRecordBindings[use.name]
+		if !imported && clauses[0].kind != pipelineClauseCallSubquery {
+			_, imported = contextBindings[use.name]
+		}
+		if !imported {
+			continue
+		}
+		if use.binding == 0 || int(use.binding) > len(program.bindings) {
+			return false, unresolvedStatementError()
+		}
+		definition := program.bindings[int(use.binding)-1]
+		if definition.start < first || definition.end > last {
+			return true, nil
 		}
 	}
-	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {
-		for name := range valueBindingsFromContext(ctx) {
-			if references(name) {
-				return true
-			}
-		}
-	}
-	return false
+	return false, nil
 }
 
 // tryExecutePipelineSimpleRelationshipCountPlan is the fused physical form of

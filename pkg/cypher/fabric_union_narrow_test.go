@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -34,9 +36,10 @@ func unionNarrowObserve(exec *StorageExecutor, name, family, query string) union
 	}
 	if err != nil {
 		out.Error = err.Error()
-		var semantic *SemanticError
-		if errors.As(err, &semantic) {
-			out.Code, out.Detail = semantic.Code, semantic.Detail
+		out.Code, _ = nornicerrors.Neo4jStatus(err)
+		var classified interface{ BoltErrorDetail() string }
+		if errors.As(err, &classified) {
+			out.Detail = classified.BoltErrorDetail()
 		}
 	}
 	return out
@@ -76,6 +79,23 @@ func TestUnionNarrowPriorFindings(t *testing.T) {
 			require.Equal(t, want.Query, control.Query, "baseline input population must not change")
 			require.Equal(t, want.Family, control.Family)
 			want = control
+		}
+
+		// The original metadata fixtures recorded defects, not the approved
+		// contract. Frame-aware admission now resolves both conditional variants.
+		if want.Family == "r4-metadata" {
+			switch {
+			case strings.Contains(want.Name, "/conditional/"), strings.Contains(want.Name, "/next_control/"):
+				want.Error, want.Code, want.Detail = "", "", ""
+				want.Columns = []string{"tag"}
+				want.Rows = [][]interface{}{{"outer"}}
+				if strings.HasSuffix(want.Name, "/EXPLAIN") {
+					want.Rows = [][]interface{}{}
+				}
+			case strings.Contains(want.Name, "/conditional_star_control/"):
+				want.Error = "RETURN * requires at least one variable in scope"
+				want.Code, want.Detail = "Neo.ClientError.Statement.SyntaxError", "NoVariablesInScope"
+			}
 		}
 		t.Run(want.Name, func(t *testing.T) {
 			got := unionNarrowObserve(exec, want.Name, want.Family, want.Query)

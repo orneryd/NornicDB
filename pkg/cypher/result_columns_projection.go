@@ -12,9 +12,12 @@ import (
 // aggregate is nested in a larger expression, aggregateExpr then being the
 // whole expression).
 type returnProjection struct {
-	expr                           string
-	variable                       string
-	direct                         bool
+	expr     string
+	variable string
+	// direct preserves a variable identity, including parenthesized identities.
+	direct bool
+	// grouped distinguishes that identity from a bare pass-through projection.
+	grouped                        bool
 	alias                          string
 	isAggr                         bool
 	aggregateName                  string
@@ -28,6 +31,7 @@ type returnProjection struct {
 // depends only on the clause text, so it is parsed once per text
 // (returnProjectionPlanFor). valid is false when the clause has no items.
 type returnProjectionPlan struct {
+	err   error
 	valid bool
 	star  bool
 	// starItems are the items after a leading * (RETURN *, x AS y, #883);

@@ -29,8 +29,9 @@ type projectedScopeFacts struct {
 }
 
 type projectionFactsKey struct {
-	query, incoming, retained              string
-	incomingKnown, retainedKnown, cypher25 bool
+	role                                    boundBodyRole
+	query, incoming, retained, presentation string
+	incomingKnown, retainedKnown, cypher25  bool
 }
 
 var projectionFactsCache = newBoundedCache[projectionFactsKey, *projectedScopeFacts](4096, func(key projectionFactsKey) int {
@@ -90,11 +91,16 @@ func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, 
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
 	key := projectionKey(query, incoming, retained, cypher25)
+	key.role = e.inputBindingRole
+	if names := quotedVariableNamesFor(ctx, query); names != nil {
+		key.presentation = names.Original
+	}
 	generation := globalProcedureRegistry.generation.Load()
 	if facts, found := projectionFactsCache.get(key); found && facts.generation == generation {
 		return facts
 	}
-	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25)
+	compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, role: e.inputBindingRole}
+	facts := compiler.compileBound(ctx, incoming, retained)
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
