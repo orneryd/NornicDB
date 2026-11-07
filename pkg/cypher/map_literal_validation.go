@@ -63,12 +63,21 @@ func validateStaticMapKeys(ctx context.Context, query string) error {
 		if close < 0 {
 			continue
 		}
-		parts := splitTopLevelComma(query[index+1 : close])
+		parts := splitTopLevelCommaKeepEmpty(query[index+1 : close])
 		mapLiteral := false
+		projection := false
 		for _, part := range parts {
 			if findTopLevelMapKeyValueSeparator(part) >= 0 {
 				mapLiteral = true
-				break
+			}
+			_, selector := mapProjectionPropertySelector(strings.TrimSpace(part))
+			projection = projection || selector || strings.TrimSpace(part) == ".*"
+		}
+		if mapLiteral || projection {
+			for _, part := range parts {
+				if strings.TrimSpace(part) == "" {
+					return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "map entries cannot be empty")
+				}
 			}
 		}
 		if !mapLiteral {
