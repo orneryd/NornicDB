@@ -10,6 +10,7 @@ import (
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // boundCompilation schedules scope transfers on the canonical CST. Binding and
@@ -409,6 +410,23 @@ func (compilation *boundCompilation) prepareClause(ctx context.Context, branch *
 			nested.graph = branch.graph
 		}
 		event := compilation.event(node)
+		if node.Rule() == cypherantlr.CypherParserRULE_collectSubquery {
+			// Body completion runs first (leave callbacks run in reverse order).
+			// Check its resolved header at compilation, even when no input row
+			// reaches the expression or EXPLAIN does not execute it.
+			checkColumns := func() {
+				if compilation.failure != nil || nested.program == nil {
+					return
+				}
+				nested.program.outputs.Visit(func(names []string) {
+					if len(names) != 1 {
+						compilation.fail(resultmetadata.ReasonUnsupportedSyntax, start,
+							localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCollectSubquery", localization.CypherSubqueriesCollectSingleColumn(len(names))))
+					}
+				}, func() {})
+			}
+			event.leave = append([]func(){checkColumns}, event.leave...)
+		}
 		if bodyNode.ID() == node.ID() {
 			event.enter = append([]func(){initialize}, event.enter...)
 		} else {
