@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep CSV export values under their matching property headers by selecting
+  the column order once and reusing it for every row.
+
 - Reconcile recovered label and relationship-type counts with replayed graph
   bodies after single-entry WAL replay and mixed physical/semantic recovery.
   Prevent relabel-then-delete recovery from failing with a count underflow.

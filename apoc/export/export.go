@@ -101,19 +101,23 @@ func Csv(ctx context.Context, nodes []*Node, filePath string) error {
 
 	// Write header
 	if len(nodes) > 0 {
+		// The first node's properties are the exported schema. Resolve that
+		// column set, and its order, once: ranging the property map again for
+		// each row yields the same columns in another order, which would place
+		// row values under headers naming different properties.
 		headers := []string{"id", "labels"}
 		for key := range nodes[0].Properties {
 			headers = append(headers, key)
 		}
+		columns := headers[2:]
+		sort.Strings(columns)
+
 		writer.Write(headers)
 
 		// Write rows
 		for _, node := range nodes {
-			row := []string{
-				fmt.Sprintf("%d", node.ID),
-				strings.Join(node.Labels, ";"),
-			}
-			for key := range nodes[0].Properties {
+			row := []string{fmt.Sprintf("%d", node.ID), strings.Join(node.Labels, ";")}
+			for _, key := range columns {
 				if val, ok := node.Properties[key]; ok {
 					row = append(row, apocconvert.ToString(val))
 				} else {

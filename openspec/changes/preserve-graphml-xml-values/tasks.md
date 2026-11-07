@@ -16,4 +16,5 @@
 - [x] Retire redundant Go aliases and register bundled names directly on canonical writers.
 - [x] Shared rooted destination owner preserves native directory and file-result contracts.
 - [x] Public scalar and native procedure permission controls pass on both parsers.
+- [x] Reproduce and correct CSV header/value misalignment across Go and bundled aliases; reuse the header-backed column view without a second key buffer.
 - [ ] Complete current-source duplicate dispositions and exact-head CI make test.
