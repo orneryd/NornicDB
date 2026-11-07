@@ -51,6 +51,7 @@ func TestOriginalBraceAdmissionValidControls(t *testing.T) {
 	for _, query := range []string{
 		"RETURN {} AS value",
 		"RETURN {key: 1 /* comma, */} AS value",
+		`RETURN {a\u0062: 1} AS value`,
 		"RETURN {key: {inner: 1}} AS value",
 		"WITH {key: 1} AS n RETURN n{.key} AS value",
 		"WITH {key: 1} AS n RETURN n{.*} AS value",

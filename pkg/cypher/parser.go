@@ -200,12 +200,12 @@ func (p *Parser) Parse(ctx context.Context, cypher string) (*Query, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := validateStaticMapKeys(ctx, cypher); err != nil {
-		return nil, err
-	}
 	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		return nil, source.Err
+	}
+	if err := validateStaticMapKeys(ctx, source.Text); err != nil {
+		return nil, err
 	}
 	trimmed := strings.TrimSpace(source.Text)
 	start := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
