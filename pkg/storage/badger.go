@@ -363,6 +363,9 @@ type BadgerEngine struct {
 	mvccByNamespaceMu    sync.RWMutex
 	mvccByNamespace      map[string]*namespaceMVCCState
 	mvccLegacyGlobalSeed uint64
+	// mvccReservations lists the versions reserved by writes that have not
+	// published yet; a transaction's cut copies it (mvccReservations).
+	mvccReservations mvccReservations
 
 	retentionPolicy           RetentionPolicy
 	activeMVCCSnapshotReaders atomic.Int64
@@ -1347,7 +1350,6 @@ func (b *BadgerEngine) loadPersistedMVCCSequence() (uint64, error) {
 // allocated-but-unpersisted sequences, which is reconciled by the
 // startup max-of-persisted-and-legacy floor.
 func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
-	_ = txn // intentionally unused — see doc above
 	state, err := b.namespaceMVCC(namespace)
 	if err != nil {
 		return MVCCVersion{}, err
@@ -1357,6 +1359,9 @@ func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, co
 	if err != nil {
 		return MVCCVersion{}, err
 	}
+	// The version is reserved, not published: the ledger holds it under the
+	// writer's transaction until the write publishes or is abandoned.
+	b.mvccReservations.reserve(txn, namespace, seq)
 	return MVCCVersion{
 		CommitTimestamp: commitStamp,
 		CommitSequence:  seq,
