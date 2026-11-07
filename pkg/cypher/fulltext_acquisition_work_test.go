@@ -146,13 +146,13 @@ func fulltextWorkQuery(relationships bool) string {
 func TestFulltextAcquisitionWork(t *testing.T) {
 	const count = 32
 	for _, buffered := range []bool{false, true} {
-		for _, shape := range []string{"native_namespace", "wal_forward", "traced_fallback", "transient"} {
+		for _, shape := range []string{"native_namespace", "wal_forward", "traced_forward", "transient"} {
 			t.Run(fmt.Sprintf("%s/buffered=%t", shape, buffered), func(t *testing.T) {
 				ctx := context.Background()
 				_, store := fulltextWorkFixture(t, count, buffered)
 				probe := &fulltextWorkProbe{NamespacedEngine: store}
 				var engine storage.Engine = probe
-				if shape == "traced_fallback" {
+				if shape == "traced_forward" {
 					engine = storage.NewTracedEngine(probe)
 				}
 				if shape == "wal_forward" {
@@ -184,13 +184,8 @@ func TestFulltextAcquisitionWork(t *testing.T) {
 								assert.Zero(t, formatted, "unranked acquisition built scoring fields")
 								if relationships {
 									want := int64(3) + skip
-									if shape == "traced_fallback" {
-										want = count
-									}
 									assert.Equal(t, want, probe.edges.Load(), "reader crossed the release prefix on repeated call %d", call)
-									if shape != "traced_fallback" {
-										assert.Equal(t, int64(1), probe.stops.Load(), "stop did not reach native reader")
-									}
+									assert.Equal(t, int64(1), probe.stops.Load(), "stop did not reach native reader")
 								} else {
 									assert.Equal(t, int64(count), probe.nodes.Load(), "the node read was incorrectly truncated")
 								}
