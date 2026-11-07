@@ -70,5 +70,11 @@ func TestQuotedQualifiedUnknownFunction(t *testing.T) {
 func TestQuotedNamespaceStaticArguments(t *testing.T) {
 	err := forEachStaticFunctionArgument(t.Context(), "`custom` . range('ok')", func(staticArgumentType, string, int) error { return nil })
 	require.NoError(t, err)
-	require.Empty(t, semanticExpressionReferences("custom . /*c*/ range('ok')"))
+	called := false
+	complete := forEachSemanticExpressionReference("custom . /*c*/ range('ok')", func(_, _ string, _ bool, _ int) bool {
+		called = true
+		return false
+	})
+	require.True(t, complete)
+	require.False(t, called, "a qualified function name is not a variable reference")
 }
