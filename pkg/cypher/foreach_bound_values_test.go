@@ -47,7 +47,7 @@ func TestCreatePropertyValues_ResolveBoundLoopVariables(t *testing.T) {
 	// fallback stored the query text as data.
 	res, err = exec.executeInternal(ctx, "CREATE (:UnboundRef {k: x})", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "SyntaxError")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	require.Nil(t, res)
 	nodes, err = engine.GetNodesByLabel(ctx, "UnboundRef")
 	require.NoError(t, err)

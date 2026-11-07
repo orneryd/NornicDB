@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
@@ -105,6 +106,73 @@ func (e *StorageExecutor) retainedClauseColumns(ctx context.Context, clause pipe
 		return nil, err
 	}
 	return names, nil
+}
+
+// regionalStatementColumns is the columns owner's compile-only regional read:
+// the columns the clause that ends region declares in the admitted statement
+// program of query. Query is a compile-only candidate view of a conditional
+// arm, so it compiles under the same incoming scope and dialect as the
+// statement it stands in, and the owner's cache (accepted text plus scope)
+// serves every repeat; no row value is an input. An incomplete program, an
+// unknown header and a region that owns no clause are errors, never an empty
+// successful header.
+func (e *StorageExecutor) regionalStatementColumns(ctx context.Context, query string, region cyphertext.Span) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25"
+	program := e.statementProjectionProgram(ctx, query, e.resultIncomingScope(), cypher25, nil)
+	if !program.complete {
+		if program.err != nil {
+			return nil, program.err
+		}
+		return nil, unresolvedStatementError()
+	}
+	columns, found := regionalClauseColumns(program.bound, region)
+	if !found {
+		return nil, unresolvedStatementError()
+	}
+	var names []string
+	var failure error
+	columns.Visit(func(known []string) { names = known }, func() { failure = unresolvedStatementError() })
+	if failure != nil {
+		return nil, failure
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return names, nil
+}
+
+// regionalClauseColumns reads the declared columns of the clause that ends
+// region in program's bound product. Clause identities and byte spans are the
+// product's own, so the read never recompiles a fragment and never infers a
+// header from a value.
+func regionalClauseColumns(program *boundStatementProgram, region cyphertext.Span) (resultmetadata.Columns, bool) {
+	if program == nil || !program.syntax.Valid() {
+		return resultmetadata.Columns{}, false
+	}
+	var selected cypherantlr.SyntaxNode
+	start, end := 0, -1
+	program.syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+		if _, declared := program.columns[node.ID()]; !declared {
+			return nil
+		}
+		from, to := node.Span()
+		if from < region.Start || to > region.End {
+			return nil
+		}
+		if selected.Valid() && (to < end || to == end && from <= start) {
+			return nil
+		}
+		selected, start, end = node, from, to
+		return nil
+	})
+	if !selected.Valid() {
+		return resultmetadata.Columns{}, false
+	}
+	columns, found := program.columns[selected.ID()]
+	return columns, found
 }
 
 func executionClauseEffects(ctx context.Context, clause pipelineClause) (pipelineClauseEffects, error) {

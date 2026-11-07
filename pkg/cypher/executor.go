@@ -425,6 +425,7 @@ type StorageExecutor struct {
 	// fabricRecordBindings carries correlated APPLY input bindings for Fabric execution.
 	// It is set only on per-query cloned executors.
 	fabricRecordBindings map[string]interface{}
+	inputBindingRole     boundBodyRole
 
 	decayMismatchLogged bool
 	hotPathTraceState   *hotPathTraceState
@@ -593,6 +594,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine, scope ...sto
 			shellParams:                  e.shellParams,
 			shellParamsByToken:           cloneShellParamsByToken(e),
 			fabricRecordBindings:         e.fabricRecordBindings,
+			inputBindingRole:             e.inputBindingRole,
 			unwindMergeChainPlanCache:    e.unwindMergeChainPlanCache,
 			// Plan 04-03: propagate the metrics bag + database label through
 			// per-query / per-storage clones so observation chokepoints in
@@ -2101,7 +2103,7 @@ func statementReadsGraphText(ctx context.Context, cypher string) bool {
 // references a parameter it wasn't given ("Expected parameter(s): p"), or nil.
 // Neo4j reports it after the statement compiles, so a statement that is also
 // a syntax or semantic error reports that error (Execute calls this after
-// validateSyntax and validateSemanticScopes; the Fabric route after it plans
+// validateSyntax and validateStatementTypes; the Fabric route after it plans
 // the statement). EXPLAIN runs nothing and needs no
 // values; in a procedure definition, $name is the procedure's argument.
 // Parameter names are reported as the statement wrote them (#734).

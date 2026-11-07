@@ -2,10 +2,8 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -207,6 +205,7 @@ func planRowSubqueries(expr string) *rowSubqueryPlan {
 // refers to them.
 func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values map[string]interface{}) *StorageExecutor {
 	correlated := e.cloneWithStorage(e.getStorage(ctx))
+	correlated.inputBindingRole = boundScalarBody
 	correlated.fabricRecordBindings = make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
 	for name, value := range e.fabricRecordBindings {
 		correlated.fabricRecordBindings[name] = value
@@ -342,9 +341,8 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 	}
 	// A COLLECT subquery collects one value per row: its RETURN has
 	// exactly one column (Neo4j 5.26 rejects any other RETURN, #907).
-	if len(result.Columns) != 1 {
-		return nil, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCollectSubquery",
-			localization.CypherSubqueriesCollectSingleColumn(len(result.Columns)))
+	if err := collectProjectionError(len(result.Columns), false, observedCollectProjection); err != nil {
+		return nil, false, err
 	}
 	collected := make([]interface{}, 0, len(result.Rows))
 	for _, row := range result.Rows {
@@ -403,62 +401,12 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 			return e.runCorrelatedSubquery(ctx, branch, values)
 		})
 	}
-	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
+	correlated := e.correlatedSubqueryExecutor(ctx, values)
+	outcome := correlated.executePipeline(ctx, query)
 	if outcome.terminal() {
 		return outcome.result, outcome.err
 	}
-	return e.executeCorrelatedSubqueryBody(ctx, query, values)
-}
-
-// executeCorrelatedSubqueryBody runs a subquery body through the full
-// executor with the row's values it uses bound the way MATCH … CALL binds a
-// correlated subquery's imports: a node as MATCH (v) WHERE id(v) = $p, a
-// relationship as MATCH ()-[v]->() WHERE id(v) = $p, any other value as
-// WITH $p AS v. Row parameters stay available.
-func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
-	params := make(map[string]interface{}, len(values))
-	for name, value := range getParamsFromContext(ctx) {
-		params[name] = value
-	}
-	names := make([]string, 0, len(values))
-	for name := range values {
-		if !strings.HasPrefix(name, "$") && containsIdentifierWord(query, name) {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	var prefix strings.Builder
-	carried := make([]string, 0, len(names))
-	for index, name := range names {
-		param := fmt.Sprintf("__subquery_row_%d", index)
-		switch value := values[name].(type) {
-		case *storage.Node:
-			if value == nil {
-				params[param] = nil
-				carried = append(carried, "$"+param+" AS "+name)
-				continue
-			}
-			params[param] = string(value.ID)
-			fmt.Fprintf(&prefix, "MATCH (%s) WHERE id(%s) = $%s ", name, name, param)
-			carried = append(carried, name)
-		case *storage.Edge:
-			if value == nil {
-				params[param] = nil
-				carried = append(carried, "$"+param+" AS "+name)
-				continue
-			}
-			params[param] = string(value.ID)
-			fmt.Fprintf(&prefix, "MATCH ()-[%s]->() WHERE id(%s) = $%s ", name, name, param)
-			carried = append(carried, name)
-		default:
-			params[param] = value
-			carried = append(carried, "$"+param+" AS "+name)
-		}
-	}
-	if len(carried) > 0 {
-		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
-	}
-	return e.executeInternal(ctx, prefix.String()+query, params)
+	return correlated.executeInternal(ctx, query, getParamsFromContext(ctx))
 }
 
 // boundNodeLookupCount counts the rows of a body that is one labelled node
@@ -1043,4 +991,24 @@ func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Nod
 		}
 	}
 	return count
+}
+
+// collectProjectionOrigin preserves the established diagnostics of a declared
+// projection and an observed result while both enforce one COLLECT contract.
+type collectProjectionOrigin uint8
+
+const (
+	declaredCollectProjection collectProjectionOrigin = iota
+	observedCollectProjection
+)
+
+func collectProjectionError(columns int, wildcard bool, origin collectProjectionOrigin) error {
+	if !wildcard && columns == 1 {
+		return nil
+	}
+	message := localization.CypherSubqueriesCollectProjection()
+	if origin == observedCollectProjection && !wildcard {
+		message = localization.CypherSubqueriesCollectSingleColumn(columns)
+	}
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCollectSubquery", message)
 }

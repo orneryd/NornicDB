@@ -56,8 +56,8 @@ func (e *StorageExecutor) statementProjectionProgram(ctx context.Context, query 
 	if schema == nil {
 		program = e.projectedStatementScope(ctx, query, names, resultmetadata.Known(nil), cypher25)
 	} else {
-		compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, schema: schema}
-		program = compiler.root(ctx, names, resultmetadata.Known(nil))
+		compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, schema: schema, role: e.inputBindingRole}
+		program = compiler.compileBound(ctx, names, resultmetadata.Known(nil))
 	}
 	// Cached programs are immutable; participant-dependent compilation never
 	// enters that cache. Both paths expose the same terminal Facts contract.
@@ -95,15 +95,8 @@ func programFailure(reason resultmetadata.UnresolvedReason, position int, err er
 	return &projectedScopeFacts{reason: reason, position: position, err: err}
 }
 
-// compileStatementProgram compiles the execution clause operators and their
-// scope transfers. WITH and RETURN use the same cached projection plans that
-// execute rows; CALL stores its nested program rather than re-inferring exports.
-func (e *StorageExecutor) compileStatementProgram(ctx context.Context, source string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
-	compiler := projectionCompilation{executor: e, source: source, cypher25: cypher25}
-	return compiler.root(ctx, incoming, retained)
-}
-
 type projectionCompilation struct {
+	role     boundBodyRole
 	executor *StorageExecutor
 	source   string
 	cypher25 bool
@@ -118,9 +111,6 @@ type projectionGraph struct {
 	outerIDs   map[string]statementBindingID
 }
 
-func (compiler *projectionCompilation) root(ctx context.Context, incoming, retained resultmetadata.Names) *projectedScopeFacts {
-	return compiler.compileBound(ctx, incoming, retained)
-}
 func statementHasReturningOperator(statement resultmetadata.Statement) bool {
 	if len(statement.Branches) > 0 {
 		for _, branch := range statement.Branches {
@@ -138,7 +128,7 @@ func projectionDescriptor(plan *returnProjectionPlan) resultmetadata.Projection 
 	passThrough := len(plan.projections) > 0
 	for _, item := range plan.projections {
 		expressions = append(expressions, item.expr)
-		passThrough = passThrough && item.direct && item.variable == item.alias
+		passThrough = passThrough && item.direct && !item.grouped && item.variable == item.alias
 	}
 	return resultmetadata.Projection{Expressions: expressions, Names: resultmetadata.Known(plan.columns), Distinct: plan.distinct, Modifiers: plan.modifiers, PassThrough: passThrough}
 }

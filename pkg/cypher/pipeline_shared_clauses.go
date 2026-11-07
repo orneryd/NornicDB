@@ -207,16 +207,29 @@ func (e *StorageExecutor) validateSharedClause(ctx context.Context, scope matchS
 	if err != nil {
 		return err
 	}
+	// LET binds its items in order: an item's expression reads the items
+	// before it (LET a = 1, b = a + 1), never its own alias or a later one.
+	// Every check of an item therefore runs against the bindings reached
+	// before it, and the item's own static type then joins the scope the next
+	// item and the clause's operator check read.
+	types := typeScopeOf(input)
 	for _, projection := range projections {
+		if err := e.validateSubqueryPatternBindings(ctx, input, projection.expression); err != nil {
+			return err
+		}
 		if err := projectionItemTermError(projection.expression); err != nil {
 			return err
 		}
-		if err := undefinedExpressionVariable(ctx, scope, projection.expression); err != nil {
+		if err := undefinedExpressionVariable(ctx, input.kinds, projection.expression); err != nil {
 			return err
 		}
 		if err := validateStaticFunctionVariables(ctx, projection.expression, input); err != nil {
 			return err
 		}
+		types[projection.alias] = projectedOperand(ctx, types, input, projection.expression)
+		next := types.static(input.cypher25)
+		next.params, next.complete = input.params, input.complete
+		input = next
 	}
 	return e.validateStaticOperatorTypes(ctx, clause, input, nil, nil)
 }
@@ -249,6 +262,14 @@ func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input 
 	if err != nil {
 		return nil, err
 	}
-	plan := pipelineRowWith{star: true, projections: projections}
-	return e.pipelineWithRowSource(ctx, input, plan), nil
+	// LET binds its items in order, so an item's expression reads the values
+	// the items before it produced. One WITH row projection per item, keeping
+	// the row's variables (star), is that order: each step evaluates one item
+	// against the row the steps before it built.
+	source := input
+	for _, projection := range projections {
+		plan := pipelineRowWith{star: true, projections: []pipelineRowProjection{projection}}
+		source = e.pipelineWithRowSource(ctx, source, plan)
+	}
+	return source, nil
 }

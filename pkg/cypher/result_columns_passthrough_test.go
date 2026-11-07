@@ -22,6 +22,7 @@ func TestProjectionPassThroughUsesSyntax(t *testing.T) {
 		{"WITH `` AS ``", []string{""}, true},
 		{"WITH 1 AS ``", nil, false},
 		{"WITH (x) AS x", []string{"x"}, false},
+		{"WITH ((x)) AS x", []string{"x"}, false},
 		{"WITH x + 0 AS x", []string{"x"}, false},
 		{"WITH DISTINCT x ORDER BY x", []string{"x"}, true},
 		{"WITH true AS true", nil, false},
