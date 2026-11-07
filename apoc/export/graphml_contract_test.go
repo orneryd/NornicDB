@@ -150,3 +150,15 @@ func TestExportSiblingFileEntryPointsWriteAndReportErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestRegisteredRawExportUsesCanonicalFileWriter(t *testing.T) {
+	require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
+	path := filepath.Join(t.TempDir(), "raw.txt")
+	_, err := apoc.Call("apoc.export.toFile", []interface{}{"content", path})
+	require.NoError(t, err)
+	output, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "content", string(output))
+	_, err = apoc.Call("apoc.export.toFile", []interface{}{"content", t.TempDir()})
+	require.Error(t, err)
+}

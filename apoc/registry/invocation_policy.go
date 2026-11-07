@@ -35,6 +35,7 @@ const (
 // These are signature metadata, never invocable functions. Root APOC's
 // supported surface stays closed; Cypher preserves its text-to-number rules.
 var apocArgumentPlans = map[reflect.Type][]argumentBinding{
+	reflect.TypeOf((func(string, string) error)(nil)):                                           {stringArgument, stringArgument},
 	reflect.TypeOf((func([]*apocexport.Node, []*apocexport.Relationship) (string, error))(nil)): {declaredArgument, declaredArgument},
 	reflect.TypeOf((func([]interface{}) float64)(nil)):                                          {listArgument},
 	reflect.TypeOf((func([]interface{}) interface{})(nil)):                                      {listArgument},

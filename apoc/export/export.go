@@ -37,18 +37,21 @@ type Relationship struct {
 	Properties map[string]interface{}
 }
 
-// writeExportFile is the one owner of an export destination: it creates the
-// parent directory of filePath and writes data there, reporting why the
-// destination could not be written instead of dropping the result. An empty
-// filePath names no destination, so there is nothing to write and no error.
-func writeExportFile(filePath string, data []byte) error {
+// ToFile writes export data to a file, creating its parent directories.
+// An empty destination preserves the established no-file behavior. Directory
+// and file errors are returned to the caller.
+//
+// Example:
+//
+//	err := apocexport.ToFile(document, "/path/to/export.graphml")
+func ToFile(data string, filePath string) error {
 	if filePath == "" {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
+	if err := os.WriteFile(filePath, []byte(data), 0644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 	return nil
@@ -84,7 +87,7 @@ func JsonAll(nodes []*Node, rels []*Relationship, filePath string) error {
 		return err
 	}
 
-	return writeExportFile(filePath, []byte(jsonStr))
+	return ToFile(jsonStr, filePath)
 }
 
 // JsonData exports specific data to JSON.
@@ -133,7 +136,7 @@ func Csv(nodes []*Node, filePath string) error {
 
 	writer.Flush()
 
-	return writeExportFile(filePath, []byte(builder.String()))
+	return ToFile(builder.String(), filePath)
 }
 
 // CsvAll exports all graph data to CSV.
@@ -224,7 +227,7 @@ func Cypher(nodes []*Node, rels []*Relationship) string {
 //
 //	apoc.export.cypher.all('/path/to/export.cypher') => exported
 func CypherAll(nodes []*Node, rels []*Relationship, filePath string) error {
-	return writeExportFile(filePath, []byte(Cypher(nodes, rels)))
+	return ToFile(Cypher(nodes, rels), filePath)
 }
 
 // CypherData exports specific data as Cypher statements.
@@ -292,7 +295,7 @@ func GraphMLAll(nodes []*Node, rels []*Relationship, filePath string) error {
 	if err != nil {
 		return err
 	}
-	return writeExportFile(filePath, []byte(document))
+	return ToFile(document, filePath)
 }
 
 // GraphMLData exports specific data to GraphML.
@@ -388,15 +391,6 @@ func appendValue(out *pool.PooledStringBuilder, val interface{}) {
 	default:
 		fmt.Fprintf(out, "'%v'", v)
 	}
-}
-
-// ToFile writes export data to a file.
-//
-// Example:
-//
-//	apoc.export.toFile(data, '/path/to/file.txt') => written
-func ToFile(data string, filePath string) error {
-	return writeExportFile(filePath, []byte(data))
 }
 
 // ToString returns export data as a string.
