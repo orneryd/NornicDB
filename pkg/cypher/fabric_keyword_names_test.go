@@ -90,3 +90,22 @@ func TestCompositeLegacyImportAndParameterIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(9), int64(7)}}, result.Rows)
 }
+
+func TestNOR72LeadingImportBeforeMatchControls(t *testing.T) {
+	outer := func(name string) bool { return name == "distinct" || name == "not" }
+	for _, tc := range []struct {
+		text string
+		want bool
+	}{
+		{"WITH distinct MATCH (n) RETURN n", true},
+		{"WITH not MATCH (n) RETURN n", true},
+		{"WITH missing MATCH (n) RETURN n", false},
+		{"WITH distinct AS renamed MATCH (n) RETURN n", false},
+		{"WITH distinct WHERE distinct = 1 MATCH (n) RETURN n", false},
+		{"WITH distinct + 1 MATCH (n) RETURN n", false},
+	} {
+		if got := leadingWithBoundNameBeforeMatch(t.Context(), tc.text, outer); got != tc.want {
+			t.Errorf("%q: got %v, want %v", tc.text, got, tc.want)
+		}
+	}
+}

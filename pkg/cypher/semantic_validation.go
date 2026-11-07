@@ -242,6 +242,14 @@ func (e *StorageExecutor) validateUnscopedImportForms(ctx context.Context, body 
 			if len(branch.clauses) == 0 || branch.clauses[0].kind != pipelineClauseWith {
 				continue
 			}
+			// A keyword-named import immediately followed by MATCH can be
+			// retained as part of the WITH expression by the grammar (for
+			// example, WITH distinct MATCH (n)). The established leading-WITH
+			// reader can identify the actual single imported variable and the
+			// following clause without treating the MATCH variable as an import.
+			if leadingWithBoundNameBeforeMatch(ctx, branch.clauses[0].text, outer) {
+				continue
+			}
 			if variable := firstUndefinedImportedName(ctx, projectionItemsFromSyntax(branch.clauses[0].syntax)); variable != "" {
 				return createUndefinedVariableError(variable)
 			}
@@ -259,6 +267,26 @@ func (e *StorageExecutor) validateUnscopedImportForms(ctx context.Context, body 
 		}
 	}
 	return nil
+}
+
+// leadingWithBoundNameBeforeMatch admits only a plain outer variable followed
+// by MATCH. Expressions, missing names and importing WITH modifiers continue
+// through the normal error owner.
+func leadingWithBoundNameBeforeMatch(ctx context.Context, text string, outer func(string) bool) bool {
+	clause, followed := leadingWithClause(text)
+	if !followed {
+		return false
+	}
+	rest := strings.TrimSpace(text[len(clause):])
+	if !startsWithKeywordFold(rest, "MATCH") && !startsWithKeywordFold(rest, "OPTIONAL MATCH") {
+		return false
+	}
+	projection, tail := projectionSemanticBodyAndTail(ctx, clause, "WITH")
+	if strings.TrimSpace(tail) != "" {
+		return false
+	}
+	name := simpleSemanticIdentifier(strings.TrimSpace(projection))
+	return name != "" && outer(name)
 }
 
 // firstUndefinedImportedName is the first name an importing WITH that imports
