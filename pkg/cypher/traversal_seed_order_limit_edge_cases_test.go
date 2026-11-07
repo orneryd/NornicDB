@@ -149,10 +149,10 @@ func TestTraversalCollectStartSeedNodes_InputAndTruncateBranches(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.True(t, used)
-	require.Len(t, nodes, 3)
-	require.Equal(t, storage.NodeID("d-07"), nodes[0].ID)
-	require.Equal(t, storage.NodeID("d-06"), nodes[1].ID)
-	require.Equal(t, storage.NodeID("d-05"), nodes[2].ID)
+	require.Len(t, nodes, 8)
+	for i, node := range nodes {
+		require.Equal(t, storage.NodeID(fmt.Sprintf("d-%02d", 7-i)), node.ID)
+	}
 }
 
 func TestTraversalStartPropertyScan_EmptyCandidateBranch(t *testing.T) {
