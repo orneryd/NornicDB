@@ -118,7 +118,7 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 			index++
 			continue
 		}
-		// Mirror semanticExpressionReferences: a name right after '.' is a
+		// Mirror forEachSemanticExpressionReference: a name right after '.' is a
 		// property key, and a name followed by '(' is a function name — neither
 		// is a variable reference.
 		before := nameStart

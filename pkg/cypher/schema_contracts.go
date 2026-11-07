@@ -258,7 +258,10 @@ func (e *StorageExecutor) parseConstraintContractEntry(ctx context.Context, rawE
 }
 
 func (e *StorageExecutor) parseConstraintContractPrimitive(ctx context.Context, entryText, variable string, entityType storage.ConstraintEntityType, labelOrType, entryName string) (*storage.Constraint, storage.ConstraintContractEntry, bool, error) {
-	if kind, property, ok := parseConstraintPredicate(ctx, entryText); ok {
+	if kind, qualifier, property, ok := parseConstraintPredicate(ctx, entryText); ok {
+		if qualifier != variable {
+			return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property qualifier"), nil)
+		}
 		if kind == "unique" {
 			constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintUnique, EntityType: entityType, Label: labelOrType, Properties: []string{property}}
 			primitiveKind := storage.ConstraintContractKindPrimitiveNode
@@ -314,9 +317,12 @@ func (e *StorageExecutor) parseConstraintContractPrimitive(ctx context.Context, 
 }
 
 func (e *StorageExecutor) parseConstraintContractPropertyType(ctx context.Context, entryText, variable string, entityType storage.ConstraintEntityType, labelOrType, entryName string) (*storage.PropertyTypeConstraint, storage.ConstraintContractEntry, bool, error) {
-	property, typeName, ok := parseConstraintTypePredicate(ctx, entryText)
+	qualifier, property, typeName, ok := parseConstraintTypePredicate(ctx, entryText)
 	if !ok {
 		return nil, storage.ConstraintContractEntry{}, false, nil
+	}
+	if qualifier != variable {
+		return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property qualifier"), nil)
 	}
 	expectedType, err := parsePropertyType(typeName)
 	if err != nil {

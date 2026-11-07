@@ -63,6 +63,20 @@ func TestCreateConstraintQuotedQualifiedPropertyIdentity(t *testing.T) {
 				reference:  "`external.id`",
 			},
 			{
+				name:       "parentheses inside a quoted property remain data",
+				constraint: "CREATE CONSTRAINT punctuation_property FOR (n:PunctuationProperty) REQUIRE (n.`external(id)`) IS UNIQUE",
+				label:      "PunctuationProperty",
+				property:   "external(id)",
+				reference:  "`external(id)`",
+			},
+			{
+				name:       "quoted FOR variable retains its identity",
+				constraint: "CREATE CONSTRAINT bound_variable FOR (`n``.x`:BoundVariable) REQUIRE `n``.x`.`external.id` IS UNIQUE",
+				label:      "BoundVariable",
+				property:   "external.id",
+				reference:  "`external.id`",
+			},
+			{
 				name:       "ordinary qualified property stays qualifier and property",
 				constraint: "CREATE CONSTRAINT plain_property FOR (n:PlainQualified) REQUIRE n.code IS UNIQUE",
 				label:      "PlainQualified",
@@ -109,6 +123,14 @@ func TestCreateConstraintQuotedQualifiedPropertyIdentity(t *testing.T) {
 
 				// Recreating the constraint must also validate existing data
 				// against the exact property, without leaving a failed index.
+				_, err = exec.Execute(ctx, "DROP CONSTRAINT "+constraints[0].Name, nil)
+				require.NoError(t, err)
+				_, err = exec.Execute(ctx, tc.constraint, nil)
+				require.NoError(t, err, "distinct existing values must backfill successfully")
+				require.True(t, exec.storage.GetSchema().MaintainsPropertyIndex(tc.label, tc.property))
+				_, err = exec.Execute(ctx, create, nil)
+				requireErrorStatus(t, err, "Neo.ClientError.Schema.ConstraintValidationFailed", create)
+				require.EqualValues(t, 2, countOf(t, exec, ctx, fmt.Sprintf("MATCH (n:%s) RETURN count(n) AS c", tc.label)))
 				_, err = exec.Execute(ctx, "DROP CONSTRAINT "+constraints[0].Name, nil)
 				require.NoError(t, err)
 				_, err = exec.Execute(ctx, create, nil)

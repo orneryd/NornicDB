@@ -276,17 +276,10 @@ func directSemanticReference(expression string) string {
 	return ""
 }
 
-func semanticExpressionReferences(expression string) []string {
-	references := make([]string, 0, 2)
-	forEachSemanticExpressionReference(expression, func(reference string, _ int) {
-		references = append(references, reference)
-	})
-	return references
-}
-
-// forEachSemanticExpressionReference calls visit with each reference
-// semanticExpressionReferences finds and the offset of its variable.
-func forEachSemanticExpressionReference(expression string, visit func(reference string, at int)) {
+// forEachSemanticExpressionReference visits each decoded variable and its first
+// property separately, preserving dots inside quoted identities. at is the
+// variable's source offset. Returning false stops the walk; true means complete.
+func forEachSemanticExpressionReference(expression string, visit func(variable, property string, hasProperty bool, at int) bool) bool {
 	for index := 0; index < len(expression); {
 		if end := queryGapEnd(expression, index); end > index {
 			index = end
@@ -343,15 +336,19 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		if !isCypherBacktickByte(name[0]) && !propertyAccess && isSemanticLiteralWord(normalized) {
 			continue
 		}
+		propertyName, hasProperty := "", false
 		if propertyAccess {
 			property, propertyEnd, propertyOK := scanSymbolicName(expression, cursor+1)
 			if propertyOK {
-				normalized += "." + normalizePropertyKey(property)
+				propertyName, hasProperty = normalizePropertyKey(property), true
 				index = propertyEnd
 			}
 		}
-		visit(normalized, start)
+		if !visit(normalized, propertyName, hasProperty, start) {
+			return false
+		}
 	}
+	return true
 }
 
 // qualifiedFunctionNameEnd reports whether the name before at continues as
@@ -367,8 +364,7 @@ func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
 }
 
 // semanticFreeReferences returns the variables and variable.property
-// references an expression reads from its scope: the names
-// semanticExpressionReferences finds, without the occurrences that read one
+// references an expression reads from its scope, without occurrences that read one
 // of the expression's own bindings where it is bound (list comprehension,
 // quantifier, reduce and named path variables; localReader) and without anything
 // inside braces (a COUNT / EXISTS / COLLECT subquery binds its own pattern
@@ -386,10 +382,15 @@ func semanticFreeReferencesIn(scopes, text string) []string {
 	locals := newLocalReader(scopes)
 	free := make([]string, 0, 2)
 	// maskSemanticBraceBodies keeps offsets: each one is the scopes text's.
-	forEachSemanticExpressionReference(maskSemanticBraceBodies(text), func(reference string, at int) {
-		if !locals.shadows(strings.SplitN(reference, ".", 2)[0], at) {
+	forEachSemanticExpressionReference(maskSemanticBraceBodies(text), func(variable, property string, hasProperty bool, at int) bool {
+		if !locals.shadows(variable, at) {
+			reference := variable
+			if hasProperty {
+				reference += "." + property
+			}
 			free = append(free, reference)
 		}
+		return true
 	})
 	return free
 }

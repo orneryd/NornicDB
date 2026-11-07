@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Preserve quoted dotted property names in constraint declarations, so uniqueness
-  validation checks the exact property instead of a truncated suffix.
+- Preserve quoted dotted property names in constraints and projected reads.
+  Keep quoted commas inside composite constraint properties and reject property
+  references to a variable other than the declared FOR variable.
 
 - Keep CSV export values under their matching property headers by selecting
   the column order once and reusing it for every row.

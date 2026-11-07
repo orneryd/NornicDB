@@ -870,13 +870,11 @@ func validateStaticFunctionVariablesTyped(ctx context.Context, text string, scop
 		if locals == nil {
 			locals = expressionLocalBindings(text)
 		}
-		for _, reference := range semanticExpressionReferences(expression) {
-			if dot := strings.IndexByte(reference, '.'); dot > 0 {
-				reference = reference[:dot]
-			}
-			if _, local := locals[reference]; local && localVariableShadowsAt(text, at, reference) {
-				return nil // the comprehension owner checks its local types
-			}
+		if !forEachSemanticExpressionReference(expression, func(variable, _ string, _ bool, _ int) bool {
+			_, local := locals[variable]
+			return !local || !localVariableShadowsAt(text, at, variable)
+		}) {
+			return nil // the comprehension owner checks its local types
 		}
 		// The shared CASE result-type owner combines branches before checking
 		// the signature: reject only when no result type fits, otherwise
