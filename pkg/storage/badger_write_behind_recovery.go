@@ -191,9 +191,19 @@ func (b *BadgerEngine) completeRecoveredCounts(ctx context.Context, recoveryErr 
 	if err := b.FlushWriteBehind(ctx); err != nil {
 		return errors.Join(recoveryErr, fmt.Errorf("wal: complete recovered writes: %w", err))
 	}
-	// The replayed commits carried no count deltas; rebuild the derived
-	// counts from committed entities so readers never observe committed
-	// entities without their counts.
+	// The transported records carry no count deltas, while a semantic record
+	// replayed beside them appends its own. Folding cannot reconcile the two:
+	// the semantic delta describes a body the transport already changed without
+	// a matching delta, so the sum underflows. The authoritative recount below
+	// is this boundary's accounting, so it supersedes the replayed delta set
+	// instead of folding it.
+	for _, kind := range []byte{countDeltaKindLabel, countDeltaKindEdgeType} {
+		if discardErr := b.discardCountDeltas(ctx, kind); discardErr != nil {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("wal: discard replayed derived-count deltas: %w", discardErr))
+		}
+	}
+	// Rebuild the derived counts from committed entities so readers never
+	// observe committed entities without their counts.
 	// Completed batches remain durable if a later record fails. Repair their
 	// counts as well, while preserving the original recovery failure.
 	if countErr := b.ensureLabelCounts(ctx); countErr != nil {

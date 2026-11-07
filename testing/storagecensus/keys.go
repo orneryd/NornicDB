@@ -465,8 +465,9 @@ func (k *keys) loadShapes(addr ssa.Value, depth int) []keyShape {
 
 // elementShapes are the shapes of the keys a slice (or array) of keys holds:
 // the elements of its literal, everything appended to it, what the cell or
-// field holding it is set to; a slice a function receives (or a closure
-// captures) is resolved by its callers ("elem").
+// field holding it is set to, and what the function returning it returns; a
+// slice a function receives (or a closure captures) is resolved by its
+// callers ("elem").
 func (k *keys) elementShapes(v ssa.Value, depth int, seen map[ssa.Value]bool) []keyShape {
 	if depth > 24 {
 		return []keyShape{unknownShape("trace too deep")}
@@ -565,23 +566,41 @@ func (k *keys) elementShapes(v ssa.Value, depth int, seen map[ssa.Value]bool) []
 			}
 		}
 	case *ssa.Call:
-		c := v.Common()
-		if b, ok := c.Value.(*ssa.Builtin); ok && b.Name() == "append" && len(c.Args) == 2 {
-			return append(k.elementShapes(c.Args[0], depth+1, seen), k.elementShapes(c.Args[1], depth+1, seen)...)
-		}
-		if callee := c.StaticCallee(); callee != nil && inModule(callee) && callee.Blocks != nil {
-			var out []keyShape
-			for _, b := range callee.Blocks {
-				if ret, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return); ok && len(ret.Results) > 0 {
-					for _, s := range k.elementShapes(ret.Results[0], depth+1, seen) {
-						out = append(out, k.substitute(s, c.Args, v, depth)...)
-					}
-				}
-			}
-			return out
+		return k.callElementShapes(v, 0, depth, seen)
+	case *ssa.Extract:
+		// keys, err := helper(...): the keys the helper returns at the
+		// extracted index, traced through the helper's returns.
+		if call, ok := v.Tuple.(*ssa.Call); ok {
+			return k.callElementShapes(call, v.Index, depth, seen)
 		}
 	}
 	return []keyShape{unknownShape(fmt.Sprintf("slice of keys %T at %s", v, k.p.pos(v.Pos())))}
+}
+
+// callElementShapes traces the keys of the slice a call returns at index:
+// append extends the slice it appends to, and an in-module callee's result is
+// read from its returns, with the callee's parameters replaced by the call's
+// arguments. A result from outside the module, or one the callee does not
+// return as a slice of keys at that index, has no provenance here.
+func (k *keys) callElementShapes(call *ssa.Call, index, depth int, seen map[ssa.Value]bool) []keyShape {
+	c := call.Common()
+	if b, ok := c.Value.(*ssa.Builtin); ok && index == 0 && b.Name() == "append" && len(c.Args) == 2 {
+		return append(k.elementShapes(c.Args[0], depth+1, seen), k.elementShapes(c.Args[1], depth+1, seen)...)
+	}
+	if callee := c.StaticCallee(); callee != nil && inModule(callee) && callee.Blocks != nil {
+		var out []keyShape
+		for _, b := range callee.Blocks {
+			ret, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return)
+			if !ok || index >= len(ret.Results) {
+				continue
+			}
+			for _, s := range k.elementShapes(ret.Results[index], depth+1, seen) {
+				out = append(out, k.substitute(s, c.Args, call, depth)...)
+			}
+		}
+		return out
+	}
+	return []keyShape{unknownShape(fmt.Sprintf("slice of keys %T at %s", call, k.p.pos(call.Pos())))}
 }
 
 // cellShapes are the values stored into a local cell.
