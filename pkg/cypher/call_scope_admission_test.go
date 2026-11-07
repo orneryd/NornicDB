@@ -56,7 +56,7 @@ func TestCallScopeAdmissionBoundaries(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			exec := newCallScopeExecutor(t)
-			admission, err := exec.admitStatement(t.Context(), test.query)
+			admission, err := exec.admitStatement(t.Context(), test.query, fabricAdmission{})
 			require.NoError(t, err)
 			require.True(t, admission.graph, "a CALL subquery statement is a graph statement")
 			require.NoError(t, admission.verifyColumns(test.columns))
@@ -76,7 +76,7 @@ func TestCallScopeAdmissionBoundaries(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			exec := newCallScopeExecutor(t)
-			admission, err := exec.admitStatement(t.Context(), test.query)
+			admission, err := exec.admitStatement(t.Context(), test.query, fabricAdmission{})
 			require.ErrorContains(t, err, "CALL imports must contain only variable names")
 			requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 			require.False(t, admission.graph, "a rejected statement admits no graph statement")
@@ -94,7 +94,7 @@ func TestCallScopeAdmissionBoundaries(t *testing.T) {
 func TestCallScopeUpdatingSubqueryRunsBody(t *testing.T) {
 	exec := newCallScopeExecutor(t)
 	query := "WITH 1 AS x CALL (x) { CREATE (n:CallScopeWrite {v: x}) } RETURN x"
-	admission, err := exec.admitStatement(t.Context(), query)
+	admission, err := exec.admitStatement(t.Context(), query, fabricAdmission{})
 	require.NoError(t, err)
 	require.True(t, admission.graph)
 	require.NoError(t, admission.verifyColumns([]string{"x"}))
@@ -114,7 +114,7 @@ func TestCallScopeAdmissionPreservesCancellation(t *testing.T) {
 	exec := newCallScopeExecutor(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	admission, err := exec.admitStatement(ctx, "WITH 1 AS x CALL (x) { RETURN x AS y } RETURN y")
+	admission, err := exec.admitStatement(ctx, "WITH 1 AS x CALL (x) { RETURN x AS y } RETURN y", fabricAdmission{})
 	require.ErrorIs(t, err, context.Canceled)
 	require.False(t, admission.graph)
 	require.False(t, admission.command)

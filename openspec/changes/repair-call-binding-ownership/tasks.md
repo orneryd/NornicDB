@@ -27,7 +27,9 @@
 - [x] Preserve DISTINCT/function-form diagnostics; focused rejection tests pass (2.307 s).
 - [x] Use shared benchmark storage fixture owner.
 - [x] Verify Bolt identity corpus and fixture ownership guard on integrated source.
-- [ ] Integrate and independently verify Fabric participant admission correction.
+- [x] Integrate and independently verify Fabric participant admission correction (cypher 4.040 s; server 12.341 s); single explicit typed admission entry, no forwarding wrapper.
 - [x] Separate execution admission orchestration from result metadata module and verify boundary guard (2.594 s, including lexical population and public undefined-variable controls).
 - [x] Run remaining failed lexical corpus and focused affected groups (85.353 s); complete affected-package/full-suite qualification still pending.
 - [ ] Push all verified CI corrections and dispatch full sharded make test on the immutable new head.
+
+- Public quoted-column cache-order regression passes on both parsers (1.061 s), covering rejected and accepted statements in both cache orders.

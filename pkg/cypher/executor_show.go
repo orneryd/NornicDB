@@ -674,7 +674,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		after = showReturnStarAsYielded(strings.TrimSpace(body[returnIndex:]), strings.Join(quoted, ", "))
 	}
 	if after != "" {
-		if _, err := e.admitStatement(ctx, showYieldedScopeStatement(outputs)+" "+after); err != nil {
+		if _, err := e.admitStatement(ctx, showYieldedScopeStatement(outputs)+" "+after, fabricAdmission{}); err != nil {
 			return nil, err
 		}
 	}
