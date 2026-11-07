@@ -28,6 +28,7 @@ type returnProjection struct {
 // depends only on the clause text, so it is parsed once per text
 // (returnProjectionPlanFor). valid is false when the clause has no items.
 type returnProjectionPlan struct {
+	err   error
 	valid bool
 	star  bool
 	// starItems are the items after a leading * (RETURN *, x AS y, #883);

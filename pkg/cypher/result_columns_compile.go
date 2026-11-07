@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -453,10 +455,37 @@ func (compilation *boundCompilation) enterClause(ctx context.Context, clause *bo
 			clause.projectionSyntax = append(clause.projectionSyntax, expression)
 		})
 		if !plan.valid {
-			compilation.fail(resultmetadata.ReasonParserDecline, source.start, nil)
+			compilation.fail(resultmetadata.ReasonParserDecline, source.start, plan.err)
 			return
 		}
-		if err := validateDuplicateProjectionNames(plan); err != nil {
+		// Binding uses canonical identifiers; an unaliased expression's public
+		// name retains the client's spelling, including quoted occurrences.
+		var labels []string
+		if names := quotedVariableNamesFor(ctx, compilation.owner.source); names != nil {
+			projections := plan.projections
+			if plan.star {
+				projections = plan.starProjections
+			}
+			labels = make([]string, len(projections))
+			for index, projection := range projections {
+				labels[index] = projection.alias
+				expression := clause.projectionSyntax[index]
+				item, _ := expression.Parent()
+				_, aliased := item.DirectToken(cypherantlr.CypherLexerAS)
+				_, variable, grouped := projectionVariableFromSyntax(expression)
+				if aliased || variable && !grouped {
+					continue
+				}
+				start, end := expression.Span()
+				original, mapped := names.OriginalText(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExactBoundaries, nil)
+				if !mapped {
+					compilation.fail(resultmetadata.ReasonUnsupportedSyntax, source.start, unresolvedStatementError())
+					return
+				}
+				labels[index] = strings.TrimSpace(original)
+			}
+		}
+		if err := validateDuplicateProjectionNames(plan, labels); err != nil {
 			compilation.fail(resultmetadata.ReasonUnsupportedSyntax, source.start, err)
 			return
 		}

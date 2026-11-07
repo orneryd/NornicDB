@@ -586,7 +586,7 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(ctx context.Context,
 			originalText, _ := names.OriginalText(cyphertext.Span{Start: position + len("RETURN"), End: end}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
 			plan = returnProjectionPlanFor(ctx, "RETURN "+strings.TrimSpace(originalText))
 		}
-		if err := validateDuplicateProjectionNames(plan); err != nil {
+		if err := validateDuplicateProjectionNames(plan, nil); err != nil {
 			return err
 		}
 	}
@@ -596,14 +596,17 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(ctx context.Context,
 // validateDuplicateProjectionNames is the column-conflict decision shared by
 // source admission and retained RETURN readers. The caller supplies the plan
 // from its actual input stage; an existing clause is never reparsed here.
-func validateDuplicateProjectionNames(plan *returnProjectionPlan) error {
+func validateDuplicateProjectionNames(plan *returnProjectionPlan, labels []string) error {
 	projections := plan.projections
 	if plan.star {
 		projections = plan.starProjections
 	}
 	seen := make(map[string]struct{}, len(projections))
-	for _, item := range projections {
+	for index, item := range projections {
 		name := item.alias
+		if labels != nil {
+			name = labels[index]
+		}
 		if name == "" {
 			name = strings.TrimSpace(item.expr)
 		}

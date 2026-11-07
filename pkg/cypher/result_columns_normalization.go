@@ -101,7 +101,7 @@ func statementExpressionNameSpans(syntax cypherantlr.StatementSyntax) []statemen
 		if !expression.Valid() {
 			return nil
 		}
-		if _, variable := projectionVariableFromSyntax(expression); variable {
+		if _, variable, grouped := projectionVariableFromSyntax(expression); variable && !grouped {
 			return nil
 		}
 		start, end := expression.Span()

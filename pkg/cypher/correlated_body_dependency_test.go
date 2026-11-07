@@ -137,15 +137,14 @@ func BenchmarkCorrelatedBodyDependencyProof(b *testing.B) {
 		"MATCH (b:Target) RETURN COUNT { RETURN * } AS c",
 	} {
 		b.Run(query, func(b *testing.B) {
-			store := storage.NewMemoryEngine()
-			b.Cleanup(func() { _ = store.Close() })
+			store := newTestMemoryEngine(b)
 			exec := NewStorageExecutor(store)
 			exec.fabricRecordBindings = map[string]interface{}{"a": int64(1)}
 			clauses, ok := canExecuteAsPipeline(b.Context(), query)
 			if !ok {
 				b.Fatal(query)
 			}
-			ctx, err := exec.bindPipelineProgram(context.Background(), clauses, map[string]struct{}{"a": {}})
+			ctx, err := exec.bindPipelineProgram(b.Context(), clauses, map[string]struct{}{"a": {}})
 			if err != nil {
 				b.Fatal(err)
 			}

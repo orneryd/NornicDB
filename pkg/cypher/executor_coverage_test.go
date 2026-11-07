@@ -694,7 +694,9 @@ func TestExecuteDeleteRequiresMATCH(t *testing.T) {
 	// DELETE without MATCH
 	_, err := exec.Execute(ctx, "DETACH DELETE n", nil)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "refers to an undefined variable")
+	assert.Contains(t, err.Error(), "Variable `n` not defined")
+	code, _ := nornicerrors.Neo4jStatus(err)
+	assert.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
 }
 
 func TestExecuteSetRequiresMATCH(t *testing.T) {

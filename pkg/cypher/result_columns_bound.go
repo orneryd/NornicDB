@@ -233,6 +233,14 @@ func (compilation *boundCompilation) bindSymbol(ctx context.Context, clause *bou
 				return
 			}
 		}
+		// A malformed function modifier can be represented as a symbol by the
+		// grammar. Preserve its owned argument/form diagnostic instead of
+		// turning it into an undefined-variable diagnostic. This runs only on
+		// the rejection path and never admits an unresolved binding.
+		if err := validateStaticFunctionArguments(ctx, clause.source.text, compilation.owner.cypher25); err != nil {
+			compilation.fail(resultmetadata.ReasonUnsupportedSyntax, start, err)
+			return
+		}
 		compilation.failUndefined(start, name)
 		return
 	}
