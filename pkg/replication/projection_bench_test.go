@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func BenchmarkStorageAdapterAcceptedProjection(b *testing.B) {
-	engine := storage.NewMemoryEngine()
-	b.Cleanup(func() { _ = engine.Close() })
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter, err := NewStorageAdapterWithWAL(engine, b.TempDir())
 	if err != nil {
 		b.Fatal(err)

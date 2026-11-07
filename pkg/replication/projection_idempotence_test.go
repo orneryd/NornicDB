@@ -16,13 +16,13 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNOR291RaftPendingProjection(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	fixture := setupTestAdapter(t, adapterFixtureOptions{backing: base})
 	r, _ := newCoverageRaftReplicator(t)
 	r.storage = fixture.adapter
@@ -185,8 +185,7 @@ func TestNOR291RetryReturnsOriginalPublicationPosition(t *testing.T) {
 
 func TestNOR291ProjectionFailedAppendCanRetry(t *testing.T) {
 	mode := WALPublished
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	a := setupTestAdapter(t, adapterFixtureOptions{backing: base}).adapter
 	cmd := wireCommand(t, "append-retry", storage.Operation{Type: storage.OpCreateNode, Node: wireNode("n", "value")})
 	cmd.RequestID = "append-retry"
@@ -209,8 +208,7 @@ func TestNOR291ProjectionFailedAppendCanRetry(t *testing.T) {
 
 func TestNOR291ProjectionTailRepairRetainsIdentity(t *testing.T) {
 	mode := WALPublished
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dir := t.TempDir()
 	a, err := NewStorageAdapterWithWAL(base, dir)
 	require.NoError(t, err)
@@ -241,8 +239,7 @@ func TestNOR291ProjectionTailRepairRetainsIdentity(t *testing.T) {
 func TestNOR291ProjectionUnreadableRecordDoesNotSkip(t *testing.T) {
 	for _, record := range []any{map[string]any{"cmd": nil}, map[string]any{"cmd": "invalid"}} {
 		mode := WALPublished
-		base := storage.NewMemoryEngine()
-		t.Cleanup(func() { _ = base.Close() })
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		fixture := setupTestAdapter(t, adapterFixtureOptions{backing: base})
 		a := fixture.adapter
 		// Use the existing JSON WAL owner to construct an unreadable command
