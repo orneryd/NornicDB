@@ -28,7 +28,7 @@
 - [x] Use shared benchmark storage fixture owner.
 - [x] Verify Bolt identity corpus and fixture ownership guard on integrated source.
 - [x] Integrate and independently verify Fabric participant admission correction (cypher 4.040 s; server 12.341 s); single explicit typed admission entry, no forwarding wrapper.
-- [x] Separate execution admission orchestration from result metadata module and verify boundary guard (2.594 s, including lexical population and public undefined-variable controls).
+- [x] Separate execution admission orchestration from result metadata module and verify boundary guard (2.594 s, metadata boundary and public undefined-variable controls; lexical population belongs to internal/cyphertext and was not executed by that command).
 - [x] Run remaining failed lexical corpus and focused affected groups (85.353 s); complete affected-package/full-suite qualification still pending.
 - [ ] Push all verified CI corrections and dispatch full sharded make test on the immutable new head.
 
@@ -40,3 +40,5 @@
 - Preserve grouped variable binding identity independently from the bare-projection PassThrough fact. Retained CST writes grouped once; metadata excludes grouped syntax without changing semantic identity.
 - Focused grouped identity, quoted/cache spelling and pass-through checks pass (2.663 s). Final-head full CI still required; no whole-suite success claimed.
 - Graphify advisory check completed on55ea092e9, indexed baseline35e3bddbf (stale vs releasef45b1a51a). Inventory has14 top-level candidate entries and110 compiler-owner pairs. Dedicated worker is reviewing all entries; no clean-duplicates claim.
+
+- Corrected source-inventory ordering after statement_admission.go move; actual internal/cyphertext TestFoundationLexicalPopulation passes (2.634 s). No inventory entries or rules changed. Superseded run42338766887 canceled; incomplete, not passed.
