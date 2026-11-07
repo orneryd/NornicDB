@@ -6,6 +6,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNOR300CallSubqueryWriteClassification(t *testing.T) {
@@ -27,6 +28,26 @@ func TestNOR300CallSubqueryWriteClassification(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNOR300SuppressionInvalidatesCachedMatch(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor300_cache"), QueryCachePolicy{MaxEntries: 64})
+	ctx := t.Context()
+	_, err := executor.Execute(ctx, "CREATE (:CacheProbe {id: 1})", nil)
+	require.NoError(t, err)
+	const read = "MATCH (n:CacheProbe) RETURN n.id AS id"
+	first, err := executor.Execute(ctx, read, nil)
+	require.NoError(t, err)
+	require.Len(t, first.Rows, 1)
+	_, err = executor.Execute(ctx, read, nil)
+	require.NoError(t, err)
+	hits, _, _, _, _ := executor.cache.Stats()
+	require.Positive(t, hits, "control must exercise the result cache")
+	_, err = executor.Execute(ctx, "MATCH (n:CacheProbe) CALL kp.suppress(n)", nil)
+	require.NoError(t, err)
+	after, err := executor.Execute(ctx, read, nil)
+	require.NoError(t, err)
+	require.Empty(t, after.Rows, "suppressed nodes must not survive a cached MATCH")
 }
 
 func TestNOR300FabricProcedureWriteClassification(t *testing.T) {
