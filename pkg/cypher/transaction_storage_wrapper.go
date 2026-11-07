@@ -392,12 +392,8 @@ func (w *transactionStorageWrapper) UpdateEdge(ctx context.Context, updateReques
 	if w.namespace == "" {
 		return w.tx.UpdateEdge(ctx, updateRequest)
 	}
-	namespaced := storage.CopyEdge(edge)
-	namespaced.ID = w.prefixEdgeID(edge.ID)
-	namespaced.StartNode = w.prefixNodeID(edge.StartNode)
-	namespaced.EndNode = w.prefixNodeID(edge.EndNode)
-	updateRequest.After = namespaced
-	return w.tx.UpdateEdge(ctx, updateRequest)
+	w.initNamespacePrefix()
+	return w.tx.UpdateEdge(ctx, updateRequest.InScope(w.namespacePrefix))
 }
 
 func (w *transactionStorageWrapper) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
