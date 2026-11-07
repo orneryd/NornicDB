@@ -81,3 +81,12 @@ func TestCompositeKeywordParameterIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(7)}}, result.Rows)
 }
+
+func TestCompositeLegacyImportAndParameterIdentity(t *testing.T) {
+	executor := newFabricCallRowsExecutor(t)
+	result, err := executor.Execute(t.Context(),
+		"USE comp WITH 9 AS call CALL { WITH call USE comp.one RETURN call AS a, $call AS b } RETURN a, b",
+		map[string]interface{}{"call": int64(7)})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(9), int64(7)}}, result.Rows)
+}
