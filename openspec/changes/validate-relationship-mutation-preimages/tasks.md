@@ -18,3 +18,9 @@ Independent review follow-up:
 - [x] Use caller-owned namespace scope prefixes rather than re-deriving separators.
 - [x] Cover real peer publication after staging and before COMMIT through public queries, and assert the peer commit actually succeeded.
 - [x] Reviewed-source focused race controls pass twice (storage 11.846s, Cypher 6.819s); source census regenerated with unchanged rules.
+
+Profiled preparation cost:
+- [x] Compare five isolated runs of the existing node preimage workload against unchanged release storage source, with CPU profiles and no concurrent local test runs.
+- [x] Reuse the existing bulk cancellation poller after profiling per-record context checks; retain final error checks and a single-operation fast path.
+- [x] Verify real in-flight fold cancellation and the 100 ms stop budget, plus canceled single-operation admission.
+- [x] Bytes and allocation counts are unchanged in all six workloads. Distinct 100/1000-operation folds improve 26–28%; one distinct operation is unchanged. Repeated 1/100 folds cost about 9 ns/214 ns more (9–10%); 1000 repeated operations cost 3.5% more. This is a preparation microbenchmark, not an end-to-end commit latency claim.

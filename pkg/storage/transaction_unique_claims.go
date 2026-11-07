@@ -13,9 +13,15 @@ func mutationPreimagesLocked[ID comparable, Image any](ctx context.Context, oper
 	if pending == 0 {
 		return nil, false, nil
 	}
+	// A single staged identity needs neither a fold nor a bulk poller. Its
+	// one admission check is already the final record check.
+	if len(operations) == 1 && pending == 1 {
+		return nil, operations[0].Type == updateType, ctx.Err()
+	}
 	updates := 0
+	var cancellation bulkReadCancellation
 	for i := range operations {
-		if err := ctx.Err(); err != nil {
+		if err := cancellation.check(ctx); err != nil {
 			return nil, false, err
 		}
 		if operations[i].Type == updateType {
@@ -23,10 +29,10 @@ func mutationPreimagesLocked[ID comparable, Image any](ctx context.Context, oper
 		}
 	}
 	if updates == 0 {
-		return nil, false, nil
+		return nil, false, ctx.Err()
 	}
 	if updates == len(operations) && updates == pending {
-		return nil, true, nil
+		return nil, true, ctx.Err()
 	}
 	createType, deleteType := OpCreateNode, OpDeleteNode
 	if updateType == OpUpdateEdge {
@@ -34,7 +40,7 @@ func mutationPreimagesLocked[ID comparable, Image any](ctx context.Context, oper
 	}
 	before := make(map[ID]Image, min(updates, pending))
 	for i := range operations {
-		if err := ctx.Err(); err != nil {
+		if err := cancellation.check(ctx); err != nil {
 			return nil, false, err
 		}
 		op := &operations[i]
@@ -53,7 +59,7 @@ func mutationPreimagesLocked[ID comparable, Image any](ctx context.Context, oper
 			}
 		}
 	}
-	return before, false, nil
+	return before, false, ctx.Err()
 }
 
 // nodeClaimPreimage selects the caller's immutable observation when supplied,
