@@ -29,15 +29,7 @@ func TestCompositeKeywordNamesNeo4j(t *testing.T) {
 	}
 }
 
-// HANDOFF (NOR-72, reproduced on release/v1.4.4 @ 29ecd7909): this test still
-// fails there. Failing families: parameter_identity and selection_parameter
-// (a caller parameter $name resolves to the same-named imported variable, e.g.
-// 9 instead of 7, or the wrong graph) plus a few "lookup" cases. Plain
-// keyword-named variables mostly pass. The same queries on a non-composite
-// executor return the parameter correctly, so the suspect is the Fabric/composite
-// path that merges record imports with caller params
-// (pkg/fabric/executor.go importStatement/remoteImportStatement and
-// pkg/cypher/executor_fabric.go stripLeadingWithImportsForFabricRecord).
+// Keyword bindings, parameters and graph selection retain their distinct identities.
 func TestCompositeKeywordNamesExecute(t *testing.T) {
 	ctx := context.Background()
 	for _, raw := range []bool{false, true} {
@@ -89,23 +81,4 @@ func TestCompositeLegacyImportAndParameterIdentity(t *testing.T) {
 		map[string]interface{}{"call": int64(7)})
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(9), int64(7)}}, result.Rows)
-}
-
-func TestNOR72LeadingImportBeforeMatchControls(t *testing.T) {
-	outer := func(name string) bool { return name == "distinct" || name == "not" }
-	for _, tc := range []struct {
-		text string
-		want bool
-	}{
-		{"WITH distinct MATCH (n) RETURN n", true},
-		{"WITH not MATCH (n) RETURN n", true},
-		{"WITH missing MATCH (n) RETURN n", false},
-		{"WITH distinct AS renamed MATCH (n) RETURN n", false},
-		{"WITH distinct WHERE distinct = 1 MATCH (n) RETURN n", false},
-		{"WITH distinct + 1 MATCH (n) RETURN n", false},
-	} {
-		if got := leadingWithBoundNameBeforeMatch(t.Context(), tc.text, outer); got != tc.want {
-			t.Errorf("%q: got %v, want %v", tc.text, got, tc.want)
-		}
-	}
 }

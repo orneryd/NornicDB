@@ -334,19 +334,7 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 		ctx = WithFabricTransaction(ctx, tx)
 		ctx = WithSubTransaction(ctx, sub)
 	}
-	// Legacy fragment imports can be emitted as parameters. Preserve that
-	// fallback without allowing an imported row to overwrite a caller parameter.
-	execParams := params
-	if record, ok := RecordBindingsFromContext(ctx); ok && len(record) > 0 {
-		execParams = make(map[string]interface{}, util.SafePreallocSum(len(params), len(record)))
-		for key, value := range record {
-			execParams[key] = value
-		}
-		for key, value := range params {
-			execParams[key] = value
-		}
-	}
-	return loc, execParams, ctx, nil
+	return loc, params, ctx, nil
 }
 
 // SetGraphAuthorizer installs the statement owner's selection check. Dispatch
