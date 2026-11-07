@@ -1364,6 +1364,21 @@ type StreamingEngine interface {
 	StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error
 }
 
+// ResolveStreamingEngine preserves streaming through transparent tracing
+// decorators while retaining any namespace or transaction boundary. It does
+// not claim the optional capability when the wrapped engine lacks it.
+func ResolveStreamingEngine(engine Engine) (StreamingEngine, bool) {
+	if streamer, ok := engine.(StreamingEngine); ok {
+		return streamer, true
+	}
+	if traced, ok := engine.(*TracedEngine); ok {
+		if inner, ok := ResolveStreamingEngine(traced.Engine); ok {
+			return &tracedStreamingEngine{TracedEngine: traced, inner: inner}, true
+		}
+	}
+	return nil, false
+}
+
 // NodeWithoutEmbeddingsStreamer streams complete node metadata and user
 // properties without loading separately stored embeddings. Snapshot writers
 // use this optional capability because embeddings are intentionally excluded
@@ -1422,7 +1437,7 @@ const StreamChunkSize = 1000
 // Otherwise, it loads all nodes but processes them in chunks.
 func StreamNodesWithFallback(ctx context.Context, engine Engine, chunkSize int, fn NodeVisitor) error {
 	// Try streaming interface first
-	if streamer, ok := engine.(StreamingEngine); ok {
+	if streamer, ok := ResolveStreamingEngine(engine); ok {
 		return streamer.StreamNodes(ctx, fn)
 	}
 
@@ -1456,7 +1471,7 @@ func StreamNodesWithFallback(ctx context.Context, engine Engine, chunkSize int, 
 // StreamEdgesWithFallback provides streaming iteration with fallback.
 func StreamEdgesWithFallback(ctx context.Context, engine Engine, chunkSize int, fn EdgeVisitor) error {
 	// Try streaming interface first
-	if streamer, ok := engine.(StreamingEngine); ok {
+	if streamer, ok := ResolveStreamingEngine(engine); ok {
 		return streamer.StreamEdges(ctx, fn)
 	}
 

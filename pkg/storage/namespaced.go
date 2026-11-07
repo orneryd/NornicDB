@@ -789,7 +789,7 @@ func (n *NamespacedEngine) NodeCount(ctx context.Context) (int64, error) {
 	}
 
 	// Fallback: streaming scan (correct but slower; should be rare in production).
-	if streamer, ok := n.inner.(StreamingEngine); ok {
+	if streamer, ok := ResolveStreamingEngine(n.inner); ok {
 		var count int64
 		var cancel bulkReadCancellation
 		err := streamer.StreamNodes(ctx, func(node *Node) error {
@@ -823,7 +823,7 @@ func (n *NamespacedEngine) NodeCountByLabel(ctx context.Context, label string) (
 
 	var count int64
 	var cancel bulkReadCancellation
-	if streamer, ok := n.inner.(StreamingEngine); ok {
+	if streamer, ok := ResolveStreamingEngine(n.inner); ok {
 		err := streamer.StreamNodes(ctx, func(node *Node) error {
 			if err := cancel.check(ctx); err != nil {
 				return err
@@ -879,7 +879,7 @@ func (n *NamespacedEngine) EdgeCount(ctx context.Context) (int64, error) {
 
 	// Fallback: streaming scan (correct but slower; should be rare in production).
 	var count int64
-	if streamer, ok := n.inner.(StreamingEngine); ok {
+	if streamer, ok := ResolveStreamingEngine(n.inner); ok {
 		var cancel bulkReadCancellation
 		err := streamer.StreamEdges(ctx, func(edge *Edge) error {
 			if err := cancel.check(ctx); err != nil {
@@ -977,7 +977,7 @@ func (n *NamespacedEngine) StreamNodesByPrefixWithoutEmbeddings(ctx context.Cont
 
 // StreamEdges streams edges in the namespace.
 func (n *NamespacedEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
-	if streamer, ok := n.inner.(StreamingEngine); ok {
+	if streamer, ok := ResolveStreamingEngine(n.inner); ok {
 		return streamer.StreamEdges(ctx, func(edge *Edge) error {
 			if n.hasEdgePrefix(edge.ID) {
 				return fn(n.toUserEdge(edge))
@@ -1001,7 +1001,7 @@ func (n *NamespacedEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) 
 
 // StreamNodeChunks streams nodes in chunks.
 func (n *NamespacedEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
-	if streamer, ok := n.inner.(StreamingEngine); ok {
+	if streamer, ok := ResolveStreamingEngine(n.inner); ok {
 		return streamer.StreamNodeChunks(ctx, chunkSize, func(nodes []*Node) error {
 			filtered, err := n.toUserNodesInNamespace(ctx, nodes, false)
 			if err != nil {
