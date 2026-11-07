@@ -23,6 +23,8 @@ const recoveryBatchSize = 1000
 // RecoverIntoEngine restores a snapshot and subsequent WAL entries directly
 // into destination. Framed snapshots and WAL files are processed one record at
 // a time. Physical bodies and name authority are retained one record at a time.
+// The destination must be quiescent until recovery completes; it must not serve
+// concurrent application writers while bodies and derived counts are restored.
 
 func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayResult, RecoveryStreamStatus, error) {
 	result := ReplayResult{Errors: make([]ReplayError, 0)}
@@ -104,7 +106,7 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 			result.Skipped++
 			return nil
 		}
-		if err := ReplayWALEntry(destination, entry); err == nil {
+		if err := replayWALEntry(destination, entry); err == nil {
 			result.Applied++
 		} else if errors.Is(err, ErrAlreadyExists) {
 			result.Skipped++
