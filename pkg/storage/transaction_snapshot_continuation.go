@@ -29,8 +29,15 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(ctx context.Context, preserve
 	if tx.engine.writeBehind != nil {
 		bufferEpoch = tx.engine.writeBehind.readEpoch.Load()
 	}
+	// The next cut is taken as BEGIN takes it: the reservation ledger is
+	// told, the physical snapshot and buffer prefix are pinned, the logical
+	// boundary is read, and the ledger is copied once the old footprint is
+	// validated; a version published meanwhile stays in the ledger for the
+	// copy (mvccReservations).
+	tx.engine.mvccReservations.cutStarted()
 	snapshotTx, badgerReadTs, beginPresence, err := tx.engine.beginTransactionSnapshot(ctx, tx.badgerDB)
 	if err != nil {
+		tx.engine.mvccReservations.cutAbandoned()
 		return err
 	}
 	// Pin the next view before validating the old footprint. A publication
@@ -38,6 +45,7 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(ctx context.Context, preserve
 	// again at commit; no interval can silently erase a write conflict.
 	beginSnapshot, err := tx.engine.snapshotNamespaceVersions(ctx)
 	if err != nil {
+		tx.engine.mvccReservations.cutAbandoned()
 		snapshotTx.Discard()
 		beginPresence.release()
 		tx.badgerDB.endRead(badgerReadTs)
@@ -52,6 +60,7 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(ctx context.Context, preserve
 			err = tx.validateSnapshotIsolationConflicts(ctx)
 		}
 		if err != nil {
+			tx.engine.mvccReservations.cutAbandoned()
 			snapshotTx.Discard()
 			beginPresence.release()
 			tx.badgerDB.endRead(badgerReadTs)
@@ -92,6 +101,8 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(ctx context.Context, preserve
 	tx.lifecycleSeq = lifecycleSeq
 	tx.bufferEpoch = bufferEpoch
 	tx.beginSnapshot = beginSnapshot
+	tx.inflightAtBegin.release()
+	tx.inflightAtBegin = tx.engine.mvccReservations.cutTaken()
 	tx.clearSnapshotCachesLocked()
 	return tx.refreshReadVersionForNamespaceLocked()
 }

@@ -52,7 +52,7 @@ func nodeScanOptions(options []StreamNodesOptions) StreamNodesOptions {
 	if len(options) > 0 {
 		return options[0]
 	}
-	return StreamNodesOptions{WithEmbeddings: true, ApplyDecayFilter: true}
+	return fullNodeStreamOptions("")
 }
 
 func (opts StreamNodesOptions) readVisibility() readVisibility {
