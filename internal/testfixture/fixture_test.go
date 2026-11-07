@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +67,39 @@ func TestOwnCheckedPreservesCloseAssertionsAndDependencyOrder(t *testing.T) {
 	}
 }
 
+func TestOwnWithCloseAssertionAcceptsExpectedAndReportsUnexpectedErrors(t *testing.T) {
+	expected := errors.New("expected terminal close failure")
+	for _, test := range []struct {
+		name        string
+		failure     error
+		wantReports int
+	}{
+		{name: "expected", failure: expected},
+		{name: "unexpected", failure: errors.New("unexpected close failure"), wantReports: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var boundary checkedBoundary
+			var closed []string
+			resource := &failingCloser{
+				recordingCloser: recordingCloser{name: "resource", closed: &closed},
+				failure:         test.failure,
+			}
+			OwnWithCloseAssertion(&boundary, resource, func(err error) bool {
+				return errors.Is(err, expected)
+			})
+
+			boundary.Close()
+
+			if len(boundary.failures) != test.wantReports {
+				t.Fatalf("close failures %v, want %d", boundary.failures, test.wantReports)
+			}
+			if !reflect.DeepEqual(closed, []string{"resource"}) {
+				t.Fatalf("closed %v", closed)
+			}
+		})
+	}
+}
+
 func (resource *recordingCloser) Close() error {
 	*resource.closed = append(*resource.closed, resource.name)
 	return nil
@@ -113,5 +147,23 @@ func TestOwnKeepsFixtureUntilExplicitBoundary(t *testing.T) {
 	boundary.Close()
 	if !reflect.DeepEqual(closed, []string{"process"}) {
 		t.Fatalf("closed %v", closed)
+	}
+}
+
+func TestBoundaryReportsAllCloseFailures(t *testing.T) {
+	var boundary Boundary
+	var closed []string
+	engine := &failingCloser{recordingCloser: recordingCloser{name: "engine", closed: &closed}, failure: errors.New("engine close failed")}
+	wal := &failingCloser{recordingCloser: recordingCloser{name: "wal", closed: &closed}, failure: errors.New("wal close failed")}
+	Own(&boundary, wal, engine)
+	err := boundary.Close()
+	if err == nil || !strings.Contains(err.Error(), "engine close failed") || !strings.Contains(err.Error(), "wal close failed") {
+		t.Fatalf("expected both close errors, got %v", err)
+	}
+	if !reflect.DeepEqual(closed, []string{"engine", "wal"}) {
+		t.Fatalf("close order %v", closed)
+	}
+	if err := boundary.Close(); err != nil {
+		t.Fatalf("repeated close returned stale errors: %v", err)
 	}
 }
