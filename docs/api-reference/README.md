@@ -68,10 +68,8 @@ must add `ctx` to `cypher.QueryPermissionRequirements(ctx, query)`,
 `cypher.TransactionDatabaseError(ctx, databases, txDB, target, query)` and
 `analyzer.Analyze(ctx, query)`. This preserves request cancellation through the
 same owners used during execution; HTTP, Bolt and CLI protocol behavior is unchanged.
-`Analyze` returns `(*QueryInfo, error)`, so callers must handle its error before
-using the analysis; a canceled analysis returns the caller's cancellation.
-`QueryInfo` reports the statement effect through `Writes()` and `ReadOnly()`
-instead of the retired `IsWriteQuery` and `IsReadOnly` fields.
+See [Embedded Go statement effects](#embedded-go-statement-effects-v144-migration)
+for the analysis result and effect-method migration.
 Permission requirements are an intermediate result: use `AuthorizeQuery` for an
 actual authorization decision rather than treating canceled classification as a grant.
 
@@ -146,7 +144,9 @@ permissions remain unchanged.
 Handle its error before using the result. Replace `info.IsWriteQuery` with
 `info.Writes()` and `info.IsReadOnly` with `info.ReadOnly()`. These methods consume
 resolved grammar and registered-procedure effects, refreshed when the procedure
-registry changes; text-shape hints are not effect decisions.
+registry changes; text-shape hints are not effect decisions. Runtime statement
+text remains conservative in these methods. Result-cache eligibility separately
+resolves its bound text and parameters through the canonical execution policy.
 
 `fabric.NewFabricPlanner(catalog, effects)` requires a
 `fabric.StatementEffectReader`. Pass the canonical analyzer rather than a keyword

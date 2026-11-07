@@ -144,6 +144,8 @@ func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "RETURN rand() AS value"}, false},
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "RETURN 1 AS value"}, true},
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CREATE (:Synthetic)"}, false},
+		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CALL missing.unknown()"}, false},
+		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CALL apoc.cypher.run('CREATE (:Synthetic)', {})"}, false},
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript"}}, true},
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"}}, false},
 		{"CALL apoc.cypher.run($statement,{request:$request})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"}}, false},

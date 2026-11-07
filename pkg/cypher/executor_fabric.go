@@ -550,7 +550,7 @@ func fabricStatementEffect(ctx context.Context, query string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return contract.mayWrite(), nil
+	return contract.effect() != statementEffectRead, nil
 }
 
 // fabricProcedureWritePlan resolves the registered CALL contract at statement

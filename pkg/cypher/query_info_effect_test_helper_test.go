@@ -27,8 +27,16 @@ func analyzedReadQueryInfo(readShape bool) *QueryInfo {
 // effect without parsing its text, for a test that supplies the statement's
 // effect itself.
 func analyzedEffectQueryInfo(readShape, writes bool) *QueryInfo {
+	effect := statementEffectRead
+	if writes {
+		effect = statementEffectWrite
+	}
+	return analyzedStatementEffectQueryInfo(readShape, effect)
+}
+
+func analyzedStatementEffectQueryInfo(readShape bool, effect statementEffect) *QueryInfo {
 	ensureBuiltInProceduresRegistered()
 	info := &QueryInfo{readShape: readShape}
-	info.effect.Store(&queryStatementEffect{generation: globalProcedureRegistry.generation.Load() + 1, writes: writes})
+	info.effect.Store(&queryStatementEffect{generation: globalProcedureRegistry.generation.Load() + 1, effect: effect})
 	return info
 }

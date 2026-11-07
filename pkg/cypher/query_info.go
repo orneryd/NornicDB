@@ -90,7 +90,7 @@ type QueryInfo struct {
 // at one procedure registry generation. It is immutable once stored.
 type queryStatementEffect struct {
 	generation uint64
-	writes     bool
+	effect     statementEffect
 }
 
 // ClauseType represents the type of a Cypher clause
@@ -225,11 +225,11 @@ func (info *QueryInfo) refreshStatementEffect(ctx context.Context, text string) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	effect := queryStatementEffect{generation: generation, writes: true}
+	effect := queryStatementEffect{generation: generation, effect: statementEffectWrite}
 	if contract, err := readStatementExecutionContract(ctx, text); err == nil {
 		// An unresolvable procedure keeps its effect unknown, which stays a
 		// write here: no optimization may treat it as read-only.
-		effect.writes = contract.mayWrite()
+		effect.effect = contract.effect()
 	} else if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
@@ -247,14 +247,31 @@ func (info *QueryInfo) refreshStatementEffect(ctx context.Context, text string) 
 // read.
 func (info *QueryInfo) Writes() bool {
 	effect := info.effect.Load()
-	return effect == nil || effect.writes
+	return effect == nil || effect.effect != statementEffectRead
+}
+
+// runtimeEffect reports the statement-effect owner's runtime answer: the
+// statement runs text supplied at execution time and fixes no write of its own,
+// so only the statements it resolved can establish that it wrote. A never-read
+// effect is unknown and is never a resolved runtime read.
+func (info *QueryInfo) runtimeEffect() bool {
+	effect := info.effect.Load()
+	return effect != nil && effect.effect == statementEffectRuntime
+}
+
+// readResult reports the row-returning, non-schema shape of an analysis. It
+// says nothing about effects: each read-only optimization decides separately
+// whether it needs the statement-effect owner's proof or resolves the bound
+// execution policy instead.
+func (info *QueryInfo) readResult() bool {
+	return info.readShape && !info.HasSchema
 }
 
 // ReadOnly reports a statement that changes nothing and returns rows, so the
 // read-only optimizations (result caching, streaming, vector-free node reads)
 // may serve it.
 func (info *QueryInfo) ReadOnly() bool {
-	return !info.Writes() && !info.HasSchema && info.readShape
+	return !info.Writes() && info.readResult()
 }
 
 // ClearCache clears the analysis cache.

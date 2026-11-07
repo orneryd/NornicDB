@@ -18,11 +18,36 @@ type statementExecutionContract struct {
 	stateChange bool
 }
 
-// mayWrite is the conservative effect used by optimization and routing owners.
-// Catalog changes and unresolved procedures must not acquire a read-only path;
-// transaction and permission owners retain their separate data-write flags.
-func (c statementExecutionContract) mayWrite() bool {
-	return c.writes || c.stateChange || c.dynamic || c.unknownProcedure
+// statementEffect is this contract's effect classification.
+//
+// statementEffectWrite is a statement whose writes are fixed by its text and
+// the live registry: grammar updating clauses, a registered WRITE or SCHEMA
+// procedure, ordinary schema DDL, a catalog/administration mutation or an
+// unresolved procedure.
+//
+// statementEffectRuntime is a statement that runs statement text supplied at
+// execution time and fixes no write of its own. Whether it writes is decided
+// when that text is resolved against the caller's parameters, so an owner that
+// needs a proven read must resolve the policy instead of refusing the
+// statement; an owner that only needs "no read-only path" still treats it as a
+// write.
+type statementEffect int
+
+const (
+	statementEffectRead statementEffect = iota
+	statementEffectWrite
+	statementEffectRuntime
+)
+
+// effect is the one owner of this contract's effect classification.
+func (c statementExecutionContract) effect() statementEffect {
+	switch {
+	case c.writes || c.stateChange || c.unknownProcedure:
+		return statementEffectWrite
+	case c.dynamic:
+		return statementEffectRuntime
+	}
+	return statementEffectRead
 }
 
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {

@@ -22,11 +22,15 @@ admission owner's responsibility.
 
 ## Cache and routing consumers
 
-The executor uses the resolved effect to decide whether result caching,
-read-only streaming and vector-free node reads are eligible. Result caching also
-requires the existing transaction, selection, determinism, revision, parameter
-and decay-policy checks; a read effect alone does not make a query cacheable.
-Writes invalidate result-cache entries through the existing invalidation owner.
+Read-only streaming and vector-free reads require the conservative static read
+effect. Result caching instead combines the row-returning shape with the bound
+execution policy: a runtime statement such as `apoc.cypher.run` is eligible only
+when every declared nested statement and parameter override resolves to a
+deterministic read. Unknown or writing nested text remains ineligible. Existing
+transaction, selection, revision, principal, continuation and decay-policy checks
+still apply. The statement completion owner invalidates entries for fixed writes
+and for runtime statements whose resolved execution recorded a write; a resolved
+runtime read does not discard its newly cached result.
 
 Fabric planners require an effect reader for each executable fragment and
 propagate its errors. The Cypher executor supplies the same execution contract;

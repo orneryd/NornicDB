@@ -23,7 +23,7 @@
 ## Later independent findings
 
 - Warm-cache cancellation fail-first reproduced; corrected and focused checks pass.
-- Catalog DROP DATABASE / DROP ALIAS false-read reproduced; stateChange fact and canonical mayWrite decision preserve existing data-write permission and transaction flags. Focused controls pass (3.254 s).
+- Catalog DROP DATABASE / DROP ALIAS false-read reproduced; stateChange fact and canonical statement-effect decision preserve existing data-write permission and transaction flags. Focused controls pass (3.254 s).
 - Schema-mode procedure effect fail-first reproduced after adding the mode to live registry tests; corrected using ProcedureSpec.writes without promoting schema procedures to data-write transactions. Focused integrated controls pass (1.056 s).
 - Fabric and storage routing still have independent write classifiers; exported contract proposal is pending maintainer choice. Public fail-first evidence is retained, not waived.
 - SHOW CONSTRAINTS plain-header proposal is incomplete: 12 public EXPLAIN/PROFILE YIELD/RETURN/alias controls fail on both actual parsers. Follow-up worker must propose retained-tail composition in the canonical owner; no individual text-tail workaround.

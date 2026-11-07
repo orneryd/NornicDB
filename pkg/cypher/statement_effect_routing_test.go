@@ -22,7 +22,7 @@ func TestRoutingConsumersFollowRegisteredWriteEffect(t *testing.T) {
 		require.True(t, execution.IsWrite)
 	})
 	t.Run("storage routing analysis", func(t *testing.T) {
-		info := storage.NewQueryAnalyzer().AnalyzeQuery(query, contract.mayWrite())
+		info := storage.NewQueryAnalyzer().AnalyzeQuery(query, contract.effect() != statementEffectRead)
 		require.True(t, info.IsWrite)
 	})
 }
@@ -56,7 +56,7 @@ func TestCatalogWriteEffectPreservesTransactionOwnership(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, contract.transaction, "catalog owner must retain its transaction lifetime")
 			require.False(t, contract.writes, "catalog mutation is not a graph-data WRITE privilege")
-			require.Equal(t, tc.writes, contract.mayWrite())
+			require.Equal(t, tc.writes, contract.effect() != statementEffectRead)
 			original := &fabric.FragmentExec{Query: tc.query, GraphName: "nornic"}
 			resolved, err := exec.fabricProcedureWritePlan(t.Context(), original)
 			require.NoError(t, err)

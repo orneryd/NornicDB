@@ -1088,7 +1088,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		e.cache.putWithLabelsAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace(), embeddingGeneration)
 	}
 
-	e.invalidateCachesForQuery(info, cypher)
+	e.invalidateCachesForQuery(ctx, info, cypher)
 
 	return result, err
 }

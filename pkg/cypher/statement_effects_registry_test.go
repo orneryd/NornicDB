@@ -25,7 +25,7 @@ func TestStatementEffectsResolveLiveProcedureModes(t *testing.T) {
 		require.True(t, contract.calls)
 		require.False(t, contract.unknownProcedure)
 		require.Equal(t, mode == ProcedureModeWrite, contract.writes, "cached syntax cannot cache live registry policy")
-		require.Equal(t, mode != ProcedureModeRead, contract.mayWrite(), "schema procedures change state without becoming data-write transactions")
+		require.Equal(t, mode != ProcedureModeRead, contract.effect() != statementEffectRead, "schema procedures change state without becoming data-write transactions")
 		require.Equal(t, mode == ProcedureModeWrite, contract.transaction)
 	}
 	require.False(t, syntax.Effects().Writes(), "the immutable grammar product contains no registry decision")

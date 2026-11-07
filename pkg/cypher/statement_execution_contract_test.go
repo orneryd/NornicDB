@@ -17,6 +17,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The contract classifies three effects: a fixed read, a fixed write and text
+// whose statements decide at execution time. Only the first two are decided by
+// the statement's own text and the live registry.
+func TestStatementEffectClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name, query string
+		effect      statementEffect
+	}{
+		{"literal read", "RETURN 1 AS value", statementEffectRead},
+		{"registered read procedure", "CALL db.labels() YIELD label RETURN label", statementEffectRead},
+		{"grammar write", "CREATE (:EffectProbe)", statementEffectWrite},
+		{"catalog mutation", "DROP DATABASE effect_fixture IF EXISTS", statementEffectWrite},
+		{"unresolved procedure", "CALL missing.unknown() YIELD value RETURN value", statementEffectWrite},
+		{"runtime statement text", "CALL apoc.cypher.run('RETURN 1 AS value', {}) YIELD value RETURN value", statementEffectRuntime},
+		{"runtime statement text with a write inside", "CALL apoc.cypher.run('CREATE (:EffectProbe)', {}) YIELD value RETURN value", statementEffectRuntime},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			contract, err := readStatementExecutionContract(t.Context(), tc.query)
+			require.NoError(t, err)
+			require.Equal(t, tc.effect, contract.effect())
+		})
+	}
+}
+
 func TestStatementExecutionIgnoresLiteralContents(t *testing.T) {
 	for _, keyword := range []string{"CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH", "CALL"} {
 		for _, form := range []string{"string", "comment", "line-comment", "parameter", "map-key", "quoted-key", "property", "variable"} {

@@ -31,7 +31,7 @@ type AST struct {
 	RawQuery  string
 	QueryType QueryType
 	// IsReadOnly is the statement-effect owner's answer for the text this AST
-	// was built from (readStatementExecutionContract.mayWrite, negated). It is
+	// was built from (readStatementExecutionContract.effect, proven read). It is
 	// not a scan of Clauses: a procedure mode, a schema change or an
 	// unresolved procedure decides the statement without a clause kind that
 	// exposes it. A published AST is immutable; QueryInfo.GetAST publishes a
@@ -355,7 +355,7 @@ func (b *ASTBuilder) Build(ctx context.Context, cypher string) (*AST, error) {
 	}
 	readOnly := false
 	if contract, err := readStatementExecutionContract(ctx, source.Text); err == nil {
-		readOnly = !contract.mayWrite()
+		readOnly = contract.effect() == statementEffectRead
 	} else if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
