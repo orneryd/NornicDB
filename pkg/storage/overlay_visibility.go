@@ -166,6 +166,8 @@ func (w *WriteBehindBuffer) commitsAfterBegin(ctx context.Context, begin *transa
 		if begin != nil && buf == begin.active {
 			first = len(begin.commits)
 		} else if begin != nil {
+			// Rotation never appends to draining generations and always
+			// installs a fresh active buffer; captured draining cuts are whole.
 			for _, captured := range begin.draining {
 				if captured == buf {
 					first = len(buf.commits)

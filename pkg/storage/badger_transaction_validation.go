@@ -314,6 +314,15 @@ func (tx *BadgerTransaction) validateMutationPredecessor(ctx context.Context, ki
 	if !head.Tombstoned {
 		return nil
 	}
+	present, err := tx.engine.readStoredPresence(ctx, kind, id)
+	if err != nil {
+		return &CommitFailureError{Cause: err}
+	}
+	if present {
+		// A pre-BEGIN acknowledged re-create may still cover this stored
+		// tombstone. Presence belongs to the current coherent read owner.
+		return nil
+	}
 operations:
 	for index := range tx.operations {
 		if err := ctx.Err(); err != nil {
@@ -400,32 +409,25 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(ctx context.Context, edg
 			}
 		}
 		head, err := tx.endpointHead(ctx, nodeID)
-		if err == ErrNotFound {
-			if _, nodeErr := tx.engine.GetStoredNode(ctx, nodeID); nodeErr == nil {
-				continue
-			} else if nodeErr == ErrNotFound {
-				return missingEndpoint(nodeID)
-			} else {
-				return &CommitFailureError{Cause: nodeErr}
-			}
-		}
-		if err != nil {
+		if err != nil && err != ErrNotFound {
 			return &CommitFailureError{Cause: err}
 		}
-		if head.Tombstoned {
-			// An acknowledged re-create the write-behind buffer has not
-			// applied yet is the endpoint's current state.
-			if _, nodeErr := tx.engine.GetStoredNode(ctx, nodeID); nodeErr == nil {
+		if err == ErrNotFound || head.Tombstoned {
+			present, readErr := tx.engine.readStoredPresence(ctx, bufferedNodeEntity, string(nodeID))
+			if readErr != nil {
+				return &CommitFailureError{Cause: readErr}
+			}
+			if present {
 				continue
-			} else if nodeErr != ErrNotFound {
-				return &CommitFailureError{Cause: nodeErr}
 			}
-			conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
-			if err != nil {
-				return &CommitFailureError{Cause: err}
-			}
-			if conflict {
-				return localizedError(localization.StorageTransactionEndpointDeleted(string(nodeID)), ErrConflict)
+			if err == nil {
+				conflict, readErr := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
+				if readErr != nil {
+					return &CommitFailureError{Cause: readErr}
+				}
+				if conflict {
+					return localizedError(localization.StorageTransactionEndpointDeleted(string(nodeID)), ErrConflict)
+				}
 			}
 			return missingEndpoint(nodeID)
 		}
