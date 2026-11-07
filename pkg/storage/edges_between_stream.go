@@ -30,8 +30,30 @@ func MatchEdgesBetween(ctx context.Context, engine Engine, startID, endID NodeID
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if match == nil {
+		return nil, ErrInvalidData
+	}
 	if matcher, ok := engine.(EdgesBetweenMatcher); ok {
 		return matcher.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match)
+	}
+	// These decorators preserve the logical read view. A namespace is a
+	// boundary, not a transparent unwrap: translate IDs on both sides and
+	// never expose another namespace to the predicate.
+	switch wrapped := engine.(type) {
+	case *TracedEngine:
+		span := wrapped.startOperation("nornicdb.storage.MatchEdgesBetween", "edge")
+		defer span.End()
+		return MatchEdgesBetween(ctx, wrapped.Engine, startID, endID, edgeType, properties, match)
+	case *WALEngine:
+		return MatchEdgesBetween(ctx, wrapped.engine, startID, endID, edgeType, properties, match)
+	case *NamespacedEngine:
+		edges, err := MatchEdgesBetween(ctx, wrapped.inner, wrapped.PrefixNodeID(startID), wrapped.PrefixNodeID(endID), edgeType, properties, func(edge *Edge) bool {
+			return edge != nil && wrapped.hasEdgePrefix(edge.ID) && match(wrapped.toUserEdge(edge))
+		})
+		if err != nil {
+			return nil, err
+		}
+		return wrapped.toUserEdgesInNamespace(ctx, edges, true, true)
 	}
 	edges, err := engine.GetEdgesBetween(ctx, startID, endID)
 	if err != nil {

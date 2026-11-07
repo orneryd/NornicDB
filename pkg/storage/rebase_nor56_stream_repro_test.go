@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 type nor56StreamingProbe struct {
@@ -29,8 +31,7 @@ func (p *nor56StreamingProbe) StreamNodeChunks(ctx context.Context, _ int, fn fu
 }
 
 func TestRebaseNOR56TracedStreamingConsumer(t *testing.T) {
-	base := NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
+	base := fixtureowner.Own(t, fixtureowner.Track(t, NewMemoryEngine(), ErrStorageClosed))
 	probe := &nor56StreamingProbe{Engine: base, node: &Node{ID: "tenant:one"}}
 	for _, tc := range []struct {
 		name   string
@@ -50,8 +51,7 @@ func TestRebaseNOR56TracedStreamingConsumer(t *testing.T) {
 }
 
 func TestRebaseNOR56StreamingResolutionContract(t *testing.T) {
-	base := NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
+	base := fixtureowner.Own(t, fixtureowner.Track(t, NewMemoryEngine(), ErrStorageClosed))
 	probe := &nor56StreamingProbe{Engine: base, node: &Node{ID: "tenant:one"}}
 	for _, engine := range []Engine{probe, NewTracedEngine(probe), NewTracedEngine(NewTracedEngine(probe))} {
 		streamer, ok := ResolveStreamingEngine(engine)
@@ -77,8 +77,7 @@ func TestRebaseNOR56StreamingResolutionContract(t *testing.T) {
 }
 
 func TestRebaseNOR56TracedChunksRespectNamespace(t *testing.T) {
-	base := NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
+	base := fixtureowner.Own(t, fixtureowner.Track(t, NewMemoryEngine(), ErrStorageClosed))
 	a := NewNamespacedEngine(base, "a")
 	b := NewNamespacedEngine(base, "b")
 	for _, tenant := range []*NamespacedEngine{a, b} {
