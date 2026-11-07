@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep CSV export values under their matching property headers by selecting
+  the column order once and reusing it for every row.
+
 - Reconcile recovered label and relationship-type counts with replayed graph
   bodies after single-entry WAL replay and mixed physical/semantic recovery.
   Prevent relabel-then-delete recovery from failing with a count underflow.
@@ -26,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject stale relationship property updates under write-behind, including
   peers whose commit version was reserved before BEGIN. Preserve the observed
   relationship namespace across implicit and explicit query updates.
+- Require the existing APOC export capability for Go file exporters and share
+  the rooted destination writer with native procedures. File helpers are now
+  context-first; redundant Go aliases are retired in favor of canonical writers.
+  See [the migration guide](docs/development/graphml-go-api.md).
+
+- Preserve XML-special characters and Unicode in GraphML export; reject text XML
+  cannot represent and report file export failures. Go `GraphML` now returns
+  `(string, error)`; see [the migration guide](docs/development/graphml-go-api.md).
 
 - Return the normal syntax error for zero-argument `normalize()` calls instead
   of closing the Bolt connection. Preserve ambiguous-aggregation diagnostics
