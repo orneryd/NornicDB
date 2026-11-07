@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject stale relationship property updates under write-behind, including
+  peers whose commit version was reserved before BEGIN. Preserve the observed
+  relationship namespace across implicit and explicit query updates.
+
 - Return the normal syntax error for zero-argument `normalize()` calls instead
   of closing the Bolt connection. Preserve ambiguous-aggregation diagnostics
   for invalid ORDER BY expressions following RETURN or WITH grouping.
