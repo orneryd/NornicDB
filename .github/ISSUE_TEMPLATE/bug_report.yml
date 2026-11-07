@@ -1,0 +1,76 @@
+name: Bug report
+description: Report incorrect behavior, a crash, or an error.
+title: '[BUG] '
+labels:
+- bug
+body:
+- type: markdown
+  attributes:
+    value: Thanks for helping improve NornicDB! Search existing issues first. Share only what you know;
+      never include passwords, API keys, private data, or sensitive logs.
+- type: textarea
+  id: problem
+  attributes:
+    label: Problem and impact
+    description: What is broken, missing, or difficult? Who is affected and how?
+  validations:
+    required: true
+- type: textarea
+  id: journey
+  attributes:
+    label: User journey and steps to reproduce
+    description: Provide a minimal setup, dataset, configuration, query, or code example, and numbered
+      steps if possible.
+  validations:
+    required: true
+- type: textarea
+  id: expected
+  attributes:
+    label: Expected behavior
+    description: What did you expect? Link a reference if relevant.
+  validations:
+    required: true
+- type: textarea
+  id: actual
+  attributes:
+    label: Actual behavior and evidence
+    description: What happened instead? Include sanitized output, errors, logs, screenshots, or a reproducible
+      example.
+  validations:
+    required: true
+- type: textarea
+  id: acceptance
+  attributes:
+    label: Desired outcome
+    description: What would a successful fix allow you to do? Include relevant cases or boundaries if
+      known.
+- type: textarea
+  id: alternatives
+  attributes:
+    label: Workarounds or alternatives
+    description: What have you tried, and did it help? Other ideas are welcome.
+- type: textarea
+  id: matrix
+  attributes:
+    label: Scenarios to check
+    description: If known, list examples, regression cases, or environments in which this does or does
+      not happen.
+- type: textarea
+  id: environment
+  attributes:
+    label: Environment
+    description: Include NornicDB version or image/commit, OS and architecture, deployment, relevant configuration,
+      and client/driver version if known.
+  validations:
+    required: true
+- type: textarea
+  id: implementation
+  attributes:
+    label: Possible implementation areas
+    description: 'Optional: suggest affected components or an approach if you know them. A proposed solution
+      is not required.'
+- type: textarea
+  id: related
+  attributes:
+    label: Related work and context
+    description: Link related issues, discussions, documentation, or reference behavior.
