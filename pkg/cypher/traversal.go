@@ -319,7 +319,8 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if earlyLimit == 0 {
 		return result, nil
 	}
-	if earlyLimit > 0 && whereClause == "" {
+	repeatedEndpoint := matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable
+	if earlyLimit > 0 && whereClause == "" && !repeatedEndpoint {
 		matches.TraversalLimit = earlyLimit
 	}
 
@@ -444,7 +445,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
 		}
 	}
-	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
+	if repeatedEndpoint {
 		filtered := paths[:0]
 		for _, path := range paths {
 			if len(path.Nodes) > 0 && path.Nodes[0].Identity() == path.Nodes[len(path.Nodes)-1].Identity() {
@@ -600,9 +601,40 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 		if !used {
 			return nil, false, nil
 		}
-		result, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, nil, -1)
-		if err != nil {
-			return nil, true, err
+		var result *ExecuteResult
+		for _, seed := range seedNodes {
+			if err := ctx.Err(); err != nil {
+				return nil, true, err
+			}
+			part, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, []*storage.Node{seed}, nil, pathVariable, nil, -1)
+			if err != nil {
+				return nil, true, err
+			}
+			if result == nil {
+				result = part
+			} else {
+				result.Rows = append(result.Rows, part.Rows...)
+			}
+			if len(result.Rows) >= limit {
+				break
+			}
+		}
+		if result == nil {
+			// Preserve the existing empty-index behavior and result columns.
+			result, err = e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, nil, -1)
+			if err != nil {
+				return nil, true, err
+			}
+		}
+		// A bounded seed window is conclusive only after the relationship
+		// pattern has produced enough rows, or the index window is exhausted.
+		// Otherwise later seeds may be the first ones with qualifying paths.
+		if len(result.Rows) < limit && len(seedNodes) >= topKSeedLimit(limit) {
+			return nil, false, nil
+		}
+		if len(result.Rows) > limit {
+			clear(result.Rows[limit:])
+			result.Rows = result.Rows[:limit]
 		}
 		e.markTraversalStartSeedTopKUsed()
 		return result, true, nil
@@ -811,12 +843,6 @@ func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, orderExpr, topKSeedLimit(limit), indexOrderGeneral)
 	if err != nil || !used {
 		return nil, used, err
-	}
-
-	if len(seedNodes) > limit {
-		if topK, ok := e.selectTopKNodesByOrder(ctx, seedNodes, nodePattern.variable, orderExpr, limit); ok {
-			seedNodes = topK
-		}
 	}
 
 	return seedNodes, true, nil
