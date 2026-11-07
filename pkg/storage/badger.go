@@ -363,6 +363,9 @@ type BadgerEngine struct {
 	mvccByNamespaceMu    sync.RWMutex
 	mvccByNamespace      map[string]*namespaceMVCCState
 	mvccLegacyGlobalSeed uint64
+	// mvccReservations lists the versions reserved by writes that have not
+	// published yet; a transaction's cut copies it (mvccReservations).
+	mvccReservations mvccReservations
 
 	retentionPolicy           RetentionPolicy
 	activeMVCCSnapshotReaders atomic.Int64
@@ -1347,20 +1350,26 @@ func (b *BadgerEngine) loadPersistedMVCCSequence() (uint64, error) {
 // allocated-but-unpersisted sequences, which is reconciled by the
 // startup max-of-persisted-and-legacy floor.
 func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
-	_ = txn // intentionally unused — see doc above
 	state, err := b.namespaceMVCC(namespace)
 	if err != nil {
 		return MVCCVersion{}, err
 	}
-	seq, saturated := state.nextSequence()
-	commitStamp, err := state.reserveCommitTimestamp(commitTime.UTC(), saturated)
+	// The version is reserved, not published: the sequence advances, the
+	// timestamp is fixed and the ledger enters the version in one step, and
+	// the ledger holds it under the writer's transaction until the write
+	// publishes or is abandoned.
+	return b.mvccReservations.reserve(txn, namespace, state, commitTime, false)
+}
+
+// allocateHistoricalMVCCVersion is allocateMVCCVersion for a bootstrap head:
+// the version keeps the entity's own time instead of being floored at the
+// latest transaction cut, because it describes state that existed before.
+func (b *BadgerEngine) allocateHistoricalMVCCVersion(txn *badger.Txn, namespace string, entityTime time.Time) (MVCCVersion, error) {
+	state, err := b.namespaceMVCC(namespace)
 	if err != nil {
 		return MVCCVersion{}, err
 	}
-	return MVCCVersion{
-		CommitTimestamp: commitStamp,
-		CommitSequence:  seq,
-	}, nil
+	return b.mvccReservations.reserve(txn, namespace, state, entityTime, true)
 }
 
 // persistMVCCSequence writes the namespace's current sequence to disk in

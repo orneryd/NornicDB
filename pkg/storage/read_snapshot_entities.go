@@ -20,7 +20,7 @@ func (s *badgerReadSnapshot) ReadNode(ctx context.Context, id NodeID) (*Node, er
 			if err != nil {
 				return nil, err
 			}
-			node, err := s.b.readStreamNodeItem(ctx, txn, item, StreamNodesOptions{WithEmbeddings: true, ApplyDecayFilter: true}, nil, DecayScoringTime(), false)
+			node, err := s.b.readStreamNodeItem(ctx, txn, item, fullNodeStreamOptions(""), nil, DecayScoringTime(), false)
 			if err != nil {
 				return nil, err
 			}

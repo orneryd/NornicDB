@@ -1844,7 +1844,7 @@ func mvccBootstrapHeadPending[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *
 func writeMVCCBootstrapHead[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, txn *badger.Txn, id ID, entity E) error {
 	var kind M
 	createdAt, updatedAt := kind.entityTimes(entity)
-	version, err := b.allocateMVCCVersion(txn, kind.entityNamespace(entity), mvccBootstrapTime(createdAt, updatedAt))
+	version, err := b.allocateHistoricalMVCCVersion(txn, kind.entityNamespace(entity), mvccBootstrapTime(createdAt, updatedAt))
 	if err != nil {
 		return err
 	}

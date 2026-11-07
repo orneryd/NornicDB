@@ -856,6 +856,16 @@ type StreamNodesOptions struct {
 	PropertyStringEquals map[string]string
 }
 
+// fullNodeStreamOptions is the one read policy of a full node stream a
+// consumer sees: StreamNodes, StreamNodeChunks and StreamNodesByPrefix, on the
+// engine and on every wrapper. It reads complete bodies with their stored
+// vectors and applies the visibility layer, as a visible read does. A stored
+// read of every node, hidden ones included, sets its own options
+// (StreamStoredNodes).
+func fullNodeStreamOptions(prefix string) StreamNodesOptions {
+	return StreamNodesOptions{Prefix: prefix, WithEmbeddings: true, ApplyDecayFilter: true}
+}
+
 // StreamNodesWithOptions iterates nodes one at a time without materializing
 // them, honoring prefix scoping, property projection, embedding and decay
 // options. Full scans use value prefetching; prefix scans use key-only seeks.
@@ -1084,7 +1094,7 @@ func (b *BadgerEngine) readStreamNodeItem(ctx context.Context, txn *badger.Txn, 
 // StreamNodes implements StreamingEngine.StreamNodes for memory-efficient iteration.
 // Iterates through all nodes one at a time without loading all into memory.
 func (b *BadgerEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
-	return b.StreamNodesWithOptions(ctx, StreamNodesOptions{WithEmbeddings: true, ApplyDecayFilter: true}, fn)
+	return b.StreamNodesWithOptions(ctx, fullNodeStreamOptions(""), fn)
 }
 
 // StreamNodesWithoutEmbeddings iterates complete node records without reading
@@ -1097,7 +1107,7 @@ func (b *BadgerEngine) StreamNodesWithoutEmbeddings(ctx context.Context, fn func
 // This is significantly faster than full StreamNodes + callback filtering when
 // tenants/databases share a physical store.
 func (b *BadgerEngine) StreamNodesByPrefix(ctx context.Context, prefix string, fn func(node *Node) error) error {
-	return b.StreamNodesWithOptions(ctx, StreamNodesOptions{Prefix: prefix, WithEmbeddings: true, ApplyDecayFilter: true}, fn)
+	return b.StreamNodesWithOptions(ctx, fullNodeStreamOptions(prefix), fn)
 }
 
 // StreamNodesByPrefixProjected streams nodes whose IDs start with prefix while
@@ -1200,15 +1210,16 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	return nil
 }
 
-// StreamNodeChunks implements StreamingEngine.StreamNodeChunks for batch processing.
-// Iterates through nodes in chunks, more efficient for batch operations.
+// StreamNodeChunks implements StreamingEngine.StreamNodeChunks for batch
+// processing. It batches the node stream, so a chunk holds exactly the nodes
+// StreamNodes publishes: the same bodies, vectors and visibility.
 func (b *BadgerEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
 	if chunkSize <= 0 {
 		chunkSize = 1000
 	}
 	chunk := make([]*Node, 0, chunkSize)
 	stopped := false
-	err := b.StreamNodesWithOptions(ctx, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
+	err := b.StreamNodes(ctx, func(node *Node) error {
 		chunk = append(chunk, node)
 		if len(chunk) < chunkSize {
 			return nil

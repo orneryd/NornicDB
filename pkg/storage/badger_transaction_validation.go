@@ -163,10 +163,11 @@ func (tx *BadgerTransaction) validatePreparedBodyConflictsLocked(ctx context.Con
 // increasing commit timestamps and this check falls back to
 // timestamp ordering only for the equal-MaxUint64 case.
 // snapshotIsolationConflict reports whether headVersion is logically newer
-// than the transaction's snapshot. Timestamps order commits: the
-// write-behind flusher backdates its heads to the buffered ACK time, so a
-// head the flusher lands after this transaction began can still be older
-// than the snapshot — not a conflict.
+// than the transaction's boundary. Timestamps order commits: the write-behind
+// flusher backdates its heads to the buffered ACK time, so a head the flusher
+// lands after this transaction began can still be older than the boundary.
+// Whether such a head was nevertheless published after the cut is the second
+// half of the rule, in snapshotHeadConflict (mvccReservations).
 func (tx *BadgerTransaction) snapshotIsolationConflict(headVersion MVCCVersion) bool {
 	return headVersion.Compare(tx.readTS) > 0
 }
@@ -179,7 +180,7 @@ func (tx *BadgerTransaction) checkNodeCreateConflict(ctx context.Context, nodeID
 	if err != nil {
 		return &CommitFailureError{Cause: err}
 	}
-	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
+	conflict, err := tx.snapshotHeadConflict(bufferedNodeEntity, string(nodeID), head.Version)
 	if err != nil {
 		return &CommitFailureError{Cause: err}
 	}
@@ -203,7 +204,7 @@ func (tx *BadgerTransaction) checkNodeWriteConflict(ctx context.Context, nodeID 
 	if err := tx.validateMutationPredecessor(ctx, bufferedNodeEntity, string(nodeID), head); err != nil {
 		return err
 	}
-	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
+	conflict, err := tx.snapshotHeadConflict(bufferedNodeEntity, string(nodeID), head.Version)
 	if err != nil {
 		return &CommitFailureError{Cause: err}
 	}
@@ -373,7 +374,7 @@ func (tx *BadgerTransaction) checkEdgeWriteConflict(ctx context.Context, edgeID 
 			return err
 		}
 	}
-	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccEdgeHeadKeyStringLookup(edgeID), head.Version)
+	conflict, err := tx.snapshotHeadConflict(bufferedEdgeEntity, string(edgeID), head.Version)
 	if err != nil {
 		return &CommitFailureError{Cause: err}
 	}
@@ -421,7 +422,7 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(ctx context.Context, edg
 				continue
 			}
 			if err == nil {
-				conflict, readErr := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
+				conflict, readErr := tx.snapshotHeadConflict(bufferedNodeEntity, string(nodeID), head.Version)
 				if readErr != nil {
 					return &CommitFailureError{Cause: readErr}
 				}
@@ -515,7 +516,12 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(ctx context.Context, nod
 						return err
 					}
 				}
-				if tx.snapshotHeadVersionConflict(head.Version, physicalVersion) {
+				conflict, err := tx.snapshotHeadVersionConflict(bufferedEdgeEntity, string(edgeID), head.Version, physicalVersion)
+				if err != nil {
+					it.Close()
+					return err
+				}
+				if conflict {
 					it.Close()
 					return localizedError(localization.StorageTransactionAdjacentEdgeChanged(string(nodeID), string(edgeID)), ErrConflict)
 				}

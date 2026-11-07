@@ -41,8 +41,7 @@ func TestTransactionLegacySnapshotViewDelegatesAndPreservesCallbackError(t *test
 func TestTransactionSnapshotHeadMissingPhysicalBindingPreservesLogicalConflict(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	_, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-	key := engine.mvccEdgeHeadKeyStringLookup(edgeID)
-	require.NotEmpty(t, key)
+	require.NotEmpty(t, engine.mvccEdgeHeadKeyStringLookup(edgeID))
 	pinned, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pinned.Rollback() })
@@ -52,18 +51,19 @@ func TestTransactionSnapshotHeadMissingPhysicalBindingPreservesLogicalConflict(t
 	for _, tc := range []struct {
 		name string
 		tx   *BadgerTransaction
-		key  []byte
+		id   string
 	}{
-		{"legacy_reader", legacy, key},
-		{"nil_key", pinned, nil},
+		{"legacy_reader", legacy, string(edgeID)},
+		// An ID with no dictionary binding has no head key to read.
+		{"unbound_id", pinned, "test:never-bound-edge"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			conflict, err := tc.tx.snapshotHeadConflict(tc.key, readVersion)
+			conflict, err := tc.tx.snapshotHeadConflict(bufferedEdgeEntity, tc.id, readVersion)
 			require.NoError(t, err)
 			require.False(t, conflict, "missing physical binding must not fabricate a conflict")
 			newer := readVersion
 			newer.CommitSequence++
-			conflict, err = tc.tx.snapshotHeadConflict(tc.key, newer)
+			conflict, err = tc.tx.snapshotHeadConflict(bufferedEdgeEntity, tc.id, newer)
 			require.NoError(t, err)
 			require.True(t, conflict, "logical conflict must be checked before physical fallback")
 		})
@@ -89,7 +89,7 @@ func TestTransactionSnapshotHeadAbsentMetadataDoesNotInventConflict(t *testing.T
 	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
-	conflict, err := reader.snapshotHeadConflict(key, MVCCVersion{})
+	conflict, err := reader.snapshotHeadConflict(bufferedEdgeEntity, "test:unpublished-edge", MVCCVersion{})
 	require.NoError(t, err)
 	require.False(t, conflict, "an absent valid head is not evidence of a peer publication")
 }

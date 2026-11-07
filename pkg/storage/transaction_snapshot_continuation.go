@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // ResumeAfterIndependentCommit advances an implicit caller's read view while
@@ -29,14 +30,23 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(ctx context.Context, preserve
 	if tx.engine.writeBehind != nil {
 		bufferEpoch = tx.engine.writeBehind.readEpoch.Load()
 	}
+	// The next cut is taken as BEGIN takes it: the reservation ledger is
+	// told, the physical snapshot and buffer prefix are pinned, then the
+	// logical boundary is read and the ledger copied in one step
+	// (mvccReservations). The old footprint is validated against the old cut
+	// afterwards; the new copy replaces the old one only when it passes.
+	tx.engine.mvccReservations.cutStarted()
 	snapshotTx, badgerReadTs, beginPresence, err := tx.engine.beginTransactionSnapshot(ctx, tx.badgerDB)
 	if err != nil {
+		tx.engine.mvccReservations.cutAbandoned()
 		return err
 	}
 	// Pin the next view before validating the old footprint. A publication
 	// after validation then remains newer than the next view and is checked
 	// again at commit; no interval can silently erase a write conflict.
-	beginSnapshot, err := tx.engine.snapshotNamespaceVersions(ctx)
+	_, beginSnapshot, inflightAtBegin, err := tx.engine.mvccReservations.cutTaken(func(now time.Time) (map[string]MVCCVersion, error) {
+		return tx.engine.snapshotNamespaceVersionsAt(ctx, now)
+	})
 	if err != nil {
 		snapshotTx.Discard()
 		beginPresence.release()
@@ -52,6 +62,7 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(ctx context.Context, preserve
 			err = tx.validateSnapshotIsolationConflicts(ctx)
 		}
 		if err != nil {
+			inflightAtBegin.release()
 			snapshotTx.Discard()
 			beginPresence.release()
 			tx.badgerDB.endRead(badgerReadTs)
@@ -92,6 +103,8 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(ctx context.Context, preserve
 	tx.lifecycleSeq = lifecycleSeq
 	tx.bufferEpoch = bufferEpoch
 	tx.beginSnapshot = beginSnapshot
+	tx.inflightAtBegin.release()
+	tx.inflightAtBegin = inflightAtBegin
 	tx.clearSnapshotCachesLocked()
 	return tx.refreshReadVersionForNamespaceLocked()
 }
