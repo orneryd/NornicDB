@@ -507,9 +507,13 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(ctx context.Context, nod
 					it.Close()
 					return err
 				}
-				if err := tx.validateMutationPredecessor(ctx, bufferedEdgeEntity, string(edgeID), head); err != nil {
-					it.Close()
-					return err
+				// Only a staged removal requires this predecessor. An obsolete
+				// index entry without a body is not a relationship we delete.
+				if _, removes := tx.deletedEdges[edgeID]; removes {
+					if err := tx.validateMutationPredecessor(ctx, bufferedEdgeEntity, string(edgeID), head); err != nil {
+						it.Close()
+						return err
+					}
 				}
 				if tx.snapshotHeadVersionConflict(head.Version, physicalVersion) {
 					it.Close()

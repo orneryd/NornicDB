@@ -428,3 +428,22 @@ func TestBadgerTransaction_Commit_WritesWithoutNamespaceBranch(t *testing.T) {
 	require.Contains(t, err.Error(), "no pinned namespace")
 	require.Equal(t, TxStatusRolledBack, tx.Status)
 }
+
+func TestAdjacencyConflictIgnoresPreviouslyDeletedUnstagedRelationship(t *testing.T) {
+	engine := adjacencyConflictFixture(t, "test:stale", nil)
+	key := append([]byte(nil), engine.outgoingIndexKeyStringLookup("test:a", "test:stale")...)
+	require.NotEmpty(t, key)
+	require.NoError(t, engine.DeleteEdge(t.Context(), "test:stale"))
+	// Retain an obsolete index entry, not a relationship body. Integrity
+	// enumeration must not turn this into a predecessor the frame removes.
+	require.NoError(t, engine.withUpdate(t.Context(), updateRequest{}, func(view *badger.Txn) error {
+		return view.Set(key, nil)
+	}))
+	tx := beginAdjacencyConflict(t, engine)
+	require.NoError(t, tx.checkNodeAdjacencyConflict(t.Context(), "test:a", nil))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
+	require.NoError(t, tx.Commit())
+	count, err := engine.EdgeCountByType(t.Context(), "REL")
+	require.NoError(t, err)
+	require.Zero(t, count)
+}

@@ -22,19 +22,28 @@ func (b *BadgerEngine) readStoredPresence(ctx context.Context, kind bufferedEnti
 			return true, nil
 		},
 	})
-	if err != nil || view == nil {
-		return present, err
+	if err != nil {
+		return false, err
 	}
-	defer view.Close()
+	if view == nil {
+		return present, nil
+	}
 	var key []byte
 	if kind == bufferedEdgeEntity {
 		key = edgeKey(EdgeID(id))
 	} else {
 		key = nodeKey(NodeID(id))
 	}
-	_, err = view.txn.Get(key)
-	if err != nil && err != badger.ErrKeyNotFound {
+	err = view.readAndClose(ctx, func(txn *badger.Txn) error {
+		_, err := txn.Get(key)
+		if err != nil && err != badger.ErrKeyNotFound {
+			return err
+		}
+		present = err == nil
+		return ctx.Err()
+	})
+	if err != nil {
 		return false, err
 	}
-	return err == nil, ctx.Err()
+	return present, nil
 }

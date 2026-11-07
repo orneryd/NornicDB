@@ -191,6 +191,17 @@ func TestAcknowledgedRecreationCanBeMutatedBeforeReplay(t *testing.T) {
 					require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{Before: before, After: after}))
 				}
 				require.NoError(t, tx.Commit())
+				if !remove {
+					if kind == "node" {
+						updated, err := b.GetNode(t.Context(), "test:n2")
+						require.NoError(t, err)
+						require.EqualValues(t, 2, updated.Properties["v"])
+					} else {
+						updated, err := b.GetEdge(t.Context(), "test:r2")
+						require.NoError(t, err)
+						require.EqualValues(t, 2, updated.Properties["v"])
+					}
+				}
 				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				nodes, err := b.AllNodes(t.Context())
 				require.NoError(t, err)
@@ -206,4 +217,30 @@ func TestAcknowledgedRecreationCanBeMutatedBeforeReplay(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestRelationshipUsesAcknowledgedRecreatedEndpoint(t *testing.T) {
+	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
+	setupCascadeBoundaryGraph(t, b)
+	require.NoError(t, b.DeleteNode(t.Context(), "test:n2"))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
+	bufferedCreate(t, b, &Node{ID: "test:n2", Properties: map[string]any{"v": int64(1)}})
+	head, err := b.GetNodeCurrentHead(t.Context(), "test:n2")
+	require.NoError(t, err)
+	require.True(t, head.Tombstoned)
+	tx, err := b.BeginTransaction(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	require.NoError(t, tx.SetImplicit(true))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:r2", StartNode: "test:n2", EndNode: "test:n3", Type: "LINK"}))
+	require.NoError(t, tx.Commit())
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
+	edge, err := b.GetEdge(t.Context(), "test:r2")
+	require.NoError(t, err)
+	require.Equal(t, NodeID("test:n2"), edge.StartNode)
+	require.Equal(t, NodeID("test:n3"), edge.EndNode)
+	count, err := b.EdgeCountByType(t.Context(), "LINK")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, count)
+	require.NoError(t, b.Close())
 }
