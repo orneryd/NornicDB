@@ -1026,6 +1026,11 @@ func (b *BadgerEngine) readStreamNodeItem(ctx context.Context, txn *badger.Txn, 
 	var err error
 	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && !opts.scanDecodesFilter() {
 		node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemQueryMetadata)
+	} else if opts.WithEmbeddings && projected == nil && len(item.Key()) > 1 {
+		// Reuse the version-keyed body cache through the same snapshot owner
+		// as point reads. Unlike the current-value cache, it never requires
+		// replaying a user callback when concurrent writes advance the view.
+		node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemFullEmbeddings)
 	} else {
 		err = item.Value(func(val []byte) error {
 			key := item.Key()
