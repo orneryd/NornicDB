@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -113,5 +114,23 @@ func TestOwnKeepsFixtureUntilExplicitBoundary(t *testing.T) {
 	boundary.Close()
 	if !reflect.DeepEqual(closed, []string{"process"}) {
 		t.Fatalf("closed %v", closed)
+	}
+}
+
+func TestBoundaryReportsAllCloseFailures(t *testing.T) {
+	var boundary Boundary
+	var closed []string
+	engine := &failingCloser{recordingCloser: recordingCloser{name: "engine", closed: &closed}, failure: errors.New("engine close failed")}
+	wal := &failingCloser{recordingCloser: recordingCloser{name: "wal", closed: &closed}, failure: errors.New("wal close failed")}
+	Own(&boundary, wal, engine)
+	err := boundary.Close()
+	if err == nil || !strings.Contains(err.Error(), "engine close failed") || !strings.Contains(err.Error(), "wal close failed") {
+		t.Fatalf("expected both close errors, got %v", err)
+	}
+	if !reflect.DeepEqual(closed, []string{"engine", "wal"}) {
+		t.Fatalf("close order %v", closed)
+	}
+	if err := boundary.Close(); err != nil {
+		t.Fatalf("repeated close returned stale errors: %v", err)
 	}
 }
