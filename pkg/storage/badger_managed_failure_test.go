@@ -76,7 +76,10 @@ func TestLargeCommit_UnrecoverableRollbackRefusesWritesUntilReopen(t *testing.T)
 
 func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 	dir := t.TempDir()
-	engine := openLargeCommitTestEngine(t, dir)
+	var expectedFinalClose error
+	engine := openLargeCommitTestEngineWithCloseAssertion(t, dir, func(err error) bool {
+		return expectedFinalClose != nil && err.Error() == expectedFinalClose.Error() && errors.Is(err, expectedFinalClose)
+	})
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 
@@ -128,6 +131,7 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 	require.ErrorContains(t, finalOutcome, "label-count final fold")
 	require.ErrorContains(t, finalOutcome, "refuses writes until restart")
 	require.ErrorIs(t, engine.Close(), finalOutcome, "repeated Close must preserve the failed count-fold outcome")
+	expectedFinalClose = finalOutcome
 
 	engine = openLargeCommitTestEngine(t, dir)
 	t.Cleanup(func() {
