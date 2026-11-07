@@ -29,6 +29,26 @@ type rowFallbackState struct {
 
 const maxRowFallbackDepth = 64
 
+// handedOverRowExpression is the one writer of the row evaluator's dispatch
+// state: the row evaluator hands expr to the shared evaluator, which owns it
+// from here on. Every handoff route records it — the value fallback and the
+// relationship-pattern fallback alike — so the shared evaluator never hands the
+// same text back (handedBackByRowEvaluator) and the two evaluators cannot pass
+// one text to each other without end.
+//
+// exhausted reports that the dispatch already carries the deepest bounded
+// fallback: the caller fails the read through the checked contract instead of
+// growing the goroutine stack.
+func handedOverRowExpression(ctx context.Context, expr string) (handoff context.Context, exhausted bool) {
+	state, _ := ctx.Value(rowFallbackExpressionKey{}).(rowFallbackState)
+	if state.depth >= maxRowFallbackDepth {
+		return ctx, true
+	}
+	return context.WithValue(ctx, rowFallbackExpressionKey{}, rowFallbackState{text: expr, depth: state.depth + 1}), false
+}
+
+// handedBackByRowEvaluator reports whether the row evaluator handed this exact
+// expression to the shared evaluator for the dispatch in progress.
 func handedBackByRowEvaluator(ctx context.Context, expr string) bool {
 	state, _ := ctx.Value(rowFallbackExpressionKey{}).(rowFallbackState)
 	return state.text != "" && logicalOperandKey(state.text) == logicalOperandKey(expr)

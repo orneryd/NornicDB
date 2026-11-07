@@ -426,9 +426,20 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		// evaluator leaves unresolved stay unresolved (a malformed literal
 		// such as [, ] is a syntax error, not a value). Subquery expressions
 		// were evaluated above.
+		// This handoff owns the expression exactly as the value fallback's
+		// does (handedOverRowExpression): the shared evaluator evaluates what
+		// it was handed instead of handing the same text back. Without the
+		// record, an APOC call with a COLLECT { } argument holding a
+		// relationship pattern passed forever between the two evaluators
+		// (NOR-409) without checking the statement's context.
 		trimmed := shape.trimmed
 		nodes, rels := entityScopesFromValues(values)
-		value, resolved = e.evaluateExpressionWithContextDefined(withValueBindings(ctx, values), trimmed, nodes, rels)
+		handoff, exhausted := handedOverRowExpression(ctx, expr)
+		if exhausted {
+			recordExpressionFailure(ctx, unresolvedExpressionError(expr))
+			return nil, false
+		}
+		value, resolved = e.evaluateExpressionWithContextDefined(withValueBindings(handoff, values), trimmed, nodes, rels)
 		if getExpressionFailure(ctx) != nil {
 			return nil, false
 		}
