@@ -1277,19 +1277,13 @@ func parseConstraintQualifiedProperty(expr string) (string, string, bool) {
 	if inner, wrapped := stripEnclosingExpressionParentheses(expr); wrapped {
 		expr = strings.TrimSpace(inner)
 	}
-	if strings.ContainsAny(expr, ",()") {
+	// Index declarations and expressions already share this quote-aware
+	// boundary reader: a dot inside a symbolic name is data, not a qualifier.
+	qualifier, property, ok := splitPostfixPropertyAccess(expr)
+	if !ok || !isPatternVariableName(qualifier) || property == "" {
 		return "", "", false
 	}
-	dot := strings.LastIndex(expr, ".")
-	if dot <= 0 || dot >= len(expr)-1 {
-		return "", "", false
-	}
-	left := strings.TrimSpace(expr[:dot])
-	right := cyphertext.SymbolicNameValue(strings.TrimSpace(expr[dot+1:]))
-	if left == "" || right == "" {
-		return "", "", false
-	}
-	return left, right, true
+	return qualifier, property, true
 }
 
 func parseConstraintPredicate(ctx context.Context, predicateRaw string) (kind string, property string, ok bool) {
