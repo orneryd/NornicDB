@@ -67,6 +67,39 @@ func TestOwnCheckedPreservesCloseAssertionsAndDependencyOrder(t *testing.T) {
 	}
 }
 
+func TestOwnWithCloseAssertionAcceptsExpectedAndReportsUnexpectedErrors(t *testing.T) {
+	expected := errors.New("expected terminal close failure")
+	for _, test := range []struct {
+		name        string
+		failure     error
+		wantReports int
+	}{
+		{name: "expected", failure: expected},
+		{name: "unexpected", failure: errors.New("unexpected close failure"), wantReports: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var boundary checkedBoundary
+			var closed []string
+			resource := &failingCloser{
+				recordingCloser: recordingCloser{name: "resource", closed: &closed},
+				failure:         test.failure,
+			}
+			OwnWithCloseAssertion(&boundary, resource, func(err error) bool {
+				return errors.Is(err, expected)
+			})
+
+			boundary.Close()
+
+			if len(boundary.failures) != test.wantReports {
+				t.Fatalf("close failures %v, want %d", boundary.failures, test.wantReports)
+			}
+			if !reflect.DeepEqual(closed, []string{"resource"}) {
+				t.Fatalf("closed %v", closed)
+			}
+		})
+	}
+}
+
 func (resource *recordingCloser) Close() error {
 	*resource.closed = append(*resource.closed, resource.name)
 	return nil

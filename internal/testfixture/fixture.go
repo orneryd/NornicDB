@@ -25,7 +25,14 @@ type CheckedOwner = Owner
 // closed first, for example an engine before the WAL it borrows. The concrete
 // values are captured even when a caller later reassigns its fixture variable.
 func Own[T Closer](owner Owner, resource T, before ...Closer) T {
-	return own(owner, resource, before)
+	return own(owner, resource, before, nil)
+}
+
+// OwnWithCloseAssertion registers resource for cleanup and accepts close errors
+// only when assertion identifies them as expected. Unaccepted errors are
+// reported through the owner like Own.
+func OwnWithCloseAssertion[T Closer](owner Owner, resource T, assertion func(error) bool, before ...Closer) T {
+	return own(owner, resource, before, assertion)
 }
 
 // OwnChecked preserves an existing close assertion through the shared owner.
@@ -34,11 +41,14 @@ func OwnChecked[T Closer](owner CheckedOwner, resource T, before ...Closer) T {
 	return Own(owner, resource, before...)
 }
 
-func own[T Closer](owner Owner, resource T, before []Closer) T {
+func own[T Closer](owner Owner, resource T, before []Closer, assertion func(error) bool) T {
 	owner.Helper()
 	owner.Cleanup(func() {
 		close := func(resource Closer) {
 			if err := resource.Close(); err != nil {
+				if assertion != nil && assertion(err) {
+					return
+				}
 				owner.Helper()
 				owner.Errorf("closing test fixture: %v", err)
 			}

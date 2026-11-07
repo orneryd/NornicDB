@@ -19,10 +19,18 @@ import (
 // entries and a few thousand nodes already need several batches.
 
 func openLargeCommitTestEngine(t *testing.T, dir string) *BadgerEngine {
+	return openLargeCommitTestEngineWithCloseAssertion(t, dir, nil)
+}
+
+func openLargeCommitTestEngineWithCloseAssertion(t *testing.T, dir string, assertion func(error) bool) *BadgerEngine {
 	t.Helper()
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true}))
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		if assertion == nil {
+			fixtureowner.Own(t, engine)
+		} else {
+			fixtureowner.OwnWithCloseAssertion(t, engine, assertion)
+		}
 	}
 	require.NoError(t, err)
 	return engine
