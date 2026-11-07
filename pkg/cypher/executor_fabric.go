@@ -484,7 +484,6 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 			return graph.constituent && graph.remote
 		}
 		_, err = e.admitStatement(ctx, desugared, fabricAdmission{
-			typesSource: fabricSingleGraphStatement(ctx, desugared),
 			schema: func(obligation resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
 				if participantOwnsSignature(obligation) {
 					return resultmetadata.Columns{}, errParticipantSignatureDeferred
@@ -918,74 +917,41 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	return result.Columns, result.Rows, nil
 }
 
+// stripLeadingWithImportsForFabricRecord removes only an import-only WITH
+// whose identifiers are already installed in the fragment's record scope.
+// Read those identifiers before looking for a clause: a bound name such as NOT
+// must not make the following MATCH look like the operand of a unary operator.
 func stripLeadingWithImportsForFabricRecord(ctx context.Context, query string, recordBindings map[string]interface{}) string {
 	if len(recordBindings) == 0 {
 		return query
 	}
 	trimmed := strings.TrimSpace(query)
-	if !strings.HasPrefix(upperASCII(trimmed), "WITH ") {
+	if !startsWithKeywordFold(trimmed, "WITH") {
 		return query
 	}
-	withEnd := findLeadingWithEndLocal(ctx, trimmed)
-	if withEnd <= 0 || withEnd >= len(trimmed) {
-		return query
-	}
-	withClause := strings.TrimSpace(trimmed[len("WITH "):withEnd])
-	rest := strings.TrimSpace(trimmed[withEnd:])
-	if rest == "" {
-		return query
-	}
-	// Stripping is safe for simple imported bindings when the next clause is a
-	// top-level read/projection/pipeline clause that can resolve identifiers from
-	// Fabric record bindings.
-	if !(startsWithKeywordFold(rest, "MATCH") ||
-		startsWithKeywordFold(rest, "OPTIONAL MATCH") ||
-		startsWithKeywordFold(rest, "RETURN") ||
-		startsWithKeywordFold(rest, "UNWIND") ||
-		startsWithUseClause(rest)) {
-		return query
-	}
-	imports := splitTopLevelComma(withClause)
-	if len(imports) == 0 {
-		return query
-	}
-	for _, item := range imports {
-		name := strings.TrimSpace(item)
-		if name == "" || strings.Contains(name, " ") {
+	position := queryGapEnd(trimmed, len("WITH"))
+	for {
+		if ctx.Err() != nil {
 			return query
 		}
-		if _, ok := recordBindings[name]; !ok {
+		identifier, ok := cyphertext.ScanIdentifier(trimmed, position)
+		if !ok {
 			return query
 		}
-	}
-	rewritten := rest
-	local := localOccurrences{text: rest}
-	for _, item := range imports {
-		name := strings.TrimSpace(item)
-		rewritten = replaceIdentifierOutsideQuotesUnless(rewritten, name, "$"+name, &local)
-	}
-	return rewritten
-}
-
-func findLeadingWithEndLocal(ctx context.Context, query string) int {
-	const prefix = "WITH "
-	if len(query) <= len(prefix) {
-		return -1
-	}
-	body := query[len(prefix):]
-	end := -1
-	for _, keyword := range [...]string{
-		"MATCH", "OPTIONAL MATCH", "RETURN", "WHERE", "USE", "WITH", "CALL",
-		"CREATE", "MERGE", "UNWIND", "SET", "DELETE", "DETACH DELETE",
-	} {
-		if index := topLevelKeywordIndex(ctx, body, keyword); index >= 0 && (end < 0 || index < end) {
-			end = index
+		if _, bound := recordBindings[identifier.Value]; !bound {
+			return query
 		}
+		position = queryGapEnd(trimmed, identifier.End)
+		if position < len(trimmed) && trimmed[position] == ',' {
+			position = queryGapEnd(trimmed, position+1)
+			continue
+		}
+		rest := strings.TrimSpace(trimmed[position:])
+		if startsWithKeywordFold(rest, "MATCH") || startsWithKeywordFold(rest, "OPTIONAL MATCH") || startsWithKeywordFold(rest, "RETURN") || startsWithKeywordFold(rest, "UNWIND") || startsWithUseClause(rest) {
+			return rest
+		}
+		return query
 	}
-	if end < 0 {
-		return -1
-	}
-	return len(prefix) + end
 }
 
 func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, sub *fabric.SubTransaction, dbName string, engine storage.Engine) (result *StorageExecutor, resultErr error) {
@@ -1111,22 +1077,23 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 }
 
 // evaluateGraphArguments evaluates a dynamic graph reference's arguments
-// (USE graph.byName(g)) for Fabric: values holds the statement's
-// parameters and the current row's variables.
+// (USE graph.byName(g)) for Fabric, with statement parameters and the
+// current row's variables kept in their respective namespaces.
 func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
 	out := make([]string, len(expressions))
+	bindings, _ := fabric.RecordBindingsFromContext(ctx)
 	for i, expression := range expressions {
-		query, names := canonicalizeQuotedVariablesWithBindings(ctx, "RETURN "+expression, values)
-		bindings, params := values, values
+		query, names := canonicalizeQuotedVariablesWithBindings(ctx, "RETURN "+expression, bindings)
+		row, params := bindings, values
 		if names != nil {
-			bindings, params = names.bindingValues(values), names.parameterValues(values)
+			row, params = names.bindingValues(bindings), names.parameterValues(values)
 		}
 		projected := strings.TrimSpace(query)
 		if len(projected) <= len("RETURN") || !strings.EqualFold(projected[:len("RETURN")], "RETURN") {
 			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 				localization.CypherCommandRoutingGraphFunctionArgumentInvalid(expression))
 		}
-		value, ok := e.evaluateRowExpressionWithContext(withQueryParams(ctx, params), strings.TrimSpace(projected[len("RETURN"):]), pipelineRow(bindings))
+		value, ok := e.evaluateRowExpressionWithContext(withQueryParams(ctx, params), strings.TrimSpace(projected[len("RETURN"):]), pipelineRow(row))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err

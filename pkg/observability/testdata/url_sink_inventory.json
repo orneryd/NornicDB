@@ -268,7 +268,7 @@
   "pkg/fabric/catalog.go:*Catalog.PopulateFromManager e048b7282ab0e9a39b88b67ecd74ae8454d2f6e43cb6ffe8d2c9a3842e1e07bb": "c.graphs[cyphertext.NameLower(alias)] = &LocationLocal{DBName: dbName}",
   "pkg/fabric/executor.go:*FabricExecutor.prepareExecDispatch 06272f77618f710f75a3e3a5626cfebf8c67eac82f6341e1221ffffa7252b72d": "return nil, nil, ctx, err",
   "pkg/fabric/executor.go:*FabricExecutor.prepareExecDispatch 223a8715bc1a47ae0fa88534208a1cec4b1d634cdc4435710007cd228bf27647": "return loc, execParams, ctx, nil",
-  "pkg/fabric/executor.go:*FabricExecutor.prepareExecDispatch eeb06ba9aa594ee500209960f0e08457d96a53801aff3821127cdea59414d816": "execParams[k] = v",
+  "pkg/fabric/executor.go:*FabricExecutor.prepareExecDispatch cf3495d96fb39e2d02f7092f614243937241e43abae9204a5c70e9611cbfe87c": "execParams[key] = value",
   "pkg/fabric/executor.go:ParticipantKeyFromLocation ef73f905a74f2511fecf5da88982b2cdc114da66cbd9399299e4a437666f80bd": "Existing URI-bearing fallback participant identity, renamed in place from participantKeyFromLocation. Production catalogs (fabric.Catalog.PopulateFromManager and cypher.buildFabricCatalog) always set GraphName for remote locations, so dispatch takes the qualified graph-name branch before this fallback. Retained as inventoried because participant keys can reach transaction lifecycle errors; this is not a non-egress exemption or approval of arbitrary caller-supplied credential-bearing locations.",
   "pkg/fabric/remote_executor.go:*RemoteFragmentExecutor.getOrCreateEngine 79d49f15b98d9de67f12df855ef848c7d08109e686595ec5119d150d0cd0e42e": "return nil, err",
   "pkg/fabric/remote_executor.go:*RemoteFragmentExecutor.getOrCreateEngine 7bed1a5f24482152db849757b7d1e2ed895bfb654a68787226aa468b4900df5c": "return engine, nil",
