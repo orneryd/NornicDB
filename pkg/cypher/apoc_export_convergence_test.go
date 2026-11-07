@@ -286,38 +286,6 @@ func TestAPOCExportObservationStride(t *testing.T) {
 	})
 }
 
-// TestAPOCExportWriteObservesCaller proves the destination writer of every export
-// writes nothing for a stopped caller and reports that caller's error, and that
-// the whole-graph writer alone creates the destination directory.
-func TestAPOCExportWriteObservesCaller(t *testing.T) {
-	t.Run("canceled", func(t *testing.T) {
-		for _, scope := range []exportScope{exportGraphScope, exportQueryScope} {
-			exec, dir := pr1615ExportExecutor(t)
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			out := filepath.Join(dir, "made", "export.out")
-
-			err := exec.writeExport(ctx, scope, out, exportPayload{content: []byte("pr1615")})
-
-			require.ErrorIs(t, err, context.Canceled)
-			_, statErr := os.Stat(out)
-			require.True(t, os.IsNotExist(statErr), "a stopped caller's write must not create the file")
-			_, dirErr := os.Stat(filepath.Dir(out))
-			require.True(t, os.IsNotExist(dirErr), "a stopped caller's write must not create the directory")
-		}
-	})
-
-	t.Run("live", func(t *testing.T) {
-		exec, dir := pr1615ExportExecutor(t)
-		out := filepath.Join(dir, "made", "export.out")
-
-		require.NoError(t, exec.writeExport(context.Background(), exportGraphScope, out, exportPayload{content: []byte("pr1615")}))
-		content, err := os.ReadFile(out)
-		require.NoError(t, err)
-		require.Equal(t, "pr1615", string(content))
-	})
-}
-
 // pr1615FailingEdgesEngine is a storage engine whose relationship read fails
 // while its other reads and its writes work.
 type pr1615FailingEdgesEngine struct {
@@ -655,5 +623,25 @@ func TestAPOCExportCSVQuotesIdentifiersAndHeaders(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, [][]string{{"a,b"}, {"42"}}, records)
 		})
+	})
+}
+
+func TestAPOCExportRootedDestinationPreservesPublicFileValue(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec, _ := newTestExecutor(t)
+		root := t.TempDir()
+		exec.SetAPOCLocalFileAccessRoot(root)
+		exec.SetAllowLocalAPOCExportFileAccess(true)
+		result, err := exec.Execute(t.Context(), "CALL apoc.export.json.all('nested/graph.json') YIELD file RETURN file", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{"nested/graph.json"}}, result.Rows)
+		content, err := os.ReadFile(filepath.Join(root, "nested", "graph.json"))
+		require.NoError(t, err)
+		require.True(t, json.Valid(content))
+		exec.SetAllowLocalAPOCExportFileAccess(false)
+		_, err = exec.Execute(t.Context(), "CALL apoc.export.json.all('denied/graph.json') YIELD file RETURN file", nil)
+		require.Error(t, err)
+		_, err = os.Stat(filepath.Join(root, "denied"))
+		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 }

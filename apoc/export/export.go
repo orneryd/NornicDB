@@ -6,15 +6,17 @@
 package apocexport
 
 import (
+	"context"
 	"encoding/csv"
+	"encoding/xml"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	apocconvert "github.com/orneryd/nornicdb/apoc/convert"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/apocio"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/pool"
 )
@@ -33,6 +35,25 @@ type Relationship struct {
 	StartNode  int64
 	EndNode    int64
 	Properties map[string]interface{}
+}
+
+// ToFile writes export data to a file, creating its parent directories.
+//
+// The caller's context is the whole admission: pkg/apocio admits the named
+// destination through the caller's APOC I/O capability and performs the write,
+// so a context without an export capability writes nothing. An empty
+// destination preserves the established no-file behavior. Directory and file
+// errors are returned to the caller.
+//
+// Example:
+//
+//	err := apocexport.ToFile(ctx, document, "/path/to/export.graphml")
+func ToFile(ctx context.Context, data string, filePath string) error {
+	destination, err := apocio.AdmitExport(ctx, filePath)
+	if err != nil {
+		return err
+	}
+	return apocio.WriteExport(ctx, destination, data, apocio.CreateDirectories)
 }
 
 // Json exports data to JSON format.
@@ -54,37 +75,18 @@ func Json(nodes []*Node, rels []*Relationship) (string, error) {
 	return string(bytes), nil
 }
 
-// JsonAll exports all graph data to JSON.
+// JsonAll exports all graph data to JSON on the caller's context.
 //
 // Example:
 //
 //	apoc.export.json.all('/path/to/export.json') => exported
-func JsonAll(nodes []*Node, rels []*Relationship, filePath string) error {
+func JsonAll(ctx context.Context, nodes []*Node, rels []*Relationship, filePath string) error {
 	jsonStr, err := Json(nodes, rels)
 	if err != nil {
 		return err
 	}
 
-	// Write to file if path provided
-	if filePath != "" {
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
-		if err := os.WriteFile(filePath, []byte(jsonStr), 0644); err != nil {
-			return fmt.Errorf("failed to write file: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// JsonData exports specific data to JSON.
-//
-// Example:
-//
-//	apoc.export.json.data(nodes, rels, '/path/to/export.json') => exported
-func JsonData(nodes []*Node, rels []*Relationship, filePath string) error {
-	return JsonAll(nodes, rels, filePath)
+	return ToFile(ctx, jsonStr, filePath)
 }
 
 // Csv exports data to CSV format.
@@ -92,26 +94,30 @@ func JsonData(nodes []*Node, rels []*Relationship, filePath string) error {
 // Example:
 //
 //	apoc.export.csv(nodes, '/path/to/export.csv') => exported
-func Csv(nodes []*Node, filePath string) error {
+func Csv(ctx context.Context, nodes []*Node, filePath string) error {
 	// Build CSV data
 	var builder strings.Builder
 	writer := csv.NewWriter(&builder)
 
 	// Write header
 	if len(nodes) > 0 {
+		// The first node's properties are the exported schema. Resolve that
+		// column set, and its order, once: ranging the property map again for
+		// each row yields the same columns in another order, which would place
+		// row values under headers naming different properties.
 		headers := []string{"id", "labels"}
 		for key := range nodes[0].Properties {
 			headers = append(headers, key)
 		}
+		columns := headers[2:]
+		sort.Strings(columns)
+
 		writer.Write(headers)
 
 		// Write rows
 		for _, node := range nodes {
-			row := []string{
-				fmt.Sprintf("%d", node.ID),
-				strings.Join(node.Labels, ";"),
-			}
-			for key := range nodes[0].Properties {
+			row := []string{fmt.Sprintf("%d", node.ID), strings.Join(node.Labels, ";")}
+			for _, key := range columns {
 				if val, ok := node.Properties[key]; ok {
 					row = append(row, apocconvert.ToString(val))
 				} else {
@@ -124,35 +130,7 @@ func Csv(nodes []*Node, filePath string) error {
 
 	writer.Flush()
 
-	// Write to file if path provided
-	if filePath != "" {
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
-		if err := os.WriteFile(filePath, []byte(builder.String()), 0644); err != nil {
-			return fmt.Errorf("failed to write file: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// CsvAll exports all graph data to CSV.
-//
-// Example:
-//
-//	apoc.export.csv.all('/path/to/export.csv') => exported
-func CsvAll(nodes []*Node, rels []*Relationship, filePath string) error {
-	return Csv(nodes, filePath)
-}
-
-// CsvData exports specific data to CSV.
-//
-// Example:
-//
-//	apoc.export.csv.data(nodes, '/path/to/export.csv') => exported
-func CsvData(nodes []*Node, filePath string) error {
-	return Csv(nodes, filePath)
+	return ToFile(ctx, builder.String(), filePath)
 }
 
 // Cypher exports data as Cypher statements.
@@ -219,28 +197,13 @@ func Cypher(nodes []*Node, rels []*Relationship) string {
 	return builder.String()
 }
 
-// CypherAll exports all graph data as Cypher statements.
+// CypherAll exports all graph data as Cypher statements on the caller's context.
 //
 // Example:
 //
 //	apoc.export.cypher.all('/path/to/export.cypher') => exported
-func CypherAll(nodes []*Node, rels []*Relationship, filePath string) error {
-	cypherStr := Cypher(nodes, rels)
-
-	// In production, would write to file
-	_ = cypherStr
-	_ = filePath
-
-	return nil
-}
-
-// CypherData exports specific data as Cypher statements.
-//
-// Example:
-//
-//	apoc.export.cypher.data(nodes, rels, '/path/to/export.cypher') => exported
-func CypherData(nodes []*Node, rels []*Relationship, filePath string) error {
-	return CypherAll(nodes, rels, filePath)
+func CypherAll(ctx context.Context, nodes []*Node, rels []*Relationship, filePath string) error {
+	return ToFile(ctx, Cypher(nodes, rels), filePath)
 }
 
 // GraphML exports data to GraphML format.
@@ -248,7 +211,10 @@ func CypherData(nodes []*Node, rels []*Relationship, filePath string) error {
 // Example:
 //
 //	apoc.export.graphml(nodes, rels) => GraphML string
-func GraphML(nodes []*Node, rels []*Relationship) string {
+//
+// GraphML rejects malformed UTF-8 and characters forbidden by XML 1.0.
+// On error it returns no partial document.
+func GraphML(nodes []*Node, rels []*Relationship) (string, error) {
 	var builder strings.Builder
 
 	builder.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
@@ -259,7 +225,9 @@ func GraphML(nodes []*Node, rels []*Relationship) string {
 	for _, node := range nodes {
 		builder.WriteString(fmt.Sprintf("    <node id=\"n%d\">\n", node.ID))
 		for key, val := range node.Properties {
-			builder.WriteString(fmt.Sprintf("      <data key=\"%s\">%s</data>\n", key, apocconvert.ToString(val)))
+			if err := writeGraphMLData(&builder, key, apocconvert.ToString(val)); err != nil {
+				return "", err
+			}
 		}
 		builder.WriteString("    </node>\n")
 	}
@@ -267,9 +235,13 @@ func GraphML(nodes []*Node, rels []*Relationship) string {
 	// Export relationships
 	for _, rel := range rels {
 		builder.WriteString(fmt.Sprintf("    <edge source=\"n%d\" target=\"n%d\">\n", rel.StartNode, rel.EndNode))
-		builder.WriteString(fmt.Sprintf("      <data key=\"type\">%s</data>\n", rel.Type))
+		if err := writeGraphMLData(&builder, "type", rel.Type); err != nil {
+			return "", err
+		}
 		for key, val := range rel.Properties {
-			builder.WriteString(fmt.Sprintf("      <data key=\"%s\">%s</data>\n", key, apocconvert.ToString(val)))
+			if err := writeGraphMLData(&builder, key, apocconvert.ToString(val)); err != nil {
+				return "", err
+			}
 		}
 		builder.WriteString("    </edge>\n")
 	}
@@ -277,31 +249,57 @@ func GraphML(nodes []*Node, rels []*Relationship) string {
 	builder.WriteString("  </graph>\n")
 	builder.WriteString("</graphml>\n")
 
-	return builder.String()
+	return builder.String(), nil
 }
 
-// GraphMLAll exports all graph data to GraphML.
+// GraphMLAll exports all graph data to GraphML on the caller's context.
 //
 // Example:
 //
 //	apoc.export.graphml.all('/path/to/export.graphml') => exported
-func GraphMLAll(nodes []*Node, rels []*Relationship, filePath string) error {
-	graphMLStr := GraphML(nodes, rels)
+func GraphMLAll(ctx context.Context, nodes []*Node, rels []*Relationship, filePath string) error {
+	document, err := GraphML(nodes, rels)
+	if err != nil {
+		return err
+	}
+	return ToFile(ctx, document, filePath)
+}
 
-	// In production, would write to file
-	_ = graphMLStr
-	_ = filePath
-
+// writeGraphMLData writes one property as a GraphML data element. The key is an
+// attribute value and the property is element text, so both are escaped and a
+// key or value carrying markup cannot break the document.
+func writeGraphMLData(builder *strings.Builder, key, value string) error {
+	if err := validateXMLText(key); err != nil {
+		return err
+	}
+	if err := validateXMLText(value); err != nil {
+		return err
+	}
+	builder.WriteString("      <data key=\"")
+	if err := xml.EscapeText(builder, []byte(key)); err != nil {
+		return err
+	}
+	builder.WriteString("\">")
+	if err := xml.EscapeText(builder, []byte(value)); err != nil {
+		return err
+	}
+	builder.WriteString("</data>\n")
 	return nil
 }
 
-// GraphMLData exports specific data to GraphML.
-//
-// Example:
-//
-//	apoc.export.graphml.data(nodes, rels, '/path/to/export.graphml') => exported
-func GraphMLData(nodes []*Node, rels []*Relationship, filePath string) error {
-	return GraphMLAll(nodes, rels, filePath)
+// validateXMLText enforces the XML 1.0 Char production before EscapeText,
+// whose replacement behavior would otherwise silently lose invalid input.
+func validateXMLText(text string) error {
+	for offset := 0; offset < len(text); {
+		r, width := utf8.DecodeRuneInString(text[offset:])
+		if (r == utf8.RuneError && width == 1) ||
+			!(r == '\t' || r == '\n' || r == '\r' ||
+				r >= 0x20 && r <= 0xd7ff || r >= 0xe000 && r <= 0xfffd || r >= 0x10000 && r <= 0x10ffff) {
+			return fmt.Errorf("GraphML: unrepresentable XML 1.0 character at byte %d", offset)
+		}
+		offset += width
+	}
+	return nil
 }
 
 // appendValue owns Cypher literal structure. Every numeric leaf uses AppendNumericText;
@@ -353,18 +351,6 @@ func appendValue(out *pool.PooledStringBuilder, val interface{}) {
 	}
 }
 
-// ToFile writes export data to a file.
-//
-// Example:
-//
-//	apoc.export.toFile(data, '/path/to/file.txt') => written
-func ToFile(data string, filePath string) error {
-	// In production, would write to file
-	_ = data
-	_ = filePath
-	return nil
-}
-
 // ToString returns export data as a string.
 //
 // Example:
@@ -377,7 +363,7 @@ func ToString(nodes []*Node, rels []*Relationship, format string) (string, error
 	case "cypher":
 		return Cypher(nodes, rels), nil
 	case "graphml":
-		return GraphML(nodes, rels), nil
+		return GraphML(nodes, rels)
 	default:
 		return "", fmt.Errorf("unsupported format: %s", format)
 	}

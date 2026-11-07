@@ -612,3 +612,29 @@ func TestBundledAPOCScalarLoaderRequiresCapability(t *testing.T) {
 	require.ErrorIs(t, err, apocio.ErrCapabilityMissing)
 	require.Zero(t, hits.Load())
 }
+
+func TestBundledAPOCFileExportUsesStatementCapability(t *testing.T) {
+	require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
+	info, ok := apoc.GetInfo("apoc.export.toFile")
+	require.True(t, ok)
+	withPluginFunctions(t, map[string]interface{}{"apoc.export.toFile": info.Handler})
+	forEachParser(t, func(t *testing.T) {
+		exec, _ := newTestExecutor(t)
+		root := t.TempDir()
+		exec.SetAPOCLocalFileAccessRoot(root)
+		exec.SetAllowLocalAPOCExportFileAccess(false)
+		query := "RETURN apoc.export.toFile($content, $path) AS result"
+		params := map[string]interface{}{"content": "exact export bytes", "path": "nested/export.txt"}
+		_, err := exec.Execute(t.Context(), query, params)
+		require.ErrorIs(t, err, apocio.ErrLocalExportFileAccessDisabled)
+		_, err = os.Stat(filepath.Join(root, "nested"))
+		require.ErrorIs(t, err, os.ErrNotExist)
+		exec.SetAllowLocalAPOCExportFileAccess(true)
+		result, err := exec.Execute(t.Context(), query, params)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{nil}}, result.Rows)
+		content, err := os.ReadFile(filepath.Join(root, "nested", "export.txt"))
+		require.NoError(t, err)
+		require.Equal(t, "exact export bytes", string(content))
+	})
+}
