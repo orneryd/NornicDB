@@ -42,16 +42,15 @@ func (operation Operation) EdgeUpdate() EdgeUpdateRequest {
 	return EdgeUpdateRequest{Before: operation.OldEdge, After: operation.Edge}
 }
 
-// InNamespace qualifies both observation and replacement IDs at the same
+// InScope qualifies both observation and replacement IDs at the same
 // namespace boundary. It copies only headers whose IDs need qualification;
 // property maps remain immutable inputs owned by the caller.
-// For example, request.InNamespace("tenant") maps a->b to tenant:a->tenant:b
+// For example, request.InScope("tenant:") maps a->b to tenant:a->tenant:b
 // in both Before and After, without changing request's original records.
-func (request EdgeUpdateRequest) InNamespace(namespace string) EdgeUpdateRequest {
-	if namespace == "" {
+func (request EdgeUpdateRequest) InScope(scope string) EdgeUpdateRequest {
+	if scope == "" {
 		return request
 	}
-	scope := namespace + ":"
 	request.Before = edgeInScope(request.Before, scope)
 	request.After = edgeInScope(request.After, scope)
 	return request

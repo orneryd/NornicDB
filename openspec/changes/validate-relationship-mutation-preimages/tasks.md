@@ -10,3 +10,11 @@
 - [ ] Run focused race and affected-package tests; report exact source and skips.
 - [ ] Push the fixed candidate and run full make test CI.
 - [ ] Document advisory duplicate findings and ticket acceptance evidence.
+
+Independent review follow-up:
+- [x] Preserve a retained observation across repeated edits in the same frame; fail-before reproduction and corrected controls pass.
+- [x] Preserve existing strict hidden-CREATE property equality; share only the common type/endpoint identity projection.
+- [x] Avoid node-schema constraint reads for relationship-only or create-only mutations.
+- [x] Use caller-owned namespace scope prefixes rather than re-deriving separators.
+- [x] Cover real peer publication after staging and before COMMIT through public queries, and assert the peer commit actually succeeded.
+- [x] Reviewed-source focused race controls pass twice (storage 11.846s, Cypher 6.819s); source census regenerated with unchanged rules.

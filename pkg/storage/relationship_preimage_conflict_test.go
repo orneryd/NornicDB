@@ -105,11 +105,11 @@ func TestRelationshipPreimagesFoldRepeatedAndCreatedImages(t *testing.T) {
 						return err
 					}
 				}
+				before, err := tx.GetEdge(ctx, "test:r")
+				if err != nil {
+					return err
+				}
 				for i := int64(1); i <= 2; i++ {
-					before, err := tx.GetEdge(ctx, "test:r")
-					if err != nil {
-						return err
-					}
 					after := copyEdge(before)
 					after.Properties["n"] = i
 					if err := tx.UpdateEdge(ctx, EdgeUpdateRequest{Before: before, After: after}); err != nil {

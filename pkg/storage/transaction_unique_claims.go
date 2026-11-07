@@ -97,16 +97,8 @@ func sameNodeUniqueClaim(ctx context.Context, before, after *Node, label, proper
 // authority is already held by PublishCommit. The current read bypasses unversioned caches and shares the
 // existing buffered/storage read cut and projected body decoder.
 func (tx *BadgerTransaction) validateMutationPreimagesLocked(ctx context.Context) error {
-	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	if len(tx.pendingNodes) == 0 && (tx.engine.writeBehind == nil || len(tx.pendingEdges) == 0) {
-		return nil
-	}
-	constraints, err := schema.GetConstraints(ctx)
-	if err != nil {
-		return err
-	}
 	validateBody := tx.engine.writeBehind != nil
-	if len(constraints) == 0 && !validateBody {
+	if len(tx.pendingNodes) == 0 && (!validateBody || len(tx.pendingEdges) == 0) {
 		return nil
 	}
 	preimages, distinctUpdates, err := mutationPreimagesLocked(ctx, tx.operations, len(tx.pendingNodes), OpUpdateNode, nodeClaimPreimage)
@@ -122,6 +114,18 @@ func (tx *BadgerTransaction) validateMutationPreimagesLocked(ctx context.Context
 		return err
 	}
 	if len(preimages) == 0 && !distinctUpdates && len(edgePreimages) == 0 && !distinctEdgeUpdates {
+		return nil
+	}
+	// Relationship-only updates have no node constraint projection. A create-only
+	// batch has already returned without copying the schema's constraint slice.
+	var constraints []UniqueConstraint
+	if len(preimages) != 0 || distinctUpdates {
+		constraints, err = tx.engine.GetSchemaForNamespace(tx.namespace).GetConstraints(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	if len(constraints) == 0 && !validateBody {
 		return nil
 	}
 	var properties []string

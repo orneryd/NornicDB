@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1786,10 +1787,7 @@ func (tx *BadgerTransaction) stageHiddenEdgeCreateLocked(edge *Edge) {
 // representation, such as a generic list against the typed slice storage
 // decodes.
 func (tx *BadgerTransaction) sameEdgeCreateIdentityLocked(stored, candidate *Edge) (bool, error) {
-	if stored == nil || candidate == nil ||
-		stored.Type != candidate.Type ||
-		stored.StartNode != candidate.StartNode ||
-		stored.EndNode != candidate.EndNode {
+	if !sameEdgeIdentity(stored, candidate) {
 		return false, nil
 	}
 	// nil and an allocated empty map are the same empty Neo4j property set.
@@ -1800,16 +1798,23 @@ func (tx *BadgerTransaction) sameEdgeCreateIdentityLocked(stored, candidate *Edg
 	if err != nil {
 		return false, err
 	}
-	return sameStoredEdgeIdentity(stored, image), nil
+	return (len(stored.Properties) == 0 && len(image.Properties) == 0) ||
+		reflect.DeepEqual(stored.Properties, image.Properties), nil
 }
 
 // sameStoredEdgeIdentity compares decoded user images. Storage-normalized
 // numeric/list values share the existing equality owner; generated timestamps
 // and internal metadata do not turn a no-change property write into a conflict.
 func sameStoredEdgeIdentity(before, current *Edge) bool {
+	return sameEdgeIdentity(before, current) && sameStoredValue(before.Properties, current.Properties)
+}
+
+// sameEdgeIdentity owns the relationship kind/endpoints comparison shared by
+// creation identity and mutation predecessor validation. Each caller retains
+// its existing property-equality contract.
+func sameEdgeIdentity(before, current *Edge) bool {
 	return before != nil && current != nil && before.Type == current.Type &&
-		before.StartNode == current.StartNode && before.EndNode == current.EndNode &&
-		sameStoredValue(before.Properties, current.Properties)
+		before.StartNode == current.StartNode && before.EndNode == current.EndNode
 }
 
 // bufferNewEdgeLocked buffers a validated new edge: its record, its
@@ -1925,10 +1930,12 @@ func (tx *BadgerTransaction) UpdateEdge(ctx context.Context, updateRequest EdgeU
 		if err := tx.enrollCommittedWriteLocked(edgeKey(edge.ID), "edge"); err != nil {
 			return err
 		}
-	}
-
-	if updateRequest.Before != nil && !sameStoredEdgeIdentity(updateRequest.Before, oldEdge) {
-		return localizedError(localization.StorageTransactionEdgeChanged(string(edge.ID)), ErrConflict)
+		// Only the first mutation compares the caller's observation with the
+		// committed predecessor. Later edits may reuse that same observation;
+		// their own pending image is not an independently committed peer.
+		if updateRequest.Before != nil && !sameStoredEdgeIdentity(updateRequest.Before, oldEdge) {
+			return localizedError(localization.StorageTransactionEdgeChanged(string(edge.ID)), ErrConflict)
+		}
 	}
 
 	// If endpoints changed, verify they exist and update outgoing/incoming indexes.
