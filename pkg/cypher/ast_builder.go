@@ -340,6 +340,9 @@ func (b *ASTBuilder) Build(ctx context.Context, cypher string) (*AST, error) {
 	if source.Err != nil {
 		return nil, source.Err
 	}
+	if err := validateStaticMapKeys(ctx, source.Text); err != nil {
+		return nil, err
+	}
 	ast := &AST{
 		RawQuery: cypher,
 		Clauses:  make([]ASTClause, 0),
