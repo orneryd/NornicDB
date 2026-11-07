@@ -13,7 +13,7 @@ import (
 func TestNormalizePreservesUnicodeInitialAndRemainder(t *testing.T) {
 	require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
 	for _, tc := range []struct{ input, want string }{
-		{"élan", "Élan"}, {" person ", "Person"}, {"", ""}, {" \t\n", ""},
+		{"élan", "Élan"}, {"ßeta", "ßeta"}, {"ﬃle", "ﬃle"}, {" person ", "Person"}, {"", ""}, {" \t\n", ""},
 		{"e\u0301lan", "E\u0301lan"}, {"\u0301élan", "\u0301élan"},
 		{"é漢字", "É漢字"}, {"漢字", "漢字"}, {"😀hello", "😀hello"},
 		{"𐐨élan", "𐐀élan"}, {"ǳuro", "Ǳuro"}, {"\ufffdabc", "\ufffdabc"},

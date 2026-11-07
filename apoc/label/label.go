@@ -515,11 +515,11 @@ func Validate(label string) map[string]interface{} {
 //
 //	apoc.label.normalize(' person ') => 'Person'
 //
-// Valid Unicode is uppercased by its first decoded codepoint, with the
-// remainder unchanged. Admitted lone UTF-16 name units retain their bytes.
+// Valid Unicode uses simple one-codepoint uppercase mapping (no expansion),
+// with the remainder unchanged. Admitted lone UTF-16 name units retain their bytes.
 // As before, this helper does not validate arbitrary Go string bytes: a
-// malformed leading byte uses strings.ToUpper replacement, while the
-// remaining bytes are preserved.
+// malformed leading byte becomes RuneError, while the remaining bytes
+// are preserved.
 func Normalize(label string) string {
 	label = strings.TrimSpace(label)
 	if len(label) > 0 {

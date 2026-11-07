@@ -34,9 +34,16 @@ func TestNormalizeRegisteredQueryPreservesUnicode(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			exec := cypher.NewStorageExecutor(base)
-			result, err := exec.Execute(t.Context(), "RETURN apoc.label.normalize($label) AS normalized", map[string]interface{}{"label": " élan漢字 "})
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{"Élan漢字"}}, result.Rows)
+			for _, tc := range []struct{ input, want string }{
+				{" élan漢字 ", "Élan漢字"},
+				{"𐐨élan", "𐐀élan"},
+				{"ßeta", "ßeta"},
+				{"\xed\xa0\x80élan", "\xed\xa0\x80élan"},
+			} {
+				result, err := exec.Execute(t.Context(), "RETURN apoc.label.normalize($label) AS normalized", map[string]interface{}{"label": tc.input})
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{tc.want}}, result.Rows)
+			}
 		})
 	}
 }

@@ -9,6 +9,9 @@
 - [x] Preserve and explicitly test existing malformed Go-byte handling; no rejection API or stronger validation contract is introduced.
 - [x] Profile and compare five isolated baseline/current runs: all five helper workloads improve latency and reduce bytes/allocations. ASCII 2->1 allocations; unchanged and admitted-unit strings allocate zero; changed Unicode requires one result allocation.
 - [x] Final focused race/coverage: three race-enabled runs pass; Normalize has 100% statement coverage.
+- [x] Reproduce the original corruption through both parsers on release 78ed35480; disposable worktree removed after retaining its failing log.
+- [x] Pin simple non-expanding uppercase and supplementary/admitted-unit results through public query calls.
+- [x] Correct the CI cascade-window fixture to retain its unapplied generation using the existing manual-drain owner; preserve every conflict/count/ownership assertion. Parent repeated race check passes (10 runs).
 - [ ] Exact-head CI make test gate.
 
 APOC text.capitalize is not an interchangeable owner: it uppercases the first
