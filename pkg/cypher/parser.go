@@ -204,6 +204,9 @@ func (p *Parser) Parse(ctx context.Context, cypher string) (*Query, error) {
 	if source.Err != nil {
 		return nil, source.Err
 	}
+	if err := validateStaticMapKeys(ctx, source.Text); err != nil {
+		return nil, err
+	}
 	trimmed := strings.TrimSpace(source.Text)
 	start := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
 	source = source.Window(start, start+len(trimmed))
