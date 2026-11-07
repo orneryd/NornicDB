@@ -458,6 +458,12 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 	}
 	desugared, _, err := desugarLabelExpressions(ctx, canonical, params, cypherVersionFromContext(ctx) == "25")
 	if err == nil {
+		// Clause-composition rejection belongs to statement admission, before
+		// participant dispatch can wrap the diagnostic or execute a preceding
+		// update. Reuse the native query-body validator.
+		err = validateQueryBodyComposition(ctx, desugared)
+	}
+	if err == nil {
 		// The local registry has already declined the procedure a participant may
 		// own, so the answer belongs to the graph its CALL's USE clause selects. A
 		// participant whose registry this coordinator cannot read before execution
