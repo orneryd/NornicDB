@@ -162,6 +162,20 @@ func TestNOR291ProjectionConcurrentAndReplicaRetry(t *testing.T) {
 	assertNOR291ProjectionCount(t, a, 1)
 }
 
+// A retry must not add a projection, while a different accepted identity must.
+func TestNOR291DistinctCommandAndRetryProjections(t *testing.T) {
+	a := setupTestAdapter(t).adapter
+	first := wireCommand(t, "first", storage.Operation{Type: storage.OpCreateEdge, Edge: wireEdge("edge-a", "missing-a", "missing-b", "value")})
+	first.RequestID = "first"
+	second := wireCommand(t, "second", storage.Operation{Type: storage.OpCreateEdge, Edge: wireEdge("edge-b", "missing-a", "missing-b", "value")})
+	second.RequestID = "second"
+	require.Error(t, applyNOR291(a, first, WALPublished))
+	require.Error(t, applyNOR291(a, second, WALPublished))
+	assertNOR291ProjectionCount(t, a, 2)
+	require.Error(t, applyNOR291(a, first, WALPublished))
+	assertNOR291ProjectionCount(t, a, 2)
+}
+
 func TestNOR291ProjectionFailedAppendCanRetry(t *testing.T) {
 	mode := WALPublished
 	base := storage.NewMemoryEngine()
