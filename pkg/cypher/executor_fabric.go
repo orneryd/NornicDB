@@ -515,7 +515,9 @@ func (e *StorageExecutor) fabricProcedureWritePlan(ctx context.Context, fragment
 		if err != nil {
 			return nil, err
 		}
-		write := contract.writes
+		// A dynamic or unresolved procedure cannot safely authorize the
+		// read-only Fabric execution path.
+		write := contract.writes || contract.dynamic || contract.unknownProcedure
 		if e.dbManager != nil && e.dbManager.IsCompositeDatabase(current.GraphName) {
 			write = false
 		}
