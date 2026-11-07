@@ -1689,7 +1689,7 @@ func TestLocalFragmentExecutor_ExecuteError(t *testing.T) {
 
 func TestQueryGateway_PlanError(t *testing.T) {
 	catalog := NewCatalog()
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, readDeclaredEffects())
 	exec := NewFabricExecutor(catalog, nil, nil)
 	gw := NewQueryGateway(p, exec)
 
@@ -2073,7 +2073,7 @@ func TestE2E_SingleGraphQueryReturnsCorrectRows(t *testing.T) {
 		},
 	}
 	gw := NewQueryGateway(
-		NewFabricPlanner(catalog),
+		NewFabricPlanner(catalog, readDeclaredEffects()),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 	res, err := gw.Execute(context.Background(), nil, "MATCH (n:Person) RETURN n.name AS name", "db", nil, "")
@@ -2091,6 +2091,15 @@ func TestE2E_SingleGraphQueryReturnsCorrectRows(t *testing.T) {
 	}
 }
 
+// newReadOnlyTestGateway shares the planner/executor wiring for read-only
+// gateway fixtures; each test retains its own catalog, mock rows and assertions.
+func newReadOnlyTestGateway(catalog *Catalog, mock *mockCypherExecutor) *QueryGateway {
+	return NewQueryGateway(
+		NewFabricPlanner(catalog, readDeclaredEffects()),
+		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
+	)
+}
+
 func TestE2E_UseClauseRoutesToCorrectGraph(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("nornic", &LocationLocal{DBName: "db1"})
@@ -2104,10 +2113,7 @@ func TestE2E_UseClauseRoutesToCorrectGraph(t *testing.T) {
 			},
 		},
 	}
-	gw := NewQueryGateway(
-		NewFabricPlanner(catalog),
-		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
-	)
+	gw := newReadOnlyTestGateway(catalog, mock)
 	res, err := gw.Execute(context.Background(), nil, "USE nornic.tr MATCH (t:Translation) RETURN t.id AS id", "nornic", nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2133,10 +2139,7 @@ func TestE2E_UnionCombinesResults(t *testing.T) {
 			},
 		},
 	}
-	gw := NewQueryGateway(
-		NewFabricPlanner(catalog),
-		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
-	)
+	gw := newReadOnlyTestGateway(catalog, mock)
 	res, err := gw.Execute(context.Background(), nil,
 		"RETURN 'a' AS val UNION ALL RETURN 'b' AS val", "db", nil, "")
 	if err != nil {
@@ -2159,10 +2162,7 @@ func TestE2E_UnionDistinctDeduplicates(t *testing.T) {
 			},
 		},
 	}
-	gw := NewQueryGateway(
-		NewFabricPlanner(catalog),
-		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
-	)
+	gw := newReadOnlyTestGateway(catalog, mock)
 	res, err := gw.Execute(context.Background(), nil,
 		"RETURN 1 AS x UNION RETURN 1 AS x", "db", nil, "")
 	if err != nil {
@@ -2222,10 +2222,7 @@ func TestE2E_CallUseSubqueryRoutesCorrectly(t *testing.T) {
 			},
 		},
 	}
-	gw := NewQueryGateway(
-		NewFabricPlanner(catalog),
-		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
-	)
+	gw := newReadOnlyTestGateway(catalog, mock)
 
 	query := `USE nornic
 CALL {

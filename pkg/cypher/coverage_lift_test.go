@@ -245,21 +245,6 @@ func TestCoverageLiftMergeCreateSubqueryAndOrderingHelpers(t *testing.T) {
 		})
 	}
 
-	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("n.name = coalesce($name, 'Ada=Byron')")
-	require.True(t, ok)
-	assert.Equal(t, "n.name", lhs)
-	assert.Equal(t, "coalesce($name, 'Ada=Byron')", rhs)
-	lhs, rhs, ok = splitTopLevelEqualityCallSubquery("m.`odd=key` = {value: 'x=y'}")
-	require.True(t, ok)
-	assert.Equal(t, "m.`odd=key`", lhs)
-	assert.Equal(t, "{value: 'x=y'}", rhs)
-	_, _, ok = splitTopLevelEqualityCallSubquery("= missingLeft")
-	assert.False(t, ok)
-	_, _, ok = splitTopLevelEqualityCallSubquery("missingRight = ")
-	assert.False(t, ok)
-	_, _, ok = splitTopLevelEqualityCallSubquery("n.name")
-	assert.False(t, ok)
-
 	assert.Equal(t, "Ada", extractOrderByPropertyValue(node, []string{"name"}))
 	assert.Equal(t, time.Unix(100, 0), extractOrderByPropertyValue(node, []string{"createdAt"}))
 	node.Properties["createdAt"] = "explicit-created"
@@ -586,7 +571,8 @@ func TestCoverageLiftCallTailProjectionAndPredicateMatrix(t *testing.T) {
 
 	// The plan runs the tail's WITH (and WHERE) and RETURN with the pipeline's
 	// appliers.
-	plan, ok := exec.parseCallTailProjectionPlan(ctx, "WITH name, age WHERE (name STARTS WITH 'A' OR age = $wantedAge) AND name IN $names RETURN name AS n, age AS years ORDER BY years DESC SKIP 0 LIMIT 10")
+	plan, ok, err := exec.parseCallTailProjectionPlan(ctx, "WITH name, age WHERE (name STARTS WITH 'A' OR age = $wantedAge) AND name IN $names RETURN name AS n, age AS years ORDER BY years DESC SKIP 0 LIMIT 10")
+	require.NoError(t, err)
 	require.True(t, ok)
 	seed := &ExecuteResult{
 		Columns: []string{"name", "age"},
@@ -615,7 +601,8 @@ func TestCoverageLiftCallTailProjectionAndPredicateMatrix(t *testing.T) {
 		"WITH name RETURN *",
 		"WITH name MATCH (n) RETURN name",
 	} {
-		_, ok = exec.parseCallTailProjectionPlan(ctx, tail)
+		_, ok, err = exec.parseCallTailProjectionPlan(ctx, tail)
+		require.NoError(t, err)
 		assert.False(t, ok, tail)
 	}
 

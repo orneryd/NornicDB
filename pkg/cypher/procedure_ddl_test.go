@@ -224,3 +224,24 @@ func TestDropProcedure_ErrorBranches(t *testing.T) {
 		require.True(t, errors.Is(err, nerrors.ErrProcedureRegistryReloadFailed))
 	})
 }
+
+func TestDropProcedureRecognitionAvoidsQueryCopies(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  bool
+	}{
+		{"DROP PROCEDURE app.refresh", true},
+		{"  drop procedure app.refresh  ", true},
+		{"MATCH (n:Person) WHERE n.age > 21 RETURN n.name", false},
+		{"RETURN 'DROP PROCEDURE' AS text", false},
+	} {
+		require.Equal(t, tc.want, isDropProcedureCommand(tc.query), tc.query)
+	}
+	query := "MATCH (n:Person) WHERE n.age > 21 RETURN n.name"
+	var recognized bool
+	allocations := testing.AllocsPerRun(100, func() {
+		recognized = isDropProcedureCommand(query)
+	})
+	require.False(t, recognized)
+	require.Zero(t, allocations, "recognition must not uppercase-copy the statement")
+}

@@ -64,11 +64,22 @@ func TestClauseHelpers_ParseAndRewrite(t *testing.T) {
 	require.Equal(t, "MATCH (a:Person), (b:Person) WHERE a.id = b.id RETURN a", out)
 	require.Equal(t, "MATCH (a:Person) RETURN a", rewriteTopLevelMultiMatchToCartesianMatch(t.Context(), "MATCH (a:Person) RETURN a"))
 
-	require.True(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{1, 2, 3}))
-	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "", []interface{}{1}))
-	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{1, 1}))
-	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{map[string]interface{}{"k": "v"}}))
-	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row MATCH (n) SET n.x = 1 RETURN count(n) AS c", []interface{}{1}))
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	for _, tc := range []struct {
+		query    string
+		items    []interface{}
+		eligible bool
+	}{
+		{"UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{1, 2, 3}, true},
+		{"", []interface{}{1}, false},
+		{"UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{1, 1}, false},
+		{"UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{map[string]interface{}{"k": "v"}}, false},
+		{"UNWIND $rows AS row MATCH (n) SET n.x = 1 RETURN count(n) AS c", []interface{}{1}, false},
+	} {
+		eligible, err := exec.canApplySetBasedUnwindRewrite(t.Context(), tc.query, tc.items)
+		require.NoError(t, err)
+		require.Equal(t, tc.eligible, eligible, tc.query)
+	}
 }
 
 func TestParseSimpleCountReturnAndRelClause(t *testing.T) {

@@ -181,9 +181,14 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 		}
 	}
 	if strings.HasPrefix(upperRest, "MATCH") {
-		if canApplySetBasedUnwindRewrite(ctx, plan.remainder, plan.items) {
+		eligible, eligibilityErr := e.canApplySetBasedUnwindRewrite(ctx, plan.remainder, plan.items)
+		if eligibilityErr != nil {
+			return nil, true, eligibilityErr
+		}
+		if eligible {
 			if rewritten, ok := e.rewriteUnwindCorrelations(ctx, plan); ok {
 				result, err := e.executeUnwindCorrelationRewrite(ctx, plan, rewritten)
+
 				return result, true, err
 			}
 		}

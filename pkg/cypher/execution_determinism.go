@@ -80,8 +80,14 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || keywordIndexFrom(ctx, text, "LOAD", 0, opts) >= 0 {
 		return policy
 	}
-	requirements := QueryPermissionRequirements(ctx, text, AcceptedSource)
-	if requirements.Write || requirements.Schema || requirements.Admin {
+	// The effect owner decides whether this statement writes, so a runtime effect
+	// still compiles here: its nested text and parameter overrides are resolved
+	// by allows, which refuses a nested write or unknown text. Schema and
+	// administrator eligibility stay with the permission owner.
+	if contract, err := readStatementExecutionContract(ctx, text); err != nil || contract.effect() == statementEffectWrite {
+		return policy
+	}
+	if requirements := QueryPermissionRequirements(ctx, text, AcceptedSource); requirements.Schema || requirements.Admin {
 		return policy
 	}
 	if err := forEachFunctionInvocation(ctx, text, func(name, normalized string, open int) error {
@@ -138,6 +144,11 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 		}
 		declaration := procedure.Spec.ResultCache
 		if len(declaration.CypherInputs) == 0 {
+			if procedure.Spec.ExecutesStatements {
+				// A handler that runs statements without declaring the text it
+				// interprets is opaque: nothing resolves what it executes.
+				return policy
+			}
 			continue
 		}
 		var arguments []string

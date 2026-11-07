@@ -509,7 +509,7 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 // before any part of it plans or runs. A statement the planner can't read is
 // checked as it is, and planning reports the error.
 func fabricSingleGraphStatement(ctx context.Context, cypher string) string {
-	planner := fabric.NewFabricPlanner(nil)
+	planner := fabric.NewFabricPlanner(nil, fabricStatementEffect)
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
 	planner.SetCallImportReader(callSubqueryImportedVariables)
 	statement, err := planner.SingleGraphStatement(ctx, cypher, cyphertext.AcceptedSource)
@@ -526,7 +526,7 @@ func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.C
 		}
 	}
 
-	planner := fabric.NewFabricPlanner(catalog)
+	planner := fabric.NewFabricPlanner(catalog, fabricStatementEffect)
 	// A name spelled UNION, OPTIONAL or RETURN is read as ordinary statements read it.
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
 	planner.SetCallImportReader(callSubqueryImportedVariables)
@@ -543,6 +543,16 @@ func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.C
 	return fragment, nil
 }
 
+// fabricStatementEffect adapts the canonical execution contract to the planner's
+// required effect reader. It resolves effects without executing the statement.
+func fabricStatementEffect(ctx context.Context, query string) (bool, error) {
+	contract, err := readStatementExecutionContract(ctx, query)
+	if err != nil {
+		return false, err
+	}
+	return contract.effect() != statementEffectRead, nil
+}
+
 // fabricProcedureWritePlan resolves the registered CALL contract at statement
 // admission, just as the native transaction route does. Cached structural plans
 // stay immutable and do not retain an obsolete procedure mode after registration.
@@ -554,13 +564,11 @@ func (e *StorageExecutor) fabricProcedureWritePlan(ctx context.Context, fragment
 		if err != nil {
 			return nil, err
 		}
-		contract, err := readStatementExecutionContract(ctx, current.Query)
+		write, err := fabricStatementEffect(ctx, current.Query)
 		if err != nil {
 			return nil, err
 		}
-		// A dynamic or unresolved procedure cannot safely authorize the
-		// read-only Fabric execution path.
-		write := contract.writes || contract.dynamic || contract.unknownProcedure
+
 		if e.dbManager != nil && e.dbManager.IsCompositeDatabase(current.GraphName) {
 			write = false
 		}
@@ -870,7 +878,11 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	defer func() { exec.graphIdentityScope = previousIdentityScope }()
 	// Local fragments bypass implicit execution's decision. Classify this
 	// fragment itself: writes and procedures must retain full node reads.
-	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(exec.analyzer.Analyze(ctx, query))
+	info, analyzeErr := exec.analyzer.Analyze(ctx, query)
+	if analyzeErr != nil {
+		return nil, nil, analyzeErr
+	}
+	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(info)
 	query, names := canonicalizeQuotedVariablesWithBindings(ctx, query, recordBindings)
 	if names != nil {
 		params = names.parameterValues(params)
