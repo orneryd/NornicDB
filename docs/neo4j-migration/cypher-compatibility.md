@@ -148,9 +148,25 @@ SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and v
 
 `CALL { … }` subqueries accept three unambiguous forms that Neo4j 5.26 rejects, as intentional extensions (#907):
 
-- An unscoped body may read an outer variable without an importing `WITH`: `MATCH (p) CALL { MATCH (p)-->(f) RETURN count(f) AS c } RETURN p, c`. Neo4j reports `Variable p not defined`.
+- An unscoped body may read an outer variable without an importing `WITH`: `MATCH (p) CALL { RETURN p.name AS name } RETURN p, name`. Neo4j reports `Variable p not defined`.
 - A body may return an outer variable as itself when it never declares that name again: `MATCH (seed) CALL (seed) { MATCH (seed)--(c) RETURN seed, collect(c) AS cs } RETURN seed, cs`. The column is the outer value. Returning any other value under an outer name is rejected, as in Neo4j (`Variable a already declared in outer scope`).
 - A scoped body (`CALL (a)`, `CALL (*)`) may declare an imported name again, as a top-level `WITH 1 AS a WITH 2 AS a` does: `CALL (a) { WITH a * 10 AS a … }`. The new value holds inside the body only; the enclosing query keeps its own. Neo4j reports that the variable is shadowing an imported variable.
+
+A scoped import remains readable after a `WITH`, but an unread import is not
+an exported wildcard column. For example,
+`WITH 1 AS a CALL (a) { WITH 5 AS v RETURN * UNION RETURN 6 AS v } RETURN a, v`
+returns `[1,5]` and `[1,6]`. An expression read can add an imported name to the
+current query part; a following `WITH` replaces that part's wildcard members.
+Thus `UNWIND [a] AS z RETURN *` exports both `a` and `z`, while
+`UNWIND [a] AS z WITH z RETURN *` exports only `z`. UNION still requires matching
+exported columns. Reads in a WITH's WHERE or ORDER BY tail do not add output
+columns. These membership rules also determine headers on empty results.
+
+Expression subqueries (`COUNT`, `EXISTS`, `COLLECT`) capture outer bindings as
+readable constants. Captures are not implicit `*` columns: a local projection
+such as `RETURN a AS value` explicitly names the result. An unchanged capture
+passed through `WITH a` remains a capture; a fresh alias becomes a local result.
+A same-spelled local in another subquery does not create an outer dependency.
 
 ### Aggregation Functions
 

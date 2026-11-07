@@ -28,15 +28,8 @@ func encodePackStreamMapInto(dst []byte, m map[string]any) []byte {
 
 func encodePackStreamMapIntoWithUTC(dst []byte, m map[string]any, useUTCDateTimeStructs bool) []byte {
 	m = storage.PublicRemoteMap(m)
-	size := len(m)
-	if _, ok := m["_pathResult"]; ok {
-		size--
-	}
-	dst = appendPackStreamMapHeader(dst, size)
+	dst = appendPackStreamMapHeader(dst, len(m))
 	for key, value := range m {
-		if key == "_pathResult" {
-			continue
-		}
 		dst = encodePackStreamStringInto(dst, key)
 		dst = encodePackStreamValueIntoWithUTC(dst, value, useUTCDateTimeStructs)
 	}
@@ -927,8 +920,7 @@ func encodeRecordValueInto(ctx context.Context, dst []byte, v any, useUTCDateTim
 // encodeRecordMapInto encodes a map for the negotiated Bolt version. Bolt 5.0
 // recurses through encodeRecordValueInto so entities nested anywhere in the
 // map get their element-id structures; Bolt 4.x keeps the shared legacy
-// encoder. The _pathResult sentinel key is always dropped (the shared 4.x
-// behavior).
+// encoder. Ordinary map keys are preserved in both versions.
 func encodeRecordMapInto(ctx context.Context, dst []byte, m map[string]any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) ([]byte, error) {
 	if !bolt5 {
 		return encodePackStreamMapIntoWithUTC(dst, m, useUTCDateTimeStructs), nil
@@ -941,26 +933,9 @@ func encodeRecordMapInto(ctx context.Context, dst []byte, m map[string]any, useU
 		return append(dst, 0xA0), nil
 	}
 
-	// Some Cypher internals use helper sentinel keys that should not be
-	// serialized to clients. Keep these out of the wire format.
-	//
-	// Note: we cannot skip all "_" keys because Bolt-compatible node/edge maps
-	// use `_nodeId` / `_edgeId`.
-	skipPathResult := false
-	if _, ok := m["_pathResult"]; ok {
-		skipPathResult = true
-	}
-
-	size := len(m)
-	if skipPathResult {
-		size--
-	}
-	dst = appendPackStreamMapHeader(dst, size)
+	dst = appendPackStreamMapHeader(dst, len(m))
 
 	for k, v := range m {
-		if k == "_pathResult" {
-			continue
-		}
 		dst = encodePackStreamStringInto(dst, k)
 		dst, err = encodeRecordValueInto(ctx, dst, v, useUTCDateTimeStructs, true, dbName, resolvers...)
 		if err != nil {
@@ -1238,60 +1213,7 @@ func extractPathFromMap(val map[string]any) (*cypher.PathResult, bool) {
 		}
 	}
 
-	nodes := coercePathNodes(val["nodes"])
-	rels := coercePathRels(val["relationships"])
-	if len(rels) == 0 {
-		rels = coercePathRels(val["rels"])
-	}
-	if len(nodes) == 0 && len(rels) == 0 {
-		return nil, false
-	}
-
-	return &cypher.PathResult{
-		Nodes:         nodes,
-		Relationships: rels,
-		Length:        len(rels),
-	}, true
-}
-
-// coercePathRecords is the shared kernel behind coercePathNodes and
-// coercePathRels: it normalizes a slice of records that may arrive as
-// []*T, []T, or a mixed []any of pointers and values into []*T. Items of
-// any other type are skipped; a non-slice input yields nil.
-func coercePathRecords[T any](val any) []*T {
-	switch records := val.(type) {
-	case []*T:
-		return records
-	case []T:
-		converted := make([]*T, 0, len(records))
-		for i := range records {
-			record := records[i]
-			converted = append(converted, &record)
-		}
-		return converted
-	case []any:
-		converted := make([]*T, 0, len(records))
-		for _, item := range records {
-			switch record := item.(type) {
-			case *T:
-				converted = append(converted, record)
-			case T:
-				r := record
-				converted = append(converted, &r)
-			}
-		}
-		return converted
-	default:
-		return nil
-	}
-}
-
-func coercePathNodes(val any) []*storage.Node {
-	return coercePathRecords[storage.Node](val)
-}
-
-func coercePathRels(val any) []*storage.Edge {
-	return coercePathRecords[storage.Edge](val)
+	return nil, false
 }
 
 // encodeNode encodes a node as a proper Bolt Node structure (signature 0x4E).

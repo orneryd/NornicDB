@@ -50,12 +50,16 @@ func groupByEdits(ctx context.Context, query string) ([]labelRewriteEdit, error)
 			continue
 		}
 		keysStart, keysEnd := words[index+1].end, len(query)
-		for _, next := range words[index+2:] {
+		for offset, next := range words[index+2:] {
 			if next.depth < word.depth {
 				keysEnd = skipBackSpaces(query, next.start)
 				break
 			}
 			if next.depth == word.depth && groupByKeysEnd(next.upper, words[projection].upper) {
+				before := words[max(0, index+offset)].start
+				if projectionOperandBefore(query, before, next.start) {
+					continue
+				}
 				keysEnd = next.start
 				break
 			}

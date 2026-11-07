@@ -169,3 +169,23 @@ func TestMissingParameterIsParameterMissing(t *testing.T) {
 	require.NoError(t, err, "EXPLAIN runs nothing and needs no parameters")
 	require.NotNil(t, result)
 }
+
+// Statements with the same executable expression can have different public
+// column identities. A cached rejection or success must not cross that boundary.
+func TestQuotedProjectionCacheKeepsClientColumnIdentity(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec, _ := newTestExecutor(t)
+		const distinct = "WITH $value AS x RETURN x + 1, `x` + 1"
+		const duplicate = "WITH $value AS x RETURN x + 1, x + 1"
+		for _, query := range []string{duplicate, distinct, distinct, duplicate, distinct} {
+			result, err := exec.Execute(t.Context(), query, map[string]interface{}{"value": int64(8)})
+			if query == duplicate {
+				require.ErrorContains(t, err, "Multiple RETURN items project the same column name")
+				continue
+			}
+			require.NoError(t, err)
+			require.Equal(t, []string{"x + 1", "`x` + 1"}, result.Columns)
+			require.Equal(t, [][]interface{}{{int64(9), int64(9)}}, result.Rows)
+		}
+	})
+}

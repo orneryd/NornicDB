@@ -209,6 +209,14 @@ func callSubqueryImports(ctx context.Context, clause pipelineClause, outer typeS
 		return nil, false, false, nil
 	}
 	initial := make(typeScope)
+	if program, bound := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); bound && boundStatementAddresses(program, clause.syntax) {
+		if call, found := program.calls[clause.syntax.ID()]; found {
+			for _, name := range call.call.Imports {
+				initial[name] = outer[name]
+			}
+			return initial, scope.scoped, true, nil
+		}
+	}
 	if scope.scoped && scope.names != nil {
 		for _, name := range scope.names {
 			operand, bound := outer[name]
@@ -275,15 +283,6 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pi
 		}
 		final, complete, err := e.semanticScopeWalk(ctx, clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained})
 		if err != nil {
-			if !scoped {
-				if detail, classified := err.(interface{ BoltErrorDetail() string }); importing && classified && detail.BoltErrorDetail() == "UndefinedVariable" {
-					return nil, firstReturn, err
-				}
-				// An old-style CALL { … } keeps NornicDB's implicit imports
-				// (gh648: an outer name it doesn't import is visible, or
-				// declared anew), so its walk only types its columns.
-				return nil, firstReturn, nil
-			}
 			return nil, firstReturn, err
 		}
 		if !complete || last.kind != pipelineClauseReturn {
@@ -299,6 +298,17 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pi
 			}
 		}
 		typedBranches++
+	}
+	if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && boundStatementAddresses(program, clause.syntax) {
+		if columns, found := program.columns[clause.syntax.ID()]; found && returned != nil {
+			projected := typeScope{}
+			columns.Visit(func(names []string) {
+				for _, name := range names {
+					projected[name] = returned[name]
+				}
+			}, func() { projected = returned })
+			returned = projected
+		}
 	}
 	return returned, firstReturn, nil
 }

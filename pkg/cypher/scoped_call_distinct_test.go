@@ -102,7 +102,11 @@ func TestScopedCallDistinctScope(t *testing.T) {
 			if strings.Contains(query, "local*y") {
 				variable = "local"
 			}
-			require.EqualError(t, err, "Variable `"+variable+"` not defined")
+			if strings.Contains(query, "ORDER BY x") {
+				require.EqualError(t, err, "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN: x")
+			} else {
+				require.EqualError(t, err, "Variable `"+variable+"` not defined")
+			}
 		})
 	}
 }

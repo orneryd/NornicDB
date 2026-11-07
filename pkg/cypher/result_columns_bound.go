@@ -11,6 +11,14 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
+// boundCallProgram carries the compiler's transport and export-collision
+// scope. Readable retained globals of an implicit body are not current locals
+// that a child CALL would redeclare.
+type boundCallProgram struct {
+	call     *resultmetadata.Call
+	reserved resultmetadata.Names
+}
+
 type statementBindingID uint32
 
 type statementBinding struct {
@@ -38,6 +46,7 @@ type boundStatementProgram struct {
 	// clause's node ID in this product. CALL's empty-input metadata reads them
 	// through this program instead of recompiling the CALL on its own.
 	columns map[int]resultmetadata.Columns
+	calls   map[int]boundCallProgram
 }
 
 func cloneBindingIDs(input map[string]statementBindingID) map[string]statementBindingID {
@@ -67,6 +76,13 @@ func (compilation *boundCompilation) defineClause(clause *boundClause) {
 		}
 	}
 	for _, name := range names {
+		if item, found := projected[name]; found && item.direct && item.variable == item.alias {
+			if _, current := clause.afterIDs[name]; !current {
+				if id, retained := clause.branch.retainedIDs[name]; retained {
+					clause.afterIDs[name] = id
+				}
+			}
+		}
 		if item, found := projected[name]; found && (!item.direct || item.variable != item.alias) {
 			clause.afterIDs[name] = compilation.define(name, item.definitionStart, item.definitionEnd)
 			continue
@@ -77,9 +93,43 @@ func (compilation *boundCompilation) defineClause(clause *boundClause) {
 			clause.afterIDs[name] = compilation.define(name, start, end)
 			continue
 		}
+		if (clause.branch.body.role == boundScalarBody || clause.branch.body.role == boundScopedCallBody) && (clause.source.kind == pipelineClauseMatch || clause.source.kind == pipelineClauseOptionalMatch) {
+			id := clause.branch.retainedIDs[name]
+			if _, weak := clause.branch.body.weakInputs[id]; id != 0 && !weak {
+				clause.afterIDs[name] = id
+			}
+		}
 		if _, exists := clause.afterIDs[name]; !exists {
 			start, end := syntaxDeclarationSpan(clause.source.syntax, name)
 			clause.afterIDs[name] = compilation.define(name, start, end)
+		}
+	}
+	if clause.branch.body.role == boundScalarBody {
+		for name, retained := range clause.branch.retainedIDs {
+			if _, weak := clause.branch.body.weakInputs[retained]; weak {
+				continue
+			}
+			if declared := clause.afterIDs[name]; declared != 0 && declared != retained {
+				outer := subqueryScope{outer: true, visible: typeScope{name: staticOperand{}}}
+				compilation.fail(resultmetadata.ReasonUnsupportedSyntax, clause.source.start, outer.redeclarationError(name))
+				return
+			}
+		}
+	}
+	// Scalar outer values remain constants. Passing one through unchanged
+	// does not introduce a wildcard member; a new alias does.
+	if clause.branch.body.role == boundScalarBody && clause.source.kind == pipelineClauseWith {
+		for name, item := range projected {
+			if _, current := clause.before[name]; !current && item.direct && item.variable == name && clause.afterIDs[name] == clause.branch.retainedIDs[name] {
+				delete(clause.after, name)
+			}
+		}
+	}
+	if clause.branch.body.role == boundScalarBody && (clause.source.kind == pipelineClauseMatch || clause.source.kind == pipelineClauseOptionalMatch) {
+		for name, id := range clause.afterIDs {
+			if _, current := clause.before[name]; !current && id != 0 && id == clause.branch.retainedIDs[name] {
+				delete(clause.after, name)
+			}
 		}
 	}
 	for name := range clause.afterIDs {
@@ -183,6 +233,14 @@ func (compilation *boundCompilation) bindSymbol(ctx context.Context, clause *bou
 				return
 			}
 		}
+		// A malformed function modifier can be represented as a symbol by the
+		// grammar. Preserve its owned argument/form diagnostic instead of
+		// turning it into an undefined-variable diagnostic. This runs only on
+		// the rejection path and never admits an unresolved binding.
+		if err := validateStaticFunctionArguments(ctx, clause.source.text, compilation.owner.cypher25); err != nil {
+			compilation.fail(resultmetadata.ReasonUnsupportedSyntax, start, err)
+			return
+		}
 		compilation.failUndefined(start, name)
 		return
 	}
@@ -202,6 +260,9 @@ func (compilation *boundCompilation) bindSymbol(ctx context.Context, clause *bou
 		if definition.start == start && definition.end == end {
 			return
 		}
+	}
+	if clause.source.kind != pipelineClauseWith && clause.source.kind != pipelineClauseReturn {
+		compilation.promoteInput(clause, name, id)
 	}
 	compilation.product.uses = append(compilation.product.uses, statementBindingUse{binding: id, name: name, start: start, end: end, clauseStart: clause.source.start, clauseEnd: clause.source.end})
 }

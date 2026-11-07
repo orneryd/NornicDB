@@ -1069,6 +1069,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphersubqueries.call_for_node_failed", Constructor: "CypherSubqueriesCallForNodeFailed", Fields: []string{"Cause", "Node"}, PluralForms: []string{"other"}},
 	{ID: "cyphersubqueries.call_not_found", Constructor: "CypherSubqueriesCallNotFound", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphersubqueries.chained_transactions_unsupported", Constructor: "CypherSubqueriesChainedTransactionsUnsupported", Fields: []string{"BatchSize"}, PluralForms: []string{"other"}},
+	{ID: "cyphersubqueries.collect_projection", Constructor: "CypherSubqueriesCollectProjection", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphersubqueries.collect_single_column", Constructor: "CypherSubqueriesCollectSingleColumn", Fields: []string{"Columns"}, PluralForms: []string{"other"}},
 	{ID: "cyphersubqueries.correlated_import_failed", Constructor: "CypherSubqueriesCorrelatedImportFailed", Fields: []string{"Cause", "Import"}, PluralForms: []string{"other"}},
 	{ID: "cyphersubqueries.correlated_union_branch_failed", Constructor: "CypherSubqueriesCorrelatedUnionBranchFailed", Fields: []string{"Branch", "Cause", "Seed"}, PluralForms: []string{"other"}},

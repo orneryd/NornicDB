@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -60,26 +61,18 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	// An unscoped body imports through its branches' leading WITHs
 	// (unscopedCallImports, #907).
+	program, err := boundClauseProgram(ctx, clause)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	compiled, found := program.calls[clause.syntax.ID()]
+	if !found {
+		return nil, nil, true, unresolvedStatementError()
+	}
+	compiledCall := compiled.call
 	callScope := scopeClauseFromSyntax(clause.syntax)
 	scopedImports, scoped := callScope.names, callScope.scoped
-	if metadata != nil {
-		declared := scopedImports
-		if declared == nil && !scoped {
-			var importErr error
-			declared, _, importErr = unscopedCallImports(ctx, importBody, func(name string) bool {
-				_, exists := metadata.scope[name]
-				return exists
-			}, true)
-			if importErr != nil {
-				return nil, nil, true, importErr
-			}
-		}
-		for _, name := range declared {
-			if _, exists := metadata.scope[name]; !exists {
-				return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable", "variable "+name+" is not defined")
-			}
-		}
-	}
+
 	targetExec := e
 	if body.branches[0].useStart >= 0 {
 		// A USE-bearing body keeps the explicit text admission: USE selects the
@@ -138,14 +131,8 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	// Neo4j 5.26 rejects the outer variable there ("Variable `n` not
 	// defined"); NornicDB keeps running such statements as before, since
 	// the import is unambiguous (#907, kept at the owner's direction).
-	imports := scopedImports
-	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
-		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(text(), name)) {
-				imports = append(imports, name)
-			}
-		}
-	}
+	imports := compiledCall.Imports
+
 	write := callSubqueryQueryIsWrite(ctx, text())
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
 	_, unionAll, _, isUnion := parseTopLevelUnionBranches(ctx, text())
@@ -175,7 +162,29 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		}
 	}
 
+	// Names.Visit protects compiled metadata by copying its slice. Resolve the
+	// immutable selection once per call, rather than allocating once per row.
+	var retainedNames []string
+	compiledCall.Retained.Visit(func(names []string) { retainedNames = names }, func() {})
+	var branchRetainedNames [][]string
+	if isUnion {
+		branchRetainedNames = make([][]string, len(compiledCall.Statement.Branches))
+		for index, branch := range compiledCall.Statement.Branches {
+			branch.Retained.Visit(func(names []string) { branchRetainedNames[index] = names }, func() {})
+		}
+	}
+
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
+		if useBody {
+			// USE/batch admission changes the source window, not its binding frame.
+			// A private clone carries that immutable compile mode; row values remain
+			// execution inputs and never enter a program-cache key.
+			runExec = runExec.cloneWithStorage(runExec.getStorage(runCtx))
+			runExec.inputBindingRole = boundImplicitCallBody
+			if scoped {
+				runExec.inputBindingRole = boundScopedCallBody
+			}
+		}
 		clauses, ok := pipelineClausesForBody(runCtx, body)
 		if useBody {
 			clauses, ok = pipelineClausesFor(runCtx, text())
@@ -185,7 +194,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		}
 		stats := &QueryStats{}
 		out := make([]pipelineRow, 0, len(outerRows))
-		hasReturn := isUnion || pipelineHasClauseKind(clauses, pipelineClauseReturn)
+		hasReturn := compiledCall.Kind == resultmetadata.CallReturning
 		// What each outer row's run of the body takes goes back when the run
 		// ends; the rows kept from it count below (#1343).
 		memory := memoryScopeFromContext(runCtx)
@@ -209,11 +218,20 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					input[name] = value
 				}
 			}
+			branchOrdinal := 0
 			runBranch := func(query string) (*ExecuteResult, error) {
 				branchClauses := clauses
 				if isUnion {
-					var planned bool
-					branchClauses, planned = pipelineClausesFor(runCtx, query)
+					if branchOrdinal >= len(importBody.branches) {
+						return nil, unresolvedStatementError()
+					}
+					// Preserve the body's admitted source and binding identities.
+					// Reparsing the branch as a root made readable imports into
+					// wildcard columns and discarded the enclosing scope contract.
+					split := cachedPipelineClausesBranch(runCtx, importBody.branches[branchOrdinal], true)
+					branchOrdinal++
+					branchClauses = split.clauses
+					planned := split.ok
 					if !planned {
 						return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "CALL branch could not be planned as a clause pipeline")
 					}
@@ -230,27 +248,15 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					delete(branchInput, name)
 					delete(scope, name)
 				}
-				var carried pipelineRow
-				if scoped {
-					carried = make(pipelineRow, len(imports))
-					for _, name := range imports {
-						carried[name] = branchInput[name]
-					}
+				carried := pipelineRow{}
+				names := retainedNames
+				if isUnion && branchOrdinal > 0 {
+					names = branchRetainedNames[branchOrdinal-1]
 				}
-				if !scoped && hasLegacyImports {
-					names := map[string]struct{}{}
-					var nodes []cypherantlr.SyntaxNode
-					for name := range branchInput {
-						names[name] = struct{}{}
-					}
-					for _, clause := range branchClauses {
-						nodes = append(nodes, clause.syntax)
-					}
-					carried = pipelineRow{}
-					for _, name := range implicitSyntaxImports(names, nodes...) {
-						carried[name] = branchInput[name]
-					}
+				for _, name := range names {
+					carried[name] = branchInput[name]
 				}
+
 				branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
 
 				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})

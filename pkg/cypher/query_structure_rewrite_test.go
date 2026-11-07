@@ -88,3 +88,95 @@ func TestQueryStructureMatchesNeo4j(t *testing.T) {
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
 }
+
+// A projection item named next is not the NEXT composition operator. The
+// operator joins two query parts, so it stands where the part before it ends,
+// never where that part's projection still expects an item. A name after a
+// comma, RETURN, DISTINCT or RETURN * therefore keeps its name reading and the
+// ORDER BY / SKIP / OFFSET / LIMIT run after it stays that projection's tail,
+// on both parsers; the operator itself keeps joining parts beside such a name.
+func TestQueryStructureNextNameKeepsClauseBoundary(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "query_structure_next"))
+	ctx := context.Background()
+	l := func(values ...interface{}) []interface{} { return values }
+	// The composition operator's own answers, as Neo4j 2026.09 gives them.
+	composed := map[string][][]interface{}{
+		"RETURN 1 AS a NEXT RETURN 2 AS b":                                  {l(int64(2))},
+		"UNWIND [1, 2] AS x RETURN x NEXT RETURN x * 10 AS v":               {l(int64(10)), l(int64(20))},
+		"UNWIND [1, 2] AS x RETURN x ORDER BY x DESC LIMIT 1 NEXT RETURN x": {l(int64(2))},
+		"UNWIND [1, 2] AS next RETURN next NEXT RETURN next * 10 AS v":      {l(int64(10)), l(int64(20))},
+		"UNWIND [1, 2] AS x RETURN * NEXT RETURN x":                         {l(int64(1)), l(int64(2))},
+	}
+	// The same statements without the operator: next is the projection's item
+	// and the tail after it belongs to that projection.
+	projected := map[string][][]interface{}{
+		"UNWIND [1, 2] AS next RETURN next ORDER BY next":           {l(int64(1)), l(int64(2))},
+		"UNWIND [1, 2] AS next RETURN DISTINCT next ORDER BY next":  {l(int64(1)), l(int64(2))},
+		"UNWIND [1, 2] AS next RETURN *, next ORDER BY next":        {l(int64(1)), l(int64(2))},
+		"UNWIND [2, 1] AS next RETURN next ORDER BY next DESC":      {l(int64(2)), l(int64(1))},
+		"UNWIND [1, 2] AS next RETURN next SKIP 1":                  {l(int64(2))},
+		"UNWIND [1, 2] AS next RETURN next LIMIT 1":                 {l(int64(1))},
+		"UNWIND [1, 2] AS next RETURN next OFFSET 1":                {l(int64(2))},
+		"UNWIND [1, 2] AS next WITH next ORDER BY next RETURN next": {l(int64(1)), l(int64(2))},
+	}
+	forEachParser(t, func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "query_structure_next_parser"))
+		for query, want := range composed {
+			result, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, want, result.Rows, query)
+		}
+		for query, want := range projected {
+			// A name needs no Cypher 25 option, so both readings of the text
+			// must give the projection its rows.
+			for _, statement := range []string{query, "CYPHER 25 " + query} {
+				result, err := exec.Execute(ctx, statement, nil)
+				require.NoError(t, err, statement)
+				require.Equal(t, []string{"next"}, result.Columns, statement)
+				require.Equal(t, want, result.Rows, statement)
+			}
+		}
+	})
+
+	// The owner's own classification: a NEXT where an operand belongs makes no
+	// rewrite, and a real composition operator produces exactly this text.
+	for _, query := range []string{
+		"UNWIND [1, 2] AS next RETURN next ORDER BY next",
+		"UNWIND [2, 1] AS next RETURN next ORDER BY next DESC",
+		"UNWIND [1, 2] AS next RETURN DISTINCT next ORDER BY next",
+		"UNWIND [1, 2] AS next RETURN *, next ORDER BY next",
+		"UNWIND [1, 2] AS next RETURN next SKIP 1 LIMIT 1",
+	} {
+		rewritten, rewrite, err := desugarQueryStructure(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Nil(t, rewrite, query)
+		require.Equal(t, query, rewritten, query)
+	}
+	rewritten, rewrite, err := desugarQueryStructure(ctx, "RETURN 1 AS a NEXT RETURN 2 AS b", nil)
+	require.NoError(t, err)
+	require.NotNil(t, rewrite)
+	require.Equal(t, "CALL (*) { RETURN 1 AS a } RETURN 2 AS b", rewritten)
+
+	// A name still names one variable, and a malformed NEXT is still refused.
+	for _, query := range []string{
+		"RETURN 1 NEXT",
+		"RETURN 1 AS a NEXT NEXT RETURN 1",
+		"UNWIND [1, 2] AS next RETURN missing ORDER BY next",
+	} {
+		_, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
+		require.Error(t, err, query)
+		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	}
+}
+
+func TestQueryStructureNextArithmeticOperand(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec, ctx := newUnitExecutor(t)
+		for _, prefix := range []string{"", "CYPHER 25 "} {
+			result, err := exec.Execute(ctx, prefix+"WITH 3 AS next RETURN 2 * next ORDER BY next", nil)
+			require.NoError(t, err)
+			require.Equal(t, []string{"2 * next"}, result.Columns)
+			require.Equal(t, [][]any{{int64(6)}}, result.Rows)
+		}
+	})
+}

@@ -1491,87 +1491,261 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	return result, handled, err
 }
 
-func rewriteUnwindCorrelationToIn(query string, variable string, paramName string) (string, bool) {
-	if strings.TrimSpace(query) == "" || strings.TrimSpace(variable) == "" || strings.TrimSpace(paramName) == "" {
+// unwindCorrelation is one conjunctive WHERE equality whose right side is
+// exactly one read of the UNWIND binding: `lhs = binding`. start and end span
+// the equality the rewrite replaces, from the left expression through the
+// binding read; readStart and readEnd span only that binding read. Every span
+// is a statement-source offset, the same coordinate the admitted statement
+// program records binding declarations and reads in.
+type unwindCorrelation struct {
+	lhs                string
+	start, end         int
+	readStart, readEnd int
+}
+
+// unwindCorrelationProduct is every conjunctive WHERE equality in one body that
+// reads the UNWIND binding. body is the text the rewrite splices, and
+// bodyOffset is where that text begins in the statement source, so a
+// correlation's statement span maps into the body by subtracting bodyOffset.
+type unwindCorrelationProduct struct {
+	body         string
+	bodyOffset   int
+	correlations []unwindCorrelation
+}
+
+// readUnwindCorrelations is the set-based UNWIND rewrite's one equality reader.
+// It reads the admitted statement's retained syntax rather than the body text.
+// The grammar's comparisonExpression/comparisonSigns/addSubExpression roles say
+// exactly where a comparison begins and ends, so the right side is the declared
+// binding itself and not a longer expression that merely starts with its name
+// (`binding + 1`, `binding.prop`, `binding[0]`); the same roles say whether an
+// AND conjunct holds the comparison or an OR, XOR or NOT operand does. The
+// declaration supplies the binding's exact name and identity, so a read the
+// program bound to another declaration - however it is spelled - is never
+// selected.
+func readUnwindCorrelations(syntax cypherantlr.StatementSyntax, declaration statementBinding, body string, bodyOffset int) unwindCorrelationProduct {
+	product := unwindCorrelationProduct{body: body, bodyOffset: bodyOffset}
+	if !syntax.Valid() || declaration.id == 0 || declaration.name == "" || body == "" || bodyOffset < 0 {
+		return product
+	}
+	bodyEnd := bodyOffset + len(body)
+	if bodyEnd > len(syntax.Source()) {
+		return product
+	}
+	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+		if node.Rule() != cypherantlr.CypherParserRULE_comparisonExpression || !unwindConjunctiveComparison(node) {
+			return nil
+		}
+		correlation, ok := unwindBindingEquality(node, declaration.name)
+		if !ok || correlation.start < bodyOffset || correlation.end > bodyEnd {
+			return nil
+		}
+		product.correlations = append(product.correlations, correlation)
+		return nil
+	})
+	return product
+}
+
+// unwindConjunctiveComparison reports whether a comparison is one conjunct of a
+// WHERE expression. An OR or XOR alternative, or a NOT, between the comparison
+// and the WHERE decides the truth value the equality contributes; substituting
+// inside one of those operands changes the statement's rows, so no such operator
+// may sit between the comparison and the WHERE.
+func unwindConjunctiveComparison(comparison cypherantlr.SyntaxNode) bool {
+	negation, ok := comparison.Parent()
+	if !ok || negation.Rule() != cypherantlr.CypherParserRULE_notExpression || negation.ChildCount() != 1 {
+		return false
+	}
+	conjunction, ok := negation.Parent()
+	if !ok || conjunction.Rule() != cypherantlr.CypherParserRULE_andExpression {
+		return false
+	}
+	exclusive, ok := conjunction.Parent()
+	if !ok || exclusive.Rule() != cypherantlr.CypherParserRULE_xorExpression || exclusive.ChildCount() != 1 {
+		return false
+	}
+	expression, ok := exclusive.Parent()
+	if !ok || expression.Rule() != cypherantlr.CypherParserRULE_expression || expression.ChildCount() != 1 {
+		return false
+	}
+	filter, ok := expression.Parent()
+	if !ok || filter.Rule() != cypherantlr.CypherParserRULE_where {
+		return false
+	}
+	// A child query's predicate does not establish the outer row's join key.
+	// Eliminating that outer iteration would collapse multiplicity, even when
+	// the only read of the key lives in the child predicate.
+	for parent, valid := filter.Parent(); valid; parent, valid = parent.Parent() {
+		switch parent.Rule() {
+		case cypherantlr.CypherParserRULE_callSubquery, cypherantlr.CypherParserRULE_collectSubquery, cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_existsSubquery, cypherantlr.CypherParserRULE_subqueryExist:
+			return false
+		}
+	}
+	return true
+}
+
+// unwindBindingEquality reads one comparisonExpression as `property = binding`.
+// The comparison must be one equality sign between two addSubExpressions, and
+// the right side must be the single symbol that spans it and spells the
+// declared binding: an arithmetic, property or subscript right side carries its
+// own operands, so no single symbol spans it.
+func unwindBindingEquality(comparison cypherantlr.SyntaxNode, binding string) (unwindCorrelation, bool) {
+	if comparison.ChildCount() != 3 {
+		return unwindCorrelation{}, false
+	}
+	left, signs, right := comparison.Child(0), comparison.Child(1), comparison.Child(2)
+	if left.Rule() != cypherantlr.CypherParserRULE_addSubExpression ||
+		signs.Rule() != cypherantlr.CypherParserRULE_comparisonSigns ||
+		right.Rule() != cypherantlr.CypherParserRULE_addSubExpression {
+		return unwindCorrelation{}, false
+	}
+	if _, equal := signs.DirectToken(cypherantlr.CypherLexerASSIGN); !equal || signs.ChildCount() != 1 {
+		return unwindCorrelation{}, false
+	}
+	start, _ := left.Span()
+	lhs := left.Text()
+	if !isSimplePropertyReference(lhs) {
+		return unwindCorrelation{}, false
+	}
+	readStart, readEnd := right.Span()
+	symbols, exact := 0, false
+	right.Walk(func(node cypherantlr.SyntaxNode) func() {
+		name, symbol := node.Name()
+		if !symbol {
+			return nil
+		}
+		symbols++
+		symbolStart, symbolEnd := node.Span()
+		if name == binding && symbolStart == readStart && symbolEnd == readEnd {
+			exact = true
+		}
+		return nil
+	})
+	if !exact || symbols != 1 {
+		return unwindCorrelation{}, false
+	}
+	return unwindCorrelation{lhs: lhs, start: start, end: readEnd, readStart: readStart, readEnd: readEnd}, true
+}
+
+// rewrite replaces the correlations with one IN-list membership plus
+// equalities on the first expression, preserving join correlation semantics:
+//
+//	a.prop = binding AND b.prop = binding
+//	=> a.prop IN $items AND b.prop = a.prop
+//
+// so the fused plan does not produce cross-key cartesian joins.
+func (product unwindCorrelationProduct) rewrite(paramName string) (string, bool) {
+	if len(product.correlations) == 0 || strings.TrimSpace(paramName) == "" || product.bodyOffset < 0 {
 		return "", false
 	}
-	// Preserve join correlation semantics:
-	//   a.prop = unwindVar AND b.prop = unwindVar
-	// => a.prop IN $items AND b.prop = a.prop
-	// so we do not produce cross-key cartesian joins.
-	type equalityMatch struct {
-		start int
-		end   int
-		lhs   string
-	}
-	matches := make([]equalityMatch, 0, 2)
-	for i := 0; i < len(query); i++ {
-		if end, quoted := skipCypherLexicalToken(query, i); quoted {
-			i = end - 1
-			continue
-		}
-		ch := query[i]
-		if ch != '=' {
-			continue
-		}
-
-		lhsEnd := i
-		for lhsEnd > 0 && cyphertext.IsWhitespaceAt(query, lhsEnd-1) {
-			lhsEnd--
-		}
-		lhsStart := lhsEnd
-		for lhsStart > 0 {
-			prev := query[lhsStart-1]
-			if cyphertext.NamePartAt(query, lhsStart-1) || prev == '.' {
-				lhsStart--
-				continue
-			}
-			break
-		}
-		lhs := strings.TrimSpace(query[lhsStart:lhsEnd])
-		if lhs == "" || !isSimplePropertyReference(lhs) {
-			continue
-		}
-
-		rhsStart := i + 1
-		for rhsStart < len(query) && cyphertext.IsWhitespaceAt(query, rhsStart) {
-			rhsStart++
-		}
-		if rhsStart+len(variable) > len(query) || !strings.EqualFold(query[rhsStart:rhsStart+len(variable)], variable) {
-			continue
-		}
-		rhsEnd := rhsStart + len(variable)
-		if rhsEnd < len(query) && cyphertext.NamePartAt(query, rhsEnd) {
-			continue
-		}
-		matches = append(matches, equalityMatch{start: lhsStart, end: rhsEnd, lhs: lhs})
-		i = rhsEnd - 1
-	}
-	if len(matches) == 0 {
-		return "", false
-	}
-	firstExpr := matches[0].lhs
+	firstExpr := product.correlations[0].lhs
 	if firstExpr == "" {
 		return "", false
 	}
-
 	var b strings.Builder
 	cursor := 0
-	for i, m := range matches {
-		b.WriteString(query[cursor:m.start])
+	for i, correlation := range product.correlations {
+		start, end := correlation.start-product.bodyOffset, correlation.end-product.bodyOffset
+		if start < cursor || end < start || end > len(product.body) {
+			return "", false
+		}
+		b.WriteString(product.body[cursor:start])
+		b.WriteString(correlation.lhs)
 		if i == 0 {
-			b.WriteString(m.lhs)
 			b.WriteString(" IN $")
 			b.WriteString(paramName)
 		} else {
-			b.WriteString(m.lhs)
 			b.WriteString(" = ")
 			b.WriteString(firstExpr)
 		}
-		cursor = m.end
+		cursor = end
 	}
-	b.WriteString(query[cursor:])
+	b.WriteString(product.body[cursor:])
 	return b.String(), true
+}
+
+// unwindBindingProof is the statement evidence that one body's set-based
+// rewrite removes every read of the UNWIND binding: the admitted statement
+// program, whose declaration and reads address the same source as the
+// correlations, and the binding the UNWIND alias declares in it.
+type unwindBindingProof struct {
+	program     *boundStatementProgram
+	declaration statementBinding
+}
+
+// unwindDeclaration is the binding the UNWIND alias declares: the program
+// binding whose span is exactly the alias token. A program without that span
+// does not address the statement the plan was prepared from.
+func unwindDeclaration(program *boundStatementProgram, start, end int) (statementBinding, bool) {
+	if program == nil || start < 0 || end <= start {
+		return statementBinding{}, false
+	}
+	var found statementBinding
+	for _, binding := range program.bindings {
+		if binding.start != start || binding.end != end {
+			continue
+		}
+		if found.id != 0 {
+			return statementBinding{}, false
+		}
+		found = binding
+	}
+	return found, found.id != 0
+}
+
+// eliminates reports whether every read of the UNWIND binding is one of these
+// correlations, so replacing them leaves no live read of the binding. Program
+// reads include the ones a wildcard projection expands to, which no scan of the
+// body text can see. Each correlation must read the declaration itself: an
+// equality the compiler bound to another declaration is not this binding's
+// read, so replacing it would change a comparison the rewrite does not own.
+func (product unwindCorrelationProduct) eliminates(proof unwindBindingProof) bool {
+	if len(product.correlations) == 0 || proof.program == nil || proof.declaration.id == 0 {
+		return false
+	}
+	for _, correlation := range product.correlations {
+		if !product.readsDeclaration(proof, correlation) {
+			return false
+		}
+	}
+	for _, use := range proof.program.uses {
+		if use.binding == proof.declaration.id {
+			if !product.covers(use) {
+				return false
+			}
+			continue
+		}
+		// A read spelled like the binding carries another identity once a later
+		// clause rebinds the name; that read belongs to the other binding. An
+		// unresolved identity could be this binding's read, so it refuses the
+		// rewrite.
+		if use.binding == 0 && use.name == proof.declaration.name {
+			return false
+		}
+	}
+	return true
+}
+
+// covers reports whether one program read is exactly a selected correlation's
+// binding read.
+func (product unwindCorrelationProduct) covers(use statementBindingUse) bool {
+	for _, correlation := range product.correlations {
+		if use.start == correlation.readStart && use.end == correlation.readEnd {
+			return true
+		}
+	}
+	return false
+}
+
+// readsDeclaration reports whether a selected correlation's read is exactly a
+// read the program resolved to the UNWIND declaration.
+func (product unwindCorrelationProduct) readsDeclaration(proof unwindBindingProof, correlation unwindCorrelation) bool {
+	for _, use := range proof.program.uses {
+		if use.start == correlation.readStart && use.end == correlation.readEnd {
+			return use.binding == proof.declaration.id
+		}
+	}
+	return false
 }
 
 func isSimplePropertyReference(expr string) bool {
@@ -1813,16 +1987,9 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 		if err != nil {
 			return nil, localizedError(localization.CypherResidualUnionBranchFailed(i+1, truncateQuery(query, 50), err), err)
 		}
-		// Some execution branches can return empty column metadata when no rows are produced,
-		// even though the query has an explicit RETURN/YIELD projection. For UNION semantics we
-		// must validate/provide branch column shapes deterministically.
-		if len(result.Columns) == 0 {
-			columns, err := e.ResultColumns(ctx, query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25", AcceptedSource)
-			if err != nil {
-				return nil, err
-			}
-			result.Columns = columns
-		}
+		// A branch runner owns its admitted header, including a legitimate
+		// zero-column unit branch. Recompiling that branch as a root would lose
+		// its CALL/scalar frame and cannot repair an execution contract failure.
 
 		if combinedResult == nil {
 			// First query - initialize result

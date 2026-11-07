@@ -103,6 +103,11 @@ func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage,
 		if err := malformedCallScopeError(ctx, source, 0); err != nil {
 			return err
 		}
+		// Rejected function forms retain their shared semantic diagnostic;
+		// they do not become accepted statements through this error adapter.
+		if err := validateStaticFunctionArguments(ctx, source, cypherVersionFromContext(ctx) == "25"); err != nil {
+			return err
+		}
 	}
 	if invalidRelationshipPattern(source) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidRelationshipPattern", "invalid variable-length relationship pattern")

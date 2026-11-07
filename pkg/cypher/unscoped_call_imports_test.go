@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -146,29 +147,25 @@ func TestUnscopedCallImportControls(t *testing.T) {
 	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
 }
 
-// A statement that does not parse has no retained body, so its refused CALL
-// bodies are admitted once and read by the same branch readers: a leading WITH
-// that imports nothing still reports its undefined variable, and an importing
-// alias is still an invalid import. Both diagnostics survive the refused input.
+// Whole-statement syntax admission precedes semantic import validation. An
+// unfinished outer RETURN reports the actual EOF, without admitting a repaired
+// CALL-body prefix as a different statement.
 func TestUnscopedImportFormsOnRefusedBodies(t *testing.T) {
 	exec := newGh648Executor(t)
-	ctx := context.Background()
-	for _, testCase := range []struct {
-		query, message string
-	}{
-		{"CALL { WITH nope RETURN nope AS x } RETURN", "Variable `nope` not defined"},
-		{"CALL { WITH [nope] AS l RETURN l } RETURN", "Variable `nope` not defined"},
-		{"CALL { WITH nope RETURN nope UNION RETURN 2 AS x } RETURN", "Variable `nope` not defined"},
-		{"WITH 1 AS v CALL { WITH v AS w RETURN w AS x } RETURN", "Importing WITH must contain only simple references to outside variables"},
-	} {
-		t.Run(testCase.query, func(t *testing.T) {
-			_, err := exec.Execute(ctx, testCase.query, nil)
-			require.Error(t, err)
-			require.ErrorContains(t, err, testCase.message)
-			code, _ := nornicerrors.Neo4jStatus(err)
-			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
-		})
-	}
+	forEachParser(t, func(t *testing.T) {
+		for _, query := range []string{
+			"CALL { WITH nope RETURN nope AS x } RETURN",
+			"CALL { WITH [nope] AS l RETURN l } RETURN",
+			"CALL { WITH nope RETURN nope UNION RETURN 2 AS x } RETURN",
+			"WITH 1 AS v CALL { WITH v AS w RETURN w AS x } RETURN",
+		} {
+			t.Run(query, func(t *testing.T) {
+				_, err := exec.Execute(t.Context(), query, nil)
+				requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+				require.ErrorContains(t, err, fmt.Sprintf("line 1:%d unexpected input", len(query)))
+			})
+		}
+	})
 }
 
 // A rejected UNION branch cannot erase a valid earlier importing branch and

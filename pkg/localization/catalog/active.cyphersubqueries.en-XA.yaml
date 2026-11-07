@@ -142,3 +142,7 @@
 - id: cyphersubqueries.batch_aggregate_invalid
   description: An aggregate was evaluated outside an aggregation operator.
   other: "[!! Aggregations should not be used like this. !!]"
+
+- id: cyphersubqueries.collect_projection
+  description: COLLECT requires one explicit return expression rather than a wildcard.
+  other: "[!! A Collect Expression must end with a single return column. !!]"
