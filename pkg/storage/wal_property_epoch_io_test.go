@@ -178,22 +178,25 @@ func TestWALPropertyEpochSealingFailureKeepsControls(t *testing.T) {
 func TestWALPropertyEpochFailedSyncCannotPublishCleanProof(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	dir := t.TempDir()
-	dest := reviewBindingEngine(t, dir)
+	var closeErr error
+	dest := reviewBindingEngine(t, dir, func(err error) bool { return closeErr != nil && err == closeErr })
 	require.NoError(t, dest.beginSemanticPropertyRestore())
 	wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
 	dest.SetBufferedCommitWAL(wal)
 	require.NoError(t, wal.file.Close())
-	require.Error(t, dest.Close())
-	_ = wal.Close()
-	dest = reviewBindingEngine(t, dir)
+	closeErr = dest.Close()
+	require.ErrorIs(t, closeErr, os.ErrClosed)
+	require.ErrorContains(t, closeErr, "wal: sync failed")
+	require.ErrorIs(t, wal.Close(), os.ErrClosed)
+	dest = reviewBindingEngine(t, dir, nil)
 	require.False(t, dest.walPropertySource.clean)
 	require.True(t, dest.walPropertySource.foreign)
 }
 
 func TestWALPropertyEpochCorruptNativeIdentityRejectsOpenAndRestore(t *testing.T) {
 	dir := t.TempDir()
-	source := reviewBindingEngine(t, dir)
+	source := reviewBindingEngine(t, dir, nil)
 	require.NoError(t, source.db.Update(func(tx *badger.Txn) error { return tx.Set(walPropertyIdentityKey, []byte("not an identity")) }))
 	backup := filepath.Join(t.TempDir(), "invalid-identity.backup")
 	require.NoError(t, source.Backup(backup))
@@ -201,7 +204,7 @@ func TestWALPropertyEpochCorruptNativeIdentityRejectsOpenAndRestore(t *testing.T
 	opened, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.ErrorContains(t, err, "property dictionary identity")
 	require.Nil(t, opened)
-	dest := reviewBindingEngine(t, t.TempDir())
+	dest := reviewBindingEngine(t, t.TempDir(), nil)
 	require.ErrorContains(t, dest.Restore(backup), "property dictionary identity")
 }
 

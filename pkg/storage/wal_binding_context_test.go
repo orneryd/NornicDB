@@ -49,18 +49,18 @@ func TestWALBindingContextValidation(t *testing.T) {
 
 func TestWALBindingContextDoesNotGuessFromReopenedDestination(t *testing.T) {
 	dir := t.TempDir()
-	b := reviewBindingEngine(t, dir)
+	b := reviewBindingEngine(t, dir, nil)
 	_, err := b.CreateNode(t.Context(), &Node{ID: "foreign:a", Properties: map[string]any{"unrelated": "keep"}})
 	require.NoError(t, err)
 	require.NoError(t, b.Close())
-	b = reviewBindingEngine(t, dir)
+	b = reviewBindingEngine(t, dir, nil)
 	body := []byte{nodeFormatTokenizedV1, 3, 1, 1, 0}
 	data := &WALBufferedCommitData{Writes: map[string][]byte{string(nodeKey("foreign:a")): body}}
 	_, err = b.importBufferedWALRecord(b.work.Context(), data, walForeignImport)
 	require.ErrorContains(t, err, "missing property name binding")
 	require.True(t, b.walPropertySource.foreign)
 	require.NoError(t, b.Close())
-	b = reviewBindingEngine(t, dir)
+	b = reviewBindingEngine(t, dir, nil)
 	_, err = b.importBufferedWALRecord(b.work.Context(), data, walOwnDirectoryAtOpen)
 	require.ErrorContains(t, err, "missing property name binding", "foreign provenance survives reopening")
 	assertPropertyDictionaryBijection(t, b)
@@ -76,7 +76,7 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 			name = "snapshot"
 		}
 		t.Run(name, func(t *testing.T) {
-			source := reviewBindingEngine(t, t.TempDir())
+			source := reviewBindingEngine(t, t.TempDir(), nil)
 			capture, err := NewWAL(t.TempDir(), DefaultWALConfig())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = capture.Close() })
@@ -118,7 +118,7 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 			}
 			require.NoError(t, wal.Close())
 			dir := t.TempDir()
-			dest := reviewBindingEngine(t, dir)
+			dest := reviewBindingEngine(t, dir, nil)
 			if snapshot {
 				require.NoError(t, dest.Close())
 				dest, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
@@ -138,7 +138,7 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 			} else {
 				require.NoError(t, ReplayWALEntry(dest, entries[0]))
 				require.NoError(t, dest.Close())
-				dest = reviewBindingEngine(t, dir)
+				dest = reviewBindingEngine(t, dir, nil)
 				n, err := RecoverBufferedCommitsAtOpen(dest, wal)
 				require.NoError(t, err)
 				require.Equal(t, 3, n)
@@ -156,7 +156,7 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 
 func TestWALBindingContextRejectsUnknownSnapshotTokensAfterReopen(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	source := reviewBindingEngine(t, t.TempDir())
+	source := reviewBindingEngine(t, t.TempDir(), nil)
 	_, err := source.CreateNode(t.Context(), &Node{ID: "unknown:a", Properties: map[string]any{"value": int64(0)}})
 	require.NoError(t, err)
 	capture, err := NewWAL(t.TempDir(), DefaultWALConfig())
@@ -182,7 +182,7 @@ func TestWALBindingContextRejectsUnknownSnapshotTokensAfterReopen(t *testing.T) 
 	require.NoError(t, legacy.Append(OpBufferedCommit, json.RawMessage(payload)))
 	require.NoError(t, legacy.Close())
 	dir := t.TempDir()
-	dest := reviewBindingEngine(t, dir)
+	dest := reviewBindingEngine(t, dir, nil)
 	path := filepath.Join(t.TempDir(), "snapshot.bin")
 	require.NoError(t, SaveSnapshot(&Snapshot{Nodes: []*Node{{ID: "unknown:b", Properties: map[string]any{"other": "keep"}}, {ID: "separator:a"}, {ID: "unknown:a", Properties: map[string]any{"value": int64(0)}}}}, path))
 	result, _, err := RecoverIntoEngine(dest, legacy.Config().Dir, path)
@@ -190,7 +190,7 @@ func TestWALBindingContextRejectsUnknownSnapshotTokensAfterReopen(t *testing.T) 
 	require.Equal(t, 1, result.Failed)
 	require.ErrorContains(t, result.Errors[0].Error, "missing property name binding")
 	require.NoError(t, dest.Close())
-	dest = reviewBindingEngine(t, dir)
+	dest = reviewBindingEngine(t, dir, nil)
 	n, err := RecoverBufferedCommitsAtOpen(dest, legacy)
 	require.ErrorContains(t, err, "missing property name binding")
 	require.Zero(t, n)
