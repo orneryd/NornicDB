@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve XML-special characters and Unicode in GraphML export; reject text XML
   cannot represent and report file export failures. Go `GraphML` now returns
   `(string, error)`; see [the migration guide](docs/development/graphml-go-api.md).
+- Normalize labels by their complete first codepoint, preserving multibyte
+  Unicode and admitted UTF-16 name units. Avoid unnecessary allocations when
+  the initial character is already unchanged by uppercase mapping.
 
 - Return the normal syntax error for zero-argument `normalize()` calls instead
   of closing the Bolt connection. Preserve ambiguous-aggregation diagnostics
