@@ -917,7 +917,7 @@ func (w *WALEngine) countByPrefix(ctx context.Context, prefix string, kind prefi
 	}
 
 	// Correctness fallback (slower).
-	if streamer, ok := w.engine.(StreamingEngine); ok {
+	if streamer, ok := ResolveStreamingEngine(w.engine); ok {
 		var count int64
 		var err error
 		if kind == countPrefixEdges {
@@ -1104,7 +1104,7 @@ func (w *WALEngine) StreamNodesByPrefixWithoutEmbeddings(ctx context.Context, pr
 
 // StreamEdges implements StreamingEngine.StreamEdges by delegating to the underlying engine.
 func (w *WALEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
-	if streamer, ok := w.engine.(StreamingEngine); ok {
+	if streamer, ok := ResolveStreamingEngine(w.engine); ok {
 		return streamer.StreamEdges(ctx, fn)
 	}
 	// Fallback: load all edges
@@ -1125,7 +1125,7 @@ func (w *WALEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) 
 
 // StreamNodeChunks implements StreamingEngine.StreamNodeChunks by delegating to the underlying engine.
 func (w *WALEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
-	if streamer, ok := w.engine.(StreamingEngine); ok {
+	if streamer, ok := ResolveStreamingEngine(w.engine); ok {
 		return streamer.StreamNodeChunks(ctx, chunkSize, fn)
 	}
 	// Fallback: use StreamNodes to build chunks

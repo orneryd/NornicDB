@@ -159,7 +159,7 @@ func (t *sizeTrackingEngine) TopLifecycleDebtKeys(limit int) []storage.MVCCLifec
 
 // StreamNodes delegates streaming iteration to the wrapped engine when available.
 func (t *sizeTrackingEngine) StreamNodes(ctx context.Context, fn func(node *storage.Node) error) error {
-	if streamer, ok := t.Engine.(storage.StreamingEngine); ok {
+	if streamer, ok := storage.ResolveStreamingEngine(t.Engine); ok {
 		return streamer.StreamNodes(ctx, fn)
 	}
 	// Fallback to engine-agnostic helper.
@@ -168,7 +168,7 @@ func (t *sizeTrackingEngine) StreamNodes(ctx context.Context, fn func(node *stor
 
 // StreamEdges delegates streaming iteration to the wrapped engine when available.
 func (t *sizeTrackingEngine) StreamEdges(ctx context.Context, fn func(edge *storage.Edge) error) error {
-	if streamer, ok := t.Engine.(storage.StreamingEngine); ok {
+	if streamer, ok := storage.ResolveStreamingEngine(t.Engine); ok {
 		return streamer.StreamEdges(ctx, fn)
 	}
 	edges, err := t.Engine.AllEdges(ctx)
@@ -193,7 +193,7 @@ func (t *sizeTrackingEngine) StreamEdges(ctx context.Context, fn func(edge *stor
 
 // StreamNodeChunks delegates chunked streaming to wrapped engine when available.
 func (t *sizeTrackingEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*storage.Node) error) error {
-	if streamer, ok := t.Engine.(storage.StreamingEngine); ok {
+	if streamer, ok := storage.ResolveStreamingEngine(t.Engine); ok {
 		return streamer.StreamNodeChunks(ctx, chunkSize, fn)
 	}
 	if chunkSize <= 0 {

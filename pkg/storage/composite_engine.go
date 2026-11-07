@@ -899,7 +899,7 @@ func streamConstituents[T any](
 			continue
 		}
 		database := composite.constituentDatabase(alias, engine)
-		if streamer, ok := engine.(StreamingEngine); ok {
+		if streamer, ok := ResolveStreamingEngine(engine); ok {
 			if frame == nil {
 				frame = &compositeStreamFrame[T]{ctx: ctx, publish: publish}
 				visitor = frame.visit
@@ -1733,7 +1733,7 @@ func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, f
 		}
 
 		database := c.constituentDatabase(alias, engine)
-		if streamer, ok := engine.(StreamingEngine); ok {
+		if streamer, ok := ResolveStreamingEngine(engine); ok {
 			if err := streamer.StreamNodeChunks(ctx, chunkSize, func(nodes []*Node) error {
 				projected, err := entitiesFromDatabase(ctx, nodes, database)
 				if err != nil {

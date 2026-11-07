@@ -830,7 +830,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		}
 		return err
 	}
-	if streamer, ok := store.(storage.StreamingEngine); ok {
+	if streamer, ok := storage.ResolveStreamingEngine(store); ok {
 		err = streamer.StreamNodes(ctx, collect)
 		if err == storage.ErrIterationStopped {
 			err = nil
