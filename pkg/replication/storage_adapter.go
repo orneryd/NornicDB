@@ -3,7 +3,6 @@ package replication
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -34,6 +33,9 @@ type StorageAdapter struct {
 	walDir      string
 	walMu       sync.RWMutex // Protects wal and walPosition
 	walPosition atomic.Uint64
+	// projectedIDs is rebuilt from the retained journal and protected by walMu.
+	projectedIDs      map[string]uint64
+	projectionLoadErr error
 
 	// In-memory WAL for fast streaming (avoids re-reading wal.log continuously).
 	memWALMu sync.RWMutex
@@ -127,7 +129,7 @@ func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAda
 	}
 
 	// Load existing WAL position
-	_ = adapter.loadWALPosition()
+	adapter.projectionLoadErr = adapter.loadWALPosition()
 
 	// Start async WAL writer
 	if adapter.work.Enter() {
@@ -143,6 +145,25 @@ func (a *StorageAdapter) loadWALPosition() error {
 	// Use that as the authoritative replication WAL position.
 	if a.wal != nil {
 		a.walPosition.Store(a.wal.Sequence())
+	}
+	entries, err := storage.ReadWALEntriesFromDir(a.walDir)
+	if err != nil {
+		return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+	}
+	a.projectedIDs = make(map[string]uint64)
+	for _, entry := range entries {
+		if entry.Operation != storage.OperationType("replication_command") {
+			continue
+		}
+		record, err := decodeProjectionRecord(entry)
+		if err != nil {
+			return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+		}
+		if id := projectionCommandID(record.Command); id != "" {
+			if _, exists := a.projectedIDs[id]; !exists {
+				a.projectedIDs[id] = entry.Sequence
+			}
+		}
 	}
 	return nil
 }
@@ -166,6 +187,9 @@ func (a *StorageAdapter) ApplyCommand(waitCtx context.Context, cmd *Command, pub
 
 	if err := retiredCommandError(cmd.Type); err != nil {
 		return CommandPublication{}, err
+	}
+	if a.projectionLoadErr != nil {
+		return CommandPublication{}, a.projectionLoadErr
 	}
 
 	// Observed client requests are admission input, never accepted state-machine
@@ -388,14 +412,12 @@ func (a *StorageAdapter) flushWALBatch(drain bool) {
 		if req.barrier {
 			continue
 		}
-		if err := a.wal.Append(storage.OperationType("replication_command"), req.record); err != nil {
-			err = localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
+		position, err := a.appendProjectionLocked(req.record)
+		if err != nil {
 			a.work.RecordError("replication WAL append", err)
 			req.complete(walCompletion{err: err})
 			continue
 		}
-		position := a.wal.Sequence()
-		a.appendToMemWAL(position, req.record, req.record.Command)
 		req.complete(walCompletion{position: position})
 	}
 	currentPos := a.wal.Sequence()
@@ -570,13 +592,8 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 		}
 		// Never return a later position after dropping an unreadable command:
 		// the receiver could acknowledge a window with a missing write.
-		var rec replicationWALRecord
-		if err := json.Unmarshal(storageEntry.Data, &rec); err != nil {
-			err = fmt.Errorf("replication WAL entry %d: %w", pos, err)
-			return nil, localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
-		}
-		if rec.Command == nil {
-			err := fmt.Errorf("replication WAL entry %d has no command", pos)
+		rec, err := decodeProjectionRecord(storageEntry)
+		if err != nil {
 			return nil, localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
 		}
 		entries = append(entries, &WALEntry{
