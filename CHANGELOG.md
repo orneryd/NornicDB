@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep composite query parameters separate from same-named imported variables,
+  including dynamic graph selection. Preserve keyword-named imports through
+  graph routing and type validation without rewriting them into parameters.
+
 - Keep CALL import visibility separate from wildcard output membership across
   UNION branches, nested scalar subqueries, and empty results. Preserve implicit
   input values through updates, sequential LET dependencies, and DISTINCT/ORDER
