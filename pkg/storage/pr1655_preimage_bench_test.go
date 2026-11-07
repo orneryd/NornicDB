@@ -26,7 +26,7 @@ func BenchmarkNodeMutationPreimages(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for range b.N {
-					folded, distinct, err := tx.nodeMutationPreimagesLocked(b.Context())
+					folded, distinct, err := mutationPreimagesLocked(b.Context(), tx.operations, len(tx.pendingNodes), OpUpdateNode, nodeClaimPreimage)
 					if err != nil {
 						b.Fatal(err)
 					}

@@ -21,7 +21,7 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 		phase         string
 	}{
 		{name: "prepare-receipt", phase: ".observeBufferedCommitReceipt"},
-		{name: "plain-preimage", plain: true, phase: ".validateNodeMutationPreimagesLocked"},
+		{name: "plain-preimage", plain: true, phase: ".validateMutationPreimagesLocked"},
 		{name: "plain-conflict", plain: true, create: true, phase: ".commitsAfterBegin"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
