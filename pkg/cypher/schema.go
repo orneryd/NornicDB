@@ -207,18 +207,6 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 	if err != nil {
 		return nil, err
 	}
-	if parsed, err := e.parseCreateConstraintForRequireDDL(ctx, cypher); err == nil {
-		if kind, properties, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(ctx, parsed.requireExpr); ok && kind == "unique" {
-			seen := make(map[string]struct{}, len(properties))
-			for _, property := range properties {
-				if _, duplicate := seen[property]; duplicate {
-					return nil, newSemanticError("Neo.ClientError.Schema.RepeatedPropertyInCompositeSchema", "RepeatedPropertyInCompositeSchema",
-						"A composite schema cannot contain the same property more than once: "+property)
-				}
-				seen[property] = struct{}{}
-			}
-		}
-	}
 	// Detect IF NOT EXISTS to pass through to AddConstraint for duplicate-schema handling.
 	ifNotExists := strings.Contains(upperASCII(cypher), "IF NOT EXISTS")
 	// Select the contract shape before execution; stored-data validation does
@@ -227,243 +215,14 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		return e.executeCreateConstraintContract(ctx, cypher, contract, ifNotExists)
 	}
 
-	if parsed, err := e.parseCreateConstraintNodeKeyDDL(ctx, cypher); err == nil {
-		if len(parsed.properties) == 0 {
-			return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("NODE KEY"), nil)
-		}
-		if _, err := e.schemaOptionMap(ctx, parsed.options, "node key constraint"); err != nil {
-			return nil, err
-		}
-		constraintName := parsed.name
-		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_node_key", parsed.label, strings.Join(parsed.properties, "_"))
-		}
-
-		constraint := storage.Constraint{
-			Name:       constraintName,
-			Type:       storage.ConstraintNodeKey,
-			Label:      parsed.label,
-			Properties: parsed.properties,
-		}
-
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
-		}
-		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	if parsed, err := e.parseCreateConstraintTemporalDDL(ctx, cypher); err == nil {
-		if parsed.isRelationship {
-			if len(parsed.properties) < 3 {
-				return nil, localizedError(localization.CypherSchemaTemporalRelationshipArityRequired(), nil)
-			}
-			constraintName := parsed.name
-			if constraintName == "" {
-				constraintName = fmt.Sprintf("constraint_%s_%s_temporal", parsed.label, strings.Join(parsed.properties, "_"))
-			}
-			if _, err := e.schemaOptionMap(ctx, parsed.options, "temporal constraint"); err != nil {
-				return nil, err
-			}
-			constraint := storage.Constraint{
-				Name:       constraintName,
-				Type:       storage.ConstraintTemporal,
-				EntityType: storage.ConstraintEntityRelationship,
-				Label:      parsed.label,
-				Properties: parsed.properties,
-			}
-			if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-				return nil, err
-			}
-			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-				return nil, err
-			}
-			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-		}
-
-		// Like relationships: (key..., valid_from, valid_to) with a 1..n property grouping key.
-		if len(parsed.properties) < 3 {
-			return nil, localizedError(localization.CypherSchemaTemporalNodeArityRequired(), nil)
-		}
-		constraintName := parsed.name
-		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_temporal", parsed.label, strings.Join(parsed.properties, "_"))
-		}
-		if _, err := e.schemaOptionMap(ctx, parsed.options, "temporal constraint"); err != nil {
-			return nil, err
-		}
-		constraint := storage.Constraint{
-			Name:       constraintName,
-			Type:       storage.ConstraintTemporal,
-			Label:      parsed.label,
-			Properties: parsed.properties,
-		}
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
-		}
-		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	if parsed, err := e.parseCreateConstraintDomainDDL(ctx, cypher); err == nil {
-		allowedValues, err := parseDomainValueList(parsed.allowedRaw)
+	// One owner reads every property declaration this prefix can spell; the
+	// requirement it returns decides the constraint the statement creates.
+	if declaration, recognized, err := e.parseCreateConstraintPropertyDDL(ctx, cypher); recognized {
 		if err != nil {
-			return nil, localizedError(localization.CypherSchemaDomainValueListInvalid(err), err)
-		}
-		if len(allowedValues) == 0 {
-			return nil, localizedError(localization.CypherSchemaDomainAllowedValueRequired(), nil)
-		}
-		constraintName := parsed.name
-		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_domain", parsed.label, parsed.property)
-		}
-		if _, err := e.schemaOptionMap(ctx, parsed.options, "domain constraint"); err != nil {
 			return nil, err
 		}
-		constraint := storage.Constraint{
-			Name:          constraintName,
-			Type:          storage.ConstraintDomain,
-			Label:         parsed.label,
-			Properties:    []string{parsed.property},
-			AllowedValues: allowedValues,
-		}
-		if parsed.isRelationship {
-			constraint.EntityType = storage.ConstraintEntityRelationship
-		}
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
-		}
-		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+		return e.executeCreateConstraintProperty(ctx, declaration, ifNotExists)
 	}
-
-	if parsed, err := e.parseCreateConstraintSimplePropertyDDL(ctx, cypher); err == nil {
-		if parsed.kind == "unique" {
-			if parsed.isRelationship {
-				constraintName := parsed.name
-				if constraintName == "" {
-					constraintName = fmt.Sprintf("constraint_%s_%s_unique", parsed.label, parsed.property)
-				}
-				if _, err := e.schemaOptionMap(ctx, parsed.options, "uniqueness constraint"); err != nil {
-					return nil, err
-				}
-				constraint := storage.Constraint{
-					Name:       constraintName,
-					Type:       storage.ConstraintUnique,
-					EntityType: storage.ConstraintEntityRelationship,
-					Label:      parsed.label,
-					Properties: []string{parsed.property},
-				}
-				if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-					return nil, err
-				}
-				if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-					return nil, err
-				}
-				return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-			}
-
-			constraintName := parsed.name
-			if constraintName == "" {
-				constraintName = fmt.Sprintf("constraint_%s_%s", parsed.label, parsed.property)
-			}
-			if _, err := e.schemaOptionMap(ctx, parsed.options, "uniqueness constraint"); err != nil {
-				return nil, err
-			}
-			constraint := storage.Constraint{
-				Name:       constraintName,
-				Type:       storage.ConstraintUnique,
-				Label:      parsed.label,
-				Properties: []string{parsed.property},
-			}
-			if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-				return nil, err
-			}
-			schema := e.storage.GetSchema()
-			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-				return nil, err
-			}
-			if err := storage.RefreshUniqueConstraintValuesForEngine(ctx, e.storage, schema); err != nil {
-				return nil, err
-			}
-			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-		}
-
-		if parsed.kind == "exists" {
-			constraintName := parsed.name
-			if constraintName == "" {
-				suffix := "exists"
-				if parsed.isRelationship {
-					constraintName = fmt.Sprintf("constraint_%s_%s_%s", parsed.label, parsed.property, suffix)
-				} else {
-					constraintName = fmt.Sprintf("constraint_%s_%s_%s", parsed.label, parsed.property, suffix)
-				}
-			}
-			if _, err := e.schemaOptionMap(ctx, parsed.options, "existence constraint"); err != nil {
-				return nil, err
-			}
-			constraint := storage.Constraint{
-				Name:       constraintName,
-				Type:       storage.ConstraintExists,
-				Label:      parsed.label,
-				Properties: []string{parsed.property},
-			}
-			if parsed.isRelationship {
-				constraint.EntityType = storage.ConstraintEntityRelationship
-			}
-			if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-				return nil, err
-			}
-			if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-				return nil, err
-			}
-			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-		}
-	}
-
-	if parsed, err := e.parseCreateConstraintTypeDDL(ctx, cypher); err == nil {
-		constraintName := parsed.name
-		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_type", parsed.label, parsed.property)
-		}
-		if _, err := e.schemaOptionMap(ctx, parsed.options, "property type constraint"); err != nil {
-			return nil, err
-		}
-		ptc := storage.PropertyTypeConstraint{
-			Name:         constraintName,
-			Label:        parsed.label,
-			Property:     parsed.property,
-			ExpectedType: parsed.expectedType,
-		}
-		opts := storage.PropertyTypeConstraintOptions{IfNotExists: ifNotExists}
-		if parsed.isRelationship {
-			ptc.EntityType = storage.ConstraintEntityRelationship
-			opts.EntityType = storage.ConstraintEntityRelationship
-		}
-		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(ctx, e.storage, ptc); err != nil {
-			return nil, err
-		}
-		if err := e.storage.GetSchema().AddPropertyTypeConstraint(constraintName, parsed.label, parsed.property, parsed.expectedType, opts); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		(strings.Contains(upperASCII(cypher), " IS ::") || strings.Contains(upperASCII(cypher), " IS TYPED")) &&
-		strings.Contains(upperASCII(err.Error()), "UNSUPPORTED PROPERTY TYPE") {
-		return nil, err
-	}
-
-	// Single-property UNIQUE/EXISTS branches are handled by parseCreateConstraintSimplePropertyDDL.
-
-	// =========================================================================
-	// Relationship constraint patterns
-	// =========================================================================
 
 	if parsed, err := e.parseCreateConstraintCardinalityDDL(ctx, cypher); err == nil {
 		constraintName := parsed.name
@@ -525,53 +284,6 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		(strings.Contains(upperASCII(cypher), "REQUIRE ALLOWED") || strings.Contains(upperASCII(cypher), "REQUIRE DISALLOWED")) {
 		return nil, err
 	}
-
-	// Relationship temporal/domain branches are handled by parseCreateConstraintTemporalDDL and parseCreateConstraintDomainDDL.
-
-	if parsed, err := e.parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(ctx, cypher); err == nil {
-		if len(parsed.properties) == 0 {
-			if parsed.kind == "rel_key" {
-				return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("RELATIONSHIP KEY"), nil)
-			}
-			return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("UNIQUE"), nil)
-		}
-
-		if _, err := e.schemaOptionMap(ctx, parsed.options, "constraint"); err != nil {
-			return nil, err
-		}
-		constraint := storage.Constraint{
-			Label:      parsed.label,
-			Properties: parsed.properties,
-		}
-		if parsed.isRelationship {
-			constraint.EntityType = storage.ConstraintEntityRelationship
-		}
-		if parsed.kind == "rel_key" {
-			constraint.Type = storage.ConstraintRelationshipKey
-			constraint.Name = parsed.name
-			if constraint.Name == "" {
-				constraint.Name = fmt.Sprintf("constraint_%s_%s_rel_key", parsed.label, strings.Join(parsed.properties, "_"))
-			}
-		} else {
-			constraint.Type = storage.ConstraintUnique
-			constraint.Name = parsed.name
-			if constraint.Name == "" {
-				constraint.Name = fmt.Sprintf("constraint_%s_%s_unique", parsed.label, strings.Join(parsed.properties, "_"))
-			}
-		}
-
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
-		}
-		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-			return nil, err
-		}
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-
-	// Relationship single-property UNIQUE/EXISTS branches are handled by parseCreateConstraintSimplePropertyDDL.
-
-	// Relationship property type branches are handled by parseCreateConstraintTypeDDL.
 
 	return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
 }
@@ -1182,63 +894,12 @@ func (e *StorageExecutor) parseCreateFulltextIndexDDL(ctx context.Context, cyphe
 	}, nil
 }
 
-type parsedSimplePropertyConstraintDDL struct {
-	name           string
-	label          string
-	property       string
-	isRelationship bool
-	kind           string // unique | exists
-	options        schemaOptions
-}
-
-type parsedTypeConstraintDDL struct {
-	name           string
-	label          string
-	property       string
-	expectedType   storage.PropertyType
-	isRelationship bool
-	options        schemaOptions
-}
-
-type parsedNodeKeyConstraintDDL struct {
-	name       string
-	label      string
-	properties []string
-	options    schemaOptions
-}
-
-type parsedRelationshipKeyOrCompositeUniqueDDL struct {
-	name           string
-	label          string
-	properties     []string
-	kind           string // rel_key | unique
-	isRelationship bool
-	options        schemaOptions
-}
-
 type parsedConstraintForRequireDDL struct {
 	variable       string
 	name           string
 	label          string
 	isRelationship bool
 	requireExpr    string
-	options        schemaOptions
-}
-
-type parsedTemporalConstraintDDL struct {
-	name           string
-	label          string
-	isRelationship bool
-	properties     []string
-	options        schemaOptions
-}
-
-type parsedDomainConstraintDDL struct {
-	name           string
-	label          string
-	isRelationship bool
-	property       string
-	allowedRaw     string
 	options        schemaOptions
 }
 
@@ -1268,117 +929,6 @@ func splitDDLOptionsTail(ctx context.Context, s string) (expr string, optionsTai
 		return strings.TrimSpace(s[:idx]), strings.TrimSpace(s[idx:])
 	}
 	return s, ""
-}
-
-// parseConstraintQualifiedProperty reads a constraint's single property,
-// n.prop, also in the parentheses Neo4j writes it with in a createStatement:
-// (n.prop). Both returned names are decoded identities.
-func parseConstraintQualifiedProperty(expr string) (string, string, bool) {
-	expr = strings.TrimSpace(expr)
-	if inner, wrapped := stripEnclosingExpressionParentheses(expr); wrapped {
-		expr = strings.TrimSpace(inner)
-	}
-	// Index declarations and expressions already share this quote-aware
-	// boundary reader: a dot inside a symbolic name is data, not a qualifier.
-	qualifier, property, ok := splitPostfixPropertyAccess(expr)
-	if !ok || !isPatternVariableName(qualifier) || property == "" {
-		return "", "", false
-	}
-	return cyphertext.SymbolicNameValue(qualifier), property, true
-}
-
-func parseConstraintPredicate(ctx context.Context, predicateRaw string) (kind string, qualifier string, property string, ok bool) {
-	predicateRaw = strings.TrimSpace(predicateRaw)
-	if predicateRaw == "" {
-		return "", "", "", false
-	}
-
-	upper := upperASCII(predicateRaw)
-	if strings.HasPrefix(upper, "EXISTS") {
-		rest := strings.TrimSpace(predicateRaw[len("EXISTS"):])
-		inside, trailing, ok := extractParenSection(rest)
-		if !ok || strings.TrimSpace(trailing) != "" {
-			return "", "", "", false
-		}
-		if qualifier, prop, ok := parseConstraintQualifiedProperty(inside); ok {
-			return "exists", qualifier, prop, true
-		}
-		return "", "", "", false
-	}
-
-	if idx := keywordIndexFrom(ctx, predicateRaw, "IS UNIQUE", 0, defaultKeywordScanOpts()); idx >= 0 {
-		end, ok := keywordSpanAt(predicateRaw, idx, "IS UNIQUE")
-		if ok && strings.TrimSpace(predicateRaw[end:]) == "" {
-			if qualifier, prop, ok := parseConstraintQualifiedProperty(predicateRaw[:idx]); ok {
-				return "unique", qualifier, prop, true
-			}
-		}
-	}
-
-	if idx := keywordIndexFrom(ctx, predicateRaw, "IS NOT NULL", 0, defaultKeywordScanOpts()); idx >= 0 {
-		end, ok := keywordSpanAt(predicateRaw, idx, "IS NOT NULL")
-		if ok && strings.TrimSpace(predicateRaw[end:]) == "" {
-			if qualifier, prop, ok := parseConstraintQualifiedProperty(predicateRaw[:idx]); ok {
-				return "exists", qualifier, prop, true
-			}
-		}
-	}
-
-	return "", "", "", false
-}
-
-func parseConstraintTypePredicate(ctx context.Context, predicateRaw string) (qualifier string, property string, typeName string, ok bool) {
-	predicateRaw = strings.TrimSpace(predicateRaw)
-	if predicateRaw == "" {
-		return "", "", "", false
-	}
-
-	idx := keywordIndexFrom(ctx, predicateRaw, "IS", 0, defaultKeywordScanOpts())
-	if idx < 0 {
-		return "", "", "", false
-	}
-	isEnd, ok := keywordSpanAt(predicateRaw, idx, "IS")
-	if !ok {
-		return "", "", "", false
-	}
-
-	qualifier, prop, ok := parseConstraintQualifiedProperty(predicateRaw[:idx])
-	if !ok {
-		return "", "", "", false
-	}
-
-	rhs := strings.TrimSpace(predicateRaw[isEnd:])
-	rhsUpper := upperASCII(rhs)
-	if strings.HasPrefix(rhsUpper, "::") {
-		typeName = strings.TrimSpace(rhs[2:])
-	} else if strings.HasPrefix(rhsUpper, "TYPED") {
-		typeName = strings.TrimSpace(rhs[len("TYPED"):])
-	} else {
-		return "", "", "", false
-	}
-	if typeName == "" {
-		return "", "", "", false
-	}
-	return qualifier, prop, typeName, true
-}
-
-func (e *StorageExecutor) parseNodeKeyPropertyList(ctx context.Context, expr string) ([]string, bool) {
-	expr = strings.TrimSpace(expr)
-	inside, rest, ok := extractParenSection(expr)
-	if !ok {
-		return nil, false
-	}
-	rest = strings.TrimSpace(rest)
-	idx := keywordIndexFrom(ctx, rest, "IS NODE KEY", 0, defaultKeywordScanOpts())
-	if idx != 0 {
-		return nil, false
-	}
-	end, ok := keywordSpanAt(rest, 0, "IS NODE KEY")
-	if !ok || strings.TrimSpace(rest[end:]) != "" {
-		return nil, false
-	}
-	props := indexPropertiesFromOnClause(inside, false)
-	return props, true
 }
 
 // parseCreateConstraintForRequireParts parses the shared CREATE CONSTRAINT
@@ -1444,80 +994,6 @@ func (e *StorageExecutor) parseCreateConstraintForRequireHead(ctx context.Contex
 	return name, patternSpan, requireExpr, options, nil
 }
 
-func (e *StorageExecutor) parseCreateConstraintNodeKeyDDL(ctx context.Context, cypher string) (parsedNodeKeyConstraintDDL, error) {
-	q := strings.TrimSpace(cypher)
-	if q == "" {
-		return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
-	}
-
-	prefixPos := keywordIndexFrom(ctx, q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
-	if prefixPos != 0 {
-		return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
-	}
-	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
-	if !ok {
-		return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
-	}
-
-	forPos := keywordIndexFrom(ctx, q, "FOR", prefixEnd, defaultKeywordScanOpts())
-	onPos := keywordIndexFrom(ctx, q, "ON", prefixEnd, defaultKeywordScanOpts())
-
-	if forPos >= 0 && (onPos < 0 || forPos < onPos) {
-		name, patternSpan, requireExpr, options, err := e.parseCreateConstraintForRequireHead(ctx, q)
-		if err != nil {
-			return parsedNodeKeyConstraintDDL{}, err
-		}
-
-		label, _, isRelationship, err := parseCreateIndexForPattern(patternSpan)
-		if err != nil || isRelationship {
-			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("NODE KEY"), nil)
-		}
-
-		props, ok := e.parseNodeKeyPropertyList(ctx, requireExpr)
-		if !ok {
-			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("NODE KEY"), nil)
-		}
-		return parsedNodeKeyConstraintDDL{name: name, label: label, properties: props, options: options}, nil
-	}
-
-	return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
-}
-
-func (e *StorageExecutor) parseRelationshipKeyOrCompositeUniquePredicate(ctx context.Context, predicateExpr string) (string, []string, bool) {
-	predicateExpr = strings.TrimSpace(predicateExpr)
-	if predicateExpr == "" {
-		return "", nil, false
-	}
-
-	if inside, rest, ok := extractParenSection(predicateExpr); ok {
-		rest = strings.TrimSpace(rest)
-		if idx := keywordIndexFrom(ctx, rest, "IS RELATIONSHIP KEY", 0, defaultKeywordScanOpts()); idx == 0 {
-			end, ok := keywordSpanAt(rest, 0, "IS RELATIONSHIP KEY")
-			if ok && strings.TrimSpace(rest[end:]) == "" {
-				return "rel_key", indexPropertiesFromOnClause(inside, false), true
-			}
-		}
-		if idx := keywordIndexFrom(ctx, rest, "IS UNIQUE", 0, defaultKeywordScanOpts()); idx == 0 {
-			end, ok := keywordSpanAt(rest, 0, "IS UNIQUE")
-			if ok && strings.TrimSpace(rest[end:]) == "" {
-				return "unique", indexPropertiesFromOnClause(inside, false), true
-			}
-		}
-	}
-
-	if idx := keywordIndexFrom(ctx, predicateExpr, "IS RELATIONSHIP KEY", 0, defaultKeywordScanOpts()); idx >= 0 {
-		end, ok := keywordSpanAt(predicateExpr, idx, "IS RELATIONSHIP KEY")
-		if ok && strings.TrimSpace(predicateExpr[end:]) == "" {
-			_, prop, ok := parseConstraintQualifiedProperty(predicateExpr[:idx])
-			if ok {
-				return "rel_key", []string{prop}, true
-			}
-		}
-	}
-
-	return "", nil, false
-}
-
 func (e *StorageExecutor) parseCreateConstraintForRequireDDL(ctx context.Context, cypher string) (parsedConstraintForRequireDDL, error) {
 	name, patternSpan, requireExpr, options, err := e.parseCreateConstraintForRequireHead(ctx, cypher)
 	if err != nil {
@@ -1528,82 +1004,6 @@ func (e *StorageExecutor) parseCreateConstraintForRequireDDL(ctx context.Context
 		return parsedConstraintForRequireDDL{}, localizedError(localization.CypherSchemaInvalidPattern("FOR"), nil)
 	}
 	return parsedConstraintForRequireDDL{name: name, label: target.name, variable: cyphertext.SymbolicNameValue(target.variableSource), isRelationship: target.isRelationship, requireExpr: requireExpr, options: options}, nil
-}
-
-func (e *StorageExecutor) parseTemporalConstraintPredicate(ctx context.Context, requireExpr string) ([]string, bool) {
-	requireExpr = strings.TrimSpace(requireExpr)
-	inside, rest, ok := extractParenSection(requireExpr)
-	if !ok {
-		return nil, false
-	}
-	rest = strings.TrimSpace(rest)
-	if idx := keywordIndexFrom(ctx, rest, "IS TEMPORAL", 0, defaultKeywordScanOpts()); idx != 0 {
-		return nil, false
-	}
-	end, ok := keywordSpanAt(rest, 0, "IS TEMPORAL")
-	if !ok {
-		return nil, false
-	}
-	tail := strings.TrimSpace(rest[end:])
-	if tail != "" {
-		if idx := keywordIndexFrom(ctx, tail, "NO OVERLAP", 0, defaultKeywordScanOpts()); idx != 0 {
-			return nil, false
-		}
-		end2, ok := keywordSpanAt(tail, 0, "NO OVERLAP")
-		if !ok || strings.TrimSpace(tail[end2:]) != "" {
-			return nil, false
-		}
-	}
-	return indexPropertiesFromOnClause(inside, false), true
-}
-
-func (e *StorageExecutor) parseCreateConstraintTemporalDDL(ctx context.Context, cypher string) (parsedTemporalConstraintDDL, error) {
-	parsed, err := e.parseCreateConstraintForRequireDDL(ctx, cypher)
-	if err != nil {
-		return parsedTemporalConstraintDDL{}, err
-	}
-	props, ok := e.parseTemporalConstraintPredicate(ctx, parsed.requireExpr)
-	if !ok {
-		return parsedTemporalConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("temporal"), nil)
-	}
-	return parsedTemporalConstraintDDL{name: parsed.name, label: parsed.label, isRelationship: parsed.isRelationship, properties: props, options: parsed.options}, nil
-}
-
-func parseDomainConstraintPredicate(ctx context.Context, requireExpr string) (qualifier string, property string, allowedRaw string, ok bool) {
-	requireExpr = strings.TrimSpace(requireExpr)
-	if requireExpr == "" {
-		return "", "", "", false
-	}
-	inPos := keywordIndexFrom(ctx, requireExpr, "IN", 0, defaultKeywordScanOpts())
-	if inPos < 0 {
-		return "", "", "", false
-	}
-	inEnd, ok := keywordSpanAt(requireExpr, inPos, "IN")
-	if !ok {
-		return "", "", "", false
-	}
-	qualifier, prop, ok := parseConstraintQualifiedProperty(requireExpr[:inPos])
-	if !ok {
-		return "", "", "", false
-	}
-	rhs := strings.TrimSpace(requireExpr[inEnd:])
-	inside, rest, ok := extractBracketSection(rhs)
-	if !ok || strings.TrimSpace(rest) != "" {
-		return "", "", "", false
-	}
-	return qualifier, prop, inside, true
-}
-
-func (e *StorageExecutor) parseCreateConstraintDomainDDL(ctx context.Context, cypher string) (parsedDomainConstraintDDL, error) {
-	parsed, err := e.parseCreateConstraintForRequireDDL(ctx, cypher)
-	if err != nil {
-		return parsedDomainConstraintDDL{}, err
-	}
-	qualifier, property, allowedRaw, ok := parseDomainConstraintPredicate(ctx, parsed.requireExpr)
-	if !ok || qualifier != parsed.variable {
-		return parsedDomainConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("domain"), nil)
-	}
-	return parsedDomainConstraintDDL{name: parsed.name, label: parsed.label, isRelationship: parsed.isRelationship, property: property, allowedRaw: allowedRaw, options: parsed.options}, nil
 }
 
 func parseCardinalityRequireExpr(ctx context.Context, requireExpr string) (int, bool) {
@@ -1765,73 +1165,6 @@ func (e *StorageExecutor) parseCreateConstraintPolicyDDL(ctx context.Context, cy
 	return parsedPolicyConstraintDDL{name: name, sourceLabel: source, relType: relType, targetLabel: target, policyMode: mode, options: options}, nil
 }
 
-func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(ctx context.Context, cypher string) (parsedRelationshipKeyOrCompositeUniqueDDL, error) {
-	name, patternSpan, requireExpr, options, err := e.parseCreateConstraintForRequireHead(ctx, cypher)
-	if err != nil {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, err
-	}
-
-	target, patternOK := parseForPatternTarget(patternSpan)
-	if !patternOK {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("relationship FOR"), nil)
-	}
-
-	kind, props, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(ctx, requireExpr)
-	if !ok || (!target.isRelationship && kind != "unique") {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("relationship key/unique"), nil)
-	}
-	// Use the same parsed target for identity and qualifier validation; the
-	// immutable FOR span needs reading only once.
-	variable := cyphertext.SymbolicNameValue(target.variableSource)
-	propertyExpr := requireExpr
-	if inside, _, wrapped := extractParenSection(requireExpr); wrapped {
-		propertyExpr = inside
-	} else if isPos := keywordIndexFrom(ctx, requireExpr, "IS", 0, defaultKeywordScanOpts()); isPos >= 0 {
-		propertyExpr = requireExpr[:isPos]
-	}
-	if !qualifiedIndexPropertiesWellFormed(propertyExpr) {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)
-	}
-	seen := make(map[string]bool, len(props))
-	for _, reference := range splitTopLevelComma(propertyExpr) {
-		qualifier, property, valid := parseConstraintQualifiedProperty(reference)
-		if !valid || qualifier != variable || seen[property] {
-			return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)
-		}
-		seen[property] = true
-	}
-
-	return parsedRelationshipKeyOrCompositeUniqueDDL{name: name, label: target.name, properties: props, kind: kind, isRelationship: target.isRelationship, options: options}, nil
-}
-
-func (e *StorageExecutor) parseCreateConstraintTypeDDL(ctx context.Context, cypher string) (parsedTypeConstraintDDL, error) {
-	parsed, err := e.parseCreateConstraintForRequireDDL(ctx, cypher)
-	if err != nil {
-		return parsedTypeConstraintDDL{}, err
-	}
-	qualifier, property, typeName, ok := parseConstraintTypePredicate(ctx, parsed.requireExpr)
-	if !ok || qualifier != parsed.variable {
-		return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("type"), nil)
-	}
-	expectedType, err := parsePropertyType(typeName)
-	if err != nil {
-		return parsedTypeConstraintDDL{}, err
-	}
-	return parsedTypeConstraintDDL{name: parsed.name, label: parsed.label, property: property, expectedType: expectedType, isRelationship: parsed.isRelationship, options: parsed.options}, nil
-}
-
-func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(ctx context.Context, cypher string) (parsedSimplePropertyConstraintDDL, error) {
-	parsed, err := e.parseCreateConstraintForRequireDDL(ctx, cypher)
-	if err != nil {
-		return parsedSimplePropertyConstraintDDL{}, err
-	}
-	kind, qualifier, property, ok := parseConstraintPredicate(ctx, parsed.requireExpr)
-	if !ok || qualifier != parsed.variable {
-		return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint"), nil)
-	}
-	return parsedSimplePropertyConstraintDDL{name: parsed.name, label: parsed.label, property: property, kind: kind, isRelationship: parsed.isRelationship, options: parsed.options}, nil
-}
-
 // addSchemaConstraint adds constraint and, when it is a single-property
 // uniqueness or node key constraint, fills the property index it owns from
 // the stored nodes (#875), as addPropertyIndex fills a new index: equality
@@ -1926,10 +1259,8 @@ func qualifiedIndexPropertiesWellFormed(propertiesStr string) bool {
 	if strings.TrimSpace(propertiesStr) == "" {
 		return true
 	}
-	for _, part := range splitTopLevelComma(propertiesStr) {
-		part = strings.TrimSpace(part)
-		variable, property, ok := splitPostfixPropertyAccess(part)
-		if !ok || !isPatternVariableName(strings.TrimSpace(variable)) || property == "" {
+	for _, part := range splitTopLevelCommaKeepEmpty(propertiesStr) {
+		if _, _, ok := schemaPropertyReference(part, schemaReferenceUngrouped); !ok {
 			return false
 		}
 	}

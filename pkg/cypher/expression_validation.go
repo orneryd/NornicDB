@@ -593,7 +593,7 @@ func (occurrences *localOccurrences) binds(name string) bool {
 // localReader answers localVariableShadowsAt for one text, reading the
 // names the text binds once (expressionLocalBindings), so a name no binding
 // declares costs a map lookup. The reference scanners
-// (semanticFreeReferences, expressionFreeVariables) ask it for each
+// (forEachFreeSemanticReference, expressionFreeVariables) ask it for each
 // occurrence they read.
 type localReader struct {
 	text  string

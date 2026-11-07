@@ -8,6 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// schemaPropertyReference is the one owner of a schema declaration's property
+// reference; the grouping argument is the calling grammar's admission, so the
+// quoting and boundary reading are shared while each grammar keeps its own.
 func TestConstraintPropertyReferenceUsesQuotedBoundaries(t *testing.T) {
 	for _, tc := range []struct {
 		input, qualifier, property string
@@ -27,7 +30,7 @@ func TestConstraintPropertyReferenceUsesQuotedBoundaries(t *testing.T) {
 		{"n.`unterminated", "", "", false},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
-			qualifier, property, valid := parseConstraintQualifiedProperty(tc.input)
+			qualifier, property, valid := schemaPropertyReference(tc.input, schemaReferenceGrouped)
 			require.Equal(t, tc.valid, valid)
 			require.Equal(t, tc.qualifier, qualifier)
 			require.Equal(t, tc.property, property)
@@ -39,9 +42,11 @@ func TestConstraintPropertyReferenceUsesQuotedBoundaries(t *testing.T) {
 // one item of an index ON list must already be a direct variable.property.
 // Both consumers reuse the property reader; they retain their own admission.
 func TestSchemaPropertyReadersRetainTheirGroupingAdmission(t *testing.T) {
-	_, property, valid := parseConstraintQualifiedProperty("(n.name)")
+	_, property, valid := schemaPropertyReference("(n.name)", schemaReferenceGrouped)
 	require.True(t, valid)
 	require.Equal(t, "name", property)
+	_, _, valid = schemaPropertyReference("(n.name)", schemaReferenceUngrouped)
+	require.False(t, valid, "an index ON list item is already one member of a list")
 	require.False(t, qualifiedIndexPropertiesWellFormed("(n.name)"))
 	require.True(t, qualifiedIndexPropertiesWellFormed("n.name"))
 }
