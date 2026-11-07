@@ -241,7 +241,7 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(ctx context
 		return nil
 	}
 	// Reuse the retained mutation preimage; ordinary reads retain no claims.
-	preimages, distinctUpdates, err := tx.nodeMutationPreimagesLocked(ctx)
+	preimages, distinctUpdates, err := mutationPreimagesLocked(ctx, tx.operations, len(tx.pendingNodes), OpUpdateNode, nodeClaimPreimage)
 	if err != nil {
 		return err
 	}
@@ -250,7 +250,7 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(ctx context
 		for index := range tx.operations {
 			operation := &tx.operations[index]
 			if operation.NodeID == nodeID {
-				before = operation.nodeClaimPreimage()
+				_, before = nodeClaimPreimage(operation)
 				break
 			}
 		}
