@@ -247,12 +247,14 @@ func exportProcedure(declaration exportDeclaration) ProcedureHandler {
 		if declaration.scope == exportGraphScope {
 			directories = apocio.CreateDirectories
 		}
-		content := payload.content
-		if content == nil {
-			content = []byte(payload.text)
+		var writeErr error
+		if payload.content != nil {
+			writeErr = apocio.WriteExport(ctx, destination, payload.content, directories)
+		} else {
+			writeErr = apocio.WriteExport(ctx, destination, payload.text, directories)
 		}
-		if err := destination.Write(ctx, content, directories); err != nil {
-			return nil, err
+		if writeErr != nil {
+			return nil, writeErr
 		}
 
 		return &ExecuteResult{

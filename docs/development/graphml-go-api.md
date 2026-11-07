@@ -30,8 +30,8 @@ The canonical file-writing entry points are context-first: `ToFile`, `JsonAll`,
 `Csv`, `CypherAll` and `GraphMLAll` take the
 caller's context as their first Go argument. `pkg/apocio` is the one owner of
 that admission and destination: `AdmitExport` resolves the named path through the
-caller's APOC export capability, and the admitted destination writes the bytes
-beneath the configured export root. A context without an export capability
+caller's APOC export capability. `WriteExport` writes text or bytes to that
+admitted destination beneath the configured export root. A context without an export capability
 performs no write and reports the owner's error, and a caller that already
 stopped writes nothing.
 
@@ -52,7 +52,9 @@ Go callers of the retired forwarding `GraphMLData` function use `GraphMLAll`.
 The public APOC names `apoc.export.graphMLAll` and `apoc.export.graphMLData`
 both register that canonical implementation directly and remain supported.
 An empty destination retains the established no-file behavior: no capability is
-needed and nothing is written. The whole-graph file exports create the
+needed and nothing is written. Text-to-byte conversion is deferred until an
+actual file write; the empty-destination path allocates nothing even for a
+1 MiB input. The whole-graph file exports create the
 destination's parent directories, and destination errors are returned to the
 caller.
 

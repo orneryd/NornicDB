@@ -53,7 +53,7 @@ func ToFile(ctx context.Context, data string, filePath string) error {
 	if err != nil {
 		return err
 	}
-	return destination.Write(ctx, []byte(data), apocio.CreateDirectories)
+	return apocio.WriteExport(ctx, destination, data, apocio.CreateDirectories)
 }
 
 // Json exports data to JSON format.

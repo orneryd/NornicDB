@@ -30,7 +30,7 @@ type ExportDestination struct{ path string }
 //
 //	destination, err := apocio.AdmitExport(ctx, "graph.json")
 //	if err != nil { return err }
-//	return destination.Write(ctx, content, apocio.CreateDirectories)
+//	return apocio.WriteExport(ctx, destination, content, apocio.CreateDirectories)
 func AdmitExport(ctx context.Context, path string) (ExportDestination, error) {
 	if err := ctx.Err(); err != nil {
 		return ExportDestination{}, err
@@ -49,10 +49,10 @@ func AdmitExport(ctx context.Context, path string) (ExportDestination, error) {
 	return ExportDestination{path: resolved}, nil
 }
 
-// Write publishes bytes to the admitted destination using the shared rooted
+// WriteExport publishes bytes or text to the admitted destination using the shared rooted
 // filesystem owner. It observes cancellation before filesystem work and after
 // completion. An OS write is not retractable or promised to be atomic.
-func (d ExportDestination) Write(ctx context.Context, content []byte, directories ExportDirectoryPolicy) error {
+func WriteExport[T ~[]byte | ~string](ctx context.Context, d ExportDestination, content T, directories ExportDirectoryPolicy) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func (d ExportDestination) Write(ctx context.Context, content []byte, directorie
 	default:
 		return fmt.Errorf("unsupported export directory policy %d", directories)
 	}
-	if err := security.WriteRootedFile(d.path, content, 0o644); err != nil {
+	if err := security.WriteRootedFile(d.path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 	return ctx.Err()
