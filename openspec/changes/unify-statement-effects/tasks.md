@@ -1,42 +1,38 @@
-# NOR-300 / combined PR1695 readiness
+# NOR-300 candidate verification
 
-- [x] Verify Linear v1.4.4 scope and assign NOR-300 to Tim.
-- [x] Preserve original owner and consumer heads; transfer PR1699 AC and close only its delivery PR.
-- [x] Fetch release and confirm PR1695 reproduction is based on f45b1a51a.
-- [x] Reproduce current-release EXPLAIN/PROFILE constraint metadata failures and registered WRITE procedure effect discrepancies.
-- [x] Inventory current canonical statement/effect, permission, cache and Fabric consumers; retained historical heads are reference-only.
-- [ ] Fix demonstrated owner/consumer defects without restoring obsolete stacks or adding compatibility wrappers.
-- [ ] Verify public outcomes, rejection/no-effect controls, registry replacement, cancellation and unknown-effect behavior on both parsers.
-- [ ] Review every duplicate finding and disposition with source/test/measurement evidence.
-- [ ] Measure baseline/head representative memory, allocations and throughput after tests are idle.
-- [ ] Push candidate and qualify final make test CI, then cleanup task-owned resources.
+This PR qualifies its statement-effect, permission, cache and SHOW-header fixes.
+Release-wide failures are owned by PR #1742. They are not evidence that these
+focused fixes pass or fail. No throughput or allocation improvement is claimed.
 
-## Integrated checks and current work
+## Correctness
 
-- Schema command EXPLAIN/PROFILE metadata correction and public no-effect controls pass on both parsers.
-- Schema permission dispatch now reuses isOrdinarySchemaDDL; both-parser permitted/denied catalog controls pass (2.934 s combined schema run).
-- Temporary reproduction probe removed after preserving fail-first evidence; permanent tests retain unchanged-catalog assertions.
-- Approved QueryAnalyzer Analyze error-result / Writes / ReadOnly migration is in DeepSeek worktree, not integrated yet. Parent review notes include warm-cache cancellation and registry refresh checks.
-- SHOW CONSTRAINTS mode/header failure is assigned to a separate isolated DeepSeek worker; not yet qualified.
-- No current full-suite or performance qualification; no merge-readiness claim.
+- [x] Preserve the original focused regression populations in the PR.
+- [x] Integrate current release scope/import and storage fixes by rebasing.
+- [x] Final-head focused Cypher controls pass (3.210 s; final schema/cache/admission replay 3.099 s), full Fabric package passes (2.327 s), storage routing controls pass (0.438 s), and lexical inventory passes (4.311 s).
+- [ ] Final-head CI, with release failures distinguished from candidate failures.
 
-## Later independent findings
+## Duplicate review
 
-- Warm-cache cancellation fail-first reproduced; corrected and focused checks pass.
-- Catalog DROP DATABASE / DROP ALIAS false-read reproduced; stateChange fact and canonical statement-effect decision preserve existing data-write permission and transaction flags. Focused controls pass (3.254 s).
-- Schema-mode procedure effect fail-first reproduced after adding the mode to live registry tests; corrected using ProcedureSpec.writes without promoting schema procedures to data-write transactions. Focused integrated controls pass (1.056 s).
-- Fabric and storage routing still have independent write classifiers; exported contract proposal is pending maintainer choice. Public fail-first evidence is retained, not waived.
-- SHOW CONSTRAINTS plain-header proposal is incomplete: 12 public EXPLAIN/PROFILE YIELD/RETURN/alias controls fail on both actual parsers. Follow-up worker must propose retained-tail composition in the canonical owner; no individual text-tail workaround.
-- Worker reported QueryCache_TTL's 1 ms immediate-hit timing failure. Independent original test passed 1,000 repetitions; no runtime cache defect established. Test fixture now verifies stored TTL/timestamp bounds, a pre-expiration hit, and explicit elapsed-age eviction without sleeps. Stabilization checks pending on final test source; no production clock or cache behavior changed.
+- [x] Replace the repeated schema-mode fixture constructor with the existing
+  `newCypherTestExecutor` owner, retaining its namespace and assertions.
+- [x] `ASTBuilder.Build` calls `build`; the latter is the single structural
+  constructor. The historical Build body is not a second current implementation.
+- [x] `planQuery` owns UNION/branch decomposition and calls `planSingleQuery`,
+  which owns USE/CALL fragment preparation. These are separate stages.
+- [x] Correlated-call filtering versus empty-outer-header tests assert different
+  outcomes; top-level USE versus CALL/USE tests assert different routing scopes.
+  Existing gateway and executor helpers own their shared setup.
+- [x] The two TTL tests cover separate cache types; cancellation of a warm cached
+  analysis and cache consistency are separate contracts.
+- [x] Admission-boundary rejection and poisoned-decision rejection exercise
+  different inputs and state; neither assertion population was removed.
+- [x] Native query analysis consumes canonical live procedure effects; the ANTLR
+  adapter retains parser-tree metadata. Storage AnalyzeQuery consumes an already
+  resolved writes flag for routing and does not reclassify effects.
+- [x] The advisory's AST-resolved owner-call and extracted-owner entries retain
+  calls to the named canonical owners rather than copied implementations.
 
-## Integrated migration and verification
-- [x] Rebase local work onto pushed dd298f1ca, preserving node-key rejection/no-effect, conservative dynamic Fabric admission, CALL-effect and suppression-cache controls. Remote regression names now describe behavior instead of ticket IDs.
-- [x] Complete QueryAnalyzer error-result/Writes/ReadOnly migration, including warm-cache cancellation and procedure-generation refresh.
-- [x] Consume canonical effects in CALL subquery evaluation, CALL-tail projection, UNWIND read rewrites and Fabric fragments; retire unreachable correlated lookup unit and keyword classifiers.
-- [x] Retained SHOW declarations/tails share canonical binding completion; public schema/mode/header controls pass (2.909s). The integrated checks caught empty node-key EXPLAIN acceptance; shared requirement validation now rejects it. The old EXPLAIN fallback is retired.
-- [x] Historical catalog/descriptor/UNWIND diagnostic and authorization checks pass (5.898s). Integrated effect controls pass (1.875s).
-- [x] Repository-wide compilation with noui,nolocalllm passes (zero tests executed). Default compilation is blocked by absent local libllama_darwin_arm64; this is not a runtime qualification.
-- [x] Approved required planner effect callback and caller-resolved storage analysis migration integrated; public routing/canonical analysis checks pass (5.294s) and unchanged lexical census passes (3.259s). Default storage test linking is blocked by the same missing llama library; the supported nolocalllm affected check is tracked separately.
-- [ ] Finish affected-package checks on integrated source, cost comparison, final duplicate dispositions and full make test CI.
-
-- [x] Integrated full Fabric package passes (2.011s); storage routing checks pass with supported nolocalllm (1.002s); repository-wide final API compilation passes with noui,nolocalllm (zero tests executed).
+The advisory displayed ten reuse candidates and abbreviated two more. These
+are dispositions of the displayed candidates and named owner-call evidence,
+not a claim that an abbreviated report exposes every finding. Final advisory
+output remains visible on the PR for review.

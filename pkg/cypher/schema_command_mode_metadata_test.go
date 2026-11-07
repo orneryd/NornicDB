@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,7 +35,7 @@ func TestExplainSchemaCommandDeclaresEmptyResultSchema(t *testing.T) {
 		} {
 			t.Run(command, func(t *testing.T) {
 				ctx := t.Context()
-				exec := newSchemaCommandModeExecutor(t)
+				exec, _ := newCypherTestExecutor(t, "schema_command_mode")
 				before := schemaCatalogNames(t, ctx, exec)
 
 				result, err := exec.Execute(ctx, "EXPLAIN "+command, nil)
@@ -53,7 +52,7 @@ func TestExplainSchemaCommandDeclaresEmptyResultSchema(t *testing.T) {
 		// "unchanged" above is not vacuous.
 		t.Run("control", func(t *testing.T) {
 			ctx := t.Context()
-			exec := newSchemaCommandModeExecutor(t)
+			exec, _ := newCypherTestExecutor(t, "schema_command_mode")
 			before := schemaCatalogNames(t, ctx, exec)
 			result, err := exec.Execute(ctx, "CREATE CONSTRAINT control_unique FOR (n:Example) REQUIRE n.p IS UNIQUE", nil)
 			require.NoError(t, err)
@@ -77,7 +76,7 @@ func TestProfileSchemaCommandExecutesAndDeclaresEmptyResultSchema(t *testing.T) 
 		} {
 			t.Run(step.command, func(t *testing.T) {
 				ctx := t.Context()
-				exec := newSchemaCommandModeExecutor(t)
+				exec, _ := newCypherTestExecutor(t, "schema_command_mode")
 
 				result, err := exec.Execute(ctx, "PROFILE "+step.command, nil)
 				require.NoError(t, err)
@@ -105,7 +104,7 @@ func TestSchemaCommandModesRejectUnsupportedSyntax(t *testing.T) {
 			for _, mode := range []string{"", "EXPLAIN ", "PROFILE "} {
 				t.Run(mode+command, func(t *testing.T) {
 					ctx := t.Context()
-					exec := newSchemaCommandModeExecutor(t)
+					exec, _ := newCypherTestExecutor(t, "schema_command_mode")
 					before := schemaCatalogNames(t, ctx, exec)
 
 					_, err := exec.Execute(ctx, mode+command, nil)
@@ -115,11 +114,6 @@ func TestSchemaCommandModesRejectUnsupportedSyntax(t *testing.T) {
 			}
 		}
 	})
-}
-
-func newSchemaCommandModeExecutor(t *testing.T) *StorageExecutor {
-	t.Helper()
-	return NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "schema_command_mode"))
 }
 
 type schemaCatalog struct {
@@ -147,7 +141,7 @@ func schemaCatalogNames(t *testing.T, ctx context.Context, exec *StorageExecutor
 
 func TestSchemaMetadataValidatesTheParsedCommandUnderModePrefixes(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
-		exec := newSchemaCommandModeExecutor(t)
+		exec, _ := newCypherTestExecutor(t, "schema_command_mode")
 		before := schemaCatalogNames(t, t.Context(), exec)
 		for _, prefix := range []string{"", "EXPLAIN ", "PROFILE "} {
 			valid := prefix + "CREATE CONSTRAINT valid_key FOR (n:Example) REQUIRE (n.a, n.b) IS NODE KEY"
