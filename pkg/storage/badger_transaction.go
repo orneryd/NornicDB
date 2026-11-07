@@ -68,6 +68,10 @@ type BadgerTransaction struct {
 	// created after our begin) bind to sequence 0, which correctly
 	// treats anything committed under them as post-begin.
 	beginSnapshot map[string]MVCCVersion
+	// inflightAtBegin is the cut's copy of the reservation ledger: the
+	// versions unpublished at the snapshot (mvccReservations); nil when
+	// there were none. closeLocked releases it.
+	inflightAtBegin *mvccCut
 	// lifecycleSeq is the engine's prefix-delete sequence at begin
 	// (prefixDroppedSince): a delete of this transaction's namespace, or a
 	// maintenance pass over it, that started since fails its commit.
@@ -314,18 +318,31 @@ func (b *BadgerEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction
 	if b.writeBehind != nil {
 		bufferEpoch = b.writeBehind.readEpoch.Load()
 	}
+	// The cut: the physical snapshot and buffer prefix, then the logical
+	// boundary, so nothing in the snapshot is newer than the boundary. The
+	// reservation ledger is told before the snapshot; after it, in one step,
+	// the cut takes its wall clock, reads the boundary and copies the ledger,
+	// so the copy holds every version unpublished at the snapshot and every
+	// later version compares newer (mvccReservations).
+	b.mvccReservations.cutStarted()
 	snapshotTx, badgerReadTs, beginPresence, err := b.beginTransactionSnapshot(ctx, badgerDB)
 	if err != nil {
+		b.mvccReservations.cutAbandoned()
 		return nil, err
 	}
-	readTS := b.currentMVCCReadVersion("")
-	beginSnapshot, err := b.snapshotNamespaceVersions(ctx)
+	startTime, beginSnapshot, inflightAtBegin, err := b.mvccReservations.cutTaken(func(now time.Time) (map[string]MVCCVersion, error) {
+		return b.snapshotNamespaceVersionsAt(ctx, now)
+	})
 	if err != nil {
 		snapshotTx.Discard()
 		beginPresence.release()
 		badgerDB.endRead(badgerReadTs)
 		return nil, err
 	}
+	// Unpinned, the boundary starts at the cut's wall clock; pinning replaces
+	// it with the namespace's exact begin-time version
+	// (refreshReadVersionForNamespaceLocked).
+	readTS := MVCCVersion{CommitTimestamp: startTime}
 	// Unpinned scans span namespaces in the already captured physical snapshot.
 	// A wall-clock-only version (sequence zero) sorts before a committed head
 	// at the same timestamp on coarse clocks, or after a backward clock step.
@@ -337,15 +354,15 @@ func (b *BadgerEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction
 		}
 	}
 	txID := generateTxID()
-	startTime := time.Now()
 	badgerTx := badgerDB.newTxnAt(badgerReadTs, true)
 
-	return &BadgerTransaction{
+	tx := &BadgerTransaction{
 		ID:                      txID,
 		StartTime:               startTime,
 		Status:                  TxStatusActive,
 		readTS:                  readTS,
 		beginSnapshot:           beginSnapshot,
+		inflightAtBegin:         inflightAtBegin,
 		lifecycleSeq:            lifecycleSeq,
 		bufferEpoch:             bufferEpoch,
 		badgerTx:                badgerTx,
@@ -369,7 +386,8 @@ func (b *BadgerEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction
 		pendingEdgeTypeLabelCountDeltas: make(map[edgeTypeLabelDelta]int64),
 		Metadata:                        make(map[string]interface{}),
 		snapshotReaderInfo:              SnapshotReaderInfo{ReaderID: txID, SnapshotVersion: readTS, StartTime: startTime},
-	}, nil
+	}
+	return tx, nil
 }
 
 // refreshReadVersionForNamespaceLocked rebinds tx.readTS once the
@@ -427,6 +445,8 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	tx.preparedEntityCommit = nil
 	tx.beginPresence.release()
 	tx.beginPresence = nil
+	tx.inflightAtBegin.release()
+	tx.inflightAtBegin = nil
 	if tx.badgerTx != nil && tx.engine != nil && tx.engine.idDict != nil {
 		// Drop any staged counter state. Safe whether the txn
 		// committed (flushTxnCounters already cleared it) or is being
@@ -935,14 +955,11 @@ func (tx *BadgerTransaction) createNode(ctx context.Context, node *Node, minted 
 		Timestamp: time.Now(),
 		NodeID:    node.ID,
 		Node:      nodeCopy,
-		// FreshID propagates the "caller asserts this ID is new and cannot
-		// collide with a tombstoned MVCC head" contract into the commit
-		// loop so it can skip the head-load round-trip. Gated on the legacy
-		// UUID-shape heuristic.
-		// The stored-inclusive point read above is skipped only for a minted
-		// ID, so a stable imported UUID cannot bypass a hidden predecessor.
-		// Once the ID is known absent, retain the generated-ID commit fast path.
-		FreshID: tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(node.ID)),
+		// FreshID lets the commit loop skip the head reload for an ID this
+		// transaction minted (CreateMintedNode): no stored or concurrent
+		// write can hold it. A caller-supplied ID keeps the head check
+		// whatever its shape; a stable import may well be UUID-shaped.
+		FreshID: tx.skipCreateExistenceCheck && minted,
 	})
 
 	return node.ID, nil
@@ -1680,7 +1697,7 @@ func (tx *BadgerTransaction) bulkCreateEdges(ctx context.Context, edges []*Edge,
 			tx.stageHiddenEdgeCreateLocked(edge)
 			continue
 		}
-		if err := tx.bufferNewEdgeLocked(edge, labels[i][0], labels[i][1]); err != nil {
+		if err := tx.bufferNewEdgeLocked(edge, labels[i][0], labels[i][1], minted); err != nil {
 			return err
 		}
 	}
@@ -1821,7 +1838,7 @@ func sameEdgeIdentity(before, current *Edge) bool {
 // outgoing, incoming, type and edge-between index entries, the positional
 // counters for its endpoints' labels (as validateNewEdgeLocked returned
 // them), the read-your-writes copy and the create operation.
-func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLabels []string) error {
+func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLabels []string, minted bool) error {
 	if !tx.acceptedApplication {
 		initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
 	}
@@ -1850,9 +1867,9 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 		Timestamp: time.Now(),
 		EdgeID:    edge.ID,
 		Edge:      edgeCopy,
-		// As for nodes, a minted ID or the stored-inclusive read has already
-		// ruled out a hidden predecessor before this generated-ID optimization.
-		FreshID: tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(edge.ID)),
+		// As for nodes, only an ID this transaction minted skips the commit
+		// head reload; a caller-supplied ID keeps it whatever its shape.
+		FreshID: tx.skipCreateExistenceCheck && minted,
 	})
 	return nil
 }
@@ -2361,7 +2378,7 @@ func (tx *BadgerTransaction) catchUpToNode(ctx context.Context, nodeID NodeID) e
 	if tx.Status != TxStatusActive {
 		return nil
 	}
-	newer, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
+	newer, err := tx.snapshotHeadConflict(bufferedNodeEntity, string(nodeID), head.Version)
 	if err != nil || !newer {
 		return err
 	}
