@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve recreated node and relationship identities when rebuilding MVCC
+  heads, so later version pruning keeps live compact relationships readable
+  across database restarts.
+
 - Return the normal syntax error for zero-argument `normalize()` calls instead
   of closing the Bolt connection. Preserve ambiguous-aggregation diagnostics
   for invalid ORDER BY expressions following RETURN or WITH grouping.
