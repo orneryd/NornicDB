@@ -4577,13 +4577,13 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		}
 		// Persist BM25 + vector store before HNSW/k-means build so base indexes are durable.
 		s.setBuildPhase("persisting_base_indexes")
-		if err := s.persistBaseIndexes(); err != nil {
-			return err
-		}
 		if err := s.bindPopulationSource(ctx); err != nil {
 			return err
 		}
 		closeSnapshot()
+		if err := s.persistBaseIndexes(); err != nil {
+			return err
+		}
 		if err := s.warmupDroppingFulltext(ctx, fulltextPath); err != nil {
 			return err
 		}
@@ -4696,13 +4696,13 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	}
 	// Persist BM25 + vector store before HNSW/k-means build so base indexes are durable.
 	s.setBuildPhase("persisting_base_indexes")
-	if err := s.persistBaseIndexes(); err != nil {
-		return err
-	}
 	if err := s.bindPopulationSource(ctx); err != nil {
 		return err
 	}
 	closeSnapshot()
+	if err := s.persistBaseIndexes(); err != nil {
+		return err
+	}
 	if err := s.warmupDroppingFulltext(ctx, fulltextPath); err != nil {
 		return err
 	}

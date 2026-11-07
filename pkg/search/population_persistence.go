@@ -149,17 +149,7 @@ func (s *Service) bindPopulationSource(ctx context.Context) error {
 	if current != w.baseline.SourceStamp || s.vectorSourcePolicy() != w.baseline.VectorSettings {
 		return nil
 	}
-	certificate := w.baseline
-	s.indexMu.RLock()
-	s.mu.RLock()
-	if vfs := s.vectorFileStore; vfs != nil {
-		vfs.mu.RLock()
-		certificate.VectorDigest = vfs.checkpointDigest
-		vfs.mu.RUnlock()
-	}
-	s.mu.RUnlock()
-	s.indexMu.RUnlock()
-	w.certificate = certificate
+	w.certificate = w.baseline
 	return nil
 }
 
@@ -338,6 +328,21 @@ func (s *Service) finishPopulationPersistence(ctx context.Context, buildErr erro
 	if buildErr == nil && !pending && s.persistEnabled.Load() && w.prepared {
 		// The completion record participates in the same rollback as the files.
 		stagedRecord := populationRecordPath(w.working)
+		// Source equality was checked while the population snapshot was pinned,
+		// before persistence. No replay can silently extend that authority:
+		// applyBuildWrites clears the certificate. Bind the tuple actually saved
+		// by the completed build only after all successful saves.
+		if w.certificate.SourceStamp != "" {
+			s.indexMu.RLock()
+			s.mu.RLock()
+			if vfs := s.vectorFileStore; vfs != nil {
+				vfs.mu.RLock()
+				w.certificate.VectorDigest = vfs.checkpointDigest
+				vfs.mu.RUnlock()
+			}
+			s.mu.RUnlock()
+			s.indexMu.RUnlock()
+		}
 		w.certificate.Complete = true
 		buildErr = writeMsgpackSnapshot(stagedRecord, &w.certificate)
 		if buildErr == nil {
