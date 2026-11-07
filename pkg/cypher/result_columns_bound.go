@@ -178,6 +178,12 @@ func variableSyntaxRead(node cypherantlr.SyntaxNode) bool {
 				if ancestor.Rule() == cypherantlr.CypherParserRULE_functionInvocation {
 					if invocation := ancestor.ChildRule(cypherantlr.CypherParserRULE_invocationName); invocation.Valid() && strings.EqualFold(invocation.QualifiedName(), "normalize") {
 						chain := ancestor.ChildRule(cypherantlr.CypherParserRULE_expressionChain)
+						// Zero-argument calls have no expression chain. They have
+						// no normal-form keyword to classify; arity validation
+						// owns their insufficient-parameters diagnostic.
+						if !chain.Valid() {
+							break
+						}
 						argument := 0
 						for index := 0; index < chain.ChildCount(); index++ {
 							child := chain.Child(index)
