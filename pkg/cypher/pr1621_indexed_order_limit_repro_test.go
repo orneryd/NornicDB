@@ -43,3 +43,17 @@ func TestReproPR1621(t *testing.T) {
 		}
 	}
 }
+
+// An indexed candidate rejected by the relationship predicate must not consume
+// the only requested result slot before the next candidate is examined.
+func TestIndexedLimitAfterRejectedRelationshipCandidate(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "limit_candidate"))
+	ctx := t.Context()
+	_, err := exec.Execute(ctx, `CREATE (:P {id:1})-[:R {value:0}]->(:Q), (:P {id:2})-[:R {value:1}]->(:Q)`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `CREATE INDEX p_id FOR (p:P) ON (p.id)`, nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, `MATCH (p:P)-[:R {value:1}]->(:Q) WHERE p.id > 0 RETURN p.id ORDER BY p.id LIMIT 1`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+}
