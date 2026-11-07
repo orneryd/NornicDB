@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 
@@ -677,9 +678,9 @@ func (compilation *boundCompilation) callImports(ctx context.Context, clause *bo
 		imports = append([]string{}, descriptor.names...)
 		if descriptor.names == nil {
 			mode = resultmetadata.ImportAll
-			// Wildcard imports include CALL globals, but not constants that
-			// are only readable through an enclosing scalar capture frame.
-			imports = pipelineScopeColumns(clause.importableBindings())
+			// Imports are execution bindings, including generated selectors.
+			// Public wildcard column filtering must not remove those bindings.
+			imports = slices.Sorted(maps.Keys(clause.importableBindings()))
 		}
 	} else {
 		shape := queryBodyFromSyntax(clause.source.syntax.ChildRule(cypherantlr.CypherParserRULE_subqueryBody))
