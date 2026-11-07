@@ -944,7 +944,7 @@ func (n *NamespacedEngine) StreamNodesWithOptions(ctx context.Context, opts Stre
 }
 
 func (n *NamespacedEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
-	return n.StreamNodesWithOptions(ctx, StreamNodesOptions{WithEmbeddings: true, ApplyDecayFilter: true}, fn)
+	return n.StreamNodesWithOptions(ctx, fullNodeStreamOptions(""), fn)
 }
 
 // StreamNodesWithoutEmbeddings streams complete lightweight nodes in this
@@ -956,7 +956,7 @@ func (n *NamespacedEngine) StreamNodesWithoutEmbeddings(ctx context.Context, fn 
 // StreamNodesByPrefix streams nodes in the namespace whose user-visible IDs
 // start with prefix.
 func (n *NamespacedEngine) StreamNodesByPrefix(ctx context.Context, prefix string, fn func(node *Node) error) error {
-	return n.StreamNodesWithOptions(ctx, StreamNodesOptions{Prefix: prefix, WithEmbeddings: true, ApplyDecayFilter: true}, fn)
+	return n.StreamNodesWithOptions(ctx, fullNodeStreamOptions(prefix), fn)
 }
 
 // StreamNodesByPrefixProjected streams nodes in the namespace whose

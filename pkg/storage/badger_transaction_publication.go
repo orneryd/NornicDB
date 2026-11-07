@@ -317,6 +317,11 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 			return fmt.Errorf("allocating mvcc commit version: %w", err)
 		}
 		tx.CommitVersion = version
+		// The version is published with the commit's Badger write, or
+		// abandoned with its failure, whichever ends this call; the writer
+		// it was reserved under is this one, whatever batch tx.badgerTx
+		// names later.
+		defer tx.engine.mvccReservations.publishTxn(tx.badgerTx)
 	}
 
 	// Every commit-phase write goes through the transaction's commit writer.

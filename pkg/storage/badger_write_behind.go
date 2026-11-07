@@ -162,6 +162,9 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 		return err
 	} else {
 		c.version = version
+		// The version is published at the acknowledgement below, or
+		// abandoned if the commit fails before it, whichever ends this call.
+		defer tx.engine.mvccReservations.publishTxn(tx.badgerTx)
 	}
 	c.counterNodeMax, c.counterEdgeMax = tx.engine.idDict.flushTxnCounters(tx.badgerTx)
 	c.idEntries = tx.engine.idDict.takeTxnCommitting(tx.badgerTx)
@@ -252,6 +255,8 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 		tx.releaseSnapshotReaderLocked()
 		tx.bufferedStagingTransferred = true
 		states := tx.engine.writeBehind.AppendCommit(c)
+		// Acknowledged: the commit's version is published to every later cut.
+		tx.engine.mvccReservations.publish(c.namespace, c.version.CommitSequence)
 		// Claims follow logical visibility, not the later materialization of
 		// historical images. Entity/value authority remains held until return.
 		// A concurrent flusher never republishes these normal ACK-time claims.
@@ -341,6 +346,9 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	// writer, token persistence and required post-durable count tail.
 	accepted := context.Background()
 	cw := b.newCommitWriter(accepted, b.db, txn)
+	// A recovered commit without a version reserves one in this writer; it
+	// is published with the replay, or abandoned with it.
+	defer b.mvccReservations.publishTxn(txn)
 	recovered := false
 	for _, commit := range commits {
 		if commit.recovered {

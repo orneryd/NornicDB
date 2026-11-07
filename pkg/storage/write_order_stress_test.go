@@ -28,12 +28,44 @@ func TestWriteOrderUnderRandomInterleavings(t *testing.T) {
 	stressWriteOrder(t, false)
 }
 
+// TestWriteOrderTypeCountsMatchStoredRelationships runs the same interleavings
+// and then requires every derived relationship-type counter to equal the
+// number of stored relationships of that type after the flush, and again after
+// a close and a reopen, which fold every pending counter delta. A counter below
+// its population, or a fold that reports an underflow, means a removal was
+// counted more than once; a counter above it means a creation was. The
+// in-memory node and relationship totals are a separate owner and are not
+// compared here.
+func TestWriteOrderTypeCountsMatchStoredRelationships(t *testing.T) {
+	stressWriteOrder(t, true)
+}
+
+// requireTypeCountsMatchStoredRelationships compares the derived
+// relationship-type counters with the relationships a full read returns.
+func requireTypeCountsMatchStoredRelationships(t *testing.T, engine *BadgerEngine, stage string) {
+	t.Helper()
+	ctx := context.Background()
+	edges, err := engine.AllEdges(ctx)
+	require.NoError(t, err)
+	byType := map[string]int{"LINK": 0}
+	for _, edge := range edges {
+		byType[edge.Type]++
+	}
+	for edgeType, live := range byType {
+		typed, err := engine.EdgeCountByType(ctx, edgeType)
+		require.NoError(t, err)
+		require.EqualValues(t, live, typed, "%s: %s relationship count", stage, edgeType)
+	}
+}
+
 // stressWriteOrder runs the interleavings; countsChecked also compares the
-// node and relationship counters with the stored entities.
+// derived relationship-type counters with the stored relationships, before
+// and after a close and reopen.
 func stressWriteOrder(t *testing.T, countsChecked bool) {
 	for _, writeBehind := range []bool{false, true} {
 		t.Run(fmt.Sprintf("write-behind=%v", writeBehind), func(t *testing.T) {
-			engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: writeBehind, WriteBehindInterval: time.Millisecond}))
+			options := BadgerOptions{DataDir: t.TempDir(), WriteBehind: writeBehind, WriteBehindInterval: time.Millisecond}
+			engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			node := func(r *rand.Rand) NodeID { return NodeID(fmt.Sprintf("test:n%d", r.Intn(6))) }
@@ -159,14 +191,16 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 				_, err := engine.GetNode(t.Context(), n.ID)
 				require.NoError(t, err, "listed node %s is stored", n.ID)
 			}
-			if countsChecked {
-				nodeCount, err := engine.NodeCount(t.Context())
-				require.NoError(t, err)
-				require.EqualValues(t, len(nodes), nodeCount, "node count")
-				edgeCount, err := engine.EdgeCount(t.Context())
-				require.NoError(t, err)
-				require.EqualValues(t, len(edges), edgeCount, "relationship count")
+			if !countsChecked {
+				return
 			}
+			requireTypeCountsMatchStoredRelationships(t, engine, "after the flush")
+			// Closing folds the pending counter deltas into their base counts;
+			// the reopen folds whatever a close left behind.
+			require.NoError(t, engine.Close())
+			reopened, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+			require.NoError(t, err)
+			requireTypeCountsMatchStoredRelationships(t, reopened, "after the reopen")
 		})
 	}
 }
