@@ -10,5 +10,6 @@
 - [x] Verify rejected input leaves a pre-existing file unchanged and creates no new output file.
 - [x] Fix demonstrated sibling Cypher/raw export output stubs through the shared file owner.
 - [x] Integrated focused race checks: export, registry and root APOC pass.
-- [ ] Profile representative exports and record correctness cost.
+- [x] Profile four representative exports in five isolated samples and document latency/bytes/allocation tradeoffs.
+- [x] Independent DeepSeek review: escaping/rejection correct; raw public dispatch gap fixed and tested; XML helper comparison documented.
 - [ ] Complete current-source duplicate dispositions and exact-head CI make test.
