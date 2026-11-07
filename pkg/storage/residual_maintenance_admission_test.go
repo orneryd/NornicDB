@@ -19,9 +19,12 @@ import (
 func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 	for _, route := range []string{"mark-clean", "consume-clean", "temporal-rebuild", "mvcc-rebuild", "temporal-write", "lifecycle-stripes", "lifecycle-suppression", "mvcc-prune", "label-drop", "edge-type-drop", "between-drop", "raw-drop-all", "raw-load", "between-repair", "label-scan-repair"} {
 		t.Run(route, func(t *testing.T) {
-			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: route == "lifecycle-stripes", WriteBehindInterval: time.Hour}))
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: route == "lifecycle-stripes", WriteBehindInterval: time.Hour}))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = b.Close() })
+			var finalOutcome error
+			fixtureowner.OwnWithCloseAssertion(t, b, func(err error) bool {
+				return finalOutcome != nil && err == finalOutcome
+			})
 			var target sync.Locker = &b.db.commitGate
 			var run func(context.Context) error
 			switch route {
@@ -142,6 +145,13 @@ func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 					b.writeBehind.order[0].Unlock()
 				}
 				require.True(t, available, "cancelled lifecycle acquisition must release its partial stripe holds")
+			}
+			if route == "label-scan-repair" {
+				// The injected state is the malformed persisted count this read
+				// repairs: retirement reports the value it cannot decode, and repeated
+				// Close retains that outcome.
+				finalOutcome = b.Close()
+				require.EqualError(t, finalOutcome, "label-count final fold: derived count value malformed: decode derived count: expected 8 bytes, got 1")
 			}
 		})
 	}
