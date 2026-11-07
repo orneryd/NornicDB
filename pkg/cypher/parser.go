@@ -200,6 +200,9 @@ func (p *Parser) Parse(ctx context.Context, cypher string) (*Query, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := validateStaticMapKeys(ctx, cypher); err != nil {
+		return nil, err
+	}
 	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		return nil, source.Err
