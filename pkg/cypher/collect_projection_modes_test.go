@@ -7,9 +7,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func TestNOR54CollectWildcardColumnContract(t *testing.T) {
+func TestCollectSubqueryProjectionContractAcrossExecutionModes(t *testing.T) {
 	withCypherParsers(t, func(t *testing.T) {
-		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor54_collect"))
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "collect_projection_modes"))
 		for _, mode := range []string{"", "EXPLAIN ", "PROFILE "} {
 			for _, prefix := range []string{"", "UNWIND [] AS ignored "} {
 				one, two := "WITH 1 AS x RETURN *", "WITH 1 AS x, 2 AS y RETURN *"
@@ -22,7 +22,8 @@ func TestNOR54CollectWildcardColumnContract(t *testing.T) {
 					name, body string
 					valid      bool
 				}{
-					{"one", one, true},
+					{"one wildcard", one, false},
+					{"one explicit", "WITH 1 AS value RETURN value", true},
 					{"two", two, false},
 				} {
 					t.Run(mode+prefix+tc.name, func(t *testing.T) {

@@ -27,39 +27,6 @@ func validateProcedureCallArguments(ctx context.Context, callCypher string) erro
 	return nil
 }
 
-// validateExplainProcedureArities checks explicit argument counts without
-// evaluating arguments or invoking procedures. Walk the retained syntax so
-// empty input rows and nested calls receive the same compile-time check.
-func validateExplainProcedureArities(ctx context.Context, query string) error {
-	syntax, err := cypherantlr.ParseSyntax(ctx, query, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
-	if err != nil {
-		return err
-	}
-	var failure error
-	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
-		if failure != nil {
-			return nil
-		}
-		if err := ctx.Err(); err != nil {
-			failure = err
-			return nil
-		}
-		if node.Rule() != cypherantlr.CypherParserRULE_queryCallSt && node.Rule() != cypherantlr.CypherParserRULE_standaloneCall {
-			return nil
-		}
-		name := node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
-		procedure, found := globalProcedureRegistry.Get(name)
-		if !found {
-			return nil // Existing admission owns unresolved procedure errors.
-		}
-		if arguments := procedureArgumentTextsFromSyntax(node); arguments != nil {
-			failure = validateProcedureArgumentCount(procedure.Spec, len(arguments))
-		}
-		return nil
-	})
-	return failure
-}
-
 func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
 	if err := validateProcedureCallArguments(ctx, callCypher); err != nil {
 		return nil, err

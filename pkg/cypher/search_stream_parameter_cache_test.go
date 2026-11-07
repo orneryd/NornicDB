@@ -33,6 +33,7 @@ func TestSearchStreamParameterAwareCache(t *testing.T) {
 	first, err := run(ctx, plain)
 	require.NoError(t, err)
 	require.Len(t, first.Rows, 2)
+	require.Equal(t, retrievalResultSchemas(retrievalColumns)[0], first.Columns)
 	requireOwnedResultCacheHit(t, exec, first, func() (*ExecuteResult, error) {
 		return run(ctx, plain)
 	})
@@ -42,6 +43,7 @@ func TestSearchStreamParameterAwareCache(t *testing.T) {
 	start := map[string]any{"query": "transcript", "limit": int64(2), "n": int64(1)}
 	started, err := run(ctx, start)
 	require.NoError(t, err)
+	require.Equal(t, retrievalResultSchemas(retrievalColumns)[1], started.Columns)
 	qid := started.Rows[0][0].(map[string]any)["qid"].(string)
 	require.NotEmpty(t, qid)
 	_, err = run(WithAuthenticatedPrincipal(context.Background(), "bob"), map[string]any{"qid": qid, "n": int64(1)})
@@ -49,6 +51,7 @@ func TestSearchStreamParameterAwareCache(t *testing.T) {
 	pull := map[string]any{"qid": qid, "n": int64(1)}
 	last, err := run(ctx, pull)
 	require.NoError(t, err)
+	require.Equal(t, started.Columns, last.Columns)
 	require.False(t, last.Rows[0][0].(map[string]any)["has_more"].(bool))
 	_, err = run(ctx, pull)
 	require.Error(t, err, "terminal PULL must reach registry")
