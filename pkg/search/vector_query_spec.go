@@ -171,6 +171,9 @@ func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32
 	if !s.vectorEnabled.Load() {
 		return nil, nil
 	}
+	if err := s.vectorStorageError(); err != nil {
+		return nil, err
+	}
 
 	// If the query dimensions don't match the configured index dimensions, Cypher expects
 	// an empty result set (not an error). The active vector backing may be either the

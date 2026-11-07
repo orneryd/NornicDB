@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Publish vector compaction checkpoints with recoverable payload/ordinal metadata.
+  Reject corrupt or stale search checkpoints and rebuild from the current database;
+  explicit disk mode reports file failures instead of silently using memory.
+  Uncertified live-update checkpoints rebuild once after restart, avoiding a
+  durable acknowledgement ledger on normal writes. See
+  [vector checkpoint recovery](docs/architecture/vector-checkpoints.md).
+
 - Preserve quoted dotted property names in constraints and projected reads.
   Keep quoted commas inside composite constraint properties and reject property
   references to a variable other than the declared FOR variable, including list
