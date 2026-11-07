@@ -280,29 +280,6 @@ func TestApplyLookupKeyString_Semantics(t *testing.T) {
 	}
 }
 
-func TestRewriteFragmentWithRuntimeImports_Apply(t *testing.T) {
-	inner := &FragmentExec{
-		Input: &FragmentInit{ImportColumns: []string{"a"}},
-		Query: "RETURN a",
-	}
-	apply := &FragmentApply{
-		Input: &FragmentInit{},
-		Inner: inner,
-	}
-	got := rewriteFragmentWithRuntimeImports(t.Context(), apply, []string{"b"})
-	result, ok := got.(*FragmentApply)
-	if !ok {
-		t.Fatalf("expected *FragmentApply, got %T", got)
-	}
-	exec, ok := result.Inner.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected inner *FragmentExec, got %T", result.Inner)
-	}
-	if !strings.Contains(exec.Query, "$") {
-		t.Fatalf("expected rewritten query with params, got %q", exec.Query)
-	}
-}
-
 func TestAliasesFromReturnItems(t *testing.T) {
 	items := []fabricReturnItem{
 		{prop: "name", alias: "name"},

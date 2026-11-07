@@ -1533,6 +1533,10 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 				request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
 				require.NoError(t, err)
 				request.Header.Set("Content-Type", "application/json")
+				// The connection-population corpus inspects established test-driver
+				// connections, excluding accepted peers that have not sent a request.
+				// Match the local Bolt fixture's declared agent on the HTTP reference.
+				request.Header.Set("User-Agent", neo4jdriver.UserAgent)
 				if strings.HasPrefix(endpoint, local.URL+"/") {
 					request.Header.Set("Authorization", token)
 				}

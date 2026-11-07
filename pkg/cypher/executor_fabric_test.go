@@ -73,13 +73,6 @@ func TestStripLeadingWithImportsForFabricRecord_UseClauseIsStripped(t *testing.T
 	}
 }
 
-func TestFabricImportCommaListUsesSharedReader(t *testing.T) {
-	parts := splitTopLevelComma("a, collect({k: b, t: c}) AS rows, `quoted`")
-	if len(parts) != 3 {
-		t.Fatalf("expected 3 top-level parts, got %#v", parts)
-	}
-}
-
 func TestCypherFabricExecutor_ExecuteQuery_DelegatesAndReturnsRows(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(baseStore)

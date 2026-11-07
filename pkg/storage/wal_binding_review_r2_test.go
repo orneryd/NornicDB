@@ -23,7 +23,7 @@ func r2BindingData(t testing.TB, count int) (*BadgerEngine, WALBufferedCommitDat
 func TestReviewR2RemapCrashBeforeApply(t *testing.T) {
 	_, data := r2BindingData(t, 1)
 	dir := t.TempDir()
-	dest := reviewBindingEngine(t, dir)
+	dest := reviewBindingEngine(t, dir, nil)
 	_, err := dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"unrelated": "keep"}})
 	require.NoError(t, err)
 	c, err := dest.importBufferedWALRecord(dest.work.Context(), &data, walForeignImport)
@@ -31,7 +31,7 @@ func TestReviewR2RemapCrashBeforeApply(t *testing.T) {
 	require.NotEmpty(t, c.propKeyDrain.pending)
 	// Crash boundary before the imported body or its destination drain applies.
 	require.NoError(t, dest.Close())
-	dest = reviewBindingEngine(t, dir)
+	dest = reviewBindingEngine(t, dir, nil)
 
 	require.True(t, dest.walPropertySource.foreign)
 	data.PropertyBindings = nil
@@ -43,7 +43,7 @@ func TestReviewR2RemapCrashBeforeApply(t *testing.T) {
 func TestReviewR2ConcurrentAllocation(t *testing.T) {
 	_, data := r2BindingData(t, 160)
 	dir := t.TempDir()
-	dest := reviewBindingEngine(t, dir)
+	dest := reviewBindingEngine(t, dir, nil)
 	_, err := dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"unrelated": "keep"}})
 	require.NoError(t, err)
 	var wg sync.WaitGroup
@@ -80,7 +80,7 @@ func TestReviewR2ConcurrentAllocation(t *testing.T) {
 		require.True(t, ok)
 	}
 	require.NoError(t, dest.Close())
-	dest = reviewBindingEngine(t, dir)
+	dest = reviewBindingEngine(t, dir, nil)
 	assertPropertyDictionaryBijection(t, dest)
 	for i := 0; i < 160; i++ {
 		_, ok := dest.propKeyDict.lookupID("perf", fmt.Sprintf("property_%03d", i))
@@ -94,7 +94,7 @@ func TestReviewR2DoubleReplay(t *testing.T) {
 	raw, err := json.Marshal(data)
 	require.NoError(t, err)
 	entry := WALEntry{Operation: OpBufferedCommit, Data: raw}
-	dest := reviewBindingEngine(t, t.TempDir())
+	dest := reviewBindingEngine(t, t.TempDir(), nil)
 	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
@@ -111,7 +111,7 @@ func TestReviewR2DoubleReplay(t *testing.T) {
 
 func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	source := reviewBindingEngine(t, t.TempDir())
+	source := reviewBindingEngine(t, t.TempDir(), nil)
 	_, err := source.CreateNode(t.Context(), &Node{ID: "identity:a", Properties: map[string]any{"alpha": int64(0)}})
 	require.NoError(t, err)
 	_, err = source.CreateNode(t.Context(), &Node{ID: "identity:b", Properties: map[string]any{"beta": int64(0)}})
@@ -151,7 +151,7 @@ func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 	}
 	require.NoError(t, wal.Close())
 	dir := t.TempDir()
-	dest := reviewBindingEngine(t, dir)
+	dest := reviewBindingEngine(t, dir, nil)
 	_, err = dest.CreateNode(t.Context(), &Node{ID: "identity:a", Properties: map[string]any{"alpha": int64(0)}})
 	require.NoError(t, err)
 	_, err = dest.CreateNode(t.Context(), &Node{ID: "identity:b", Properties: map[string]any{"other": int64(0)}})
@@ -160,7 +160,7 @@ func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 	// source token 2 means beta, while destination token 2 means other.
 	require.NoError(t, ReplayWALEntry(dest, entries[0]))
 	require.NoError(t, dest.Close())
-	dest = reviewBindingEngine(t, dir)
+	dest = reviewBindingEngine(t, dir, nil)
 	n, recoverErr := RecoverBufferedCommitsAtOpen(dest, wal)
 	node, readErr := dest.GetNode(t.Context(), "identity:b")
 	require.NoError(t, readErr)

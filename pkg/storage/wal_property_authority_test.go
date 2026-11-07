@@ -40,7 +40,7 @@ func TestWALPropertyAuthorityRejectsInvalidRecords(t *testing.T) {
 
 func TestWALPropertyAuthorityRejectsCorruptIdentity(t *testing.T) {
 	dir := t.TempDir()
-	b := reviewBindingEngine(t, dir)
+	b := reviewBindingEngine(t, dir, nil)
 	require.NoError(t, b.db.Update(func(tx *badger.Txn) error {
 		return tx.Set(walPropertyIdentityKey, []byte("invalid-identity"))
 	}))
@@ -63,8 +63,8 @@ func TestWALPropertyOwnLegacyStagedDrain(t *testing.T) {
 }
 
 func TestWALPropertyLosslessLegacyEdge(t *testing.T) {
-	source := reviewBindingEngine(t, t.TempDir())
-	destination := reviewBindingEngine(t, t.TempDir())
+	source := reviewBindingEngine(t, t.TempDir(), nil)
+	destination := reviewBindingEngine(t, t.TempDir(), nil)
 	for _, b := range []*BadgerEngine{source, destination} {
 		for _, id := range []NodeID{"named:a", "named:b"} {
 			_, err := b.CreateNode(t.Context(), &Node{ID: id})

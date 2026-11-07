@@ -13,13 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func reviewBindingEngine(t *testing.T, dir string) *BadgerEngine {
+func reviewBindingEngine(t *testing.T, dir string, assertion func(error) bool) *BadgerEngine {
 	t.Helper()
-	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4(), WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+	b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4(), WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+	if b != nil {
+		fixtureowner.OwnWithCloseAssertion(t, b, assertion)
+	}
 	require.NoError(t, err)
 	// Keep crash fixtures pending even after an explicit flush adapts the delay.
 	b.writeBehind.SetDelayBounds(time.Hour, time.Hour)
-	t.Cleanup(func() { _ = b.Close() })
 	return b
 }
 
@@ -31,7 +33,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			t.Cleanup(config.WithWALEnabled())
 			dir := t.TempDir()
-			source := reviewBindingEngine(t, dir)
+			source := reviewBindingEngine(t, dir, nil)
 			_, err := source.CreateNode(t.Context(), &Node{ID: "legacy:a", Properties: map[string]any{"value": int64(0)}})
 			require.NoError(t, err)
 			require.NoError(t, source.FlushWriteBehind(context.Background()))
@@ -97,7 +99,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 				assertPropertyDictionaryBijection(t, dest)
 				return
 			}
-			recovered := reviewBindingEngine(t, dir)
+			recovered := reviewBindingEngine(t, dir, nil)
 			require.NotNil(t, recovered.writeBehind)
 			legacyEntries, err := ReadWALEntriesFromDir(legacy.Config().Dir)
 			require.NoError(t, err)
@@ -129,7 +131,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 // prefix never supplies authority for a later record.
 func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	source := reviewBindingEngine(t, t.TempDir())
+	source := reviewBindingEngine(t, t.TempDir(), nil)
 	capture, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = capture.Close() })
@@ -152,7 +154,7 @@ func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 	}
 	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 	require.NoError(t, err)
-	destination := reviewBindingEngine(t, t.TempDir())
+	destination := reviewBindingEngine(t, t.TempDir(), nil)
 	index := 0
 	for _, entry := range entries {
 		if entry.Operation != OpBufferedCommit {
@@ -187,9 +189,9 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	for _, restart := range []bool{false, true} {
 		t.Run(fmt.Sprint(restart), func(t *testing.T) {
-			source := reviewBindingEngine(t, t.TempDir())
+			source := reviewBindingEngine(t, t.TempDir(), nil)
 			destDir := t.TempDir()
-			dest := reviewBindingEngine(t, destDir)
+			dest := reviewBindingEngine(t, destDir, nil)
 			for _, ns := range []string{"growth", "other"} {
 				for _, b := range []*BadgerEngine{source, dest} {
 					// Same node order, reversed property dictionary. Extra keys
@@ -258,7 +260,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 				}
 				require.Equal(t, 3, applied)
 				require.NoError(t, dest.Close())
-				dest = reviewBindingEngine(t, destDir)
+				dest = reviewBindingEngine(t, destDir, nil)
 			}
 			n, err := RecoverBufferedCommits(dest, wal)
 			require.NoError(t, err)
@@ -269,7 +271,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 				require.Equal(t, 6, n)
 			}
 			require.NoError(t, dest.Close())
-			dest = reviewBindingEngine(t, destDir)
+			dest = reviewBindingEngine(t, destDir, nil)
 			assertPropertyDictionaryBijection(t, dest)
 			for _, ns := range []string{"growth", "other"} {
 				node, err := dest.GetNode(t.Context(), NodeID(ns+":a"))
@@ -308,7 +310,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
 			require.True(t, tx.AcknowledgedBuffered())
-			third := reviewBindingEngine(t, t.TempDir())
+			third := reviewBindingEngine(t, t.TempDir(), nil)
 			n, err = RecoverBufferedCommits(third, secondLog)
 			require.NoError(t, err)
 			require.Equal(t, 1, n)

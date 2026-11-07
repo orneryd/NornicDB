@@ -22,7 +22,7 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 	}{
 		{name: "prepare-receipt", phase: ".observeBufferedCommitReceipt"},
 		{name: "plain-preimage", plain: true, phase: ".validateNodeMutationPreimagesLocked"},
-		{name: "plain-conflict", plain: true, create: true, phase: ".commitsSince"},
+		{name: "plain-conflict", plain: true, create: true, phase: ".commitsAfterBegin"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			plain := testCase.plain
@@ -177,21 +177,24 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 
 func TestBufferedReceiptAndConflictScansObserveRealCancellation(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
+	begin, err := b.BeginTransaction(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = begin.Rollback() })
 	for _, id := range []NodeID{"test:a", "test:b", "test:c"} {
 		bufferedCreate(t, b, &Node{ID: id})
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	visits := 0
-	err := b.writeBehind.commitsSince(ctx, MVCCVersion{}, func(context.Context, MVCCVersion, []Operation) (bool, error) { visits++; cancel(); return true, nil })
+	err = b.writeBehind.commitsAfterBegin(ctx, begin.beginPresence, func(context.Context, MVCCVersion, []Operation) (bool, error) { visits++; cancel(); return true, nil })
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, visits)
 	visits = 0
-	err = b.writeBehind.commitsSince(t.Context(), MVCCVersion{}, func(context.Context, MVCCVersion, []Operation) (bool, error) { visits++; return false, nil })
+	err = b.writeBehind.commitsAfterBegin(t.Context(), begin.beginPresence, func(context.Context, MVCCVersion, []Operation) (bool, error) { visits++; return false, nil })
 	require.NoError(t, err)
 	require.Equal(t, 1, visits, "visitor stop remains synchronous and honored")
 	visits = 0
-	err = b.writeBehind.commitsSince(t.Context(), MVCCVersion{}, func(context.Context, MVCCVersion, []Operation) (bool, error) { visits++; return true, nil })
+	err = b.writeBehind.commitsAfterBegin(t.Context(), begin.beginPresence, func(context.Context, MVCCVersion, []Operation) (bool, error) { visits++; return true, nil })
 	require.NoError(t, err)
 	require.Equal(t, 3, visits)
 	poll := newIndexPollCancelContext(t, 2)

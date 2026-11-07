@@ -112,10 +112,15 @@ func TestPropertyKeyDict_Lookup_UnknownNamespaceReturnsFalse(t *testing.T) {
 }
 
 func TestPropertyKeyDict_PersistTxnCountersReportsFailure(t *testing.T) {
-	eng := newTestEngine(t)
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	require.NoError(t, err)
+	var finalOutcome error
+	fixtureowner.OwnWithCloseAssertion(t, eng, func(err error) bool {
+		return finalOutcome != nil && err == finalOutcome
+	})
 	require.NoError(t, eng.db.Close())
 
-	err := eng.propKeyDict.persistTxnCounters(context.Background(), eng.db, propKeyTxnDrain{
+	err = eng.propKeyDict.persistTxnCounters(context.Background(), eng.db, propKeyTxnDrain{
 		counters: map[string]uint64{"nornic": 20},
 		pending: []propKeyPersistEntry{{
 			namespace: "nornic",
@@ -124,6 +129,12 @@ func TestPropertyKeyDict_PersistTxnCountersReportsFailure(t *testing.T) {
 		}},
 	})
 	require.Error(t, err)
+
+	// The injected state is the closed native handle: retirement reports the
+	// handle it lost, and repeated Close retains that same outcome.
+	finalOutcome = eng.Close()
+	require.ErrorIs(t, finalOutcome, badger.ErrDBClosed)
+	require.EqualError(t, finalOutcome, "label-count final fold: DB Closed\nedge-type-count final fold: DB Closed")
 }
 
 func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
@@ -135,7 +146,12 @@ func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
 	require.NoError(t, err)
 	drain := dict.flushTxnCounters(firstTxn)
 	firstTxn.Discard()
-	closed := newTestEngine(t)
+	closed, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	require.NoError(t, err)
+	var closedOutcome error
+	fixtureowner.OwnWithCloseAssertion(t, closed, func(err error) bool {
+		return closedOutcome != nil && err == closedOutcome
+	})
 	require.NoError(t, closed.db.Close())
 	require.Error(t, dict.persistTxnCounters(context.Background(), closed.db, drain))
 
@@ -146,6 +162,12 @@ func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
 	secondTxn.Discard()
 	require.Len(t, retryDrain.pending, 1, "an unpersisted token must be restaged on retry")
 	require.NoError(t, dict.persistTxnCounters(context.Background(), eng.db, retryDrain))
+
+	// Only the failed attempt's engine lost its native handle; retirement reports
+	// it there, and repeated Close retains that same outcome.
+	closedOutcome = closed.Close()
+	require.ErrorIs(t, closedOutcome, badger.ErrDBClosed)
+	require.EqualError(t, closedOutcome, "label-count final fold: DB Closed\nedge-type-count final fold: DB Closed")
 }
 
 func TestPropertyKeyDict_NovelKeySurvivesCleanReopen(t *testing.T) {

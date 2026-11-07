@@ -1842,7 +1842,7 @@
   },
   {
     "name": "GH530 DBMS connection populated fields",
-    "query": "CALL dbms.listConnections() YIELD connectionId, connectTime, connector, userAgent, serverAddress, clientAddress RETURN count(connectionId) > 0 AS connectionsPresent, count(connectTime) = count(connectionId) AS timestampsPresent, count(connector) = count(connectionId) AS protocolsPresent, count(userAgent) = count(connectionId) AS agentsPresent, count(serverAddress) = count(connectionId) AS serversPresent, count(clientAddress) = count(connectionId) AS clientsPresent",
+    "query": "CALL dbms.listConnections() YIELD connectionId, connectTime, connector, userAgent, serverAddress, clientAddress WHERE userAgent STARTS WITH 'Go Driver/' RETURN count(connectionId) > 0 AS connectionsPresent, count(connectTime) = count(connectionId) AS timestampsPresent, count(connector) = count(connectionId) AS protocolsPresent, count(userAgent) = count(connectionId) AS agentsPresent, count(serverAddress) = count(connectionId) AS serversPresent, count(clientAddress) = count(connectionId) AS clientsPresent",
     "no_effects": true
   },
   {

@@ -445,12 +445,11 @@ var fabricUnionContract = fabric.UnionContract{
 // rewritten; the planner and remote participants keep the names as written.
 // Diagnostics are mapped back to those names.
 //
-// The binding copy keeps its USE clauses, because they carry the identity of
+// Binding and type validation keep USE clauses because they carry the identity of
 // the graph each CALL runs on: that graph owns the procedure the CALL names.
 // Binding a USE-free copy would erase the selection and report the local
-// registry's ProcedureNotFound for a procedure a participant owns. The
-// semantic and type checks still read the single-graph form, which is the one
-// statement the engine validates a composite statement as.
+// registry's ProcedureNotFound for a procedure a participant owns. Both phases
+// consume the same original clause boundaries and retained binding identities.
 func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cypher string, params map[string]interface{}) error {
 	canonical, names := canonicalizeQuotedVariablesWithBindings(ctx, cypher, nil)
 	if names != nil {
@@ -458,6 +457,12 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 		params = names.parameterValues(params)
 	}
 	desugared, _, err := desugarLabelExpressions(ctx, canonical, params, cypherVersionFromContext(ctx) == "25")
+	if err == nil {
+		// Clause-composition rejection belongs to statement admission, before
+		// participant dispatch can wrap the diagnostic or execute a preceding
+		// update. Reuse the native query-body validator.
+		err = validateQueryBodyComposition(ctx, desugared)
+	}
 	if err == nil {
 		// The local registry has already declined the procedure a participant may
 		// own, so the answer belongs to the graph its CALL's USE clause selects. A
@@ -501,22 +506,6 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
 	_, err = (resultRestoration{names: names}).restore(ctx, nil, err, parseItems)
 	return err
-}
-
-// fabricSingleGraphStatement is cypher without the USE clauses the Fabric
-// planner reads (FabricPlanner.SingleGraphStatement): the one statement whose
-// semantic and type rules are checked, as Neo4j checks a composite statement's,
-// before any part of it plans or runs. A statement the planner can't read is
-// checked as it is, and planning reports the error.
-func fabricSingleGraphStatement(ctx context.Context, cypher string) string {
-	planner := fabric.NewFabricPlanner(nil, fabricStatementEffect)
-	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
-	planner.SetCallImportReader(callSubqueryImportedVariables)
-	statement, err := planner.SingleGraphStatement(ctx, cypher, cyphertext.AcceptedSource)
-	if err != nil {
-		return cypher
-	}
-	return statement
 }
 
 func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
