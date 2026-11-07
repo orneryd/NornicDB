@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reconcile recovered label and relationship-type counts with replayed graph
   bodies after single-entry WAL replay and mixed physical/semantic recovery.
   Prevent relabel-then-delete recovery from failing with a count underflow.
+- Complete APOC calls containing relationship-pattern COLLECT subqueries
+  without recursive evaluator handoff, including RETURN, CASE and WITH forms.
+  Preserve statement cancellation while evaluating their subquery arguments.
+- Preserve recreated node and relationship identities when rebuilding MVCC
+  heads, so later version pruning keeps live compact relationships readable
+  across database restarts.
+- Reject stale relationship property updates under write-behind, including
+  peers whose commit version was reserved before BEGIN. Preserve the observed
+  relationship namespace across implicit and explicit query updates.
 
 - Return the normal syntax error for zero-argument `normalize()` calls instead
   of closing the Bolt connection. Preserve ambiguous-aggregation diagnostics
