@@ -163,6 +163,19 @@ func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properti
 	return node, true
 }
 
+// nodeBodyCacheable reports whether a decoded body can be cached without
+// loss. A cached body carries no vectors, and a hit hydrates only the chunk
+// vectors the codec stored under their own keys (loadNodeEmbeddingState).
+// Named vectors always live inline in the body, and chunk vectors do unless
+// the codec moved them out, so a body holding either of those is never
+// cached: every read decodes it again, as reads did before the cache.
+func nodeBodyCacheable(node *Node) bool {
+	if len(node.NamedEmbeddings) > 0 {
+		return false
+	}
+	return len(node.ChunkEmbeddings) == 0 || node.RuntimeMetadata().EmbeddingsStoredSeparately
+}
+
 func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *Node, source uint64) {
 	if id == "" || node == nil {
 		return
@@ -172,9 +185,7 @@ func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *N
 	if source < b.durableCaches.nodeFloor(id) {
 		return
 	}
-	// Inline vectors cannot be reconstructed from separate keys. Avoid caching
-	// a lossy projection; large separately stored vectors are rehydrated on hit.
-	if !node.RuntimeMetadata().EmbeddingsStoredSeparately && (len(node.ChunkEmbeddings) > 0 || len(node.NamedEmbeddings) > 0) {
+	if !nodeBodyCacheable(node) {
 		return
 	}
 	cached := copyNodeWithoutEmbeddings(node)
