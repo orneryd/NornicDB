@@ -49,3 +49,10 @@
 - [x] Remove only the two inventory rows for retired symbols; unchanged lexical census passed (2.530s).
 - [x] Focused COLLECT/public subquery/projection checks passed (1.290s); RETURN function controls passed (0.956s).
 - [ ] Include these corrections in a fresh final-head CI qualification; current run targets earlier pushed 51dccbe5d.
+
+## Final duplicate-review convergence
+- [x] One parameterized benchmark registration replaces twelve forwarding entries and three shape runners; all six workload families and their warm/cold sizes remain. Public workload result controls pass (1.530s); all 22 benchmark variants execute successfully.
+- [x] Both CREATE-only UNWIND gates share the unchanged top-level mutation restriction; all TestUnwind controls pass (5.835s), lexical census passes (1.895s).
+- [x] Sequential baseline/current cost check: same harness on 4c575471 and this candidate, three 100ms samples for each of 22 variants. Median latency, bytes and allocations do not increase by >5% in any variant. This is a comparison to the earlier candidate, not a new release-base qualification or statistical significance claim.
+- [x] CPU/allocation profiles captured during benchmark execution with no concurrent local Go tests. Inventory and every reported candidate receive a source-backed disposition, with omitted localization identities explicitly unverified.
+- [ ] Publish final source and full disposition comment; qualify exact final head in sharded make test CI.

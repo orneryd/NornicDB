@@ -562,191 +562,162 @@ func TestCallBindingWorkloadResults(t *testing.T) {
 	})
 }
 
-// BenchmarkCallBindingOrdinaryLabeledReadWarm qualifies a repeated plain
-// labeled read with warm compile caches and no result cache.
-func BenchmarkCallBindingOrdinaryLabeledReadWarm(b *testing.B) {
-	fixture := newCallBindingBenchFixture(b, callBindingBaselineRows)
-	seen := make([]bool, fixture.rows)
-	verify := func(tb testing.TB, result *ExecuteResult) {
-		callBindingAssertOrdinaryRead(tb, result, fixture.rows, seen)
-	}
-	benchmarkCallBindingWarm(b, fixture, callBindingOrdinaryReadQuery(false), verify)
+// callBindingWorkload parameterizes one measured CALL-binding workload. A single
+// runner then owns fixture construction, width enumeration and warm/cold
+// dispatch, while every benchmark entry keeps the recorded name of its shape.
+type callBindingWorkload struct {
+	// sizes are the measured widths. nil marks a single-size shape, measured
+	// once at callBindingBaselineRows without a sub-benchmark.
+	sizes []int
+	// name builds the sub-benchmark name for a width, e.g. "rows128".
+	name func(width int) string
+	// rows maps a width to the fixture size that width needs.
+	rows func(width int) int
+	// query builds the statement text; distinct selects the cold text form.
+	query func(width int, distinct bool) string
+	// verify returns the per-iteration result assertion for one fixture.
+	verify func(fixture *callBindingBenchFixture, width int) func(testing.TB, *ExecuteResult)
 }
 
-// BenchmarkCallBindingOrdinaryLabeledReadCold qualifies the same labeled read
-// with distinct statement text on every iteration.
-func BenchmarkCallBindingOrdinaryLabeledReadCold(b *testing.B) {
-	fixture := newCallBindingBenchFixture(b, callBindingBaselineRows)
-	seen := make([]bool, fixture.rows)
-	verify := func(tb testing.TB, result *ExecuteResult) {
-		callBindingAssertOrdinaryRead(tb, result, fixture.rows, seen)
-	}
-	benchmarkCallBindingCold(b, fixture, func() string { return callBindingOrdinaryReadQuery(true) }, verify)
-}
+// callBindingBaselineFixtureRows is the fixture size of the single-size shapes
+// and of the shapes whose width varies something other than the graph size.
+func callBindingBaselineFixtureRows(int) int { return callBindingBaselineRows }
 
-// BenchmarkCallBindingCorrelatedCallWarm qualifies a repeated correlated CALL
-// returning a fresh alias at 1, 128 and 4096 outer rows.
-func BenchmarkCallBindingCorrelatedCallWarm(b *testing.B) {
-	benchmarkCallBindingCorrelatedCall(b, false)
-}
-
-// BenchmarkCallBindingCorrelatedCallCold qualifies the correlated CALL shape
-// with distinct statement text on every iteration.
-func BenchmarkCallBindingCorrelatedCallCold(b *testing.B) {
-	benchmarkCallBindingCorrelatedCall(b, true)
-}
-
-func benchmarkCallBindingCorrelatedCall(b *testing.B, distinct bool) {
+// benchmarkCallBindingWorkload is the single parameterized entry every CALL
+// binding benchmark funnels through: it runs one workload warm (one statement
+// text, repeated) or cold (fresh text on every iteration) at each configured
+// width. A shape without sizes is measured at the top level, so the single-size
+// benchmarks keep the top-level name they record today.
+func benchmarkCallBindingWorkload(b *testing.B, workload callBindingWorkload, distinct bool) {
 	b.Helper()
-	for _, rows := range callBindingCorrelatedRowCounts {
-		b.Run(fmt.Sprintf("rows%d", rows), func(b *testing.B) {
-			fixture := newCallBindingBenchFixture(b, rows)
-			seen := make([]bool, fixture.rows)
-			verify := func(tb testing.TB, result *ExecuteResult) {
-				callBindingAssertCorrelatedCall(tb, result, fixture.rows, seen)
-			}
-			if distinct {
-				benchmarkCallBindingCold(b, fixture, func() string { return callBindingCorrelatedCallQuery(true) }, verify)
-				return
-			}
-			benchmarkCallBindingWarm(b, fixture, callBindingCorrelatedCallQuery(false), verify)
+	if len(workload.sizes) == 0 {
+		benchmarkCallBindingSize(b, workload, callBindingBaselineRows, distinct)
+		return
+	}
+	for _, width := range workload.sizes {
+		b.Run(workload.name(width), func(b *testing.B) {
+			benchmarkCallBindingSize(b, workload, width, distinct)
 		})
 	}
 }
 
-// BenchmarkCallBindingRetainedScopedImportWarm qualifies a repeated read of the
-// scoped import after the CALL body's own WITH.
-func BenchmarkCallBindingRetainedScopedImportWarm(b *testing.B) {
-	fixture := newCallBindingBenchFixture(b, callBindingBaselineRows)
-	seen := make([]bool, fixture.rows)
-	verify := func(tb testing.TB, result *ExecuteResult) {
-		callBindingAssertRetainedScopedImport(tb, result, fixture.rows, seen)
-	}
-	benchmarkCallBindingWarm(b, fixture, callBindingRetainedScopedImportQuery(false), verify)
-}
-
-// BenchmarkCallBindingRetainedScopedImportCold qualifies the same retained
-// import read with distinct statement text on every iteration.
-func BenchmarkCallBindingRetainedScopedImportCold(b *testing.B) {
-	fixture := newCallBindingBenchFixture(b, callBindingBaselineRows)
-	seen := make([]bool, fixture.rows)
-	verify := func(tb testing.TB, result *ExecuteResult) {
-		callBindingAssertRetainedScopedImport(tb, result, fixture.rows, seen)
-	}
-	benchmarkCallBindingCold(b, fixture, func() string { return callBindingRetainedScopedImportQuery(true) }, verify)
-}
-
-// BenchmarkCallBindingScalarCountWarm qualifies a repeated scalar COUNT/sum
-// aggregate with explicit output columns.
-func BenchmarkCallBindingScalarCountWarm(b *testing.B) {
-	fixture := newCallBindingBenchFixture(b, callBindingBaselineRows)
-	verify := func(tb testing.TB, result *ExecuteResult) {
-		callBindingAssertScalarCount(tb, result, fixture.rows)
-	}
-	benchmarkCallBindingWarm(b, fixture, callBindingScalarCountQuery(false), verify)
-}
-
-// BenchmarkCallBindingScalarCountCold qualifies the scalar COUNT/sum aggregate
-// with distinct statement text on every iteration.
-func BenchmarkCallBindingScalarCountCold(b *testing.B) {
-	fixture := newCallBindingBenchFixture(b, callBindingBaselineRows)
-	verify := func(tb testing.TB, result *ExecuteResult) {
-		callBindingAssertScalarCount(tb, result, fixture.rows)
-	}
-	benchmarkCallBindingCold(b, fixture, func() string { return callBindingScalarCountQuery(true) }, verify)
-}
-
-// BenchmarkCallBindingConditionalLiteralWarm qualifies a repeated top-level CASE
-// at 2, 16 and 64 literal arms.
-func BenchmarkCallBindingConditionalLiteralWarm(b *testing.B) {
-	benchmarkCallBindingConditionalLiteral(b, false)
-}
-
-// BenchmarkCallBindingConditionalLiteralCold qualifies the top-level CASE shape
-// with distinct statement text on every iteration.
-func BenchmarkCallBindingConditionalLiteralCold(b *testing.B) {
-	benchmarkCallBindingConditionalLiteral(b, true)
-}
-
-func benchmarkCallBindingConditionalLiteral(b *testing.B, distinct bool) {
+// benchmarkCallBindingSize builds one fixture plus its assertion for a workload
+// width and hands them to the warm or the cold runner. Setup stays outside the
+// timer in both runners.
+func benchmarkCallBindingSize(b *testing.B, workload callBindingWorkload, width int, distinct bool) {
 	b.Helper()
-	for _, arms := range callBindingConditionalArmCounts {
-		b.Run(fmt.Sprintf("arms%d", arms), func(b *testing.B) {
-			fixture := newCallBindingBenchFixture(b, callBindingBaselineRows)
-			verify := func(tb testing.TB, result *ExecuteResult) {
-				callBindingAssertConditionalLiteral(tb, result, arms)
-			}
-			if distinct {
-				benchmarkCallBindingCold(b, fixture, func() string { return callBindingConditionalLiteralQuery(arms, true) }, verify)
-				return
-			}
-			benchmarkCallBindingWarm(b, fixture, callBindingConditionalLiteralQuery(arms, false), verify)
-		})
+	fixture := newCallBindingBenchFixture(b, workload.rows(width))
+	verify := workload.verify(fixture, width)
+	if distinct {
+		benchmarkCallBindingCold(b, fixture, func() string { return workload.query(width, true) }, verify)
+		return
 	}
+	benchmarkCallBindingWarm(b, fixture, workload.query(width, false), verify)
 }
 
-// BenchmarkCallBindingWideProjectionWarm qualifies a repeated projection with
-// 128 and 512 items whose first column is named next and whose remaining
-// columns use distinct aliases.
-func BenchmarkCallBindingWideProjectionWarm(b *testing.B) {
-	benchmarkCallBindingWideProjection(b, false)
+// callBindingOrdinaryReadWorkload reads every fixture node's id and value.
+var callBindingOrdinaryReadWorkload = callBindingWorkload{
+	rows:  callBindingBaselineFixtureRows,
+	query: func(_ int, distinct bool) string { return callBindingOrdinaryReadQuery(distinct) },
+	verify: func(fixture *callBindingBenchFixture, _ int) func(testing.TB, *ExecuteResult) {
+		seen := make([]bool, fixture.rows)
+		return func(tb testing.TB, result *ExecuteResult) {
+			callBindingAssertOrdinaryRead(tb, result, fixture.rows, seen)
+		}
+	},
 }
 
-// BenchmarkCallBindingWideProjectionCold qualifies the wide projection shape
-// with distinct statement text on every iteration.
-func BenchmarkCallBindingWideProjectionCold(b *testing.B) {
-	benchmarkCallBindingWideProjection(b, true)
+// callBindingCorrelatedCallWorkload correlates one CALL per outer row, so the
+// measured width is both the outer row count and the fixture size.
+var callBindingCorrelatedCallWorkload = callBindingWorkload{
+	sizes: callBindingCorrelatedRowCounts,
+	name:  func(rows int) string { return fmt.Sprintf("rows%d", rows) },
+	rows:  func(rows int) int { return rows },
+	query: func(_ int, distinct bool) string { return callBindingCorrelatedCallQuery(distinct) },
+	verify: func(fixture *callBindingBenchFixture, _ int) func(testing.TB, *ExecuteResult) {
+		seen := make([]bool, fixture.rows)
+		return func(tb testing.TB, result *ExecuteResult) {
+			callBindingAssertCorrelatedCall(tb, result, fixture.rows, seen)
+		}
+	},
 }
 
-func benchmarkCallBindingWideProjection(b *testing.B, distinct bool) {
-	b.Helper()
-	for _, items := range callBindingProjectionItemCounts {
-		b.Run(fmt.Sprintf("items%d", items), func(b *testing.B) {
-			fixture := newCallBindingBenchFixture(b, callBindingBaselineRows)
-			expectation := newCallBindingProjectionExpectation(items)
-			verify := func(tb testing.TB, result *ExecuteResult) {
-				callBindingAssertProjection(tb, result, expectation)
-			}
-			if distinct {
-				benchmarkCallBindingCold(b, fixture, func() string { return callBindingProjectionQuery(items, true) }, verify)
-				return
-			}
-			benchmarkCallBindingWarm(b, fixture, callBindingProjectionQuery(items, false), verify)
-		})
-	}
+// callBindingRetainedScopedImportWorkload reads the scoped import after the
+// CALL body's own WITH horizon.
+var callBindingRetainedScopedImportWorkload = callBindingWorkload{
+	rows:  callBindingBaselineFixtureRows,
+	query: func(_ int, distinct bool) string { return callBindingRetainedScopedImportQuery(distinct) },
+	verify: func(fixture *callBindingBenchFixture, _ int) func(testing.TB, *ExecuteResult) {
+		seen := make([]bool, fixture.rows)
+		return func(tb testing.TB, result *ExecuteResult) {
+			callBindingAssertRetainedScopedImport(tb, result, fixture.rows, seen)
+		}
+	},
 }
 
-// Native query conditionals exercise enclosing-frame column admission rather
-// than scalar CASE evaluation. Every arm has the same explicit result schema.
-func BenchmarkCallBindingConditionalQueries(b *testing.B) {
-	for _, arms := range []int{2, 16, 64} {
-		for _, cold := range []bool{false, true} {
-			b.Run(fmt.Sprintf("arms=%d/cold=%t", arms, cold), func(b *testing.B) {
-				fixture := newCallBindingBenchFixture(b, 1)
-				queryFor := func(salt uint64) string {
-					var text strings.Builder
-					fmt.Fprintf(&text, "CYPHER 25 WHEN %d=%d THEN RETURN 0 AS v ", salt, salt)
-					for i := 1; i < arms; i++ {
-						fmt.Fprintf(&text, "WHEN %d=0 THEN RETURN %d AS v ", i, i)
-					}
-					text.WriteString("ELSE RETURN -1 AS v")
-					return text.String()
-				}
-				query := queryFor(0)
-				if _, err := fixture.exec.Execute(fixture.ctx, query, nil); err != nil {
-					b.Fatal(err)
-				}
-				b.ReportAllocs()
-				b.ResetTimer()
-				for i := 0; i < b.N; i++ {
-					if cold {
-						query = queryFor(callBindingBenchSequence.Add(1))
-					}
-					result, err := fixture.exec.Execute(fixture.ctx, query, nil)
-					if err != nil || len(result.Rows) != 1 || result.Rows[0][0] != int64(0) {
-						b.Fatalf("conditional result: %+v, %v", result, err)
-					}
-				}
+// callBindingScalarCountWorkload aggregates count(n) and a COUNT{}-sum with
+// explicit output columns.
+var callBindingScalarCountWorkload = callBindingWorkload{
+	rows:  callBindingBaselineFixtureRows,
+	query: func(_ int, distinct bool) string { return callBindingScalarCountQuery(distinct) },
+	verify: func(fixture *callBindingBenchFixture, _ int) func(testing.TB, *ExecuteResult) {
+		rows := fixture.rows
+		return func(tb testing.TB, result *ExecuteResult) {
+			callBindingAssertScalarCount(tb, result, rows)
+		}
+	},
+}
+
+// callBindingConditionalLiteralWorkload varies the number of literal CASE arms
+// over the same fixture.
+var callBindingConditionalLiteralWorkload = callBindingWorkload{
+	sizes: callBindingConditionalArmCounts,
+	name:  func(arms int) string { return fmt.Sprintf("arms%d", arms) },
+	rows:  callBindingBaselineFixtureRows,
+	query: func(arms int, distinct bool) string { return callBindingConditionalLiteralQuery(arms, distinct) },
+	verify: func(_ *callBindingBenchFixture, arms int) func(testing.TB, *ExecuteResult) {
+		return func(tb testing.TB, result *ExecuteResult) {
+			callBindingAssertConditionalLiteral(tb, result, arms)
+		}
+	},
+}
+
+// callBindingWideProjectionWorkload varies the projection width over the same
+// fixture.
+var callBindingWideProjectionWorkload = callBindingWorkload{
+	sizes: callBindingProjectionItemCounts,
+	name:  func(items int) string { return fmt.Sprintf("items%d", items) },
+	rows:  callBindingBaselineFixtureRows,
+	query: func(items int, distinct bool) string { return callBindingProjectionQuery(items, distinct) },
+	verify: func(_ *callBindingBenchFixture, items int) func(testing.TB, *ExecuteResult) {
+		expectation := newCallBindingProjectionExpectation(items)
+		return func(tb testing.TB, result *ExecuteResult) {
+			callBindingAssertProjection(tb, result, expectation)
+		}
+	},
+}
+
+// BenchmarkCallBindingWorkloads qualifies every CALL binding workload through
+// one registration and one measured runner. Each shape retains warm and cold
+// variants and every recorded row, arm and projection-width population.
+func BenchmarkCallBindingWorkloads(b *testing.B) {
+	for _, shape := range []struct {
+		name     string
+		workload callBindingWorkload
+	}{
+		{"OrdinaryLabeledRead", callBindingOrdinaryReadWorkload},
+		{"CorrelatedCall", callBindingCorrelatedCallWorkload},
+		{"RetainedScopedImport", callBindingRetainedScopedImportWorkload},
+		{"ScalarCount", callBindingScalarCountWorkload},
+		{"ConditionalLiteral", callBindingConditionalLiteralWorkload},
+		{"WideProjection", callBindingWideProjectionWorkload},
+	} {
+		for _, mode := range []struct {
+			name     string
+			distinct bool
+		}{{"Warm", false}, {"Cold", true}} {
+			b.Run(shape.name+"/"+mode.name, func(b *testing.B) {
+				benchmarkCallBindingWorkload(b, shape.workload, mode.distinct)
 			})
 		}
 	}

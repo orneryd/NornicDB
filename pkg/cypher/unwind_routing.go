@@ -196,10 +196,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	// could read what another row writes (MERGE, SET, MATCH, aggregation
 	// via WITH) keeps the row-by-row route.
 	if strings.HasPrefix(upperRest, "CREATE") &&
-		findKeywordIndexInContext(ctx, plan.remainder, "MERGE") < 0 &&
-		findKeywordIndexInContext(ctx, plan.remainder, "SET") < 0 &&
-		findKeywordIndexInContext(ctx, plan.remainder, "DELETE") < 0 &&
-		findKeywordIndexInContext(ctx, plan.remainder, "REMOVE") < 0 &&
+		!hasNonCreateMutationClause(ctx, plan.remainder) &&
 		findKeywordIndexInContext(ctx, plan.remainder, "FOREACH") < 0 &&
 		findKeywordIndexInContext(ctx, plan.remainder, "MATCH") < 0 &&
 		findKeywordIndexInContext(ctx, plan.remainder, "WITH") < 0 &&
@@ -261,10 +258,7 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {
 	query := plan.remainder
 	if findKeywordIndexInContext(ctx, query, "CREATE") < 0 ||
-		findKeywordIndexInContext(ctx, query, "MERGE") >= 0 ||
-		findKeywordIndexInContext(ctx, query, "SET") >= 0 ||
-		findKeywordIndexInContext(ctx, query, "DELETE") >= 0 ||
-		findKeywordIndexInContext(ctx, query, "REMOVE") >= 0 ||
+		hasNonCreateMutationClause(ctx, query) ||
 		!unwindItemsAreDistinctComparable(plan.items) {
 		return nil, false, nil
 	}
@@ -281,4 +275,14 @@ func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Contex
 	}
 	result, err := e.executeUnwindCorrelationRewrite(ctx, plan, rewritten)
 	return result, true, err
+}
+
+// hasNonCreateMutationClause is the shared CREATE-only batching restriction.
+// It checks top-level clauses, preserving per-row semantics for other mutations.
+// Read-only rewrite admission uses the complete statement-effect owner instead.
+func hasNonCreateMutationClause(ctx context.Context, query string) bool {
+	return findKeywordIndexInContext(ctx, query, "MERGE") >= 0 ||
+		findKeywordIndexInContext(ctx, query, "SET") >= 0 ||
+		findKeywordIndexInContext(ctx, query, "DELETE") >= 0 ||
+		findKeywordIndexInContext(ctx, query, "REMOVE") >= 0
 }
