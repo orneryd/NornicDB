@@ -129,6 +129,9 @@ func TestStoreCompatRoundTrip(t *testing.T) {
 	requireCompatStoreServes(t, dir, 1)
 	// The resulting complete snapshot is reusable when its source is unchanged.
 	requireCompatStoreServes(t, dir, 0)
+	// Reuse must retain the proof, not force alternating rebuilds.
+	requireCompatStoreServes(t, dir, 0)
+	requireCompatStoreServes(t, dir, 0)
 }
 
 func TestStoreCompatReadsFixtures(t *testing.T) {
