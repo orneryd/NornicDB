@@ -204,13 +204,18 @@ func (b *BadgerEngine) EnsureNamespaceMVCC(namespace string) error {
 // after a peer commit. The snapshot is a point-in-time copy, so peer
 // commits after BeginTransaction do NOT mutate it.
 func (b *BadgerEngine) snapshotNamespaceVersions(ctx context.Context) (map[string]MVCCVersion, error) {
+	return b.snapshotNamespaceVersionsAt(ctx, time.Now().UTC())
+}
+
+// snapshotNamespaceVersionsAt is snapshotNamespaceVersions at the wall clock
+// a transaction cut supplies (mvccReservations.cutTaken).
+func (b *BadgerEngine) snapshotNamespaceVersionsAt(ctx context.Context, now time.Time) (map[string]MVCCVersion, error) {
 	b.mvccByNamespaceMu.RLock()
 	defer b.mvccByNamespaceMu.RUnlock()
 	if len(b.mvccByNamespace) == 0 {
 		return nil, ctx.Err()
 	}
 	out := make(map[string]MVCCVersion, len(b.mvccByNamespace))
-	now := time.Now().UTC()
 	for ns, state := range b.mvccByNamespace {
 		if err := ctx.Err(); err != nil {
 			return nil, err

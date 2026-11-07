@@ -578,14 +578,31 @@ func (tx *BadgerTransaction) withSnapshotViewLocked(read func(*badger.Txn) error
 	return tx.engine.withView(read)
 }
 
-// snapshotHeadConflict also compares physical publication versions: namespace
-// MVCC reservations can predate this reader even when their data commits later.
-// A separate read transaction preserves the existing consumer conflict shape
-// without adding planning reads to the writer's Badger SSI set.
-func (tx *BadgerTransaction) snapshotHeadConflict(key []byte, version MVCCVersion) (bool, error) {
+// snapshotHeadConflict is the one rule for whether a peer's head of entity
+// id was published after this transaction's cut: its version is newer than
+// the boundary (snapshotIsolationConflict), or it is in the cut's copy of the
+// reservation ledger and neither the transaction's snapshot nor its buffer
+// prefix holds it (publishedBeforeCut). The same rule answers for a peer the
+// write-behind flusher has replayed and for one that committed to Badger
+// itself (mvccReservations). Without write-behind it also compares physical
+// publication versions: namespace MVCC reservations can predate this reader
+// even when their data commits later. A separate read transaction preserves
+// the existing consumer conflict shape without adding planning reads to the
+// writer's Badger SSI set.
+func (tx *BadgerTransaction) snapshotHeadConflict(kind bufferedEntityKind, id string, version MVCCVersion) (bool, error) {
 	if tx.snapshotIsolationConflict(version) {
 		return true, nil
 	}
+	if tx.inflightAtBegin.holds(tx.namespace, version) {
+		seen, err := tx.publishedBeforeCut(kind, id, version)
+		if err != nil {
+			return false, err
+		}
+		if !seen {
+			return true, nil
+		}
+	}
+	key := tx.mvccHeadKey(kind, id)
 	// The physical-version guard exists for peers that committed after the
 	// pinned snapshot. Under write-behind the flusher is the only writer
 	// landing heads mid-transaction and its heads are backdated to ACK
@@ -620,9 +637,55 @@ func (tx *BadgerTransaction) snapshotHeadConflictInView(view *badger.Txn, key []
 	return item.Version() > tx.snapshotTx.ReadTs(), nil
 }
 
-func (tx *BadgerTransaction) snapshotHeadVersionConflict(version MVCCVersion, physicalVersion uint64) bool {
+// snapshotHeadVersionConflict is snapshotHeadConflict for a head whose
+// physical version the caller already read.
+func (tx *BadgerTransaction) snapshotHeadVersionConflict(kind bufferedEntityKind, id string, version MVCCVersion, physicalVersion uint64) (bool, error) {
 	if tx.snapshotIsolationConflict(version) {
-		return true
+		return true, nil
 	}
-	return tx.snapshotTx != nil && tx.engine.writeBehind == nil && physicalVersion > tx.snapshotTx.ReadTs()
+	if tx.inflightAtBegin.holds(tx.namespace, version) {
+		seen, err := tx.publishedBeforeCut(kind, id, version)
+		if err != nil {
+			return false, err
+		}
+		if !seen {
+			return true, nil
+		}
+	}
+	return tx.snapshotTx != nil && tx.engine.writeBehind == nil && physicalVersion > tx.snapshotTx.ReadTs(), nil
+}
+
+// mvccHeadKey is the head key of entity id for the physical-version check.
+func (tx *BadgerTransaction) mvccHeadKey(kind bufferedEntityKind, id string) []byte {
+	if kind == bufferedEdgeEntity {
+		return tx.engine.mvccEdgeHeadKeyStringLookup(EdgeID(id))
+	}
+	return tx.engine.mvccNodeHeadKeyStringLookup(NodeID(id))
+}
+
+// publishedBeforeCut reports whether this transaction's cut already holds
+// version of entity id: its buffer prefix acknowledged it, or its physical
+// snapshot holds that head. A version in the cut's copy of the reservation
+// ledger that the cut does not hold was published after the cut.
+func (tx *BadgerTransaction) publishedBeforeCut(kind bufferedEntityKind, id string, version MVCCVersion) (bool, error) {
+	if tx.beginPresence.holdsVersion(tx.namespace, version) {
+		return true, nil
+	}
+	if tx.snapshotTx == nil {
+		return false, nil
+	}
+	var head MVCCHead
+	var err error
+	if kind == bufferedEdgeEntity {
+		head, err = tx.engine.loadEdgeMVCCHeadInTxn(tx.snapshotTx, EdgeID(id))
+	} else {
+		head, err = tx.engine.loadNodeMVCCHeadInTxn(tx.snapshotTx, NodeID(id))
+	}
+	if err == ErrNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return head.Version.CommitSequence == version.CommitSequence, nil
 }

@@ -54,6 +54,44 @@ func (w *WriteBehindBuffer) pinTransactionBeginLocked() (*transactionBeginPresen
 	return presence, nil
 }
 
+// holdsVersion reports whether the captured buffer prefix holds a commit of
+// namespace with version: the transaction's cut acknowledged it.
+func (presence *transactionBeginPresence) holdsVersion(namespace string, version MVCCVersion) bool {
+	if presence == nil {
+		return false
+	}
+	presence.mu.RLock()
+	defer presence.mu.RUnlock()
+	if presence.released {
+		return false
+	}
+	if commitsHoldVersion(presence.commits, namespace, version.CommitSequence) {
+		return true
+	}
+	for _, generation := range presence.draining {
+		if generation.holdsVersion(namespace, version.CommitSequence) {
+			return true
+		}
+	}
+	return false
+}
+
+// holdsVersion reports whether the generation holds a commit of namespace
+// with sequence. A retired generation's commits are complete and immutable;
+// the active generation is asked through the prefix a presence captured.
+func (generation *CommitBuffer) holdsVersion(namespace string, sequence uint64) bool {
+	return commitsHoldVersion(generation.commits, namespace, sequence)
+}
+
+func commitsHoldVersion(commits []bufferedCommit, namespace string, sequence uint64) bool {
+	for i := range commits {
+		if commits[i].namespace == namespace && commits[i].version.CommitSequence == sequence {
+			return true
+		}
+	}
+	return false
+}
+
 func (presence *transactionBeginPresence) release() {
 	if presence == nil {
 		return
