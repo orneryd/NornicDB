@@ -223,7 +223,7 @@ func (e *StorageExecutor) validateSharedClause(ctx context.Context, scope matchS
 		if err := undefinedExpressionVariable(ctx, input.kinds, projection.expression); err != nil {
 			return err
 		}
-		if err := validateStaticFunctionVariables(ctx, projection.expression, input); err != nil {
+		if err := validateStaticFunctionVariablesTyped(ctx, projection.expression, func() staticTypeScope { return input }, staticTypeScope.staticExpressionType); err != nil {
 			return err
 		}
 		types[projection.alias] = projectedOperand(ctx, types, input, projection.expression)

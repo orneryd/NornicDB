@@ -18,39 +18,44 @@ func TestSchemaConstraintNamesArePreservedOnSupportedFORRequireShapes(t *testing
 	ctx := context.Background()
 
 	t.Run("node key", func(t *testing.T) {
-		parsed, err := exec.parseCreateConstraintNodeKeyDDL(ctx,
+		declaration, recognized, err := exec.parseCreateConstraintPropertyDDL(ctx,
 			"CREATE CONSTRAINT named_node_key FOR (n:Person) REQUIRE (n.a, n.b) IS NODE KEY")
 		require.NoError(t, err)
-		require.Equal(t, "named_node_key", parsed.name)
-		require.Equal(t, "Person", parsed.label)
-		require.Equal(t, []string{"a", "b"}, parsed.properties)
+		require.True(t, recognized)
+		require.Equal(t, "named_node_key", declaration.name)
+		require.Equal(t, "Person", declaration.label)
+		require.Equal(t, constraintRequirementNodeKey, declaration.requirement.kind)
+		require.Equal(t, []string{"a", "b"}, declaration.requirement.properties)
 	})
 
 	t.Run("property type", func(t *testing.T) {
-		parsed, err := exec.parseCreateConstraintTypeDDL(ctx,
+		declaration, recognized, err := exec.parseCreateConstraintPropertyDDL(ctx,
 			"CREATE CONSTRAINT named_type FOR (n:Person) REQUIRE n.age IS :: INTEGER")
 		require.NoError(t, err)
-		require.Equal(t, "named_type", parsed.name)
-		require.Equal(t, "Person", parsed.label)
-		require.Equal(t, "age", parsed.property)
+		require.True(t, recognized)
+		require.Equal(t, "named_type", declaration.name)
+		require.Equal(t, "Person", declaration.label)
+		require.Equal(t, "age", declaration.requirement.property)
 	})
 
 	t.Run("single property", func(t *testing.T) {
-		parsed, err := exec.parseCreateConstraintSimplePropertyDDL(ctx,
+		declaration, recognized, err := exec.parseCreateConstraintPropertyDDL(ctx,
 			"CREATE CONSTRAINT named_unique FOR (n:Person) REQUIRE n.email IS UNIQUE")
 		require.NoError(t, err)
-		require.Equal(t, "named_unique", parsed.name)
-		require.Equal(t, "Person", parsed.label)
-		require.Equal(t, "email", parsed.property)
-		require.Equal(t, "unique", parsed.kind)
+		require.True(t, recognized)
+		require.Equal(t, "named_unique", declaration.name)
+		require.Equal(t, "Person", declaration.label)
+		require.Equal(t, "email", declaration.requirement.property)
+		require.Equal(t, constraintRequirementUnique, declaration.requirement.kind)
 	})
 
 	t.Run("relationship key", func(t *testing.T) {
-		parsed, err := exec.parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(ctx,
+		declaration, recognized, err := exec.parseCreateConstraintPropertyDDL(ctx,
 			"CREATE CONSTRAINT named_rel_key FOR ()-[r:KNOWS]-() REQUIRE (r.since) IS RELATIONSHIP KEY")
 		require.NoError(t, err)
-		require.Equal(t, "named_rel_key", parsed.name)
-		require.Equal(t, []string{"since"}, parsed.properties)
+		require.True(t, recognized)
+		require.Equal(t, "named_rel_key", declaration.name)
+		require.Equal(t, []string{"since"}, declaration.requirement.properties)
 	})
 
 	t.Run("through Execute", func(t *testing.T) {
@@ -62,9 +67,10 @@ func TestSchemaConstraintNamesArePreservedOnSupportedFORRequireShapes(t *testing
 }
 
 // TestSchemaLegacyAssertShapeIsRejected records the current contract for the
-// Neo4j 4.x ON ... ASSERT shape: it is unsupported syntax. Every private reader
-// rejects the shape before reading its predicate, and the public entry keeps its
-// own rejection, so no statement of this shape reaches a parser.
+// Neo4j 4.x ON ... ASSERT shape: it is unsupported syntax. The one property
+// declaration owner rejects the shape before reading its predicate, and the
+// public entry keeps its own rejection, so no statement of this shape reaches a
+// predicate reader.
 func TestSchemaLegacyAssertShapeIsRejected(t *testing.T) {
 	exec, _ := newTestExecutor(t)
 	ctx := context.Background()
@@ -74,27 +80,11 @@ func TestSchemaLegacyAssertShapeIsRejected(t *testing.T) {
 		"CREATE CONSTRAINT legacy_type ON (n:Legacy) ASSERT n.age IS TYPED INTEGER",
 		"CREATE CONSTRAINT legacy_unique ON (n:Legacy) ASSERT n.email IS UNIQUE",
 	}
-	readers := []struct {
-		owner string
-		parse func(string) error
-	}{
-		{owner: "node key", parse: func(statement string) error {
-			_, err := exec.parseCreateConstraintNodeKeyDDL(ctx, statement)
-			return err
-		}},
-		{owner: "property type", parse: func(statement string) error {
-			_, err := exec.parseCreateConstraintTypeDDL(ctx, statement)
-			return err
-		}},
-		{owner: "single property", parse: func(statement string) error {
-			_, err := exec.parseCreateConstraintSimplePropertyDDL(ctx, statement)
-			return err
-		}},
-	}
-	for _, reader := range readers {
-		for _, statement := range statements {
-			require.EqualError(t, reader.parse(statement), "unsupported CREATE CONSTRAINT shape", reader.owner+": "+statement)
-		}
+	for _, statement := range statements {
+		declaration, recognized, err := exec.parseCreateConstraintPropertyDDL(ctx, statement)
+		require.False(t, recognized, statement)
+		require.EqualError(t, err, "unsupported CREATE CONSTRAINT shape", statement)
+		require.Equal(t, parsedConstraintPropertyDeclaration{}, declaration, statement)
 	}
 
 	for _, statement := range statements {
@@ -291,25 +281,27 @@ func TestSchemaForPatternCallersKeepTheirOwnErrors(t *testing.T) {
 	require.False(t, ok)
 }
 
-// TestSchemaRelationshipKeyDDLUsesTheForPatternVariable checks the third caller
-// of the FOR reading: the relationship-key DDL takes the pattern's variable from
-// the shared reader and still rejects property references qualified by another
+// TestSchemaRelationshipKeyDDLUsesTheForPatternVariable checks the relationship
+// key declaration at that owner: it takes the pattern's variable from the shared
+// FOR reading and still rejects property references qualified by another
 // variable.
 func TestSchemaRelationshipKeyDDLUsesTheForPatternVariable(t *testing.T) {
 	exec, _ := newTestExecutor(t)
 	ctx := context.Background()
 
-	parsed, err := exec.parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(ctx,
+	declaration, recognized, err := exec.parseCreateConstraintPropertyDDL(ctx,
 		"CREATE CONSTRAINT rk FOR ()-[r:KNOWS]-() REQUIRE (r.since, r.reason) IS RELATIONSHIP KEY")
 	require.NoError(t, err)
-	require.Equal(t, "rk", parsed.name)
-	require.Equal(t, "KNOWS", parsed.label)
-	require.True(t, parsed.isRelationship)
-	require.Equal(t, "rel_key", parsed.kind)
-	require.Equal(t, []string{"since", "reason"}, parsed.properties)
+	require.True(t, recognized)
+	require.Equal(t, "rk", declaration.name)
+	require.Equal(t, "KNOWS", declaration.label)
+	require.True(t, declaration.isRelationship)
+	require.Equal(t, constraintRequirementRelationshipKey, declaration.requirement.kind)
+	require.Equal(t, []string{"since", "reason"}, declaration.requirement.properties)
 
-	_, err = exec.parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(ctx,
+	_, recognized, err = exec.parseCreateConstraintPropertyDDL(ctx,
 		"CREATE CONSTRAINT rk_mismatch FOR ()-[r:KNOWS]-() REQUIRE (s.since) IS RELATIONSHIP KEY")
+	require.True(t, recognized)
 	require.EqualError(t, err, "unsupported constraint property references predicate")
 }
 

@@ -233,24 +233,24 @@ func TestNOR300CreateConstraintOptionsRequiresMap(t *testing.T) {
 				owner: "node key",
 				base:  "CREATE CONSTRAINT nor300_node_key FOR (n:Legacy) REQUIRE (n.tenant, n.id) IS NODE KEY",
 				parse: func(query string) (bool, error) {
-					parsed, err := exec.parseCreateConstraintNodeKeyDDL(t.Context(), query)
-					return len(parsed.properties) == 2, err
+					parsed, recognized, err := exec.parseCreateConstraintPropertyDDL(t.Context(), query)
+					return recognized && parsed.requirement.kind == constraintRequirementNodeKey && len(parsed.requirement.properties) == 2, err
 				},
 			},
 			{
 				owner: "property type",
 				base:  "CREATE CONSTRAINT nor300_type FOR (n:Legacy) REQUIRE n.active IS TYPED BOOLEAN",
 				parse: func(query string) (bool, error) {
-					parsed, err := exec.parseCreateConstraintTypeDDL(t.Context(), query)
-					return parsed.property == "active", err
+					parsed, recognized, err := exec.parseCreateConstraintPropertyDDL(t.Context(), query)
+					return recognized && parsed.requirement.kind == constraintRequirementPropertyType && parsed.requirement.property == "active", err
 				},
 			},
 			{
 				owner: "single property",
 				base:  "CREATE CONSTRAINT nor300_unique FOR (n:Legacy) REQUIRE n.email IS UNIQUE",
 				parse: func(query string) (bool, error) {
-					parsed, err := exec.parseCreateConstraintSimplePropertyDDL(t.Context(), query)
-					return parsed.property == "email", err
+					parsed, recognized, err := exec.parseCreateConstraintPropertyDDL(t.Context(), query)
+					return recognized && parsed.requirement.kind == constraintRequirementUnique && parsed.requirement.property == "email", err
 				},
 			},
 		}
