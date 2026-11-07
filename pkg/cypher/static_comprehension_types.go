@@ -23,7 +23,7 @@ func (checker staticOperatorChecker) checkScoped(ctx context.Context, text strin
 	if checker.params != nil {
 		typer.checked = make(map[string]staticCheckResult)
 	}
-	if err := validateStaticFunctionVariablesTyped(ctx, text, func() staticTypeScope { return checker.scope }, func(scope staticTypeScope, expression string) string {
+	if err := validateStaticFunctionVariablesTyped(ctx, text, func() staticTypeScope { return checker.scope }, func(scope staticTypeScope, ctx context.Context, expression string) string {
 		return typer.argumentType(ctx, scope, expression)
 	}); err != nil {
 		return staticOperand{}, err

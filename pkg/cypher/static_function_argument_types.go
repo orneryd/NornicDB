@@ -805,34 +805,16 @@ func (scope staticTypeScope) staticExpressionType(ctx context.Context, expressio
 	return scope.operandOf(ctx, expression).typeName()
 }
 
-// validateStaticFunctionVariables rejects a function called with a variable
-// whose static type it doesn't accept (toInteger(n) for a node n, type(r) for
-// a variable-length relationship list, toUpper(x) after UNWIND [1] AS x, …) in
-// one clause. A variable the clause binds itself (a list comprehension,
-// reduce, any / all / none / single) shadows the scope where it is bound
-// (localVariableShadowsAt) and is not checked there.
-func validateStaticFunctionVariables(ctx context.Context, text string, scope staticTypeScope) error {
-	return validateStaticFunctionVariablesIn(ctx, text, func() staticTypeScope { return scope })
-}
-
-// validateStaticFunctionVariablesIn is validateStaticFunctionVariables with
-// the scope built only when a function has a variable argument.
-func validateStaticFunctionVariablesIn(ctx context.Context, text string, scopeOf func() staticTypeScope) error {
-	return validateStaticFunctionVariablesTyped(ctx, text, scopeOf, func(scope staticTypeScope, expression string) string {
-		return scope.staticExpressionType(ctx, expression)
-	})
-}
-
-// validateStaticFunctionVariablesTyped is validateStaticFunctionVariablesIn
-// with the argument types read through typeOf (staticExpressionType, or a
-// local scope's checker, which types each text of its scope once).
+// validateStaticFunctionVariablesTyped rejects function arguments whose static
+// type does not fit their signature. scopeOf builds the scope lazily; typeOf
+// uses either the ordinary expression typer or a local scope's cached checker.
 //
 // An argument that reads a variable a comprehension, quantifier or reduce of
 // text binds around it is not typed here: this scope doesn't hold that
 // variable, and the construct's own check (checkScoped) types the argument
 // with it. Typing it here as well typed every nested construct once for each
 // enclosing scope, which grew exponentially with the nesting depth (NOR-150).
-func validateStaticFunctionVariablesTyped(ctx context.Context, text string, scopeOf func() staticTypeScope, typeOf func(staticTypeScope, string) string) error {
+func validateStaticFunctionVariablesTyped(ctx context.Context, text string, scopeOf func() staticTypeScope, typeOf func(staticTypeScope, context.Context, string) string) error {
 	var scope *staticTypeScope
 	var locals map[string]struct{}
 	return forEachStaticFunctionArgument(ctx, text, func(argument staticArgumentType, expression string, at int) error {
@@ -870,13 +852,11 @@ func validateStaticFunctionVariablesTyped(ctx context.Context, text string, scop
 		if locals == nil {
 			locals = expressionLocalBindings(text)
 		}
-		for _, reference := range semanticExpressionReferences(expression) {
-			if dot := strings.IndexByte(reference, '.'); dot > 0 {
-				reference = reference[:dot]
-			}
-			if _, local := locals[reference]; local && localVariableShadowsAt(text, at, reference) {
-				return nil // the comprehension owner checks its local types
-			}
+		if !forEachSemanticExpressionReference(expression, func(variable, _ string, _ bool, _ int) bool {
+			_, local := locals[variable]
+			return !local || !localVariableShadowsAt(text, at, variable)
+		}) {
+			return nil // the comprehension owner checks its local types
 		}
 		// The shared CASE result-type owner combines branches before checking
 		// the signature: reject only when no result type fits, otherwise
@@ -885,7 +865,7 @@ func validateStaticFunctionVariablesTyped(ctx context.Context, text string, scop
 		// entity or a map (labels(n.x), id(n.x), point(n.x) are Neo4j's
 		// compile-time SyntaxError); another base's member has the type the
 		// scope knows for it (a Cypher 25 map's), or none.
-		typeName := typeOf(*scope, expression)
+		typeName := typeOf(*scope, ctx, expression)
 		if typeName == "" || argument.accepts(typeName) {
 			return nil
 		}
