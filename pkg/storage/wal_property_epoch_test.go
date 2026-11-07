@@ -52,7 +52,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	for _, rotate := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rotate=%v", rotate), func(t *testing.T) {
-			source := reviewBindingEngine(t, t.TempDir())
+			source := reviewBindingEngine(t, t.TempDir(), nil)
 			baseline := &Snapshot{Nodes: []*Node{{ID: "epoch:a", Properties: map[string]any{"alpha": "before"}}, {ID: "other:boundary"}, {ID: "epoch:b"}}}
 			for _, node := range baseline.Nodes {
 				_, err := source.CreateNode(t.Context(), node)
@@ -294,14 +294,14 @@ func TestWALPropertyEpochMatchingPrefixCannotAuthorizeLegacyAfterReopen(t *testi
 	require.NoError(t, legacy.Append(OpBufferedCommit, &unbound))
 	require.NoError(t, legacy.Close())
 	dir := t.TempDir()
-	dest := reviewBindingEngine(t, dir)
+	dest := reviewBindingEngine(t, dir, nil)
 	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:seed", Properties: map[string]any{"property_000": int64(0)}})
 	require.NoError(t, err)
 	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:later", Properties: map[string]any{"other": int64(0)}})
 	require.NoError(t, err)
 	require.NoError(t, ReplayWALEntry(dest, first)) // every entry in this epoch matches
 	require.NoError(t, dest.Close())
-	dest = reviewBindingEngine(t, dir)
+	dest = reviewBindingEngine(t, dir, nil)
 	_, err = RecoverBufferedCommitsAtOpen(dest, legacy)
 	require.ErrorContains(t, err, "missing property name binding")
 	node, err := dest.GetNode(t.Context(), "perf:later")

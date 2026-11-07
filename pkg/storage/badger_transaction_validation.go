@@ -69,7 +69,7 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Cont
 				continue
 			}
 			if !op.FreshID {
-				if err := tx.checkEdgeWriteConflict(ctx, op.EdgeID); err != nil {
+				if err := tx.checkEdgeWriteConflict(ctx, op.EdgeID, false); err != nil {
 					return err
 				}
 			}
@@ -80,14 +80,14 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Cont
 			if _, deleted := tx.deletedEdges[op.EdgeID]; deleted {
 				continue
 			}
-			if err := tx.checkEdgeWriteConflict(ctx, op.EdgeID); err != nil {
+			if err := tx.checkEdgeWriteConflict(ctx, op.EdgeID, true); err != nil {
 				return err
 			}
 			if err := tx.checkEdgeEndpointConflicts(ctx, op.Edge); err != nil {
 				return err
 			}
 		case OpDeleteEdge:
-			if err := tx.checkEdgeWriteConflict(ctx, op.EdgeID); err != nil {
+			if err := tx.checkEdgeWriteConflict(ctx, op.EdgeID, true); err != nil {
 				return err
 			}
 		}
@@ -200,6 +200,9 @@ func (tx *BadgerTransaction) checkNodeWriteConflict(ctx context.Context, nodeID 
 	if err != nil {
 		return &CommitFailureError{Cause: err}
 	}
+	if err := tx.validateMutationPredecessor(ctx, bufferedNodeEntity, string(nodeID), head); err != nil {
+		return err
+	}
 	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
 	if err != nil {
 		return &CommitFailureError{Cause: err}
@@ -302,13 +305,73 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(ctx context
 	return nil
 }
 
-func (tx *BadgerTransaction) checkEdgeWriteConflict(ctx context.Context, edgeID EdgeID) error {
+// validateMutationPredecessor checks presence independently of reserved MVCC
+// ordering. A peer can reserve its version before BEGIN and publish its delete
+// afterward; comparing that version alone would count the removal twice. A
+// frame-created identity has no committed predecessor, so CREATE followed by
+// DELETE (including reuse of an old tombstoned ID) remains a valid no-op.
+func (tx *BadgerTransaction) validateMutationPredecessor(ctx context.Context, kind bufferedEntityKind, id string, head MVCCHead) error {
+	if !head.Tombstoned {
+		return nil
+	}
+	present, err := tx.engine.readStoredPresence(ctx, kind, id)
+	if err != nil {
+		return &CommitFailureError{Cause: err}
+	}
+	if present {
+		// A pre-BEGIN acknowledged re-create may still cover this stored
+		// tombstone. Presence belongs to the current coherent read owner.
+		return nil
+	}
+operations:
+	for index := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		op := &tx.operations[index]
+		if kind == bufferedNodeEntity && string(op.NodeID) == id {
+			if op.Type == OpCreateNode {
+				return nil
+			}
+			break
+		}
+		if kind == bufferedEdgeEntity {
+			if string(op.EdgeID) == id {
+				if op.Type == OpCreateEdge {
+					return nil
+				}
+				break
+			}
+			if op.Type == OpDeleteNode {
+				for _, cascaded := range op.DeletedEdgeIDs {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					if string(cascaded) == id {
+						break operations
+					}
+				}
+			}
+		}
+	}
+	if kind == bufferedNodeEntity {
+		return localizedError(localization.StorageTransactionNodeChanged(id), ErrConflict)
+	}
+	return localizedError(localization.StorageTransactionEdgeChanged(id), ErrConflict)
+}
+
+func (tx *BadgerTransaction) checkEdgeWriteConflict(ctx context.Context, edgeID EdgeID, requiresPredecessor bool) error {
 	head, err := tx.engine.GetEdgeCurrentHead(ctx, edgeID)
 	if err == ErrNotFound {
 		return nil
 	}
 	if err != nil {
 		return &CommitFailureError{Cause: err}
+	}
+	if requiresPredecessor {
+		if err := tx.validateMutationPredecessor(ctx, bufferedEdgeEntity, string(edgeID), head); err != nil {
+			return err
+		}
 	}
 	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccEdgeHeadKeyStringLookup(edgeID), head.Version)
 	if err != nil {
@@ -346,32 +409,25 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(ctx context.Context, edg
 			}
 		}
 		head, err := tx.endpointHead(ctx, nodeID)
-		if err == ErrNotFound {
-			if _, nodeErr := tx.engine.GetStoredNode(ctx, nodeID); nodeErr == nil {
-				continue
-			} else if nodeErr == ErrNotFound {
-				return missingEndpoint(nodeID)
-			} else {
-				return &CommitFailureError{Cause: nodeErr}
-			}
-		}
-		if err != nil {
+		if err != nil && err != ErrNotFound {
 			return &CommitFailureError{Cause: err}
 		}
-		if head.Tombstoned {
-			// An acknowledged re-create the write-behind buffer has not
-			// applied yet is the endpoint's current state.
-			if _, nodeErr := tx.engine.GetStoredNode(ctx, nodeID); nodeErr == nil {
+		if err == ErrNotFound || head.Tombstoned {
+			present, readErr := tx.engine.readStoredPresence(ctx, bufferedNodeEntity, string(nodeID))
+			if readErr != nil {
+				return &CommitFailureError{Cause: readErr}
+			}
+			if present {
 				continue
-			} else if nodeErr != ErrNotFound {
-				return &CommitFailureError{Cause: nodeErr}
 			}
-			conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
-			if err != nil {
-				return &CommitFailureError{Cause: err}
-			}
-			if conflict {
-				return localizedError(localization.StorageTransactionEndpointDeleted(string(nodeID)), ErrConflict)
+			if err == nil {
+				conflict, readErr := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
+				if readErr != nil {
+					return &CommitFailureError{Cause: readErr}
+				}
+				if conflict {
+					return localizedError(localization.StorageTransactionEndpointDeleted(string(nodeID)), ErrConflict)
+				}
 			}
 			return missingEndpoint(nodeID)
 		}
@@ -451,6 +507,14 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(ctx context.Context, nod
 					it.Close()
 					return err
 				}
+				// Only a staged removal requires this predecessor. An obsolete
+				// index entry without a body is not a relationship we delete.
+				if _, removes := tx.deletedEdges[edgeID]; removes {
+					if err := tx.validateMutationPredecessor(ctx, bufferedEdgeEntity, string(edgeID), head); err != nil {
+						it.Close()
+						return err
+					}
+				}
 				if tx.snapshotHeadVersionConflict(head.Version, physicalVersion) {
 					it.Close()
 					return localizedError(localization.StorageTransactionAdjacentEdgeChanged(string(nodeID), string(edgeID)), ErrConflict)
@@ -473,7 +537,7 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(ctx context.Context, nod
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := tx.checkEdgeWriteConflict(ctx, edgeID); err != nil {
+		if err := tx.checkEdgeWriteConflict(ctx, edgeID, true); err != nil {
 			return err
 		}
 	}

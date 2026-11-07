@@ -31,7 +31,7 @@ func walReplayLifetimeFixture(t *testing.T, mode string) (*BadgerEngine, func() 
 	t.Helper()
 	_, data := r2BindingData(t, 1)
 	dir := t.TempDir()
-	b := reviewBindingEngine(t, dir)
+	b := reviewBindingEngine(t, dir, nil)
 	_, err := b.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"other": int64(0)}})
 	require.NoError(t, err)
 	if mode == "importer" {

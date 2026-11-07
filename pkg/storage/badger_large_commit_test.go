@@ -281,7 +281,10 @@ func TestLargeCommit_FailureRollsBackWrittenBatches(t *testing.T) {
 // opened again.
 func TestLargeCommit_CrashMidCommitRollsBackOnOpen(t *testing.T) {
 	dir := t.TempDir()
-	engine := openLargeCommitTestEngine(t, dir)
+	var crashOutcome error
+	engine := openLargeCommitTestEngineWithCloseAssertion(t, dir, func(err error) bool {
+		return crashOutcome != nil && errors.Is(err, crashOutcome) && err.Error() == crashOutcome.Error()
+	})
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 
@@ -301,7 +304,11 @@ func TestLargeCommit_CrashMidCommitRollsBackOnOpen(t *testing.T) {
 	stageLargeCreate(t, tx, 6000)
 	require.Error(t, tx.Commit())
 	restore()
-	_ = engine.Close()
+	// The simulated process death closed Badger under the engine: retirement
+	// reports the native handle it lost, and repeated Close retains that outcome.
+	crashOutcome = engine.Close()
+	require.ErrorIs(t, crashOutcome, badger.ErrDBClosed)
+	require.EqualError(t, crashOutcome, "label-count final fold: DB Closed\nedge-type-count final fold: DB Closed")
 
 	engine = openLargeCommitTestEngine(t, dir)
 	defer engine.Close()

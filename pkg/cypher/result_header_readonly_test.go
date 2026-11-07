@@ -239,15 +239,16 @@ func TestResultHeaderUnionContractsAndBoundInputs(t *testing.T) {
 func TestResultHeaderExecutionCacheOnly(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "header-cache-only"))
 	ctx := context.Background()
-	query := "WITH 3 AS r73CacheOnly CALL db.labels() YIELD label RETURN *"
+	column := nextReaderCacheColumn()
+	query := "WITH 3 AS " + column + " CALL db.labels() YIELD label RETURN *"
 	key := projectionKey(query, resultmetadata.Known(nil), resultmetadata.Known(nil), false)
 
 	exec.CachedResultColumns(ctx, query, nil).Visit(func([]string) { t.Fatal("a cache miss performed analysis") }, func() {})
 	if _, found := projectionFactsCache.get(key); found {
 		t.Fatal("lookup compiled a projection program")
 	}
-	require.Equal(t, []string{"label", "r73CacheOnly"}, exec.StatementColumns(query))
-	exec.CachedResultColumns(ctx, query, nil).Visit(func(names []string) { require.Equal(t, []string{"label", "r73CacheOnly"}, names) }, func() { t.Fatal("owner did not populate the statement cache") })
+	require.Equal(t, []string{"label", column}, exec.StatementColumns(query))
+	exec.CachedResultColumns(ctx, query, nil).Visit(func(names []string) { require.Equal(t, []string{"label", column}, names) }, func() { t.Fatal("owner did not populate the statement cache") })
 	exec.ResultProjection(context.Background(), "RETURN 1 AS cheapProjection", nil, RawSource)
 	present := projectionKey("RETURN 1 AS cheapProjection", resultmetadata.Known(nil), resultmetadata.Known(nil), false)
 	if program, found := projectionFactsCache.get(present); !found || !program.complete {

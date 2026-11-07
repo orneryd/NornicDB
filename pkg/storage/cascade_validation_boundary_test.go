@@ -150,7 +150,7 @@ func TestNodeCascadeValidationWindowBlocksPeerAcknowledgement(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("primary commit did not reach its buffered conflict scan")
 	}
-	require.Contains(t, waitChain, "(*WriteBehindBuffer).commitsSince < (*BadgerTransaction).bufferedWriteConflictLocked",
+	require.Contains(t, waitChain, "(*WriteBehindBuffer).commitsAfterBegin < (*BadgerTransaction).bufferedWriteConflictLocked",
 		"the window under test is the buffered conflict scan of the primary commit, got %s", waitChain)
 
 	peerWait := make(chan struct{}, 1)
