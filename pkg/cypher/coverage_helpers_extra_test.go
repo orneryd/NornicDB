@@ -80,10 +80,11 @@ func TestSmallCypherHelperBranches(t *testing.T) {
 		"MATCH (n) SET n.name = 'a'",
 		"MATCH (n) REMOVE n.name",
 	}
+	analyzer := NewQueryAnalyzer(16)
 	for _, query := range writeQueries {
-		require.True(t, looksLikeWriteQuery(t.Context(), query), query)
+		require.True(t, mustAnalyze(t, analyzer, t.Context(), query).Writes(), query)
 	}
-	require.False(t, looksLikeWriteQuery(t.Context(), "MATCH (n) RETURN n"))
+	require.False(t, mustAnalyze(t, analyzer, t.Context(), "MATCH (n) RETURN n").Writes())
 }
 
 func TestSliceAndNumericCoercionHelpers(t *testing.T) {

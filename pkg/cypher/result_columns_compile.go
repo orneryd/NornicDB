@@ -25,6 +25,9 @@ type boundCompilation struct {
 	locals      map[localIdentityKey]statementBindingID
 	clauses     map[int]queryBodyClause
 	localSyntax map[int][]syntaxLocalBinding
+	// commands holds the declaration of every catalog command clause this
+	// compilation composed from retained syntax, by that command's node ID.
+	commands map[int]*boundCommand
 }
 type boundEvent struct{ enter, leave []func() }
 type boundBodyRole uint8
@@ -128,12 +131,15 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		}
 		return fixedCommandScopeFacts(start, end, incoming, retained, nil, resultmetadata.ClauseWrite, commandRetainInputScope)
 	}
-	// These commands already declare their fixed schema in the typed SHOW
-	// owner. EXPLAIN reads that declaration without enumerating users.
-	show := query.ChildRule(cypherantlr.CypherParserRULE_showCommand)
-	if show.Valid() && !show.ChildRule(cypherantlr.CypherParserRULE_showTail).Valid() &&
-		(startsWithKeywords(ctx, show.Code(), "SHOW", "USERS") || startsWithKeywords(ctx, show.Code(), "SHOW", "CURRENT USER")) {
-		return fixedCommandScopeFacts(start, end, incoming, retained, showUsersColumns, resultmetadata.ClauseOther, commandResultScope)
+	// A SHOW command declares its result schema in the typed owner that builds
+	// the listing: the kind it names selects rows, never columns, so EXPLAIN and
+	// PROFILE read that declaration without running the listing. A retained YIELD
+	// / WHERE / RETURN tail is the statement's own projection over those columns
+	// and composes with them as any query composes with its input.
+	if show := query.ChildRule(cypherantlr.CypherParserRULE_showCommand); show.Valid() {
+		if compiled, handled := compiler.compileShowCommand(ctx, syntax, show, start, end, incoming, retained); handled {
+			return compiled
+		}
 	}
 	// A database creation command declares an empty result schema in its execute
 	// owner: as in Neo4j, it returns no columns and no records. The command's
@@ -143,38 +149,21 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		(startsWithKeywords(ctx, administration.Code(), "CREATE", "DATABASE") || isCreateOrReplaceDatabaseQuery(ctx, administration.Code())) {
 		return fixedCommandScopeFacts(start, end, incoming, retained, nil, resultmetadata.ClauseWrite, commandResultScope)
 	}
-	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}, columns: map[int]resultmetadata.Columns{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
+	// Native schema DDL (CREATE / DROP CONSTRAINT and INDEX) declares an empty
+	// result schema in its own execute owner: as in Neo4j it returns no columns
+	// and no records. Its native syntax has no graph body to compose, so EXPLAIN
+	// and PROFILE read that declaration instead of projecting graph variables.
+	if schema := query.ChildRule(cypherantlr.CypherParserRULE_schemaCommand); schema.Valid() {
+		if startsWithKeywords(ctx, schema.Code(), "CREATE", "CONSTRAINT") {
+			if _, err := compiler.executor.canonicalConstraintRequirement(ctx, schema.Code()); err != nil {
+				return programFailure(resultmetadata.ReasonUnsupportedSyntax, start, err)
+			}
+		}
+		return fixedCommandScopeFacts(start, end, incoming, retained, nil, resultmetadata.ClauseWrite, commandResultScope)
+	}
+	compilation := newBoundCompilation(compiler, syntax)
 	body := compilation.prepareBody(ctx, queryBodyFromSyntax(query), query, start, end)
-	body.role = compiler.role
-	if compiler.role == boundScalarBody || compiler.role == boundScopedCallBody {
-		retained = addProjectedNames(incoming, retained)
-		incoming = resultmetadata.Known(nil)
-	}
-	body.incoming, body.retained = incoming, retained
-	body.incomingIDs = map[string]statementBindingID{}
-	input := projectedNameMap(addProjectedNames(incoming, retained))
-	var inputNames []string
-	for name := range input {
-		inputNames = append(inputNames, name)
-	}
-	slices.Sort(inputNames)
-	for _, name := range inputNames {
-		body.incomingIDs[name] = compilation.define(name, -1, -1)
-	}
-	var effects pipelineClauseEffects
-	syntax.Walk(compilation.visitor(ctx), compilation.metadataVisitor(&effects))
-	if compilation.failure != nil {
-		return compilation.failure
-	}
-	if body.program == nil {
-		return programFailure(resultmetadata.ReasonParserDecline, start, nil)
-	}
-	if ctx.Err() != nil {
-		return programFailure(resultmetadata.ReasonParserDecline, start, ctx.Err())
-	}
-	pipelineClauseEffectCache.put("\x00"+compiler.source, effects)
-	body.program.bound = compilation.product
-	return body.program
+	return compilation.completeBody(ctx, body, syntax, incoming, retained)
 }
 
 func (compilation *boundCompilation) event(node cypherantlr.SyntaxNode) *boundEvent {
@@ -434,6 +423,10 @@ func (compilation *boundCompilation) enterClause(ctx context.Context, clause *bo
 	compilation.promoteClauseInputs(ctx, clause)
 	clause.outputs = resultmetadata.Known(nil)
 	clause.step = resultmetadata.Clause{Start: source.start, End: source.end, Before: projectionScope(projectedMapNames(clause.before))}
+	if command, declared := compilation.commands[source.syntax.ID()]; declared {
+		compilation.enterCommand(clause, command)
+		return
+	}
 	switch source.kind {
 	case pipelineClauseWith, pipelineClauseReturn:
 		if name := branchEmbeddingCandidate(branch.shape.clauses, source); name != "" {
@@ -582,6 +575,12 @@ func branchEmbeddingCandidate(clauses []queryBodyClause, source queryBodyClause)
 }
 
 func (compilation *boundCompilation) leaveClause(clause *boundClause) {
+	if _, declared := compilation.commands[clause.source.syntax.ID()]; declared {
+		// A command clause completes on entry (enterCommand): the clauses it
+		// composes with are its own descendants, so their leaves have run long
+		// before its own and must not be undone or reordered here.
+		return
+	}
 	if clause.plan != nil {
 		compilation.product.projections[clause.source.syntax.ID()] = clause.plan
 	}
@@ -918,6 +917,14 @@ func (compilation *boundCompilation) expressionBindings(clause *boundClause, nod
 		case cypherantlr.CypherParserRULE_yieldItems:
 			input, ids = clause.after, clause.afterIDs
 		case cypherantlr.CypherParserRULE_where:
+			if _, command := compilation.commands[clause.source.syntax.ID()]; command {
+				// A catalog command's own tail predicates filter the columns it
+				// declares and the aliases a YIELD adds: that is the command
+				// clause's after-scope. A predicate of a body nested in the tail
+				// binds in that body's clause, which has entered by then.
+				input, ids = clause.after, clause.afterIDs
+				break
+			}
 			owner, direct := parent.Parent()
 			if !direct || owner.ID() != clause.source.syntax.ID() {
 				continue // A comprehension predicate reads its expression's input.
@@ -971,4 +978,39 @@ func (compilation *boundCompilation) expressionBindings(clause *boundClause, nod
 		}
 	}
 	return input, ids, restricted
+}
+
+// completeBody binds input identities and publishes one completed statement product.
+// Graph and declared-command bodies share the same completion and cancellation rules.
+func (compilation *boundCompilation) completeBody(ctx context.Context, body *boundBody, syntax cypherantlr.StatementSyntax, incoming, retained resultmetadata.Names) *projectedScopeFacts {
+	body.role = compilation.owner.role
+	if body.role == boundScalarBody || body.role == boundScopedCallBody {
+		retained = addProjectedNames(incoming, retained)
+		incoming = resultmetadata.Known(nil)
+	}
+	body.incoming, body.retained = incoming, retained
+	body.incomingIDs = map[string]statementBindingID{}
+	input := projectedNameMap(addProjectedNames(incoming, retained))
+	var inputNames []string
+	for name := range input {
+		inputNames = append(inputNames, name)
+	}
+	slices.Sort(inputNames)
+	for _, name := range inputNames {
+		body.incomingIDs[name] = compilation.define(name, -1, -1)
+	}
+	var effects pipelineClauseEffects
+	syntax.Walk(compilation.visitor(ctx), compilation.metadataVisitor(&effects))
+	if compilation.failure != nil {
+		return compilation.failure
+	}
+	if body.program == nil {
+		return programFailure(resultmetadata.ReasonParserDecline, body.start, nil)
+	}
+	if ctx.Err() != nil {
+		return programFailure(resultmetadata.ReasonParserDecline, body.start, ctx.Err())
+	}
+	pipelineClauseEffectCache.put("\x00"+compilation.owner.source, effects)
+	body.program.bound = compilation.product
+	return body.program
 }

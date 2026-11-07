@@ -10,23 +10,6 @@ import (
 func TestCallSubqueryStringParsers(t *testing.T) {
 	parts := splitTopLevelAndConjuncts(t.Context(), "a = 1 AND b = 'x AND y' AND c = [1,2]")
 	require.Equal(t, []string{"a = 1", "b = 'x AND y'", "c = [1,2]"}, parts)
-
-	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("a = b")
-	require.True(t, ok)
-	require.Equal(t, "a", lhs)
-	require.Equal(t, "b", rhs)
-
-	_, _, ok = splitTopLevelEqualityCallSubquery("a = {k: 'v=v'}")
-	require.True(t, ok)
-	_, _, ok = splitTopLevelEqualityCallSubquery("a")
-	require.False(t, ok)
-
-	idx := indexTopLevelKeywordCallSubquery(t.Context(), "x = 'ORDER BY y' ORDER BY n.name", "ORDER BY")
-	require.GreaterOrEqual(t, idx, 0)
-	require.Equal(t, "ORDER BY n.name", "x = 'ORDER BY y' ORDER BY n.name"[idx:])
-
-	idx = indexTopLevelKeywordCallSubquery(t.Context(), "RETURN n", "ORDER BY")
-	require.Equal(t, -1, idx)
 }
 
 func TestCallSubqueryIdentifierHelpers(t *testing.T) {
@@ -37,21 +20,7 @@ func TestCallSubqueryIdentifierHelpers(t *testing.T) {
 
 }
 
-func TestSplitTopLevelResultModifiersCallSubquery(t *testing.T) {
-	proj, mods := splitTopLevelResultModifiersCallSubquery(t.Context(), "n.name AS name ORDER BY name SKIP 1 LIMIT 2")
-	require.Equal(t, "n.name AS name", proj)
-	require.Equal(t, "ORDER BY name SKIP 1 LIMIT 2", mods)
-
-	proj, mods = splitTopLevelResultModifiersCallSubquery(t.Context(), "n.name AS name")
-	require.Equal(t, "n.name AS name", proj)
-	require.Empty(t, mods)
-}
-
-func TestCallSubqueryWriteAndIdentifierChecks(t *testing.T) {
-	require.True(t, callSubqueryQueryIsWrite(t.Context(), "MATCH (n) CREATE (m)"))
-	require.True(t, callSubqueryQueryIsWrite(t.Context(), "MATCH (n) SET n.x = 1"))
-	require.False(t, callSubqueryQueryIsWrite(t.Context(), "MATCH (n) RETURN n"))
-
+func TestCallSubqueryIdentifierChecks(t *testing.T) {
 	require.True(t, isSimpleIdentifier("name_1"))
 	require.True(t, isSimpleIdentifier("`quoted`"))
 	require.False(t, isSimpleIdentifier("1bad"))

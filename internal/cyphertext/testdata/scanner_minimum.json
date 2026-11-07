@@ -296,12 +296,10 @@
   "pkg/cypher/executor_subqueries.go": [
     "clauseBindingDeclares",
     "firstVariableOccurrence",
-    "indexTopLevelKeywordCallSubquery",
     "isSimpleIdentifier",
     "leadingWithClause",
     "nextNonSpace",
-    "previousNonSpace",
-    "splitTopLevelEqualityCallSubquery"
+    "previousNonSpace"
   ],
   "pkg/cypher/executor_use.go": [
     "systemShowTailError",
@@ -993,7 +991,6 @@
     "findMatchingBrace",
     "hasTopLevelReturnClause",
     "keywordAt",
-    "queryIsWrite",
     "splitTopLevelUnion",
     "trailingWithAliases"
   ],

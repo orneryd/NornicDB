@@ -1807,27 +1807,24 @@ func rewriteTopLevelMultiMatchToCartesianMatch(ctx context.Context, query string
 	return "MATCH " + left + ", " + right + " WHERE " + whereClause + " " + tail
 }
 
-func canApplySetBasedUnwindRewrite(ctx context.Context, query string, items []interface{}) bool {
+func (e *StorageExecutor) canApplySetBasedUnwindRewrite(ctx context.Context, query string, items []interface{}) (bool, error) {
 	if strings.TrimSpace(query) == "" || len(items) == 0 {
-		return false
+		return false, nil
+	}
+	info, err := e.analyzer.Analyze(ctx, query)
+	if err != nil {
+		return false, err
+	}
+	// Per-row writes, including registered procedures, cannot become a
+	// set-based read. The analyzer supplies the shared statement effect.
+	if info.Writes() {
+		return false, nil
 	}
 	upper := upperASCII(query)
-	// Keep rewrite on read-only MATCH ... RETURN count(...) pipelines.
-	// Mutation clauses with correlated values (SET += row.props, MERGE/CREATE/DELETE/REMOVE)
-	// must execute per-row to preserve semantics.
-	if findKeywordIndex(ctx, query, "CREATE") >= 0 ||
-		findKeywordIndex(ctx, query, "MERGE") >= 0 ||
-		findKeywordIndex(ctx, query, "SET") >= 0 ||
-		findKeywordIndex(ctx, query, "DELETE") >= 0 ||
-		findKeywordIndex(ctx, query, "REMOVE") >= 0 {
-		return false
-	}
 	if !strings.Contains(upper, "RETURN") || !strings.Contains(upper, "COUNT(") {
-		return false
+		return false, nil
 	}
-	// Rewrites should preserve semantics. We only apply when unwind items are
-	// distinct comparable values so IN-list matching does not collapse duplicates.
-	return unwindItemsAreDistinctComparable(items)
+	return unwindItemsAreDistinctComparable(items), nil
 }
 
 func unwindItemsAreDistinctComparable(items []interface{}) bool {

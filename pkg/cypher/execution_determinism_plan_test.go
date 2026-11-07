@@ -23,7 +23,7 @@ func TestExecutionDeterminismCachedAdmissionAllocations(t *testing.T) {
 		"CALL db.rretrieve({query: 'transcript', limit: 2})",
 	} {
 		t.Run(query, func(t *testing.T) {
-			info := exec.analyzer.Analyze(t.Context(), query)
+			info := mustAnalyze(t, exec.analyzer, t.Context(), query)
 			require.True(t, exec.canUseResultCache(ctx, info, query))
 			allocations := testing.AllocsPerRun(1000, func() {
 				if !exec.canUseResultCache(ctx, info, query) {
@@ -35,7 +35,7 @@ func TestExecutionDeterminismCachedAdmissionAllocations(t *testing.T) {
 	}
 	t.Run("fixed executable field with bound data", func(t *testing.T) {
 		const query = "CALL db.rretrieve({query:$query,where:'timestamp() < $deadline'})"
-		info := exec.analyzer.Analyze(t.Context(), query)
+		info := mustAnalyze(t, exec.analyzer, t.Context(), query)
 		require.False(t, exec.canUseResultCache(ctx, info, query))
 		require.Zero(t, testing.AllocsPerRun(1000, func() {
 			if exec.canUseResultCache(ctx, info, query) {
@@ -55,7 +55,7 @@ func TestExecutionDeterminismCachedBindings(t *testing.T) {
 			"CALL db.rretrieve($envelope['request'])",
 			"CALL apoc.cypher.run('CALL db.rretrieve($request)', {request:$envelope.request}) YIELD value RETURN value",
 		} {
-			info := exec.analyzer.Analyze(t.Context(), query)
+			info := mustAnalyze(t, exec.analyzer, t.Context(), query)
 			for _, test := range []struct {
 				request map[string]any
 				allowed bool
@@ -78,7 +78,7 @@ func TestExecutionDeterminismCachedBindings(t *testing.T) {
 	t.Run("concurrent bindings eight workers one hundred iterations", func(t *testing.T) {
 		exec := solR2CacheExecutor(t)
 		const query = "CALL db.rretrieve($request)"
-		info := exec.analyzer.Analyze(t.Context(), query)
+		info := mustAnalyze(t, exec.analyzer, t.Context(), query)
 		var workers sync.WaitGroup
 		for worker := 0; worker < 8; worker++ {
 			workers.Add(1)
@@ -107,7 +107,7 @@ func TestExecutionDeterminismCachedRegistryAndPluginDependencies(t *testing.T) {
 	exec := solR2CacheExecutor(t)
 	ctx := context.Background()
 	const query = "CALL db.labels() YIELD label RETURN label"
-	info := exec.analyzer.Analyze(t.Context(), query)
+	info := mustAnalyze(t, exec.analyzer, t.Context(), query)
 	require.True(t, exec.canUseResultCache(ctx, info, query))
 	original, found := globalProcedureRegistry.Get("db.labels")
 	require.True(t, found)
@@ -122,7 +122,7 @@ func TestExecutionDeterminismCachedRegistryAndPluginDependencies(t *testing.T) {
 	// Literal inner text was folded into the outer verdict, but its function
 	// dependency must still observe plugin loading after that compilation.
 	const nested = "CALL apoc.cypher.run('RETURN toString(1) AS value', {}) YIELD value RETURN value"
-	nestedInfo := exec.analyzer.Analyze(t.Context(), nested)
+	nestedInfo := mustAnalyze(t, exec.analyzer, t.Context(), nested)
 	require.True(t, exec.canUseResultCache(ctx, nestedInfo, nested))
 	lookup := PluginFunctionLookup
 	t.Cleanup(func() { PluginFunctionLookup = lookup })

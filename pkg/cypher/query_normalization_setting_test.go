@@ -29,25 +29,23 @@ func TestQueryNormalizationSettingKeepsClassification(t *testing.T) {
 	} {
 		canonical, _ := canonicalizeQueryText(t.Context(), statement)
 		want := QueryPermissionRequirements(t.Context(), canonical, RawSource)
-		wantWrite := looksLikeWriteQuery(t.Context(), canonical)
 		wantCacheable := isCacheableReadQuery(canonical)
-		wantInfo := *analyzer.Analyze(t.Context(), canonical)
+		wantInfo := mustAnalyze(t, analyzer, t.Context(), canonical)
 		for _, enabled := range []bool{true, false} {
 			restore := config.WithCypherQueryNormalizationDisabled()
 			config.SetCypherQueryNormalizationEnabled(enabled)
 			analyzer.ClearCache()
 			require.Equal(t, want, QueryPermissionRequirements(t.Context(), statement, RawSource), "%q enabled=%v", statement, enabled)
-			require.Equal(t, wantWrite, looksLikeWriteQuery(t.Context(), statement), "%q enabled=%v", statement, enabled)
 			require.Equal(t, wantCacheable, isCacheableReadQuery(statement), "%q enabled=%v", statement, enabled)
-			info := analyzer.Analyze(t.Context(), statement)
-			require.Equal(t, wantInfo.IsWriteQuery, info.IsWriteQuery, "%q enabled=%v", statement, enabled)
-			require.Equal(t, wantInfo.IsReadOnly, info.IsReadOnly, "%q enabled=%v", statement, enabled)
+			info := mustAnalyze(t, analyzer, t.Context(), statement)
+			require.Equal(t, wantInfo.Writes(), info.Writes(), "%q enabled=%v", statement, enabled)
+			require.Equal(t, wantInfo.ReadOnly(), info.ReadOnly(), "%q enabled=%v", statement, enabled)
 			restore()
 		}
 	}
 	require.True(t, QueryPermissionRequirements(t.Context(), "/* c */ CREATE (n:X)", RawSource).Write)
 	require.False(t, QueryPermissionRequirements(t.Context(), "MATCH (n) // delete later\nRETURN n", RawSource).Write)
-	require.True(t, looksLikeWriteQuery(t.Context(), "MATCH (n)\n\tSET\tn.x = 1"))
+	require.True(t, mustAnalyze(t, analyzer, t.Context(), "MATCH (n)\n\tSET\tn.x = 1").Writes())
 
 	canonical := "MATCH (n:Person {name: $name}) WHERE n.age > 30 RETURN n.name AS name"
 	require.Zero(t, testing.AllocsPerRun(100, func() { _ = classificationText(t.Context(), canonical) }))

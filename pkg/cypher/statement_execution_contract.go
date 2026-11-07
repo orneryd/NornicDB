@@ -13,6 +13,41 @@ type statementExecutionContract struct {
 	writes, transaction, calls, dynamic bool
 	unknownProcedure                    bool
 	selectsDatabase                     bool
+	// stateChange covers catalog/extension mutations whose existing owner
+	// completes them without the data-write transaction wrapper.
+	stateChange bool
+}
+
+// statementEffect is this contract's effect classification.
+//
+// statementEffectWrite is a statement whose writes are fixed by its text and
+// the live registry: grammar updating clauses, a registered WRITE or SCHEMA
+// procedure, ordinary schema DDL, a catalog/administration mutation or an
+// unresolved procedure.
+//
+// statementEffectRuntime is a statement that runs statement text supplied at
+// execution time and fixes no write of its own. Whether it writes is decided
+// when that text is resolved against the caller's parameters, so an owner that
+// needs a proven read must resolve the policy instead of refusing the
+// statement; an owner that only needs "no read-only path" still treats it as a
+// write.
+type statementEffect int
+
+const (
+	statementEffectRead statementEffect = iota
+	statementEffectWrite
+	statementEffectRuntime
+)
+
+// effect is the one owner of this contract's effect classification.
+func (c statementExecutionContract) effect() statementEffect {
+	switch {
+	case c.writes || c.stateChange || c.unknownProcedure:
+		return statementEffectWrite
+	case c.dynamic:
+		return statementEffectRuntime
+	}
+	return statementEffectRead
 }
 
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
@@ -20,8 +55,11 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 	if mode == ModeExplain {
 		return statementExecutionContract{}, nil
 	}
-	if startsWithKeywordFold(body, "SHOW") || isNornicExtensionStatement(ctx, body) || bareTransactionCommand(body) != "" {
+	if startsWithKeywordFold(body, "SHOW") || bareTransactionCommand(body) != "" {
 		return statementExecutionContract{}, nil
+	}
+	if isNornicExtensionStatement(ctx, body) {
+		return statementExecutionContract{stateChange: true}, nil
 	}
 	if isOrdinarySchemaDDL(ctx, body) {
 		// Ordinary schema DDL is a write whose effects the implicit
@@ -32,14 +70,14 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 		return statementExecutionContract{writes: true, transaction: true}, nil
 	}
 	if isSchemaCommandStatement(body) {
-		return statementExecutionContract{}, nil
+		return statementExecutionContract{stateChange: true}, nil
 	}
 	if fabric.IsAdministrationCommand(body) {
 		// Administration keeps its existing routing and error owner. CREATE
 		// commands not handled by the system router retain the implicit
 		// wrapper used before procedure admission was introduced.
 		writes := startsWithKeywordFold(body, "CREATE")
-		return statementExecutionContract{writes: writes, transaction: writes}, nil
+		return statementExecutionContract{writes: writes, transaction: writes, stateChange: true}, nil
 	}
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	structure, err := cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypher25, cypherantlr.AcceptedSource)
@@ -62,6 +100,7 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 		// this contract admits registered data WRITE procedures.
 		fixedWrite := spec.Mode == ProcedureModeWrite
 		contract.writes = contract.writes || fixedWrite
+		contract.stateChange = contract.stateChange || spec.writes()
 		contract.dynamic = contract.dynamic || spec.ExecutesStatements
 		contract.transaction = contract.transaction || !spec.OwnsTransactions &&
 			(fixedWrite || spec.ExecutesStatements || spec.Name == "tx.setMetaData")

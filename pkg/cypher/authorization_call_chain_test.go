@@ -69,13 +69,9 @@ func TestProcedureCaseAuthorizationPreservesExactContracts(t *testing.T) {
 			return &ExecuteResult{}, nil
 		}))
 	}
-	t.Cleanup(func() {
-		globalProcedureRegistry.mu.Lock()
-		defer globalProcedureRegistry.mu.Unlock()
-		for _, name := range names {
-			delete(globalProcedureRegistry.user, name)
-		}
-	})
+	// Cleanup must retire folded-name metadata and advance the generation used
+	// by cached procedure decisions, not only delete map entries.
+	t.Cleanup(ClearUserProcedures)
 	require.False(t, QueryPermissionRequirements(t.Context(), "CALL caseAuthorization.Read()", RawSource).Admin)
 	require.True(t, QueryPermissionRequirements(t.Context(), "CALL caseAuthorization.read()", RawSource).Admin)
 	unknownCase := QueryPermissionRequirements(t.Context(), "CALL CASEAUTHORIZATION.READ()", RawSource)

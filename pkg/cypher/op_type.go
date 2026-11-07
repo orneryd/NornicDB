@@ -7,9 +7,10 @@
 // RISK-1 correction (RESEARCH RISK-1): the original CONTEXT D-04 wording
 // named a `plan.Root.Op` chokepoint that does NOT exist on the normal-path
 // executor — `*ExecutionPlan` is built ONLY on EXPLAIN/PROFILE; normal
-// Execute uses QueryAnalyzer.Analyze() *QueryInfo. This file's classifier
-// reads the actual normal-path classifier surface (*QueryInfo flags), NOT
-// the non-existent plan field.
+// Execute uses QueryAnalyzer.Analyze() (*QueryInfo, error). This file's
+// classifier reads the actual normal-path classifier surface (*QueryInfo
+// flags and its statement-effect owner's answer), NOT the non-existent plan
+// field.
 //
 // Three observation sites use this classifier (see executor.go):
 //
@@ -40,8 +41,10 @@ package cypher
 //	parse_error (info nil) → defensive nil-info safety net (Site 2 callers
 //	                          should emit parse_error directly)
 //	schema (IsSchemaQuery) → CREATE/DROP INDEX, SHOW INDEXES, etc.
-//	write (IsWriteQuery)   → CREATE/MERGE/DELETE/SET/REMOVE
-//	read (IsReadOnly)      → MATCH/RETURN/UNWIND/CALL db.*
+//	write (Writes)         → the statement-effect owner's answer: grammar
+//	                          mutations, registered WRITE procedures, schema
+//	                          DDL and administration CREATE
+//	read (ReadOnly)        → MATCH/RETURN/UNWIND/CALL db.*
 //	read (default)         → safe default; closed enum NEVER returns outside
 //	                          AllowedCypherOpTypes (TestClassifyOpType_AllReturnsAreClosedEnum)
 //
@@ -64,10 +67,10 @@ func classifyOpType(info *QueryInfo, isFabric, isAdmin bool) string {
 	if info.IsSchemaQuery {
 		return "schema"
 	}
-	if info.IsWriteQuery {
+	if info.Writes() {
 		return "write"
 	}
-	if info.IsReadOnly {
+	if info.ReadOnly() {
 		return "read"
 	}
 	// Safe default: a query that classifies as neither write nor schema

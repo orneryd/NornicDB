@@ -133,7 +133,14 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	// the import is unambiguous (#907, kept at the owner's direction).
 	imports := compiledCall.Imports
 
-	write := callSubqueryQueryIsWrite(ctx, text())
+	// The body's effect is the statement-effect owner's answer for the text that
+	// runs: a registered WRITE procedure is a write of an uncorrelated body, so
+	// the body runs where the input rows are instead of once for all of them.
+	bodyInfo, bodyInfoErr := e.analyzer.Analyze(ctx, text())
+	if bodyInfoErr != nil {
+		return nil, nil, true, bodyInfoErr
+	}
+	write := bodyInfo.Writes()
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
 	_, unionAll, _, isUnion := parseTopLevelUnionBranches(ctx, text())
 

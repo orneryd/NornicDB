@@ -17,6 +17,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The contract classifies three effects: a fixed read, a fixed write and text
+// whose statements decide at execution time. Only the first two are decided by
+// the statement's own text and the live registry.
+func TestStatementEffectClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name, query string
+		effect      statementEffect
+	}{
+		{"literal read", "RETURN 1 AS value", statementEffectRead},
+		{"registered read procedure", "CALL db.labels() YIELD label RETURN label", statementEffectRead},
+		{"grammar write", "CREATE (:EffectProbe)", statementEffectWrite},
+		{"catalog mutation", "DROP DATABASE effect_fixture IF EXISTS", statementEffectWrite},
+		{"unresolved procedure", "CALL missing.unknown() YIELD value RETURN value", statementEffectWrite},
+		{"runtime statement text", "CALL apoc.cypher.run('RETURN 1 AS value', {}) YIELD value RETURN value", statementEffectRuntime},
+		{"runtime statement text with a write inside", "CALL apoc.cypher.run('CREATE (:EffectProbe)', {}) YIELD value RETURN value", statementEffectRuntime},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			contract, err := readStatementExecutionContract(t.Context(), tc.query)
+			require.NoError(t, err)
+			require.Equal(t, tc.effect, contract.effect())
+		})
+	}
+}
+
 func TestStatementExecutionIgnoresLiteralContents(t *testing.T) {
 	for _, keyword := range []string{"CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH", "CALL"} {
 		for _, form := range []string{"string", "comment", "line-comment", "parameter", "map-key", "quoted-key", "property", "variable"} {
@@ -131,7 +155,6 @@ func TestStatementExecutionAdmissionBoundary(t *testing.T) {
 	files, err := os.ReadDir(".")
 	require.NoError(t, err)
 	functions := map[string]*ast.FuncDecl{}
-	origins := map[string]string{}
 	fields := map[string]map[string]string{}
 	globals := map[string]string{}
 	var declarations []*ast.GenDecl
@@ -149,7 +172,7 @@ func TestStatementExecutionAdmissionBoundary(t *testing.T) {
 				if fn.Recv != nil {
 					key = typeName(fn.Recv.List[0].Type) + "." + key
 				}
-				functions[key], origins[key] = fn, name
+				functions[key] = fn
 			}
 			if decl, ok := declaration.(*ast.GenDecl); ok {
 				declarations = append(declarations, decl)
@@ -267,11 +290,8 @@ func TestStatementExecutionAdmissionBoundary(t *testing.T) {
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			if field, ok := node.(*ast.SelectorExpr); ok {
 				switch field.Sel.Name {
-				case "IsWriteQuery", "IsReadOnly", "HasCreate", "HasMerge", "HasDelete", "HasSet", "HasRemove", "HasForeach":
+				case "HasCreate", "HasMerge", "HasDelete", "HasSet", "HasRemove", "HasForeach":
 					hints[key] = true
-				}
-				if field.Sel.Name == "IsWriteQuery" {
-					require.Contains(t, map[string]bool{"query_info.go": true, "cache_policy.go": true, "op_type.go": true}, origins[key], "cache-only write hint escaped into %s", key)
 				}
 			}
 			// References, rather than just calls, retain function-valued aliases too.
@@ -374,7 +394,7 @@ func TestStatementExecutionAdmissionGuardRejectsPoisonedDecision(t *testing.T) {
 		want           bool
 	}{
 		{"actual", "", "", true},
-		{"cache write hint", "if contract.transaction {", "if info.IsWriteQuery {", false},
+		{"cache write hint", "if contract.transaction {", "if info.Writes() {", false},
 		{"cache create hint", "if contract.transaction {", "if info.HasCreate {", false},
 		{"different producer", "contract, err := readStatementExecutionContract(ctx, cypher)", "contract, err := otherProducer(ctx, cypher)", false},
 	} {
@@ -408,10 +428,13 @@ func TestStatementExecutionPoisonedCacheHintCannotBypassAtomicAdmission(t *testi
 			executor := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
 			query := "CREATE (:AdmissionPoison) WITH 1 AS x RETURN x / $zero AS value"
 			executor.analyzer.cacheMu.Lock()
-			poison := &QueryInfo{IsReadOnly: true, IsWriteQuery: false, HasReturn: true}
+			// Poisoned optimizer hints: a cacheable-read analysis of a writing statement.
+			poison := analyzedReadQueryInfo(true)
 			executor.analyzer.raw[query] = poison
 			executor.analyzer.cacheMu.Unlock()
-			require.Same(t, poison, executor.analyzer.Analyze(t.Context(), query), "exact query must hit the poisoned optimizer entry")
+			analyzed, err := executor.analyzer.Analyze(t.Context(), query)
+			require.NoError(t, err)
+			require.Same(t, poison, analyzed, "exact query must hit the poisoned optimizer entry")
 			result, err := executor.Execute(t.Context(), query, map[string]interface{}{"zero": int64(0)})
 			require.ErrorContains(t, err, "zero")
 			if result != nil {

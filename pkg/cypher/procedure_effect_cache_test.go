@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -9,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNOR300CallSubqueryWriteClassification(t *testing.T) {
+func TestCallSubqueryCanonicalWriteClassification(t *testing.T) {
 	for _, tc := range []struct {
 		name, query string
 		write       bool
@@ -23,14 +22,16 @@ func TestNOR300CallSubqueryWriteClassification(t *testing.T) {
 		{"nested mutation", "FOREACH (x IN [1] | CREATE (:Doc))", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := callSubqueryQueryIsWrite(context.Background(), tc.query); got != tc.write {
+			info, err := NewQueryAnalyzer(0).Analyze(t.Context(), tc.query)
+			require.NoError(t, err)
+			if got := info.Writes(); got != tc.write {
 				t.Fatalf("write=%v want %v for %q", got, tc.write, tc.query)
 			}
 		})
 	}
 }
 
-func TestNOR300SuppressionInvalidatesCachedMatch(t *testing.T) {
+func TestSuppressionInvalidatesCachedMatch(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor300_cache"), QueryCachePolicy{MaxEntries: 64})
 	ctx := t.Context()
 	_, err := executor.Execute(ctx, "CREATE (:CacheProbe {id: 1})", nil)
@@ -50,7 +51,41 @@ func TestNOR300SuppressionInvalidatesCachedMatch(t *testing.T) {
 	require.Empty(t, after.Rows, "suppressed nodes must not survive a cached MATCH")
 }
 
-func TestNOR300FabricProcedureWriteClassification(t *testing.T) {
+// A runtime statement's cached reads stay current when it resolved to reads, and
+// the writes it did resolve discard them. The resolved statement mode is the
+// only answer: the statement's own text fixes no write.
+func TestResolvedRuntimeStatementCacheInvalidation(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor300_runtime_cache"), QueryCachePolicy{MaxEntries: 64})
+	ctx := t.Context()
+	_, err := executor.Execute(ctx, "CREATE (:RuntimeProbe {id: 1})", nil)
+	require.NoError(t, err)
+	const read = "MATCH (n:RuntimeProbe) RETURN n.id AS id"
+	first, err := executor.Execute(ctx, read, nil)
+	require.NoError(t, err)
+	require.Len(t, first.Rows, 1)
+	_, err = executor.Execute(ctx, read, nil)
+	require.NoError(t, err)
+	hits, _, _, _, _ := executor.cache.Stats()
+	require.Positive(t, hits, "control must exercise the result cache")
+
+	_, err = executor.Execute(ctx, "CALL apoc.cypher.run('RETURN 1 AS value', {}) YIELD value RETURN value", nil)
+	require.NoError(t, err)
+	readHits, _, _, _, _ := executor.cache.Stats()
+	_, err = executor.Execute(ctx, read, nil)
+	require.NoError(t, err)
+	afterReadHits, _, _, _, _ := executor.cache.Stats()
+	require.Equal(t, readHits+1, afterReadHits, "a runtime call that resolved to reads leaves the cached read current")
+
+	_, err = executor.Execute(ctx, "CALL apoc.cypher.run('CREATE (:RuntimeProbe {id: 2})', {}) YIELD value RETURN value", nil)
+	require.NoError(t, err)
+	_, _, cached, _, _ := executor.cache.Stats()
+	require.Zero(t, cached, "a write resolved inside a runtime call discards cached reads")
+	after, err := executor.Execute(ctx, read, nil)
+	require.NoError(t, err)
+	require.Len(t, after.Rows, 2, "the read after the resolved write sees the written node")
+}
+
+func TestFabricProcedureCanonicalWriteClassification(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor300_fabric"))
 	for _, tc := range []struct {
 		name, query string
