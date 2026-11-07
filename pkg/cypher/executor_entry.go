@@ -361,7 +361,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			markRewriteFree(rewriteFreeFunctionAliases, false, cypher)
 		}
 	}
-	ctx, cypher = trimSourceText(ctx, cypher, trimSourceWhitespace)
+	ctx, cypher = trimSourceText(ctx, cypher, trimSourceLeadingTrivia)
 	ctx = withCypherVersion(ctx, cypher)
 	if err := validateCypherPreamble(cypher); err != nil {
 		return nil, err

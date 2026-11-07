@@ -197,25 +197,6 @@ func loadCSVStatementEffects(t *testing.T, query string) cypherantlr.StatementEf
 	return syntax.Effects()
 }
 
-// forEachLoadCSVParserSetting runs a case under both parsers, with and without
-// query normalization, as the product admits statements under all four.
-func forEachLoadCSVParserSetting(t *testing.T, run func(t *testing.T)) {
-	t.Helper()
-	previous := config.GetParserType()
-	t.Cleanup(func() { config.SetParserType(previous) })
-	for _, parser := range []string{config.ParserTypeNornic, config.ParserTypeANTLR} {
-		for _, normalization := range []bool{true, false} {
-			t.Run(fmt.Sprintf("%s/normalization_%v", parser, normalization), func(t *testing.T) {
-				config.SetParserType(parser)
-				if !normalization {
-					t.Cleanup(config.WithCypherQueryNormalizationDisabled())
-				}
-				run(t)
-			})
-		}
-	}
-}
-
 // requireLoadCSVReadForwarded asserts the whole accepted path of one read-only
 // LOAD CSV statement: the grammar's tail is read (a mutating tail would be
 // classified as a write), the statement scope binds the record variable and
@@ -267,7 +248,7 @@ func requireLoadCSVReadForwarded(t *testing.T, executor *StorageExecutor, remote
 // Fabric forwards the whole clause to the participant USE names.
 func TestFabricLoadCSVReadIsForwarded(t *testing.T) {
 	const source = "http://127.0.0.1:1"
-	forEachLoadCSVParserSetting(t, func(t *testing.T) {
+	forEachCypherParserSetting(t, func(t *testing.T) {
 		executor, remote := newLoadCSVParticipantExecutor(t, "read_write")
 		for _, separator := range loadCSVClauseSeparators {
 			for _, headers := range []bool{false, true} {
@@ -297,7 +278,7 @@ func TestFabricLoadCSVReadIsForwarded(t *testing.T) {
 // same clause with an updating tail (CREATE, MERGE, and a CALL subquery that
 // creates) is a write, and the participant is asked to write.
 func TestFabricLoadCSVWriteTailsAreClassifiedAsWrites(t *testing.T) {
-	forEachLoadCSVParserSetting(t, func(t *testing.T) {
+	forEachCypherParserSetting(t, func(t *testing.T) {
 
 		const source = "http://127.0.0.1:1"
 		executor, remote := newLoadCSVParticipantExecutor(t, "read_write")
@@ -343,7 +324,7 @@ func TestFabricLoadCSVWriteTailsAreClassifiedAsWrites(t *testing.T) {
 // LOAD CSV pipeline that writes is rejected as a read-only violation and never
 // forwarded.
 func TestFabricLoadCSVReadOnlyConstituentControls(t *testing.T) {
-	forEachLoadCSVParserSetting(t, func(t *testing.T) {
+	forEachCypherParserSetting(t, func(t *testing.T) {
 
 		const source = "http://127.0.0.1:1"
 		executor, remote := newLoadCSVParticipantExecutor(t, "read")
@@ -388,7 +369,7 @@ func TestLoadCSVMalformedClauseRejected(t *testing.T) {
 		{"terminator_variable", "LOAD CSV FROM '" + source + "/plain' AS row FIELDTERMINATOR row RETURN row AS k"},
 		{"terminator_before_binding", "LOAD CSV FROM '" + source + "/plain' FIELDTERMINATOR ';' AS row RETURN row AS k"},
 	}
-	forEachLoadCSVParserSetting(t, func(t *testing.T) {
+	forEachCypherParserSetting(t, func(t *testing.T) {
 		federated, participant := newLoadCSVParticipantExecutor(t, "read_write")
 		for _, route := range []struct {
 			name, prefix string
@@ -429,7 +410,7 @@ func TestLoadCSVLocalStatementStaysUnsupported(t *testing.T) {
 	// is never planned as a local clause pipeline.
 	_, pipeline := canExecuteAsPipeline(context.Background(), "LOAD CSV FROM 'file:///rows.csv' AS row RETURN row AS k")
 	require.False(t, pipeline, "LOAD CSV is not a local pipeline clause")
-	forEachLoadCSVParserSetting(t, func(t *testing.T) {
+	forEachCypherParserSetting(t, func(t *testing.T) {
 		executor := NewStorageExecutor(newTestMemoryEngine(t))
 		for _, query := range []string{
 			"LOAD CSV FROM '" + csv.URL + "/plain' AS row RETURN toInteger(row[0]) AS k",

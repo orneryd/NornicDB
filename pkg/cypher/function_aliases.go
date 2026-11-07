@@ -33,8 +33,11 @@ var cypherFunctionAliases = map[string]string{
 // PROPERTY_EXISTS(n, key) written as a string (PROPERTY_EXISTS(n, 'key')),
 // so every evaluator and check reads a plain function call; and the rewrite
 // that maps the result back, or query and nil when it has none. A name is a
-// call when '(' follows it, and an alias only on its own: not a property
-// (n.ln(), which isn't a call), a namespace part (x.ln) or a parameter ($ln).
+// call when '(' follows it, spaces or comments apart, and an alias only on
+// its own: not a property (n.ln(), which isn't a call), a namespace part
+// (x.ln) or a parameter ($ln). Backticks quote a name rather than spell data,
+// so `ceiling`(1.2) calls ceiling as ceiling(1.2) does; strings and comments
+// are data.
 func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 	if !mayCallFunctionAlias(query) {
 		return query, nil
@@ -47,7 +50,7 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 	for index := 0; index < len(query); {
 		c := query[index]
 		switch {
-		case isCypherQuoteByte(c):
+		case isCypherStringQuoteByte(c):
 			index = skipCypherQuotedText(query, index, c)
 			continue
 		case c == '/':
@@ -56,20 +59,28 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 				continue
 			}
 		}
-		if !cyphertext.NamePartAt(query, index) || isDigitByte(c) || index > 0 && (cyphertext.NamePartAt(query, index-1) || query[index-1] == '.' || query[index-1] == '$') {
+		if !isCypherBacktickByte(c) && !cyphertext.NameStartAt(query, index) {
 			index++
 			continue
 		}
-		end := index + 1
-		end = cyphertext.NamePartEnd(query, end)
-		next := skipSpaces(query, end)
+		token, ok := cyphertext.ScanIdentifier(query, index)
+		if !ok {
+			index++
+			continue
+		}
+		end, name := token.End, token.Value
+		if !functionNameStartsAt(query, index) {
+			index = end
+			continue
+		}
+		next := queryGapEnd(query, end)
 		if next >= len(query) || query[next] != '(' {
 			index = end
 			continue
 		}
-		name := strings.ToLower(query[index:end])
-		start, stop, replacement := index, end, cypherFunctionAliases[name]
-		if name == "property_exists" {
+		lower := strings.ToLower(name)
+		start, stop, replacement := index, end, cypherFunctionAliases[lower]
+		if lower == "property_exists" {
 			start, stop, replacement = propertyExistsKeyName(query, next)
 		}
 		if replacement == "" {
@@ -97,16 +108,17 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 
 // propertyExistsKeyName finds the key of PROPERTY_EXISTS(variable, key)
 // whose parentheses open at open: its span and the key as a string literal,
-// or an empty replacement when the call doesn't have that form.
+// or an empty replacement when the call doesn't have that form. Arguments
+// may be separated by spaces or comments.
 func propertyExistsKeyName(query string, open int) (start, end int, literal string) {
-	after, ok := cyphertext.ScanIdentifier(query, skipSpaces(query, open+1))
-	comma := skipSpaces(query, after.End)
+	after, ok := cyphertext.ScanIdentifier(query, queryGapEnd(query, open+1))
+	comma := queryGapEnd(query, after.End)
 	if !ok || comma >= len(query) || query[comma] != ',' {
 		return 0, 0, ""
 	}
-	start = skipSpaces(query, comma+1)
+	start = queryGapEnd(query, comma+1)
 	key, ok := cyphertext.ScanIdentifier(query, start)
-	if closing := skipSpaces(query, key.End); !ok || closing >= len(query) || query[closing] != ')' {
+	if closing := queryGapEnd(query, key.End); !ok || closing >= len(query) || query[closing] != ')' {
 		return 0, 0, ""
 	}
 	return start, key.End, "'" + strings.ReplaceAll(strings.ReplaceAll(key.Value, `\`, `\\`), `'`, `\'`) + "'"

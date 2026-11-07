@@ -67,7 +67,7 @@ func findAggregateSpans(expr string) []aggregateSpan {
 		// aggregate. It is evaluated once per row by the same expression path.
 		folded := asciiUpper(c)
 		if folded < 'A' || folded > 'Z' || prefixMask&(uint32(1)<<(folded-'A')) == 0 ||
-			i > 0 && (cyphertext.NamePartAt(expr, i-1) || expr[i-1] == '.') {
+			!functionNameStartsAt(expr, i) {
 			i++
 			continue
 		}

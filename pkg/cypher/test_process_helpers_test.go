@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"fmt"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"os"
 	"os/exec"
@@ -39,4 +40,20 @@ func withCypherParsers(t *testing.T, body func(*testing.T)) {
 			t.Log(string(output))
 		})
 	}
+}
+
+// forEachCypherParserSetting exercises both admitted normalization settings
+// under each parser and restores the process-wide settings after each case.
+func forEachCypherParserSetting(t *testing.T, body func(*testing.T)) {
+	t.Helper()
+	forEachParser(t, func(t *testing.T) {
+		for _, normalization := range []bool{false, true} {
+			t.Run(fmt.Sprintf("normalization_%v", normalization), func(t *testing.T) {
+				previous := config.IsCypherQueryNormalizationEnabled()
+				t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(previous) })
+				config.SetCypherQueryNormalizationEnabled(normalization)
+				body(t)
+			})
+		}
+	})
 }

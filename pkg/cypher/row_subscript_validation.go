@@ -175,10 +175,7 @@ func closingBracketGroupStart(expression string) int {
 // receiver while retaining chained, parenthesized, literal, and property
 // receivers.
 func rowSubscriptReceiverStart(expression string, open int) int {
-	end := open - 1
-	for end >= 0 && cyphertext.IsWhitespaceAt(expression, end) {
-		end--
-	}
+	end, quotedStart := expressionPredecessor(expression, open)
 	if end < 0 {
 		return -1
 	}
@@ -191,22 +188,19 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		start = cyphertext.FindMatchingDelimiter(expression, end, '[', ']', cyphertext.ClosingDelimiter)
 		// A bracket group after an operator or a comma is a list literal,
 		// the whole receiver (... + [5, 6][1]).
-		before := start - 1
-		for before >= 0 && cyphertext.IsWhitespaceAt(expression, before) {
-			before--
-		}
+		before, _ := expressionPredecessor(expression, start)
 		if before >= 0 && !isRowReceiverIdentifierAt(expression, before) && !strings.ContainsRune(")]}", rune(expression[before])) && !isCypherQuoteByte(expression[before]) {
 			return start
 		}
 		if start > 0 {
 			receiverStart := rowSubscriptReceiverStart(expression, start)
 			if receiverStart >= 0 {
-				switch upperASCII(strings.TrimSpace(expression[receiverStart:start])) {
-				case "RETURN", "WITH", "UNWIND", "WHERE", "IN", "AS", "THEN", "ELSE", "WHEN", "DISTINCT":
+				if name, ok := cyphertext.ScanIdentifier(expression, receiverStart); ok &&
+					queryGapEnd(expression[:start], name.End) == start && !name.Quoted &&
+					isNonFunctionSemanticKeyword(lowerASCII(name.Value)) {
 					return start
-				default:
-					return receiverStart
 				}
+				return receiverStart
 			}
 		}
 		return start
@@ -215,19 +209,13 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		if start < 0 {
 			return -1
 		}
-		for start > 0 && isRowReceiverIdentifierAt(expression, start-1) {
-			start--
-		}
-		return start
+		return callableReceiverStart(expression, start)
 	case '}':
 		open := cyphertext.FindMatchingDelimiter(expression, end, '{', '}', cyphertext.ClosingDelimiter)
 		if open < 0 {
 			return -1
 		}
-		wordEnd := open - 1
-		for wordEnd >= 0 && cyphertext.IsWhitespaceAt(expression, wordEnd) {
-			wordEnd--
-		}
+		wordEnd, _ := expressionPredecessor(expression, open)
 		word := wordEnd
 		for word >= 0 && isRowReceiverIdentifierAt(expression, word) {
 			word--
@@ -244,37 +232,13 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		return open
 	default:
 		if isCypherStringQuoteByte(expression[end]) {
-			return quotedRowReceiverStart(expression, end)
+			return quotedStart
 		}
 		for start > 0 && isRowReceiverIdentifierAt(expression, start-1) {
 			start--
 		}
 		return start
 	}
-}
-
-// quotedRowReceiverStart finds a string/name token ending at end. It reads
-// forward through canonical quotation tokens; reverse quote matching loses
-// doubled quotes and escapes.
-func quotedRowReceiverStart(expression string, end int) int {
-	for index := 0; index <= end; index++ {
-		switch character := expression[index]; {
-		case isCypherQuoteByte(character):
-			finish, closed := scanCypherQuotedText(expression, index, character)
-			if !closed {
-				return -1
-			}
-			if finish == end+1 {
-				return index
-			}
-			index = finish - 1
-		case character == '/':
-			if finish := queryCommentEnd(expression, index); finish >= 0 {
-				index = finish - 1
-			}
-		}
-	}
-	return -1
 }
 
 func isRowReceiverIdentifierAt(text string, index int) bool {

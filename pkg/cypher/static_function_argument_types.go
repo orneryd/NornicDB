@@ -393,7 +393,8 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 }
 
 // forEachStaticFunctionArgument checks every call to a built-in function in
-// text, outside string literals and quoted names, including nested calls: a
+// text, outside string literals, quoted names and comments, including nested
+// calls: a
 // call with an argument count outside the function's arity (functionArities)
 // is Neo4j's compile-time SyntaxError, and check is called for every
 // argument of a function in staticFunctionArguments. A DISTINCT before an aggregate's
@@ -403,6 +404,14 @@ func forEachStaticFunctionArgument(ctx context.Context, text string, check func(
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
 	text = maskTypePredicateTypes(text)
 	for index := 0; index < len(text); {
+		// A comment is trivia: its text is neither a call nor an argument
+		// (range('bad') in /* range('bad') */ is a comment).
+		if text[index] == '/' {
+			if end := queryCommentEnd(text, index); end >= 0 {
+				index = end
+				continue
+			}
+		}
 		switch cypherStringLexicalByte(text[index]) {
 		case cypherStringQuoteClass:
 			index = skipQuotedSemanticText(text, index)
@@ -413,14 +422,14 @@ func forEachStaticFunctionArgument(ctx context.Context, text string, check func(
 			index++
 			continue
 		}
-		if index > 0 && (text[index-1] == '.' || text[index-1] == '$' || cyphertext.NamePartAt(text, index-1)) {
+		if !functionNameStartsAt(text, index) {
 			index = name.End
 			continue
 		}
 		if index > 0 && text[index-1] == ':' {
 			// A label or type name (n:Label, [:TYPE]); a map value written
 			// without a space ({a:toUpper(x)}) is a call like any other.
-			if open := skipSpaces(text, name.End); open >= len(text) || text[open] != '(' {
+			if open := queryGapEnd(text, name.End); open >= len(text) || text[open] != '(' {
 				index = name.End
 				continue
 			}
@@ -433,10 +442,12 @@ func forEachStaticFunctionArgument(ctx context.Context, text string, check func(
 			continue
 		}
 		// A qualified name has one canonical identity in validation and dispatch.
-		parts, end := dottedNameParts(text, name.End, true)
+		parts, end := dottedNameParts(text, name.End, true, dottedNameIdentity)
 		name.Value, name.End = name.Value+parts, end
 
-		open := skipSpaces(text, name.End)
+		// Comments between a name and its argument list are trivia too, so
+		// substring /* … */ (…) is the call its arguments make.
+		open := queryGapEnd(text, name.End)
 		if open >= len(text) || text[open] != '(' {
 			index = name.End
 			continue

@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Read comments and quoted names consistently across function calls, indexed
+  receivers, aggregate map values and native vector expressions. Preserve
+  predicate precedence and DISTINCT grouping while avoiding repeated prefix
+  scans for ordinary subscript receivers. Keep deleted-entity read errors and
+  property-null tests consistent across comments and quoted identifiers.
+
 - Report WAL snapshot admission interrupted by shutdown as a closed WAL,
   consistently with snapshots that acquire the barrier during shutdown.
   Cancellation on an open engine still returns the caller cancellation error.
