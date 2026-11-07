@@ -1,0 +1,64 @@
+name: Documentation issue
+description: Report missing, unclear, or incorrect documentation.
+title: '[DOCS] '
+labels:
+- documentation
+body:
+- type: markdown
+  attributes:
+    value: Thanks for helping improve NornicDB! Search existing issues first. Share only what you know;
+      never include passwords, API keys, private data, or sensitive logs.
+- type: textarea
+  id: problem
+  attributes:
+    label: Problem and impact
+    description: What is broken, missing, or difficult? Who is affected and how?
+  validations:
+    required: true
+- type: textarea
+  id: journey
+  attributes:
+    label: User journey
+    description: What were you trying to do, and where did you get stuck?
+  validations:
+    required: true
+- type: textarea
+  id: location
+  attributes:
+    label: Documentation location
+    description: Link the page or file and identify the relevant section.
+  validations:
+    required: true
+- type: textarea
+  id: acceptance
+  attributes:
+    label: Desired outcome
+    description: What information or example would make the task clear?
+  validations:
+    required: true
+- type: textarea
+  id: alternatives
+  attributes:
+    label: Workarounds or alternatives
+    description: What have you tried, and did it help? Other ideas are welcome.
+- type: textarea
+  id: matrix
+  attributes:
+    label: Scenarios to check
+    description: If relevant, include example commands, expected output, or versions.
+- type: textarea
+  id: environment
+  attributes:
+    label: Environment or version
+    description: Include the NornicDB version and deployment if relevant.
+- type: textarea
+  id: implementation
+  attributes:
+    label: Possible implementation areas
+    description: 'Optional: suggest affected components or an approach if you know them. A proposed solution
+      is not required.'
+- type: textarea
+  id: related
+  attributes:
+    label: Related work and context
+    description: Link related issues, discussions, documentation, or reference behavior.

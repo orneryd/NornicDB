@@ -1,0 +1,74 @@
+name: Performance issue
+description: Report slow behavior or a performance regression.
+title: '[PERF] '
+labels:
+- Performance
+body:
+- type: markdown
+  attributes:
+    value: Thanks for helping improve NornicDB! Search existing issues first. Share only what you know;
+      never include passwords, API keys, private data, or sensitive logs.
+- type: textarea
+  id: problem
+  attributes:
+    label: Problem and impact
+    description: What is broken, missing, or difficult? Who is affected and how?
+  validations:
+    required: true
+- type: textarea
+  id: journey
+  attributes:
+    label: Workload and steps to reproduce
+    description: Include operation or query, dataset size and shape, indexes, settings, concurrency, and
+      warmup where known.
+  validations:
+    required: true
+- type: textarea
+  id: expected
+  attributes:
+    label: Expected behavior
+    description: What performance did you expect and why?
+  validations:
+    required: true
+- type: textarea
+  id: actual
+  attributes:
+    label: Actual behavior and evidence
+    description: Include timing, throughput, resource use, samples, measurement method, and sanitized
+      profiles or logs where available.
+  validations:
+    required: true
+- type: textarea
+  id: acceptance
+  attributes:
+    label: Desired outcome
+    description: What would make this workload usable? Include a target only if you have one.
+- type: textarea
+  id: alternatives
+  attributes:
+    label: Workarounds or alternatives
+    description: What have you tried, and did it help? Other ideas are welcome.
+- type: textarea
+  id: matrix
+  attributes:
+    label: Scenarios to check
+    description: If known, list workload variations, prior versions, or comparisons using the same settings.
+- type: textarea
+  id: environment
+  attributes:
+    label: Environment
+    description: Include NornicDB version or image/commit, OS and architecture, CPU, memory, GPU if used,
+      deployment, and settings.
+  validations:
+    required: true
+- type: textarea
+  id: implementation
+  attributes:
+    label: Possible implementation areas
+    description: 'Optional: suggest affected components or an approach if you know them. A proposed solution
+      is not required.'
+- type: textarea
+  id: related
+  attributes:
+    label: Related work and context
+    description: Link related issues, discussions, documentation, or reference behavior.
