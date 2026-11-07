@@ -118,13 +118,12 @@ func (e *StorageExecutor) evaluateRowFallback(operationCtx context.Context, expr
 		}
 	}
 	parent := operationCtx
-	state, _ := parent.Value(rowFallbackExpressionKey{}).(rowFallbackState)
-	if state.depth >= maxRowFallbackDepth {
+	handoff, exhausted := handedOverRowExpression(parent, expr)
+	if exhausted {
 		_, err := checkedPropertyResult(parent, expr, nil, false, unresolvedExpressionError(expr))
 		return nil, false, err
 	}
-	ctx := context.WithValue(parent, expressionOperandFailureKey{}, &expressionFailure{})
-	ctx = context.WithValue(ctx, rowFallbackExpressionKey{}, rowFallbackState{text: expr, depth: state.depth + 1})
+	ctx := context.WithValue(handoff, expressionOperandFailureKey{}, &expressionFailure{})
 	if rowIsCypher25(values) {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
 	}
