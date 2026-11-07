@@ -1527,13 +1527,11 @@ func splitTopLevelResultModifiersCallSubquery(ctx context.Context, returnPart st
 }
 
 func callSubqueryQueryIsWrite(ctx context.Context, query string) bool {
-	// Single-pass: check each write keyword once with findKeywordIndex from position 0.
-	// Previous implementation was O(n*m) — called findKeywordIndex from every byte offset.
-	return findKeywordIndex(ctx, query, "CREATE") >= 0 ||
-		findKeywordIndex(ctx, query, "MERGE") >= 0 ||
-		findKeywordIndex(ctx, query, "DELETE") >= 0 ||
-		findKeywordIndex(ctx, query, "SET") >= 0 ||
-		findKeywordIndex(ctx, query, "REMOVE") >= 0
+	contract, err := readStatementExecutionContract(ctx, query)
+	// This is an optimization/routing predicate, so an unresolved statement
+	// must not be treated as read-only. The caller still owns any parse or
+	// cancellation error and the normal admission path reports it.
+	return err != nil || contract.writes || contract.dynamic || contract.unknownProcedure
 }
 
 func isSimpleIdentifier(s string) bool {
