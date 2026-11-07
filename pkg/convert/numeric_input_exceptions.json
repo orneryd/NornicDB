@@ -103,10 +103,6 @@
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
     "sha256": "e5a3e2cd5f5d75f51a5237e8091f51c5883e7850140c167327c04a52aaaf6041"
   },
-  "pkg/cypher/executor_subqueries.go:callSubqueryLookupKeyString": {
-    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "64e92d0a0e50b1dc5ad1128d903f7a6babfbae8a95e50d5abad21bdc6e0aa828"
-  },
   "pkg/cypher/executor_subqueries.go:extractSeedNodesFromResult": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets. Reviewed context-first migration changes only the declaration and context forwarded to map/string node lookup in direct and single-wrapper cases. TestExtractSeedNodesFromResult_Branches preserves map, string, wrapped value, ignored type, missing projection and empty result behavior.",
     "sha256": "1856350e48ff0cdf53a794b9058282cf10afc48cc9515d5225b2bee3ab9170d7"

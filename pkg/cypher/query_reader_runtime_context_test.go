@@ -69,7 +69,8 @@ func TestCanceledRuntimeReaderCachesDoNotPoisonPublicExecute(t *testing.T) {
 				_, found := executionPolicyCache.get(query)
 				require.False(t, found)
 			case "analyzer":
-				executor.analyzer.Analyze(canceled, query)
+				_, analyzeErr := executor.analyzer.Analyze(canceled, query)
+				require.ErrorIs(t, analyzeErr, context.Canceled)
 				executor.analyzer.cacheMu.RLock()
 				_, found := executor.analyzer.raw[query]
 				executor.analyzer.cacheMu.RUnlock()

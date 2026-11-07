@@ -199,6 +199,7 @@ var queryBodyEndings = map[pipelineClauseKind]string{
 	pipelineClauseCallSubquery: "CALL",
 	pipelineClauseReturn:       "", pipelineClauseCreate: "", pipelineClauseMerge: "", pipelineClauseDelete: "",
 	pipelineClauseSet: "", pipelineClauseRemove: "", pipelineClauseForeach: "", pipelineClauseCall: "",
+	pipelineClauseCommand: "",
 }
 
 // unconcludedClause is the keyword of a query body branch's last clause when

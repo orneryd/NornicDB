@@ -13,6 +13,16 @@ type statementExecutionContract struct {
 	writes, transaction, calls, dynamic bool
 	unknownProcedure                    bool
 	selectsDatabase                     bool
+	// stateChange covers catalog/extension mutations whose existing owner
+	// completes them without the data-write transaction wrapper.
+	stateChange bool
+}
+
+// mayWrite is the conservative effect used by optimization and routing owners.
+// Catalog changes and unresolved procedures must not acquire a read-only path;
+// transaction and permission owners retain their separate data-write flags.
+func (c statementExecutionContract) mayWrite() bool {
+	return c.writes || c.stateChange || c.dynamic || c.unknownProcedure
 }
 
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
@@ -20,8 +30,11 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 	if mode == ModeExplain {
 		return statementExecutionContract{}, nil
 	}
-	if startsWithKeywordFold(body, "SHOW") || isNornicExtensionStatement(ctx, body) || bareTransactionCommand(body) != "" {
+	if startsWithKeywordFold(body, "SHOW") || bareTransactionCommand(body) != "" {
 		return statementExecutionContract{}, nil
+	}
+	if isNornicExtensionStatement(ctx, body) {
+		return statementExecutionContract{stateChange: true}, nil
 	}
 	if isOrdinarySchemaDDL(ctx, body) {
 		// Ordinary schema DDL is a write whose effects the implicit
@@ -32,14 +45,14 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 		return statementExecutionContract{writes: true, transaction: true}, nil
 	}
 	if isSchemaCommandStatement(body) {
-		return statementExecutionContract{}, nil
+		return statementExecutionContract{stateChange: true}, nil
 	}
 	if fabric.IsAdministrationCommand(body) {
 		// Administration keeps its existing routing and error owner. CREATE
 		// commands not handled by the system router retain the implicit
 		// wrapper used before procedure admission was introduced.
 		writes := startsWithKeywordFold(body, "CREATE")
-		return statementExecutionContract{writes: writes, transaction: writes}, nil
+		return statementExecutionContract{writes: writes, transaction: writes, stateChange: true}, nil
 	}
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	structure, err := cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypher25, cypherantlr.AcceptedSource)
@@ -62,6 +75,7 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 		// this contract admits registered data WRITE procedures.
 		fixedWrite := spec.Mode == ProcedureModeWrite
 		contract.writes = contract.writes || fixedWrite
+		contract.stateChange = contract.stateChange || spec.writes()
 		contract.dynamic = contract.dynamic || spec.ExecutesStatements
 		contract.transaction = contract.transaction || !spec.OwnsTransactions &&
 			(fixedWrite || spec.ExecutesStatements || spec.Name == "tx.setMetaData")

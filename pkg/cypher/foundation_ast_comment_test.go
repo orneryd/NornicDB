@@ -22,7 +22,7 @@ func TestFoundationASTMutationItems(t *testing.T) {
 		t.Run(test.query, func(t *testing.T) {
 			built, err := NewASTBuilder().Build(t.Context(), test.query)
 			require.NoError(t, err)
-			info := NewQueryAnalyzer(4).Analyze(t.Context(), test.query)
+			info := mustAnalyze(t, NewQueryAnalyzer(4), t.Context(), test.query)
 			cached, err := info.GetAST(t.Context())
 			require.NoError(t, err)
 			for _, ast := range []*AST{built, cached} {

@@ -68,6 +68,10 @@ must add `ctx` to `cypher.QueryPermissionRequirements(ctx, query)`,
 `cypher.TransactionDatabaseError(ctx, databases, txDB, target, query)` and
 `analyzer.Analyze(ctx, query)`. This preserves request cancellation through the
 same owners used during execution; HTTP, Bolt and CLI protocol behavior is unchanged.
+`Analyze` returns `(*QueryInfo, error)`, so callers must handle its error before
+using the analysis; a canceled analysis returns the caller's cancellation.
+`QueryInfo` reports the statement effect through `Writes()` and `ReadOnly()`
+instead of the retired `IsWriteQuery` and `IsReadOnly` fields.
 Permission requirements are an intermediate result: use `AuthorizeQuery` for an
 actual authorization decision rather than treating canceled classification as a grant.
 
@@ -135,3 +139,31 @@ permissions remain unchanged.
 - Usage walkthroughs: [../user-guides/README.md](../user-guides/README.md)
 - Troubleshooting by symptom: [../issues-index.md](../issues-index.md)
 - Operations and deployment behavior: [../operations/README.md](../operations/README.md)
+
+### Embedded Go statement effects (v1.4.4 migration)
+
+`cypher.QueryAnalyzer.Analyze(ctx, statement)` now returns `(*QueryInfo, error)`.
+Handle its error before using the result. Replace `info.IsWriteQuery` with
+`info.Writes()` and `info.IsReadOnly` with `info.ReadOnly()`. These methods consume
+resolved grammar and registered-procedure effects, refreshed when the procedure
+registry changes; text-shape hints are not effect decisions.
+
+`fabric.NewFabricPlanner(catalog, effects)` requires a
+`fabric.StatementEffectReader`. Pass the canonical analyzer rather than a keyword
+classifier:
+
+```go
+analyzer := cypher.NewQueryAnalyzer(1000)
+planner := fabric.NewFabricPlanner(catalog, func(ctx context.Context, query string) (bool, error) {
+    info, err := analyzer.Analyze(ctx, query)
+    if err != nil {
+        return false, err
+    }
+    return info.Writes(), nil
+})
+```
+
+A missing effect reader fails planning. Fragment planning propagates reader and
+cancellation errors. `storage.QueryAnalyzer.AnalyzeQuery(query, writes)` now takes
+the caller's resolved `writes` flag; it extracts routing hints without separately
+classifying the statement. HTTP/Bolt syntax and stored formats are unchanged.

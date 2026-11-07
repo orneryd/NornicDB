@@ -85,9 +85,18 @@ WITH collect(DISTINCT row.k) AS keys RETURN keys`, nil)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, []interface{}{"a", "b"}, res.Rows[0][0])
 
-	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row RETURN count(row)", []interface{}{nil, nil}))
-	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row RETURN row", []interface{}{1, 2}))
-	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row REMOVE row.x RETURN count(row)", []interface{}{1, 2}))
+	for _, tc := range []struct {
+		query string
+		items []interface{}
+	}{
+		{"UNWIND $rows AS row RETURN count(row)", []interface{}{nil, nil}},
+		{"UNWIND $rows AS row RETURN row", []interface{}{1, 2}},
+		{"UNWIND $rows AS row REMOVE row.x RETURN count(row)", []interface{}{1, 2}},
+	} {
+		eligible, err := exec.canApplySetBasedUnwindRewrite(t.Context(), tc.query, tc.items)
+		require.NoError(t, err)
+		require.False(t, eligible, tc.query)
+	}
 }
 
 func TestRewriteTopLevelMultiMatchToCartesianMatch_MoreBranches(t *testing.T) {

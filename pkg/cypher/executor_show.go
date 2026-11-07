@@ -214,10 +214,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 		}
 	}
 
-	return withShowDefaultColumns(&ExecuteResult{
-		Columns: append(append([]string(nil), showIndexesDefaultColumns...), "trackedSince", "options", "failureMessage", "createStatement"),
-		Rows:    rows,
-	}, showIndexesDefaultColumns), nil
+	return showIndexesResult.listing(rows), nil
 }
 
 // executeShowConstraints handles SHOW [kind] CONSTRAINTS: every constraint
@@ -315,16 +312,7 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 		}
 	}
 
-	// Neo4j's full set, then NornicDB's cardinality / policy constraint
-	// columns, which only YIELD * or YIELD <column> show.
-	defaults := showConstraintsDefaultColumns
-	columns := append([]string(nil), showConstraintsDefaultColumns[:6]...)
-	if cypher25 {
-		defaults = showConstraintsCypher25DefaultColumns
-		columns = append(columns, "enforcedLabel", "classification")
-	}
-	columns = append(columns, "ownedIndex", "propertyType", "options", "createStatement", "direction", "maxCount", "sourceLabel", "targetLabel", "policyMode")
-	return withShowDefaultColumns(&ExecuteResult{Columns: columns, Rows: rows}, defaults), nil
+	return showConstraintResult(cypher25).listing(rows), nil
 }
 
 // showConstraintTypeCypher25 is a constraint type as Neo4j 2026.09 names it
@@ -769,10 +757,7 @@ func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*
 			})
 		}
 	}
-	return &ExecuteResult{
-		Columns: []string{"name", "targetEntityType", "targetLabelOrType", "entryCount", "compiledEntryCount", "runtimeEntryCount", "definition"},
-		Rows:    rows,
-	}, nil
+	return showConstraintContractsResult.listing(rows), nil
 }
 
 // executeShowProcedures handles SHOW PROCEDURES command

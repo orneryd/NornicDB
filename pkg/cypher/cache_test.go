@@ -44,22 +44,37 @@ func TestQueryCache_TTL(t *testing.T) {
 		Rows:    [][]interface{}{{"value"}},
 	}
 
-	// Store with very short TTL
-	cache.Put("MATCH (n) RETURN n", nil, result, 1*time.Millisecond)
-
-	// Immediate hit
-	_, found := cache.Get("MATCH (n) RETURN n", nil)
-	if !found {
-		t.Error("Expected cache hit immediately after put")
+	const query = "MATCH (n) RETURN n"
+	const ttl = time.Hour
+	before := time.Now()
+	cache.Put(query, nil, result, ttl)
+	after := time.Now()
+	key := cache.cacheKey(query, nil)
+	cache.mu.RLock()
+	entry := cache.cache[key]
+	if entry == nil {
+		cache.mu.RUnlock()
+		t.Fatal("Put must store the result")
+	}
+	storedAt, storedTTL := entry.timestamp, entry.ttl
+	cache.mu.RUnlock()
+	if storedTTL != ttl || storedAt.Before(before) || storedAt.After(after) {
+		t.Fatalf("incorrect TTL metadata: timestamp=%v, TTL=%v", storedAt, storedTTL)
+	}
+	if _, found := cache.Get(query, nil); !found {
+		t.Fatal("Expected cache hit before TTL expiration")
 	}
 
-	// Wait for TTL to expire
-	time.Sleep(5 * time.Millisecond)
-
-	// Should be expired
-	_, found = cache.Get("MATCH (n) RETURN n", nil)
-	if found {
+	// Age this private fixture past its recorded TTL instead of relying on
+	// a one-millisecond scheduling window or sleeping in the test suite.
+	cache.mu.Lock()
+	cache.cache[key].timestamp = time.Now().Add(-ttl - time.Second)
+	cache.mu.Unlock()
+	if _, found := cache.Get(query, nil); found {
 		t.Error("Expected cache miss after TTL expiration")
+	}
+	if _, _, size := cache.Stats(); size != 0 {
+		t.Error("Expired entry must be removed from the cache")
 	}
 }
 

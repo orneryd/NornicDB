@@ -115,46 +115,20 @@ func TestSeedNodesFromOuterMatch_Branches(t *testing.T) {
 }
 
 func TestCallSubqueryScannerPopulations(t *testing.T) {
-	type equalityCase struct {
-		source, lhs, rhs string
-		ok               bool
-	}
 	type identifierCase struct {
 		source string
 		hit    bool
 	}
-	type keywordCase struct {
-		source string
-		index  int
-	}
 	for _, tc := range []struct {
 		name        string
-		equalities  []equalityCase
 		identifiers []identifierCase
-		keywords    []keywordCase
 	}{
 		{name: "TestExecutorSubqueryHelpers_ExtraBranches",
-			equalities:  []equalityCase{{"a = b", "a", "b", true}, {"a = ", "", "", false}, {"(a = b)", "", "", false}},
-			identifiers: []identifierCase{{"x + y", true}, {"foo.x", false}, {"xx", false}},
-			keywords:    []keywordCase{{"`RETURN` RETURN x", 9}, {"[1,2,RETURN] RETURN x", 13}}},
+			identifiers: []identifierCase{{"x + y", true}, {"foo.x", false}, {"xx", false}}},
 		{name: "TestSubqueryIdentifierAndEqualitySplit_MoreBranches",
-			equalities:  []equalityCase{{"`a` = {x: [1,2], y: 'a=b'}", "`a`", "{x: [1,2], y: 'a=b'}", true}, {"x = ", "", "", false}},
 			identifiers: []identifierCase{{"coalesce(x, 0) + y", true}, {"obj.`x`", false}, {"'x' + \"x\"", false}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, test := range tc.equalities {
-				lhs, rhs, ok := splitTopLevelEqualityCallSubquery(test.source)
-				if test.ok {
-					require.True(t, ok)
-					require.Equal(t, test.lhs, lhs)
-					require.Equal(t, test.rhs, rhs)
-				} else {
-					require.False(t, ok)
-				}
-			}
-			for _, test := range tc.keywords {
-				require.Equal(t, test.index, indexTopLevelKeywordCallSubquery(t.Context(), test.source, "RETURN"))
-			}
 			for _, test := range tc.identifiers {
 				found := cyphertext.FindIdentifier(test.source, "x", 0, cyphertext.IdentifierUnqualifiedFold) >= 0
 				if test.hit {

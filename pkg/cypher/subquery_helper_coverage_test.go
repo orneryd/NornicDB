@@ -102,19 +102,7 @@ func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
 		"'A AND B' = 'A AND B'",
 	}, parts)
 
-	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("n.id = outer")
-	require.True(t, ok)
-	require.Equal(t, "n.id", lhs)
-	require.Equal(t, "outer", rhs)
-
-	_, _, ok = splitTopLevelEqualityCallSubquery("'a=b'")
-	require.False(t, ok)
-
-	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere("n.id = outer AND outer IS NOT NULL AND n.age > 3", "outer", splitTopLevelAndConjuncts, splitTopLevelEqualityCallSubquery, parseCallSubqueryVarProp, isSimpleIdentifier)
-	require.True(t, ok)
-	require.Equal(t, "n", matchVar)
-	require.Equal(t, "id", matchProp)
-	require.Equal(t, "outer IS NOT NULL AND n.age > 3", otherWhere)
+	otherWhere := "outer IS NOT NULL AND n.age > 3"
 
 	sanitized, ok := cyphertext.FilterImportConjuncts(otherWhere, "outer", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
 	require.True(t, ok)
@@ -132,19 +120,11 @@ func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
 	require.False(t, cyphertext.FindIdentifier("n.outer = 1", "outer", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
 	require.False(t, cyphertext.FindIdentifier("'outer' = name", "outer", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
 
-	v, p, ok := parseCallSubqueryVarProp("`n`.`id`")
-	require.True(t, ok)
-	require.Equal(t, "n", v)
-	require.Equal(t, "id", p)
-
-	_, _, ok = parseCallSubqueryVarProp("1.bad")
-	require.False(t, ok)
-
 	require.True(t, isSimpleIdentifier("`outer_name`"))
 	require.False(t, isSimpleIdentifier("1outer"))
 }
 
-func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
+func TestCallSubqueryHelpers_ModifiersAndJoin(t *testing.T) {
 	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(t.Context(), "RETURN 'UNION' AS v UNION ALL RETURN 2 AS v")
 	require.True(t, ok)
 	require.False(t, mixed)
@@ -156,13 +136,6 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	require.False(t, mixed)
 	require.False(t, unionAll)
 	require.Equal(t, 2, len(branches))
-
-	projection, modifiers := splitTopLevelResultModifiersCallSubquery(t.Context(), "n.name, 'ORDER BY literal' ORDER BY n.age DESC SKIP 1 LIMIT 2")
-	require.Equal(t, "n.name, 'ORDER BY literal'", projection)
-	require.Equal(t, "ORDER BY n.age DESC SKIP 1 LIMIT 2", modifiers)
-
-	idx := indexTopLevelKeywordCallSubquery(t.Context(), "'ORDER BY' ORDER BY n.age", "ORDER BY")
-	require.Equal(t, len("'ORDER BY' "), idx)
 
 	col, desc, ok := parseOrderByModifier(t.Context(), "ORDER BY n.age DESC SKIP 1 LIMIT 2")
 	require.True(t, ok)
@@ -187,14 +160,6 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	_, ok = e.parseIntModifier(context.Background(), "LIMIT 1 - 2", "LIMIT")
 	require.False(t, ok)
 
-	require.Equal(t, "<nil>", callSubqueryLookupKeyString(nil))
-	require.Equal(t, "s:name", callSubqueryLookupKeyString([]byte(" \"name\" ")))
-	require.Equal(t, "i:7", callSubqueryLookupKeyString(7))
-	require.Equal(t, "i64:8", callSubqueryLookupKeyString(int64(8)))
-	require.Equal(t, "f:1.5", callSubqueryLookupKeyString(1.5))
-	require.Equal(t, "b:1", callSubqueryLookupKeyString(true))
-	require.Contains(t, callSubqueryLookupKeyString(struct{ X int }{X: 1}), "struct")
-
 	joined := crossJoinCallResults(
 		&ExecuteResult{Columns: []string{"left", "shared"}, Rows: [][]interface{}{{"l1", "keep"}}},
 		&ExecuteResult{Columns: []string{"shared", "right", "extra"}, Rows: [][]interface{}{{"drop", "r1", "x1"}, {"drop2", "r2"}}},
@@ -204,9 +169,6 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 
 	require.Same(t, joined, crossJoinCallResults(joined, nil))
 	require.Same(t, joined, crossJoinCallResults(nil, joined))
-
-	require.True(t, callSubqueryQueryIsWrite(t.Context(), "MATCH (n) CREATE (m)"))
-	require.False(t, callSubqueryQueryIsWrite(t.Context(), "MATCH (n) RETURN n"))
 }
 
 func TestCallSubqueryHelpers_PropertyExtractionAndOrdering(t *testing.T) {

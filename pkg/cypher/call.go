@@ -166,11 +166,16 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	if projected, ok, err := e.projectCallTailReturnAll(ctx, seed, tail); ok || err != nil {
 		return projected, err
 	}
+	info, err := e.analyzer.Analyze(ctx, tail)
+	if err != nil {
+		return nil, err
+	}
+	writeTail := info.Writes()
 	// A tail that doesn't start with MATCH (WITH, UNWIND, RETURN, a chained
 	// CALL, …) runs as one pipeline over every yielded row, so aggregation,
 	// ORDER BY and SKIP / LIMIT see all of them. MATCH tails keep their fused
 	// operators below and reach the pipeline before the per-row fallback.
-	if !tailStartsWithMatchClause(tail) && !isPotentialWriteTail(ctx, tail) {
+	if !tailStartsWithMatchClause(tail) && !writeTail {
 		// WITH … [WHERE] RETURN … projections keep their compiled row
 		// projection, which declines aggregation, DISTINCT and SKIP / LIMIT
 		// expressions.
@@ -209,7 +214,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	// or batched IN. This avoids per-row tail re-execution and preserves global
 	// ORDER/LIMIT scope. Write tails (SET/CREATE/DELETE/MERGE/REMOVE) must use
 	// the per-row path to preserve transactional write-per-row semantics.
-	if !isPotentialWriteTail(ctx, tail) {
+	if !writeTail {
 		if projected, ok, err := e.tryExecuteCallTailRelationshipMatchProjection(ctx, seed, tail, expectedCols); ok || err != nil {
 			return projected, err
 		}
@@ -217,7 +222,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 			return projected, err
 		}
 	}
-	if !isPotentialWriteTail(ctx, tail) {
+	if !writeTail {
 		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
 			return pipelined, err
 		}
@@ -225,7 +230,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	// Fallback fast path for read-only tails the pipeline declines: execute
 	// per-row tails concurrently. It runs the tail once per yielded row, so it
 	// can't aggregate across rows.
-	if len(seed.Rows) > 1 && !isPotentialWriteTail(ctx, tail) {
+	if len(seed.Rows) > 1 && !writeTail {
 		if parallel, ok, err := e.executeCallTailParallel(ctx, seed, tail, usedCols, expectedCols); ok || err != nil {
 			return parallel, err
 		}
@@ -505,15 +510,6 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 	return inner, nil
 }
 
-func isPotentialWriteTail(ctx context.Context, tail string) bool {
-	t := upperASCII(strings.TrimSpace(tail))
-	return findKeywordIndexInContext(ctx, t, "CREATE") >= 0 ||
-		findKeywordIndexInContext(ctx, t, "MERGE") >= 0 ||
-		findKeywordIndexInContext(ctx, t, "DELETE") >= 0 ||
-		findKeywordIndexInContext(ctx, t, "SET") >= 0 ||
-		findKeywordIndexInContext(ctx, t, "REMOVE") >= 0
-}
-
 // callTailProjectionPlan is a CALL tail that is exactly WITH … [WHERE …]
 // RETURN …, run over the yielded rows by the pipeline's WITH and RETURN
 // appliers without the general pipeline's routing.
@@ -576,7 +572,10 @@ func (e *StorageExecutor) tryExecuteCallTailProjectionFilter(
 	tail string,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
-	plan, ok := e.parseCallTailProjectionPlan(ctx, tail)
+	plan, ok, err := e.parseCallTailProjectionPlan(ctx, tail)
+	if err != nil {
+		return nil, true, err
+	}
 	if !ok || plan.relationship != nil {
 		return nil, false, nil
 	}
@@ -627,7 +626,10 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 	tail string,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
-	projection, ok := e.parseCallTailProjectionPlan(ctx, tail)
+	projection, ok, err := e.parseCallTailProjectionPlan(ctx, tail)
+	if err != nil {
+		return nil, true, err
+	}
 	if !ok || projection.relationship == nil {
 		return nil, false, nil
 	}
@@ -859,7 +861,14 @@ var callTailPlanClauseKeywords = []string{
 
 // parseCallTailProjectionPlan returns the tail's projection plan, parsed once
 // per tail text, when its LIMIT / SKIP resolve to integers for this execution.
-func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail string) (*callTailProjectionPlan, bool) {
+func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail string) (*callTailProjectionPlan, bool, error) {
+	info, err := e.analyzer.Analyze(ctx, tail)
+	if err != nil {
+		return nil, false, err
+	}
+	if info.Writes() {
+		return nil, false, nil
+	}
 	cache := callTailProjectionPlans
 	if hasPrefixFoldASCII(strings.TrimSpace(tail), "MATCH ") {
 		cache = callTailRelationshipMatchPlans
@@ -867,12 +876,15 @@ func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail 
 	plan, cached := cache.get(tail)
 	if !cached {
 		plan = e.planCallTailProjection(ctx, tail)
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		cache.put(tail, plan)
 	}
 	if plan == nil || !callTailPlanTokensResolve(ctx, plan) {
-		return nil, false
+		return nil, false, nil
 	}
-	return plan, true
+	return plan, true, nil
 }
 
 // callTailPlanTokensResolve reports whether the plan's LIMIT and SKIP are a
@@ -889,7 +901,7 @@ func callTailPlanTokensResolve(ctx context.Context, plan *callTailProjectionPlan
 // preceded by a relationship MATCH over a yielded relationship, or returns nil.
 func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail string) *callTailProjectionPlan {
 	trimmed := strings.TrimSpace(tail)
-	if hasPrefixFoldASCII(trimmed, "MATCH ") && !isPotentialWriteTail(ctx, trimmed) {
+	if hasPrefixFoldASCII(trimmed, "MATCH ") {
 		parts, ok := parseCallTailRelationshipPattern(trimmed)
 		if !ok {
 			return nil
@@ -932,7 +944,7 @@ func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail strin
 		}
 		return projection
 	}
-	if !hasPrefixFoldASCII(trimmed, "WITH ") || isPotentialWriteTail(ctx, trimmed) {
+	if !hasPrefixFoldASCII(trimmed, "WITH ") {
 		return nil
 	}
 	withIdx := len("WITH ")

@@ -103,20 +103,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 		}
 	}
 	columns, err := e.StatementResultColumnsContext(ctx, query, AcceptedSource)
-	if err != nil && ctx.Err() == nil && startsWithKeywordFold(strings.TrimSpace(query), "CREATE CONSTRAINT") {
-		// Node-key DDL is handled by the schema command owner, whose parser
-		// establishes its empty result header without running a schema write.
-		canonical, canonicalErr := e.canonicalConstraintRequirement(ctx, query)
-		if canonicalErr != nil {
-			return nil, canonicalErr
-		}
-		if parsed, parseErr := e.parseCreateConstraintNodeKeyDDL(ctx, canonical); parseErr == nil && len(parsed.properties) > 0 {
-			if _, optionErr := e.schemaOptionMap(ctx, parsed.options, "node key constraint"); optionErr != nil {
-				return nil, optionErr
-			}
-			columns, err = []string{}, nil
-		}
-	}
+
 	if err != nil {
 		return nil, err
 	}

@@ -277,17 +277,6 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	lhs, rhs, ok := splitTopLevelEqualityCallSubquery(`x = "a=b"`)
-	require.True(t, ok)
-	require.Equal(t, "x", lhs)
-	require.Equal(t, `"a=b"`, rhs)
-
-	_, _, ok = splitTopLevelEqualityCallSubquery("x")
-	require.False(t, ok)
-
-	idx := indexTopLevelKeywordCallSubquery(ctx, `x = "RETURN y" RETURN x`, "RETURN")
-	require.Equal(t, 15, idx)
-
 	cache := map[string]map[string]interface{}{"s1": {"x": "cached"}}
 	val, found, err := exec.resolveCorrelatedImportValue(ctx, "MATCH (seed:Seed)", "seed", "s1", "x", cache)
 	require.NoError(t, err)

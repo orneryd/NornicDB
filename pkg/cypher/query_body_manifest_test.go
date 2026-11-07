@@ -146,11 +146,11 @@ var queryBodyManifest = map[string]string{
 
 // Every clause kind the pipeline splits a body into says how it ends one.
 func TestQueryBodyEndingsCoverEveryClauseKind(t *testing.T) {
-	for kind := pipelineClauseMatch; kind <= pipelineClauseLoadCSV; kind++ {
+	for kind := pipelineClauseMatch; kind <= pipelineClauseCommand; kind++ {
 		_, listed := queryBodyEndings[kind]
 		require.True(t, listed, "clause kind %d has no queryBodyEndings entry", kind)
 	}
-	require.Len(t, queryBodyEndings, int(pipelineClauseLoadCSV)+1)
+	require.Len(t, queryBodyEndings, int(pipelineClauseCommand)+1)
 	// An update clause concludes a body.
 	for kind := range updatingClauses {
 		require.Empty(t, queryBodyEndings[kind], "update clause kind %d", kind)

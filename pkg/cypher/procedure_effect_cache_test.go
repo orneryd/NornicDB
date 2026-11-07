@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -9,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNOR300CallSubqueryWriteClassification(t *testing.T) {
+func TestCallSubqueryCanonicalWriteClassification(t *testing.T) {
 	for _, tc := range []struct {
 		name, query string
 		write       bool
@@ -23,14 +22,16 @@ func TestNOR300CallSubqueryWriteClassification(t *testing.T) {
 		{"nested mutation", "FOREACH (x IN [1] | CREATE (:Doc))", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := callSubqueryQueryIsWrite(context.Background(), tc.query); got != tc.write {
+			info, err := NewQueryAnalyzer(0).Analyze(t.Context(), tc.query)
+			require.NoError(t, err)
+			if got := info.Writes(); got != tc.write {
 				t.Fatalf("write=%v want %v for %q", got, tc.write, tc.query)
 			}
 		})
 	}
 }
 
-func TestNOR300SuppressionInvalidatesCachedMatch(t *testing.T) {
+func TestSuppressionInvalidatesCachedMatch(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor300_cache"), QueryCachePolicy{MaxEntries: 64})
 	ctx := t.Context()
 	_, err := executor.Execute(ctx, "CREATE (:CacheProbe {id: 1})", nil)
@@ -50,7 +51,7 @@ func TestNOR300SuppressionInvalidatesCachedMatch(t *testing.T) {
 	require.Empty(t, after.Rows, "suppressed nodes must not survive a cached MATCH")
 }
 
-func TestNOR300FabricProcedureWriteClassification(t *testing.T) {
+func TestFabricProcedureCanonicalWriteClassification(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor300_fabric"))
 	for _, tc := range []struct {
 		name, query string
