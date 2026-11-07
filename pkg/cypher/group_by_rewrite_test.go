@@ -63,3 +63,13 @@ func TestGroupByMatchesNeo4j(t *testing.T) {
 	_, err := exec.Execute(ctx, "CYPHER 25 MATCH (n:S25) RETURN n.age > 25 AS old, n.name AS name, count(*) AS c GROUP BY old", nil)
 	require.ErrorContains(t, err, "Aggregation column contains implicit grouping expressions.")
 }
+
+func TestGroupByKeyNamedNext(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec, ctx := newUnitExecutor(t)
+		result, err := exec.Execute(ctx, "CYPHER 25 UNWIND [1,1,2] AS next RETURN next,count(*) AS c GROUP BY next ORDER BY next", nil)
+		require.NoError(t, err)
+		require.Equal(t, []string{"next", "c"}, result.Columns)
+		require.Equal(t, [][]any{{int64(1), int64(2)}, {int64(2), int64(1)}}, result.Rows)
+	})
+}

@@ -116,6 +116,14 @@ func CypherSubqueriesCorrelatedUnionBranchFailed(branch int, seed string, cause 
 	return cypherSubqueriesMessage(MessageCypherSubqueriesCorrelatedUnionBranchFailed, fmt.Sprintf("failed correlated UNION subquery branch %d for seed %s: %s", branch, seed, cause), map[string]any{"Branch": branch, "Seed": seed, "Cause": cause.Error()})
 }
 
+const MessageCypherSubqueriesCollectProjection MessageID = "cyphersubqueries.collect_projection"
+
+// CypherSubqueriesCollectProjection identifies a COLLECT body without exactly
+// one explicit returned expression, including a wildcard-only projection.
+func CypherSubqueriesCollectProjection() Message {
+	return cypherSubqueriesMessage(MessageCypherSubqueriesCollectProjection, "A Collect Expression must end with a single return column.", nil)
+}
+
 // CypherSubqueriesCollectSingleColumn identifies a COLLECT subquery whose
 // RETURN doesn't have exactly one column.
 func CypherSubqueriesCollectSingleColumn(columns int) Message {

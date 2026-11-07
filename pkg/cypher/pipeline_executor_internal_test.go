@@ -76,8 +76,18 @@ func TestUnwindRewrittenOperatorsPreserveExecutionErrors(t *testing.T) {
 			ctx := context.Background()
 			_, err := exec.Execute(ctx, "CREATE (:UnwindError {id: 1})", nil)
 			require.NoError(t, err)
-			plan := topLevelUnwindPlan{variable: "row", items: []interface{}{int64(1)}, remainder: fixture.remainder}
-			rewritten, ok := rewriteUnwindCorrelationToIn(plan.remainder, plan.variable, "__unwind_items")
+			// The rewritten operators admit the statement program of the
+			// statement they rewrite: its binding reads are the elimination
+			// proof, so a plan prepared without it declines to the row pipeline.
+			source := "UNWIND [1] AS row " + fixture.remainder
+			clauses, ok := canExecuteAsPipeline(t.Context(), source)
+			require.True(t, ok)
+			ctx, err = exec.bindPipelineProgram(ctx, clauses, nil)
+			require.NoError(t, err)
+			plan, err := exec.prepareTopLevelUnwind(ctx, source)
+			require.NoError(t, err)
+			require.Equal(t, fixture.remainder, plan.remainder)
+			rewritten, ok := exec.rewriteUnwindCorrelations(ctx, plan)
 			require.True(t, ok)
 			_, expectedErr := exec.Execute(ctx, rewritten, map[string]interface{}{"__unwind_items": plan.items})
 			require.Error(t, expectedErr)

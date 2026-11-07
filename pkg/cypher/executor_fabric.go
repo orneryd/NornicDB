@@ -444,16 +444,60 @@ var fabricUnionContract = fabric.UnionContract{
 // label expressions before checking scopes. Only this validation copy is
 // rewritten; the planner and remote participants keep the names as written.
 // Diagnostics are mapped back to those names.
+//
+// The binding copy keeps its USE clauses, because they carry the identity of
+// the graph each CALL runs on: that graph owns the procedure the CALL names.
+// Binding a USE-free copy would erase the selection and report the local
+// registry's ProcedureNotFound for a procedure a participant owns. The
+// semantic and type checks still read the single-graph form, which is the one
+// statement the engine validates a composite statement as.
 func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cypher string, params map[string]interface{}) error {
-	statement := fabricSingleGraphStatement(ctx, cypher)
-	canonical, names := canonicalizeQuotedVariablesWithBindings(ctx, statement, nil)
+	canonical, names := canonicalizeQuotedVariablesWithBindings(ctx, cypher, nil)
 	if names != nil {
 		ctx = withQuotedVariableNames(ctx, names)
 		params = names.parameterValues(params)
 	}
 	desugared, _, err := desugarLabelExpressions(ctx, canonical, params, cypherVersionFromContext(ctx) == "25")
 	if err == nil {
-		err = e.validateSemanticScopes(ctx, desugared)
+		// The local registry has already declined the procedure a participant may
+		// own, so the answer belongs to the graph its CALL's USE clause selects. A
+		// participant whose registry this coordinator cannot read before execution
+		// owns its procedures' signatures and their columns and resolves them when
+		// it compiles the fragment; every other selection keeps the local
+		// registry's terminal answer, as one database reports it.
+		participantOwnsSignature := func(obligation resultmetadata.SchemaObligation) bool {
+			if e.dbManager == nil || obligation.UseStart < 0 || obligation.UseEnd <= obligation.UseStart || obligation.UseEnd > len(desugared) {
+				return false
+			}
+			// The binding owner has already validated this statement's grammar, so the
+			// selection needs only its graph reference; the statement text after the
+			// clause is the clause the USE grammar requires after a reference.
+			selection, _, hasUse, err := parseUseClause(ctx, desugared[obligation.UseStart:], false, cyphertext.AcceptedSource)
+			if err != nil || !hasUse {
+				return false
+			}
+			if selection.IsDynamic() {
+				// The selection is chosen at run time, so no local registry owns it.
+				return true
+			}
+			graph := resolveGraphSelection(e.dbManager, selection.Name)
+			return graph.constituent && graph.remote
+		}
+		_, err = e.admitStatement(ctx, desugared, fabricAdmission{
+			typesSource: fabricSingleGraphStatement(ctx, desugared),
+			schema: func(obligation resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
+				if participantOwnsSignature(obligation) {
+					return resultmetadata.Columns{}, errParticipantSignatureDeferred
+				}
+				return resultmetadata.Columns{}, unknownProcedureError(obligation.Procedure)
+			},
+		})
+		// A participant that owns a procedure's implicit signature completes it
+		// when it compiles the fragment it runs; every scope, import and type
+		// diagnostic the local owner can establish was reported before this.
+		if errors.Is(err, errParticipantSignatureDeferred) {
+			err = nil
+		}
 	}
 	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
 	_, err = (resultRestoration{names: names}).restore(ctx, nil, err, parseItems)
@@ -462,9 +506,9 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 
 // fabricSingleGraphStatement is cypher without the USE clauses the Fabric
 // planner reads (FabricPlanner.SingleGraphStatement): the one statement whose
-// variable scopes are checked, as Neo4j checks a composite statement's, before
-// any part of it plans or runs. A statement the planner can't read is checked
-// as it is, and planning reports the error.
+// semantic and type rules are checked, as Neo4j checks a composite statement's,
+// before any part of it plans or runs. A statement the planner can't read is
+// checked as it is, and planning reports the error.
 func fabricSingleGraphStatement(ctx context.Context, cypher string) string {
 	planner := fabric.NewFabricPlanner(nil)
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)

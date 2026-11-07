@@ -173,8 +173,8 @@
     "parseUnwindMergeRelationshipClause",
     "parseUnwindNodePatternClauseInternal",
     "prevWordEqualsIgnoreCase",
+    "readUnwindCorrelations",
     "replaceIdentifierOutsideQuotesUnless",
-    "rewriteUnwindCorrelationToIn",
     "splitUnwindCompoundMutationStages"
   ],
   "pkg/cypher/comparison.go": [
@@ -807,8 +807,7 @@
     "maskPredicatePatterns",
     "patternInBooleanPosition",
     "trailingIdentifier",
-    "validateCallSubqueryScopes",
-    "validateSemanticScopes"
+    "validateStatementTypes"
   ],
   "pkg/cypher/set_helpers.go": [
     "hasConcatOperator"
