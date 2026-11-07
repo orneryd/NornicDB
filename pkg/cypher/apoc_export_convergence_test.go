@@ -625,3 +625,23 @@ func TestAPOCExportCSVQuotesIdentifiersAndHeaders(t *testing.T) {
 		})
 	})
 }
+
+func TestAPOCExportRootedDestinationPreservesPublicFileValue(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec, _ := newTestExecutor(t)
+		root := t.TempDir()
+		exec.SetAPOCLocalFileAccessRoot(root)
+		exec.SetAllowLocalAPOCExportFileAccess(true)
+		result, err := exec.Execute(t.Context(), "CALL apoc.export.json.all('nested/graph.json') YIELD file RETURN file", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{"nested/graph.json"}}, result.Rows)
+		content, err := os.ReadFile(filepath.Join(root, "nested", "graph.json"))
+		require.NoError(t, err)
+		require.True(t, json.Valid(content))
+		exec.SetAllowLocalAPOCExportFileAccess(false)
+		_, err = exec.Execute(t.Context(), "CALL apoc.export.json.all('denied/graph.json') YIELD file RETURN file", nil)
+		require.Error(t, err)
+		_, err = os.Stat(filepath.Join(root, "denied"))
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+}

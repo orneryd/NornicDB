@@ -6,17 +6,17 @@
 package apocexport
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/xml"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	apocconvert "github.com/orneryd/nornicdb/apoc/convert"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/apocio"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/pool"
 )
@@ -38,23 +38,22 @@ type Relationship struct {
 }
 
 // ToFile writes export data to a file, creating its parent directories.
-// An empty destination preserves the established no-file behavior. Directory
-// and file errors are returned to the caller.
+//
+// The caller's context is the whole admission: pkg/apocio admits the named
+// destination through the caller's APOC I/O capability and performs the write,
+// so a context without an export capability writes nothing. An empty
+// destination preserves the established no-file behavior. Directory and file
+// errors are returned to the caller.
 //
 // Example:
 //
-//	err := apocexport.ToFile(document, "/path/to/export.graphml")
-func ToFile(data string, filePath string) error {
-	if filePath == "" {
-		return nil
+//	err := apocexport.ToFile(ctx, document, "/path/to/export.graphml")
+func ToFile(ctx context.Context, data string, filePath string) error {
+	destination, err := apocio.AdmitExport(ctx, filePath)
+	if err != nil {
+		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-	if err := os.WriteFile(filePath, []byte(data), 0644); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
-	}
-	return nil
+	return destination.Write(ctx, []byte(data), apocio.CreateDirectories)
 }
 
 // Json exports data to JSON format.
@@ -76,27 +75,18 @@ func Json(nodes []*Node, rels []*Relationship) (string, error) {
 	return string(bytes), nil
 }
 
-// JsonAll exports all graph data to JSON.
+// JsonAll exports all graph data to JSON on the caller's context.
 //
 // Example:
 //
 //	apoc.export.json.all('/path/to/export.json') => exported
-func JsonAll(nodes []*Node, rels []*Relationship, filePath string) error {
+func JsonAll(ctx context.Context, nodes []*Node, rels []*Relationship, filePath string) error {
 	jsonStr, err := Json(nodes, rels)
 	if err != nil {
 		return err
 	}
 
-	return ToFile(jsonStr, filePath)
-}
-
-// JsonData exports specific data to JSON.
-//
-// Example:
-//
-//	apoc.export.json.data(nodes, rels, '/path/to/export.json') => exported
-func JsonData(nodes []*Node, rels []*Relationship, filePath string) error {
-	return JsonAll(nodes, rels, filePath)
+	return ToFile(ctx, jsonStr, filePath)
 }
 
 // Csv exports data to CSV format.
@@ -104,7 +94,7 @@ func JsonData(nodes []*Node, rels []*Relationship, filePath string) error {
 // Example:
 //
 //	apoc.export.csv(nodes, '/path/to/export.csv') => exported
-func Csv(nodes []*Node, filePath string) error {
+func Csv(ctx context.Context, nodes []*Node, filePath string) error {
 	// Build CSV data
 	var builder strings.Builder
 	writer := csv.NewWriter(&builder)
@@ -136,25 +126,7 @@ func Csv(nodes []*Node, filePath string) error {
 
 	writer.Flush()
 
-	return ToFile(builder.String(), filePath)
-}
-
-// CsvAll exports all graph data to CSV.
-//
-// Example:
-//
-//	apoc.export.csv.all('/path/to/export.csv') => exported
-func CsvAll(nodes []*Node, rels []*Relationship, filePath string) error {
-	return Csv(nodes, filePath)
-}
-
-// CsvData exports specific data to CSV.
-//
-// Example:
-//
-//	apoc.export.csv.data(nodes, '/path/to/export.csv') => exported
-func CsvData(nodes []*Node, filePath string) error {
-	return Csv(nodes, filePath)
+	return ToFile(ctx, builder.String(), filePath)
 }
 
 // Cypher exports data as Cypher statements.
@@ -221,22 +193,13 @@ func Cypher(nodes []*Node, rels []*Relationship) string {
 	return builder.String()
 }
 
-// CypherAll exports all graph data as Cypher statements.
+// CypherAll exports all graph data as Cypher statements on the caller's context.
 //
 // Example:
 //
 //	apoc.export.cypher.all('/path/to/export.cypher') => exported
-func CypherAll(nodes []*Node, rels []*Relationship, filePath string) error {
-	return ToFile(Cypher(nodes, rels), filePath)
-}
-
-// CypherData exports specific data as Cypher statements.
-//
-// Example:
-//
-//	apoc.export.cypher.data(nodes, rels, '/path/to/export.cypher') => exported
-func CypherData(nodes []*Node, rels []*Relationship, filePath string) error {
-	return CypherAll(nodes, rels, filePath)
+func CypherAll(ctx context.Context, nodes []*Node, rels []*Relationship, filePath string) error {
+	return ToFile(ctx, Cypher(nodes, rels), filePath)
 }
 
 // GraphML exports data to GraphML format.
@@ -285,17 +248,17 @@ func GraphML(nodes []*Node, rels []*Relationship) (string, error) {
 	return builder.String(), nil
 }
 
-// GraphMLAll exports all graph data to GraphML.
+// GraphMLAll exports all graph data to GraphML on the caller's context.
 //
 // Example:
 //
 //	apoc.export.graphml.all('/path/to/export.graphml') => exported
-func GraphMLAll(nodes []*Node, rels []*Relationship, filePath string) error {
+func GraphMLAll(ctx context.Context, nodes []*Node, rels []*Relationship, filePath string) error {
 	document, err := GraphML(nodes, rels)
 	if err != nil {
 		return err
 	}
-	return ToFile(document, filePath)
+	return ToFile(ctx, document, filePath)
 }
 
 // writeGraphMLData writes one property as a GraphML data element. The key is an

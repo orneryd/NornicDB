@@ -12,4 +12,8 @@
 - [x] Integrated focused race checks: export, registry and root APOC pass.
 - [x] Profile four representative exports in five isolated samples and document latency/bytes/allocation tradeoffs.
 - [x] Independent DeepSeek review: escaping/rejection correct; raw public dispatch gap fixed and tested; XML helper comparison documented.
+- [x] Approved context-first file helpers reuse the existing APOC export capability.
+- [x] Retire redundant Go aliases and register bundled names directly on canonical writers.
+- [x] Shared rooted destination owner preserves native directory and file-result contracts.
+- [x] Public scalar and native procedure permission controls pass on both parsers.
 - [ ] Complete current-source duplicate dispositions and exact-head CI make test.

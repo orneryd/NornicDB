@@ -10,12 +10,15 @@ import (
 )
 
 func TestExportAdmissionRequiresExistingCapability(t *testing.T) {
+	canceled, cancel := context.WithCancel(WithCapability(t.Context(), NewPolicy(Config{}).Capability()))
+	cancel()
 	for _, tc := range []struct {
 		name string
 		ctx  context.Context
 		want error
 	}{
 		{"missing", t.Context(), ErrCapabilityMissing},
+		{"canceled denied", canceled, context.Canceled},
 		{"denied", WithCapability(t.Context(), NewPolicy(Config{}).Capability()), ErrLocalExportFileAccessDisabled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,5 +87,15 @@ func TestExportDestinationUsesRootedWriter(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "still rooted", string(content))
 	_, err = os.Stat(filepath.Join(filepath.Dir(root), "rebased.txt"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestExportDestinationRejectsUnknownDirectoryPolicy(t *testing.T) {
+	root := t.TempDir()
+	ctx := WithCapability(t.Context(), NewPolicy(Config{AllowExportFileAccess: true}).Capability())
+	destination, err := AdmitExport(ctx, filepath.Join(root, "missing", "out.txt"))
+	require.NoError(t, err)
+	require.Error(t, destination.Write(ctx, []byte("content"), ExportDirectoryPolicy(99)))
+	_, err = os.Stat(filepath.Join(root, "missing"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 }

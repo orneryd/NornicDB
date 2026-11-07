@@ -3,6 +3,7 @@ package registry
 // Author: Codex NOR-184 lane. Argument policy data for the sole callable invoker.
 
 import (
+	"context"
 	"reflect"
 
 	apocexport "github.com/orneryd/nornicdb/apoc/export"
@@ -35,7 +36,6 @@ const (
 // These are signature metadata, never invocable functions. Root APOC's
 // supported surface stays closed; Cypher preserves its text-to-number rules.
 var apocArgumentPlans = map[reflect.Type][]argumentBinding{
-	reflect.TypeOf((func(string, string) error)(nil)):                                           {stringArgument, stringArgument},
 	reflect.TypeOf((func([]*apocexport.Node, []*apocexport.Relationship) (string, error))(nil)): {declaredArgument, declaredArgument},
 	reflect.TypeOf((func([]interface{}) float64)(nil)):                                          {listArgument},
 	reflect.TypeOf((func([]interface{}) interface{})(nil)):                                      {listArgument},
@@ -50,11 +50,17 @@ var apocArgumentPlans = map[reflect.Type][]argumentBinding{
 	reflect.TypeOf((func([]float64, []float64) float64)(nil)):                                   {numericListArgument, numericListArgument},
 	reflect.TypeOf((func(int64, int64) (int64, error))(nil)):                                    {declaredArgument, declaredArgument},
 	// The whole-graph export file family (apoc.export.{json,csv,cypher,graphml}
-	// {All,Data}) declares one shape: the graph the caller already holds plus the
-	// destination path for it. Every argument arrives bound to its declared Go
-	// type, and the export writer -- the one owner of that destination -- reports
-	// the write failure as the call's error.
-	reflect.TypeOf((func([]*apocexport.Node, []*apocexport.Relationship, string) error)(nil)): {declaredArgument, declaredArgument, declaredArgument},
+	// {All,Data} and apoc.export.toFile) declares exactly one shape per writer:
+	// the caller's context first, then the graph the caller already holds plus
+	// the destination path for it. Every argument arrives bound to its declared
+	// Go type, and pkg/apocio -- the one owner of export admission and writing --
+	// reports a missing capability, a denied export or a write failure as the
+	// call's error. A context-free declaration of these shapes is not listed:
+	// its only remaining match would be an unrelated two-string signature such
+	// as apoc.log.toFile, which is not an export surface.
+	reflect.TypeOf((func(context.Context, []*apocexport.Node, []*apocexport.Relationship, string) error)(nil)): {declaredArgument, declaredArgument, declaredArgument, declaredArgument},
+	reflect.TypeOf((func(context.Context, []*apocexport.Node, string) error)(nil)):                             {declaredArgument, declaredArgument, declaredArgument},
+	reflect.TypeOf((func(context.Context, string, string) error)(nil)):                                         {declaredArgument, declaredArgument, declaredArgument},
 }
 
 var cypherArgumentPlans = map[reflect.Type][]argumentBinding{

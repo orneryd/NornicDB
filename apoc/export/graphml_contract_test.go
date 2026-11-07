@@ -1,16 +1,19 @@
 package apocexport_test
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	apoclog "github.com/orneryd/nornicdb/apoc/log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/apoc"
 	apocexport "github.com/orneryd/nornicdb/apoc/export"
+	"github.com/orneryd/nornicdb/apoc/registry"
 	apocstorage "github.com/orneryd/nornicdb/apoc/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +36,17 @@ type graphMLDocument struct {
 	} `xml:"graph"`
 }
 
+// callRegisteredExport invokes one registered export handler the way the query
+// adapter does: the caller's context is bound as the handler's first argument.
+func callRegisteredExport(t *testing.T, name string, ctx context.Context, args ...interface{}) (interface{}, error) {
+	t.Helper()
+	require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
+	info, found := apoc.GetInfo(name)
+	require.True(t, found, "%s must be registered", name)
+	require.NotNil(t, info.Handler, name)
+	return info.Handler.CallWithPolicy(args, []reflect.Value{reflect.ValueOf(ctx)}, registry.APOCArguments)
+}
+
 func TestGraphMLPreservesXMLTextAttributesAndUnicode(t *testing.T) {
 	const key = "key\"&<>\n漢"
 	const value = "value&<>\"'\nélan漢😀"
@@ -52,9 +66,8 @@ func TestGraphMLPreservesXMLTextAttributesAndUnicode(t *testing.T) {
 }
 
 func TestGraphMLRegisteredFileExportWritesParsableDocument(t *testing.T) {
-	require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
 	path := filepath.Join(t.TempDir(), "graph.graphml")
-	_, err := apoc.Call("apoc.export.graphMLAll", []interface{}{[]*apocexport.Node{{ID: 1, Properties: map[string]interface{}{"name": "a&b"}}}, []*apocexport.Relationship(nil), path})
+	_, err := callRegisteredExport(t, "apoc.export.graphMLAll", exportCaller(t), []*apocexport.Node{{ID: 1, Properties: map[string]interface{}{"name": "a&b"}}}, []*apocexport.Relationship(nil), path)
 	require.NoError(t, err)
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -65,7 +78,7 @@ func TestGraphMLRegisteredFileExportWritesParsableDocument(t *testing.T) {
 }
 
 func TestGraphMLFileExportPropagatesDestinationError(t *testing.T) {
-	require.Error(t, apocexport.GraphMLAll(nil, nil, t.TempDir()), "a directory is not a writable export file")
+	require.Error(t, apocexport.GraphMLAll(exportCaller(t), nil, nil, t.TempDir()), "a directory is not a writable export file")
 }
 
 func TestGraphMLRejectsUnrepresentableXMLBeforeWriting(t *testing.T) {
@@ -88,7 +101,7 @@ func TestGraphMLRejectsUnrepresentableXMLBeforeWriting(t *testing.T) {
 				require.Error(t, err)
 				require.Empty(t, output)
 				path := filepath.Join(t.TempDir(), "graph.graphml")
-				require.Error(t, apocexport.GraphMLAll(nodes, rels, path))
+				require.Error(t, apocexport.GraphMLAll(exportCaller(t), nodes, rels, path))
 				_, err = os.Stat(path)
 				require.ErrorIs(t, err, os.ErrNotExist)
 			})
@@ -118,9 +131,8 @@ func TestGraphMLRejectedInputPreservesExistingDestination(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "graph.graphml")
 	require.NoError(t, os.WriteFile(path, []byte("existing export"), 0600))
 	nodes := []*apocexport.Node{{ID: 1, Properties: map[string]interface{}{"bad": "\x00"}}}
-	require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
 	for _, name := range []string{"apoc.export.graphMLAll", "apoc.export.graphMLData"} {
-		_, err := apoc.Call(name, []interface{}{nodes, []*apocexport.Relationship(nil), path})
+		_, err := callRegisteredExport(t, name, exportCaller(t), nodes, []*apocexport.Relationship(nil), path)
 		require.Error(t, err)
 		content, err := os.ReadFile(path)
 		require.NoError(t, err)
@@ -132,43 +144,45 @@ func TestExportSiblingFileEntryPointsWriteAndReportErrors(t *testing.T) {
 	nodes := []*apocexport.Node{{ID: 1, Properties: map[string]interface{}{"name": "value"}}}
 	for _, name := range []string{"cypher", "raw"} {
 		t.Run(name, func(t *testing.T) {
+			ctx := exportCaller(t)
 			path := filepath.Join(t.TempDir(), "nested", "export.txt")
 			var err error
 			if name == "cypher" {
-				err = apocexport.CypherAll(nodes, nil, path)
+				err = apocexport.CypherAll(ctx, nodes, nil, path)
 			} else {
-				err = apocexport.ToFile("raw content", path)
+				err = apocexport.ToFile(ctx, "raw content", path)
 			}
 			require.NoError(t, err)
 			content, err := os.ReadFile(path)
 			require.NoError(t, err)
 			if name == "cypher" {
 				require.Equal(t, apocexport.Cypher(nodes, nil), string(content))
-				require.Error(t, apocexport.CypherAll(nodes, nil, t.TempDir()))
+				require.Error(t, apocexport.CypherAll(ctx, nodes, nil, t.TempDir()))
 			} else {
 				require.Equal(t, "raw content", string(content))
-				require.Error(t, apocexport.ToFile("raw", t.TempDir()))
+				require.Error(t, apocexport.ToFile(ctx, "raw", t.TempDir()))
 			}
 		})
 	}
 }
 
 func TestRegisteredRawExportUsesCanonicalFileWriter(t *testing.T) {
-	require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
+	ctx := exportCaller(t)
 	path := filepath.Join(t.TempDir(), "raw.txt")
-	_, err := apoc.Call("apoc.export.toFile", []interface{}{"content", path})
+	_, err := callRegisteredExport(t, "apoc.export.toFile", ctx, "content", path)
 	require.NoError(t, err)
 	output, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, "content", string(output))
-	_, err = apoc.Call("apoc.export.toFile", []interface{}{"content", t.TempDir()})
+	_, err = callRegisteredExport(t, "apoc.export.toFile", ctx, "content", t.TempDir())
 	require.Error(t, err)
 }
 
 func TestExportReplacementAndLogAppendHaveDifferentFileContracts(t *testing.T) {
+	ctx := exportCaller(t)
 	path := filepath.Join(t.TempDir(), "data.txt")
-	require.NoError(t, apocexport.ToFile("first", path))
-	require.NoError(t, apocexport.ToFile("replacement", path))
+	require.NoError(t, apocexport.ToFile(ctx, "first", path))
+	require.NoError(t, apocexport.ToFile(ctx, "replacement", path))
 	output, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, "replacement", string(output))
