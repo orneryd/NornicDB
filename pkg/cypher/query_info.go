@@ -275,34 +275,52 @@ func (a *QueryAnalyzer) CacheSize() int {
 // GetAST returns the structured AST for the query.
 // The AST is lazily built on first call and cached for subsequent calls.
 // This is useful for LLM features that need structured query representation.
+//
+// The statement-effect owner is refreshed first so the AST and Writes carry
+// one answer, and a cached analysis keeps the answer it already resolved
+// instead of resolving the effect again. When a registry change turns the
+// statement from a read into a write, GetAST publishes a new AST for the
+// current answer and leaves the AST a caller may still hold untouched. An
+// unchanged warm AST is returned as the same pointer without another
+// allocation.
 func (info *QueryInfo) GetAST(ctx context.Context) (*AST, error) {
-	if err := ctx.Err(); err != nil {
+	if err := info.refreshStatementEffect(ctx, info.rawQuery); err != nil {
 		return nil, err
 	}
-	// Fast path: already built
+	readOnly := !info.Writes()
+
+	// Fast path: a built AST whose effect answer still holds.
 	info.astMu.RLock()
 	if info.astBuilt {
-		ast := info.ast
-		info.astMu.RUnlock()
-		return ast, nil
+		if ast := info.ast; ast.IsReadOnly == readOnly {
+			info.astMu.RUnlock()
+			return ast, nil
+		}
 	}
 	info.astMu.RUnlock()
 
-	// Slow path: build AST
 	info.astMu.Lock()
 	defer info.astMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
-	// Double-check after acquiring write lock
 	if info.astBuilt {
+		if info.ast.IsReadOnly == readOnly {
+			return info.ast, nil
+		}
+		// Publish the refreshed effect without mutating an AST a caller may
+		// still hold.
+		refreshed := *info.ast
+		refreshed.IsReadOnly = readOnly
+		info.ast = &refreshed
 		return info.ast, nil
 	}
 
-	// Build AST
-	builder := NewASTBuilder()
-	ast, err := builder.Build(ctx, info.rawQuery)
+	source := cyphertext.NewSource(ctx, info.rawQuery, cyphertext.AcceptedSource)
+	if source.Err != nil {
+		return nil, source.Err
+	}
+	ast, err := NewASTBuilder().build(ctx, source, readOnly)
 	if err != nil {
 		return nil, err
 	}

@@ -144,7 +144,10 @@ func AnalyzeQueryComplexity(ctx context.Context, query string) (*Analysis, error
     if err != nil {
         return nil, err
     }
-    ast := info.GetAST()
+    ast, err := info.GetAST(ctx)
+    if err != nil {
+        return nil, err
+    }
     
     // LLM analyzes structure
     complexity := llm.AnalyzeComplexity(ast)
@@ -168,7 +171,10 @@ func CorrectQuery(ctx context.Context, originalQuery string, cause error) (strin
     if err != nil {
         return "", err
     }
-    ast := info.GetAST()
+    ast, err := info.GetAST(ctx)
+    if err != nil {
+        return "", err
+    }
     
     // LLM suggests correction
     correctedQuery := llm.SuggestCorrection(ast, error)
@@ -367,7 +373,11 @@ plugin:
 ### Plugin AST Access
 
 ```go
-// Plugins get read-only AST view
+// Plugins get read-only AST view.
+//
+// IsReadOnly is the statement-effect owner's answer for the analysis, published
+// on the AST: a registered WRITE procedure, a schema or catalog change and an
+// unresolved procedure are writes even though no clause kind exposes them.
 type PluginASTView struct {
     Clauses   []ASTClauseView  // Sanitized view
     IsReadOnly bool

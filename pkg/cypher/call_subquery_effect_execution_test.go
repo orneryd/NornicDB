@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"context"
-	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -15,8 +15,7 @@ import (
 // stores one node per invocation, so the observable state matches the
 // invocation count.
 type callSubqueryEffectFixture struct {
-	mu    sync.Mutex
-	calls int
+	calls atomic.Int64
 	name  string
 	mode  ProcedureMode
 }
@@ -35,10 +34,7 @@ func (f *callSubqueryEffectFixture) register(t *testing.T) {
 		MaxArgs:   0,
 		Returns:   []ProcedureColumn{{Name: "v", Type: "INTEGER"}},
 	}, func(ctx context.Context, exec *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
-		f.mu.Lock()
-		f.calls++
-		invocation := f.calls
-		f.mu.Unlock()
+		invocation := f.calls.Add(1)
 		if f.mode == ProcedureModeWrite {
 			if _, err := exec.executeUserStatement(ctx, "CREATE (:CallSubqueryEffect {call: $call})", map[string]interface{}{
 				"call": int64(invocation),
@@ -48,12 +44,6 @@ func (f *callSubqueryEffectFixture) register(t *testing.T) {
 		}
 		return &ExecuteResult{Columns: []string{"v"}, Rows: [][]interface{}{{int64(invocation)}}}, nil
 	}))
-}
-
-func (f *callSubqueryEffectFixture) invocations() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.calls
 }
 
 // seedCallSubqueryEffectSeeds stores three rows for an uncorrelated CALL to
@@ -95,7 +85,7 @@ func TestCallSubqueryUncorrelatedWriteProcedureRunsPerInputRow(t *testing.T) {
 		}
 		require.ElementsMatch(t, []int64{1, 2, 3}, values,
 			"each input row runs the write procedure in its own invocation")
-		require.Equal(t, 3, fixture.invocations(),
+		require.Equal(t, int64(3), fixture.calls.Load(),
 			"an uncorrelated CALL body with a registered WRITE procedure runs once per input row")
 
 		state, err := exec.Execute(t.Context(), "MATCH (n:CallSubqueryEffect) RETURN count(n)", nil)
@@ -124,7 +114,7 @@ func TestCallSubqueryUncorrelatedReadProcedureStaysRead(t *testing.T) {
 		for _, row := range result.Rows {
 			require.Equal(t, int64(1), row[1], "the read body's single result reaches each input row")
 		}
-		require.Equal(t, 1, fixture.invocations(), "a read body keeps its single shared run")
+		require.Equal(t, int64(1), fixture.calls.Load(), "a read body keeps its single shared run")
 	})
 }
 
@@ -157,7 +147,7 @@ func TestCallSubqueryCanceledCallReportsCancellation(t *testing.T) {
 	result, err := exec.Execute(ctx, uncorrelatedCallBody(fixture.name), nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Zero(t, fixture.invocations(), "a canceled call runs no invocation")
+	require.Zero(t, fixture.calls.Load(), "a canceled call runs no invocation")
 
 	state, err := exec.Execute(t.Context(), "MATCH (n:CallSubqueryEffect) RETURN count(n)", nil)
 	require.NoError(t, err)

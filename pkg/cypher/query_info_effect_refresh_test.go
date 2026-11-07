@@ -87,3 +87,31 @@ func TestQueryAnalyzerWarmCacheHonorsCancellation(t *testing.T) {
 	require.Same(t, live, resumed)
 	require.True(t, resumed.ReadOnly())
 }
+
+func TestQueryAnalyzerCachedEffectAgreesAcrossStatementVersions(t *testing.T) {
+	analyzer := NewQueryAnalyzer(32)
+	for _, tc := range []struct {
+		query  string
+		writes bool
+	}{
+		{"MATCH (n:Doc) RETURN n", false},
+		{"RETURN 'CREATE SET DELETE' AS text", false},
+		{"MATCH (n:Doc) RETURN n.set", false},
+		{"CREATE (:Doc)", true},
+		{"FOREACH (x IN [1] | CREATE (:Doc))", true},
+		{"CALL kp.suppress(null)", true},
+		{"CALL db.labels()", false},
+		{"CALL missing.effect()", true},
+		{"CREATE INDEX effect_index FOR (n:Doc) ON (n.id)", true},
+		{"DROP DATABASE effect_database IF EXISTS", true},
+		{"SHOW DATABASES", false},
+		{"EXPLAIN CREATE (:Doc)", false},
+	} {
+		for _, version := range []string{"5", "25", "5"} {
+			ctx := context.WithValue(t.Context(), cypherVersionKey{}, version)
+			info, err := analyzer.Analyze(ctx, tc.query)
+			require.NoError(t, err, "%s: %s", version, tc.query)
+			require.Equal(t, tc.writes, info.Writes(), "%s: %s", version, tc.query)
+		}
+	}
+}

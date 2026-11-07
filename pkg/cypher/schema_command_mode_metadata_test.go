@@ -144,3 +144,20 @@ func schemaCatalogNames(t *testing.T, ctx context.Context, exec *StorageExecutor
 		indexes:     readSchemaNames(t, ctx, exec, "SHOW INDEXES YIELD name RETURN name ORDER BY name"),
 	}
 }
+
+func TestSchemaMetadataValidatesTheParsedCommandUnderModePrefixes(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec := newSchemaCommandModeExecutor(t)
+		before := schemaCatalogNames(t, t.Context(), exec)
+		for _, prefix := range []string{"", "EXPLAIN ", "PROFILE "} {
+			valid := prefix + "CREATE CONSTRAINT valid_key FOR (n:Example) REQUIRE (n.a, n.b) IS NODE KEY"
+			columns, err := exec.StatementResultColumnsContext(t.Context(), valid, RawSource)
+			require.NoError(t, err, valid)
+			require.Empty(t, columns, valid)
+			invalid := prefix + "CREATE CONSTRAINT invalid_key FOR (n:Example) REQUIRE () IS NODE KEY"
+			_, err = exec.StatementResultColumnsContext(t.Context(), invalid, RawSource)
+			require.Error(t, err, invalid)
+		}
+		require.Equal(t, before, schemaCatalogNames(t, t.Context(), exec), "header discovery must not publish schema")
+	})
+}
