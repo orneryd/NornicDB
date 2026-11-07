@@ -41,3 +41,32 @@ func (operation Operation) NodeUpdate() NodeUpdateRequest {
 func (operation Operation) EdgeUpdate() EdgeUpdateRequest {
 	return EdgeUpdateRequest{Before: operation.OldEdge, After: operation.Edge}
 }
+
+// InScope qualifies both observation and replacement IDs at the same
+// namespace boundary. It copies only headers whose IDs need qualification;
+// property maps remain immutable inputs owned by the caller.
+// For example, request.InScope("tenant:") maps a->b to tenant:a->tenant:b
+// in both Before and After, without changing request's original records.
+func (request EdgeUpdateRequest) InScope(scope string) EdgeUpdateRequest {
+	if scope == "" {
+		return request
+	}
+	request.Before = edgeInScope(request.Before, scope)
+	request.After = edgeInScope(request.After, scope)
+	return request
+}
+
+func edgeInScope(edge *Edge, scope string) *Edge {
+	if edge == nil {
+		return nil
+	}
+	id := EdgeID(qualifyEntityID(scope, string(edge.ID)))
+	start := NodeID(qualifyEntityID(scope, string(edge.StartNode)))
+	end := NodeID(qualifyEntityID(scope, string(edge.EndNode)))
+	if id == edge.ID && start == edge.StartNode && end == edge.EndNode {
+		return edge
+	}
+	input := *edge
+	input.ID, input.StartNode, input.EndNode = id, start, end
+	return &input
+}

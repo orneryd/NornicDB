@@ -2905,7 +2905,7 @@
       "field": "pkg/storage.BadgerTransaction.badgerReadTs",
       "class": "transaction snapshot",
       "func": "pkg/storage.BadgerTransaction.rebaseBadgerAfterDrainLocked",
-      "pos": "pkg/storage/badger_transaction.go:2407"
+      "pos": "pkg/storage/badger_transaction.go:2425"
     },
     {
       "field": "pkg/storage.BadgerTransaction.badgerReadTs",
