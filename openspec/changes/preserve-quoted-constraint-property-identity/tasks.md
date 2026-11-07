@@ -1,0 +1,27 @@
+# Quoted constraint property identity (NOR-46)
+
+- [x] Read reopened Linear scope and branch from current release c79157537.
+- [x] Reproduce quoted dotted-property declaration/enforcement through both public parser paths.
+- [x] Reuse the existing quote-aware property reader in constraint admission, retaining exact decoded identity.
+- [x] Verify ordinary and escaped-backtick property controls and rejected duplicate atomicity.
+- [x] Affected constraint/schema race checks pass (76.212s); expanded public controls pass in three race runs (13.754s), including parenthesized and escaped-dot names and rejected backfill cleanup.
+- [x] Lexical/source audit passes with the data record updated to the actual shared-reader call shape; rules unchanged.
+- [x] Resolve the initial independent review: retain decoded FOR qualifiers, fix quoted composite commas, add successful backfill and grouping/punctuation controls; prove block routing and parser harness populations.
+- [x] Correct exposed projected-read data loss by retaining separate variable/property identities in the existing semantic walker. Retire the flattened collector and migrate every caller; node/relationship scan/index public controls pass.
+- [x] Expanded final focused race matrix passes twice (55.623s), without skips. The broad affected sweep had 5,826 passing tests and two legacy-diagnostic failures; both are corrected without weakening assertions and pass three race repetitions. One Neo4j-reference metadata oracle was skipped because no reference server is attached.
+- [x] CPU-profile four correct-on-both-baselines selector workloads: all reduce time, bytes and allocations (five 100ms samples each). Ordinary selection: 586.4->507.8 ns/op, 80->32 B/op, 4->1 allocations.
+- [x] Re-review and consolidate scalar/list REQUIRE preparation into one typed owner shared by native declarations and contract entries. Retire all six per-kind DDL adapters, parallel predicate readers and contract primitive/type wrappers; migrate private test consumers.
+- [x] Preserve general boolean-entry classification and the runtime compiler's supported grammar. Baseline controls establish unsupported computed predicates stay rejected; supported property comparisons/membership remain boolean entries.
+- [x] Correct the CI-discovered composite trailing-comma failure using the existing empty-preserving comma owner, with public native/block/index empty-member rejection controls and unchanged malformed-composite assertions.
+- [x] Retire flattened free-reference collectors and fixed/lazy static-check forwarding adapters; canonical callers pass typed identities and explicit scope/type operations. Direct validator fail-first proof and public healthy/versioned controls retained.
+- [x] Independent read-only integrated review completed; no remaining actionable source finding after the classification correction. Every entry of the 1f416 advisory is inventoried for final public disposition.
+- [x] Profile correct-on-both-version scope validation (five 200ms samples): entity 520->448 B/12->9 allocs; eight properties 3928->3648 B/75->51 allocs; aggregate 1048->1008 B/26->24 allocs. Aggregate time unchanged within this sample; no whole-query gain claim.
+- [x] Final integrated public/ownership race matrix passes twice (62.055s), including list binding, strict empty-list rejection, unchanged malformed-composite assertion, boolean grammar, policy/options and join controls.
+- [x] Strict lexical/normalization audit passes after reviewing 14 new/changed and 19 retired source members; analyzer rules unchanged.
+- [x] Blocking TestStorageNilContextCensus passes after the main consolidation (91.005s).
+- [x] Final advisory's ORDER BY overlap: remove two redundant SKIP/LIMIT scans and call the existing canonical term reader directly. Keep variable availability versus grouped-horizon eligibility as distinct tested contracts. Keyword-named variable controls already passed before removal; no additional public bug claim.
+- [x] Final ORDER BY focused checks pass (1.206s), races twice pass (8.907s), lexical audit passes (2.176s), and blocking context census passes again (94.662s).
+- [x] Profile the boundary-scan removal against the preceding candidate: entity 1289->1229 ns/op, eight properties 6819->6566, aggregate 2685->2422; bytes/allocations unchanged in all three five-sample controls.
+- [x] Open separate draft #1750 against release/v1.4.4 with an explicit AC map.
+- [ ] Pass exact-head full make test CI and resolve discovered failures.
+- [ ] Preserve required evidence and clean task-owned artifacts before readiness.

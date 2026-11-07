@@ -134,13 +134,16 @@ func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string
 		for _, expression := range expressions {
 			masked = maskProjectedExpression(masked, expression)
 		}
-		for _, reference := range semanticFreeReferences(masked) {
-			base := strings.SplitN(reference, ".", 2)[0]
-			if _, projected := aliases[normalizeProjectionColumnName(base)]; projected {
-				continue
+		var referenceErr error
+		forEachFreeSemanticReference(masked, masked, func(reference semanticReference) bool {
+			if _, projected := aliases[reference.variable]; projected {
+				return true
 			}
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable",
-				localization.CypherMatchingAggregationScopeVariable(base))
+			referenceErr = localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable", localization.CypherMatchingAggregationScopeVariable(reference.variable))
+			return false
+		})
+		if referenceErr != nil {
+			return referenceErr
 		}
 	}
 	return nil

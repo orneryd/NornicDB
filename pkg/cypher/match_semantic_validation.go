@@ -511,7 +511,7 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 				}
 			}
 			input := staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25}
-			if err := validateStaticFunctionVariables(ctx, projection, input); err != nil {
+			if err := validateStaticFunctionVariablesTyped(ctx, projection, func() staticTypeScope { return input }, staticTypeScope.staticExpressionType); err != nil {
 				return types, false, err
 			}
 			if err := e.validateStaticOperatorTypes(ctx, clause, input, func() staticTypeScope { return projectionAliasScope(ctx, input, clause) }, nil); err != nil {
@@ -534,7 +534,7 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 			scope, valueTypes, valueMembers = projected.kinds, projected.values, projected.members
 			view, stale = projected, false
 			if err := forEachProjectedTailExpression(ctx, projection, rest, func(expression string) error {
-				return validateStaticFunctionVariables(ctx, expression, projected)
+				return validateStaticFunctionVariablesTyped(ctx, expression, func() staticTypeScope { return projected }, staticTypeScope.staticExpressionType)
 			}); err != nil {
 				return types, false, err
 			}
@@ -671,21 +671,20 @@ func validateWithOrderBySemanticScope(ctx context.Context, input matchSemanticSc
 // Neo4j does ("Variable `y` not defined"). orderBody is the text after ORDER
 // BY; its SKIP / LIMIT are ignored.
 func validateOrderByReferences(ctx context.Context, input, output matchSemanticScope, orderBody string) error {
-	for _, keyword := range []string{"SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(ctx, orderBody, keyword); index >= 0 {
-			orderBody = strings.TrimSpace(orderBody[:index])
-		}
-	}
 	for _, term := range parseOrderByClause(ctx, orderBody) {
-		for _, reference := range semanticFreeReferences(term.column) {
-			base := strings.SplitN(reference, ".", 2)[0]
-			if _, available := input[base]; available {
-				continue
+		var referenceErr error
+		forEachFreeSemanticReference(term.column, term.column, func(reference semanticReference) bool {
+			if _, available := input[reference.variable]; available {
+				return true
 			}
-			if _, projected := output[base]; projected {
-				continue
+			if _, projected := output[reference.variable]; projected {
+				return true
 			}
-			return createUndefinedVariableError(base)
+			referenceErr = createUndefinedVariableError(reference.variable)
+			return false
+		})
+		if referenceErr != nil {
+			return referenceErr
 		}
 	}
 	return nil
@@ -1318,15 +1317,15 @@ func (e *StorageExecutor) validateStaticClauseTypes(ctx context.Context, clause 
 			}
 			return *projected
 		}
-		if err := validateStaticFunctionVariables(ctx, projection, scope); err != nil {
+		if err := validateStaticFunctionVariablesTyped(ctx, projection, func() staticTypeScope { return scope }, staticTypeScope.staticExpressionType); err != nil {
 			return err
 		}
 		if err := forEachProjectedTailExpression(ctx, projection, rest, func(expression string) error {
-			return validateStaticFunctionVariablesIn(ctx, expression, projectedScope)
+			return validateStaticFunctionVariablesTyped(ctx, expression, projectedScope, staticTypeScope.staticExpressionType)
 		}); err != nil {
 			return err
 		}
-	} else if err := validateStaticFunctionVariables(ctx, clause.text, scope); err != nil {
+	} else if err := validateStaticFunctionVariablesTyped(ctx, clause.text, func() staticTypeScope { return scope }, staticTypeScope.staticExpressionType); err != nil {
 		return err
 	}
 	return e.validateStaticOperatorTypes(ctx, clause, scope, projectedScope, nil)
@@ -1381,7 +1380,7 @@ func (e *StorageExecutor) validateQuantifiedGroupPredicates(ctx context.Context,
 			if err := staticListOperandTypeError(ctx, predicate, iteration); err != nil {
 				return "", err
 			}
-			if err := validateStaticFunctionVariables(ctx, predicate, iteration); err != nil {
+			if err := validateStaticFunctionVariablesTyped(ctx, predicate, func() staticTypeScope { return iteration }, staticTypeScope.staticExpressionType); err != nil {
 				return "", err
 			}
 			// Neo4j types the operators of a group predicate but doesn't

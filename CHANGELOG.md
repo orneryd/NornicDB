@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve quoted dotted property names in constraints and projected reads.
+  Keep quoted commas inside composite constraint properties and reject property
+  references to a variable other than the declared FOR variable, including list
+  constraints and primitive contract entries. Reject empty schema-list members
+  without discarding quoted punctuation. Keep quoted variable identities distinct
+  from property accesses during ordering and grouping validation.
+
 - Keep CSV export values under their matching property headers by selecting
   the column order once and reusing it for every row.
 

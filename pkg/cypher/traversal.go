@@ -865,10 +865,10 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 	if plan == nil || !plan.complete {
 		return nil, false, nil
 	}
-	for _, reference := range semanticExpressionReferences(whereClause) {
-		if strings.SplitN(reference, ".", 2)[0] != nodePattern.variable {
-			return nil, false, nil
-		}
+	if !forEachSemanticExpressionReference(whereClause, func(variable, _ string, _ bool, _ int) bool {
+		return variable == nodePattern.variable
+	}) {
+		return nil, false, nil
 	}
 	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 	if err != nil {

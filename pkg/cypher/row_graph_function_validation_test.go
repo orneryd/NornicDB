@@ -9,7 +9,7 @@ import (
 )
 
 func TestLabelsRejectsStaticallyKnownPathArguments(t *testing.T) {
-	err := validateStaticFunctionVariables(t.Context(), "labels(path)", staticTypeScope{kinds: matchSemanticScope{"path": matchBindingPath}})
+	err := validateStaticFunctionVariablesTyped(t.Context(), "labels(path)", func() staticTypeScope { return staticTypeScope{kinds: matchSemanticScope{"path": matchBindingPath}} }, staticTypeScope.staticExpressionType)
 	require.Error(t, err)
 	var semanticError *SemanticError
 	require.True(t, errors.As(err, &semanticError))
@@ -28,7 +28,7 @@ func TestLabelsRejectsNonNodeValuesResolvedAtRuntime(t *testing.T) {
 }
 
 func TestTypeRejectsStaticallyKnownNodeArguments(t *testing.T) {
-	err := validateStaticFunctionVariables(t.Context(), "type(node)", staticTypeScope{kinds: matchSemanticScope{"node": matchBindingNode}})
+	err := validateStaticFunctionVariablesTyped(t.Context(), "type(node)", func() staticTypeScope { return staticTypeScope{kinds: matchSemanticScope{"node": matchBindingNode}} }, staticTypeScope.staticExpressionType)
 	require.Error(t, err)
 	var semanticError *SemanticError
 	require.True(t, errors.As(err, &semanticError))
@@ -113,13 +113,13 @@ func TestLengthRejectsGraphEntitiesAndAcceptsPaths(t *testing.T) {
 		"node":         matchBindingNode,
 		"relationship": matchBindingRelationship,
 	} {
-		err := validateStaticFunctionVariables(t.Context(), "length("+variable+")", staticTypeScope{kinds: matchSemanticScope{variable: kind}})
+		err := validateStaticFunctionVariablesTyped(t.Context(), "length("+variable+")", func() staticTypeScope { return staticTypeScope{kinds: matchSemanticScope{variable: kind}} }, staticTypeScope.staticExpressionType)
 		require.Error(t, err)
 		var semanticError *SemanticError
 		require.ErrorAs(t, err, &semanticError)
 		require.Equal(t, "InvalidArgumentType", semanticError.Detail)
 	}
-	require.NoError(t, validateStaticFunctionVariables(t.Context(), "length(path)", staticTypeScope{kinds: matchSemanticScope{"path": matchBindingPath}}))
+	require.NoError(t, validateStaticFunctionVariablesTyped(t.Context(), "length(path)", func() staticTypeScope { return staticTypeScope{kinds: matchSemanticScope{"path": matchBindingPath}} }, staticTypeScope.staticExpressionType))
 }
 
 // TestGraphFunctionsOfNullAreNull: a graph function of null is null, as in

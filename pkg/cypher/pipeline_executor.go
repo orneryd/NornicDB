@@ -1494,26 +1494,24 @@ func pipelineNodePredicateProperties(variable, expression string, inline map[str
 		seen[property] = struct{}{}
 		properties = append(properties, property)
 	}
-	prefix := normalizeProjectionColumnName(variable) + "."
-	for _, reference := range semanticExpressionReferences(expression) {
-		if reference == normalizeProjectionColumnName(variable) {
-			return nil
+	variable = normalizeProjectionColumnName(variable)
+	wholeNode := false
+	forEachSemanticExpressionReference(expression, func(base, property string, hasProperty bool, _ int) bool {
+		if base != variable {
+			return true
 		}
-		if !strings.HasPrefix(reference, prefix) {
-			continue
+		if !hasProperty || property == "" {
+			wholeNode = true
+			return false
 		}
-		property := strings.TrimPrefix(reference, prefix)
-		if nested := strings.IndexByte(property, '.'); nested >= 0 {
-			property = property[:nested]
+		if _, exists := seen[property]; !exists {
+			seen[property] = struct{}{}
+			properties = append(properties, property)
 		}
-		if property == "" {
-			return nil
-		}
-		if _, exists := seen[property]; exists {
-			continue
-		}
-		seen[property] = struct{}{}
-		properties = append(properties, property)
+		return true
+	})
+	if wholeNode {
+		return nil
 	}
 	sort.Strings(properties)
 	return properties

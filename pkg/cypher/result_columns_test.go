@@ -85,6 +85,71 @@ func TestUnionColumnOrder(t *testing.T) {
 	require.False(t, same)
 	require.Equal(t, [][]interface{}{{int64(2), int64(1)}, {nil, int64(3)}},
 		reorderUnionRows([][]interface{}{{int64(1), int64(2)}, {int64(3)}}, []int{1, 0}))
-	require.Equal(t, []string{"n.y"}, semanticFreeReferences(removeAggregateCalls("collect(n.x)[0].id + n.y")))
-	require.Empty(t, semanticFreeReferences("[1, 2][0..1]"))
+	var references []semanticReference
+	text := removeAggregateCalls("collect(n.x)[0].id + n.y")
+	forEachFreeSemanticReference(text, text, func(reference semanticReference) bool { references = append(references, reference); return true })
+	require.Equal(t, []semanticReference{{variable: "n", property: "y", hasProperty: true}}, references)
+	require.True(t, forEachFreeSemanticReference("[1, 2][0..1]", "[1, 2][0..1]", func(reference semanticReference) bool { t.Errorf("unexpected reference: %+v", reference); return false }))
+}
+
+// Scope validation must keep decoded variable identities separate from their
+// property names, even when a quoted variable itself contains a dot.
+func TestSemanticReferenceIdentityBoundaries(t *testing.T) {
+	ctx := t.Context()
+	require.NoError(t, validateReturnOrderBySemanticScope(ctx, "RETURN DISTINCT `n.dot` ORDER BY `n.dot`.x"))
+	require.NoError(t, validateOrderByReferences(ctx, matchSemanticScope{"n.dot": matchBindingNode}, nil, "`n.dot`.x"))
+	require.NoError(t, validateReturnAggregationSemanticsIn(ctx, "count(*) + `n.dot`.x", typeScope{"n.dot": {}}))
+	requireSemanticDetail(t, validateReturnOrderBySemanticScope(ctx, "RETURN DISTINCT n.x ORDER BY `n.x`"), "UndefinedVariable")
+	requireSemanticDetail(t, validateReturnAggregationSemantics(ctx, "n.x, count(*) + `n.x`"), "AmbiguousAggregationExpression")
+}
+
+func TestSemanticReferenceProductsKeepQuotedBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		text   string
+		want   semanticReference
+		direct bool
+	}{
+		{"`n.x`", semanticReference{variable: "n.x"}, true},
+		{"n.`x.y`", semanticReference{variable: "n", property: "x.y", hasProperty: true}, true},
+		{"`n.x`.`y``.z`", semanticReference{variable: "n.x", property: "y`.z", hasProperty: true}, true},
+		{"n.x.y", semanticReference{}, false},
+	} {
+		t.Run(test.text, func(t *testing.T) {
+			got, ok := directSemanticReference(test.text)
+			require.Equal(t, test.direct, ok)
+			require.Equal(t, test.want, got)
+		})
+	}
+	var references []semanticReference
+	expression := "[x IN xs | x.a] + `n.x`.`y.z` + n.x"
+	require.True(t, forEachFreeSemanticReference(expression, expression, func(ref semanticReference) bool { references = append(references, ref); return true }))
+	require.Equal(t, []semanticReference{{variable: "xs"}, {variable: "n.x", property: "y.z", hasProperty: true}, {variable: "n", property: "x", hasProperty: true}}, references)
+	visits := 0
+	require.False(t, forEachFreeSemanticReference("a + b", "a + b", func(semanticReference) bool { visits++; return false }))
+	require.Equal(t, 1, visits)
+}
+
+func TestOrderScopeRetainsKeywordNamedSortVariables(t *testing.T) {
+	for _, name := range []string{"skip", "limit"} {
+		t.Run(name, func(t *testing.T) {
+			for _, tail := range []string{"", " LIMIT 1", " SKIP 1 LIMIT 2"} {
+				order := name + tail
+				requireSemanticDetail(t, validateOrderByReferences(t.Context(), nil, nil, order), "UndefinedVariable")
+				require.NoError(t, validateOrderByReferences(t.Context(), matchSemanticScope{name: matchBindingValue}, nil, order))
+				requireSemanticDetail(t, validateReturnOrderBySemanticScope(t.Context(), "RETURN DISTINCT n.name ORDER BY "+order), "UndefinedVariable")
+				require.NoError(t, validateReturnOrderBySemanticScope(t.Context(), "RETURN DISTINCT "+name+" ORDER BY "+order))
+			}
+		})
+	}
+}
+
+// Binding availability and grouped-horizon eligibility are independent checks.
+// The same reference can pass one and fail the other; both share term reading.
+func TestOrderScopePhasesRetainTheirDistinctContracts(t *testing.T) {
+	ctx := t.Context()
+	input := matchSemanticScope{"n": matchBindingNode}
+	require.NoError(t, validateOrderByReferences(ctx, input, nil, "n.age"))
+	requireSemanticDetail(t, validateReturnOrderBySemanticScope(ctx, "RETURN DISTINCT n.name ORDER BY n.age"), "UndefinedVariable")
+	require.NoError(t, validateReturnOrderBySemanticScope(ctx, "RETURN n ORDER BY missing"))
+	requireSemanticDetail(t, validateOrderByReferences(ctx, input, nil, "missing"), "UndefinedVariable")
 }
