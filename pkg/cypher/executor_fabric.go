@@ -1111,22 +1111,23 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 }
 
 // evaluateGraphArguments evaluates a dynamic graph reference's arguments
-// (USE graph.byName(g)) for Fabric: values holds the statement's
-// parameters and the current row's variables.
+// (USE graph.byName(g)) for Fabric, with statement parameters and the
+// current row's variables kept in their respective namespaces.
 func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
 	out := make([]string, len(expressions))
+	bindings, _ := fabric.RecordBindingsFromContext(ctx)
 	for i, expression := range expressions {
-		query, names := canonicalizeQuotedVariablesWithBindings(ctx, "RETURN "+expression, values)
-		bindings, params := values, values
+		query, names := canonicalizeQuotedVariablesWithBindings(ctx, "RETURN "+expression, bindings)
+		row, params := bindings, values
 		if names != nil {
-			bindings, params = names.bindingValues(values), names.parameterValues(values)
+			row, params = names.bindingValues(bindings), names.parameterValues(values)
 		}
 		projected := strings.TrimSpace(query)
 		if len(projected) <= len("RETURN") || !strings.EqualFold(projected[:len("RETURN")], "RETURN") {
 			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 				localization.CypherCommandRoutingGraphFunctionArgumentInvalid(expression))
 		}
-		value, ok := e.evaluateRowExpressionWithContext(withQueryParams(ctx, params), strings.TrimSpace(projected[len("RETURN"):]), pipelineRow(bindings))
+		value, ok := e.evaluateRowExpressionWithContext(withQueryParams(ctx, params), strings.TrimSpace(projected[len("RETURN"):]), pipelineRow(row))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err
