@@ -1477,7 +1477,10 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 		return statementExec.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 	// Check if this is a write operation using cached analysis
-	info := e.analyzer.Analyze(ctx, cypher)
+	info, err := e.analyzer.Analyze(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
 	contract, err := readStatementExecutionContract(ctx, cypher)
 	if err != nil {
 		return nil, err

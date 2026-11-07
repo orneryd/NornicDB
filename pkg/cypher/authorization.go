@@ -225,22 +225,25 @@ func procedureNameAt(query string, offset int) (string, bool) {
 	return query[startName:endName], true
 }
 
+// isSchemaPermissionQuery reports whether query declares or removes a schema
+// index or constraint. It reads isOrdinarySchemaDDL, the classifier of ordinary
+// schema DDL that the statement contract and the executor's autocommit routing
+// also read, so every supported form -- CREATE INDEX, CREATE RANGE, TEXT, POINT,
+// VECTOR, FULLTEXT and LOOKUP INDEX, CREATE CONSTRAINT and the DROP forms --
+// needs schema permission, and no statement is ordinary schema DDL for one owner
+// and a plain write, or a read, for another.
+//
+// Leading trivia (whitespace, comments, a byte order mark) is not statement
+// text, so the statement is read from its first executable offset. An EXPLAIN,
+// PROFILE or CYPHER version preamble is not stripped here: those statements keep
+// their own routes, and a statement run under such a preamble is authorized
+// again on its own text.
 func isSchemaPermissionQuery(ctx context.Context, query string) bool {
-	commandOffset := firstExecutableCypherOffset(query)
-	for _, command := range [][2]string{
-		{"CREATE", "INDEX"},
-		{"CREATE", "RANGE INDEX"},
-		{"CREATE", "FULLTEXT INDEX"},
-		{"CREATE", "VECTOR INDEX"},
-		{"DROP", "INDEX"},
-		{"CREATE", "CONSTRAINT"},
-		{"DROP", "CONSTRAINT"},
-	} {
-		if findMultiWordKeywordIndex(ctx, query, command[0], command[1]) == commandOffset {
-			return true
-		}
+	offset := firstExecutableCypherOffset(query)
+	if offset >= len(query) {
+		return false
 	}
-	return false
+	return isOrdinarySchemaDDL(ctx, query[offset:])
 }
 
 func isAdminPermissionQuery(ctx context.Context, query string) bool {

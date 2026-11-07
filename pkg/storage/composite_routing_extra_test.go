@@ -8,19 +8,50 @@ import (
 
 func TestQueryAnalyzer_AnalyzeQuery(t *testing.T) {
 	a := NewQueryAnalyzer()
+	for _, tc := range []struct {
+		name, query             string
+		writes, fullScan, label bool
+	}{
+		{"explicit label token", "MATCH :Person RETURN n", false, false, true},
+		{"parenthesized label token", "MATCH ( :Person ) RETURN n", false, false, true},
+		{"resolved write", "CREATE (n:Person {name: 'a'})", true, false, false},
+		{"conventional match hint", "MATCH (n:Person) RETURN n", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := a.AnalyzeQuery(tc.query, tc.writes)
+			assert.Equal(t, tc.writes, info.IsWrite)
+			assert.Equal(t, tc.fullScan, info.IsFullScan)
+			if tc.label {
+				assert.Contains(t, info.Labels, "PERSON")
+			}
+		})
+	}
+}
 
-	// Label extraction in this lightweight analyzer expects explicit ":Label" tokens.
-	readWithLabelToken := a.AnalyzeQuery("MATCH :Person RETURN n")
-	assert.Contains(t, readWithLabelToken.Labels, "PERSON")
-	assert.False(t, readWithLabelToken.IsWrite)
-	assert.False(t, readWithLabelToken.IsFullScan)
-
-	write := a.AnalyzeQuery("CREATE (n:Person {name: 'a'})")
-	assert.True(t, write.IsWrite)
-
-	// Typical MATCH syntax without an explicit :Label token is treated as full scan.
-	scan := a.AnalyzeQuery("MATCH (n:Person) RETURN n")
-	assert.True(t, scan.IsFullScan)
+// TestQueryAnalyzer_AnalyzeQuery_ResolvedEffect pins the canonical effect
+// boundary: AnalyzeQuery reports the effect its caller resolved and never
+// reclassifies the statement text, while shape extraction stays unchanged.
+func TestQueryAnalyzer_AnalyzeQuery_ResolvedEffect(t *testing.T) {
+	a := NewQueryAnalyzer()
+	for _, tc := range []struct {
+		name, query             string
+		writes                  bool
+		wantWrite, wantFullScan bool
+	}{
+		{"mutation resolved as write", "CREATE (n:Doc {name: 'a'})", true, true, false},
+		{"mutation resolved as read", "CREATE (n:Doc {name: 'a'})", false, false, true},
+		{"read resolved as read", "MATCH (n) RETURN n", false, false, true},
+		{"read resolved as write", "MATCH (n) RETURN n", true, true, false},
+		{"quoted keyword resolved as read", "RETURN 'DELETE n' AS text", false, false, true},
+		{"quoted keyword resolved as write", "RETURN 'DELETE n' AS text", true, true, false},
+		{"labelled read resolved as write", "MATCH :Person RETURN n", true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := a.AnalyzeQuery(tc.query, tc.writes)
+			assert.Equal(t, tc.wantWrite, info.IsWrite, "the resolved effect is authoritative")
+			assert.Equal(t, tc.wantFullScan, info.IsFullScan)
+		})
+	}
 }
 
 func TestQueryAnalyzer_RouteQuery_LabelRouting(t *testing.T) {
@@ -39,16 +70,6 @@ func TestQueryAnalyzer_RouteQuery_LabelRouting(t *testing.T) {
 	q3 := &QueryInfo{Labels: []string{"Unknown"}, Properties: map[string]interface{}{}}
 	r3 := a.RouteQuery(q3, []string{"dbA", "dbB", "dbC"})
 	assert.Equal(t, []string{"dbA", "dbB", "dbC"}, r3)
-}
-
-func TestQueryAnalyzer_AnalyzeQuery_ParenLabel(t *testing.T) {
-	a := NewQueryAnalyzer()
-
-	// Test the ( :Label pattern — triggers the uncovered branch at line 73
-	// where a label follows "(" or ","
-	q := a.AnalyzeQuery("MATCH ( :Person ) RETURN n")
-	assert.Contains(t, q.Labels, "PERSON")
-	assert.False(t, q.IsWrite)
 }
 
 func TestQueryAnalyzer_RouteQuery_PropertyRouting(t *testing.T) {

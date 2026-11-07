@@ -423,7 +423,7 @@ func TestQueryInfo_GetAST(t *testing.T) {
 	analyzer := NewQueryAnalyzer(100)
 
 	t.Run("lazy AST building", func(t *testing.T) {
-		info := analyzer.Analyze(t.Context(), "MATCH (n:Person) WHERE n.age > 21 RETURN n.name")
+		info := mustAnalyze(t, analyzer, t.Context(), "MATCH (n:Person) WHERE n.age > 21 RETURN n.name")
 
 		// AST should not be built yet
 		if info.HasAST() {
@@ -459,12 +459,12 @@ func TestQueryInfo_GetAST(t *testing.T) {
 		query := "MATCH (n:Test) RETURN n"
 
 		// First analysis
-		info1 := analyzer.Analyze(t.Context(), query)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query)
 		ast1, err := info1.GetAST(t.Context())
 		require.NoError(t, err)
 
 		// Second analysis (should be cached)
-		info2 := analyzer.Analyze(t.Context(), query)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query)
 
 		// Same QueryInfo should be returned
 		if info1 != info2 {
@@ -506,17 +506,17 @@ func BenchmarkQueryInfo_GetAST(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					analyzer.ClearCache()
-					info := analyzer.Analyze(b.Context(), query)
+					info := mustAnalyze(b, analyzer, b.Context(), query)
 					_, err := info.GetAST(b.Context())
 					require.NoError(b, err)
 				}
 			} else {
-				info := analyzer.Analyze(b.Context(), query)
+				info := mustAnalyze(b, analyzer, b.Context(), query)
 				_, err := info.GetAST(b.Context())
 				require.NoError(b, err)
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					info := analyzer.Analyze(b.Context(), query)
+					info := mustAnalyze(b, analyzer, b.Context(), query)
 					_, err := info.GetAST(b.Context())
 					require.NoError(b, err)
 				}
@@ -531,8 +531,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 
 	t.Run("same query returns cached QueryInfo", func(t *testing.T) {
 		query := "MATCH (n:Test) RETURN n"
-		info1 := analyzer.Analyze(t.Context(), query)
-		info2 := analyzer.Analyze(t.Context(), query)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query)
 
 		// Should be same pointer
 		if info1 != info2 {
@@ -544,8 +544,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 		query1 := "MATCH (n:Test) RETURN n"
 		query2 := "MATCH  (n:Test)  RETURN  n" // Extra spaces
 
-		info1 := analyzer.Analyze(t.Context(), query1)
-		info2 := analyzer.Analyze(t.Context(), query2)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query1)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query2)
 
 		// Should be same after normalization
 		if info1 != info2 {
@@ -557,8 +557,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 		query1 := "MATCH (n:Person) RETURN n"
 		query2 := "MATCH (n:Company) RETURN n"
 
-		info1 := analyzer.Analyze(t.Context(), query1)
-		info2 := analyzer.Analyze(t.Context(), query2)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query1)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query2)
 
 		if info1 == info2 {
 			t.Error("Different queries should have different QueryInfo")
@@ -574,16 +574,16 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 		smallAnalyzer := NewQueryAnalyzer(3) // Very small cache
 
 		// Fill cache
-		smallAnalyzer.Analyze(t.Context(), "MATCH (a:A) RETURN a")
-		smallAnalyzer.Analyze(t.Context(), "MATCH (b:B) RETURN b")
-		smallAnalyzer.Analyze(t.Context(), "MATCH (c:C) RETURN c")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (a:A) RETURN a")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (b:B) RETURN b")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (c:C) RETURN c")
 
 		if smallAnalyzer.CacheSize() != 3 {
 			t.Errorf("Cache should have 3 entries, got %d", smallAnalyzer.CacheSize())
 		}
 
 		// Add one more, should evict
-		smallAnalyzer.Analyze(t.Context(), "MATCH (d:D) RETURN d")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (d:D) RETURN d")
 
 		if smallAnalyzer.CacheSize() != 3 {
 			t.Errorf("Cache should still have 3 entries after eviction, got %d", smallAnalyzer.CacheSize())
@@ -592,8 +592,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 
 	t.Run("ClearCache empties cache", func(t *testing.T) {
 		localAnalyzer := NewQueryAnalyzer(100)
-		localAnalyzer.Analyze(t.Context(), "MATCH (n) RETURN n")
-		localAnalyzer.Analyze(t.Context(), "CREATE (n:Node)")
+		mustAnalyze(t, localAnalyzer, t.Context(), "MATCH (n) RETURN n")
+		mustAnalyze(t, localAnalyzer, t.Context(), "CREATE (n:Node)")
 
 		if localAnalyzer.CacheSize() != 2 {
 			t.Errorf("Expected 2 cached entries, got %d", localAnalyzer.CacheSize())
@@ -613,7 +613,7 @@ func TestAST_ConcurrentAccess(t *testing.T) {
 	query := "MATCH (n:Person) WHERE n.age > 21 RETURN n.name"
 
 	// Pre-analyze to get cached QueryInfo
-	info := analyzer.Analyze(t.Context(), query)
+	info := mustAnalyze(t, analyzer, t.Context(), query)
 
 	// Concurrent GetAST calls
 	done := make(chan bool, 10)

@@ -588,15 +588,6 @@ func (e *StorageExecutor) transactionStorageFor(tx *storage.BadgerTransaction) *
 	return wrapper
 }
 
-func looksLikeWriteQuery(ctx context.Context, cypher string) bool {
-	upper := upperASCII(classificationText(ctx, cypher))
-	return strings.Contains(upper, "CREATE") ||
-		strings.Contains(upper, "MERGE") ||
-		strings.Contains(upper, "DELETE") ||
-		strings.Contains(upper, "SET ") ||
-		strings.Contains(upper, "REMOVE ")
-}
-
 // executeQueryAgainstStorage executes query with current storage context.
 func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	e.decayMismatchLogged = false
