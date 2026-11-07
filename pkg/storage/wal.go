@@ -2320,9 +2320,33 @@ func ReadWALEntriesAfter(path string, afterSeq uint64, scope WALReadScope) ([]WA
 	return filtered, nil
 }
 
-// ReplayWALEntry applies a single WAL entry to the engine.
-// Uses the database name from the entry if present, otherwise wraps with default database.
+// ReplayWALEntry applies a single WAL entry to the engine as its own recovery
+// boundary. Uses the database name from the entry if present, otherwise wraps
+// with default database. As with batch recovery, destination must be quiescent:
+// no concurrent application writers may change the recovered graph or counts.
+//
+// A physical buffered commit transports entity bodies without the
+// destination-local count deltas that justified them, so this boundary ends
+// with the same authoritative count reconciliation the recovery batch owners
+// run. A caller replaying a sequence as one recovery batch applies each record
+// with replayWALEntry and completes the batch itself, so that reconciliation
+// stays once per batch rather than once per record.
 func ReplayWALEntry(engine Engine, entry WALEntry) error {
+	if err := replayWALEntry(engine, entry); err != nil {
+		return err
+	}
+	if entry.Operation != OpBufferedCommit {
+		return nil
+	}
+	if native, ok := UnwrapEngine(engine).(*BadgerEngine); ok && native != nil {
+		return native.completeRecoveredCounts(context.Background(), nil)
+	}
+	return nil
+}
+
+// replayWALEntry applies a single WAL entry to the engine without completing
+// the derived counts its physical replay did not transport.
+func replayWALEntry(engine Engine, entry WALEntry) error {
 	switch entry.Operation {
 	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
 		// Control records do not change graph state. Embedding audit records
@@ -2824,7 +2848,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 		if tx.Done && !tx.Aborted {
 			// Transaction committed - apply all its entries
 			for _, entry := range tx.Entries {
-				if err := ReplayWALEntry(engine, entry); err != nil {
+				if err := replayWALEntry(engine, entry); err != nil {
 					if !errors.Is(err, ErrAlreadyExists) {
 						result.FailedTransactions = append(result.FailedTransactions, txID)
 					}
@@ -2840,7 +2864,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 			// Transaction incomplete - needs rollback
 			// First apply forward (in case partially applied before crash)
 			for _, entry := range tx.Entries {
-				ReplayWALEntry(engine, entry) // Ignore errors - might already exist
+				replayWALEntry(engine, entry) // Ignore errors - might already exist
 			}
 			// Then undo in reverse order
 			for i := len(tx.Entries) - 1; i >= 0; i-- {
@@ -2859,7 +2883,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 
 	// Phase 4: Apply non-transactional entries
 	for _, entry := range nonTxEntries {
-		if err := ReplayWALEntry(engine, entry); err != nil {
+		if err := replayWALEntry(engine, entry); err != nil {
 			if !errors.Is(err, ErrAlreadyExists) {
 				result.NonTxErrors = append(result.NonTxErrors, err.Error())
 			}
@@ -3050,7 +3074,7 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 	// Each entry will use its own database name (stored in entry.Database)
 	result.Errors = make([]ReplayError, 0)
 	for _, entry := range entries {
-		result.Record(entry, ReplayWALEntry(engine, entry))
+		result.Record(entry, replayWALEntry(engine, entry))
 	}
 	if result.Applied > 0 {
 		if err := engine.BadgerEngine.completeRecoveredCounts(context.Background(), nil); err != nil {
