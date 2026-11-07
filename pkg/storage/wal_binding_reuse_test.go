@@ -29,7 +29,7 @@ func TestWALBindingReuseKeepsRecordAuthority(t *testing.T) {
 			exported, err := bufferedWALPropertyBindings(data.Writes, source.propKeyDict)
 			require.NoError(t, err)
 			require.ElementsMatch(t, legacyBindingEntries(t, original), legacyBindingEntries(t, exported))
-			destination := reviewBindingEngine(t, t.TempDir())
+			destination := reviewBindingEngine(t, t.TempDir(), nil)
 			_, err = destination.CreateNode(t.Context(), &Node{ID: "warm:seed"})
 			require.NoError(t, err)
 			play := func() error {
@@ -68,7 +68,7 @@ func TestWALBindingReuseKeepsRecordAuthority(t *testing.T) {
 			}
 			// Native restore replaces the dictionary in place. A prepared plan
 			// for the previous mapping must not survive that replacement.
-			donor := reviewBindingEngine(t, t.TempDir())
+			donor := reviewBindingEngine(t, t.TempDir(), nil)
 			_, err = donor.CreateNode(t.Context(), &Node{ID: "perf:seed", Properties: map[string]any{"unused_a": 1, "unused_b": 2}})
 			require.NoError(t, err)
 			before := *node
@@ -119,7 +119,7 @@ func TestWALBindingCompressedTableValidation(t *testing.T) {
 func TestWALBindingReuseRetentionBound(t *testing.T) {
 	_, data := r2BindingData(t, walBindingCacheKeys+1)
 	require.Len(t, legacyBindingEntries(t, data.PropertyBindings), walBindingCacheKeys+1)
-	destination := reviewBindingEngine(t, t.TempDir())
+	destination := reviewBindingEngine(t, t.TempDir(), nil)
 	commit, err := destination.importBufferedWALRecord(destination.work.Context(), &data, walForeignImport)
 	require.NoError(t, err)
 	require.Len(t, commit.propKeyDrain.pending, walBindingCacheKeys+1)

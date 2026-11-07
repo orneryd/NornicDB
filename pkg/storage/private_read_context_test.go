@@ -104,7 +104,15 @@ func TestTransactionEndpointReadsUseCallerContext(t *testing.T) {
 func TestEmbeddingAcceptedOutcomeSurvivesCancellation(t *testing.T) {
 	for _, stopOwner := range []bool{false, true} {
 		t.Run(map[bool]string{false: "request", true: "retained_completion"}[stopOwner], func(t *testing.T) {
-			b := newSidecarTestBadger(t)
+			var finalOutcome error
+			var b *BadgerEngine
+			if stopOwner {
+				b = fixture.OwnWithCloseAssertion(t, fixture.Track(t, NewMemoryEngine(), ErrStorageClosed), func(err error) bool {
+					return finalOutcome != nil && err == finalOutcome
+				}).BadgerEngine
+			} else {
+				b = newSidecarTestBadger(t)
+			}
 			node := publicationProofPayload(t, b)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -127,6 +135,13 @@ func TestEmbeddingAcceptedOutcomeSurvivesCancellation(t *testing.T) {
 				require.ErrorIs(t, b.work.Context().Err(), context.Canceled)
 			}
 			require.Equal(t, 1, published, "durably accepted outcome must reach its existing listener")
+			if stopOwner {
+				// The stopped owner is the injected state: retirement reports the
+				// suppression ends it could not delete, and repeated Close retains it.
+				finalOutcome = b.Close()
+				require.ErrorIs(t, finalOutcome, context.Canceled)
+				require.EqualError(t, finalOutcome, "suppression ends before the write barrier: context canceled")
+			}
 		})
 	}
 }

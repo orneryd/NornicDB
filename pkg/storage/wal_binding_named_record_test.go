@@ -29,7 +29,7 @@ func typedPropertyRecordFixture(t *testing.T, data WALBufferedCommitData, proper
 
 func TestWALUnstampedForeignCannotBorrowPriorRecord(t *testing.T) {
 	_, data := r2BindingData(t, 1)
-	dest := reviewBindingEngine(t, t.TempDir())
+	dest := reviewBindingEngine(t, t.TempDir(), nil)
 	_, err := dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"other": int64(0)}})
 	require.NoError(t, err)
 	payload, err := json.Marshal(data)

@@ -140,23 +140,46 @@ func (b *BadgerEngine) readBufferedEntities(ctx context.Context, w *WriteBehindB
 	return result, nil
 }
 
-// commitsSince visits the operations of each commit the buffer acknowledged
-// after since and has not applied yet, newest first within a generation,
-// until visit returns false.
-func (w *WriteBehindBuffer) commitsSince(ctx context.Context, since MVCCVersion, visit func(context.Context, MVCCVersion, []Operation) (bool, error)) error {
+// commitsAfterBegin visits unapplied acknowledgements outside the transaction's
+// captured BEGIN prefix. Reserved MVCC versions do not establish publication
+// order: a writer can reserve before BEGIN and acknowledge afterward.
+func (w *WriteBehindBuffer) commitsAfterBegin(ctx context.Context, begin *transactionBeginPresence, visit func(context.Context, MVCCVersion, []Operation) (bool, error)) error {
+	// An idle BEGIN retains no buffer prefix. Every later buffered commit
+	// is outside that empty cut; keep the allocation-free idle representation.
+	if begin != nil {
+		begin.mu.RLock()
+		defer begin.mu.RUnlock()
+		if begin.released || begin.buffer != w {
+			return ErrStorageClosed
+		}
+	}
 	if err := w.mu.RLockContext(ctx); err != nil {
 		return err
 	}
 	defer w.mu.RUnlock()
-	for _, buf := range append([]*CommitBuffer{w.active}, w.draining...) {
-		for i := len(buf.commits) - 1; i >= 0; i-- {
+	for generation := -1; generation < len(w.draining); generation++ {
+		buf := w.active
+		if generation >= 0 {
+			buf = w.draining[generation]
+		}
+		first := 0
+		if begin != nil && buf == begin.active {
+			first = len(begin.commits)
+		} else if begin != nil {
+			// Rotation never appends to draining generations and always
+			// installs a fresh active buffer; captured draining cuts are whole.
+			for _, captured := range begin.draining {
+				if captured == buf {
+					first = len(buf.commits)
+					break
+				}
+			}
+		}
+		for i := len(buf.commits) - 1; i >= first; i-- {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			c := &buf.commits[i]
-			if c.version.Compare(since) <= 0 {
-				break
-			}
 			more, err := visit(ctx, c.version, c.ops)
 			if err != nil {
 				return err
@@ -166,7 +189,7 @@ func (w *WriteBehindBuffer) commitsSince(ctx context.Context, since MVCCVersion,
 			}
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 // readBufferedBeginPresence projects physical existence at an immutable BEGIN
