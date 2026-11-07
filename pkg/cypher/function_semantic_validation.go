@@ -161,7 +161,7 @@ func forEachFunctionInvocation(ctx context.Context, text string, visit func(name
 			index = skipCalledName(expression, name.End)
 			continue
 		}
-		parts, cursor := dottedNameParts(expression, name.End, true)
+		parts, cursor := dottedNameParts(expression, name.End, true, dottedNameIdentity)
 		name.Value += parts
 		cursor = queryGapEnd(expression, cursor)
 		if cursor >= len(expression) || expression[cursor] != '(' {
@@ -185,7 +185,7 @@ func forEachFunctionInvocation(ctx context.Context, text string, visit func(name
 
 func isNonFunctionSemanticKeyword(name string) bool {
 	switch name {
-	case "and", "by", "call", "case", "contains", "create", "delete", "detach", "distinct", "do", "each", "elements", "else", "end", "filter", "for", "foreach", "group", "groups", "in", "insert", "is", "limit", "match", "merge", "not", "of", "offset", "on", "optional", "or", "path", "paths", "remove", "require", "return", "set", "shortest", "skip", "starts", "then", "union", "unwind", "when", "where", "with", "xor", "yield":
+	case "and", "as", "by", "call", "case", "contains", "create", "delete", "detach", "distinct", "do", "each", "elements", "else", "end", "filter", "for", "foreach", "group", "groups", "in", "insert", "is", "limit", "match", "merge", "not", "of", "offset", "on", "optional", "or", "path", "paths", "remove", "require", "return", "set", "shortest", "skip", "starts", "then", "union", "unwind", "when", "where", "with", "xor", "yield":
 		return true
 	default:
 		return false
@@ -200,16 +200,25 @@ func skipCalledName(expression string, start int) int {
 	if !ok {
 		return start
 	}
-	_, end.End = dottedNameParts(expression, end.End, true)
+	_, end.End = dottedNameParts(expression, end.End, true, dottedNameExtent)
 	return end.End
 }
+
+type dottedNameProjection uint8
+
+const (
+	dottedNameIdentity dottedNameProjection = iota
+	dottedNameExtent
+)
 
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends
 // at end, and where they end. Each name is read as the code that runs it
 // reads it: whitespace may stand around a dot only when spaced is set, for a
 // procedure, function or graph name. Contiguous unquoted components reuse
-// the source slice; only names containing trivia or quotes are normalized.
-func dottedNameParts(expression string, end int, spaced bool) (string, int) {
+// the source slice; only identity projection normalizes trivia or quotes.
+// Extent projection returns the source suffix without decoding or building an
+// identity; its consumers use only the returned end.
+func dottedNameParts(expression string, end int, spaced bool, projection dottedNameProjection) (string, int) {
 	skip := func(index int) int {
 		if spaced && index < len(expression) && (cyphertext.IsWhitespaceAt(expression, index) || expression[index] == '/' || expression[index] >= 0x80) {
 			return queryGapEnd(expression, index)
@@ -221,27 +230,27 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 	normalizing := false
 	for {
 		dot := skip(end)
-		if dot >= len(expression) || expression[dot] != '.' {
+		if !isPropertyDotAt(expression, dot) {
 			if normalizing {
 				return normalized.String(), end
 			}
 			return expression[origin:end], end
 		}
 		partStart := skip(dot + 1)
-		part, ok := cyphertext.ScanIdentifier(expression, partStart)
+		part, quoted, ok := cyphertext.ScanIdentifierExtent(expression, partStart)
 		if !ok {
 			if normalizing {
 				return normalized.String(), end
 			}
 			return expression[origin:end], end
 		}
-		if !normalizing && (dot != end || partStart != dot+1 || isCypherBacktickByte(expression[partStart])) {
+		if projection == dottedNameIdentity && !normalizing && (dot != end || partStart != dot+1 || quoted) {
 			normalized.WriteString(expression[origin:end])
 			normalizing = true
 		}
 		if normalizing {
 			normalized.WriteByte('.')
-			normalized.WriteString(part.Value)
+			normalized.WriteString(cyphertext.SymbolicNameValue(expression[part.Start:part.End]))
 		}
 		end = part.End
 	}

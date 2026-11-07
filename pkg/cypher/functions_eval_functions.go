@@ -24,26 +24,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Parenthesized Expressions - strip outer parens
 	// ========================================
-	if strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
-		// Check if these parentheses wrap the entire expression
-		depth := 0
-		allWrapped := true
-		for i, ch := range expr {
-			if ch == '(' {
-				depth++
-			} else if ch == ')' {
-				depth--
-			}
-			// If depth reaches 0 before the last character, parens don't wrap the whole thing
-			if depth == 0 && i < len(expr)-1 {
-				allWrapped = false
-				break
-			}
-		}
-		if allWrapped && depth == 0 {
-			// Strip outer parentheses and re-evaluate
-			return e.evaluateExpressionWithContextFull(ctx, expr[1:len(expr)-1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		}
+	if inner, wrapped := stripEnclosingRowDelimiter(expr, '(', ')'); wrapped {
+		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// ========================================

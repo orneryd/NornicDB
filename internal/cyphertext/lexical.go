@@ -9,6 +9,13 @@ import (
 // IsWhitespace is the shared lexer's White_Space classification.
 func IsWhitespace(r rune) bool { return unicode.IsSpace(r) }
 
+// IsHorizontalASCIIWhitespace recognizes the space/tab fast-path subset.
+// For example, newline returns false so line-comment boundaries remain with
+// the full trivia reader; Unicode whitespace is decoded by WhitespaceAt.
+func IsHorizontalASCIIWhitespace(character byte) bool {
+	return character == ' ' || character == '\t'
+}
+
 // NameStart is the shared lexer's Letter classification. Semantic identifier
 // validation may reject a name after tokenization; whitespace never joins it.
 func NameStart(r rune) bool {

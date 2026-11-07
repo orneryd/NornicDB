@@ -201,45 +201,49 @@ type deletedEntityRead struct {
 
 // deletedEntityReadsIn returns the variables expression reads a property, the
 // labels, the keys or properties() of, outside string literals: v.p,
-// labels(v), keys(v), properties(v).
+// labels(v), keys(v), properties(v). A gap between those parts is the
+// statement's: whitespace and comments (queryGapEnd).
 func deletedEntityReadsIn(expression string) []deletedEntityRead {
 	var reads []deletedEntityRead
 	for index := 0; index < len(expression); {
-		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
-			index = end
-			continue
+		if !isCypherBacktickByte(expression[index]) {
+			if end, opaque := skipCypherLexicalToken(expression, index); opaque {
+				index = end
+				continue
+			}
 		}
-		switch {
-		case !cyphertext.NamePartAt(expression, index) || (index > 0 && (cyphertext.NamePartAt(expression, index-1) || expression[index-1] == '.')):
+		name, ok := cyphertext.ScanIdentifier(expression, index)
+		if !ok {
 			index++
 			continue
 		}
-		start := index
-		index = cyphertext.NamePartEnd(expression, index)
-		word := expression[start:index]
-		next := skipSpaceIndex(expression, index)
+		if !functionNameStartsAt(expression, index) {
+			index = name.End
+			continue
+		}
+		index = name.End
+		word := name.Value
+		next := queryGapEnd(expression, index)
 		switch {
-		case next < len(expression) && expression[next] == '.' && next+1 < len(expression) && expression[next+1] != '.':
+		case isPropertyDotAt(expression, next):
+			// A qualified function namespace is not a row variable. Keep
+			// scanning the argument body so actual deleted reads still fail.
+			_, end := dottedNameParts(expression, index, true, dottedNameExtent)
+			if open := queryGapEnd(expression, end); open < len(expression) && expression[open] == '(' {
+				index = end
+				continue
+			}
 			if !propertyNullTestFollows(expression, next+1) {
 				reads = append(reads, deletedEntityRead{variable: word})
 			}
 		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
-			argumentStart := skipSpaceIndex(expression, next+1)
-			argumentEnd := argumentStart
-			argumentEnd = cyphertext.NamePartEnd(expression, argumentEnd)
-			if close := skipSpaceIndex(expression, argumentEnd); argumentEnd > argumentStart && close < len(expression) && expression[close] == ')' {
-				reads = append(reads, deletedEntityRead{variable: expression[argumentStart:argumentEnd], relationshipOnly: !strings.EqualFold(word, "labels")})
+			argument, ok := cyphertext.ScanIdentifier(expression, queryGapEnd(expression, next+1))
+			if close := queryGapEnd(expression, argument.End); ok && close < len(expression) && expression[close] == ')' {
+				reads = append(reads, deletedEntityRead{variable: argument.Value, relationshipOnly: !strings.EqualFold(word, "labels")})
 			}
 		}
 	}
 	return reads
-}
-
-func skipSpaceIndex(text string, index int) int {
-	for index < len(text) && cyphertext.IsWhitespaceAt(text, index) {
-		index++
-	}
-	return index
 }
 
 // bindsDeleted reports whether row binds variable to a deleted node or
@@ -284,16 +288,19 @@ func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool)
 // index is followed by IS NULL or IS NOT NULL: Neo4j tests a deleted
 // entity's property for null without an error (it has none).
 func propertyNullTestFollows(expression string, index int) bool {
-	index = cyphertext.NamePartEnd(expression, index)
-	rest := expression[skipSpaceIndex(expression, index):]
-	if !startsWithKeywordFold(rest, "IS") {
+	property, _, ok := cyphertext.ScanIdentifierExtent(expression, queryGapEnd(expression, index))
+	if !ok {
 		return false
 	}
-	rest = strings.TrimLeftFunc(rest[len("IS"):], cyphertext.IsWhitespace)
-	if startsWithKeywordFold(rest, "NOT") {
-		rest = strings.TrimLeftFunc(rest[len("NOT"):], cyphertext.IsWhitespace)
+	index = queryGapEnd(expression, property.End)
+	if !matchKeywordAt(expression, index, "IS") {
+		return false
 	}
-	return startsWithKeywordFold(rest, "NULL")
+	index = queryGapEnd(expression, index+len("IS"))
+	if matchKeywordAt(expression, index, "NOT") {
+		index = queryGapEnd(expression, index+len("NOT"))
+	}
+	return matchKeywordAt(expression, index, "NULL")
 }
 
 // iterationSourceVariable is the row variable that variable iterates in
@@ -307,15 +314,13 @@ func iterationSourceVariable(clause, variable string) string {
 		}
 		after := offset + index + len(variable)
 		offset = after
-		rest := clause[skipSpaceIndex(clause, after):]
+		rest := clause[queryGapEnd(clause, after):]
 		if !startsWithKeywordFold(rest, "IN") {
 			continue
 		}
-		rest = strings.TrimLeftFunc(rest[len("IN"):], cyphertext.IsWhitespace)
-		end := 0
-		end = cyphertext.NamePartEnd(rest, end)
-		if end > 0 {
-			return rest[:end]
+		source, ok := cyphertext.ScanIdentifier(rest, queryGapEnd(rest, len("IN")))
+		if ok {
+			return source.Value
 		}
 	}
 	return ""

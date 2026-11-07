@@ -147,10 +147,7 @@ func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColu
 // type cast ::.
 func mayTestExpressionLabels(query string) bool {
 	for i := strings.IndexByte(query, ')'); i >= 0; {
-		j := i + 1
-		for j < len(query) && cyphertext.IsWhitespaceAt(query, j) {
-			j++
-		}
+		j := queryGapEnd(query, i+1)
 		if j < len(query) && query[j] == ':' && (j+1 >= len(query) || query[j+1] != ':') {
 			return true
 		}
@@ -1188,7 +1185,10 @@ func (r *labelExpressionRewriter) foreach(start, end int) error {
 	if close < 0 {
 		return nil
 	}
-	bar := topLevelByteIndex(q, open+1, close, '|')
+	bar := findTopLevelOperator(q[open+1:close], "|", false, true)
+	if bar >= 0 {
+		bar += open + 1
+	}
 	if bar < 0 {
 		return r.expression(open+1, close)
 	}
@@ -1212,7 +1212,18 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 		}
 		switch {
 		case isCypherQuoteByte(c):
+			if isCypherBacktickByte(c) {
+				if name, ok := cyphertext.ScanIdentifier(q[:end], i); ok {
+					if err := r.vectorCall(i, name.End, end); err != nil {
+						return err
+					}
+				}
+			}
 			i = skipCypherQuotedText(q, i, c) - 1
+		case c == '/':
+			if next := queryCommentEnd(q[:end], i); next > i {
+				i = next - 1
+			}
 		case c == '{':
 			close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter)
 			if close < 0 {
@@ -1222,7 +1233,7 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 				if err := r.subquery(i+1, close); err != nil {
 					return err
 				}
-			} else if err := r.expression(i+1, close); err != nil {
+			} else if err := r.mapLiteral(i+1, close); err != nil {
 				return err
 			}
 			i = close
@@ -1266,6 +1277,54 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 		}
 	}
 	return nil
+}
+
+// mapLiteral rewrites the entries of the map literal or map projection
+// query[start:close] (start after its '{', close at its '}'): an entry's key
+// is a name or a quoted name, not an expression, so its colon is no label
+// test ({a:(x):A} is the value (x):A), and the entry's value is an
+// expression like any other. A map projection's keyless selector (.name)
+// has no value.
+func (r *labelExpressionRewriter) mapLiteral(start, close int) error {
+	for entry := start; entry < close; {
+		entry = queryGapEnd(r.query[:close], entry)
+		if entry >= close {
+			return nil
+		}
+		end := findTopLevelOperator(r.query[entry:close], ",", false, true)
+		if end >= 0 {
+			end += entry
+		}
+		if end < 0 {
+			end = close
+		}
+		if err := r.expression(mapEntryValueStart(r.query, entry, end), end); err != nil {
+			return err
+		}
+		entry = end + 1
+	}
+	return nil
+}
+
+// mapEntryValueStart is where the value of the map entry query[entry:end]
+// starts: after the entry's key and the trivia around its colon. It is entry
+// for a map projection's keyless selector (.name, .*) and for an entry
+// without a colon.
+func mapEntryValueStart(q string, entry, end int) int {
+	if entry >= end || q[entry] == '.' {
+		return entry
+	}
+	at := entry
+	if isCypherQuoteByte(q[at]) {
+		at = skipCypherQuotedText(q, at, q[at])
+	} else {
+		at = cyphertext.NamePartEnd(q, at)
+	}
+	colon := queryGapEnd(q[:end], at)
+	if colon >= end || q[colon] != ':' {
+		return entry
+	}
+	return queryGapEnd(q[:end], colon+1)
 }
 
 // labelTest checks the word at query[wordStart:wordEnd]: a variable followed
@@ -1519,31 +1578,25 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 	if close < 0 {
 		return end, nil
 	}
-	call := open > start && cyphertext.NamePartAt(q, open-1)
+	subject := callableReceiverStart(q, open)
+	call := subject >= start && subject < open
 	if !call {
 		if chainEnd, ok := relationshipChainEnd(r.query, open, end); ok {
 			return chainEnd, r.patternPredicate(open, chainEnd, -1, -1)
 		}
-		if next, handled, err := r.expressionLabelTest(open, open, close, end); handled {
+		if next, handled, err := r.expressionLabelTest(start, open, open, close, end); handled {
 			return next, err
 		}
 	} else {
-		subject := open - 1
-		for subject > start && (cyphertext.NamePartAt(q, subject-1) || q[subject-1] == '.') {
-			subject--
-		}
-		if next, handled, err := r.expressionLabelTest(subject, open, close, end); handled {
+		if next, handled, err := r.expressionLabelTest(start, subject, open, close, end); handled {
 			return next, err
 		}
 		// exists((n)-->(m)): the argument as the predicate.
-		nameStart := open - 1
-		for nameStart > start && cyphertext.NamePartAt(q, nameStart-1) {
-			nameStart--
-		}
+
 		inner := skipASCIISpaces(q, open+1, close)
-		if strings.EqualFold(q[nameStart:open], "exists") {
+		if name, ok := canonicalCallableName(q[subject:open]); ok && strings.EqualFold(name, "exists") {
 			if chainEnd, ok := relationshipChainEnd(r.query, inner, close); ok && skipASCIISpaces(q, chainEnd, close) == close {
-				return close + 1, r.patternPredicate(inner, chainEnd, nameStart, close)
+				return close + 1, r.patternPredicate(inner, chainEnd, subject, close)
 			}
 		}
 	}
@@ -1557,18 +1610,20 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 // labels on any expression (#1181). handled is false when no label test
 // follows, or when the parenthesis is a dynamic label's ($(e), $any(e),
 // $all(e)) or stands in a label chain (n:$(e):B); an expression that itself
-// holds a rewrite is left as it was.
-func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close, end int) (int, bool, error) {
+// holds a rewrite is left as it was. start is where the expression being
+// scanned begins: a subject that begins it (a map entry's value, {a:(x):A})
+// stands in no label chain, however the text before it ends.
+func (r *labelExpressionRewriter) expressionLabelTest(start, subjectStart, open, close, end int) (int, bool, error) {
 	q := r.query
-	if strings.HasPrefix(q[subjectStart:open], "$") || (subjectStart > 0 && (q[subjectStart-1] == '$' || q[subjectStart-1] == ':')) {
+	if strings.HasPrefix(q[subjectStart:open], "$") || (subjectStart > start && (q[subjectStart-1] == '$' || q[subjectStart-1] == ':')) {
 		return 0, false, nil
 	}
 	after := close + 1
 	chainStart := -1
-	if colon := skipASCIISpaces(q, after, end); colon < end && q[colon] == ':' && (colon+1 >= end || q[colon+1] != ':') {
-		chainStart = skipASCIISpaces(q, colon+1, end)
-	} else if is := skipASCIISpaces(q, after, end); is > after && matchKeywordAt(q[:end], is, "IS") && readLabelISOperand(q[:end], is+2, labelAfterIS).label {
-		label := skipASCIISpaces(q, is+2, end)
+	if colon := queryGapEnd(q[:end], after); colon < end && q[colon] == ':' && (colon+1 >= end || q[colon+1] != ':') {
+		chainStart = queryGapEnd(q[:end], colon+1)
+	} else if is := queryGapEnd(q[:end], after); is > after && matchKeywordAt(q[:end], is, "IS") && readLabelISOperand(q[:end], is+2, labelAfterIS).label {
+		label := queryGapEnd(q[:end], is+2)
 		if matchKeywordAt(q[:end], label, "NOT") || matchKeywordAt(q[:end], label, "LABELED") {
 			return 0, false, nil
 		}
@@ -1665,7 +1720,10 @@ func (r *labelExpressionRewriter) comprehension(open, close int) (bool, error) {
 func (r *labelExpressionRewriter) projectionBar(start, end int) int {
 	q := r.query
 	for i := start; ; {
-		bar := topLevelByteIndex(q, i, end, '|')
+		bar := findTopLevelOperator(q[i:end], "|", false, true)
+		if bar >= 0 {
+			bar += i
+		}
 		if bar < 0 || !labelExpressionBarAt(q[:end], start, bar) {
 			return bar
 		}
@@ -1742,28 +1800,6 @@ func startsPathAssignment(q string, i, end int) bool {
 	}
 	paren := skipASCIISpaces(q, eq+1, end)
 	return paren < end && q[paren] == '('
-}
-
-// topLevelByteIndex returns the index of the first b in q[start:end] outside
-// quotes and brackets, -1 when there is none.
-func topLevelByteIndex(q string, start, end int, b byte) int {
-	depth := 0
-	for i := start; i < end; i++ {
-		c := q[i]
-		switch cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			i = skipCypherQuotedText(q, i, c) - 1
-			continue
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		}
-		if c == b && depth == 0 {
-			return i
-		}
-	}
-	return -1
 }
 
 // clauseKeywordStart returns where the clause keyword that ends at
