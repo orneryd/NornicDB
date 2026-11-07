@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject stale relationship property updates under write-behind, including
   peers whose commit version was reserved before BEGIN. Preserve the observed
   relationship namespace across implicit and explicit query updates.
+- Preserve XML-special characters and Unicode in GraphML export; reject text XML
+  cannot represent and report file export failures. Go `GraphML` now returns
+  `(string, error)`; see [the migration guide](docs/development/graphml-go-api.md).
 
 - Return the normal syntax error for zero-argument `normalize()` calls instead
   of closing the Bolt connection. Preserve ambiguous-aggregation diagnostics

@@ -5,6 +5,7 @@ package registry
 import (
 	"reflect"
 
+	apocexport "github.com/orneryd/nornicdb/apoc/export"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
@@ -34,18 +35,25 @@ const (
 // These are signature metadata, never invocable functions. Root APOC's
 // supported surface stays closed; Cypher preserves its text-to-number rules.
 var apocArgumentPlans = map[reflect.Type][]argumentBinding{
-	reflect.TypeOf((func([]interface{}) float64)(nil)):           {listArgument},
-	reflect.TypeOf((func([]interface{}) interface{})(nil)):       {listArgument},
-	reflect.TypeOf((func([]interface{}, interface{}) bool)(nil)): {listArgument, declaredArgument},
-	reflect.TypeOf((func([]string, string) string)(nil)):         {stringListArgument, stringArgument},
-	reflect.TypeOf((func(string, string) []string)(nil)):         {stringArgument, stringArgument},
-	reflect.TypeOf((func(string) string)(nil)):                   {stringArgument},
-	reflect.TypeOf((func(string, string) int)(nil)):              {stringArgument, stringArgument},
-	reflect.TypeOf((func(string, string) float64)(nil)):          {stringArgument, stringArgument},
-	reflect.TypeOf((func(float64) float64)(nil)):                 {numericArgument},
-	reflect.TypeOf((func([]float64) []float64)(nil)):             {numericListArgument},
-	reflect.TypeOf((func([]float64, []float64) float64)(nil)):    {numericListArgument, numericListArgument},
-	reflect.TypeOf((func(int64, int64) (int64, error))(nil)):     {declaredArgument, declaredArgument},
+	reflect.TypeOf((func([]*apocexport.Node, []*apocexport.Relationship) (string, error))(nil)): {declaredArgument, declaredArgument},
+	reflect.TypeOf((func([]interface{}) float64)(nil)):                                          {listArgument},
+	reflect.TypeOf((func([]interface{}) interface{})(nil)):                                      {listArgument},
+	reflect.TypeOf((func([]interface{}, interface{}) bool)(nil)):                                {listArgument, declaredArgument},
+	reflect.TypeOf((func([]string, string) string)(nil)):                                        {stringListArgument, stringArgument},
+	reflect.TypeOf((func(string, string) []string)(nil)):                                        {stringArgument, stringArgument},
+	reflect.TypeOf((func(string) string)(nil)):                                                  {stringArgument},
+	reflect.TypeOf((func(string, string) int)(nil)):                                             {stringArgument, stringArgument},
+	reflect.TypeOf((func(string, string) float64)(nil)):                                         {stringArgument, stringArgument},
+	reflect.TypeOf((func(float64) float64)(nil)):                                                {numericArgument},
+	reflect.TypeOf((func([]float64) []float64)(nil)):                                            {numericListArgument},
+	reflect.TypeOf((func([]float64, []float64) float64)(nil)):                                   {numericListArgument, numericListArgument},
+	reflect.TypeOf((func(int64, int64) (int64, error))(nil)):                                    {declaredArgument, declaredArgument},
+	// The whole-graph export file family (apoc.export.{json,csv,cypher,graphml}
+	// {All,Data}) declares one shape: the graph the caller already holds plus the
+	// destination path for it. Every argument arrives bound to its declared Go
+	// type, and the export writer -- the one owner of that destination -- reports
+	// the write failure as the call's error.
+	reflect.TypeOf((func([]*apocexport.Node, []*apocexport.Relationship, string) error)(nil)): {declaredArgument, declaredArgument, declaredArgument},
 }
 
 var cypherArgumentPlans = map[reflect.Type][]argumentBinding{

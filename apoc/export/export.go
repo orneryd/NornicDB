@@ -7,11 +7,13 @@ package apocexport
 
 import (
 	"encoding/csv"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	apocconvert "github.com/orneryd/nornicdb/apoc/convert"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -33,6 +35,23 @@ type Relationship struct {
 	StartNode  int64
 	EndNode    int64
 	Properties map[string]interface{}
+}
+
+// writeExportFile is the one owner of an export destination: it creates the
+// parent directory of filePath and writes data there, reporting why the
+// destination could not be written instead of dropping the result. An empty
+// filePath names no destination, so there is nothing to write and no error.
+func writeExportFile(filePath string, data []byte) error {
+	if filePath == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+	return nil
 }
 
 // Json exports data to JSON format.
@@ -65,17 +84,7 @@ func JsonAll(nodes []*Node, rels []*Relationship, filePath string) error {
 		return err
 	}
 
-	// Write to file if path provided
-	if filePath != "" {
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
-		if err := os.WriteFile(filePath, []byte(jsonStr), 0644); err != nil {
-			return fmt.Errorf("failed to write file: %w", err)
-		}
-	}
-
-	return nil
+	return writeExportFile(filePath, []byte(jsonStr))
 }
 
 // JsonData exports specific data to JSON.
@@ -124,17 +133,7 @@ func Csv(nodes []*Node, filePath string) error {
 
 	writer.Flush()
 
-	// Write to file if path provided
-	if filePath != "" {
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
-		if err := os.WriteFile(filePath, []byte(builder.String()), 0644); err != nil {
-			return fmt.Errorf("failed to write file: %w", err)
-		}
-	}
-
-	return nil
+	return writeExportFile(filePath, []byte(builder.String()))
 }
 
 // CsvAll exports all graph data to CSV.
@@ -225,13 +224,7 @@ func Cypher(nodes []*Node, rels []*Relationship) string {
 //
 //	apoc.export.cypher.all('/path/to/export.cypher') => exported
 func CypherAll(nodes []*Node, rels []*Relationship, filePath string) error {
-	cypherStr := Cypher(nodes, rels)
-
-	// In production, would write to file
-	_ = cypherStr
-	_ = filePath
-
-	return nil
+	return writeExportFile(filePath, []byte(Cypher(nodes, rels)))
 }
 
 // CypherData exports specific data as Cypher statements.
@@ -248,7 +241,10 @@ func CypherData(nodes []*Node, rels []*Relationship, filePath string) error {
 // Example:
 //
 //	apoc.export.graphml(nodes, rels) => GraphML string
-func GraphML(nodes []*Node, rels []*Relationship) string {
+//
+// GraphML rejects malformed UTF-8 and characters forbidden by XML 1.0.
+// On error it returns no partial document.
+func GraphML(nodes []*Node, rels []*Relationship) (string, error) {
 	var builder strings.Builder
 
 	builder.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
@@ -259,7 +255,9 @@ func GraphML(nodes []*Node, rels []*Relationship) string {
 	for _, node := range nodes {
 		builder.WriteString(fmt.Sprintf("    <node id=\"n%d\">\n", node.ID))
 		for key, val := range node.Properties {
-			builder.WriteString(fmt.Sprintf("      <data key=\"%s\">%s</data>\n", key, apocconvert.ToString(val)))
+			if err := writeGraphMLData(&builder, key, apocconvert.ToString(val)); err != nil {
+				return "", err
+			}
 		}
 		builder.WriteString("    </node>\n")
 	}
@@ -267,9 +265,13 @@ func GraphML(nodes []*Node, rels []*Relationship) string {
 	// Export relationships
 	for _, rel := range rels {
 		builder.WriteString(fmt.Sprintf("    <edge source=\"n%d\" target=\"n%d\">\n", rel.StartNode, rel.EndNode))
-		builder.WriteString(fmt.Sprintf("      <data key=\"type\">%s</data>\n", rel.Type))
+		if err := writeGraphMLData(&builder, "type", rel.Type); err != nil {
+			return "", err
+		}
 		for key, val := range rel.Properties {
-			builder.WriteString(fmt.Sprintf("      <data key=\"%s\">%s</data>\n", key, apocconvert.ToString(val)))
+			if err := writeGraphMLData(&builder, key, apocconvert.ToString(val)); err != nil {
+				return "", err
+			}
 		}
 		builder.WriteString("    </edge>\n")
 	}
@@ -277,7 +279,7 @@ func GraphML(nodes []*Node, rels []*Relationship) string {
 	builder.WriteString("  </graph>\n")
 	builder.WriteString("</graphml>\n")
 
-	return builder.String()
+	return builder.String(), nil
 }
 
 // GraphMLAll exports all graph data to GraphML.
@@ -286,13 +288,11 @@ func GraphML(nodes []*Node, rels []*Relationship) string {
 //
 //	apoc.export.graphml.all('/path/to/export.graphml') => exported
 func GraphMLAll(nodes []*Node, rels []*Relationship, filePath string) error {
-	graphMLStr := GraphML(nodes, rels)
-
-	// In production, would write to file
-	_ = graphMLStr
-	_ = filePath
-
-	return nil
+	document, err := GraphML(nodes, rels)
+	if err != nil {
+		return err
+	}
+	return writeExportFile(filePath, []byte(document))
 }
 
 // GraphMLData exports specific data to GraphML.
@@ -302,6 +302,43 @@ func GraphMLAll(nodes []*Node, rels []*Relationship, filePath string) error {
 //	apoc.export.graphml.data(nodes, rels, '/path/to/export.graphml') => exported
 func GraphMLData(nodes []*Node, rels []*Relationship, filePath string) error {
 	return GraphMLAll(nodes, rels, filePath)
+}
+
+// writeGraphMLData writes one property as a GraphML data element. The key is an
+// attribute value and the property is element text, so both are escaped and a
+// key or value carrying markup cannot break the document.
+func writeGraphMLData(builder *strings.Builder, key, value string) error {
+	if err := validateXMLText(key); err != nil {
+		return err
+	}
+	if err := validateXMLText(value); err != nil {
+		return err
+	}
+	builder.WriteString("      <data key=\"")
+	if err := xml.EscapeText(builder, []byte(key)); err != nil {
+		return err
+	}
+	builder.WriteString("\">")
+	if err := xml.EscapeText(builder, []byte(value)); err != nil {
+		return err
+	}
+	builder.WriteString("</data>\n")
+	return nil
+}
+
+// validateXMLText enforces the XML 1.0 Char production before EscapeText,
+// whose replacement behavior would otherwise silently lose invalid input.
+func validateXMLText(text string) error {
+	for offset := 0; offset < len(text); {
+		r, width := utf8.DecodeRuneInString(text[offset:])
+		if (r == utf8.RuneError && width == 1) ||
+			!(r == '\t' || r == '\n' || r == '\r' ||
+				r >= 0x20 && r <= 0xd7ff || r >= 0xe000 && r <= 0xfffd || r >= 0x10000 && r <= 0x10ffff) {
+			return fmt.Errorf("GraphML: unrepresentable XML 1.0 character at byte %d", offset)
+		}
+		offset += width
+	}
+	return nil
 }
 
 // appendValue owns Cypher literal structure. Every numeric leaf uses AppendNumericText;
@@ -359,10 +396,7 @@ func appendValue(out *pool.PooledStringBuilder, val interface{}) {
 //
 //	apoc.export.toFile(data, '/path/to/file.txt') => written
 func ToFile(data string, filePath string) error {
-	// In production, would write to file
-	_ = data
-	_ = filePath
-	return nil
+	return writeExportFile(filePath, []byte(data))
 }
 
 // ToString returns export data as a string.
@@ -377,7 +411,7 @@ func ToString(nodes []*Node, rels []*Relationship, format string) (string, error
 	case "cypher":
 		return Cypher(nodes, rels), nil
 	case "graphml":
-		return GraphML(nodes, rels), nil
+		return GraphML(nodes, rels)
 	default:
 		return "", fmt.Errorf("unsupported format: %s", format)
 	}
