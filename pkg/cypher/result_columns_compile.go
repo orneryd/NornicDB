@@ -811,7 +811,15 @@ func (compilation *boundCompilation) procedure(clause *boundClause) {
 	clause.step.Kind = resultmetadata.ClauseProcedure
 	node := clause.source.syntax
 	name := node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
-	_, found := globalProcedureRegistry.Get(name)
+	procedure, found := globalProcedureRegistry.Get(name)
+	if found {
+		if arguments := procedureArgumentTextsFromSyntax(node); arguments != nil {
+			if err := validateProcedureArgumentCount(procedure.Spec, len(arguments)); err != nil {
+				compilation.fail(resultmetadata.ReasonUnsupportedSyntax, clause.source.start, err)
+				return
+			}
+		}
+	}
 	yield := yieldFromSyntax(node)
 	outputs := projectedProcedureNodeNames(node)
 	if !found {
