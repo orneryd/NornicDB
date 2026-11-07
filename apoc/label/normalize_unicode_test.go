@@ -16,7 +16,7 @@ func TestNormalizePreservesUnicodeInitialAndRemainder(t *testing.T) {
 		{"élan", "Élan"}, {" person ", "Person"}, {"", ""}, {" \t\n", ""},
 		{"e\u0301lan", "E\u0301lan"}, {"\u0301élan", "\u0301élan"},
 		{"é漢字", "É漢字"}, {"漢字", "漢字"}, {"😀hello", "😀hello"},
-		{"𐐨élan", "𐐀élan"}, {"ǳuro", "Ǳuro"},
+		{"𐐨élan", "𐐀élan"}, {"ǳuro", "Ǳuro"}, {"\ufffdabc", "\ufffdabc"},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			got := label.Normalize(tc.input)
@@ -47,6 +47,7 @@ func TestNormalizePreservesAdmittedUTF16NameUnits(t *testing.T) {
 func TestNormalizeRetainsMalformedByteHandling(t *testing.T) {
 	for _, tc := range []struct{ input, want string }{
 		{"\xffabc", "\ufffdabc"}, {"\xc3", "\ufffd"}, {"a\xff", "A\xff"},
+		{"\xed\xa0", "\ufffd\xa0"},
 	} {
 		require.Equal(t, tc.want, label.Normalize(tc.input))
 	}

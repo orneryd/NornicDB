@@ -1,8 +1,9 @@
 package label_test
 
 import (
-	"github.com/orneryd/nornicdb/apoc/label"
 	"testing"
+
+	"github.com/orneryd/nornicdb/apoc/label"
 )
 
 var normalizedLabelSink string
