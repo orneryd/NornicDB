@@ -243,11 +243,18 @@ func (e *StorageExecutor) parseConstraintContractEntry(ctx context.Context, rawE
 	}
 
 	entryName := storage.ConstraintContractEntryName(contractName, index)
-	if compiledConstraint, contractEntry, ok, err := e.parseConstraintContractPrimitive(ctx, entryText, variable, entityType, labelOrType, entryName); ok || err != nil {
-		return contractEntry, compiledConstraint, nil, err
+	// The entry reads its REQUIRE expression with the one property requirement
+	// owner a native declaration uses, so the properties a contract compiles are
+	// bound to the contract's FOR variable exactly as a declaration binds them.
+	requirement, recognized, err := parseConstraintPropertyRequirement(ctx, variable, entryText)
+	if err != nil {
+		return storage.ConstraintContractEntry{}, nil, nil, err
 	}
-	if compiledType, contractEntry, ok, err := e.parseConstraintContractPropertyType(ctx, entryText, variable, entityType, labelOrType, entryName); ok || err != nil {
-		return contractEntry, nil, compiledType, err
+	if recognized {
+		entry, constraint, propertyType, compiled, compileErr := compileConstraintContractPrimitive(requirement, entryText, entityType, labelOrType, entryName)
+		if compiled || compileErr != nil {
+			return entry, constraint, propertyType, compileErr
+		}
 	}
 
 	kind := storage.ConstraintContractKindBooleanNode
@@ -257,75 +264,76 @@ func (e *StorageExecutor) parseConstraintContractEntry(ctx context.Context, rawE
 	return storage.ConstraintContractEntry{Kind: kind, Expression: entryText}, nil, nil, nil
 }
 
-func (e *StorageExecutor) parseConstraintContractPrimitive(ctx context.Context, entryText, variable string, entityType storage.ConstraintEntityType, labelOrType, entryName string) (*storage.Constraint, storage.ConstraintContractEntry, bool, error) {
-	if kind, property, ok := parseConstraintPredicate(ctx, entryText); ok {
-		if kind == "unique" {
-			constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintUnique, EntityType: entityType, Label: labelOrType, Properties: []string{property}}
-			primitiveKind := storage.ConstraintContractKindPrimitiveNode
-			if entityType == storage.ConstraintEntityRelationship {
-				primitiveKind = storage.ConstraintContractKindPrimitiveRelationship
-			}
-			return constraint, storage.ConstraintContractEntry{Kind: primitiveKind, PrimitiveType: string(storage.ConstraintUnique), Property: property, Properties: []string{property}, Expression: entryText}, true, nil
-		}
-		if kind == "exists" {
-			constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintExists, EntityType: entityType, Label: labelOrType, Properties: []string{property}}
-			primitiveKind := storage.ConstraintContractKindPrimitiveNode
-			if entityType == storage.ConstraintEntityRelationship {
-				primitiveKind = storage.ConstraintContractKindPrimitiveRelationship
-			}
-			return constraint, storage.ConstraintContractEntry{Kind: primitiveKind, PrimitiveType: string(storage.ConstraintExists), Property: property, Properties: []string{property}, Expression: entryText}, true, nil
-		}
-	}
-
-	if entityType == storage.ConstraintEntityNode {
-		if properties, ok := e.parseNodeKeyPropertyList(ctx, entryText); ok {
-			if len(properties) == 0 {
-				return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaConstraintPropertiesRequired("NODE KEY"), nil)
-			}
-			constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintNodeKey, EntityType: entityType, Label: labelOrType, Properties: properties}
-			return constraint, storage.ConstraintContractEntry{Kind: storage.ConstraintContractKindPrimitiveNode, PrimitiveType: string(storage.ConstraintNodeKey), Properties: properties, Expression: entryText}, true, nil
-		}
-		if properties, ok := e.parseTemporalConstraintPredicate(ctx, entryText); ok {
-			if len(properties) < 3 {
-				return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaTemporalNodeArityRequired(), nil)
-			}
-			constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintTemporal, EntityType: entityType, Label: labelOrType, Properties: properties}
-			return constraint, storage.ConstraintContractEntry{Kind: storage.ConstraintContractKindPrimitiveNode, PrimitiveType: string(storage.ConstraintTemporal), Properties: properties, Expression: entryText}, true, nil
-		}
-	}
-
+// compileConstraintContractPrimitive turns one recognized requirement into the
+// constraint a contract entry compiles. compiled is false for a requirement the
+// contract does not compile — a domain value list, whose block form the
+// contract evaluates as its own boolean expression, a grouped list of a scalar
+// form, and a list the contract's entity does not admit — so the entry keeps
+// the boolean expression it was written as. Every compiled primitive keeps its
+// own admission and its own error.
+func compileConstraintContractPrimitive(requirement constraintPropertyRequirement, entryText string, entityType storage.ConstraintEntityType, labelOrType, entryName string) (storage.ConstraintContractEntry, *storage.Constraint, *storage.PropertyTypeConstraint, bool, error) {
+	primitiveKind := storage.ConstraintContractKindPrimitiveNode
 	if entityType == storage.ConstraintEntityRelationship {
-		// The shared relationship-key predicate also admits the unparenthesized
-		// r.k IS RELATIONSHIP KEY spelling. A contract entry admits only the
-		// parenthesized list, so it guards that shape first and then reads the
-		// predicate itself from the one owner.
-		if _, _, parenthesized := extractParenSection(strings.TrimSpace(entryText)); parenthesized {
-			if kind, properties, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(ctx, entryText); ok && kind == "rel_key" {
-				if len(properties) == 0 {
-					return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaConstraintPropertiesRequired("RELATIONSHIP KEY"), nil)
-				}
-				constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintRelationshipKey, EntityType: entityType, Label: labelOrType, Properties: properties}
-				return constraint, storage.ConstraintContractEntry{Kind: storage.ConstraintContractKindPrimitiveRelationship, PrimitiveType: string(storage.ConstraintRelationshipKey), Properties: properties, Expression: entryText}, true, nil
-			}
+		primitiveKind = storage.ConstraintContractKindPrimitiveRelationship
+	}
+
+	switch requirement.kind {
+	case constraintRequirementUnique, constraintRequirementExists:
+		// A contract compiles the single-property form only; a grouped list
+		// stays the expression the contract evaluates itself.
+		if requirement.properties != nil {
+			return storage.ConstraintContractEntry{}, nil, nil, false, nil
 		}
+		constraintType := storage.ConstraintUnique
+		if requirement.kind == constraintRequirementExists {
+			constraintType = storage.ConstraintExists
+		}
+		constraint := &storage.Constraint{
+			Name:       entryName,
+			Type:       constraintType,
+			EntityType: entityType,
+			Label:      labelOrType,
+			Properties: []string{requirement.property},
+		}
+		return storage.ConstraintContractEntry{Kind: primitiveKind, PrimitiveType: string(constraintType), Property: requirement.property, Properties: []string{requirement.property}, Expression: entryText}, constraint, nil, true, nil
+
+	case constraintRequirementPropertyType:
+		propertyType := &storage.PropertyTypeConstraint{Name: entryName, EntityType: entityType, Label: labelOrType, Property: requirement.property, ExpectedType: requirement.expectedType}
+		return storage.ConstraintContractEntry{Kind: primitiveKind, PrimitiveType: string(storage.ConstraintPropertyType), Property: requirement.property, Properties: []string{requirement.property}, ExpectedType: string(requirement.expectedType), Expression: entryText}, nil, propertyType, true, nil
+
+	case constraintRequirementNodeKey:
+		if entityType != storage.ConstraintEntityNode {
+			return storage.ConstraintContractEntry{}, nil, nil, false, nil
+		}
+		if len(requirement.properties) == 0 {
+			return storage.ConstraintContractEntry{}, nil, nil, true, localizedError(localization.CypherSchemaConstraintPropertiesRequired("NODE KEY"), nil)
+		}
+		constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintNodeKey, EntityType: entityType, Label: labelOrType, Properties: requirement.properties}
+		return storage.ConstraintContractEntry{Kind: primitiveKind, PrimitiveType: string(storage.ConstraintNodeKey), Properties: requirement.properties, Expression: entryText}, constraint, nil, true, nil
+
+	case constraintRequirementTemporal:
+		if entityType != storage.ConstraintEntityNode {
+			return storage.ConstraintContractEntry{}, nil, nil, false, nil
+		}
+		if len(requirement.properties) < 3 {
+			return storage.ConstraintContractEntry{}, nil, nil, true, localizedError(localization.CypherSchemaTemporalNodeArityRequired(), nil)
+		}
+		constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintTemporal, EntityType: entityType, Label: labelOrType, Properties: requirement.properties}
+		return storage.ConstraintContractEntry{Kind: primitiveKind, PrimitiveType: string(storage.ConstraintTemporal), Properties: requirement.properties, Expression: entryText}, constraint, nil, true, nil
+
+	case constraintRequirementRelationshipKey:
+		// A contract entry compiles the parenthesized list only: the
+		// unparenthesized r.k IS RELATIONSHIP KEY spelling stays the boolean
+		// expression the contract evaluates itself.
+		if entityType != storage.ConstraintEntityRelationship || requirement.properties == nil {
+			return storage.ConstraintContractEntry{}, nil, nil, false, nil
+		}
+		if len(requirement.properties) == 0 {
+			return storage.ConstraintContractEntry{}, nil, nil, true, localizedError(localization.CypherSchemaConstraintPropertiesRequired("RELATIONSHIP KEY"), nil)
+		}
+		constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintRelationshipKey, EntityType: entityType, Label: labelOrType, Properties: requirement.properties}
+		return storage.ConstraintContractEntry{Kind: primitiveKind, PrimitiveType: string(storage.ConstraintRelationshipKey), Properties: requirement.properties, Expression: entryText}, constraint, nil, true, nil
 	}
 
-	return nil, storage.ConstraintContractEntry{}, false, nil
-}
-
-func (e *StorageExecutor) parseConstraintContractPropertyType(ctx context.Context, entryText, variable string, entityType storage.ConstraintEntityType, labelOrType, entryName string) (*storage.PropertyTypeConstraint, storage.ConstraintContractEntry, bool, error) {
-	property, typeName, ok := parseConstraintTypePredicate(ctx, entryText)
-	if !ok {
-		return nil, storage.ConstraintContractEntry{}, false, nil
-	}
-	expectedType, err := parsePropertyType(typeName)
-	if err != nil {
-		return nil, storage.ConstraintContractEntry{}, true, err
-	}
-	kind := storage.ConstraintContractKindPrimitiveNode
-	if entityType == storage.ConstraintEntityRelationship {
-		kind = storage.ConstraintContractKindPrimitiveRelationship
-	}
-	constraint := &storage.PropertyTypeConstraint{Name: entryName, EntityType: entityType, Label: labelOrType, Property: property, ExpectedType: expectedType}
-	return constraint, storage.ConstraintContractEntry{Kind: kind, PrimitiveType: string(storage.ConstraintPropertyType), Property: property, Properties: []string{property}, ExpectedType: string(expectedType), Expression: entryText}, true, nil
+	return storage.ConstraintContractEntry{}, nil, nil, false, nil
 }

@@ -295,11 +295,11 @@ func (e *StorageExecutor) compilePipelineNodeMatchSource(ctx context.Context, cl
 	}
 	for _, template := range templates {
 		for _, property := range template.properties {
-			for _, reference := range semanticExpressionReferences(property.expr) {
-				variable := strings.SplitN(reference, ".", 2)[0]
-				if _, dependent := variables[variable]; dependent {
-					return plan
-				}
+			if !forEachSemanticExpressionReference(property.expr, func(variable, _ string, _ bool, _ int) bool {
+				_, dependent := variables[variable]
+				return !dependent
+			}) {
+				return plan
 			}
 		}
 	}
