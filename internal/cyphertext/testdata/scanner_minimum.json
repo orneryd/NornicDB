@@ -979,7 +979,6 @@
     "lastKeywordIndexFold",
     "nextTopLevelClause",
     "parseSimplePositiveInt",
-    "replaceStandaloneVar",
     "skipLeadingSpace",
     "splitTopLevelAnd",
     "splitTopLevelCSV",
