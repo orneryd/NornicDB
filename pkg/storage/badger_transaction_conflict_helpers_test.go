@@ -51,11 +51,11 @@ func TestBadgerTransaction_ConflictHelpers(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
-	err = tx.checkEdgeWriteConflict(context.Background(), "test:e1")
+	err = tx.checkEdgeWriteConflict(context.Background(), "test:e1", true)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
-	err = tx.checkEdgeWriteConflict(context.Background(), "test:e1")
+	err = tx.checkEdgeWriteConflict(context.Background(), "test:e1", true)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
@@ -100,10 +100,10 @@ func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
 
 	// Missing entities on create-conflict checks are non-conflicting.
 	require.NoError(t, tx.checkNodeCreateConflict(context.Background(), "test:missing"))
-	require.NoError(t, tx.checkEdgeWriteConflict(context.Background(), "test:missing"))
+	require.NoError(t, tx.checkEdgeWriteConflict(context.Background(), "test:missing", true))
 	// Existing heads already visible to this transaction are also non-conflicting.
 	require.NoError(t, tx.checkNodeCreateConflict(context.Background(), "test:n1"))
-	require.NoError(t, tx.checkEdgeWriteConflict(context.Background(), "test:e"))
+	require.NoError(t, tx.checkEdgeWriteConflict(context.Background(), "test:e", true))
 
 	// snapshotIsolationConflict orders by timestamp first: same sequence
 	// with a newer timestamp is a conflict.
