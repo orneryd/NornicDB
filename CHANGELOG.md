@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Complete APOC calls containing relationship-pattern COLLECT subqueries
+  without recursive evaluator handoff, including RETURN, CASE and WITH forms.
+  Preserve statement cancellation while evaluating their subquery arguments.
+
 - Return the normal syntax error for zero-argument `normalize()` calls instead
   of closing the Bolt connection. Preserve ambiguous-aggregation diagnostics
   for invalid ORDER BY expressions following RETURN or WITH grouping.
