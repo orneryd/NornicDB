@@ -45,3 +45,26 @@ func TestQuotedVariableSemanticReferencesThroughExecute(t *testing.T) {
 		}
 	})
 }
+
+func TestOrderKeywordVariablesThroughExecute(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
+		for _, name := range []string{"skip", "limit"} {
+			t.Run(name, func(t *testing.T) {
+				exec, _ := newCypherTestExecutor(t, "order_keyword_variable")
+				query := fmt.Sprintf("UNWIND [3,1,2] AS %s RETURN %s AS value ORDER BY %s LIMIT 2", name, name, name)
+				result, err := exec.Execute(t.Context(), query, nil)
+				require.NoError(t, err, query)
+				require.Equal(t, []string{"value"}, result.Columns)
+				require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}}, result.Rows)
+				for _, query := range []string{
+					"WITH 1 AS other RETURN other AS value ORDER BY " + name,
+					fmt.Sprintf("WITH 1 AS %s RETURN DISTINCT 1 AS value ORDER BY %s", name, name),
+				} {
+					_, err := exec.Execute(t.Context(), query, nil)
+					require.Error(t, err, query)
+					requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
+				}
+			})
+		}
+	})
+}

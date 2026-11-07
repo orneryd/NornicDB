@@ -671,11 +671,6 @@ func validateWithOrderBySemanticScope(ctx context.Context, input matchSemanticSc
 // Neo4j does ("Variable `y` not defined"). orderBody is the text after ORDER
 // BY; its SKIP / LIMIT are ignored.
 func validateOrderByReferences(ctx context.Context, input, output matchSemanticScope, orderBody string) error {
-	for _, keyword := range []string{"SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(ctx, orderBody, keyword); index >= 0 {
-			orderBody = strings.TrimSpace(orderBody[:index])
-		}
-	}
 	for _, term := range parseOrderByClause(ctx, orderBody) {
 		var referenceErr error
 		forEachFreeSemanticReference(term.column, term.column, func(reference semanticReference) bool {

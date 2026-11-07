@@ -18,7 +18,10 @@
 - [x] Profile correct-on-both-version scope validation (five 200ms samples): entity 520->448 B/12->9 allocs; eight properties 3928->3648 B/75->51 allocs; aggregate 1048->1008 B/26->24 allocs. Aggregate time unchanged within this sample; no whole-query gain claim.
 - [x] Final integrated public/ownership race matrix passes twice (62.055s), including list binding, strict empty-list rejection, unchanged malformed-composite assertion, boolean grammar, policy/options and join controls.
 - [x] Strict lexical/normalization audit passes after reviewing 14 new/changed and 19 retired source members; analyzer rules unchanged.
-- [x] Blocking TestStorageNilContextCensus passes on final source (91.005s).
+- [x] Blocking TestStorageNilContextCensus passes after the main consolidation (91.005s).
+- [x] Final advisory's ORDER BY overlap: remove two redundant SKIP/LIMIT scans and call the existing canonical term reader directly. Keep variable availability versus grouped-horizon eligibility as distinct tested contracts. Keyword-named variable controls already passed before removal; no additional public bug claim.
+- [x] Final ORDER BY focused checks pass (1.206s), races twice pass (8.907s), lexical audit passes (2.176s), and blocking context census passes again (94.662s).
+- [x] Profile the boundary-scan removal against the preceding candidate: entity 1289->1229 ns/op, eight properties 6819->6566, aggregate 2685->2422; bytes/allocations unchanged in all three five-sample controls.
 - [x] Open separate draft #1750 against release/v1.4.4 with an explicit AC map.
 - [ ] Pass exact-head full make test CI and resolve discovered failures.
 - [ ] Preserve required evidence and clean task-owned artifacts before readiness.

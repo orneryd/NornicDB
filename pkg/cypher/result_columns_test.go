@@ -128,3 +128,28 @@ func TestSemanticReferenceProductsKeepQuotedBoundaries(t *testing.T) {
 	require.False(t, forEachFreeSemanticReference("a + b", "a + b", func(semanticReference) bool { visits++; return false }))
 	require.Equal(t, 1, visits)
 }
+
+func TestOrderScopeRetainsKeywordNamedSortVariables(t *testing.T) {
+	for _, name := range []string{"skip", "limit"} {
+		t.Run(name, func(t *testing.T) {
+			for _, tail := range []string{"", " LIMIT 1", " SKIP 1 LIMIT 2"} {
+				order := name + tail
+				requireSemanticDetail(t, validateOrderByReferences(t.Context(), nil, nil, order), "UndefinedVariable")
+				require.NoError(t, validateOrderByReferences(t.Context(), matchSemanticScope{name: matchBindingValue}, nil, order))
+				requireSemanticDetail(t, validateReturnOrderBySemanticScope(t.Context(), "RETURN DISTINCT n.name ORDER BY "+order), "UndefinedVariable")
+				require.NoError(t, validateReturnOrderBySemanticScope(t.Context(), "RETURN DISTINCT "+name+" ORDER BY "+order))
+			}
+		})
+	}
+}
+
+// Binding availability and grouped-horizon eligibility are independent checks.
+// The same reference can pass one and fail the other; both share term reading.
+func TestOrderScopePhasesRetainTheirDistinctContracts(t *testing.T) {
+	ctx := t.Context()
+	input := matchSemanticScope{"n": matchBindingNode}
+	require.NoError(t, validateOrderByReferences(ctx, input, nil, "n.age"))
+	requireSemanticDetail(t, validateReturnOrderBySemanticScope(ctx, "RETURN DISTINCT n.name ORDER BY n.age"), "UndefinedVariable")
+	require.NoError(t, validateReturnOrderBySemanticScope(ctx, "RETURN n ORDER BY missing"))
+	requireSemanticDetail(t, validateOrderByReferences(ctx, input, nil, "missing"), "UndefinedVariable")
+}

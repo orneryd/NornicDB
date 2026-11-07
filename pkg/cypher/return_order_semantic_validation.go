@@ -21,11 +21,6 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 	}
 	projectionBody := strings.TrimSpace(body[:orderIndex])
 	orderBody := strings.TrimSpace(body[keywordEndAt(body, orderIndex, "ORDER BY"):])
-	for _, keyword := range []string{"SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(ctx, orderBody, keyword); index >= 0 {
-			orderBody = strings.TrimSpace(orderBody[:index])
-		}
-	}
 	projectionBody, distinct := cutDistinct(projectionBody)
 
 	aliases := make(map[string]struct{})
