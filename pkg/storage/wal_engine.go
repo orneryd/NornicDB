@@ -1071,7 +1071,7 @@ func (w *WALEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodes
 }
 
 func (w *WALEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
-	return w.StreamNodesWithOptions(ctx, StreamNodesOptions{WithEmbeddings: true, ApplyDecayFilter: true}, fn)
+	return w.StreamNodesWithOptions(ctx, fullNodeStreamOptions(""), fn)
 }
 
 // StreamNodesWithoutEmbeddings preserves embedding-free snapshot scans through
@@ -1084,7 +1084,7 @@ func (w *WALEngine) StreamNodesWithoutEmbeddings(ctx context.Context, fn func(no
 // iteration to the wrapped engine when available. This preserves namespace-aware
 // early termination behavior for MATCH ... LIMIT hot paths.
 func (w *WALEngine) StreamNodesByPrefix(ctx context.Context, prefix string, fn func(node *Node) error) error {
-	return w.StreamNodesWithOptions(ctx, StreamNodesOptions{Prefix: prefix, WithEmbeddings: true, ApplyDecayFilter: true}, fn)
+	return w.StreamNodesWithOptions(ctx, fullNodeStreamOptions(prefix), fn)
 }
 
 // StreamNodesByPrefixProjected preserves embedding-free projected scans
