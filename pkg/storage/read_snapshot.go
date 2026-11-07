@@ -139,7 +139,7 @@ func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 			if s.nodesTouched[nodeID] {
 				continue // the write-behind overlay shadows this committed row
 			}
-			node, err := s.b.readStreamNodeItem(ctx, txn, it.Item(), opts, nil, 0)
+			node, err := s.b.readStreamNodeItem(ctx, txn, it.Item(), opts, nil, 0, false)
 			if err != nil {
 				// The native scan fails its read on a row it cannot decode;
 				// the capture must not report the rest as the whole population.

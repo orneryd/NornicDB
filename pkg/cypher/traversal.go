@@ -1380,7 +1380,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 			return reader.StreamNodesByLabelProjected(ctx, labels[0], nil, visit)
 		}
 	} else {
-		reader, ok := store.(storage.StreamingEngine)
+		reader, ok := storage.ResolveStreamingEngine(store)
 		if !ok {
 			return nil, false, nil
 		}
