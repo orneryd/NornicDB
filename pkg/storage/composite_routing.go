@@ -51,14 +51,17 @@ func (p *QueryAnalyzer) SetPropertyDefault(propertyName string, constituent stri
 	p.propertyDefaults[propertyName] = constituent
 }
 
-// AnalyzeQuery extracts routing information from a Cypher query string.
-// This is a simplified analyzer - a full implementation would parse the AST.
-func (a *QueryAnalyzer) AnalyzeQuery(cypher string) *QueryInfo {
+// AnalyzeQuery extracts routing information from a Cypher query string and
+// records the statement effect the caller already resolved canonically:
+// writes is true when the statement may write. This is a simplified analyzer -
+// a full implementation would parse the AST - and it never classifies a
+// statement's effects itself.
+func (a *QueryAnalyzer) AnalyzeQuery(cypher string, writes bool) *QueryInfo {
 	upper := strings.ToUpper(cypher)
 	info := &QueryInfo{
 		Labels:     []string{},
 		Properties: make(map[string]interface{}),
-		IsWrite:    strings.Contains(upper, "CREATE") || strings.Contains(upper, "MERGE") || strings.Contains(upper, "SET") || strings.Contains(upper, "DELETE"),
+		IsWrite:    writes,
 		IsFullScan: false,
 	}
 
@@ -126,6 +129,9 @@ func (a *QueryAnalyzer) RouteQuery(queryInfo *QueryInfo, allConstituents []strin
 type QueryInfo struct {
 	Labels     []string
 	Properties map[string]interface{}
-	IsWrite    bool
+	// IsWrite is the statement effect the caller resolved canonically, reported
+	// by AnalyzeQuery and never guessed from the query text.
+	IsWrite bool
+	// IsFullScan reports a statement with no label token that cannot write.
 	IsFullScan bool
 }

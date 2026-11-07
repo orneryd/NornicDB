@@ -1880,8 +1880,9 @@ func (s *Session) recordExplicitTransactionWrite(ctx context.Context, query stri
 		s.txHasNonMergeWrite = true
 		return
 	}
-	info := boltTxWriteAnalyzer.Analyze(ctx, query)
-	if ctx.Err() != nil || info == nil {
+	info, err := boltTxWriteAnalyzer.Analyze(ctx, query)
+	if err != nil || info == nil {
+		// A canceled analysis cannot be classified for retry.
 		s.txHasNonMergeWrite = true
 		return
 	}

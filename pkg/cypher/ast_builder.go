@@ -27,9 +27,15 @@ func NewASTBuilder() *ASTBuilder { return &ASTBuilder{} }
 
 // AST represents a complete parsed query.
 type AST struct {
-	Clauses    []ASTClause
-	RawQuery   string
-	QueryType  QueryType
+	Clauses   []ASTClause
+	RawQuery  string
+	QueryType QueryType
+	// IsReadOnly is the statement-effect owner's answer for the text this AST
+	// was built from (readStatementExecutionContract.effect, proven read). It is
+	// not a scan of Clauses: a procedure mode, a schema change or an
+	// unresolved procedure decides the statement without a clause kind that
+	// exposes it. A published AST is immutable; QueryInfo.GetAST publishes a
+	// new one when the answer changes.
 	IsReadOnly bool
 	IsCompound bool
 }
@@ -335,16 +341,37 @@ func astWithoutComments(source *cyphertext.Source) *cyphertext.Source {
 }
 
 // Build parses a Cypher query into an AST.
+//
+// IsReadOnly answers the statement-effect owner
+// (readStatementExecutionContract), so a registered WRITE procedure, a schema
+// or catalog mutation and an unresolved procedure are writes even when no
+// clause kind here exposes them. Text the effect owner cannot read keeps the
+// structural result with a conservative write effect: its diagnostic belongs
+// to admission, not to this builder. The caller cancellation is returned.
 func (b *ASTBuilder) Build(ctx context.Context, cypher string) (*AST, error) {
 	source := cyphertext.NewSource(ctx, cypher, cyphertext.RawSource)
 	if source.Err != nil {
 		return nil, source.Err
 	}
+	readOnly := false
+	if contract, err := readStatementExecutionContract(ctx, source.Text); err == nil {
+		readOnly = contract.effect() == statementEffectRead
+	} else if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	return b.build(ctx, source, readOnly)
+}
+
+// build constructs the structural AST for an already resolved statement
+// effect. The caller passes the effect owner's answer, so this function never
+// classifies effects and the public builder and a cached analysis share one
+// construction implementation.
+func (b *ASTBuilder) build(ctx context.Context, source *cyphertext.Source, readOnly bool) (*AST, error) {
 	if err := validateStaticMapKeys(ctx, source.Text); err != nil {
 		return nil, err
 	}
 	ast := &AST{
-		RawQuery: cypher,
+		RawQuery: source.Original,
 		Clauses:  make([]ASTClause, 0),
 	}
 
@@ -363,7 +390,7 @@ func (b *ASTBuilder) Build(ctx context.Context, cypher string) (*AST, error) {
 	}
 
 	// Determine query properties
-	ast.IsReadOnly = b.determineReadOnly(ast)
+	ast.IsReadOnly = readOnly
 	ast.IsCompound = len(ast.Clauses) > 1
 	ast.QueryType = b.determineQueryType(ast)
 
@@ -1106,18 +1133,6 @@ func (b *ASTBuilder) parseExpression(source *cyphertext.Source) ASTExpression {
 		expr.Variable = name
 	}
 	return expr
-}
-
-// determineReadOnly checks if the AST represents a read-only query.
-func (b *ASTBuilder) determineReadOnly(ast *AST) bool {
-	for _, clause := range ast.Clauses {
-		switch clause.Type {
-		case ASTClauseCreate, ASTClauseMerge, ASTClauseDelete, ASTClauseDetachDelete,
-			ASTClauseSet, ASTClauseRemove:
-			return false
-		}
-	}
-	return true
 }
 
 // determineQueryType determines the primary query type.

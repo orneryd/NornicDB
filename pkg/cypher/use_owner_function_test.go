@@ -79,7 +79,7 @@ func TestUseOwnerFunctionCacheability(t *testing.T) {
 				policy := cachedExecutionPolicy(ctx, query)
 				require.Equal(t, test.cacheable, policy.cacheable)
 				require.Same(t, policy, cachedExecutionPolicy(ctx, query), "compiled admission cache hit")
-				require.Equal(t, test.cacheable, exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly: true}, query))
+				require.Equal(t, test.cacheable, exec.canUseResultCache(ctx, analyzedReadQueryInfo(true), query))
 			})
 		}
 	}

@@ -16,6 +16,9 @@ import (
 // This mirrors Neo4j's FabricPlanner.scala.
 type FabricPlanner struct {
 	catalog *Catalog
+	// statementEffects is the Cypher executor's canonical statement effect
+	// reader; every FragmentExec's IsWrite comes from it.
+	statementEffects StatementEffectReader
 	// keywordIsName is the Cypher executor's reader of a clause keyword that is
 	// a name where it stands; nil reads every keyword as a clause.
 	keywordIsName ClauseKeywordNameReader
@@ -23,6 +26,11 @@ type FabricPlanner struct {
 	// subquery imports; nil imports none.
 	callImports CallImportReader
 }
+
+// StatementEffectReader reports whether one statement executes a write, as the
+// Cypher executor's canonical statement effects classify it. It is the only
+// source of a FragmentExec's IsWrite; an error fails the plan.
+type StatementEffectReader func(ctx context.Context, statement string) (bool, error)
 
 // CallImportReader returns the variables a CALL subquery imports from its
 // enclosing query ("*" for every variable): the variables its scope clause
@@ -191,9 +199,33 @@ func keywordAt(s string, idx int, keyword string) bool {
 	return true
 }
 
-// NewFabricPlanner creates a planner backed by the given catalog.
-func NewFabricPlanner(catalog *Catalog) *FabricPlanner {
-	return &FabricPlanner{catalog: catalog}
+// NewFabricPlanner creates a planner backed by the given catalog and the
+// required statement effect reader: every FragmentExec carries the effect that
+// reader resolves for its own statement.
+func NewFabricPlanner(catalog *Catalog, effects StatementEffectReader) *FabricPlanner {
+	return &FabricPlanner{catalog: catalog, statementEffects: effects}
+}
+
+// errStatementEffectReaderMissing fails a plan whose planner has no statement
+// effect reader; the planner never classifies a statement itself.
+var errStatementEffectReaderMissing = errors.New("fabric planner: statement effect reader is required")
+
+// statementEffect applies the installed StatementEffectReader.
+func (p *FabricPlanner) statementEffect(ctx context.Context, statement string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if p.statementEffects == nil {
+		return false, errStatementEffectReaderMissing
+	}
+	writes, err := p.statementEffects(ctx, statement)
+	if err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return writes, nil
 }
 
 // Plan decomposes a query into a Fragment tree.
@@ -329,7 +361,10 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 			if prefix == "" {
 				return inner, nil
 			}
-			prefixExec := newExec(ensureRowProducingPrefix(ctx, prefix, p.keywordIsName), top, scope)
+			prefixExec, err := p.newExec(ctx, ensureRowProducingPrefix(ctx, prefix, p.keywordIsName), top, scope)
+			if err != nil {
+				return nil, err
+			}
 			return &FragmentApply{
 				Input: &FragmentApply{
 					Input:   &FragmentInit{Columns: nil},
@@ -342,7 +377,11 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 		}
 
 		// Simple case: single-graph query, no CALL {} blocks at this scope.
-		return newExec(remaining, top, scope), nil
+		exec, err := p.newExec(ctx, remaining, top, scope)
+		if err != nil {
+			return nil, err
+		}
+		return exec, nil
 	}
 
 	// Multi-graph case: decompose into Apply chain.
@@ -629,7 +668,11 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 		// Preserve outer query segments before each CALL block.
 		prefix := fragmentStatementText(fullQuery[lastPos:block.startPos])
 		if prefix != "" {
-			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(ctx, prefix, p.keywordIsName), top, scope), Projection: true, Columns: nil}
+			prefixExec, err := p.newExec(ctx, ensureRowProducingPrefix(ctx, prefix, p.keywordIsName), top, scope)
+			if err != nil {
+				return nil, err
+			}
+			currentInput = &FragmentApply{Input: currentInput, Inner: prefixExec, Projection: true, Columns: nil}
 		}
 
 		subqueryFragment, err := p.planQuery(ctx, block.body, top, scope, true)
@@ -663,9 +706,13 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 	// Preserve trailing outer query clauses after the final CALL block.
 	trailingQuery := strings.TrimSpace(fullQuery[lastPos:])
 	if trailingQuery != "" {
+		trailingExec, err := p.newExec(ctx, trailingQuery, top, scope)
+		if err != nil {
+			return nil, err
+		}
 		currentInput = &FragmentApply{
 			Input:      currentInput,
-			Inner:      newExec(trailingQuery, top, scope),
+			Inner:      trailingExec,
 			Projection: true,
 			Columns:    nil,
 		}
@@ -879,20 +926,25 @@ func useTarget(clause UseClause) planTarget {
 }
 
 // newExec is an executable fragment running query on target; a dynamic
-// target may name the constituents of the composite scope.
-func newExec(query string, target planTarget, scope string) *FragmentExec {
+// target may name the constituents of the composite scope. Its IsWrite is the
+// statement effect reader's answer for query.
+func (p *FabricPlanner) newExec(ctx context.Context, query string, target planTarget, scope string) (*FragmentExec, error) {
+	writes, err := p.statementEffect(ctx, query)
+	if err != nil {
+		return nil, err
+	}
 	exec := &FragmentExec{
 		Input:     &FragmentInit{Columns: nil},
 		Query:     query,
 		GraphName: target.name,
 		Columns:   nil, // determined at execution time
-		IsWrite:   queryIsWrite(query),
+		IsWrite:   writes,
 	}
 	if target.dynamic != nil {
 		exec.Graph = target.dynamic
 		exec.Scope = scope
 	}
-	return exec
+	return exec, nil
 }
 
 // extractTopLevelCallBlocks finds CALL { ... } and OPTIONAL CALL { ... }
@@ -1070,26 +1122,6 @@ func findMatchingBrace(s string, pos int) (int, error) {
 	}
 
 	return -1, fmt.Errorf("unmatched brace (depth=%d remaining)", depth)
-}
-
-// queryIsWrite performs a simple heuristic check for write operations.
-// Strings, quoted names and comments are skipped; keywords there are text.
-func queryIsWrite(query string) bool {
-	for i := 0; i < len(query); i++ {
-		if next, quoted := cyphertext.SkipToken(query, i); quoted {
-			i = next - 1
-			continue
-		}
-		if keywordAt(query, i, "CREATE") ||
-			keywordAt(query, i, "MERGE") ||
-			keywordAt(query, i, "DETACH DELETE") ||
-			keywordAt(query, i, "DELETE") ||
-			keywordAt(query, i, "SET") ||
-			keywordAt(query, i, "REMOVE") {
-			return true
-		}
-	}
-	return false
 }
 
 // startsWithFold checks if s starts with prefix (case-insensitive).

@@ -56,7 +56,7 @@ func TestExecutionDeterminismRegisteredInputs(t *testing.T) {
 					}
 					query := "CALL " + procedure.Name + "(" + strings.Join(args, ",") + ")"
 					ctx := withQueryParams(context.Background(), params)
-					require.False(t, exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly: true}, query), query)
+					require.False(t, exec.canUseResultCache(ctx, analyzedReadQueryInfo(true), query), query)
 				})
 			}
 		}
@@ -144,6 +144,8 @@ func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "RETURN rand() AS value"}, false},
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "RETURN 1 AS value"}, true},
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CREATE (:Synthetic)"}, false},
+		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CALL missing.unknown()"}, false},
+		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CALL apoc.cypher.run('CREATE (:Synthetic)', {})"}, false},
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript"}}, true},
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"}}, false},
 		{"CALL apoc.cypher.run($statement,{request:$request})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"}}, false},
@@ -152,7 +154,7 @@ func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
 	} {
 		t.Run(test.query+fmt.Sprint(test.params), func(t *testing.T) {
 			ctx := withQueryParams(context.Background(), test.params)
-			require.Equal(t, test.cacheable, exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly: true}, test.query))
+			require.Equal(t, test.cacheable, exec.canUseResultCache(ctx, analyzedReadQueryInfo(true), test.query))
 		})
 	}
 }

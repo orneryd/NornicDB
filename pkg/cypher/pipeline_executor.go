@@ -65,6 +65,11 @@ const (
 	// executed here: the splitter declines a statement that contains one and
 	// the clause's own owner runs it. Scope and effects still see its binding.
 	pipelineClauseLoadCSV
+	// pipelineClauseCommand is a catalog command that declares its own result
+	// schema (SHOW …). Its executor runs it; the clause exists so the command
+	// takes part in statement composition as the scope operator it is, and the
+	// pipeline never executes one.
+	pipelineClauseCommand
 )
 
 // pipelineClause is one segment of the pipeline. `text` includes the leading
@@ -1081,7 +1086,14 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			for _, name := range callMetadata.columns {
 				scope[name] = struct{}{}
 			}
-			if callSubqueryQueryIsWrite(ctx, clause.text) || callMetadata.batch != nil {
+			// The CALL clause's effect is the statement-effect owner's answer for
+			// the clause that runs: a registered WRITE procedure in the body is a
+			// write even though the text carries no updating clause.
+			callInfo, infoErr := e.analyzer.Analyze(ctx, clause.text)
+			if infoErr != nil {
+				return result, true, infoErr
+			}
+			if callInfo.Writes() || callMetadata.batch != nil {
 				wrote = true
 			}
 		case pipelineClauseForeach:

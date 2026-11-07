@@ -16,7 +16,7 @@ func TestPreparationKeywordCallbackContextCancellationAndRetry(t *testing.T) {
 		t.Run(map[bool]string{false: "Plan", true: "SingleGraphStatement"}[projection], func(t *testing.T) {
 			parent, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			planner := NewFabricPlanner(catalog)
+			planner := NewFabricPlanner(catalog, readDeclaredEffects())
 			var observed []context.Context
 			planner.SetClauseKeywordNameReader(func(ctx context.Context, text string, pos, end int, keyword string) bool {
 				require.Equal(t, "UNION", keyword)
@@ -54,7 +54,7 @@ func TestPreparationImportCallbackContextErrorsAndRetry(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
 	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
-	planner := NewFabricPlanner(catalog)
+	planner := NewFabricPlanner(catalog, readDeclaredEffects())
 	query := "USE db CALL { USE db.shard WITH myVar RETURN myVar } RETURN myVar"
 	parent, cancel := context.WithCancel(t.Context())
 	defer cancel()

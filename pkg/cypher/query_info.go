@@ -46,8 +46,6 @@ type QueryInfo struct {
 	FirstClause ClauseType
 
 	// Derived properties
-	IsReadOnly      bool
-	IsWriteQuery    bool
 	IsSchemaQuery   bool
 	IsCompoundQuery bool
 
@@ -67,12 +65,32 @@ type QueryInfo struct {
 	// replacement refreshes it; ordinary hits only evaluate actual bindings.
 	cachePolicy atomic.Pointer[executionDeterminismPolicy]
 
+	// readShape reports that the statement's text returns graph or
+	// introspection rows (MATCH, RETURN, a CALL db.* introspection procedure
+	// or SHOW). With the statement-effect owner's answer it gates the
+	// read-only optimization; it never decides whether the statement writes.
+	readShape bool
+
+	// effect caches the statement-effect owner's answer
+	// (readStatementExecutionContract) for the procedure registry generation
+	// it was read at. Analyze refreshes it before it returns an analysis, so
+	// every Writes and ReadOnly read carries a current answer. Only
+	// refreshStatementEffect writes it; readers load the pointer once.
+	effect atomic.Pointer[queryStatementEffect]
+
 	// Structured AST (lazily built, cached)
 	// Use GetAST() to access - builds on first call
 	ast      *AST
 	astBuilt bool
 	rawQuery string
 	astMu    sync.RWMutex
+}
+
+// queryStatementEffect is the statement-effect owner's answer for one analysis
+// at one procedure registry generation. It is immutable once stored.
+type queryStatementEffect struct {
+	generation uint64
+	effect     statementEffect
 }
 
 // ClauseType represents the type of a Cypher clause
@@ -117,13 +135,19 @@ func NewQueryAnalyzer(maxSize int) *QueryAnalyzer {
 	}
 }
 
-// Analyze extracts query information, using cache when available.
-func (a *QueryAnalyzer) Analyze(ctx context.Context, cypher string) *QueryInfo {
+// Analyze extracts query information, using cache when available. Every
+// returned analysis carries the statement-effect owner's answer; a procedure
+// registry change refreshes the cached answer instead of re-reading it on
+// every hit, and a cancellation while computing one is returned.
+func (a *QueryAnalyzer) Analyze(ctx context.Context, cypher string) (*QueryInfo, error) {
 	// Fast path: exact query text cache hit avoids normalization cost on hot loops.
 	a.cacheMu.RLock()
 	if info, ok := a.raw[cypher]; ok {
 		a.cacheMu.RUnlock()
-		return info
+		if err := info.refreshStatementEffect(ctx, cypher); err != nil {
+			return nil, err
+		}
+		return info, nil
 	}
 	a.cacheMu.RUnlock()
 
@@ -137,19 +161,25 @@ func (a *QueryAnalyzer) Analyze(ctx context.Context, cypher string) *QueryInfo {
 	a.cacheMu.RLock()
 	if info, ok := a.cache[normalized]; ok {
 		a.cacheMu.RUnlock()
-		return info
+		if err := info.refreshStatementEffect(ctx, text); err != nil {
+			return nil, err
+		}
+		return info, nil
 	}
 	a.cacheMu.RUnlock()
 
 	// Analyze query
 	info := analyzeQuery(text)
 	info.NormalizedQuery = normalized
-	if info.IsReadOnly && ctx.Err() == nil {
+	if err := info.refreshStatementEffect(ctx, text); err != nil {
+		return nil, err
+	}
+	if info.ReadOnly() {
 		info.cachePolicy.Store(cachedExecutionPolicy(ctx, text))
 	}
 
-	if ctx.Err() != nil {
-		return info
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	// Cache result
 	a.cacheMu.Lock()
@@ -171,7 +201,77 @@ func (a *QueryAnalyzer) Analyze(ctx context.Context, cypher string) *QueryInfo {
 	a.raw[cypher] = info
 	a.cacheMu.Unlock()
 
-	return info
+	return info, nil
+}
+
+// refreshStatementEffect reads the statement-effect owner when the procedure
+// registry changed since the cached answer, so a registered WRITE procedure is
+// a write on this path as on every other. The generation is read before the
+// owner, so a registration that races this read leaves a stale mark the next
+// access refreshes rather than a fresh one over an older answer. Text the owner
+// cannot read has an unknown effect, which counts as a write for optimizations;
+// its syntax diagnostic belongs to admission, not here. A cancellation while
+// computing a new effect is returned.
+func (info *QueryInfo) refreshStatementEffect(ctx context.Context, text string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ensureBuiltInProceduresRegistered()
+	// +1 keeps a never-read effect (zero value) from matching generation 0.
+	generation := globalProcedureRegistry.generation.Load() + 1
+	if current := info.effect.Load(); current != nil && current.generation == generation {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	effect := queryStatementEffect{generation: generation, effect: statementEffectWrite}
+	if contract, err := readStatementExecutionContract(ctx, text); err == nil {
+		// An unresolvable procedure keeps its effect unknown, which stays a
+		// write here: no optimization may treat it as read-only.
+		effect.effect = contract.effect()
+	} else if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info.effect.Store(&effect)
+	return nil
+}
+
+// Writes reports the statement-effect owner's answer: the statement changes
+// state through the grammar's updating clauses, a registered WRITE procedure,
+// ordinary schema DDL or a catalog/administration mutation. An analysis whose effect was
+// never read counts as a write, so no optimization treats unknown text as a
+// read.
+func (info *QueryInfo) Writes() bool {
+	effect := info.effect.Load()
+	return effect == nil || effect.effect != statementEffectRead
+}
+
+// runtimeEffect reports the statement-effect owner's runtime answer: the
+// statement runs text supplied at execution time and fixes no write of its own,
+// so only the statements it resolved can establish that it wrote. A never-read
+// effect is unknown and is never a resolved runtime read.
+func (info *QueryInfo) runtimeEffect() bool {
+	effect := info.effect.Load()
+	return effect != nil && effect.effect == statementEffectRuntime
+}
+
+// readResult reports the row-returning, non-schema shape of an analysis. It
+// says nothing about effects: each read-only optimization decides separately
+// whether it needs the statement-effect owner's proof or resolves the bound
+// execution policy instead.
+func (info *QueryInfo) readResult() bool {
+	return info.readShape && !info.HasSchema
+}
+
+// ReadOnly reports a statement that changes nothing and returns rows, so the
+// read-only optimizations (result caching, streaming, vector-free node reads)
+// may serve it.
+func (info *QueryInfo) ReadOnly() bool {
+	return !info.Writes() && info.readResult()
 }
 
 // ClearCache clears the analysis cache.
@@ -192,34 +292,52 @@ func (a *QueryAnalyzer) CacheSize() int {
 // GetAST returns the structured AST for the query.
 // The AST is lazily built on first call and cached for subsequent calls.
 // This is useful for LLM features that need structured query representation.
+//
+// The statement-effect owner is refreshed first so the AST and Writes carry
+// one answer, and a cached analysis keeps the answer it already resolved
+// instead of resolving the effect again. When a registry change turns the
+// statement from a read into a write, GetAST publishes a new AST for the
+// current answer and leaves the AST a caller may still hold untouched. An
+// unchanged warm AST is returned as the same pointer without another
+// allocation.
 func (info *QueryInfo) GetAST(ctx context.Context) (*AST, error) {
-	if err := ctx.Err(); err != nil {
+	if err := info.refreshStatementEffect(ctx, info.rawQuery); err != nil {
 		return nil, err
 	}
-	// Fast path: already built
+	readOnly := !info.Writes()
+
+	// Fast path: a built AST whose effect answer still holds.
 	info.astMu.RLock()
 	if info.astBuilt {
-		ast := info.ast
-		info.astMu.RUnlock()
-		return ast, nil
+		if ast := info.ast; ast.IsReadOnly == readOnly {
+			info.astMu.RUnlock()
+			return ast, nil
+		}
 	}
 	info.astMu.RUnlock()
 
-	// Slow path: build AST
 	info.astMu.Lock()
 	defer info.astMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
-	// Double-check after acquiring write lock
 	if info.astBuilt {
+		if info.ast.IsReadOnly == readOnly {
+			return info.ast, nil
+		}
+		// Publish the refreshed effect without mutating an AST a caller may
+		// still hold.
+		refreshed := *info.ast
+		refreshed.IsReadOnly = readOnly
+		info.ast = &refreshed
 		return info.ast, nil
 	}
 
-	// Build AST
-	builder := NewASTBuilder()
-	ast, err := builder.Build(ctx, info.rawQuery)
+	source := cyphertext.NewSource(ctx, info.rawQuery, cyphertext.AcceptedSource)
+	if source.Err != nil {
+		return nil, source.Err
+	}
+	ast, err := NewASTBuilder().build(ctx, source, readOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -321,13 +439,11 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info.FirstClause = detectFirstClause(upper)
 
 	// Derive compound flags
-	info.IsWriteQuery = info.HasCreate || info.HasMerge || info.HasDelete ||
-		info.HasSet || info.HasRemove
-	// For CALL, only "CALL db." procedures are read-only (schema introspection).
-	// Other procedures like gds.graph.drop() may be writes.
+	// The row-returning shape gates the read-only optimization (schema
+	// introspection included); whether anything writes is the statement-effect
+	// owner's answer (refreshStatementEffect).
 	isDbCall := info.HasCall && strings.Contains(upperASCII(cypher), "CALL DB.")
-	info.IsReadOnly = !info.IsWriteQuery && !info.HasSchema &&
-		(info.HasMatch || info.HasReturn || isDbCall || info.HasShow)
+	info.readShape = info.HasMatch || info.HasReturn || isDbCall || info.HasShow
 	info.IsSchemaQuery = info.HasSchema || info.HasShow
 
 	// Count major clauses for compound detection

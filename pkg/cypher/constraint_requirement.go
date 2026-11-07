@@ -46,6 +46,11 @@ func (e *StorageExecutor) canonicalConstraintRequirement(ctx context.Context, cy
 		return "", localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidConstraintPattern",
 			localization.CypherSchemaConstraintEntityMismatch("IS "+entity+" "+kind, pattern))
 	}
+	if kind == "KEY" && !relationship {
+		if inside, _, parenthesized := extractParenSection(properties); parenthesized && len(indexPropertiesFromOnClause(inside, false)) == 0 {
+			return "", localizedError(localization.CypherSchemaConstraintPropertiesRequired("NODE KEY"), nil)
+		}
+	}
 	canonical := properties + " IS UNIQUE"
 	switch {
 	case kind == "KEY" && relationship:
