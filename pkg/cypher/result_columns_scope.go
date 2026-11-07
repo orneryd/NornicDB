@@ -99,7 +99,8 @@ func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, 
 	if facts, found := projectionFactsCache.get(key); found && facts.generation == generation {
 		return facts
 	}
-	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25)
+	compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, role: e.inputBindingRole}
+	facts := compiler.compileBound(ctx, incoming, retained)
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}

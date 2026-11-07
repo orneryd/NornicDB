@@ -10,7 +10,6 @@ import (
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
-	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // boundCompilation schedules scope transfers on the canonical CST. Binding and
@@ -489,9 +488,11 @@ func (compilation *boundCompilation) enterClause(ctx context.Context, clause *bo
 			compilation.fail(resultmetadata.ReasonUnsupportedSyntax, source.start, err)
 			return
 		}
-		if source.kind == pipelineClauseReturn && branch.body.scalarKind == cypherantlr.CypherParserRULE_collectSubquery && (plan.star || len(plan.projections) != 1) {
-			compilation.fail(resultmetadata.ReasonUnsupportedSyntax, source.start, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCollectSubquery", localization.CypherSubqueriesCollectProjection()))
-			return
+		if source.kind == pipelineClauseReturn && branch.body.scalarKind == cypherantlr.CypherParserRULE_collectSubquery {
+			if err := collectProjectionError(len(plan.projections), plan.star, declaredCollectProjection); err != nil {
+				compilation.fail(resultmetadata.ReasonUnsupportedSyntax, source.start, err)
+				return
+			}
 		}
 		if plan.star {
 			if len(clause.before) == 0 && source.kind == pipelineClauseReturn {

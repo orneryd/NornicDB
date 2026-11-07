@@ -57,7 +57,7 @@ func (e *StorageExecutor) statementProjectionProgram(ctx context.Context, query 
 		program = e.projectedStatementScope(ctx, query, names, resultmetadata.Known(nil), cypher25)
 	} else {
 		compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, schema: schema, role: e.inputBindingRole}
-		program = compiler.root(ctx, names, resultmetadata.Known(nil))
+		program = compiler.compileBound(ctx, names, resultmetadata.Known(nil))
 	}
 	// Cached programs are immutable; participant-dependent compilation never
 	// enters that cache. Both paths expose the same terminal Facts contract.
@@ -95,14 +95,6 @@ func programFailure(reason resultmetadata.UnresolvedReason, position int, err er
 	return &projectedScopeFacts{reason: reason, position: position, err: err}
 }
 
-// compileStatementProgram compiles the execution clause operators and their
-// scope transfers. WITH and RETURN use the same cached projection plans that
-// execute rows; CALL stores its nested program rather than re-inferring exports.
-func (e *StorageExecutor) compileStatementProgram(ctx context.Context, source string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
-	compiler := projectionCompilation{executor: e, source: source, cypher25: cypher25, role: e.inputBindingRole}
-	return compiler.root(ctx, incoming, retained)
-}
-
 type projectionCompilation struct {
 	role     boundBodyRole
 	executor *StorageExecutor
@@ -119,9 +111,6 @@ type projectionGraph struct {
 	outerIDs   map[string]statementBindingID
 }
 
-func (compiler *projectionCompilation) root(ctx context.Context, incoming, retained resultmetadata.Names) *projectedScopeFacts {
-	return compiler.compileBound(ctx, incoming, retained)
-}
 func statementHasReturningOperator(statement resultmetadata.Statement) bool {
 	if len(statement.Branches) > 0 {
 		for _, branch := range statement.Branches {

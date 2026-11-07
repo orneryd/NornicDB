@@ -42,3 +42,10 @@
 - Graphify advisory check completed on55ea092e9, indexed baseline35e3bddbf (stale vs releasef45b1a51a). Inventory has14 top-level candidate entries and110 compiler-owner pairs. Dedicated worker is reviewing all entries; no clean-duplicates claim.
 
 - Corrected source-inventory ordering after statement_admission.go move; actual internal/cyphertext TestFoundationLexicalPopulation passes (2.634 s). No inventory entries or rules changed. Superseded run42338766887 canceled; incomplete, not passed.
+
+## Additional duplicate-review corrections
+- [x] Consolidate declared/runtime COLLECT column validation while preserving established diagnostic keys and status.
+- [x] Retire private raw compilation/root and test-only RETURN forwarding functions; migrate direct callers.
+- [x] Remove only the two inventory rows for retired symbols; unchanged lexical census passed (2.530s).
+- [x] Focused COLLECT/public subquery/projection checks passed (1.290s); RETURN function controls passed (0.956s).
+- [ ] Include these corrections in a fresh final-head CI qualification; current run targets earlier pushed 51dccbe5d.

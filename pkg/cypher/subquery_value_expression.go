@@ -341,9 +341,8 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 	}
 	// A COLLECT subquery collects one value per row: its RETURN has
 	// exactly one column (Neo4j 5.26 rejects any other RETURN, #907).
-	if len(result.Columns) != 1 {
-		return nil, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCollectSubquery",
-			localization.CypherSubqueriesCollectSingleColumn(len(result.Columns)))
+	if err := collectProjectionError(len(result.Columns), false, observedCollectProjection); err != nil {
+		return nil, false, err
 	}
 	collected := make([]interface{}, 0, len(result.Rows))
 	for _, row := range result.Rows {
@@ -992,4 +991,24 @@ func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Nod
 		}
 	}
 	return count
+}
+
+// collectProjectionOrigin preserves the established diagnostics of a declared
+// projection and an observed result while both enforce one COLLECT contract.
+type collectProjectionOrigin uint8
+
+const (
+	declaredCollectProjection collectProjectionOrigin = iota
+	observedCollectProjection
+)
+
+func collectProjectionError(columns int, wildcard bool, origin collectProjectionOrigin) error {
+	if !wildcard && columns == 1 {
+		return nil
+	}
+	message := localization.CypherSubqueriesCollectProjection()
+	if origin == observedCollectProjection && !wildcard {
+		message = localization.CypherSubqueriesCollectSingleColumn(columns)
+	}
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCollectSubquery", message)
 }

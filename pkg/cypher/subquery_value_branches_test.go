@@ -119,3 +119,25 @@ func TestSubqueryBodiesWithCallSubqueries(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(12), nil, nil}}, result.Rows)
 }
+
+func TestCollectProjectionContractPreservesDeclaredAndObservedDiagnostics(t *testing.T) {
+	for _, origin := range []collectProjectionOrigin{declaredCollectProjection, observedCollectProjection} {
+		require.NoError(t, collectProjectionError(1, false, origin))
+		for _, columns := range []int{0, 3} {
+			err := collectProjectionError(columns, false, origin)
+			require.Error(t, err)
+			var classified interface {
+				BoltErrorCode() string
+				BoltErrorDetail() string
+			}
+			require.ErrorAs(t, err, &classified)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode())
+			require.Equal(t, "InvalidCollectSubquery", classified.BoltErrorDetail())
+			if origin == observedCollectProjection && columns == 3 {
+				require.Contains(t, err.Error(), "3", "an observed-width diagnostic retains the actual width")
+			}
+		}
+	}
+	// Wildcard syntax is rejected even if it would expand to one column.
+	require.Error(t, collectProjectionError(1, true, declaredCollectProjection))
+}

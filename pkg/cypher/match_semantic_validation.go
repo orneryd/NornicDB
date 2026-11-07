@@ -690,13 +690,8 @@ func validateOrderByReferences(ctx context.Context, input, output matchSemanticS
 	return nil
 }
 
-func validateReturnSemanticScope(ctx context.Context, scope matchSemanticScope, clause string) error {
-	return validateReturnSemanticScopeIn(ctx, scope, clause, nil)
-}
-
-// validateReturnSemanticScopeIn is validateReturnSemanticScope in an EXISTS /
-// COUNT / COLLECT body, whose enclosing query's variables (outer) are
-// constants there, not grouping keys: COLLECT { … RETURN count(*) + g }.
+// validateReturnSemanticScopeIn treats enclosing subquery variables as constants,
+// rather than grouping keys. A nil outer scope validates a top-level RETURN.
 func validateReturnSemanticScopeIn(ctx context.Context, scope matchSemanticScope, clause string, outer typeScope) error {
 	if err := validateReturnOrderBySemanticScopeIn(ctx, clause, outer); err != nil {
 		return err
