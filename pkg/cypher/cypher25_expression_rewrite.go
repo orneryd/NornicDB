@@ -404,7 +404,7 @@ func mapComprehensionText(ctx context.Context, body string) (string, bool) {
 		source, predicate = strings.TrimSpace(source[:where]), strings.TrimSpace(source[where+len("WHERE"):])
 	}
 	projection := rest[bar+1:]
-	keyEnd := topLevelByteIndex(projection, 0, len(projection), ':')
+	keyEnd := findTopLevelOperator(projection, ":", false, true)
 	if source == "" || keyEnd < 0 {
 		return "", false
 	}

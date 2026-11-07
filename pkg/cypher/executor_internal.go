@@ -81,6 +81,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(ctx, result, retErr, nil) }()
 	}
 	cypher = source.Text
+	ctx, cypher = trimSourceText(ctx, cypher, trimSourceLeadingTrivia)
 	if config.IsCypherQueryNormalizationEnabled() {
 		var err error
 		var rewrite *queryRewrite

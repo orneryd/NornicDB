@@ -29,11 +29,15 @@ var vectorCallMetrics = map[string][]string{
 // when it is vector, vector_distance or vector_norm.
 func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error {
 	q := r.query
-	word := strings.ToLower(q[wordStart:wordEnd])
+	token, ok := cyphertext.ScanIdentifier(q, wordStart)
+	if !ok || token.End != wordEnd || !functionNameStartsAt(q, wordStart) {
+		return nil
+	}
+	word := strings.ToLower(token.Value)
 	if word != "vector" && word != "vector_distance" && word != "vector_norm" {
 		return nil
 	}
-	open := skipASCIISpaces(q, wordEnd, end)
+	open := queryGapEnd(q[:end], wordEnd)
 	if open >= end || q[open] != '(' {
 		return nil
 	}
@@ -81,17 +85,25 @@ func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error 
 func isBareName(text string) bool { return cyphertext.IsIdentifier(text) }
 
 // topLevelArgumentSpans returns the [start, end) of each comma-separated
-// argument in query[start:end], spaces trimmed.
+// argument in query[start:end], surrounding comments and whitespace trimmed.
 func topLevelArgumentSpans(query string, start, end int) [][2]int {
 	var spans [][2]int
 	for from := start; from <= end; {
-		comma := topLevelByteIndex(query, from, end, ',')
+		comma := findTopLevelOperator(query[from:end], ",", false, true)
+		if comma >= 0 {
+			comma += from
+		}
 		stop := end
 		if comma >= 0 {
 			stop = comma
 		}
-		argStart := skipASCIISpaces(query, from, stop)
-		spans = append(spans, [2]int{argStart, trimRightIndex(query, argStart, stop)})
+		argStart := queryGapEnd(query[:stop], from)
+		last, _ := expressionPredecessor(query[argStart:stop], stop-argStart)
+		argEnd := argStart + last + 1
+		if argEnd < argStart {
+			argEnd = argStart
+		}
+		spans = append(spans, [2]int{argStart, argEnd})
 		if comma < 0 {
 			break
 		}
@@ -111,16 +123,18 @@ func mayUseVectorCall(query string) bool {
 		}
 		at += from
 		from = at + len("vector")
-		if at > 0 && (cyphertext.NamePartAt(query, at-1) || query[at-1] == '.') {
+		if at > 0 && isCypherBacktickByte(query[at-1]) {
+			at--
+		}
+		token, ok := cyphertext.ScanIdentifier(query, at)
+		if !ok || !functionNameStartsAt(query, at) {
 			continue
 		}
-		end := from
-		for _, suffix := range []string{"_distance", "_norm"} {
-			if len(query) >= end+len(suffix) && equalFoldASCII(query[end:end+len(suffix)], suffix) {
-				end += len(suffix)
-			}
+		name := strings.ToLower(token.Value)
+		if name != "vector" && name != "vector_distance" && name != "vector_norm" {
+			continue
 		}
-		if next := skipASCIISpaces(query, end, len(query)); next < len(query) && query[next] == '(' {
+		if next := queryGapEnd(query, token.End); next < len(query) && query[next] == '(' {
 			return true
 		}
 	}

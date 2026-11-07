@@ -252,7 +252,10 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 	}
 	var parts [][2]int
 	for partStart := start; partStart <= end; {
-		comma := topLevelByteIndex(q, partStart, end, ',')
+		comma := findTopLevelOperator(q[partStart:end], ",", false, true)
+		if comma >= 0 {
+			comma += partStart
+		}
 		if comma < 0 {
 			parts = append(parts, [2]int{partStart, end})
 			break

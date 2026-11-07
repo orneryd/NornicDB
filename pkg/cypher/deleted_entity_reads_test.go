@@ -164,7 +164,7 @@ func TestDeletedEntityReadTextAndIteration(t *testing.T) {
 }
 
 func TestDeletedEntityReadsIn(t *testing.T) {
-	require.Equal(t, []deletedEntityRead{{variable: "n"}, {variable: "m", relationshipOnly: true}, {variable: "r"}},
+	require.Equal(t, []deletedEntityRead{{variable: "n"}, {variable: "m", relationshipOnly: true}, {variable: "r"}, {variable: "q"}},
 		deletedEntityReadsIn("n.a + size(keys( m )) + 'x.y' + size(labels(r)) + `q`.z"))
 	require.Empty(t, deletedEntityReadsIn("range(1..2)"))
 	require.Empty(t, deletedEntityReadsIn("keys(f(n))"))
