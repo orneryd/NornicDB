@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Complete APOC calls containing relationship-pattern COLLECT subqueries
+  without recursive evaluator handoff, including RETURN, CASE and WITH forms.
+  Preserve statement cancellation while evaluating their subquery arguments.
 - Preserve recreated node and relationship identities when rebuilding MVCC
   heads, so later version pruning keeps live compact relationships readable
   across database restarts.
