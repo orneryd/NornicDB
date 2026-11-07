@@ -99,6 +99,7 @@ func TestIndexSourceStampCaptureReopenRestore(t *testing.T) {
 	engine := open()
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]any{"text": "baseline"}})
 	require.NoError(t, err)
+	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "doc_key", Type: ConstraintUnique, Label: "Doc", Properties: []string{"key"}}))
 	before := indexSourceStamp(t, engine)
 	view, err := engine.OpenReadSnapshot(t.Context())
 	require.NoError(t, err)
@@ -112,9 +113,11 @@ func TestIndexSourceStampCaptureReopenRestore(t *testing.T) {
 	after := indexSourceStamp(t, engine)
 	require.NotEqual(t, before, after)
 	view.Close()
-	require.NoError(t, engine.Close())
-	engine = open()
-	require.Equal(t, after, indexSourceStamp(t, engine), "opening without a source write keeps its proof")
+	for range 3 {
+		require.NoError(t, engine.Close())
+		engine = open()
+		require.Equal(t, after, indexSourceStamp(t, engine), "opening with a nonempty schema and no source writes keeps its proof")
+	}
 	backup := filepath.Join(t.TempDir(), "backup.bin")
 	require.NoError(t, engine.Backup(backup))
 	require.NoError(t, engine.Restore(backup))

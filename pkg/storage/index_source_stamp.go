@@ -55,7 +55,7 @@ func (s *badgerReadSnapshot) IndexSourceStamp(ctx context.Context) (string, erro
 	// scoring uses the clock/access history, and reveal is query-local.
 	// With active manual suppressions a transient reveal scope can change
 	// selection and finish before the final check, without any stored write.
-	if s.b.decayEnabled || s.b.revealAll.Load() || s.b.manualSuppressionCount.Load() > 0 {
+	if s.b.decayEnabled || s.b.revealAll.Load() || s.b.HasManualSuppressions() {
 		return "", ErrReadSnapshotUnsupported
 	}
 	// Buffered images have not acquired immutable physical versions yet. They
@@ -65,7 +65,7 @@ func (s *badgerReadSnapshot) IndexSourceStamp(ctx context.Context) (string, erro
 		return "", ErrReadSnapshotUnsupported
 	}
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("nornic-index-source-v3\x00"))
+	_, _ = hash.Write([]byte("nornic-index-source-v4\x00"))
 	var prefixLength [8]byte
 	binary.LittleEndian.PutUint64(prefixLength[:], uint64(len(s.prefix)))
 	_, _ = hash.Write(prefixLength[:])
@@ -91,6 +91,9 @@ func (s *badgerReadSnapshot) IndexSourceStamp(ctx context.Context) (string, erro
 			prefixMVCCNodeHead, prefixMVCCEdgeHead,
 			prefixIDDictNodeForward, prefixIDDictEdgeForward, prefixIDDictNodeReverse, prefixIDDictEdgeReverse,
 			prefixPropKeyForward, prefixPropKeyReverse}
+		// Schema policy and suppression are consulted live during population.
+		// Schema create/drop must change the proof even when its final encoded
+		// value is identical: a transient temporal rule can exclude a row.
 		// Suppression is separate from body records and is consulted live by
 		// relationship streams. Include its newest version even when deleted:
 		// otherwise suppress/unsuppress could restore identical bytes after
@@ -104,9 +107,9 @@ func (s *badgerReadSnapshot) IndexSourceStamp(ctx context.Context) (string, erro
 		prefixSets = append(prefixSets, []byte{prefixMVCCMeta, prefixMVCCMetaManualSuppression})
 		var encoded [16]byte
 		for _, prefix := range prefixSets {
-			suppression := len(prefix) == 2
+			history := len(prefix) == 2 || prefix[0] == prefixSchema
 			opts := badgerPrefixIteratorOptions(prefix)
-			opts.AllVersions = suppression
+			opts.AllVersions = history
 			opts.PrefetchValues = false
 			it := txn.NewIterator(opts)
 			var previous []byte
@@ -117,14 +120,14 @@ func (s *badgerReadSnapshot) IndexSourceStamp(ctx context.Context) (string, erro
 				}
 				item := it.Item()
 				key := item.Key()
-				if suppression {
+				if history {
 					if bytes.Equal(previous, key) {
 						continue
 					}
 					previous = append(previous[:0], key...)
 				}
 				binary.LittleEndian.PutUint64(encoded[:8], uint64(len(key)))
-				if suppression || prefix[0] == prefixNode || prefix[0] == prefixEdge || prefix[0] == prefixEmbedding {
+				if history || prefix[0] == prefixNode || prefix[0] == prefixEdge || prefix[0] == prefixEmbedding {
 					binary.LittleEndian.PutUint64(encoded[8:], item.Version())
 					_, _ = hash.Write(encoded[:])
 					_, _ = hash.Write(key)
@@ -161,9 +164,12 @@ func (s *namespacedReadSnapshot) IndexSourceStamp(ctx context.Context) (string, 
 
 // IndexSourceStamp preserves the same namespace composition as capture.
 func (n *NamespacedEngine) IndexSourceStamp(ctx context.Context) (string, error) {
-	prefix, _ := ctx.Value(readSnapshotPrefixKey{}).(string)
-	ctx = context.WithValue(ctx, readSnapshotPrefixKey{}, string(n.PrefixNodeID(NodeID(prefix))))
-	return ReadIndexSourceStamp(ctx, n.inner)
+	view, err := n.OpenReadSnapshot(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer view.Close()
+	return ReadIndexSourceStamp(ctx, view)
 }
 
 func (w *WALEngine) IndexSourceStamp(ctx context.Context) (string, error) {

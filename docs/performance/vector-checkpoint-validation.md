@@ -68,3 +68,35 @@ acknowledgement ledger. Source validation still runs when checking reuse.
 
 Checkpoint Save and compaction additionally hash payloads/metadata and synchronize
 publication files. The mutation benchmark above does not measure that I/O cost.
+
+## Checkpoint Save cost
+
+A separate paired fixture saves 1,000 or 10,000 128-dimensional vectors, five
+operations per sample and three samples. Baseline and candidate ran sequentially
+with local tests stopped and CPU profiling enabled. Candidate includes the final
+publication-error and schema-source review corrections after `c588e1328`.
+
+| Vectors | Version | Median ms/op | Range ms/op | B/op range | Allocs/op range |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1,000 | Release | 9.81 | 9.63–10.42 | 81,123–81,196 | 2,061 |
+| 1,000 | Candidate | 39.00 | 36.21–39.36 | 338,688–549,505 | 7,299–7,300 |
+| 10,000 | Release | 10.61 | 10.42–11.01 | 679,443–889,534 | 20,089–20,090 |
+| 10,000 | Candidate | 41.79 | 40.39–43.99 | 3,490,665–4,462,032 | 70,395–70,421 |
+
+This is a substantial checkpoint-path cost, not a speedup: payload/association
+integrity checks, metadata decoding and the durable publication decision add work
+that the old unsafe publication omitted. CPU samples were dominated by syscalls
+(72% flat), with fixture setup and runtime work also present; the short profile
+does not isolate every individual synchronization cost. Temporary allocation is
+reported, not peak retained memory. Population relocation additionally copies the
+payload and is not included in this Save-only fixture.
+
+The runtime-first choice avoids per-commit source markers or acknowledgements;
+it does not make checkpoint persistence free. These results must accompany the
+unchanged mutation allocation result when assessing the release tradeoff.
+
+```sh
+go test -tags 'noui nolocalllm' ./pkg/search -run '^$' \
+  -bench '^BenchmarkVectorCheckpointSave$' -benchtime=5x -count=3 \
+  -benchmem -cpuprofile checkpoint-save.cpu
+```

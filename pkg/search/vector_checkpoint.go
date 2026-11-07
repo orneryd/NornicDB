@@ -298,11 +298,8 @@ func (v *VectorFileStore) relocateCheckpoint(base string) error {
 	defer v.appendMu.Unlock()
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.closed || v.file == nil {
-		return errVecFileClosed
-	}
-	if v.publicationErr != nil {
-		return v.publicationErr
+	if err := v.checkpointHealthLocked(); err != nil {
+		return err
 	}
 	meta := v.checkpointMetadataLocked()
 	if err := v.stageCheckpointPrefixLocked(base, meta); err != nil {
@@ -352,6 +349,12 @@ func (v *VectorFileStore) installCheckpointLocked(meta VectorFileStoreMeta) {
 func (v *VectorFileStore) checkpointHealth() error {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
+	return v.checkpointHealthLocked()
+}
+
+// checkpointHealthLocked preserves a failed publication's cause even when
+// replacement has retired the append handle. The caller holds mu.
+func (v *VectorFileStore) checkpointHealthLocked() error {
 	if v.publicationErr != nil {
 		return v.publicationErr
 	}

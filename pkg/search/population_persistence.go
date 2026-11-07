@@ -249,9 +249,9 @@ func (s *Service) resetIncompletePopulation() {
 }
 
 // preparePopulationArtifacts runs after saved-source admission and before any
-// replacement scan/save. Append-only vectors can retain their committed file:
-// its old metadata still selects the old ordinals on failure. A restarted
-// vector population uses a new file instead of deleting the committed one.
+// replacement scan/save. The tuple owner copies vectors and metadata into a
+// private destination; scans and intermediate saves do not replace the saved
+// population. Final publication binds the resulting tuple to its certificate.
 func (s *Service) preparePopulationArtifacts() error {
 	s.persistRunMu.Lock()
 	defer s.persistRunMu.Unlock()
@@ -326,7 +326,9 @@ func (s *Service) finishPopulationPersistence(ctx context.Context, buildErr erro
 		s.population.active.Store(false)
 	}()
 	if buildErr == nil && !pending && s.persistEnabled.Load() && w.prepared {
-		// The completion record participates in the same rollback as the files.
+		// The completion record rolls back with the non-vector artifacts. The
+		// vector tuple publishes atomically through its own recovery owner; if
+		// later publication fails, its digest mismatch forces a complete rebuild.
 		stagedRecord := populationRecordPath(w.working)
 		// Source equality was checked while the population snapshot was pinned,
 		// before persistence. No replay can silently extend that authority:

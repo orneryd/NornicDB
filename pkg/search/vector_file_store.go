@@ -268,11 +268,7 @@ func (v *VectorFileStore) Add(id string, vec []float32) error {
 	defer v.appendMu.Unlock()
 
 	v.mu.RLock()
-	if v.closed || v.file == nil {
-		v.mu.RUnlock()
-		return errVecFileClosed
-	}
-	if err := v.publicationErr; err != nil {
+	if err := v.checkpointHealthLocked(); err != nil {
 		v.mu.RUnlock()
 		return err
 	}
@@ -677,11 +673,7 @@ func (v *VectorFileStore) Save() error {
 	v.appendMu.Lock()
 	defer v.appendMu.Unlock()
 	v.mu.RLock()
-	if v.closed || v.file == nil {
-		v.mu.RUnlock()
-		return errVecFileClosed
-	}
-	if err := v.publicationErr; err != nil {
+	if err := v.checkpointHealthLocked(); err != nil {
 		v.mu.RUnlock()
 		return err
 	}
@@ -738,8 +730,8 @@ func (v *VectorFileStore) Load() error {
 	defer v.appendMu.Unlock()
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.closed {
-		return errVecFileClosed
+	if err := v.checkpointHealthLocked(); err != nil {
+		return err
 	}
 	meta, err := decodeVectorCheckpoint(v.metaPath)
 	if err != nil {
@@ -865,6 +857,10 @@ func (v *VectorFileStore) GetBuildIndexedCount() int64 {
 // Sync flushes the .vec file to disk so progress is visible and durable.
 func (v *VectorFileStore) Sync() error {
 	v.mu.RLock()
+	if err := v.publicationErr; err != nil {
+		v.mu.RUnlock()
+		return err
+	}
 	closed := v.closed
 	file := v.file
 	syncFn := v.syncFile
@@ -889,10 +885,6 @@ func (v *VectorFileStore) CompactIfNeeded() (bool, error) {
 	if err := v.publicationErr; err != nil {
 		return false, err
 	}
-	return v.compactIfNeededLocked()
-}
-
-func (v *VectorFileStore) compactIfNeededLocked() (bool, error) {
 	if v.closed || v.file == nil {
 		return false, nil
 	}

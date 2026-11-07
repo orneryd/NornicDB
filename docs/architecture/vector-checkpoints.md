@@ -16,6 +16,12 @@ Publication, compaction, and population relocation use the same checkpoint owner
 An interrupted publication leaves its recovery files in place. Operational file
 errors are returned; a failed writer is not reused for subsequent mutations.
 
+Population artifacts are admitted together by their completion certificate. If
+a process stops or cancellation arrives after the vector tuple publishes but
+before the remaining population files publish, the previous certificate cannot
+authorize that new tuple. Restart rebuilds the population from the database; it
+does not promise to retain the previous derived vector file in this case.
+
 ## Source validation
 
 Admission checks both payload/association integrity and the source certificate
