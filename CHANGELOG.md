@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reconcile recovered label and relationship-type counts with replayed graph
+  bodies after single-entry WAL replay and mixed physical/semantic recovery.
+  Prevent relabel-then-delete recovery from failing with a count underflow.
 - Complete APOC calls containing relationship-pattern COLLECT subqueries
   without recursive evaluator handoff, including RETURN, CASE and WITH forms.
   Preserve statement cancellation while evaluating their subquery arguments.
