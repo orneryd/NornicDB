@@ -62,6 +62,9 @@ func BenchmarkFunctionLookupFirstExecution(b *testing.B) {
 // their argument splitting.
 func BenchmarkFunctionCallRows(b *testing.B) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"))
+	// Keep compiled programs warm while actually evaluating every row: a
+	// cached result measures cache lookup instead of function evaluation.
+	exec.cache = nil
 	ctx := context.Background()
 	if _, err := exec.Execute(ctx, "UNWIND range(1, 1000) AS i CREATE (:FnRow {name: 'name ' + toString(i), n: i, d: date('2020-01-01') + duration({days: i % 300})})", nil); err != nil {
 		b.Fatal(err)

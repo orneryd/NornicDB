@@ -80,6 +80,7 @@ type sourceTrimPolicy uint8
 const (
 	trimSourceWhitespace sourceTrimPolicy = iota
 	trimSourceTerminator
+	trimSourceLeadingTrivia
 )
 
 // sourceWhitespaceExtent returns the half-open byte extent of text with
@@ -99,6 +100,11 @@ func sourceWhitespaceExtent(text string) (start, end int) {
 func trimSourceText(ctx context.Context, text string, policy sourceTrimPolicy) (context.Context, string) {
 	source := cyphertext.SourceFor(ctx, text)
 	start, end := sourceWhitespaceExtent(text)
+	if policy == trimSourceLeadingTrivia && start < end && text[start] == '/' {
+		if next, unclosed := cyphertext.GapEnd(text, start); unclosed < 0 {
+			start = min(next, end)
+		}
+	}
 	trimmed := text[start:end]
 	if policy == trimSourceTerminator {
 		trimmed = trimTrailingStatementDelimiters(trimmed)
