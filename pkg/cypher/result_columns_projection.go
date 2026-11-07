@@ -12,9 +12,12 @@ import (
 // aggregate is nested in a larger expression, aggregateExpr then being the
 // whole expression).
 type returnProjection struct {
-	expr                           string
-	variable                       string
-	direct                         bool
+	expr     string
+	variable string
+	// direct preserves a variable identity, including parenthesized identities.
+	direct bool
+	// grouped distinguishes that identity from a bare pass-through projection.
+	grouped                        bool
 	alias                          string
 	isAggr                         bool
 	aggregateName                  string

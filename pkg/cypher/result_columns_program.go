@@ -139,7 +139,7 @@ func projectionDescriptor(plan *returnProjectionPlan) resultmetadata.Projection 
 	passThrough := len(plan.projections) > 0
 	for _, item := range plan.projections {
 		expressions = append(expressions, item.expr)
-		passThrough = passThrough && item.direct && item.variable == item.alias
+		passThrough = passThrough && item.direct && !item.grouped && item.variable == item.alias
 	}
 	return resultmetadata.Projection{Expressions: expressions, Names: resultmetadata.Known(plan.columns), Distinct: plan.distinct, Modifiers: plan.modifiers, PassThrough: passThrough}
 }

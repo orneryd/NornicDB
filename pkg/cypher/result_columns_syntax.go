@@ -78,7 +78,7 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 		}
 		target.addProjection(itemSource.expression, itemSource.alias)
 		projection := &target.projections[len(target.projections)-1]
-		projection.variable, projection.direct, _ = projectionVariableFromSyntax(expression)
+		projection.variable, projection.direct, projection.grouped = projectionVariableFromSyntax(expression)
 		for _, visit := range expressions {
 			visit(expression)
 		}

@@ -33,3 +33,10 @@
 - [ ] Push all verified CI corrections and dispatch full sharded make test on the immutable new head.
 
 - Public quoted-column cache-order regression passes on both parsers (1.061 s), covering rejected and accepted statements in both cache orders.
+
+## Second CI correction
+
+- Run42336067612 on55ea092e9 passed command/server/storage/capturecensus/lint. Cypher failed only TestProjectionPassThroughUsesSyntax for WITH (x) AS x; other/storagecensus still pending at observation.
+- Preserve grouped variable binding identity independently from the bare-projection PassThrough fact. Retained CST writes grouped once; metadata excludes grouped syntax without changing semantic identity.
+- Focused grouped identity, quoted/cache spelling and pass-through checks pass (2.663 s). Final-head full CI still required; no whole-suite success claimed.
+- Graphify advisory check completed on55ea092e9, indexed baseline35e3bddbf (stale vs releasef45b1a51a). Inventory has14 top-level candidate entries and110 compiler-owner pairs. Dedicated worker is reviewing all entries; no clean-duplicates claim.
