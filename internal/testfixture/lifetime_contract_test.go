@@ -164,17 +164,15 @@ func TestLifetimeProcessBoundaryAndNilResources(t *testing.T) {
 	}
 	owner.Close()
 	resource := TrackProcess(&owner, &lifetimeState{}, nil)
-	var caught any
-	func() { defer func() { caught = recover() }(); owner.Close() }()
-	if caught == nil || !strings.Contains(fmt.Sprint(caught), "still open") {
-		t.Fatal("process leak was not rejected")
+	if err := owner.Close(); err == nil || !strings.Contains(err.Error(), "still open") {
+		t.Fatalf("process leak was not reported: %v", err)
 	}
 	if !resource.closed {
 		t.Fatal("process leak not disposed")
 	}
 	owner.Close()
 	var nilOwner *Boundary
-	caught = nil
+	var caught any
 	resource = &lifetimeState{}
 	func() { defer func() { caught = recover() }(); TrackProcess(nilOwner, resource, nil) }()
 	if caught == nil || !resource.closed {
