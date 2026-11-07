@@ -311,20 +311,9 @@ func wrapPipelineIterator(ctx context.Context, it RowIterator, prefetch int) Row
 
 // prepareExecDispatch resolves the graph a fragment runs on
 // (resolveExecGraph), preserves its catalog name for selection checks, joins the distributed
-// transaction, and merges the row's variables into the parameters.
+// transaction, keeping the row's variables distinct from parameters.
 func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}) (Location, map[string]interface{}, context.Context, error) {
-	recordBindings, _ := RecordBindingsFromContext(ctx)
-	execParams := params
-	if len(recordBindings) > 0 {
-		execParams = make(map[string]interface{}, util.SafePreallocSum(len(params), len(recordBindings)))
-		for k, v := range params {
-			execParams[k] = v
-		}
-		for k, v := range recordBindings {
-			execParams[k] = v
-		}
-	}
-	graph, loc, err := e.resolveExecGraph(ctx, f, execParams)
+	graph, loc, err := e.resolveExecGraph(ctx, f, params)
 	if err != nil {
 		return nil, nil, ctx, err
 	}
@@ -345,7 +334,7 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 		ctx = WithFabricTransaction(ctx, tx)
 		ctx = WithSubTransaction(ctx, sub)
 	}
-	return loc, execParams, ctx, nil
+	return loc, params, ctx, nil
 }
 
 // SetGraphAuthorizer installs the statement owner's selection check. Dispatch
