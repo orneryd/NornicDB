@@ -2,15 +2,8 @@
 // Adapted from the NOR-288 lane's test-only d663 projection control.
 package replication
 
-// HANDOFF (reproduction only; no fix included). Reproduced on release/v1.4.4
-// 29ecd7909: retrying an accepted command writes one replication WAL projection
-// per ApplyCommand call (3 instead of 1; Raft revisit 2 instead of 1).
-// Suspected owner: StorageAdapter.ApplyCommand (storage_adapter.go) always
-// enqueues a walWriteRequest, and flushWALBatch appends it with no accepted-command
-// ID check. A fix needs one ID-aware append owner with bounded retained identity.
-// TestNOR291ProjectionFailedAppendCanRetry and ...UnreadableRecordDoesNotSkip were
-// ported from the pre-queue API (sync writer path gone) and may need re-expression
-// once the fix lands. Raft recovery qualification depends on #1691.
+// Retry, recovery and streaming regressions for the accepted-command projection
+// owner. Raft recovery qualification remains dependent on #1691.
 
 import (
 	"context"
@@ -176,6 +169,20 @@ func TestNOR291DistinctCommandAndRetryProjections(t *testing.T) {
 	assertNOR291ProjectionCount(t, a, 2)
 }
 
+func TestNOR291RetryReturnsOriginalPublicationPosition(t *testing.T) {
+	a := setupTestAdapter(t).adapter
+	payload, err := storage.EncodeCommandPayload(struct{ Prefix string }{Prefix: "unused:"})
+	require.NoError(t, err)
+	cmd := &Command{Type: CmdDeleteByPrefix, RequestID: "same-command", Data: payload, Timestamp: time.Now()}
+	first, err := a.ApplyCommand(t.Context(), cmd, WALPublished)
+	require.NoError(t, err)
+	require.NotZero(t, first.Position)
+	second, err := a.ApplyCommand(t.Context(), cmd, WALPublished)
+	require.NoError(t, err)
+	require.Equal(t, first.Position, second.Position)
+	assertNOR291ProjectionCount(t, a, 1)
+}
+
 func TestNOR291ProjectionFailedAppendCanRetry(t *testing.T) {
 	mode := WALPublished
 	base := storage.NewMemoryEngine()
@@ -189,12 +196,15 @@ func TestNOR291ProjectionFailedAppendCanRetry(t *testing.T) {
 	require.NoError(t, err)
 	a.wal = wal
 	require.NoError(t, applyNOR291(a, cmd, mode))
-	assertNOR291ProjectionCount(t, a, 1)
+	assertNOR291PublishedProjectionCount(t, a, 1)
 	node, err := storage.GetStoredNode(context.Background(), a.engine, "wire:n")
 	require.NoError(t, err)
 	require.Equal(t, "value", node.Properties["value"])
 	require.NoError(t, applyNOR291(a, cmd, mode))
-	assertNOR291ProjectionCount(t, a, 1)
+	assertNOR291PublishedProjectionCount(t, a, 1)
+	// The worker retains its first append error for FlushWAL/Close even when
+	// a subsequent published request succeeds; do not hide that failure.
+	require.ErrorIs(t, a.FlushWAL(), storage.ErrWALClosed)
 }
 
 func TestNOR291ProjectionTailRepairRetainsIdentity(t *testing.T) {
@@ -257,6 +267,12 @@ func TestNOR291ProjectionUnreadableRecordDoesNotSkip(t *testing.T) {
 func assertNOR291ProjectionCount(t *testing.T, a *StorageAdapter, count int) {
 	t.Helper()
 	require.NoError(t, a.FlushWAL())
+	assertNOR291PublishedProjectionCount(t, a, count)
+}
+
+// Call only after a WALPublished request or a successful FlushWAL barrier.
+func assertNOR291PublishedProjectionCount(t *testing.T, a *StorageAdapter, count int) {
+	t.Helper()
 	entries, err := a.GetWALEntries(0, 100)
 	require.NoError(t, err)
 	require.Len(t, entries, count, "streamed projection count")
