@@ -23,6 +23,12 @@ const (
 // Worker embedding state is hydrated from the same transaction, independently
 // of the body cache: sidecar writes do not change the node record's version.
 func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration) (*Node, error) {
+	return b.readNodeItemInTxnWithEmbeddingAbsence(txn, item, id, hydrate, false)
+}
+
+// embeddingRecordsAbsent is established by the scan's own snapshot, never by
+// a current-value cache. Legacy body flags still use normal hydration.
+func (b *BadgerEngine) readNodeItemInTxnWithEmbeddingAbsence(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration, embeddingRecordsAbsent bool) (*Node, error) {
 	node, hit := b.cacheLoadNodeBody(id, item.Version(), nil, nodeBodyDetached)
 	if !hit {
 		err := item.Value(func(value []byte) error {
@@ -42,6 +48,9 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 	case nodeItemBodyOnly:
 		return node, nil
 	case nodeItemQueryMetadata, nodeItemFullEmbeddings:
+		if embeddingRecordsAbsent && !node.RuntimeMetadata().EmbeddingsStoredSeparately {
+			return node, nil
+		}
 		return b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, id, hydrate == nodeItemFullEmbeddings)
 	default:
 		return nil, ErrInvalidData
