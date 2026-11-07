@@ -120,6 +120,9 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	if err != nil {
 		return nil, err
 	}
+	if err := validateExplainProcedureArities(ctx, query); err != nil {
+		return nil, err
+	}
 	if indexASCIIFold(query, "shortestpath") >= 0 {
 		if err := e.validateMatchSemanticScopes(ctx, query, cypherVersionFromContext(ctx) == "25"); err != nil {
 			return nil, err

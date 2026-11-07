@@ -18,3 +18,19 @@ func TestRebaseBaselineNOR54ProcedureArity(t *testing.T) {
 		}
 	}
 }
+
+func TestNOR54ExplainProcedureArityControls(t *testing.T) {
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor54_arity"))
+	for _, query := range []string{
+		"EXPLAIN CALL db.labels() YIELD label RETURN label",
+		"EXPLAIN UNWIND [] AS ignored CALL db.labels() YIELD label RETURN label",
+	} {
+		if _, err := executor.Execute(t.Context(), query, nil); err != nil {
+			t.Errorf("valid query %q: %v", query, err)
+		}
+	}
+	query := "EXPLAIN CALL { CALL db.labels(1) YIELD label RETURN label } RETURN label"
+	if _, err := executor.Execute(t.Context(), query, nil); err == nil {
+		t.Errorf("invalid nested procedure arity accepted: %s", query)
+	}
+}
