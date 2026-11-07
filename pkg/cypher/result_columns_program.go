@@ -56,7 +56,7 @@ func (e *StorageExecutor) statementProjectionProgram(ctx context.Context, query 
 	if schema == nil {
 		program = e.projectedStatementScope(ctx, query, names, resultmetadata.Known(nil), cypher25)
 	} else {
-		compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, schema: schema}
+		compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, schema: schema, role: e.inputBindingRole}
 		program = compiler.root(ctx, names, resultmetadata.Known(nil))
 	}
 	// Cached programs are immutable; participant-dependent compilation never
@@ -99,11 +99,12 @@ func programFailure(reason resultmetadata.UnresolvedReason, position int, err er
 // scope transfers. WITH and RETURN use the same cached projection plans that
 // execute rows; CALL stores its nested program rather than re-inferring exports.
 func (e *StorageExecutor) compileStatementProgram(ctx context.Context, source string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
-	compiler := projectionCompilation{executor: e, source: source, cypher25: cypher25}
+	compiler := projectionCompilation{executor: e, source: source, cypher25: cypher25, role: e.inputBindingRole}
 	return compiler.root(ctx, incoming, retained)
 }
 
 type projectionCompilation struct {
+	role     boundBodyRole
 	executor *StorageExecutor
 	source   string
 	cypher25 bool

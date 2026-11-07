@@ -101,6 +101,7 @@ func (e *StorageExecutor) CachedResultColumns(ctx context.Context, query string,
 		names[name] = struct{}{}
 	}
 	key := projectionKey(query, projectedMapNames(names), resultmetadata.Known(nil), cypher25)
+	key.role = e.inputBindingRole
 	if facts, found := projectionFactsCache.get(key); found && facts.generation == globalProcedureRegistry.generation.Load() && facts.complete {
 		names := resultmetadata.Unknown()
 		facts.statement.Columns.Visit(func(header []string) { names = resultmetadata.Known(header) }, func() {})

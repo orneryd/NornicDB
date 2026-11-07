@@ -453,7 +453,7 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 	}
 	desugared, _, err := desugarLabelExpressions(ctx, canonical, params, cypherVersionFromContext(ctx) == "25")
 	if err == nil {
-		err = e.validateSemanticScopes(ctx, desugared)
+		_, err = e.admitStatement(ctx, desugared)
 	}
 	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
 	_, err = (resultRestoration{names: names}).restore(ctx, nil, err, parseItems)

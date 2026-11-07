@@ -29,6 +29,7 @@ type projectedScopeFacts struct {
 }
 
 type projectionFactsKey struct {
+	role                                   boundBodyRole
 	query, incoming, retained              string
 	incomingKnown, retainedKnown, cypher25 bool
 }
@@ -90,6 +91,7 @@ func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, 
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
 	key := projectionKey(query, incoming, retained, cypher25)
+	key.role = e.inputBindingRole
 	generation := globalProcedureRegistry.generation.Load()
 	if facts, found := projectionFactsCache.get(key); found && facts.generation == generation {
 		return facts

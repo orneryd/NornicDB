@@ -24,10 +24,21 @@ func (admission boundScopeAdmission) verifyColumns(actual []string) error {
 	return unresolvedStatementError()
 }
 
-// admitBoundStatement is execution's adapter into the shared scope program.
+// admitStatement is execution's adapter into the shared scope program.
 // Administrative commands have a typed command continuation; graph statements
 // cannot decline binding or substitute successful empty facts.
-func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string) (boundScopeAdmission, error) {
+func (e *StorageExecutor) admitStatement(ctx context.Context, source string) (admission boundScopeAdmission, err error) {
+	// Binding establishes exact membership and headers before type validation.
+	// Both phases finish before any execution owner can perform effects.
+	defer func() {
+		if err != nil {
+			return
+		}
+		if admission.program != nil {
+			ctx = withBoundStatementProgram(ctx, admission.program)
+		}
+		err = e.validateStatementTypes(ctx, source)
+	}()
 	// Extensions have a real command continuation with its own syntax and
 	// result contract. The graph grammar must not reject them before routing.
 	if isNornicExtensionStatement(ctx, source) || isSchemaCommandStatement(source) || isMetadataCommand(ctx, source, metadataCatalogExecution) {
@@ -73,13 +84,13 @@ func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string
 		}
 		return boundScopeAdmission{graph: true, columns: program.statement.Columns, program: program.bound}, nil
 	}
-	admission := boundScopeAdmission{}
+	admission = boundScopeAdmission{}
 	program := e.statementProjectionProgram(ctx, source, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25", schema)
 	if err := ctx.Err(); err != nil {
 		return boundScopeAdmission{}, err
 	}
 	program.facts.Visit(func(statement resultmetadata.Statement) {
-		admission = boundScopeAdmission{graph: true, columns: statement.Columns}
+		admission = boundScopeAdmission{graph: true, columns: statement.Columns, program: program.bound}
 	}, func() { err = unresolvedStatementError() }, func(reason resultmetadata.Unresolved) { err = reason.Err })
 	return admission, err
 }

@@ -23,7 +23,7 @@ func (clause *boundClause) projectionTailBindings(read cypherantlr.SyntaxNode) (
 	restricted := clause.plan != nil && (clause.plan.distinct || clause.plan.hasAggregate)
 	if restricted {
 		if name, symbol := read.Name(); symbol {
-			if _, retained := projectedNameMap(clause.branch.body.retained)[name]; retained {
+			if _, retained := clause.branch.retainedIDs[name]; retained {
 				names, ids := clause.combinedBindings()
 				return names, ids, false
 			}

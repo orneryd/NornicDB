@@ -92,7 +92,7 @@ func TestResultHeaderConsumerBoundary(t *testing.T) {
 					if name == "canonicalizeQueryText" && !owned && fn.Name.Name != "classificationText" {
 						t.Errorf("execution normalization bypasses source-column preservation: %s (%s)", fn.Name.Name, fset.Position(n.Pos()))
 					}
-					if owned && (name == "semanticScopeWalk" || name == "validateMatchSemanticScopes" || name == "validateSemanticScopes") {
+					if owned && (name == "semanticScopeWalk" || name == "validateMatchSemanticScopes" || name == "validateStatementTypes") {
 						t.Errorf("projection metadata invoked validation: %s", name)
 					}
 					if strings.Contains(lower, "keyword") || strings.HasPrefix(lower, "parse") || strings.Contains(lower, "split") || name == "LastIndex" || name == "Index" {
