@@ -104,13 +104,21 @@ func requireCascadeEdgeConflict(t *testing.T, err error) {
 // it cascades, so it cannot be acknowledged in the window; once the primary is
 // acknowledged and releases that authority, the peer's own validation observes
 // the acknowledged removal and rejects it as an ordinary conflict.
+//
+// That window belongs to the validation phase of a commit that runs its
+// buffered conflict scan, so the unrelated generation the scan walks must still
+// be unapplied when the commit validates. This test therefore owns the replay
+// owner instead of running one: a live write-behind worker drains that
+// generation whenever its queued flush signal reaches it, and a drained
+// generation legitimately removes the scan - the commit then reaches its buffer
+// append directly, so the first admission wait observed is the AppendCommit
+// append and not the scan. That is which phase the commit is in, not whether
+// the guarantee holds, so the prerequisite is fixed here rather than timed.
 func TestNodeCascadeValidationWindowBlocksPeerAcknowledgement(t *testing.T) {
 	ctx := context.Background()
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	setupCascadeBoundaryGraph(t, engine)
 	require.NotNil(t, engine.writeBehind)
-	// Keep generations unapplied until a step drains them.
-	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 
 	primary, err := engine.BeginTransaction(ctx)
 	require.NoError(t, err)
@@ -130,6 +138,8 @@ func TestNodeCascadeValidationWindowBlocksPeerAcknowledgement(t *testing.T) {
 	var releaseOnce sync.Once
 	releaseWindow := func() { releaseOnce.Do(engine.writeBehind.mu.Unlock) }
 	t.Cleanup(releaseWindow)
+	require.Equal(t, uint64(1), engine.writeBehind.readEpoch.Load()&1,
+		"the window's commit must still find the unrelated generation unapplied, otherwise it skips its buffered conflict scan")
 
 	parked := make(chan string, 1)
 	t.Cleanup(setAdmissionWaitObserver(func(owner any, _ context.Context) {

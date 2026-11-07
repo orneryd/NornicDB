@@ -5,8 +5,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // Functions binds this package's storage-backed label helpers to one storage
@@ -511,10 +514,24 @@ func Validate(label string) map[string]interface{} {
 // Example:
 //
 //	apoc.label.normalize(' person ') => 'Person'
+//
+// Valid Unicode uses simple one-codepoint uppercase mapping (no expansion),
+// with the remainder unchanged. Admitted lone UTF-16 name units retain their bytes.
+// As before, this helper does not validate arbitrary Go string bytes: a
+// malformed leading byte becomes RuneError, while the remaining bytes
+// are preserved.
 func Normalize(label string) string {
 	label = strings.TrimSpace(label)
 	if len(label) > 0 {
-		label = strings.ToUpper(label[:1]) + label[1:]
+		initial, size := cyphertext.ReadCodepoint(label, 0)
+		upper := unicode.ToUpper(initial)
+		// Unchanged codepoints, including admitted lone UTF-16 units, retain
+		// their exact bytes. A malformed leading byte keeps the established
+		// RuneError replacement rather than being mistaken for an unchanged rune.
+		if upper == initial && !(initial == utf8.RuneError && size == 1) {
+			return label
+		}
+		label = string(upper) + label[size:]
 	}
 	return label
 }
