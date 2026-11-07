@@ -14,7 +14,6 @@ import (
 	apocload "github.com/orneryd/nornicdb/apoc/load"
 	"github.com/orneryd/nornicdb/pkg/apocio"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
-	securitypkg "github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -229,16 +228,9 @@ func exportProcedure(declaration exportDeclaration) ProcedureHandler {
 		// The destination resolves through the caller's APOC I/O capability, and
 		// only when the caller named a file: a streamed export performs no file I/O
 		// and needs no export path.
-		resolvedPath := ""
-		if filePath != "" {
-			capability, err := apocio.CapabilityFrom(ctx)
-			if err != nil {
-				return nil, err
-			}
-			resolvedPath, err = capability.ExportPath(filePath)
-			if err != nil {
-				return nil, err
-			}
+		destination, err := apocio.AdmitExport(ctx, filePath)
+		if err != nil {
+			return nil, err
 		}
 
 		source, err := e.readExportSource(ctx, declaration.scope, query)
@@ -251,8 +243,18 @@ func exportProcedure(declaration exportDeclaration) ProcedureHandler {
 			return nil, err
 		}
 
-		if err := e.writeExport(ctx, declaration.scope, resolvedPath, payload); err != nil {
-			return nil, err
+		directories := apocio.ExistingDirectory
+		if declaration.scope == exportGraphScope {
+			directories = apocio.CreateDirectories
+		}
+		var writeErr error
+		if payload.content != nil {
+			writeErr = apocio.WriteExport(ctx, destination, payload.content, directories)
+		} else {
+			writeErr = apocio.WriteExport(ctx, destination, payload.text, directories)
+		}
+		if writeErr != nil {
+			return nil, writeErr
 		}
 
 		return &ExecuteResult{
@@ -285,32 +287,6 @@ func (e *StorageExecutor) readExportSource(ctx context.Context, scope exportScop
 		return exportSource{}, fmt.Errorf("failed to read relationships: %w", err)
 	}
 	return exportSource{nodes: nodes, edges: edges}, nil
-}
-
-// writeExport writes one encoded export to its resolved path. The whole-graph
-// procedures create the file's parent directory; the query procedures write
-// only into a directory the caller already has. A caller that has stopped
-// performs no write and never receives a successful export.
-func (e *StorageExecutor) writeExport(ctx context.Context, scope exportScope, path string, payload exportPayload) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if path == "" {
-		return nil
-	}
-	if scope == exportGraphScope {
-		if err := securitypkg.EnsureRootedParent(path, 0o755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
-	}
-	content := payload.content
-	if content == nil {
-		content = []byte(payload.text)
-	}
-	if err := securitypkg.WriteRootedFile(path, content, 0o644); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
-	}
-	return ctx.Err()
 }
 
 // exportChunks observes the caller between pages of
