@@ -50,7 +50,10 @@ func TestCompositeKeywordNamesExecute(t *testing.T) {
 								queryExec = fabricCallRowsCompositeExecutor(t, exec)
 								_, err := queryExec.Execute(ctx, "BEGIN", nil)
 								require.NoError(t, err)
-								defer queryExec.Execute(ctx, "ROLLBACK", nil)
+								t.Cleanup(func() {
+									_, rollbackErr := queryExec.Execute(ctx, "ROLLBACK", nil)
+									require.NoError(t, rollbackErr)
+								})
 							}
 							result, err := queryExec.Execute(ctx, tc.Query, tc.Params)
 							require.NoError(t, err, "%s", tc.Query)
@@ -81,4 +84,12 @@ func TestCompositeLegacyImportAndParameterIdentity(t *testing.T) {
 		map[string]interface{}{"call": int64(7)})
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(9), int64(7)}}, result.Rows)
+}
+
+func TestCompositeGraphSelectorRequiresParameterSigil(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
+		executor := newFabricCallRowsExecutor(t)
+		_, err := executor.Execute(t.Context(), "USE comp CALL { USE graph.byName(selected) RETURN 7 AS k } RETURN k", map[string]interface{}{"selected": "comp.one"})
+		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	})
 }

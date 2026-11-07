@@ -41,6 +41,7 @@ func TestCompositeKeywordBindingsHTTP(t *testing.T) {
 				var result TransactionResponse
 				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
 				if result.Commit != "" {
+					require.Contains(t, result.Commit, "/db/", "explicit transaction must return a database commit URL")
 					commitPath := result.Commit[strings.Index(result.Commit, "/db/"):]
 					defer makeRequest(t, server, http.MethodDelete, strings.TrimSuffix(commitPath, "/commit"), nil, token)
 				}
