@@ -21,7 +21,7 @@ func BenchmarkSemanticValidationUncached(b *testing.B) {
 				exec.semanticValidationCache = newSemanticValidationCache(1)
 				exec.matchSemanticValidationCache = newSemanticValidationCache(1)
 				exec.mergeSemanticValidationCache = newSemanticValidationCache(1)
-				if err := exec.validateSemanticScopes(context.Background(), statement); err != nil {
+				if err := exec.validateStatementTypes(context.Background(), statement); err != nil {
 					b.Fatal(err)
 				}
 			}

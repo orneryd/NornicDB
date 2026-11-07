@@ -31,6 +31,11 @@ const investigationPass = "synthetic-userpass-investigation-48263917"
 const investigationMarker = "real-remote-marker-67193824"
 const investigationRead = "MATCH (n:AuthInvestigation) RETURN n.marker AS marker"
 
+// investigationFailingRead is admitted by every ingress and fails when the
+// remote participant executes its projection, so the implicit workflow must
+// roll back the remote sub-transaction instead of committing it.
+const investigationFailingRead = "MATCH (n:AuthInvestigation) RETURN 1 / 0 AS value"
+
 func investigationDiagnostic(message string) string {
 	message = strings.ReplaceAll(message, investigationPass, "<synthetic-password>")
 	return strings.ReplaceAll(message, base64.StdEncoding.EncodeToString([]byte("admin:"+investigationPass)), "<synthetic-basic-auth>")
@@ -387,7 +392,7 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 						target.wire.reset()
 						query := "USE " + graph + " " + investigationRead
 						if ending == "rollback" {
-							query = "USE " + graph + " CALL nornic.synthetic_missing_credential_workflow()"
+							query = "USE " + graph + " " + investigationFailingRead
 						}
 						ok, failed, status, requestErr := investigationIngress(local, "bolt://127.0.0.1:"+lb, ingress, query)
 						requests, correct, encrypted := target.wire.info()

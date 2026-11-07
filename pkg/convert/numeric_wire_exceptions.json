@@ -623,9 +623,9 @@
     "reason": "Author: #1665 implementation lane (Codex). Internal remote-graph fixture server reads typed control requests and writes fixed test graph envelopes, not a production property admission path; unchanged TJ body.",
     "sha256": "2fc254a16c9e29c4efd67cf4154b1d1cec680dcf71e136e28fbee33481d63b27"
   },
-  "pkg/replication/storage_adapter.go:StorageAdapter.GetWALEntries": {
-    "reason": "Author: #1665 implementation lane (Codex). Decodes a typed historical replication wrapper; its entity payload remains opaque bytes and is transcoded through the retained payload owner. TJ body unchanged.",
-    "sha256": "9bd2134a3c8e7505696fbf33b32203548960885f7cc13c8bab25c2a744bfe316"
+  "pkg/replication/storage_adapter_projection.go:decodeProjectionRecord": {
+    "reason": "Author: #1665 implementation lane (Codex). Decodes the typed historical replication wrapper for startup and streaming; entity payloads remain opaque bytes and use the retained payload owner.",
+    "sha256": "40260159ec0a81c7d90aedc553fd946a0bfc21fe5ef864aa3b1609ad73c96f84"
   },
   "pkg/replication/wal_v4_payload.go:TranscodeV4WALPayload": {
     "reason": "Author: #1665 implementation lane (Codex). Version-4 migration reads typed/raw-message envelope fields and delegates entity conversion to the historical transcoder. Re-encoding wraps converted bytes; current property decoding is not bypassed.",

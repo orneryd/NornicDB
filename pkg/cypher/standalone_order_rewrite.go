@@ -245,6 +245,33 @@ func standaloneOperandPosition(previousWord string, last rune) bool {
 	return standaloneOperandWord(previousWord) || (last != 0 && strings.ContainsRune(",:=<>+-/%^|", last))
 }
 
+// projectionOperandBefore classifies a word using a bounded window from the
+// caller's forward word product. Quotes/comments and predecessor extents keep
+// their lexical owners; no consumer rescans a complete statement prefix.
+func projectionOperandBefore(query string, from, at int) bool {
+	prefix := query[from:at]
+	previous, _ := expressionPredecessor(prefix, len(prefix))
+	if previous < 0 {
+		return false
+	}
+	last := cyphertext.RuneAt(prefix, previous)
+	if last == '.' || last == '$' {
+		return true
+	}
+	if last == '*' {
+		word := previousSignificantWord(prefix, previous)
+		return !strings.EqualFold(word, "RETURN") && !strings.EqualFold(word, "WITH") && !strings.EqualFold(word, "DISTINCT")
+	}
+	word := previousSignificantWord(prefix, previous+1)
+	if word != "" {
+		before, _ := expressionPredecessor(prefix, previous+1-len(word))
+		if before >= 0 && (isPropertyDotAt(prefix, before) || prefix[before] == '$' || prefix[before] == ':') {
+			word = ""
+		}
+	}
+	return standaloneOperandPosition(word, last)
+}
+
 // standaloneClauseKind is the projection stage the word upper at
 // query[:next] starts (ORDER BY, SKIP / OFFSET, LIMIT), or
 // standaloneStageItems for any other word.

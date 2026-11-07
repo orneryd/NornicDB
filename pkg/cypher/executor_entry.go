@@ -839,10 +839,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if finishTerminated {
 		scopeText += " FINISH"
 	}
-	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
-		return nil, err
-	}
-	admission, admissionErr := e.admitBoundStatement(ctx, scopeText)
+	admission, admissionErr := e.admitStatement(ctx, scopeText, fabricAdmission{})
 	if admissionErr != nil {
 		return nil, admissionErr
 	}

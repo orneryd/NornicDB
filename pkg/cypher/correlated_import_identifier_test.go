@@ -75,7 +75,11 @@ func TestCorrelatedPipelineImportedIdentifierShortcutParity(t *testing.T) {
 						} else {
 							runCtx = withValueBindings(ctx, bindings)
 						}
-						require.True(t, exec.pipelineReadsImportedBinding(runCtx, clauses))
+						proofCtx, proofErr := exec.bindPipelineProgram(runCtx, clauses, map[string]struct{}{name: {}})
+						require.NoError(t, proofErr)
+						reads, proofErr := exec.pipelineReadsImportedBinding(proofCtx, clauses)
+						require.NoError(t, proofErr)
+						require.True(t, reads)
 						// These direct callers supply clause text before the public
 						// quoted-variable rewrite. Preserve the general path's existing
 						// name/scope behavior and compare dispatch against it verbatim.
@@ -92,7 +96,11 @@ func TestCorrelatedPipelineImportedIdentifierShortcutParity(t *testing.T) {
 					unrelated := "MATCH (other:A) RETURN count(other) AS c"
 					unrelatedClauses, ok := canExecuteAsPipeline(t.Context(), unrelated)
 					require.True(t, ok)
-					require.False(t, exec.pipelineReadsImportedBinding(withValueBindings(ctx, pipelineRow{name: seeds.Rows[0][0]}), unrelatedClauses))
+					proofCtx, proofErr := exec.bindPipelineProgram(withValueBindings(ctx, pipelineRow{name: seeds.Rows[0][0]}), unrelatedClauses, map[string]struct{}{name: {}})
+					require.NoError(t, proofErr)
+					reads, proofErr := exec.pipelineReadsImportedBinding(proofCtx, unrelatedClauses)
+					require.NoError(t, proofErr)
+					require.False(t, reads)
 					unrelatedResult := exec.executePipeline(ctx, unrelated)
 					require.NoError(t, unrelatedResult.err)
 					require.True(t, unrelatedResult.handled())

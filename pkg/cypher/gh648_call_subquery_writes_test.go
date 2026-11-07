@@ -296,7 +296,10 @@ func TestGh648_SharedReturnBoundary(t *testing.T) {
 func TestGh648_OuterScopeAndColumnNames(t *testing.T) {
 	t.Run("independent_return_bindings", func(t *testing.T) {
 		exec := newGh648Executor(t)
-		rows, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(context.Background(), []pipelineRow{{"v": int64(1)}}, pr1682TestCallClause(t, "CALL { RETURN 2 AS c }"), nil)
+		clause := callScopeTestClause(t, "CALL { RETURN 2 AS c }")
+		ctx, err := exec.bindPipelineProgram(context.Background(), []pipelineClause{clause}, map[string]struct{}{"v": {}})
+		require.NoError(t, err)
+		rows, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"v": int64(1)}}, clause, nil)
 		require.NoError(t, err)
 		require.True(t, handled)
 		require.Equal(t, []pipelineRow{{"v": int64(1), "c": int64(2)}}, rows)
@@ -438,7 +441,7 @@ func TestPR771TransactionalCallChainedRows(t *testing.T) {
 	query := "CALL { UNWIND [1,2,3] AS i RETURN i } CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS RETURN i ORDER BY i"
 	clauses, split := splitPipelineClausesAllowingProcedureCalls(t.Context(), query)
 	t.Logf("clauses: split=%v values=%+v", split, clauses)
-	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, pr1682TestCallClause(t, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS"), nil)
+	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, callScopeTestClause(t, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS"), nil)
 	t.Logf("call probe: rows=%+v stats=%+v handled=%v err=%v", callRows, callStats, callHandled, callErr)
 	runner := newGh648Executor(t)
 	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{}}, clauses[0], nil)

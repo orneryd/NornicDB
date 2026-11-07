@@ -30,8 +30,6 @@ func TestCallReturnClauseSurvivesUnknownTypes(t *testing.T) {
 		{"USE opaque return", "CALL { USE g RETURN abs(-1) AS x }", "RETURN abs(-1) AS x", true},
 		{"USE ordered wildcard", "CALL { USE g RETURN *, 1 AS k }", "RETURN *, 1 AS k", true},
 		{"USE first UNION", "CALL { USE g RETURN 1 AS z UNION RETURN 2 AS z }", "RETURN 1 AS z", false},
-		{"undefined implicit body", "CALL { RETURN missing AS k }", "RETURN missing AS k", true},
-		{"unknown later UNION", "CALL { RETURN 1 AS k UNION RETURN missing AS k }", "RETURN 1 AS k", true},
 		{"procedure wildcard", "CALL { CALL db.labels() YIELD * RETURN * }", "RETURN *", true},
 		{"known ordered columns", "CALL { RETURN 1 AS z, 2 AS a }", "RETURN 1 AS z, 2 AS a", false},
 		{"mixed wildcard", "CALL { UNWIND [7] AS v RETURN *, 1 AS k }", "RETURN *, 1 AS k", false},
@@ -55,6 +53,33 @@ func TestCallReturnClauseSurvivesUnknownTypes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Unknown inferred types are permitted, but an undefined variable is a rejected
+// statement. Retaining its RETURN text must not swallow that semantic error.
+func TestCallReturnClauseRetainsUndefinedVariableError(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		for _, tc := range []struct{ query, firstReturn string }{
+			{"CALL { RETURN missing AS k }", "RETURN missing AS k"},
+			{"CALL { RETURN 1 AS k UNION RETURN missing AS k }", "RETURN 1 AS k"},
+		} {
+			t.Run(tc.query, func(t *testing.T) {
+				e := NewStorageExecutor(newTestMemoryEngine(t))
+				call, body := testRetainedCall(t, tc.query)
+				types, clause, err := e.callSubqueryReturnTypes(t.Context(), call, body, typeScope{}, false)
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "missing")
+				require.Equal(t, tc.firstReturn, clause)
+				require.Nil(t, types)
+				_, err = e.Execute(t.Context(), tc.query+" RETURN k", nil)
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "missing")
+				var classified interface{ BoltErrorCode() string }
+				require.ErrorAs(t, err, &classified)
+				require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode())
+			})
+		}
+	})
 }
 
 func TestPipelineClauseProductCacheIsolation(t *testing.T) {
