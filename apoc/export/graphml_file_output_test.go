@@ -22,7 +22,6 @@ func TestGraphMLFileExportWritesCanonicalDocument(t *testing.T) {
 		export func([]*Node, []*Relationship, string) error
 	}{
 		{"graphMLAll", GraphMLAll},
-		{"graphMLData", GraphMLData},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "nested", "graph.graphml")

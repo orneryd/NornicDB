@@ -298,15 +298,6 @@ func GraphMLAll(nodes []*Node, rels []*Relationship, filePath string) error {
 	return ToFile(document, filePath)
 }
 
-// GraphMLData exports specific data to GraphML.
-//
-// Example:
-//
-//	apoc.export.graphml.data(nodes, rels, '/path/to/export.graphml') => exported
-func GraphMLData(nodes []*Node, rels []*Relationship, filePath string) error {
-	return GraphMLAll(nodes, rels, filePath)
-}
-
 // writeGraphMLData writes one property as a GraphML data element. The key is an
 // attribute value and the property is element text, so both are escaped and a
 // key or value carrying markup cannot break the document.

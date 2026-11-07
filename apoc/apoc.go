@@ -1200,7 +1200,7 @@ func registerAllFunctions(functions map[string]Function, fns *boundFunctions) er
 	register("apoc.export.cypherData", "export", apocexport.CypherData, "Export Cypher data", []string{"apoc.export.cypherData(nodes, rels) => cypher"})
 	register("apoc.export.graphML", "export", apocexport.GraphML, "Export GraphML", []string{"apoc.export.graphML('/path/to/file.graphml') => result"})
 	register("apoc.export.graphMLAll", "export", apocexport.GraphMLAll, "Export all GraphML", []string{"apoc.export.graphMLAll('/path/to/file.graphml') => result"})
-	register("apoc.export.graphMLData", "export", apocexport.GraphMLData, "Export GraphML data", []string{"apoc.export.graphMLData(nodes, rels) => graphml"})
+	register("apoc.export.graphMLData", "export", apocexport.GraphMLAll, "Export GraphML data", []string{"apoc.export.graphMLData(nodes, rels) => graphml"})
 	register("apoc.export.toFile", "export", apocexport.ToFile, "Export to file", []string{"apoc.export.toFile(data, '/path/to/file') => result"})
 	register("apoc.export.toString", "export", apocexport.ToString, "Export to string", []string{"apoc.export.toString(data) => string"})
 

@@ -3,8 +3,10 @@ package apocexport_test
 import (
 	"encoding/xml"
 	"fmt"
+	apoclog "github.com/orneryd/nornicdb/apoc/log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/apoc"
@@ -161,4 +163,21 @@ func TestRegisteredRawExportUsesCanonicalFileWriter(t *testing.T) {
 	require.Equal(t, "content", string(output))
 	_, err = apoc.Call("apoc.export.toFile", []interface{}{"content", t.TempDir()})
 	require.Error(t, err)
+}
+
+func TestExportReplacementAndLogAppendHaveDifferentFileContracts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data.txt")
+	require.NoError(t, apocexport.ToFile("first", path))
+	require.NoError(t, apocexport.ToFile("replacement", path))
+	output, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "replacement", string(output))
+	require.NoError(t, apoclog.ToFile(path, "log one"))
+	require.NoError(t, apoclog.ToFile(path, "log two"))
+	output, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(string(output), "replacement"))
+	require.Contains(t, string(output), "log one\n")
+	require.Contains(t, string(output), "log two\n")
+	require.Greater(t, len(output), len("replacementlog one\nlog two\n"), "logger adds timestamp formatting; export preserves exact bytes")
 }

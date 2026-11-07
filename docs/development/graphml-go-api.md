@@ -24,7 +24,10 @@ new file nor changes an existing one. Write errors are returned to the caller;
 this is not a guarantee of atomic replacement for an operating-system write
 failure.
 
-`GraphMLAll` and `GraphMLData` write the same document. An empty destination
+Go callers of the retired forwarding `GraphMLData` function use `GraphMLAll`.
+The public APOC names `apoc.export.graphMLAll` and `apoc.export.graphMLData`
+both register that canonical implementation directly and remain supported.
+An empty destination
 retains the established no-file behavior. JSON, CSV, Cypher and raw file exports
 share the existing directory/file-writing owner and report destination errors.
 
