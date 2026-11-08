@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"strings"
 	"testing"
 
@@ -124,7 +125,7 @@ func TestQueryNodeScansLeaveEmbeddingsInStorage(t *testing.T) {
 	}
 	// Engine wrappers may forward mandatory methods while hiding optional
 	// streaming interfaces. Their query-node capability must still be honored.
-	g.exec = NewStorageExecutor(&queryNodeReadSpy{Engine: g.store}, QueryCachePolicy{MaxEntries: 0, TTL: 0})
+	g.exec = NewStorageExecutor(storagefault.NewQueryNodeReadSpy(g.store), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, tc := range []struct {
 		query string
 		rows  int
@@ -140,7 +141,7 @@ func TestQueryNodeScansLeaveEmbeddingsInStorage(t *testing.T) {
 	}
 	// A namespaced wrapper that hides optional capabilities still forwards
 	// the query scan's metadata-only hydration decision.
-	inner := &projectedQueryNodeWrapper{queryNodeReadSpy: &queryNodeReadSpy{Engine: g.engine}}
+	inner := &projectedQueryNodeWrapper{queryNodeReadSpy: storagefault.NewQueryNodeReadSpy(g.engine)}
 	wrapped := storage.NewNamespacedEngine(inner, "test")
 	exec := NewStorageExecutor(wrapped, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	result, err := exec.Execute(context.Background(), "MATCH (n:Doc) RETURN n LIMIT 2", nil)
@@ -211,21 +212,22 @@ func TestFabricFragmentQueryNodeEligibility(t *testing.T) {
 		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) RETURN n", true},
 		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) SET n.seen = 1 RETURN n", false},
 		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) CALL db.labels() YIELD label RETURN n LIMIT 1", false},
+		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) CALL { WITH n RETURN n.title AS title } RETURN n, title", false},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			g := newLargeEmbeddingGraph(t, 2)
-			spy := &queryNodeReadSpy{Engine: g.store}
+			spy := storagefault.NewQueryNodeReadSpy(g.store)
 			exec := g.exec.cloneWithStorage(spy, selectedDatabaseStorage)
 			fabric := &cypherFabricExecutor{base: g.exec}
 			_, _, err := fabric.executeFragmentQuery(context.Background(), exec, tc.query, nil, nil)
 			require.NoError(t, err)
 			require.Equal(t, tc.eligible, exec.readOnlyQueryNodes)
 			if tc.eligible {
-				require.Positive(t, spy.query.Load())
-				require.Zero(t, spy.full.Load())
+				require.Positive(t, spy.Query.Load())
+				require.Zero(t, spy.Full.Load())
 			} else {
-				require.Positive(t, spy.full.Load())
-				require.Zero(t, spy.query.Load())
+				require.Positive(t, spy.Full.Load())
+				require.Zero(t, spy.Query.Load())
 			}
 		})
 	}

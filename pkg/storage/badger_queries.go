@@ -483,7 +483,11 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				return nil, false
 			}
 			b.nodeCacheMu.RLock()
-			cached, ok := b.nodeCache[nodeID]
+			mode := nodeReadCacheFull
+			if queryNodes {
+				mode = nodeReadCacheQuery
+			}
+			cached, ok := b.nodeReadCacheImageLocked(nodeID, mode)
 			b.nodeCacheMu.RUnlock()
 			if !ok || b.writeBehind != nil {
 				return nil, false

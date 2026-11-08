@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep lightweight CALL-subquery and metadata reads lightweight after full node
+  reads warm the cache. Full and query node images now share an estimated
+  256 MiB byte budget, including vectors, with individual eviction instead of
+  whole-cache clearing. Full-vector reads remain cached within that budget.
+  See [NOR-413 verification](docs/performance/nor413-call-reads-and-node-cache.md).
+
 - Keep accepted replication transactions distinct across databases when Go callers
   reuse a logical ID, while preserving retry identity across journal reopen.
   Transaction envelopes, rather than transport request IDs, define that identity.
@@ -150,6 +156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   property names at the scan snapshot, and preserve embedding sidecar read
   contracts. Malformed node bodies now fail scans instead of silently returning
   an incomplete population.
+- Read-only auto-commit statements whose only `CALL`s are `CALL { }`
+  subqueries no longer load the stored chunk vectors of the nodes they match,
+  like the same statement without the subquery. A statement that calls any
+  procedure, runs a subquery `IN TRANSACTIONS` or under `USE`, or calls a
+  plugin function outside the bundled APOC library keeps its full node reads,
+  as do statements that write.
 - Batch Graphify relationship inventory by at most 200 source nodes per request,
   retaining complete fan-out, repository isolation and stale-deletion guards.
 - Honor the host's per-database result-cache size and TTL for Bolt, including

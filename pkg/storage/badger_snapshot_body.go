@@ -44,17 +44,40 @@ func (b *BadgerEngine) readNodeItemInTxnWithEmbeddingAbsence(txn *badger.Txn, it
 		}
 		b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs())
 	}
+	var err error
 	switch hydrate {
 	case nodeItemBodyOnly:
-		return node, nil
 	case nodeItemQueryMetadata, nodeItemFullEmbeddings:
-		if embeddingRecordsAbsent && !node.RuntimeMetadata().EmbeddingsStoredSeparately {
-			return node, nil
+		if !embeddingRecordsAbsent || node.RuntimeMetadata().EmbeddingsStoredSeparately {
+			node, err = b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, id, hydrate == nodeItemFullEmbeddings)
+			if err != nil {
+				return nil, err
+			}
 		}
-		return b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, id, hydrate == nodeItemFullEmbeddings)
 	default:
 		return nil, ErrInvalidData
 	}
+	b.bindNodeReadSource(node, id, item.Version())
+	return node, nil
+}
+
+// bindNodeReadSource gives a decoded image the identity of the pinned body
+// it came from. Point and scan reads use the same record, independently of
+// whether a whole-node cache happened to contain the node. Besides embedding
+// writeback provenance, native handlers comparing node images must not see
+// different ownership records solely because one read was a scan.
+func (b *BadgerEngine) bindNodeReadSource(node *Node, id NodeID, version uint64) {
+	if node == nil {
+		return
+	}
+	revision := EmbeddingBodyRevision{physical: version}
+	if node.runtime != nil && node.runtime.embeddingOwner == b && node.runtime.embeddingOwnerID == id && node.runtime.embeddingRevision == revision {
+		return
+	}
+	state := node.runtimeState()
+	state.embeddingOwner, state.embeddingOwnerID = b, id
+	state.embeddingRevision = revision
+	node.setRuntimeState(state)
 }
 
 // cacheLoadEdgeAtVersion is the version-checked form of the edge body's hot
