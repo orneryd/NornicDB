@@ -874,7 +874,7 @@ type rowComparisonNode struct {
 func (n *rowComparisonNode) eval(ctx context.Context, e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
 	return evaluateScannedComparisonChain(n.text, &n.scan, n.normalizeIdentity, func(index int, _ string) (interface{}, bool, error) {
 		return n.operands[index].eval(ctx, e, values, frames)
-	}, compareCypherPredicateValue, rowIsCypher25(values), e.graphIdentityDomain())
+	}, compareCypherPredicateValue, rowIsCypher25(values))
 }
 
 type rowNullTestNode struct {
@@ -911,7 +911,7 @@ func (n *rowMembershipNode) eval(ctx context.Context, e *StorageExecutor, values
 	if !leftOK || !rightOK {
 		return nil, false, nil
 	}
-	value, ok := rowMembershipOfValues(needle, haystack, n.identity, e.graphIdentityDomain())
+	value, ok := rowMembershipOfValues(needle, haystack, n.identity)
 	if !n.negated || !ok || value == nil {
 		return value, ok, nil
 	}
