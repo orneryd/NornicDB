@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Require exact database identity for qualified textual element IDs in MATCH
+  predicates and graph functions. Arbitrary database prefixes no longer resolve
+  to local entities; raw local-ID inputs remain supported.
 - Keep lightweight CALL-subquery and metadata reads lightweight after full node
   reads warm the cache. Full and query node images now share an estimated
   256 MiB byte budget, including vectors, with individual eviction instead of

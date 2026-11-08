@@ -697,6 +697,10 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testin
 		ID: edgeID, StartNode: "node-1", EndNode: "node-2", Type: "REFERENCES", CreatedAt: createdAt,
 	}))
 
+	// Element IDs this store returns carry its own database namespace.
+	nodeElementID := storage.NodeElementID("nornic", "node-1")
+	edgeElementID := storage.RelationshipElementID("nornic", "edge-1")
+
 	tests := []struct {
 		name      string
 		entityID  string
@@ -704,9 +708,9 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testin
 		wantScope string
 	}{
 		{name: "raw node ID", entityID: "node-1", wantID: "node-1", wantScope: "NODE"},
-		{name: "node element ID", entityID: "4:nornicdb:node-1", wantID: "4:nornicdb:node-1", wantScope: "NODE"},
+		{name: "node element ID", entityID: nodeElementID, wantID: nodeElementID, wantScope: "NODE"},
 		{name: "raw relationship ID", entityID: "edge-1", wantID: "edge-1", wantScope: "EDGE"},
-		{name: "relationship element ID", entityID: "5:nornicdb:edge-1", wantID: "5:nornicdb:edge-1", wantScope: "EDGE"},
+		{name: "relationship element ID", entityID: edgeElementID, wantID: edgeElementID, wantScope: "EDGE"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -718,10 +722,13 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testin
 		})
 	}
 
-	_, err = exec.Execute(ctx, "CALL kp.resolve('4:nornicdb:edge-1', '', '')", nil)
-	require.EqualError(t, err, "Failed to invoke procedure `kp.resolve`: Caused by: entity not found: 4:nornicdb:edge-1")
-	_, err = exec.Execute(ctx, "CALL kp.resolve('5:nornicdb:node-1', '', '')", nil)
-	require.EqualError(t, err, "Failed to invoke procedure `kp.resolve`: Caused by: entity not found: 5:nornicdb:node-1")
+	// A qualified element ID of the other entity kind names no entity either.
+	nodeKindEdgeID := storage.NodeElementID("nornic", storage.NodeID(edgeID))
+	edgeKindNodeID := storage.RelationshipElementID("nornic", storage.EdgeID("node-1"))
+	_, err = exec.Execute(ctx, fmt.Sprintf("CALL kp.resolve('%s', '', '')", nodeKindEdgeID), nil)
+	require.EqualError(t, err, "Failed to invoke procedure `kp.resolve`: Caused by: entity not found: "+nodeKindEdgeID)
+	_, err = exec.Execute(ctx, fmt.Sprintf("CALL kp.resolve('%s', '', '')", edgeKindNodeID), nil)
+	require.EqualError(t, err, "Failed to invoke procedure `kp.resolve`: Caused by: entity not found: "+edgeKindNodeID)
 }
 
 func TestE2E_CallNornicDbKnowledgePolicyDeindexStatus(t *testing.T) {

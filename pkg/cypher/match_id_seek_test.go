@@ -50,9 +50,11 @@ func TestMatchWhereIDEquality_AcceptsCanonicalElementIDString(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// id() accepts the canonical element ID string this store returns.
+	rawElementID := storage.NodeElementID("test", "raw-id-1")
 	res, err := exec.Execute(ctx, `
 		MATCH (n)
-		WHERE id(n) = "4:nornicdb:raw-id-1"
+		WHERE id(n) = "`+rawElementID+`"
 		RETURN n.text AS text
 		LIMIT 1
 	`, nil)

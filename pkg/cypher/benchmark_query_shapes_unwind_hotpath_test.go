@@ -232,8 +232,8 @@ MERGE (h5)-[:BENCH_HOP]->(h6)
 RETURN count(o) AS prepared`
 
 	rows := []map[string]interface{}{
-		{"rootID": "4:nornicdb:" + idByTextKey["benchhop-000"], "rootKey": "benchhop-000"},
-		{"rootID": "4:nornicdb:" + idByTextKey["benchhop-001"], "rootKey": "benchhop-001"},
+		{"rootID": storage.NodeElementID("test", storage.NodeID(idByTextKey["benchhop-000"])), "rootKey": "benchhop-000"},
+		{"rootID": storage.NodeElementID("test", storage.NodeID(idByTextKey["benchhop-001"])), "rootKey": "benchhop-001"},
 	}
 	res, err := exec.Execute(ctx, linkQuery, map[string]interface{}{"rows": rows})
 	require.NoError(t, err)
