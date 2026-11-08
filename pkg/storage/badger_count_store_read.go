@@ -161,7 +161,7 @@ func (b *BadgerEngine) scopeHasRelevantHiddenInTxn(ctx context.Context, txn *bad
 		return false, err
 	}
 	if b.writeBehind != nil {
-		if err := b.writeBehind.collectCountLabelNamesLocked(ctx, hidden, candidates); err != nil {
+		if err := b.writeBehind.collectCountLabelNamesLocked(ctx, namespace, hidden, candidates); err != nil {
 			return false, err
 		}
 	}
