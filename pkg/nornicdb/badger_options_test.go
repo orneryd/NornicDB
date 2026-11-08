@@ -21,6 +21,9 @@ func TestResolveBadgerOptionsStorageMode(t *testing.T) {
 		require.False(t, options.LowMemory)
 		require.Equal(t, 321, options.NodeCacheMaxEntries)
 		require.Equal(t, 12, options.EdgeTypeCacheMaxTypes)
+		// MERGE key waits are bounded by the transaction timeout and logged
+		// past the slow-query threshold (NOR-284).
+		require.Equal(t, storage.LockWaitOptions{Timeout: 30 * time.Second, LogAfter: 5 * time.Second}, options.EngineOptions.LockWait)
 	})
 
 	t.Run("low selects memory constrained representation", func(t *testing.T) {

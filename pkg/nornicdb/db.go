@@ -1009,7 +1009,13 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		}
 		fmt.Printf("📦 Wrapped storage with namespace '%s' (all operations are namespaced)\n", selectedDefaultDBName)
 	} else {
-		var baseStorage storage.Engine = storage.NewMemoryEngine()
+		// The in-memory store opens with the same engine-wide policy as a
+		// persistent one (resolveEngineOptions).
+		memoryEngine, err := storage.NewMemoryEngineWithOptions(storage.BadgerOptions{EngineOptions: resolveEngineOptions(config), Logger: config.Logger})
+		if err != nil {
+			return nil, err
+		}
+		var baseStorage storage.Engine = memoryEngine
 		fmt.Println("⚠️  Using in-memory storage (data will not persist)")
 
 		// Track the underlying storage chain so Close() can cleanly shut down goroutines/locks.
@@ -1487,14 +1493,27 @@ func resolveBadgerOptions(dataDir string, config *Config) storage.BadgerOptions 
 		NodeCacheMaxEntries:   config.Database.BadgerNodeCacheMaxEntries,
 		EdgeTypeCacheMaxTypes: config.Database.BadgerEdgeTypeCacheMaxTypes,
 		AllowStorageUpgrade:   config.Database.AllowStorageUpgrade,
-		EngineOptions: storage.EngineOptions{
-			RetentionPolicy: storage.RetentionPolicy{
-				MaxVersionsPerKey: config.Database.MVCCRetentionMaxVersions,
-				TTL:               config.Database.MVCCRetentionTTL,
-			},
-			IDFreelistTTL: config.Database.IDFreelistTTL,
+		EngineOptions:         resolveEngineOptions(config),
+		Logger:                config.Logger,
+	}
+}
+
+// resolveEngineOptions is the engine-wide policy a database's storage opens
+// with, persistent or in memory: MVCC retention, ID recycling, and how long a
+// MERGE waits for a node key another transaction holds: at most the
+// transaction timeout, and a wait past the slow-query threshold is logged
+// (NOR-284).
+func resolveEngineOptions(config *Config) storage.EngineOptions {
+	return storage.EngineOptions{
+		RetentionPolicy: storage.RetentionPolicy{
+			MaxVersionsPerKey: config.Database.MVCCRetentionMaxVersions,
+			TTL:               config.Database.MVCCRetentionTTL,
 		},
-		Logger: config.Logger,
+		IDFreelistTTL: config.Database.IDFreelistTTL,
+		LockWait: storage.LockWaitOptions{
+			Timeout:  config.Database.TransactionTimeout,
+			LogAfter: config.Logging.SlowQueryThreshold,
+		},
 	}
 }
 

@@ -1076,7 +1076,7 @@ func (e *StorageExecutor) observeSlowQueryIfThresholded(duration time.Duration) 
 	if e.metrics == nil {
 		return
 	}
-	if e.slowQueryThreshold <= 0 || duration < e.slowQueryThreshold {
+	if !config.SlowQueryThresholdReached(e.slowQueryThreshold, duration) {
 		return
 	}
 	e.metrics.BindSlowQueries(e.database).Inc()
@@ -1116,7 +1116,7 @@ func (e *StorageExecutor) logger() *slog.Logger {
 // exceeded the configured threshold. The hot path (Execute fast return)
 // never enters this method.
 func (e *StorageExecutor) emitSlowQueryLog(ctx context.Context, query string, plan *ExecutionPlan, duration time.Duration) {
-	if e.slowQueryThreshold <= 0 || duration < e.slowQueryThreshold {
+	if !config.SlowQueryThresholdReached(e.slowQueryThreshold, duration) {
 		return
 	}
 	redacted := e.redactForLog(ctx, query)

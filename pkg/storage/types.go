@@ -803,6 +803,10 @@ type EngineOptions struct {
 	// pruned, its numID stays parked for this long before allocations
 	// can reclaim it. Zero = engine default (30 seconds).
 	IDFreelistTTL time.Duration
+	// LockWait bounds and reports a MERGE's wait for a UNIQUE / NODE KEY key
+	// another transaction holds. The zero value waits until the key is
+	// released, the wait would close a deadlock, or the statement ends.
+	LockWait LockWaitOptions
 }
 
 func normalizeRetentionPolicy(policy RetentionPolicy) RetentionPolicy {

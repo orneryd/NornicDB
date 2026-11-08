@@ -4,3 +4,6 @@
 - id: storage-log.log.wal_embeddings_skipped
   description: Advertencia tras omitir incrustaciones dañadas recuperables.
   other: "recuperación de WAL: se omitieron entradas de incrustación dañadas"
+- id: storage-log.log.lock_wait_prolonged
+  description: Advertencia por un MERGE que sigue esperando el bloqueo de una clave que otra transacción mantiene.
+  other: "la transacción sigue esperando el bloqueo de una clave que otra transacción mantiene"

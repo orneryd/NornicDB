@@ -922,6 +922,8 @@ type LoggingConfig struct {
 	QueryLogEnabled bool
 	// SlowQueryThreshold for logging slow queries (single source of truth
 	// per D-04d; replaces the prior pkg/server.Config.SlowQueryThreshold).
+	// Zero disables slow-query reporting (SlowQueryThresholdReached),
+	// including the prolonged MERGE-wait warning.
 	SlowQueryThreshold time.Duration
 	// SlowQueryLogFile is the optional file path for the slow-query log
 	// stream. Empty => log to the configured server logger. Single source of
@@ -2311,13 +2313,8 @@ func applyEnvVars(config *Config) error {
 	if getEnvBool("NORNICDB_READ_ONLY", false) || getEnvBool("NEO4J_dbms_read__only", false) {
 		config.Database.ReadOnly = true
 	}
-	if v := getEnvDuration("NORNICDB_TRANSACTION_TIMEOUT", 0); v > 0 {
-		config.Database.TransactionTimeout = v
-	} else {
-		// Backward compatibility: Neo4j env name
-		if v := getEnvDuration("NEO4J_dbms_transaction_timeout", 0); v > 0 {
-			config.Database.TransactionTimeout = v
-		}
+	if err := transactionTimeoutSetting.applyEnv(config); err != nil {
+		return err
 	}
 	if v := getEnvInt("NORNICDB_MAX_TRANSACTIONS", 0); v > 0 {
 		config.Database.MaxConcurrentTransactions = v
@@ -3029,8 +3026,8 @@ func applyEnvVars(config *Config) error {
 	if getEnv("NORNICDB_QUERY_LOG_ENABLED", "") == "true" {
 		config.Logging.QueryLogEnabled = true
 	}
-	if v := getEnvDuration("NORNICDB_SLOW_QUERY_THRESHOLD", 0); v > 0 {
-		config.Logging.SlowQueryThreshold = v
+	if err := slowQueryThresholdSetting.applyEnv(config); err != nil {
+		return err
 	}
 	if v, exists := os.LookupEnv(localization.EnvLanguage); exists {
 		v = strings.TrimSpace(v)
@@ -3436,10 +3433,8 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Database.ReadOnly {
 		config.Database.ReadOnly = true
 	}
-	if yamlCfg.Database.TransactionTimeout != "" {
-		if d, err := time.ParseDuration(yamlCfg.Database.TransactionTimeout); err == nil {
-			config.Database.TransactionTimeout = d
-		}
+	if err := transactionTimeoutSetting.applyYAML(config, yamlCfg.Database.TransactionTimeout); err != nil {
+		return nil, err
 	}
 	if yamlCfg.Database.MaxConcurrentTransactions > 0 {
 		config.Database.MaxConcurrentTransactions = yamlCfg.Database.MaxConcurrentTransactions
@@ -4246,10 +4241,8 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Logging.QueryLogEnabled {
 		config.Logging.QueryLogEnabled = true
 	}
-	if yamlCfg.Logging.SlowQueryThreshold != "" {
-		if d, err := time.ParseDuration(yamlCfg.Logging.SlowQueryThreshold); err == nil {
-			config.Logging.SlowQueryThreshold = d
-		}
+	if err := slowQueryThresholdSetting.applyYAML(config, yamlCfg.Logging.SlowQueryThreshold); err != nil {
+		return nil, err
 	}
 
 	// === Localization Settings ===

@@ -56,7 +56,9 @@ func stopR2Server(t *testing.T) (*Server, string) {
 	path := filepath.Join(t.TempDir(), "slow.log")
 	s, _ := setupTestServerWithConfig(t, func(c *Config) {
 		c.SlowQueryEnabled = true
-		c.Logging.SlowQueryThreshold = 0
+		// Every request statement is slow; a zero threshold disables
+		// slow-query reporting (config.SlowQueryThresholdReached).
+		c.Logging.SlowQueryThreshold = time.Nanosecond
 		c.Logging.SlowQueryLogFile = path
 	})
 	require.NotNil(t, s.slowQueryFile)
