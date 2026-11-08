@@ -30,6 +30,16 @@ type getEdgesByTypeProbe struct {
 // GetInnerEngine is the canonical EngineUnwrapper accessor.
 func (p *getEdgesByTypeProbe) GetInnerEngine() storage.Engine { return p.Engine }
 
+// ReadCountStore forwards the label-presence probe the count owners ask
+// before they read a counter, so counting through this decorator still answers
+// from the counters instead of materializing edges.
+func (p *getEdgesByTypeProbe) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	if reader, ok := p.Engine.(storage.CountStoreReadEngine); ok {
+		return reader.ReadCountStore(ctx, request)
+	}
+	return storage.CountStoreRead{}, nil
+}
+
 type forwardingNamespacedEngine struct {
 	storage.Engine
 }

@@ -948,12 +948,21 @@ func shouldHideSystemNodes(engine storage.Engine) bool {
 	return true
 }
 
+// internalLabelPrefix starts every label that names an internal node class: the
+// store's own records, which a user database reads as no rows.
+const internalLabelPrefix = "_"
+
+// isInternalLabel reports whether label names an internal node class.
+func isInternalLabel(label string) bool {
+	return strings.HasPrefix(label, internalLabelPrefix)
+}
+
 func isSystemNode(node *storage.Node) bool {
 	if node == nil {
 		return false
 	}
 	for _, label := range node.Labels {
-		if strings.HasPrefix(label, "_") {
+		if isInternalLabel(label) {
 			return true
 		}
 	}

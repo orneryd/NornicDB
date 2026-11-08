@@ -184,3 +184,14 @@ func (t *TracedEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[Nod
 	defer span.End()
 	return t.Engine.BatchGetNodes(ctx, ids)
 }
+
+// ReadCountStore preserves a single count-store observation through tracing.
+func (t *TracedEngine) ReadCountStore(ctx context.Context, request CountStoreReadRequest) (CountStoreRead, error) {
+	reader, ok := t.Engine.(CountStoreReadEngine)
+	if !ok {
+		return CountStoreRead{}, nil
+	}
+	span := t.startOperation("ReadCountStore", "read")
+	defer span.End()
+	return reader.ReadCountStore(ctx, request)
+}

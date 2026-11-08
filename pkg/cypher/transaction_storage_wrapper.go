@@ -944,6 +944,40 @@ func (w *transactionStorageWrapper) nodeCountByLabelScan(ctx context.Context, la
 	return countOfRead(w.GetNodesByLabel(ctx, label))
 }
 
+// ReadCountStore answers the label-presence probe for the transaction's
+// scope, which is the one its counts describe: the committed engine's label
+// counts plus the labels the transaction's own staged writes add, the same two
+// halves its NodeCountByLabel adds. Unproven is left to the caller as unproven,
+// never as an empty scope.
+func (w *transactionStorageWrapper) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	if !w.countersDescribeTransaction() {
+		return storage.CountStoreRead{}, nil
+	}
+	reader, ok := w.underlying.(storage.CountStoreReadEngine)
+	if !ok {
+		return storage.CountStoreRead{}, nil
+	}
+	request.Namespace = w.namespace
+	pending := storage.CountStoreRead{DescribesRows: true}
+	if w.tx.HasPendingNodeMutations() || w.tx.HasPendingEdgeMutations() {
+		var tracked bool
+		var pendingErr error
+		pending, tracked, pendingErr = w.tx.PendingCountStoreDelta(ctx, request)
+		if pendingErr != nil {
+			return storage.CountStoreRead{}, pendingErr
+		}
+		if !tracked || !pending.DescribesRows {
+			return storage.CountStoreRead{}, nil
+		}
+	}
+	answer, err := reader.ReadCountStore(ctx, request)
+	if err != nil || !answer.DescribesRows {
+		return answer, err
+	}
+	answer.Count += pending.Count
+	return answer, nil
+}
+
 // EdgeCount is the transaction-visible number of relationships, as
 // NodeCount is (#1076).
 func (w *transactionStorageWrapper) EdgeCount(ctx context.Context) (int64, error) {

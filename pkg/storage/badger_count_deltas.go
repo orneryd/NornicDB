@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -117,12 +116,12 @@ func sumCountDeltasInTxn(ctx context.Context, txn *badger.Txn, kind byte, namesp
 	return total, seen, nil
 }
 
-// sumCountDeltasByNameInTxn sums the persisted deltas of one kind for one
-// name (a label or an edge type) across all namespaces visible in txn.
-func sumCountDeltasByNameInTxn(ctx context.Context, txn *badger.Txn, kind byte, name string) (int64, error) {
+// sumCountDeltasByNamesInTxn sums the persisted deltas of one kind for the
+// names the filter accepts (a label or an edge type) across all namespaces
+// visible in txn.
+func sumCountDeltasByNamesInTxn(ctx context.Context, txn *badger.Txn, kind byte, wanted func(namespaceLabel) bool) (int64, error) {
 	var total int64
 	prefix := countDeltaAllPrefix(kind)
-	needle := []byte(name)
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 	var cancel bulkReadCancellation
@@ -130,16 +129,8 @@ func sumCountDeltasByNameInTxn(ctx context.Context, txn *badger.Txn, kind byte, 
 		if err := cancel.check(ctx); err != nil {
 			return 0, err
 		}
-		key := it.Item().KeyCopy(nil)
-		sep := bytesIndexByte(key[2:], 0)
-		if sep < 0 {
-			continue
-		}
-		nameSep := bytesIndexByte(key[2+sep+1:], 0)
-		if nameSep < 0 {
-			continue
-		}
-		if !bytes.Equal(key[2+sep+1:2+sep+1+nameSep], needle) {
+		candidate, ok := countDeltaLabelKeyParts(it.Item().Key())
+		if !ok || !wanted(candidate) {
 			continue
 		}
 		if err := it.Item().Value(func(val []byte) error {
@@ -154,6 +145,16 @@ func sumCountDeltasByNameInTxn(ctx context.Context, txn *badger.Txn, kind byte, 
 		}
 	}
 	return total, nil
+}
+
+// countDeltaLabelKeyParts splits one persisted delta key into its
+// (namespace, name) pair.
+func countDeltaLabelKeyParts(key []byte) (namespaceLabel, bool) {
+	namespace, name, ok := countDeltaKeyParts(key)
+	if !ok {
+		return namespaceLabel{}, false
+	}
+	return namespaceLabel{namespace: namespace, label: name}, true
 }
 
 // hasAnyCountDeltasInDB reports whether any persisted delta of one kind

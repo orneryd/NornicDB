@@ -1347,7 +1347,11 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		return nil, true, err
 	}
 	if !usedIndex {
-		if filteredCount && (whereClause != "" || len(nodePattern.properties) > 0) {
+		// The store counters answer only the reads they describe, so this
+		// reduction also serves a plain labeled count: it counts the label's
+		// stream through the same admission and WHERE test as the rows, and
+		// never materializes them.
+		if filteredCount {
 			if result, streamed, streamErr := e.tryStreamPipelineFilteredNodeCount(ctx, nodePattern, whereClause, countColumn); streamed || streamErr != nil {
 				return result, true, streamErr
 			}

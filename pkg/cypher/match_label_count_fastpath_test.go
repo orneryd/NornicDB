@@ -37,6 +37,17 @@ func (e *labelCountGuardEngine) NodeCountByLabel(ctx context.Context, label stri
 	return storage.CountNodesWithLabel(ctx, e.Engine, label)
 }
 
+// ReadCountStore forwards the label-presence probe the count owners ask
+// before they read a counter, so counting through this guard still answers from
+// the counters.
+func (e *labelCountGuardEngine) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	e.labelCountCalls++
+	if reader, ok := e.Engine.(storage.CountStoreReadEngine); ok {
+		return reader.ReadCountStore(ctx, request)
+	}
+	return storage.CountStoreRead{}, nil
+}
+
 func TestMatchCountUsesLabelCountFastPath(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })

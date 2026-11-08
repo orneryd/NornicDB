@@ -880,6 +880,15 @@ func (w *WALEngine) NodeCountByLabelInNamespace(ctx context.Context, namespace, 
 	return namespaceLabelCount(ctx, w.engine, namespace, label)
 }
 
+// ReadCountStore forwards a count-store read to the inner engine, where the
+// counters and the visibility proof live, so the answer is one consistent read.
+func (w *WALEngine) ReadCountStore(ctx context.Context, request CountStoreReadRequest) (CountStoreRead, error) {
+	if reader, ok := w.engine.(CountStoreReadEngine); ok {
+		return reader.ReadCountStore(ctx, request)
+	}
+	return CountStoreRead{}, nil
+}
+
 // EdgeCount delegates to underlying engine.
 func (w *WALEngine) EdgeCount(ctx context.Context) (int64, error) {
 	return w.engine.EdgeCount(ctx)
