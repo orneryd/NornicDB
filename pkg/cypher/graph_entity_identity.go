@@ -357,8 +357,9 @@ func (c *linkPredictionConfig) bindIdentity(ctx context.Context, engine storage.
 		}
 		c.identityOutput = func(id storage.NodeID) string { return string(id) }
 	} else {
-		view := graphIdentityView(engine)
-		read, c.identityStore, c.identityOutput = view.inputKey, identityGraphEngine(engine), view.outputID
+		c.identityStore = identityGraphEngine(engine)
+		view := graphIdentityView(c.identityStore)
+		read, c.identityOutput = view.inputKey, view.outputID
 	}
 	value := c.sourceValue
 	if value == nil {
