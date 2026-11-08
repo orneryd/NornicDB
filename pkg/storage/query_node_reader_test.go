@@ -285,14 +285,20 @@ func TestEngineGetQueryNodeReadsNoChunk(t *testing.T) {
 }
 
 // TestEngineGetQueryNodeMatchesGetNode: apart from the vectors, the query-node
-// read returns what GetNode returns: from the node cache (in-memory vectors
-// detached for the caller), and from the write-behind overlay before a flush,
+// read returns what GetNode returns apart from persisted vectors, including
+// after a full read, and from the write-behind overlay before a flush,
 // buffered deletes included.
 func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 	stripVectors := func(n *Node) *Node {
 		c := CopyNode(n)
 		c.ChunkEmbeddings = nil
 		c.NamedEmbeddings = nil
+		// A query image decoded after a cached write carries the pinned
+		// physical revision, while the write's cached full image carries its
+		// existing current-image provenance. Compare the complete delivered
+		// value here; source identity is independently checked below and by
+		// the point/scan provenance and writeback regressions.
+		c.runtime = nil
 		return c
 	}
 	t.Run("node-cache", func(t *testing.T) {
@@ -302,8 +308,14 @@ func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 		full, err := b.GetNode(t.Context(), id) // fills the node cache
 		require.NoError(t, err)
 		node := mustReadNode(t, b.GetQueryNode, id)
-		require.Equal(t, chunks, node.ChunkEmbeddings, "a cached node's vectors remain available")
+		require.Empty(t, node.ChunkEmbeddings, "warming a full read must not change the metadata-read contract")
+		require.True(t, node.HasChunkEmbeddings())
+		reread := mustReadNode(t, b.GetNode, id)
+		require.Equal(t, chunks, reread.ChunkEmbeddings, "full reads still return every persisted vector")
 		require.Equal(t, stripVectors(full), stripVectors(node))
+		require.Equal(t, full.RuntimeMetadata(), node.RuntimeMetadata())
+		require.Equal(t, full.runtime.embeddingOwner, node.runtime.embeddingOwner)
+		require.Equal(t, full.runtime.embeddingOwnerID, node.runtime.embeddingOwnerID)
 	})
 	t.Run("write-behind", func(t *testing.T) {
 		b := newWriteBehindTestEngine(t, time.Hour)
@@ -313,6 +325,7 @@ func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 		require.NoError(t, err)
 		node := mustReadNode(t, b.GetQueryNode, id)
 		require.Equal(t, stripVectors(full), stripVectors(node))
+		require.Equal(t, full.RuntimeMetadata(), node.RuntimeMetadata())
 		require.True(t, node.HasChunkEmbeddings())
 
 		tx, err := b.BeginTransaction(t.Context())

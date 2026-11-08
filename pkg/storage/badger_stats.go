@@ -376,6 +376,7 @@ func (b *BadgerEngine) releaseClosedStateLocked() {
 	b.db = nil
 	b.nodeCache = nil
 	b.queryNodeCache = nil
+	b.nodeCacheBytes = 0
 	b.nodeBodyCache = nil
 	b.nodeBodyCacheLRU.Init()
 	b.nodeBodyCacheBytes = 0

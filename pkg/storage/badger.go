@@ -135,6 +135,7 @@ const maxNodeSize = 50 * 1024 // 50KB
 const (
 	defaultBadgerNodeCacheMaxEntries   = 10000
 	defaultBadgerNodeBodyCacheMaxBytes = int64(256 << 20)
+	defaultBadgerNodeCacheMaxBytes     = int64(256 << 20)
 	defaultBadgerEdgeTypeCacheMaxTypes = 50
 	defaultBadgerLabelFirstCacheMax    = 1000
 )
@@ -264,10 +265,13 @@ type BadgerEngine struct {
 	// Dramatically speeds up repeated MATCH lookups
 	nodeCache   map[NodeID]*Node
 	nodeCacheMu sync.RWMutex
-	// queryNodeCache holds nodes as GetQueryNode reads them (no stored
-	// vectors) that nodeCache doesn't hold in full. It is guarded by
-	// nodeCacheMu and invalidated wherever nodeCache is.
+	// queryNodeCache holds nodes as GetQueryNode reads them (no separately
+	// stored chunks), including when a full image is also cached. It is
+	// guarded by nodeCacheMu and invalidated on the same writes.
 	queryNodeCache map[NodeID]*Node
+	// Both current-value node caches share a byte budget, under nodeCacheMu.
+	nodeCacheBytes    int64
+	nodeCacheMaxBytes int64
 	// The generations order each read cache's fills against its writes
 	// (see cacheGeneration).
 	nodeCacheGen       cacheGeneration
@@ -762,6 +766,9 @@ type BadgerOptions struct {
 	// hot node cache (used by GetNode). When exceeded, the cache is cleared.
 	// Set to 0 to use the default.
 	NodeCacheMaxEntries int
+	// NodeCacheMaxBytes bounds the estimated retained bytes across full and
+	// query node images, including vectors. Zero selects the 256 MiB default.
+	NodeCacheMaxBytes int64
 
 	// NodeBodyCacheMaxBytes bounds decoded MVCC node bodies by retained bytes.
 	// Entries larger than the budget are not cached. Set to 0 for the default.
@@ -1042,6 +1049,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		retentionPolicy: retentionPolicy,
 
 		nodeCacheMaxEntries:   opts.NodeCacheMaxEntries,
+		nodeCacheMaxBytes:     opts.NodeCacheMaxBytes,
 		nodeBodyCacheMaxBytes: opts.NodeBodyCacheMaxBytes,
 		edgeTypeCacheMaxTypes: opts.EdgeTypeCacheMaxTypes,
 		labelFirstCacheMax:    opts.LabelFirstNodeCacheMaxEntries,
@@ -1056,6 +1064,9 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 
 	if engine.nodeCacheMaxEntries <= 0 {
 		engine.nodeCacheMaxEntries = defaultBadgerNodeCacheMaxEntries
+	}
+	if engine.nodeCacheMaxBytes <= 0 {
+		engine.nodeCacheMaxBytes = defaultBadgerNodeCacheMaxBytes
 	}
 	if engine.nodeBodyCacheMaxBytes <= 0 {
 		engine.nodeBodyCacheMaxBytes = defaultBadgerNodeBodyCacheMaxBytes
