@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   durable acknowledgement ledger on normal writes. See
   [vector checkpoint recovery](docs/architecture/vector-checkpoints.md).
 
+- Keep the creation time of a node or relationship that is created and then
+  edited in the same Cypher statement or transaction (`SET`, `SET +=`,
+  `MERGE ... ON CREATE SET`, `REMOVE`, label changes). Such entities were stored
+  with a zero `CreatedAt` in every named database, so creation-time decay,
+  retention and ordering treated them as ancient.
+
 - Preserve quoted dotted property names in constraints and projected reads.
   Keep quoted commas inside composite constraint properties and reject property
   references to a variable other than the declared FOR variable, including list
