@@ -64,6 +64,21 @@ func (e *ReadFailureEngine) GetStoredEdge(ctx context.Context, id storage.EdgeID
 	}
 	return e.StoredEntityReader.GetStoredEdge(ctx, id)
 }
+
+// ReadCountStore preserves the real engine's count capability while injecting
+// the same count-read failures as the scalar admission seams.
+func (e *ReadFailureEngine) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	operation := e.operation.Load()
+	if (request.Kind == storage.CountStoreNodesByLabel && operation == NodeCountRead) ||
+		(request.Kind != storage.CountStoreNodesByLabel && operation == EdgeCountRead) {
+		return storage.CountStoreRead{}, e.failure
+	}
+	if reader, ok := e.ReadEngine.(storage.CountStoreReadEngine); ok {
+		return reader.ReadCountStore(ctx, request)
+	}
+	return storage.CountStoreRead{}, nil
+}
+
 func (e *ReadFailureEngine) NodeCount(ctx context.Context) (int64, error) {
 	if e.operation.Load() == NodeCountRead {
 		return 0, e.failure

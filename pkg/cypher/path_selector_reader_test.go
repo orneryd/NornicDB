@@ -40,7 +40,7 @@ func TestIncidentReaderCancellationWork(t *testing.T) {
 				require.NoError(t, err)
 			}
 			canceled.Cancel()
-			adjacent := &adjacentEdgeEngine{Engine: reader}
+			adjacent := &adjacencyReadSpy{Engine: reader}
 			atCalls := 0
 			canceled = fixtureowner.NewCheckpointContext(budget, func() { atCalls = adjacent.calls })
 			_, _, err = incidentEdgeListsContext(canceled, adjacent, source.ID, direction)

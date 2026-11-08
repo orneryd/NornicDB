@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testutil/memorypressure"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -101,6 +102,9 @@ func fulltextAssertTransition(t *testing.T, logs *fulltextMemoryLogs, transition
 // limit. Keep live ballast so a GC cannot make the pressure premise disappear.
 // This serial test deliberately changes the process limit, then restores it.
 func TestFulltextRetainedMemoryRuntimePublic(t *testing.T) {
+	// Establish the retained state independently of the suite's ambient limit;
+	// the pressure phase below installs and exercises its own real runtime limit.
+	memorypressure.WithoutRuntimePressure(t)
 	executor, store, logs, service := fulltextMemoryPublicFixture(t)
 	ctx := t.Context()
 	queries := fulltextMemoryQueries()

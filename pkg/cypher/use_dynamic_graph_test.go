@@ -36,7 +36,19 @@ func rowsOf(t *testing.T, exec *StorageExecutor, query string, params map[string
 	t.Helper()
 	result, err := exec.Execute(context.Background(), query, params)
 	require.NoError(t, err, query)
+	require.NotNil(t, result, query)
 	return result.Rows
+}
+
+// singleQueryValue asserts the shared one-row, one-column result contract.
+func singleQueryValue[T any](t *testing.T, exec *StorageExecutor, query string) T {
+	t.Helper()
+	rows := rowsOf(t, exec, query, nil)
+	require.Len(t, rows, 1, query)
+	require.Len(t, rows[0], 1, query)
+	value, ok := rows[0][0].(T)
+	require.True(t, ok, query)
+	return value
 }
 
 // TestCompositeDynamicGraphReferences: on a composite database a USE clause

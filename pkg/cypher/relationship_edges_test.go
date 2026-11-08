@@ -9,28 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// adjacentEdgeEngine reads both directions of a node's relationships in one
-// call (storage.AdjacentEdgesEngine), counting the calls, and fails them
-// when fail is set.
-type adjacentEdgeEngine struct {
-	storage.Engine
-	calls int
-	fail  bool
-}
-
-func (e *adjacentEdgeEngine) GetAdjacentEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
-	e.calls++
-	if e.fail {
-		return nil, nil, errEdgeRead
-	}
-	outgoing, err := e.Engine.GetOutgoingEdges(ctx, id)
-	if err != nil {
-		return nil, nil, err
-	}
-	incoming, err := e.Engine.GetIncomingEdges(ctx, id)
-	return outgoing, incoming, err
-}
-
 // undirectedIncidentEdges lists each relationship of a node once, a
 // self-relationship too, with one read when the store reads both directions
 // at once, and a failed read is its error. The caller's context is the read's
@@ -56,7 +34,7 @@ func TestUndirectedIncidentEdges(t *testing.T) {
 		sort.Strings(out)
 		return out
 	}
-	adjacent := &adjacentEdgeEngine{Engine: store}
+	adjacent := &adjacencyReadSpy{Engine: store}
 	edges, err := undirectedIncidentEdges(context.Background(), adjacent, "a")
 	require.NoError(t, err)
 	require.Equal(t, []string{"aa", "ab", "ba"}, ids(edges))
@@ -75,6 +53,6 @@ func TestUndirectedIncidentEdges(t *testing.T) {
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = undirectedIncidentEdges(cancelled, &adjacentEdgeEngine{Engine: store}, "a")
+	_, err = undirectedIncidentEdges(cancelled, &adjacencyReadSpy{Engine: store}, "a")
 	require.ErrorIs(t, err, context.Canceled)
 }
