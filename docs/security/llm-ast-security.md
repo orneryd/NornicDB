@@ -82,7 +82,7 @@ BenchmarkSimpleQuery/StreamExecute-16  500000     2500 ns/op    1200 B/op    15 
 
 ## Security Considerations: Stream Parse-Execute
 
-### ✅ Benefits
+### Benefits
 
 | Property | Explanation |
 |----------|-------------|
@@ -91,7 +91,7 @@ BenchmarkSimpleQuery/StreamExecute-16  500000     2500 ns/op    1200 B/op    15 
 | **Consistent parsing** | Same code parses AND executes - no semantic drift |
 | **Memory safety** | Less allocation = less chance of buffer issues |
 
-### ⚠️ Considerations
+### Considerations
 
 | Concern | Risk | Mitigation |
 |---------|------|------------|

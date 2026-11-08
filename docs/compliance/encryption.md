@@ -15,10 +15,10 @@ NornicDB provides enterprise-grade encryption to protect sensitive data:
 
 NornicDB uses **full database encryption** at the storage layer. When encryption is enabled:
 
-- ✅ **ALL data is encrypted** - nodes, relationships, properties, indexes
-- ✅ **Transparent operation** - no code changes needed
-- ✅ **Strong protection** - AES-256 encryption
-- ✅ **Simple configuration** - just enable and set password
+-  **ALL data is encrypted** - nodes, relationships, properties, indexes
+-  **Transparent operation** - no code changes needed
+-  **Strong protection** - AES-256 encryption
+-  **Simple configuration** - just enable and set password
 
 ### Configuration
 
@@ -101,7 +101,7 @@ openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
 
 ## Important Considerations
 
-### ⚠️ Password Security
+### Password Security
 
 **If you lose your encryption password, your data is PERMANENTLY LOST.**
 
@@ -109,7 +109,7 @@ openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
 - Keep a backup in a secure location
 - The password cannot be recovered
 
-### ⚠️ Migration Limitations
+### Migration Limitations
 
 **You cannot convert between encrypted/unencrypted in place.**
 
@@ -127,10 +127,10 @@ When opening an encrypted database:
 
 | Scenario | Result |
 |----------|--------|
-| Correct password | ✅ Database opens normally |
-| Wrong password | ❌ Error: "ENCRYPTION ERROR: Failed to open database..." |
-| No password provided | ❌ Error: "Database appears to be encrypted but no password..." |
-| Unencrypted DB + password | ⚠️ May fail or create new encrypted DB |
+| Correct password |  Database opens normally |
+| Wrong password |  Error: "ENCRYPTION ERROR: Failed to open database..." |
+| No password provided |  Error: "Database appears to be encrypted but no password..." |
+| Unencrypted DB + password |  May fail or create new encrypted DB |
 
 ## Compliance Mapping
 
@@ -181,7 +181,7 @@ The overhead is acceptable for most use cases and provides complete protection.
 **Error: "ENCRYPTION ERROR: Failed to open database..."**
 - Cause: Wrong encryption password
 - Fix: Verify `NORNICDB_ENCRYPTION_PASSWORD` or `encryption_password` in config
-- ⚠️ If you forgot the password, data cannot be recovered
+-  If you forgot the password, data cannot be recovered
 
 **Error: "Database appears to be encrypted but no password was provided"**
 - Cause: Database was created with encryption, but password not set

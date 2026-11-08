@@ -39,12 +39,12 @@ To reduce context and limit what the model can do, expose only a subset of tools
 ### Environment
 
 - **All tools** (when MCP enabled): do **not** set `NORNICDB_HEIMDALL_MCP_TOOLS` (leave unset).
-- **No tools** (disable MCP tools even when “on”): set to empty.  
+- **No tools** (disable MCP tools even when “on”): set to empty.
   ```bash
   export NORNICDB_HEIMDALL_MCP_ENABLE=true
   export NORNICDB_HEIMDALL_MCP_TOOLS=
   ```
-- **Only some tools**: comma-separated list.  
+- **Only some tools**: comma-separated list.
   ```bash
   export NORNICDB_HEIMDALL_MCP_ENABLE=true
   export NORNICDB_HEIMDALL_MCP_TOOLS=store,recall,link

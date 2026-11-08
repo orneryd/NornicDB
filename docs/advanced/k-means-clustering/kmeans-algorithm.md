@@ -6,7 +6,7 @@ This document describes how to implement GPU-accelerated k-means clustering for 
 
 ## Feasibility Analysis
 
-### ✅ Can GPUs Do K-Means Clustering?
+### Can GPUs Do K-Means Clustering?
 
 **Yes, extremely well.** K-means is highly parallelizable:
 
@@ -15,7 +15,7 @@ This document describes how to implement GPU-accelerated k-means clustering for 
 - **Assignment step**: Each point evaluated independently
 - **Memory access patterns**: Coalesced reads perfect for GPU architecture
 
-### ✅ Math Functions Available
+### Math Functions Available
 
 All required operations are GPU-native in CUDA/Metal/Vulkan:
 
@@ -29,7 +29,7 @@ All required operations are GPU-native in CUDA/Metal/Vulkan:
 - Reductions: sum, mean, argmin
 - Square root (hardware accelerated)
 
-### 📊 Performance on 1024-Dimensional Embeddings
+### Performance on 1024-Dimensional Embeddings
 
 **Back-of-envelope calculation:**
 - 10,000 embeddings × 1024 dimensions
@@ -781,11 +781,11 @@ concept_clustering:
 
 **GPU k-means clustering on 1024-dimensional embeddings is:**
 
-✅ **Feasible**: All required math operations are GPU-native  
-✅ **Fast**: 100-400x speedup over CPU  
-✅ **Scalable**: Handles millions of embeddings  
-✅ **Memory-efficient**: Fits in modern GPU VRAM  
-✅ **Practical**: Multiple proven implementations available  
+ **Feasible**: All required math operations are GPU-native
+ **Fast**: 100-400x speedup over CPU
+ **Scalable**: Handles millions of embeddings
+ **Memory-efficient**: Fits in modern GPU VRAM
+ **Practical**: Multiple proven implementations available
 
 **For NornicDB, this enables:**
 

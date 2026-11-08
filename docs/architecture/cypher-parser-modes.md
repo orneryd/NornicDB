@@ -53,7 +53,7 @@ flowchart TB
 
 ## Real-World Benchmarks (Northwind Database)
 
-| Query | ⚡ Nornic | 🌳 ANTLR | Slowdown |
+| Query |  Nornic |  ANTLR | Slowdown |
 |-------|----------|----------|----------|
 | Count all nodes | 3,272 hz | 45 hz | **73x** |
 | Count all relationships | 3,693 hz | 50 hz | **74x** |
@@ -66,12 +66,12 @@ flowchart TB
 **Total test suite time:**
 | Mode | Time |
 |------|------|
-| ⚡ Nornic | 17.5s |
-| 🌳 ANTLR | 35.3s (2x slower) |
+|  Nornic | 17.5s |
+|  ANTLR | 35.3s (2x slower) |
 
 ## Mode Comparison
 
-| Feature | ⚡ Nornic (Default) | 🌳 ANTLR |
+| Feature |  Nornic (Default) |  ANTLR |
 |---------|---------------------|----------|
 | **Throughput** | 3,000-4,200 ops/sec | 0.8-2,100 ops/sec |
 | **Worst Case** | - | **4,753x slower** |
@@ -131,7 +131,7 @@ config.SetParserType(config.ParserTypeNornic)
 
 ## When to Use Each Parser
 
-### ⚡ Nornic Parser (`NORNICDB_PARSER=nornic`) — **Default**
+### Nornic Parser (`NORNICDB_PARSER=nornic`) — **Default**
 
 **Use when:**
 - Production deployments
@@ -141,17 +141,17 @@ config.SetParserType(config.ParserTypeNornic)
 
 **Pros:**
 - **Fastest execution** — 3,000-4,200 ops/sec
-- 💾 **Lowest memory** — No parse tree allocation
-- 🔧 **Battle-tested** — Original implementation, converged single pipeline
-- ⚡ **Zero parsing overhead** — scannerless recursive descent, no lexer or parse tree
+-  **Lowest memory** — No parse tree allocation
+-  **Battle-tested** — Original implementation, converged single pipeline
+-  **Zero parsing overhead** — scannerless recursive descent, no lexer or parse tree
 
 **Cons:**
-- 🐛 **No structured parse tree** — debugging uses restored positions, not AST inspection
-- 📝 **Semantic scope checks** are clause-targeted rather than grammar-derived; the TCK ratchet gates the supported surface
+-  **No structured parse tree** — debugging uses restored positions, not AST inspection
+-  **Semantic scope checks** are clause-targeted rather than grammar-derived; the TCK ratchet gates the supported surface
 
 ---
 
-### 🌳 ANTLR Parser (`NORNICDB_PARSER=antlr`)
+### ANTLR Parser (`NORNICDB_PARSER=antlr`)
 
 **Use when:**
 - Development and debugging
@@ -160,15 +160,15 @@ config.SetParserType(config.ParserTypeNornic)
 - Building query analysis tools
 
 **Pros:**
-- ✅ **Strict validation** — Full OpenCypher grammar
-- 📍 **Detailed errors** — Line and column numbers
-- 🌳 **Full parse tree** — For analysis/tooling
-- 🛠️ **Extensible** — Easy to add new features
+-  **Strict validation** — Full OpenCypher grammar
+-  **Detailed errors** — Line and column numbers
+-  **Full parse tree** — For analysis/tooling
+-  **Extensible** — Easy to add new features
 
 **Cons:**
-- 🐢 **Much slower** — 50-5000x slower than Nornic
-- 💾 **Higher memory** — Full parse tree allocation
-- ⏱️ **Not for production** — Too slow for high-throughput
+-  **Much slower** — 50-5000x slower than Nornic
+-  **Higher memory** — Full parse tree allocation
+-  **Not for production** — Too slow for high-throughput
 
 ## Error Message Comparison
 

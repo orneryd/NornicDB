@@ -150,14 +150,14 @@ This automatically enables:
 
 ### When to Use Strict Mode
 
-✅ **Use Strict Durability for:**
+ **Use Strict Durability for:**
 - Financial transactions
 - Payment processing
 - Audit logging
 - Compliance-critical data (HIPAA, SOX, PCI-DSS)
 - Data that cannot be regenerated
 
-❌ **Don't need Strict Durability for:**
+ **Don't need Strict Durability for:**
 - Caches
 - Session data
 - Search indexes
@@ -257,10 +257,10 @@ Each WAL entry uses an atomic binary format designed to detect any form of corru
 
 On startup, NornicDB scans the WAL and:
 
-1. ✅ **Commits complete entries** - All layers validated
-2. ⚠️ **Skips incomplete entries** - Detected via missing trailer/CRC
-3. 🔄 **Rolls back partial transactions** - No commit marker found
-4. 🔁 **Regenerates embeddings** - Corrupted embedding entries skipped (safe to regenerate)
+1.  **Commits complete entries** - All layers validated
+2.  **Skips incomplete entries** - Detected via missing trailer/CRC
+3.  **Rolls back partial transactions** - No commit marker found
+4.  **Regenerates embeddings** - Corrupted embedding entries skipped (safe to regenerate)
 
 After an orderly shutdown, NornicDB also consumes a durable, one-use clean
 shutdown marker. Because acknowledged asynchronous writes are flushed before

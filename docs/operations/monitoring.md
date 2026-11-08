@@ -401,8 +401,8 @@ export NORNICDB_SEARCH_DIAG_TIMINGS=true
 
 You will see two complementary log lines per search:
 
-- `⏱️ Search timing:` stage-level search-service timings (`vector_ms`, `bm25_ms`, `fusion_ms`, candidate counts, fallback)
-- `🔎 Search timing db=...:` request-path timings (`embed_total`, `search_total`, `embed_calls`, chunk info)
+- ` Search timing:` stage-level search-service timings (`vector_ms`, `bm25_ms`, `fusion_ms`, candidate counts, fallback)
+- ` Search timing db=...:` request-path timings (`embed_total`, `search_total`, `embed_calls`, chunk info)
 
 Field reference (Apple M3 Max, 64GB RAM, Feb 2026):
 

@@ -223,7 +223,7 @@ curl -s -u "$NORNIC_USERNAME:$NORNIC_PASSWORD" "$ENDPOINT" \
 
 ## Related Reading
 
-- [Current Northwind Benchmark vs Neo4j](1.1.0-northwind-results/comparison.md)
+- [Current Northwind Benchmark vs Neo4j](../development/archive/benchmarks/database-comparison-baseline/comparison.md)
 - [Retrieval Recall Benchmark](retrieval-recall-benchmark.md)
 - [Graph-RAG: Typical Distributed vs NornicDB In-Memory](../architecture/graph-rag-nornicdb-comparison.md)
 - [Canonical Graph + Mutation Log Guide](../user-guides/canonical-graph-ledger.md)

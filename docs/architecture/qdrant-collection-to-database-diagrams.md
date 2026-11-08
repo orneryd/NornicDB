@@ -281,7 +281,7 @@ sequenceDiagram
 | **Isolation**             | Label filtering                | Namespace isolation           |
 | **Delete Performance**    | O(n) - scan all nodes          | O(1) - delete namespace       |
 | **Collection Management** | Separate registry              | DatabaseManager               |
-| **Cypher Access**         | ❌ No direct access            | ✅ `USE collection MATCH (n)` |
+| **Cypher Access**         |  No direct access            |  `USE collection MATCH (n)` |
 | **Metadata Storage**      | Metadata nodes in shared space | Optional metadata node in DB  |
 | **Search Index**          | Shared index, label filtering  | Per-database isolated indexes |
 | **Scalability**           | Single shared index            | Per-collection indexes        |
@@ -518,7 +518,7 @@ After refactoring, we should see:
 2. **Query Performance**: Same or better (namespace isolation = automatic filtering)
 3. **Memory Usage**: Similar or better (better isolation = can free per-collection)
 4. **Code Complexity**: Reduced (remove registry, use existing DatabaseManager)
-5. **Feature Completeness**: ✅ Cypher access to collections (new capability)
+5. **Feature Completeness**:  Cypher access to collections (new capability)
 
 ---
 

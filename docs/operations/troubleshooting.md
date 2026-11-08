@@ -181,7 +181,7 @@ If you are using the MCP tools (`store`, `discover`, etc.):
    # Or via environment variable
    NORNICDB_LOW_MEMORY=true nornicdb serve
    ```
-   
+
    See **[Low Memory Mode Guide](low-memory-mode.md)** for details.
 
 2. **Increase GC frequency:**

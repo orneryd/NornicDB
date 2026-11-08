@@ -2,7 +2,7 @@
 
 **Operational guidance for running NornicDB in Docker production environments.**
 
-## 📋 Available Images
+## Available Images
 
 ### Production Images
 
@@ -40,7 +40,7 @@ docker run -d \
   timothyswt/nornicdb-amd64-cuda-bge:latest
 ```
 
-## 🐳 Docker Compose
+## Docker Compose
 
 ### Basic Setup
 
@@ -144,7 +144,7 @@ volumes:
   nornicdb-logs:
 ```
 
-## ⚙️ Configuration
+## Configuration
 
 Use the canonical runtime references instead of maintaining a partial Docker-only variable table here:
 
@@ -166,7 +166,7 @@ Common Docker-specific overrides that are verified in the runtime docs:
 | `/logs`   | Application logs               |
 | `/config` | Configuration files (optional) |
 
-## 🔧 Building Custom Images
+## Building Custom Images
 
 ### From Source
 
@@ -212,7 +212,7 @@ Build with:
 docker build -t my-nornicdb:latest .
 ```
 
-## 🖥️ GPU Acceleration
+## GPU Acceleration
 
 ### Apple Silicon (Metal)
 
@@ -257,7 +257,7 @@ docker run -d \
   timothyswt/nornicdb-amd64-vulkan-bge:latest
 ```
 
-## 📊 Health Checks
+## Health Checks
 
 ### Default Health Check
 
@@ -300,7 +300,7 @@ curl -f http://localhost:7474/health
 nc -z localhost 7687
 ```
 
-## 📝 Logs Management
+## Logs Management
 
 ### Viewing Logs
 
@@ -348,7 +348,7 @@ services:
         tag: nornicdb
 ```
 
-## 🔍 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -431,7 +431,7 @@ docker exec -it nornicdb-debug ps aux
 docker exec -it nornicdb-debug env | grep NORNICDB
 ```
 
-## 📈 Performance Optimization
+## Performance Optimization
 
 ### Resource Limits
 
@@ -473,7 +473,7 @@ services:
       - NORNICDB_TMP_DIR=/tmp
 ```
 
-## 🔄 Updates and Maintenance
+## Updates and Maintenance
 
 ### Updating Images
 
@@ -518,7 +518,7 @@ sleep 30
 curl -f http://localhost:7474/health || echo "Health check failed"
 ```
 
-## 📚 Related Documentation
+## Related Documentation
 
 - **[Docker Deployment Guide](../getting-started/docker-deployment.md)** - Getting started with Docker
 - **[Operations Guide](./README.md)** - Production operations
@@ -527,5 +527,5 @@ curl -f http://localhost:7474/health || echo "Health check failed"
 
 ---
 
-**Need help?** → **[Troubleshooting Guide](./troubleshooting.md)**  
+**Need help?** → **[Troubleshooting Guide](./troubleshooting.md)**
 **Production deployment?** → **[Docker Deployment Guide](../getting-started/docker-deployment.md)**

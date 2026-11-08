@@ -7,7 +7,7 @@ This guide explains how to use NornicDB as a persistent memory system within Cur
 
 ---
 
-## 🎯 What is nornicdb-v2 Chat Mode?
+## What is nornicdb-v2 Chat Mode?
 
 The `nornicdb-v2` chat mode transforms Cursor's AI assistant into a **memory-augmented coding agent** that:
 
@@ -20,7 +20,7 @@ Instead of repeating context every conversation, the agent stores and retrieves 
 
 ---
 
-## 📦 Setup
+## Setup
 
 ### 1. Start NornicDB
 
@@ -87,7 +87,7 @@ After configuring MCP, restart Cursor to load the new server.
 
 ---
 
-## 🛠️ Available MCP Tools
+## Available MCP Tools
 
 NornicDB provides **7 tools** via MCP:
 
@@ -103,7 +103,7 @@ NornicDB provides **7 tools** via MCP:
 
 ---
 
-## 💬 Natural Conversation Patterns
+## Natural Conversation Patterns
 
 ### Storing Knowledge
 
@@ -170,7 +170,7 @@ Shall I start on task-123?"
 
 ---
 
-## 🔄 Memory-First Workflow
+## Memory-First Workflow
 
 The nornicdb-v2 chat mode enforces a **memory-first** approach:
 
@@ -202,7 +202,7 @@ As you work, the agent automatically:
 
 ---
 
-## 📊 Example Session
+## Example Session
 
 ```markdown
 User: "I need to add user authentication to our Go API"
@@ -254,7 +254,7 @@ Agent: Starting work on task-456...
 
 ---
 
-## 🎨 Relationship Types
+## Relationship Types
 
 When using `link()`, use these standard relations:
 
@@ -323,7 +323,7 @@ tasks(status=["pending"], unblocked_only=true)
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### MCP Tools Not Available
 
@@ -346,7 +346,7 @@ tasks(status=["pending"], unblocked_only=true)
 
 ---
 
-## 📚 Further Reading
+## Further Reading
 
 - **[MCP Tools Quick Reference](../features/mcp-integration.md)** - Tool cheat sheet
 - **[Vector Search Guide](../user-guides/vector-search.md)** - Semantic search details
@@ -355,5 +355,5 @@ tasks(status=["pending"], unblocked_only=true)
 
 ---
 
-**Last Updated:** 2025-11-28  
+**Last Updated:** 2025-11-28
 **Version:** 0.1.3

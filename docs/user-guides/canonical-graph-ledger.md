@@ -88,10 +88,10 @@ export NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS=false
 
 ## Step 2 — Bootstrap the canonical schema
 
-Run the idempotent bootstrap script once per database:
+Run the [bootstrap script](../examples/canonical-bootstrap.cypher) once per database, using your configured administrator password:
 
 ```bash
-cat docs/plans/canonical-bootstrap.cypher | cypher-shell -u admin -p password
+cat docs/examples/canonical-bootstrap.cypher | cypher-shell -u admin -p "$NORNICDB_PASSWORD"
 ```
 
 This creates:
@@ -436,11 +436,11 @@ RETURN node, score;
 
 ## Operational Checklist
 
-- ✅ Run `canonical-bootstrap.cypher`
-- ✅ Ensure `FactVersion` validity windows don’t overlap
-- ✅ Record `MutationEvent` nodes for provenance
-- ✅ Use receipts for audit‑grade mutation proofs
-- ✅ Configure WAL retention only when you need ledger‑grade durability
+-  Run `canonical-bootstrap.cypher`
+-  Ensure `FactVersion` validity windows don’t overlap
+-  Record `MutationEvent` nodes for provenance
+-  Use receipts for audit‑grade mutation proofs
+-  Configure WAL retention only when you need ledger‑grade durability
 
 ---
 

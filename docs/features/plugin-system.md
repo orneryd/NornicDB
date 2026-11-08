@@ -279,8 +279,8 @@ Result: "Repository context analyzed"
 
 ### APOC Plugin
 
-**Type:** Function  
-**Exported function names:** 865 (of the 983-name library catalog; the 118 procedure-only entries are excluded — see the [APOC procedure capability audit](apoc-procedure-capabilities.md))  
+**Type:** Function
+**Exported function names:** 865 (of the 983-name library catalog; the 118 procedure-only entries are excluded — see the [APOC procedure capability audit](apoc-procedure-capabilities.md))
 **Location:** `apoc/built-plugins/apoc.so`
 
 Provides Neo4j-compatible APOC functions:
@@ -293,8 +293,8 @@ Provides Neo4j-compatible APOC functions:
 
 ### Watcher Plugin
 
-**Type:** Heimdall  
-**Actions:** 6  
+**Type:** Heimdall
+**Actions:** 6
 **Location:** `plugins/heimdall/built-plugins/watcher.so`
 
 Provides coding-agent orchestration:
@@ -309,11 +309,11 @@ Provides coding-agent orchestration:
 
 | Platform | Function Plugins | Heimdall Plugins | Notes |
 |----------|-----------------|------------------|-------|
-| **Linux (amd64)** | ✅ | ✅ | Full support |
-| **Linux (arm64)** | ✅ | ✅ | Full support |
-| **macOS (arm64)** | ✅ | ✅ | Apple Silicon |
-| **macOS (amd64)** | ✅ | ✅ | Intel Macs |
-| **Windows** | ❌ | ❌ | Go plugin limitation - use static linking |
+| **Linux (amd64)** | Yes | Yes | Full support |
+| **Linux (arm64)** | Yes | Yes | Full support |
+| **macOS (arm64)** | Yes | Yes | Apple Silicon |
+| **macOS (amd64)** | Yes | Yes | Intel Macs |
+| **Windows** | No | No | Go plugin limitation - use static linking |
 
 **Windows Users:** Compile plugins directly into the binary instead of using `.so` files.
 

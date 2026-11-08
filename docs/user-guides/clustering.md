@@ -71,10 +71,10 @@ MODE 3: MULTI-REGION (Raft clusters + cross-region HA)
 
 **Trade-offs:**
 
-- ✅ Simple setup and operation.
-- ✅ Low resource overhead.
-- ⚠️ Only 2 nodes (no quorum).
-- ⚠️ Risk of data loss on async failover.
+-  Simple setup and operation.
+-  Low resource overhead.
+-  Only 2 nodes (no quorum).
+-  Risk of data loss on async failover.
 
 ### Raft Cluster (3-5 nodes)
 
@@ -87,11 +87,11 @@ MODE 3: MULTI-REGION (Raft clusters + cross-region HA)
 
 **Trade-offs:**
 
-- ✅ Strong consistency (linearizable).
-- ✅ Automatic leader election.
-- ✅ No data loss on failover.
-- ⚠️ Higher latency (quorum writes).
-- ⚠️ Requires odd number of nodes.
+-  Strong consistency (linearizable).
+-  Automatic leader election.
+-  No data loss on failover.
+-  Higher latency (quorum writes).
+-  Requires odd number of nodes.
 
 ### Multi-Region (6+ nodes)
 
@@ -104,10 +104,10 @@ MODE 3: MULTI-REGION (Raft clusters + cross-region HA)
 
 **Trade-offs:**
 
-- ✅ Geographic redundancy.
-- ✅ Local read performance.
-- ⚠️ Complex setup.
-- ⚠️ Cross-region latency for writes.
+-  Geographic redundancy.
+-  Local read performance.
+-  Complex setup.
+-  Cross-region latency for writes.
 
 ---
 

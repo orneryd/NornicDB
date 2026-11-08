@@ -6,7 +6,7 @@
 
 ## Overview
 
-NornicDB is fully compatible with Neo4j data formats, making migration seamless. This guide covers importing data from Neo4j and exporting data for backup or migration.
+This guide covers importing Neo4j data through supported drivers and exporting NornicDB data. Neo4j store files are not interchangeable with NornicDB storage; use the transfer methods below and validate property types and queries against the selected release.
 
 ---
 
@@ -109,12 +109,12 @@ curl -X POST http://localhost:7474/db/nornic/tx/commit \
 
 | Feature        | Status  | Notes               |
 | -------------- | ------- | ------------------- |
-| Cypher Queries | ✅ Full | All standard Cypher |
-| Bolt Protocol  | ✅ Full | v4.4 compatible     |
-| HTTP API       | ✅ Full | Neo4j REST API      |
-| Transactions   | ✅ Full | ACID compliant      |
-| Indexes        | ✅ Full | B-tree and vector   |
-| Constraints    | ✅ Full | Unique, exists      |
+| Cypher Queries |  Full | All standard Cypher |
+| Bolt Protocol  |  Full | v4.4 compatible     |
+| HTTP API       |  Full | Neo4j REST API      |
+| Transactions   |  Full | ACID compliant      |
+| Indexes        |  Full | B-tree and vector   |
+| Constraints    |  Full | Unique, exists      |
 
 ### Driver Compatibility
 

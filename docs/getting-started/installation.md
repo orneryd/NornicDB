@@ -212,10 +212,10 @@ When `AsyncWritesEnabled` is true:
 
 **Trade-offs:**
 
-- ✅ Much faster writes (~100x improvement)
-- ✅ Better throughput for batch operations
-- ⚠️ Data may be lost if crash before flush (use with WAL for durability)
-- ⚠️ Reads may see slightly stale data (within flush interval)
+-  Much faster writes (~100x improvement)
+-  Better throughput for batch operations
+-  Data may be lost if crash before flush (use with WAL for durability)
+-  Reads may see slightly stale data (within flush interval)
 
 ## Enable Semantic Search (Embeddings)
 
@@ -233,7 +233,7 @@ Or via CLI:
 
 Then you can verify embeddings are enabled via:
 
-- logs at startup (`✅ Embeddings ready: ...`) and
+- logs at startup (` Embeddings ready: ...`) and
 - API: `GET /nornicdb/embed/stats` (requires auth)
 
 ## Optional: Qdrant gRPC Endpoint (Qdrant SDK Compatibility)

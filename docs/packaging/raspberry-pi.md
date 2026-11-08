@@ -385,7 +385,7 @@ vcgencmd measure_temp
 ## Implementation Checklist
 
 - [ ] Create optimized arm64 build
-- [ ] Create armv7 build  
+- [ ] Create armv7 build
 - [ ] Create armv6 build (Pi Zero)
 - [ ] Create headless variants
 - [ ] Write one-line installer script

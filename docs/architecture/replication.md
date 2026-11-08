@@ -409,10 +409,10 @@ go test ./pkg/replication/... -short
 
 | Component | Status | Details |
 |-----------|--------|---------|
-| Hot Standby | ✅ Complete | 2-node HA with auto-failover |
-| Raft Cluster | ✅ Complete | 3-5 node strong consistency |
-| Multi-Region | ✅ Complete | Async cross-region replication |
-| Chaos Testing | ✅ Complete | Extreme latency, packet loss, Byzantine failures |
+| Hot Standby |  Complete | 2-node HA with auto-failover |
+| Raft Cluster |  Complete | 3-5 node strong consistency |
+| Multi-Region |  Complete | Async cross-region replication |
+| Chaos Testing |  Complete | Extreme latency, packet loss, Byzantine failures |
 
 ## See Also
 

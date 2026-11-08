@@ -1,0 +1,32 @@
+{
+  "name": "nornicdb-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev . --host 127.0.0.1",
+    "build": "node tools/build-current.mjs",
+    "preview": "vitepress preview . --host 127.0.0.1",
+    "graph": "node tools/graph.mjs",
+    "prepare-docs": "node tools/prepare.mjs && node tools/pages.mjs",
+    "prebuild": "npm run graph && npm run prepare-docs",
+    "predev": "npm run graph && npm run prepare-docs",
+    "test": "node --test tests/*.test.mjs",
+    "pretest:browser": "npm run build && npm run build:version -- v1.4.3",
+    "test:browser": "playwright test",
+    "build:version": "node tools/version-build.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "prettier": "^3.9.10",
+    "vitepress": "2.0.0-alpha.21",
+    "vue": "^3.5.0"
+  },
+  "dependencies": {
+    "3d-force-graph": "^1.80.2",
+    "d3-force-3d": "^3.0.6",
+    "mermaid": "^12.3.0",
+    "minisearch": "^7.2.0",
+    "three": "^0.187.0",
+    "three-spritetext": "^1.10.0"
+  }
+}

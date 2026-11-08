@@ -1,6 +1,15 @@
-# Quick Start Guide
+# Docker platform examples
 
-**Get NornicDB running in minutes with Docker.**
+For the shortest path from installation to a query, use the [quick start](../start.md). This page contains platform-specific Docker commands and optional embedding setup.
+
+These examples run on your computer. Set a password before starting a container:
+
+```bash
+export NORNICDB_PASSWORD='replace-with-a-long-random-password'
+export NORNICDB_JWT_SECRET='replace-with-at-least-32-random-characters'
+```
+
+The commands configure authentication explicitly. Authentication is enabled by default; see `pkg/config/config.go:LoadDefaults` and `applyEnvVars`.
 
 ## Option 1: Docker (Recommended)
 
@@ -9,9 +18,11 @@
 ```bash
 docker run -d \
   --name nornicdb \
-  -p 7474:7474 \
-  -p 7687:7687 \
+  -p 127.0.0.1:7474:7474 \
+  -p 127.0.0.1:7687:7687 \
   -v nornicdb-data:/data \
+  -e NORNICDB_AUTH="admin:${NORNICDB_PASSWORD}" \
+  -e NORNICDB_AUTH_JWT_SECRET="${NORNICDB_JWT_SECRET}" \
   timothyswt/nornicdb-arm64-metal-bge:latest
 ```
 
@@ -21,9 +32,11 @@ docker run -d \
 docker run -d \
   --name nornicdb \
   --gpus all \
-  -p 7474:7474 \
-  -p 7687:7687 \
+  -p 127.0.0.1:7474:7474 \
+  -p 127.0.0.1:7687:7687 \
   -v nornicdb-data:/data \
+  -e NORNICDB_AUTH="admin:${NORNICDB_PASSWORD}" \
+  -e NORNICDB_AUTH_JWT_SECRET="${NORNICDB_JWT_SECRET}" \
   timothyswt/nornicdb-amd64-cuda-bge:latest
 ```
 
@@ -32,13 +45,15 @@ docker run -d \
 ```bash
 docker run -d \
   --name nornicdb \
-  -p 7474:7474 \
-  -p 7687:7687 \
+  -p 127.0.0.1:7474:7474 \
+  -p 127.0.0.1:7687:7687 \
   -v nornicdb-data:/data \
+  -e NORNICDB_AUTH="admin:${NORNICDB_PASSWORD}" \
+  -e NORNICDB_AUTH_JWT_SECRET="${NORNICDB_JWT_SECRET}" \
   timothyswt/nornicdb-amd64-cpu:latest
 ```
 
-## ✅ Verify Installation
+## Verify Installation
 
 ```bash
 # Check container is running
@@ -48,39 +63,39 @@ docker ps
 curl http://localhost:7474/health
 
 # Test with a Neo4j-compatible Cypher HTTP request
-curl -X POST http://localhost:7474/db/nornic/tx/commit \
+curl -u "admin:${NORNICDB_PASSWORD}" -X POST http://localhost:7474/db/nornic/tx/commit \
   -H "Content-Type: application/json" \
   -d '{"statements":[{"statement":"CREATE (n:Person {name: \"Alice\"}) RETURN n"}]}'
 ```
 
-## 🔗 Access NornicDB
+## Access NornicDB
 
 - **HTTP API:** http://localhost:7474
 - **Bolt Protocol:** bolt://localhost:7687
 - **Health Check:** http://localhost:7474/health
 
-## 🧪 Try Your First Query
+## Try Your First Query
 
 NornicDB's Cypher-over-HTTP flow follows the Neo4j transaction endpoint shape.
 
 ```bash
 # Create a node
-curl -X POST http://localhost:7474/db/nornic/tx/commit \
+curl -u "admin:${NORNICDB_PASSWORD}" -X POST http://localhost:7474/db/nornic/tx/commit \
   -H "Content-Type: application/json" \
   -d '{"statements":[{"statement":"CREATE (n:Person {name: \"Alice\", age: 30}) RETURN n"}]}'
 
 # Query nodes
-curl -X POST http://localhost:7474/db/nornic/tx/commit \
+curl -u "admin:${NORNICDB_PASSWORD}" -X POST http://localhost:7474/db/nornic/tx/commit \
   -H "Content-Type: application/json" \
   -d '{"statements":[{"statement":"MATCH (n:Person) RETURN n.name, n.age"}]}'
 
 # Create a relationship in one request
-curl -X POST http://localhost:7474/db/nornic/tx/commit \
+curl -u "admin:${NORNICDB_PASSWORD}" -X POST http://localhost:7474/db/nornic/tx/commit \
   -H "Content-Type: application/json" \
   -d '{"statements":[{"statement":"MERGE (a:Person {name: \"Alice\"}) MERGE (b:Person {name: \"Bob\"}) MERGE (a)-[:KNOWS]->(b) RETURN a, b"}]}'
 ```
 
-## 🧠 Enable Semantic Search (Optional)
+## Enable Semantic Search (Optional)
 
 For embedding-powered search:
 
@@ -92,9 +107,11 @@ docker rm nornicdb
 # Start with Ollama for embeddings
 docker run -d \
   --name nornicdb \
-  -p 7474:7474 \
-  -p 7687:7687 \
+  -p 127.0.0.1:7474:7474 \
+  -p 127.0.0.1:7687:7687 \
   -v nornicdb-data:/data \
+  -e NORNICDB_AUTH="admin:${NORNICDB_PASSWORD}" \
+  -e NORNICDB_AUTH_JWT_SECRET="${NORNICDB_JWT_SECRET}" \
   -e NORNICDB_EMBEDDING_ENABLED=true \
   -e NORNICDB_EMBEDDING_PROVIDER=ollama \
   -e NORNICDB_EMBEDDING_MODEL=mxbai-embed-large \
@@ -116,11 +133,13 @@ services:
     depends_on:
       - ollama
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     volumes:
       - nornicdb-data:/data
     environment:
+      - NORNICDB_AUTH=admin:${NORNICDB_PASSWORD}
+      - NORNICDB_AUTH_JWT_SECRET=${NORNICDB_JWT_SECRET}
       - NORNICDB_EMBEDDING_ENABLED=true
       - NORNICDB_EMBEDDING_PROVIDER=ollama
       - NORNICDB_EMBEDDING_API_URL=http://ollama:11434
@@ -134,7 +153,7 @@ EOF
 docker-compose up -d
 ```
 
-## 🔧 Common CLI Commands
+## Common CLI Commands
 
 ```bash
 # View logs
@@ -162,11 +181,11 @@ docker run --rm \
   alpine tar czf /backup/nornicdb-backup-$(date +%Y%m%d).tar.gz -C /data .
 ```
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Run basic functionality tests
-curl -X POST http://localhost:7474/db/nornic/tx/commit \
+curl -u "admin:${NORNICDB_PASSWORD}" -X POST http://localhost:7474/db/nornic/tx/commit \
   -H "Content-Type: application/json" \
   -d '{"statements":[{"statement":"RETURN 1 as test"}]}'
 
@@ -174,12 +193,12 @@ curl -X POST http://localhost:7474/db/nornic/tx/commit \
 nc -z localhost 7687 && echo "Bolt port open" || echo "Bolt port closed"
 
 # Performance test
-time curl -X POST http://localhost:7474/db/nornic/tx/commit \
+time curl -u "admin:${NORNICDB_PASSWORD}" -X POST http://localhost:7474/db/nornic/tx/commit \
   -H "Content-Type: application/json" \
   -d '{"statements":[{"statement":"MATCH (n) RETURN count(n)"}]}'
 ```
 
-## 🛑 Stopping NornicDB
+## Stopping NornicDB
 
 ```bash
 # Graceful stop
@@ -192,7 +211,7 @@ docker rm nornicdb
 docker volume rm nornicdb-data
 ```
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Container Won't Start
 
@@ -240,14 +259,14 @@ NornicDB uses ~1GB RAM by default. Enable low memory mode:
 ```bash
 docker run -d \
   --name nornicdb \
-  -p 7474:7474 \
-  -p 7687:7687 \
+  -p 127.0.0.1:7474:7474 \
+  -p 127.0.0.1:7687:7687 \
   -v nornicdb-data:/data \
   -e NORNICDB_LOW_MEMORY=true \
   timothyswt/nornicdb-arm64-metal-bge:latest
 ```
 
-## ⏭️ Next Steps
+## Next Steps
 
 - **[Docker Deployment Guide](./docker-deployment.md)** - Production deployment with Docker
 - **[Operations Guide](../operations/README.md)** - Production operations and monitoring
@@ -259,5 +278,5 @@ docker run -d \
 
 ---
 
-**Need help?** → **[Troubleshooting Guide](../operations/troubleshooting.md)**  
+**Need help?** → **[Troubleshooting Guide](../operations/troubleshooting.md)**
 **Production ready?** → **[Docker Deployment Guide](./docker-deployment.md)**

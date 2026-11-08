@@ -9,28 +9,28 @@ Complete reference for all feature flags in NornicDB. Feature flags allow you to
 | Category | Feature | Default | Environment Variable |
 |----------|---------|---------|---------------------|
 | **Tier 1 - Production Safety** | | | |
-| | Edge Provenance | ✅ Enabled | `NORNICDB_EDGE_PROVENANCE_ENABLED` |
-| | Cooldown | ✅ Enabled | `NORNICDB_COOLDOWN_ENABLED` |
-| | Evidence Buffering | ✅ Enabled | `NORNICDB_EVIDENCE_BUFFERING_ENABLED` |
-| | Per-Node Config | ✅ Enabled | `NORNICDB_PER_NODE_CONFIG_ENABLED` |
-| | WAL (Write-Ahead Log) | ✅ Enabled | `NORNICDB_WAL_ENABLED` |
-| | Auto-Recover on Corruption | ✅ Enabled | `NORNICDB_AUTO_RECOVER_ON_CORRUPTION` |
+| | Edge Provenance |  Enabled | `NORNICDB_EDGE_PROVENANCE_ENABLED` |
+| | Cooldown |  Enabled | `NORNICDB_COOLDOWN_ENABLED` |
+| | Evidence Buffering |  Enabled | `NORNICDB_EVIDENCE_BUFFERING_ENABLED` |
+| | Per-Node Config |  Enabled | `NORNICDB_PER_NODE_CONFIG_ENABLED` |
+| | WAL (Write-Ahead Log) |  Enabled | `NORNICDB_WAL_ENABLED` |
+| | Auto-Recover on Corruption |  Enabled | `NORNICDB_AUTO_RECOVER_ON_CORRUPTION` |
 | **Performance** | | | |
-| | Embedding Cache | ✅ Enabled (10K) | `NORNICDB_EMBEDDING_CACHE_SIZE` |
-| | Async Writes (adaptive write-behind) | ❌ Disabled (durable default) | `NORNICDB_ASYNC_WRITES_ENABLED` |
+| | Embedding Cache |  Enabled (10K) | `NORNICDB_EMBEDDING_CACHE_SIZE` |
+| | Async Writes (adaptive write-behind) |  Disabled (durable default) | `NORNICDB_ASYNC_WRITES_ENABLED` |
 | | Async Flush Interval | auto | `NORNICDB_ASYNC_FLUSH_INTERVAL` |
-| | Per-Node Config Auto-Integration | ✅ Enabled | `NORNICDB_PER_NODE_CONFIG_AUTO_INTEGRATION_ENABLED` |
+| | Per-Node Config Auto-Integration |  Enabled | `NORNICDB_PER_NODE_CONFIG_AUTO_INTEGRATION_ENABLED` |
 | **Experimental** | | | |
-| | Kalman Filtering | ❌ Disabled | `NORNICDB_KALMAN_ENABLED` |
-| | GPU K-Means Clustering | ❌ Disabled | `NORNICDB_KMEANS_CLUSTERING_ENABLED` |
-| | Auto-TLP (Automatic Relationship Inference) | ❌ Disabled | `NORNICDB_AUTO_TLP_ENABLED` |
+| | Kalman Filtering |  Disabled | `NORNICDB_KALMAN_ENABLED` |
+| | GPU K-Means Clustering |  Disabled | `NORNICDB_KMEANS_CLUSTERING_ENABLED` |
+| | Auto-TLP (Automatic Relationship Inference) |  Disabled | `NORNICDB_AUTO_TLP_ENABLED` |
 | **Auto-TLP Sub-features** | | | |
-| | Heimdall LLM QC | ❌ Disabled | `NORNICDB_AUTO_TLP_LLM_QC_ENABLED` |
-| | Heimdall LLM Augment | ❌ Disabled | `NORNICDB_AUTO_TLP_LLM_AUGMENT_ENABLED` |
-| | Edge Decay | ✅ Enabled | `NORNICDB_EDGE_DECAY_ENABLED` |
-| | Cooldown Auto-Integration | ✅ Enabled | `NORNICDB_COOLDOWN_AUTO_INTEGRATION_ENABLED` |
-| | Evidence Auto-Integration | ✅ Enabled | `NORNICDB_EVIDENCE_AUTO_INTEGRATION_ENABLED` |
-| | Edge Provenance Auto-Integration | ✅ Enabled | `NORNICDB_EDGE_PROVENANCE_AUTO_INTEGRATION_ENABLED` |
+| | Heimdall LLM QC |  Disabled | `NORNICDB_AUTO_TLP_LLM_QC_ENABLED` |
+| | Heimdall LLM Augment |  Disabled | `NORNICDB_AUTO_TLP_LLM_AUGMENT_ENABLED` |
+| | Edge Decay |  Enabled | `NORNICDB_EDGE_DECAY_ENABLED` |
+| | Cooldown Auto-Integration |  Enabled | `NORNICDB_COOLDOWN_AUTO_INTEGRATION_ENABLED` |
+| | Evidence Auto-Integration |  Enabled | `NORNICDB_EVIDENCE_AUTO_INTEGRATION_ENABLED` |
+| | Edge Provenance Auto-Integration |  Enabled | `NORNICDB_EDGE_PROVENANCE_AUTO_INTEGRATION_ENABLED` |
 
 ---
 
@@ -44,7 +44,7 @@ These features are **enabled by default** to ensure production stability and saf
 
 **Environment Variable**: `NORNICDB_EDGE_PROVENANCE_ENABLED`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable if causing performance issues (not recommended)
@@ -84,7 +84,7 @@ defer cleanup()
 
 **Environment Variable**: `NORNICDB_COOLDOWN_ENABLED`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable if edges aren't being created when expected
@@ -126,7 +126,7 @@ defer cleanup()
 
 **Environment Variable**: `NORNICDB_EVIDENCE_BUFFERING_ENABLED`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable if edges aren't appearing after expected activity
@@ -167,7 +167,7 @@ defer cleanup()
 
 **Environment Variable**: `NORNICDB_PER_NODE_CONFIG_ENABLED`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable if per-node rules are causing unexpected behavior
@@ -210,7 +210,7 @@ defer cleanup()
 
 **Environment Variable**: `NORNICDB_WAL_ENABLED`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable for maximum performance (data loss risk on crash)
@@ -252,7 +252,7 @@ defer cleanup()
 
 **Environment Variable**: `NORNICDB_AUTO_RECOVER_ON_CORRUPTION`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable (server will fail fast instead of rebuilding from WAL/snapshots)
@@ -285,7 +285,7 @@ These flags control **automatic integration** into the inference engine's `Proce
 
 **Environment Variable**: `NORNICDB_COOLDOWN_AUTO_INTEGRATION_ENABLED`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable automatic integration (manual use still works)
@@ -312,7 +312,7 @@ engine.GetCooldownTable().CanMaterialize(src, dst, label)
 
 **Environment Variable**: `NORNICDB_EVIDENCE_AUTO_INTEGRATION_ENABLED`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable automatic integration
@@ -339,7 +339,7 @@ engine.GetEvidenceBuffer().AddEvidence(src, dst, label, score, signalType, sessi
 
 **Environment Variable**: `NORNICDB_EDGE_PROVENANCE_AUTO_INTEGRATION_ENABLED`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable automatic logging
@@ -366,7 +366,7 @@ engine.GetEdgeMetaStore().Append(ctx, meta)
 
 **Environment Variable**: `NORNICDB_PER_NODE_CONFIG_AUTO_INTEGRATION_ENABLED`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable automatic checking
@@ -397,7 +397,7 @@ These features are **enabled by default** for optimal performance.
 
 **Environment Variable**: `NORNICDB_EMBEDDING_CACHE_SIZE`
 
-**Default**: ✅ Enabled (10,000 entries, ~40MB memory)
+**Default**:  Enabled (10,000 entries, ~40MB memory)
 
 ```bash
 # Adjust cache size (default: 10000)
@@ -463,7 +463,7 @@ See [Write-Behind Adaptive Buffer](../performance/write-behind-adaptive-buffer.m
 - `NORNICDB_ASYNC_WRITES_ENABLED` - Enable/disable the adaptive write-behind buffer (default: false)
 - `NORNICDB_ASYNC_FLUSH_INTERVAL` - Initial flush interval; the runtime adapts it to measured drain latency (default: 50ms)
 
-**Default**: ❌ Disabled (durable writes)
+**Default**:  Disabled (durable writes)
 
 ```bash
 # Durable default (writes block until persisted)
@@ -511,12 +511,12 @@ db, err := nornicdb.Open("./data", config)
 - Eventual responses expose `optimistic` metadata instead of a durable `receipt`
 
 **Trade-offs**:
-- ✅ ~100x faster writes
-- ✅ Better batch operation throughput
-- ✅ Reduced disk I/O pressure
-- ⚠️ Data may be lost if crash before flush (mitigated by WAL)
-- ⚠️ Reads may see slightly stale data (within flush interval)
-- ⚠️ `202 Accepted` indicates the mutation used the eventual-consistency path and was queued, not durably completed
+-  ~100x faster writes
+-  Better batch operation throughput
+-  Reduced disk I/O pressure
+-  Data may be lost if crash before flush (mitigated by WAL)
+-  Reads may see slightly stale data (within flush interval)
+-  `202 Accepted` indicates the mutation used the eventual-consistency path and was queued, not durably completed
 
 **When to enable (default)**:
 - High write throughput workloads
@@ -542,7 +542,7 @@ These features are **disabled by default**. Enable them to experiment with advan
 
 **Environment Variable**: `NORNICDB_KALMAN_ENABLED`
 
-**Default**: ❌ Disabled
+**Default**:  Disabled
 
 ```bash
 # Enable Kalman filtering
@@ -590,7 +590,7 @@ defer cleanup()
 
 **Environment Variable**: `NORNICDB_AUTO_TLP_ENABLED`
 
-**Default**: ❌ Disabled
+**Default**:  Disabled
 
 ```bash
 # Enable automatic relationship inference
@@ -617,7 +617,7 @@ engine.GetTLP().InferRelationship(src, dst, label, confidence)
 
 **Environment Variable**: `NORNICDB_AUTO_TLP_LLM_QC_ENABLED`
 
-**Default**: ❌ Disabled (requires `NORNICDB_AUTO_TLP_ENABLED` to have any effect)
+**Default**:  Disabled (requires `NORNICDB_AUTO_TLP_ENABLED` to have any effect)
 
 ```bash
 # Enable Heimdall review of TLP suggestions
@@ -673,7 +673,7 @@ defer cleanup()
 
 **Environment Variable**: `NORNICDB_AUTO_TLP_LLM_AUGMENT_ENABLED`
 
-**Default**: ❌ Disabled (requires both `NORNICDB_AUTO_TLP_ENABLED` and `NORNICDB_AUTO_TLP_LLM_QC_ENABLED`)
+**Default**:  Disabled (requires both `NORNICDB_AUTO_TLP_ENABLED` and `NORNICDB_AUTO_TLP_LLM_QC_ENABLED`)
 
 ```bash
 # Full hybrid mode: TLP + Heimdall review + augmentation
@@ -712,7 +712,7 @@ config.DisableAutoTLPLLMAugment()
 
 **Environment Variable**: `NORNICDB_KMEANS_CLUSTERING_ENABLED`
 
-**Default**: ❌ Disabled
+**Default**:  Disabled
 
 ```bash
 # Enable GPU-accelerated clustering
@@ -739,7 +739,7 @@ engine.GetClusteringEngine().Cluster(embeddings)
 
 **Environment Variable**: `NORNICDB_EDGE_DECAY_ENABLED`
 
-**Default**: ✅ Enabled
+**Default**:  Enabled
 
 ```bash
 # Disable edge decay

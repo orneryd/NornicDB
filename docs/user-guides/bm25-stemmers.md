@@ -41,7 +41,7 @@ git -C ./third_party/snowball checkout v3.1.1
 make -C ./third_party/snowball
 ```
 
-The examples use the current stable Snowball v3.1.1 compiler and Go runtime.
+The examples pin the Snowball v3.1.1 compiler and Go runtime for reproducibility.
 Keep both on the same release so generated code and runtime APIs stay aligned.
 The plugin version passed to `nornicdb-snowball` should identify that build.
 
@@ -212,6 +212,11 @@ the selected stemmer ID is unavailable or the rebuild fails, the update fails
 and the previous search service stays active.
 
 ## Runtime Contract
+
+The implemented plugin ABI is `Stem(token string) string`, exported through a
+symbol named `Plugin`. The manifest uses `schema_version: 1`, `api_version: 1`,
+and `type: bm25_stemmer`. See the [runtime types and manifest validation](../../pkg/search/stemmer/stemmer.go)
+and the [Snowball packaging command](../../cmd/nornicdb-snowball/package.go).
 
 - The selected plugin must be present at startup in
   `NORNICDB_STEMMER_PLUGINS_DIR` or `plugins.stemmers.directory`.

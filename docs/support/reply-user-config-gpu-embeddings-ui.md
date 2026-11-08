@@ -33,11 +33,11 @@ docker run ... \
 ```
 
 If config is loading, startup logs should include something like:
-- `📄 Loaded config from: /config/nornicdb.yaml`
+- ` Loaded config from: /config/nornicdb.yaml`
 
 If you paste the first ~50 lines of container logs after startup, we can confirm immediately.
 
-## 2) “Is CUDA being used?” and the confusing “✅ SLM model loaded on CPU”
+## 2) “Is CUDA being used?” and the confusing “ SLM model loaded on CPU”
 
 There are two separate “GPU stories” that can be conflated:
 
@@ -46,7 +46,7 @@ There are two separate “GPU stories” that can be conflated:
 
 ### What was confusing
 - You can see llama.cpp CUDA buffer logs (meaning CUDA backend exists / tried to allocate), but then still see:
-  - `✅ SLM model loaded on CPU (slower but functional)`
+  - ` SLM model loaded on CPU (slower but functional)`
 
 That message is emitted when Heimdall tries GPU offload and falls back. It didn’t report *why* clearly enough, and some config paths made “cpu-only vs auto” ambiguous.
 
@@ -58,7 +58,7 @@ That message is emitted when Heimdall tries GPU offload and falls back. It didn�
 Please include:
 - the relevant config section for Heimdall and embeddings
 - the startup log lines containing:
-  - `🛡️ Loading Heimdall model: ...`
+  - ` Loading Heimdall model: ...`
   - `GPU layers: ...`
   - any subsequent `GPU loading failed...`
   - and the `Compute: GPU=...` line (newer builds)
@@ -87,19 +87,19 @@ nornicdb serve --embedding-enabled
 
 Then verify embeddings are actually ready:
 - Look for logs like:
-  - `🔄 Loading embedding model: ...`
-  - `✅ Embeddings ready: ...`
+  - ` Loading embedding model: ...`
+  - ` Embeddings ready: ...`
 - If the embedder can’t load (model path wrong, model missing, etc.), the logs currently say it’s falling back to full-text.
 
 ## 4) `/help` opens a blank page — we need one screenshot to be sure
 
 There are two different things that look like “/help”:
 
-1) **A chat command inside the Heimdall/Bifrost panel**  
+1) **A chat command inside the Heimdall/Bifrost panel**
    - You open the UI, open the chat panel, type `/help` into the chat input.
    - Expected behavior: it prints an in-chat help message (it should *not* navigate).
 
-2) **A browser URL path**  
+2) **A browser URL path**
    - You type `http://host:7474/help` in the address bar.
    - Expected behavior (newer builds): the UI SPA should load and route you back to the app (no blank page).
    - Older builds could fall through to the Neo4j discovery handler and look like a “blank” page depending on the browser and auth state.

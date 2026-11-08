@@ -590,16 +590,16 @@ CREATE CONSTRAINT person_email_string FOR (p:Person) REQUIRE p.email IS :: STRIN
 ## Summary
 
 **Supported Types:**
-- ✅ **Primitives**: `string`, `int`/`int64`, `float64`/`float32`, `bool`, `null`
-- ✅ **Temporal**: `time.Time` (dates/timestamps)
-- ✅ **Collections**: Arrays (`[]interface{}`, `[]string`, `[]int`, `[]float64`) of primitive or temporal values
-- ✅ **Constraints**: Type constraints for schema enforcement
+-  **Primitives**: `string`, `int`/`int64`, `float64`/`float32`, `bool`, `null`
+-  **Temporal**: `time.Time` (dates/timestamps)
+-  **Collections**: Arrays (`[]interface{}`, `[]string`, `[]int`, `[]float64`) of primitive or temporal values
+-  **Constraints**: Type constraints for schema enforcement
 
 **Not Supported as Properties:**
-- ❌ Maps and lists that contain lists or maps (TypeError on CREATE, MERGE and SET)
-- ❌ Functions, closures
-- ❌ Binary data (use base64 strings)
-- ❌ Circular references (will cause serialization issues)
+-  Maps and lists that contain lists or maps (TypeError on CREATE, MERGE and SET)
+-  Functions, closures
+-  Binary data (use base64 strings)
+-  Circular references (will cause serialization issues)
 
 **Best Practices:**
 - Use appropriate types for clarity

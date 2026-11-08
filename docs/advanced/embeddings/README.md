@@ -2,7 +2,7 @@
 
 **Generate and manage vector embeddings.**
 
-## 📚 Documentation
+## Documentation
 
 - **[Local GGUF Models](local-gguf.md)** - Run models locally
 - **[Ollama Integration](../../features/vector-embeddings.md#ollama-recommended)** - Use Ollama for embeddings
@@ -10,7 +10,7 @@
 - **[OrcaRouter Integration](../../features/vector-embeddings.md#orcarouter)** - Use OrcaRouter's OpenAI-compatible API
 - **[Voyage AI](voyage-ai.md)** - Use Voyage embeddings, contextualized chunking, and reranking
 
-## 🎯 What are Embeddings?
+## What are Embeddings?
 
 Embeddings are vector representations of text that capture semantic meaning, enabling:
 - Semantic search

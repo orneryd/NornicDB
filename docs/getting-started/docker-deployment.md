@@ -2,7 +2,7 @@
 
 **Deploy NornicDB in production using Docker with best practices.**
 
-## 📋 Prerequisites
+## Prerequisites
 
 - Docker installed (20.10+)
 - Docker Compose (optional, for multi-container setups)
@@ -45,7 +45,7 @@ Access NornicDB at:
 - **HTTP API:** http://localhost:7474
 - **Bolt Protocol:** bolt://localhost:7687
 
-## 🔧 Production Deployment
+## Production Deployment
 
 ### With Persistent Storage
 
@@ -78,7 +78,7 @@ docker run -d \
 
 For the full supported environment-variable surface, use the canonical [Environment Variables Reference](../operations/environment-variables.md).
 
-## 🐳 Docker Compose
+## Docker Compose
 
 ### Basic Setup
 
@@ -158,7 +158,7 @@ volumes:
   nornicdb-logs:
 ```
 
-## ⚙️ Configuration
+## Configuration
 
 Use the canonical operational docs for supported settings instead of a shortened deployment-only table:
 
@@ -174,7 +174,7 @@ Use the canonical operational docs for supported settings instead of a shortened
 | `/logs`   | Application logs               |
 | `/config` | Configuration files (optional) |
 
-## 🔒 Security Best Practices
+## Security Best Practices
 
 ### 1. Use Strong Passwords
 
@@ -212,7 +212,7 @@ networks:
     internal: true
 ```
 
-## 📊 Monitoring
+## Monitoring
 
 ### Health Checks
 
@@ -234,7 +234,7 @@ docker stats nornicdb
 
 For metrics exposure, scrape the supported endpoints described in [API Reference](../api-reference/openapi.md) and the monitoring guidance in [Operations](../operations/README.md). Keep deployment docs focused on container topology and leave runtime observability settings to the canonical operations pages.
 
-## 🔄 Backup & Restore
+## Backup & Restore
 
 ### Backup
 
@@ -268,7 +268,7 @@ docker run --rm \
 docker start nornicdb
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Container Won't Start
 
@@ -326,7 +326,7 @@ services:
 
 See **[Low Memory Mode Guide](../operations/low-memory-mode.md)** for details.
 
-## ⏭️ Next Steps
+## Next Steps
 
 - **[Operations Guide](../operations/README.md)** - Monitoring, backup, scaling
 - **[Scaling Guide](../operations/scaling.md)** - Reverse proxies, capacity planning, and topology
@@ -336,5 +336,5 @@ See **[Low Memory Mode Guide](../operations/low-memory-mode.md)** for details.
 
 ---
 
-**Need help?** → **[Troubleshooting Guide](../operations/troubleshooting.md)**  
+**Need help?** → **[Troubleshooting Guide](../operations/troubleshooting.md)**
 **Production ready?** → **[Operations Guide](../operations/README.md)**

@@ -529,7 +529,7 @@ When WS is disabled:
 - Plain `GET /` (no Upgrade headers) → still returns the 200 discovery response (health checks unaffected).
 - A real WS upgrade attempt → returns `426 Upgrade Required` with body pointing at `bolt://<host>:<port>/` and increments `bolt_connections_rejected_total{reason="ws_disabled"}`.
 
-## Async Write Settings ⭐ New
+## Async Write Settings  New
 
 The async write engine provides write-behind caching for improved throughput. Async-eligible auto-commit writes return immediately after updating the cache and are flushed to disk asynchronously. Mutations that still need the implicit transactional path continue to execute synchronously and produce durable receipts.
 
@@ -659,7 +659,7 @@ Node eligibility is configured separately with `NORNICDB_EMBEDDING_LABELS_INCLUD
 - **properties_exclude** is always applied; it is also applied when include is set (so an excluded key is never embedded even if listed in include).
 - Precedence: defaults → config file → environment variables (env wins).
 
-### Search Similarity ⭐ New
+### Search Similarity  New
 
 Configure minimum similarity thresholds for vector search:
 

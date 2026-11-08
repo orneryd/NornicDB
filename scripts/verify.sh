@@ -66,7 +66,7 @@ describe() {
     allocations)  echo "allocation ratchet against the merge base (fixed-count workloads, 1% B/op tolerance)" ;;
     conformance)  echo "make cypher-conformance (pinned TCK corpus + regressions)" ;;
     differential) echo "make cypher-differential (fixed corpus vs pinned Neo4j; needs Docker)" ;;
-    docs)         echo "mkdocs build --strict (pushes to main)" ;;
+    docs)         echo "VitePress build and corpus, search and graph contracts" ;;
   esac
 }
 
@@ -75,7 +75,7 @@ watched() {
   case "$1" in
     ci)          echo '^(docker|lib|macos|pkg|plugins|scripts|ui)/|^cmd/nornicdb/|^cmd/nornicdb-admin/|^go\.(mod|sum)$|^Makefile$|^\.github/workflows/ci\.yml$' ;;
     conformance) echo '^pkg/|^testing/cypher/|^scripts/cypher-tck/|^docs/plans/cypher-convergence-[^/]*\.md$|^openspec/|^\.github/workflows/cypher-conformance\.yml$|^go\.(mod|sum)$|^Makefile$' ;;
-    docs)        echo '^docs/|^mkdocs\.yml$|^\.github/workflows/docs-pages\.yml$|^requirements-docs\.txt$' ;;
+    docs)        echo '^docs/|^docs-site/|^\.github/workflows/docs-pages\.yml$' ;;
   esac
 }
 
@@ -259,13 +259,7 @@ step_differential() {
 }
 
 step_docs() {
-  local venv="${STATE_DIR}/docs-venv" stamp
-  stamp="$(shasum requirements-docs.txt | cut -d' ' -f1)"
-  if [[ ! -x "${venv}/bin/mkdocs" || "$(cat "${venv}/.requirements" 2>/dev/null)" != "${stamp}" ]]; then
-    python3 -m venv "${venv}" && "${venv}/bin/pip" install --quiet -r requirements-docs.txt || return 1
-    echo "${stamp}" > "${venv}/.requirements"
-  fi
-  "${venv}/bin/mkdocs" build --strict --site-dir "${LOG_DIR}/site"
+  (cd docs-site && npm ci && npm run build && npm test)
 }
 
 # --- run ----------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 # NornicDB Multi-Database Support
 
-**Status:** Complete  
-**Version:** 1.2  
+**Status:** Complete
+**Version:** 1.2
 **Last Updated:** 2024-12-04
 
 NornicDB supports multiple isolated databases (multi-tenancy) within a single storage backend, providing Neo4j 4.x-compatible multi-database functionality.
@@ -27,12 +27,12 @@ NornicDB supports multiple isolated databases within a single storage backend, e
 
 ### Features
 
-- ✅ **Create and manage databases** - `CREATE DATABASE`, `DROP DATABASE`, `SHOW DATABASES`
-- ✅ **Complete data isolation** - Each database is completely separate
-- ✅ **Neo4j 4.x compatibility** - Works with existing Neo4j drivers and tools
-- ✅ **Automatic migration** - Existing data automatically migrated on upgrade
-- ✅ **Zero downtime** - Migration happens transparently during startup
-- ✅ **Backwards compatible** - Existing code continues to work without changes
+-  **Create and manage databases** - `CREATE DATABASE`, `DROP DATABASE`, `SHOW DATABASES`
+-  **Complete data isolation** - Each database is completely separate
+-  **Neo4j 4.x compatibility** - Works with existing Neo4j drivers and tools
+-  **Automatic migration** - Existing data automatically migrated on upgrade
+-  **Zero downtime** - Migration happens transparently during startup
+-  **Backwards compatible** - Existing code continues to work without changes
 
 ### How It Works
 
@@ -44,10 +44,10 @@ NornicDB uses **key-prefix namespacing** within a single storage backend:
 
 ### Implemented Features
 
-- ✅ **Database Aliases** — CREATE/DROP/SHOW ALIAS commands, alias resolution
-- ✅ **Per-Database Resource Limits** — `ALTER DATABASE ... SET LIMIT max_nodes/max_edges/max_bytes/max_query_time/max_results/max_concurrent_queries/max_connections/max_queries_per_second/max_writes_per_second`, enforced at runtime
-- ✅ **Composite Databases (Sharding)** — `CREATE COMPOSITE DATABASE` with local and remote constituents, `USE <composite>.<alias>` Fabric-style routing, many-read/one-write transactional semantics, OIDC credential forwarding for remote constituents
-- ✅ **Schema merging** for composite databases — constraints and indexes (property, composite, fulltext, vector, range) merged into a unified read-only metadata view
+-  **Database Aliases** — CREATE/DROP/SHOW ALIAS commands, alias resolution
+-  **Per-Database Resource Limits** — `ALTER DATABASE ... SET LIMIT max_nodes/max_edges/max_bytes/max_query_time/max_results/max_concurrent_queries/max_connections/max_queries_per_second/max_writes_per_second`, enforced at runtime
+-  **Composite Databases (Sharding)** — `CREATE COMPOSITE DATABASE` with local and remote constituents, `USE <composite>.<alias>` Fabric-style routing, many-read/one-write transactional semantics, OIDC credential forwarding for remote constituents
+-  **Schema merging** for composite databases — constraints and indexes (property, composite, fulltext, vector, range) merged into a unified read-only metadata view
 
 Plain (non-composite) cross-database queries are not supported by design; composite databases are the supported route to query across multiple databases.
 
@@ -383,23 +383,23 @@ session = driver.session(database="tenant_a")
 
 | Feature | Neo4j 4.x | NornicDB v1 | Notes |
 |---------|-----------|-------------|-------|
-| `CREATE DATABASE` | ✅ | ✅ | Fully implemented |
-| `DROP DATABASE` | ✅ | ✅ | Fully implemented |
-| `SHOW DATABASES` | ✅ | ✅ | Fully implemented |
-| `SHOW DATABASE x` | ✅ | ✅ | Fully implemented |
-| `:USE database` | ✅ | ✅ | Bolt protocol support |
-| `database` param | ✅ | ✅ | Bolt protocol support |
+| `CREATE DATABASE` | Yes | Yes | Fully implemented |
+| `DROP DATABASE` | Yes | Yes | Fully implemented |
+| `SHOW DATABASES` | Yes | Yes | Fully implemented |
+| `SHOW DATABASE x` | Yes | Yes | Fully implemented |
+| `:USE database` | Yes | Yes | Bolt protocol support |
+| `database` param | Yes | Yes | Bolt protocol support |
 | Default database | `neo4j` | `nornic` | Configurable |
-| Configuration precedence | CLI > Env > File > Default | ✅ | Implemented |
-| Backwards compatibility | N/A | ✅ | Existing code works |
-| Automatic migration | N/A | ✅ | Automatic on upgrade |
-| Database aliases | ✅ | ✅ | Fully implemented |
-| Composite DBs | ✅ | ✅ | Fully implemented |
-| Per-DB limits | ✅ | ✅ | Fully implemented |
+| Configuration precedence | CLI > Env > File > Default | Yes | Implemented |
+| Backwards compatibility | N/A | Yes | Existing code works |
+| Automatic migration | N/A | Yes | Automatic on upgrade |
+| Database aliases | Yes | Yes | Fully implemented |
+| Composite DBs | Yes | Yes | Fully implemented |
+| Per-DB limits | Yes | Yes | Fully implemented |
 
 ### Backwards Compatibility
 
-✅ **Fully backwards compatible:**
+ **Fully backwards compatible:**
 - Existing code without database parameter works with default database
 - All existing data automatically migrated and accessible in default database namespace
 - No breaking changes to existing APIs
@@ -407,15 +407,15 @@ session = driver.session(database="tenant_a")
 
 ### Testing
 
-Comprehensive unit tests verify:
-- ✅ Database creation and deletion
-- ✅ Data isolation between databases
-- ✅ Configuration precedence
-- ✅ Backwards compatibility
-- ✅ Automatic migration of existing unprefixed data
-- ✅ Metadata persistence
-- ✅ Namespaced storage operations
-- ✅ Migration idempotency (doesn't run twice)
+unit tests verify:
+-  Database creation and deletion
+-  Data isolation between databases
+-  Configuration precedence
+-  Backwards compatibility
+-  Automatic migration of existing unprefixed data
+-  Metadata persistence
+-  Namespaced storage operations
+-  Migration idempotency (doesn't run twice)
 
 **Test Coverage:** 84.7% for multidb package
 

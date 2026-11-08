@@ -184,7 +184,7 @@ MATCH (n) RETURN n
 
 ## Backwards Compatibility
 
-✅ **Fully backwards compatible:**
+ **Fully backwards compatible:**
 
 - Existing code without database parameter works with default database
 - All existing data automatically migrated and accessible in default database
@@ -663,8 +663,8 @@ Notes:
 
 #### End-to-End Example
 
-Coordinator: `https://coordinator.example/nornic-db`  
-Remote shard A: `https://shard-a.example/nornic-db`  
+Coordinator: `https://coordinator.example/nornic-db`
+Remote shard A: `https://shard-a.example/nornic-db`
 Remote shard B: `https://shard-b.example/nornic-db`
 
 Create/query data directly on remote shards first:

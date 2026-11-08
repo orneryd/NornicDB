@@ -6,13 +6,13 @@ This directory contains deployment plans for packaging NornicDB as an installabl
 
 | Platform | Architecture | Package Type | Status |
 |----------|-------------|--------------|--------|
-| [macOS](./macos.md) | arm64 (Apple Silicon) | Homebrew, .pkg | 📋 Planned |
-| [macOS](./macos.md) | amd64 (Intel) | Homebrew, .pkg | 📋 Planned |
-| [Windows](./windows.md) | amd64 | MSI + Service | 📋 Planned |
-| [Linux](./linux.md) | amd64 | deb, rpm, systemd | 📋 Planned |
-| [Linux](./linux.md) | arm64 | deb, rpm, systemd | 📋 Planned |
-| [Raspberry Pi](./raspberry-pi.md) | arm64/arm | deb, systemd | 📋 Planned |
-| [Docker](./docker.md) | amd64, arm64 | Container | ✅ Available |
+| [macOS](./macos.md) | arm64 (Apple Silicon) | Homebrew, .pkg |  Planned |
+| [macOS](./macos.md) | amd64 (Intel) | Homebrew, .pkg |  Planned |
+| [Windows](./windows.md) | amd64 | MSI + Service |  Planned |
+| [Linux](./linux.md) | amd64 | deb, rpm, systemd |  Planned |
+| [Linux](./linux.md) | arm64 | deb, rpm, systemd |  Planned |
+| [Raspberry Pi](./raspberry-pi.md) | arm64/arm | deb, systemd |  Planned |
+| [Docker](./docker.md) | amd64, arm64 | Container |  Available |
 
 ## Quick Cross-Compilation
 
@@ -63,7 +63,7 @@ packaging/
 
 ## Implementation Priority
 
-1. **Docker** ✅ - Already available
+1. **Docker**  - Already available
 2. **Homebrew** - Highest impact for developer adoption
 3. **Windows MSI** - Required for Windows market
 4. **Linux systemd** - Server deployments

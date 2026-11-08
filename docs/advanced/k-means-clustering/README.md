@@ -2,12 +2,12 @@
 
 **K-Means clustering for vector embeddings (not database clustering).**
 
-## 📚 Documentation
+## Documentation
 
 - **[K-Means Algorithm](kmeans-algorithm.md)** - Algorithm details and how clustering speeds up vector search
 - **[Metal Optimizations](metal-optimizations.md)** - Apple Silicon-specific kernel notes
 
-## 🎯 What is K-Means Clustering?
+## What is K-Means Clustering?
 
 K-Means clustering groups similar vectors together. NornicDB uses it as an inverted-file approximate nearest-neighbor (IVF) candidate generator: queries first identify the most relevant clusters, then perform exact similarity scoring within those clusters. This is faster than full brute-force search on large datasets.
 
@@ -24,7 +24,7 @@ The cluster index is built automatically once the dataset reaches `NORNICDB_KMEA
 
 For the user-facing tuning surface, see [Vector Search → Performance Tuning](../../user-guides/vector-search.md#performance-tuning).
 
-## 📖 Learn More
+## Learn More
 
 - **[K-Means Algorithm](kmeans-algorithm.md)** — How K-Means works in NornicDB's IVF candidate generator
 - **[Metal Optimizations](metal-optimizations.md)** — Atomic-float workaround for the Metal kernel

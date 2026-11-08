@@ -1,33 +1,29 @@
 # Performance
 
-This section contains benchmark evidence, profiling guides, and tuning playbooks.
+Benchmark reports describe their recorded workloads, hardware, and software builds. Query latency and end-to-end throughput measure different parts of a run; compare matching conditions.
 
-## Start Here
+## Benchmark reports
 
-- Current Neo4j comparison (48k-product / 48k-order Northwind): [1.1.0-northwind-results/comparison.md](1.1.0-northwind-results/comparison.md)
-- BEIR SciFact retrieval quality and reproduction protocol: [retrieval-recall-benchmark.md](retrieval-recall-benchmark.md#recorded-scifact-results)
-- Search methodology and tuning model: [searching.md](searching.md)
-- HTTP/API optimization options: [http-optimization-options.md](http-optimization-options.md)
-- Hot-path query cookbook: [hot-path-query-cookbook.md](hot-path-query-cookbook.md)
+| Report | Scope |
+| --- | --- |
+| [Database comparison](benchmarks/database-comparison/sweep.md) | Latest recorded Northwind sweep across NornicDB, Neo4j, FalkorDB, Memgraph, and LadybugDB. |
+| [Shortest-path traversal](benchmarks/shortest-path.md) | 500,000 nodes and 3,969,418 edges; seed cost and latency across hop depths. |
+| [Parser scaling](benchmarks/parser-scaling/report.md) | Input-size growth, allocations, bytes, latency, and GC for the native and ANTLR parsers. |
+| [Northwind parser modes](benchmarks/database-comparison/parser-modes.md) | Native and ANTLR query latency over the same seeded graph. |
+| [Neo4j comparison](benchmarks/database-comparison/comparison.md) | Query-level results, ingestion, storage, power, and measurement definitions. |
+| [Retrieval quality](retrieval-recall-benchmark.md) | BEIR SciFact recall, ranking scores, and reproduction protocol. |
+| [Hybrid queries](hybrid-query-benchmarks.md) | Combined retrieval and graph-query workloads. |
 
-## Benchmark and Analysis Reports
+Report directories use stable topic names. Build identifiers, versions, and dates remain inside the reports and raw artifacts so the measurements can be reproduced.
 
-- Northwind benchmark against Neo4j: [1.1.0-northwind-results/comparison.md](1.1.0-northwind-results/comparison.md)
-- Hybrid query benchmarks: [hybrid-query-benchmarks.md](hybrid-query-benchmarks.md)
-- BEIR retrieval recall and ranking scores: [retrieval-recall-benchmark.md](retrieval-recall-benchmark.md#recorded-scifact-results)
-- Additional and historical Neo4j comparisons: [benchmarks-vs-neo4j.md](benchmarks-vs-neo4j.md)
-- HTTP API vs Neo4j measurements: [http-api-vs-neo4j.md](http-api-vs-neo4j.md)
-- Single-request benchmark: [single-request-benchmark.md](single-request-benchmark.md)
-- Historical v0.1.0 aggregated test results: [test-results.md](test-results.md)
+## Profiling and tuning
 
-## Profiling and Runtime Tuning
+- [Search methodology](searching.md)
+- [Hot-path query cookbook](hot-path-query-cookbook.md)
+- [HTTP optimization](http-optimization-options.md)
+- [Profiling with pprof](pprof-quick-guide.md)
+- [Single-request measurements](single-request-benchmark.md)
 
-- pprof quick guide: [pprof-quick-guide.md](pprof-quick-guide.md)
-- HTTP optimization options: [http-optimization-options.md](http-optimization-options.md)
-- GPU capability notes: [../features/gpu-acceleration.md](../features/gpu-acceleration.md)
+## Development records
 
-## Related Docs
-
-- Product usage guides: [../user-guides/README.md](../user-guides/README.md)
-- Operations runbooks: [../operations/README.md](../operations/README.md)
-- Symptom-based issue routing: [../issues-index.md](../issues-index.md)
+[Earlier benchmark baselines and PR-specific qualification records](../development/archive/) are kept with the development material.

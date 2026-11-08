@@ -4,7 +4,7 @@ Last Updated: January 2026
 
 HTTP write performance comparison via REST API. Configuration: HTTP/2, JWT auth, 50,000 requests.
 
-> **Scope:** This protocol-specific report compares NornicDB measurements with separately published or estimated Neo4j HTTP figures. For the current same-hardware, same-workload comparison, use the [48k-product / 48k-order Northwind report](1.1.0-northwind-results/comparison.md).
+> **Scope:** This protocol-specific report compares NornicDB measurements with separately published or estimated Neo4j HTTP figures. For the current same-hardware, same-workload comparison, use the [48k-product / 48k-order Northwind report](../development/archive/benchmarks/database-comparison-baseline/comparison.md).
 
 ## Executive Summary
 
@@ -118,7 +118,7 @@ NornicDB achieves **sub-millisecond P99 latency** (0.22ms) for single requests, 
 
 **NornicDB Benchmarks:**
 
-- Comprehensive latency metrics (P50, P95, P99, P99.9)
+- latency metrics (P50, P95, P99, P99.9)
 - Sub-millisecond single-request latency
 - Consistent performance across operation types
 - Works efficiently on standard storage
@@ -144,12 +144,12 @@ NornicDB achieves **sub-millisecond P99 latency** (0.22ms) for single requests, 
 
 **NornicDB's HTTP API demonstrates superior performance compared to published Neo4j benchmarks:**
 
-- ✅ **1.5-5.6x higher throughput** (38,982 vs 7,000-26,000 req/s)
-- ✅ **23-45x lower latency** for single requests (0.22ms vs estimated 5-10ms)
-- ✅ **3-7x lower latency** under high concurrency (4.57ms vs estimated 15-30ms)
-- ✅ **Sub-millisecond P99 latency** for single requests
-- ✅ **Sub-5ms P99 latency** under high concurrency
-- ✅ **Consistent performance** across all operation types
+-  **1.5-5.6x higher throughput** (38,982 vs 7,000-26,000 req/s)
+-  **23-45x lower latency** for single requests (0.22ms vs estimated 5-10ms)
+-  **3-7x lower latency** under high concurrency (4.57ms vs estimated 15-30ms)
+-  **Sub-millisecond P99 latency** for single requests
+-  **Sub-5ms P99 latency** under high concurrency
+-  **Consistent performance** across all operation types
 
 **The combination of ultra-low latency, high throughput, and memory efficiency makes NornicDB an excellent choice for latency-sensitive applications requiring high-concurrency database operations.**
 
@@ -157,6 +157,6 @@ NornicDB achieves **sub-millisecond P99 latency** (0.22ms) for single requests, 
 
 - [NornicDB Single Request Benchmark](single-request-benchmark.md)
 - [NornicDB MaxConcurrentStreams Comparison](maxconcurrentstreams-comparison.md)
-- [Current Northwind Benchmark vs Neo4j](1.1.0-northwind-results/comparison.md)
+- [Current Northwind Benchmark vs Neo4j](../development/archive/benchmarks/database-comparison-baseline/comparison.md)
 - [Neo4j Performance Documentation](https://neo4j.com/docs/operations-manual/current/performance/)
 - [Neo4j Benchmarking Data](https://gist.github.com/jexp/b0a78c4681c8c9f8189f)

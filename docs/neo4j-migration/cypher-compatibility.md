@@ -1,6 +1,6 @@
 # NornicDB Cypher Compatibility
 
-**Date**: November 26, 2025  
+**Date**: November 26, 2025
 **Status**: Historical feature inventory; not a complete language conformance claim
 
 **Purpose**: Inventory of implemented Cypher features and native extensions
@@ -19,30 +19,30 @@ Neo4j syntax. No full Cypher 25 or ISO GQL compliance is claimed.
 
 ### Core Clauses
 
-- ✅ **MATCH** - Pattern matching with property filters
-- ✅ **MATCH...CREATE** - Create relationships between matched nodes (like Neo4j's variable scoping)
-- ✅ **CREATE** - Node and relationship creation
-- ✅ **MERGE** - Upsert operations with ON CREATE/ON MATCH
-- ✅ **DELETE** - Node deletion
-- ✅ **DETACH DELETE** - Delete with relationship removal
-- ✅ **SET** - Property updates
-- ✅ **SET +=** - Property merging
-- ✅ **REMOVE** - Property removal
-- ✅ **RETURN** - Result projection
-- ✅ **WHERE** - Filtering
-- ✅ **WITH** - Intermediate result projection
-- ✅ **UNWIND** - List expansion
-- ✅ **OPTIONAL MATCH** - Outer join equivalent
-- ✅ **UNION** / **UNION ALL** - Query combination
-- ✅ **FOREACH** - Iteration with updates
+-  **MATCH** - Pattern matching with property filters
+-  **MATCH...CREATE** - Create relationships between matched nodes (like Neo4j's variable scoping)
+-  **CREATE** - Node and relationship creation
+-  **MERGE** - Upsert operations with ON CREATE/ON MATCH
+-  **DELETE** - Node deletion
+-  **DETACH DELETE** - Delete with relationship removal
+-  **SET** - Property updates
+-  **SET +=** - Property merging
+-  **REMOVE** - Property removal
+-  **RETURN** - Result projection
+-  **WHERE** - Filtering
+-  **WITH** - Intermediate result projection
+-  **UNWIND** - List expansion
+-  **OPTIONAL MATCH** - Outer join equivalent
+-  **UNION** / **UNION ALL** - Query combination
+-  **FOREACH** - Iteration with updates
 
 ### Schema Management
 
-- ✅ **CREATE CONSTRAINT** - All constraint families (see below)
-- ✅ **CREATE INDEX** - Property indexes
-- ✅ **CREATE FULLTEXT INDEX** - Fulltext search indexes
-- ✅ **CREATE VECTOR INDEX** - Vector similarity indexes
-- ✅ **DROP CONSTRAINT** / **DROP INDEX** - Schema deletion
+-  **CREATE CONSTRAINT** - All constraint families (see below)
+-  **CREATE INDEX** - Property indexes
+-  **CREATE FULLTEXT INDEX** - Fulltext search indexes
+-  **CREATE VECTOR INDEX** - Vector similarity indexes
+-  **DROP CONSTRAINT** / **DROP INDEX** - Schema deletion
 
 #### Constraint Types
 
@@ -96,24 +96,24 @@ For operational guidance on NornicDB-specific schema features, including `REQUIR
 
 ### CALL Procedures
 
-- ✅ **db.labels()** - List all labels
-- ✅ **db.propertyKeys()** - List all property keys
-- ✅ **db.relationshipTypes()** - List all relationship types
-- ✅ **db.indexes()** - List indexes
-- ✅ **db.constraints()** - List constraints
-- ✅ **db.index.vector.queryNodes()** - Vector similarity search
-- ✅ **db.index.fulltext.queryNodes()** - Fulltext search
-- ✅ **apoc.path.subgraphNodes()** - Graph traversal
-- ✅ **apoc.path.expand()** - Path expansion
+-  **db.labels()** - List all labels
+-  **db.propertyKeys()** - List all property keys
+-  **db.relationshipTypes()** - List all relationship types
+-  **db.indexes()** - List indexes
+-  **db.constraints()** - List constraints
+-  **db.index.vector.queryNodes()** - Vector similarity search
+-  **db.index.fulltext.queryNodes()** - Fulltext search
+-  **apoc.path.subgraphNodes()** - Graph traversal
+-  **apoc.path.expand()** - Path expansion
 
 ### SHOW Commands
 
-- ✅ **SHOW INDEXES** - Display indexes
-- ✅ **SHOW CONSTRAINTS** - Display constraints
-- ✅ **SHOW CONSTRAINT CONTRACTS** - Display block-style constraint contract metadata
-- ✅ **SHOW PROCEDURES** - List procedures
-- ✅ **SHOW FUNCTIONS** - List functions
-- ✅ **SHOW DATABASE** - Database info
+-  **SHOW INDEXES** - Display indexes
+-  **SHOW CONSTRAINTS** - Display constraints
+-  **SHOW CONSTRAINT CONTRACTS** - Display block-style constraint contract metadata
+-  **SHOW PROCEDURES** - List procedures
+-  **SHOW FUNCTIONS** - List functions
+-  **SHOW DATABASE** - Database info
 
 SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and values: constraint types such as `UNIQUENESS` / `RELATIONSHIP_UNIQUENESS` and `NODE_PROPERTY_EXISTENCE`, Neo4j's index providers (`range-1.0`, `fulltext-1.0`, `vector-2.0`, …), `options`, and a `createStatement` that recreates each index and constraint. NornicDB's own constraint types (temporal no-overlap, domain, cardinality, endpoint policy) keep their names, and their `createStatement` uses the NornicDB syntax above. Some values have no NornicDB meaning and are `null`:
 
@@ -154,28 +154,28 @@ SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and v
 
 ### Aggregation Functions
 
-- ✅ **COUNT()** - Count aggregation
-- ✅ **SUM()** - Sum aggregation
-- ✅ **AVG()** - Average aggregation
-- ✅ **MIN()** / **MAX()** - Min/max aggregation
-- ✅ **COLLECT()** - List collection
+-  **COUNT()** - Count aggregation
+-  **SUM()** - Sum aggregation
+-  **AVG()** - Average aggregation
+-  **MIN()** / **MAX()** - Min/max aggregation
+-  **COLLECT()** - List collection
 
 ### Scalar Functions (52 total)
 
-- ✅ String functions: substring, replace, trim, upper, lower, split, etc.
-- ✅ Math functions: abs, ceil, floor, round, sqrt, sin, cos, etc.
-- ✅ List functions: size, head, tail, last, range, etc.
-- ✅ Type functions: toInteger, toFloat, toString, toBoolean
-- ✅ Spatial functions: point, distance
-- ✅ POINT values (cartesian, cartesian-3d, wgs-84, wgs-84-3d): stored as
+-  String functions: substring, replace, trim, upper, lower, split, etc.
+-  Math functions: abs, ceil, floor, round, sqrt, sin, cos, etc.
+-  List functions: size, head, tail, last, range, etc.
+-  Type functions: toInteger, toFloat, toString, toBoolean
+-  Spatial functions: point, distance
+-  POINT values (cartesian, cartesian-3d, wgs-84, wgs-84-3d): stored as
   properties (also lists of one CRS), returned over Bolt as Point2D / Point3D
   and over HTTP in Neo4j's GeoJSON-like form; fields `x`, `y`, `z`,
   `latitude`, `longitude`, `height`, `crs`, `srid`; `point.distance`,
   `point.withinBBox`, equality and ORDER BY as in Neo4j 5.26
-- ✅ Type predicate expressions: `x IS :: TYPE`, `x IS NOT :: TYPE`, `x :: TYPE`,
+-  Type predicate expressions: `x IS :: TYPE`, `x IS NOT :: TYPE`, `x :: TYPE`,
   `x IS [NOT] TYPED TYPE` (all types and synonyms, `NOT NULL`, `LIST<T>`,
   unions, `ANY`, `NOTHING`, `NULL`, `PROPERTY VALUE`)
-- ✅ Date/time functions: date, datetime, timestamp
+-  Date/time functions: date, datetime, timestamp
 
 ### Bolt Handshake Compatibility for `cypher-shell`
 
@@ -209,7 +209,7 @@ This normalization is on by default. `NORNICDB_CYPHER_QUERY_NORMALIZATION=false`
 
 ### 1. **ORDER BY** Clause
 
-**Status**: Implemented  
+**Status**: Implemented
 **Impact**: Full sorting support
 
 ```cypher
@@ -221,14 +221,14 @@ ORDER BY n.age DESC, n.name ASC
 
 **Features**:
 
-- ✅ Single and multiple sort fields
-- ✅ ASC/DESC modifiers
-- ✅ String and numeric sorting
-- ✅ Integration with LIMIT/SKIP
+-  Single and multiple sort fields
+-  ASC/DESC modifiers
+-  String and numeric sorting
+-  Integration with LIMIT/SKIP
 
 ### 2. **LIMIT** / **SKIP** Clauses
 
-**Status**: Implemented  
+**Status**: Implemented
 **Impact**: Full pagination support
 
 ```cypher
@@ -242,14 +242,14 @@ LIMIT 20
 
 **Features**:
 
-- ✅ LIMIT with any number
-- ✅ SKIP with any number
-- ✅ Combined SKIP + LIMIT for pagination
-- ✅ Works with ORDER BY
+-  LIMIT with any number
+-  SKIP with any number
+-  Combined SKIP + LIMIT for pagination
+-  Works with ORDER BY
 
 ### 3. **DISTINCT** Keyword
 
-**Status**: Implemented  
+**Status**: Implemented
 **Impact**: Full deduplication support
 
 ```cypher
@@ -260,13 +260,13 @@ RETURN DISTINCT n.name
 
 **Features**:
 
-- ✅ RETURN DISTINCT
-- ✅ Deduplication of result rows
-- ✅ Works with aggregations
+-  RETURN DISTINCT
+-  Deduplication of result rows
+-  Works with aggregations
 
 ### 4. **AS** Aliasing in RETURN
 
-**Status**: Implemented  
+**Status**: Implemented
 **Impact**: Full aliasing support
 
 ```cypher
@@ -344,7 +344,7 @@ CALL db.labels() YIELD label WHERE label CONTAINS 'Person'
 
 ### 11. **CASE Expressions**
 
-**Status**: Complete  
+**Status**: Complete
 **Files**: `pkg/cypher/case_expression.go` (376 lines)
 
 ```cypher
@@ -368,17 +368,17 @@ END AS ageLabel
 
 **Features Implemented**:
 
-- ✅ Searched CASE with WHEN/THEN/ELSE
-- ✅ Simple CASE with value matching
-- ✅ NULL handling (IS NULL, IS NOT NULL)
-- ✅ Comparison operators (<, >, <=, >=, =, <>)
-- ✅ Nested expression evaluation
-- ✅ Multiple WHEN clauses
-- ✅ Optional ELSE clause (returns NULL if omitted)
+-  Searched CASE with WHEN/THEN/ELSE
+-  Simple CASE with value matching
+-  NULL handling (IS NULL, IS NOT NULL)
+-  Comparison operators (<, >, <=, >=, =, <>)
+-  Nested expression evaluation
+-  Multiple WHEN clauses
+-  Optional ELSE clause (returns NULL if omitted)
 
 ### 12. **shortestPath() / allShortestPaths()**
 
-**Status**: Complete (16 passing tests)  
+**Status**: Complete (16 passing tests)
 **Files**: `pkg/cypher/shortest_path.go` (372 lines), `pkg/cypher/traversal.go` (617 lines)
 
 ```cypher
@@ -399,14 +399,14 @@ RETURN nodes(p), relationships(p), length(p)
 
 **Features Implemented**:
 
-- ✅ BFS shortest path algorithm (unweighted)
-- ✅ allShortestPaths() - finds all paths of minimum length
-- ✅ **Variable resolution from MATCH clause** (like Neo4j's LogicalVariable)
-- ✅ Direction support (outgoing ->, incoming <-, both -)
-- ✅ Relationship type filtering
-- ✅ Max hops limiting (\*..max)
-- ✅ Path functions: nodes(p), relationships(p), length(p)
-- ✅ Cycle detection
+-  BFS shortest path algorithm (unweighted)
+-  allShortestPaths() - finds all paths of minimum length
+-  **Variable resolution from MATCH clause** (like Neo4j's LogicalVariable)
+-  Direction support (outgoing ->, incoming <-, both -)
+-  Relationship type filtering
+-  Max hops limiting (\*..max)
+-  Path functions: nodes(p), relationships(p), length(p)
+-  Cycle detection
 
 **Recent Fix**: shortestPath now correctly resolves variable references (e.g., `start`, `end`) from the preceding MATCH clause, matching Neo4j's behavior where variables are "in scope" and referenced, not re-queried.
 
@@ -431,32 +431,32 @@ tx.Rollback()
 
 **Features Implemented**:
 
-- ✅ `BeginTransaction()` - Start new transaction
-- ✅ `Commit()` - Atomically apply all buffered operations
-- ✅ `Rollback()` - Discard all buffered operations
-- ✅ `CreateNode/UpdateNode/DeleteNode` - Node operations in transaction
-- ✅ `CreateEdge/DeleteEdge` - Edge operations in transaction
-- ✅ `GetNode()` - Read-your-writes consistency
-- ✅ `IsActive()` - Check transaction status
-- ✅ Isolation - Uncommitted changes not visible to other operations
-- ✅ Atomicity - All operations succeed or all fail together
+-  `BeginTransaction()` - Start new transaction
+-  `Commit()` - Atomically apply all buffered operations
+-  `Rollback()` - Discard all buffered operations
+-  `CreateNode/UpdateNode/DeleteNode` - Node operations in transaction
+-  `CreateEdge/DeleteEdge` - Edge operations in transaction
+-  `GetNode()` - Read-your-writes consistency
+-  `IsActive()` - Check transaction status
+-  Isolation - Uncommitted changes not visible to other operations
+-  Atomicity - All operations succeed or all fail together
 
 ### 14. **Composite Indexes**
 
-**Status**: Complete  
+**Status**: Complete
 **Files**: `pkg/storage/schema.go`
 
 **Features**:
 
-- ✅ Multi-property indexes
-- ✅ SHA256-based composite keys
-- ✅ Efficient prefix lookups
-- ✅ Full and partial key matching
-- ✅ Neo4j-compatible behavior
+-  Multi-property indexes
+-  SHA256-based composite keys
+-  Efficient prefix lookups
+-  Full and partial key matching
+-  Neo4j-compatible behavior
 
 ### 15. **MATCH...CREATE**
 
-**Status**: Complete  
+**Status**: Complete
 **Files**: `pkg/cypher/create.go` (427 lines)
 
 ```cypher
@@ -471,7 +471,7 @@ CREATE (a)-[:KNOWS]->(b)
 
 ### 16. **EXPLAIN / PROFILE**
 
-**Status**: Complete (27 passing tests)  
+**Status**: Complete (27 passing tests)
 **Files**: `pkg/cypher/explain.go` (560 lines), `pkg/cypher/explain_test.go`
 
 ```cypher
@@ -486,14 +486,14 @@ PROFILE MATCH (n:Person)-[:KNOWS]->(m) RETURN n, m
 
 **Features Implemented**:
 
-- ✅ EXPLAIN mode (shows plan, doesn't execute)
-- ✅ PROFILE mode (executes and shows plan with stats)
-- ✅ Execution plan tree structure
-- ✅ Operator types: NodeByLabelScan, AllNodesScan, NodeIndexSeek, Filter, Expand, Sort, Limit, ProduceResults, etc.
-- ✅ Estimated rows per operator
-- ✅ DB hits estimation
-- ✅ Actual rows and timing (PROFILE only)
-- ✅ Visual plan formatting
+-  EXPLAIN mode (shows plan, doesn't execute)
+-  PROFILE mode (executes and shows plan with stats)
+-  Execution plan tree structure
+-  Operator types: NodeByLabelScan, AllNodesScan, NodeIndexSeek, Filter, Expand, Sort, Limit, ProduceResults, etc.
+-  Estimated rows per operator
+-  DB hits estimation
+-  Actual rows and timing (PROFILE only)
+-  Visual plan formatting
 
 **Example Output**:
 
@@ -514,9 +514,9 @@ PROFILE MATCH (n:Person)-[:KNOWS]->(m) RETURN n, m
 
 ---
 
-## ⏺️ Optional Features
+## Optional Features
 
-### 1. **Multi-database Support** ✅
+### 1. **Multi-database Support**
 
 **Status**: IMPLEMENTED
 
@@ -565,57 +565,57 @@ selected database. See [multi-database](../user-guides/multi-database.md).
 
 ## Current Status Summary
 
-**Compatibility**: 100% — production ready  
-**Status**: All critical features implemented  
-**Deployment**: Ready for production use
+**Compatibility**: 100% — production ready
+**Status**: refer to the feature-specific sections and known differences.
+**Deployment**: evaluate durability, query compatibility, and operational requirements for your workload.
 
 ### Complete Feature Set
 
-**Core Query (100%)**:
+**Core Query (supported surface)**:
 
-- ✅ All 16 Cypher clauses implemented and tested
-- ✅ All result modifiers (ORDER BY, LIMIT, SKIP, DISTINCT, AS)
-- ✅ All pattern types (variable-length, bidirectional, multiple)
-- ✅ All subqueries (EXISTS, COUNT)
-- ✅ All collections (map projections, list/pattern comprehensions)
-- ✅ WHERE after YIELD filtering
+-  All 16 Cypher clauses implemented and tested
+-  All result modifiers (ORDER BY, LIMIT, SKIP, DISTINCT, AS)
+-  All pattern types (variable-length, bidirectional, multiple)
+-  All subqueries (EXISTS, COUNT)
+-  All collections (map projections, list/pattern comprehensions)
+-  WHERE after YIELD filtering
 
-**Advanced Features (100%)**:
+**Advanced Features (supported surface)**:
 
-- ✅ CASE expressions (searched and simple)
-- ✅ shortestPath() and allShortestPaths() with MATCH variable resolution
-- ✅ Variable-length path traversal
-- ✅ Composite indexes with prefix lookup
-- ✅ MATCH...CREATE with variable scoping (like Neo4j)
+-  CASE expressions (searched and simple)
+-  shortestPath() and allShortestPaths() with MATCH variable resolution
+-  Variable-length path traversal
+-  Composite indexes with prefix lookup
+-  MATCH...CREATE with variable scoping (like Neo4j)
 
-**Transaction Support (100%)**:
+**Transaction Support (supported surface)**:
 
-- ✅ BeginTransaction/Commit/Rollback
-- ✅ Atomic operations (all-or-nothing)
-- ✅ Read-your-writes consistency
-- ✅ Transaction isolation
+-  BeginTransaction/Commit/Rollback
+-  Atomic operations (all-or-nothing)
+-  Read-your-writes consistency
+-  Transaction isolation
 
-**Schema & Indexes (100%)**:
+**Schema & Indexes (supported surface)**:
 
-- ✅ All constraint families: UNIQUE, EXISTS, NODE KEY, RELATIONSHIP KEY, property type
-- ✅ Constraints on both nodes and relationships with full write-path enforcement
-- ✅ NornicDB extensions: temporal no-overlap, domain/enum, cardinality, endpoint policy constraints
-- ✅ IF NOT EXISTS idempotent creation, owned backing indexes
-- ✅ Property indexes (single and composite)
-- ✅ Fulltext indexes (BM25 scoring)
-- ✅ Vector indexes (cosine/euclidean/dot similarity)
+-  All constraint families: UNIQUE, EXISTS, NODE KEY, RELATIONSHIP KEY, property type
+-  Constraints on both nodes and relationships with full write-path enforcement
+-  NornicDB extensions: temporal no-overlap, domain/enum, cardinality, endpoint policy constraints
+-  IF NOT EXISTS idempotent creation, owned backing indexes
+-  Property indexes (single and composite)
+-  Fulltext indexes (BM25 scoring)
+-  Vector indexes (cosine/euclidean/dot similarity)
 
-**Functions (100%)**:
+**Functions (supported surface)**:
 
-- ✅ 52 scalar functions
-- ✅ 5 aggregation functions
-- ✅ 10 CALL procedures
+-  52 scalar functions
+-  5 aggregation functions
+-  10 CALL procedures
 
-### ⏺️ Optional (Not Required for Most Deployments)
+### Optional (Not Required for Most Deployments)
 
 **Low Priority**:
 
-- ⏺️ Multi-database - Not needed
+-  Multi-database - Not needed
 
 ---
 
@@ -672,6 +672,6 @@ native extensions. Empty query collection returns no fabricated counter row.
 
 ---
 
-**Last Updated**: November 26, 2025 (Post EXPLAIN/PROFILE implementation)  
-**Status**: Production ready  
+**Last Updated**: November 26, 2025 (Post EXPLAIN/PROFILE implementation)
+**Status**: Production ready
 **Test Results**: 1,171 tests passing

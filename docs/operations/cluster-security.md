@@ -62,7 +62,7 @@ openssl rand -base64 48
 # Example: K7xB2mN9pQr4sT6uV8wY0zA3bC5dE7fG9hI1jK3lM5nO7pQ9rS1tU3vW5xY7zA==
 ```
 
-**⚠️ Important**: This secret must be identical on ALL cluster nodes.
+** Important**: This secret must be identical on ALL cluster nodes.
 
 #### Step 2: Configure All Nodes
 

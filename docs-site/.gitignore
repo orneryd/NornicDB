@@ -1,0 +1,15 @@
+node_modules/
+.vitepress/cache/
+.vitepress/.temp/
+.vitepress/.archives-*/
+.vitepress/dist/
+.generated/
+.source-graph.json
+.env
+test-results/
+playwright-report/
+*.log
+artifact-audit.json
+.graphify-calls.json
+.graphify-export/
+.screenshots/

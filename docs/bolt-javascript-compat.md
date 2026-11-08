@@ -37,11 +37,11 @@ func encodePackStreamInt(val int64) []byte {
 
 | Encoding  | Range                      | Marker             | Bytes | JS Decoding |
 | --------- | -------------------------- | ------------------ | ----- | ----------- |
-| **Tiny**  | -16 to 127                 | inline (0xF0-0x7F) | 1     | Number ✅   |
-| **INT8**  | -128 to -17                | 0xC8               | 2     | Number ✅   |
-| **INT16** | -32768 to 32767            | 0xC9               | 3     | Number ✅   |
-| **INT32** | -2147483648 to 2147483647  | 0xCA               | 5     | Number ✅   |
-| **INT64** | < INT32 min or > INT32 max | 0xCB               | 9     | BigInt ⚠️   |
+| **Tiny**  | -16 to 127                 | inline (0xF0-0x7F) | 1     | Number    |
+| **INT8**  | -128 to -17                | 0xC8               | 2     | Number    |
+| **INT16** | -32768 to 32767            | 0xC9               | 3     | Number    |
+| **INT32** | -2147483648 to 2147483647  | 0xCA               | 5     | Number    |
+| **INT64** | < INT32 min or > INT32 max | 0xCB               | 9     | BigInt    |
 
 ## JavaScript Safe Integer Range
 
@@ -93,10 +93,10 @@ Tests verify:
 
 | Language       | INT32 & Smaller  | INT64    | Issues?             |
 | -------------- | ---------------- | -------- | ------------------- |
-| **JavaScript** | `Number`         | `BigInt` | ⚠️ Cannot mix types |
-| **Python**     | `int`            | `int`    | ✅ No issues        |
-| **Go**         | `int64`          | `int64`  | ✅ No issues        |
-| **Java**       | `Integer`/`Long` | `Long`   | ✅ Autoboxing works |
+| **JavaScript** | `Number`         | `BigInt` |  Cannot mix types |
+| **Python**     | `int`            | `int`    |  No issues        |
+| **Go**         | `int64`          | `int64`  |  No issues        |
+| **Java**       | `Integer`/`Long` | `Long`   |  Autoboxing works |
 
 ## References
 

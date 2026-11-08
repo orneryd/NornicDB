@@ -62,7 +62,7 @@ LDFLAGS: -lm
 
 ## Testing
 
-✅ **All tests pass:**
+ **All tests pass:**
 ```bash
 $ go test ./pkg/simd -v
 --- PASS: TestInfo (0.00s)

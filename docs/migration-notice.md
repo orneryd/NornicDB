@@ -1,14 +1,14 @@
-# ⚠️ Breaking Change: Storage Encoding Migration (Pre-v1.0)
+# Breaking Change: Storage Encoding Migration (Pre-v1.0)
 
-**Effective:** December 2024  
+**Effective:** December 2024
 **Affects:** All users upgrading from builds prior to December 5, 2024
 
 ## What Changed
 
 NornicDB has switched from **JSON encoding** to **Gob encoding** for internal storage. This change provides:
-- ✅ **Type preservation** - `int64` stays `int64` (JSON converted everything to `float64`)
-- ✅ **Neo4j compatibility** - Numeric types now match Neo4j behavior exactly
-- ✅ **Better performance** - Gob is faster than JSON for Go types
+-  **Type preservation** - `int64` stays `int64` (JSON converted everything to `float64`)
+-  **Neo4j compatibility** - Numeric types now match Neo4j behavior exactly
+-  **Better performance** - Gob is faster than JSON for Go types
 
 ## Impact
 

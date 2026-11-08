@@ -4,7 +4,7 @@
 
 ## Overview
 
-NornicDB leverages GPU acceleration for:
+NornicDB uses GPU acceleration for:
 - Vector similarity search
 - K-means clustering
 - Embedding generation

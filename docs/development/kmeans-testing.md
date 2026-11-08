@@ -90,10 +90,10 @@ Check these log messages:
 
 | Log | Meaning |
 |-----|---------|
-| `mode=clustered` | ✅ Using k-means accelerated search |
-| `mode=brute_force` | ❌ Falling back to brute force |
-| `mode=brute_force_fallback` | ⚠️ Cluster search failed, using fallback |
-| `reason=not_yet_clustered` | ⏳ Clustering hasn't run yet |
+| `mode=clustered` |  Using k-means accelerated search |
+| `mode=brute_force` |  Falling back to brute force |
+| `mode=brute_force_fallback` |  Cluster search failed, using fallback |
+| `reason=not_yet_clustered` |  Clustering hasn't run yet |
 | `reason=too_few_embeddings` | Need 1000+ embeddings |
 
 ## 6. Minimum Requirements

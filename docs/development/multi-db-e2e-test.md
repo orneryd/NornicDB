@@ -1,6 +1,6 @@
 # Multi-Database End-to-End Test Guide
 
-This guide provides a comprehensive test sequence to verify multi-database functionality, including in-place upgrade verification, database creation, data isolation, composite databases, and proper cleanup.
+This guide provides a test sequence to verify multi-database functionality, including in-place upgrade verification, database creation, data isolation, composite databases, and proper cleanup.
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ This guide provides a comprehensive test sequence to verify multi-database funct
    - Web UI: `http://localhost:7474`
    - Bolt client: `bolt://localhost:7687`
 
-### ⚠️ Important: Default Database Name
+### Important: Default Database Name
 
 **NornicDB uses `"nornic"` as the default database name** (Neo4j uses `"neo4j"`).
 
@@ -76,7 +76,7 @@ POST /db/nornic/tx/commit
 
 **Purpose**: Confirm that existing data was automatically migrated to the default database namespace.
 
-**⚠️ Before running this query**: Make sure you're connected to the correct database:
+** Before running this query**: Make sure you're connected to the correct database:
 - If you configured NornicDB to use `"neo4j"` as default, you're already connected
 - If using default `"nornic"`, switch to it in your client (see Prerequisites above)
 
@@ -85,7 +85,7 @@ POST /db/nornic/tx/commit
 SHOW DATABASES
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should show at least `nornic` (or `neo4j` if you configured it) and `system`
 - The default database should be marked as `default: true`
 - If you see an error "Database 'neo4j' not found", see Troubleshooting section below
@@ -97,7 +97,7 @@ MATCH (n)
 RETURN count(n) as node_count
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return the count of nodes from your existing dataset
 - Confirms data was migrated to default database namespace
 
@@ -109,7 +109,7 @@ RETURN labels(n) as labels, count(n) as count
 LIMIT 10
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should show your existing data's labels and counts
 - Confirms default database contains migrated data
 
@@ -124,7 +124,7 @@ LIMIT 10
 CREATE DATABASE test_db_a
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Success message or empty result (command succeeded)
 
 ```cypher
@@ -132,7 +132,7 @@ CREATE DATABASE test_db_a
 SHOW DATABASES
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should now show `test_db_a` in the list
 - Should show `nornic` (default), `system`, and `test_db_a`
 
@@ -157,7 +157,7 @@ CREATE (bob)-[:WORKS_FOR]->(company)
 RETURN alice, bob, company
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should create 3 nodes and 2 relationships
 - Should return the created nodes
 
@@ -186,7 +186,7 @@ RETURN n.name as name, labels(n) as labels, n.db as db
 ORDER BY n.name
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return 3 rows: Alice, Acme Corp, Bob
 - All should have `db: "test_db_a"`
 
@@ -197,7 +197,7 @@ MATCH (p:Person)-[r:WORKS_FOR]->(c:Company)
 RETURN p.name as person, c.name as company, type(r) as relationship
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return 2 rows: Alice -> Acme Corp, Bob -> Acme Corp
 
 ```cypher
@@ -208,7 +208,7 @@ RETURN labels(n)[0] as label, count(n) as count
 ORDER BY label
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return: Company: 1, Person: 2
 
 ---
@@ -222,7 +222,7 @@ ORDER BY label
 CREATE DATABASE test_db_b
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Success message or empty result
 
 ```cypher
@@ -230,7 +230,7 @@ CREATE DATABASE test_db_b
 SHOW DATABASES
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should show `test_db_a`, `test_db_b`, `nornic`, and `system`
 
 ---
@@ -253,7 +253,7 @@ CREATE (diana)-[:PLACED]->(order)
 RETURN charlie, diana, order
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should create 3 nodes and 2 relationships
 - Should return the created nodes
 
@@ -282,7 +282,7 @@ RETURN n.name as name, n.order_id as order_id, labels(n) as labels, n.db as db
 ORDER BY n.name
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return 3 rows: Charlie, Diana, ORD-001
 - All should have `db: "test_db_b"`
 
@@ -293,7 +293,7 @@ MATCH (p:Person)-[r:PLACED]->(o:Order)
 RETURN p.name as person, o.order_id as order, type(r) as relationship
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return 2 rows: Charlie -> ORD-001, Diana -> ORD-001
 
 ```cypher
@@ -304,7 +304,7 @@ RETURN labels(n)[0] as label, count(n) as count
 ORDER BY label
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return: Order: 1, Person: 2
 
 ---
@@ -324,7 +324,7 @@ RETURN n.name as name, n.order_id as order_id, labels(n) as labels, n.db as db
 ORDER BY n.name
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return only: Alice, Acme Corp, Bob
 - Should NOT return Charlie, Diana, or ORD-001
 - All should have `db: "test_db_a"`
@@ -336,7 +336,7 @@ MATCH (o:Order)
 RETURN count(o) as order_count
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return: `order_count: 0`
 
 ```cypher
@@ -350,7 +350,7 @@ RETURN n.name as name, labels(n) as labels, n.db as db
 ORDER BY n.name
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return only: Charlie, Diana, ORD-001
 - Should NOT return Alice, Bob, or Acme Corp
 - All should have `db: "test_db_b"`
@@ -362,7 +362,7 @@ MATCH (c:Company)
 RETURN count(c) as company_count
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return: `company_count: 0`
 
 ```cypher
@@ -375,7 +375,7 @@ MATCH (n)
 RETURN count(n) as node_count
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return the count of your original migrated data
 - Should NOT include data from test_db_a or test_db_b
 
@@ -387,7 +387,7 @@ WHERE n.db IN ["test_db_a", "test_db_b"]
 RETURN count(n) as test_db_nodes
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return: `test_db_nodes: 0`
 
 ---
@@ -403,7 +403,7 @@ CREATE COMPOSITE DATABASE test_composite
   ALIAS db_b FOR DATABASE test_db_b
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Success message or empty result
 
 ```cypher
@@ -411,7 +411,7 @@ CREATE COMPOSITE DATABASE test_composite
 SHOW COMPOSITE DATABASES
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should show `test_composite` in the list
 
 ```cypher
@@ -419,7 +419,7 @@ SHOW COMPOSITE DATABASES
 SHOW CONSTITUENTS FOR COMPOSITE DATABASE test_composite
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should show 2 constituents: `db_a` -> `test_db_a`, `db_b` -> `test_db_b`
 
 ---
@@ -438,7 +438,7 @@ RETURN p.name as name, p.db as db, labels(p) as labels
 ORDER BY p.name
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return 4 rows: Alice, Bob, Charlie, Diana
 - Should show `db: "test_db_a"` for Alice and Bob
 - Should show `db: "test_db_b"` for Charlie and Diana
@@ -449,7 +449,7 @@ MATCH (n)
 RETURN count(n) as total_nodes
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return: `total_nodes: 6` (3 from test_db_a + 3 from test_db_b)
 
 ```cypher
@@ -459,7 +459,7 @@ RETURN labels(n)[0] as label, count(n) as count
 ORDER BY label
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return: Company: 1, Order: 1, Person: 4
 
 ```cypher
@@ -469,7 +469,7 @@ RETURN p.name as person, type(r) as relationship, labels(target)[0] as target_ty
 ORDER BY p.name
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return 4 rows:
   - Alice -> WORKS_FOR -> Company (Acme Corp)
   - Bob -> WORKS_FOR -> Company (Acme Corp)
@@ -482,7 +482,7 @@ CREATE (new_person:Person {name: "Eve", id: "composite-1", db: "test_composite"}
 RETURN new_person
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should create a new Person node
 - Node will be routed to one of the constituent databases
 
@@ -492,7 +492,7 @@ MATCH (p:Person {name: "Eve"})
 RETURN p.name as name, p.db as db
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return: Eve with `db: "test_composite"` or the actual constituent database name
 
 ```cypher
@@ -500,7 +500,7 @@ RETURN p.name as name, p.db as db
 SHOW INDEXES
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should show indexes from both test_db_a and test_db_b (if any were created)
 
 ```cypher
@@ -508,7 +508,7 @@ SHOW INDEXES
 SHOW CONSTRAINTS
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should show constraints from both test_db_a and test_db_b (if any were created)
 
 ---
@@ -526,7 +526,7 @@ MATCH (n)
 RETURN count(n) as node_count
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return: `node_count: 3` (Alice, Bob, Acme Corp)
 - Should NOT include data from test_db_b
 
@@ -539,7 +539,7 @@ MATCH (n)
 RETURN count(n) as node_count
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return: `node_count: 3` (Charlie, Diana, ORD-001)
 - Should NOT include data from test_db_a
 
@@ -554,7 +554,7 @@ RETURN count(n) as node_count
 DROP COMPOSITE DATABASE test_composite
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Success message or empty result
 
 ```cypher
@@ -562,7 +562,7 @@ DROP COMPOSITE DATABASE test_composite
 SHOW COMPOSITE DATABASES
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return empty result or not show `test_composite`
 
 ```cypher
@@ -570,7 +570,7 @@ SHOW COMPOSITE DATABASES
 SHOW DATABASES
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should still show `test_db_a` and `test_db_b`
 - Confirms dropping composite doesn't affect constituents
 
@@ -585,7 +585,7 @@ SHOW DATABASES
 DROP DATABASE test_db_a
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Success message or empty result
 
 ```cypher
@@ -593,7 +593,7 @@ DROP DATABASE test_db_a
 SHOW DATABASES
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should NOT show `test_db_a`
 - Should still show `test_db_b`, `nornic`, and `system`
 
@@ -602,7 +602,7 @@ SHOW DATABASES
 DROP DATABASE test_db_b
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Success message or empty result
 
 ```cypher
@@ -610,7 +610,7 @@ DROP DATABASE test_db_b
 SHOW DATABASES
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should NOT show `test_db_b`
 - Should only show `nornic` (default) and `system`
 
@@ -620,7 +620,7 @@ MATCH (n)
 RETURN count(n) as node_count
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - Should return the count of your original migrated data
 - Confirms cleanup didn't affect default database
 
@@ -628,7 +628,7 @@ RETURN count(n) as node_count
 
 ## Test Summary
 
-### ✅ What This Test Verifies
+### What This Test Verifies
 
 1. **In-Place Upgrade**: Existing data is accessible in default database after upgrade
 2. **Database Creation**: Can create multiple databases
@@ -639,29 +639,29 @@ RETURN count(n) as node_count
 7. **Write Routing**: Writes to composite database are routed correctly
 8. **Proper Cleanup**: Can drop composite and constituent databases in correct order
 
-### 🔍 Key Observations
+### Key Observations
 
 - **Isolation**: Each database maintains complete data isolation
 - **Composite View**: Composite database provides transparent access to all constituents
 - **No Data Loss**: Dropping composite database doesn't affect constituent databases
 - **Default Database**: Original migrated data remains intact throughout all operations
 
-### ⚠️ Important Notes
+### Important Notes
 
-1. **Database Switching**: 
+1. **Database Switching**:
    - In Cypher Shell, use `:USE database_name`
    - In drivers, specify `database="database_name"` in connection/session
    - In HTTP API, use `/db/database_name/tx/commit`
 
-2. **Cleanup Order**: 
+2. **Cleanup Order**:
    - Always drop composite databases BEFORE dropping constituent databases
    - Dropping a constituent database that's part of a composite will fail
 
-3. **Default Database**: 
+3. **Default Database**:
    - The default database (`nornic`) is protected and cannot be dropped
    - The `system` database is internal and cannot be dropped
 
-4. **Data Persistence**: 
+4. **Data Persistence**:
    - All data persists across server restarts
    - Database metadata is stored in the `system` database
 
@@ -676,7 +676,7 @@ RETURN count(n) as node_count
 **Solutions**:
 
 1. **Configure NornicDB to use `"neo4j"` as default** (Recommended):
-   
+
    **Option A: Config File** (`nornicdb.yaml`):
    ```yaml
    database:
@@ -698,17 +698,17 @@ RETURN count(n) as node_count
    ```
 
 2. **Switch to `"nornic"` database in your client**:
-   
+
    **In Web UI**:
    - Look for a database selector/dropdown
    - Select `"nornic"` from the list
    - Or manually change the URL from `/db/neo4j/` to `/db/nornic/`
-   
+
    **In Cypher Shell**:
    ```cypher
    :USE nornic
    ```
-   
+
    **In Drivers**:
    ```python
    # Python

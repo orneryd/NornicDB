@@ -1,6 +1,6 @@
 # HTTP Server Performance Optimization Options
 
-**Last Updated:** 2025-01-27  
+**Last Updated:** 2025-01-27
 **Status:** Research & Recommendations
 
 ## Executive Summary
@@ -29,8 +29,8 @@ From recent profiling of NornicDB's HTTP write path:
 
 ### 1.1 Profile-Guided Optimization (PGO)
 
-**Status:** Available in Go 1.21+  
-**Expected Improvement:** 2-14% performance gain  
+**Status:** Available in Go 1.21+
+**Expected Improvement:** 2-14% performance gain
 **Effort:** Low (automatic after profile collection)
 
 **Implementation:**
@@ -59,8 +59,8 @@ go build ./cmd/nornicdb
 
 ### 1.2 sync.Pool for Zero-Allocation Hot Paths
 
-**Status:** Can be applied immediately  
-**Expected Improvement:** 20-50% reduction in allocations, 5-15% throughput improvement  
+**Status:** Can be applied immediately
+**Expected Improvement:** 20-50% reduction in allocations, 5-15% throughput improvement
 **Effort:** Medium (requires profiling to identify hot paths)
 
 **Current State:**
@@ -110,8 +110,8 @@ defer func() {
 
 ### 1.3 Connection Pooling Optimization
 
-**Status:** Partially implemented  
-**Expected Improvement:** 10-30% latency reduction for concurrent requests  
+**Status:** Partially implemented
+**Expected Improvement:** 10-30% latency reduction for concurrent requests
 **Effort:** Low (tuning existing settings)
 
 **Current Configuration:**
@@ -134,8 +134,8 @@ Transport: &http.Transport{
 
 ### 1.4 HTTP/2 Support (Implemented)
 
-**Status:** ✅ Always enabled (backwards compatible)  
-**Expected Improvement:** 10-20% latency reduction for concurrent requests  
+**Status:**  Always enabled (backwards compatible)
+**Expected Improvement:** 10-20% latency reduction for concurrent requests
 **Implementation Date:** 2026-01-27
 
 **Implementation:**
@@ -154,10 +154,10 @@ server, err := server.New(db, auth, config)
 ```
 
 **Benefits:**
-- ✅ Multiplexing multiple requests over single connection
-- ✅ Header compression
-- ✅ Backwards compatible with HTTP/1.1 clients
-- ✅ Automatic protocol negotiation
+-  Multiplexing multiple requests over single connection
+-  Header compression
+-  Backwards compatible with HTTP/1.1 clients
+-  Automatic protocol negotiation
 
 **Configuration:**
 - `HTTP2MaxConcurrentStreams`: Maximum concurrent streams per connection (default: 250, matches Go's internal default)
@@ -168,8 +168,8 @@ server, err := server.New(db, auth, config)
 
 ### 1.5 Zero-Copy Response Writing
 
-**Status:** Can be applied selectively  
-**Expected Improvement:** 5-10% reduction in memory allocations  
+**Status:** Can be applied selectively
+**Expected Improvement:** 5-10% reduction in memory allocations
 **Effort:** Medium (requires careful buffer management)
 
 **Implementation:**
@@ -280,7 +280,7 @@ func encodeJSONFast(data interface{}) []byte {
 
 ### Phase 2: Medium-Term (Medium Effort, Medium Impact)
 
-4. ✅ **HTTP/2 Support** - **COMPLETED** (10-20% latency reduction for concurrent requests)
+4.  **HTTP/2 Support** - **COMPLETED** (10-20% latency reduction for concurrent requests)
    - Always enabled, backwards compatible
    - Supports both HTTPS (ALPN) and HTTP (h2c) modes
 

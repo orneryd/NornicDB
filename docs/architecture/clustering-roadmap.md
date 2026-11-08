@@ -14,11 +14,11 @@
 
 | Tier | Nodes | Approach | Status |
 |------|-------|----------|--------|
-| Embedded | 1 | Library mode | ✅ Available |
-| Standalone | 1-2 | Single binary, optional standby | ✅ Available |
-| Raft Cluster | 3-5 | Strong-consistency Raft per database | ✅ Available |
-| Multi-Region | 6+ | Per-region Raft + async cross-region | ✅ Available |
-| **Composite-sharded** | N | Composite DB over local/remote constituents | ✅ Available |
+| Embedded | 1 | Library mode |  Available |
+| Standalone | 1-2 | Single binary, optional standby |  Available |
+| Raft Cluster | 3-5 | Strong-consistency Raft per database |  Available |
+| Multi-Region | 6+ | Per-region Raft + async cross-region |  Available |
+| **Composite-sharded** | N | Composite DB over local/remote constituents |  Available |
 
 ## Horizontal Sharding via Composite Databases
 
@@ -78,11 +78,11 @@ This is a documented operational pattern, not an automated feature. Automated du
 
 Geographic distribution with async cross-region replication:
 
-- ✅ Per-region Raft clusters (strong local consistency)
-- ✅ Cross-region WAL streaming (async replication)
-- ✅ Conflict resolution strategies (`last_write_wins`, `manual`)
-- ✅ Configurable cross-region sync modes (`async`, `quorum`)
-- ✅ Region failover and promotion
+-  Per-region Raft clusters (strong local consistency)
+-  Cross-region WAL streaming (async replication)
+-  Conflict resolution strategies (`last_write_wins`, `manual`)
+-  Configurable cross-region sync modes (`async`, `quorum`)
+-  Region failover and promotion
 
 ### Chaos Testing
 

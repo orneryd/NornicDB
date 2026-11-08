@@ -2,10 +2,10 @@
 
 NornicDB uses [yzma](https://github.com/hybridgroup/yzma) for GPU-accelerated inference on Windows. This means:
 
-✅ **No CGO required** — Just download prebuilt DLLs  
-✅ **Easy CUDA support** — One command to download CUDA libraries  
-✅ **Easy updates** — Re-run setup when llama.cpp updates  
-✅ **No ABI conflicts** — yzma handles Windows DLL loading  
+ **No CGO required** — Just download prebuilt DLLs
+ **Easy CUDA support** — One command to download CUDA libraries
+ **Easy updates** — Re-run setup when llama.cpp updates
+ **No ABI conflicts** — yzma handles Windows DLL loading
 
 ## Quick Setup (5 minutes)
 

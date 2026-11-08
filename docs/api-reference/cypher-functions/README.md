@@ -1,6 +1,6 @@
 # NornicDB Complete Functions Index
 
-**Comprehensive documentation with real-world examples**
+**documentation with real-world examples**
 
 Last Updated: November 25, 2025
 
@@ -8,15 +8,15 @@ Last Updated: November 25, 2025
 
 ## Quick Navigation
 
-📁 **[Detailed Function Docs](./README.md#all-functions-by-category)** - Complete guides with examples  
-🧠 **[Memory Decay System](../../features/memory-decay.md)** - How memory fading works  
-📊 **Status:** 52 functions documented (100% coverage)
+ **[Detailed Function Docs](./README.md#all-functions-by-category)** - Complete guides with examples
+ **[Memory Decay System](../../features/memory-decay.md)** - How memory fading works
+ **Status:** 52 functions documented (100% coverage)
 
 ---
 
 ## All Functions by Category
 
-### 🔍 Node & Relationship Functions (11 functions)
+### Node & Relationship Functions (11 functions)
 
 | Function              | What It Does                | Example                           |
 | --------------------- | --------------------------- | --------------------------------- |
@@ -32,7 +32,7 @@ Last Updated: November 25, 2025
 | `relationships(path)` | Get rels in path            | `RETURN relationships(path)`      |
 | `exists(n.prop)`      | Check if property exists    | `WHERE exists(n.email)`           |
 
-### 📝 String Functions (20 functions)
+### String Functions (20 functions)
 
 | Function                   | What It Does           | Example                           |
 | -------------------------- | ---------------------- | --------------------------------- |
@@ -60,7 +60,7 @@ The `string.*` namespace (Cypher 25 functions, also accepted under Cypher 5):
 | `string.join(list, delimiter)`      | Join a list of strings                         | `RETURN string.join(["a", "b"], "-")`          |
 | `string.regexReplace(s, re, repl)`  | Replace every match of a regular expression    | `RETURN string.regexReplace("a  b", "\s+", " ")` |
 
-### 🔢 Type Conversion Functions (4 functions)
+### Type Conversion Functions (4 functions)
 
 | Function         | What It Does          | Example                    |
 | ---------------- | --------------------- | -------------------------- |
@@ -69,7 +69,7 @@ The `string.*` namespace (Cypher 25 functions, also accepted under Cypher 5):
 | `toFloat(val)`   | Convert to decimal    | `RETURN toFloat("3.14")`   |
 | `toBoolean(val)` | Convert to true/false | `RETURN toBoolean("true")` |
 
-### 📐 Mathematical Functions (7 functions)
+### Mathematical Functions (7 functions)
 
 | Function   | What It Does      | Example             |
 | ---------- | ----------------- | ------------------- |
@@ -81,7 +81,7 @@ The `string.*` namespace (Cypher 25 functions, also accepted under Cypher 5):
 | `sqrt(x)`  | Square root       | `RETURN sqrt(16)`   |
 | `rand()`   | Random 0-1        | `RETURN rand()`     |
 
-### 📊 Trigonometric Functions (11 functions)
+### Trigonometric Functions (11 functions)
 
 | Function       | What It Does      | Example                   |
 | -------------- | ----------------- | ------------------------- |
@@ -97,7 +97,7 @@ The `string.*` namespace (Cypher 25 functions, also accepted under Cypher 5):
 | `degrees(rad)` | Radians→degrees   | `RETURN degrees(3.14)`    |
 | `haversin(x)`  | Haversine         | `RETURN haversin(x)`      |
 
-### 🌟 Advanced Math Functions (4 functions)
+### Advanced Math Functions (4 functions)
 
 | Function   | What It Does | Example             |
 | ---------- | ------------ | ------------------- |
@@ -107,7 +107,7 @@ The `string.*` namespace (Cypher 25 functions, also accepted under Cypher 5):
 | `pi()`     | π constant   | `RETURN pi()`       |
 | `e()`      | e constant   | `RETURN e()`        |
 
-### 📋 List Functions (17 functions)
+### List Functions (17 functions)
 
 | Function                  | What It Does           | Example                        |
 | ------------------------- | ---------------------- | ------------------------------ |
@@ -139,7 +139,7 @@ A null list, index or depth gives null.
 An index or depth out of range, and `coll.remove` on an empty list, are
 ArgumentErrors, as in Neo4j.
 
-### 🎯 Vector Functions (2 functions)
+### Vector Functions (2 functions)
 
 | Function                              | What It Does       | Example                                             |
 | ------------------------------------- | ------------------ | --------------------------------------------------- |
@@ -168,7 +168,7 @@ dimensions are an ArgumentError, as in Neo4j.
 | `uuid.mostSignificantBits(u)` / `uuid.leastSignificantBits(u)` | Its halves as integers | `RETURN uuid.mostSignificantBits(uuid())` |
 | `uuid.v5(namespace, name)` | The version 5 (name-based) UUID of `name` in `namespace` (a UUID or its text): the same arguments always give the same UUID, so `MERGE` can deduplicate on it. A NornicDB extension. | `RETURN toString(uuid.v5('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 'python.org'))` |
 
-### 📈 Kalman Filter Functions (10 functions)
+### Kalman Filter Functions (10 functions)
 
 Real-time signal filtering and prediction for time series data. Perfect for smoothing noisy sensor readings, tracking market sentiment, or predicting trends.
 
@@ -185,7 +185,7 @@ Real-time signal filtering and prediction for time series data. Perfect for smoo
 | `kalman.adaptive.init(config?)`         | Create auto-switching filter  | `kalman.adaptive.init()`              |
 | `kalman.adaptive.process(val, state)`   | Filter with auto mode-switch  | Returns `{value, mode, state}`        |
 
-### 🔎 Text Location (1 function, a NornicDB extension)
+### Text Location (1 function, a NornicDB extension)
 
 `text.locate(text, quote, options)` returns `{start, end}`, the span of a quote's best occurrence in `text` in code points (`substring(text, start, end - start)` is the passage), or null. The quote's words match in order, as a reader copies a quote: without case; with any run of whitespace, JSON escapes (`\n`, `\r`, `\t`, as a JSON file's one-line body has them) or a reply's `>` markers after a line break between them (a `>` in the quote matches one literally); typographic and plain quotation marks (`'`, `"`), apostrophes and dashes alike; markdown emphasis (`*`, `**`, `_`, `__`) and link markup (`[label](target)`) allowed around a word, never inside one, so `filename` doesn't match `file_name`. The span is the text's own, markup around its first and last words included. In the quote, a copied line label (`12: `) and JSON escapes are dropped.
 
@@ -202,7 +202,7 @@ RETURN text.locate(s.text, $quote, {line: $line, from: $partStart, to: $partEnd}
 
 To place many quotes in one long text passed as a parameter, bind it once (`WITH $text AS t UNWIND $citations AS c RETURN text.locate(t, c.quote, {line: c.line})`): a string parameter used directly in the per-row expression is re-read on every row.
 
-### ⏰ Date/Time Functions (4 functions)
+### Date/Time Functions (4 functions)
 
 | Function      | What It Does                | Example              |
 | ------------- | --------------------------- | -------------------- |
@@ -211,7 +211,7 @@ To place many quotes in one long text passed as a parameter, bind it once (`WITH
 | `date()`      | Current date                | `RETURN date()`      |
 | `time()`      | Current time                | `RETURN time()`      |
 
-### ✅ Null/Check Functions (3 functions)
+### Null/Check Functions (3 functions)
 
 | Function         | What It Does          | Example               |
 | ---------------- | --------------------- | --------------------- |
@@ -219,14 +219,14 @@ To place many quotes in one long text passed as a parameter, bind it once (`WITH
 | `isNaN(x)`       | Check if not-a-number | `RETURN isNaN(0/0)`   |
 | `nullIf(v1, v2)` | Return null if equal  | `RETURN nullIf(5, 5)` |
 
-### 🔄 Aggregation Functions (2 functions)
+### Aggregation Functions (2 functions)
 
 | Function       | What It Does | Example                     |
 | -------------- | ------------ | --------------------------- |
 | `count(x)`     | Count items  | `MATCH (n) RETURN count(n)` |
 | `length(path)` | Path length  | `RETURN length(path)`       |
 
-### 🎲 Utility Functions (2 functions)
+### Utility Functions (2 functions)
 
 | Function       | What It Does      | Example               |
 | -------------- | ----------------- | --------------------- |
@@ -494,41 +494,41 @@ RETURN c.symbol,
 
 ## Function Categories by Use Case
 
-### 🔍 Data Inspection
+### Data Inspection
 
 - `id()`, `labels()`, `type()`, `keys()`, `properties()`
 
-### 🧹 Data Cleaning
+### Data Cleaning
 
 - `trim()`, `toLower()`, `toUpper()`, `replace()`, `split()`
 
-### 🔄 Type Safety
+### Type Safety
 
 - `toInteger()`, `toFloat()`, `toString()`, `toBoolean()`
 
-### 📊 Analytics
+### Analytics
 
 - `count()`, `avg()`, `sum()`, `min()`, `max()`
 
-### 🧮 Math & Stats
+### Math & Stats
 
 - `abs()`, `ceil()`, `floor()`, `round()`, `sqrt()`, `pow()`
 
-### 🗺️ Spatial/Geo
+### Spatial/Geo
 
 - `sin()`, `cos()`, `haversin()`, `atan2()`, `sqrt()` (for distances)
 
-### 🤖 AI/ML Features
+### AI/ML Features
 
 - `vector.similarity.cosine()`, `vector.similarity.euclidean()`
 
-### 📈 Signal Processing & Prediction
+### Signal Processing & Prediction
 
 - `kalman.init()`, `kalman.process()`, `kalman.predict()`
 - `kalman.velocity.init()`, `kalman.velocity.process()`, `kalman.velocity.predict()`
 - `kalman.adaptive.init()`, `kalman.adaptive.process()`
 
-### 🧠 Memory Management
+### Memory Management
 
 - Decay system functions (see [Memory Decay System](../../features/memory-decay.md))
 
@@ -663,8 +663,8 @@ See [Per-Database Search Index Flags](../../operations/configuration.md#per-data
 
 ---
 
-**Documentation Status:** ✅ Complete  
-**Functions Documented:** 62/62 (100%)  
+**Documentation Status:**  Complete
+**Functions Documented:** 62/62 (100%)
 **Examples Provided:** 160+
 
 **Last Updated:** November 29, 2025

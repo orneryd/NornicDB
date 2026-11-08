@@ -17,12 +17,12 @@ Navigate to `http://localhost:7474/graphql/playground` to access the interactive
 
 ## Core Features
 
-- ✅ **Full CRUD operations** on nodes and relationships
-- ✅ **Advanced search** with vector similarity and BM25
-- ✅ **Cypher query pass-through** for complex graph operations
-- ✅ **Real-time subscriptions** for live data updates
-- ✅ **Schema introspection** for auto-complete
-- ✅ **Graph traversal queries** with relationship filtering
+-  **Full CRUD operations** on nodes and relationships
+-  **Advanced search** with vector similarity and BM25
+-  **Cypher query pass-through** for complex graph operations
+-  **Real-time subscriptions** for live data updates
+-  **Schema introspection** for auto-complete
+-  **Graph traversal queries** with relationship filtering
 
 ## Schema Overview
 

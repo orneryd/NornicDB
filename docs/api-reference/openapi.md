@@ -2,7 +2,7 @@
 
 NornicDB provides a complete OpenAPI 3.0 specification for all REST API endpoints, enabling interactive API documentation and easy integration with API testing tools.
 
-## 📋 Specification File
+## Specification File
 
 - **[openapi.yaml](openapi.yaml)** - Complete OpenAPI 3.0 specification
 
@@ -39,7 +39,7 @@ NornicDB provides a complete OpenAPI 3.0 specification for all REST API endpoint
 3. Select `docs/api-reference/openapi.yaml`
 4. All endpoints will be available for testing
 
-## 📚 What's Included
+## What's Included
 
 The OpenAPI specification includes:
 
@@ -49,7 +49,7 @@ The OpenAPI specification includes:
 - **Error Responses** - Standard error response formats
 - **Examples** - Example requests and responses for each endpoint
 
-## 🔐 Authentication
+## Authentication
 
 The OpenAPI spec documents two authentication methods:
 
@@ -72,7 +72,7 @@ To authenticate in Swagger UI:
 - Enter your credentials
 - All requests will include the authentication header
 
-## 📖 Endpoint Categories
+## Endpoint Categories
 
 ### Health & Status
 
@@ -127,7 +127,7 @@ To authenticate in Swagger UI:
 - `GET /graphql/playground` - GraphQL Playground
 - MCP and Heimdall endpoints
 
-## 🔧 Code Generation
+## Code Generation
 
 You can generate client libraries from the OpenAPI spec using tools like:
 
@@ -166,7 +166,7 @@ swagger-codegen generate \
   -o ./generated/java-client
 ```
 
-## 📝 Example Usage
+## Example Usage
 
 ### Graph Endpoint Quick Notes
 
@@ -218,7 +218,7 @@ response = requests.post(
 results = response.json()
 ```
 
-## 🔄 Keeping the Spec Updated
+## Keeping the Spec Updated
 
 The OpenAPI specification is maintained manually and should be updated whenever:
 
@@ -234,13 +234,13 @@ To update the spec:
 3. Test endpoints in Swagger UI
 4. Update this README if needed
 
-## 📚 Related Documentation
+## Related Documentation
 
 - **[API Reference](README.md)** - Complete API documentation
 - **[User Guides](../user-guides/README.md)** - Usage examples
 - **[Getting Started](../getting-started/README.md)** - Installation and setup
 
-## 🐛 Reporting Issues
+## Reporting Issues
 
 If you find any issues with the OpenAPI specification:
 
@@ -253,5 +253,5 @@ If you find any issues with the OpenAPI specification:
 
 ---
 
-**Ready to test?** → **[OpenAPI Spec](openapi.yaml)**  
+**Ready to test?** → **[OpenAPI Spec](openapi.yaml)**
 **Need help?** → **[User Guides](../user-guides/README.md)**

@@ -10,7 +10,7 @@
 
 | Flag | Environment Variable | Default |
 |------|---------------------|---------|
-| Auto-TLP | `NORNICDB_AUTO_TLP_ENABLED` | ❌ Disabled |
+| Auto-TLP | `NORNICDB_AUTO_TLP_ENABLED` |  Disabled |
 
 ```bash
 # Enable automatic relationship inference
@@ -163,14 +163,14 @@ for _, s := range suggestions {
 
 ## When to Enable Auto-TLP
 
-### ✅ Good Use Cases
+### Good Use Cases
 
 - **Personal knowledge graphs**: Notes, bookmarks, research
 - **AI agent memory**: Building associative memory automatically
 - **Discovery systems**: "Related items" features
 - **Recommendation engines**: Finding similar content
 
-### ❌ Avoid When
+### Avoid When
 
 - **Strict schemas**: You control all relationships explicitly
 - **High-volume writes**: Many nodes created rapidly
@@ -260,8 +260,8 @@ For higher-quality edges, enable **Heimdall QC** - an LLM-based review layer tha
 
 | Flag | Environment Variable | Default | Description |
 |------|---------------------|---------|-------------|
-| LLM QC | `NORNICDB_AUTO_TLP_LLM_QC_ENABLED` | ❌ Disabled | Heimdall reviews TLP suggestions |
-| LLM Augment | `NORNICDB_AUTO_TLP_LLM_AUGMENT_ENABLED` | ❌ Disabled | Heimdall can suggest additional edges |
+| LLM QC | `NORNICDB_AUTO_TLP_LLM_QC_ENABLED` |  Disabled | Heimdall reviews TLP suggestions |
+| LLM Augment | `NORNICDB_AUTO_TLP_LLM_AUGMENT_ENABLED` |  Disabled | Heimdall can suggest additional edges |
 
 ### Progressive Enablement
 
@@ -327,7 +327,7 @@ See [Heimdall TLP QC Proposal](auto-tlp-heimdall.md) for full details.
 |--------|---------|
 | **Purpose** | Automatically infer relationships |
 | **Flag** | `NORNICDB_AUTO_TLP_ENABLED` |
-| **Default** | ❌ Disabled |
+| **Default** |  Disabled |
 | **Triggers** | OnStore (new nodes), OnAccess (reads) |
 | **Signals** | Semantic, co-access, temporal, transitive |
 | **Cleanup** | Edge Decay (enabled by default) |
