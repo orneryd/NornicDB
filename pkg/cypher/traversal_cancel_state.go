@@ -1,11 +1,21 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/internal/cancelprobe"
+import (
+	"context"
+
+	"github.com/orneryd/nornicdb/internal/cancelprobe"
+)
 
 // traversalCancelled caches the context channel once for the DFS state. A
 // nonblocking channel probe preserves prompt frame/sibling cancellation without
 // a Context.Err interface call and its context mutex on every candidate. Once
 // observed, cancellation stays latched while every ancestor unwinds.
+//
+// Only a cancellation of the traversal's own context stops it. The running
+// statement's parent is probed too, but it stops the traversal only when the
+// traversal's context inherits the statement's cancellation, which its Err
+// then reports at once: a context detached from the statement
+// (context.WithoutCancel) keeps running after the statement has ended.
 func (state *TraversalContext) traversalCancelled() bool {
 	if state.cancellationObserved {
 		return true
@@ -18,14 +28,21 @@ func (state *TraversalContext) traversalCancelled() bool {
 		if statement, ok := state.cancelCtx.Value(statementContextKey{}).(*statementContext); ok {
 			state.cancelParentDone = statement.parent.Done()
 		}
-		if state.cancelCtx.Err() != nil {
-			return state.observeTraversalCancellation()
+		if err := state.cancelCtx.Err(); err != nil {
+			return state.observeTraversalCancellation(err)
 		}
 	}
 	// Short-circuit calls preserve two cheap single-channel probes, without
 	// introducing a general multi-channel scheduler select on every edge.
-	if cancelprobe.Ready(state.cancelDone) || cancelprobe.Ready(state.cancelParentDone) {
-		return state.observeTraversalCancellation()
+	if cancelprobe.Ready(state.cancelDone) {
+		return state.observeTraversalCancellation(state.cancelCtx.Err())
+	}
+	if cancelprobe.Ready(state.cancelParentDone) {
+		if err := state.cancelCtx.Err(); err != nil {
+			return state.observeTraversalCancellation(err)
+		}
+		// Detached from the statement: its end is not this traversal's.
+		state.cancelParentDone = nil
 	}
 	return false
 }
@@ -41,11 +58,13 @@ func (state *TraversalContext) memoryAccount() *memoryAccount {
 }
 
 // Cancellation is an expression failure, so a partially built path set never
-// becomes a successful statement result on either evaluator/transaction route.
-func (state *TraversalContext) observeTraversalCancellation() bool {
+// becomes a successful statement result on either evaluator/transaction route:
+// every observed cancellation records an error.
+func (state *TraversalContext) observeTraversalCancellation(err error) bool {
 	state.cancellationObserved = true
-	if err := state.cancelCtx.Err(); err != nil {
-		recordExpressionFailure(state.cancelCtx, err)
+	if err == nil {
+		err = context.Canceled
 	}
+	recordExpressionFailure(state.cancelCtx, err)
 	return true
 }

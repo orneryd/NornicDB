@@ -18,10 +18,11 @@ func TestSearchWhereAdmitsCandidates(t *testing.T) {
 	makeNode(t, eng, "nornic:a", []string{"Doc"}, map[string]any{"content": "late fee clause", "state": "current"})
 	makeNode(t, eng, "nornic:b", []string{"Doc"}, map[string]any{"content": "late fee clause", "state": "retired"})
 	makeNode(t, eng, "nornic:c", []string{"Note"}, map[string]any{"content": "late fee clause"})
-	current := func(node *storage.Node) bool { return node.Properties["state"] != "retired" }
+	current := func(_ context.Context, node *storage.Node) (bool, error) { return node.Properties["state"] != "retired", nil }
 
 	results := buildFilterResults("nornic:a", "nornic:b", "nornic:c")
-	ids := func(results []indexResult) []string {
+	ids := func(results []indexResult, err error) []string {
+		require.NoError(t, err)
 		out := []string{}
 		for _, result := range results {
 			out = append(out, result.ID)
@@ -33,7 +34,7 @@ func TestSearchWhereAdmitsCandidates(t *testing.T) {
 	require.Equal(t, []string{"nornic:a", "nornic:c"}, ids(svc.filterByProperties(ctx, results, &SearchOptions{Where: current}, map[string]bool{})))
 
 	require.NoError(t, svc.BuildIndexes(ctx))
-	search := func(where func(*storage.Node) bool) []string {
+	search := func(where func(context.Context, *storage.Node) (bool, error)) []string {
 		opts := DefaultSearchOptions()
 		opts.Limit = 10
 		opts.Where = where
@@ -46,6 +47,6 @@ func TestSearchWhereAdmitsCandidates(t *testing.T) {
 		return out
 	}
 	require.ElementsMatch(t, []string{"nornic:a", "nornic:c"}, search(current))
-	require.ElementsMatch(t, []string{"nornic:b"}, search(func(node *storage.Node) bool { return node.Properties["state"] == "retired" }))
+	require.ElementsMatch(t, []string{"nornic:b"}, search(func(_ context.Context, node *storage.Node) (bool, error) { return node.Properties["state"] == "retired", nil }))
 	require.ElementsMatch(t, []string{"nornic:a", "nornic:b", "nornic:c"}, search(nil))
 }

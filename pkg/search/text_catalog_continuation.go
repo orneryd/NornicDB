@@ -478,8 +478,8 @@ func (s *Service) continuationNodeEligible(ctx context.Context, node *storage.No
 	if len(options.Types) > 0 && !nodeMatchesType(node, wantedTypes) {
 		return false, nil
 	}
-	if !options.admitsNode(node) {
-		return false, nil
+	if admitted, err := options.admitsNode(ctx, node); err != nil || !admitted {
+		return false, err
 	}
 	return s.shouldIndexNode(ctx, node)
 }

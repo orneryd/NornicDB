@@ -175,9 +175,9 @@ func (s *cancelScript) search(ctx context.Context, _ string, _ []float32, option
 	opts.CandidateTarget = 2
 	s.policy.Options(&opts)
 	if s.armed && s.where {
-		opts.Where = func(*storage.Node) bool {
+		opts.Where = func(context.Context, *storage.Node) (bool, error) {
 			s.trigger.fireAt(callerFunctions(2), completionStage)
-			return false
+			return false, nil
 		}
 	}
 	response, err := s.f.Service.Search(ctx, "", s.query, &opts)

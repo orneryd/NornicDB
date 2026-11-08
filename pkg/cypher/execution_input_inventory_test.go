@@ -618,7 +618,7 @@ func (s *inventorySource) reachesText(call inventoryCall, maxArgs int, rawText m
 	methods := s.methods
 
 	name := call.name
-	if name == "executeUserStatement" || name == "compileNodeWhereFilter" || name == "compileRelationshipWhereFilter" {
+	if name == "executeUserStatement" || name == "compileNodeWhereFilter" || name == "compileRetainedWhere" {
 		return true
 	}
 	// Generic engines consume syntax already present in the outer text.
