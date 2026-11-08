@@ -1,3 +1,0 @@
-# github.com/orneryd/nornicdb/pkg/server.test
-ld: warning: ignoring duplicate libraries: '-lobjc'
-ok  	github.com/orneryd/nornicdb/pkg/server	160.453s

@@ -1,3 +1,0 @@
-# github.com/orneryd/nornicdb/pkg/search.test
-ld: warning: ignoring duplicate libraries: '-lobjc'
-ok  	github.com/orneryd/nornicdb/pkg/search	1.224s	coverage: 24.0% of statements
