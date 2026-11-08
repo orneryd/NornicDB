@@ -33,8 +33,10 @@ type StorageAdapter struct {
 	walDir      string
 	walMu       sync.RWMutex // Protects wal and walPosition
 	walPosition atomic.Uint64
-	// projectedIDs is rebuilt from the retained journal and protected by walMu.
-	projectedIDs      map[string]uint64
+	// projectedIDs maps each retained accepted command identity (its database and
+	// logical ID) to its journal position. It is rebuilt from the retained journal
+	// and protected by walMu.
+	projectedIDs      map[projectionIdentity]uint64
 	projectionLoadErr error
 
 	// In-memory WAL for fast streaming (avoids re-reading wal.log continuously).
@@ -61,7 +63,8 @@ type walCompletion struct {
 
 // walWriteRequest represents a pending WAL write.
 type walWriteRequest struct {
-	record replicationWALRecord
+	record   replicationWALRecord
+	identity projectionIdentity // resolved before native application or queue transfer
 	// done carries the writer's typed completion. Every request allocates one
 	// buffered outcome channel, replacing the former record error channel and
 	// barrier position/error channels; the writer sends exactly once.
@@ -150,7 +153,7 @@ func (a *StorageAdapter) loadWALPosition() error {
 	if err != nil {
 		return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
 	}
-	a.projectedIDs = make(map[string]uint64)
+	a.projectedIDs = make(map[projectionIdentity]uint64)
 	for _, entry := range entries {
 		if entry.Operation != storage.OperationType("replication_command") {
 			continue
@@ -159,9 +162,18 @@ func (a *StorageAdapter) loadWALPosition() error {
 		if err != nil {
 			return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
 		}
-		if id := projectionCommandID(record.Command); id != "" {
-			if _, exists := a.projectedIDs[id]; !exists {
-				a.projectedIDs[id] = entry.Sequence
+		var envelope storage.EntityTransactionEnvelope
+		if record.Command.Type == CmdCommitTransaction {
+			var err error
+			envelope, _, err = storage.DecodeEntityTransaction(record.Command.Data)
+			if err != nil {
+				return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+			}
+		}
+		identity := projectionCommandIdentity(record.Command, envelope)
+		if identity.logicalID != "" {
+			if _, exists := a.projectedIDs[identity]; !exists {
+				a.projectedIDs[identity] = entry.Sequence
 			}
 		}
 	}
@@ -207,7 +219,9 @@ func (a *StorageAdapter) ApplyCommand(waitCtx context.Context, cmd *Command, pub
 	var err error
 	switch cmd.Type {
 	case CmdCommitTransaction:
-		if !cmd.accepted.AppliesTo(a.engine) {
+		if cmd.accepted.AppliesTo(a.engine) {
+			envelope.Namespace, envelope.LogicalTxID = cmd.accepted.Identity()
+		} else {
 			envelope, operations, err = storage.DecodeEntityTransaction(cmd.Data)
 		}
 	case CmdCreateNode, CmdUpdateNode, CmdDeleteNode, CmdCreateEdge, CmdUpdateEdge,
@@ -230,8 +244,9 @@ func (a *StorageAdapter) ApplyCommand(waitCtx context.Context, cmd *Command, pub
 
 	// Transfer the replicated record to the bounded FIFO WAL writer.
 	req := &walWriteRequest{
-		record: record,
-		done:   make(chan walCompletion, 1),
+		record:   record,
+		identity: projectionCommandIdentity(cmd, envelope),
+		done:     make(chan walCompletion, 1),
 	}
 
 	if err := a.enqueueWAL(req); err != nil {
@@ -412,7 +427,7 @@ func (a *StorageAdapter) flushWALBatch(drain bool) {
 		if req.barrier {
 			continue
 		}
-		position, err := a.appendProjectionLocked(req.record)
+		position, err := a.appendProjectionLocked(req.record, req.identity)
 		if err != nil {
 			a.work.RecordError("replication WAL append", err)
 			req.complete(walCompletion{err: err})

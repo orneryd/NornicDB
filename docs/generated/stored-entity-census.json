@@ -2559,7 +2559,7 @@
       "field": "pkg/storage.AcceptedEntityCommitHandle.pendingTop",
       "class": "publication-order",
       "func": "pkg/storage.AcceptedEntityCommitHandle.publishPending",
-      "pos": "pkg/storage/accepted_entity_handle.go:301"
+      "pos": "pkg/storage/accepted_entity_handle.go:309"
     },
     {
       "field": "pkg/storage.BadgerEngine.activeMVCCSnapshotReaders",
