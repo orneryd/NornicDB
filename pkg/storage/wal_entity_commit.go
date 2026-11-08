@@ -68,7 +68,7 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 		releaseMutation = func() { mutationOnce.Do(w.mutationMu.RUnlock) }
 	}
 	releaseAcceptedMutation := releaseMutation
-	logicalID := prepared.LogicalID()
+	identity := acceptedApplicationKey{namespace: prepared.Namespace(), logicalID: prepared.LogicalID()}
 	// The existing WAL mutex joins registration to its closed admission cut.
 	if err := w.wal.lockAdmission(ctx); err != nil {
 		releaseMutation()
@@ -78,14 +78,14 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 
 	receipt, resolve := NewCommitReceipt(func(outcome CommitOutcome) {
 		handle.Settled()
-		w.pendingEntityCommits.Delete(logicalID)
+		w.pendingEntityCommits.Delete(identity)
 		releaseAcceptedMutation()
 		if settle != nil {
 			settle(outcome)
 		}
 	})
 	accepted := &walAcceptedEntityCommit{handle: handle, receipt: receipt, resolve: resolve, releaseMutation: releaseAcceptedMutation}
-	existing, loaded := w.pendingEntityCommits.LoadOrStore(logicalID, accepted)
+	existing, loaded := w.pendingEntityCommits.LoadOrStore(identity, accepted)
 	w.wal.mu.Unlock()
 	if loaded {
 		releaseMutation()
@@ -103,7 +103,7 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	if err != nil {
 		var rejection *walRecordRejection
 		if !journalStarted || errors.Is(err, ErrWALClosed) || errors.As(err, &rejection) {
-			w.pendingEntityCommits.Delete(logicalID)
+			w.pendingEntityCommits.Delete(identity)
 			handle.Discard(nil, err)
 			releaseAcceptedMutation()
 			return nil, err

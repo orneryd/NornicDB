@@ -121,7 +121,7 @@ func TestObservedWALPreservesAcceptedFailure(t *testing.T) {
 	require.ErrorIs(t, diagnostic, physicalErr)
 	require.Equal(t, CommitRecoveryPending, accepted.State)
 	require.NotEmpty(t, accepted.LogicalID)
-	_, pending := owner.pendingEntityCommits.Load(accepted.LogicalID)
+	_, pending := owner.pendingEntityCommits.Load(acceptedApplicationKey{namespace: "test", logicalID: accepted.LogicalID})
 	require.True(t, pending, "recovery pending ownership survives caller error")
 	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
 	require.NoError(t, err)

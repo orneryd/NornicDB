@@ -8,26 +8,31 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// projectionCommandID uses the accepted identity, including older transaction
-// envelopes that carry their logical identity only in the encoded payload.
-func projectionCommandID(cmd *Command) string {
-	if cmd.RequestID != "" {
-		return cmd.RequestID
-	}
+// projectionIdentity is one accepted command's journal identity: the database
+// that accepted the command and the caller's logical ID inside that database.
+// Logical IDs are only unique per database, so two databases reusing one ID are
+// two accepted commands. The typed key makes database and ID separate fields,
+// so no caller text can collide with another pair.
+type projectionIdentity struct {
+	database  string
+	logicalID string
+}
+
+// projectionCommandIdentity uses the identity validated by the native transaction
+// owner. RequestID is transport metadata for transactions; direct commands retain
+// their existing request-ID domain, distinguished by an empty database.
+func projectionCommandIdentity(cmd *Command, envelope storage.EntityTransactionEnvelope) projectionIdentity {
 	if cmd.Type == CmdCommitTransaction {
-		if envelope, _, err := storage.DecodeEntityTransaction(cmd.Data); err == nil {
-			return envelope.LogicalTxID
-		}
+		return projectionIdentity{database: envelope.Namespace, logicalID: envelope.LogicalTxID}
 	}
-	return ""
+	return projectionIdentity{logicalID: cmd.RequestID}
 }
 
 // appendProjectionLocked returns the original publication position on retry.
 // The FIFO writer holds walMu, serializing identity checks with physical append.
-func (a *StorageAdapter) appendProjectionLocked(record replicationWALRecord) (uint64, error) {
-	id := projectionCommandID(record.Command)
-	if id != "" {
-		if position, exists := a.projectedIDs[id]; exists {
+func (a *StorageAdapter) appendProjectionLocked(record replicationWALRecord, identity projectionIdentity) (uint64, error) {
+	if identity.logicalID != "" {
+		if position, exists := a.projectedIDs[identity]; exists {
 			return position, nil
 		}
 	}
@@ -35,11 +40,11 @@ func (a *StorageAdapter) appendProjectionLocked(record replicationWALRecord) (ui
 	if err != nil {
 		return 0, localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
 	}
-	if id != "" {
+	if identity.logicalID != "" {
 		if a.projectedIDs == nil {
-			a.projectedIDs = make(map[string]uint64)
+			a.projectedIDs = make(map[projectionIdentity]uint64)
 		}
-		a.projectedIDs[id] = position
+		a.projectedIDs[identity] = position
 	}
 	a.appendToMemWAL(position, record, record.Command)
 	return position, nil
