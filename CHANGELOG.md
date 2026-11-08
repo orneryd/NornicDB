@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep lightweight CALL-subquery and metadata reads lightweight after full node
+  reads warm the cache. Full and query node images now share an estimated
+  256 MiB byte budget, including vectors, with individual eviction instead of
+  whole-cache clearing. Full-vector reads remain cached within that budget.
+  See [NOR-413 verification](docs/performance/nor413-call-reads-and-node-cache.md).
+
 - Keep accepted replication transactions distinct across databases when Go callers
   reuse a logical ID, while preserving retry identity across journal reopen.
   Transaction envelopes, rather than transport request IDs, define that identity.

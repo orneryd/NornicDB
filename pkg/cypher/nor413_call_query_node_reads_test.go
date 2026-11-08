@@ -175,6 +175,37 @@ func TestNOR413AutoCommitCallReadsLeaveVectorsInStorage(t *testing.T) {
 	}
 }
 
+// A full read (a procedure or embedded caller) must not turn later eligible
+// reads back into per-hit deep copies of the stored vector corpus.
+func TestNOR413CallSubqueryAfterFullReadsKeepsAllocationBound(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		g := newNOR413Graph(t, 16, 64)
+		exec := NewStorageExecutor(g.store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
+		params := map[string]interface{}{"ids": g.ids}
+		for i := range g.ids {
+			full, err := g.engine.GetNode(t.Context(), storage.NodeID(fmt.Sprintf("test:src-%d", i)))
+			require.NoError(t, err)
+			require.Len(t, full.ChunkEmbeddings, 64)
+		}
+		run := func() {
+			result, err := exec.Execute(t.Context(), nor413CallSubquery, params)
+			require.NoError(t, err)
+			require.Len(t, result.Rows, len(g.ids))
+			for i, row := range result.Rows {
+				require.Equal(t, fmt.Sprintf("src-%d", i), row[0])
+			}
+		}
+		bytes := nor413Allocated(t, func() {}, run, func() {})
+		t.Logf("warm CALL-subquery read: %d B, stored vectors: %d B", bytes, g.vectorBytes)
+		require.Less(t, bytes, g.vectorBytes/4)
+		for i := range g.ids {
+			full, err := g.engine.GetNode(t.Context(), storage.NodeID(fmt.Sprintf("test:src-%d", i)))
+			require.NoError(t, err)
+			require.Len(t, full.ChunkEmbeddings, 64, "the optimization must preserve full reads")
+		}
+	})
+}
+
 // TestNOR413AutoCommitCallReadsUseQueryNodes: the reported statement's row
 // nodes, with a CALL subquery, are point-read without their vectors
 // (GetQueryNode), never with them (GetNode), as without CALL. With a READ
