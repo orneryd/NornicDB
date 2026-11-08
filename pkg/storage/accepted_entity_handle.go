@@ -21,6 +21,7 @@ type AcceptedEntityCommitHandle struct {
 	work      *BadgerEngine // the prepared frame's engine: its lifecycle owner runs the join
 	inner     EntityCommitSubmitter
 	logicalID string
+	namespace string
 	release   func()
 
 	once         sync.Once
@@ -57,9 +58,16 @@ func AcceptEntityCommit(ctx context.Context, engine Engine, prepared *PreparedEn
 	if err != nil {
 		return nil, nil, err
 	}
-	h := &AcceptedEntityCommitHandle{engine: engine, work: prepared.engine, inner: inner.Submitter, logicalID: prepared.LogicalID(), release: release}
+	h := &AcceptedEntityCommitHandle{engine: engine, work: prepared.engine, inner: inner.Submitter, logicalID: prepared.LogicalID(), namespace: prepared.Namespace(), release: release}
 	h.prepared.Store(prepared)
 	return h, payload, nil
+}
+
+// Identity returns the immutable database and logical transaction identity
+// retained when this command was accepted. It remains available after native
+// settlement retires the prepared frame, so publication retries use the same key.
+func (h *AcceptedEntityCommitHandle) Identity() (namespace, logicalID string) {
+	return h.namespace, h.logicalID
 }
 
 // AppliesTo reports whether this owner applies its command on engine. A

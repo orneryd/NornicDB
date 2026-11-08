@@ -68,6 +68,19 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.prefixDrops.seq":          {class: "prefix-delete sequence"},
 	"pkg/storage.prefixDrops.start":        {class: "prefix-delete sequence"},
 
+	// The MVCC reservation ledger retains unpublished versions across a snapshot
+	// cut. count controls whether cutTaken copies the ledger; cutsInProgress
+	// delays retirement until every announced cut has copied it. lastCutNanos
+	// floors subsequent reservations so their versions cannot precede the cut.
+	// These are publication-order controls, not graph entity counts. Name each
+	// real writer/reader so an additional caller or field still fails closed.
+	"pkg/storage.mvccReservations.count": {class: "publication-order", owners: []string{
+		"pkg/storage.mvccReservations.enterLocked", "pkg/storage.mvccReservations.retireLocked", "pkg/storage.mvccReservations.endCutLocked"}, readers: []string{"pkg/storage.mvccReservations.cutTaken"}},
+	"pkg/storage.mvccReservations.cutsInProgress": {class: "publication-order", owners: []string{
+		"pkg/storage.mvccReservations.cutStarted", "pkg/storage.mvccReservations.endCutLocked"}, readers: []string{"pkg/storage.mvccReservations.retireLocked"}},
+	"pkg/storage.mvccReservations.lastCutNanos": {class: "publication-order", owners: []string{
+		"pkg/storage.mvccReservations.cutTaken"}, readers: []string{"pkg/storage.mvccReservations.reserve"}},
+
 	// Runtime publication order is assigned only by stage registration, not an entity MVCC field.
 	"pkg/storage.commitPublication.ts": {class: "publication-order", owners: []string{"pkg/storage.publicationStage.register"}},
 	// An accepted command's pending reports reach its outer receipt in the

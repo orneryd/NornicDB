@@ -265,11 +265,11 @@
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit": {
-      "Reason": "post-acceptance commit completion and derived-count repair after data is durable. Re-reviewed 2026-11-06 against release base 60ff9d644d0c75b0d1b67154c4662321f9d9dd7f and this head c40d10504f21392188c6e3a48f3ed30b5e6860d7: the function still creates exactly these two fresh contexts, and only their source offsets moved, +236/+457 to +247/+468, because earlier lines of the same function grew by eleven. The first is still the private preparation continuation handoff after its terminal owner accepted the command and before the plain-commit client check; the second is still completionContext for the positional (label, type) count tail, retained after the entity and index writes are durable so caller cancellation cannot veto counts or their repair. Neither site is the accepted-completion boundary itself, and neither changed it, creates a new boundary, or reuses a request or engine-stop lifetime. The existing approval is re-pinned to the moved sites; this review claims no fresh human approval.",
+      "Reason": "post-acceptance commit completion and derived-count repair after data is durable. Re-reviewed 2026-11-07 against the previously approved c40d10504f21392188c6e3a48f3ed30b5e6860d7 source and release 9dcf1bba10f0709bec9472628dd9f3f0fa3b32f6: PublishCommit still creates exactly these two fresh contexts. The private accepted preparation continuation remains at +247. The positional-count completion tail moved from +468 to +473 solely because five preceding lines now retire the native MVCC reservation with a deferred publishTxn call. The cw.finish success check, retained count lock, completionContext consumers applyEdgeTypeLabelCountDeltasLocked and rebuildAuthoritativeEdgeTypeCountsLocked, and their implementation files are unchanged. Caller cancellation must still reject before acceptance and cannot veto derived counts or repair after durable publication. This re-pins the existing approved phase; it introduces no new lifetime boundary, analyzer exemption, or human approval.",
       "Approver": "orneryd (2 November 2026)",
       "Occurrences": [
         "call context.Background (+247 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)",
-        "call context.Background (+468 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)"
+        "call context.Background (+473 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)"
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication": {
