@@ -5,7 +5,11 @@
       (pipelineNodeMatchesPattern, its initial-node candidate loop, and the
       ordered index window that truncates before rows are admitted).
 - [x] Verify visible ordering/pagination and privileged system reads on both parsers
-      (nornic and ANTLR package runs; system namespace asserted on the visibility
+      (focused nornic and ANTLR checks; system namespace asserted on the visibility
       decision and the admission test because the system database refuses graph reads).
-- [ ] Review integrated changes, duplicate candidates and affected tests.
+- [x] Review integrated changes and the initial duplicate inventory.
+- [x] Correct same-snapshot count eligibility, buffered visibility composition and pinned relationship traversal.
+- [x] Address reviewer feedback and consolidate reported test/count owners.
+- [x] Fix CI census classifications and preserve quota fault count capability.
+- [ ] Complete latest integrated full-suite CI and updated-head duplicate review.
 - [ ] Push release PR with AC evidence; complete CI and update Linear.

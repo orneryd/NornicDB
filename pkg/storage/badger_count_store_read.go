@@ -161,15 +161,8 @@ func (b *BadgerEngine) scopeHasRelevantHiddenInTxn(ctx context.Context, txn *bad
 		return false, err
 	}
 	if b.writeBehind != nil {
-		for _, buf := range b.writeBehind.liveBuffers() {
-			if buf.countsApplied.Load() {
-				continue
-			}
-			for label := range buf.nodesByLabel {
-				if strings.HasPrefix(label, prefix) {
-					candidates[namespaceLabel{namespace: namespace, label: label}] = struct{}{}
-				}
-			}
+		if err := b.writeBehind.collectCountLabelNamesLocked(ctx, hidden, candidates); err != nil {
+			return false, err
 		}
 	}
 	for candidate := range candidates {
@@ -213,12 +206,12 @@ func (b *BadgerEngine) hiddenLabelIntersectsNodeLabelInTxn(ctx context.Context, 
 	}
 	var touched map[NodeID]bool
 	if b.writeBehind != nil {
-		nodes, shadowed, err := b.writeBehind.labelOverlayLocked(ctx, candidate.label, scope)
+		overlay, err := b.readBufferedEntities(ctx, b.writeBehind, storedRead, bufferedEntityRead{kind: bufferedLabel, label: candidate.label, prefix: scope})
 		if err != nil {
 			return false, err
 		}
-		touched = shadowed
-		for _, node := range nodes {
+		touched = overlay.nodesTouched
+		for _, node := range overlay.nodes {
 			if hasLabel(node.Labels, wanted) {
 				return true, nil
 			}

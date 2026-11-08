@@ -387,14 +387,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:244",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:244",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:818"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:244",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:244",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:818"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
@@ -429,14 +429,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:261",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:261",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:818"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:261",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:261",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:818"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
@@ -471,14 +471,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:264",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:264",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:818"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:264",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:264",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:818"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
@@ -912,42 +912,42 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:272",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:272",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:740"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:744"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:272",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:272",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:742"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:746"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:284",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:284",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:740"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:744"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:284",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:284",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:742"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:746"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:286",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:286",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:740"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:744"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:286",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:286",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:742"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:746"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
@@ -3324,6 +3324,12 @@
       "pos": "pkg/storage/commit_buffer.go:753"
     },
     {
+      "field": "pkg/storage.CountStoreRead.Count",
+      "class": "count-store read answer (detached result value)",
+      "func": "pkg/storage.BadgerEngine.readCountStoreSnapshot$1",
+      "pos": "pkg/storage/badger_count_store_read.go:76"
+    },
+    {
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
@@ -4670,14 +4676,6 @@
     }
   ],
   "pending": null,
-  "violations": [
-    "unclassified field: pkg/storage.CountStoreRead.Count is changed at pkg/storage/badger_count_store_read.go:76 in pkg/storage.BadgerEngine.readCountStoreSnapshot$1",
-    "unowned derived-count read: pkg/storage.BadgerTransaction.pendingEdgeTypeCountDeltas at pkg/storage/badger_transaction_pending_counts.go:69 in pkg/storage.BadgerTransaction.PendingCountStoreDelta (readers: pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeCount, pkg/storage.BadgerTransaction.closeLocked, pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked, pkg/storage.BadgerTransaction.commitBufferedLocked, pkg/storage.BadgerTransaction.PublishCommit, pkg/storage.BadgerTransaction.PendingEdgeTypeCountDelta)",
-    "unowned derived-count read: pkg/storage.BadgerTransaction.pendingEdgeTypeCountDeltas at pkg/storage/badger_transaction_pending_counts.go:91 in pkg/storage.BadgerTransaction.PendingCountStoreDelta (readers: pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeCount, pkg/storage.BadgerTransaction.closeLocked, pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked, pkg/storage.BadgerTransaction.commitBufferedLocked, pkg/storage.BadgerTransaction.PublishCommit, pkg/storage.BadgerTransaction.PendingEdgeTypeCountDelta)",
-    "unowned derived-count read: pkg/storage.BadgerTransaction.pendingEdgeTypeLabelCountDeltas at pkg/storage/badger_transaction_pending_counts.go:91 in pkg/storage.BadgerTransaction.PendingCountStoreDelta (readers: pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeLabelCount, pkg/storage.BadgerTransaction.closeLocked, pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked, pkg/storage.BadgerTransaction.commitBufferedLocked, pkg/storage.BadgerTransaction.PublishCommit, pkg/storage.BadgerTransaction.acquireCommitPublicationLocked)",
-    "unowned derived-count read: pkg/storage.BadgerTransaction.pendingLabelCountDeltas at pkg/storage/badger_transaction_pending_counts.go:55 in pkg/storage.BadgerTransaction.PendingCountStoreDelta (readers: pkg/storage.BadgerTransaction.bufferAdjustLabelCount, pkg/storage.BadgerTransaction.closeLocked, pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked, pkg/storage.BadgerTransaction.commitBufferedLocked, pkg/storage.BadgerTransaction.PublishCommit, pkg/storage.BadgerTransaction.PendingNodeLabelCountDelta)",
-    "unowned derived-count read: pkg/storage.BadgerTransaction.pendingLabelCountDeltas at pkg/storage/badger_transaction_pending_counts.go:67 in pkg/storage.BadgerTransaction.PendingCountStoreDelta (readers: pkg/storage.BadgerTransaction.bufferAdjustLabelCount, pkg/storage.BadgerTransaction.closeLocked, pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked, pkg/storage.BadgerTransaction.commitBufferedLocked, pkg/storage.BadgerTransaction.PublishCommit, pkg/storage.BadgerTransaction.PendingNodeLabelCountDelta)",
-    "unowned derived-count read: pkg/storage.BadgerTransaction.pendingLabelCountDeltas at pkg/storage/badger_transaction_pending_counts.go:91 in pkg/storage.BadgerTransaction.PendingCountStoreDelta (readers: pkg/storage.BadgerTransaction.bufferAdjustLabelCount, pkg/storage.BadgerTransaction.closeLocked, pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked, pkg/storage.BadgerTransaction.commitBufferedLocked, pkg/storage.BadgerTransaction.PublishCommit, pkg/storage.BadgerTransaction.PendingNodeLabelCountDelta)"
-  ],
+  "violations": null,
   "unordered": null
 }

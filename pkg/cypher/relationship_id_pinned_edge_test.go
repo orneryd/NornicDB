@@ -10,31 +10,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// pinnedEdgeAdjacencySpy counts every relationship listing a query makes
+// adjacencyReadSpy counts every relationship listing a query makes
 // through the public executor: per-node adjacency (headers or full bodies) and
 // whole-type edge streams. calls/entries are the work a one-hop match spends
 // listing a start node's adjacency instead of walking one pinned relationship.
-type pinnedEdgeAdjacencySpy struct {
+type adjacencyReadSpy struct {
 	storage.Engine
 	calls   int
 	entries int
 	streams int
+	fail    bool
 }
 
-func (s *pinnedEdgeAdjacencySpy) count(edges []*storage.Edge) {
+func (s *adjacencyReadSpy) count(edges []*storage.Edge) {
 	s.calls++
 	s.entries += len(edges)
 }
 
-func (s *pinnedEdgeAdjacencySpy) countStream() {
+func (s *adjacencyReadSpy) countStream() {
 	s.streams++
 }
 
-func (s *pinnedEdgeAdjacencySpy) reset() {
+func (s *adjacencyReadSpy) reset() {
 	s.calls, s.entries, s.streams = 0, 0, 0
 }
 
-func (s *pinnedEdgeAdjacencySpy) OutgoingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
+func (s *adjacencyReadSpy) OutgoingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
 	if reader, ok := s.Engine.(storage.EdgeHeaderReader); ok {
 		edges, answered, err := reader.OutgoingEdgeHeaders(ctx, id)
 		if err == nil && answered {
@@ -49,7 +50,7 @@ func (s *pinnedEdgeAdjacencySpy) OutgoingEdgeHeaders(ctx context.Context, id sto
 	return edges, err == nil, err
 }
 
-func (s *pinnedEdgeAdjacencySpy) IncomingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
+func (s *adjacencyReadSpy) IncomingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
 	if reader, ok := s.Engine.(storage.EdgeHeaderReader); ok {
 		edges, answered, err := reader.IncomingEdgeHeaders(ctx, id)
 		if err == nil && answered {
@@ -64,7 +65,7 @@ func (s *pinnedEdgeAdjacencySpy) IncomingEdgeHeaders(ctx context.Context, id sto
 	return edges, err == nil, err
 }
 
-func (s *pinnedEdgeAdjacencySpy) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+func (s *adjacencyReadSpy) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	edges, err := s.Engine.GetOutgoingEdges(ctx, id)
 	if err == nil {
 		s.count(edges)
@@ -72,7 +73,7 @@ func (s *pinnedEdgeAdjacencySpy) GetOutgoingEdges(ctx context.Context, id storag
 	return edges, err
 }
 
-func (s *pinnedEdgeAdjacencySpy) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+func (s *adjacencyReadSpy) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	edges, err := s.Engine.GetIncomingEdges(ctx, id)
 	if err == nil {
 		s.count(edges)
@@ -80,7 +81,11 @@ func (s *pinnedEdgeAdjacencySpy) GetIncomingEdges(ctx context.Context, id storag
 	return edges, err
 }
 
-func (s *pinnedEdgeAdjacencySpy) GetAdjacentEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
+func (s *adjacencyReadSpy) GetAdjacentEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
+	s.calls++
+	if s.fail {
+		return nil, nil, errEdgeRead
+	}
 	var outgoing, incoming []*storage.Edge
 	var err error
 	if adjacent, ok := s.Engine.(storage.AdjacentEdgesEngine); ok {
@@ -91,13 +96,12 @@ func (s *pinnedEdgeAdjacencySpy) GetAdjacentEdges(ctx context.Context, id storag
 		}
 	}
 	if err == nil {
-		s.calls++
 		s.entries += len(outgoing) + len(incoming)
 	}
 	return outgoing, incoming, err
 }
 
-func (s *pinnedEdgeAdjacencySpy) StreamEdgesByType(ctx context.Context, kind string, visit func(*storage.Edge) error) error {
+func (s *adjacencyReadSpy) StreamEdgesByType(ctx context.Context, kind string, visit func(*storage.Edge) error) error {
 	s.countStream()
 	return storage.StreamEdgesByType(ctx, s.Engine, kind, visit)
 }
@@ -107,7 +111,7 @@ func (s *pinnedEdgeAdjacencySpy) StreamEdgesByType(ctx context.Context, kind str
 // relationships, so listing the hub's adjacency lists 300 relationships while
 // walking the pinned edge lists none.
 type pinnedEdgeFixture struct {
-	spy    *pinnedEdgeAdjacencySpy
+	spy    *adjacencyReadSpy
 	exec   *StorageExecutor
 	writer *StorageExecutor
 
@@ -119,7 +123,7 @@ type pinnedEdgeFixture struct {
 func newPinnedEdgeFixture(t *testing.T) *pinnedEdgeFixture {
 	t.Helper()
 	namespaced := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	spy := &pinnedEdgeAdjacencySpy{Engine: namespaced}
+	spy := &adjacencyReadSpy{Engine: namespaced}
 	writer := NewStorageExecutor(namespaced)
 	ctx := context.Background()
 	_, err := writer.Execute(ctx, `
@@ -133,28 +137,10 @@ func newPinnedEdgeFixture(t *testing.T) *pinnedEdgeFixture {
 
 	exec := NewStorageExecutor(spy)
 	fixture := &pinnedEdgeFixture{spy: spy, exec: exec, writer: writer}
-	fixture.spokeID = pinnedEdgeElementID(t, exec, "MATCH (:X {id: 2})-[r:SPOKE]->(z:Z {id: 7}) RETURN elementId(r)")
-	fixture.spokeNativeID = pinnedEdgeRows(t, exec, "MATCH (:X {id: 2})-[r:SPOKE]->(z:Z {id: 7}) RETURN id(r)", nil)[0][0]
-	fixture.loopID = pinnedEdgeElementID(t, exec, "MATCH (loop:L {id: 1})-[r:LOOP]->(again) RETURN elementId(r)")
+	fixture.spokeID = singleQueryValue[string](t, exec, "MATCH (:X {id: 2})-[r:SPOKE]->(z:Z {id: 7}) RETURN elementId(r)")
+	fixture.spokeNativeID = rowsOf(t, exec, "MATCH (:X {id: 2})-[r:SPOKE]->(z:Z {id: 7}) RETURN id(r)", nil)[0][0]
+	fixture.loopID = singleQueryValue[string](t, exec, "MATCH (loop:L {id: 1})-[r:LOOP]->(again) RETURN elementId(r)")
 	return fixture
-}
-
-func pinnedEdgeElementID(t *testing.T, exec *StorageExecutor, query string) string {
-	t.Helper()
-	result, err := exec.Execute(context.Background(), query, nil)
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1, query)
-	id, ok := result.Rows[0][0].(string)
-	require.True(t, ok, query)
-	return id
-}
-
-func pinnedEdgeRows(t *testing.T, exec *StorageExecutor, query string, params map[string]interface{}) [][]interface{} {
-	t.Helper()
-	result, err := exec.Execute(context.Background(), query, params)
-	require.NoError(t, err)
-	require.NotNil(t, result, query)
-	return result.Rows
 }
 
 // A one-hop match whose relationship is pinned by elementId(r) or id(r) walks
@@ -196,7 +182,7 @@ func TestRelationshipIDPinnedEdgeWalksOnlyThatRelationship(t *testing.T) {
 		require.Zero(t, fixture.spy.streams, "%s: whole-type edge streams %q", shape.name, pinned)
 
 		general := fmt.Sprintf("MATCH %s WHERE %s AND true %s", shape.pattern, shape.clause, shape.tail)
-		require.Equal(t, pinnedEdgeRows(t, fixture.exec, general, params), result.Rows,
+		require.Equal(t, rowsOf(t, fixture.exec, general, params), result.Rows,
 			"%s: the general path answers the same rows", shape.name)
 	}
 }
@@ -212,10 +198,10 @@ func TestRelationshipIDPinnedEdgeUnresolvedMatchesNothing(t *testing.T) {
 	_, _, local, ok := storage.ParseElementID(fixture.spokeID)
 	require.True(t, ok)
 
-	deletedID := pinnedEdgeElementID(t, fixture.exec, "MATCH (:X {id: 1})-[r:R]->() RETURN elementId(r)")
+	deletedID := singleQueryValue[string](t, fixture.exec, "MATCH (:X {id: 1})-[r:R]->() RETURN elementId(r)")
 	_, err := fixture.writer.Execute(ctx, "MATCH (:X {id: 1})-[r:R]->() DELETE r", nil)
 	require.NoError(t, err)
-	nodeID := pinnedEdgeElementID(t, fixture.exec, "MATCH (a:X {id: 1}) RETURN elementId(a)")
+	nodeID := singleQueryValue[string](t, fixture.exec, "MATCH (a:X {id: 1}) RETURN elementId(a)")
 
 	for _, test := range []struct {
 		name           string
@@ -232,10 +218,10 @@ func TestRelationshipIDPinnedEdgeUnresolvedMatchesNothing(t *testing.T) {
 		params := map[string]interface{}{"e": test.value}
 		// The general path's answer: an extra true conjunct keeps the pinned
 		// lookup out of it, so the pattern is filtered by WHERE alone.
-		general := pinnedEdgeRows(t, fixture.exec,
+		general := rowsOf(t, fixture.exec,
 			"MATCH (a)-[r]->(b) WHERE elementId(r) = $e AND true RETURN count(r)", params)
 		fixture.spy.reset()
-		pinned := pinnedEdgeRows(t, fixture.exec,
+		pinned := rowsOf(t, fixture.exec,
 			"MATCH (a)-[r]->(b) WHERE elementId(r) = $e RETURN count(r)", params)
 		require.Equal(t, general, pinned, test.name)
 		require.Zero(t, fixture.spy.calls, "%s: adjacency listings", test.name)
@@ -403,9 +389,9 @@ func TestRelationshipIDPinnedEdgeUsesTransactionLocalWrites(t *testing.T) {
 		}))
 	}
 
-	txSpy := &pinnedEdgeAdjacencySpy{Engine: txStore}
+	txSpy := &adjacencyReadSpy{Engine: txStore}
 	txExec := NewStorageExecutor(txSpy)
-	edgeID := pinnedEdgeElementID(t, txExec, "MATCH (:X {id: 2})-[r:SPOKE]->(z:Z {id: 3}) RETURN elementId(r)")
+	edgeID := singleQueryValue[string](t, txExec, "MATCH (:X {id: 2})-[r:SPOKE]->(z:Z {id: 3}) RETURN elementId(r)")
 
 	txSpy.reset()
 	result, err := txExec.Execute(ctx, "MATCH (a)-[r]->(b) WHERE elementId(r) = $e RETURN a.id, b.id",
@@ -416,7 +402,7 @@ func TestRelationshipIDPinnedEdgeUsesTransactionLocalWrites(t *testing.T) {
 	require.Zero(t, txSpy.entries)
 
 	// The committed reader does not see the uncommitted relationship.
-	readerSpy := &pinnedEdgeAdjacencySpy{Engine: namespaced}
+	readerSpy := &adjacencyReadSpy{Engine: namespaced}
 	reader := NewStorageExecutor(readerSpy)
 	result, err = reader.Execute(ctx, "MATCH (a)-[r]->(b) WHERE elementId(r) = $e RETURN count(r)",
 		map[string]interface{}{"e": edgeID})
@@ -439,7 +425,7 @@ func BenchmarkRelationshipIDPinnedEdgeTraversal(b *testing.B) {
 	if _, err := writer.Execute(ctx, "MATCH (hub:X {id: 1}) UNWIND range(0, 4999) AS i CREATE (hub)-[:SPOKE {i: i}]->(:Z {id: i})", nil); err != nil {
 		b.Fatal(err)
 	}
-	spy := &pinnedEdgeAdjacencySpy{Engine: namespaced}
+	spy := &adjacencyReadSpy{Engine: namespaced}
 	exec := NewStorageExecutor(spy)
 	result, err := exec.Execute(ctx, "MATCH (:X {id: 1})-[r:SPOKE]->(z:Z {id: 12}) RETURN elementId(r)", nil)
 	if err != nil {

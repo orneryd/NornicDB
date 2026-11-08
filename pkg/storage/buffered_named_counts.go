@@ -111,3 +111,25 @@ func (w *WriteBehindBuffer) namedCountDelta(ctx context.Context, kind byte, name
 	total, err := w.countStoreDelta(ctx, request)
 	return total, err
 }
+
+// collectCountLabelNamesLocked contributes only label-count metadata keys,
+// never buffered entity bodies. The caller holds w.mu across its count snapshot.
+func (w *WriteBehindBuffer) collectCountLabelNamesLocked(ctx context.Context, wanted func(namespaceLabel) bool, names map[namespaceLabel]struct{}) error {
+	var cancel bulkReadCancellation
+	for _, buf := range w.liveBuffers() {
+		if buf.countsApplied.Load() {
+			continue
+		}
+		for _, commit := range buf.commits {
+			for key := range commit.labelDeltas {
+				if err := cancel.check(ctx); err != nil {
+					return err
+				}
+				if wanted(key) {
+					names[key] = struct{}{}
+				}
+			}
+		}
+	}
+	return nil
+}

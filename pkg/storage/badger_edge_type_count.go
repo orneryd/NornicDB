@@ -93,14 +93,14 @@ func (b *BadgerEngine) adjustEdgeTypeCountInTxn(txn *badger.Txn, namespace, edge
 // EdgeCountByTypeInNamespace returns the persisted count of edges of the given
 // type in one namespace (0 when absent).
 func (b *BadgerEngine) EdgeCountByTypeInNamespace(ctx context.Context, namespace, edgeType string) (int64, error) {
-	return b.namedCountInNamespace(ctx, countDeltaKindEdgeType, namespace, edgeType)
+	return b.namedCount(ctx, countDeltaKindEdgeType, namespace, edgeType, true)
 }
 
 // EdgeCountByType returns the total count of edges of the given type across
 // all namespaces. This is the O(#namespaces) point-read fast path behind
 // MATCH ()-[r:T]->() RETURN count(r).
 func (b *BadgerEngine) EdgeCountByType(ctx context.Context, edgeType string) (int64, error) {
-	return b.namedCount(ctx, countDeltaKindEdgeType, edgeType)
+	return b.namedCount(ctx, countDeltaKindEdgeType, "", edgeType, false)
 }
 
 func (b *BadgerEngine) edgeTypeCountReady() (bool, error) {
