@@ -13,5 +13,6 @@
 - [x] Fix CI census classifications and preserve quota fault count capability.
 - [x] Reproduce and repair the cache-overlap fixture at the typed count boundary, retaining cancellation controls.
 - [x] Qualify a CI-only Go memory budget and coverage attempt diagnostics without weakening checks.
+- [x] Reproduce fulltext reuse assertions under ambient memory pressure; isolate no-pressure setup and retain real release/refill checks (five paired repetitions).
 - [ ] Complete latest integrated full-suite CI, release-failure reconciliation and updated-head duplicate review.
 - [ ] Push release PR with AC evidence; complete CI and update Linear.
