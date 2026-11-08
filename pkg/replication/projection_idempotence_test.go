@@ -189,11 +189,21 @@ func TestNOR291ProjectionFailedAppendCanRetry(t *testing.T) {
 	a := setupTestAdapter(t, adapterFixtureOptions{backing: base}).adapter
 	cmd := wireCommand(t, "append-retry", storage.Operation{Type: storage.OpCreateNode, Node: wireNode("n", "value")})
 	cmd.RequestID = "append-retry"
-	require.NoError(t, a.wal.Close())
+	// Close and replace the field under its own lock: the asynchronous writer
+	// reads a.wal while holding walMu, so the test must not touch it unlocked.
+	a.walMu.Lock()
+	closeErr := a.wal.Close()
+	a.walMu.Unlock()
+	require.NoError(t, closeErr)
 	require.ErrorIs(t, applyNOR291(a, cmd, mode), storage.ErrWALClosed)
+	// The barrier completes only after the writer left its batch, so no queued
+	// request can still be appending through the closed WAL when it is replaced.
+	require.ErrorIs(t, a.FlushWAL(), storage.ErrWALClosed)
 	wal, err := storage.NewWAL(a.walDir, nil)
 	require.NoError(t, err)
+	a.walMu.Lock()
 	a.wal = wal
+	a.walMu.Unlock()
 	require.NoError(t, applyNOR291(a, cmd, mode))
 	assertNOR291PublishedProjectionCount(t, a, 1)
 	node, err := storage.GetStoredNode(context.Background(), a.engine, "wire:n")

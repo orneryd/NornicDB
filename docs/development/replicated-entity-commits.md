@@ -38,6 +38,35 @@ the accepted semantic record. Replaying a previously accepted transaction after
 prefix deletion does not resurrect its entities; a new write requires a new
 transaction identity.
 
+## Accepted-command journal identity
+
+An accepted entity transaction is identified by its database namespace and
+logical transaction ID together. Go callers may reuse a logical ID in another
+database, but must use a new ID for a new transaction in the same database.
+The replication journal uses that same identity for live publication and retained
+journal reconstruction. Retrying a command keeps its original publication position,
+including after pruning the streaming cache or reopening the journal. The WAL
+wrapper also keys pending receipts by this pair. Concurrent writes in different
+databases receive separate receipts and records even if their logical IDs match;
+a retry within one database still joins that database's accepted command.
+
+`Command.RequestID` remains the identity for direct, nontransaction commands.
+For `CmdCommitTransaction`, the accepted envelope is authoritative: changing a
+transport request ID neither creates a new transaction nor suppresses a distinct
+accepted transaction. `AcceptedEntityCommitHandle.Identity()` exposes the immutable
+namespace and logical ID to local publication without decoding the payload again:
+
+```go
+namespace, logicalID := accepted.Identity()
+```
+
+The handle retains that identity after the prepared frame is settled. On remote
+application, the existing validated envelope supplies the same pair. No command
+wire field, WAL format, Badger key or persisted entity payload changes. Upgrading
+prevents new projection omissions; it cannot reconstruct commands omitted from a
+historical journal. Existing replicas that may have missed such writes need a
+verified snapshot resynchronization from the authoritative database.
+
 ## Retired low-level replication commands
 
 The internal `CmdCypher`, `CmdSetProperty` and `CmdBatchWrite` entry points are
