@@ -22,6 +22,9 @@ type adjacencyReadSpy struct {
 	fail    bool
 }
 
+// GetInnerEngine preserves namespace and source identity while observing reads.
+func (s *adjacencyReadSpy) GetInnerEngine() storage.Engine { return s.Engine }
+
 func (s *adjacencyReadSpy) count(edges []*storage.Edge) {
 	s.calls++
 	s.entries += len(edges)
@@ -187,11 +190,8 @@ func TestRelationshipIDPinnedEdgeWalksOnlyThatRelationship(t *testing.T) {
 	}
 }
 
-// Relationship ids that name no local relationship match nothing and list no
-// adjacency. What a foreign database qualifier means is the identity domain's
-// decision (a single-database store compares element-id payloads), so the
-// pinned lookup must return exactly what the general, adjacency-listing path
-// returns for the same value.
+// Missing, foreign-database and wrong-kind IDs match nothing. The pinned
+// lookup and general predicate must agree without listing adjacency.
 func TestRelationshipIDPinnedEdgeUnresolvedMatchesNothing(t *testing.T) {
 	fixture := newPinnedEdgeFixture(t)
 	ctx := context.Background()
@@ -204,16 +204,15 @@ func TestRelationshipIDPinnedEdgeUnresolvedMatchesNothing(t *testing.T) {
 	nodeID := singleQueryValue[string](t, fixture.exec, "MATCH (a:X {id: 1}) RETURN elementId(a)")
 
 	for _, test := range []struct {
-		name           string
-		value          interface{}
-		identityDomain bool // the value names an element id's database
+		name  string
+		value interface{}
 	}{
-		{"missing local id", "5:test:no-such-relationship", false},
-		{"deleted relationship", deletedID, false},
-		{"foreign database", "5:otherdb:" + local, true},
-		{"malformed value", "bogus", false},
-		{"node element id", nodeID, false},
-		{"null value", nil, false},
+		{"missing local id", "5:test:no-such-relationship"},
+		{"deleted relationship", deletedID},
+		{"foreign database", "5:otherdb:" + local},
+		{"malformed value", "bogus"},
+		{"node element id", nodeID},
+		{"null value", nil},
 	} {
 		params := map[string]interface{}{"e": test.value}
 		// The general path's answer: an extra true conjunct keeps the pinned
@@ -226,9 +225,7 @@ func TestRelationshipIDPinnedEdgeUnresolvedMatchesNothing(t *testing.T) {
 		require.Equal(t, general, pinned, test.name)
 		require.Zero(t, fixture.spy.calls, "%s: adjacency listings", test.name)
 		require.Zero(t, fixture.spy.entries, "%s: adjacency entries", test.name)
-		if !test.identityDomain {
-			require.Equal(t, [][]interface{}{{int64(0)}}, pinned, test.name)
-		}
+		require.Equal(t, [][]interface{}{{int64(0)}}, pinned, test.name)
 	}
 }
 
@@ -476,6 +473,10 @@ func TestRelationshipIDPinRetainsBoundEndpointAndConjunct(t *testing.T) {
 func TestRelationshipIDPinIsRequestOwned(t *testing.T) {
 	fixture := newPinnedEdgeFixture(t)
 	exec := NewStorageExecutor(fixture.writer.storage)
+	// Observing adjacency must not change the database identity emitted by
+	// the wrapped store or make the result unusable by an unwrapped executor.
+	require.Equal(t, fixture.spokeID, singleQueryValue[string](t, exec, "MATCH (:X {id: 2})-[r:SPOKE]->(z:Z {id: 7}) RETURN elementId(r)"))
+	require.Equal(t, fixture.loopID, singleQueryValue[string](t, exec, "MATCH (loop:L {id: 1})-[r:LOOP]->(again) RETURN elementId(r)"))
 	failures := make(chan error, 2)
 	var workers sync.WaitGroup
 	for _, tc := range []struct {

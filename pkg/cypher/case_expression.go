@@ -732,7 +732,7 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
 			return e.evaluateExpressionWithContext(ctx, operand, nodes, rels)
 		})
-	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25", e.graphIdentityDomain()); matched {
+	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25"); matched {
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil

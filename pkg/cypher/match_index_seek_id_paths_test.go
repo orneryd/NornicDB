@@ -84,7 +84,7 @@ func TestTryCollectNodesFromIDEquality_Branches(t *testing.T) {
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("person-1"), nodes[0].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = '4:nornic:person-1'")
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = '"+storage.NodeElementID("seek_id_eq_cov", "person-1")+"'")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
@@ -124,7 +124,7 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = $id", map[string]interface{}{"id": "4:nornic:n1"})
+	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = $id", map[string]interface{}{"id": storage.NodeElementID("seek_id_param_cov", "n1")})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
@@ -188,7 +188,7 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}, properties: map[string]interface{}{"kind": "human"}},
 		"elementId(n) IN $ids",
-		map[string]interface{}{"ids": []interface{}{"p1", "4:nornic:p2", "p1", "", 7}},
+		map[string]interface{}{"ids": []interface{}{"p1", storage.NodeElementID("seek_id_in_cov", "p2"), "p1", "", 7}},
 	)
 	require.NoError(t, err)
 	require.True(t, used)

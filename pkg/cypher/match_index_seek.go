@@ -110,28 +110,18 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 // entitySeekLookup retains the database until the selected engine accepts it.
 // Unqualified strings retain the existing raw-ID extension.
 func (e *StorageExecutor) entitySeekLookup(value, kind, function string) (string, bool, bool) {
-	actual, database, local, qualified := storage.ParseElementID(value)
+	reference, qualified, valid := graphElementIdentity(value, kind)
 	if function != "elementId" && !strings.HasPrefix(value, kind+":") {
-		qualified = false
+		reference, qualified, valid = storage.EntityIdentity{LocalID: value}, false, true
 	}
-	if !qualified {
-		// A raw local ID may match several sources. Leave that kept extension
-		// to the normal predicate rather than certifying a single-node seek.
-		if storage.CompositeDatabaseOf(e.storage) != "" {
-			return "", false, false
-		}
-		return value, true, true
-	}
-	if actual != kind {
+	if !valid {
 		return "", false, true
 	}
-	if storage.CompositeDatabaseOf(e.storage) == "" && e.graphIdentityDomain().foreignQualifier(database) {
-		return "", false, true
+	// A raw local ID can name multiple composite sources; the predicate owns it.
+	if !qualified && storage.CompositeDatabaseOf(e.storage) != "" {
+		return "", false, false
 	}
-	if storage.CompositeDatabaseOf(e.storage) == "" {
-		return local, true, true
-	}
-	id, found := (storage.EntityIdentity{Database: database, LocalID: local}).LookupID(e.storage, kind)
+	id, found := reference.LookupID(e.storage, kind)
 	return id, found, true
 }
 
