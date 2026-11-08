@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   256 MiB byte budget, including vectors, with individual eviction instead of
   whole-cache clearing. Full-vector reads remain cached within that budget.
   See [NOR-413 verification](docs/performance/nor413-call-reads-and-node-cache.md).
+- Exclude internal nodes consistently from indexed and bound MATCH rows and
+  counts, preserving visible ordering and pagination without scanning a visible
+  population merely because unrelated internal metadata exists.
+- Require every pattern label before filling ordered index pages and evaluating
+  relationship-cosine endpoints; keep one-hop relationship-ID reads independent
+  of endpoint degree while retaining bound and composite source identities.
+  See [count-store visibility and Go API notes](docs/development/count-store-visibility.md).
 
 - Keep accepted replication transactions distinct across databases when Go callers
   reuse a logical ID, while preserving retry identity across journal reopen.

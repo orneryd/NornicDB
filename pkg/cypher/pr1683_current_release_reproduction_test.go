@@ -35,6 +35,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testutil/memorypressure"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -111,11 +112,11 @@ func pr1683FulltextRows(t *testing.T, exec *StorageExecutor, index, query string
 	return rows
 }
 
-// TestPR1683CurrentRelease_RepeatedFulltextQueryRescansUnchangedDocuments
-// probes NOR-148: an unchanged repeated public fulltext query must not stream
-// and rebuild the same documents again. On this release the procedure scans on
-// every call, so the second execution's counts are expected to be non-zero.
-func TestPR1683CurrentRelease_RepeatedFulltextQueryRescansUnchangedDocuments(t *testing.T) {
+// TestFulltextRepeatedQueriesReuseUnchangedDocuments checks maintained reuse
+// while optional copies can remain resident. Pressure-driven release and refill
+// are independently asserted by TestFulltextRetainedMemoryRuntimePublic.
+func TestFulltextRepeatedQueriesReuseUnchangedDocuments(t *testing.T) {
+	memorypressure.WithoutRuntimePressure(t)
 	t.Run("ranked top-k", func(t *testing.T) {
 		spy, exec := pr1683NewScanSpyExecutor(t)
 		pr1683SeedOrchardCorpus(t, exec)

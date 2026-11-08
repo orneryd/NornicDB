@@ -385,142 +385,142 @@
     {
       "space": "prefixMVCCMetaEdgeTypeCountDelta",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:243",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:243",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:693"
+      "origin": "pkg/storage/badger_count_deltas.go:244",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:244",
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:243",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:243",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:693"
+      "origin": "pkg/storage/badger_count_deltas.go:244",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:244",
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:243",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:243",
+      "origin": "pkg/storage/badger_count_deltas.go:244",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:244",
       "where": "pkg/storage.BadgerEngine.foldRemainingCountDeltasOnClose pkg/storage/badger_edge_type_count.go:433"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCountDelta",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:243",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:243",
+      "origin": "pkg/storage/badger_count_deltas.go:244",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:244",
       "where": "pkg/storage.BadgerEngine.foldRemainingCountDeltasOnClose pkg/storage/badger_edge_type_count.go:436"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:243",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:243",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:423"
+      "origin": "pkg/storage/badger_count_deltas.go:244",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:244",
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:424"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCountDelta",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:243",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:243",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:430"
+      "origin": "pkg/storage/badger_count_deltas.go:244",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:244",
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:431"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:260",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:260",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:693"
+      "origin": "pkg/storage/badger_count_deltas.go:261",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:261",
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:260",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:260",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:693"
+      "origin": "pkg/storage/badger_count_deltas.go:261",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:261",
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:260",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:260",
+      "origin": "pkg/storage/badger_count_deltas.go:261",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:261",
       "where": "pkg/storage.BadgerEngine.foldRemainingCountDeltasOnClose pkg/storage/badger_edge_type_count.go:433"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:260",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:260",
+      "origin": "pkg/storage/badger_count_deltas.go:261",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:261",
       "where": "pkg/storage.BadgerEngine.foldRemainingCountDeltasOnClose pkg/storage/badger_edge_type_count.go:436"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:260",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:260",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:423"
+      "origin": "pkg/storage/badger_count_deltas.go:261",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:261",
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:424"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:260",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:260",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:430"
+      "origin": "pkg/storage/badger_count_deltas.go:261",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:261",
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:431"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:263",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:263",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:693"
+      "origin": "pkg/storage/badger_count_deltas.go:264",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:264",
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:263",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:263",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:693"
+      "origin": "pkg/storage/badger_count_deltas.go:264",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:264",
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:787"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:263",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:263",
+      "origin": "pkg/storage/badger_count_deltas.go:264",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:264",
       "where": "pkg/storage.BadgerEngine.foldRemainingCountDeltasOnClose pkg/storage/badger_edge_type_count.go:433"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:263",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:263",
+      "origin": "pkg/storage/badger_count_deltas.go:264",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:264",
       "where": "pkg/storage.BadgerEngine.foldRemainingCountDeltasOnClose pkg/storage/badger_edge_type_count.go:436"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:263",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:263",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:423"
+      "origin": "pkg/storage/badger_count_deltas.go:264",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:264",
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:424"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:263",
-      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:263",
-      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:430"
+      "origin": "pkg/storage/badger_count_deltas.go:264",
+      "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:264",
+      "where": "pkg/storage.BadgerEngine.foldRestoredCountDeltas pkg/storage/badger_count_deltas.go:431"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCountDelta",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:411",
-      "func": "pkg/storage.BadgerEngine.discardCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:411",
-      "where": "pkg/storage.BadgerEngine.discardCountDeltas pkg/storage/badger_count_deltas.go:368"
+      "origin": "pkg/storage/badger_count_deltas.go:412",
+      "func": "pkg/storage.BadgerEngine.discardCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:412",
+      "where": "pkg/storage.BadgerEngine.discardCountDeltas pkg/storage/badger_count_deltas.go:369"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_count_deltas.go:411",
-      "func": "pkg/storage.BadgerEngine.discardCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:411",
-      "where": "pkg/storage.BadgerEngine.discardCountDeltas pkg/storage/badger_count_deltas.go:368"
+      "origin": "pkg/storage/badger_count_deltas.go:412",
+      "func": "pkg/storage.BadgerEngine.discardCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:412",
+      "where": "pkg/storage.BadgerEngine.discardCountDeltas pkg/storage/badger_count_deltas.go:369"
     },
     {
       "space": "prefixEdge",
@@ -604,14 +604,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_edge_type_count.go:633",
       "func": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountInTxn pkg/storage/badger_edge_type_count.go:633",
-      "where": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountsForEdgeInTxn pkg/storage/badger_edge_type_count.go:777"
+      "where": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountsForEdgeInTxn pkg/storage/badger_edge_type_count.go:832"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeEndLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_edge_type_count.go:633",
       "func": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountInTxn pkg/storage/badger_edge_type_count.go:633",
-      "where": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountsForEdgeInTxn pkg/storage/badger_edge_type_count.go:782"
+      "where": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountsForEdgeInTxn pkg/storage/badger_edge_type_count.go:837"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeEndLabelCount",
@@ -632,14 +632,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_edge_type_count.go:633",
       "func": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountInTxn pkg/storage/badger_edge_type_count.go:633",
-      "where": "pkg/storage.BadgerEngine.applyEdgeTypeLabelCountDeltasLocked$1 pkg/storage/badger_edge_type_count.go:1013"
+      "where": "pkg/storage.BadgerEngine.applyEdgeTypeLabelCountDeltasLocked$1 pkg/storage/badger_edge_type_count.go:1068"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeStartLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_edge_type_count.go:633",
       "func": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountInTxn pkg/storage/badger_edge_type_count.go:633",
-      "where": "pkg/storage.BadgerEngine.applyEdgeTypeLabelCountDeltasLocked$1 pkg/storage/badger_edge_type_count.go:1013"
+      "where": "pkg/storage.BadgerEngine.applyEdgeTypeLabelCountDeltasLocked$1 pkg/storage/badger_edge_type_count.go:1068"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeEndLabelCount",
@@ -674,14 +674,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_edge_type_count.go:638",
       "func": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountInTxn pkg/storage/badger_edge_type_count.go:638",
-      "where": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountsForEdgeInTxn pkg/storage/badger_edge_type_count.go:777"
+      "where": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountsForEdgeInTxn pkg/storage/badger_edge_type_count.go:832"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeEndLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_edge_type_count.go:638",
       "func": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountInTxn pkg/storage/badger_edge_type_count.go:638",
-      "where": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountsForEdgeInTxn pkg/storage/badger_edge_type_count.go:782"
+      "where": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountsForEdgeInTxn pkg/storage/badger_edge_type_count.go:837"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeEndLabelCount",
@@ -702,14 +702,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_edge_type_count.go:638",
       "func": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountInTxn pkg/storage/badger_edge_type_count.go:638",
-      "where": "pkg/storage.BadgerEngine.applyEdgeTypeLabelCountDeltasLocked$1 pkg/storage/badger_edge_type_count.go:1013"
+      "where": "pkg/storage.BadgerEngine.applyEdgeTypeLabelCountDeltasLocked$1 pkg/storage/badger_edge_type_count.go:1068"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeStartLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_edge_type_count.go:638",
       "func": "pkg/storage.BadgerEngine.adjustEdgeTypeLabelCountInTxn pkg/storage/badger_edge_type_count.go:638",
-      "where": "pkg/storage.BadgerEngine.applyEdgeTypeLabelCountDeltasLocked$1 pkg/storage/badger_edge_type_count.go:1013"
+      "where": "pkg/storage.BadgerEngine.applyEdgeTypeLabelCountDeltasLocked$1 pkg/storage/badger_edge_type_count.go:1068"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeEndLabelCount",
@@ -912,63 +912,63 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:272",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:272",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:579"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:744"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:272",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:272",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:581"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:746"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:284",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:284",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:579"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:744"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:284",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:284",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:581"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:746"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:286",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:286",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:579"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:744"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_label_count.go:286",
       "func": "pkg/storage.BadgerEngine.repairNamedCountLocked$1 pkg/storage/badger_label_count.go:286",
-      "where": "pkg/storage.BadgerEngine.namedCountInNamespace pkg/storage/badger_label_count.go:581"
+      "where": "pkg/storage.BadgerEngine.namedCount pkg/storage/badger_label_count.go:746"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_label_count.go:459",
-      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:459",
-      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:459"
+      "origin": "pkg/storage/badger_label_count.go:457",
+      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:457",
+      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:457"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_label_count.go:470",
-      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:470",
-      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:470"
+      "origin": "pkg/storage/badger_label_count.go:468",
+      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:468",
+      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:468"
     },
     {
       "space": "prefixMVCCMetaLabelCountReady",
       "class": "store-metadata",
-      "origin": "pkg/storage/badger_label_count.go:474",
-      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:474",
-      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:474"
+      "origin": "pkg/storage/badger_label_count.go:472",
+      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:472",
+      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:472"
     },
     {
       "space": "prefixMVCCMetaEdgeBetweenIndexReady",
@@ -3021,13 +3021,13 @@
       "field": "pkg/storage.BadgerTransaction.pendingEdgeTypeLabelCountDeltas",
       "class": "derived-count",
       "func": "pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeLabelCount",
-      "pos": "pkg/storage/badger_edge_type_count.go:910"
+      "pos": "pkg/storage/badger_edge_type_count.go:965"
     },
     {
       "field": "pkg/storage.BadgerTransaction.pendingEdgeTypeLabelCountDeltas",
       "class": "derived-count",
       "func": "pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeLabelCount",
-      "pos": "pkg/storage/badger_edge_type_count.go:912"
+      "pos": "pkg/storage/badger_edge_type_count.go:967"
     },
     {
       "field": "pkg/storage.BadgerTransaction.pendingEdgeTypeLabelCountDeltas",
@@ -3045,13 +3045,13 @@
       "field": "pkg/storage.BadgerTransaction.pendingLabelCountDeltas",
       "class": "derived-count",
       "func": "pkg/storage.BadgerTransaction.bufferAdjustLabelCount",
-      "pos": "pkg/storage/badger_label_count.go:514"
+      "pos": "pkg/storage/badger_label_count.go:512"
     },
     {
       "field": "pkg/storage.BadgerTransaction.pendingLabelCountDeltas",
       "class": "derived-count",
       "func": "pkg/storage.BadgerTransaction.bufferAdjustLabelCount",
-      "pos": "pkg/storage/badger_label_count.go:516"
+      "pos": "pkg/storage/badger_label_count.go:514"
     },
     {
       "field": "pkg/storage.BadgerTransaction.pendingLabelCountDeltas",
@@ -3324,6 +3324,12 @@
       "pos": "pkg/storage/commit_buffer.go:753"
     },
     {
+      "field": "pkg/storage.CountStoreRead.Count",
+      "class": "count-store read answer (detached result value)",
+      "func": "pkg/storage.BadgerEngine.readCountStoreSnapshot$1",
+      "pos": "pkg/storage/badger_count_store_read.go:76"
+    },
+    {
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
@@ -3435,7 +3441,7 @@
       "field": "pkg/storage.WriteBehindBuffer.warnState",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.sizingWarningLocked",
-      "pos": "pkg/storage/commit_buffer.go:1793"
+      "pos": "pkg/storage/commit_buffer.go:1738"
     },
     {
       "field": "pkg/storage.bufferedCardinalityDeltas.edgeTotal",

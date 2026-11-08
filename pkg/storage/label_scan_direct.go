@@ -62,11 +62,11 @@ func (b *BadgerEngine) labelCoversScope(ctx context.Context, scope, label string
 	var err error
 	if scope == "" {
 		total = b.nodeCount.Load()
-		labelled, err = b.namedCount(ctx, countDeltaKindLabel, label)
+		labelled, err = b.namedCount(ctx, countDeltaKindLabel, "", label, false)
 	} else {
 		if total, err = b.entityCountByPrefix(ctx, scope, prefixNode); err == nil {
 			namespace, _, _ := strings.Cut(scope, ":")
-			labelled, err = b.namedCountInNamespace(ctx, countDeltaKindLabel, namespace, label)
+			labelled, err = b.namedCount(ctx, countDeltaKindLabel, namespace, label, true)
 		}
 	}
 	// Failed count hints retain point lookups; cancellation still ends the read.

@@ -1647,61 +1647,6 @@ func (w *WriteBehindBuffer) EdgeCountDelta() int64 {
 	return delta
 }
 
-// EdgeTypeLabelCountDeltaInNamespace sums the buffered positional
-// (label, type) count deltas of one tier (start or end label) in one
-// namespace, for reads answered from the positional counters.
-func (w *WriteBehindBuffer) EdgeTypeLabelCountDeltaInNamespace(sub byte, namespace, label, edgeType string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			if c.edgeTypeLabelDeltas == nil {
-				continue
-			}
-			for key, delta := range c.edgeTypeLabelDeltas {
-				if key.sub == sub && key.namespace == namespace && key.label == label && key.edgeType == edgeType {
-					total += delta
-				}
-			}
-		}
-	}
-	for _, buf := range w.liveBuffers() {
-		sum(buf)
-	}
-	return total
-}
-
-// EdgeTypeLabelCountDelta is EdgeTypeLabelCountDeltaInNamespace across every
-// namespace.
-func (w *WriteBehindBuffer) EdgeTypeLabelCountDelta(sub byte, label, edgeType string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			if c.edgeTypeLabelDeltas == nil {
-				continue
-			}
-			for key, delta := range c.edgeTypeLabelDeltas {
-				if key.sub == sub && key.label == label && key.edgeType == edgeType {
-					total += delta
-				}
-			}
-		}
-	}
-	for _, buf := range w.liveBuffers() {
-		sum(buf)
-	}
-	return total
-}
-
 // EdgeCountDeltaForPrefix is the buffered total edge-count delta restricted to
 // edges whose ID starts with prefix: live buffered edge IDs minus buffered
 // deleted edge IDs. prefix may be empty for the whole graph.

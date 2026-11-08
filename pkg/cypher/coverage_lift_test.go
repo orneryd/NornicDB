@@ -32,7 +32,9 @@ func TestCoverageLiftVectorRelationshipHelpers(t *testing.T) {
 
 	pattern, ok := exec.parseSimpleMatchRelationshipPattern("(l:Left)-[e:REL]->(r:Right)")
 	require.True(t, ok)
-	nodeCtx, edgeCtx, ok := exec.buildRelationshipContext(t.Context(), pattern, edge)
+	nodeCtx := make(map[string]*storage.Node, 2)
+	edgeCtx := make(map[string]*storage.Edge, 1)
+	ok = exec.buildRelationshipContextInto(t.Context(), pattern, edge, nodeCtx, edgeCtx)
 	require.True(t, ok)
 	require.Equal(t, left.ID, nodeCtx["l"].ID)
 	require.Equal(t, right.ID, nodeCtx["r"].ID)
@@ -42,15 +44,15 @@ func TestCoverageLiftVectorRelationshipHelpers(t *testing.T) {
 
 	reversePattern, ok := exec.parseSimpleMatchRelationshipPattern("(r:Right)<-[e:REL]-(l:Left)")
 	require.True(t, ok)
-	nodeCtx, edgeCtx, ok = exec.buildRelationshipContext(t.Context(), reversePattern, edge)
+	ok = exec.buildRelationshipContextInto(t.Context(), reversePattern, edge, nodeCtx, edgeCtx)
 	require.True(t, ok)
 	assert.Equal(t, right.ID, nodeCtx["r"].ID)
 	assert.Equal(t, left.ID, nodeCtx["l"].ID)
 	assert.Same(t, edge, edgeCtx["e"])
 
-	_, _, ok = exec.buildRelationshipContext(t.Context(), parsedSimpleMatchRelationshipPattern{leftVar: "l", leftLabels: []string{"Missing"}, relVar: "e"}, edge)
+	ok = exec.buildRelationshipContextInto(t.Context(), parsedSimpleMatchRelationshipPattern{leftVar: "l", leftLabels: []string{"Missing"}, relVar: "e"}, edge, nodeCtx, edgeCtx)
 	assert.False(t, ok)
-	_, _, ok = exec.buildRelationshipContext(t.Context(), pattern, nil)
+	ok = exec.buildRelationshipContextInto(t.Context(), pattern, nil, nodeCtx, edgeCtx)
 	assert.False(t, ok)
 
 	assert.Equal(t, "[-1,2.5]", formatInlineFloat32Vector([]float32{-1, 2.5}))

@@ -182,6 +182,13 @@ func (f failingCountEngine) NodeCountByLabel(context.Context, string) (int64, er
 	return 0, errCountStore
 }
 
+// ReadCountStore forwards the label-presence probe: this engine fails
+// the counters it overrides, not the label counts that decide whether a counter
+// describes the read.
+func (f failingCountEngine) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	return storage.CountStoreRead{}, errCountStore
+}
+
 func (f failingCountEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	if f.nilEdges {
 		return []*storage.Edge{nil}, nil

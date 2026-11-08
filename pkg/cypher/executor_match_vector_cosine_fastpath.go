@@ -1495,15 +1495,6 @@ func parseSimpleEndpointRef(content string) (string, []string, bool) {
 	return strictNodeHeadLabels(content)
 }
 
-func (e *StorageExecutor) buildRelationshipContext(ctx context.Context, pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
-	nodeCtx := make(map[string]*storage.Node, 2)
-	edgeCtx := make(map[string]*storage.Edge, 1)
-	if !e.buildRelationshipContextInto(ctx, pattern, edge, nodeCtx, edgeCtx) {
-		return nil, nil, false
-	}
-	return nodeCtx, edgeCtx, true
-}
-
 func (e *StorageExecutor) buildRelationshipContextInto(ctx context.Context, pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge, nodeCtx map[string]*storage.Node, edgeCtx map[string]*storage.Edge) bool {
 	if edge == nil {
 		return false
@@ -1535,10 +1526,10 @@ func (e *StorageExecutor) buildRelationshipContextInto(ctx context.Context, patt
 		rightNode = endNode
 	}
 
-	if len(pattern.leftLabels) > 0 && !nodeHasAnyLabel(leftNode, pattern.leftLabels) {
+	if len(pattern.leftLabels) > 0 && !mergeNodeHasLabels(leftNode, pattern.leftLabels) {
 		return false
 	}
-	if len(pattern.rightLabels) > 0 && !nodeHasAnyLabel(rightNode, pattern.rightLabels) {
+	if len(pattern.rightLabels) > 0 && !mergeNodeHasLabels(rightNode, pattern.rightLabels) {
 		return false
 	}
 	if pattern.leftVar != "" {

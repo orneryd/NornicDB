@@ -93,14 +93,14 @@ func (b *BadgerEngine) adjustEdgeTypeCountInTxn(txn *badger.Txn, namespace, edge
 // EdgeCountByTypeInNamespace returns the persisted count of edges of the given
 // type in one namespace (0 when absent).
 func (b *BadgerEngine) EdgeCountByTypeInNamespace(ctx context.Context, namespace, edgeType string) (int64, error) {
-	return b.namedCountInNamespace(ctx, countDeltaKindEdgeType, namespace, edgeType)
+	return b.namedCount(ctx, countDeltaKindEdgeType, namespace, edgeType, true)
 }
 
 // EdgeCountByType returns the total count of edges of the given type across
 // all namespaces. This is the O(#namespaces) point-read fast path behind
 // MATCH ()-[r:T]->() RETURN count(r).
 func (b *BadgerEngine) EdgeCountByType(ctx context.Context, edgeType string) (int64, error) {
-	return b.namedCount(ctx, countDeltaKindEdgeType, edgeType)
+	return b.namedCount(ctx, countDeltaKindEdgeType, "", edgeType, false)
 }
 
 func (b *BadgerEngine) edgeTypeCountReady() (bool, error) {
@@ -650,6 +650,93 @@ func (b *BadgerEngine) EdgeCountByEndLabelInNamespace(ctx context.Context, names
 	return b.sumEdgeTypeLabelCountAcrossNamespaces(ctx, prefixMVCCMetaEdgeTypeEndLabelCount, label, edgeType, namespace)
 }
 
+// edgeTypeLabelCountKeyParts splits one persisted positional-count key into its
+// (label, type) pair.
+func edgeTypeLabelCountKeyParts(key []byte) (label, edgeType string, ok bool) {
+	if len(key) < 3 {
+		return "", "", false
+	}
+	namespaceSep := bytesIndexByte(key[2:], 0)
+	if namespaceSep < 0 {
+		return "", "", false
+	}
+	rest := key[2+namespaceSep+1:]
+	labelSep := bytesIndexByte(rest, 0)
+	if labelSep < 0 {
+		return "", "", false
+	}
+	return string(rest[:labelSep]), string(rest[labelSep+1:]), true
+}
+
+// sumEdgeTypeLabelCountsInTxn sums one positional tier of one label over the
+// requested relationship types, or over every type the tier holds when
+// edgeTypes is empty, in one snapshot: one point read per (namespace, type) or
+// one bounded key scan, never a scan of the relationships themselves.
+func (b *BadgerEngine) sumEdgeTypeLabelCountsInTxn(ctx context.Context, txn *badger.Txn, sub byte, namespace, label string, edgeTypes []string) (int64, error) {
+	if namespace != "" && len(edgeTypes) > 0 {
+		var total int64
+		for i, edgeType := range edgeTypes {
+			duplicate := false
+			for _, previous := range edgeTypes[:i] {
+				if previous == edgeType {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
+				continue
+			}
+			count, err := b.readEdgeTypeLabelCountInTxn(txn, sub, namespace, label, edgeType)
+			if err != nil {
+				return 0, err
+			}
+			total += count
+		}
+		return total, nil
+	}
+	wantedTypes := make(map[string]struct{}, len(edgeTypes))
+	for _, edgeType := range edgeTypes {
+		wantedTypes[edgeType] = struct{}{}
+	}
+	needleLabel := []byte(label)
+	prefix := edgeTypeStartLabelCountPrefix()
+	if sub == prefixMVCCMetaEdgeTypeEndLabelCount {
+		prefix = edgeTypeEndLabelCountPrefix()
+	}
+	if namespace != "" {
+		prefix = edgeTypeLabelCountKey(sub, namespace, label, "")
+	}
+	var total int64
+	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	defer it.Close()
+	var cancel bulkReadCancellation
+	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+		if err := cancel.check(ctx); err != nil {
+			return 0, err
+		}
+		countedLabel, countedType, ok := edgeTypeLabelCountKeyParts(it.Item().Key())
+		if !ok || countedLabel != string(needleLabel) {
+			continue
+		}
+		if len(wantedTypes) > 0 {
+			if _, wanted := wantedTypes[countedType]; !wanted {
+				continue
+			}
+		}
+		if err := it.Item().Value(func(val []byte) error {
+			count, decodeErr := decodeDerivedCount(val)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			total += count
+			return nil
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return total, nil
+}
+
 // sumEdgeTypeLabelCountAcrossNamespaces sums one positional tier across every
 // namespace (O(#namespaces) point reads), or reads one explicitly supplied
 // namespace. ctx is the caller's count context: it owns admission of the tier
@@ -674,55 +761,15 @@ func (b *BadgerEngine) sumEdgeTypeLabelCountAcrossNamespaces(ctx context.Context
 		return 0, err
 	}
 	defer b.edgeTypeCountWriteMu.RUnlock()
-	needleLabel := []byte(label)
-	needleType := []byte(edgeType)
-	var prefix []byte
-	if len(namespace) == 0 {
-		if sub == prefixMVCCMetaEdgeTypeStartLabelCount {
-			prefix = edgeTypeStartLabelCountPrefix()
-		} else {
-			prefix = edgeTypeEndLabelCountPrefix()
-		}
-	}
 	var total int64
 	err := b.withView(func(txn *badger.Txn) error {
+		scope := ""
 		if len(namespace) != 0 {
-			var err error
-			total, err = b.readEdgeTypeLabelCountInTxn(txn, sub, namespace[0], label, edgeType)
-			return err
+			scope = namespace[0]
 		}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		var cancel bulkReadCancellation
-		for it.Rewind(); it.Valid(); it.Next() {
-			if err := cancel.check(ctx); err != nil {
-				return err
-			}
-			key := it.Item().KeyCopy(nil)
-			sep1 := bytes.IndexByte(key[2:], 0)
-			if sep1 < 0 {
-				continue
-			}
-			rest := key[2+sep1+1:]
-			sep2 := bytes.IndexByte(rest, 0)
-			if sep2 < 0 {
-				continue
-			}
-			if !bytes.Equal(rest[:sep2], needleLabel) || !bytes.Equal(rest[sep2+1:], needleType) {
-				continue
-			}
-			if err := it.Item().Value(func(val []byte) error {
-				count, decodeErr := decodeDerivedCount(val)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				total += count
-				return nil
-			}); err != nil {
-				return err
-			}
-		}
-		return nil
+		var sumErr error
+		total, sumErr = b.sumEdgeTypeLabelCountsInTxn(ctx, txn, sub, scope, label, []string{edgeType})
+		return sumErr
 	})
 	if err != nil {
 		return 0, err
@@ -731,11 +778,19 @@ func (b *BadgerEngine) sumEdgeTypeLabelCountAcrossNamespaces(ctx context.Context
 	// make the counter read-your-writes until the flusher lands them
 	// (PR #1043 read-overlay parity).
 	if b.writeBehind != nil {
+		scope := ""
 		if len(namespace) != 0 {
-			total += b.writeBehind.EdgeTypeLabelCountDeltaInNamespace(sub, namespace[0], label, edgeType)
-		} else {
-			total += b.writeBehind.EdgeTypeLabelCountDelta(sub, label, edgeType)
+			scope = namespace[0]
 		}
+		kind := CountStoreRelationshipsByStartLabel
+		if sub == prefixMVCCMetaEdgeTypeEndLabelCount {
+			kind = CountStoreRelationshipsByEndLabel
+		}
+		delta, deltaErr := b.writeBehind.countStoreDelta(ctx, CountStoreReadRequest{Kind: kind, Namespace: scope, Name: label, Types: []string{edgeType}})
+		if deltaErr != nil {
+			return 0, deltaErr
+		}
+		total += delta
 	}
 	return total, nil
 }

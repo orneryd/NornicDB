@@ -83,13 +83,6 @@ func newNOR214Executor(t *testing.T) (*StorageExecutor, *nor214ScanProbe) {
 	return exec, probe
 }
 
-func nor214Rows(t *testing.T, exec *StorageExecutor, query string, params map[string]interface{}) [][]interface{} {
-	t.Helper()
-	result, err := exec.Execute(context.Background(), query, params)
-	require.NoError(t, err, query)
-	return result.Rows
-}
-
 // TestNOR214LabelledLookupRows asserts the exact rows of a labelled equality
 // lookup for each equality shape, including the extra required label that the
 // engine's hint cannot enforce.
@@ -161,7 +154,7 @@ func TestNOR214LabelledLookupRows(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.rows, nor214Rows(t, exec, test.query, test.params), test.query)
+			require.Equal(t, test.rows, rowsOf(t, exec, test.query, test.params), test.query)
 		})
 	}
 }
@@ -175,7 +168,7 @@ func TestNOR214LabelledLookupRows(t *testing.T) {
 func TestNOR214LabelledLookupUsesEqualityHint(t *testing.T) {
 	exec, probe := newNOR214Executor(t)
 	require.Equal(t, [][]interface{}{{"repository documentation"}},
-		nor214Rows(t, exec, "MATCH (r:Reading {id: 'reading-1'}) RETURN r.source AS source", nil))
+		rowsOf(t, exec, "MATCH (r:Reading {id: 'reading-1'}) RETURN r.source AS source", nil))
 
 	options, labelScans, pointReads := probe.take()
 	require.Zero(t, labelScans, "the equality hint scan replaced the unrestricted label scan")
@@ -202,7 +195,7 @@ func TestNOR214LabelledLookupUsesEqualityHint(t *testing.T) {
 func TestNOR214LabelledScanWithoutEqualityKeepsLabelStream(t *testing.T) {
 	exec, probe := newNOR214Executor(t)
 	require.Equal(t, [][]interface{}{{"reading-1"}, {"reading-2"}, {"reading-9"}},
-		nor214Rows(t, exec, "MATCH (r:Reading) RETURN r.id AS id ORDER BY id", nil))
+		rowsOf(t, exec, "MATCH (r:Reading) RETURN r.id AS id ORDER BY id", nil))
 	options, labelScans, _ := probe.take()
 	require.Positive(t, labelScans, "an unrestricted labelled scan is the label-indexed stream: %#v", options)
 	require.Empty(t, options, "no options-driven scan runs for it")

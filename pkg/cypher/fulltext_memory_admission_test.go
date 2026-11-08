@@ -18,7 +18,15 @@ import (
 // been released when another workload's forecast is rejected. The sampler is
 // real; this checks release ordering without prescribing GC/recovery timing.
 func TestFulltextRetainedMemoryApplicationPublic(t *testing.T) {
-	_, store := fulltextMaintainedFixture(t, 160)
+	memorypressure.WithoutRuntimePressure(t)
+	warmExecutor, store := fulltextMaintainedFixture(t, 160)
+	query := fulltextMemoryQueries()[0]
+	// Sample the application budget after one-time parser/procedure setup.
+	// Otherwise cold initialization itself can consume the pressure fixture's
+	// headroom and introduce a release before the reservation being tested.
+	warm, err := warmExecutor.Execute(t.Context(), query, nil)
+	require.NoError(t, err)
+	require.NoError(t, warmExecutor.search().Close())
 	policy := memorypressure.New(t)
 	options := search.DefaultServiceOptions("fulltext_fixture")
 	options.MemoryPolicy = policy
@@ -29,9 +37,9 @@ func TestFulltextRetainedMemoryApplicationPublic(t *testing.T) {
 	executor := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
 	executor.SetSearchServiceResolver("fulltext_fixture", func(string) *search.Service { return service })
 	require.NoError(t, policy.Refresh())
-	query := fulltextMemoryQueries()[0]
 	expected, err := executor.Execute(t.Context(), query, nil)
 	require.NoError(t, err)
+	require.Equal(t, warm.Rows, expected.Rows)
 	require.Len(t, service.FulltextRetention(), 1)
 	require.True(t, service.FulltextRetention()[0].Retained)
 	_, err = policy.Reserve(1 << 30)

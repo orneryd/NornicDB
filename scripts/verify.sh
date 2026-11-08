@@ -23,7 +23,10 @@
 #   VERIFY_LIST=1      show the plan and exit
 set -uo pipefail
 
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/ci/go-memory-policy.sh
+source "${ROOT}/scripts/ci/go-memory-policy.sh"
 STEPS="localization ui llama-libs build tests allocations conformance differential docs"
 BASE="${VERIFY_BASE:-origin/main}"
 BRANCH="${VERIFY_BRANCH:-}"

@@ -1347,7 +1347,11 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		return nil, true, err
 	}
 	if !usedIndex {
-		if filteredCount && (whereClause != "" || len(nodePattern.properties) > 0) {
+		// The store counters answer only the reads they describe, so this
+		// reduction also serves a plain labeled count: it counts the label's
+		// stream through the same admission and WHERE test as the rows, and
+		// never materializes them.
+		if filteredCount {
 			if result, streamed, streamErr := e.tryStreamPipelineFilteredNodeCount(ctx, nodePattern, whereClause, countColumn); streamed || streamErr != nil {
 				return result, true, streamErr
 			}
@@ -1857,7 +1861,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		}
 		if bound, exists := row[nodePattern.variable]; exists {
 			node, isNode := bound.(*storage.Node)
-			if !isNode || node == nil || !e.pipelineNodeMatchesPattern(node, nodePattern) {
+			if !isNode || node == nil || !e.pipelineNodeMatchesPattern(ctx, node, nodePattern) {
 				continue
 			}
 			// The WHERE sees the path too (WHERE length(p) = 0).
@@ -1907,6 +1911,12 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			}
 		}
 		for _, node := range candidates.nodes {
+			// An index seek or scan only discovers candidates: the pattern
+			// decides which of them a row may carry, so nodes hidden by query
+			// memory never become MATCH rows.
+			if !e.pipelineNodeMatchesPattern(ctx, node, nodePattern) {
+				continue
+			}
 			var path interface{}
 			if pathVariable != "" {
 				path = e.pathToMapContext(ctx, PathResult{Nodes: []*storage.Node{node}})
@@ -2071,7 +2081,7 @@ func (e *StorageExecutor) prefetchedPipelineCandidate(ctx context.Context, nodeP
 	}
 	for property, value := range nodePattern.properties {
 		key := nodeBatchMatchKey{label: nodePattern.labels[0], prop: property}
-		if node := prefetched[key][propEqKeyBatch(value)]; node != nil && e.pipelineNodeMatchesPattern(node, nodePattern) {
+		if node := prefetched[key][propEqKeyBatch(value)]; node != nil && e.pipelineNodeMatchesPattern(ctx, node, nodePattern) {
 			return node
 		}
 	}
@@ -2231,7 +2241,7 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 			start, startErr := e.getQueryNode(ctx, store, startID)
 			end, endErr := e.getQueryNode(ctx, store, endID)
 			if startErr != nil || endErr != nil || start == nil || end == nil ||
-				!e.pipelineNodeMatchesPattern(start, match.StartNode) || !e.pipelineNodeMatchesPattern(end, match.EndNode) {
+				!e.pipelineNodeMatchesPattern(ctx, start, match.StartNode) || !e.pipelineNodeMatchesPattern(ctx, end, match.EndNode) {
 				continue
 			}
 			if bound, exists := row[match.StartNode.variable]; exists {
@@ -2337,7 +2347,17 @@ func traceRelationshipList(relationships []*storage.Edge, direction string) [][2
 	return starts
 }
 
-func (e *StorageExecutor) pipelineNodeMatchesPattern(node *storage.Node, pattern nodePatternInfo) bool {
+// pipelineNodeMatchesPattern is the one acceptance test of a MATCH node
+// pattern: a row may carry node only when it has the pattern's labels and
+// properties and query memory shows it. Internal system nodes (labels
+// starting with "_") hold the database's own records and are hidden by
+// shouldHideSystemNodes unless the active database is the system namespace,
+// whichever route found the node (label scan, index seek, prefetch or a row
+// bound earlier).
+func (e *StorageExecutor) pipelineNodeMatchesPattern(ctx context.Context, node *storage.Node, pattern nodePatternInfo) bool {
+	if isSystemNode(node) && shouldHideSystemNodes(e.getStorage(ctx)) {
+		return false
+	}
 	if !mergeNodeHasLabels(node, pattern.labels) {
 		return false
 	}
