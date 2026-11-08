@@ -206,3 +206,8 @@ func (e *ReplicatedEngine) applyEntityCommand(ctx context.Context, kind CommandT
 	}
 	return e.replicator.Apply(ctx, &Command{Type: kind, Data: data, Timestamp: time.Now()}, e.timeout)
 }
+
+// IndexSourceStamp forwards through the declared read-preserving wrapper.
+func (e *ReplicatedEngine) IndexSourceStamp(ctx context.Context) (string, error) {
+	return storage.ReadIndexSourceStamp(ctx, e.Engine)
+}

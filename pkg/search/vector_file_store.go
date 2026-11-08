@@ -13,11 +13,13 @@ import (
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"io"
+	"maps"
 	"os"
 	"slices"
 	"sort"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -65,6 +67,12 @@ type VectorFileStore struct {
 	queryReadMap          *vectorFileReadLease // borrowed only while mu is read-locked; nil reads with ReadAt
 	queryReadSlots        int64                // slot count queryReadMap was established for, mapped or not
 	closed                bool
+	// generation changes on every committed content change; checkpointLoaded,
+	// checkpointDigest and publicationErr describe the last committed tuple.
+	generation       vectorCheckpointGeneration
+	checkpointLoaded bool
+	checkpointDigest string
+	publicationErr   error
 }
 
 type vfsCandidateOffset struct {
@@ -85,15 +93,34 @@ func (v *VectorFileStore) Has(id string) bool {
 	return ok
 }
 
-func (v *VectorFileStore) stateVersion() (count int, slots int64) {
+// stateVersion is the tuple's derivative identity: live count, committed slot
+// count and the generation that changes on every committed content change, so
+// a derivative (ANN overlay, graph) can tell its own source apart.
+func (v *VectorFileStore) stateVersion() (count int, slots int64, generation vectorCheckpointGeneration) {
 	if v == nil {
-		return 0, 0
+		return 0, 0, vectorCheckpointGeneration{}
 	}
 	v.mu.RLock()
 	count = len(v.idToOrdinal)
 	slots = v.nextOrdinal
+	generation = v.generation
 	v.mu.RUnlock()
-	return count, slots
+	return count, slots, generation
+}
+
+// vectorCheckpointGeneration identifies a source lineage and its mutations.
+// Only a new lineage allocates an epoch; normal Add/Remove operations increment
+// a value counter rather than generating and allocating a UUID per vector.
+type vectorCheckpointGeneration struct {
+	Epoch    string `msgpack:"epoch"`
+	Revision uint64 `msgpack:"revision"`
+}
+
+func (g *vectorCheckpointGeneration) advance() {
+	g.Revision++
+	if g.Revision == 0 {
+		g.Epoch = uuid.NewString()
+	}
 }
 
 // VectorFileStoreMeta is persisted to the .meta file (msgpack).
@@ -110,6 +137,11 @@ type VectorFileStoreMeta struct {
 	NodeChunkVectors      map[string][]string          `msgpack:"node_chunk_vectors,omitempty"`
 	NodeMetadataPersisted bool                         `msgpack:"node_metadata_persisted,omitempty"`
 	NodeTypesPersisted    bool                         `msgpack:"node_types_persisted,omitempty"`
+	// Integrity and derivative identity of this exact tuple. A .meta without
+	// them cannot certify its payload/associations and is rebuilt.
+	MetadataDigest string                     `msgpack:"metadata_digest,omitempty"`
+	PayloadDigest  string                     `msgpack:"payload_digest,omitempty"`
+	Generation     vectorCheckpointGeneration `msgpack:"generation,omitempty"`
 }
 
 // NewVectorFileStore creates a new file-backed store and opens the vector file for append.
@@ -119,11 +151,15 @@ func NewVectorFileStore(vecBasePath string, dimensions int) (*VectorFileStore, e
 	if dimensions <= 0 {
 		return nil, localizedError(localization.SearchDimensionsMustBePositive(dimensions), nil)
 	}
+	if err := recoverVectorCheckpoint(vecBasePath); err != nil {
+		return nil, err
+	}
 	vecPath := vecBasePath + ".vec"
 	metaPath := vecBasePath + ".meta"
 
 	v := &VectorFileStore{
 		dimensions:          dimensions,
+		generation:          vectorCheckpointGeneration{Epoch: uuid.NewString()},
 		vecPath:             vecPath,
 		metaPath:            metaPath,
 		idToOrdinal:         make(map[string]int64),
@@ -184,7 +220,7 @@ func NewVectorFileStore(vecBasePath string, dimensions int) (*VectorFileStore, e
 	stride, ok := v.vectorStride()
 	if !ok || dataBytes < 0 || dataBytes%stride != 0 {
 		v.file.Close()
-		return nil, fmt.Errorf("invalid fixed-stride vector file size: %d", stat.Size())
+		return nil, rejectVectorCheckpoint(fmt.Errorf("invalid fixed-stride vector file size: %d", stat.Size()))
 	}
 	v.nextOrdinal = dataBytes / stride
 
@@ -204,17 +240,20 @@ func (v *VectorFileStore) readHeader() error {
 	buf := make([]byte, vecHeaderSize)
 	_, err := io.ReadFull(v.file, buf)
 	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return rejectVectorCheckpoint(err)
+		}
 		return err
 	}
 	if string(buf[:4]) != vecFileMagic {
-		return localizedError(localization.SearchVectorFileMagicInvalid(), nil)
+		return rejectVectorCheckpoint(localizedError(localization.SearchVectorFileMagicInvalid(), nil))
 	}
 	if buf[4] != vecFileVersion {
-		return localizedError(localization.SearchVectorFileVersionUnsupported(buf[4]), nil)
+		return rejectVectorCheckpoint(localizedError(localization.SearchVectorFileVersionUnsupported(buf[4]), nil))
 	}
 	dim := int(binary.LittleEndian.Uint32(buf[5:9]))
 	if dim != v.dimensions {
-		return localizedError(localization.SearchVectorFileDimensionsMismatch(dim, v.dimensions), nil)
+		return rejectVectorCheckpoint(localizedError(localization.SearchVectorFileDimensionsMismatch(dim, v.dimensions), nil))
 	}
 	return nil
 }
@@ -229,9 +268,9 @@ func (v *VectorFileStore) Add(id string, vec []float32) error {
 	defer v.appendMu.Unlock()
 
 	v.mu.RLock()
-	if v.closed || v.file == nil {
+	if err := v.checkpointHealthLocked(); err != nil {
 		v.mu.RUnlock()
-		return errVecFileClosed
+		return err
 	}
 	file := v.file
 	writeFn := v.writeRecord
@@ -253,6 +292,7 @@ func (v *VectorFileStore) Add(id string, vec []float32) error {
 	v.nextOrdinal++
 	_, existed := v.idToOrdinal[id]
 	v.idToOrdinal[id] = ordinal
+	v.generation.advance()
 	if existed {
 		v.obsoleteCount++
 	}
@@ -271,6 +311,7 @@ func (v *VectorFileStore) Remove(id string) bool {
 		return false
 	}
 	delete(v.idToOrdinal, id)
+	v.generation.advance()
 	v.obsoleteCount++
 	return true
 }
@@ -624,143 +665,108 @@ func (v *VectorFileStore) IterateChunked(chunkSize int, fn func(ids []string, ve
 	return nil
 }
 
-// Save atomically commits the ID-to-ordinal map after syncing vector payloads.
+// Save commits the ID-to-ordinal map and its associations as one recoverable
+// tuple after syncing vector payloads. Appends leave the committed payload
+// prefix untouched, so this publication writes metadata only; compaction and
+// relocation stage a complete replacement payload and use the same decision.
 func (v *VectorFileStore) Save() error {
 	v.appendMu.Lock()
 	defer v.appendMu.Unlock()
 	v.mu.RLock()
-	if v.closed {
+	if err := v.checkpointHealthLocked(); err != nil {
 		v.mu.RUnlock()
-		return errVecFileClosed
+		return err
 	}
-	dim := v.dimensions
-	buildCount := v.buildIndexedCount
-	dataSlots := v.nextOrdinal
-	idToOrdinalCopy := make(map[string]int64, len(v.idToOrdinal))
-	for id, ordinal := range v.idToOrdinal {
-		idToOrdinalCopy[id] = ordinal
-	}
-	nodeLabels := cloneStringSlices(v.nodeLabels)
-	nodeTypes := cloneStringMap(v.nodeTypes)
-	nodeNamedVectors := cloneNestedStringMaps(v.nodeNamedVectors)
-	nodePropertyVectors := cloneNestedStringMaps(v.nodePropertyVectors)
-	nodeChunkVectors := cloneStringSlices(v.nodeChunkVectors)
-	nodeMetadataPersisted := v.nodeMetadataPersisted
-	nodeTypesPersisted := v.nodeTypesPersisted
+	meta := v.checkpointMetadataLocked()
 	file := v.file
+	base := v.vecPath[:len(v.vecPath)-len(".vec")]
 	v.mu.RUnlock()
 	if err := file.Sync(); err != nil {
 		return err
 	}
-
-	if err := security.EnsureRootedParent(v.metaPath, 0o755); err != nil {
-		return err
-	}
-	tmpPath := v.metaPath + ".tmp"
-	f, err := security.CreateRootedFile(tmpPath, 0o644)
+	var err error
+	meta.PayloadDigest, err = vectorPayloadDigest(file.File, vecHeaderSize+meta.DataSlots*int64(meta.Dimensions)*4)
 	if err != nil {
 		return err
 	}
-	if err := encodeMsgpackBuffered(f, &VectorFileStoreMeta{
-		Version:               vecFileVersion,
-		Dimensions:            dim,
-		IDToOrdinal:           idToOrdinalCopy,
-		DataSlots:             dataSlots,
-		BuildIndexedCount:     buildCount,
-		NodeLabels:            nodeLabels,
-		NodeTypes:             nodeTypes,
-		NodeNamedVectors:      nodeNamedVectors,
-		NodePropertyVectors:   nodePropertyVectors,
-		NodeChunkVectors:      nodeChunkVectors,
-		NodeMetadataPersisted: nodeMetadataPersisted,
-		NodeTypesPersisted:    nodeTypesPersisted,
-	}); err != nil {
-		_ = f.Close()
-		_ = security.RemoveRootedPath(tmpPath)
+	if err := publishVectorCheckpoint(base, &meta, false); err != nil {
+		v.mu.Lock()
+		v.publicationErr = err
+		v.mu.Unlock()
 		return err
 	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = security.RemoveRootedPath(tmpPath)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = security.RemoveRootedPath(tmpPath)
-		return err
-	}
-	return security.RenameRootedFile(tmpPath, v.metaPath)
+	v.mu.Lock()
+	v.checkpointLoaded = true
+	v.checkpointDigest = meta.MetadataDigest
+	v.mu.Unlock()
+	return nil
 }
 
-// Load populates the store from an existing .vec + .meta. The store must be created with
-// NewVectorFileStore(vecBasePath, dimensions); Load then reads the committed ID-to-ordinal
-// metadata and discards any uncommitted vector tail.
+// checkpointMetadataLocked captures one tuple description. The caller owns mu.
+// Service captures its query metadata under indexMu before calling Save, so an
+// ordinal map is never paired with associations from a different index turn.
+func (v *VectorFileStore) checkpointMetadataLocked() VectorFileStoreMeta {
+	ordinals := make(map[string]int64, len(v.idToOrdinal))
+	for id, ordinal := range v.idToOrdinal {
+		ordinals[id] = ordinal
+	}
+	return VectorFileStoreMeta{
+		Version: vecFileVersion, Dimensions: v.dimensions, DataSlots: v.nextOrdinal,
+		IDToOrdinal: ordinals, BuildIndexedCount: v.buildIndexedCount,
+		NodeLabels: cloneStringSlices(v.nodeLabels), NodeTypes: cloneStringMap(v.nodeTypes),
+		NodeNamedVectors:      cloneNestedStringMaps(v.nodeNamedVectors),
+		NodePropertyVectors:   cloneNestedStringMaps(v.nodePropertyVectors),
+		NodeChunkVectors:      cloneStringSlices(v.nodeChunkVectors),
+		NodeMetadataPersisted: v.nodeMetadataPersisted, NodeTypesPersisted: v.nodeTypesPersisted,
+		Generation: v.generation,
+	}
+}
+
+// Load is the sole vector tuple installer. It verifies metadata and the
+// committed payload prefix before truncating any uncommitted append tail; an
+// append tail is uncommitted because the .meta slot count is the commit point.
 func (v *VectorFileStore) Load() error {
 	v.appendMu.Lock()
 	defer v.appendMu.Unlock()
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.closed {
-		return errVecFileClosed
+	if err := v.checkpointHealthLocked(); err != nil {
+		return err
 	}
-	f, err := security.OpenRootedFile(v.metaPath, os.O_RDONLY, 0)
+	meta, err := decodeVectorCheckpoint(v.metaPath)
 	if err != nil {
 		if os.IsNotExist(err) && v.nextOrdinal == 0 {
-			v.idToOrdinal = make(map[string]int64)
-			return nil
+			return nil // A new, header-only store has no committed population.
+		}
+		if os.IsNotExist(err) {
+			return rejectVectorCheckpoint(err)
 		}
 		return err
-	}
-	defer f.Close()
-	var meta VectorFileStoreMeta
-	if err := util.DecodeMsgpackFile(f.File, &meta); err != nil {
-		return err
-	}
-	if meta.Version != vecFileVersion {
-		return localizedError(localization.SearchVectorFileVersionUnsupported(byte(meta.Version)), nil)
 	}
 	if meta.Dimensions != v.dimensions {
-		return localizedError(localization.SearchVectorMetaDimensionsMismatch(meta.Dimensions, v.dimensions), nil)
+		return rejectVectorCheckpoint(fmt.Errorf("meta dimensions %d do not match vector store dimensions %d", meta.Dimensions, v.dimensions))
 	}
-	if meta.DataSlots < 0 || meta.DataSlots > v.nextOrdinal {
-		return fmt.Errorf("vector metadata slot count %d exceeds data slots %d", meta.DataSlots, v.nextOrdinal)
-	}
-	for id, ordinal := range meta.IDToOrdinal {
-		if ordinal < 0 || ordinal >= meta.DataSlots {
-			return fmt.Errorf("vector metadata ordinal %d for %q is outside %d slots", ordinal, id, meta.DataSlots)
-		}
+	if meta.DataSlots > v.nextOrdinal {
+		return rejectVectorCheckpoint(fmt.Errorf("vector checkpoint slots %d exceed payload slots %d", meta.DataSlots, v.nextOrdinal))
 	}
 	stride, _ := v.vectorStride()
-	// Append handles cannot truncate on Windows. Use a writable handle for
-	// recovery while retaining append semantics on the store's active handle.
-	recoveryFile, err := security.OpenRootedFile(v.vecPath, os.O_RDWR, 0)
+	digest, err := vectorPayloadDigest(v.file.File, vecHeaderSize+meta.DataSlots*stride)
 	if err != nil {
 		return err
 	}
-	if err := v.releaseQueryReadMapLocked(); err != nil {
-		_ = recoveryFile.Close()
-		return err
+	if digest != meta.PayloadDigest {
+		return rejectVectorCheckpoint(errors.New("vector payload integrity mismatch"))
 	}
-	if err := recoveryFile.Truncate(vecHeaderSize + meta.DataSlots*stride); err != nil {
-		_ = recoveryFile.Close()
-		return err
+	if meta.DataSlots < v.nextOrdinal {
+		// Uncommitted append tail: retire it through the same replacement
+		// protocol instead of truncating the shared payload in place.
+		base := v.vecPath[:len(v.vecPath)-len(".vec")]
+		if err := v.stageCheckpointPrefixLocked(base, meta); err != nil {
+			return err
+		}
+		return v.replaceCheckpointLocked(base, meta)
 	}
-	if err := recoveryFile.Close(); err != nil {
-		return err
-	}
-	v.idToOrdinal = meta.IDToOrdinal
-	if v.idToOrdinal == nil {
-		v.idToOrdinal = make(map[string]int64)
-	}
-	v.nextOrdinal = meta.DataSlots
-	v.buildIndexedCount = meta.BuildIndexedCount
-	v.nodeLabels = meta.NodeLabels
-	v.nodeTypes = meta.NodeTypes
-	v.nodeNamedVectors = meta.NodeNamedVectors
-	v.nodePropertyVectors = meta.NodePropertyVectors
-	v.nodeChunkVectors = meta.NodeChunkVectors
-	v.nodeMetadataPersisted = meta.NodeMetadataPersisted
-	v.nodeTypesPersisted = meta.NodeTypesPersisted
-	v.obsoleteCount = meta.DataSlots - int64(len(v.idToOrdinal))
+	v.installCheckpointLocked(meta)
 	return nil
 }
 
@@ -778,6 +784,16 @@ func (v *VectorFileStore) SetNodeQueryMetadataWithTypes(labels map[string][]stri
 func (v *VectorFileStore) setNodeQueryMetadata(labels map[string][]string, types map[string]string, named, properties map[string]map[string]string, chunks map[string][]string, typesPersisted bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	// Empty and nil containers have the same query meaning, including after
+	// an optional field's wire omission. They cannot create a new source
+	// generation on every unchanged checkpoint. Keys and ordered label/chunk
+	// values remain significant; the persisted-presence flags remain separate.
+	if !maps.EqualFunc(v.nodeLabels, labels, slices.Equal[[]string]) || !maps.Equal(v.nodeTypes, types) ||
+		!maps.EqualFunc(v.nodeNamedVectors, named, maps.Equal[map[string]string, map[string]string]) ||
+		!maps.EqualFunc(v.nodePropertyVectors, properties, maps.Equal[map[string]string, map[string]string]) ||
+		!maps.EqualFunc(v.nodeChunkVectors, chunks, slices.Equal[[]string]) || !v.nodeMetadataPersisted || v.nodeTypesPersisted != typesPersisted {
+		v.generation.advance()
+	}
 	v.nodeLabels = cloneStringSlices(labels)
 	v.nodeTypes = cloneStringMap(types)
 	v.nodeNamedVectors = cloneNestedStringMaps(named)
@@ -841,6 +857,10 @@ func (v *VectorFileStore) GetBuildIndexedCount() int64 {
 // Sync flushes the .vec file to disk so progress is visible and durable.
 func (v *VectorFileStore) Sync() error {
 	v.mu.RLock()
+	if err := v.publicationErr; err != nil {
+		v.mu.RUnlock()
+		return err
+	}
 	closed := v.closed
 	file := v.file
 	syncFn := v.syncFile
@@ -862,10 +882,9 @@ func (v *VectorFileStore) CompactIfNeeded() (bool, error) {
 	defer v.appendMu.Unlock()
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return v.compactIfNeededLocked()
-}
-
-func (v *VectorFileStore) compactIfNeededLocked() (bool, error) {
+	if err := v.publicationErr; err != nil {
+		return false, err
+	}
 	if v.closed || v.file == nil {
 		return false, nil
 	}
@@ -924,16 +943,18 @@ func (v *VectorFileStore) compactIfNeededLocked() (bool, error) {
 }
 
 func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
-	tmpPath := v.vecPath + ".tmp-compact"
+	tmpPath := v.vecPath + ".next"
 	tmp, err := security.CreateRootedFile(tmpPath, 0o644)
 	if err != nil {
 		return err
 	}
-	cleanup := func() {
+	publicationStarted := false
+	defer func() {
 		_ = tmp.Close()
-		_ = security.RemoveRootedPath(tmpPath)
-	}
-	defer cleanup()
+		if !publicationStarted {
+			_ = security.RemoveRootedPath(tmpPath)
+		}
+	}()
 
 	header := make([]byte, vecHeaderSize)
 	copy(header, vecFileMagic)
@@ -965,22 +986,13 @@ func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := v.releaseQueryReadMapLocked(); err != nil {
+	meta := v.checkpointMetadataLocked()
+	meta.IDToOrdinal, meta.DataSlots = newOrdinals, int64(len(newOrdinals))
+	meta.BuildIndexedCount = int64(len(newOrdinals))
+	publicationStarted = true
+	if err := v.replaceCheckpointLocked(v.vecPath[:len(v.vecPath)-len(".vec")], meta); err != nil {
 		return err
 	}
-	if err := v.file.Close(); err != nil {
-		return err
-	}
-	if err := security.RenameRootedFile(tmpPath, v.vecPath); err != nil {
-		return err
-	}
-	reopened, err := security.OpenRootedFile(v.vecPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	v.file = reopened
-	v.idToOrdinal = newOrdinals
-	v.nextOrdinal = int64(len(newOrdinals))
 	return nil
 }
 

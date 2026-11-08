@@ -426,17 +426,27 @@ func (s *Service) readLockOrQueue(ctx context.Context, write deferredIndexWrite)
 		if queued || err != nil {
 			return queued, err
 		}
-		if wait {
+		if wait || !s.buildMu.TryRLock() {
+			if !wait && s.buildWrites.open.Load() && s.buildDefersWrites() {
+				continue
+			}
 			s.buildMu.RLock()
+			// A write that waited for a build re-decides first use of the vector
+			// source under the lock it now owns; a rejected saved source is
+			// rebuilt by its population owner before any entry is installed.
+			if err := s.prepareVectorMutation(write); err != nil {
+				s.buildMu.RUnlock()
+				if !errors.Is(err, errVectorSourceNeedsBuild) {
+					return false, err
+				}
+				if err := s.BuildIndexes(s.lifecycleCtx); err != nil {
+					return false, err
+				}
+				continue
+			}
 			return false, nil
 		}
-		if s.buildMu.TryRLock() {
-			return false, nil
-		}
-		if !s.buildWrites.open.Load() || !s.buildDefersWrites() {
-			s.buildMu.RLock()
-			return false, nil
-		}
+		return false, nil
 	}
 }
 
@@ -494,6 +504,13 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 	for _, write := range writes {
 		if write.valid != nil && !write.valid() {
 			continue
+		}
+		if work := s.population.work; work != nil {
+			// Payload callers and ordered settings are not a proof that the
+			// captured database projection is unchanged. They still finish
+			// in order, but this build cannot certify a later restart.
+			work.baseline.SourceStamp = ""
+			work.certificate = populationRecord{}
 		}
 		var err error
 		switch {

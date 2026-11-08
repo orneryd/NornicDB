@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"errors"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -66,7 +65,7 @@ func TestEnablingVectorPersistenceMigratesExistingLiveVectors(t *testing.T) {
 	require.Zero(t, svc.vectorIndex.Count())
 }
 
-func TestLiveVectorIndexSurvivesRestartWithoutStorageRebuild(t *testing.T) {
+func TestLiveVectorIndexRestartRebuildsUncertifiedSource(t *testing.T) {
 	engine := newNamespacedEngine(t)
 	node := &storage.Node{
 		ID:              "live-node",
@@ -87,13 +86,17 @@ func TestLiveVectorIndexSurvivesRestartWithoutStorageRebuild(t *testing.T) {
 	first.SetFulltextIndexPath(fulltextPath)
 	first.SetVectorIndexPath(vectorPath)
 	first.SetPersistenceEnabled(true)
+	// Author of the recovered vector-checkpoint work: #1683 implementation lane
+	// (Codex), 2026-11-01. Establish the complete database population before
+	// testing live reuse: an arbitrary IndexNode prefix alone cannot certify
+	// absent source rows.
+	require.NoError(t, first.BuildIndexes(context.Background()))
 	require.NoError(t, first.IndexNode(node))
 	first.PersistIndexesToDisk()
 	require.NoError(t, first.Close())
 
 	restarted := NewService(&iteratorEngine{
-		Engine:     engine,
-		iterateErr: errors.New("persisted live index must not rebuild from storage"),
+		Engine: engine,
 	}, 2, nil)
 	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
 	restarted.SetFulltextIndexPath(fulltextPath)
