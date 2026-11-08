@@ -85,6 +85,41 @@ fixture="$(mktemp -d)"
 fixture="$(cd "${fixture}" && pwd)"
 trap 'rm -rf "${fixture}"' EXIT
 
+# Exercise the verifier's child environment through its real build step.
+mkdir -p "${fixture}/memory/scripts"
+cp "${verify}" "${fixture}/memory/scripts/verify.sh"
+cat > "${fixture}/memory/Makefile" <<'MAKE'
+build:
+	@printf '%s\n' "$${GOMEMLIMIT-unset}" > observed-limit
+MAKE
+git init --quiet "${fixture}/memory"
+(
+  cd "${fixture}/memory"
+  git config user.name 'Verify self-test'
+  git config user.email 'verify-test@example.invalid'
+  git add scripts/verify.sh Makefile
+  git commit --quiet -m 'memory policy fixture'
+  memory_base="$(git rev-parse HEAD)"
+  for mode in ci-default ci-override local-default local-override; do
+    actions=false
+    expected=unset
+    setting=
+    case "${mode}" in
+      ci-default) actions=true; expected=3GiB ;;
+      ci-override) actions=true; setting=off; expected=off ;;
+      local-override) setting=5GiB; expected=5GiB ;;
+    esac
+    if [[ -n "${setting}" ]]; then
+      env GITHUB_ACTIONS="${actions}" GOMEMLIMIT="${setting}" VERIFY_BASE="${memory_base}" VERIFY_FETCH=0 VERIFY_ALL=1 VERIFY_ONLY=build bash scripts/verify.sh > /dev/null
+    else
+      env -u GOMEMLIMIT GITHUB_ACTIONS="${actions}" VERIFY_BASE="${memory_base}" VERIFY_FETCH=0 VERIFY_ALL=1 VERIFY_ONLY=build bash scripts/verify.sh > /dev/null
+    fi
+    actual="$(cat observed-limit)"
+    [[ "${actual}" == "${expected}" ]] || { echo "FAIL: ${mode} inherited ${actual}, expected ${expected}" >&2; exit 1; }
+  done
+)
+echo 'PASS: verification child memory policy (CI default, explicit off, local default and override)'
+
 # Run the real verifier in plan-only mode on isolated, committed file changes.
 # No tools or checks should run; each plan must select exactly the mapped steps.
 mkdir -p "${fixture}/plan/scripts"

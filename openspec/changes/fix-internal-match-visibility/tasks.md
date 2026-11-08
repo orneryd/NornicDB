@@ -11,5 +11,7 @@
 - [x] Correct same-snapshot count eligibility, buffered visibility composition and pinned relationship traversal.
 - [x] Address reviewer feedback and consolidate reported test/count owners.
 - [x] Fix CI census classifications and preserve quota fault count capability.
-- [ ] Complete latest integrated full-suite CI and updated-head duplicate review.
+- [x] Reproduce and repair the cache-overlap fixture at the typed count boundary, retaining cancellation controls.
+- [x] Qualify a CI-only Go memory budget and coverage attempt diagnostics without weakening checks.
+- [ ] Complete latest integrated full-suite CI, release-failure reconciliation and updated-head duplicate review.
 - [ ] Push release PR with AC evidence; complete CI and update Linear.

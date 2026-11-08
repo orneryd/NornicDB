@@ -23,6 +23,14 @@
 #   VERIFY_LIST=1      show the plan and exit
 set -uo pipefail
 
+# Covered Cypher compilation alone can consume most of a hosted runner. Keep
+# Go-managed memory below that host budget; this soft GC target is inherited
+# by compiler/test children and does not change production server defaults.
+# Explicit operator settings (including "off") always win.
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  export GOMEMLIMIT="${GOMEMLIMIT:-3GiB}"
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STEPS="localization ui llama-libs build tests allocations conformance differential docs"
 BASE="${VERIFY_BASE:-origin/main}"

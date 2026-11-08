@@ -38,13 +38,20 @@ run_pkg_with_retry() {
 	# the CI workflow uses to subset a large package into named buckets.
 	local extra_flags=("$@")
 	local attempts=3
+	local attempt_started status
 
 	# Portable "expand-if-set" pattern: ${arr[@]+"${arr[@]}"} so set -u does
 	# not trip on an empty array (notably on macOS bash 3.2, where empty
 	# array expansion under set -u is treated as unbound).
 	for attempt in $(seq 1 "$attempts"); do
+		attempt_started=$SECONDS
+		printf 'coverage test: %s (attempt %s/%s) started\n' "$pkg" "$attempt" "$attempts"
 		if go test -p 1 -parallel 4 -timeout 30m -coverprofile="$prof" ${extra_flags[@]+"${extra_flags[@]}"} "$pkg"; then
+			printf 'coverage test: %s passed in %ss\n' "$pkg" "$((SECONDS - attempt_started))"
 			return 0
+		else
+			status=$?
+			printf 'coverage test: %s failed in %ss (exit %s)\n' "$pkg" "$((SECONDS - attempt_started))" "$status" >&2
 		fi
 		if [ "$attempt" -lt "$attempts" ]; then
 			echo "retrying coverage test for $pkg (attempt $((attempt + 1))/$attempts)" >&2
