@@ -1,6 +1,6 @@
 # Verification memory and interruption diagnostics
 
-`scripts/verify.sh` and direct `scripts/generate-coverage.sh` runs source the same `scripts/ci/go-memory-policy.sh` policy. When either runs under GitHub Actions (`GITHUB_ACTIONS=true`), it supplies `GOMEMLIMIT=3GiB` unless the caller already provided a nonempty value. This standard Go setting is inherited by compiler, linker and test processes. Local verification and production server defaults are unchanged. An explicit setting, including `GOMEMLIMIT=off`, is preserved.
+`scripts/verify.sh`, direct `scripts/generate-coverage.sh` runs and the trusted `scripts/ci/make-test-shard.sh` runner source the same `scripts/ci/go-memory-policy.sh` policy. When these run under GitHub Actions (`GITHUB_ACTIONS=true`), it supplies `GOMEMLIMIT=3GiB` unless the caller already provided a nonempty value. This standard Go setting is inherited by compiler, linker and test processes. Local verification and production server defaults are unchanged. An explicit setting, including `GOMEMLIMIT=off`, is preserved.
 
 The limit is a soft Go-managed memory target, not an RSS or native-memory cap. More frequent garbage collection can increase compilation time. Every selected test, coverage profile, timeout, retry and failure assertion remains enabled.
 

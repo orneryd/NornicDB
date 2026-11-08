@@ -88,6 +88,7 @@ trap 'rm -rf "${fixture}"' EXIT
 
 # Exercise both public entry points through their actual child processes.
 coverage_script="$(dirname "${verify}")/generate-coverage.sh"
+shard_script="$(dirname "${verify}")/ci/make-test-shard.sh"
 mkdir -p "${fixture}/memory/scripts/ci" "${fixture}/memory/bin"
 cp "${memory_policy}" "${fixture}/memory/scripts/ci/go-memory-policy.sh"
 cp "${verify}" "${fixture}/memory/scripts/verify.sh"
@@ -119,11 +120,13 @@ git init --quiet "${fixture}/memory"
   git add scripts/verify.sh scripts/ci/go-memory-policy.sh Makefile
   git commit --quiet -m 'memory policy fixture'
   memory_base="$(git rev-parse HEAD)"
-  for entry in verification coverage; do
+  for entry in verification coverage shard; do
     if [[ "${entry}" == verification ]]; then
-      command=(bash scripts/verify.sh)
+      memory_command=(bash scripts/verify.sh)
+    elif [[ "${entry}" == coverage ]]; then
+      memory_command=(bash "${coverage_script}" --append "${fixture}/memory/raw.out" memory ./pkg/cypher)
     else
-      command=(bash "${coverage_script}" --append "${fixture}/memory/raw.out" memory ./pkg/cypher)
+      memory_command=(bash "${shard_script}" cypher)
     fi
     for mode in ci-default ci-override local-default local-override; do
       actions=false
@@ -135,16 +138,16 @@ git init --quiet "${fixture}/memory"
         local-override) setting=5GiB; expected=5GiB ;;
       esac
       if [[ -n "${setting}" ]]; then
-        env PATH="${fixture}/memory/bin:${PATH}" GITHUB_ACTIONS="${actions}" GOMEMLIMIT="${setting}" VERIFY_BASE="${memory_base}" VERIFY_FETCH=0 VERIFY_ALL=1 VERIFY_ONLY=build "${command[@]}" > /dev/null
+        env PATH="${fixture}/memory/bin:${PATH}" GITHUB_ACTIONS="${actions}" GOMEMLIMIT="${setting}" VERIFY_BASE="${memory_base}" VERIFY_FETCH=0 VERIFY_ALL=1 VERIFY_ONLY=build "${memory_command[@]}" > /dev/null
       else
-        env -u GOMEMLIMIT PATH="${fixture}/memory/bin:${PATH}" GITHUB_ACTIONS="${actions}" VERIFY_BASE="${memory_base}" VERIFY_FETCH=0 VERIFY_ALL=1 VERIFY_ONLY=build "${command[@]}" > /dev/null
+        env -u GOMEMLIMIT PATH="${fixture}/memory/bin:${PATH}" GITHUB_ACTIONS="${actions}" VERIFY_BASE="${memory_base}" VERIFY_FETCH=0 VERIFY_ALL=1 VERIFY_ONLY=build "${memory_command[@]}" > /dev/null
       fi
       actual="$(cat observed-limit)"
       [[ "${actual}" == "${expected}" ]] || { echo "FAIL: ${entry}/${mode} inherited ${actual}, expected ${expected}" >&2; exit 1; }
     done
   done
 )
-echo 'PASS: verification and direct coverage child memory policy (CI default, explicit off, local default and override)'
+echo 'PASS: verification, coverage and shard child memory policy (CI default, explicit off, local default and override)'
 
 # Run the real verifier in plan-only mode on isolated, committed file changes.
 # No tools or checks should run; each plan must select exactly the mapped steps.
