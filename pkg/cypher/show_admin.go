@@ -342,10 +342,14 @@ func (r *runningTransactionRegistry) terminate(id string) (*runningTransaction, 
 	return tx, true
 }
 
+// transactionTerminatedCode is Neo4j's status for a statement of a
+// terminated transaction.
+const transactionTerminatedCode = "Neo.ClientError.Transaction.Terminated"
+
 // transactionTerminatedError is Neo4j's error for a statement of a
 // terminated transaction.
 func transactionTerminatedError() error {
-	return localizedStatusError("Neo.ClientError.Transaction.Terminated", "Terminated",
+	return localizedStatusError(transactionTerminatedCode, "Terminated",
 		localization.CypherAdminTransactionTerminated())
 }
 

@@ -9,11 +9,17 @@ import (
 )
 
 func logWALRecoveryEvent(logger *slog.Logger, event localization.LogEvent) {
+	logStorageEvent(context.Background(), logger, slog.LevelWarn, event)
+}
+
+// logStorageEvent emits event at level with its stable event_id. A nil
+// logger discards it.
+func logStorageEvent(ctx context.Context, logger *slog.Logger, level slog.Level, event localization.LogEvent) {
 	if logger == nil {
-		logger = discardWALSlog()
+		return
 	}
 	attrs := append([]slog.Attr{slog.String("event_id", string(event.ID))}, event.Attrs...)
-	logger.LogAttrs(context.Background(), slog.LevelWarn, event.Message.Fallback, attrs...)
+	logger.LogAttrs(ctx, level, event.Message.Fallback, attrs...)
 }
 
 // WALLogger receives structured diagnostics emitted by WAL recovery / corruption handlers.
