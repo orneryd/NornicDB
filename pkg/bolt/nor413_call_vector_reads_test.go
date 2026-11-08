@@ -12,7 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync/atomic"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -20,23 +20,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
-
-// nor413BoltReadSpy counts a store's full node point reads and its
-// query-node (vector-free) point reads.
-type nor413BoltReadSpy struct {
-	storage.Engine
-	full, query atomic.Int64
-}
-
-func (s *nor413BoltReadSpy) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
-	s.full.Add(1)
-	return s.Engine.GetNode(ctx, id)
-}
-
-func (s *nor413BoltReadSpy) GetQueryNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
-	s.query.Add(1)
-	return s.Engine.(storage.QueryNodeReader).GetQueryNode(ctx, id)
-}
 
 // newNOR413BoltGraph is a hub linked to four docs, each with a property
 // vector (vec) and a managed 2048-dimension chunk vector in the embedding
@@ -115,7 +98,7 @@ func nor413BoltRun(t *testing.T, driver neo4j.DriverWithContext, explicit bool, 
 // procedure they are read in full, as on the release head.
 func TestNOR413BoltAutoCommitCallReadsUseQueryNodes(t *testing.T) {
 	_, store := newNOR413BoltGraph(t)
-	spy := &nor413BoltReadSpy{Engine: store}
+	spy := storagefault.NewQueryNodeReadSpy(store)
 	_, port := startBoltIntegrationServer(t, spy, boltIntegrationAutocommit)
 	driver := nor413BoltDriver(t, port)
 	for _, tc := range []struct {
@@ -127,15 +110,15 @@ func TestNOR413BoltAutoCommitCallReadsUseQueryNodes(t *testing.T) {
 		{"MATCH (:Hub)-[:HAS]->(d:Doc {k: 3}) CALL db.labels() YIELD label WHERE label = 'Doc' RETURN d.title, d.has_embedding", false},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			spy.full.Store(0)
-			spy.query.Store(0)
+			spy.Full.Store(0)
+			spy.Query.Store(0)
 			require.Equal(t, []string{`["doc 3",true]`}, nor413BoltRun(t, driver, false, tc.query, nil))
 			if tc.vectorFree {
-				require.Positive(t, spy.query.Load(), "row nodes are read without vectors")
-				require.Zero(t, spy.full.Load(), "no row node is read with its vectors")
+				require.Positive(t, spy.Query.Load(), "row nodes are read without vectors")
+				require.Zero(t, spy.Full.Load(), "no row node is read with its vectors")
 			} else {
-				require.Positive(t, spy.full.Load(), "row nodes are read in full")
-				require.Zero(t, spy.query.Load(), "no row node is read without its vectors")
+				require.Positive(t, spy.Full.Load(), "row nodes are read in full")
+				require.Zero(t, spy.Query.Load(), "no row node is read without its vectors")
 			}
 		})
 	}

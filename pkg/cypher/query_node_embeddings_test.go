@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"sync/atomic"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -84,14 +84,22 @@ func (g *largeEmbeddingGraph) link(tb testing.TB, from, to storage.NodeID, relTy
 // embed writes vector as id's managed embedding through the worker sidecar.
 func (g *largeEmbeddingGraph) embed(tb testing.TB, id storage.NodeID, vector []float32) {
 	tb.Helper()
-	stored, err := g.engine.GetNode(tb.Context(), "test:"+id)
+	writeManagedTestChunks(tb, g.engine, "test:"+id, [][]float32{vector})
+}
+
+// writeManagedTestChunks is the fixture owner for worker-sidecar writes.
+// Callers choose their vectors; this owner preserves the current node body
+// and writes matching chunk-count/embedding metadata through the public API.
+func writeManagedTestChunks(tb testing.TB, engine *storage.BadgerEngine, id storage.NodeID, chunks [][]float32) {
+	tb.Helper()
+	stored, err := engine.GetNode(tb.Context(), id)
 	if err != nil {
 		tb.Fatal(err)
 	}
 	payload := storage.CopyNode(stored)
-	payload.ChunkEmbeddings = [][]float32{vector}
-	payload.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": 1}
-	if err := g.engine.UpdateNodeEmbeddingSidecar(tb.Context(), payload); err != nil {
+	payload.ChunkEmbeddings = chunks
+	payload.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": len(chunks)}
+	if err := engine.UpdateNodeEmbeddingSidecar(tb.Context(), payload); err != nil {
 		tb.Fatal(err)
 	}
 }
@@ -179,21 +187,7 @@ func TestGetQueryNodeOutsideTransactionReadsFullNode(t *testing.T) {
 	require.Len(t, node.ChunkEmbeddings, 1, "an executor that may write reads the full node")
 }
 
-// queryNodeReadSpy counts a store's full node reads and query-node reads.
-type queryNodeReadSpy struct {
-	storage.Engine
-	full, query atomic.Int64
-}
-
-func (s *queryNodeReadSpy) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
-	s.full.Add(1)
-	return s.Engine.GetNode(ctx, id)
-}
-
-func (s *queryNodeReadSpy) GetQueryNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
-	s.query.Add(1)
-	return s.Engine.(storage.QueryNodeReader).GetQueryNode(ctx, id)
-}
+type queryNodeReadSpy = storagefault.QueryNodeReadSpy
 
 // TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage: an auto-commit
 // statement that cannot write reads the nodes it binds (id seek, traversal,
@@ -203,7 +197,7 @@ func (s *queryNodeReadSpy) GetQueryNode(ctx context.Context, id storage.NodeID) 
 // procedure call, which may write outside a transaction, reads full nodes.
 func TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage(t *testing.T) {
 	g := newLargeEmbeddingGraph(t, 4)
-	spy := &queryNodeReadSpy{Engine: g.store}
+	spy := storagefault.NewQueryNodeReadSpy(g.store)
 	exec := NewStorageExecutor(spy, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	run := func(t *testing.T, query string) *ExecuteResult {
 		t.Helper()
@@ -219,11 +213,11 @@ func TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage(t *testing.T) {
 	}
 	for _, query := range reads {
 		t.Run(query, func(t *testing.T) {
-			spy.full.Store(0)
-			spy.query.Store(0)
+			spy.Full.Store(0)
+			spy.Query.Store(0)
 			require.Equal(t, [][]interface{}{{"doc 3", true}}, run(t, query).Rows)
-			require.Positive(t, spy.query.Load(), "row nodes are read without vectors")
-			require.Zero(t, spy.full.Load(), "no row node is read with its vectors")
+			require.Positive(t, spy.Query.Load(), "row nodes are read without vectors")
+			require.Zero(t, spy.Full.Load(), "no row node is read with its vectors")
 
 			g.run(t, "BEGIN", nil)
 			inTx := g.run(t, query, nil)
@@ -232,12 +226,12 @@ func TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage(t *testing.T) {
 		})
 	}
 	t.Run("procedure call reads full nodes", func(t *testing.T) {
-		spy.full.Store(0)
-		spy.query.Store(0)
+		spy.Full.Store(0)
+		spy.Query.Store(0)
 		result := run(t, "MATCH (:Hub)-[:HAS]->(n:Doc {k: 3}) CALL db.labels() YIELD label RETURN n.title, n.has_embedding LIMIT 1")
 		require.Equal(t, [][]interface{}{{"doc 3", true}}, result.Rows)
-		require.Zero(t, spy.query.Load())
-		require.Positive(t, spy.full.Load())
+		require.Zero(t, spy.Query.Load())
+		require.Positive(t, spy.Full.Load())
 	})
 }
 

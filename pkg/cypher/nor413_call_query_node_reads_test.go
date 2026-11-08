@@ -11,6 +11,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"math"
 	"runtime"
 	"testing"
@@ -72,21 +73,13 @@ func (g *nor413Graph) embed(tb testing.TB, id storage.NodeID, count int) {
 	if count == 0 {
 		return
 	}
-	stored, err := g.engine.GetNode(tb.Context(), "test:"+id)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	payload := storage.CopyNode(stored)
-	payload.ChunkEmbeddings = make([][]float32, count)
-	for c := range payload.ChunkEmbeddings {
+	chunks := make([][]float32, count)
+	for c := range chunks {
 		vector := make([]float32, nor413Dims)
 		vector[c%nor413Dims] = 1
-		payload.ChunkEmbeddings[c] = vector
+		chunks[c] = vector
 	}
-	payload.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": count}
-	if err := g.engine.UpdateNodeEmbeddingSidecar(tb.Context(), payload); err != nil {
-		tb.Fatal(err)
-	}
+	writeManagedTestChunks(tb, g.engine, "test:"+id, chunks)
 	g.vectorBytes += uint64(count * nor413Dims * 4)
 }
 
@@ -213,7 +206,7 @@ func TestNOR413CallSubqueryAfterFullReadsKeepsAllocationBound(t *testing.T) {
 // head.
 func TestNOR413AutoCommitCallReadsUseQueryNodes(t *testing.T) {
 	g := newNOR413Graph(t, 4, 2)
-	spy := &queryNodeReadSpy{Engine: g.store}
+	spy := storagefault.NewQueryNodeReadSpy(g.store)
 	exec := NewStorageExecutor(spy, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, tc := range []struct {
 		query      string
@@ -224,8 +217,8 @@ func TestNOR413AutoCommitCallReadsUseQueryNodes(t *testing.T) {
 		{nor413ReadProcedure, false},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			spy.full.Store(0)
-			spy.query.Store(0)
+			spy.Full.Store(0)
+			spy.Query.Store(0)
 			result, err := exec.Execute(context.Background(), tc.query, map[string]interface{}{"ids": g.ids})
 			require.NoError(t, err)
 			require.Len(t, result.Rows, len(g.ids))
@@ -240,12 +233,12 @@ func TestNOR413AutoCommitCallReadsUseQueryNodes(t *testing.T) {
 func nor413RequireReadMode(t *testing.T, spy *queryNodeReadSpy, vectorFree bool) {
 	t.Helper()
 	if vectorFree {
-		require.Positive(t, spy.query.Load(), "row nodes are read without vectors")
-		require.Zero(t, spy.full.Load(), "no node is read with its vectors")
+		require.Positive(t, spy.Query.Load(), "row nodes are read without vectors")
+		require.Zero(t, spy.Full.Load(), "no node is read with its vectors")
 		return
 	}
-	require.Positive(t, spy.full.Load(), "row nodes are read in full")
-	require.Zero(t, spy.query.Load(), "no node is read without its vectors")
+	require.Positive(t, spy.Full.Load(), "row nodes are read in full")
+	require.Zero(t, spy.Query.Load(), "no node is read without its vectors")
 }
 
 // nor413DocGraph is largeEmbeddingGraph's hub and docs, each doc with a

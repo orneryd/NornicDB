@@ -11,6 +11,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"testing"
 
 	apoccoll "github.com/orneryd/nornicdb/apoc/coll"
@@ -221,7 +222,7 @@ func TestNOR413CallStatementReadModes(t *testing.T) {
 	nor413CallLookup(t)
 	nor413RegisterNodeTitle(t)
 	g := newLargeEmbeddingGraph(t, 4)
-	spy := &queryNodeReadSpy{Engine: g.store}
+	spy := storagefault.NewQueryNodeReadSpy(g.store)
 	exec := NewStorageExecutor(spy, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	const match = "MATCH (:Hub)-[:HAS]->(n:Doc {k: 3}) "
 	for _, tc := range []struct {
@@ -239,8 +240,8 @@ func TestNOR413CallStatementReadModes(t *testing.T) {
 		{match + "CALL { WITH n RETURN n.title AS title } RETURN nor413.title(n)", false},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			spy.full.Store(0)
-			spy.query.Store(0)
+			spy.Full.Store(0)
+			spy.Query.Store(0)
 			result, err := exec.Execute(context.Background(), tc.query, nil)
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{"doc 3"}}, result.Rows)
