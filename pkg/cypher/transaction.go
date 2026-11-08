@@ -38,9 +38,10 @@ type TransactionContext struct {
 	// Captured at BEGIN, independent of user-editable tx.setMetaData values.
 	coordinatorOwned bool
 	active           bool
-	// storageRolledBack records early cleanup after a memory failure. The
-	// protocol transaction stays failed until its owner receives COMMIT or
-	// ROLLBACK, while staged storage and its budget are released immediately.
+	// storageRolledBack records early cleanup after a failure that ended the
+	// transaction (endsTransaction). The protocol transaction stays failed
+	// until its owner receives COMMIT or ROLLBACK, while staged storage and its
+	// budget are released immediately.
 	// (The flags sit together so the context keeps its allocation size.)
 	storageRolledBack bool
 	tx                interface{}    // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
@@ -82,7 +83,7 @@ func (e *StorageExecutor) failTransaction(ctx context.Context, err error) error 
 		// the cause. Later statements and COMMIT read this display after the
 		// producer has regained control of its error value.
 		tx.failed = localization.ProjectError(err, err.Error(), nil, nil)
-		if code, _ := nornicerrors.Neo4jStatus(err); code == transactionMemoryLimitCode || code == memoryPoolOutOfMemoryCode {
+		if endsTransaction(err) {
 			if storageTx, ok := tx.tx.(*storage.BadgerTransaction); ok {
 				if rollbackErr := storageTx.Rollback(); rollbackErr == nil {
 					tx.storageRolledBack = true
@@ -112,6 +113,22 @@ func (e *StorageExecutor) failTransaction(ctx context.Context, err error) error 
 		}
 	}
 	return err
+}
+
+// endsTransaction reports whether err ended its transaction, as Neo4j
+// terminates it: a memory limit, a transaction timeout (the server's, NOR-284,
+// or the client's) or TERMINATE TRANSACTIONS. Such a transaction releases its
+// native storage at once (staged writes and their memory, its key locks and
+// its write admission), so an idle client holds nothing other transactions
+// or schema changes wait for; it stays failed until its owner ends it.
+func endsTransaction(err error) bool {
+	switch code, _ := nornicerrors.Neo4jStatus(err); code {
+	case transactionMemoryLimitCode, memoryPoolOutOfMemoryCode,
+		nornicerrors.TransactionTimedOut, nornicerrors.TransactionTimedOutClientConfiguration,
+		transactionTerminatedCode:
+		return true
+	}
+	return false
 }
 
 // remoteFailureRollbackContext bounds a failed transaction's remote

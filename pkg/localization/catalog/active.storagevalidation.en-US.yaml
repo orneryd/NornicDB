@@ -140,6 +140,8 @@
   other: "conflict detected: edge {{.EdgeID}} changed after transaction start"
 - id: storage.transaction.deadlock_detected
   other: "deadlock detected: waiting for the lock on a {{.Label}}.{{.Property}} key would wait for this transaction itself"
+- id: storage.transaction.lock_wait_timed_out
+  other: "transaction timed out: waited {{.Timeout}}, the transaction timeout, for the lock on a {{.Label}}.{{.Property}} key another transaction holds"
 - id: storage.transaction.node_changed
   other: "conflict detected: node {{.NodeID}} changed after transaction start"
 - id: storage.transaction.node_changed_detailed

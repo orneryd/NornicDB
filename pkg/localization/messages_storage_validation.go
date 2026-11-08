@@ -75,6 +75,7 @@ const (
 	MessageStorageTransactionEdgeChanged                    MessageID = "storage.transaction.edge_changed"
 	MessageStorageTransactionNodeChanged                    MessageID = "storage.transaction.node_changed"
 	MessageStorageTransactionDeadlockDetected               MessageID = "storage.transaction.deadlock_detected"
+	MessageStorageTransactionLockWaitTimedOut               MessageID = "storage.transaction.lock_wait_timed_out"
 	MessageStorageTransactionNodeChangedDetailed            MessageID = "storage.transaction.node_changed_detailed"
 	MessageStorageTransactionConcurrentModification         MessageID = "storage.transaction.concurrent_modification"
 	MessageStorageTransactionEndpointDeleted                MessageID = "storage.transaction.endpoint_deleted"
@@ -328,6 +329,13 @@ func StorageTransactionEdgeChanged(edgeID string) Message {
 // key that the lock's holder is, through its own waits, waiting for.
 func StorageTransactionDeadlockDetected(label, property string) Message {
 	return storageValidationMessage(MessageStorageTransactionDeadlockDetected, fmt.Sprintf("deadlock detected: waiting for the lock on a %s.%s key would wait for this transaction itself", label, property), map[string]any{"Label": label, "Property": property})
+}
+
+// StorageTransactionLockWaitTimedOut is a MERGE that waited the server's
+// transaction timeout for the lock on a constraint key another transaction
+// holds; timeout is that timeout (a Go duration such as "30s").
+func StorageTransactionLockWaitTimedOut(label, property, timeout string) Message {
+	return storageValidationMessage(MessageStorageTransactionLockWaitTimedOut, fmt.Sprintf("transaction timed out: waited %s, the transaction timeout, for the lock on a %s.%s key another transaction holds", timeout, label, property), map[string]any{"Label": label, "Property": property, "Timeout": timeout})
 }
 func StorageTransactionNodeChanged(nodeID string) Message {
 	return storageValidationMessage(MessageStorageTransactionNodeChanged, fmt.Sprintf("conflict detected: node %s changed after transaction start", nodeID), map[string]any{"NodeID": nodeID})
