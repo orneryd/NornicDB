@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Partition the exact go test ./... package set across independent runners.
 set -euo pipefail
+# shellcheck source=scripts/ci/go-memory-policy.sh
+source "$(dirname "${BASH_SOURCE[0]}")/go-memory-policy.sh"
+printf 'Go test memory target: %s\n' "${GOMEMLIMIT:-default}"
 shard="${1:?usage: make-test-shard.sh cypher|storage|server|storagecensus|capturecensus|command|other}"
 case "$shard" in cypher|storage|server|storagecensus|capturecensus|command|other) ;; *) echo "Unknown shard: $shard" >&2; exit 2;; esac
 packages=()
