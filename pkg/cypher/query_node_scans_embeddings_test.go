@@ -211,6 +211,7 @@ func TestFabricFragmentQueryNodeEligibility(t *testing.T) {
 		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) RETURN n", true},
 		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) SET n.seen = 1 RETURN n", false},
 		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) CALL db.labels() YIELD label RETURN n LIMIT 1", false},
+		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) CALL { WITH n RETURN n.title AS title } RETURN n, title", false},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			g := newLargeEmbeddingGraph(t, 2)

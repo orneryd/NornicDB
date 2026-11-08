@@ -199,8 +199,8 @@ func (s *queryNodeReadSpy) GetQueryNode(ctx context.Context, id storage.NodeID) 
 // statement that cannot write reads the nodes it binds (id seek, traversal,
 // relationship endpoint) without their stored vectors, as a transaction does,
 // and answers the same rows; n.has_embedding answers from the metadata. A
-// statement with a procedure call, which may write outside a transaction,
-// reads full nodes.
+// read-only CALL subquery doesn't change that (NOR-413). A statement with a
+// procedure call, which may write outside a transaction, reads full nodes.
 func TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage(t *testing.T) {
 	g := newLargeEmbeddingGraph(t, 4)
 	spy := &queryNodeReadSpy{Engine: g.store}
@@ -215,6 +215,7 @@ func TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage(t *testing.T) {
 		"MATCH (n) WHERE id(n) = 'doc-3' RETURN n.title, n.has_embedding",
 		"MATCH (:Hub)-[:HAS]->(n:Doc {k: 3}) RETURN n.title, n.has_embedding",
 		"MATCH (:Hub)-[r:HAS]->(:Doc {k: 3}) RETURN endNode(r).title, endNode(r).has_embedding",
+		"MATCH (h:Hub) CALL { WITH h MATCH (h)-[:HAS]->(n:Doc {k: 3}) RETURN n } RETURN n.title, n.has_embedding",
 	}
 	for _, query := range reads {
 		t.Run(query, func(t *testing.T) {
