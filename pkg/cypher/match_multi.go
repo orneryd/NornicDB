@@ -179,7 +179,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			var paths []PathResult
 			if boundStartNode != nil {
-				if !e.pipelineNodeMatchesPattern(boundStartNode, matches.StartNode) {
+				if !e.pipelineNodeMatchesPattern(ctx, boundStartNode, matches.StartNode) {
 					continue
 				}
 				if matches.IsChained && len(matches.Segments) > 1 {
@@ -230,7 +230,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			// Check if variable is already bound
 			if boundNode := existing[nodePattern.variable]; boundNode != nil {
-				if !e.pipelineNodeMatchesPattern(boundNode, nodePattern) {
+				if !e.pipelineNodeMatchesPattern(ctx, boundNode, nodePattern) {
 					continue
 				}
 				newBindings = append(newBindings, existing)
@@ -1552,7 +1552,7 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 		reversed := reverseTraversalMatch(match)
 		return reversed != nil && e.evaluateBoundOneHopPattern(ctx, reversed, nodes)
 	}
-	if !e.pipelineNodeMatchesPattern(start, match.StartNode) {
+	if !e.pipelineNodeMatchesPattern(ctx, start, match.StartNode) {
 		return false
 	}
 	viewport, _ := TemporalViewportFromContext(ctx)

@@ -1285,7 +1285,7 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 	if len(match.StartNode.properties) > 0 || len(match.StartNode.labels) > 0 {
 		var filtered []*storage.Node
 		for _, n := range startNodes {
-			if e.pipelineNodeMatchesPattern(n, match.StartNode) {
+			if e.pipelineNodeMatchesPattern(ctx, n, match.StartNode) {
 				filtered = append(filtered, n)
 			}
 		}
