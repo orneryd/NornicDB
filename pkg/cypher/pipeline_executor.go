@@ -1908,8 +1908,8 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		}
 		for _, node := range candidates.nodes {
 			// An index seek or scan only discovers candidates: the pattern
-			// decides which of them a row may carry, so a node query memory
-			// hides never becomes a MATCH row.
+			// decides which of them a row may carry, so nodes hidden by query
+			// memory never become MATCH rows.
 			if !e.pipelineNodeMatchesPattern(ctx, node, nodePattern) {
 				continue
 			}
