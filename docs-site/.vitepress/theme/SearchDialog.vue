@@ -122,7 +122,7 @@ onBeforeUnmount(() => {
       :aria-expanded="opened"
       :aria-controls="id + '-panel'"
       :aria-describedby="opened && !query.trim() ? id + '-guidance' : undefined"
-      placeholder="Search docs…"
+      placeholder="What can we find?"
       @focus="open"
       @input="open"
       @click="open"
@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
           :id="id + '-guidance'"
           class="search-guidance"
         >
-          <p>Find a guide, configuration option, or source symbol.</p>
+          <p>Ask a question or search for a guide, setting, or code.</p>
           <div>
             <button @click="example('hybrid search')">Hybrid search</button
             ><button @click="example('authentication')">Authentication</button

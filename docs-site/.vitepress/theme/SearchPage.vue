@@ -147,7 +147,7 @@ onBeforeUnmount(() => {
         v-model="query"
         type="search"
         maxlength="240"
-        placeholder="For example: hybrid search"
+        placeholder="How do I use hybrid search?"
       /><label class="search-scope"
         >Search in
         <select v-model="type">

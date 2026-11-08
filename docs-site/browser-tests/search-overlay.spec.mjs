@@ -111,11 +111,15 @@ for (const width of [1440, 390, 320])
       }),
       before = await input.boundingBox(),
       scroll = await page.evaluate(() => scrollY);
+    await expect(input).toHaveAttribute("placeholder", "What can we find?");
     await input.click();
     const panel = page.getByRole("dialog", { name: "Documentation search" });
     await expect(panel).toBeVisible();
     await expect(panel).toHaveAttribute("aria-modal", "false");
     await expect(panel.locator(".search-guidance")).toBeVisible();
+    await expect(panel.locator(".search-guidance p")).toHaveText(
+      "Ask a question or search for a guide, setting, or code.",
+    );
     const focused = await input.boundingBox();
     expect(Math.abs(focused.x - before.x)).toBeLessThan(1);
     expect(Math.abs(focused.y - before.y)).toBeLessThan(1);
