@@ -421,21 +421,35 @@ func TestNodeRuntimeNamespaceProjectionPreservesMetadataAndIdentity(t *testing.T
 	}
 
 	named := []struct {
-		name string
-		read func(NodeID) (*Node, error)
+		name   string
+		read   func(NodeID) (*Node, error)
+		source func(NodeID) (*Node, error)
 	}{
-		{"GetNode", func(id NodeID) (*Node, error) { return store.GetNode(t.Context(), id) }},
-		{"GetQueryNode", func(id NodeID) (*Node, error) { return store.GetQueryNode(t.Context(), id) }},
-		{"GetNodeWithoutEmbeddings", func(id NodeID) (*Node, error) { return store.GetNodeWithoutEmbeddings(t.Context(), id) }},
-		{"GetNodeLatestVisible", func(id NodeID) (*Node, error) { return store.GetNodeLatestVisible(t.Context(), id) }},
+		{"GetNode", func(id NodeID) (*Node, error) { return store.GetNode(t.Context(), id) }, nil},
+		{"GetQueryNode", func(id NodeID) (*Node, error) { return store.GetQueryNode(t.Context(), id) }, func(id NodeID) (*Node, error) { return engine.GetQueryNode(t.Context(), id) }},
+		{"GetNodeWithoutEmbeddings", func(id NodeID) (*Node, error) { return store.GetNodeWithoutEmbeddings(t.Context(), id) }, nil},
+		{"GetNodeLatestVisible", func(id NodeID) (*Node, error) { return store.GetNodeLatestVisible(t.Context(), id) }, nil},
 	}
 	for _, tc := range named {
 		t.Run(tc.name, func(t *testing.T) {
+			expectedIdentity, expectedMetadata := wantIdentity, wantMetadata
+			if tc.source != nil {
+				// The lightweight read can now coexist with a full cached
+				// image. Compare namespace projection to that same inner read
+				// class, whose decode pins a physical body revision, rather
+				// than substituting the full cached write's provenance.
+				source, err := tc.source(NodeID(namespace + ":" + string(userID)))
+				require.NoError(t, err)
+				sourceState := source.runtimeState()
+				expectedIdentity = runtimeIdentityFixture{state: sourceState, attempt: sourceState.embeddingAttempt}
+				expectedMetadata = source.RuntimeMetadata()
+				expectedMetadata.Database = namespace
+			}
 			node, err := tc.read(userID)
 			require.NoError(t, err)
 			require.Equal(t, userID, node.ID, "the namespace prefix is stripped")
-			requireRuntimeMetadata(t, tc.name, node, wantMetadata)
-			requireRuntimeIdentity(t, tc.name, node, wantIdentity)
+			requireRuntimeMetadata(t, tc.name, node, expectedMetadata)
+			requireRuntimeIdentity(t, tc.name, node, expectedIdentity)
 			require.Equal(t, EntityIdentity{Database: namespace, LocalID: string(userID)}, node.Identity())
 		})
 	}

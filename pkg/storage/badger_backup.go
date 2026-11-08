@@ -199,8 +199,7 @@ func restoreEngine(engine Engine, path string) error {
 
 func (b *BadgerEngine) invalidateCachesAfterRestore() {
 	b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
-	b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
-	b.queryNodeCache = nil
+	b.resetNodeReadCachesLocked()
 	b.nodeCacheMu.Unlock()
 
 	b.nodeBodyCacheMu.Lock()
@@ -567,12 +566,12 @@ func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, li
 		b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
 		for id := range b.nodeCache {
 			if strings.HasPrefix(string(id), prefix) {
-				delete(b.nodeCache, id)
+				b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
 			}
 		}
 		for id := range b.queryNodeCache {
 			if strings.HasPrefix(string(id), prefix) {
-				delete(b.queryNodeCache, id)
+				b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
 			}
 		}
 		b.nodeCacheMu.Unlock()

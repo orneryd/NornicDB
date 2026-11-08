@@ -15,8 +15,11 @@ import (
 // This module centralizes cache writes/invalidations for BadgerEngine.
 //
 // Invariants:
-//   - Node cache stores deep copies (see copyNode) and GetNode returns a deep
-//     copy, so callers cannot mutate cached state.
+//   - Full and query node images share a byte budget, including hydrated
+//     vector payloads. Query reads keep their lightweight decoded image
+//     instead of deep-copying a full cached image's stored chunks.
+//   - Cached images and returned images are detached, so callers cannot
+//     mutate cached state.
 //   - Edge type cache is an acceleration structure for GetEdgesByType and must
 //     be invalidated whenever edges of a type are created/deleted OR when an
 //     edge changes its Type.
@@ -51,25 +54,43 @@ func (g *cacheGeneration) current() uint64 { return g.n.Load() }
 // advance records a write; the caller holds the cache's lock.
 func (g *cacheGeneration) advance() { g.n.Add(1) }
 
-// cacheStoreNode caches node as written (a write: see cacheGeneration).
+// copyNodeForReadCache avoids copying an image that cannot fit the byte
+// budget. Cache admission itself is serialized in putNodeLocked.
+func (b *BadgerEngine) copyNodeForReadCache(node *Node) *Node {
+	if node == nil || estimateNodeReadCacheBytes(node) > b.nodeReadCacheLimit() {
+		return nil
+	}
+	return copyNode(node)
+}
+
+// cacheStoreNode caches an eligible node as written (a write: see
+// cacheGeneration). An ineligible replacement still invalidates every older
+// image, including a query image from before this write.
 func (b *BadgerEngine) cacheStoreNode(node *Node, source uint64) {
 	if node == nil {
 		return
 	}
 	// Prepare immutable state before publication. Ordinary cache-hit copies
 	// inherit this same owner record without allocating another one.
-	cached := copyNode(node)
-	state := cached.runtimeState()
-	state.embeddingOwner, state.embeddingOwnerID = b, node.ID
-	state.embeddingRevision, state.embeddingAttempt = EmbeddingBodyRevision{}, nil
-	cached.setRuntimeState(state)
+	cached := b.copyNodeForReadCache(node)
+	if cached != nil {
+		state := cached.runtimeState()
+		state.embeddingOwner, state.embeddingOwnerID = b, node.ID
+		state.embeddingRevision, state.embeddingAttempt = EmbeddingBodyRevision{}, nil
+		cached.setRuntimeState(state)
+	}
 	b.durableCaches.mu.Lock()
 	defer b.durableCaches.mu.Unlock()
 	if source < b.durableCaches.nodeFloor(node.ID) {
 		return
 	}
 	b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
-	b.putNodeLocked(cached, nodeReadCacheFull)
+	b.deleteNodeReadCacheLocked(node.ID, nodeReadCacheQuery)
+	if cached != nil {
+		b.putNodeLocked(cached, nodeReadCacheFull)
+	} else {
+		b.deleteNodeReadCacheLocked(node.ID, nodeReadCacheFull)
+	}
 	b.nodeCacheMu.Unlock()
 	b.cacheDeleteNode(node.ID, nodeCacheBodyOnly)
 }
@@ -81,7 +102,10 @@ func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node, mode nodeReadCacheM
 	if node == nil {
 		return
 	}
-	cached := copyNode(node)
+	cached := b.copyNodeForReadCache(node)
+	if cached == nil {
+		return
+	}
 	b.durableCaches.mu.Lock()
 	defer b.durableCaches.mu.Unlock()
 	if source < b.durableCaches.nodeFloor(node.ID) {
@@ -93,7 +117,7 @@ func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node, mode nodeReadCacheM
 		return
 	}
 	if mode == nodeReadCacheQuery {
-		if _, full := b.nodeCache[node.ID]; !full {
+		if full := b.nodeCache[node.ID]; full == nil || len(full.ChunkEmbeddings) > 0 {
 			b.putNodeLocked(cached, nodeReadCacheQuery)
 		}
 		b.nodeCacheMu.Unlock()
@@ -105,22 +129,95 @@ func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node, mode nodeReadCacheM
 }
 
 // putNodeLocked stores an already-copied body in the selected cache while the
-// caller holds nodeCacheMu. A full image supersedes its query-only image.
+// caller holds nodeCacheMu. A full read may coexist with a lightweight query
+// image; a write invalidates that image before entering this owner.
 func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
+	b.deleteNodeReadCacheLocked(copied.ID, mode)
+	bytes := estimateNodeReadCacheBytes(copied)
+	limit := b.nodeReadCacheLimit()
+	if bytes > limit {
+		return
+	}
+	// Evict individual immutable images instead of clearing every hot node
+	// when one large vector payload reaches the budget.
+	for id := range b.nodeCache {
+		if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.nodeCache) < b.nodeCacheMaxEntries || mode == nodeReadCacheQuery) {
+			break
+		}
+		b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
+	}
+	for id := range b.queryNodeCache {
+		if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.queryNodeCache) < b.nodeCacheMaxEntries || mode != nodeReadCacheQuery) {
+			break
+		}
+		b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
+	}
 	if mode == nodeReadCacheQuery {
-		if b.queryNodeCache == nil || (b.nodeCacheMaxEntries > 0 && len(b.queryNodeCache) > b.nodeCacheMaxEntries) {
+		if b.queryNodeCache == nil {
 			b.queryNodeCache = make(map[NodeID]*Node)
 		}
 		b.queryNodeCache[copied.ID] = copied
+		b.nodeCacheBytes += bytes
 		return
 	}
-	// Simple eviction: if cache is too large, clear it.
-	// Keeps behavior consistent with existing code paths.
-	if b.nodeCacheMaxEntries > 0 && len(b.nodeCache) > b.nodeCacheMaxEntries {
+	if b.nodeCache == nil {
 		b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
 	}
 	b.nodeCache[copied.ID] = copied
-	delete(b.queryNodeCache, copied.ID)
+	b.nodeCacheBytes += bytes
+}
+
+func (b *BadgerEngine) nodeReadCacheLimit() int64 {
+	if b.nodeCacheMaxBytes > 0 {
+		return b.nodeCacheMaxBytes
+	}
+	return defaultBadgerNodeCacheMaxBytes
+}
+
+func estimateNodeReadCacheBytes(node *Node) int64 {
+	bytes := estimateNodeBodyCacheBytes(node)
+	for _, chunk := range node.ChunkEmbeddings {
+		bytes += 24 + int64(len(chunk))*4
+	}
+	for name, vector := range node.NamedEmbeddings {
+		bytes += 48 + int64(len(name)) + int64(len(vector))*4
+	}
+	return bytes
+}
+
+// deleteNodeReadCacheLocked is the sole per-image removal/accounting owner.
+func (b *BadgerEngine) deleteNodeReadCacheLocked(id NodeID, mode nodeReadCacheMode) {
+	cache := b.nodeCache
+	if mode == nodeReadCacheQuery {
+		cache = b.queryNodeCache
+	}
+	if node := cache[id]; node != nil {
+		b.nodeCacheBytes -= estimateNodeReadCacheBytes(node)
+	}
+	delete(cache, id)
+}
+
+func (b *BadgerEngine) resetNodeReadCachesLocked() {
+	b.nodeCache = make(map[NodeID]*Node)
+	b.queryNodeCache = nil
+	b.nodeCacheBytes = 0
+}
+
+// nodeReadCacheImageLocked selects an immutable current-value image. A query
+// read never borrows hydrated chunks from a full image: its first read decodes
+// the lightweight storage image, and subsequent point/label reads reuse that
+// query image. The caller holds nodeCacheMu for reading.
+func (b *BadgerEngine) nodeReadCacheImageLocked(id NodeID, mode nodeReadCacheMode) (*Node, bool) {
+	if mode == nodeReadCacheQuery {
+		if query, found := b.queryNodeCache[id]; found {
+			return query, true
+		}
+	}
+	node, found := b.nodeCache[id]
+	if found && mode == nodeReadCacheQuery && len(node.ChunkEmbeddings) > 0 {
+		return nil, false
+	}
+	return node, found
 }
 
 // cacheLoadQueryNode returns a caller-owned copy of id's GetQueryNode entry,
@@ -579,8 +676,8 @@ func (b *BadgerEngine) cacheDeleteNode(id NodeID, selection nodeCacheSelection) 
 	}
 	if selection == nodeCacheAllForms {
 		b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
-		delete(b.nodeCache, id)
-		delete(b.queryNodeCache, id)
+		b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
+		b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
 		b.nodeCacheMu.Unlock()
 	}
 	b.nodeBodyCacheMu.Lock()

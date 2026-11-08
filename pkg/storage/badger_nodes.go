@@ -251,10 +251,7 @@ func (b *BadgerEngine) getNodeByID(ctx context.Context, id NodeID, v readVisibil
 			return false, nil
 		}
 		b.nodeCacheMu.RLock()
-		value, found := b.nodeCache[id]
-		if !found && cacheMode == nodeReadCacheQuery {
-			value, found = b.queryNodeCache[id]
-		}
+		value, found := b.nodeReadCacheImageLocked(id, cacheMode)
 		if found {
 			node = value
 		}
@@ -280,12 +277,7 @@ func (b *BadgerEngine) getNodeByID(ctx context.Context, id NodeID, v readVisibil
 				return err
 			}
 			node, err = decode(txn, item)
-			if node != nil {
-				state := node.runtimeState()
-				state.embeddingRevision = EmbeddingBodyRevision{physical: item.Version()}
-				state.embeddingOwner, state.embeddingOwnerID = b, id
-				node.setRuntimeState(state)
-			}
+			b.bindNodeReadSource(node, id, item.Version())
 			return err
 		})
 	}
@@ -367,9 +359,10 @@ func (b *BadgerEngine) getNodeSnapshotForRead(ctx context.Context, id NodeID, fo
 // GetQueryNode implements QueryNodeReader with GetNode's reads (the
 // write-behind overlay, the node cache, the stored body) and its embedding
 // metadata, without reading separately stored chunk vectors. In-memory
-// vectors belong to the returned caller-owned copy. The vector-free
-// node is cached apart from the node cache (queryNodeCache), so full reads
-// never see it and still hydrate.
+// inline vectors belong to the returned caller-owned copy. The lightweight
+// image is cached apart from the full image (queryNodeCache), so warming a
+// full read cannot make later metadata reads copy separately stored chunks;
+// full reads never take the lightweight entry and still return all vectors.
 func (b *BadgerEngine) GetQueryNode(ctx context.Context, id NodeID) (*Node, error) {
 	return b.readNodeMetadata(ctx, id, visibleRead, nodeItemQueryMetadata)
 }
