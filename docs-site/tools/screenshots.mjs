@@ -59,7 +59,7 @@ for(const [name,width,height] of [['desktop',1440,1050],['mobile',390,844]]){
   await input.click();
   await page.screenshot({path:`.screenshots/search-guidance-${name}.png`});
   await input.fill('hybrid search');
-  await page.locator('.search-timing').waitFor({timeout:10000});
+  await page.getByText('Semantic search', {exact: true}).first().waitFor({timeout:10000});
   await page.screenshot({path:`.screenshots/search-results-${name}.png`});
 }
 await browser.close();

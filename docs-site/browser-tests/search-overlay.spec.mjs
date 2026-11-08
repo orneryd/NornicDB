@@ -1,4 +1,80 @@
 import { test, expect } from "@playwright/test";
+test("semantic requests wait until typing stops", async ({ page }) => {
+  const queries = [];
+  await page.route("**/api/search?**", async (route) => {
+    queries.push(new URL(route.request().url()).searchParams.get("q"));
+    await route.fulfill({
+      json: {
+        mode: "semantic",
+        results: [
+          {
+            id: "result",
+            title: "Semantic result",
+            url: "/start",
+            text: "result",
+          },
+        ],
+      },
+    });
+  });
+  await page.goto("start");
+  const input = page.getByRole("combobox", {
+    name: "Search documentation and code",
+  });
+  await input.fill("hyb");
+  await page.waitForTimeout(350);
+  await input.fill("hybrid");
+  await page.waitForTimeout(350);
+  await input.fill("hybrid search");
+  expect(queries).toEqual([]);
+  await expect(
+    page.getByText("Semantic result", { exact: true }),
+  ).toBeVisible();
+  expect(queries).toEqual(["hybrid search"]);
+  await expect(page.getByLabel("Semantic search timing")).toHaveCount(0);
+});
+test("a new query cancels an older semantic request", async ({ page }) => {
+  const aborted = [];
+  let releaseOld;
+  const holdOld = new Promise((resolve) => {
+    releaseOld = resolve;
+  });
+  page.on("requestfailed", (request) => {
+    if (request.url().includes("/api/search?"))
+      aborted.push(new URL(request.url()).searchParams.get("q"));
+  });
+  await page.route("**/api/search?**", async (route) => {
+    const query = new URL(route.request().url()).searchParams.get("q");
+    if (query === "old search") await holdOld;
+    await route
+      .fulfill({
+        json: {
+          mode: "semantic",
+          results: [{ id: query, title: query, url: "/start", text: query }],
+        },
+      })
+      .catch(() => {});
+  });
+  await page.goto("start");
+  const input = page.getByRole("combobox", {
+    name: "Search documentation and code",
+  });
+  const first = page.waitForRequest((request) =>
+    request.url().includes("q=old+search"),
+  );
+  await input.fill("old search");
+  await first;
+  await input.fill("new search");
+  await expect(page.getByRole("link", { name: "new search" })).toBeVisible();
+  await expect.poll(() => aborted).toContain("old search");
+  await expect(
+    page.getByText(
+      "Nornic search did not respond. Using full-text search instead.",
+    ),
+  ).toHaveCount(0);
+  releaseOld();
+  await page.unrouteAll({ behavior: "wait" });
+});
 for (const width of [1440, 390, 320])
   test(`anchored search preserves input and document positions at ${width}px`, async ({
     page,
@@ -49,12 +125,7 @@ for (const width of [1440, 390, 320])
       panel.getByText("Hybrid search guide", { exact: true }),
     ).toBeVisible();
     await expect(panel.locator(".search-guidance")).toHaveCount(0);
-    await expect(panel.getByLabel("Semantic search timing")).toContainText(
-      "Server 7.25 ms",
-    );
-    await expect(panel.getByLabel("Semantic search timing")).toContainText(
-      /Latency \d+ ms/,
-    );
+    await expect(panel.getByLabel("Semantic search timing")).toHaveCount(0);
     const bounds = await panel.boundingBox();
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);

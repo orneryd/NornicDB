@@ -531,19 +531,6 @@ input:focus-visible {
   margin: 4px 0 10px;
   box-shadow: none;
 }
-.search-timing {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 18px;
-  margin: 6px 0 12px;
-  color: var(--vp-c-text-2);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.search-timing strong {
-  color: var(--vp-c-text-1);
-  font-weight: 500;
-}
 @media (max-width: 767px) {
   .inline-search {
     flex-basis: 112px;
