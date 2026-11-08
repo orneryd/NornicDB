@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +33,7 @@ func TestCheckpointMetadataDigestSurvivesWireRoundTrip(t *testing.T) {
 // combination and rebuild the complete current text/vector population.
 func TestCheckpointPopulationCancellationAfterVectorPublication(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := storage.NewBadgerEngine(filepath.Join(dir, "graph"))
+	engine, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
 	require.NoError(t, err)
 	defer engine.Close()
 	seed := compatStoreService(engine, dir)

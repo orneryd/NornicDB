@@ -73,15 +73,17 @@ publication files. The mutation benchmark above does not measure that I/O cost.
 
 A separate paired fixture saves 1,000 or 10,000 128-dimensional vectors, five
 operations per sample and three samples. Baseline and candidate ran sequentially
-with local tests stopped and CPU profiling enabled. Candidate includes the final
-publication-error and schema-source review corrections after `c588e1328`.
+with local tests stopped. The final candidate measurements include the canonical
+typed-state JSON encoder correction after `cd9d8f14`. The earlier paired CPU
+profile covered the publication-error and schema-source corrections; the final
+encoder rerun measured timing and allocations without CPU profiling.
 
 | Vectors | Version | Median ms/op | Range ms/op | B/op range | Allocs/op range |
 | --- | --- | ---: | ---: | ---: | ---: |
 | 1,000 | Release | 9.81 | 9.63–10.42 | 81,123–81,196 | 2,061 |
-| 1,000 | Candidate | 39.00 | 36.21–39.36 | 338,688–549,505 | 7,299–7,300 |
+| 1,000 | Candidate | 36.42 | 33.57–36.79 | 453,035–880,905 | 9,321–9,326 |
 | 10,000 | Release | 10.61 | 10.42–11.01 | 679,443–889,534 | 20,089–20,090 |
-| 10,000 | Candidate | 41.79 | 40.39–43.99 | 3,490,665–4,462,032 | 70,395–70,421 |
+| 10,000 | Candidate | 43.39 | 42.79–45.39 | 4,364,641–4,573,987 | 90,422–90,427 |
 
 This is a substantial checkpoint-path cost, not a speedup: payload/association
 integrity checks, metadata decoding and the durable publication decision add work

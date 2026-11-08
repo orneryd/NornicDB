@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -15,7 +16,7 @@ import (
 // source instead of replaying that row.
 func TestCheckpointDoesNotRestoreFulltextRowDeletedWithoutDelivery(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := storage.NewBadgerEngine(filepath.Join(dir, "graph"))
+	engine, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
 	require.NoError(t, err)
 	svc := compatStoreService(engine, dir)
 	t.Cleanup(func() { _ = svc.Close(); _ = engine.Close() })
@@ -31,7 +32,7 @@ func TestCheckpointDoesNotRestoreFulltextRowDeletedWithoutDelivery(t *testing.T)
 	require.NoError(t, svc.Close())
 	require.NoError(t, engine.Close())
 
-	reopened, err := storage.NewBadgerEngine(filepath.Join(dir, "graph"))
+	reopened, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
 	require.NoError(t, err)
 	restored := compatStoreService(reopened, dir)
 	defer func() { require.NoError(t, restored.Close()); require.NoError(t, reopened.Close()) }()

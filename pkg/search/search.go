@@ -4092,7 +4092,11 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		}
 	}
 	vectorsAdmitted := false
-	if w := s.population.work; w != nil {
+	if w := s.population.work; w != nil && snapshot != nil {
+		// A new population is certifiable only while its source capture stays
+		// pinned through final comparison. Independent before/after stamps
+		// cannot prove fallback traversal observed one state. sourceStamp
+		// still admits an already-certified saved tuple without traversal.
 		w.baseline = populationRecord{SourceStamp: sourceStamp, VectorSettings: s.vectorSourcePolicy()}
 	}
 	var storageNodeCount int64

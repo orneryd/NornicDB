@@ -3,13 +3,13 @@ package search
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -75,9 +75,9 @@ func vectorMetadataDigest(meta VectorFileStoreMeta) (string, error) {
 	if len(meta.NodeChunkVectors) == 0 {
 		meta.NodeChunkVectors = nil
 	}
-	// encoding/json sorts string map keys, including the nested association
+	// The typed-state JSON owner sorts map keys, including nested association
 	// maps. Label/chunk slices deliberately keep their semantic order.
-	data, err := json.Marshal(meta)
+	data, err := convert.PropertyJSON.MarshalState(meta)
 	if err != nil {
 		return "", err
 	}
