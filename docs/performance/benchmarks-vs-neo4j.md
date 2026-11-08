@@ -1,12 +1,12 @@
 # Historical NornicDB vs Neo4j Performance Benchmark
 
-> **Historical benchmark archive:** This page records v0.1.0 measurements on a 48-node / 56-relationship fixture. It is retained for provenance and does not represent the current benchmark headline. See the [current 48k-product / 48k-order Northwind comparison](1.1.0-northwind-results/comparison.md) for the latest Neo4j comparison, including correctness fingerprints, power, memory, and storage measurements.
+> **Historical benchmark archive:** This page records v0.1.0 measurements on a 48-node / 56-relationship fixture. It is retained for provenance and does not represent the current benchmark headline. See the [current 48k-product / 48k-order Northwind comparison](../development/archive/benchmarks/database-comparison-baseline/comparison.md) for the latest Neo4j comparison, including correctness fingerprints, power, memory, and storage measurements.
 
 > **Result recorded by this historical run:** NornicDB with Apple Metal GPU measured **1.6-4.9x faster** operations than Neo4j, with a **35-47% additional boost** from GPU acceleration under the configuration below.
 
 ---
 
-## 🏆 Key Results (Northwind Dataset - Consolidated)
+## Key Results (Northwind Dataset - Consolidated)
 
 | Metric                | NornicDB (Metal) | Neo4j         | Winner          |
 | --------------------- | ---------------- | ------------- | --------------- |
@@ -18,7 +18,7 @@
 
 ---
 
-## 💻 Test Environment
+## Test Environment
 
 ### macOS (Apple Silicon - Primary)
 
@@ -40,11 +40,11 @@
 
 ---
 
-## 📊 Northwind Benchmark (48 nodes, 56 relationships)
+## Northwind Benchmark (48 nodes, 56 relationships)
 
 _Averaged across 3 runs (2 with Metal, 1 without). Variance: ±2-4%_
 
-### 🏆 Where NornicDB Dominates (2x+ faster)
+### Where NornicDB Dominates (2x+ faster)
 
 | Query                            | NornicDB (Metal) | Neo4j    | Speedup  |
 | -------------------------------- | ---------------- | -------- | -------- |
@@ -64,7 +64,7 @@ _Averaged across 3 runs (2 with Metal, 1 without). Variance: ±2-4%_
 | **Products in Beverages**        | 3,395 hz         | 2,050 hz | **1.7x** |
 | **Expensive products (>30)**     | 3,085 hz         | 2,013 hz | **1.5x** |
 
-### ✅ Where NornicDB Wins (1.0-1.5x faster)
+### Where NornicDB Wins (1.0-1.5x faster)
 
 | Query                             | NornicDB (Metal) | Neo4j    | Speedup   |
 | --------------------------------- | ---------------- | -------- | --------- |
@@ -78,7 +78,7 @@ _Averaged across 3 runs (2 with Metal, 1 without). Variance: ±2-4%_
 | **Orders per customer**           | 1,792 hz         | 1,805 hz | **0.99x** |
 | **Products per supplier**         | 1,876 hz         | 1,804 hz | **1.04x** |
 
-### ⚠️ Where Neo4j is Competitive
+### Where Neo4j is Competitive
 
 | Query                             | NornicDB (Metal) | Neo4j    | Ratio | Notes                   |
 | --------------------------------- | ---------------- | -------- | ----- | ----------------------- |
@@ -90,7 +90,7 @@ _Averaged across 3 runs (2 with Metal, 1 without). Variance: ±2-4%_
 
 ---
 
-## 📈 Metal GPU Acceleration Impact
+## Metal GPU Acceleration Impact
 
 _Comparing NornicDB without Metal vs with Metal enabled:_
 
@@ -108,7 +108,7 @@ _Comparing NornicDB without Metal vs with Metal enabled:_
 
 ---
 
-## 🔧 Optimizations Applied
+## Optimizations Applied
 
 Performance improvements implemented (no functionality changes):
 
@@ -122,7 +122,7 @@ Performance improvements implemented (no functionality changes):
 
 ---
 
-## 📊 Performance Characteristics
+## Performance Characteristics
 
 ### Where NornicDB Excels
 
@@ -144,7 +144,7 @@ Performance improvements implemented (no functionality changes):
 
 ---
 
-## 🔗 References
+## References
 
 - [Neo4j Performance Benchmarks](https://neo4j.com/docs/operations-manual/current/performance/)
 - [Graph Database Benchmark Consortium (LDBC)](https://ldbcouncil.org/benchmarks/snb/)
@@ -152,7 +152,7 @@ Performance improvements implemented (no functionality changes):
 
 ---
 
-## 📋 Raw Benchmark Output
+## Raw Benchmark Output
 
 <details>
 <summary>Click to expand full benchmark logs</summary>
@@ -222,7 +222,7 @@ Performance improvements implemented (no functionality changes):
 
 ---
 
-## 🧪 Reproduce These Results
+## Reproduce These Results
 
 ```bash
 # Start NornicDB
@@ -386,7 +386,7 @@ what does this data mean?
 
 GitHub Copilot: Looking at these benchmark results comparing **NornicDB** (your custom graph database) vs **Neo4j** on the Northwind dataset, here's what the data tells us:
 
-## 📊 Summary: NornicDB is Faster Overall
+## Summary: NornicDB is Faster Overall
 
 ### Key Metrics Explained
 
@@ -399,7 +399,7 @@ GitHub Copilot: Looking at these benchmark results comparing **NornicDB** (your 
 
 ---
 
-## 🏆 NornicDB vs Neo4j Comparison
+## NornicDB vs Neo4j Comparison
 
 ### Where NornicDB Dominates (2x+ faster):
 
@@ -426,13 +426,13 @@ GitHub Copilot: Looking at these benchmark results comparing **NornicDB** (your 
 
 ---
 
-## 🎯 What This Means
+## What This Means
 
 1. **Read operations in this v0.1.0 fixture** measured 1.5-4x faster than Neo4j
 
 2. **Write operations are MUCH faster** - 3.5x faster create/delete (important for agent memory workloads)
 
-3. **Simple queries shine** - Count, lookup by ID/name are blazing fast
+3. **Simple queries shine** - Count, lookup by ID/name are fast
 
 4. **Complex aggregations need work** - Some GROUP BY queries are slower (this is where Neo4j's mature optimizer helps)
 
@@ -440,7 +440,7 @@ GitHub Copilot: Looking at these benchmark results comparing **NornicDB** (your 
 
 ---
 
-## 💡 Recommendations
+## Recommendations
 
 Your parallel execution work should help with the aggregation queries (Products per category, Orders per customer) where NornicDB is currently slower. Those involve scanning + grouping large result sets - perfect for parallel execution!
 
@@ -666,9 +666,9 @@ Find category by name - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts 
 
 user@laptop NornicDB %
 
-GitHub Copilot: ## 📊 NornicDB vs Neo4j Performance Breakdown (Metal GPU Enabled)
+GitHub Copilot: ##  NornicDB vs Neo4j Performance Breakdown (Metal GPU Enabled)
 
-### 🔥 Overall: NornicDB is **1.5x - 4.3x faster** across the board
+### Overall: NornicDB is **1.5x - 4.3x faster** across the board
 
 ---
 
@@ -676,7 +676,7 @@ GitHub Copilot: ## 📊 NornicDB vs Neo4j Performance Breakdown (Metal GPU Enabl
 
 | Query Type                        | NornicDB (ops/s) | Neo4j (ops/s) | **Speedup** | Notes                     |
 | --------------------------------- | ---------------- | ------------- | ----------- | ------------------------- |
-| **Top products by revenue**       | 4,959            | 1,849         | **2.68x**   | 🥇 Fastest NornicDB query |
+| **Top products by revenue**       | 4,959            | 1,849         | **2.68x**   |  Fastest NornicDB query |
 | **Create/delete relationship**    | 4,938            | 1,308         | **3.78x**   | Massive write advantage   |
 | **Orders by customer ALFKI**      | 4,145            | 2,094         | **1.98x**   | Simple traversal          |
 | **Customer orders to products**   | 4,130            | 1,725         | **2.39x**   | Multi-hop traversal       |
@@ -699,16 +699,16 @@ GitHub Copilot: ## 📊 NornicDB vs Neo4j Performance Breakdown (Metal GPU Enabl
 | **Customer→supplier→orders**      | 1,908            | 1,851         | **1.03x**   | 3-hop traversal           |
 | **Supplier→category→products**    | 1,907            | 1,714         | **1.11x**   | 3-hop traversal           |
 | **Orders per customer**           | 1,907            | 1,863         | **1.02x**   | GROUP BY                  |
-| **Get all customers**             | 1,897            | 1,934         | **0.98x**   | ⚠️ Neo4j wins slightly    |
-| **Products per supplier**         | 1,898            | 1,931         | **0.98x**   | ⚠️ Neo4j wins slightly    |
-| **Get all categories**            | 1,884            | 1,949         | **0.97x**   | ⚠️ Neo4j wins slightly    |
-| **Customers with order lists**    | 1,865            | 1,948         | **0.96x**   | ⚠️ Neo4j wins slightly    |
-| **Total qty ordered per product** | 1,169            | 1,843         | **0.63x**   | ⚠️ Neo4j wins             |
-| **Get all products**              | 1,141            | 1,801         | **0.63x**   | ⚠️ Neo4j wins             |
+| **Get all customers**             | 1,897            | 1,934         | **0.98x**   |  Neo4j wins slightly    |
+| **Products per supplier**         | 1,898            | 1,931         | **0.98x**   |  Neo4j wins slightly    |
+| **Get all categories**            | 1,884            | 1,949         | **0.97x**   |  Neo4j wins slightly    |
+| **Customers with order lists**    | 1,865            | 1,948         | **0.96x**   |  Neo4j wins slightly    |
+| **Total qty ordered per product** | 1,169            | 1,843         | **0.63x**   |  Neo4j wins             |
+| **Get all products**              | 1,141            | 1,801         | **0.63x**   |  Neo4j wins             |
 
 ---
 
-## 🎯 Key Insights
+## Key Insights
 
 ### Where NornicDB Dominates (2x+ faster):
 
@@ -737,7 +737,7 @@ GitHub Copilot: ## 📊 NornicDB vs Neo4j Performance Breakdown (Metal GPU Enabl
 
 ---
 
-## 📈 Metal GPU Impact
+## Metal GPU Impact
 
 Comparing to your **previous run without Metal**:
 
@@ -753,7 +753,7 @@ Comparing to your **previous run without Metal**:
 
 ---
 
-## 🔧 Optimization Opportunities
+## Optimization Opportunities
 
 The two queries where Neo4j wins significantly:
 
@@ -767,12 +767,12 @@ These would benefit from:
 
 Want me to optimize these specific queries?
 
-Timothy-Sweet_cvsh: Get all customers 1,897 1,934 0.98x ⚠️ Neo4j wins slightly
-Products per supplier 1,898 1,931 0.98x ⚠️ Neo4j wins slightly
-Get all categories 1,884 1,949 0.97x ⚠️ Neo4j wins slightly
-Customers with order lists 1,865 1,948 0.96x ⚠️ Neo4j wins slightly
-Total qty ordered per product 1,169 1,843 0.63x ⚠️ Neo4j wins
-Get all products 1,141 1,801 0.63x ⚠️ Neo4j wins
+Timothy-Sweet_cvsh: Get all customers 1,897 1,934 0.98x  Neo4j wins slightly
+Products per supplier 1,898 1,931 0.98x  Neo4j wins slightly
+Get all categories 1,884 1,949 0.97x  Neo4j wins slightly
+Customers with order lists 1,865 1,948 0.96x  Neo4j wins slightly
+Total qty ordered per product 1,169 1,843 0.63x  Neo4j wins
+Get all products 1,141 1,801 0.63x  Neo4j wins
 
 check if they are easy performance gains such as regex not compiled up front if we can, better cleanup and management of things, etc.. CHANGE NO FUNCTIONALITY
 

@@ -1,66 +1,66 @@
-# Composite Database Implementation - Comprehensive Analysis
+# Composite database implementation notes
 
-**Date:** 2024-12-04  
-**Status:** Complete
+**Date:** 2024-12-04
+**Scope:** Historical implementation record. Current behavior is documented in the [topology guide](../user-guides/infinigraph-topology.md).
 
 ## Executive Summary
 
-All composite database features have been fully implemented, tested, and documented. The implementation is production-ready with comprehensive test coverage and complete schema merging (including all index types).
+The sections below describe composite database management, query routing, and schema handling at the date recorded above. They do not establish support for every composite query or index combination. Check the current topology guide and the tests in `pkg/multidb` and `pkg/cypher` for the selected release.
 
 ---
 
 ## Completed Features
 
 ### 1. Core Composite Database Management
-- ✅ CREATE COMPOSITE DATABASE
-- ✅ DROP COMPOSITE DATABASE
-- ✅ SHOW COMPOSITE DATABASES
-- ✅ SHOW CONSTITUENTS FOR COMPOSITE DATABASE
-- ✅ ALTER COMPOSITE DATABASE ADD ALIAS
-- ✅ ALTER COMPOSITE DATABASE DROP ALIAS
+-  CREATE COMPOSITE DATABASE
+-  DROP COMPOSITE DATABASE
+-  SHOW COMPOSITE DATABASES
+-  SHOW CONSTITUENTS FOR COMPOSITE DATABASE
+-  ALTER COMPOSITE DATABASE ADD ALIAS
+-  ALTER COMPOSITE DATABASE DROP ALIAS
 
 ### 2. Query Execution
-- ✅ Transparent querying across all constituents
-- ✅ Result merging with deduplication
-- ✅ Write routing (label-based and property-based)
-- ✅ Read operations from all constituents
-- ✅ Error handling for offline constituents
+-  Transparent querying across all constituents
+-  Result merging with deduplication
+-  Write routing (label-based and property-based)
+-  Read operations from all constituents
+-  Error handling for offline constituents
 
 ### 3. Schema Merging
-- ✅ **Constraints**: All constraint types merged (UNIQUE, NODE_KEY, EXISTS)
-- ✅ **Property Indexes**: Merged from all constituents
-- ✅ **Composite Indexes**: Merged from all constituents
-- ✅ **Full-text Indexes**: Merged from all constituents
-- ✅ **Vector Indexes**: Merged from all constituents
-- ✅ **Range Indexes**: Merged from all constituents
-- ✅ **Deduplication**: Duplicate indexes/constraints by name are deduplicated
+-  **Constraints**: All constraint types merged (UNIQUE, NODE_KEY, EXISTS)
+-  **Property Indexes**: Merged from all constituents
+-  **Composite Indexes**: Merged from all constituents
+-  **Full-text Indexes**: Merged from all constituents
+-  **Vector Indexes**: Merged from all constituents
+-  **Range Indexes**: Merged from all constituents
+-  **Deduplication**: Duplicate indexes/constraints by name are deduplicated
 
 ### 4. Result Deduplication
-- ✅ Node deduplication by ID in all query methods
-- ✅ Edge deduplication by ID in all query methods
-- ✅ Applied to: GetNodesByLabel, GetEdgesByType, AllNodes, AllEdges, GetOutgoingEdges, GetIncomingEdges, GetEdgesBetween
+-  Node deduplication by ID in all query methods
+-  Edge deduplication by ID in all query methods
+-  Applied to: GetNodesByLabel, GetEdgesByType, AllNodes, AllEdges, GetOutgoingEdges, GetIncomingEdges, GetEdgesBetween
 
 ### 5. Edge Case Handling
-- ✅ Empty composite databases (no constituents)
-- ✅ Offline constituents (errors skipped, operations continue)
-- ✅ All constituents offline (graceful degradation)
-- ✅ Circular dependency prevention (at DatabaseManager level)
+-  Empty composite databases (no constituents)
+-  Offline constituents (errors skipped, operations continue)
+-  All constituents offline (graceful degradation)
+-  Circular dependency prevention (at DatabaseManager level)
 
 ### 6. Integration Tests
-- ✅ End-to-end Cypher query tests
-- ✅ Complex queries with WHERE, WITH, aggregation
-- ✅ Relationship queries
-- ✅ ALTER COMPOSITE DATABASE commands
+-  End-to-end Cypher query tests
+-  Complex queries with WHERE, WITH, aggregation
+-  Relationship queries
+-  ALTER COMPOSITE DATABASE commands
 
 ### 7. Documentation
-- ✅ User guide with examples
-- ✅ Architecture documentation
-- ✅ Schema merging documentation
-- ✅ Limitations documented
+-  User guide with examples
+-  Architecture documentation
+-  Schema merging documentation
+-  Limitations documented
 
 ---
 
-## 📊 Test Coverage
+## Test Coverage
 
 ### Unit Tests
 - **pkg/multidb/composite.go**: 85.9% coverage
@@ -80,7 +80,7 @@ All composite database features have been fully implemented, tested, and documen
 
 ---
 
-## 🔍 Implementation Analysis
+## Implementation Analysis
 
 ### Architecture
 
@@ -130,7 +130,7 @@ All composite database features have been fully implemented, tested, and documen
 
 ---
 
-## ⚠️ Known Limitations (By Design)
+## Known Limitations (By Design)
 
 ### 1. Remote Constituents Are Supported
 - **Status**: Implemented
@@ -161,7 +161,7 @@ All composite database features have been fully implemented, tested, and documen
 
 ---
 
-## 🎯 Potential Enhancements (Future)
+## Potential Enhancements (Future)
 
 ### 1. Advanced Routing Integration
 - **Priority**: Medium
@@ -198,26 +198,26 @@ All composite database features have been fully implemented, tested, and documen
 ## Code Quality
 
 ### No Technical Debt
-- ✅ No TODOs in composite database code
-- ✅ No FIXMEs or HACKs
-- ✅ No incomplete implementations
-- ✅ All methods fully implemented
+-  No TODOs in composite database code
+-  No FIXMEs or HACKs
+-  Implementation details and limitations are recorded in the sections above
+-  Method coverage is limited to the tests listed in this record
 
 ### Documentation
-- ✅ All public APIs documented
-- ✅ Examples provided
-- ✅ User guide complete
-- ✅ Architecture docs updated
+-  All public APIs documented
+-  Examples provided
+-  User guide complete
+-  Architecture docs updated
 
 ### Testing
-- ✅ Comprehensive unit tests
-- ✅ Integration tests
-- ✅ Edge case tests
-- ✅ 90%+ coverage for critical paths
+-  unit tests
+-  Integration tests
+-  Edge case tests
+-  90%+ coverage for critical paths
 
 ---
 
-## 📋 Implementation Checklist
+## Implementation Checklist
 
 ### Core Features
 - [x] CREATE COMPOSITE DATABASE
@@ -272,14 +272,14 @@ All composite database features have been fully implemented, tested, and documen
 The composite database implementation is complete.
 
 All features from the original requirements have been implemented:
-- ✅ ALTER COMPOSITE DATABASE commands
-- ✅ Query result deduplication
-- ✅ Integration tests
-- ✅ Complete schema merging (all index types)
-- ✅ Documentation
-- ✅ Edge case handling
+-  ALTER COMPOSITE DATABASE commands
+-  Query result deduplication
+-  Integration tests
+-  Complete schema merging (all index types)
+-  Documentation
+-  Edge case handling
 
 The only "missing" features are future enhancements (remote constituents, distributed transactions) which are documented as limitations and planned for future releases.
 
-**No critical gaps or incomplete implementations remain.**
+**This record does not establish completeness. Routing integration and other limitations described above must be evaluated against the selected source revision.**
 

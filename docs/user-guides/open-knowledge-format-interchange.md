@@ -198,4 +198,4 @@ The strongest pattern is to keep OKF as the authored source of knowledge and use
 
 ## Implementation Status
 
-See `docs/plans/okf-admin-import-export-plan.md` for the CLI, validation rules, graph mapping, tests, and acceptance criteria.
+The CLI implementation and validation rules are in [nornicdb-admin](../../cmd/nornicdb-admin/).

@@ -2,12 +2,12 @@
 
 **Learn basic Cypher queries to create, read, update, and delete graph data.**
 
-## 📋 Prerequisites
+## Prerequisites
 
 - NornicDB installed and running (see [Installation](installation.md))
 - Connected to database (HTTP or Bolt)
 
-## 🎯 What You'll Learn
+## What You'll Learn
 
 1. Creating nodes and relationships
 2. Querying graph data
@@ -15,7 +15,7 @@
 4. Deleting data
 5. Basic graph patterns
 
-## 1️⃣ Creating Your First Node
+## 1⃣ Creating Your First Node
 
 Let's create a person node:
 
@@ -34,7 +34,7 @@ RETURN alice
 - `{name: ..., age: ...}` - Properties (see [Property Data Types](../user-guides/property-data-types.md) for all supported types)
 - `RETURN alice` - Returns the created node
 
-## 2️⃣ Creating Multiple Nodes
+## 2⃣ Creating Multiple Nodes
 
 ```cypher
 CREATE 
@@ -44,7 +44,7 @@ CREATE
 RETURN bob, carol, company
 ```
 
-## 3️⃣ Creating Relationships
+## 3⃣ Creating Relationships
 
 Connect Alice to the company:
 
@@ -61,7 +61,7 @@ RETURN alice, r, company
 - `r:WORKS_AT` - Relationship type
 - `{since: 2020, role: "Engineer"}` - Relationship properties
 
-## 4️⃣ Querying Data
+## 4⃣ Querying Data
 
 ### Find all people
 
@@ -95,7 +95,7 @@ WHERE p1.name < p2.name  // Avoid duplicates
 RETURN p1.name, p2.name, c.name
 ```
 
-## 5️⃣ Updating Data
+## 5⃣ Updating Data
 
 ### Update properties
 
@@ -121,7 +121,7 @@ REMOVE alice.email
 RETURN alice
 ```
 
-## 6️⃣ Deleting Data
+## 6⃣ Deleting Data
 
 ### Delete a node (must delete relationships first)
 
@@ -139,14 +139,14 @@ MATCH (alice:Person)-[r:WORKS_AT]->()
 DELETE r
 ```
 
-### Delete all data (⚠️ Use with caution!)
+### Delete all data ( Use with caution!)
 
 ```cypher
 MATCH (n)
 DETACH DELETE n
 ```
 
-## 7️⃣ Common Patterns
+## 7⃣ Common Patterns
 
 ### Create if not exists (MERGE)
 
@@ -182,7 +182,7 @@ MATCH (p:Person)
 RETURN collect(p.name) as allNames
 ```
 
-## 8️⃣ Practical Example: Social Network
+## 8⃣ Practical Example: Social Network
 
 Let's build a small social network:
 
@@ -221,7 +221,7 @@ MATCH path = shortestPath(
 RETURN path
 ```
 
-## 9️⃣ Working with Properties
+## 9⃣ Working with Properties
 
 ### JSON-like properties
 
@@ -255,7 +255,7 @@ MATCH (doc:Document)
 RETURN doc.metadata.author, doc.metadata.tags
 ```
 
-## 🔟 Tips & Best Practices
+## Tips & Best Practices
 
 ### 1. Use parameters for dynamic values
 
@@ -293,7 +293,7 @@ RETURN p
 LIMIT 10
 ```
 
-## 📚 Common Functions
+## Common Functions
 
 ### String functions
 
@@ -323,7 +323,7 @@ RETURN
   tail([1,2,3]) as restOfList
 ```
 
-## ⏭️ Next Steps
+## Next Steps
 
 Now that you know the basics:
 
@@ -332,7 +332,7 @@ Now that you know the basics:
 3. **[Cypher Functions Reference](../api-reference/cypher-functions/README.md)** - All functions
 4. **[Advanced Topics](../advanced/README.md)** - K-Means clustering, embeddings, custom functions
 
-## 🆘 Common Issues
+## Common Issues
 
 ### "Node not found"
 - Make sure you created the node first
@@ -348,5 +348,5 @@ Now that you know the basics:
 
 ---
 
-**Need more examples?** → **[Complete Examples](../user-guides/complete-examples.md)**  
+**Need more examples?** → **[Complete Examples](../user-guides/complete-examples.md)**
 **Ready for advanced features?** → **[User Guides](../user-guides/README.md)**

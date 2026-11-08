@@ -132,7 +132,7 @@ const (
 | Available actions | 200-500 | Depends on plugin count |
 | Cypher primer | ~400 | Reference guide |
 | Response modes | ~100 | Action + Help modes |
-| Built-in examples | ~500 | 20 comprehensive examples |
+| Built-in examples | ~500 | 20 examples |
 | **Base total** | **~1,200** | Before plugins |
 | Plugin instructions | ~10,800 available | Plugins can add context |
 

@@ -422,7 +422,7 @@ Health/liveness probes must NOT target `/nornicdb/search` for any `warming=lazy`
 
 ## Best Practices
 
-### Do ✅
+### Do
 
 - Use `NORNICDB_LOW_MEMORY=true` for containers with < 4GB RAM
 - Set `GOGC=100` (or lower) alongside low memory mode
@@ -430,7 +430,7 @@ Health/liveness probes must NOT target `/nornicdb/search` for any `warming=lazy`
 - Monitor memory usage with `docker stats`
 - Enable WAL auto-compaction
 
-### Don't ❌
+### Don't
 
 - Don't enable both `LOW_MEMORY` and `HIGH_PERFORMANCE`
 - Don't load large embedding models (>500MB) in low memory mode
@@ -442,9 +442,9 @@ Health/liveness probes must NOT target `/nornicdb/search` for any `warming=lazy`
 - **[WAL Compaction](wal-compaction.md)** - Automatic disk space management
 - **[Docker Deployment](../getting-started/docker-deployment.md)** - Complete Docker guide
 - **[Raspberry Pi](../packaging/raspberry-pi.md)** - Edge deployment guide
-- **[Current Northwind Benchmark](../performance/1.1.0-northwind-results/comparison.md)** - Neo4j performance and resource comparison
+- **[Current Northwind Benchmark](../development/archive/benchmarks/database-comparison-baseline/comparison.md)** - Neo4j performance and resource comparison
 
 ---
 
-**Memory issues?** → **[Troubleshooting Guide](troubleshooting.md)**  
+**Memory issues?** → **[Troubleshooting Guide](troubleshooting.md)**
 **Need more performance?** → Consider upgrading to a system with 8GB+ RAM

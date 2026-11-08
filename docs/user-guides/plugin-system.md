@@ -1,6 +1,6 @@
 # NornicDB Plugin System
 
-NornicDB features a powerful plugin system that extends Cypher with APOC (Awesome Procedures On Cypher) functions. The APOC plugin provides **964 functions** covering collections, text processing, math, graph algorithms, data import/export, and more.
+NornicDB features a plugin system that extends Cypher with APOC (Awesome Procedures On Cypher) functions. The APOC plugin provides **964 functions** covering collections, text processing, math, graph algorithms, data import/export, and more.
 
 ## Overview
 
@@ -254,11 +254,11 @@ This error means the plugin was built for a different architecture:
 
 | Platform | Plugin Support | Notes |
 |----------|---------------|-------|
-| Linux (amd64) | ✅ Full | Native Go plugin support |
-| Linux (arm64) | ✅ Full | Native Go plugin support |
-| macOS (arm64) | ✅ Full | Native Go plugin support |
-| macOS (amd64) | ✅ Full | Native Go plugin support |
-| Windows | ❌ None | Go plugins not supported |
+| Linux (amd64) |  Full | Native Go plugin support |
+| Linux (arm64) |  Full | Native Go plugin support |
+| macOS (arm64) |  Full | Native Go plugin support |
+| macOS (amd64) |  Full | Native Go plugin support |
+| Windows |  None | Go plugins not supported |
 
 For Windows, build NornicDB with APOC functions compiled in (not as plugin).
 

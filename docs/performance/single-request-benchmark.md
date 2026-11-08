@@ -89,28 +89,28 @@ The latency distribution shows excellent consistency:
 ## Use Cases
 
 ### Single Request (1 Concurrent) - Best For:
-- ✅ **Low-latency APIs** - When response time is critical
-- ✅ **Single-user applications** - Desktop apps, CLI tools
-- ✅ **Real-time systems** - Where sub-millisecond latency matters
-- ✅ **Interactive queries** - User-facing applications
-- ✅ **Testing baseline** - Understanding best-case performance
+-  **Low-latency APIs** - When response time is critical
+-  **Single-user applications** - Desktop apps, CLI tools
+-  **Real-time systems** - Where sub-millisecond latency matters
+-  **Interactive queries** - User-facing applications
+-  **Testing baseline** - Understanding best-case performance
 
 ### High Concurrency (100 Concurrent) - Best For:
-- ✅ **High-throughput APIs** - When total requests/sec matters
-- ✅ **Multi-user applications** - Web services, microservices
-- ✅ **Batch processing** - Parallel data ingestion
-- ✅ **Load testing** - Understanding system limits
-- ✅ **Production workloads** - Real-world multi-user scenarios
+-  **High-throughput APIs** - When total requests/sec matters
+-  **Multi-user applications** - Web services, microservices
+-  **Batch processing** - Parallel data ingestion
+-  **Load testing** - Understanding system limits
+-  **Production workloads** - Real-world multi-user scenarios
 
 ## Conclusion
 
 **Single request performance demonstrates:**
-- ✅ **Sub-millisecond latency** for 99% of requests (P99: 0.17ms)
-- ✅ **Fastest possible request: 77.8µs (0.08ms)**
-- ✅ **Ultra-consistent** response times (low variance)
-- ✅ **Excellent baseline** for understanding system overhead
-- ✅ **8,917.61 req/s** throughput even with sequential processing
-- ✅ **Memory optimizations** maintain performance (1.4 KB/request overhead)
+-  **Sub-millisecond latency** for 99% of requests (P99: 0.17ms)
+-  **Fastest possible request: 77.8µs (0.08ms)**
+-  **Ultra-consistent** response times (low variance)
+-  **Excellent baseline** for understanding system overhead
+-  **8,917.61 req/s** throughput even with sequential processing
+-  **Memory optimizations** maintain performance (1.4 KB/request overhead)
 
 **The system achieves excellent single-request latency (0.11ms average) while maintaining high throughput under concurrency (37.5K req/s with 100 concurrent requests).**
 

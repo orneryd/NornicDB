@@ -2,7 +2,7 @@
 
 **Deep dive into advanced features and internals.**
 
-## 📚 Documentation
+## Documentation
 
 ### K-Means Clustering
 - **[K-Means Algorithm](k-means-clustering/kmeans-algorithm.md)** - K-Means clustering basics
@@ -18,7 +18,7 @@
 - **[Custom Functions](../features/plugin-system.md)** - UDF development
 - **[Extending NornicDB](../architecture/plugin-system.md)** - Plugin development
 
-## 🎯 Topics
+## Topics
 
 ### K-Means Clustering
 Learn how to use K-Means clustering on embeddings for improved search and organization.

@@ -21,7 +21,7 @@ The Norns' role as weavers of destiny mirrors NornicDB's core functionality:
 ### Weaving Connections
 Just as the Norns weave threads to connect all beings, NornicDB automatically discovers and creates relationships between data nodes based on:
 - Embedding similarity
-- Co-access patterns  
+- Co-access patterns
 - Temporal proximity
 - Transitive inference
 

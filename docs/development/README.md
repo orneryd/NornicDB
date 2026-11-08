@@ -7,6 +7,7 @@ Use this section for contributor setup, standards, and test workflows.
 - Local setup: [setup.md](setup.md)
 - Coding standards: [code-style.md](code-style.md)
 - Test strategy and commands: [testing.md](testing.md)
+- [Development archive](archive/) contains PR reviews, earlier benchmark baselines, and qualification records.
 
 ## Contributor Workflow
 

@@ -1,6 +1,6 @@
 # Audit Logging
 
-**Comprehensive audit trails for compliance and security monitoring.**
+**audit trails for compliance and security monitoring.**
 
 ## Overview
 
@@ -13,13 +13,13 @@ NornicDB provides immutable audit logging required by major regulatory framework
 
 ## Features
 
-- ✅ Immutable append-only logs
-- ✅ Structured JSON format
-- ✅ Real-time security alerting
-- ✅ Compliance reporting
-- ✅ Configurable retention (7+ years)
-- ✅ User activity tracking
-- ✅ Data access logging
+-  Immutable append-only logs
+-  Structured JSON format
+-  Real-time security alerting
+-  Compliance reporting
+-  Configurable retention (7+ years)
+-  User activity tracking
+-  Data access logging
 
 ## Configuration
 

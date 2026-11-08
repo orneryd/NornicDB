@@ -10,7 +10,7 @@
 | Snapshot      | VM/Container | Seconds  |
 | File Copy     | Development  | Yes      |
 
-## WAL Compaction ⭐ NEW
+## WAL Compaction  NEW
 
 NornicDB's Write-Ahead Log (WAL) ensures durability but can grow unbounded without compaction.
 Starting in v1.0.0, NornicDB includes automatic WAL compaction.

@@ -7,7 +7,7 @@ For a reproducible BEIR evaluation of BM25 and RRF recall, see the
 
 ---
 
-## 🎯 Overview
+## Overview
 
 NornicDB implements a **hybrid search system** that combines multiple search methodologies for maximum accuracy and performance:
 
@@ -46,7 +46,7 @@ NornicDB implements a **hybrid search system** that combines multiple search met
 
 ---
 
-## 1️⃣ Vector Similarity Search
+## 1⃣ Vector Similarity Search
 
 ### What It Does
 
@@ -184,7 +184,7 @@ if info.Accelerated {
 
 ### Advantages & Limitations
 
-| Aspect             | ✅ Strength                                 | ❌ Limitation                          |
+| Aspect             |  Strength                                 |  Limitation                          |
 | ------------------ | ------------------------------------------- | -------------------------------------- |
 | **Semantic Match** | Captures meaning, not just keywords         | May miss exact keyword matches         |
 | **Speed**          | O(log N) with HNSW + SIMD acceleration      | Requires pre-computed embeddings       |
@@ -193,7 +193,7 @@ if info.Accelerated {
 
 ---
 
-## 2️⃣ Full-Text Search (BM25)
+## 2⃣ Full-Text Search (BM25)
 
 ### What It Does
 
@@ -256,7 +256,7 @@ Term          Documents with frequency
 
 ### Advantages & Limitations
 
-| Aspect               | ✅ Strength                          | ❌ Limitation              |
+| Aspect               |  Strength                          |  Limitation              |
 | -------------------- | ------------------------------------ | -------------------------- |
 | **Keyword Matching** | Exact term matching guaranteed       | Misses semantic variations |
 | **Speed**            | Very fast (inverted index O(log N))  | Must build index upfront   |
@@ -273,7 +273,7 @@ By default, both the vector (HNSW) and BM25 indexes are built in memory on start
 
 ---
 
-## 3️⃣ Reciprocal Rank Fusion (RRF)
+## 3⃣ Reciprocal Rank Fusion (RRF)
 
 ### What It Does
 
@@ -379,7 +379,7 @@ Scenario 2: Vector & BM25 Disagree
 
 ---
 
-## 4️⃣ Cross-Encoder Reranking (Stage 2)
+## 4⃣ Cross-Encoder Reranking (Stage 2)
 
 ### What It Does
 
@@ -481,7 +481,7 @@ IF reranking enabled:
 
 ---
 
-## 5️⃣ SIMD Vector Acceleration
+## 5⃣ SIMD Vector Acceleration
 
 ### What It Does
 
@@ -564,7 +564,7 @@ Speedup: 16 cycles / 3 cycles ≈ 5-10x faster
 
 ### Measured Performance (Intel i9-9900KF, AVX2+FMA)
 
-**Comprehensive benchmarks across multiple vector sizes:**
+**benchmarks across multiple vector sizes:**
 
 ```
 DOT PRODUCT (AVX2 is 8-way vectorized):
@@ -761,7 +761,7 @@ On older x86 or other platforms:
 
 ---
 
-## 6️⃣ K-Means Clustering (Semantic Partitioning)
+## 6⃣ K-Means Clustering (Semantic Partitioning)
 
 ### What It Does
 
@@ -1089,7 +1089,7 @@ Check health:
 
 ---
 
-## 📊 End-to-End Search Flow
+## End-to-End Search Flow
 
 ### Complete Request Lifecycle
 
@@ -1181,7 +1181,7 @@ Unified search (`pkg/search`) caches **search results** so that repeated identic
 
 ---
 
-## 🎯 Choosing the Right Method
+## Choosing the Right Method
 
 ### Decision Tree
 
@@ -1216,7 +1216,7 @@ Q: Critical relevance required?
 
 ---
 
-## 📈 Performance Benchmarks
+## Performance Benchmarks
 
 ### Field Measurements (Apple M3 Max, 64GB RAM)
 
@@ -1285,7 +1285,7 @@ HNSW scales logarithmically; BM25 scales linearly. RRF helps by combining both s
 
 ---
 
-## 🔧 Configuration & Tuning
+## Configuration & Tuning
 
 ### Vector Search Parameters
 
@@ -1347,7 +1347,7 @@ cross_encoder:
 
 ---
 
-## 📚 API Reference
+## API Reference
 
 ### Basic Search
 
@@ -1399,7 +1399,7 @@ type SearchResponse struct {
 
 ---
 
-## 🔍 Debugging Search Issues
+## Debugging Search Issues
 
 ### Common Problems
 
@@ -1451,7 +1451,7 @@ results, _ := svc.Search(ctx, query, embedding, opts)
 
 ---
 
-## 📖 Further Reading
+## Further Reading
 
 - **HNSW**: Malkov & Yashunin (2018) - "Efficient and Robust Approximate Nearest Neighbor Search"
 - **BM25**: Robertson & Zaragoza (2009) - "The Probabilistic Relevance Framework: BM25 and Beyond"
@@ -1460,5 +1460,5 @@ results, _ := svc.Search(ctx, query, embedding, opts)
 
 ---
 
-**Last Updated**: February 17, 2026  
+**Last Updated**: February 17, 2026
 **Package**: `pkg/search` + `pkg/simd` + `pkg/math/vector`

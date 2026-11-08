@@ -65,7 +65,7 @@ Batch size guidance:
 
 ### 4. Verify
 
-After every collection: `count(name, exact=True)` on both sides should match. The scripts print `✓` / `✗` per collection and surface mismatches loudly.
+After every collection: `count(name, exact=True)` on both sides should match. The scripts print `✓` / `` per collection and surface mismatches loudly.
 
 ## Mapping reference
 

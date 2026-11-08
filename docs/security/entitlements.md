@@ -25,9 +25,9 @@ The server exposes the full list at **GET /auth/entitlements** (requires read pe
 
 ### Role defaults (built-in)
 
-- **admin**: read, write, create, delete, admin, schema, user_manage  
-- **editor**: read, write, create, delete  
-- **viewer**: read  
+- **admin**: read, write, create, delete, admin, schema, user_manage
+- **editor**: read, write, create, delete
+- **viewer**: read
 
 User-defined roles have no global entitlements by default; assign them via role configuration or (when implemented) per-role entitlement assignment.
 
@@ -37,7 +37,7 @@ User-defined roles have no global entitlements by default; assign them via role 
 
 These apply **per database** and are configured via:
 
-- **Allowlist** (`/auth/access/databases`): which roles can **see** and **access** which databases.  
+- **Allowlist** (`/auth/access/databases`): which roles can **see** and **access** which databases.
 - **Privileges matrix** (`/auth/access/privileges`): per (role, database) **read** and **write**.
 
 | ID | Name | What it gates |

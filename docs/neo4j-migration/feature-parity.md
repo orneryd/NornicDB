@@ -1,6 +1,6 @@
 # Neo4j vs NornicDB Feature Audit
 
-**Drop-in Replacement Validation**
+**Historical compatibility audit**
 
 Last Updated: December 2025 (historical snapshot)
 
@@ -12,25 +12,25 @@ Scope: Production workloads excluding plugins and multi-database orchestration.
 
 ## Executive Summary
 
-NornicDB is a **drop-in replacement** for Neo4j with:
+The December 2025 audit recorded the following estimates. These percentages are historical measurements, not current compatibility guarantees:
 
 | Category            | Status  | Notes                                                                                                                                                         |
 | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Core Data Model     | ✅ 100% | Nodes, relationships, properties, arrays, maps                                                                                                                |
-| Cypher Language     | ✅ 100% | All clauses, pattern matching, subqueries                                                                                                                     |
-| Functions           | ✅ 109% | Dec 2025 measurement: 147 functions vs Neo4j's 135. Current built-in surface: `SHOW FUNCTIONS`; APOC surface: [APOC Functions](../features/apoc-functions.md)   |
-| Indexes             | ✅ 100% | B-tree, full-text, vector, composite, range                                                                                                                   |
-| Constraints         | ✅ 100% | UNIQUE, EXISTS, NODE KEY, RELATIONSHIP KEY, property type (nodes + relationships) + temporal no-overlap, domain/enum, cardinality, endpoint policy extensions |
-| Transactions        | ✅ 100% | Full ACID with BEGIN/COMMIT/ROLLBACK                                                                                                                          |
-| Built-in Procedures | ✅ 100% | Dec 2025 measurement: 41 procedures (34 `db._` + 7 `dbms._`). Current surface: `SHOW PROCEDURES`                                                                 |
-| APOC                | ⚠️ Partial | Dec 2025 measurement: 960+. Current: [APOC Functions](../features/apoc-functions.md) and the [procedure capability audit](../features/apoc-procedure-capabilities.md); remaining gaps tracked in [#1318](https://github.com/orneryd/NornicDB/issues/1318) |
-| Protocol/Drivers    | ✅ 95%  | Bolt v4.x, all major drivers                                                                                                                                  |
+| Core Data Model     |  100% | Nodes, relationships, properties, arrays, maps                                                                                                                |
+| Cypher Language     |  100% | Implemented clauses, pattern matching, and subqueries; consult the compatibility guide for limits                                                                                                                     |
+| Functions           |  109% | Dec 2025 measurement: 147 functions vs Neo4j's 135. Current built-in surface: `SHOW FUNCTIONS`; APOC surface: [APOC Functions](../features/apoc-functions.md)   |
+| Indexes             |  100% | B-tree, full-text, vector, composite, range                                                                                                                   |
+| Constraints         |  100% | UNIQUE, EXISTS, NODE KEY, RELATIONSHIP KEY, property type (nodes + relationships) + temporal no-overlap, domain/enum, cardinality, endpoint policy extensions |
+| Transactions        |  100% | Full ACID with BEGIN/COMMIT/ROLLBACK                                                                                                                          |
+| Built-in Procedures |  100% | Dec 2025 measurement: 41 procedures (34 `db._` + 7 `dbms._`). Current surface: `SHOW PROCEDURES`                                                                 |
+| APOC                |  Partial | Dec 2025 measurement: 960+. Current: [APOC Functions](../features/apoc-functions.md) and the [procedure capability audit](../features/apoc-procedure-capabilities.md); remaining gaps tracked in [#1318](https://github.com/orneryd/NornicDB/issues/1318) |
+| Protocol/Drivers    |  95%  | Bolt v4.x, all major drivers                                                                                                                                  |
 
 **New in 0.1.4:**
 
-- ✅ String query auto-embedding in `db.index.vector.queryNodes`
-- ✅ Multi-line SET with arrays support
-- ✅ Server-side query embedding
+-  String query auto-embedding in `db.index.vector.queryNodes`
+-  Multi-line SET with arrays support
+-  Server-side query embedding
 
 ---
 
@@ -68,22 +68,22 @@ All 12 features fully implemented: node/relationship creation, multiple labels, 
 
 | Category          | Count | Status                       |
 | ----------------- | ----- | ---------------------------- |
-| String            | 23    | ✅ 100%                      |
-| List              | 17    | ✅ 100%                      |
-| Mathematical      | 24    | ✅ 126% (exceeds Neo4j's 19) |
-| Trigonometric     | 11    | ✅ 100%                      |
-| Aggregation       | 12    | ✅ 133% (exceeds Neo4j's 9)  |
-| Temporal          | 25    | ✅ 100%                      |
-| Spatial           | 19    | ✅ 127%                      |
-| Type Conversion   | 12    | ✅ 100%                      |
-| Node/Relationship | 12    | ✅ 100%                      |
-| Vector/Similarity | 3     | ✅ 100%                      |
+| String            | 23    |  100%                      |
+| List              | 17    |  100%                      |
+| Mathematical      | 24    |  126% (exceeds Neo4j's 19) |
+| Trigonometric     | 11    |  100%                      |
+| Aggregation       | 12    |  133% (exceeds Neo4j's 9)  |
+| Temporal          | 25    |  100%                      |
+| Spatial           | 19    |  127%                      |
+| Type Conversion   | 12    |  100%                      |
+| Node/Relationship | 12    |  100%                      |
+| Vector/Similarity | 3     |  100%                      |
 
-### 4. Indexes - 100% ✅
+### 4. Indexes - 100%
 
 All index types supported: B-tree, full-text (Lucene-compatible), vector (HNSW), composite (multi-property), token lookup, range indexes. Full CRUD operations including CREATE INDEX, DROP INDEX, SHOW INDEXES, index hints.
 
-### 5. Constraints & Schema - 100% ✅
+### 5. Constraints & Schema - 100%
 
 Full Neo4j constraint parity on both nodes and relationships:
 
@@ -95,7 +95,7 @@ Full Neo4j constraint parity on both nodes and relationships:
 
 All constraint DDL supports `IF NOT EXISTS` for idempotent creation. Constraints are validated against existing data at creation time and enforced on all write paths (CREATE, MERGE, SET, REMOVE) including transactions and bulk operations. Label mutations (SET n:Label, REMOVE n:Label) are also validated against endpoint policy constraints. `SHOW CONSTRAINTS` reports entity type (NODE or RELATIONSHIP), constraint type, owned backing indexes, and additional columns for cardinality (direction, maxCount) and policy (sourceLabel, targetLabel, policyMode) constraints. Block-style constraint contracts are exposed separately via `SHOW CONSTRAINT CONTRACTS`.
 
-### 6. Transactions - 100% ✅
+### 6. Transactions - 100%
 
 Full ACID guarantees via BadgerDB:
 
@@ -106,15 +106,15 @@ Full ACID guarantees via BadgerDB:
 
 Supports: BEGIN/COMMIT/ROLLBACK, implicit transactions, automatic rollback on error, transaction metadata.
 
-### 7. Protocol & Drivers - 95% ✅
+### 7. Protocol & Drivers - 95%
 
 | Driver                   | Status                    |
 | ------------------------ | ------------------------- |
-| Python (neo4j-driver)    | ✅ Full                   |
-| JavaScript/TypeScript    | ✅ Full                   |
-| Go (neo4j-go-driver)     | ✅ Full                   |
-| Java (neo4j-java-driver) | ✅ Full                   |
-| .NET, Ruby               | ⚠️ Untested (should work) |
+| Python (neo4j-driver)    |  Full                   |
+| JavaScript/TypeScript    |  Full                   |
+| Go (neo4j-go-driver)     |  Full                   |
+| Java (neo4j-java-driver) |  Full                   |
+| .NET, Ruby               |  Untested (should work) |
 
 Bolt v4.x fully supported. v5.x backward compatible.
 
@@ -122,7 +122,7 @@ Bolt v4.x fully supported. v5.x backward compatible.
 
 ## Built-in Procedures (18+ Implemented)
 
-### db.\* Procedures ✅
+### db.\* Procedures
 
 ```
 db.labels, db.propertyKeys, db.relationshipTypes, db.info, db.ping
@@ -136,14 +136,14 @@ db.clearQueryCaches
 db.create.setNodeVectorProperty, db.create.setRelationshipVectorProperty
 ```
 
-### dbms.\* Procedures ✅
+### dbms.\* Procedures
 
 ```
 dbms.info, dbms.listConfig, dbms.clientConfig
 tx.setMetaData
 ```
 
-### ✨ NEW: Vector Search Enhancements
+### NEW: Vector Search Enhancements
 
 ```cypher
 -- String query (auto-embedded by NornicDB)
@@ -167,7 +167,7 @@ SET n.embedding = [0.7, 0.2, 0.05, 0.05],
 
 ## APOC Procedures (52 Implemented)
 
-### Core Utilities ✅
+### Core Utilities
 
 | Category       | Functions                                                                                                                                     |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -179,14 +179,14 @@ SET n.embedding = [0.7, 0.2, 0.05, 0.05],
 | **Meta**       | `apoc.meta.type`, `apoc.meta.isType`                                                                                                          |
 | **UUID**       | `apoc.create.uuid`                                                                                                                            |
 
-### Dynamic Cypher ✅
+### Dynamic Cypher
 
 ```cypher
 CALL apoc.cypher.run('MATCH (n) RETURN count(n)', {})
 CALL apoc.cypher.runMany('CREATE (n); MATCH (n) RETURN n', {})
 ```
 
-### Batch Processing ✅
+### Batch Processing
 
 ```cypher
 CALL apoc.periodic.iterate(
@@ -200,13 +200,13 @@ CALL apoc.periodic.iterate(
 
 | Algorithm        | Procedure                                      | Status |
 | ---------------- | ---------------------------------------------- | ------ |
-| Dijkstra         | `apoc.algo.dijkstra`                           | ✅ APOC name |
-| A\*              | `apoc.algo.aStar`                              | ✅ APOC name |
-| All Simple Paths | `apoc.algo.allSimplePaths`                     | ✅ APOC name |
+| Dijkstra         | `apoc.algo.dijkstra`                           |  APOC name |
+| A\*              | `apoc.algo.aStar`                              |  APOC name |
+| All Simple Paths | `apoc.algo.allSimplePaths`                     |  APOC name |
 | PageRank         | `apoc.algo.pageRank`                           | NornicDB extension (GDS: `gds.pageRank.stream`) |
 | Betweenness      | `apoc.algo.betweenness`                        | NornicDB extension (GDS: `gds.betweenness.stream`) |
 | Closeness        | `apoc.algo.closeness`                          | NornicDB extension (GDS: `gds.closeness.stream`) |
-| Neighbors        | `apoc.neighbors.tohop`, `apoc.neighbors.byhop` | ✅ APOC names |
+| Neighbors        | `apoc.neighbors.tohop`, `apoc.neighbors.byhop` |  APOC names |
 
 ### Community Detection
 
@@ -240,19 +240,19 @@ NornicDB's differences: `nodeId` is the node's id (a STRING, #1165); FastRP's `r
 
 Some of these algorithms exist as NornicDB extensions under `apoc.algo.*` (tables above); NornicDB's own `gds.linkPrediction.*.stream` procedures are extensions too.
 
-### Data Import/Export ✅
+### Data Import/Export
 
 | Operation   | Procedure                                        | Status |
 | ----------- | ------------------------------------------------ | ------ |
-| Load JSON   | `apoc.load.json`, `apoc.load.jsonArray`          | ✅     |
-| Load CSV    | `apoc.load.csv`                                  | ✅     |
-| Export JSON | `apoc.export.json.all`, `apoc.export.json.query` | ✅     |
-| Export CSV  | `apoc.export.csv.all`, `apoc.export.csv.query`   | ✅     |
-| Import JSON | `apoc.import.json`                               | ✅     |
+| Load JSON   | `apoc.load.json`, `apoc.load.jsonArray`          | Yes |
+| Load CSV    | `apoc.load.csv`                                  | Yes |
+| Export JSON | `apoc.export.json.all`, `apoc.export.json.query` | Yes |
+| Export CSV  | `apoc.export.csv.all`, `apoc.export.csv.query`   | Yes |
+| Import JSON | `apoc.import.json`                               | Yes |
 
 ---
 
-## NornicDB-Exclusive Features ✨
+## NornicDB-Exclusive Features
 
 Features NornicDB has that Neo4j doesn't:
 
@@ -283,7 +283,7 @@ The current same-hardware Northwind benchmark records the following results for 
 | Peak system memory used        |   33.4 GiB |    32.5 GiB |                  -2.7% |
 | Total benchmark data directory |    204 MiB |     134 MiB |                 -34.3% |
 
-See the [full Northwind comparison](../performance/1.1.0-northwind-results/comparison.md) for workload, hardware, correctness fingerprints, power, and storage details. Treat these as workload-specific measurements rather than universal deployment requirements.
+See the [full Northwind comparison](../development/archive/benchmarks/database-comparison-baseline/comparison.md) for workload, hardware, correctness fingerprints, power, and storage details. Treat these as workload-specific measurements rather than universal deployment requirements.
 
 ---
 
@@ -302,7 +302,7 @@ See the [full Northwind comparison](../performance/1.1.0-northwind-results/compa
 | Prometheus /metrics endpoint              | Full metrics export (requests, nodes, edges, embeddings, slow queries) |
 | Slow query logging                        | Configurable threshold (default 100ms), file or stderr output          |
 
-### 🟢 Not Applicable
+### Not Applicable
 
 | Feature                      | Reason                 |
 | ---------------------------- | ---------------------- |
@@ -345,12 +345,12 @@ See the [full Northwind comparison](../performance/1.1.0-northwind-results/compa
 
 | Task                   | Effort | Status  |
 | ---------------------- | ------ | ------- |
-| Prometheus metrics     | 2 days | ✅ Done |
-| Slow query logging     | 1 day  | ✅ Done |
-| MMR diversification    | 1 day  | ✅ Done |
-| Cross-encoder rerank   | 3 days | ✅ Done |
-| Plugin system for APOC | 3 days | ✅ Done |
-| Eval harness           | 2 days | ✅ Done |
+| Prometheus metrics     | 2 days |  Done |
+| Slow query logging     | 1 day  |  Done |
+| MMR diversification    | 1 day  |  Done |
+| Cross-encoder rerank   | 3 days |  Done |
+| Plugin system for APOC | 3 days |  Done |
+| Eval harness           | 2 days |  Done |
 
 ---
 
@@ -366,11 +366,10 @@ NornicDB v0.1.4 provides production-grade Neo4j replacement capability:
 - Neo4j driver compatibility (Bolt v4.x)
 - LLM-native features (memory decay, vector search, auto-embedding)
 
-**For LLM/AI workloads:** Recommended (99% effective parity)  
+**For LLM/AI workloads:** Recommended (99% effective parity)
 **For general Neo4j replacement:** Suitable (96% feature parity)
 
 ---
 
-_Last Updated: December 1, 2025_  
-_Previous Audit: November 27, 2025_  
-_Auditor: Claudette (Cascade AI)_
+_Last Updated: December 1, 2025_
+_Previous Audit: November 27, 2025_

@@ -5,12 +5,12 @@
 
 ---
 
-## 🎯 Quick Decision Tree
+## Quick Decision Tree
 
-**Want to remember something?** → `store`  
-**Know the ID, need to fetch?** → `recall`  
-**Search by meaning/topic?** → `discover`  
-**Connect two things?** → `link`  
+**Want to remember something?** → `store`
+**Know the ID, need to fetch?** → `recall`
+**Search by meaning/topic?** → `discover`
+**Connect two things?** → `link`
 **Work with tasks?** → `tasks` (create, manage and list)
 
 ---
@@ -27,7 +27,7 @@
 
 ---
 
-## 💡 Common Patterns
+## Common Patterns
 
 ### Store & Link Pattern
 ```
@@ -59,7 +59,7 @@
 
 ---
 
-## 📋 Parameter Cheat Sheet
+## Parameter Cheat Sheet
 
 ### store
 ```yaml
@@ -122,27 +122,27 @@ limit: 20
 
 ---
 
-## 🔥 Most Common Mistakes
+## Most Common Mistakes
 
-### ❌ Using recall for semantic search
+### Using recall for semantic search
 ```
 ❌ recall(query="authentication")  # Wrong! recall is for ID/filters
 ✅ discover(query="authentication") # Right! discover is for meaning
 ```
 
-### ❌ Forgetting required parameters
+### Forgetting required parameters
 ```
 ❌ store(type="decision")          # Missing content!
 ✅ store(content="...", type="decision")
 ```
 
-### ❌ Wrong relation names
+### Wrong relation names
 ```
 ❌ link(from=A, to=B, relation="connected")  # Not a valid relation
 ✅ link(from=A, to=B, relation="relates_to") # Valid
 ```
 
-### ❌ Mixing management and listing arguments
+### Mixing management and listing arguments
 ```
 ❌ tasks(id="task-123", unblocked_only=true)  # id switches to update mode
 ✅ tasks(id="task-123")                      # update/toggle one task
@@ -151,7 +151,7 @@ limit: 20
 
 ---
 
-## 📊 Response Fields You Should Use
+## Response Fields You Should Use
 
 ### store response
 ```json
@@ -237,7 +237,7 @@ limit: 20
 
 ---
 
-## 🎯 Task Status State Machine
+## Task Status State Machine
 
 ```
 pending → active → done
@@ -253,7 +253,7 @@ Use tasks(id=X) with no status to auto-advance:
 
 ---
 
-## 🔍 When to Use What Search
+## When to Use What Search
 
 | Scenario | Tool | Why |
 |----------|------|-----|
@@ -264,7 +264,7 @@ Use tasks(id=X) with no status to auto-advance:
 
 ---
 
-## 💬 Example Conversations
+## Example Conversations
 
 ### Example 1: Storing a Decision
 ```
@@ -315,7 +315,7 @@ I recommend starting with:
 
 ---
 
-## 📚 Further Reading
+## Further Reading
 
 - **Using MCP tools in Bifrost (agentic loop):** The same tools can be exposed to the Heimdall chat assistant so the LLM can call store/recall/link etc. in process. They are **off by default**. See [Enabling MCP tools in the agentic loop](../user-guides/heimdall-mcp-tools.md).
 - **Rationale and tool set:** This document describes the current MCP tool set (store, recall, discover, link, tasks); implementation lives in `pkg/mcp/`.

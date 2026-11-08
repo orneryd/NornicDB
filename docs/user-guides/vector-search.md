@@ -13,7 +13,7 @@ not change the low-level vector index procedures documented here.
 
 ## Overview
 
-NornicDB provides production-ready vector search with:
+NornicDB provides vector search with:
 
 - **Automatic indexing** - All node embeddings are indexed automatically
 - **Cypher integration** - `db.index.vector.queryNodes` procedure
@@ -550,13 +550,13 @@ curl http://localhost:8080/health
 
 | Feature                    | Neo4j GDS | NornicDB |
 | -------------------------- | --------- | -------- |
-| Vector array queries       | ✅        | ✅       |
-| String auto-embedding      | ❌        | ✅       |
-| Multi-line SET with arrays | ❌        | ✅       |
-| Managed embedding storage  | ❌        | ✅       |
-| Server-side embedding      | ❌        | ✅       |
-| GPU acceleration           | ❌        | ✅       |
-| Embedding cache            | ❌        | ✅       |
+| Vector array queries       | Yes | Yes |
+| String auto-embedding      | No | Yes |
+| Multi-line SET with arrays | No | Yes |
+| Managed embedding storage  | No | Yes |
+| Server-side embedding      | No | Yes |
+| GPU acceleration           | No | Yes |
+| Embedding cache            | No | Yes |
 
 ---
 

@@ -2,10 +2,10 @@
 
 **System design and internal architecture of NornicDB.**
 
-## 📚 Documentation
+## Documentation
 
 - **[System Design](system-design.md)** - High-level architecture overview
-- **[Projected Entity Byte-Map Plan](../plans/projected-entity-byte-map-plan.md)** - Proposed opaque node/relationship property access, projection contracts, and async snapshot layering
+- **[Search related documentation](/search?q=Projected%20Entity%20Reads%20and%20Per-Entity%20Byte%20Maps)** - Proposed opaque node/relationship property access, projection contracts, and async snapshot layering
 - **[MVCC Lifecycle and Background Work](mvcc-lifecycle-background-work.md)** - Debounced mutation work, lifecycle scheduling, and query-protection behavior
 - **[Embedding Search](embedding-search.md)** - Embedding storage model and search paths
 - **[Secure Search Continuation](secure-search-continuation.md)** - Cross-protocol qids, ranked continuation, and caching/performance tradeoffs
@@ -17,7 +17,7 @@
 - **[Plugin System](plugin-system.md)** - Extensibility architecture
 - **[Norns Mythology](norns-mythology.md)** - Project naming and philosophy
 
-## 🏗️ Core Components
+## Core Components
 
 ### Storage Layer
 
@@ -55,7 +55,7 @@
 - Memory-optimized operations
 - Batch processing
 
-## 📖 Learn More
+## Learn More
 
 - **[System Design](system-design.md)** - Complete architecture
 - **[MVCC Lifecycle and Background Work](mvcc-lifecycle-background-work.md)** - Maintenance behavior and background work control

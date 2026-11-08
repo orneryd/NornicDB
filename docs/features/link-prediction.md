@@ -10,9 +10,9 @@ NornicDB includes topological link prediction to complement its existing semanti
 
 Five canonical graph algorithms:
 - **Common Neighbors**: `|N(u) ∩ N(v)|`
-- **Jaccard Coefficient**: `|N(u) ∩ N(v)| / |N(u) ∪ N(v)|`  
-- **Adamic-Adar**: `Σ(1 / log(|N(z)|))` for common neighbors  
-- **Resource Allocation**: `Σ(1 / |N(z)|)` for common neighbors  
+- **Jaccard Coefficient**: `|N(u) ∩ N(v)| / |N(u) ∪ N(v)|`
+- **Adamic-Adar**: `Σ(1 / log(|N(z)|))` for common neighbors
+- **Resource Allocation**: `Σ(1 / |N(z)|)` for common neighbors
 - **Preferential Attachment**: `|N(u)| * |N(v)|`
 
 Plus hybrid scoring that blends topology with semantic similarity.
@@ -158,7 +158,7 @@ Leverages existing `Engine` interface:
 - `GetOutgoingEdges(nodeID)` - Build adjacency lists
 - `GetNode(id)` - Fetch embeddings for semantic scoring
 
-No changes to storage layer required ✅
+No changes to storage layer required
 
 ### 3. Inference Engine (`pkg/inference/`)
 
@@ -258,16 +258,16 @@ Expected: Diana ranks high (2 common neighbors: Bob and Charlie)
 
 ## Neo4j Compatibility Statement
 
-✅ **GDS's functions**: `gds.alpha.linkprediction.*`, `gds.util.asNode` / `asNodes` / `NaN` / `infinity` / `isFinite` / `isInfinite` and `gds.version()` take GDS 2.13's arguments and give its values  
-⚠️ **NornicDB extensions**: the `gds.linkPrediction.*.stream` procedures aren't GDS's (GDS has none by those names); a query using them runs only on NornicDB  
-✅ **GDS procedures**: `gds.graph.project`, `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists`, `gds.fastRP.stream` / `stats` and `gds.util.nodeProperty` / `gds.graph.exists()` take GDS 2.13's parameters and give its columns, values and errors; the `.stream` procedures can read a projected graph by name  
+ **GDS's functions**: `gds.alpha.linkprediction.*`, `gds.util.asNode` / `asNodes` / `NaN` / `infinity` / `isFinite` / `isInfinite` and `gds.version()` take GDS 2.13's arguments and give its values
+ **NornicDB extensions**: the `gds.linkPrediction.*.stream` procedures aren't GDS's (GDS has none by those names); a query using them runs only on NornicDB
+ **GDS procedures**: `gds.graph.project`, `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists`, `gds.fastRP.stream` / `stats` and `gds.util.nodeProperty` / `gds.graph.exists()` take GDS 2.13's parameters and give its columns, values and errors; the `.stream` procedures can read a projected graph by name
 
-❌ **Not Implemented**: the rest of GDS: see [GDS in the feature parity list](../neo4j-migration/feature-parity.md#graph-data-science-gds)
+ **Not Implemented**: the rest of GDS: see [GDS in the feature parity list](../neo4j-migration/feature-parity.md#graph-data-science-gds)
 
 ## Use Cases
 
 ### 1. Social Networks
-**Best**: Adamic-Adar, Common Neighbors  
+**Best**: Adamic-Adar, Common Neighbors
 **Why**: Mutual friends are strong signal
 
 ```cypher
@@ -275,7 +275,7 @@ CALL gds.linkPrediction.adamicAdar.stream({...})
 ```
 
 ### 2. Knowledge Graphs
-**Best**: Hybrid (topology + semantic)  
+**Best**: Hybrid (topology + semantic)
 **Why**: Both structure and content matter
 
 ```cypher
@@ -286,11 +286,11 @@ CALL gds.linkPrediction.predict.stream({
 ```
 
 ### 3. Citation Networks
-**Best**: Adamic-Adar, Preferential Attachment  
+**Best**: Adamic-Adar, Preferential Attachment
 **Why**: Common citations + popular papers get more citations
 
 ### 4. AI Agent Memory
-**Best**: Hybrid with high semantic weight  
+**Best**: Hybrid with high semantic weight
 **Why**: Semantic similarity drives associations, structure is secondary
 
 ```cypher

@@ -36,8 +36,8 @@ MVCC note:
 - new MVCC/internal metadata does not use gob
 
 If an existing database is detected to use gob, NornicDB will:
-1) log a warning about the mismatch  
-2) continue using gob for that database  
+1) log a warning about the mismatch
+2) continue using gob for that database
 3) still apply msgpack to **new** databases
 
 ## Configuration

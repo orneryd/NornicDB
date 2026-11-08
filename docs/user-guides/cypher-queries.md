@@ -2,7 +2,7 @@
 
 **Complete guide to querying NornicDB with Cypher - the graph query language.**
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Introduction](#introduction)
 - [Basic Syntax](#basic-syntax)
@@ -678,7 +678,7 @@ WITH p.city AS city
 RETURN city
 ```
 
-## ⏭️ Next Steps
+## Next Steps
 
 - **[Cypher Functions Reference](../api-reference/cypher-functions/README.md)** - Complete function list
 - **[Graph Traversal](graph-traversal.md)** - Advanced pattern matching
@@ -687,5 +687,5 @@ RETURN city
 
 ---
 
-**Need more examples?** → **[Complete Examples](complete-examples.md)**  
+**Need more examples?** → **[Complete Examples](complete-examples.md)**
 **Ready for advanced patterns?** → **[Graph Traversal](graph-traversal.md)**

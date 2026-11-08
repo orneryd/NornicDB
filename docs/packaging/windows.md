@@ -16,11 +16,11 @@ NornicDB offers 5 Windows build variants to match different deployment needs:
 
 | Variant | Binary | Size | Embeddings | GPU | Use Case |
 |---------|--------|------|------------|-----|----------|
-| `cpu` | `nornicdb-cpu.exe` | ~15MB | None | ❌ | Smallest, use external embedding service |
-| `cpu-localllm` | `nornicdb-cpu-localllm.exe` | ~25MB | BYOM | ❌ | Resource-constrained, bring own model |
-| `cpu-bge` | `nornicdb-cpu-bge.exe` | ~425MB | Built-in | ❌ | Resource-constrained, ready to run |
-| `cuda` | `nornicdb-cuda.exe` | ~30MB | BYOM | ✅ | GPU-accelerated, bring own model |
-| `cuda-bge` | `nornicdb-cuda-bge.exe` | ~430MB | Built-in | ✅ | GPU-accelerated, ready to run |
+| `cpu` | `nornicdb-cpu.exe` | ~15MB | None | No | Smallest, use external embedding service |
+| `cpu-localllm` | `nornicdb-cpu-localllm.exe` | ~25MB | BYOM | No | Resource-constrained, bring own model |
+| `cpu-bge` | `nornicdb-cpu-bge.exe` | ~425MB | Built-in | No | Resource-constrained, ready to run |
+| `cuda` | `nornicdb-cuda.exe` | ~30MB | BYOM | Yes | GPU-accelerated, bring own model |
+| `cuda-bge` | `nornicdb-cuda-bge.exe` | ~430MB | Built-in | Yes | GPU-accelerated, ready to run |
 
 **BYOM** = Bring Your Own Model (place `.gguf` file in `models/` directory)
 
@@ -63,11 +63,11 @@ build.bat all
 
 | Variant | Go | llama.cpp libs | CUDA Toolkit | BGE Model |
 |---------|-----|----------------|--------------|-----------|
-| `cpu` | ✅ | ❌ | ❌ | ❌ |
-| `cpu-localllm` | ✅ | ✅ | ❌ | ❌ |
-| `cpu-bge` | ✅ | ✅ | ❌ | ✅ |
-| `cuda` | ✅ | ✅ (CUDA) | ✅ | ❌ |
-| `cuda-bge` | ✅ | ✅ (CUDA) | ✅ | ✅ |
+| `cpu` | Yes | No | No | No |
+| `cpu-localllm` | Yes | Yes | No | No |
+| `cpu-bge` | Yes | Yes | No | Yes |
+| `cuda` | Yes | ✅ (CUDA) | Yes | No |
+| `cuda-bge` | Yes | ✅ (CUDA) | Yes | Yes |
 
 ## Pre-Built llama.cpp Libraries
 

@@ -16,22 +16,22 @@ How to keep memory usage bounded when building search indexes (especially the ve
 
 ## How Qdrant Handles It
 
-1. **Vectors on disk (mmap)**  
-   - Collection can set **`on_disk: true`** for vector storage.  
-   - Vectors are stored in **AppendableMemmap** backed by **ChunkedMmapVectors**: append-only chunked mmap files.  
+1. **Vectors on disk (mmap)**
+   - Collection can set **`on_disk: true`** for vector storage.
+   - Vectors are stored in **AppendableMemmap** backed by **ChunkedMmapVectors**: append-only chunked mmap files.
    - Process memory stays bounded: only current chunk(s) and metadata (e.g. id → offset) in RAM, not N full vectors.
 
-2. **Defer HNSW build**  
-   - **`indexing_threshold`**: HNSW is built only after N vectors (or when explicitly triggered). During bulk ingest you only append to vector storage.  
-   - **`m: 0`**: Disable HNSW during ingestion, then set `m` back (e.g. 16) to build the index once.  
+2. **Defer HNSW build**
+   - **`indexing_threshold`**: HNSW is built only after N vectors (or when explicitly triggered). During bulk ingest you only append to vector storage.
+   - **`m: 0`**: Disable HNSW during ingestion, then set `m` back (e.g. 16) to build the index once.
    - So **during bulk**: memory = vector storage (mmap or in-RAM) + no HNSW graph yet.
 
-3. **Streaming upload**  
-   - **`upload_collection`** (Python): data comes from an **iterator**; the client never holds the full dataset in memory.  
+3. **Streaming upload**
+   - **`upload_collection`** (Python): data comes from an **iterator**; the client never holds the full dataset in memory.
    - Server still needs to store vectors (on disk via mmap or in RAM); the win is client-side and avoiding a single huge request.
 
-4. **Summary**  
-   - **Main lever**: store vectors in **chunked mmap (on disk)** so the process doesn’t hold N vectors in RAM.  
+4. **Summary**
+   - **Main lever**: store vectors in **chunked mmap (on disk)** so the process doesn’t hold N vectors in RAM.
    - **Secondary**: defer building the HNSW index until after bulk ingest.
 
 ## Implemented in NornicDB
@@ -70,5 +70,5 @@ How to keep memory usage bounded when building search indexes (especially the ve
 
 ## References
 
-- Neo4j: [Vector index memory configuration](https://neo4j.com/docs/operations-manual/current/performance/vector-index-memory-configuration/), batch sizing for writes.  
+- Neo4j: [Vector index memory configuration](https://neo4j.com/docs/operations-manual/current/performance/vector-index-memory-configuration/), batch sizing for writes.
 - Qdrant: [Optimizing memory for bulk uploads](https://qdrant.tech/articles/indexing-optimization), [Large-scale ingestion](https://qdrant.tech/course/essentials/day-4/large-scale-ingestion/); source: `lib/segment/src/vector_storage/` (ChunkedMmapVectors, AppendableMmapDenseVectorStorage, on_disk config).

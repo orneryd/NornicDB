@@ -616,7 +616,7 @@ python -m llama_cpp.convert \
 
 | Model | Best For | Context | Dims | License |
 |-------|----------|---------|------|---------|
-| **bge-m3** ⭐ | Long docs, code+docs hybrid (default) | 8192 | 1024 | MIT |
+| **bge-m3**  | Long docs, code+docs hybrid (default) | 8192 | 1024 | MIT |
 | **e5-large-v2** | Natural language search, multilingual | 512 | 1024 | MIT |
 | **jina-embeddings-v2-base-code** | Pure code search | 8192 | 768 | Apache 2.0 |
 

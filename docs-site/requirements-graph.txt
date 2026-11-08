@@ -1,0 +1,2 @@
+graphifyy[sql]==0.9.72
+ijson>=3.2,<4

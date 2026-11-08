@@ -18,9 +18,9 @@ While these algorithms are fast and effective, they can produce false positives:
 - **Transitive errors**: A→B and B→C doesn't always mean A should connect to C
 
 An LLM can provide **semantic validation** that algorithms can't:
-- "These two notes are about the same project" ✅
-- "These nodes share keywords but aren't actually related" ❌
-- "This relationship would be more accurately typed as INSPIRED_BY" 🔄
+- "These two notes are about the same project"
+- "These nodes share keywords but aren't actually related"
+- "This relationship would be more accurately typed as INSPIRED_BY"
 
 ## Design Goals
 
@@ -95,9 +95,9 @@ An LLM can provide **semantic validation** that algorithms can't:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `NORNICDB_AUTO_TLP_ENABLED` | ❌ Off | Enable TLP candidate generation |
-| `NORNICDB_AUTO_TLP_LLM_QC_ENABLED` | ❌ Off | Enable Heimdall batch review |
-| `NORNICDB_AUTO_TLP_LLM_AUGMENT_ENABLED` | ❌ Off | Allow Heimdall to suggest new edges |
+| `NORNICDB_AUTO_TLP_ENABLED` |  Off | Enable TLP candidate generation |
+| `NORNICDB_AUTO_TLP_LLM_QC_ENABLED` |  Off | Enable Heimdall batch review |
+| `NORNICDB_AUTO_TLP_LLM_AUGMENT_ENABLED` |  Off | Allow Heimdall to suggest new edges |
 
 **Progressive enablement:**
 ```bash

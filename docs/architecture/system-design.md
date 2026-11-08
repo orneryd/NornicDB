@@ -1,6 +1,6 @@
 # NornicDB Architecture
 
-**Version:** 0.1.4  
+**Version:** 0.1.4
 **Last Updated:** December 1, 2025
 
 ## Overview
@@ -141,7 +141,7 @@ Key Design Decisions:
 - **Co-located retrieval path** - In-process embedding, search orchestration, reranking, and transactional state for single-digit millisecond retrieval
 - **Protocol pluralism** - Bolt/Cypher, REST/HTTP, MCP JSON-RPC, and future GraphQL/gRPC interfaces share the same underlying engine
 - **Fail-open degradation** - Reranker/embedder unavailability doesn't block retrieval; system gracefully degrades
-- **Runtime adaptability** - Strategy switching (CPU brute-force ↔ GPU ↔ HNSW) with configurable thresholds for resource-conscious deployment
+- **Runtime adaptability** - Strategy switching (CPU brute-force  GPU  HNSW) with configurable thresholds for resource-conscious deployment
 
 ## Data Flow
 
@@ -181,22 +181,22 @@ Key Design Decisions:
 
 | Operation      | Protocol  | Port     | Status |
 | -------------- | --------- | -------- | ------ |
-| Cypher queries | Bolt      | 7687     | ✅     |
-| HTTP/REST      | HTTP      | 7474     | ✅     |
-| MCP Tools      | JSON-RPC  | 7474/mcp | ✅     |
-| Authentication | Basic/JWT | Both     | ✅     |
+| Cypher queries | Bolt      | 7687     | Yes |
+| HTTP/REST      | HTTP      | 7474     | Yes |
+| MCP Tools      | JSON-RPC  | 7474/mcp | Yes |
+| Authentication | Basic/JWT | Both     | Yes |
 
 ### Vector Search Features
 
 | Feature                         | Neo4j GDS | NornicDB |
 | ------------------------------- | --------- | -------- |
-| Vector array queries            | ✅        | ✅       |
-| String auto-embedding           | ❌        | ✅       |
-| `WITH EMBEDDING` (inline embed) | ❌        | ✅       |
-| Multi-line SET with arrays      | ❌        | ✅       |
-| Server-side embedding           | ❌        | ✅       |
-| GPU acceleration                | ❌        | ✅       |
-| Embedding cache                 | ❌        | ✅       |
+| Vector array queries            | Yes | Yes |
+| String auto-embedding           | No | Yes |
+| `WITH EMBEDDING` (inline embed) | No | Yes |
+| Multi-line SET with arrays      | No | Yes |
+| Server-side embedding           | No | Yes |
+| GPU acceleration                | No | Yes |
+| Embedding cache                 | No | Yes |
 
 ## Core Components
 

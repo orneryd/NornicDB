@@ -4,7 +4,7 @@ This document describes how NornicDB maps CMEK/HSM integrations.
 
 ## FIPS and Responsibility Boundaries
 
-NornicDB delegates KEK operations to configured providers (KMS/HSM wrappers).  
+NornicDB delegates KEK operations to configured providers (KMS/HSM wrappers).
 FIPS 140-2/3 posture depends on:
 
 1. selected provider service (for example AWS KMS/Azure Key Vault HSM tiers),
@@ -44,7 +44,7 @@ Recommended:
 
 ## Thales/CloudHSM
 
-NornicDB currently integrates through provider wrappers in this branch.  
+NornicDB currently integrates through provider wrappers in this branch.
 Direct PKCS#11/HSM socket provider support can be added as a dedicated `kms.KeyProvider`.
 
 ## Operational Boundary

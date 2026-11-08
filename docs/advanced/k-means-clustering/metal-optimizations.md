@@ -1,6 +1,6 @@
 # Metal Atomic Float Fix - Quick Reference
 
-## ✅ FIXED: Metal K-Means Atomic Operations
+## FIXED: Metal K-Means Atomic Operations
 
 ### Problem
 Original plan used `atomic_float` which doesn't exist in Metal 2.x (macOS < 13).
@@ -36,7 +36,7 @@ inline void atomicAddFloat(device atomic_uint* addr, float val) {
 
 ## Implementation Files
 
-### Created ✅
+### Created
 - **`nornicdb/pkg/gpu/metal/kmeans_kernels_darwin.metal`** - Production Metal kernels
   - 10 kernel functions for k-means clustering
   - Atomic float workaround built-in
@@ -134,7 +134,7 @@ func (ci *ClusterIndex) Cluster() error {
 
 ---
 
-**Status:** ✅ Metal kernels ready for Go integration  
-**Compatibility:** macOS 10.13+ (Metal 2.0+)  
-**Performance:** 94x faster than CPU with emulation  
+**Status:**  Metal kernels ready for Go integration
+**Compatibility:** macOS 10.13+ (Metal 2.0+)
+**Performance:** 94x faster than CPU with emulation
 **Next:** Implement Go wrapper in `gpu_metal.go`

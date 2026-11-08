@@ -297,14 +297,14 @@ The cross-encoder integration supports multiple response formats:
 
 ### When to Use
 
-✅ **Use cross-encoder when:**
+ **Use cross-encoder when:**
 
 - Accuracy is more important than latency
 - Users are willing to wait for better results
 - Search volume is low to moderate
 - High-stakes decisions based on search
 
-❌ **Skip cross-encoder when:**
+ **Skip cross-encoder when:**
 
 - Low latency is critical (<50ms)
 - High query volume (>1000 QPS)

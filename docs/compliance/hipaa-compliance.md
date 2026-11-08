@@ -32,7 +32,7 @@ This document maps NornicDB's built-in security features to the HIPAA Security R
 | Requirement | Section | NornicDB Feature |
 |---|---|---|
 | Access Control | (a)(1) | JWT authentication, RBAC, per-database roles |
-| Audit Controls | (b) | Comprehensive audit logging with retention |
+| Audit Controls | (b) | audit logging with retention |
 | Integrity | (c)(1) | AES-256-GCM encryption, hash-chained audit logs |
 | Person Authentication | (d) | Unique user IDs, password policies |
 | Transmission Security | (e)(1) | TLS 1.2+ (TLS 1.3 preferred) |
@@ -243,7 +243,7 @@ When deploying NornicDB:
 - [ ] Enable TLS 1.2+ for all connections
 - [ ] Enable encryption at rest (AES-256-GCM)
 - [ ] Configure RBAC with minimum-necessary permissions
-- [ ] Enable comprehensive audit logging
+- [ ] Enable audit logging
 - [ ] Set audit log retention to 6+ years
 - [ ] Enable hash-chained audit log integrity
 - [ ] Configure security alerting

@@ -51,7 +51,7 @@ The `QueryAnalyzer` performs **lightweight keyword detection** to determine:
 
 ## Threat Analysis
 
-### ✅ Protected: Write Operations Hidden as Reads
+### Protected: Write Operations Hidden as Reads
 
 **Threat:** An attacker crafts a query that deletes/modifies data but is marked as "read-only" by the analyzer.
 
@@ -77,7 +77,7 @@ MATCH (n) ＤＥＬＥＴＥ n
 -- ✅ Not ASCII "DELETE", not valid Cypher
 ```
 
-### ⚡ Accepted: Read Operations Marked as Writes (False Positives)
+### Accepted: Read Operations Marked as Writes (False Positives)
 
 **Scenario:** A read-only query is incorrectly marked as a write operation.
 
@@ -101,7 +101,7 @@ MATCH (n) ＤＥＬＥＴＥ n
 3. **No security impact** - Query executes correctly, just not cached
 4. **Simple implementation** - Complex parsing adds attack surface
 
-### ✅ Protected: False Positives Cannot Leak Data
+### Protected: False Positives Cannot Leak Data
 
 **Concern:** Could an attacker use a false positive to gain unauthorized data access?
 
@@ -329,13 +329,13 @@ go test ./pkg/cypher/... -run "Cache|Security" -v
 
 | Aspect | Protection Level | Notes |
 |--------|-----------------|-------|
-| Write ops hidden as reads | ✅ **Fully Protected** | Not possible in valid Cypher |
-| Read ops marked as writes | ⚡ **Accepted** | Performance impact only |
-| False positive data leakage | ✅ **Protected** | Analyzer doesn't affect access control |
-| Cache poisoning | ✅ **Protected** | Keys include parameters |
-| Procedure writes | ✅ **Protected** | Only `db.*` cached |
-| Access control bypass | ✅ **N/A** | Analyzer not used for auth |
-| Cache timing side-channel | ✅ **Protected** | Query must succeed before cache action |
+| Write ops hidden as reads |  **Fully Protected** | Not possible in valid Cypher |
+| Read ops marked as writes |  **Accepted** | Performance impact only |
+| False positive data leakage |  **Protected** | Analyzer doesn't affect access control |
+| Cache poisoning |  **Protected** | Keys include parameters |
+| Procedure writes |  **Protected** | Only `db.*` cached |
+| Access control bypass |  **N/A** | Analyzer not used for auth |
+| Cache timing side-channel |  **Protected** | Query must succeed before cache action |
 
 ---
 

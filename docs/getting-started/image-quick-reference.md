@@ -2,7 +2,7 @@
 
 **Quick reference for NornicDB Docker images and common commands.**
 
-## 📦 Production Images
+## Production Images
 
 | Platform | Architecture | GPU Support | Image | Command |
 |----------|-------------|-------------|-------|---------|
@@ -10,7 +10,7 @@
 | NVIDIA GPU | AMD64 | CUDA | `timothyswt/nornicdb-amd64-cuda-bge` | `docker run -d --gpus all -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data timothyswt/nornicdb-amd64-cuda-bge:latest` |
 | CPU Only | AMD64 | None | `timothyswt/nornicdb-amd64-cpu` | `docker run -d -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data timothyswt/nornicdb-amd64-cpu:latest` |
 
-## 🛠️ Development Images
+## Development Images
 
 | Platform | Architecture | Features | Image | Command |
 |----------|-------------|----------|-------|---------|
@@ -78,7 +78,7 @@ docker run -d \
   timothyswt/nornicdb-arm64-metal-bge:latest
 ```
 
-## 🔧 Common Operations
+## Common Operations
 
 ### Container Management
 
@@ -139,7 +139,7 @@ curl -X POST http://localhost:7474/db/nornic/tx/commit \
   -d '{"statements":[{"statement":"RETURN 1 as test"}]}'
 ```
 
-## 🏗️ Building Images
+## Building Images
 
 ### Prerequisites
 
@@ -174,7 +174,7 @@ make build-arm64-metal-bge-heimdall
 DOCKER_NO_CACHE=1 make build-arm64-metal-bge
 ```
 
-## 🌐 Access Points
+## Access Points
 
 | Service | Port | Protocol | URL |
 |---------|------|----------|-----|
@@ -183,11 +183,11 @@ DOCKER_NO_CACHE=1 make build-arm64-metal-bge
 | Health Check | 7474 | HTTP | http://localhost:7474/health |
 | Metrics (optional) | 9090 | HTTP | http://localhost:9090/metrics |
 
-## 🔒 Environment Variables
+## Environment Variables
 
 Use the canonical [Environment Variables Reference](../operations/environment-variables.md) for supported settings and defaults. This quick reference intentionally stays focused on image choice, startup commands, and operational shortcuts.
 
-## 📚 Documentation Links
+## Documentation Links
 
 - **[Docker Deployment Guide](./docker-deployment.md)** - Complete deployment guide
 - **[Operations Guide](../operations/README.md)** - Production operations
@@ -196,5 +196,5 @@ Use the canonical [Environment Variables Reference](../operations/environment-va
 
 ---
 
-**Need help?** → **[Troubleshooting Guide](../operations/troubleshooting.md)**  
+**Need help?** → **[Troubleshooting Guide](../operations/troubleshooting.md)**
 **Production deployment?** → **[Docker Deployment Guide](./docker-deployment.md)**

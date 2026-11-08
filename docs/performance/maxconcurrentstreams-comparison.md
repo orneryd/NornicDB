@@ -66,12 +66,12 @@ Apple M3 Max
 ### Key Findings
 
 With memory optimizations (executor caching + search service reuse) enabled:
-- ✅ **100 streams provides slightly higher throughput** (37,450 req/s vs 37,093 req/s for 250)
-- ✅ **Significantly better tail latency** (P99: 4.12ms vs 10.18ms for 250)
-- ✅ **Lower high-percentile latency under load** (P95/P99/P99.9 all improved)
-- ✅ **Much better median and average latency** (P50/avg both improved by ~60%)
-- ✅ **No errors** - 100% success rate maintained
-- ✅ **89% reduction in memory growth** during load
+-  **100 streams provides slightly higher throughput** (37,450 req/s vs 37,093 req/s for 250)
+-  **Significantly better tail latency** (P99: 4.12ms vs 10.18ms for 250)
+-  **Lower high-percentile latency under load** (P95/P99/P99.9 all improved)
+-  **Much better median and average latency** (P50/avg both improved by ~60%)
+-  **No errors** - 100% success rate maintained
+-  **89% reduction in memory growth** during load
 
 ### Why 100 Streams Performs Best
 
@@ -100,17 +100,17 @@ The **59.5% improvement in P99 latency** (10.18ms → 4.12ms) with 100 streams i
 ### For High-Concurrency Workloads
 
 **Use MaxConcurrentStreams = 100 when:**
-- ✅ **Best performance** - highest throughput and lowest latency
-- ✅ **Optimal for 100 concurrent connections** - as tested
-- ✅ **Lower memory usage** - fewer stream buffers
-- ✅ **Better security** - DoS protection with lower limits
-- ✅ **Standard web workloads** - sufficient for most use cases
+-  **Best performance** - highest throughput and lowest latency
+-  **Optimal for 100 concurrent connections** - as tested
+-  **Lower memory usage** - fewer stream buffers
+-  **Better security** - DoS protection with lower limits
+-  **Standard web workloads** - sufficient for most use cases
 
 **Use MaxConcurrentStreams = 250 when:**
-- ✅ You need Go's default behavior (matches standard library)
-- ✅ You have many more concurrent clients (200+)
-- ✅ Each client makes many parallel requests
-- ✅ Memory usage is not a concern
+-  You need Go's default behavior (matches standard library)
+-  You have many more concurrent clients (200+)
+-  Each client makes many parallel requests
+-  Memory usage is not a concern
 
 ### Current Default: 250
 
@@ -124,12 +124,12 @@ The default is **250** (Go's internal default) to:
 ## Conclusion
 
 **MaxConcurrentStreams = 100 (with memory optimizations) provides stronger tail-latency performance:**
-- ✅ **Slightly higher throughput** (37,451 req/s vs 37,093 req/s for 250)
-- ✅ **59.5% P99 latency improvement** (4.12ms vs 10.18ms for 250) - most significant
-- ✅ **63.7% P95 latency improvement** (3.25ms vs 8.95ms for 250)
-- ✅ **60.3% average latency improvement** (2.67ms vs 6.72ms for 250)
-- ✅ **89% reduction in memory growth** during load
-- ✅ **No performance regressions**
-- ✅ **100% success rate maintained**
+-  **Slightly higher throughput** (37,451 req/s vs 37,093 req/s for 250)
+-  **59.5% P99 latency improvement** (4.12ms vs 10.18ms for 250) - most significant
+-  **63.7% P95 latency improvement** (3.25ms vs 8.95ms for 250)
+-  **60.3% average latency improvement** (2.67ms vs 6.72ms for 250)
+-  **89% reduction in memory growth** during load
+-  **No performance regressions**
+-  **100% success rate maintained**
 
 The combination of `MaxConcurrentStreams = 100` and memory optimizations (executor caching + search service reuse) provides stronger tail-latency behavior for high-concurrency database workloads. The **sub-5ms P99 latency** (4.12ms) demonstrates excellent performance. While the default is 250 (matching Go's standard library), **100 streams is recommended when tail latency is the priority** with ~100 concurrent connections.

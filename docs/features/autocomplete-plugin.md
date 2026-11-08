@@ -50,17 +50,17 @@ The Autocomplete Plugin provides intelligent, database-aware Cypher query autoco
    - If SLM is available, generates completion using schema context
    - Returns both the suggestion and schema info
 
-4. **Suggestion Display**: 
+4. **Suggestion Display**:
    - If a valid suggestion is returned, it appears in a dropdown
    - User can accept via click, Enter key, or continue typing
 
 ## Benefits
 
-✅ **Database-Aware**: Uses actual labels, properties, and relationship types from your database  
-✅ **Context-Aware**: Suggestions are based on what actually exists in your graph  
-✅ **Intelligent**: SLM generates completions with full schema context  
-✅ **Performance**: Debounced requests prevent excessive API calls  
-✅ **User-Friendly**: Keyboard navigation and toggleable feature  
+ **Database-Aware**: Uses actual labels, properties, and relationship types from your database
+ **Context-Aware**: Suggestions are based on what actually exists in your graph
+ **Intelligent**: SLM generates completions with full schema context
+ **Performance**: Debounced requests prevent excessive API calls
+ **User-Friendly**: Keyboard navigation and toggleable feature
 
 ## API Details
 
