@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Require exact database identity for qualified textual element IDs in MATCH
   predicates and graph functions. Arbitrary database prefixes no longer resolve
   to local entities; raw local-ID inputs remain supported.
+- Stop false "changed after transaction start" conflicts on observed relationship
+  updates in databases with storage limits. Managed and routed write preparation
+  now scope the observed relationship exactly like the database's own writes.
+  Ordinary commits without write-behind or unique constraints skip predecessor
+  validation again before doing any work, and mixed imports no longer record
+  their creates as predecessors (NOR-418).
+
 - Keep lightweight CALL-subquery and metadata reads lightweight after full node
   reads warm the cache. Full and query node images now share an estimated
   256 MiB byte budget, including vectors, with individual eviction instead of
