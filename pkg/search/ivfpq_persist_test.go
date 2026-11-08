@@ -259,7 +259,7 @@ func TestIVFPQPersistedMutationsDetectVectorStoreChanges(t *testing.T) {
 	require.NoError(t, store.Add("base", []float32{1, 0}))
 
 	snapshot := newANNMutationOverlay().snapshot()
-	snapshot.VectorStoreCount, snapshot.VectorStoreSlots = store.stateVersion()
+	snapshot.VectorStoreCount, snapshot.VectorStoreSlots, snapshot.VectorStoreGeneration = store.stateVersion()
 	require.True(t, snapshot.matchesVectorStore(store))
 
 	require.NoError(t, store.Add("fresh", []float32{0, 1}))

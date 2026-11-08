@@ -107,7 +107,10 @@ func (s *Service) clearIndexes(all bool) error {
 		paths = append(paths, s.fulltextIndexPath)
 	}
 	if s.vectorIndexPath != "" {
-		paths = append(paths, s.vectorIndexPath+".vec", s.vectorIndexPath+".meta")
+		// The tuple owner retires every file of the publication protocol.
+		if err := removeVectorCheckpoint(s.vectorIndexPath); err != nil {
+			return err
+		}
 	}
 	if s.hnswIndexPath != "" {
 		paths = append(paths, s.hnswIndexPath)

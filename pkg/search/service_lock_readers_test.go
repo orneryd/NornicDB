@@ -83,7 +83,11 @@ func TestServiceExactVectorReadVersusAdminWriter(t *testing.T) {
 			reading := func(method string) bool {
 				return serviceLockStack("(*Service).VectorQueryNodes(", method, "sync.(*RWMutex).RLock")
 			}
-			return reading("(*Service).VectorIndexDimensions") || reading("(*Service).EmbeddingCount")
+			// The read's first metadata access may now be the vector-storage health
+			// probe before the count/dimension reads. The staged property is the
+			// same: the read cannot complete while the admin write holds svc.mu.
+			return reading("(*Service).VectorIndexDimensions") || reading("(*Service).EmbeddingCount") ||
+				reading("(*Service).vectorStorageError")
 		})
 		select {
 		case err := <-queried:

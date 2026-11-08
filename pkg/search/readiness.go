@@ -14,5 +14,5 @@ func (s *Service) prepareSearchRead(ctx context.Context) error {
 	if s.buildAttempted.Load() && !s.IsReady() {
 		return localizedError(localization.SearchIndexBuilding(), ErrSearchIndexBuilding)
 	}
-	return nil
+	return s.vectorStorageError()
 }

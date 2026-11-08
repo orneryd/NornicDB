@@ -138,6 +138,10 @@ type DatabaseSearchStatus struct {
 	// 503 search_disabled_for_database (both off), and the lazy-trigger 503.
 	BM25Enabled   bool `json:"bm25_enabled"`
 	VectorEnabled bool `json:"vector_enabled"`
+	// VectorStorage reports the configured and active vector backing. An
+	// explicit disk database that fell back to memory is visible here instead
+	// of appearing as a successfully persisted vector index.
+	VectorStorage search.VectorStorageStatus `json:"vector_storage"`
 	// LazyTriggerNeeded is true when at least one resolved-as-enabled index
 	// is configured warming=lazy and has not yet started building.
 	LazyTriggerNeeded bool `json:"lazy_trigger_needed,omitempty"`
@@ -666,6 +670,7 @@ func (db *DB) GetDatabaseSearchStatus(dbName string) DatabaseSearchStatus {
 		BM25Enabled:       bm25On,
 		VectorEnabled:     vectorOn,
 		LazyTriggerNeeded: lazyNeeded,
+		VectorStorage:     entry.svc.VectorStorageStatus(),
 	}
 }
 
