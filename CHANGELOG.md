@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep accepted replication transactions distinct across databases when Go callers
+  reuse a logical ID, while preserving retry identity across journal reopen.
+  Transaction envelopes, rather than transport request IDs, define that identity.
+  Scope pending WAL receipts to the database too, so an overlapping commit in
+  another database cannot return success for a write that was never applied.
 - Publish vector compaction checkpoints with recoverable payload/ordinal metadata.
   Reject corrupt or stale search checkpoints and rebuild from the current database;
   explicit disk mode reports file failures instead of silently using memory.
