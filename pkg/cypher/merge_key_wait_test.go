@@ -19,10 +19,10 @@ import (
 // statement's transaction ends and the key stays the holder's.
 func TestMergeKeyWaitEndsAtTransactionTimeoutOnEveryRoute(t *testing.T) {
 	const timeout = 200 * time.Millisecond
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		InMemory:      true,
 		EngineOptions: storage.EngineOptions{LockWait: storage.LockWaitOptions{Timeout: timeout}},
-	})
+	}))
 	require.NoError(t, err)
 	base := runtimeFixtureOwner.Track(t, &storage.MemoryEngine{BadgerEngine: engine}, storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
@@ -86,10 +86,10 @@ func TestMergeKeyWaitEndsAtTransactionTimeoutOnEveryRoute(t *testing.T) {
 // waiter in explicit transactions, holder holding k = 1.
 func mergeKeyWaitExecutors(t *testing.T, timeout time.Duration) (setup, holder, waiter *StorageExecutor) {
 	t.Helper()
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		InMemory:      true,
 		EngineOptions: storage.EngineOptions{LockWait: storage.LockWaitOptions{Timeout: timeout}},
-	})
+	}))
 	require.NoError(t, err)
 	base := runtimeFixtureOwner.Track(t, &storage.MemoryEngine{BadgerEngine: engine}, storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })

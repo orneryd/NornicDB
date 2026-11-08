@@ -9,6 +9,8 @@
 - [x] Document the compatibility change without stored-key, payload or WAL changes.
 - [x] Review lexical delta and refresh stored-entity census locations and the renamed lock scratch writer from release PR1756; classifications unchanged.
 - [x] Review all 32 advisory entries at 2a86223f3 and reuse the retained graph view during identity binding; scoped binding drops 16 B and one allocation per operation with unchanged nil/prewrapped controls.
+- [x] Review the updated 34-entry advisory at 6dd3f6ce3 and record every disposition in the PR comment.
+- [x] Correct release MERGE key-wait fixture lifetime ownership and review the four new/two retired constructor inventory paths; default-tag fixture and affected key-wait checks pass.
 - [ ] Resolve the blocking context census finding in WAL recovery logging; retain the census as a gate.
 - [ ] Complete fresh full make-test CI on the follow-up head.
 - [ ] Reconcile duplicate advisory/review feedback and update Linear.
