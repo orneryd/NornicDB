@@ -50,6 +50,13 @@ func stopTestServer(t testing.TB, server *Server) {
 
 func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, *auth.Authenticator) {
 	t.Helper()
+	return setupTestServerWithDatabaseConfig(t, nil, configure)
+}
+
+// setupTestServerWithDatabaseConfig is setupTestServerWithConfig whose
+// database opens with configureDB applied to its configuration.
+func setupTestServerWithDatabaseConfig(t testing.TB, configureDB func(*nornicdb.Config), configure func(*Config)) (*Server, *auth.Authenticator) {
+	t.Helper()
 
 	// Create temporary directory for test database
 	tmpDir, err := os.MkdirTemp("", "nornicdb-server-test-*")
@@ -71,6 +78,9 @@ func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, 
 	// tests opt in here so prior-version fixtures aren't silently erased
 	// by the overwrite-in-place update path.
 	config.Database.MVCCRetentionMaxVersions = 100
+	if configureDB != nil {
+		configureDB(config)
+	}
 
 	// Set encryption key for remote credential tests.
 	t.Setenv("NORNICDB_REMOTE_CREDENTIALS_KEY", "test-remote-credential-key-32b!")

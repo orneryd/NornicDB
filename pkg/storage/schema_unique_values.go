@@ -372,6 +372,13 @@ func constraintLockValue(ctx context.Context, node *Node, prop string) (interfac
 // ErrDeadlock, and a wait ends with ctx's error when ctx ends. The locks
 // taken so far are released either way.
 func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context, owner string, keys []uniqueConstraintLockKey) (func(), error) {
+	return sm.acquireUniqueConstraintLocks(ctx, owner, keys, nil)
+}
+
+// acquireUniqueConstraintLocks is acquireUniqueConstraintCommitLocks with
+// owner's waits for keys other owners hold waiting as wait says: MERGE
+// admission's also end at the server's transaction timeout (mergeKeyWait).
+func (sm *SchemaManager) acquireUniqueConstraintLocks(ctx context.Context, owner string, keys []uniqueConstraintLockKey, wait *uniqueKeyLockWait) (func(), error) {
 	if len(keys) == 0 {
 		return func() {}, nil
 	}
@@ -447,7 +454,7 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 	})
 
 	for i := range requests {
-		if err := sm.waitForUniqueConstraintLock(ctx, owner, requests[i]); err != nil {
+		if err := sm.waitForUniqueConstraintLock(ctx, owner, requests[i], wait); err != nil {
 			sm.releaseUniqueConstraintLocks(owner, requests[:i], requests[i:])
 			recycleUniqueConstraintRequests(requestBatch, requests)
 			return nil, err
@@ -540,8 +547,11 @@ func signalUniqueConstraintLock(lock *uniqueConstraintCommitLock) {
 // waitForUniqueConstraintLock owns one key in exclusive or shared mode. The
 // latter is only used for relationship endpoints, which must be stable against
 // node mutation but can be read concurrently by independent relationships.
-func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner string, request uniqueConstraintLockRequest) error {
+// While another owner holds the key it waits as wait says
+// (awaitUniqueConstraintLock).
+func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner string, request uniqueConstraintLockRequest, wait *uniqueKeyLockWait) error {
 	lock := request.lock
+	var clock uniqueKeyLockClock
 	sm.uniqueConstraintCommitLocksMu.Lock()
 	waiting := false
 	clearWait := func() {
@@ -610,13 +620,11 @@ func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner 
 		if hook := uniqueKeyLockWaitHook.Load(); hook != nil {
 			(*hook)()
 		}
-		select {
-		case <-released:
-		case <-ctx.Done():
+		if err := sm.awaitUniqueConstraintLock(ctx, owner, request, released, wait, &clock); err != nil {
 			sm.uniqueConstraintCommitLocksMu.Lock()
 			clearWait()
 			sm.uniqueConstraintCommitLocksMu.Unlock()
-			return ctx.Err()
+			return err
 		}
 		sm.uniqueConstraintCommitLocksMu.Lock()
 	}

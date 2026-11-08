@@ -4,3 +4,6 @@
 - id: storage-log.log.wal_embeddings_skipped
   description: Pseudo-locale recoverable corrupted-embedding warning.
   other: "[!! wal recovery: skipped corrupted embedding entries !!]"
+- id: storage-log.log.lock_wait_prolonged
+  description: Pseudo-locale warning for a prolonged key lock wait.
+  other: "[!! transaction is still waiting for a key lock another transaction holds !!]"

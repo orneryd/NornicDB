@@ -4,3 +4,6 @@
 - id: storage-log.log.wal_embeddings_skipped
   description: WAL recovery warning after skipping recoverable corrupted embeddings.
   other: "wal recovery: skipped corrupted embedding entries"
+- id: storage-log.log.lock_wait_prolonged
+  description: Warning for a MERGE still waiting for a key lock another transaction holds.
+  other: "transaction is still waiting for a key lock another transaction holds"

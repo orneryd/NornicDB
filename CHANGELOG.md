@@ -38,6 +38,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a zero `CreatedAt` in every named database, so creation-time decay,
   retention and ordering treated them as ancient.
 
+- Bound a MERGE's wait for a uniquely constrained node key that another
+  transaction holds by the configured transaction timeout
+  (`database.transaction_timeout`, `NORNICDB_TRANSACTION_TIMEOUT`, 30s by
+  default; 0 disables it), so a holder that never ends no longer blocks it
+  indefinitely: the MERGE fails with
+  `Neo.ClientError.Transaction.TransactionTimedOut` and releases its keys, and
+  an explicit transaction ended by a timeout or `TERMINATE TRANSACTIONS` is
+  rolled back at once. A wait longer than the slow-query threshold logs one
+  `storage.transaction.lock_wait_prolonged` warning naming the waiting and
+  holding transactions. Client deadlines, cancellation and deadlock detection
+  end the wait as before. `NORNICDB_TRANSACTION_TIMEOUT=0` now disables the
+  timeout instead of being ignored (and suppresses the legacy
+  `NEO4J_dbms_transaction_timeout`), and `NORNICDB_SLOW_QUERY_THRESHOLD=0`
+  now disables slow-query reporting (that warning, the Cypher slow-query log
+  and metric, and the HTTP slow-query log, which used to log every query at
+  a zero threshold). A negative or invalid value for either setting, in any
+  source, stops startup.
+
 - Preserve quoted dotted property names in constraints and projected reads.
   Keep quoted commas inside composite constraint properties and reject property
   references to a variable other than the declared FOR variable, including list

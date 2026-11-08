@@ -2347,7 +2347,9 @@ var (
 //     committed while this one waited is handled as above.
 //
 // A wait ends with ErrDeadlock, also transient, when it would close a cycle
-// of transactions waiting for each other, or with ctx's error.
+// of transactions waiting for each other, with ctx's error, or, after the
+// server's transaction timeout (EngineOptions.LockWait), with
+// ErrLockWaitTimeout.
 func (tx *BadgerTransaction) PrepareMergeKey(ctx context.Context, label, property string, value interface{}) error {
 	return tx.PrepareMergeNode(ctx, []string{label}, map[string]interface{}{property: value})
 }
