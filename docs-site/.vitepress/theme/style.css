@@ -576,6 +576,12 @@ input:focus-visible {
   }
 }
 @media (max-width: 359px) {
+  .inline-search-input {
+    padding-left: 10px;
+  }
+  .inline-search-input::placeholder {
+    font-size: 12px;
+  }
   .inline-search {
     flex-basis: 88px;
     width: 88px;

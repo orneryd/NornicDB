@@ -111,7 +111,16 @@ for (const width of [1440, 390, 320])
       }),
       before = await input.boundingBox(),
       scroll = await page.evaluate(() => scrollY);
-    await expect(input).toHaveAttribute("placeholder", "What can we find?");
+    await expect(input).toHaveAttribute("placeholder", "How do I…?");
+    await page.evaluate(() => document.fonts.ready);
+    expect(await input.evaluate((el) => {
+      const style = getComputedStyle(el), hint = getComputedStyle(el, "::placeholder");
+      const canvas = document.createElement("canvas").getContext("2d");
+      canvas.font = `${hint.fontSize} ${hint.fontFamily}`;
+      return canvas.measureText(el.placeholder).width <=
+        el.getBoundingClientRect().width - parseFloat(style.borderLeftWidth) -
+        parseFloat(style.borderRightWidth) - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    })).toBe(true);
     await input.click();
     const panel = page.getByRole("dialog", { name: "Documentation search" });
     await expect(panel).toBeVisible();
