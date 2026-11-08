@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -157,13 +155,11 @@ type walPendingIdentityFixture struct {
 
 func newWALPendingIdentityFixture(t *testing.T) *walPendingIdentityFixture {
 	t.Helper()
-	t.Cleanup(config.WithWALEnabled())
-	native := newTestEngine(t)
-	parked := newParkedWALEntitySubmitter(native)
-	wal, err := NewWAL(t.TempDir(), nil)
-	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, wal)
-	owner := fixtureowner.OwnChecked(t, NewWALEngine(parked, wal))
+	var parked *parkedWALEntitySubmitter
+	native, wal, owner := newWALClientFixture(t, func(engine *MemoryEngine) Engine {
+		parked = newParkedWALEntitySubmitter(engine)
+		return parked
+	})
 	var once sync.Once
 	release := func() { once.Do(func() { close(parked.release) }) }
 	// Cleanup order (LIFO): release every parked native application and join it,
@@ -172,7 +168,7 @@ func newWALPendingIdentityFixture(t *testing.T) *walPendingIdentityFixture {
 		release()
 		parked.inflight.Wait()
 	})
-	return &walPendingIdentityFixture{native: native, parked: parked, wal: wal, owner: owner, release: release}
+	return &walPendingIdentityFixture{native: native.BadgerEngine, parked: parked, wal: wal, owner: owner, release: release}
 }
 
 // prepare stages one entity commit of database in a fresh native transaction
