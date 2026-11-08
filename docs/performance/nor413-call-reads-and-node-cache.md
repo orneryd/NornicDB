@@ -46,6 +46,30 @@ write-behind images retain their existing public read behavior.
   Bolt/HTTP, named-vector streaming and embedding-writeback regressions remain
   required controls. This change does not classify READ procedures as vector-free.
 
+## Fresh local benchmark samples
+
+Go 1.27.3, Windows/amd64, Intel Core i9-9900KF, `GOMAXPROCS=2`,
+500 ms samples. Baseline storage is byte-identical to original PR head
+`23ad2767072f46a4a36a9fde05bed957de7db0cb`; runtime candidate is
+`444cc0950f36f37c854d2bebe73012358bc850df`. The first three samples:
+
+| Warm read | Baseline ns/op | Candidate ns/op | Baseline B/op | Candidate B/op | Allocs baseline to candidate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Metadata, 1 MiB stored chunks | 164,131-199,748 | 493-497 | 1,052,608-1,052,609 | 832 | 135 to 6 |
+| Full vectors, same payload | 167,140-185,440 | 179,068-192,794 | 1,052,609-1,052,610 | 1,052,609-1,052,610 | 135 to 135 |
+| Ordinary non-vector cache hit | 319-328 | 326-330 | 496 | 496 | 4 to 4 |
+
+These descriptive samples establish the allocation change. Full-vector timing
+ranges overlap; this is not a statistical claim about small latency changes.
+Static analysis was also running on the host, so timings should not be used as
+production capacity estimates. Additional alternating baseline/candidate rounds
+are retained with the verification receipts.
+
+Focused storage coverage exercises the new estimation, removal, reset, cache
+selection and source-binding helpers at 100%; cache admission is 91.3% and the
+configured-limit/default helper 66.7%. The focused run's package-wide coverage
+is 20.3%; that is not a claim of full storage-package coverage.
+
 ## Verification limits
 
 This report distinguishes current candidate checks from the earlier Linux lab

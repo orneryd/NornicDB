@@ -91,8 +91,8 @@ func BenchmarkNOR413WarmQueryRead(b *testing.B) {
 	}
 }
 
-// A vector-bearing replacement must evict the previous cache image, even
-// though the replacement itself is deliberately not retained there.
+// A vector-bearing replacement must revoke every previous cache image;
+// a late fill from the preceding generation cannot overwrite the replacement.
 func TestNOR413VectorReplacementRevokesOldCachedBody(t *testing.T) {
 	b := newSidecarTestBadger(t)
 	id := NodeID("test:replace")

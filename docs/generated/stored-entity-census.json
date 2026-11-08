@@ -2856,6 +2856,42 @@
       "pos": "pkg/storage/badger.go:1072"
     },
     {
+      "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
+      "class": "read cache",
+      "func": "pkg/storage.BadgerEngine.putNodeLocked",
+      "pos": "pkg/storage/badger_cache.go:160"
+    },
+    {
+      "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
+      "class": "read cache",
+      "func": "pkg/storage.BadgerEngine.putNodeLocked",
+      "pos": "pkg/storage/badger_cache.go:167"
+    },
+    {
+      "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
+      "class": "read cache",
+      "func": "pkg/storage.BadgerEngine.deleteNodeReadCacheLocked",
+      "pos": "pkg/storage/badger_cache.go:195"
+    },
+    {
+      "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
+      "class": "read cache",
+      "func": "pkg/storage.BadgerEngine.resetNodeReadCachesLocked",
+      "pos": "pkg/storage/badger_cache.go:203"
+    },
+    {
+      "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
+      "class": "read cache",
+      "func": "pkg/storage.BadgerEngine.releaseClosedStateLocked",
+      "pos": "pkg/storage/badger_stats.go:379"
+    },
+    {
+      "field": "pkg/storage.BadgerEngine.nodeCacheMaxBytes",
+      "class": "configuration",
+      "func": "pkg/storage.NewBadgerEngineWithOptions",
+      "pos": "pkg/storage/badger.go:1069"
+    },
+    {
       "field": "pkg/storage.BadgerEngine.nodeCacheMaxEntries",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
@@ -4634,13 +4670,6 @@
     }
   ],
   "pending": null,
-  "violations": [
-    "unclassified field: pkg/storage.BadgerEngine.nodeCacheBytes is changed at pkg/storage/badger_cache.go:160 in pkg/storage.BadgerEngine.putNodeLocked",
-    "unclassified field: pkg/storage.BadgerEngine.nodeCacheBytes is changed at pkg/storage/badger_cache.go:167 in pkg/storage.BadgerEngine.putNodeLocked",
-    "unclassified field: pkg/storage.BadgerEngine.nodeCacheBytes is changed at pkg/storage/badger_cache.go:195 in pkg/storage.BadgerEngine.deleteNodeReadCacheLocked",
-    "unclassified field: pkg/storage.BadgerEngine.nodeCacheBytes is changed at pkg/storage/badger_cache.go:203 in pkg/storage.BadgerEngine.resetNodeReadCachesLocked",
-    "unclassified field: pkg/storage.BadgerEngine.nodeCacheBytes is changed at pkg/storage/badger_stats.go:379 in pkg/storage.BadgerEngine.releaseClosedStateLocked",
-    "unclassified field: pkg/storage.BadgerEngine.nodeCacheMaxBytes is changed at pkg/storage/badger.go:1069 in pkg/storage.NewBadgerEngineWithOptions"
-  ],
+  "violations": null,
   "unordered": null
 }
