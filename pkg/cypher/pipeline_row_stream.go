@@ -384,7 +384,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 							return false
 						}
 					}
-					if !typed || node == nil || !e.pipelineNodeMatchesPattern(node, pattern) {
+					if !typed || node == nil || !e.pipelineNodeMatchesPattern(ctx, node, pattern) {
 						return true
 					}
 					return visit(index + 1)
@@ -447,7 +447,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 					candidates[index].ready = true
 				}
 				for _, node := range candidates[index].nodes {
-					if !e.pipelineNodeMatchesPattern(node, pattern) {
+					if !e.pipelineNodeMatchesPattern(ctx, node, pattern) {
 						continue
 					}
 					current[pattern.variable] = node
@@ -501,7 +501,7 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				if !e.pipelineNodeMatchesPattern(node, pattern) {
+				if !e.pipelineNodeMatchesPattern(ctx, node, pattern) {
 					return nil
 				}
 				current[pattern.variable] = node

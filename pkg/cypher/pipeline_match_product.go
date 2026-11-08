@@ -173,7 +173,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 			}
 			var nodes []*storage.Node
 			if value, bound := row[pattern.variable]; bound {
-				if node, typed := value.(*storage.Node); typed && node != nil && e.pipelineNodeMatchesPattern(node, pattern) {
+				if node, typed := value.(*storage.Node); typed && node != nil && e.pipelineNodeMatchesPattern(ctx, node, pattern) {
 					nodes = []*storage.Node{node}
 				}
 			} else {

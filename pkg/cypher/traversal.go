@@ -83,6 +83,10 @@ type TraversalContext struct {
 	// repeatable lets a path repeat relationships: a walk, under MATCH
 	// REPEATABLE ELEMENTS (repeatable_elements.go).
 	repeatable bool
+	// pinnedRelationship, when set, is the only relationship the path's first
+	// step may traverse. Its start nodes are that relationship's own endpoints
+	// (relationshipIDSeedEndpointNodes), so the step lists no adjacency.
+	pinnedRelationship *storage.Edge
 }
 
 // traversalEndpointsNeedOnlyExist reports whether the nodes a traversal
@@ -274,8 +278,11 @@ func readRelationshipPattern(ctx context.Context, pattern string, properties pat
 // caller passes that node here so the traversal starts from the known
 // endpoint and walks backwards, instead of expanding the pattern over every
 // relationship in the store and joining the bound value afterward. seedNodes
-// (start-side) takes priority when both are supplied.
-func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, pathVariable string, readTail []string, earlyLimit int) (*ExecuteResult, error) {
+// (start-side) takes priority when both are supplied. relationship, when the
+// caller's own id / elementId lookup supplies it, is the one relationship the
+// pattern may walk: the traversal then starts from that relationship's own
+// endpoints and lists no adjacency.
+func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, relationship *storage.Edge, pathVariable string, readTail []string, earlyLimit int) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -335,6 +342,22 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				return nil, err
 			}
 			return result, nil
+		}
+	}
+
+	// A relationship the WHERE pins by id / elementId is the only relationship
+	// this pattern may walk, and its own endpoints are the start nodes, so the
+	// traversal lists no adjacency. The relationship's type, direction, inline
+	// properties, endpoint admission and the WHERE keep their existing owners.
+	if relationship != nil && !matches.IsChained {
+		matches.pinnedRelationship = relationship
+		if len(seedNodes) == 0 && len(endSeedNodes) == 0 {
+			seedNodes = e.relationshipIDSeedEndpointNodes(ctx, relationship, matches)
+			if len(seedNodes) == 0 {
+				// Endpoint admission rejected every endpoint: nothing matches, and
+				// the traversal must not fall back to a store-wide scan.
+				return result, nil
+			}
 		}
 	}
 
@@ -606,7 +629,7 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 			if err := ctx.Err(); err != nil {
 				return nil, true, err
 			}
-			part, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, []*storage.Node{seed}, nil, pathVariable, nil, -1)
+			part, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, []*storage.Node{seed}, nil, nil, pathVariable, nil, -1)
 			if err != nil {
 				return nil, true, err
 			}
@@ -621,7 +644,7 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 		}
 		if result == nil {
 			// Preserve the existing empty-index behavior and result columns.
-			result, err = e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, nil, -1)
+			result, err = e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, nil, pathVariable, nil, -1)
 			if err != nil {
 				return nil, true, err
 			}
@@ -903,6 +926,10 @@ type TraversalMatch struct {
 	TraversalLimit    int                // Early traversal cap for LIMIT-only shapes (0 = disabled)
 	// boundEndNodeID filters endpoints before they count toward TraversalLimit.
 	boundEndNodeID storage.NodeID
+	// pinnedRelationship is the one relationship a WHERE id() / elementId()
+	// equality names. findPaths walks it from its own endpoints instead of
+	// listing a start node's adjacency (relationshipIDSeedEdge).
+	pinnedRelationship *storage.Edge
 	// UnusedPropertyVariables lists pattern node variables whose properties no
 	// later clause (RETURN, WHERE) reads, so the traversal may load a named
 	// labelled endpoint by ID + labels alone. nil means "not analysed": every
@@ -1285,7 +1312,7 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 	if len(match.StartNode.properties) > 0 || len(match.StartNode.labels) > 0 {
 		var filtered []*storage.Node
 		for _, n := range startNodes {
-			if e.pipelineNodeMatchesPattern(n, match.StartNode) {
+			if e.pipelineNodeMatchesPattern(ctx, n, match.StartNode) {
 				filtered = append(filtered, n)
 			}
 		}
@@ -1459,6 +1486,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			nodeProperties:               match.endpointProperties,
 			endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
 			relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
+			pinnedRelationship:           match.pinnedRelationship,
 		}
 
 		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, nil)
@@ -1532,6 +1560,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					nodeProperties:               match.endpointProperties,
 					endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
+					pinnedRelationship:           match.pinnedRelationship,
 				}
 
 				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, nil)
@@ -1766,6 +1795,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 	ctx.nodeProperties = match.endpointProperties
 	ctx.endpointsNeedOnlyLabels = traversalEndpointsNeedOnlyLabels(match)
 	ctx.relationshipsNeedOnlyHeaders = traversalRelationshipsNeedOnlyHeaders(match)
+	ctx.pinnedRelationship = match.pinnedRelationship
 	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, nil)
 }
 
@@ -1881,25 +1911,32 @@ func (e *StorageExecutor) findPaths(
 		return results
 	}
 
-	// Translate the native source once at the storage boundary. Local IDs
-	// alone cannot select adjacency in a composite with duplicate IDs.
-	lookupID, validSource := currentNode.Identity().NodeLookupID(e.storage)
-	if !validSource {
-		return results
-	}
-	// Get edges based on direction
 	var edges []*storage.Edge
-	switch ctx.direction {
-	case "outgoing":
-		edges = e.traversalEdges(ctx, lookupID, true)
-	case "incoming":
-		edges = e.traversalEdges(ctx, lookupID, false)
-	case "both":
-		var err error
-		edges, err = undirectedIncidentEdges(ctx.cancelCtx, e.storage, lookupID)
-		if err != nil {
-			recordExpressionFailure(ctx.cancelCtx, err)
+	if ctx.pinnedRelationship != nil && depth == 0 {
+		// A pinned relationship is the one step this path may take. Its
+		// endpoints are the start nodes, so no adjacency is listed and no
+		// source translation is needed to select it.
+		edges = []*storage.Edge{ctx.pinnedRelationship}
+	} else {
+		// Translate the native source once at the storage boundary. Local IDs
+		// alone cannot select adjacency in a composite with duplicate IDs.
+		lookupID, validSource := currentNode.Identity().NodeLookupID(e.storage)
+		if !validSource {
 			return results
+		}
+		// Get edges based on direction
+		switch ctx.direction {
+		case "outgoing":
+			edges = e.traversalEdges(ctx, lookupID, true)
+		case "incoming":
+			edges = e.traversalEdges(ctx, lookupID, false)
+		case "both":
+			var err error
+			edges, err = undirectedIncidentEdges(ctx.cancelCtx, e.storage, lookupID)
+			if err != nil {
+				recordExpressionFailure(ctx.cancelCtx, err)
+				return results
+			}
 		}
 	}
 
@@ -1913,6 +1950,18 @@ func (e *StorageExecutor) findPaths(
 		// immediately back in the opposite direction.
 		if ctx.usedEdges[edge.Identity()] && !ctx.repeatable {
 			continue
+		}
+		if ctx.pinnedRelationship != nil && depth == 0 {
+			current := currentNode.Identity()
+			if ctx.direction == "outgoing" && edge.StartIdentity() != current {
+				continue
+			}
+			if ctx.direction == "incoming" && edge.EndIdentity() != current {
+				continue
+			}
+			if ctx.direction == "both" && edge.StartIdentity() != current && edge.EndIdentity() != current {
+				continue
+			}
 		}
 		// Check relationship type filter
 		if len(ctx.relTypes) > 0 {

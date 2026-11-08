@@ -50,6 +50,7 @@ type delegationContractEngine interface {
 	NamespaceSchemaProvider
 	PrefixStatsEngine
 	NamespaceLabelStatsProvider
+	CountStoreReadEngine
 	StartupMaintenanceStateEngine
 	MVCCMaintenanceEngine
 	TemporalMaintenanceEngine
@@ -316,6 +317,11 @@ func (s *delegationSpyEngine) EdgeCountByPrefix(ctx context.Context, prefix stri
 func (s *delegationSpyEngine) NodeCountByLabelInNamespace(ctx context.Context, namespace, label string) (int64, error) {
 	s.record("NodeCountByLabelInNamespace")
 	return s.MemoryEngine.NodeCountByLabelInNamespace(ctx, namespace, label)
+}
+
+func (s *delegationSpyEngine) ReadCountStore(ctx context.Context, request CountStoreReadRequest) (CountStoreRead, error) {
+	s.record("ReadCountStore")
+	return s.MemoryEngine.ReadCountStore(ctx, request)
 }
 
 func (s *delegationSpyEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, error) {
@@ -785,6 +791,10 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 				require.GreaterOrEqual(t, got, int64(1), "%s.NodeCountByLabelInNamespace must count seeded nodes", stack)
 			}
 
+			answer, readErr := engine.ReadCountStore(ctx, CountStoreReadRequest{Kind: CountStoreNodesByLabel, Namespace: namespace, Name: "Person", HiddenLabelPrefix: "_"})
+			check("ReadCountStore", readErr)
+			require.True(t, answer.DescribesRows)
+			require.GreaterOrEqual(t, answer.Count, int64(2))
 			_, err = engine.ConsumeCleanShutdownMarker(ctx)
 			check("ConsumeCleanShutdownMarker", err)
 			require.NoError(t, engine.MarkCleanShutdown(ctx))
