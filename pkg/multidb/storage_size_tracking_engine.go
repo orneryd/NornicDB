@@ -609,6 +609,15 @@ func (t *sizeTrackingEngine) NodeCountByLabel(ctx context.Context, label string)
 	return int64(len(nodes)), nil
 }
 
+// ReadCountStore preserves the count-store read across this wrapper, so the
+// count owners keep answering from the counters instead of the rows here.
+func (t *sizeTrackingEngine) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	if reader, ok := t.Engine.(storage.CountStoreReadEngine); ok {
+		return reader.ReadCountStore(ctx, request)
+	}
+	return storage.CountStoreRead{}, nil
+}
+
 // Namespace preserves the wrapped engine's namespace (its database name), so
 // what a caller reads through this wrapper is the database it tracks; it is
 // "" when the wrapped engine has none, which every caller treats as unknown.

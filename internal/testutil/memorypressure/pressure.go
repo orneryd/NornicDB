@@ -3,6 +3,7 @@
 package memorypressure
 
 import (
+	"math"
 	"runtime"
 	"runtime/debug"
 	"testing"
@@ -10,6 +11,16 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/memory"
 )
+
+// WithoutRuntimePressure isolates serial cache-reuse tests from the ambient
+// runtime limit. It restores that limit at cleanup and leaves GC policy unchanged.
+// Tests exercising pressure must install their explicit limit after this call.
+// Like New, it changes process-wide state and must not run in parallel tests.
+func WithoutRuntimePressure(t testing.TB) {
+	t.Helper()
+	previousLimit := debug.SetMemoryLimit(math.MaxInt64)
+	t.Cleanup(func() { debug.SetMemoryLimit(previousLimit) })
+}
 
 // New disables automatic GC and returns a policy whose physical-usage stand-in
 // includes committed heap pages, including idle pages not returned to the OS.
@@ -22,11 +33,10 @@ func New(t *testing.T) *memory.Policy {
 // without waiting for wall time. Heap usage and reclamation remain real.
 func NewWithClock(t *testing.T, now func() time.Time) *memory.Policy {
 	t.Helper()
+	WithoutRuntimePressure(t)
 	previousGC := debug.SetGCPercent(-1)
-	previousLimit := debug.SetMemoryLimit(1<<63 - 1)
 	t.Cleanup(func() {
 		debug.SetGCPercent(previousGC)
-		debug.SetMemoryLimit(previousLimit)
 		runtime.GC()
 	})
 	debug.FreeOSMemory()

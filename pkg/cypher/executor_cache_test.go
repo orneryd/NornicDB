@@ -4,6 +4,7 @@ package cypher
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,21 +85,34 @@ type pausedLabelCountEngine struct {
 
 func (s *pausedLabelCountEngine) NodeCountByLabel(ctx context.Context, label string) (int64, error) {
 	count, err := s.NamespacedEngine.NodeCountByLabel(ctx, label)
-	if s.counted != nil {
-		if s.countContext != nil {
-			s.countContext <- ctx
-		}
-		close(s.counted)
-		select {
-		case <-s.resume:
-		case <-ctx.Done():
-		}
-		s.counted = nil
-		if err == nil && ctx.Err() != nil {
-			return 0, ctx.Err()
-		}
+	if err == nil {
+		err = s.pauseCountRead(ctx)
 	}
 	return count, err
+}
+
+func (s *pausedLabelCountEngine) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	answer, err := s.NamespacedEngine.ReadCountStore(ctx, request)
+	if err == nil {
+		err = s.pauseCountRead(ctx)
+	}
+	return answer, err
+}
+
+func (s *pausedLabelCountEngine) pauseCountRead(ctx context.Context) error {
+	if s.counted == nil {
+		return nil
+	}
+	if s.countContext != nil {
+		s.countContext <- ctx
+	}
+	close(s.counted)
+	select {
+	case <-s.resume:
+	case <-ctx.Done():
+	}
+	s.counted = nil
+	return ctx.Err()
 }
 
 func (s *pausedLabelCountEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
@@ -120,14 +134,34 @@ func TestExecutor_CacheDoesNotPublishOverlappingReadAtNewRevision(t *testing.T) 
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	const query = `MATCH (n:CacheDelete) RETURN count(n)`
 
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
+	joined := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(store.resume) }) }
+	t.Cleanup(func() {
+		cancel()
+		release()
+		select {
+		case <-joined:
+		case <-time.After(5 * time.Second):
+			t.Error("overlapping count query did not retire")
+		}
+	})
 	go func() {
-		_, executeErr := exec.Execute(context.Background(), query, nil)
+		defer close(joined)
+		_, executeErr := exec.Execute(ctx, query, nil)
 		done <- executeErr
 	}()
-	<-store.counted
+	select {
+	case <-store.counted:
+	case executeErr := <-done:
+		t.Fatalf("query bypassed the count pause: %v", executeErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("query did not reach the count pause")
+	}
 	require.NoError(t, store.DeleteNode(t.Context(), "node"))
-	close(store.resume)
+	release()
 	require.NoError(t, <-done)
 
 	result, err := exec.Execute(context.Background(), query, nil)

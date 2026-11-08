@@ -106,6 +106,69 @@ expect_clean_fixture_run() {
   fi
 }
 
+# Exercise both public entry points through their actual child processes.
+coverage_script="$(dirname "${verify}")/generate-coverage.sh"
+shard_script="$(dirname "${verify}")/ci/make-test-shard.sh"
+mkdir -p "${fixture}/memory/scripts/ci" "${fixture}/memory/bin"
+cp "${memory_policy}" "${fixture}/memory/scripts/ci/go-memory-policy.sh"
+cp "${verify}" "${fixture}/memory/scripts/verify.sh"
+cat > "${fixture}/memory/Makefile" <<'MAKE'
+build:
+	@printf '%s\n' "$${GOMEMLIMIT-unset}" > observed-limit
+MAKE
+cat > "${fixture}/memory/bin/go" <<'GO'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == list ]]; then
+  echo github.com/orneryd/nornicdb/pkg/cypher
+  exit 0
+fi
+[[ "$1" == test ]] || exit 2
+printf '%s\n' "${GOMEMLIMIT-unset}" > observed-limit
+for arg in "$@"; do
+  case "${arg}" in
+    -coverprofile=*) printf 'mode: set\nexample.go:1.1,2.1 1 1\n' > "${arg#*=}" ;;
+  esac
+done
+GO
+chmod +x "${fixture}/memory/bin/go"
+git init --quiet "${fixture}/memory"
+(
+  cd "${fixture}/memory"
+  git config user.name 'Verify self-test'
+  git config user.email 'verify-test@example.invalid'
+  git add scripts/verify.sh scripts/ci/go-memory-policy.sh Makefile
+  git commit --quiet -m 'memory policy fixture'
+  memory_base="$(git rev-parse HEAD)"
+  for entry in verification coverage shard; do
+    if [[ "${entry}" == verification ]]; then
+      memory_command=(bash scripts/verify.sh)
+    elif [[ "${entry}" == coverage ]]; then
+      memory_command=(bash "${coverage_script}" --append "${fixture}/memory/raw.out" memory ./pkg/cypher)
+    else
+      memory_command=(bash "${shard_script}" cypher)
+    fi
+    for mode in ci-default ci-override local-default local-override; do
+      actions=false
+      expected=unset
+      setting=
+      case "${mode}" in
+        ci-default) actions=true; expected=3GiB ;;
+        ci-override) actions=true; setting=off; expected=off ;;
+        local-override) setting=5GiB; expected=5GiB ;;
+      esac
+      if [[ -n "${setting}" ]]; then
+        env PATH="${fixture}/memory/bin:${PATH}" GITHUB_ACTIONS="${actions}" GOMEMLIMIT="${setting}" VERIFY_BASE="${memory_base}" VERIFY_FETCH=0 VERIFY_ALL=1 VERIFY_ONLY=build "${memory_command[@]}" > /dev/null
+      else
+        env -u GOMEMLIMIT PATH="${fixture}/memory/bin:${PATH}" GITHUB_ACTIONS="${actions}" VERIFY_BASE="${memory_base}" VERIFY_FETCH=0 VERIFY_ALL=1 VERIFY_ONLY=build "${memory_command[@]}" > /dev/null
+      fi
+      actual="$(cat observed-limit)"
+      [[ "${actual}" == "${expected}" ]] || { echo "FAIL: ${entry}/${mode} inherited ${actual}, expected ${expected}" >&2; exit 1; }
+    done
+  done
+)
+echo 'PASS: verification, coverage and shard child memory policy (CI default, explicit off, local default and override)'
+
 # Run the real verifier in plan-only mode on isolated, committed file changes.
 # No tools or checks should run; each plan must select exactly the mapped steps.
 mkdir -p "${fixture}/plan/scripts"

@@ -56,6 +56,12 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 		return strings.Compare(string(a.ID), string(b.ID))
 	}
 	nodes := make([]*storage.Node, 0, limit)
+	// The window keeps only a page of the ordered index. Internal system
+	// nodes (labels starting with "_") are not MATCH rows, so they are
+	// skipped before the page is filled: a page that counted them would
+	// return fewer visible rows than the LIMIT asks for, and the rows the
+	// query does show would be the wrong ones.
+	hideSystemNodes := shouldHideSystemNodes(e.getStorage(ctx))
 	var filter func(*storage.Node) bool
 	if strings.TrimSpace(where) != "" {
 		filter = e.compileNodeWhereFilter(ctx, pattern.variable, where)
@@ -78,7 +84,10 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 			if err != nil || node == nil {
 				continue
 			}
-			if (len(pattern.labels) > 0 && !nodeHasAnyLabel(node, pattern.labels)) || !e.nodeMatchesProps(node, pattern.properties) {
+			if hideSystemNodes && isSystemNode(node) {
+				continue
+			}
+			if (len(pattern.labels) > 0 && !mergeNodeHasLabels(node, pattern.labels)) || !e.nodeMatchesProps(node, pattern.properties) {
 				continue
 			}
 			if filter != nil && !filter(node) {

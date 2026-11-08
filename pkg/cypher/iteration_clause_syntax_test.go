@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -60,6 +61,18 @@ func cyphertextSymbolicName(aliasTail string) string {
 	return symbolicNameValue(name)
 }
 
+// iterationStatementForParser writes a shared-grammar FOR statement in the
+// form the active front end admits. The ANTLR parser keeps the strict Cypher
+// 5.26 admission for the additive clauses, so it reads FOR only behind the
+// CYPHER 25 header the shared grammar makes optional; the SRD parser also
+// reads the headerless form. Both are the same statement to the executor.
+func iterationStatementForParser(statement string) string {
+	if config.IsANTLRParser() && startsWithKeywordFold(statement, "FOR") {
+		return "CYPHER 25 " + statement
+	}
+	return statement
+}
+
 // The FOR form is a shared-grammar iteration clause; its binding comes from
 // the same retained node reader.
 func TestIterationClauseReadsForClauses(t *testing.T) {
@@ -103,8 +116,8 @@ func TestIterationClauseExecution(t *testing.T) {
 		{name: "unwind parameter", query: "UNWIND $list AS x RETURN x ORDER BY x", params: map[string]interface{}{"list": []interface{}{int64(1), int64(2)}}, wantRows: [][]interface{}{{int64(1)}, {int64(2)}}},
 		{name: "unwind quoted variable", query: "UNWIND [1, 2] AS `odd name` RETURN `odd name` AS v ORDER BY v", wantRows: [][]interface{}{{int64(1)}, {int64(2)}}},
 		{name: "unwind node labels", query: "MATCH (n:IterationRow) UNWIND labels(n) AS label RETURN label", wantRows: [][]interface{}{{"IterationRow"}}},
-		{name: "for list", query: "FOR x IN [1, 2] RETURN x ORDER BY x", wantRows: [][]interface{}{{int64(1)}, {int64(2)}}},
-		{name: "for comment after keyword", query: "FOR /* gap */ x IN [1, 2] RETURN x ORDER BY x", wantRows: [][]interface{}{{int64(1)}, {int64(2)}}},
+		{name: "for list", query: iterationStatementForParser("FOR x IN [1, 2] RETURN x ORDER BY x"), wantRows: [][]interface{}{{int64(1)}, {int64(2)}}},
+		{name: "for comment after keyword", query: iterationStatementForParser("FOR /* gap */ x IN [1, 2] RETURN x ORDER BY x"), wantRows: [][]interface{}{{int64(1)}, {int64(2)}}},
 		{name: "unwind trailing where", query: "UNWIND [1, 2] AS x WHERE x > 1 RETURN x", wantError: "Invalid input 'WHERE'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,22 +133,69 @@ func TestIterationClauseExecution(t *testing.T) {
 	}
 }
 
+// The additive iteration clause's admission is the one documented difference
+// between the front ends, so each form is pinned where it is admitted: the
+// ANTLR parser requires the CYPHER 25 header (strict Cypher 5.26) and the SRD
+// parser reads both forms, and every admitted form returns the same rows.
+func TestIterationClauseForAdmissionAcrossParsers(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "iteration_admission"))
+	ctx := context.Background()
+	const headerless = "FOR x IN [1, 2] RETURN x ORDER BY x"
+	headered := "CYPHER 25 " + headerless
+	want := [][]interface{}{{int64(1)}, {int64(2)}}
+
+	previous := config.GetParserType()
+	t.Cleanup(func() { config.SetParserType(previous) })
+	for _, parser := range []string{config.ParserTypeNornic, config.ParserTypeANTLR} {
+		t.Run(parser, func(t *testing.T) {
+			config.SetParserType(parser)
+			// The optional header is accepted by both parsers and discards
+			// nothing of the statement it precedes.
+			result, err := exec.Execute(ctx, headered, nil)
+			require.NoError(t, err, headered)
+			require.Equal(t, want, result.Rows, headered)
+			if parser == config.ParserTypeANTLR {
+				_, err = exec.Execute(ctx, headerless, nil)
+				require.ErrorContains(t, err, "LET, FILTER and FOR require CYPHER 25 with the ANTLR parser", headerless)
+				return
+			}
+			headerlessResult, err := exec.Execute(ctx, headerless, nil)
+			require.NoError(t, err, headerless)
+			require.Equal(t, want, headerlessResult.Rows, headerless)
+		})
+	}
+}
+
 // Malformed iteration clauses keep their statement-level diagnostics: no
-// clause node exists for them, so the grammar's own error reports them.
+// clause node exists for them, so the grammar's own error reports them. The
+// whole-statement "must be followed by a clause" rule speaks after syntax
+// validation, so it names the error for the text the SRD parser admits, while
+// the ANTLR grammar reports its own input error for the same text.
 func TestIterationClauseMalformedDiagnostics(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "iteration_malformed"))
 	ctx := context.Background()
+	clauseFollows := "must be followed by a clause"
 	for query, message := range map[string]string{
 		"UNWIND [1, 2] RETURN 1": "unexpected input",
-		"UNWIND [1, 2] AS":       "UNWIND must be followed by a clause",
 		"UNWIND AS x RETURN x":   "unexpected input",
 		"FOR x [1, 2] RETURN x":  "unexpected input",
-		"FOR x IN RETURN x":      "FOR must be followed by a clause",
+		"UNWIND [1, 2] AS":       iterationClauseDiagnostic(config.IsANTLRParser(), "UNWIND", clauseFollows),
+		"FOR x IN RETURN x":      iterationClauseDiagnostic(config.IsANTLRParser(), "FOR", clauseFollows),
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
 		require.Contains(t, err.Error(), message, query)
 	}
+}
+
+// iterationClauseDiagnostic names a malformed iteration clause the way the
+// active front end reports it: the ANTLR grammar's own input error, or the
+// statement-level rule the SRD parser's admission lets speak.
+func iterationClauseDiagnostic(antlr bool, keyword, followedBy string) string {
+	if antlr {
+		return "unexpected input"
+	}
+	return keyword + " " + followedBy
 }
 
 // A cancelled statement stays a cancelled statement: the node reader adds no
@@ -146,7 +206,7 @@ func TestIterationClauseCancellation(t *testing.T) {
 	cancel()
 	for _, query := range []string{
 		"UNWIND [1, 2] AS x RETURN x",
-		"FOR x IN [1, 2] RETURN x",
+		iterationStatementForParser("FOR x IN [1, 2] RETURN x"),
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.ErrorIs(t, err, context.Canceled, query)

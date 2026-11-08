@@ -71,17 +71,6 @@ func newAdmittedCommitCanceler(t *testing.T, namespace string) (*StorageExecutor
 	return exec, engine, store
 }
 
-func countValue(t *testing.T, exec *StorageExecutor, query string) int64 {
-	t.Helper()
-	result, err := exec.Execute(context.Background(), query, nil)
-	require.NoError(t, err, query)
-	require.Len(t, result.Rows, 1, query)
-	require.Len(t, result.Rows[0], 1, query)
-	value, ok := result.Rows[0][0].(int64)
-	require.True(t, ok, query)
-	return value
-}
-
 func rowCount(t *testing.T, exec *StorageExecutor, query string) int64 {
 	t.Helper()
 	result, err := exec.Execute(context.Background(), query, nil)
@@ -110,7 +99,7 @@ func TestAcceptedCommitCompletionKeepsImplicitSuppression(t *testing.T) {
 			require.Equal(t, 1, engine.applied, "the accepted commit applies its queued suppression")
 
 			observer := NewStorageExecutor(store)
-			require.Zero(t, countValue(t, observer, "MATCH (n:Document {id: 'implicit'}) RETURN count(n)"),
+			require.Zero(t, singleQueryValue[int64](t, observer, "MATCH (n:Document {id: 'implicit'}) RETURN count(n)"),
 				"the accepted suppression hides the node")
 			require.EqualValues(t, 1, rowCount(t, observer, "MATCH (n:Document {id: 'implicit'}) RETURN reveal(n).touched"),
 				"the graph write of the same transaction stays committed")
@@ -146,7 +135,7 @@ func TestAcceptedCommitCompletionKeepsExplicitSuppression(t *testing.T) {
 			require.Equal(t, 1, engine.applied, "the accepted COMMIT applies its queued suppression")
 
 			observer := NewStorageExecutor(store)
-			require.Zero(t, countValue(t, observer, "MATCH (n:Document {id: 'explicit'}) RETURN count(n)"),
+			require.Zero(t, singleQueryValue[int64](t, observer, "MATCH (n:Document {id: 'explicit'}) RETURN count(n)"),
 				"the accepted suppression hides the node")
 			require.EqualValues(t, 1, rowCount(t, observer, "MATCH (n:Document {id: 'explicit'}) RETURN reveal(n).touched"),
 				"the graph write of the same transaction stays committed")
@@ -160,8 +149,8 @@ func TestAcceptedCommitCompletionKeepsExplicitSuppression(t *testing.T) {
 			}
 			require.Equal(t, 2, engine.attempts)
 			require.Equal(t, 2, engine.applied, "each accepted commit applies its own action exactly once")
-			require.Zero(t, countValue(t, observer, "MATCH (n:Document {id: 'retry'}) RETURN count(n)"))
-			require.Zero(t, countValue(t, observer, "MATCH (n:Document {id: 'explicit'}) RETURN count(n)"))
+			require.Zero(t, singleQueryValue[int64](t, observer, "MATCH (n:Document {id: 'retry'}) RETURN count(n)"))
+			require.Zero(t, singleQueryValue[int64](t, observer, "MATCH (n:Document {id: 'explicit'}) RETURN count(n)"))
 		})
 	}
 }
@@ -196,7 +185,7 @@ func TestAcceptedCommitCompletionIsDurable(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = reopened.Close() })
 			observer := NewStorageExecutor(storage.NewNamespacedEngine(reopened, "completion-durable"))
-			require.Zero(t, countValue(t, observer, "MATCH (n:Document {id: 'durable'}) RETURN count(n)"),
+			require.Zero(t, singleQueryValue[int64](t, observer, "MATCH (n:Document {id: 'durable'}) RETURN count(n)"),
 				"the accepted suppression is durable")
 			require.EqualValues(t, 1, rowCount(t, observer, "MATCH (n:Document {id: 'durable'}) RETURN reveal(n).id"),
 				"only the visibility changed; the committed data remains")
@@ -221,7 +210,7 @@ func TestCommitAdmissionRefusesCancellationBeforeAcceptance(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled, "cancellation before acceptance is preserved")
 	require.Zero(t, engine.applied, "nothing is completed for a refused commit")
 	observer := NewStorageExecutor(store)
-	require.Zero(t, countValue(t, observer, "MATCH (n:Document {id: 'refused'}) RETURN count(n)"),
+	require.Zero(t, singleQueryValue[int64](t, observer, "MATCH (n:Document {id: 'refused'}) RETURN count(n)"),
 		"a refused commit stores nothing")
 }
 
@@ -256,5 +245,5 @@ func TestExplicitCommitAdmissionRefusalClosesNativeTransaction(t *testing.T) {
 	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "completion-admission-cleanup:late"})
 	require.ErrorIs(t, err, storage.ErrTransactionClosed, "rejected admission must retire native state before dropping its handle")
 	observer := NewStorageExecutor(store)
-	require.Zero(t, countValue(t, observer, "MATCH (n:Document {id:'refused'}) RETURN count(n)"))
+	require.Zero(t, singleQueryValue[int64](t, observer, "MATCH (n:Document {id:'refused'}) RETURN count(n)"))
 }

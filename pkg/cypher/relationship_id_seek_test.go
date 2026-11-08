@@ -45,12 +45,15 @@ func TestRelationshipIDSeekMatches(t *testing.T) {
 		require.Equal(t, want, result.Rows, query)
 	}
 
-	nodes, none, ok := exec.relationshipIDSeedNodes(ctx, "(a)-[r]->(b)", fmt.Sprintf("elementId(r) = '%v'", elementID))
+	edge, none, ok := exec.relationshipIDSeedEdge(ctx, "(a)-[r]->(b)", fmt.Sprintf("elementId(r) = '%v'", elementID))
 	require.True(t, ok)
 	require.False(t, none)
-	require.Len(t, nodes, 1, "the start node only")
-	_, _, ok = exec.relationshipIDSeedNodes(ctx, "(a)-[r*1..2]->(b)", fmt.Sprintf("elementId(r) = '%v'", elementID))
+	require.NotNil(t, edge)
+	pinned := exec.parseTraversalPattern(ctx, "(a)-[r]->(b)")
+	require.NotNil(t, pinned)
+	require.Len(t, exec.relationshipIDSeedEndpointNodes(ctx, edge, pinned), 1, "the start node only")
+	_, _, ok = exec.relationshipIDSeedEdge(ctx, "(a)-[r*1..2]->(b)", fmt.Sprintf("elementId(r) = '%v'", elementID))
 	require.False(t, ok, "a variable-length pattern")
-	_, _, ok = exec.relationshipIDSeedNodes(ctx, "(a)-[r]->(b)", "r.id = 7")
+	_, _, ok = exec.relationshipIDSeedEdge(ctx, "(a)-[r]->(b)", "r.id = 7")
 	require.False(t, ok)
 }

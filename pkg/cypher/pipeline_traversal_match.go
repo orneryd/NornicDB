@@ -101,17 +101,25 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 				rowHint.earlyLimit = hint.earlyLimit
 				rowHint.readTail = hint.readTail
 			}
-			if startSeedNodes == nil && endSeedNodes == nil {
-				// A relationship pinned by id / elementId starts from its
-				// endpoints, not from every node.
-				if seeds, none, pinned := e.relationshipIDSeedNodes(rowCtx, materializedPattern, physicalWhere); pinned {
+			var pinnedRelationship *storage.Edge
+			{
+				// A relationship pinned by id / elementId is the one this row
+				// may walk, from its own endpoints. The predicate the traversal
+				// keeps supplies the value; when the whole WHERE stays with the
+				// outer row, the row bindings resolve it here instead, and the
+				// row filter still evaluates it.
+				pin := materializedWhere
+				if pin == "" {
+					pin = physicalWhere
+				}
+				if edge, none, pinned := e.relationshipIDSeedEdge(rowCtx, materializedPattern, pin); pinned {
 					if none {
 						continue
 					}
-					startSeedNodes = seeds
+					pinnedRelationship = edge
 				}
 			}
-			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
+			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pinnedRelationship, pathVariable, rowHint.readTail, rowHint.earlyLimit)
 			if err != nil {
 				return nil, true, err
 			}

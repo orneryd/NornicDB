@@ -815,6 +815,18 @@ func (n *NamespacedEngine) NodeCount(ctx context.Context) (int64, error) {
 	return int64(len(nodes)), nil
 }
 
+// ReadCountStore answers a count-store read for this namespace: the inner
+// engine's counters and visibility read one consistent view, with this
+// namespace as the counted scope, so the answer describes this database's rows.
+func (n *NamespacedEngine) ReadCountStore(ctx context.Context, request CountStoreReadRequest) (CountStoreRead, error) {
+	reader, ok := n.inner.(CountStoreReadEngine)
+	if !ok {
+		return CountStoreRead{}, nil
+	}
+	request.Namespace = n.namespace
+	return reader.ReadCountStore(ctx, request)
+}
+
 // NodeCountByLabel counts this namespace with the caller-owned metadata or scan path.
 func (n *NamespacedEngine) NodeCountByLabel(ctx context.Context, label string) (int64, error) {
 	if stats, ok := n.inner.(NamespaceLabelStatsProvider); ok {

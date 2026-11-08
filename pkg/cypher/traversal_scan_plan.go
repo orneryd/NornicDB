@@ -93,7 +93,7 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 		return nil
 	case traversalLabelScan:
 		return e.visitPipelineInitialNodeCandidates(ctx, match.StartNode, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}, func(node *storage.Node) error {
-			if node == nil || !e.pipelineNodeMatchesPattern(node, match.StartNode) {
+			if node == nil || !e.pipelineNodeMatchesPattern(ctx, node, match.StartNode) {
 				return nil
 			}
 			lookupID, validSource := node.Identity().NodeLookupID(store)

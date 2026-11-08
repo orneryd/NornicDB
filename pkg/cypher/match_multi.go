@@ -179,7 +179,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			var paths []PathResult
 			if boundStartNode != nil {
-				if !e.pipelineNodeMatchesPattern(boundStartNode, matches.StartNode) {
+				if !e.pipelineNodeMatchesPattern(ctx, boundStartNode, matches.StartNode) {
 					continue
 				}
 				if matches.IsChained && len(matches.Segments) > 1 {
@@ -230,7 +230,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			// Check if variable is already bound
 			if boundNode := existing[nodePattern.variable]; boundNode != nil {
-				if !e.pipelineNodeMatchesPattern(boundNode, nodePattern) {
+				if !e.pipelineNodeMatchesPattern(ctx, boundNode, nodePattern) {
 					continue
 				}
 				newBindings = append(newBindings, existing)
@@ -948,12 +948,21 @@ func shouldHideSystemNodes(engine storage.Engine) bool {
 	return true
 }
 
+// internalLabelPrefix starts every label that names an internal node class: the
+// store's own records, which a user database reads as no rows.
+const internalLabelPrefix = "_"
+
+// isInternalLabel reports whether label names an internal node class.
+func isInternalLabel(label string) bool {
+	return strings.HasPrefix(label, internalLabelPrefix)
+}
+
 func isSystemNode(node *storage.Node) bool {
 	if node == nil {
 		return false
 	}
 	for _, label := range node.Labels {
-		if strings.HasPrefix(label, "_") {
+		if isInternalLabel(label) {
 			return true
 		}
 	}
@@ -1552,7 +1561,7 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 		reversed := reverseTraversalMatch(match)
 		return reversed != nil && e.evaluateBoundOneHopPattern(ctx, reversed, nodes)
 	}
-	if !e.pipelineNodeMatchesPattern(start, match.StartNode) {
+	if !e.pipelineNodeMatchesPattern(ctx, start, match.StartNode) {
 		return false
 	}
 	viewport, _ := TemporalViewportFromContext(ctx)
