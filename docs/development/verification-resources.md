@@ -1,6 +1,6 @@
 # Verification memory and interruption diagnostics
 
-When `scripts/verify.sh` runs under GitHub Actions (`GITHUB_ACTIONS=true`), it supplies `GOMEMLIMIT=3GiB` unless the caller already provided a nonempty value. This standard Go setting is inherited by compiler, linker and test processes. Local verification and production server defaults are unchanged. An explicit setting, including `GOMEMLIMIT=off`, is preserved.
+`scripts/verify.sh` and direct `scripts/generate-coverage.sh` runs source the same `scripts/ci/go-memory-policy.sh` policy. When either runs under GitHub Actions (`GITHUB_ACTIONS=true`), it supplies `GOMEMLIMIT=3GiB` unless the caller already provided a nonempty value. This standard Go setting is inherited by compiler, linker and test processes. Local verification and production server defaults are unchanged. An explicit setting, including `GOMEMLIMIT=off`, is preserved.
 
 The limit is a soft Go-managed memory target, not an RSS or native-memory cap. More frequent garbage collection can increase compilation time. Every selected test, coverage profile, timeout, retry and failure assertion remains enabled.
 
@@ -19,4 +19,4 @@ The experiment used `go test -c -cover` with equivalent compiler boolean spellin
 
 Release coverage and conformance jobs have reported exit 143 and an explicit runner shutdown signal without a failed test assertion or Go timeout. That proves the jobs were interrupted; it does not establish an out-of-memory root cause or a passing test result. The memory policy reduces measured compilation pressure but is not proof that every runner interruption is repaired.
 
-Coverage generation prints each package and attempt before starting, then its elapsed time and exit status when it finishes. Preserve those logs and the exact head/base revisions. Runner diagnostics or host telemetry are still needed to attribute a runner shutdown. A canceled or interrupted run never substitutes for a completed verification pass.
+Coverage generation prints each package and attempt before starting, the effective Go memory target, then its elapsed time and exit status when it finishes. Preserve those logs and the exact head/base revisions. Runner diagnostics or host telemetry are still needed to attribute a runner shutdown. A canceled or interrupted run never substitutes for a completed verification pass.

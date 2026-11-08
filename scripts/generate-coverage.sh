@@ -28,6 +28,9 @@
 
 set -euo pipefail
 
+# shellcheck source=scripts/ci/go-memory-policy.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ci/go-memory-policy.sh"
+
 EXCLUDE_RE='github.com/orneryd/nornicdb/pkg/cypher/(fn|testutil)$|github.com/orneryd/nornicdb/pkg/nornicgrpc/gen$|github.com/orneryd/nornicdb/pkg/localllm$|github.com/orneryd/nornicdb/pkg/gpu($|/)|github.com/orneryd/nornicdb/pkg/graphql/generated$'
 
 run_pkg_with_retry() {
@@ -45,7 +48,7 @@ run_pkg_with_retry() {
 	# array expansion under set -u is treated as unbound).
 	for attempt in $(seq 1 "$attempts"); do
 		attempt_started=$SECONDS
-		printf 'coverage test: %s (attempt %s/%s) started\n' "$pkg" "$attempt" "$attempts"
+		printf 'coverage test: %s (attempt %s/%s) started (GOMEMLIMIT=%s)\n' "$pkg" "$attempt" "$attempts" "${GOMEMLIMIT:-default}"
 		if go test -p 1 -parallel 4 -timeout 30m -coverprofile="$prof" ${extra_flags[@]+"${extra_flags[@]}"} "$pkg"; then
 			printf 'coverage test: %s passed in %ss\n' "$pkg" "$((SECONDS - attempt_started))"
 			return 0
