@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,11 +48,11 @@ func (l *mergeKeyWaitLog) prolonged(t *testing.T) []map[string]any {
 func newMergeKeyWaitEngine(t *testing.T, options LockWaitOptions) (*BadgerEngine, *SchemaManager, *mergeKeyWaitLog) {
 	t.Helper()
 	log := &mergeKeyWaitLog{}
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory:      true,
 		Logger:        slog.New(slog.NewJSONHandler(log, nil)),
 		EngineOptions: EngineOptions{LockWait: options},
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	schema := engine.GetSchemaForNamespace("test")

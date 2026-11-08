@@ -159,7 +159,7 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 	if err != nil {
 		return nil, err
 	}
-	view := graphIdentityView(store, e.graphIdentityScope)
+	view := graphIdentityView(store)
 	outgoing, incoming, err := incidentEdgeListsContext(ctx, view, storage.NodeID(node.IdentityKey()), "both")
 	if err != nil {
 		return nil, err

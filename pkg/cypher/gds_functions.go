@@ -388,14 +388,14 @@ func gdsNodeFunction(name string, many bool) cypherfn.Func {
 			return nil, err
 		}
 		if !many {
-			return gdsNodeByID(workCtx, store, values[0], graphFunctionIdentityDomain(ctx, store)), nil
+			return gdsNodeByID(workCtx, store, values[0]), nil
 		}
 		nodes := make([]interface{}, 0, len(ids))
 		for _, id := range ids {
 			if err := workCtx.Err(); err != nil {
 				return nil, err
 			}
-			if node := gdsNodeByID(workCtx, store, id, graphFunctionIdentityDomain(ctx, store)); node != nil {
+			if node := gdsNodeByID(workCtx, store, id); node != nil {
 				nodes = append(nodes, node)
 			}
 		}
@@ -403,11 +403,11 @@ func gdsNodeFunction(name string, many bool) cypherfn.Func {
 	}
 }
 
-func gdsNodeByID(ctx context.Context, store storage.Engine, value interface{}, domains ...graphIdentityDomain) interface{} {
+func gdsNodeByID(ctx context.Context, store storage.Engine, value interface{}) interface{} {
 	if store == nil || value == nil {
 		return nil
 	}
-	id, ok := graphEntityLookupID(store, value, domains...)
+	id, ok := graphEntityLookupID(store, value)
 	if !ok {
 		return nil
 	}
