@@ -14,7 +14,6 @@ import (
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 func TestVectorFileStore_CompactionReclaimsObsoleteRecords(t *testing.T) {
@@ -529,8 +528,10 @@ func TestVectorFileStore_ErrorAndEdgeBranches(t *testing.T) {
 		vfs2, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors2"), 2)
 		require.NoError(t, err)
 		defer func() { _ = vfs2.Close() }()
-		require.NoError(t, os.WriteFile(vfs2.metaPath, []byte("file-not-dir"), 0o644))
-		vfs2.metaPath = filepath.Join(vfs2.metaPath, "nested.meta")
+		// Author of the recovered vector-checkpoint work: #1683 implementation lane
+		// (Codex), 2026-11-01. Obstruct the real tuple publication destination:
+		// mutating the private loader path does not change the canonical publisher.
+		require.NoError(t, os.Mkdir(vfs2.metaPath+".next", 0o755))
 		require.Error(t, vfs2.Save())
 	})
 
@@ -551,17 +552,19 @@ func TestVectorFileStore_ErrorAndEdgeBranches(t *testing.T) {
 		require.NoError(t, os.WriteFile(base+".meta", []byte("not-msgpack"), 0o644))
 		require.Error(t, vfs.Load())
 
-		// Dimension mismatch in meta should error.
-		f, err := os.Create(base + ".meta")
+		// Author of the recovered vector-checkpoint work: #1683 implementation lane
+		// (Codex), 2026-11-01. A dimension mismatch must carry a valid metadata
+		// integrity envelope to reach the dimension check rather than the earlier
+		// corrupt-file gate.
+		otherBase := filepath.Join(t.TempDir(), "other-dimensions")
+		other, err := NewVectorFileStore(otherBase, 3)
 		require.NoError(t, err)
-		require.NoError(t, msgpack.NewEncoder(f).Encode(&VectorFileStoreMeta{
-			Version:           vecFileVersion,
-			Dimensions:        3,
-			IDToOrdinal:       map[string]int64{"id-1": 0},
-			DataSlots:         1,
-			BuildIndexedCount: 1,
-		}))
-		require.NoError(t, f.Close())
+		require.NoError(t, other.Add("id-1", []float32{1, 0, 0}))
+		require.NoError(t, other.Save())
+		require.NoError(t, other.Close())
+		metadata, err := os.ReadFile(otherBase + ".meta")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(base+".meta", metadata, 0o644))
 		err = vfs.Load()
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "meta dimensions")

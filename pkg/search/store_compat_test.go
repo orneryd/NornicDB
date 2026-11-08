@@ -124,6 +124,13 @@ func TestStoreCompatRoundTrip(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	dir := t.TempDir()
 	writeCompatStore(t, dir)
+	// Live mutations have no complete delivery acknowledgement. Rebuild once
+	// rather than adding an acknowledgement ledger to the normal write path.
+	requireCompatStoreServes(t, dir, 1)
+	// The resulting complete snapshot is reusable when its source is unchanged.
+	requireCompatStoreServes(t, dir, 0)
+	// Reuse must retain the proof, not force alternating rebuilds.
+	requireCompatStoreServes(t, dir, 0)
 	requireCompatStoreServes(t, dir, 0)
 }
 

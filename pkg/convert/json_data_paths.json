@@ -641,5 +641,12 @@
     "calls": {
       "property.MarshalIndent": 1
     }
+  },
+  "pkg/search/vector_checkpoint.go:vectorMetadataDigest": {
+    "write_domain": "property",
+    "contract": "Typed vector checkpoint metadata digest; canonical deterministic state encoding preserves ordinal integer values and exact identifier strings.",
+    "calls": {
+      "property.MarshalState": 1
+    }
   }
 }

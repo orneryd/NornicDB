@@ -2,6 +2,8 @@ package search
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -14,6 +16,17 @@ import (
 )
 
 const msgpackSnapshotBufferBytes = 1 << 20
+
+// checkpointStreamDigest hashes checkpoint bytes with bounded working memory.
+// Range/format admission belongs to the caller; this helper decodes nothing.
+func checkpointStreamDigest(reader io.Reader) (string, int64, error) {
+	hash := sha256.New()
+	n, err := io.Copy(hash, reader)
+	if err != nil {
+		return "", n, err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), n, nil
+}
 
 var msgpackSnapshotWriterPool = sync.Pool{
 	New: func() any {

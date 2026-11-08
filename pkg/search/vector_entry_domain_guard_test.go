@@ -253,8 +253,18 @@ func domainVectorAPI(recv types.Type) bool {
 // String parameters on a vector backend are entry identities by default. Only
 // the existing file-path APIs are exempt. New lookup/admission method names
 // therefore cannot silently disappear from the family inventory.
+// Checkpoint tuple methods take a filesystem path base, never a vector entry
+// key: they copy, publish, relocate or remove whole committed files and the
+// ordinals/associations those files carry.
 func domainKeyMethod(method string) bool {
-	return method != "Save" && method != "Load"
+	switch method {
+	case "Save", "Load",
+		"relocateCheckpoint", "replaceCheckpointLocked", "stageCheckpointPrefixLocked",
+		"publishVectorCheckpoint", "recoverVectorCheckpoint", "removeVectorCheckpoint",
+		"decodeVectorCheckpoint":
+		return false
+	}
+	return true
 }
 
 // Vector lookup and score-reader callbacks share one entry-key input contract.
