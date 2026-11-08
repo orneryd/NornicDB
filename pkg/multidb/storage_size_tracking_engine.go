@@ -668,3 +668,8 @@ func (t *sizeTrackingEngine) initializeManagedUsage(ctx context.Context) error {
 	}
 	return t.runtime.initializeManagedUsage(ctx, managedEntityOwnerFor(t.Engine).boundary)
 }
+
+// IndexSourceStamp forwards through the declared read-preserving wrapper.
+func (e *sizeTrackingEngine) IndexSourceStamp(ctx context.Context) (string, error) {
+	return storage.ReadIndexSourceStamp(ctx, e.Engine)
+}

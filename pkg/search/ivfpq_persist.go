@@ -44,7 +44,7 @@ func SaveIVFPQBundle(basePath string, idx *IVFPQIndex) error {
 
 func saveIVFPQBundle(basePath string, idx *IVFPQIndex, overlay *annMutationOverlay, vectorStore *VectorFileStore) error {
 	mutations := overlay.snapshot()
-	mutations.VectorStoreCount, mutations.VectorStoreSlots = vectorStore.stateVersion()
+	mutations.VectorStoreCount, mutations.VectorStoreSlots, mutations.VectorStoreGeneration = vectorStore.stateVersion()
 	return saveIVFPQBundleSnapshot(basePath, idx, mutations)
 }
 
@@ -159,7 +159,7 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 	s.mu.RLock()
 	vectorStore := s.vectorFileStore
 	s.mu.RUnlock()
-	mutations.VectorStoreCount, mutations.VectorStoreSlots = vectorStore.stateVersion()
+	mutations.VectorStoreCount, mutations.VectorStoreSlots, mutations.VectorStoreGeneration = vectorStore.stateVersion()
 	s.indexMu.Unlock()
 	if idx == nil || idx.Count() == 0 {
 		return

@@ -31,6 +31,14 @@ type nor283ScanEngine struct {
 	reads atomic.Int32
 }
 
+// IndexSourceStamp preserves the native source identity: this adapter changes
+// only traversal instrumentation, never the rows or their projection. Do not
+// forward OpenReadSnapshot here: the matrix deliberately exercises both direct
+// traversal contracts, and a snapshot would bypass those counters.
+func (e *nor283ScanEngine) IndexSourceStamp(ctx context.Context) (string, error) {
+	return storage.ReadIndexSourceStamp(ctx, e.Engine)
+}
+
 func (e *nor283ScanEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	e.reads.Add(1)
 	return e.Engine.AllNodes(ctx)
@@ -238,8 +246,11 @@ func nor283ReleaseCase(t *testing.T, traversal, lifecycle, kind, entry string) {
 		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	source, _ := nor283Source(t, engine, traversal)
-	seed, closeSeed := nor283Service(t, source, indexDir)
+	// Create the checkpoint through the native captured-source owner. The
+	// reopened counting adapter below intentionally omits snapshots to test
+	// direct traversal; it may admit this existing proof but cannot certify
+	// a newly traversed population without holding its source capture.
+	seed, closeSeed := nor283Service(t, engine, indexDir)
 	require.NoError(t, seed.BuildIndexes(ctx))
 	seed.PersistIndexesToDisk()
 	closeSeed()

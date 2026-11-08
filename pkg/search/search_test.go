@@ -39,6 +39,13 @@ type iteratorEngine struct {
 	iterateErr error
 }
 
+// This fixture preserves the wrapped rows; only its population reader reports
+// an injected failure. Explicitly forward source authority so disk-only tests
+// keep proving that certified checkpoints avoid that reader.
+func (e *iteratorEngine) IndexSourceStamp(ctx context.Context) (string, error) {
+	return storage.ReadIndexSourceStamp(ctx, e.Engine)
+}
+
 type lastWriteEngine struct {
 	storage.Engine
 	writeTime time.Time

@@ -842,6 +842,7 @@ type Service struct {
 	metadataMemoryMaxBytes int64
 	bm25StorageMode        string
 	vectorStorageMode      string
+	vectorStorage          VectorStorageStatus // guarded by mu; the active vector backing and its reason
 	indexCapacityByNode    map[string]indexCapacityUsage
 	indexCapacityByEdge    map[string]indexCapacityUsage
 	bm25ResidentBytes      int64
@@ -894,7 +895,12 @@ type Service struct {
 	buildMu        sync.RWMutex
 	ready          atomic.Bool
 	buildAttempted atomic.Bool
-	embeddingSpace atomic.Value
+	// fulltextRebuilt records that the current build replaced the saved
+	// fulltext checkpoint from source. The checkpoint must then be written even
+	// when the rebuilt index holds no rows and is therefore not dirty: a
+	// superseded file still describes rows the source no longer holds.
+	fulltextRebuilt atomic.Bool
+	embeddingSpace  atomic.Value
 	// resumeVectorBuild skips re-adding vectors already present in vectorFileStore during BuildIndexes.
 	resumeVectorBuild bool
 
@@ -2396,7 +2402,7 @@ func (s *Service) persistBaseIndexes() error {
 	}
 	var persistErr error
 	if ftPath != "" {
-		if !s.fulltext().IsDirty() {
+		if !s.fulltext().IsDirty() && !s.fulltextRebuilt.Load() {
 			s.logPrintf("📇 Persist: BM25 skip (unchanged)")
 		} else {
 			s.logPrintf("📇 Persist: saving BM25 to %s...", ftPath)
@@ -3088,70 +3094,6 @@ func (s *Service) trackIVFPQRemove(id string) {
 	s.ivfpqMu.RUnlock()
 }
 
-// ensureVectorFileStore creates vectorFileStore when persistence has a vector
-// path so both initial builds and live ingestion write vectors directly to disk.
-// Caller holds s.indexMu.
-// When not resuming, BuildIndexes has already removed .vec/.meta so we start from 0; when resuming, existing files are appended to.
-func (s *Service) ensureVectorFileStore() {
-	if s.vectorStorageMode == "memory" {
-		return
-	}
-	if !s.persistEnabled.Load() {
-		return
-	}
-	s.mu.RLock()
-	_, path, _ := s.persistencePathsLocked()
-	vi, existing := s.vectorIndex, s.vectorFileStore
-	s.mu.RUnlock()
-	if path == "" || vi == nil || existing != nil {
-		return
-	}
-	dims := vi.GetDimensions()
-	if dims <= 0 {
-		return
-	}
-	vfs, err := NewVectorFileStore(path, dims)
-	if err != nil {
-		s.logPrintf("⚠️ VectorFileStore create failed (using in-memory index): %v", err)
-		return
-	}
-	if err := vfs.Load(); err != nil {
-		_ = vfs.Close()
-		s.logPrintf("⚠️ VectorFileStore load failed (using in-memory index): %v", err)
-		return
-	}
-	// Build callers normally arrive with an empty in-memory index. If
-	// persistence was enabled after live ingestion began, migrate those vectors
-	// before publishing the file store so switching storage cannot lose data.
-	// The caller's indexMu excludes every vector mutation, so a read lock is
-	// enough to copy them.
-	vi.mu.RLock()
-	for id, normalized := range vi.vectors {
-		value := normalized
-		if raw, ok := vi.rawVectors[id]; ok {
-			value = raw
-		}
-		if err := vfs.Add(id, value); err != nil {
-			vi.mu.RUnlock()
-			_ = vfs.Close()
-			s.logPrintf("⚠️ VectorFileStore migration failed (using in-memory index): %v", err)
-			return
-		}
-	}
-	vi.mu.RUnlock()
-	// Publishing the store and emptying the in-memory index is one s.mu
-	// change, so a reader sees the vectors in exactly one of them. vi.mu is
-	// taken inside s.mu, the order every reader of the index uses (see
-	// clusterStateMu).
-	s.mu.Lock()
-	s.replaceVectorFileStoreLocked(vfs)
-	vi.mu.Lock()
-	vi.vectors = make(map[string][]float32)
-	vi.rawVectors = make(map[string][]float32)
-	vi.mu.Unlock()
-	s.mu.Unlock()
-}
-
 // closeVectorFileStoreLocked closes and drops the file-backed vector store.
 // Caller holds s.mu for writing, so a reader holding s.mu never sees the store
 // change or close under it. The caller also holds buildMu exclusively (the
@@ -3330,9 +3272,12 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 		defer s.publishNodeMembersLocked(nodeIDStr)
 	}
 
-	// Create the file store before the first live vector mutation.
+	// Create the file store before the first live vector mutation. Explicit
+	// disk mode fails the write instead of acknowledging memory.
 	if indexVectorState && firstVectorDimensions(node) > 0 && s.persistEnabled.Load() && s.vectorIndexPath != "" {
-		s.ensureVectorFileStore()
+		if err := s.ensureVectorFileStore(); err != nil {
+			return errors.Join(indexErr, err)
+		}
 	}
 
 	// Index every vector entry of the node: named vectors, managed chunk
@@ -3754,7 +3699,9 @@ func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
 		return nil
 	}
 	if s.buildInProgress.Load() && s.persistEnabled.Load() && s.vectorIndexPath != "" {
-		s.ensureVectorFileStore()
+		if err := s.ensureVectorFileStore(); err != nil {
+			return err
+		}
 	}
 
 	dim := s.VectorIndexDimensions()
@@ -4134,6 +4081,24 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	if s.vectorEnabled.Load() && s.vectorStorageMode == "disk" && vectorPath == "" {
 		return fmt.Errorf("search: vector disk storage requires index persistence and a configured vector index path")
 	}
+	// Service has one constructor/loader/policy decision for saved vectors,
+	// shared with first live use. Integrity is not database source equality.
+	var sourceStamp string
+	if fulltextPath != "" || vectorPath != "" || hnswPath != "" {
+		var err error
+		sourceStamp, err = s.vectorSourceStamp(ctx, snapshot)
+		if err != nil {
+			return err
+		}
+	}
+	vectorsAdmitted := false
+	if w := s.population.work; w != nil && snapshot != nil {
+		// A new population is certifiable only while its source capture stays
+		// pinned through final comparison. Independent before/after stamps
+		// cannot prove fallback traversal observed one state. sourceStamp
+		// still admits an already-certified saved tuple without traversal.
+		w.baseline = populationRecord{SourceStamp: sourceStamp, VectorSettings: s.vectorSourcePolicy()}
+	}
 	var storageNodeCount int64
 	if n, err := s.engine.NodeCount(ctx); err == nil {
 		storageNodeCount = n
@@ -4183,7 +4148,26 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		forceHNSWRebuild, forceRoutingRebuild = true, true
 	}
 
-	if fulltextPath != "" && !s.population.work.restart {
+	// A saved fulltext belongs to the same population as the saved vectors, so
+	// it is this database's rows only under the saved population's source
+	// certificate. A positive document count is not source authority: a write
+	// that never reached the search service changed the source while the saved
+	// rows stayed behind.
+	fulltextAdmitted := false
+	if bm25On && fulltextPath != "" && !s.population.work.restart {
+		savedPopulation, recordErr := s.savedPopulationSource()
+		if recordErr != nil {
+			return recordErr
+		}
+		fulltextAdmitted = savedPopulation.admits(sourceStamp)
+		if !fulltextAdmitted {
+			// Rows from a source the database no longer equals are discarded,
+			// including entries for nodes the source no longer holds.
+			forceFulltextRebuild = true
+			s.logPrintf("📇 BuildIndexes: saved BM25 has no equal database source certificate; rebuilding fulltext from storage")
+		}
+	}
+	if fulltextAdmitted {
 		_ = s.fulltext().Load(fulltextPath)
 		if s.fulltext().Count() == 0 {
 			if info, statErr := security.RootedStat(fulltextPath); statErr == nil {
@@ -4192,48 +4176,63 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			}
 		}
 	}
-	// Prefer file-backed vector store when .vec exists (low-RAM format); else legacy in-memory index.
+	// A populated file is reusable only after source/projection admission. Every
+	// failure to admit a well-formed tuple forces an ordinary rebuild; it never
+	// installs rows the database source did not certify. The build installs a
+	// fresh store and retires the preceding one through its lifetime owner, so a
+	// superseded file or directory capability is never retained.
 	if vectorPath != "" && !s.population.work.restart && s.vectorStorageMode != "memory" && s.vectorIndex != nil {
-		if _, err := security.RootedStat(vectorPath + ".vec"); err == nil {
+		s.indexMu.Lock()
+		var candidate *VectorFileStore
+		var rejected bool
+		var admissionErr error
+		if _, statErr := security.RootedStat(vectorPath + ".vec"); statErr == nil {
 			dims := s.vectorIndex.GetDimensions()
 			if dims <= 0 {
-				dims = 384
+				dims = DefaultVectorDimensions
 			}
-			if vfs, err := NewVectorFileStore(vectorPath, dims); err == nil {
-				if loadErr := vfs.Load(); loadErr != nil {
-					s.logPrintf("⚠️ VectorFileStore load failed; rebuilding from 0: %v", loadErr)
-					_ = vfs.Close()
-				} else if labels, types, named, properties, chunks, ok := vfs.NodeQueryMetadataWithTypes(); ok {
-					s.indexMu.Lock()
-					s.mu.Lock()
-					s.replaceVectorFileStoreLocked(vfs)
-					s.nodeLabels = labels
-					s.nodeTypes = types
-					s.nodeNamedVector = named
-					s.nodePropVector = properties
-					s.nodeChunkVectors = chunks
-					s.rebuildNodeMembersLocked()
-					clear(s.nodeChunkSpans) // read on demand: the snapshot doesn't hold them
-					s.mu.Unlock()
-					s.indexMu.Unlock()
-				} else if storageNodeCount == 0 {
-					s.logPrintf("BuildIndexes: vector metadata missing and storage empty; loading legacy vectors without query metadata")
-					s.mu.Lock()
-					s.replaceVectorFileStoreLocked(vfs)
-					s.mu.Unlock()
-				} else {
-					s.logPrintf("BuildIndexes: vector metadata missing; rebuilding from storage")
-					_ = vfs.Close()
-				}
+			candidate, rejected, admissionErr = s.openVectorStore(ctx, vectorPath, dims, sourceStamp)
+			vectorsAdmitted = candidate != nil && candidate.checkpointLoaded && !rejected
+		}
+		if admissionErr == nil && candidate != nil {
+			labels, types, named, properties, chunks, complete := candidate.NodeQueryMetadataWithTypes()
+			s.mu.Lock()
+			s.replaceVectorFileStoreLocked(candidate)
+			if complete {
+				s.nodeLabels, s.nodeTypes = labels, types
+				s.nodeNamedVector, s.nodePropVector, s.nodeChunkVectors = named, properties, chunks
+				s.rebuildNodeMembersLocked()
+				clear(s.nodeChunkSpans)
+			}
+			s.mu.Unlock()
+		}
+		s.indexMu.Unlock()
+		if admissionErr != nil {
+			return admissionErr
+		}
+		if rejected {
+			s.mu.RLock()
+			live := s.vectorFileStore
+			s.mu.RUnlock()
+			if live != nil && live.Count() > 0 {
+				// An in-process store already holds this build's own live
+				// projection; the unusable saved checkpoint was never installed.
+				// The build resumes from the live source (same-process resume).
+				s.logPrintf("📇 BuildIndexes: saved vector checkpoint unusable; resuming the live store")
+			} else {
+				forceVectorRebuild = true
+				forceHNSWRebuild, forceRoutingRebuild = true, true
 			}
 		}
 	}
 
+	s.fulltextRebuilt.Store(bm25On && forceFulltextRebuild)
 	if forceFulltextRebuild && s.fulltext().Count() > 0 {
 		s.fulltext().Clear()
 	}
 	if forceVectorRebuild {
 		restartVectorStore = true
+		vectorsAdmitted = false
 		s.mu.Lock()
 		s.closeVectorFileStoreLocked()
 		s.mu.Unlock()
@@ -4284,8 +4283,11 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			s.hnswMu.Unlock()
 		}, true)
 	}
-	if fulltextPath != "" && vectorPath != "" && s.fulltext().Count() > 0 && vectorCount > 0 {
+	if vectorsAdmitted && fulltextPath != "" && vectorPath != "" && s.fulltext().Count() > 0 && vectorCount > 0 {
 		skipIteration = true
+		if w := s.population.work; w != nil {
+			w.certificate = w.previous
+		}
 		s.logPrintf("📇 Search indexes loaded from disk (BM25: %d docs, vector: %d); skipping node-iteration rebuild",
 			s.fulltext().Count(), vectorCount)
 	}
@@ -4304,8 +4306,9 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		skipFulltextRebuild = true
 	}
 
-	// Decide whether the on-disk vector store is still valid to resume.
-	// Only relevant when we are rebuilding; do not invalidate on skipIteration path.
+	// A last write later than the committed payload means the saved vector set
+	// may predate the database. It is a conservative extra restart, never an
+	// acceptance: the source certificate above remains the admission decision.
 	s.mu.RLock()
 	hasFileStore := s.vectorFileStore != nil
 	s.mu.RUnlock()
@@ -4314,6 +4317,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			if info, err := security.RootedStat(vectorPath + ".vec"); err == nil {
 				if lastWrite.After(info.ModTime()) {
 					restartVectorStore = true
+					vectorsAdmitted = false
 					s.logPrintf("📇 BuildIndexes: db updated after vector store (db=%s, vec=%s); restarting vector build",
 						lastWrite.Format(time.RFC3339), info.ModTime().Format(time.RFC3339))
 					s.mu.Lock()
@@ -4474,7 +4478,9 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 				s.indexMu.Lock()
 				defer s.indexMu.Unlock()
 				if s.vectorStorageMode != "memory" && vectorPath != "" {
-					s.ensureVectorFileStore()
+					if err := s.ensureVectorFileStore(); err != nil {
+						return err
+					}
 				}
 				for _, node := range filtered {
 					if err := s.indexStoredNodeLocked(node, false, true); err != nil {
@@ -4568,14 +4574,17 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		if err := s.buildRelationshipVectorIndexes(ctx, snapshot); err != nil {
 			return err
 		}
-		// The population is complete: every queued operation, administrative
-		// ones included, is installed before the base save.
-		closeSnapshot()
+		// Keep the source pinned through certification: suppression tombstones
+		// must remain visible until the final source comparison.
 		if err := s.completeBuildPopulation(); err != nil {
 			return err
 		}
 		// Persist BM25 + vector store before HNSW/k-means build so base indexes are durable.
 		s.setBuildPhase("persisting_base_indexes")
+		if err := s.bindPopulationSource(ctx); err != nil {
+			return err
+		}
+		closeSnapshot()
 		if err := s.persistBaseIndexes(); err != nil {
 			return err
 		}
@@ -4685,14 +4694,16 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	if err := s.buildRelationshipVectorIndexes(ctx, snapshot); err != nil {
 		return err
 	}
-	// The population is complete: every queued operation, administrative ones
-	// included, is installed before the base save.
-	closeSnapshot()
+	// Keep the source pinned through the final certificate comparison.
 	if err := s.completeBuildPopulation(); err != nil {
 		return err
 	}
 	// Persist BM25 + vector store before HNSW/k-means build so base indexes are durable.
 	s.setBuildPhase("persisting_base_indexes")
+	if err := s.bindPopulationSource(ctx); err != nil {
+		return err
+	}
+	closeSnapshot()
 	if err := s.persistBaseIndexes(); err != nil {
 		return err
 	}

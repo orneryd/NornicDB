@@ -68,6 +68,13 @@ type hookedReadSnapshot struct {
 	beforeNodes, beforeEdges func() error
 }
 
+// The observer parks traversal but does not change the captured source. Keep
+// its optional certificate visible so restart tests measure saved admission,
+// rather than an incidental loss of capability in the counting wrapper.
+func (s *hookedReadSnapshot) IndexSourceStamp(ctx context.Context) (string, error) {
+	return storage.ReadIndexSourceStamp(ctx, s.ReadSnapshotView)
+}
+
 func (s *hookedReadSnapshot) IterateNodes(fn func(*storage.Node) bool) error {
 	if s.beforeNodes != nil {
 		if err := s.beforeNodes(); err != nil {

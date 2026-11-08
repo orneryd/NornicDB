@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Transaction envelopes, rather than transport request IDs, define that identity.
   Scope pending WAL receipts to the database too, so an overlapping commit in
   another database cannot return success for a write that was never applied.
+- Publish vector compaction checkpoints with recoverable payload/ordinal metadata.
+  Reject corrupt or stale search checkpoints and rebuild from the current database;
+  explicit disk mode reports file failures instead of silently using memory.
+  Uncertified live-update checkpoints rebuild once after restart, avoiding a
+  durable acknowledgement ledger on normal writes. See
+  [vector checkpoint recovery](docs/architecture/vector-checkpoints.md).
+
+- Keep the creation time of a node or relationship that is created and then
+  edited in the same Cypher statement or transaction (`SET`, `SET +=`,
+  `MERGE ... ON CREATE SET`, `REMOVE`, label changes). Such entities were stored
+  with a zero `CreatedAt` in every named database, so creation-time decay,
+  retention and ordering treated them as ancient.
 
 - Preserve quoted dotted property names in constraints and projected reads.
   Keep quoted commas inside composite constraint properties and reject property
