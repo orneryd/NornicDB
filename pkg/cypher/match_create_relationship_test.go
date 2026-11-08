@@ -296,6 +296,10 @@ func TestMatchCreateRelationship_IDSeekFastPath(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// These stores return element IDs qualified with their own namespace.
+	fromElementID := storage.NodeElementID("test", "fp-node-a")
+	toElementID := storage.NodeElementID("test", "fp-node-b")
+
 	t.Run("comma-separated MATCH with elementId params creates relationship via ID seek", func(t *testing.T) {
 		result, err := exec.Execute(ctx, `
 			MATCH (a), (b)
@@ -303,8 +307,8 @@ func TestMatchCreateRelationship_IDSeekFastPath(t *testing.T) {
 			CREATE (a)-[r:LINKS_TO]->(b)
 			RETURN type(r) AS relType
 		`, map[string]interface{}{
-			"from": "4:nornicdb:fp-node-a",
-			"to":   "4:nornicdb:fp-node-b",
+			"from": fromElementID,
+			"to":   toElementID,
 		})
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Stats.RelationshipsCreated)
@@ -347,8 +351,8 @@ func TestMatchCreateRelationship_IDSeekFastPath(t *testing.T) {
 			CREATE (a)-[r:TYPED_LINK]->(b)
 			RETURN type(r) AS relType
 		`, map[string]interface{}{
-			"from": "4:nornicdb:fp-node-a",
-			"to":   "4:nornicdb:fp-node-b",
+			"from": fromElementID,
+			"to":   toElementID,
 		})
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Stats.RelationshipsCreated)
@@ -361,8 +365,8 @@ func TestMatchCreateRelationship_IDSeekFastPath(t *testing.T) {
 			CREATE (a)-[r:SHOULD_NOT_EXIST]->(b)
 			RETURN type(r) AS relType
 		`, map[string]interface{}{
-			"from": "4:nornicdb:fp-node-a",
-			"to":   "4:nornicdb:fp-node-b",
+			"from": fromElementID,
+			"to":   toElementID,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, 0, result.Stats.RelationshipsCreated)
