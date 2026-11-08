@@ -60,7 +60,7 @@ github.com/orneryd/nornicdb/pkg/cypher/testutil.setupTestExecutorTB -> github.co
 github.com/orneryd/nornicdb/pkg/nornicdb.Open
 github.com/orneryd/nornicdb/pkg/nornicdb.Open -> github.com/orneryd/nornicdb/pkg/nornicdb.recoverBadgerFromSnapshotAndWAL calls=1
 github.com/orneryd/nornicdb/pkg/nornicdb.Open -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
-github.com/orneryd/nornicdb/pkg/nornicdb.Open -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=1
+github.com/orneryd/nornicdb/pkg/nornicdb.Open -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithOptions calls=1
 github.com/orneryd/nornicdb/pkg/nornicdb.recoverBadgerFromSnapshotAndWAL
 github.com/orneryd/nornicdb/pkg/nornicdb.recoverBadgerFromSnapshotAndWAL -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.Start
@@ -116,9 +116,11 @@ github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions
 github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions -> github.com/orneryd/nornicdb/pkg/storage.*BadgerEngine.reopenForPostMigrationCompaction calls=1
 github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions -> github.com/orneryd/nornicdb/pkg/storage.openManagedBadger calls=1
 github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine
-github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineInMemory calls=1
+github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithOptions calls=1
 github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithMVCCHistory
 github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithMVCCHistory -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
+github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithOptions
+github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithOptions -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
 github.com/orneryd/nornicdb/pkg/storage.RecoverFromWAL
 github.com/orneryd/nornicdb/pkg/storage.RecoverFromWAL -> github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithLogger calls=1
 github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithLogger

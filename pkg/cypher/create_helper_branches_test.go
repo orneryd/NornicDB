@@ -65,6 +65,7 @@ func TestResolveNodeFromIDEqualityTerm_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, nodes)
 	nid := string(nodes[0].ID)
+	elementID := storage.NodeElementID("resolve_node_id_cov", nodes[0].ID)
 
 	v, node := exec.resolveNodeFromIDEqualityTerm(t.Context(), "", nil)
 	require.Empty(t, v)
@@ -100,12 +101,12 @@ func TestResolveNodeFromIDEqualityTerm_Branches(t *testing.T) {
 	require.NotNil(t, node)
 	require.Equal(t, nid, string(node.ID))
 
-	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "elementId(n) = '4:nornic:"+nid+"'", nil)
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "elementId(n) = '"+elementID+"'", nil)
 	require.Equal(t, "n", v)
 	require.NotNil(t, node)
 	require.Equal(t, nid, string(node.ID))
 
-	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "elementId(n) = $p", map[string]interface{}{"p": "4:nornic:" + nid})
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "elementId(n) = $p", map[string]interface{}{"p": elementID})
 	require.Equal(t, "n", v)
 	require.NotNil(t, node)
 	require.Equal(t, nid, string(node.ID))

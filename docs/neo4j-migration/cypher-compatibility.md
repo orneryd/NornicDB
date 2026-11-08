@@ -193,6 +193,20 @@ A same-spelled local in another subquery does not create an outer dependency.
   unions, `ANY`, `NOTHING`, `NULL`, `PROPERTY VALUE`)
 -  Date/time functions: date, datetime, timestamp
 
+### Element-ID database identity in v1.4.4
+
+Database qualifiers in textual element IDs are part of the identity. An ID
+returned by database `archive` cannot select an entity in database `nornic`,
+even if both entities have the same local ID. This applies to MATCH equality
+and IN predicates, relationship-ID lookups, and graph-function inputs.
+Composite queries retain the constituent database in their element IDs.
+
+Earlier versions accepted arbitrary database prefixes on plain databases;
+that extension is retired. Clients must retain the complete ID returned by
+`elementId()` and use it in the database that produced it. Existing unqualified
+local-ID inputs remain a NornicDB extension. No stored key or payload migration
+is required.
+
 ### Bolt Handshake Compatibility for `cypher-shell`
 
 NornicDB speaks Bolt directly, and most Bolt drivers work without special handling. One notable edge case is Neo4j's `cypher-shell`, which may reject an otherwise valid Bolt connection if the Bolt `HELLO` success metadata does not advertise a Neo4j-style `server` string.
