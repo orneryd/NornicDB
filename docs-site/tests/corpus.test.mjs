@@ -6,6 +6,25 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createContentPolicy } from "../tools/content-policy.mjs";
 const root = path.resolve("..");
+test("archive directories and historical local source links have public destinations", () => {
+  for (const file of ["development/index.md", "performance/index.md"])
+    assert.match(
+      fs.readFileSync(path.join(".generated", file), "utf8"),
+      /\]\(\/development\/archive\/index\.md\)/,
+    );
+  const benchmark = fs.readFileSync(
+    ".generated/performance/benchmarks-vs-neo4j.md",
+    "utf8",
+  );
+  assert.doesNotMatch(benchmark, /file:/);
+  for (const [file, line] of [
+    ["create", 855],
+    ["create", 1000],
+    ["create", 1100],
+    ["executor", 2360],
+  ])
+    assert.ok(benchmark.includes(`/pkg/cypher/${file}.go#L${line})`));
+});
 const policy = createContentPolicy(
   JSON.parse(fs.readFileSync("content-policy.json", "utf8")),
 );

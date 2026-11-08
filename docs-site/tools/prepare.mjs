@@ -140,6 +140,12 @@ for (const file of walk(source)) {
   // README routes become index routes. Links to repository source use immutable revisions.
   text = text.replace(/\]\(([^\s)]+)([^)]*)\)/g, (all, link, rest) => {
     if (/^(https?:|mailto:|#)/.test(link)) return all;
+    // Publish editor-local references from historical reports as pinned source links.
+    const localSource = link.match(
+      /^file:\/\/~\/src\/NornicDB\/(.+?)(?:#(\d+)-\d+)?$/,
+    );
+    if (localSource)
+      return `](https://github.com/orneryd/NornicDB/blob/${releaseReference ? provenance.preservedFrom : revision}/${localSource[1]}${localSource[2] ? "#L" + localSource[2] : ""}${rest})`;
     const [url, anchor] = link.split("#"),
       [pathname, query] = url.split("?"),
       resolved = pathname.startsWith("/")
@@ -160,7 +166,8 @@ for (const file of walk(source)) {
       return `](/search?q=${encodeURIComponent(path.basename(pathname, ".md").replaceAll("-", " "))}${rest})`;
     const routePath =
       "/" +
-      target.replace(/^docs\//, "").replace(/(^|\/)README\.md$/, "$1index.md");
+      target.replace(/^docs\//, "").replace(/(^|\/)README\.md$/, "$1index.md") +
+      (pathname.endsWith("/") ? "/index.md" : "");
     return `](${routePath}${query ? "?" + query : ""}${anchor ? "#" + anchor : ""}${rest})`;
   });
   fs.writeFileSync(dest, text);
