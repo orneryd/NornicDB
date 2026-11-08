@@ -3,6 +3,7 @@ package cypher
 // Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"hash/fnv"
@@ -27,14 +28,21 @@ func (e *StorageExecutor) capturesChanges() bool {
 	return ok && capture.ChangeCapture(e.databaseName()) != storage.ChangeCaptureOff
 }
 
-// changeCapture returns the executor's database and its change-capturing
-// engine; Neo4j's Disabled error when the database doesn't capture changes.
-func (e *StorageExecutor) changeCapture() (storage.ChangeCaptureEngine, string, error) {
+// changeCapture returns the executor's database and the change feed the
+// statement reads: its transaction's snapshot, so that every change it lists
+// is visible to the same transaction's reads (an auto-commit statement's
+// implicit transaction is its single-statement snapshot), else the engine's
+// latest committed state. Neo4j's Disabled error when the database doesn't
+// capture changes.
+func (e *StorageExecutor) changeCapture(ctx context.Context) (storage.ChangeFeed, string, error) {
 	database := e.databaseName()
 	capture, ok := storage.ChangeCaptureOf(e.storage)
 	if !ok || capture.ChangeCapture(database) == storage.ChangeCaptureOff {
 		return nil, database, localizedStatusError("Neo.DatabaseError.ChangeDataCapture.Disabled", "Disabled",
 			localization.CypherSpecializedCallsCDCDisabled(database))
+	}
+	if member := e.membership(ctx); member.storage != nil && member.storage.tx != nil {
+		return member.storage.tx, database, nil
 	}
 	return capture, database, nil
 }
@@ -92,8 +100,8 @@ func (e *StorageExecutor) databaseChangeTag(database string) uint64 {
 }
 
 // changeBounds returns the positions just before a database's earliest
-// retained change and just after its last committed one.
-func changeBounds(capture storage.ChangeCaptureEngine, database string) (earliest, current changePosition, err error) {
+// retained change and just after its last committed one, as feed sees them.
+func changeBounds(capture storage.ChangeFeed, database string) (earliest, current changePosition, err error) {
 	first, last, err := capture.ChangeBounds(database)
 	if err != nil {
 		return changePosition{}, changePosition{}, localizedStatusError("Neo.DatabaseError.ChangeDataCapture.ScanFailure", "ScanFailure",
@@ -108,9 +116,10 @@ func changeBounds(capture storage.ChangeCaptureEngine, database string) (earlies
 }
 
 // callDbCdcCurrent is db.cdc.current(): the identifier just after the last
-// committed change, which db.cdc.query takes to return later changes.
-func (e *StorageExecutor) callDbCdcCurrent() (*ExecuteResult, error) {
-	capture, database, err := e.changeCapture()
+// committed change the statement can see, which db.cdc.query takes to return
+// later changes.
+func (e *StorageExecutor) callDbCdcCurrent(ctx context.Context) (*ExecuteResult, error) {
+	capture, database, err := e.changeCapture(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -123,8 +132,8 @@ func (e *StorageExecutor) callDbCdcCurrent() (*ExecuteResult, error) {
 
 // callDbCdcEarliest is db.cdc.earliest(): the identifier just before the
 // earliest retained change.
-func (e *StorageExecutor) callDbCdcEarliest() (*ExecuteResult, error) {
-	capture, database, err := e.changeCapture()
+func (e *StorageExecutor) callDbCdcEarliest(ctx context.Context) (*ExecuteResult, error) {
+	capture, database, err := e.changeCapture(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -139,11 +148,13 @@ func (e *StorageExecutor) callDbCdcEarliest() (*ExecuteResult, error) {
 // the changes after from (exclusive; "" is db.cdc.current()), in commit
 // order, that match any selector (all when there is none), at most limit of
 // them (a NornicDB extension for reading a large backlog in parts: pass the
-// last id as the next from). An identifier older than the earliest retained
-// change is Neo4j's InvalidIdentifier error, one past the last committed
-// change its FutureIdentifier error.
-func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, error) {
-	capture, database, err := e.changeCapture()
+// last id as the next from). Inside a transaction the changes end at its
+// snapshot, so each one listed is visible to the transaction's reads. An
+// identifier older than the earliest retained change is Neo4j's
+// InvalidIdentifier error, one past the last committed change the statement
+// can see its FutureIdentifier error.
+func (e *StorageExecutor) callDbCdcQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	capture, database, err := e.changeCapture(ctx)
 	if err != nil {
 		return nil, err
 	}
