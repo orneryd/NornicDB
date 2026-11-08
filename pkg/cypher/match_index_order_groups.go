@@ -87,7 +87,7 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 			if hideSystemNodes && isSystemNode(node) {
 				continue
 			}
-			if (len(pattern.labels) > 0 && !nodeHasAnyLabel(node, pattern.labels)) || !e.nodeMatchesProps(node, pattern.properties) {
+			if (len(pattern.labels) > 0 && !mergeNodeHasLabels(node, pattern.labels)) || !e.nodeMatchesProps(node, pattern.properties) {
 				continue
 			}
 			if filter != nil && !filter(node) {

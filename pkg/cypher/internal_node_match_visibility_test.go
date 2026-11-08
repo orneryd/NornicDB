@@ -168,3 +168,18 @@ func TestQueryNodeReadKeepsInternalNodesForWriters(t *testing.T) {
 	require.Equal(t, int64(1), read.Properties["id"])
 	require.True(t, isSystemNode(read))
 }
+
+func TestOrderedIndexRequiresEveryPatternLabel(t *testing.T) {
+	ctx := context.Background()
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "multilabel"))
+	for _, q := range []string{
+		"CREATE INDEX FOR (n:GraphNode) ON (n.id)",
+		"CREATE (:GraphNode:Document {id:'d0'}), (:GraphNode:Document {id:'d1'}), (:GraphNode:Entity {id:'m0'}), (:GraphNode:Entity {id:'m1'})",
+	} {
+		_, err := exec.Execute(ctx, q, nil)
+		require.NoError(t, err)
+	}
+	result, err := exec.Execute(ctx, "MATCH (m:GraphNode:Entity) WHERE m.id > '' RETURN m.id ORDER BY m.id LIMIT 2", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"m0"}, {"m1"}}, result.Rows)
+}

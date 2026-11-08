@@ -1535,10 +1535,10 @@ func (e *StorageExecutor) buildRelationshipContextInto(ctx context.Context, patt
 		rightNode = endNode
 	}
 
-	if len(pattern.leftLabels) > 0 && !nodeHasAnyLabel(leftNode, pattern.leftLabels) {
+	if len(pattern.leftLabels) > 0 && !mergeNodeHasLabels(leftNode, pattern.leftLabels) {
 		return false
 	}
-	if len(pattern.rightLabels) > 0 && !nodeHasAnyLabel(rightNode, pattern.rightLabels) {
+	if len(pattern.rightLabels) > 0 && !mergeNodeHasLabels(rightNode, pattern.rightLabels) {
 		return false
 	}
 	if pattern.leftVar != "" {
