@@ -88,11 +88,17 @@ func streamQueryNodes(ctx context.Context, store storage.Engine, labels []string
 
 // readsQueryNodesWithoutVectors reports whether an auto-commit statement
 // running without a transaction reads its row nodes without vectors: one
-// that matches nodes and cannot write. A write needs a write clause or a
-// procedure (CALL), which may write without one; both keep full reads, as
-// does a store without the query-node read.
+// that matches nodes and cannot write. Whether it can write is the
+// statement-effect owner's answer (QueryInfo.ReadOnly). A statement with CALL
+// keeps full reads unless every CALL is a read-only CALL subquery run in line
+// (QueryInfo.callSubqueriesOnly), which reads like the same statement without
+// it. A procedure call keeps full reads whatever it does: it may write
+// outside a transaction, hand the nodes to native code, or add nodes it reads
+// in full (vector search) to the same rows, where a vector-free copy of the
+// same node would compare unequal. A store without the query-node read keeps
+// full reads.
 func (e *StorageExecutor) readsQueryNodesWithoutVectors(info *QueryInfo) bool {
-	if info == nil || !info.ReadOnly() || !info.HasMatch || info.HasCall {
+	if info == nil || !info.ReadOnly() || !info.HasMatch || info.HasCall && !info.callSubqueriesOnly() {
 		return false
 	}
 	_, ok := e.storage.(storage.QueryNodeReader)
