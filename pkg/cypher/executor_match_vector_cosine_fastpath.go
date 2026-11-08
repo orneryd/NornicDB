@@ -133,7 +133,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, e.vectorIndexOnline)
 	if !hasIndex {
 		return nil, false
 	}
@@ -387,7 +387,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	if !projectionOK {
 		projectedProps = nil
 	}
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, e.vectorIndexOnline)
 	var nodeScores []vectorNodeScore
 	if needsExactCandidates {
 		if preWhereClause != "" && preWhereNotNullProp == "" {
@@ -588,7 +588,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, e.vectorIndexOnline)
 	if !hasIndex {
 		return nil, false
 	}
@@ -741,7 +741,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, e.vectorIndexOnline)
 	if !hasIndex {
 		return nil, false
 	}
@@ -873,7 +873,7 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 	if svc != nil && !svc.VectorEnabled() {
 		return []vectorNodeScore{}, true
 	}
-	if svc == nil || svc.VectorIndexDimensions() != wantDims || (!svc.IsReady() && (targetProperty == "" || svc.CountPropertyVectorEntries(targetProperty) == 0)) {
+	if served, _ := e.vectorIndexServiceAnswers(ctx, svc, indexName, search.VectorIndexTarget{Label: targetLabel, Property: targetProperty}, wantDims, vectorReadPassive); !served {
 		return e.fetchCosineNodeScoresExact(ctx, targetLabel, targetProperty, similarityFunc, limit, queryVector, orderDesc, wantDims)
 	}
 	if !svc.VectorEnabled() {
@@ -1029,17 +1029,58 @@ func collectNodePropertyRefsForProjection(varName string, expr string, props map
 	return true
 }
 
-func prepareWiredNodeVectorService(ctx context.Context, svc *search.Service, wantDims int) (bool, error) {
-	if svc == nil || svc.VectorIndexDimensions() != wantDims {
+// vectorQueryRead is how a query bound to a schema vector index reads the
+// wired search service. Both are deliberate contracts and stay distinct:
+//   - vectorReadWarm: the vector query procedures warm a lazy service and
+//     read it once it is ready.
+//   - vectorReadPassive: a scalar vector.similarity read in MATCH never warms
+//     the service, and reads the vectors it already holds for the property
+//     before full readiness, so ingest-time reads neither trigger warmup nor
+//     scan storage.
+type vectorQueryRead uint8
+
+const (
+	vectorReadWarm vectorQueryRead = iota
+	vectorReadPassive
+)
+
+// vectorQueryReads is every read of the service by a query bound to a schema
+// vector index. The publication populates the service for each of them
+// (populateVectorIndexPublication).
+var vectorQueryReads = [...]vectorQueryRead{vectorReadWarm, vectorReadPassive}
+
+// vectorIndexServiceAnswers is the one decision of whether the wired search
+// service answers a query bound to the vector index named index, reading
+// target with vectors of dims dimensions, or storage does. Every
+// schema-bound vector query asks it: the publication, the node and
+// relationship query procedures, and the node and relationship MATCH
+// paths. Storage answers through the exact fallbacks, which read a node's
+// vector by search.VectorSourcePrecedence as the service does.
+//   - The index must be ONLINE: its population state, which the search
+//     service owns (vectorIndexOnline). The publication, which establishes
+//     that state, passes no index.
+//   - For relationships, the service must hold vectors of the type and
+//     property.
+//   - For nodes, the service must have the index's dimensions and be ready:
+//     a warm read warms it first; a passive read also accepts the
+//     property's vectors the service already holds.
+func (e *StorageExecutor) vectorIndexServiceAnswers(ctx context.Context, svc *search.Service, index string, target search.VectorIndexTarget, dims int, read vectorQueryRead) (bool, error) {
+	if svc == nil || (index != "" && !e.vectorIndexOnline(index)) {
 		return false, nil
+	}
+	if target.Relationship {
+		return target.Property != "" && svc.HasRelationshipVectorEntries(target.Label, target.Property), nil
+	}
+	if svc.VectorIndexDimensions() != dims {
+		return false, nil
+	}
+	if read == vectorReadPassive {
+		return svc.IsReady() || (target.Property != "" && svc.CountPropertyVectorEntries(target.Property) > 0), nil
 	}
 	if err := svc.EnsureWarm(ctx); err != nil {
 		return false, err
 	}
-	if !svc.IsReady() {
-		return false, nil
-	}
-	return true, nil
+	return svc.IsReady(), nil
 }
 
 func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label string, property string, similarity string, limit int, queryVector []float32, orderDesc bool, wantDims int) ([]vectorNodeScore, bool) {
@@ -1135,36 +1176,38 @@ func scoreNodeVectorForFastPath(node *storage.Node, property string, similarity 
 		vectorName = "default"
 	}
 
+	// The vector that represents the node is the search service's decision
+	// (search.VectorSourcePrecedence), read here from the stored node.
 	bestScore := -2.0
-	if node.NamedEmbeddings != nil {
-		if embedding, ok := node.NamedEmbeddings[vectorName]; ok {
-			if score, ok := scoreVectorForFastPath(queryVector, embedding, similarity); ok {
-				bestScore = score
+	for _, source := range search.VectorSourcePrecedence(property) {
+		switch source {
+		case search.VectorSourceNamed:
+			if embedding, ok := node.NamedEmbeddings[vectorName]; ok {
+				if score, ok := scoreVectorForFastPath(queryVector, embedding, similarity); ok {
+					bestScore = score
+				}
 			}
-		}
-		if bestScore < -1.0 && property == "" {
+		case search.VectorSourceAnyNamed:
 			for _, embedding := range node.NamedEmbeddings {
 				if score, ok := scoreVectorForFastPath(queryVector, embedding, similarity); ok && score > bestScore {
 					bestScore = score
 				}
 			}
-		}
-	}
-
-	if bestScore < -1.0 && property != "" && node.Properties != nil {
-		if score, ok := scoreVectorForFastPath(queryVector, toFloat32Slice(node.Properties[property]), similarity); ok {
-			bestScore = score
-		}
-	}
-
-	if bestScore < -1.0 {
-		for _, embedding := range node.ChunkEmbeddings {
-			if score, ok := scoreVectorForFastPath(queryVector, embedding, similarity); ok && score > bestScore {
+		case search.VectorSourceProperty:
+			if score, ok := scoreVectorForFastPath(queryVector, toFloat32Slice(node.Properties[property]), similarity); ok {
 				bestScore = score
 			}
+		case search.VectorSourceChunks:
+			for _, embedding := range node.ChunkEmbeddings {
+				if score, ok := scoreVectorForFastPath(queryVector, embedding, similarity); ok && score > bestScore {
+					bestScore = score
+				}
+			}
+		}
+		if bestScore >= -1.0 {
+			break
 		}
 	}
-
 	if bestScore < -1.0 {
 		return 0, false
 	}
@@ -1203,7 +1246,9 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 			similarityFunc = vectorIdx.SimilarityFunc
 		}
 	}
-	if svc := e.search(); orderDesc && svc != nil && targetProperty != "" && svc.HasRelationshipVectorEntries(targetRelType, targetProperty) {
+	svc := e.search()
+	served, _ := e.vectorIndexServiceAnswers(ctx, svc, indexName, search.VectorIndexTarget{Label: targetRelType, Property: targetProperty, Relationship: true}, 0, vectorReadPassive)
+	if orderDesc && served {
 		hits, err := svc.VectorQueryRelationships(ctx, vec, search.RelationshipVectorQuerySpec{
 			IndexName:  indexName,
 			Type:       targetRelType,
@@ -1349,7 +1394,11 @@ func parseFastPathLimit(ctx context.Context, limitPart string) (int, bool) {
 	return resolveIntLiteralOrParam(ctx, fields[0])
 }
 
-func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType) (string, bool) {
+// findCosineVectorIndexName is the cosine vector index on property of label
+// (of the relationship type) that may answer a MATCH: answers, when set, is
+// whether an index may answer now (StorageExecutor.vectorIndexOnline). With
+// none, the MATCH reads storage.
+func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType, answers func(name string) bool) (string, bool) {
 	if schema == nil {
 		return "", false
 	}
@@ -1391,7 +1440,7 @@ func findCosineVectorIndexName(schema *storage.SchemaManager, label string, prop
 			continue
 		}
 
-		if name, ok := idx["name"].(string); ok && strings.TrimSpace(name) != "" {
+		if name, ok := idx["name"].(string); ok && strings.TrimSpace(name) != "" && (answers == nil || answers(name)) {
 			matches = append(matches, name)
 		}
 	}

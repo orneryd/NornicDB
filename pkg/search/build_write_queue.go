@@ -79,6 +79,10 @@ type deferredIndexWrite struct {
 	// (IndexRelationship, RemoveRelationship). Its text and source depend on
 	// settings ordered in this sequence, so it is ordered here too.
 	relationship bool
+	// refresh marks node or edge as the stored state a storage-following
+	// refresh installs: entry by entry (installStored), so an entry a budget
+	// or a dimension refuses is decided on its own and is not a build failure.
+	refresh bool
 	// valid, when set, is checked when the write is installed, before it is
 	// applied: false means a later write superseded it (a refresh whose
 	// reservation is no longer current), so it is skipped. It is called with
@@ -199,7 +203,9 @@ func (s *Service) completeBuildPopulation() error {
 // the caller's data (copied), the temporal decision, and the settings while
 // no setting change is queued. An error from the checks the live path
 // reports is returned and nothing is queued, as a write that waited would
-// have failed. wait reports that the outcome depends on the operations ahead
+// have failed; a storage-following refresh is the exception: an embedding of
+// other dimensions refuses that entry only, so the write is queued and the
+// refusal returned with it, as the live install reports it. wait reports that the outcome depends on the operations ahead
 // (vectorNeedsOrderedDecision, a queued setting change) or that the copy does
 // not fit the queue's memory reservation (queueFitsLocked): the write waits
 // for the build and the live path decides it in order. Administrative
@@ -209,16 +215,18 @@ func (s *Service) queueBuildWrite(ctx context.Context, write deferredIndexWrite)
 	if !q.open.Load() || !s.buildDefersWrites() {
 		return false, false, nil
 	}
+	var refused error
 	switch {
 	case write.node != nil:
-		current, wait, err := s.admitQueuedNode(ctx, write.node)
-		if err != nil {
-			return false, false, err
+		current, wait, admission := s.admitQueuedNode(ctx, write.node)
+		if admission != nil && !(write.refresh && errors.Is(admission, ErrDimensionMismatch)) {
+			return false, false, admission
 		}
 		if wait {
 			return false, true, nil
 		}
 		write.current = current
+		refused = admission
 	case write.edge != nil && !write.relationship:
 		// An edge's vectors are judged at install, by the dimensions and
 		// flags of its turn; only automatic dimensions make that turn's
@@ -244,7 +252,7 @@ func (s *Service) queueBuildWrite(ctx context.Context, write deferredIndexWrite)
 	if write.dims {
 		q.pendingOps++
 	}
-	return true, false, nil
+	return true, false, refused
 }
 
 // fitsLocked reports whether size more retained bytes fit the queue's
@@ -517,11 +525,15 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 		case write.relationship:
 			s.updateRelationshipNow(write)
 		case write.node != nil:
-			err = s.indexNodeOwned(s.LifetimeContext(), write.node, &write.current)
+			install := installPayload
+			if write.refresh {
+				install = installStored
+			}
+			err = s.indexNodeOwned(s.LifetimeContext(), write.node, &write.current, install)
 		case write.nodeID != "":
 			s.removeNodeOwned(storage.NodeID(write.nodeID))
 		case write.edge != nil:
-			err = s.indexEdgeOwned(write.edge)
+			err = s.indexEdgeOwned(write.edge, write.refresh)
 		case write.edgeID != "":
 			s.removeEdgeOwned(storage.EdgeID(write.edgeID))
 		case write.apply != nil:
@@ -529,6 +541,9 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 			if write.dims {
 				s.buildWrites.opApplied()
 			}
+		}
+		if write.refresh {
+			err = withoutRefusals(err)
 		}
 		if err != nil {
 			s.population.state.Store(populationFailed)

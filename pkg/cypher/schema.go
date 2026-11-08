@@ -18,6 +18,7 @@ import (
 
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -308,7 +309,7 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherSchemaInvalidSyntax("DROP INDEX"))
 	}
 
-	if err := e.dropIndexByName(name, ifExists); err != nil {
+	if err := e.dropIndexByName(ctx, name, ifExists); err != nil {
 		return nil, err
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -346,18 +347,26 @@ func parseDropSchemaName(rest string) (name string, ifExists, ok bool) {
 // in-memory data that belongs to it. It is the single drop path for DROP INDEX
 // and the db.index.vector.drop / db.index.fulltext.drop procedures. A missing
 // index is a Neo.DatabaseError.Schema.IndexDropFailed error unless ifExists is set.
-func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
+func (e *StorageExecutor) dropIndexByName(ctx context.Context, name string, ifExists bool) error {
 	// Look up the schema entry BEFORE dropping it so we can also tear down
-	// any in-memory index data the schema entry was the only handle for.
-	// Vector indexes carry their declared (label, property) — when the user
-	// drops one we must also delete every "<nodeID>-prop-<property>" vector
-	// from the search service, otherwise a recreate-from-scratch of the same
-	// index inherits orphaned vectors that still match queries.
+	// what the index alone owns: its registered vector space. The search
+	// service's vectors are not the index's: every vector-shaped property of
+	// a node or relationship has one entry, kept equal to storage by every
+	// installer whatever indexes exist, and read by every vector index on the
+	// property, by hybrid search and by the Qdrant API. They stay, so another
+	// vector index on the same property keeps serving its nodes and an index
+	// created again serves the stored nodes at once, as Neo4j fills a new
+	// index from existing data (NOR-404). Nothing is retired, so no work
+	// admitted before the drop can bring back a retired entry (NOR-386).
 	var droppedVectorIndex *storage.VectorIndex
+	var population *search.VectorIndexPopulation
 	if schema := e.storage.GetSchema(); schema != nil {
 		if vi, ok := schema.GetVectorIndex(name); ok && vi != nil {
 			copyVI := *vi
 			droppedVectorIndex = &copyVI
+			// The index's population record (FAILED, or one still running)
+			// ends with the index, once its drop commits.
+			population = e.search().VectorIndexPopulationOf(name)
 		}
 	}
 
@@ -372,14 +381,13 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 		return err
 	}
 
-	// Tear down the matching in-memory vector data after the schema entry
-	// is gone so concurrent reads can't see a half-dropped index.
+	// Unregister the index's vector space after the schema entry is gone so
+	// concurrent reads can't see a half-dropped index.
 	if droppedVectorIndex != nil {
+		e.withdrawVectorIndexPublication(ctx, name)
 		if err := e.afterCommit(context.Background(), func(context.Context) error {
-			if svc := e.search(); svc != nil && droppedVectorIndex.Property != "" {
-				svc.RemovePropertyVectorIndex(droppedVectorIndex.Property)
-			}
 			e.unregisterVectorSpace(name)
+			population.Retire()
 			return nil
 		}); err != nil {
 			return err

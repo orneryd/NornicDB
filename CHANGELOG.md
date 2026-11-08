@@ -89,6 +89,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep CSV export values under their matching property headers by selecting
   the column order once and reusing it for every row.
 
+- Keep other vector indexes working when one is dropped. `DROP INDEX` removed
+  the stored vectors of every node on the index's property from search, so
+  another vector index on the same property returned nothing until a rewrite
+  or rebuild, and an index created again started empty. Dropping a vector
+  index now removes only the index: other indexes on the property keep
+  serving, an index created or created again serves the stored nodes at once,
+  including writes whose search refresh is still queued, and search work
+  queued before the drop installs each node's current vector. A search
+  refresh decides a node's text and vectors separately: a text beyond the
+  BM25 memory budget is refused on its own and the node's vectors stay
+  served, and a vector the index memory budget or the index dimensions
+  refuse is not served in place of the stored one, during a running build
+  too. Vector indexes have Neo4j's lifecycle: a new one is `POPULATING` until
+  its population completes, queries wait for it to be `ONLINE` (up to 30
+  seconds), and one whose population cannot serve every stored node of its
+  label is `FAILED`, refusing queries until it is dropped and created again;
+  `SHOW INDEXES` reports the state. A query
+  naming a dropped vector index answers as if it never existed. If an index
+  was dropped on an earlier release, other vector indexes on its property may
+  need one search index rebuild to serve their nodes again.
+
 - Reconcile recovered label and relationship-type counts with replayed graph
   bodies after single-entry WAL replay and mixed physical/semantic recovery.
   Prevent relabel-then-delete recovery from failing with a count underflow.

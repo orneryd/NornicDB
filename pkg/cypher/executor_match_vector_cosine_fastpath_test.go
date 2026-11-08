@@ -909,11 +909,11 @@ func TestFindCosineVectorIndexName_DisambiguatesByEntityType(t *testing.T) {
 	require.NoError(t, schema.AddVectorIndex("a_rel_idx", "Thing", "emb", 3, "cosine", storage.ConstraintEntityRelationship))
 	require.NoError(t, schema.AddVectorIndex("z_node_idx", "Thing", "emb", 3, "cosine", storage.ConstraintEntityNode))
 
-	nodeIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityNode)
+	nodeIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityNode, nil)
 	require.True(t, ok)
 	require.Equal(t, "z_node_idx", nodeIndex)
 
-	relIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityRelationship)
+	relIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityRelationship, nil)
 	require.True(t, ok)
 	require.Equal(t, "a_rel_idx", relIndex)
 }

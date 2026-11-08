@@ -42,42 +42,31 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 	var targetLabel, targetProperty string
 	var similarityFunc string = "cosine"
 
-	schema := e.storage.GetSchema()
+	// The index's definition is the one its wait for ONLINE ended on.
+	vectorIdx, err := e.awaitVectorIndexDefinition(ctx, indexName)
+	if err != nil {
+		return nil, err
+	}
 	wantDims := 0
-	indexFound := false
-	if schema != nil {
-		if vectorIdx, exists := schema.GetVectorIndex(indexName); exists {
-			indexFound = true
-			targetLabel = vectorIdx.Label
-			targetProperty = vectorIdx.Property
-			similarityFunc = vectorIdx.SimilarityFunc
-			if vectorIdx.Dimensions > 0 {
-				wantDims = vectorIdx.Dimensions
-			}
+	indexFound := vectorIdx != nil
+	if indexFound {
+		targetLabel = vectorIdx.Label
+		targetProperty = vectorIdx.Property
+		similarityFunc = vectorIdx.SimilarityFunc
+		if vectorIdx.Dimensions > 0 {
+			wantDims = vectorIdx.Dimensions
 		}
 	}
 	if !indexFound {
-		svc := e.search()
-		managed := svc != nil && svc.EmbeddingCount() > 0
-		if !managed {
-			stop := errors.New("managed vector found")
-			err := e.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
-				for _, vector := range node.NamedEmbeddings {
-					if len(vector) > 0 {
-						return stop
-					}
-				}
-				for _, vector := range node.ChunkEmbeddings {
-					if len(vector) > 0 {
-						return stop
-					}
-				}
-				return nil
-			})
-			if err != nil && !errors.Is(err, stop) {
-				return nil, err
-			}
-			managed = errors.Is(err, stop)
+		// A name with no vector index reads the managed embeddings (named
+		// embeddings and chunks). Storage decides whether there are any, with
+		// or without a search service: vector arrays a dropped index left in
+		// the search service don't make its name queryable, and managed
+		// embeddings the service hasn't loaded yet, or holds in another
+		// dimension, still do.
+		managed, err := e.storageHasManagedNodeEmbeddings(ctx)
+		if err != nil {
+			return nil, err
 		}
 		if !managed {
 			return nil, noSuchVectorIndexError(indexName)
@@ -102,7 +91,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 		return result, nil
 	}
 
-	useService, err := prepareWiredNodeVectorService(ctx, svc, wantDims)
+	gate := ""
+	if indexFound {
+		gate = indexName
+	}
+	useService, err := e.vectorIndexServiceAnswers(ctx, svc, gate, search.VectorIndexTarget{Label: targetLabel, Property: targetProperty}, wantDims, vectorReadWarm)
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +151,30 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 	}
 
 	return result, nil
+}
+
+// storageHasManagedNodeEmbeddings reports whether any stored node has a named
+// embedding or a managed chunk: the data a vector query naming no vector
+// index reads.
+func (e *StorageExecutor) storageHasManagedNodeEmbeddings(ctx context.Context) (bool, error) {
+	stop := errors.New("managed vector found")
+	err := e.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
+		for _, vector := range node.NamedEmbeddings {
+			if len(vector) > 0 {
+				return stop
+			}
+		}
+		for _, vector := range node.ChunkEmbeddings {
+			if len(vector) > 0 {
+				return stop
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, stop) {
+		return false, err
+	}
+	return errors.Is(err, stop), nil
 }
 
 // callDbIndexVectorEmbed implements db.index.vector.embed: the embedding of
