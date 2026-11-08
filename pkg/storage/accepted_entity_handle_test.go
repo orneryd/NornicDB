@@ -82,7 +82,7 @@ func TestAcceptedWALCloseRetiresPendingNativeFrameWithoutDiscard(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("inner submission did not enter")
 	}
-	pending, ok := w.pendingEntityCommits.Load(p.LogicalID())
+	pending, ok := w.pendingEntityCommits.Load(acceptedApplicationKey{namespace: p.Namespace(), logicalID: p.LogicalID()})
 	require.True(t, ok)
 	handle := pending.(*walAcceptedEntityCommit).handle
 	snapshotDone := make(chan error, 1)

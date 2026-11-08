@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep accepted replication transactions distinct across databases when Go callers
   reuse a logical ID, while preserving retry identity across journal reopen.
   Transaction envelopes, rather than transport request IDs, define that identity.
+  Scope pending WAL receipts to the database too, so an overlapping commit in
+  another database cannot return success for a write that was never applied.
 
 - Preserve quoted dotted property names in constraints and projected reads.
   Keep quoted commas inside composite constraint properties and reject property

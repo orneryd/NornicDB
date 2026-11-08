@@ -45,7 +45,10 @@ logical transaction ID together. Go callers may reuse a logical ID in another
 database, but must use a new ID for a new transaction in the same database.
 The replication journal uses that same identity for live publication and retained
 journal reconstruction. Retrying a command keeps its original publication position,
-including after pruning the streaming cache or reopening the journal.
+including after pruning the streaming cache or reopening the journal. The WAL
+wrapper also keys pending receipts by this pair. Concurrent writes in different
+databases receive separate receipts and records even if their logical IDs match;
+a retry within one database still joins that database's accepted command.
 
 `Command.RequestID` remains the identity for direct, nontransaction commands.
 For `CmdCommitTransaction`, the accepted envelope is authoritative: changing a
