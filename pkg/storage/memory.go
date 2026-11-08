@@ -61,12 +61,24 @@ var _ EngineUnwrapper = (*MemoryEngine)(nil)
 //
 // Note: For tests, prefer storage.NewTestEngine(t) which handles cleanup.
 func NewMemoryEngine() *MemoryEngine {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := NewMemoryEngineWithOptions(BadgerOptions{})
 	if err != nil {
 		// In testing context, panic is acceptable for setup failures
 		panic(fmt.Sprintf("failed to create in-memory BadgerEngine: %v", err))
 	}
-	return &MemoryEngine{BadgerEngine: engine}
+	return engine
+}
+
+// NewMemoryEngineWithOptions creates an in-memory storage engine with opts,
+// such as the engine-wide policy (EngineOptions) and logger a database opens
+// with; opts.InMemory is implied.
+func NewMemoryEngineWithOptions(opts BadgerOptions) (*MemoryEngine, error) {
+	opts.InMemory = true
+	engine, err := NewBadgerEngineWithOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	return &MemoryEngine{BadgerEngine: engine}, nil
 }
 
 // BeginTransaction starts a new transaction.

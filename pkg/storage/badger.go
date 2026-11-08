@@ -483,6 +483,9 @@ type BadgerEngine struct {
 	// fallback installed in NewBadgerEngineWithOptions when opts.Logger == nil.
 	log *slog.Logger
 
+	// lockWait bounds and reports MERGE key waits (EngineOptions.LockWait).
+	lockWait LockWaitOptions
+
 	// Plan 04-04-06: pre-bound storage observers cached at AttachMetrics
 	// time (MET-25). Hot-path observation funnels through these — zero
 	// WithLabelValues lookup per Get/Put/Delete/Scan call. Nil-safe: when
@@ -1094,6 +1097,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 
 	engine.idDict = newIDDictionary()
 	engine.idDict.setFreelistTTL(opts.EngineOptions.IDFreelistTTL)
+	engine.lockWait = opts.EngineOptions.LockWait
 	if err := engine.idDict.loadFromBadger(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to load id dictionary: %w", err)

@@ -24,6 +24,9 @@ var _ MergeNodePreparer = (*BadgerTransaction)(nil)
 // key projection and registry, retaining acquired keys until transaction end.
 // A peer committed after an unobserved snapshot is caught up; a snapshot that
 // has already been read or written returns retryable ErrConflict instead.
+// A wait for a key another transaction holds ends as PrepareMergeKey says:
+// with ErrDeadlock, ctx's error, or ErrLockWaitTimeout at the server's
+// transaction timeout; a wait past the slow-query threshold is logged.
 func (tx *BadgerTransaction) PrepareMergeNode(ctx context.Context, labels []string, props map[string]interface{}) error {
 	return tx.prepareMergeNode(ctx, labels, props, false)
 }
@@ -116,7 +119,8 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 	if !found && !complete {
 		return nil
 	}
-	release, err := schema.acquireUniqueConstraintCommitLocks(ctx, tx.ID, []uniqueConstraintLockKey{key.lock})
+	wait := tx.mergeKeyWait(namespace)
+	release, err := schema.acquireUniqueConstraintLocks(ctx, tx.ID, []uniqueConstraintLockKey{key.lock}, &wait)
 	if err != nil {
 		return err
 	}

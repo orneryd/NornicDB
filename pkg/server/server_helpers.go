@@ -15,6 +15,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
+	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -626,7 +627,9 @@ func (s *Server) logSlowQuery(query string, params map[string]interface{}, durat
 		return
 	}
 
-	if duration < s.config.Logging.SlowQueryThreshold {
+	// A zero threshold disables slow-query reporting, as in the Cypher
+	// executor and the MERGE wait (NOR-284).
+	if !nornicConfig.SlowQueryThresholdReached(s.config.Logging.SlowQueryThreshold, duration) {
 		return
 	}
 
