@@ -18,10 +18,11 @@ type annMutationOverlay struct {
 }
 
 type annMutationOverlaySnapshot struct {
-	Vectors          map[string][]float32 `msgpack:"vectors,omitempty"`
-	Tombstones       []string             `msgpack:"tombstones,omitempty"`
-	VectorStoreCount int                  `msgpack:"vector_store_count,omitempty"`
-	VectorStoreSlots int64                `msgpack:"vector_store_slots,omitempty"`
+	VectorStoreGeneration vectorCheckpointGeneration `msgpack:"vector_store_generation,omitempty"`
+	Vectors               map[string][]float32       `msgpack:"vectors,omitempty"`
+	Tombstones            []string                   `msgpack:"tombstones,omitempty"`
+	VectorStoreCount      int                        `msgpack:"vector_store_count,omitempty"`
+	VectorStoreSlots      int64                      `msgpack:"vector_store_slots,omitempty"`
 }
 
 func newANNMutationOverlay() *annMutationOverlay {
@@ -151,13 +152,19 @@ func (o *annMutationOverlay) restore(snapshot annMutationOverlaySnapshot) {
 
 func (s annMutationOverlaySnapshot) matchesVectorStore(store *VectorFileStore) bool {
 	if store == nil {
-		return true
+		// A snapshot that carries no store identity and no overlay mutations has
+		// nothing that could belong to another source. One that names a store
+		// (or holds its mutations) cannot be attributed without that store.
+		return len(s.Vectors) == 0 && len(s.Tombstones) == 0 &&
+			s.VectorStoreCount == 0 && s.VectorStoreSlots == 0 && s.VectorStoreGeneration == (vectorCheckpointGeneration{})
 	}
 	if s.VectorStoreSlots <= 0 {
 		return false
 	}
-	count, slots := store.stateVersion()
-	return count == s.VectorStoreCount && slots == s.VectorStoreSlots
+	// Equal counts and slot counts are not proof that the overlay belongs to
+	// this vector source: only the source generation is.
+	count, slots, _ := store.stateVersion()
+	return count == s.VectorStoreCount && slots == s.VectorStoreSlots && vectorGenerationMatches(store, s.VectorStoreGeneration)
 }
 
 // size is the number of vectors the overlay holds.
