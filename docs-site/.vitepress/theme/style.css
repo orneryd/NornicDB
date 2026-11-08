@@ -577,14 +577,15 @@ input:focus-visible {
 }
 @media (max-width: 359px) {
   .inline-search-input {
-    padding-left: 10px;
+    padding-left: 8px;
+    padding-right: 8px;
   }
   .inline-search-input::placeholder {
-    font-size: 12px;
+    font-size: 13px;
   }
   .inline-search {
-    flex-basis: 88px;
-    width: 88px;
+    flex-basis: 104px;
+    width: 104px;
   }
   :root .version-picker {
     padding: 0 2px;
