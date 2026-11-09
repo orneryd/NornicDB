@@ -77,7 +77,7 @@ func testHNSWBackgroundExact(t *testing.T, fileBacked bool) {
 	minimum := -1.0
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	eligible := func(node *storage.Node) bool { return node.ID != "excluded" }
+	eligible := func(_ context.Context, node *storage.Node) (bool, error) { return node.ID != "excluded", nil }
 	for i := 0; i < cap(answers); i++ {
 		go func(i int) {
 			query := ""

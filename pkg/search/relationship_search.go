@@ -796,7 +796,11 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 			if node, err := s.engine.GetNode(ctx, edge.EndNode); err == nil {
 				end = node
 			}
-			if !opts.RelationshipWhere(edge, start, end) {
+			passes, err := opts.relationshipWhere(ctx, edge, start, end)
+			if err != nil {
+				return nil, err
+			}
+			if !passes {
 				continue
 			}
 		}

@@ -156,23 +156,23 @@ func sequentialHybridReference(
 	seenOrphans := make(map[string]bool)
 	var bm25Results []indexResult
 	if svc.fulltext() != nil {
-		bm25Results, _, err = svc.adaptiveBM25Search(ctx, svc.fulltext(), query, opts, func(results []indexResult) []indexResult {
+		bm25Results, _, err = svc.adaptiveBM25Search(ctx, svc.fulltext(), query, opts, func(results []indexResult) ([]indexResult, error) {
 			results = svc.filterDecayedCandidates(results)
 			if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-				results = svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: opts.Types, Filters: opts.Filters}, seenOrphans)
+				return svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: opts.Types, Filters: opts.Filters}, seenOrphans)
 			}
-			return results
+			return results, nil
 		})
 		if err != nil {
 			return sequentialHybridReferenceResult{}, err
 		}
 	}
-	vectorResults, _, err := svc.adaptiveVectorSearch(ctx, pipeline, embedding, opts, lexicalEntryIDsFromResults(bm25Results), func(results []indexResult) []indexResult {
+	vectorResults, _, err := svc.adaptiveVectorSearch(ctx, pipeline, embedding, opts, lexicalEntryIDsFromResults(bm25Results), func(results []indexResult) ([]indexResult, error) {
 		results = svc.filterDecayedCandidates(results)
 		if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-			results = svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: opts.Types, Filters: opts.Filters}, seenOrphans)
+			return svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: opts.Types, Filters: opts.Filters}, seenOrphans)
 		}
-		return results
+		return results, nil
 	})
 	if err != nil {
 		return sequentialHybridReferenceResult{}, err

@@ -118,11 +118,13 @@ func TestFilterByPropertiesDirect(t *testing.T) {
 	results := buildFilterResults("nornic:n1", "nornic:n2", "nornic:missing")
 	seenOrphans := map[string]bool{}
 
-	filtered := svc.filterByProperties(ctx, results, &SearchOptions{Filters: map[string][]string{"color": {"blue"}}}, seenOrphans)
+	filtered, err := svc.filterByProperties(ctx, results, &SearchOptions{Filters: map[string][]string{"color": {"blue"}}}, seenOrphans)
+	require.NoError(t, err)
 	require.Len(t, filtered, 1)
 	require.Equal(t, "nornic:n1", filtered[0].ID)
 	require.True(t, seenOrphans["nornic:missing"])
 
-	all := svc.filterByProperties(ctx, results[:2], &SearchOptions{}, seenOrphans)
+	all, err := svc.filterByProperties(ctx, results[:2], &SearchOptions{}, seenOrphans)
+	require.NoError(t, err)
 	require.Equal(t, results[:2], all)
 }

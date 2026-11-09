@@ -1520,10 +1520,10 @@ func TestSearchTextContinuationIDModeBoundsBuildTime(t *testing.T) {
 	require.NoError(t, err)
 
 	options := DefaultSearchOptions()
-	options.Where = func(*storage.Node) bool {
+	options.Where = func(context.Context, *storage.Node) (bool, error) {
 		// Cross the configured deadline even on coarse platform clocks.
 		time.Sleep(10 * time.Millisecond)
-		return true
+		return true, nil
 	}
 	_, err = service.SearchTextContinuation(
 		context.Background(), "", options,

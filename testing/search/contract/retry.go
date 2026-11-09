@@ -88,10 +88,10 @@ func RunRetry(t *testing.T, factory func(*testing.T, int, Policy) Fixture) {
 				opts := *options
 				policy.Options(&opts)
 				if armed {
-					opts.Where = func(*storage.Node) bool {
+					opts.Where = func(context.Context, *storage.Node) (bool, error) {
 						where.observe(callerFunctions(2))
 						cancel()
-						return false
+						return false, nil
 					}
 				}
 				response, err := f.Service.Search(ctx, "", query, &opts)

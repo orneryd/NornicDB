@@ -436,13 +436,18 @@ type SearchOptions struct {
 	// is applied with Types and Filters to the candidates, before the top-K cut.
 	// A search with a Where isn't cached: what it admits can depend on more than
 	// the options.
-	Where func(*storage.Node) bool
+	//
+	// ctx is the search that asks: for a continuation page, that page's
+	// request, not the one that started the search, so cancelling the page
+	// stops the filter. An error admits nothing and ends the search with it:
+	// a candidate the filter could not decide is never returned.
+	Where func(ctx context.Context, node *storage.Node) (bool, error)
 
 	// RelationshipWhere admits a candidate relationship of a relationship or
 	// graph search, given its start and end nodes (nil when not visible), as
 	// Where does a node; nil admits every relationship. It is applied with
 	// the relationship types, before the limit.
-	RelationshipWhere func(edge *storage.Edge, start, end *storage.Node) bool
+	RelationshipWhere func(ctx context.Context, edge *storage.Edge, start, end *storage.Node) (bool, error)
 
 	// MMR (Maximal Marginal Relevance) diversification
 	// When enabled, results are re-ranked to balance relevance with diversity
@@ -5166,6 +5171,10 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	// Fallback to vector-only
 	// Failed branches are replaced by the selected fallback. A successful but
 	// incomplete branch must still prevent false exhaustion of the whole search.
+	// A filter that could not decide a candidate ends the search instead.
+	if finalSearchError(err) {
+		return nil, err
+	}
 	hybridFailed := err != nil
 	hybridIncomplete := err == nil && response != nil && !response.RetrievalExhausted
 	response, err = s.vectorSearchOnly(ctx, embedding, opts)
@@ -5183,6 +5192,9 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	}
 
 	// Final fallback to full-text
+	if finalSearchError(err) {
+		return nil, err
+	}
 	vectorFailed := err != nil
 	vectorIncomplete := err == nil && response != nil && !response.RetrievalExhausted
 	mode = "bm25" // Plan 04-05-05: final fallback to BM25-only
@@ -5228,12 +5240,12 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	bm25SeenOrphans := make(map[string]bool)
 	retrieveBM25 := func() bm25RetrievalResult {
 		bm25Start := time.Now()
-		results, stats, err := s.adaptiveBM25Search(ctx, fulltextIndex, query, opts, func(results []indexResult) []indexResult {
+		results, stats, err := s.adaptiveBM25Search(ctx, fulltextIndex, query, opts, func(results []indexResult) ([]indexResult, error) {
 			results = s.filterDecayedCandidates(results)
 			if opts.filtersCandidates() {
-				results = s.filterByTypeAndProperties(ctx, results, opts, bm25SeenOrphans)
+				return s.filterByTypeAndProperties(ctx, results, opts, bm25SeenOrphans)
 			}
-			return results
+			return results, nil
 		})
 		return bm25RetrievalResult{
 			results:  results,
@@ -5269,12 +5281,12 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	var vectorStats vectorOverfetchStats
 	seenOrphans := make(map[string]bool)
 	if pipelineErr == nil {
-		vectorResults, vectorStats, pipelineErr = s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, lexicalEntryIDsFromResults(bm25Result.results), func(results []indexResult) []indexResult {
+		vectorResults, vectorStats, pipelineErr = s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, lexicalEntryIDsFromResults(bm25Result.results), func(results []indexResult) ([]indexResult, error) {
 			results = s.filterDecayedCandidates(results)
 			if opts.filtersCandidates() {
-				results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
+				return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 			}
-			return results
+			return results, nil
 		})
 	}
 	vectorMs := int(time.Since(vectorStart).Milliseconds())
@@ -5443,11 +5455,11 @@ func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float3
 	}
 
 	seenOrphans := make(map[string]bool)
-	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) []indexResult {
+	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) ([]indexResult, error) {
 		if opts.filtersCandidates() {
-			results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
+			return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
-		return results
+		return results, nil
 	})
 	if err != nil {
 		return nil, err
@@ -5579,7 +5591,7 @@ func (s *Service) adaptiveVectorSearch(
 	embedding []float32,
 	opts *SearchOptions,
 	lexicalEntryIDs []string,
-	postProcess func([]indexResult) []indexResult,
+	postProcess func([]indexResult) ([]indexResult, error),
 ) ([]indexResult, vectorOverfetchStats, error) {
 	if opts == nil {
 		defaults := defaultSearchOptionsValue()
@@ -5618,7 +5630,9 @@ func (s *Service) adaptiveVectorSearch(
 			results = append(results, indexResult{ID: nodeID, MatchID: result.ID, Score: result.Score})
 		}
 		if postProcess != nil {
-			results = postProcess(results)
+			if results, err = postProcess(results); err != nil {
+				return nil, stats, err
+			}
 		}
 		if len(results) >= config.target {
 			stats.exhausted = stats.exhausted && len(results) == config.target
@@ -5689,7 +5703,7 @@ func (s *Service) completeVectorSearch(
 	embedding []float32,
 	opts *SearchOptions,
 	target int,
-	postProcess func([]indexResult) []indexResult,
+	postProcess func([]indexResult) ([]indexResult, error),
 	stats vectorOverfetchStats,
 ) ([]indexResult, vectorOverfetchStats, error) {
 	work := newSearchBatch(ctx)
@@ -5783,7 +5797,11 @@ func (s *Service) completeVectorSearch(
 			return nil, stats, err
 		}
 		end := min(start+target, len(ranked))
-		results = append(results, postProcess(append([]indexResult(nil), ranked[start:end]...))...)
+		admitted, err := postProcess(append([]indexResult(nil), ranked[start:end]...))
+		if err != nil {
+			return nil, stats, err
+		}
+		results = append(results, admitted...)
 	}
 	if len(results) > target {
 		results = results[:target]
@@ -5809,7 +5827,7 @@ func (s *Service) adaptiveBM25Search(
 	index bm25Index,
 	query string,
 	opts *SearchOptions,
-	postProcess func([]indexResult) []indexResult,
+	postProcess func([]indexResult) ([]indexResult, error),
 ) ([]indexResult, vectorOverfetchStats, error) {
 	if index == nil {
 		return nil, vectorOverfetchStats{exhausted: true}, nil
@@ -5824,9 +5842,9 @@ func (s *Service) adaptiveBM25Search(
 			return index.SearchAllowed(query, limit, allowed)
 		}
 	}
-	filter := func(results []indexResult) []indexResult {
+	filter := func(results []indexResult) ([]indexResult, error) {
 		if postProcess == nil {
-			return results
+			return results, nil
 		}
 		return postProcess(results)
 	}
@@ -5841,7 +5859,10 @@ func (s *Service) adaptiveBM25Search(
 		stats.rawCandidates = len(rawResults)
 		// BM25 enumerates an exact ranked prefix before metadata filtering.
 		stats.exhausted = len(rawResults) < requestLimit
-		results := filter(rawResults)
+		results, err := filter(rawResults)
+		if err != nil {
+			return nil, stats, err
+		}
 		if len(results) >= config.target {
 			stats.exhausted = stats.exhausted && len(results) == config.target
 			return results[:config.target], stats, nil
@@ -5878,7 +5899,7 @@ func (s *Service) completeBM25Search(
 	search func(query string, limit int) []indexResult,
 	query string,
 	documents, target, batch int,
-	filter func([]indexResult) []indexResult,
+	filter func([]indexResult) ([]indexResult, error),
 	stats vectorOverfetchStats,
 ) ([]indexResult, vectorOverfetchStats, error) {
 	all := search(query, max(documents, 1))
@@ -5890,8 +5911,11 @@ func (s *Service) completeBM25Search(
 			return nil, stats, err
 		}
 		end := min(start+batch, len(all))
-		page := append([]indexResult(nil), all[start:end]...)
-		results = append(results, filter(page)...)
+		admitted, err := filter(append([]indexResult(nil), all[start:end]...))
+		if err != nil {
+			return nil, stats, err
+		}
+		results = append(results, admitted...)
 	}
 	stats.exhausted = len(results) < target
 	if len(results) > target {
@@ -7388,11 +7412,11 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 		return nil, pipelineErr
 	}
 	seenOrphans := make(map[string]bool)
-	results, vectorStats, searchErr := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) []indexResult {
+	results, vectorStats, searchErr := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) ([]indexResult, error) {
 		if opts.filtersCandidates() {
-			results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
+			return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
-		return results
+		return results, nil
 	})
 	if searchErr != nil {
 		return nil, searchErr
@@ -7480,11 +7504,11 @@ func (s *Service) fullTextSearchOnly(ctx context.Context, query string, opts *Se
 	}
 	bm25Start := time.Now()
 	seenOrphans := make(map[string]bool)
-	results, bm25Stats, err := s.adaptiveBM25Search(ctx, ft, query, opts, func(results []indexResult) []indexResult {
+	results, bm25Stats, err := s.adaptiveBM25Search(ctx, ft, query, opts, func(results []indexResult) ([]indexResult, error) {
 		if opts.filtersCandidates() {
-			results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
+			return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
-		return results
+		return results, nil
 	})
 	if err != nil {
 		return nil, err
@@ -7889,9 +7913,16 @@ func (opts *SearchOptions) filtersCandidates() bool {
 }
 
 // admitsNode is the property test every search path applies to a candidate
-// before the top-K cut: the property filters, then Where.
-func (opts *SearchOptions) admitsNode(node *storage.Node) bool {
-	return nodeMatchesFilters(node, opts.Filters) && (opts.Where == nil || opts.Where(node))
+// before the top-K cut: the property filters, then Where under ctx. A Where
+// that fails admits nothing, and its error is the search's (ErrFilterEvaluation).
+func (opts *SearchOptions) admitsNode(ctx context.Context, node *storage.Node) (bool, error) {
+	if !nodeMatchesFilters(node, opts.Filters) {
+		return false, nil
+	}
+	if opts.Where == nil {
+		return true, nil
+	}
+	return opts.where(ctx, node)
 }
 
 // propValueMatchesAny returns true if any of wantVals matches propVal.
@@ -7922,9 +7953,9 @@ func propValueMatchesAny(propVal any, wantVals []string) bool {
 }
 
 // filterByProperties filters results to the nodes opts admits (admitsNode).
-func (s *Service) filterByProperties(ctx context.Context, results []indexResult, opts *SearchOptions, seenOrphans map[string]bool) []indexResult {
+func (s *Service) filterByProperties(ctx context.Context, results []indexResult, opts *SearchOptions, seenOrphans map[string]bool) ([]indexResult, error) {
 	if len(opts.Filters) == 0 && opts.Where == nil {
-		return results
+		return results, nil
 	}
 	var filtered []indexResult
 	for _, r := range results {
@@ -7935,11 +7966,15 @@ func (s *Service) filterByProperties(ctx context.Context, results []indexResult,
 			}
 			continue
 		}
-		if opts.admitsNode(node) {
+		admitted, err := opts.admitsNode(ctx, node)
+		if err != nil {
+			return nil, err
+		}
+		if admitted {
 			filtered = append(filtered, r)
 		}
 	}
-	return filtered
+	return filtered, nil
 }
 
 // filterByTypeAndProperties resolves type predicates from compact index metadata
@@ -7950,9 +7985,9 @@ func (s *Service) filterByTypeAndProperties(
 	results []indexResult,
 	opts *SearchOptions,
 	seenOrphans map[string]bool,
-) []indexResult {
+) ([]indexResult, error) {
 	if !opts.filtersCandidates() {
-		return results
+		return results, nil
 	}
 	types := opts.Types
 	// properties is whether the nodes' properties are tested too.
@@ -7964,7 +7999,7 @@ func (s *Service) filterByTypeAndProperties(
 			results = indexedResults
 			typesResolved = true
 			if len(results) == 0 || !properties {
-				return results
+				return results, nil
 			}
 		}
 	}
@@ -7990,9 +8025,9 @@ func (s *Service) filterByTypeAndProperties(
 			results = s.filterByType(ctx, results, types, seenOrphans)
 		}
 		if properties {
-			results = s.filterByProperties(ctx, results, opts, seenOrphans)
+			return s.filterByProperties(ctx, results, opts, seenOrphans)
 		}
-		return results
+		return results, nil
 	}
 
 	var filtered []indexResult
@@ -8006,13 +8041,17 @@ func (s *Service) filterByTypeAndProperties(
 			continue
 		}
 
-		if !opts.admitsNode(node) {
+		admitted, err := opts.admitsNode(ctx, node)
+		if err != nil {
+			return nil, err
+		}
+		if !admitted {
 			continue
 		}
 
 		filtered = append(filtered, r)
 	}
-	return filtered
+	return filtered, nil
 }
 
 // filterByType filters results to only include specified node types.

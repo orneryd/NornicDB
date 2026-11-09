@@ -1423,7 +1423,7 @@ func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.D
 		opts.QuantizationOversampling = q.GetOversampling()
 	}
 	if filter != nil {
-		opts.Where = func(node *storage.Node) bool { return matchesFilter(node, filter) }
+		opts.Where = func(_ context.Context, node *storage.Node) (bool, error) { return matchesFilter(node, filter), nil }
 	}
 	hits, err := searchSvc.VectorQueryNodesWithOptions(ctx, queryVec, search.VectorQuerySpec{
 		Label:      QdrantPointLabel,

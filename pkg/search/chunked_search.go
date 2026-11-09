@@ -460,7 +460,7 @@ func fatalChunkedSearchError(ctx context.Context, predicate func(error) bool, er
 	if canceled := ctx.Err(); canceled != nil {
 		return canceled
 	}
-	if err != nil && (errors.Is(err, context.Canceled) || predicate != nil && predicate(err)) {
+	if err != nil && (errors.Is(err, context.Canceled) || finalSearchError(err) || predicate != nil && predicate(err)) {
 		return err
 	}
 	return nil

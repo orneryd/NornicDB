@@ -38,11 +38,11 @@ func TestCloseCancelsLexicalSearchCompletion(t *testing.T) {
 	var once sync.Once
 	opts := search.DefaultSearchOptions()
 	filtered := false
-	opts.Where = func(*storage.Node) bool {
+	opts.Where = func(context.Context, *storage.Node) (bool, error) {
 		filtered = true
 		once.Do(func() { go func() { closed <- db.Close() }() })
 		<-useCtx.Done()
-		return true
+		return true, nil
 	}
 	response, searchErr := search.SearchTextChunks(useCtx, "needle", opts, nil, nil, svc.Search)
 	finish()

@@ -130,7 +130,9 @@ func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32
 //	hits, err := svc.VectorQueryNodesWithOptions(ctx, query, search.VectorQuerySpec{
 //		Label: "QdrantPoint", Property: "default", Similarity: "cosine",
 //		Limit: 10, ScoreScale: search.VectorScoreSimilarity,
-//	}, &search.SearchOptions{HNSWEf: 128, Where: func(n *storage.Node) bool { return n.Properties["tag"] == "a" }})
+//	}, &search.SearchOptions{HNSWEf: 128, Where: func(_ context.Context, n *storage.Node) (bool, error) {
+//		return n.Properties["tag"] == "a", nil
+//	}})
 func (s *Service) VectorQueryNodesWithOptions(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, opts *SearchOptions) ([]VectorQueryHit, error) {
 	return s.vectorQueryNodes(ctx, queryEmbedding, spec, opts, true)
 }
@@ -345,16 +347,16 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 
 	var postProcessErr error
 	seenOrphans := make(map[string]bool)
-	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, queryEmbedding, resolved, nil, func(candidates []indexResult) []indexResult {
+	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, queryEmbedding, resolved, nil, func(candidates []indexResult) ([]indexResult, error) {
 		if postProcessErr != nil {
-			return nil
+			return nil, nil
 		}
 		// Candidate discovery activates a pending PQ model after collection
 		// growth. Score supplements afterwards, once, using that same policy.
 		if !supplementReady && spec.Property != "" {
 			supplement, postProcessErr = s.propertyVectorNodeScores(ctx, normalizedQuery, spec.Label, spec.Property, quantizedIndex)
 			if postProcessErr != nil {
-				return nil
+				return nil, nil
 			}
 			supplementReady = true
 		}
@@ -766,7 +768,14 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 				return nil, err
 			}
 			node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(candidate.id))
-			if err != nil || !opts.Where(node) {
+			if err != nil {
+				continue
+			}
+			passes, err := opts.where(ctx, node)
+			if err != nil {
+				return nil, err
+			}
+			if !passes {
 				continue
 			}
 			admitted = append(admitted, candidate)
