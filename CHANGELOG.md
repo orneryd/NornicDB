@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   errors across thirteen existing Cypher APIs. Fabric keyword-name and import
   readers are context-first stateless callbacks; canceled preparation is not
   cached. See [the migration guide](docs/development/cypher-preparation-context-api.md#use-and-clause-scanner-migration).
+- Go `search.SearchOptions.Where` and `RelationshipWhere` filters now receive
+  the context of the search that asks and return an error. An error admits
+  nothing and fails the search with it, marked `search.ErrFilterEvaluation`:
+  no vector, full-text or query-chunk fallback replaces it.
 
 ### Fixed
 
@@ -125,6 +129,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and metric, and the HTTP slow-query log, which used to log every query at
   a zero threshold). A negative or invalid value for either setting, in any
   source, stops startup.
+
+- Apply the `where` of a ranked `db.retrieve` / `db.rretrieve` continuation on
+  every page as on the first. A graph pattern in the `where` stopped matching
+  once the request that started the search had ended (`EXISTS` read false and
+  `NOT EXISTS` true), so later pages returned rows the `where` excludes and lost
+  rows it admits. Later pages read the graph through their own statement, so
+  a search started in an explicit transaction keeps paging after COMMIT. A
+  cancelled page, or a `where` that cannot be evaluated, now fails the page
+  instead of returning rows (no full-text fallback replaces it); a cancelled
+  page can be pulled again. A traversal stops only on its own context's
+  cancellation and always reports it as an error.
 
 - Preserve quoted dotted property names in constraints and projected reads.
   Keep quoted commas inside composite constraint properties and reject property

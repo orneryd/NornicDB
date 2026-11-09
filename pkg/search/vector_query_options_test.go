@@ -141,7 +141,7 @@ func TestVectorQueryNodesWithOptions_WhereFindsSelectiveMatch(t *testing.T) {
 	}
 	nodes = append(nodes, pointNode("rare", []float32{0, 0, 0, 1}, map[string]any{"tag": "rare"}))
 	svc := newOptionsTestService(t, 4, nodes...)
-	opts := &SearchOptions{Where: func(node *storage.Node) bool { return node.Properties["tag"] == "rare" }}
+	opts := &SearchOptions{Where: func(_ context.Context, node *storage.Node) (bool, error) { return node.Properties["tag"] == "rare", nil }}
 
 	for _, similarity := range []string{"cosine", "dot"} {
 		hits, err := svc.VectorQueryNodesWithOptions(context.Background(), []float32{1, 0, 0, 0},
