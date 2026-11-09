@@ -5,7 +5,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 type Symbol struct {
@@ -156,7 +157,7 @@ func main() {
 			})
 		}
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(graph); err != nil {
+	if err := valueconvert.PropertyJSON.NewEncoder(os.Stdout).Encode(graph); err != nil {
 		panic(err)
 	}
 }
