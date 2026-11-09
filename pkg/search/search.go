@@ -3588,7 +3588,25 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 		return nil
 	}
 	if queued, err := s.readLockOrQueue(ctx, reservedWrite(deferredIndexWrite{node: node}, applyMutation)); queued || err != nil {
-		if !queued {
+		if !queued && withoutRefusals(err) != nil {
+			// A failed eligibility lookup cannot leave the build's older snapshot
+			// visible. Order withdrawal after that snapshot, without completing the
+			// reservation; transfer retry ownership after withdrawal and lock release.
+			withdraw := deferredIndexWrite{
+				apply: func() {
+					_ = applyReservedIndexMutation(applyMutation, func() error {
+						s.removeNodeOwned(applyMutation.id)
+						return err
+					})
+				},
+				afterBuild: func() { s.refusedAdmission(RefreshRetry{Node: mutation}, err) },
+			}
+			if deferred, _ := s.readLockOrQueue(s.LifetimeContext(), withdraw); !deferred {
+				withdraw.apply()
+				s.buildMu.RUnlock()
+				withdraw.afterBuild()
+			}
+		} else if !queued {
 			s.refusedAdmission(RefreshRetry{Node: mutation}, err)
 		}
 		return err
@@ -4049,12 +4067,18 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	// for the build instead.
 	s.beginBuildWrites(storage.SupportsReadSnapshot(ctx, s.engine))
 	s.buildMu.Lock()
-	defer s.buildMu.Unlock()
+	var notifications []func()
+	defer func() {
+		s.buildMu.Unlock()
+		for _, notify := range notifications {
+			notify()
+		}
+	}()
 	defer func() {
 		if resultErr == nil {
 			resultErr = ctx.Err()
 		}
-		resultErr = s.endBuildWrites(ctx, resultErr)
+		resultErr, notifications = s.endBuildWrites(ctx, resultErr)
 	}()
 	s.startBuildWrites()
 	if err := s.beginPopulationPersistence(); err != nil {

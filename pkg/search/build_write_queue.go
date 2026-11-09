@@ -66,6 +66,8 @@ type deferredIndexWrite struct {
 	edge   *storage.Edge // IndexEdge
 	edgeID string        // RemoveEdge
 	apply  func()        // an administrative operation (orderWithBuild)
+	// afterBuild delivers error-path ownership only after buildMu is released.
+	afterBuild func()
 	// dims marks an administrative operation that can change the dimension
 	// decision (orderDimensionChange).
 	dims bool
@@ -117,6 +119,7 @@ type buildWriteQueue struct {
 	// calls leave (bm25, vector).
 	flags       [2]bool
 	flagsQueued bool
+	afterBuild  []func()
 }
 
 // beginBuildWrites opens the queue for a build about to take buildMu.
@@ -148,7 +151,7 @@ func (s *Service) startBuildWrites() {
 // A build that another one waits for leaves the rest, and publication, to it.
 // Caller owns buildMu and releases it next, so a write that finds the queue
 // closed waits only for that release.
-func (s *Service) endBuildWrites(ctx context.Context, buildErr error) error {
+func (s *Service) endBuildWrites(ctx context.Context, buildErr error) (error, []func()) {
 	s.ready.Store(false)
 	if buildErr != nil {
 		s.population.state.Store(populationFailed)
@@ -159,7 +162,7 @@ func (s *Service) endBuildWrites(ctx context.Context, buildErr error) error {
 	if q.owners > 0 {
 		q.mu.Unlock()
 		s.setBuildPhase("idle")
-		return s.finishPopulationPersistence(ctx, buildErr, true, false)
+		return s.finishPopulationPersistence(ctx, buildErr, true, false), nil
 	}
 	q.open.Store(false)
 	q.deferring.Store(false)
@@ -178,8 +181,10 @@ func (s *Service) endBuildWrites(ctx context.Context, buildErr error) error {
 	} else {
 		s.setBuildPhase("idle")
 	}
+	notifications := q.afterBuild
+	q.afterBuild = nil
 	q.mu.Unlock()
-	return resultErr
+	return resultErr, notifications
 }
 
 // completeBuildPopulation records that the build's baseline is installed and
@@ -541,6 +546,11 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 			if write.dims {
 				s.buildWrites.opApplied()
 			}
+		}
+		if write.afterBuild != nil {
+			s.buildWrites.mu.Lock()
+			s.buildWrites.afterBuild = append(s.buildWrites.afterBuild, write.afterBuild)
+			s.buildWrites.mu.Unlock()
 		}
 		if write.refresh {
 			err = withoutRefusals(err)
