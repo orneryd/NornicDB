@@ -137,7 +137,8 @@ func IsStreamingSnapshot(path string) (bool, error) {
 }
 
 // ReadSnapshot visits entities from NDS2 v1 JSON or v2 typed frames.
-// Unsupported versions fail before visiting entities.
+// Unsupported versions fail before visiting entities. The non-nil ctx is
+// passed unchanged to every visitor callback.
 func ReadSnapshot(ctx context.Context, reader io.Reader, visitor SnapshotVisitor) (SnapshotMetadata, error) {
 	return readSnapshot(ctx, reader, visitor, nil, defaultSnapshotRecordSize)
 }

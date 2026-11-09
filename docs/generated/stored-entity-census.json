@@ -4575,7 +4575,7 @@
       "field": "pkg/storage.snapshotFrameWriter.scratch",
       "class": "snapshot frame serialization scratch",
       "func": "pkg/storage.snapshotFrameWriter.write",
-      "pos": "pkg/storage/snapshot_stream.go:253"
+      "pos": "pkg/storage/snapshot_stream.go:257"
     },
     {
       "field": "pkg/storage.uniqueConstraintSeenTable.keys",

@@ -30,3 +30,12 @@
 - [x] Final canonical emitter source: unchanged context census passes (113.345s); focused WAL/recovery checks pass (36.914s); focused race checks pass (7.426s).
 - [x] All test packages compile with zero tests run; affected public consumers, fixture guard, stored census and tagged vet pass.
 - [ ] Full make-test CI on the pushed migration head; duplicate advisory review.
+
+## Independent review closure
+
+- [x] Document cancellation independence on public recovery/undo APIs and correct stale replay comments.
+- [x] Remove redundant detachment from the private snapshot restore helper; public undo retains its standalone completion boundary.
+- [x] Verify WorkLifetime.Context initializes its zero value without prior Enter; component and WAL startup controls pass.
+- [x] Expand canceled-initiator checks through snapshot plus WAL, result-returning recovery, direct redo/undo and incomplete-transaction compensation.
+- [x] Reviewed correction passes focused storage checks (42.568s), storage/lifecycle race checks (5.701s / 1.302s), blocking census (103.177s), and final stored-census freshness/fixture guard (13.226s / 1.453s).
+- [x] Preserve diagnostic logger defaults: discarded diagnostics remain discarded; no additional logging scope or volume is claimed.

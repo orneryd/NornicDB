@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 )
@@ -209,19 +211,75 @@ func TestWALDiagnosticEmitterPreservesOperationContext(t *testing.T) {
 
 // Recovering acknowledged data must not inherit a canceled initiating request.
 func TestWALRecoveryCompletesAfterInitiatorCancellation(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
 	source := newTestMemoryEngine(t)
 	_, err := source.CreateNode(t.Context(), &Node{ID: "test:snapshot", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	snapshot := filepath.Join(t.TempDir(), "snapshot.nds")
 	require.NoError(t, SaveStreamingSnapshot(t.Context(), source, snapshot, SnapshotOptions{}))
+	walDir := t.TempDir()
+	wal, err := NewWAL(walDir, &WALConfig{Dir: walDir, SyncMode: "immediate"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = wal.Close() })
+	require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "wal", Labels: []string{"Doc"}}}, "test"))
+	require.NoError(t, wal.Close())
 	destination := newTestMemoryEngine(t)
 	ctx, cancel := context.WithCancel(walDiagnosticOperationContext(t.Context()))
 	cancel()
-	result, status, err := RecoverIntoEngine(ctx, destination, t.TempDir(), snapshot)
+	result, status, err := RecoverIntoEngine(ctx, destination, walDir, snapshot)
 	require.NoError(t, err)
 	require.Zero(t, result.Failed)
+	require.Equal(t, 1, result.Applied)
+	require.Equal(t, uint64(1), status.WALEntries)
 	require.Equal(t, uint64(1), status.SnapshotNodes)
 	node, err := destination.GetNode(t.Context(), "test:snapshot")
 	require.NoError(t, err)
 	require.Equal(t, []string{"Doc"}, node.Labels)
+	_, err = destination.GetNode(t.Context(), "test:wal")
+	require.NoError(t, err)
+	recovered, replay, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(ctx, walDir, snapshot))
+	require.NoError(t, err)
+	require.Zero(t, replay.Failed)
+	require.Equal(t, 1, replay.Applied)
+	for _, id := range []NodeID{"test:snapshot", "test:wal"} {
+		_, err = recovered.GetNode(t.Context(), id)
+		require.NoError(t, err)
+	}
+}
+
+func TestWALCompensationCompletesAfterInitiatorCancellation(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	t.Run("public replay and undo", func(t *testing.T) {
+		engine := newTestMemoryEngine(t)
+		data, err := marshalWALRecoveryPayload(nil, WALNodeData{Node: &Node{ID: "temporary", Labels: []string{"Doc"}}})
+		require.NoError(t, err)
+		entry := WALEntry{Sequence: 1, Operation: OpCreateNode, Database: "test", Data: data, Checksum: crc32Checksum(data)}
+		require.NoError(t, ReplayWALEntry(ctx, engine, entry))
+		_, err = engine.GetNode(t.Context(), "test:temporary")
+		require.NoError(t, err)
+		require.NoError(t, UndoWALEntry(ctx, engine, entry))
+		_, err = engine.GetNode(t.Context(), "test:temporary")
+		require.ErrorIs(t, err, ErrNotFound)
+	})
+	t.Run("incomplete transaction recovery", func(t *testing.T) {
+		dir := t.TempDir()
+		wal, err := NewWAL(dir, &WALConfig{Dir: dir, SyncMode: "immediate"})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = wal.Close() })
+		require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "accepted", Labels: []string{"Doc"}}}, "test"))
+		require.NoError(t, wal.AppendWithDatabase(OpTxBegin, WALTxData{TxID: "incomplete"}, "test"))
+		require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "temporary", Labels: []string{"Doc"}}, TxID: "incomplete"}, "test"))
+		require.NoError(t, wal.Close())
+		recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(ctx, dir, ""))
+		require.NoError(t, err)
+		require.False(t, result.HasErrors())
+		require.Equal(t, 1, result.NonTxApplied)
+		require.Equal(t, 1, result.RolledBackTransactions)
+		_, err = recovered.GetNode(t.Context(), "test:accepted")
+		require.NoError(t, err)
+		_, err = recovered.GetNode(t.Context(), "test:temporary")
+		require.ErrorIs(t, err, ErrNotFound)
+	})
 }

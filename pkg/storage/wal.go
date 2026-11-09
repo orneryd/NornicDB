@@ -2331,7 +2331,8 @@ func ReadWALEntriesAfter(ctx context.Context, path string, afterSeq uint64, scop
 // with the same authoritative count reconciliation the recovery batch owners
 // run. A caller replaying a sequence as one recovery batch applies each record
 // with replayWALEntry and completes the batch itself, so that reconciliation
-// stays once per batch rather than once per record.
+// stays once per batch rather than once per record. ctx must be non-nil;
+// its values are retained, while cancellation is detached to finish recovery.
 func ReplayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 	ctx = context.WithoutCancel(ctx)
 	if err := replayWALEntry(ctx, engine, entry); err != nil {
@@ -2504,8 +2505,8 @@ func replayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 				return fmt.Errorf("wal: complete preceding writes before buffered replay: %w", err)
 			}
 		}
-		// Physical replay has no caller context at this exported entry.
-		// Preserve its non-cancellable phase through provenance admission.
+		// The recovery boundary supplies its completion context, retaining
+		// operation provenance independently of initiating cancellation.
 		c, err := b.importBufferedWALRecord(ctx, &data, walForeignImport)
 		if err != nil {
 			return err
@@ -2517,11 +2518,12 @@ func replayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 	}
 }
 
-// UndoWALEntry reverses a WAL entry using its stored "before image".
-// This is used for transaction rollback on crash recovery.
-// Returns ErrNoUndoData if the entry lacks undo information.
+// ErrNoUndoData means a WAL entry lacks the before image needed for undo.
 var ErrNoUndoData = errors.New("wal: entry has no undo data")
 
+// UndoWALEntry reverses a WAL entry using its stored before image during crash
+// recovery. ctx must be non-nil; its values are retained, while cancellation is
+// detached so compensation completes. Missing undo data returns ErrNoUndoData.
 func UndoWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 	ctx = context.WithoutCancel(ctx)
 	// Determine database name: use entry's database if present, otherwise infer from engine/config.
@@ -2930,7 +2932,8 @@ func (r *TransactionRecoveryResult) HasErrors() bool {
 }
 
 // RecoverFromWAL recovers database state from a snapshot and WAL.
-// Returns a new MemoryEngine with the recovered state.
+// Returns a new MemoryEngine with the recovered state. Recovery retains ctx
+// values but completes independently of its cancellation.
 //
 // Uses a discard *slog.Logger for diagnostics. Callers wanting structured
 // recovery visibility should use RecoverFromWALWithLogger.
@@ -2939,6 +2942,7 @@ func RecoverFromWAL(ctx context.Context, walDir, snapshotPath string) (*MemoryEn
 }
 
 // RecoverFromWALWithLogger is the slog-aware variant of RecoverFromWAL.
+// Recovery retains ctx values but completes independently of its cancellation.
 // D-07: pass a child logger tagged subsystem=wal_recovery so completion-
 // with-errors records land in the structured stream. Operator-actionable
 // fields: failed, errors, summary; per-error attributes seq, operation, error.
@@ -2973,7 +2977,8 @@ func RecoverFromWALWithLogger(ctx context.Context, walDir, snapshotPath string, 
 }
 
 // RecoverFromWALWithResult recovers database state and returns detailed results.
-// Use this for programmatic access to replay statistics and errors.
+// Use this for programmatic access to replay statistics and errors. ctx must
+// be non-nil; values survive but cancellation is detached to finish recovery.
 func RecoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, ReplayResult, error) {
 	ctx = context.WithoutCancel(ctx)
 	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {

@@ -25,7 +25,8 @@ const recoveryBatchSize = 1000
 // a time. Physical bodies and name authority are retained one record at a time.
 // The destination must be quiescent until recovery completes; it must not serve
 // concurrent application writers while bodies and derived counts are restored.
-
+// ctx must be non-nil. Recovery retains its values and detaches cancellation
+// so restoring acknowledged data completes independently of the initiator.
 func RecoverIntoEngine(ctx context.Context, destination Engine, walDir, snapshotPath string) (ReplayResult, RecoveryStreamStatus, error) {
 	ctx = context.WithoutCancel(ctx)
 	result := ReplayResult{Errors: make([]ReplayError, 0)}
@@ -214,8 +215,8 @@ func (v *recoverySnapshotVisitor) flushEdges(ctx context.Context) error {
 	return nil
 }
 
+// restoreLegacySnapshot uses the completion context established by its recovery owner.
 func restoreLegacySnapshot(ctx context.Context, destination Engine, snapshot *Snapshot) error {
-	ctx = context.WithoutCancel(ctx)
 	dbName := defaultRecoveryDatabase()
 	if len(snapshot.Nodes) > 0 {
 		if parsed, _, ok := ParseDatabasePrefix(string(snapshot.Nodes[0].ID)); ok {
