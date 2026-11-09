@@ -4526,12 +4526,17 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		fulltextPath, vectorPath, hnswPath = w.working[0], w.working[1], w.working[2]
 	}
 	if skipIteration {
-		s.setBuildPhase("warmup_hnsw_or_kmeans")
-		// The indexes are restored: the population is complete.
+		// Saved artifacts restore nodes. Relationships still need their canonical
+		// snapshot stream before queued writes and readiness are published.
+		s.setBuildPhase("iterating_relationship_vectors")
+		if err := s.buildRelationshipVectorIndexes(ctx, snapshot); err != nil {
+			return err
+		}
 		closeSnapshot()
 		if err := s.completeBuildPopulation(); err != nil {
 			return err
 		}
+		s.setBuildPhase("warmup_hnsw_or_kmeans")
 		s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
 		s.warmupVectorPipeline(ctx, nil)
 		// Writes handed over since the last step, including during the
