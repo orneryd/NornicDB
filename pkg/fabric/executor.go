@@ -35,6 +35,7 @@ type FabricExecutor struct {
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
+	visibleGraph           func(context.Context, string) bool
 	remoteStatementPolicy  func(context.Context, string) (RemoteStatementPolicy, error)
 	union                  UnionContract
 	resultColumns          resultmetadata.Provider
@@ -330,6 +331,13 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 		ctx = WithSubTransaction(ctx, sub)
 	}
 	return loc, params, ctx, nil
+}
+
+// SetGraphVisibility installs the catalog owner's live metadata visibility
+// predicate. Element-ID resolution skips invisible names before lookup, so it
+// cannot reveal a constituent through a different lookup outcome.
+func (e *FabricExecutor) SetGraphVisibility(visible func(context.Context, string) bool) {
+	e.visibleGraph = visible
 }
 
 // SetGraphAuthorizer installs the statement owner's selection check. Dispatch

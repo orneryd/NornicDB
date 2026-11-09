@@ -19,7 +19,7 @@ var functionContextSink cypherfn.Context
 func TestFunctionContextGraphsAllocatesNothing(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	allocs := testing.AllocsPerRun(100, func() {
-		functionContextSink = cypherfn.Context{Graphs: exec}
+		functionContextSink = exec.registryFunctionContext(t.Context(), nil)
 	})
 	require.Zero(t, allocs)
 	graphs, composite := functionContextSink.Graphs.CompositeGraphs()

@@ -80,9 +80,11 @@ func init() {
 		if argumentCount(args) > 0 {
 			return nil, &ParameterCountError{Function: "graph.names", TooMany: true}
 		}
-		out := make([]interface{}, len(graphs))
-		for i, graph := range graphs {
-			out[i] = graph
+		out := make([]interface{}, 0, len(graphs))
+		for _, graph := range graphs {
+			if ctx.GraphVisible == nil || ctx.GraphVisible(workCtx, graph) {
+				out = append(out, graph)
+			}
 		}
 		return out, nil
 	})
@@ -107,7 +109,7 @@ func init() {
 			return nil, &ArgumentTypeError{Function: "graph.propertiesByName", Value: value}
 		}
 		for _, graph := range graphs {
-			if strings.EqualFold(graph, name) {
+			if strings.EqualFold(graph, name) && (ctx.GraphVisible == nil || ctx.GraphVisible(workCtx, graph)) {
 				return map[string]interface{}{}, nil
 			}
 		}

@@ -28,3 +28,19 @@ func TestFragmentAuthorizesBeforeCatalogLookup(t *testing.T) {
 		})
 	}
 }
+
+func TestElementIDResolutionUsesCatalogVisibility(t *testing.T) {
+	catalog := NewCatalog()
+	catalog.Register("comp.hidden", &LocationLocal{DBName: "hidden"})
+	exec := NewFabricExecutor(catalog, nil, nil)
+	exec.SetGraphVisibility(func(context.Context, string) bool { return false })
+	for _, name := range []string{"hidden", "absent"} {
+		_, err := exec.constituentForElementID(context.Background(), "4:"+name+":node", "comp")
+		var missing *GraphNotFoundError
+		require.ErrorAs(t, err, &missing)
+	}
+	exec.SetGraphVisibility(func(context.Context, string) bool { return true })
+	name, err := exec.constituentForElementID(context.Background(), "4:hidden:node", "comp")
+	require.NoError(t, err)
+	require.Equal(t, "comp.hidden", name)
+}

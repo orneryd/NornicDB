@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -27,6 +28,10 @@ type Context struct {
 	// Graphs lists the graphs of the composite database the query runs on.
 	// Nil means not a composite database.
 	Graphs GraphCatalog
+
+	// GraphVisible applies live selection visibility to catalog function output.
+	// Nil preserves trusted embedded use without a request authorization policy.
+	GraphVisible func(context.Context, string) bool
 
 	// Cypher25 is set while a Cypher 25 statement runs: a function whose
 	// results or errors Neo4j 2026.09 changed follows Neo4j 2026.09 then, and

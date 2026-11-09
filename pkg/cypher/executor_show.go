@@ -949,24 +949,6 @@ func functionSignatureDescriptions(signature string) ([]interface{}, string) {
 
 // executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
 func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Named SHOW DATABASE selects from the same visible catalog population as
-	// SHOW DATABASES. Hidden and absent names therefore both return no rows.
-	end := keywordEndAt(cypher, firstExecutableCypherOffset(cypher), "SHOW DATABASE")
-	if name := strings.TrimSpace(cypher[end:]); name != "" {
-		name = cyphertext.SymbolicNameValue(name)
-		result, err := e.executeShowDatabases(ctx, cypher)
-		if err != nil {
-			return nil, err
-		}
-		rows := result.Rows[:0]
-		for _, row := range result.Rows {
-			if cyphertext.NameEqualFold(row[0].(string), name) {
-				rows = append(rows, row)
-			}
-		}
-		result.Rows = rows
-		return result, nil
-	}
 	nodeCount, err := e.storage.NodeCount(ctx)
 	if err != nil {
 		return nil, err
@@ -1507,6 +1489,9 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 	// Format results
 	rows := make([][]interface{}, 0, len(aliases))
 	for alias, dbName := range aliases {
+		if !catalogDatabaseVisible(ctx, dbName) {
+			continue
+		}
 		rows = append(rows, []interface{}{alias, dbName})
 	}
 
