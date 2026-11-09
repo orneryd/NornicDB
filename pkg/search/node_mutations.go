@@ -3,6 +3,9 @@ package search
 import (
 	"context"
 	"errors"
+	"fmt"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -153,6 +156,11 @@ func (s *Service) RefreshNode(ctx context.Context, nodeID storage.NodeID) error 
 // queued for a storage event. Storage is read after the reservation: a write
 // this read misses commits later and reserves a newer refresh of its own,
 // which makes this one a no-op.
+//
+// The refresh installs the stored node entry by entry (installStored): an
+// entry a budget or a dimension refuses is decided on its own, and the error
+// reports the refusal. A read that fails keeps the reservation for the retry
+// owner; the node's entries lag until it lands.
 func (s *Service) RefreshNodeWithMutation(ctx context.Context, mutation NodeMutation) error {
 	if mutation.mutation.owner() != s || mutation.mutation.retire() {
 		return nil
@@ -166,6 +174,85 @@ func (s *Service) RefreshNodeWithMutation(ctx context.Context, mutation NodeMuta
 		return err
 	}
 	return s.applyReservedNodeIndex(ctx, node, mutation)
+}
+
+// entryRefused reports whether err is only the refusal of entries a stored
+// node or relationship could not be given (an index memory budget, an
+// embedding of other dimensions): the refresh installed everything else, so
+// it is final, not a failure to retry.
+func entryRefused(err error) bool {
+	return errors.Is(err, ErrIndexMemoryBudgetExceeded) || errors.Is(err, ErrDimensionMismatch)
+}
+
+// withoutRefusals is err without the entry refusals it reports.
+func withoutRefusals(err error) error {
+	if err == nil {
+		return nil
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var kept []error
+		for _, part := range joined.Unwrap() {
+			if part = withoutRefusals(part); part != nil {
+				kept = append(kept, part)
+			}
+		}
+		return errors.Join(kept...)
+	}
+	if entryRefused(err) {
+		return nil
+	}
+	return err
+}
+
+// refreshAttempts bounds how often catch-up and population apply a refresh
+// whose failure is transient (a read that failed) before reporting it.
+const refreshAttempts = 3
+
+// refreshUntilApplied applies refresh to id until it lands, is refused
+// (final), or has failed refreshAttempts times; it returns the last outcome.
+func refreshUntilApplied[ID ~string](ctx context.Context, refresh func(context.Context, ID) error, id ID) error {
+	var err error
+	for range refreshAttempts {
+		if err = refresh(ctx, id); err == nil || entryRefused(err) {
+			return err
+		}
+	}
+	return err
+}
+
+// CatchUpPendingRefreshes applies now a refresh of every node and relationship
+// that has one reserved and not yet applied, such as a write whose refresh is
+// still waiting in the debounced event queue; each queued refresh, superseded,
+// does nothing when it runs. A refresh whose read fails is retried a bounded
+// number of times; it returns those that still failed. An entry a refresh
+// refused is not a failure: the refresh installed everything else.
+func (s *Service) CatchUpPendingRefreshes(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	s.nodeMutationMu.Lock()
+	nodes := slices.Collect(maps.Keys(s.nodeMutations.pending))
+	edges := slices.Collect(maps.Keys(s.edgeMutations.pending))
+	s.nodeMutationMu.Unlock()
+	return errors.Join(catchUp(ctx, "node", nodes, s.RefreshNode), catchUp(ctx, "relationship", edges, s.RefreshEdge))
+}
+
+// catchUp applies refresh to every identity of the kind in ids; an entry a
+// refresh refused is not a failure.
+func catchUp[ID ~string](ctx context.Context, kind string, ids []ID, refresh func(context.Context, ID) error) error {
+	return eachFailure(kind, ids, func(id ID) error { return withoutRefusals(refreshUntilApplied(ctx, refresh, id)) })
+}
+
+// eachFailure applies apply to every identity of the kind (a node, a
+// relationship) and joins the failures, each naming its identity.
+func eachFailure[ID ~string](kind string, ids []ID, apply func(ID) error) error {
+	var failures error
+	for _, id := range ids {
+		if err := apply(id); err != nil {
+			failures = errors.Join(failures, fmt.Errorf("%s %s: %w", kind, id, err))
+		}
+	}
+	return failures
 }
 
 // DiscardNodeMutation retires work that could not be prepared for application.
@@ -255,7 +342,7 @@ func claimReservedIndexMutation[ID ~string](mutation identityMutation[ID]) bool 
 
 // applyReservedIndexMutation completes one node or relationship reservation
 // while retaining the identity lane over its index application.
-func applyReservedIndexMutation[ID ~string](mutation identityMutation[ID], apply func() error) error {
+func applyReservedIndexMutation[ID ~string](mutation identityMutation[ID], apply func() error) (err error) {
 	s := mutation.owner()
 	if s == nil || mutation.generation == 0 {
 		return nil
@@ -268,7 +355,11 @@ func applyReservedIndexMutation[ID ~string](mutation identityMutation[ID], apply
 	s.nodeMutationMu.Unlock()
 	defer func() {
 		s.nodeMutationMu.Lock()
-		mutation.complete(s)
+		// A transient installation failure still belongs to its retry owner.
+		// Budget/dimension refusals are final outcomes, not pending work.
+		if withoutRefusals(err) == nil {
+			mutation.complete(s)
+		}
 		s.unlockMutation(lane)
 	}()
 	return apply()

@@ -569,27 +569,19 @@ func isNaNOrInf(f float64) bool {
 	return f != f || f > 1e308 || f < -1e308
 }
 
-// TestDropVectorIndex_TearsDownInMemoryIndex pins the bug the operator
-// flagged: Cypher DROP INDEX must not just remove the schema entry, it
-// must also tear down the per-property vector data the index was the
-// only handle for. Without this, a follow-up query through any code path
-// that walks the in-memory vector store still sees the old vectors, and a
-// CREATE-from-scratch of the same index name inherits orphaned entries.
+// TestDropVectorIndex_KeepsStoredVectorsForRecreate pins what DROP INDEX does
+// to a vector index's data in the search service. Its node vectors are
+// projections of storage that every vector index on the property, hybrid
+// search and the Qdrant API read, so they stay (NOR-404):
 //
-// The contract this test pins down:
-//
-//  1. Before DROP: queryNodes returns the source node for a stored
-//     property vector. EmbeddingCount > 0.
-//  2. After DROP INDEX: queryNodes for that index name returns 0 rows
-//     (the schema entry is gone) AND the in-memory property vectors that
-//     were only reachable through the dropped index are GONE — the
-//     search service's per-property-vector bookkeeping for the dropped
-//     property is empty.
-//  3. After re-CREATE without re-indexing: the new index is empty (no
-//     orphaned vectors carried over from before the drop). EmbeddingCount
-//     contributed by the property index drops to zero between the drop and
-//     a fresh BuildSearchIndexes / IndexNode pass.
-func TestDropVectorIndex_TearsDownInMemoryIndex(t *testing.T) {
+//  1. Before DROP: queryNodes returns the source node for a stored property
+//     vector.
+//  2. After DROP INDEX: a query naming the dropped index fails as Neo4j's
+//     does, and the search service still holds every node's vector, equal to
+//     storage.
+//  3. After CREATE again, without a rebuild: the new index serves the stored
+//     nodes at once, as Neo4j fills a new index from existing data.
+func TestDropVectorIndex_KeepsStoredVectorsForRecreate(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Memory.EmbeddingEnabled = false
 	cfg.Memory.EmbeddingDimensions = e2eBulkVectorDims
@@ -647,79 +639,39 @@ func TestDropVectorIndex_TearsDownInMemoryIndex(t *testing.T) {
 		qVec[j] = float64(v)
 	}
 	qParams := map[string]interface{}{"q": qVec}
+	const query = "CALL db.index.vector.queryNodes('docvec', 5, $q) YIELD node, score RETURN node, score"
 
-	res, err := db.ExecuteCypher(ctx,
-		"CALL db.index.vector.queryNodes('docvec', 5, $q) YIELD node, score RETURN node, score",
-		qParams)
+	res, err := db.ExecuteCypher(ctx, query, qParams)
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows, "pre-drop: query must return rows")
 	preTop := res.Rows[0][0].(*storage.Node)
 	require.Equal(t, localID(ids[probe]), localID(preTop.ID),
 		"pre-drop: top-1 must be the source node")
-
-	beforeEmbCount := svc.EmbeddingCount()
-	require.GreaterOrEqual(t, beforeEmbCount, nodeCount,
-		"pre-drop: every node's property vector must be in the index (got %d, want >= %d)",
-		beforeEmbCount, nodeCount)
-
-	// Count how many property-vector entries the search service tracks. The
-	// teardown contract is that this drops to zero for the dropped property.
-	beforePropCount := countPropertyVectors(svc, "embedding")
-	require.GreaterOrEqual(t, beforePropCount, nodeCount,
-		"pre-drop: search service must track a property-vector entry per node "+
-			"for the embedding property (got %d, want >= %d)", beforePropCount, nodeCount)
+	require.Equal(t, nodeCount, countPropertyVectors(svc, "embedding"),
+		"pre-drop: the search service tracks a property-vector entry per node")
 
 	// ─── DROP INDEX. ───────────────────────────────────────────────────────
 	_, err = db.ExecuteCypher(ctx, "DROP INDEX docvec", nil)
 	require.NoError(t, err, "DROP INDEX must succeed")
-
-	// In-memory property-vector bookkeeping must be empty for the dropped
-	// property IMMEDIATELY after DROP. This is the bug fix: previously,
-	// DROP INDEX only removed the schema entry and left these vectors
-	// orphaned in vectorIndex, HNSW, and the cluster index. Check the
-	// invariant BEFORE issuing any queryNodes call — queryNodes lazily
-	// rebuilds an empty vector index from storage, which would mask the bug.
-	afterPropCount := countPropertyVectors(svc, "embedding")
-	assert.Equal(t, 0, afterPropCount,
-		"REGRESSION: after DROP INDEX, the search service must not retain any "+
-			"per-property vector entries for the dropped property "+
-			"(got %d, want 0). DROP INDEX previously only removed the schema "+
-			"entry, leaving orphaned vectors that still matched queries.",
-		afterPropCount)
+	_, err = db.ExecuteCypher(ctx, query, qParams)
+	require.ErrorContains(t, err, "There is no such vector schema index",
+		"a query naming the dropped index fails as Neo4j's does")
+	require.Equal(t, nodeCount, countPropertyVectors(svc, "embedding"),
+		"the stored nodes' vectors stay in the search service")
 
 	// ─── Re-CREATE without rebuild. ────────────────────────────────────────
-	// Fresh index, no IndexNode pass yet — must not surface the
-	// pre-drop vectors. This catches a regression where DROP retained
-	// vectors and CREATE blindly registered them under the new index.
 	_, err = db.ExecuteCypher(ctx, createIdx, nil)
 	require.NoError(t, err, "CREATE VECTOR INDEX after drop must succeed")
-
-	resAfterRecreate, err := db.ExecuteCypher(ctx,
-		"CALL db.index.vector.queryNodes('docvec', 5, $q) YIELD node, score RETURN node, score",
-		qParams)
+	resAfterRecreate, err := db.ExecuteCypher(ctx, query, qParams)
 	require.NoError(t, err)
-	// The new index is empty — queryNodes either returns 0 rows OR rebuilds
-	// from storage on demand. Both behaviours are acceptable; what's NOT
-	// acceptable is returning a stale top-1 that came from the pre-drop state.
+	require.Len(t, resAfterRecreate.Rows, len(res.Rows),
+		"the recreated index serves the stored nodes without a rebuild")
 	for i, row := range resAfterRecreate.Rows {
-		s, _ := row[1].(float64)
-		// The only way to score ~1.0 is from a fresh, correctly-indexed entry.
-		// If we see a 1.0 hit here without having called BuildSearchIndexes,
-		// it's a stale orphan — the bug we're fixing.
-		if s > 0.999 {
-			n, _ := row[0].(*storage.Node)
-			require.NotNil(t, n, "row %d: node must not be nil", i)
-			// Orphan detection: if the node still exists AND we never rebuilt,
-			// the only way the score is ~1 is from leftover state.
-			// Allow it ONLY if the per-property entry was rebuilt from storage
-			// implicitly (some code paths call BuildIndexes lazily). In that
-			// case we expect ALL nodes to be back.
-			require.GreaterOrEqual(t, countPropertyVectors(svc, "embedding"), nodeCount,
-				"row %d scored ~1.0 (%.6f) but only %d property vectors are tracked — "+
-					"this is a stale-orphan match from before DROP",
-				i, s, countPropertyVectors(svc, "embedding"))
-			break
-		}
+		n, _ := row[0].(*storage.Node)
+		require.NotNil(t, n, "row %d", i)
+		before, _ := res.Rows[i][0].(*storage.Node)
+		require.Equal(t, localID(before.ID), localID(n.ID), "row %d: the recreated index ranks as before the drop", i)
+		require.InDelta(t, res.Rows[i][1], row[1], 1e-6, "row %d: the stored vector's score", i)
 	}
 }
 

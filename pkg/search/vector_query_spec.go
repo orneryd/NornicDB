@@ -384,6 +384,39 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 	return hits, nil
 }
 
+// VectorSource is one kind of a node's vector sources that a Cypher vector
+// query reads (VectorSourcePrecedence).
+type VectorSource uint8
+
+const (
+	VectorSourceNamed    VectorSource = iota // the named embedding of the query's name
+	VectorSourceAnyNamed                     // every named embedding (a query bound to no property)
+	VectorSourceProperty                     // the vector-shaped value of the query's property
+	VectorSourceChunks                       // the managed chunk embeddings
+)
+
+var (
+	propertyVectorSources = []VectorSource{VectorSourceNamed, VectorSourceProperty, VectorSourceChunks}
+	unboundVectorSources  = []VectorSource{VectorSourceNamed, VectorSourceAnyNamed, VectorSourceChunks}
+)
+
+// VectorSourcePrecedence is the one decision of which of a node's vector
+// sources a Cypher vector query on property reads (Cypher precedence): its
+// sources in order, of which the first that holds a vector the reader can
+// read is the node's, and the later ones are not read. Every reader of the
+// vector a query reads for a node follows it, each in its own
+// representation: the candidate and exact queries over the service's
+// entries, the scoring of stored nodes, the population that makes an index
+// serve what storage holds (storedIndexVectors, indexVectorKeysLocked), and
+// Cypher's scoring of a node it reads from storage. The returned order is
+// shared and must not be changed.
+func VectorSourcePrecedence(property string) []VectorSource {
+	if property == "" {
+		return unboundVectorSources
+	}
+	return propertyVectorSources
+}
+
 func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuery []float32, spec VectorQuerySpec, vectorName string, candidates []indexResult, supplement []vectorQueryScoredNode, quantizedIndex *HNSWIndex) ([]indexResult, error) {
 	candidateNodes := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
@@ -419,45 +452,37 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 			}
 		}
 
-		// Apply Cypher precedence for selecting which vector represents this node.
+		// The vector that represents this node (VectorSourcePrecedence).
 		bestScore := -2.0
-
-		if named := nodeMeta.named; named != nil {
-			if vecID, ok := named[vectorName]; ok {
-				if score, ok := scoreVector(vecID); ok {
-					bestScore = score
-				}
-			}
-			// If there is no explicit Cypher property/index mapping (property key is empty),
-			// fall through to managed named embeddings (any key) before chunk fallback.
-			if bestScore < -1.0 && spec.Property == "" {
-				for _, vecID := range named {
-					if score, ok := scoreVector(vecID); ok {
-						if score > bestScore {
-							bestScore = score
-						}
-					}
-				}
-			}
-		}
-
-		if bestScore < -1.0 && spec.Property != "" {
-			if props := nodeMeta.props; props != nil {
-				if vecID, ok := props[spec.Property]; ok {
+		for _, source := range VectorSourcePrecedence(spec.Property) {
+			switch source {
+			case VectorSourceNamed:
+				if vecID, ok := nodeMeta.named[vectorName]; ok {
 					if score, ok := scoreVector(vecID); ok {
 						bestScore = score
 					}
 				}
-			}
-		}
-
-		if bestScore < -1.0 {
-			for _, vecID := range nodeMeta.chunks {
-				if score, ok := scoreVector(vecID); ok {
-					if score > bestScore {
+			case VectorSourceAnyNamed:
+				for _, vecID := range nodeMeta.named {
+					if score, ok := scoreVector(vecID); ok && score > bestScore {
 						bestScore = score
 					}
 				}
+			case VectorSourceProperty:
+				if vecID, ok := nodeMeta.props[spec.Property]; ok {
+					if score, ok := scoreVector(vecID); ok {
+						bestScore = score
+					}
+				}
+			case VectorSourceChunks:
+				for _, vecID := range nodeMeta.chunks {
+					if score, ok := scoreVector(vecID); ok && score > bestScore {
+						bestScore = score
+					}
+				}
+			}
+			if bestScore >= -1.0 {
+				break
 			}
 		}
 
@@ -671,47 +696,41 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 				}
 			}
 
+			// The vector that represents this node (VectorSourcePrecedence).
 			bestScore := math.Inf(-1)
-
-			// Apply Cypher precedence for selecting which vector represents this node.
-			if named := s.nodeNamedVector[nodeID]; named != nil {
-				if vecID, ok := named[vectorName]; ok {
-					if v, ok := s.getVectorForCypherLocked(vecID); ok {
-						bestScore = prepared.score(v)
-					}
-				}
-				// If there is no explicit Cypher property/index mapping (property key is empty),
-				// fall through to managed named embeddings (any key) before chunk fallback.
-				if math.IsInf(bestScore, -1) && spec.Property == "" {
-					for _, vecID := range named {
+			for _, source := range VectorSourcePrecedence(spec.Property) {
+				switch source {
+				case VectorSourceNamed:
+					if vecID, ok := s.nodeNamedVector[nodeID][vectorName]; ok {
 						if v, ok := s.getVectorForCypherLocked(vecID); ok {
-							score := prepared.score(v)
-							if score > bestScore {
+							bestScore = prepared.score(v)
+						}
+					}
+				case VectorSourceAnyNamed:
+					for _, vecID := range s.nodeNamedVector[nodeID] {
+						if v, ok := s.getVectorForCypherLocked(vecID); ok {
+							if score := prepared.score(v); score > bestScore {
+								bestScore = score
+							}
+						}
+					}
+				case VectorSourceProperty:
+					if vecID, ok := s.nodePropVector[nodeID][spec.Property]; ok {
+						if v, ok := s.getVectorForCypherLocked(vecID); ok {
+							bestScore = prepared.score(v)
+						}
+					}
+				case VectorSourceChunks:
+					for _, vecID := range s.nodeChunkVectors[nodeID] {
+						if v, ok := s.getVectorForCypherLocked(vecID); ok {
+							if score := prepared.score(v); score > bestScore {
 								bestScore = score
 							}
 						}
 					}
 				}
-			}
-
-			if math.IsInf(bestScore, -1) && spec.Property != "" {
-				if props := s.nodePropVector[nodeID]; props != nil {
-					if vecID, ok := props[spec.Property]; ok {
-						if v, ok := s.getVectorForCypherLocked(vecID); ok {
-							bestScore = prepared.score(v)
-						}
-					}
-				}
-			}
-
-			if math.IsInf(bestScore, -1) {
-				for _, vecID := range s.nodeChunkVectors[nodeID] {
-					if v, ok := s.getVectorForCypherLocked(vecID); ok {
-						score := prepared.score(v)
-						if score > bestScore {
-							bestScore = score
-						}
-					}
+				if !math.IsInf(bestScore, -1) {
+					break
 				}
 			}
 
@@ -907,18 +926,19 @@ func neo4jCosineScore(cosine float64) float64 {
 	return float64(float32(math.Max((1+cosine)/2, 0)))
 }
 
+// resolveCypherCandidateEmbeddings is the vectors of a stored node that a
+// Cypher vector query on propertyKey reads (VectorSourcePrecedence).
 func resolveCypherCandidateEmbeddings(node *storage.Node, propertyKey string, vectorName string) [][]float32 {
 	if node == nil {
 		return nil
 	}
-
-	if node.NamedEmbeddings != nil {
-		if emb, ok := node.NamedEmbeddings[vectorName]; ok && len(emb) > 0 {
-			return [][]float32{emb}
-		}
-		// When Cypher does not bind to a specific property/index (propertyKey empty),
-		// include all managed named embeddings as candidates.
-		if propertyKey == "" {
+	for _, source := range VectorSourcePrecedence(propertyKey) {
+		switch source {
+		case VectorSourceNamed:
+			if emb, ok := node.NamedEmbeddings[vectorName]; ok && len(emb) > 0 {
+				return [][]float32{emb}
+			}
+		case VectorSourceAnyNamed:
 			all := make([][]float32, 0, len(node.NamedEmbeddings))
 			for _, emb := range node.NamedEmbeddings {
 				if len(emb) > 0 {
@@ -928,21 +948,18 @@ func resolveCypherCandidateEmbeddings(node *storage.Node, propertyKey string, ve
 			if len(all) > 0 {
 				return all
 			}
-		}
-	}
-
-	if propertyKey != "" && node.Properties != nil {
-		if emb, ok := node.Properties[propertyKey]; ok {
-			if vec := toFloat32SliceAny(emb); len(vec) > 0 {
-				return [][]float32{vec}
+		case VectorSourceProperty:
+			if emb, ok := node.Properties[propertyKey]; ok {
+				if vec := toFloat32SliceAny(emb); len(vec) > 0 {
+					return [][]float32{vec}
+				}
+			}
+		case VectorSourceChunks:
+			if len(node.ChunkEmbeddings) > 0 {
+				return node.ChunkEmbeddings
 			}
 		}
 	}
-
-	if len(node.ChunkEmbeddings) > 0 {
-		return node.ChunkEmbeddings
-	}
-
 	return nil
 }
 

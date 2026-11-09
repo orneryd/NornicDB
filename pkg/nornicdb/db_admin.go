@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1286,12 +1287,24 @@ func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string
 	case "fulltext":
 		return schema.AddFulltextIndex(indexName, []string{label}, []string{property}, storage.ConstraintEntityNode)
 	case "vector":
+		// Declared through the canonical Cypher DDL owner too, so the index is
+		// published like a client's CREATE VECTOR INDEX: its vector space is
+		// registered and search catches up with queued writes before it serves.
 		// Use configured embedding dimensions instead of hardcoded value
 		dims := 1024
 		if config != nil {
 			dims = config.Memory.EmbeddingDimensions
 		}
-		return schema.AddVectorIndex(indexName, label, property, dims, "cosine", storage.ConstraintEntityNode)
+		statement := "CREATE VECTOR INDEX " + cyphertext.PrintIdentifier(indexName, nil, cyphertext.RawSource) +
+			" IF NOT EXISTS FOR (n:" + cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource) +
+			") ON (n." + cyphertext.PrintIdentifier(property, nil, cyphertext.RawSource) + ")" +
+			" OPTIONS {indexConfig: {`vector.similarity_function`: 'cosine'"
+		if dims > 0 {
+			statement += ", `vector.dimensions`: " + strconv.Itoa(dims)
+		}
+		statement += "}}"
+		_, err := db.ExecuteCypher(ctx, statement, nil)
+		return err
 	case "range":
 		return schema.AddRangeIndex(indexName, label, property)
 	default:

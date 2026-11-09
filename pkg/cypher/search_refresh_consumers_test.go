@@ -173,6 +173,13 @@ func TestCypherVectorOrphanKeepsNewerIndex(t *testing.T) {
 	ctx := context.Background()
 	store, barrier, svc := newConsumerVectorStore(t, func(_ *storage.Node, err error) bool { return errors.Is(err, storage.ErrNotFound) })
 	require.NoError(t, store.DeleteNode(t.Context(), "source"))
+	// Storage decides whether a name with no vector index has managed data, so
+	// another stored managed node keeps 'managed' queryable while search still
+	// holds the deleted node's orphaned vector.
+	other := &storage.Node{ID: "other", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0, 1}}}
+	_, err := store.CreateNode(t.Context(), other)
+	require.NoError(t, err)
+	require.NoError(t, svc.IndexNode(other))
 	exec := NewStorageExecutor(barrier)
 	exec.SetSearchService(svc)
 	barrier.Armed.Store(true)
@@ -183,12 +190,12 @@ func TestCypherVectorOrphanKeepsNewerIndex(t *testing.T) {
 	}()
 	runtimeFixtureOwner.WaitForBarrier(t, barrier.Entered, 5*time.Second, barrier.ReleaseWrites, "vector query did not reach its observation")
 	newer := &storage.Node{ID: "source", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-	_, err := store.CreateNode(t.Context(), newer)
+	_, err = store.CreateNode(t.Context(), newer)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(newer))
 	barrier.ReleaseWrites()
 	require.NoError(t, <-done)
-	require.Equal(t, 1, svc.EmbeddingCount(), "an older orphan observation removed a newer live vector")
+	require.Equal(t, 2, svc.EmbeddingCount(), "an older orphan observation removed a newer live vector")
 }
 
 // The unsuppress read must not resurrect a node deleted after it.

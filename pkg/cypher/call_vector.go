@@ -19,19 +19,19 @@ import (
 // Neo4j Vector Index Procedures
 // ========================================
 
-// callDbIndexVectorQueryNodesWithVector implements the search half of
-// db.index.vector.queryNodes. The statement has already bound and resolved the
-// procedure's arguments, once, in callVectorQueryArguments.
-//
-// Parameters:
-//   - indexName: Name of the vector index (from CREATE VECTOR INDEX)
-//   - k: Number of results to return
-//   - queryVector: The query embedding to search with
-//
-// Returns:
-//   - node: The matched node with all properties
-//   - score: Cosine similarity score (0.0 to 1.0)
-func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Context, indexName string, k int, queryVector []float32) (*ExecuteResult, error) {
+// vectorQueryRequest carries arguments and the definition whose ONLINE wait
+// completed, shared by both entity procedures without resolving it twice.
+type vectorQueryRequest struct {
+	indexName string
+	k         int
+	vector    []float32
+	index     *storage.VectorIndex
+}
+
+// callDbIndexVectorQueryNodesWithVector reads the node population selected by
+// the validated procedure request.
+func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Context, request vectorQueryRequest) (*ExecuteResult, error) {
+	indexName, k, queryVector := request.indexName, request.k, request.vector
 	result := &ExecuteResult{
 		Columns: columnNames(nodeScoreColumns),
 		Rows:    [][]interface{}{},
@@ -42,42 +42,28 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 	var targetLabel, targetProperty string
 	var similarityFunc string = "cosine"
 
-	schema := e.storage.GetSchema()
+	// The index's definition is the one its wait for ONLINE ended on.
+	vectorIdx := request.index
 	wantDims := 0
-	indexFound := false
-	if schema != nil {
-		if vectorIdx, exists := schema.GetVectorIndex(indexName); exists {
-			indexFound = true
-			targetLabel = vectorIdx.Label
-			targetProperty = vectorIdx.Property
-			similarityFunc = vectorIdx.SimilarityFunc
-			if vectorIdx.Dimensions > 0 {
-				wantDims = vectorIdx.Dimensions
-			}
+	indexFound := vectorIdx != nil
+	if indexFound {
+		targetLabel = vectorIdx.Label
+		targetProperty = vectorIdx.Property
+		similarityFunc = vectorIdx.SimilarityFunc
+		if vectorIdx.Dimensions > 0 {
+			wantDims = vectorIdx.Dimensions
 		}
 	}
 	if !indexFound {
-		svc := e.search()
-		managed := svc != nil && svc.EmbeddingCount() > 0
-		if !managed {
-			stop := errors.New("managed vector found")
-			err := e.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
-				for _, vector := range node.NamedEmbeddings {
-					if len(vector) > 0 {
-						return stop
-					}
-				}
-				for _, vector := range node.ChunkEmbeddings {
-					if len(vector) > 0 {
-						return stop
-					}
-				}
-				return nil
-			})
-			if err != nil && !errors.Is(err, stop) {
-				return nil, err
-			}
-			managed = errors.Is(err, stop)
+		// A name with no vector index reads the managed embeddings (named
+		// embeddings and chunks). Storage decides whether there are any, with
+		// or without a search service: vector arrays a dropped index left in
+		// the search service don't make its name queryable, and managed
+		// embeddings the service hasn't loaded yet, or holds in another
+		// dimension, still do.
+		managed, err := e.storageHasManagedNodeEmbeddings(ctx)
+		if err != nil {
+			return nil, err
 		}
 		if !managed {
 			return nil, noSuchVectorIndexError(indexName)
@@ -102,7 +88,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 		return result, nil
 	}
 
-	useService, err := prepareWiredNodeVectorService(ctx, svc, wantDims)
+	gate := ""
+	if indexFound {
+		gate = indexName
+	}
+	useService, err := e.vectorIndexServiceAnswers(ctx, svc, gate, search.VectorIndexTarget{Label: targetLabel, Property: targetProperty}, wantDims, vectorReadWarm)
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +148,30 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 	}
 
 	return result, nil
+}
+
+// storageHasManagedNodeEmbeddings reports whether any stored node has a named
+// embedding or a managed chunk: the data a vector query naming no vector
+// index reads.
+func (e *StorageExecutor) storageHasManagedNodeEmbeddings(ctx context.Context) (bool, error) {
+	stop := errors.New("managed vector found")
+	err := e.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
+		for _, vector := range node.NamedEmbeddings {
+			if len(vector) > 0 {
+				return stop
+			}
+		}
+		for _, vector := range node.ChunkEmbeddings {
+			if len(vector) > 0 {
+				return stop
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, stop) {
+		return false, err
+	}
+	return errors.Is(err, stop), nil
 }
 
 // callDbIndexVectorEmbed implements db.index.vector.embed: the embedding of
@@ -287,8 +301,16 @@ func (e *StorageExecutor) callVectorQueryArguments(ctx context.Context, args []i
 	if err != nil {
 		return nil, err
 	}
-	if relationships {
-		return e.callDbIndexVectorQueryRelationshipsWithVector(ctx, indexName, int(count), queryVector)
+	index, err := e.awaitVectorIndexDefinition(ctx, indexName)
+	if err != nil {
+		return nil, err
 	}
-	return e.callDbIndexVectorQueryNodesWithVector(ctx, indexName, int(count), queryVector)
+	if len(queryVector) == 0 || (index != nil && index.Dimensions > 0 && len(queryVector) != index.Dimensions) {
+		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "query vector must be nonempty and match the vector index dimensions")
+	}
+	request := vectorQueryRequest{indexName: indexName, k: int(count), vector: queryVector, index: index}
+	if relationships {
+		return e.callDbIndexVectorQueryRelationshipsWithVector(ctx, request)
+	}
+	return e.callDbIndexVectorQueryNodesWithVector(ctx, request)
 }

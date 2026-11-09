@@ -1407,7 +1407,11 @@ func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
 			properties = ps
 		}
 
-		rows = append(rows, []interface{}{name, idxType, labels, properties, "ONLINE"})
+		state := "ONLINE"
+		if vectorName, ok := name.(string); ok && idxType == "VECTOR" {
+			state, _, _ = e.vectorIndexShowState(vectorName)
+		}
+		rows = append(rows, []interface{}{name, idxType, labels, properties, state})
 	}
 
 	return &ExecuteResult{
