@@ -492,3 +492,30 @@ func TestStoredRefreshTemporalFailureRetainsRetryOwnership(t *testing.T) {
 		})
 	}
 }
+
+func TestStoredRefreshTemporalAdmissionFailureRetainsRetryOwnership(t *testing.T) {
+	failure := errors.New("transient temporal admission read")
+	failed := true
+	base, ns, svc := newTemporalDecisionTestService(t, func(context.Context, *storage.Node) (bool, error) {
+		if failed {
+			return false, failure
+		}
+		return true, nil
+	})
+	t.Cleanup(base.open)
+	built := startGatedBuild(t, base, svc)
+	node := &storage.Node{ID: "retry-admission", Labels: []string{"FactVersion"}, Properties: map[string]any{"title": "currentterm", "fact_key": "admission", "valid_from": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), "valid_to": nil}, ChunkEmbeddings: [][]float32{{1, 0, 0}}}
+	_, err := ns.CreateNode(t.Context(), node)
+	require.NoError(t, err)
+	var retries []RefreshRetry
+	svc.SetRefreshRetryOwner(func(work RefreshRetry, err error) { require.ErrorIs(t, err, failure); retries = append(retries, work) })
+	require.ErrorIs(t, svc.RefreshNode(t.Context(), node.ID), failure)
+	require.Len(t, retries, 1)
+	require.True(t, retries[0].Current())
+	failed = false
+	base.open()
+	require.NoError(t, <-built)
+	require.NoError(t, svc.RefreshNodeWithMutation(t.Context(), retries[0].Node))
+	require.True(t, retries[0].Retired())
+	require.Len(t, svc.fulltext().Search("currentterm", 10), 1)
+}

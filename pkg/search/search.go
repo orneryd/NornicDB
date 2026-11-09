@@ -3630,13 +3630,12 @@ func reservedWrite[ID ~string](write deferredIndexWrite, mutation identityMutati
 	return write
 }
 
-// refusedAdmission ends a reserved refresh a running build did not admit. One
-// whose admission could not decide (the request was canceled or timed out)
-// keeps its reservation for the retry owner, as a refresh whose read failed
-// does: discarded, the build's earlier snapshot would be served with nothing
-// pending. Any other refusal is final.
+// refusedAdmission routes a reserved refresh a running build did not admit.
+// Failed preparation retains the same retry owner as a failed live install;
+// only entry refusals are final. Discarding a transient temporal read failure
+// would leave the build's earlier snapshot served with no repair pending.
 func (s *Service) refusedAdmission(work RefreshRetry, err error) {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if withoutRefusals(err) != nil {
 		s.retryRefresh(work, err)
 		return
 	}
