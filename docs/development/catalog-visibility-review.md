@@ -47,5 +47,7 @@ These are source and focused-test dispositions, not an exhaustive graph verdict.
 The final context audit found that carrying the whole context through fn.Context
 created an unused nullable receiver field at GraphStorage. That field is retired:
 auth.CatalogVisibility carries only mode, scope and the existing selection
-resolver. No census acceptance or rule was added. The full context census must
-confirm the only remaining finding is the separate WAL substitution.
+resolver. No census acceptance or rule was added. The shared WAL correction in #1769 is integrated by rebase for testing.
+The unchanged blocking context census passes on that integrated source
+(126.031s). No census acceptance or rule change was needed. Final-head
+full-suite CI and the advisory review remain release gates.

@@ -8,4 +8,10 @@
 - [x] Record manual owner review and unavailable graph retrieval; update Linear and push candidate #1770.
 - [ ] Complete exact-head CI before readiness.
 
-Remaining gates: independent source review; shared release census/fixture corrections (#1769), rebase after they merge, exact-head full CI. Current context census still reports the same single WAL substitution (zero nil flows), not a pass.
+Shared release corrections from #1769 are integrated by rebase for testing. The integrated unchanged context census passes (126.031s); focused default/ANTLR and race checks pass. Merge #1769 first. Rebase onto its release integration and finish exact-head full make-test CI and advisory review before readiness.
+
+- [x] Integrate shared CI corrections by rebase for combined validation.
+- [x] Independently repeat affected default/ANTLR and race checks on the integrated source.
+- [x] Integrated blocking context census passes without a policy or assertion change.
+- [ ] Refresh generated stored-entity source positions from the final shared-fix head and rerun freshness.
+- [ ] Final-head full make-test CI and advisory review.
