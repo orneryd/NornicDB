@@ -28,9 +28,13 @@ func (b *BadgerEngine) StartLifecycleManager(ctx context.Context) {
 }
 
 // RegisterSnapshotReader delegates reader registration when lifecycle is enabled.
+// The caller may read history through fresh views, as an as-of read does, so
+// its registration waits for a prune step in flight (beginMVCCSnapshotRead),
+// never for a whole prune pass; that step's scan of its key's remaining
+// history grows with the chain's length.
 func (b *BadgerEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
-	b.mvccPruneMu.Lock()
-	defer b.mvccPruneMu.Unlock()
+	b.mvccPruneBatchMu.RLock()
+	defer b.mvccPruneBatchMu.RUnlock()
 	b.mu.RLock()
 	controller := b.lifecycleController
 	b.mu.RUnlock()
@@ -106,17 +110,29 @@ func (b *BadgerEngine) TopLifecycleDebtKeys(limit int) []MVCCLifecycleDebtKey {
 	return nil
 }
 
+// acquireSnapshotReader registers a reader without waiting for any prune. A
+// transaction registers here directly: it reads only through its pinned
+// physical snapshot, so the next prune step's floors are all it needs
+// (badger_mvcc_prune.go).
+//
+// With a lifecycle controller whose automatic cycles are off (retention keeps
+// at most one version), a manual prune can still run, so the reader is
+// registered with its database and version all the same, without the
+// lifecycle's pressure admission. Only an engine without a controller counts
+// readers it cannot describe.
 func (b *BadgerEngine) acquireSnapshotReader(info SnapshotReaderInfo) (func(), error) {
-	b.mvccPruneMu.Lock()
-	defer b.mvccPruneMu.Unlock()
 	b.mu.RLock()
 	controller := b.lifecycleController
 	b.mu.RUnlock()
-	if controller == nil || !controller.IsLifecycleEnabled() {
+	switch {
+	case controller == nil:
 		b.activeMVCCSnapshotReaders.Add(1)
 		return func() { b.activeMVCCSnapshotReaders.Add(-1) }, nil
+	case !controller.IsLifecycleEnabled():
+		return controller.RegisterSnapshotReader(info), nil
+	default:
+		return controller.AcquireSnapshotReader(info)
 	}
-	return controller.AcquireSnapshotReader(info)
 }
 
 func (b *BadgerEngine) evaluateSnapshotReader(info SnapshotReaderInfo) (bool, bool) {

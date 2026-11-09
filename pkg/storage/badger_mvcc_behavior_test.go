@@ -652,7 +652,7 @@ func TestBadgerEngine_PruneMVCCVersions_PreservesActiveSnapshot(t *testing.T) {
 	for version := 1; version <= 12; version++ {
 		require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: nodeID, Properties: map[string]any{"v": version}}}))
 	}
-	release, err := engine.beginMVCCSnapshotRead(head.Version)
+	release, err := engine.beginMVCCSnapshotRead(t.Context(), head.Version)
 	require.NoError(t, err)
 	defer release()
 	deleted, err := engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 2})

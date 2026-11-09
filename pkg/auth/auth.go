@@ -392,6 +392,10 @@ type Authenticator struct {
 	users  map[string]*User // keyed by username (in-memory cache for fast lookups)
 	config AuthConfig
 
+	// recordOrder orders every stored user-record write (recordWriteOrder);
+	// it is taken before mu.
+	recordOrder recordWriteOrder
+
 	// Storage engine for persistence (required)
 	storage storage.Engine
 
@@ -750,6 +754,17 @@ func (a *Authenticator) saveUser(ctx context.Context, user *User, transaction st
 	return WithStoreTransaction(ctx, a.storage, mutate)
 }
 
+// persistUserRecord is the persist step of a change that writes one user
+// record; operation names the change in its error.
+func (a *Authenticator) persistUserRecord(user *User, operation string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := a.saveUser(ctx, user, nil); err != nil {
+			return fmt.Errorf("failed to persist %s: %w", operation, err)
+		}
+		return nil
+	}
+}
+
 // deleteUserNode removes the stored user record under the caller's lifetime.
 func (a *Authenticator) deleteUserNode(ctx context.Context, username string) error {
 	nodeID := storage.NodeID("user:" + username)
@@ -800,68 +815,70 @@ func (a *Authenticator) CreateUser(ctx context.Context, username, password strin
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	var created *User
+	err := a.writeUserRecords(ctx, func() (userRecordChange, error) {
+		// Check if user exists
+		if _, exists := a.storedUser(username); exists {
+			a.audit(AuditEvent{
+				EventType: "user_create",
+				Username:  username,
+				Success:   false,
+				Details:   "user already exists",
+			})
+			return userRecordChange{}, ErrUserExists
+		}
 
-	// Check if user exists
-	if _, exists := a.users[username]; exists {
-		a.logAudit(AuditEvent{
-			EventType: "user_create",
-			Username:  username,
-			Success:   false,
-			Details:   "user already exists",
-		})
-		return nil, ErrUserExists
-	}
+		// Validate password
+		if len(password) < a.config.MinPasswordLength {
+			return userRecordChange{}, fmt.Errorf("%w: minimum %d characters required", ErrPasswordTooShort, a.config.MinPasswordLength)
+		}
 
-	// Validate password
-	if len(password) < a.config.MinPasswordLength {
-		return nil, fmt.Errorf("%w: minimum %d characters required", ErrPasswordTooShort, a.config.MinPasswordLength)
-	}
+		// Hash password
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), a.config.BcryptCost)
+		if err != nil {
+			return userRecordChange{}, fmt.Errorf("failed to hash password: %w", err)
+		}
 
-	// Hash password
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), a.config.BcryptCost)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash password: %w", err)
-	}
+		// Default to viewer role if none specified
+		if len(roles) == 0 {
+			roles = []Role{RoleViewer}
+		}
 
-	// Default to viewer role if none specified
-	if len(roles) == 0 {
-		roles = []Role{RoleViewer}
-	}
-
-	// Create user
-	now := time.Now()
-	user := &User{
-		ID:           generateID(),
-		Username:     username,
-		Email:        username + "@localhost", // Default pattern for dev users
-		PasswordHash: string(hash),
-		Roles:        roles,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		Metadata:     make(map[string]string),
-	}
-
-	// Save to storage
-	if err := a.saveUser(ctx, user, nil); err != nil {
-		return nil, fmt.Errorf("failed to persist user: %w", err)
-	}
-
-	a.users[username] = user
-
-	a.logAudit(AuditEvent{
-		EventType: "user_create",
-		Username:  username,
-		UserID:    user.ID,
-		Success:   true,
-		Details:   fmt.Sprintf("created with roles %v", roles),
+		// Create user
+		now := time.Now()
+		user := &User{
+			ID:           generateID(),
+			Username:     username,
+			Email:        username + "@localhost", // Default pattern for dev users
+			PasswordHash: string(hash),
+			Roles:        roles,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+			Metadata:     make(map[string]string),
+		}
+		return userRecordChange{
+			persist: a.persistUserRecord(user, "user"),
+			publish: func() {
+				a.users[username] = user
+				a.logAudit(AuditEvent{
+					EventType: "user_create",
+					Username:  username,
+					UserID:    user.ID,
+					Success:   true,
+					Details:   fmt.Sprintf("created with roles %v", roles),
+				})
+				created = user
+			},
+		}, nil
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	// Return copy without password hash, but preserve ID for newly created users
 	// (ID is safe to expose for newly created users, not internal DB IDs)
-	safeCopy := a.copyUserSafe(user)
-	safeCopy.ID = user.ID // Preserve ID for newly created users
+	safeCopy := a.copyUserSafe(created)
+	safeCopy.ID = created.ID // Preserve ID for newly created users
 	return safeCopy, nil
 }
 
@@ -938,12 +955,30 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password, ip
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	for {
+		response, user, changed, err := a.authenticateObserved(ctx, username, password, ipAddress, userAgent)
+		if !changed {
+			return response, user, err
+		}
+		// The record changed while its password was checked (a password
+		// change, a lockout, an unlock): check again against the new one.
+	}
+}
 
-	user, exists := a.users[username]
+// authenticateObserved runs one login attempt against the record it observes.
+// The password check runs outside every lock. A refusal decided by the record
+// alone (unknown, locked, disabled, the default admin's wrong password) writes
+// nothing. Any other outcome changes the stored record through the one
+// user-record owner (writeUserRecords), and only while the live record still
+// decides the login the same way (loginFacts: password hash, disabled flag,
+// lock state); changed reports that it does not, and the caller checks again.
+// A changed password therefore never authenticates once its change is
+// published, while another login's bookkeeping alone does not force a second
+// password check.
+func (a *Authenticator) authenticateObserved(ctx context.Context, username, password, ipAddress, userAgent string) (*TokenResponse, *User, bool, error) {
+	observed, exists := a.storedUser(username)
 	if !exists {
-		a.logAudit(AuditEvent{
+		a.audit(AuditEvent{
 			EventType: "login",
 			Username:  username,
 			IPAddress: ipAddress,
@@ -951,89 +986,110 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password, ip
 			Success:   false,
 			Details:   "user not found",
 		})
-		return nil, nil, ErrInvalidCredentials // Don't reveal if user exists
+		return nil, nil, false, ErrInvalidCredentials // Don't reveal if user exists
 	}
 
 	// Check if account is locked (default admin account is never locked)
 	isDefaultAdmin := a.config.DefaultAdminUsername != "" && username == a.config.DefaultAdminUsername
-	if !isDefaultAdmin && !user.LockedUntil.IsZero() && time.Now().Before(user.LockedUntil) {
-		a.logAudit(AuditEvent{
+	facts := a.loginFacts(observed, isDefaultAdmin)
+	switch {
+	case facts.locked:
+		a.audit(AuditEvent{
 			EventType: "login",
 			Username:  username,
-			UserID:    user.ID,
+			UserID:    observed.ID,
 			IPAddress: ipAddress,
 			UserAgent: userAgent,
 			Success:   false,
 			Details:   "account locked",
 		})
-		return nil, nil, ErrAccountLocked
-	}
-
-	// Check if account is disabled
-	if user.Disabled {
-		a.logAudit(AuditEvent{
+		return nil, nil, false, ErrAccountLocked
+	case observed.Disabled:
+		a.audit(AuditEvent{
 			EventType: "login",
 			Username:  username,
-			UserID:    user.ID,
+			UserID:    observed.ID,
 			IPAddress: ipAddress,
 			UserAgent: userAgent,
 			Success:   false,
 			Details:   "account disabled",
 		})
-		return nil, nil, ErrInvalidCredentials
+		return nil, nil, false, ErrInvalidCredentials
 	}
 
-	// Verify password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		// Default admin account ("admin") is never locked - skip lockout logic
-		if !isDefaultAdmin {
+	// Verify password, outside every lock.
+	matched := bcrypt.CompareHashAndPassword([]byte(observed.PasswordHash), []byte(password)) == nil
+	if !matched && isDefaultAdmin {
+		// Default admin failed login - log but don't lock (ensures admin access is always available)
+		a.audit(AuditEvent{
+			EventType: "login",
+			Username:  username,
+			UserID:    observed.ID,
+			IPAddress: ipAddress,
+			UserAgent: userAgent,
+			Success:   false,
+			Details:   fmt.Sprintf("invalid password (root admin account %s - no lockout)", username),
+		})
+		return nil, nil, false, ErrInvalidCredentials
+	}
+
+	// The outcome changes the stored record: publish it through the one
+	// user-record owner, best effort, if the live record still decides the
+	// login the same way.
+	var user *User
+	err := a.writeUserRecords(ctx, func() (userRecordChange, error) {
+		current, exists := a.storedUser(username)
+		if !exists || a.loginFacts(current, isDefaultAdmin) != facts {
+			return userRecordChange{}, errLoginRecordChanged
+		}
+		user = cloneStoredUser(current)
+		user.UpdatedAt = time.Now()
+		if matched {
+			// Reset failed login counter on success
+			user.FailedLogins = 0
+			user.LockedUntil = time.Time{}
+			user.LastLogin = user.UpdatedAt
+		} else {
 			// Increment failed login counter
 			user.FailedLogins++
 			if user.FailedLogins >= a.config.MaxFailedLogins {
 				user.LockedUntil = time.Now().Add(a.config.LockoutDuration)
 			}
-			user.UpdatedAt = time.Now()
-
-			// Persist failed login state
-			a.saveUser(ctx, user, nil) // Ignore error - don't fail on storage issues
-
-			a.logAudit(AuditEvent{
-				EventType: "login",
-				Username:  username,
-				UserID:    user.ID,
-				IPAddress: ipAddress,
-				UserAgent: userAgent,
-				Success:   false,
-				Details:   fmt.Sprintf("invalid password (attempt %d/%d)", user.FailedLogins, a.config.MaxFailedLogins),
-			})
-		} else {
-			// Default admin failed login - log but don't lock (ensures admin access is always available)
-			a.logAudit(AuditEvent{
-				EventType: "login",
-				Username:  username,
-				UserID:    user.ID,
-				IPAddress: ipAddress,
-				UserAgent: userAgent,
-				Success:   false,
-				Details:   fmt.Sprintf("invalid password (root admin account %s - no lockout)", username),
-			})
 		}
-		return nil, nil, ErrInvalidCredentials
+		return userRecordChange{
+			bestEffort: true,
+			// Persist login state changes; ignore error - don't fail on storage issues
+			persist: func(ctx context.Context) error { return a.saveUser(ctx, user, nil) },
+			publish: func() {
+				a.users[username] = user
+				if !matched {
+					a.logAudit(AuditEvent{
+						EventType: "login",
+						Username:  username,
+						UserID:    user.ID,
+						IPAddress: ipAddress,
+						UserAgent: userAgent,
+						Success:   false,
+						Details:   fmt.Sprintf("invalid password (attempt %d/%d)", user.FailedLogins, a.config.MaxFailedLogins),
+					})
+				}
+			},
+		}, nil
+	})
+	if errors.Is(err, errLoginRecordChanged) {
+		return nil, nil, true, nil
 	}
-
-	// Reset failed login counter on success
-	user.FailedLogins = 0
-	user.LockedUntil = time.Time{}
-	user.LastLogin = time.Now()
-	user.UpdatedAt = time.Now()
-
-	// Persist login state changes
-	a.saveUser(ctx, user, nil) // Ignore error - don't fail authentication on storage issues
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if !matched {
+		return nil, nil, false, ErrInvalidCredentials
+	}
 
 	// Generate JWT token
 	token, err := a.issueUserJWT(user, a.config.TokenExpiry)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate token: %w", err)
+		return nil, nil, false, fmt.Errorf("failed to generate token: %w", err)
 	}
 
 	// Build OAuth 2.0 compliant response
@@ -1048,7 +1104,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password, ip
 		response.ExpiresIn = int64(a.config.TokenExpiry.Seconds())
 	}
 
-	a.logAudit(AuditEvent{
+	a.audit(AuditEvent{
 		EventType: "login",
 		Username:  username,
 		UserID:    user.ID,
@@ -1062,7 +1118,28 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password, ip
 	// (ID is needed for JWT claims and user lookups)
 	safeCopy := a.copyUserSafe(user)
 	safeCopy.ID = user.ID // Preserve ID for authentication flows
-	return response, safeCopy, nil
+	return response, safeCopy, false, nil
+}
+
+// errLoginRecordChanged reports that the record a login was checked against
+// changed before the login could publish its outcome.
+var errLoginRecordChanged = errors.New("auth: user record changed during login")
+
+// loginDecision is what a stored user record contributes to a login's
+// outcome: a login checked against one record holds for another with equal
+// facts.
+type loginDecision struct {
+	passwordHash string
+	disabled     bool
+	locked       bool
+}
+
+func (a *Authenticator) loginFacts(user *User, isDefaultAdmin bool) loginDecision {
+	return loginDecision{
+		passwordHash: user.PasswordHash,
+		disabled:     user.Disabled,
+		locked:       !isDefaultAdmin && !user.LockedUntil.IsZero() && time.Now().Before(user.LockedUntil),
+	}
 }
 
 // ValidateToken validates a JWT token and returns the claims.
@@ -1247,9 +1324,11 @@ func (a *Authenticator) OnPasswordChange(fn func(username string)) {
 	a.passwordListeners = append(a.passwordListeners, fn)
 }
 
-// mutateStoredUser owns the locked clone/persist/cache/audit boundary. The
-// operation supplies only its actual field transition and audit details. The
-// optional completion runs after durable success and audit, still under mu.
+// mutateStoredUser stages one account's change through the user-record owner
+// (writeUserRecords): clone, apply, persist, then publish with its audit. The
+// operation supplies only its actual field transition and audit details; apply
+// runs with no lock held. The optional completion runs after durable success
+// and audit, under mu.
 //
 // ctx is the caller's lifetime and orders the boundary: the clone is published
 // into the live cache, and its success audit and completion run, only after the
@@ -1259,36 +1338,37 @@ func (a *Authenticator) mutateStoredUser(ctx context.Context, username, operatio
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	user, exists := a.users[username]
-	if !exists {
-		return ErrUserNotFound
-	}
-	user = cloneStoredUser(user)
-	event, err := apply(user)
-	if err != nil {
-		return err
-	}
-	user.UpdatedAt = time.Now()
-	if err := a.saveUser(ctx, user, nil); err != nil {
-		return fmt.Errorf("failed to persist %s: %w", operation, err)
-	}
-	a.users[username] = user
-	event.Username, event.UserID, event.Success = username, user.ID, true
-	a.logAudit(event)
-	if complete != nil {
-		complete()
-	}
-	return nil
+	return a.writeUserRecords(ctx, func() (userRecordChange, error) {
+		current, exists := a.storedUser(username)
+		if !exists {
+			return userRecordChange{}, ErrUserNotFound
+		}
+		user := cloneStoredUser(current)
+		event, err := apply(user)
+		if err != nil {
+			return userRecordChange{}, err
+		}
+		user.UpdatedAt = time.Now()
+		return userRecordChange{
+			persist: a.persistUserRecord(user, operation),
+			publish: func() {
+				a.users[username] = user
+				event.Username, event.UserID, event.Success = username, user.ID, true
+				a.logAudit(event)
+				if complete != nil {
+					complete()
+				}
+			},
+		}, nil
+	})
 }
 
 // ChangePassword updates a user's password and invalidates credential caches
-// only after successful persistence. Failure audit and listeners run under mu.
+// only after successful persistence. Audits and listeners run under mu.
 func (a *Authenticator) ChangePassword(ctx context.Context, username, oldPassword, newPassword string) error {
 	return a.mutateStoredUser(ctx, username, "password change", func(user *User) (AuditEvent, error) {
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
-			a.logAudit(AuditEvent{EventType: "password_change", Username: username, UserID: user.ID, Success: false, Details: "old password incorrect"})
+			a.audit(AuditEvent{EventType: "password_change", Username: username, UserID: user.ID, Success: false, Details: "old password incorrect"})
 			return AuditEvent{}, ErrInvalidCredentials
 		}
 		if len(newPassword) < a.config.MinPasswordLength {
@@ -1387,32 +1467,32 @@ func (a *Authenticator) DeleteUser(ctx context.Context, username string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	user, exists := a.users[username]
-	if !exists {
-		return ErrUserNotFound
-	}
-
-	userID := user.ID
-
-	// Delete from storage
-	if err := a.deleteUserNode(ctx, username); err != nil {
-		return fmt.Errorf("failed to delete user from storage: %w", err)
-	}
-
-	// Delete from in-memory cache
-	delete(a.users, username)
-
-	a.logAudit(AuditEvent{
-		EventType: "user_delete",
-		Username:  username,
-		UserID:    userID,
-		Success:   true,
+	return a.writeUserRecords(ctx, func() (userRecordChange, error) {
+		user, exists := a.storedUser(username)
+		if !exists {
+			return userRecordChange{}, ErrUserNotFound
+		}
+		userID := user.ID
+		return userRecordChange{
+			// Delete from storage
+			persist: func(ctx context.Context) error {
+				if err := a.deleteUserNode(ctx, username); err != nil {
+					return fmt.Errorf("failed to delete user from storage: %w", err)
+				}
+				return nil
+			},
+			// Delete from in-memory cache
+			publish: func() {
+				delete(a.users, username)
+				a.logAudit(AuditEvent{
+					EventType: "user_delete",
+					Username:  username,
+					UserID:    userID,
+					Success:   true,
+				})
+			},
+		}, nil
 	})
-
-	return nil
 }
 
 // UserCount returns the number of registered users.

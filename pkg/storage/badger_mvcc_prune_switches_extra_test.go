@@ -82,11 +82,11 @@ func TestBadgerMVCC_PruneMVCCKeyspaceInTxn_TombstoneReclaim_NodeAndEdge(t *testi
 	}))
 
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
-		nDeleted, err := engine.pruneMVCCKeyspaceInTxn(context.Background(), txn, []byte{prefixMVCCNode}, MVCCPruneOptions{MaxVersionsPerKey: 0}, false)
+		nDeleted, _, err := engine.pruneMVCCKeyspaceInTxn(context.Background(), txn, []byte{prefixMVCCNode}, MVCCPruneOptions{MaxVersionsPerKey: 0}, nil, 0)
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, nDeleted, int64(2))
 
-		eDeleted, err := engine.pruneMVCCKeyspaceInTxn(context.Background(), txn, []byte{prefixMVCCEdge}, MVCCPruneOptions{MaxVersionsPerKey: 0}, false)
+		eDeleted, _, err := engine.pruneMVCCKeyspaceInTxn(context.Background(), txn, []byte{prefixMVCCEdge}, MVCCPruneOptions{MaxVersionsPerKey: 0}, nil, 0)
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, eDeleted, int64(2))
 		return nil

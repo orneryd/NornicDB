@@ -827,6 +827,15 @@ func normalizeRetentionPolicy(policy RetentionPolicy) RetentionPolicy {
 type MVCCPruneOptions struct {
 	MaxVersionsPerKey int
 	MinRetentionAge   time.Duration
+	// MaxRuntime bounds one engine's prune call, its waits for another pass,
+	// for storage admission and for conflict retries included; reading the
+	// reader floors takes short engine locks without a deadline. A spent call
+	// returns what it committed and the next bounded call resumes after its
+	// last committed decision. A commit storage has already admitted
+	// completes, so a call can exceed MaxRuntime by that one commit. The
+	// budget is per engine: a call that prunes several engines (a composite
+	// database) gives each its own MaxRuntime. Zero walks every key.
+	MaxRuntime time.Duration
 }
 
 // MVCCVisibilityEngine is an optional extension interface for latest and

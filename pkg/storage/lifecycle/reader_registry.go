@@ -80,17 +80,7 @@ func (r *ReaderRegistry) OldestReaderVersion() (storage.MVCCVersion, bool) {
 // so the prune planner must use this map to compute a per-namespace safe
 // floor, not the global oldest reader.
 func (r *ReaderRegistry) OldestReaderVersionsByNamespace() map[string]storage.MVCCVersion {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make(map[string]storage.MVCCVersion)
-	for _, reader := range r.readers {
-		ns := reader.info.Namespace
-		existing, ok := out[ns]
-		if !ok || reader.info.SnapshotVersion.Compare(existing) < 0 {
-			out[ns] = reader.info.SnapshotVersion
-		}
-	}
-	return out
+	return storage.OldestSnapshotVersionsByNamespace(r.Snapshot())
 }
 
 // OldestReaderAge returns the maximum age of active readers.

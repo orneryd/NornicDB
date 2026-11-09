@@ -32,12 +32,13 @@ func TestBadgerEngine_PruneMVCCKeyspace_HeadlessLogicalKeyFallback(t *testing.T)
 	var deleted int64
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
-		deleted, err = engine.pruneMVCCKeyspaceInTxn(
+		deleted, _, err = engine.pruneMVCCKeyspaceInTxn(
 			context.Background(),
 			txn,
 			[]byte{prefixMVCCNode},
 			MVCCPruneOptions{MaxVersionsPerKey: 1},
-			false,
+			nil,
+			0,
 		)
 		return err
 	}))
