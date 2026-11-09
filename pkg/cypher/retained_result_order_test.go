@@ -46,3 +46,32 @@ func TestResultCacheDetachedMapOrdersFollowReturnedMaps(t *testing.T) {
 		})
 	}
 }
+
+// Exercise the real metadata producer and cache consumer together: literal maps
+// are materialized with traversal order, then every cache delivery must rebind it.
+func TestExecuteCachedLiteralMapMetadataFollowsOwnedRows(t *testing.T) {
+	exec := nor307PublicExecutor(t)
+	query := "MATCH (n:Nor307Ownership) RETURN {node:n, nested:{b:2,a:1}} AS value"
+	var previous *ExecuteResult
+	for generation := range 3 {
+		hits, _, _, _, _ := exec.cache.Stats()
+		result, err := exec.Execute(t.Context(), query, nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		if generation > 0 {
+			after, _, _, _, _ := exec.cache.Stats()
+			require.Equal(t, hits+1, after, "this must exercise a real cache hit")
+			require.NotSame(t, previous, result)
+		}
+		outer := result.Rows[0][0].(map[string]interface{})
+		nested := outer["nested"].(map[string]interface{})
+		outerID := uintptr(reflect.ValueOf(outer).UnsafePointer())
+		nestedID := uintptr(reflect.ValueOf(nested).UnsafePointer())
+		require.Equal(t, []string{"node", "nested"}, result.MapKeyOrders[outerID])
+		require.Equal(t, []string{"b", "a"}, result.MapKeyOrders[nestedID])
+		require.Equal(t, int64(2), nested["b"])
+		nested["b"] = int64(99)
+		result.MapKeyOrders[nestedID][0] = "caller changed"
+		previous = result
+	}
+}

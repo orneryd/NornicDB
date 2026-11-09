@@ -586,20 +586,13 @@ func (sc *SmartQueryCache) observeEviction(reason string) {
 
 // Get retrieves a cached result (same as QueryCache).
 func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*ExecuteResult, bool) {
-	return sc.get(resultCacheEntryKey(context.Background(), cypher, params))
-}
-
-func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
-	result, _, _, found := sc.getWithTrace(key)
+	key := resultCacheEntryKey(context.Background(), cypher, params)
+	result, _, _, found := sc.getWithTraceForEmbedding(key, 0)
 	return result, found
 }
 
-// getWithTrace returns a cached result, its hot-path trace, and whether it
-// returns nodes or relationships (entities).
-func (sc *SmartQueryCache) getWithTrace(key string) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
-	return sc.getWithTraceForEmbedding(key, 0)
-}
-
+// getWithTraceForEmbedding returns an owned cached result, its trace and entity
+// classification only when its embedding generation matches the caller's.
 func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint64) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
 	sc.mu.RLock()
 	cached, exists := sc.cache[key]

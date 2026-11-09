@@ -87,7 +87,7 @@ func BenchmarkNOR307QueryResultCache(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for b.Loop() {
-					got, trace, entities, found := cache.getWithTrace(key)
+					got, trace, entities, found := cache.getWithTraceForEmbedding(key, 0)
 					if !found {
 						b.Fatal("cached result missing")
 					}

@@ -156,11 +156,15 @@ func TestGetNodesByLabelReturnsCallerOwnedValues(t *testing.T) {
 	}
 }
 
-// TestGetRelationshipsByTypeReturnsCallerOwnedValues is the same requirement
+// TestGetRelationshipsByType is the same requirement
 // for the relationship type index.
-func TestGetRelationshipsByTypeReturnsCallerOwnedValues(t *testing.T) {
+func TestGetRelationshipsByType(t *testing.T) {
 	fixture := newOwnershipWarmupFixture(t)
 	fixture.warm(t)
+
+	missing, found := fixture.functions.GetRelationshipsByType("NonExistent")
+	require.False(t, found)
+	require.Nil(t, missing)
 
 	rels, ok := fixture.functions.GetRelationshipsByType("WORKS_AT")
 	require.True(t, ok)
