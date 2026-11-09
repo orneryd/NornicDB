@@ -33,7 +33,7 @@ func TestRecoverIntoEngineStreamsSnapshotAndWAL(t *testing.T) {
 	require.NoError(t, wal.Close())
 
 	destination := newTestMemoryEngine(t)
-	result, status, err := RecoverIntoEngine(destination, walDir, snapshotPath)
+	result, status, err := RecoverIntoEngine(t.Context(), destination, walDir, snapshotPath)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Applied)
 	require.True(t, status.SnapshotStreaming)
@@ -60,7 +60,7 @@ func TestRecoverIntoEngineStreamsMixedNamespaces(t *testing.T) {
 	destination, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer destination.Close()
-	_, status, err := RecoverIntoEngine(destination, t.TempDir(), snapshotPath)
+	_, status, err := RecoverIntoEngine(t.Context(), destination, t.TempDir(), snapshotPath)
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), status.SnapshotNodes)
 	for _, namespace := range []string{"nornic", "system"} {
@@ -88,7 +88,7 @@ func TestVisitWALEntriesAfterFromDirPreservesOrder(t *testing.T) {
 	require.NoError(t, wal.Close())
 
 	var sequences []uint64
-	err = VisitWALEntriesAfterFromDir(dir, 2, func(entry WALEntry) error {
+	err = VisitWALEntriesAfterFromDir(t.Context(), dir, 2, func(entry WALEntry) error {
 		sequences = append(sequences, entry.Sequence)
 		return nil
 	})

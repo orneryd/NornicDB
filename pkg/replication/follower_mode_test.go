@@ -91,7 +91,7 @@ func TestManagedFollowerPreservesSingleItemBulkProducerMode(t *testing.T) {
 				want = storage.CommitModeImplicit
 			}
 			require.Equal(t, []storage.EntityCommitMode{want}, modes)
-			entries, err := storage.ReadWALEntriesFromDir(walDir)
+			entries, err := storage.ReadWALEntriesFromDir(t.Context(), walDir)
 			require.NoError(t, err)
 			acks := 0
 			for _, entry := range entries {

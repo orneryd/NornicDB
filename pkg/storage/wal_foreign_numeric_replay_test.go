@@ -113,7 +113,7 @@ func (f *foreignNumericReplayFixture) bufferedEdgeCommit(t *testing.T, mutate fu
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered(), "the source commit must be a buffered write-behind commit")
 
-	entries, err := ReadWALEntriesFromDir(f.source.bufferedCommitWAL.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), f.source.bufferedCommitWAL.Config().Dir)
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
 	entry := entries[len(entries)-1]
@@ -123,7 +123,7 @@ func (f *foreignNumericReplayFixture) bufferedEdgeCommit(t *testing.T, mutate fu
 
 func (f *foreignNumericReplayFixture) replay(t *testing.T, entry WALEntry) {
 	t.Helper()
-	require.NoError(t, ReplayWALEntry(f.dest, entry))
+	require.NoError(t, ReplayWALEntry(t.Context(), f.dest, entry))
 	// Assertions read the destination's stored bodies and indexes, not a
 	// replayed in-memory publication cache.
 	f.dest.invalidateCachesAfterRestore()

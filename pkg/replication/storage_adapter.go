@@ -149,7 +149,7 @@ func (a *StorageAdapter) loadWALPosition() error {
 	if a.wal != nil {
 		a.walPosition.Store(a.wal.Sequence())
 	}
-	entries, err := storage.ReadWALEntriesFromDir(a.walDir)
+	entries, err := storage.ReadWALEntriesFromDir(a.work.Context(), a.walDir)
 	if err != nil {
 		return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
 	}
@@ -580,7 +580,7 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 	a.walMu.RLock()
 	defer a.walMu.RUnlock()
 
-	storageEntries, err := storage.ReadWALEntriesFromDir(a.walDir)
+	storageEntries, err := storage.ReadWALEntriesFromDir(a.work.Context(), a.walDir)
 	if err != nil {
 		// Handle missing WAL file gracefully (may not exist yet)
 		if os.IsNotExist(err) {

@@ -63,13 +63,13 @@ func TestRecoveryErrorLifetimeChild(t *testing.T) {
 		var err error
 		switch name {
 		case "with_result":
-			engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshot))
+			engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), filepath.Join(dir, "wal"), snapshot))
 		case "transactions":
-			engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshot))
+			engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), filepath.Join(dir, "wal"), snapshot))
 		case "logger":
-			engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWALWithLogger(filepath.Join(dir, "wal"), snapshot, nil))
+			engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWALWithLogger(t.Context(), filepath.Join(dir, "wal"), snapshot, nil))
 		case "plain":
-			engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(filepath.Join(dir, "wal"), snapshot))
+			engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), filepath.Join(dir, "wal"), snapshot))
 		default:
 			t.Fatal("unknown recovery control", name)
 		}

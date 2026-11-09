@@ -26,7 +26,7 @@ func TestWALSteadyBufferedPayloadUsesTypedCodec(t *testing.T) {
 			for i := 0; i < 3; i++ {
 				require.NoError(t, wal.AppendBufferedCommit(commit, b.propKeyDict))
 			}
-			entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+			entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 			require.NoError(t, err)
 			require.Len(t, entries, 3)
 			for _, entry := range entries {
@@ -84,7 +84,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 			// A new ID is allocated while the earlier acknowledged commit is
 			// still buffered, and before the semantic snapshot boundary.
 			update("epoch:b", map[string]any{"beta": "b1"})
-			entries, err := ReadWALEntriesFromDir(walDir)
+			entries, err := ReadWALEntriesFromDir(t.Context(), walDir)
 			require.NoError(t, err)
 			require.Len(t, entries, 2)
 			require.NotNil(t, entries[0].PropertyEpoch)
@@ -110,7 +110,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 						require.NoError(t, os.WriteFile(filepath.Join(crashDir, "wal.log"), bytes[:cut], 0600))
 						dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 						require.NoError(t, err)
-						result, _, err := RecoverIntoEngine(dest, crashDir, baselinePath)
+						result, _, err := RecoverIntoEngine(t.Context(), dest, crashDir, baselinePath)
 						require.NoError(t, err)
 						require.Zero(t, result.Failed)
 						require.Equal(t, want, result.Applied)
@@ -150,7 +150,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 			check := func(alpha, beta string) {
 				dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 				require.NoError(t, err)
-				result, _, err := RecoverIntoEngine(dest, walDir, snapshotPath)
+				result, _, err := RecoverIntoEngine(t.Context(), dest, walDir, snapshotPath)
 				require.NoError(t, err)
 				require.Zero(t, result.Failed)
 				a, err := dest.GetNode(t.Context(), "epoch:a")
@@ -163,7 +163,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 				require.NoError(t, dest.Close())
 			}
 			check("a2", "b2") // snapshot published, original WAL still present
-			require.NoError(t, wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate))
+			require.NoError(t, wal.ManageSnapshot(t.Context(), snapshot.Sequence, WALSnapshotTruncate))
 			check("a2", "b2") // retained entries keep their original epoch
 			update("epoch:a", map[string]any{"alpha": "a3", "beta": "b3"})
 			check("a3", "b3") // first steady append after truncation
@@ -177,7 +177,7 @@ func TestWALPropertyEpochTransportAndRawLegacyBoundary(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	source, wal, commit := bindingCostFixture(t, 160)
 	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	raw, err := json.Marshal(entries[0])
 	require.NoError(t, err)
@@ -188,7 +188,7 @@ func TestWALPropertyEpochTransportAndRawLegacyBoundary(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, dest.Close()) })
 	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
 	require.NoError(t, err)
-	require.NoError(t, ReplayWALEntry(dest, transported))
+	require.NoError(t, ReplayWALEntry(t.Context(), dest, transported))
 	node, err := dest.GetNode(t.Context(), "perf:a")
 	require.NoError(t, err)
 	require.Len(t, node.Properties, 160)
@@ -198,7 +198,7 @@ func TestWALPropertyEpochTransportAndRawLegacyBoundary(t *testing.T) {
 	assertPropertyDictionaryBijection(t, dest)
 	// Dropping transport authority must fail explicitly in a foreign store.
 	transported.PropertyEpoch = nil
-	require.ErrorContains(t, ReplayWALEntry(dest, transported), "missing property name binding")
+	require.ErrorContains(t, ReplayWALEntry(t.Context(), dest, transported), "missing property name binding")
 	// A generic physical append starts an unbound interval, even if its tokens
 	// happen to match the previous writer. A later constructor cannot infer it.
 	payload, err := decompressWALBufferedCommitPayload(entries[0].Data)
@@ -210,22 +210,22 @@ func TestWALPropertyEpochTransportAndRawLegacyBoundary(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	require.NoError(t, reopened.Append(OpBufferedCommit, &unbound))
-	entries, err = ReadWALEntriesFromDir(reopened.Config().Dir)
+	entries, err = ReadWALEntriesFromDir(t.Context(), reopened.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	require.Nil(t, entries[1].PropertyEpoch)
-	require.ErrorContains(t, ReplayWALEntry(dest, entries[1]), "missing property name binding")
+	require.ErrorContains(t, ReplayWALEntry(t.Context(), dest, entries[1]), "missing property name binding")
 	// Batch writes share the same unbound boundary owner.
 	require.NoError(t, reopened.AppendBufferedCommit(commit, source.propKeyDict))
 	batch := reopened.NewBatch()
 	require.NoError(t, batch.append(OpBufferedCommit, &unbound))
 	require.NoError(t, batch.Commit())
-	entries, err = ReadWALEntriesFromDir(reopened.Config().Dir)
+	entries, err = ReadWALEntriesFromDir(t.Context(), reopened.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 4)
 	require.NotNil(t, entries[2].PropertyEpoch)
 	require.Nil(t, entries[3].PropertyEpoch)
-	require.ErrorContains(t, ReplayWALEntry(dest, entries[3]), "missing property name binding")
+	require.ErrorContains(t, ReplayWALEntry(t.Context(), dest, entries[3]), "missing property name binding")
 }
 
 func TestWALPropertyEpochChangesOnlyAtDictionaryBoundaries(t *testing.T) {
@@ -266,7 +266,7 @@ func TestWALPropertyEpochMatchingPrefixCannotAuthorizeLegacyAfterReopen(t *testi
 	t.Cleanup(config.WithWALEnabled())
 	source, wal, commit := bindingCostFixture(t, 1)
 	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	first := entries[0]
 	_, err = source.CreateNode(t.Context(), &Node{ID: "perf:later", Properties: map[string]any{"beta": int64(2)}})
@@ -281,7 +281,7 @@ func TestWALPropertyEpochMatchingPrefixCannotAuthorizeLegacyAfterReopen(t *testi
 	}))
 	late := &bufferedCommit{txID: "later", namespace: "perf", writes: map[string][]byte{string(nodeKey("perf:later")): body}}
 	require.NoError(t, wal.AppendBufferedCommit(late, source.propKeyDict))
-	entries, err = ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err = ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, legacyBindingEntries(t, entries[0].PropertyEpoch.state.Bindings), 1, "later headers cannot mutate earlier authority")
 	require.Len(t, legacyBindingEntries(t, entries[1].PropertyEpoch.state.Bindings), 2)
@@ -299,7 +299,7 @@ func TestWALPropertyEpochMatchingPrefixCannotAuthorizeLegacyAfterReopen(t *testi
 	require.NoError(t, err)
 	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:later", Properties: map[string]any{"other": int64(0)}})
 	require.NoError(t, err)
-	require.NoError(t, ReplayWALEntry(dest, first)) // every entry in this epoch matches
+	require.NoError(t, ReplayWALEntry(t.Context(), dest, first)) // every entry in this epoch matches
 	require.NoError(t, dest.Close())
 	dest = reviewBindingEngine(t, dir, nil)
 	_, err = RecoverBufferedCommitsAtOpen(dest, legacy)
@@ -315,7 +315,7 @@ func TestWALPropertyEpochOwnDirectoryAllocationBounds(t *testing.T) {
 	source, wal, commit := bindingCostFixture(t, 1)
 	ctx := source.work.Context()
 	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(ctx, wal.Config().Dir)
 	require.NoError(t, err)
 	data, err := decodeBufferedWALRecord(entries[0])
 	require.NoError(t, err)

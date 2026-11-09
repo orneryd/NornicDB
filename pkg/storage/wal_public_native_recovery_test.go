@@ -22,17 +22,17 @@ func TestPublicRecoverBufferedNativeWrapperAndMixedSemantic(t *testing.T) {
 				expected++
 			}
 			require.NoError(t, wal.Sync())
-			entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+			entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 			require.NoError(t, err)
 			require.NoError(t, source.FlushWriteBehind(t.Context()))
 			require.NoError(t, source.Close())
 			require.NoError(t, wal.Close())
-			recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(wal.Config().Dir, ""))
+			recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), wal.Config().Dir, ""))
 			require.NoError(t, err)
 			require.Zero(t, result.Failed, "automatic recovery's MemoryEngine must expose its actual physical owner")
 			require.Positive(t, result.Applied)
 			for _, entry := range entries {
-				require.NoError(t, ReplayWALEntry(recovered, entry))
+				require.NoError(t, ReplayWALEntry(t.Context(), recovered, entry))
 			}
 			count, err := recovered.NodeCount(t.Context())
 			require.NoError(t, err)
@@ -43,12 +43,12 @@ func TestPublicRecoverBufferedNativeWrapperAndMixedSemantic(t *testing.T) {
 			dir := t.TempDir()
 			disk := openLargeCommitTestEngine(t, dir)
 			for _, entry := range entries {
-				require.NoError(t, ReplayWALEntry(disk, entry))
+				require.NoError(t, ReplayWALEntry(t.Context(), disk, entry))
 			}
 			require.NoError(t, disk.Close())
 			reopened := openLargeCommitTestEngine(t, dir)
 			for _, entry := range entries {
-				require.NoError(t, ReplayWALEntry(reopened, entry))
+				require.NoError(t, ReplayWALEntry(t.Context(), reopened, entry))
 			}
 			count, err = reopened.NodeCount(t.Context())
 			require.NoError(t, err)

@@ -245,14 +245,14 @@ func TestRecoveryReportsBulkWriteFailures(t *testing.T) {
 	}
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
-	err := restoreLegacySnapshot(&failingBulkEngine{Engine: engine, nodesErr: failure}, snapshot())
+	err := restoreLegacySnapshot(t.Context(), &failingBulkEngine{Engine: engine, nodesErr: failure}, snapshot())
 	require.ErrorIs(t, err, failure)
 	require.ErrorContains(t, err, "failed to restore nodes")
-	err = restoreLegacySnapshot(&failingBulkEngine{Engine: engine, edgesErr: failure}, snapshot())
+	err = restoreLegacySnapshot(t.Context(), &failingBulkEngine{Engine: engine, edgesErr: failure}, snapshot())
 	require.ErrorIs(t, err, failure)
 	require.ErrorContains(t, err, "failed to restore edges")
 
 	visitor := newRecoverySnapshotVisitor(&failingBulkEngine{Engine: engine, edgesErr: failure}, 10)
 	visitor.edges = append(visitor.edges, &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "R"})
-	require.ErrorIs(t, visitor.Flush(), failure)
+	require.ErrorIs(t, visitor.Flush(t.Context()), failure)
 }

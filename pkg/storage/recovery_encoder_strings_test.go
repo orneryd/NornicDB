@@ -56,7 +56,7 @@ func TestRecoveryEncoderLosslessStrings(t *testing.T) {
 			var collection bytes.Buffer
 			require.NoError(t, writeSnapshotCollection(&collection, &Snapshot{Sequence: 12, Nodes: []*Node{node}, Edges: []*Edge{edge}}))
 			visitor := &collectingSnapshotVisitor{}
-			metadata, err := ReadSnapshot(&collection, visitor)
+			metadata, err := ReadSnapshot(t.Context(), &collection, visitor)
 			require.NoError(t, err)
 			require.Equal(t, uint64(12), metadata.Sequence)
 			require.Len(t, visitor.nodes, 1)

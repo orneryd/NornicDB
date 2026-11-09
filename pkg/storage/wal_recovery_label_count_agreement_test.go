@@ -26,7 +26,7 @@ func TestReplayedBufferedCommitReconcilesLabelCountsWithRestoredBody(t *testing.
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 
-	entries, err := ReadWALEntriesFromDir(source.bufferedCommitWAL.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), source.bufferedCommitWAL.Config().Dir)
 	require.NoError(t, err)
 	destination := createTestBadgerEngine(t)
 	_, err = destination.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"Old"}})
@@ -37,7 +37,7 @@ func TestReplayedBufferedCommitReconcilesLabelCountsWithRestoredBody(t *testing.
 			continue
 		}
 		replayed = true
-		require.NoError(t, ReplayWALEntry(destination, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), destination, entry))
 	}
 	require.True(t, replayed)
 
@@ -98,7 +98,7 @@ func TestRecoveredRelabelThenDeletedNodeLeavesNoStaleLabelCount(t *testing.T) {
 	require.NoError(t, source.bufferedCommitWAL.Sync())
 
 	walDir := source.bufferedCommitWAL.Config().Dir
-	entries, err := ReadWALEntriesFromDir(walDir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), walDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 
@@ -114,7 +114,7 @@ func TestRecoveredRelabelThenDeletedNodeLeavesNoStaleLabelCount(t *testing.T) {
 	for _, destinationKind := range destinations {
 		t.Run(destinationKind.name, func(t *testing.T) {
 			destination := destinationKind.open(t)
-			result, _, err := RecoverIntoEngine(destination, walDir, snapshotPath)
+			result, _, err := RecoverIntoEngine(t.Context(), destination, walDir, snapshotPath)
 			require.NoError(t, err)
 			require.Equal(t, 2, result.Applied)
 			require.Zero(t, result.Failed)

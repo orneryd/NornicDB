@@ -97,7 +97,7 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 				}
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())
-				entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+				entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 				require.NoError(t, err)
 				crashClose(t, engine, wal)
 				recovered, wal2 := open()
@@ -115,7 +115,7 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 				} else {
 					for _, entry := range entries {
 						if entry.Operation == OpBufferedCommit {
-							require.NoError(t, ReplayWALEntry(recovered, entry))
+							require.NoError(t, ReplayWALEntry(t.Context(), recovered, entry))
 						}
 					}
 				}
@@ -171,7 +171,7 @@ func TestSnapshotEmptyNamedVectorsDoNotAdvertiseAvailability(t *testing.T) {
 			var out bytes.Buffer
 			require.NoError(t, WriteSnapshot(context.Background(), engine, &out, SnapshotOptions{}))
 			visitor := &recoveryFieldsVisitor{}
-			_, err = ReadSnapshot(bytes.NewReader(out.Bytes()), visitor)
+			_, err = ReadSnapshot(t.Context(), bytes.NewReader(out.Bytes()), visitor)
 			require.NoError(t, err)
 			require.Len(t, visitor.nodes, 1)
 			restored := visitor.nodes[0]
@@ -218,7 +218,7 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 			require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:new-r", StartNode: "test:new-a", EndNode: "test:new-b", Type: "R", Properties: map[string]any{"v": float64(1)}}))
 			require.NoError(t, tx.Commit())
 			require.True(t, tx.AcknowledgedBuffered())
-			entries, err := ReadWALEntriesFromDir(w.Config().Dir)
+			entries, err := ReadWALEntriesFromDir(t.Context(), w.Config().Dir)
 			require.NoError(t, err)
 			crashClose(t, b, w)
 			b, w = open()
@@ -229,7 +229,7 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 			} else {
 				for _, entry := range entries {
 					if entry.Operation == OpBufferedCommit {
-						require.NoError(t, ReplayWALEntry(b, entry))
+						require.NoError(t, ReplayWALEntry(t.Context(), b, entry))
 					}
 				}
 			}
@@ -263,7 +263,7 @@ func TestBufferedRecoveryRejectsCorruptAuthoritativeBodies(t *testing.T) {
 			}
 			payload, err := json.Marshal(data)
 			require.NoError(t, err)
-			require.Error(t, ReplayWALEntry(b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
+			require.Error(t, ReplayWALEntry(t.Context(), b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
 			marker, err := b.observeBufferedCommitReceipt(t.Context(), bufferedReceiptRead{txID: "corrupt"})
 			require.NoError(t, err)
 			require.False(t, marker.present)

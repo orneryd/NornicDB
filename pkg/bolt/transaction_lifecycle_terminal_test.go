@@ -146,7 +146,7 @@ func TestBoltExplicitTransactionTerminalPathsRecordSinglePersistentWALAbort(t *t
 			require.Equal(t, [][]any{{int64(0)}}, records)
 
 			require.NoError(t, wal.Sync())
-			entries, err := storage.ReadWALEntriesFromDir(walDir)
+			entries, err := storage.ReadWALEntriesFromDir(t.Context(), walDir)
 			require.NoError(t, err)
 			operations := make(map[storage.OperationType]int)
 			for _, entry := range entries {

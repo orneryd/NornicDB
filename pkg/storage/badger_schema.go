@@ -58,7 +58,7 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 			sm := NewSchemaManager()
 			// Opening a namespace schema is startup work that owns its own
 			// lifetime; it has no caller context to cancel.
-			if err := sm.ReplaceFromDefinition(context.Background(), &def); err != nil {
+			if err := sm.ReplaceFromDefinition(b.work.Context(), &def); err != nil {
 				return fmt.Errorf("schema: apply %q: %w", namespace, err)
 			}
 			b.bindNamespaceSchema(namespace, sm)
@@ -204,10 +204,10 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 			if hasUnique {
 				for _, label := range node.Labels {
 					for propName, propValue := range node.Properties {
-						if err := sm.CheckUniqueConstraint(context.Background(), label, propName, propValue, node.ID); err != nil {
+						if err := sm.CheckUniqueConstraint(b.work.Context(), label, propName, propValue, node.ID); err != nil {
 							return fmt.Errorf("schema: rebuild unique values: namespace=%q: %w", namespace, err)
 						}
-						if err := sm.ApplyUniqueValue(context.Background(), label, propName, propValue, node.ID, ValidatedUniqueClaim); err != nil {
+						if err := sm.ApplyUniqueValue(b.work.Context(), label, propName, propValue, node.ID, ValidatedUniqueClaim); err != nil {
 							return err
 						}
 					}
@@ -224,7 +224,7 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 						// under full/prefix, so one pass fills every index. A
 						// rebuild carries no request: its keys have the rebuild's
 						// own lifetime.
-						if err := idx.IndexNode(context.Background(), node.ID, node.Properties); err != nil {
+						if err := idx.IndexNode(b.work.Context(), node.ID, node.Properties); err != nil {
 							return fmt.Errorf("schema: rebuild composite indexes: namespace=%q index=%q: %w", namespace, idx.Name, err)
 						}
 					}

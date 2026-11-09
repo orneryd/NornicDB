@@ -65,7 +65,7 @@ func TestSnapshotRecoveryKeepsHiddenRelationships(t *testing.T) {
 	for name, path := range map[string]string{"streaming": streaming, "materialized": materialized} {
 		t.Run(name, func(t *testing.T) {
 			recovered := newTestMemoryEngine(t)
-			_, _, err := RecoverIntoEngine(recovered, t.TempDir(), path)
+			_, _, err := RecoverIntoEngine(t.Context(), recovered, t.TempDir(), path)
 			require.NoError(t, err)
 			for _, id := range []EdgeID{"test:suppressed", "test:decayed", "test:visible"} {
 				_, err := recovered.GetEdge(t.Context(), id)

@@ -141,7 +141,7 @@ func TestAcceptedConflictSettlesThroughPublicCypher(t *testing.T) {
 			t.Run("cold-replay", func(t *testing.T) {
 				// Cold WAL replay has no old native frame: it must reproduce exactly
 				// the success returned by the accepted request, with no duplicate rows.
-				recovered, replay, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(walDir, ""))
+				recovered, replay, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(ctx, walDir, ""))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = recovered.Close() })
 				require.Empty(t, replay.Errors)
@@ -171,7 +171,7 @@ func TestAcceptedConflictSettlesThroughPublicCypher(t *testing.T) {
 
 func countAcceptedConflictRecords(t *testing.T, dir string) int {
 	t.Helper()
-	entries, err := storage.ReadWALEntriesFromDir(dir)
+	entries, err := storage.ReadWALEntriesFromDir(t.Context(), dir)
 	require.NoError(t, err)
 	count := 0
 	for _, entry := range entries {

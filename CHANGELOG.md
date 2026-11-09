@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve request/job trace context in WAL read diagnostics. WAL recovery and
+  snapshot reader Go APIs, replay/undo and snapshot visitors now take contexts
+  explicitly; embedding callers must migrate and rebuild. Recovery retains its
+  independent completion lifetime. WAL and snapshot encoding, Badger keys and
+  storage version are unchanged. See [the migration notes](docs/operations/recovery-format-compatibility.md#local-validation).
+
 - Require exact database identity for qualified textual element IDs in MATCH
   predicates and graph functions. Arbitrary database prefixes no longer resolve
   to local entities; raw local-ID inputs remain supported.

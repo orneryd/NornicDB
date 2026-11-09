@@ -32,13 +32,13 @@ func BenchmarkRecoveryConstructors(b *testing.B) {
 						var err error
 						switch api {
 						case "plain":
-							engine, err = fixtureowner.OwnResult[*MemoryEngine](b, ErrStorageClosed)(RecoverFromWAL(filepath.Join(dir, "wal"), snapshot))
+							engine, err = fixtureowner.OwnResult[*MemoryEngine](b, ErrStorageClosed)(RecoverFromWAL(b.Context(), filepath.Join(dir, "wal"), snapshot))
 						case "logger":
-							engine, err = fixtureowner.OwnResult[*MemoryEngine](b, ErrStorageClosed)(RecoverFromWALWithLogger(filepath.Join(dir, "wal"), snapshot, nil))
+							engine, err = fixtureowner.OwnResult[*MemoryEngine](b, ErrStorageClosed)(RecoverFromWALWithLogger(b.Context(), filepath.Join(dir, "wal"), snapshot, nil))
 						case "with_result":
-							engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](b, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshot))
+							engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](b, ErrStorageClosed)(RecoverFromWALWithResult(b.Context(), filepath.Join(dir, "wal"), snapshot))
 						case "transactions":
-							engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](b, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshot))
+							engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](b, ErrStorageClosed)(RecoverWithTransactions(b.Context(), filepath.Join(dir, "wal"), snapshot))
 						}
 						b.StopTimer()
 						if err != nil {

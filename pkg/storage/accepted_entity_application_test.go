@@ -98,7 +98,7 @@ func TestAcceptedSettlementCallbackCanCloseEngine(t *testing.T) {
 		return
 	}
 	require.NoError(t, <-closed)
-	recovered, replay, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(walDir, ""))
+	recovered, replay, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(ctx, walDir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	require.Empty(t, replay.Errors)
@@ -205,7 +205,7 @@ func TestAcceptedApplicationPendingRecoverySettlesOnce(t *testing.T) {
 			unavailable.unavailable.Store(false)
 			if scenario == "restart" {
 				require.NoError(t, owner.Close())
-				recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(walDir, ""))
+				recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(ctx, walDir, ""))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = recovered.Close() })
 				require.Empty(t, result.Errors)

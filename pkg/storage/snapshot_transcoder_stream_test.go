@@ -40,7 +40,7 @@ func snapshotStreamDifferential(t *testing.T, engine Engine, expectedEdges int) 
 	// frame by entity ID, including its byte length and checksum.
 	require.Equal(t, snapshotFramesByID(t, general.Bytes()), snapshotFramesByID(t, fast.Bytes()))
 	visitor := &collectingSnapshotVisitor{}
-	metadata, err := ReadSnapshot(bytes.NewReader(fast.Bytes()), visitor)
+	metadata, err := ReadSnapshot(t.Context(), bytes.NewReader(fast.Bytes()), visitor)
 	require.NoError(t, err)
 	require.Equal(t, uint64(expectedEdges), metadata.EdgeCount)
 	return bytes.Clone(fast.Bytes())
@@ -105,22 +105,22 @@ func TestSnapshotTranscoderStoredStreamDifferential(t *testing.T) {
 	recovered, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, recovered.Close()) })
-	_, status, err := RecoverIntoEngine(recovered, t.TempDir(), path)
+	_, status, err := RecoverIntoEngine(t.Context(), recovered, t.TempDir(), path)
 	require.NoError(t, err)
 	require.Equal(t, uint64(len(corpus)+1), status.SnapshotEdges)
 	reference, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reference.Close()) })
-	_, referenceStatus, err := RecoverIntoEngine(reference, t.TempDir(), generalPath)
+	_, referenceStatus, err := RecoverIntoEngine(t.Context(), reference, t.TempDir(), generalPath)
 	require.NoError(t, err)
 	require.Equal(t, status.SnapshotEdges, referenceStatus.SnapshotEdges)
 	var before, after bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), reference, &before, SnapshotOptions{}))
 	require.NoError(t, WriteSnapshot(context.Background(), recovered, &after, SnapshotOptions{}))
 	left, right := &collectingSnapshotVisitor{}, &collectingSnapshotVisitor{}
-	_, err = ReadSnapshot(&before, left)
+	_, err = ReadSnapshot(t.Context(), &before, left)
 	require.NoError(t, err)
-	_, err = ReadSnapshot(&after, right)
+	_, err = ReadSnapshot(t.Context(), &after, right)
 	require.NoError(t, err)
 	// General recovery already normalizes some list widths on re-import.
 	// B must produce precisely the same recovered state, including that policy.

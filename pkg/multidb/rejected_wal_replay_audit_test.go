@@ -48,7 +48,7 @@ func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
 			// must be a journal property, not another admission check during replay.
 			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, nil))
 			require.NoError(t, manager.Close())
-			recovered, _, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(dir, ""))
+			recovered, _, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(t.Context(), dir, ""))
 			require.NoError(t, err)
 			defer recovered.Close()
 			if entity == "node" {

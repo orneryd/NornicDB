@@ -107,7 +107,7 @@ func TestRecoverySnapshotPreservesFieldsAndPropertyTypes(t *testing.T) {
 	n, e := recoveryFieldFixture()
 	path := filepath.Join(t.TempDir(), "snapshot.json")
 	require.NoError(t, SaveSnapshot(&Snapshot{Sequence: 17, Version: "1.0", Nodes: []*Node{n}, Edges: []*Edge{e}}, path))
-	got, err := LoadSnapshot(path)
+	got, err := LoadSnapshot(t.Context(), path)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(17), got.Sequence)
 	require.Len(t, got.Nodes, 1)
@@ -136,7 +136,7 @@ func TestWALEngineRecoveryPreservesSuppliedTimes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, live.CreateEdge(t.Context(), e))
 	require.NoError(t, wal.Close())
-	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	gotN, err := recovered.GetNode(t.Context(), n.ID)
@@ -158,7 +158,7 @@ func TestRecoveryStreamingSnapshotPreservesFields(t *testing.T) {
 	var raw bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), eng, &raw, SnapshotOptions{Sequence: 19}))
 	visitor := &recoveryFieldsVisitor{}
-	metadata, err := ReadSnapshot(&raw, visitor)
+	metadata, err := ReadSnapshot(t.Context(), &raw, visitor)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(19), metadata.Sequence)
 	require.Len(t, visitor.nodes, 2)
@@ -181,8 +181,14 @@ type recoveryFieldsVisitor struct {
 	edges []*Edge
 }
 
-func (v *recoveryFieldsVisitor) VisitNode(n *Node) error { v.nodes = append(v.nodes, n); return nil }
-func (v *recoveryFieldsVisitor) VisitEdge(e *Edge) error { v.edges = append(v.edges, e); return nil }
+func (v *recoveryFieldsVisitor) VisitNode(ctx context.Context, n *Node) error {
+	v.nodes = append(v.nodes, n)
+	return nil
+}
+func (v *recoveryFieldsVisitor) VisitEdge(ctx context.Context, e *Edge) error {
+	v.edges = append(v.edges, e)
+	return nil
+}
 
 func newTimestampRecoveryWAL(t *testing.T) (*WALEngine, *WAL, string) {
 	t.Helper()
@@ -213,7 +219,7 @@ func TestWALEngineDefaultTimesRecordedBeforeCreation(t *testing.T) {
 	e, err := live.GetEdge(t.Context(), "test:e")
 	require.NoError(t, err)
 	require.NoError(t, wal.Close())
-	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	gotN, err := recovered.GetNode(t.Context(), n.ID)
@@ -239,7 +245,7 @@ func TestWALEngineDefaultUpdateTimeRecordedBeforeMutation(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, want.UpdatedAt.IsZero())
 	require.NoError(t, wal.Close())
-	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	got, err := recovered.GetNode(t.Context(), node.ID)

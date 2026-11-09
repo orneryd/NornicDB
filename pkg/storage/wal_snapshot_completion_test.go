@@ -45,7 +45,7 @@ func TestRecoveryStopsBeforeWALWhenSnapshotCompletionFails(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, wal.Close()) })
 			require.NoError(t, wal.Append(OpCreateNode, &Node{ID: "test:later"}))
 			require.NoError(t, wal.Sync())
-			result, status, err := RecoverIntoEngine(destination, wal.Config().Dir, snapshot)
+			result, status, err := RecoverIntoEngine(t.Context(), destination, wal.Config().Dir, snapshot)
 			require.ErrorIs(t, err, injected)
 			require.ErrorContains(t, err, "complete snapshot restore")
 			require.Equal(t, 1, owner.flushes)
@@ -127,7 +127,7 @@ func TestRecoveryPublishesReplayedRelabelAndRelationshipCounts(t *testing.T) {
 				if withSnapshot {
 					snapshotPath = snapshot
 				}
-				result, _, err := RecoverIntoEngine(destination, walDir, snapshotPath)
+				result, _, err := RecoverIntoEngine(t.Context(), destination, walDir, snapshotPath)
 				require.NoError(t, err)
 				require.Zero(t, result.Failed)
 				check(t, destination)
@@ -156,14 +156,14 @@ func TestRecoveryPublishesReplayedRelabelAndRelationshipCounts(t *testing.T) {
 		}
 	}
 	t.Run("public-recovery", func(t *testing.T) {
-		destination, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(walDir, snapshot))
+		destination, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), walDir, snapshot))
 		require.NoError(t, err)
 		require.Zero(t, result.Failed)
 		defer func() { require.NoError(t, destination.Close()) }()
 		check(t, destination.BadgerEngine)
 	})
 	t.Run("transaction-recovery", func(t *testing.T) {
-		destination, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(walDir, snapshot))
+		destination, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), walDir, snapshot))
 		require.NoError(t, err)
 		require.False(t, result.HasErrors(), result.Summary())
 		defer func() { require.NoError(t, destination.Close()) }()
@@ -180,7 +180,7 @@ func TestRecoveryPublishesReplayedRelabelAndRelationshipCounts(t *testing.T) {
 		require.NoError(t, clone.Append(OpBufferedCommit, "invalid buffered commit"))
 		require.NoError(t, clone.Sync())
 		destination := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-		result, _, err := RecoverIntoEngine(destination, cloneDir, snapshot)
+		result, _, err := RecoverIntoEngine(t.Context(), destination, cloneDir, snapshot)
 		require.NoError(t, err, "record failures are reported in ReplayResult")
 		require.Positive(t, result.Applied)
 		require.Equal(t, 1, result.Failed)

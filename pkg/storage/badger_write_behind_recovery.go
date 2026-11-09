@@ -89,7 +89,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		pendingBytes = 0
 		return nil
 	}
-	err = VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
+	err = VisitWALEntriesAfterFromDir(b.work.Context(), wal.config.Dir, 0, func(entry WALEntry) error {
 		if entry.Operation == OpEntityCommit {
 			// Keep the existing streaming replay owner: an earlier physical
 			// batch must finish before this semantic record can inspect its

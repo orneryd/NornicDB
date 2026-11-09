@@ -53,7 +53,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())
 			}
-			entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
+			entries, err := ReadWALEntriesFromDir(t.Context(), capture.Config().Dir)
 			require.NoError(t, err)
 			legacy, err := NewWAL(t.TempDir(), DefaultWALConfig())
 			require.NoError(t, err)
@@ -86,7 +86,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 					{ID: "separator:a"},
 					{ID: "legacy:a", Properties: map[string]any{"value": int64(0)}},
 				}}, path))
-				result, _, err := RecoverIntoEngine(dest, legacy.Config().Dir, path)
+				result, _, err := RecoverIntoEngine(t.Context(), dest, legacy.Config().Dir, path)
 				require.NoError(t, err)
 				require.Equal(t, 20, result.Failed)
 				require.Zero(t, result.Applied)
@@ -101,7 +101,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 			}
 			recovered := reviewBindingEngine(t, dir, nil)
 			require.NotNil(t, recovered.writeBehind)
-			legacyEntries, err := ReadWALEntriesFromDir(legacy.Config().Dir)
+			legacyEntries, err := ReadWALEntriesFromDir(t.Context(), legacy.Config().Dir)
 			require.NoError(t, err)
 			require.Len(t, legacyEntries, 20)
 			for _, entry := range legacyEntries {
@@ -152,7 +152,7 @@ func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 		require.True(t, tx.AcknowledgedBuffered())
 		require.NoError(t, source.FlushWriteBehind(context.Background()))
 	}
-	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), capture.Config().Dir)
 	require.NoError(t, err)
 	destination := reviewBindingEngine(t, t.TempDir(), nil)
 	index := 0
@@ -174,7 +174,7 @@ func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 		entry.Data = typedPropertyRecordFixture(t, data, map[string]any{"value": int64(index)})
 		entry.PropertyEpoch = nil // This fixture deliberately models a pre-epoch record.
 		require.NoError(t, err)
-		err = ReplayWALEntry(destination, entry)
+		err = ReplayWALEntry(t.Context(), destination, entry)
 		t.Logf("legacy prefix record=%d bindings=%d error=%v", index, len(data.PropKeys), err)
 		require.NoError(t, err, "this record supplies its own lossless named properties")
 		index++
@@ -245,14 +245,14 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 				}
 			}
 			if restart {
-				entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+				entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 				require.NoError(t, err)
 				applied := 0
 				for _, entry := range entries {
 					if entry.Operation != OpBufferedCommit {
 						continue
 					}
-					require.NoError(t, ReplayWALEntry(dest, entry))
+					require.NoError(t, ReplayWALEntry(t.Context(), dest, entry))
 					applied++
 					if applied == 3 {
 						break

@@ -98,7 +98,7 @@ func testAcceptedTimeLiveAndCold(t *testing.T, epoch time.Time) {
 	// The semantic codec must retain the same stored timestamps as native
 	// application, including unset and the real Unix epoch (NOR-303).
 	t.Run("cold-replay", func(t *testing.T) {
-		cold, replay, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(dir, ""))
+		cold, replay, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(t.Context(), dir, ""))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = cold.Close() })
 		require.Empty(t, replay.Errors)

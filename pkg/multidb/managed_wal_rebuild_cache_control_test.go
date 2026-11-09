@@ -117,11 +117,11 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 					require.NoError(t, err)
 					wal, err := storage.NewWAL(walDir, storage.DefaultWALConfig())
 					require.NoError(t, err)
-					entries, err := storage.ReadWALEntriesFromDir(walDir)
+					entries, err := storage.ReadWALEntriesFromDir(t.Context(), walDir)
 					require.NoError(t, err)
 					result := storage.ReplayResult{Errors: make([]storage.ReplayError, 0)}
 					for _, entry := range entries {
-						result.Record(entry, storage.ReplayWALEntry(base, entry))
+						result.Record(entry, storage.ReplayWALEntry(t.Context(), base, entry))
 					}
 					require.Zero(t, result.Failed, "%s errors=%+v", result.Summary(), result.Errors)
 					manager, err := NewDatabaseManager(t.Context(), storage.NewWALEngine(base, wal), nil)

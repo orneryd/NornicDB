@@ -89,7 +89,7 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, 4, n)
 			} else {
-				result, _, err := RecoverIntoEngine(destination, wal.Config().Dir, "")
+				result, _, err := RecoverIntoEngine(t.Context(), destination, wal.Config().Dir, "")
 				require.NoError(t, err)
 				require.Zero(t, result.Failed, "%s", result.Summary())
 			}
@@ -183,7 +183,7 @@ func TestBufferedWALLegacyBindings(t *testing.T) {
 					require.NoError(t, wal.Append(OpBufferedCommit, json.RawMessage(payload)))
 					_, err = RecoverBufferedCommits(destination, wal)
 				} else {
-					err = ReplayWALEntry(destination, WALEntry{Operation: OpBufferedCommit, Data: payload})
+					err = ReplayWALEntry(t.Context(), destination, WALEntry{Operation: OpBufferedCommit, Data: payload})
 				}
 				if bound {
 					require.NoError(t, err)

@@ -82,7 +82,7 @@ func TestTxlogProceduresReadCompressedBufferedCommitByID(t *testing.T) {
 	transactionID := tx.ID
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	entries, err := storage.ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := storage.ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, []byte{0x28, 0xb5, 0x2f, 0xfd}, entries[0].Data[:4], "the real buffered payload is compressed")

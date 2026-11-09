@@ -69,7 +69,7 @@ func TestAcceptedReplayMaterializesDecodedTimestampImages(t *testing.T) {
 	assertImages(base)
 	require.EqualValues(t, 1, wal.Sequence(), "accepted application never records a new command")
 	require.NoError(t, owner.Close())
-	recovered, replay, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+	recovered, replay, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	require.Empty(t, replay.Errors)

@@ -11,7 +11,7 @@ import (
 func (b *BadgerEngine) migrateV2ToV3() error {
 	// The startup migration is a context-free entry: its own unbounded lifetime
 	// is established here and threaded to the private repair helpers.
-	ctx := context.Background()
+	ctx := b.work.Context()
 	start := []byte{prefixEdge}
 	for {
 		edges, lastScanned, reachedEnd, err := collectMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](b, ctx, start, mvccRebuildScanBatchSize)
@@ -46,7 +46,7 @@ func (b *BadgerEngine) migrateV2ToV3() error {
 	if err := b.repairArchivedEdgeAdjacency(ctx); err != nil {
 		return fmt.Errorf("repair archived edge adjacency: %w", err)
 	}
-	if _, err := b.rebuildRelationshipIndexes(context.Background(), rebuildCaseSensitiveUpgrade); err != nil {
+	if _, err := b.rebuildRelationshipIndexes(b.work.Context(), rebuildCaseSensitiveUpgrade); err != nil {
 		return err
 	}
 	return b.writeSchemaVersion(storageVersionEdgeAdjacencyV3)

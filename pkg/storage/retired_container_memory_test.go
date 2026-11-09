@@ -117,7 +117,7 @@ func TestRetiredRecoverySnapshotBatchesCollectible(t *testing.T) {
 		e := &Edge{ID: "test:retired", StartNode: "test:a", EndNode: "test:b"}
 		owner.nodes, owner.edges = []*Node{n}, []*Edge{e}
 		nref, eref := weak.Make(n), weak.Make(e)
-		require.NoError(t, owner.Flush())
+		require.NoError(t, owner.Flush(t.Context()))
 		return nref, eref
 	}()
 	runtime.GC()

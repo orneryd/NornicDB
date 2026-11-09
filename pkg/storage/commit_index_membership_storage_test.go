@@ -71,7 +71,7 @@ func TestCommitIndexMembershipStorageOrigins(t *testing.T) {
 						publish = func() error { return engine.FlushWriteBehind(context.Background()) }
 					} else {
 						wal := engine.bufferedCommitWAL
-						entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+						entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 						require.NoError(t, err)
 						crashClose(t, engine, wal)
 						engine = newWriteBehindTestEngine(t, time.Hour, options)
@@ -89,7 +89,7 @@ func TestCommitIndexMembershipStorageOrigins(t *testing.T) {
 							publish = func() error {
 								for _, entry := range entries {
 									if entry.Operation == OpBufferedCommit {
-										if err := ReplayWALEntry(engine, entry); err != nil {
+										if err := ReplayWALEntry(t.Context(), engine, entry); err != nil {
 											return err
 										}
 									}

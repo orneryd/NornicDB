@@ -46,7 +46,7 @@ func walReplayLifetimeFixture(t *testing.T, mode string) (*BadgerEngine, func() 
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = w.Close() })
 		require.NoError(t, w.Append(OpBufferedCommit, &data))
-		entries, err := ReadWALEntriesFromDir(w.Config().Dir)
+		entries, err := ReadWALEntriesFromDir(t.Context(), w.Config().Dir)
 		require.NoError(t, err)
 		require.Len(t, entries, 1, "the batch replay must reach the source owner")
 		return b, func() error { _, err := RecoverBufferedCommits(b, w); return err }, dir
@@ -58,7 +58,7 @@ func walReplayLifetimeFixture(t *testing.T, mode string) (*BadgerEngine, func() 
 		entry.Data, err = json.Marshal(WALNodeData{Node: &Node{ID: "shutdown:replay", Properties: map[string]any{"value": int64(1)}}})
 	}
 	require.NoError(t, err)
-	return b, func() error { return ReplayWALEntry(b, entry) }, dir
+	return b, func() error { return ReplayWALEntry(t.Context(), b, entry) }, dir
 }
 
 func TestReviewR73ReplayLifetime(t *testing.T) {

@@ -37,7 +37,7 @@ func TestAutoCompactionWritesRecoverableStreamingSnapshot(t *testing.T) {
 	require.GreaterOrEqual(t, len(header), len(streamSnapshotMagic))
 	require.Equal(t, streamSnapshotMagic, string(header[:len(streamSnapshotMagic)]))
 
-	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(wal.config.Dir, paths[0]))
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), wal.config.Dir, paths[0]))
 	require.NoError(t, err)
 	nodes, err := recovered.AllNodes(context.Background())
 	require.NoError(t, err)

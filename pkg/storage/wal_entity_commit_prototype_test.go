@@ -66,7 +66,7 @@ func TestAcceptedWALRoutesAndRecoversAtomicSemanticImage(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, float64(1.5), sourceEdge.Properties["weight"])
 	require.NoError(t, wal.Close())
-	recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+	recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 	require.NoError(t, err)
 	require.Empty(t, result.Errors)
 	got, err := recovered.GetStoredNode(t.Context(), "test:a")

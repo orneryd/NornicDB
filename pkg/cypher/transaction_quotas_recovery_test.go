@@ -95,7 +95,7 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 				}
 				verify(engine, svc)
 				require.NoError(t, wal.Close())
-				recovered, err := fixtureowner.OwnResult[*storage.MemoryEngine](t, storage.ErrStorageClosed)(storage.RecoverFromWAL(dir, ""))
+				recovered, err := fixtureowner.OwnResult[*storage.MemoryEngine](t, storage.ErrStorageClosed)(storage.RecoverFromWAL(ctx, dir, ""))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = recovered.Close() })
 				recoveredEngine := storage.NewNamespacedEngine(recovered, "quota")

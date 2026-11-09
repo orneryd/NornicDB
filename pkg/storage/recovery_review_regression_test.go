@@ -23,7 +23,7 @@ func TestLegacyRecoveryPreservesExactIntegerLexemes(t *testing.T) {
 	require.Equal(t, int64(9007199254740993), buffered.Ops[0].Node.Properties["integer"])
 	path := filepath.Join(t.TempDir(), "legacy.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"nodes":[{"id":"legacy","properties":{"integer":9007199254740993}}]}`), 0600))
-	snapshot, err := LoadSnapshot(path)
+	snapshot, err := LoadSnapshot(t.Context(), path)
 	require.NoError(t, err)
 	require.Equal(t, int64(9007199254740993), snapshot.Nodes[0].Properties["integer"])
 }
@@ -42,7 +42,7 @@ func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
 	var output bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), engine, &output, SnapshotOptions{}))
 	visitor := &recoveryFieldsVisitor{}
-	_, err = ReadSnapshot(bytes.NewReader(output.Bytes()), visitor)
+	_, err = ReadSnapshot(t.Context(), bytes.NewReader(output.Bytes()), visitor)
 	require.NoError(t, err)
 	require.Len(t, visitor.nodes, 1)
 	restored := visitor.nodes[0]
@@ -87,6 +87,6 @@ func TestLegacyRecoveryIntegerRangeAndMalformedValues(t *testing.T) {
 	require.Error(t, decodeRecoveryPayload([]byte(`{"nodes":[{"properties":{"nested":[{"value":18446744073709551616}],"other":18446744073709551616}}]}`), &bulk))
 	path := filepath.Join(t.TempDir(), "concatenated.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"nodes":[]} {"nodes":[]}`), 0600))
-	_, err := LoadSnapshot(path)
+	_, err := LoadSnapshot(t.Context(), path)
 	require.Error(t, err, "extra JSON values must not be silently ignored")
 }

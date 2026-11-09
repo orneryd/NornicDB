@@ -41,7 +41,7 @@ func TestUndoCreateNode(t *testing.T) {
 	}
 
 	// Apply redo
-	if err := ReplayWALEntry(engine, entry); err != nil {
+	if err := ReplayWALEntry(t.Context(), engine, entry); err != nil {
 		t.Fatalf("Redo failed: %v", err)
 	}
 
@@ -52,7 +52,7 @@ func TestUndoCreateNode(t *testing.T) {
 	}
 
 	// Apply undo
-	if err := UndoWALEntry(engine, entry); err != nil {
+	if err := UndoWALEntry(t.Context(), engine, entry); err != nil {
 		t.Fatalf("Undo failed: %v", err)
 	}
 
@@ -87,7 +87,7 @@ func TestUndoUpdateNode(t *testing.T) {
 	}
 
 	// Apply redo
-	if err := ReplayWALEntry(engine, entry); err != nil {
+	if err := ReplayWALEntry(t.Context(), engine, entry); err != nil {
 		t.Fatalf("Redo failed: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestUndoUpdateNode(t *testing.T) {
 	}
 
 	// Apply undo
-	if err := UndoWALEntry(engine, entry); err != nil {
+	if err := UndoWALEntry(t.Context(), engine, entry); err != nil {
 		t.Fatalf("Undo failed: %v", err)
 	}
 
@@ -132,7 +132,7 @@ func TestUndoDeleteNode(t *testing.T) {
 	}
 
 	// Apply redo
-	if err := ReplayWALEntry(engine, entry); err != nil {
+	if err := ReplayWALEntry(t.Context(), engine, entry); err != nil {
 		t.Fatalf("Redo failed: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestUndoDeleteNode(t *testing.T) {
 	}
 
 	// Apply undo
-	if err := UndoWALEntry(engine, entry); err != nil {
+	if err := UndoWALEntry(t.Context(), engine, entry); err != nil {
 		t.Fatalf("Undo failed: %v", err)
 	}
 
@@ -174,7 +174,7 @@ func TestUndoWithoutBeforeImage(t *testing.T) {
 	}
 
 	// Undo should fail due to missing before image
-	err := UndoWALEntry(engine, entry)
+	err := UndoWALEntry(t.Context(), engine, entry)
 	if err != ErrNoUndoData {
 		t.Errorf("Expected ErrNoUndoData, got: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestTxBoundaryMarkers(t *testing.T) {
 	wal.Close()
 
 	// Read back
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
+	entries, err := ReadWALEntries(t.Context(), filepath.Join(dir, "wal.log"), nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestRecoverCommittedTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestRecoverIncompleteTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestRecoverAbortedTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestRecoverMixedTransactions(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestRecoverWithTransactions_ErrorAccountingPaths(t *testing.T) {
 
 	require.NoError(t, wal.Close())
 
-	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), dir, ""))
 	require.NoError(t, err)
 	require.NotNil(t, baseEngine)
 
@@ -605,7 +605,7 @@ func TestUndoCreateEdge(t *testing.T) {
 	entry := WALEntry{Sequence: 1, Operation: OpCreateEdge, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 
 	// Redo
-	require.NoError(t, ReplayWALEntry(engine, entry))
+	require.NoError(t, ReplayWALEntry(t.Context(), engine, entry))
 
 	e, _ := engine.GetEdge(t.Context(), "e1")
 	if e == nil {
@@ -613,7 +613,7 @@ func TestUndoCreateEdge(t *testing.T) {
 	}
 
 	// Undo
-	require.NoError(t, UndoWALEntry(engine, entry))
+	require.NoError(t, UndoWALEntry(t.Context(), engine, entry))
 
 	e, _ = engine.GetEdge(t.Context(), "e1")
 	if e != nil {
@@ -639,7 +639,7 @@ func TestUndoDeleteEdge(t *testing.T) {
 	entry := WALEntry{Sequence: 2, Operation: OpDeleteEdge, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 
 	// Redo (delete)
-	require.NoError(t, ReplayWALEntry(engine, entry))
+	require.NoError(t, ReplayWALEntry(t.Context(), engine, entry))
 
 	e, _ := engine.GetEdge(t.Context(), "e1")
 	if e != nil {
@@ -647,7 +647,7 @@ func TestUndoDeleteEdge(t *testing.T) {
 	}
 
 	// Undo (restore)
-	require.NoError(t, UndoWALEntry(engine, entry))
+	require.NoError(t, UndoWALEntry(t.Context(), engine, entry))
 
 	e, _ = engine.GetEdge(t.Context(), "e1")
 	if e == nil {
@@ -676,12 +676,12 @@ func TestUndoUpdateEdge(t *testing.T) {
 	data, _ := json.Marshal(WALEdgeData{Edge: newEdge, OldEdge: oldEdge})
 	entry := WALEntry{Sequence: 3, Operation: OpUpdateEdge, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 
-	require.NoError(t, ReplayWALEntry(engine, entry))
+	require.NoError(t, ReplayWALEntry(t.Context(), engine, entry))
 	updated, _ := engine.GetEdge(t.Context(), "e1")
 	require.NotNil(t, updated)
 	require.Equal(t, int64(2024), updated.Properties["since"])
 
-	require.NoError(t, UndoWALEntry(engine, entry))
+	require.NoError(t, UndoWALEntry(t.Context(), engine, entry))
 	restored, _ := engine.GetEdge(t.Context(), "e1")
 	require.NotNil(t, restored)
 	require.Equal(t, int64(2020), restored.Properties["since"])
@@ -701,9 +701,9 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 		engine := NewNamespacedEngine(baseEngine, "test")
 		data, _ := json.Marshal(WALBulkNodesData{Nodes: nodes})
 		entry := WALEntry{Operation: OpBulkNodes, Data: data, Checksum: crc32Checksum(data), Database: "test"}
-		require.NoError(t, ReplayWALEntry(engine, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), engine, entry))
 		require.NotNil(t, mustReadNode(t, engine.GetNode, "n1"))
-		require.NoError(t, UndoWALEntry(engine, entry))
+		require.NoError(t, UndoWALEntry(t.Context(), engine, entry))
 		n, _ := engine.GetNode(t.Context(), "n1")
 		require.Nil(t, n)
 	})
@@ -717,10 +717,10 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 		}
 		data, _ := json.Marshal(WALBulkEdgesData{Edges: edges})
 		entry := WALEntry{Operation: OpBulkEdges, Data: data, Checksum: crc32Checksum(data), Database: "test"}
-		require.NoError(t, ReplayWALEntry(engine, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), engine, entry))
 		e, _ := engine.GetEdge(t.Context(), "e1")
 		require.NotNil(t, e)
-		require.NoError(t, UndoWALEntry(engine, entry))
+		require.NoError(t, UndoWALEntry(t.Context(), engine, entry))
 		e, _ = engine.GetEdge(t.Context(), "e1")
 		require.Nil(t, e)
 	})
@@ -734,10 +734,10 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 		}
 		data, _ := json.Marshal(WALBulkDeleteNodesData{IDs: []string{"n1", "n2"}, OldNodes: nodes})
 		entry := WALEntry{Operation: OpBulkDeleteNodes, Data: data, Checksum: crc32Checksum(data), Database: "test"}
-		require.NoError(t, ReplayWALEntry(engine, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), engine, entry))
 		n, _ := engine.GetNode(t.Context(), "n1")
 		require.Nil(t, n)
-		require.NoError(t, UndoWALEntry(engine, entry))
+		require.NoError(t, UndoWALEntry(t.Context(), engine, entry))
 		require.NotNil(t, mustReadNode(t, engine.GetNode, "n1"))
 	})
 
@@ -751,10 +751,10 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 		require.NoError(t, engine.CreateEdge(t.Context(), edges[0]))
 		data, _ := json.Marshal(WALBulkDeleteEdgesData{IDs: []string{"e1"}, OldEdges: edges})
 		entry := WALEntry{Operation: OpBulkDeleteEdges, Data: data, Checksum: crc32Checksum(data), Database: "test"}
-		require.NoError(t, ReplayWALEntry(engine, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), engine, entry))
 		e, _ := engine.GetEdge(t.Context(), "e1")
 		require.Nil(t, e)
-		require.NoError(t, UndoWALEntry(engine, entry))
+		require.NoError(t, UndoWALEntry(t.Context(), engine, entry))
 		e, _ = engine.GetEdge(t.Context(), "e1")
 		require.NotNil(t, e)
 	})
@@ -766,15 +766,15 @@ func TestReplayAndUndoWALEntry_ErrorBranches(t *testing.T) {
 
 	t.Run("marker operations are noops", func(t *testing.T) {
 		for _, op := range []OperationType{OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort} {
-			require.NoError(t, ReplayWALEntry(engine, WALEntry{Operation: op}))
-			require.NoError(t, UndoWALEntry(engine, WALEntry{Operation: op}))
+			require.NoError(t, ReplayWALEntry(t.Context(), engine, WALEntry{Operation: op}))
+			require.NoError(t, UndoWALEntry(t.Context(), engine, WALEntry{Operation: op}))
 		}
-		require.NoError(t, UndoWALEntry(engine, WALEntry{Operation: OpUpdateEmbedding}))
+		require.NoError(t, UndoWALEntry(t.Context(), engine, WALEntry{Operation: OpUpdateEmbedding}))
 	})
 
 	t.Run("unknown operations return errors", func(t *testing.T) {
-		require.Error(t, ReplayWALEntry(engine, WALEntry{Operation: OperationType("UNKNOWN")}))
-		require.Error(t, UndoWALEntry(engine, WALEntry{Operation: OperationType("UNKNOWN")}))
+		require.Error(t, ReplayWALEntry(t.Context(), engine, WALEntry{Operation: OperationType("UNKNOWN")}))
+		require.Error(t, UndoWALEntry(t.Context(), engine, WALEntry{Operation: OperationType("UNKNOWN")}))
 	})
 
 	t.Run("malformed payloads return errors", func(t *testing.T) {
@@ -786,36 +786,36 @@ func TestReplayAndUndoWALEntry_ErrorBranches(t *testing.T) {
 			{Operation: OpBulkDeleteNodes, Data: []byte("{bad"), Database: "test"},
 			{Operation: OpBulkDeleteEdges, Data: []byte("{bad"), Database: "test"},
 		} {
-			require.Error(t, ReplayWALEntry(engine, entry))
-			require.Error(t, UndoWALEntry(engine, entry))
+			require.Error(t, ReplayWALEntry(t.Context(), engine, entry))
+			require.Error(t, UndoWALEntry(t.Context(), engine, entry))
 		}
 	})
 
 	t.Run("bulk delete undo requires before image", func(t *testing.T) {
 		data, _ := json.Marshal(WALBulkDeleteNodesData{IDs: []string{"n1"}})
-		err := UndoWALEntry(engine, WALEntry{Operation: OpBulkDeleteNodes, Data: data, Database: "test"})
+		err := UndoWALEntry(t.Context(), engine, WALEntry{Operation: OpBulkDeleteNodes, Data: data, Database: "test"})
 		require.ErrorIs(t, err, ErrNoUndoData)
 
 		data, _ = json.Marshal(WALBulkDeleteEdgesData{IDs: []string{"e1"}})
-		err = UndoWALEntry(engine, WALEntry{Operation: OpBulkDeleteEdges, Data: data, Database: "test"})
+		err = UndoWALEntry(t.Context(), engine, WALEntry{Operation: OpBulkDeleteEdges, Data: data, Database: "test"})
 		require.ErrorIs(t, err, ErrNoUndoData)
 	})
 
 	t.Run("single entity undo requires before image", func(t *testing.T) {
 		data, _ := json.Marshal(WALDeleteData{ID: "n1"})
-		err := UndoWALEntry(engine, WALEntry{Operation: OpDeleteNode, Data: data, Database: "test"})
+		err := UndoWALEntry(t.Context(), engine, WALEntry{Operation: OpDeleteNode, Data: data, Database: "test"})
 		require.ErrorIs(t, err, ErrNoUndoData)
 
 		data, _ = json.Marshal(WALEdgeData{Edge: nil})
-		err = UndoWALEntry(engine, WALEntry{Operation: OpCreateEdge, Data: data, Database: "test"})
+		err = UndoWALEntry(t.Context(), engine, WALEntry{Operation: OpCreateEdge, Data: data, Database: "test"})
 		require.ErrorIs(t, err, ErrNoUndoData)
 
 		data, _ = json.Marshal(WALEdgeData{OldEdge: nil})
-		err = UndoWALEntry(engine, WALEntry{Operation: OpUpdateEdge, Data: data, Database: "test"})
+		err = UndoWALEntry(t.Context(), engine, WALEntry{Operation: OpUpdateEdge, Data: data, Database: "test"})
 		require.ErrorIs(t, err, ErrNoUndoData)
 
 		data, _ = json.Marshal(WALDeleteData{ID: "e1"})
-		err = UndoWALEntry(engine, WALEntry{Operation: OpDeleteEdge, Data: data, Database: "test"})
+		err = UndoWALEntry(t.Context(), engine, WALEntry{Operation: OpDeleteEdge, Data: data, Database: "test"})
 		require.ErrorIs(t, err, ErrNoUndoData)
 	})
 }
@@ -831,7 +831,7 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 		snapshotPath := filepath.Join(dir, "snapshot.json")
 		require.NoError(t, os.WriteFile(snapshotPath, []byte("{bad-json"), 0644))
 
-		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to load snapshot")
 	})
 
@@ -849,7 +849,7 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			require.NoError(t, manifestErr)
 		}
 
-		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), dir, ""))
 		require.ErrorContains(t, err, "failed to read WAL")
 	})
 
@@ -870,7 +870,7 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			Version: "1.0",
 		}, snapshotPath))
 
-		baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
+		baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), filepath.Join(dir, "wal"), snapshotPath))
 		require.NoError(t, err)
 		require.NotNil(t, baseEngine)
 		require.Equal(t, uint64(7), result.SnapshotSeq)
@@ -897,7 +897,7 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(snapshotPath, legacy, 0600))
 
-		_, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
+		_, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to restore nodes")
 	})
 
@@ -915,7 +915,7 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			Version: "1.0",
 		}, snapshotPath))
 
-		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to restore edges")
 	})
 }

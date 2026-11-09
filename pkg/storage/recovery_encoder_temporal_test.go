@@ -59,9 +59,9 @@ func TestRecoveryEncoderRegisteredPropertyKinds(t *testing.T) {
 	oldPath, newPath := filepath.Join(dir, "old.nds"), filepath.Join(dir, "new.nds")
 	require.NoError(t, os.WriteFile(oldPath, old.Bytes(), 0644))
 	require.NoError(t, storage.SaveSnapshot(&storage.Snapshot{Nodes: []*storage.Node{node, node}}, newPath))
-	want, err := storage.LoadSnapshot(oldPath)
+	want, err := storage.LoadSnapshot(t.Context(), oldPath)
 	require.NoError(t, err)
-	got, err := storage.LoadSnapshot(newPath)
+	got, err := storage.LoadSnapshot(t.Context(), newPath)
 	require.NoError(t, err)
 	require.Len(t, got.Nodes, 2)
 	for _, decoded := range got.Nodes {
@@ -97,7 +97,7 @@ func TestRecoveryEncoderRegisteredPropertyKinds(t *testing.T) {
 	const snapshotHeaderBytes = 4 + 1 + 8 + 8
 	require.Equal(t, general.Bytes()[snapshotHeaderBytes:], fast.Bytes()[snapshotHeaderBytes:])
 	require.NoError(t, os.WriteFile(newPath, fast.Bytes(), 0644))
-	edgeSnapshot, err := storage.LoadSnapshot(newPath)
+	edgeSnapshot, err := storage.LoadSnapshot(t.Context(), newPath)
 	require.NoError(t, err)
 	require.Len(t, edgeSnapshot.Edges, len(storedKinds), "hidden typed relationships remain recoverable")
 }

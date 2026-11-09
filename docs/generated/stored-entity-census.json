@@ -364,16 +364,16 @@
     {
       "space": "prefixMVCCMetaNamespaceSeq",
       "class": "mvcc-sequence",
-      "origin": "pkg/storage/badger.go:1417",
-      "func": "pkg/storage.BadgerEngine.persistMVCCSequence$1 pkg/storage/badger.go:1417",
+      "origin": "pkg/storage/badger.go:1416",
+      "func": "pkg/storage.BadgerEngine.persistMVCCSequence$1 pkg/storage/badger.go:1416",
       "where": "pkg/storage.BadgerEngine.persistMVCCSequence -"
     },
     {
       "space": "prefixMVCCMetaSchemaVersion",
       "class": "store-metadata",
-      "origin": "pkg/storage/badger.go:1448",
-      "func": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1448",
-      "where": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1448"
+      "origin": "pkg/storage/badger.go:1447",
+      "func": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1447",
+      "where": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1447"
     },
     {
       "space": "prefixMVCCMeta+\"accessmeta:\"",
@@ -2577,7 +2577,7 @@
       "field": "pkg/storage.BadgerEngine.adjCacheMaxNodes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1091"
+      "pos": "pkg/storage/badger.go:1090"
     },
     {
       "field": "pkg/storage.BadgerEngine.cacheHits",
@@ -2607,7 +2607,7 @@
       "field": "pkg/storage.BadgerEngine.edgeCacheMaxItems",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1089"
+      "pos": "pkg/storage/badger.go:1088"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheSources",
@@ -2721,13 +2721,13 @@
       "field": "pkg/storage.BadgerEngine.edgeTypeCacheMaxTypes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1078"
+      "pos": "pkg/storage/badger.go:1077"
     },
     {
       "field": "pkg/storage.BadgerEngine.labelFirstCacheMax",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1081"
+      "pos": "pkg/storage/badger.go:1080"
     },
     {
       "field": "pkg/storage.BadgerEngine.manualSuppressionCount",
@@ -2757,13 +2757,13 @@
       "field": "pkg/storage.BadgerEngine.mvccLegacyGlobalSeed",
       "class": "MVCC sequence",
       "func": "pkg/storage.BadgerEngine.initializeMVCCSequence",
-      "pos": "pkg/storage/badger.go:1318"
+      "pos": "pkg/storage/badger.go:1317"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
       "class": "entity-count",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1095"
+      "pos": "pkg/storage/badger.go:1094"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
@@ -2793,7 +2793,7 @@
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
       "class": "entity-count",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1094"
+      "pos": "pkg/storage/badger.go:1093"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
@@ -2853,7 +2853,7 @@
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheMaxBytes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1075"
+      "pos": "pkg/storage/badger.go:1074"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
@@ -2889,13 +2889,13 @@
       "field": "pkg/storage.BadgerEngine.nodeCacheMaxBytes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1072"
+      "pos": "pkg/storage/badger.go:1071"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheMaxEntries",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1069"
+      "pos": "pkg/storage/badger.go:1068"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCount",
@@ -2931,19 +2931,19 @@
       "field": "pkg/storage.BadgerEngine.storageVersion",
       "class": "store metadata",
       "func": "pkg/storage.BadgerEngine.runOnStartMigrations",
-      "pos": "pkg/storage/migration_runner.go:156"
+      "pos": "pkg/storage/migration_runner.go:155"
     },
     {
       "field": "pkg/storage.BadgerEngine.storageVersion",
       "class": "store metadata",
       "func": "pkg/storage.BadgerEngine.runOnStartMigrations",
-      "pos": "pkg/storage/migration_runner.go:224"
+      "pos": "pkg/storage/migration_runner.go:223"
     },
     {
       "field": "pkg/storage.BadgerEngine.storageVersion",
       "class": "store metadata",
       "func": "pkg/storage.BadgerEngine.runOnStartMigrations",
-      "pos": "pkg/storage/migration_runner.go:293"
+      "pos": "pkg/storage/migration_runner.go:292"
     },
     {
       "field": "pkg/storage.BadgerEngine.storageVersion",

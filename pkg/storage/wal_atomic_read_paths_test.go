@@ -79,7 +79,7 @@ func TestReadAtomicWALEntries_SkipsCorruptedEmbeddingAndReturnsOthers(t *testing
 
 	require.NoError(t, os.WriteFile(path, append(append(good1, badEmbedding...), good2...), 0644))
 
-	entries, err := ReadWALEntries(path, nil)
+	entries, err := ReadWALEntries(t.Context(), path, nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	require.Equal(t, uint64(1), entries[0].Sequence)
@@ -96,7 +96,7 @@ func TestReadAtomicWALEntries_DetectsVersionLengthAndDataChecksumErrors(t *testi
 		rec := buildAtomicRecordRaw(payload, walFormatVersionCurrent+1, crc32Checksum(payload), walTrailer, true)
 		require.NoError(t, os.WriteFile(path, rec, 0644))
 
-		_, err := ReadWALEntries(path, nil)
+		_, err := ReadWALEntries(t.Context(), path, nil)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "unsupported WAL version")
 	})
@@ -109,7 +109,7 @@ func TestReadAtomicWALEntries_DetectsVersionLengthAndDataChecksumErrors(t *testi
 		binary.LittleEndian.PutUint32(header[5:9], walMaxEntrySize+1)
 		require.NoError(t, os.WriteFile(path, header, 0644))
 
-		_, err := ReadWALEntries(path, nil)
+		_, err := ReadWALEntries(t.Context(), path, nil)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "exceeds maximum")
 	})
@@ -121,7 +121,7 @@ func TestReadAtomicWALEntries_DetectsVersionLengthAndDataChecksumErrors(t *testi
 		rec := buildAtomicRecordRaw(payload, walFormatVersionCurrent, crc32Checksum(payload), walTrailer, true)
 		require.NoError(t, os.WriteFile(path, rec, 0644))
 
-		_, err := ReadWALEntries(path, nil)
+		_, err := ReadWALEntries(t.Context(), path, nil)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "data checksum mismatch")
 	})
@@ -149,7 +149,7 @@ func TestReadAtomicWALEntries_DetectsVersionLengthAndDataChecksumErrors(t *testi
 
 		require.NoError(t, os.WriteFile(path, append(good, badEmbedding...), 0644))
 
-		entries, err := ReadWALEntries(path, nil)
+		entries, err := ReadWALEntries(t.Context(), path, nil)
 		require.NoError(t, err)
 		require.Len(t, entries, 1)
 		require.Equal(t, uint64(1), entries[0].Sequence)
@@ -167,7 +167,7 @@ func TestReadAtomicWALEntries_PartialTrailerAndPaddingHandledAsTail(t *testing.T
 		rec = rec[:9+len(payload)+4+5]
 		require.NoError(t, os.WriteFile(path, rec, 0644))
 
-		entries, err := ReadWALEntries(path, nil)
+		entries, err := ReadWALEntries(t.Context(), path, nil)
 		require.NoError(t, err)
 		require.Len(t, entries, 0)
 	})
@@ -179,7 +179,7 @@ func TestReadAtomicWALEntries_PartialTrailerAndPaddingHandledAsTail(t *testing.T
 		recNoPadding := buildAtomicRecordRaw(payload, walFormatVersionCurrent, crc32Checksum(payload), walTrailer, false)
 		require.NoError(t, os.WriteFile(path, recNoPadding, 0644))
 
-		_, err := ReadWALEntries(path, nil)
+		_, err := ReadWALEntries(t.Context(), path, nil)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "failed to read padding")
 	})

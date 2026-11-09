@@ -23,7 +23,7 @@ func TestRecoveryReadsLegacySnapshotFormats(t *testing.T) {
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "legacy.json")
 	require.NoError(t, os.WriteFile(path, raw, 0600))
-	loaded, err := LoadSnapshot(path)
+	loaded, err := LoadSnapshot(t.Context(), path)
 	require.NoError(t, err)
 	require.True(t, legacy.Timestamp.Equal(loaded.Timestamp))
 	expected := *legacy
@@ -42,7 +42,7 @@ func TestRecoveryReadsLegacySnapshotFormats(t *testing.T) {
 	require.NoError(t, buffered.Flush())
 	framed.Bytes()[4] = 1
 	visitor := &recoveryFieldsVisitor{}
-	meta, err := ReadSnapshot(bytes.NewReader(framed.Bytes()), visitor)
+	meta, err := ReadSnapshot(t.Context(), bytes.NewReader(framed.Bytes()), visitor)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(19), meta.Sequence)
 	require.Len(t, visitor.nodes, 1)
@@ -79,17 +79,17 @@ func TestRecoverySnapshotRejectsTruncationCorruptionAndUnknownVersion(t *testing
 	require.NoError(t, writeSnapshotCollection(&buffer, &Snapshot{Nodes: []*Node{n}}))
 	raw := buffer.Bytes()
 	for _, cut := range []int{0, 4, 12, len(raw) - 1} {
-		_, err := ReadSnapshot(bytes.NewReader(raw[:cut]), &recoveryFieldsVisitor{})
+		_, err := ReadSnapshot(t.Context(), bytes.NewReader(raw[:cut]), &recoveryFieldsVisitor{})
 		assert.Error(t, err)
 	}
 	corrupt := append([]byte(nil), raw...)
 	corrupt[30] ^= 1
-	_, err := ReadSnapshot(bytes.NewReader(corrupt), &recoveryFieldsVisitor{})
+	_, err := ReadSnapshot(t.Context(), bytes.NewReader(corrupt), &recoveryFieldsVisitor{})
 	assert.Error(t, err)
 	future := append([]byte(nil), raw...)
 	future[4] = 3
 	visitor := &recoveryFieldsVisitor{}
-	_, err = ReadSnapshot(bytes.NewReader(future), visitor)
+	_, err = ReadSnapshot(t.Context(), bytes.NewReader(future), visitor)
 	require.Error(t, err)
 	assert.Empty(t, visitor.nodes, "unsupported versions must fail before visiting entities")
 }
@@ -110,7 +110,7 @@ func TestRecoveryReplayUndoPreservesEntityFields(t *testing.T) {
 				raw, err := marshalWALRecoveryPayload(nil, data)
 				require.NoError(t, err)
 				entry := WALEntry{Operation: op, Database: "test", Data: raw}
-				require.NoError(t, ReplayWALEntry(engine, entry))
+				require.NoError(t, ReplayWALEntry(t.Context(), engine, entry))
 				return entry
 			}
 			if bulk {
@@ -134,8 +134,8 @@ func TestRecoveryReplayUndoPreservesEntityFields(t *testing.T) {
 				deleteE = apply(OpDeleteEdge, WALDeleteData{ID: "e", OldEdge: e})
 				deleteN = apply(OpDeleteNode, WALDeleteData{ID: "a", OldNode: n})
 			}
-			require.NoError(t, UndoWALEntry(engine, deleteN))
-			require.NoError(t, UndoWALEntry(engine, deleteE))
+			require.NoError(t, UndoWALEntry(t.Context(), engine, deleteN))
+			require.NoError(t, UndoWALEntry(t.Context(), engine, deleteE))
 			gotN, err = ns.GetNode(t.Context(), "a")
 			require.NoError(t, err)
 			assertRecoveryNodeFields(t, n, gotN)
@@ -145,14 +145,14 @@ func TestRecoveryReplayUndoPreservesEntityFields(t *testing.T) {
 			updated := *n
 			updated.UpdatedAt = n.UpdatedAt.Add(time.Hour)
 			entry := apply(OpUpdateNode, WALNodeData{Node: &updated, OldNode: n})
-			require.NoError(t, UndoWALEntry(engine, entry))
+			require.NoError(t, UndoWALEntry(t.Context(), engine, entry))
 			gotN, err = ns.GetNode(t.Context(), "a")
 			require.NoError(t, err)
 			assertRecoveryNodeFields(t, n, gotN)
 			updatedE := *e
 			updatedE.Confidence = 0.9
 			entry = apply(OpUpdateEdge, WALEdgeData{Edge: &updatedE, OldEdge: e})
-			require.NoError(t, UndoWALEntry(engine, entry))
+			require.NoError(t, UndoWALEntry(t.Context(), engine, entry))
 			gotE, err = ns.GetEdge(t.Context(), "e")
 			require.NoError(t, err)
 			assertRecoveryEdgeFields(t, e, gotE)
@@ -179,16 +179,16 @@ func TestRecoverySnapshotSaveRestoreAcrossRoutes(t *testing.T) {
 			snapshot := &Snapshot{Sequence: 37, Version: "custom", Timestamp: time.Unix(120, 456), Nodes: []*Node{n, b}, Edges: []*Edge{e}}
 			path := filepath.Join(t.TempDir(), "snapshot.nds")
 			require.NoError(t, SaveSnapshot(snapshot, path))
-			loaded, err := LoadSnapshot(path)
+			loaded, err := LoadSnapshot(t.Context(), path)
 			require.NoError(t, err)
 			assert.Equal(t, snapshot.Sequence, loaded.Sequence)
 			assert.Equal(t, snapshot.Version, loaded.Version)
 			assert.True(t, snapshot.Timestamp.Equal(loaded.Timestamp))
-			memory, _, err := runtimeFixtureOwner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.TempDir(), path))
+			memory, _, err := runtimeFixtureOwner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), t.TempDir(), path))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = memory.Close() })
 			target := newTestMemoryEngine(t)
-			_, status, err := RecoverIntoEngine(target, t.TempDir(), path)
+			_, status, err := RecoverIntoEngine(t.Context(), target, t.TempDir(), path)
 			require.NoError(t, err)
 			assert.True(t, status.SnapshotStreaming)
 			for _, engine := range []Engine{memory, target} {
@@ -263,18 +263,18 @@ func TestRecoveryMaterializedSnapshotKeepsLargeEntitySupport(t *testing.T) {
 	node := &Node{ID: "test:large", Properties: map[string]any{"body": string(bytes.Repeat([]byte{'x'}, defaultSnapshotRecordSize+1))}}
 	path := filepath.Join(t.TempDir(), "large.nds")
 	require.NoError(t, SaveSnapshot(&Snapshot{Nodes: []*Node{node}}, path), "materialized backups previously accepted entities larger than the streaming record limit")
-	snapshot, err := LoadSnapshot(path)
+	snapshot, err := LoadSnapshot(t.Context(), path)
 	require.NoError(t, err)
 	require.Len(t, snapshot.Nodes, 1)
 	assert.Equal(t, node.Properties, snapshot.Nodes[0].Properties)
 	file, err := os.Open(path)
 	require.NoError(t, err)
-	_, err = ReadSnapshot(file, &recoveryFieldsVisitor{})
+	_, err = ReadSnapshot(t.Context(), file, &recoveryFieldsVisitor{})
 	require.ErrorContains(t, err, "reader limit")
 	require.NoError(t, file.Close())
 	// Memory recovery retains its pre-existing 64KiB Badger value ceiling;
 	// its storage error must be reached after the large frame was decoded.
-	restored, _, err := runtimeFixtureOwner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.TempDir(), path))
+	restored, _, err := runtimeFixtureOwner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), t.TempDir(), path))
 	require.ErrorContains(t, err, "exceeded 65536 limit")
 	if restored != nil {
 		_ = restored.Close()
@@ -282,7 +282,7 @@ func TestRecoveryMaterializedSnapshotKeepsLargeEntitySupport(t *testing.T) {
 	target, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = target.Close() })
-	_, _, err = RecoverIntoEngine(target, t.TempDir(), path)
+	_, _, err = RecoverIntoEngine(t.Context(), target, t.TempDir(), path)
 	require.NoError(t, err)
 	got, err := target.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
@@ -308,7 +308,7 @@ func TestRecoveryLargeClaimedSnapshotLengthDoesNotPreallocate(t *testing.T) {
 	require.NoError(t, binary.Write(writer, binary.LittleEndian, uint32(materializedSnapshotRecordSize)))
 	require.NoError(t, writer.Flush())
 	reader := &recordingSnapshotReader{Reader: bytes.NewReader(buffer.Bytes())}
-	_, err := readSnapshot(reader, &recoveryFieldsVisitor{}, nil, materializedSnapshotRecordSize)
+	_, err := readSnapshot(t.Context(), reader, &recoveryFieldsVisitor{}, nil, materializedSnapshotRecordSize)
 	require.Error(t, err)
 	assert.LessOrEqual(t, reader.largestRead, 64<<10, "a claimed4GiB length must not become a giant read/allocation before data exists")
 }

@@ -24,7 +24,7 @@
 //	wal.SaveSnapshot(snapshot, "/path/to/snapshot.json")
 //
 //	// Recovery after crash
-//	engine, err = RecoverFromWAL("/path/to/wal", "/path/to/snapshot.json")
+//	engine, err = RecoverFromWAL(ctx, "/path/to/wal", "/path/to/snapshot.json")
 package storage
 
 import (
@@ -542,7 +542,7 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 
 // loadLastSequence reads the last sequence number from the current-format WAL.
 func (w *WAL) loadLastSequence() (uint64, error) {
-	entries, err := ReadWALEntriesFromDir(w.config.Dir)
+	entries, err := ReadWALEntriesFromDir(w.work.Context(), w.config.Dir)
 	if err != nil {
 		return 0, err
 	}
@@ -559,7 +559,7 @@ func (w *WAL) loadLastSequence() (uint64, error) {
 
 func (w *WAL) loadActiveSegmentState() {
 	activePath := walActivePath(w.config.Dir)
-	entries, err := ReadWALEntries(activePath, nil)
+	entries, err := ReadWALEntries(w.work.Context(), activePath, nil)
 	if err != nil || len(entries) == 0 {
 		return
 	}
@@ -1396,7 +1396,7 @@ func saveSnapshot(snapshot *Snapshot, path string, syncDirectory func(string) er
 }
 
 // LoadSnapshot reads legacy JSON or NDS2 v1/v2 framed snapshots from disk.
-func LoadSnapshot(path string) (*Snapshot, error) {
+func LoadSnapshot(ctx context.Context, path string) (*Snapshot, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("wal: failed to open snapshot: %w", err)
@@ -1410,7 +1410,7 @@ func LoadSnapshot(path string) (*Snapshot, error) {
 	var snapshot Snapshot
 	if streaming {
 		snapshot.Version = "1.0"
-		metadata, err := readSnapshot(file, snapshotCollectionVisitor{snapshot: &snapshot}, &snapshot, materializedSnapshotRecordSize)
+		metadata, err := readSnapshot(ctx, file, snapshotCollectionVisitor{snapshot: &snapshot}, &snapshot, materializedSnapshotRecordSize)
 		if err != nil {
 			return nil, fmt.Errorf("wal: failed to decode snapshot: %w", err)
 		}
@@ -1536,9 +1536,9 @@ func (m WALSnapshotMode) String() string {
 //
 //	snapshot, _ := wal.CreateSnapshot(engine)
 //	SaveSnapshot(snapshot, "data/snapshot.json")
-//	wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)  // Reclaim disk space
-//	wal.ManageSnapshot(snapshot.Sequence, WALSnapshotRetention) // Retention only
-func (w *WAL) ManageSnapshot(snapshotSeq uint64, mode WALSnapshotMode) error {
+//	wal.ManageSnapshot(ctx, snapshot.Sequence, WALSnapshotTruncate)  // Reclaim disk space
+//	wal.ManageSnapshot(ctx, snapshot.Sequence, WALSnapshotRetention) // Retention only
+func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSnapshotMode) error {
 	if w.work.Closing() {
 		return ErrWALClosed
 	}
@@ -1587,7 +1587,7 @@ func (w *WAL) ManageSnapshot(snapshotSeq uint64, mode WALSnapshotMode) error {
 	// A failed read may include entries newer than the snapshot. Rewriting the
 	// file from a best-effort subset would turn an observable failure into data
 	// loss, so leave the active handle and WAL intact for recovery.
-	allEntries, readErr := ReadWALEntriesFromDir(w.config.Dir)
+	allEntries, readErr := ReadWALEntriesFromDir(ctx, w.config.Dir)
 	if readErr != nil {
 		if errors.Is(readErr, ErrWALCorrupted) || errors.Is(readErr, ErrWALChecksumFailed) {
 			diag := &CorruptionDiagnostics{
@@ -1604,7 +1604,7 @@ func (w *WAL) ManageSnapshot(snapshotSeq uint64, mode WALSnapshotMode) error {
 		}
 		return fmt.Errorf("wal: cannot truncate unreadable WAL: %w", readErr)
 	}
-	activeEntries, err := ReadWALEntries(walPath, nil)
+	activeEntries, err := ReadWALEntries(ctx, walPath, nil)
 	if err != nil {
 		return fmt.Errorf("wal: cannot truncate unreadable active WAL: %w", err)
 	}
@@ -1622,7 +1622,7 @@ func (w *WAL) ManageSnapshot(snapshotSeq uint64, mode WALSnapshotMode) error {
 			if pathErr != nil {
 				return pathErr
 			}
-			entries, segmentErr := ReadWALEntries(path, nil)
+			entries, segmentErr := ReadWALEntries(ctx, path, nil)
 			if segmentErr != nil {
 				return fmt.Errorf("wal: cannot inspect segment for truncation: %w", segmentErr)
 			}
@@ -1891,17 +1891,18 @@ func (w *WAL) reopenWAL() error {
 // Returns error on corruption of critical entries (nodes, edges).
 // Embedding updates are safe to skip as they can be regenerated.
 //
-// A nil logger discards recovery diagnostics.
-func ReadWALEntries(walPath string, logger *slog.Logger) ([]WALEntry, error) {
+// A nil logger discards recovery diagnostics. ctx supplies diagnostic provenance;
+// reading the WAL does not cancel accepted recovery work.
+func ReadWALEntries(ctx context.Context, walPath string, logger *slog.Logger) ([]WALEntry, error) {
 	entries := make([]WALEntry, 0)
-	err := visitWALEntriesWithLogger(walPath, logger, func(entry WALEntry) error {
+	err := visitWALEntriesWithLogger(ctx, walPath, logger, func(entry WALEntry) error {
 		entries = append(entries, entry)
 		return nil
 	})
 	return entries, err
 }
 
-func visitWALEntriesWithLogger(walPath string, logger *slog.Logger, visit func(WALEntry) error) error {
+func visitWALEntriesWithLogger(ctx context.Context, walPath string, logger *slog.Logger, visit func(WALEntry) error) error {
 	if logger == nil {
 		logger = discardWALSlog()
 	}
@@ -1932,13 +1933,13 @@ func visitWALEntriesWithLogger(walPath string, logger *slog.Logger, visit func(W
 	// The current atomic format starts with magic "WALE".
 	magic := binary.LittleEndian.Uint32(header)
 	if magic == walMagic {
-		return visitAtomicWALEntries(file, logger, visit)
+		return visitAtomicWALEntries(ctx, file, logger, visit)
 	}
 
 	return fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
 }
 
-func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
+func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
 	visit = withWALPropertyEpochs(visit)
 	if logger == nil {
 		logger = discardWALSlog()
@@ -2106,10 +2107,10 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 	}
 
 	if partialWriteDetected {
-		logWALRecoveryEvent(logger, localization.StorageWALIncompleteWriteEvent())
+		logStorageEvent(ctx, logger, slog.LevelWarn, localization.StorageWALIncompleteWriteEvent())
 	}
 	if skippedEmbeddings > 0 {
-		logWALRecoveryEvent(logger, localization.StorageWALCorruptedEmbeddingsSkippedEvent(skippedEmbeddings, "atomic"))
+		logStorageEvent(ctx, logger, slog.LevelWarn, localization.StorageWALCorruptedEmbeddingsSkippedEvent(skippedEmbeddings, "atomic"))
 	}
 
 	return nil
@@ -2297,14 +2298,14 @@ const (
 )
 
 // ReadWALEntriesAfter reads entries after a sequence from the selected WAL scope.
-func ReadWALEntriesAfter(path string, afterSeq uint64, scope WALReadScope) ([]WALEntry, error) {
+func ReadWALEntriesAfter(ctx context.Context, path string, afterSeq uint64, scope WALReadScope) ([]WALEntry, error) {
 	var all []WALEntry
 	var err error
 	switch scope {
 	case WALReadFile:
-		all, err = ReadWALEntries(path, nil)
+		all, err = ReadWALEntries(ctx, path, nil)
 	case WALReadDirectory:
-		all, err = ReadWALEntriesFromDir(path)
+		all, err = ReadWALEntriesFromDir(ctx, path)
 	default:
 		return nil, fmt.Errorf("wal: invalid read scope %d", scope)
 	}
@@ -2331,22 +2332,23 @@ func ReadWALEntriesAfter(path string, afterSeq uint64, scope WALReadScope) ([]WA
 // run. A caller replaying a sequence as one recovery batch applies each record
 // with replayWALEntry and completes the batch itself, so that reconciliation
 // stays once per batch rather than once per record.
-func ReplayWALEntry(engine Engine, entry WALEntry) error {
-	if err := replayWALEntry(engine, entry); err != nil {
+func ReplayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
+	ctx = context.WithoutCancel(ctx)
+	if err := replayWALEntry(ctx, engine, entry); err != nil {
 		return err
 	}
 	if entry.Operation != OpBufferedCommit {
 		return nil
 	}
 	if native, ok := UnwrapEngine(engine).(*BadgerEngine); ok && native != nil {
-		return native.completeRecoveredCounts(context.Background(), nil)
+		return native.completeRecoveredCounts(ctx, nil)
 	}
 	return nil
 }
 
 // replayWALEntry applies a single WAL entry to the engine without completing
 // the derived counts its physical replay did not transport.
-func replayWALEntry(engine Engine, entry WALEntry) error {
+func replayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 	switch entry.Operation {
 	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
 		// Control records do not change graph state. Embedding audit records
@@ -2403,7 +2405,7 @@ func replayWALEntry(engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		_, err := namespacedEngine.CreateNode(context.Background(), data.Node)
+		_, err := namespacedEngine.CreateNode(ctx, data.Node)
 		return err
 
 	case OpUpdateNode:
@@ -2411,49 +2413,49 @@ func replayWALEntry(engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		return namespacedEngine.UpdateNode(context.Background(), NodeUpdateRequest{After: data.Node})
+		return namespacedEngine.UpdateNode(ctx, NodeUpdateRequest{After: data.Node})
 
 	case OpDeleteNode:
 		var data WALDeleteData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
-		return namespacedEngine.DeleteNode(context.Background(), NodeID(data.ID))
+		return namespacedEngine.DeleteNode(ctx, NodeID(data.ID))
 
 	case OpCreateEdge:
 		var data WALEdgeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return namespacedEngine.CreateEdge(context.Background(), data.Edge)
+		return namespacedEngine.CreateEdge(ctx, data.Edge)
 
 	case OpUpdateEdge:
 		var data WALEdgeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return namespacedEngine.UpdateEdge(context.Background(), EdgeUpdateRequest{After: data.Edge})
+		return namespacedEngine.UpdateEdge(ctx, EdgeUpdateRequest{After: data.Edge})
 
 	case OpDeleteEdge:
 		var data WALDeleteData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
-		return namespacedEngine.DeleteEdge(context.Background(), EdgeID(data.ID))
+		return namespacedEngine.DeleteEdge(ctx, EdgeID(data.ID))
 
 	case OpBulkNodes:
 		var data WALBulkNodesData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk nodes: %w", err)
 		}
-		return namespacedEngine.BulkCreateNodes(context.Background(), data.Nodes)
+		return namespacedEngine.BulkCreateNodes(ctx, data.Nodes)
 
 	case OpBulkEdges:
 		var data WALBulkEdgesData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk edges: %w", err)
 		}
-		return namespacedEngine.BulkCreateEdges(context.Background(), data.Edges)
+		return namespacedEngine.BulkCreateEdges(ctx, data.Edges)
 
 	case OpBulkDeleteNodes:
 		var data WALBulkDeleteNodesData
@@ -2464,7 +2466,7 @@ func replayWALEntry(engine Engine, entry WALEntry) error {
 		for i, id := range data.IDs {
 			ids[i] = NodeID(id)
 		}
-		return namespacedEngine.BulkDeleteNodes(context.Background(), ids)
+		return namespacedEngine.BulkDeleteNodes(ctx, ids)
 
 	case OpBulkDeleteEdges:
 		var data WALBulkDeleteEdgesData
@@ -2475,7 +2477,7 @@ func replayWALEntry(engine Engine, entry WALEntry) error {
 		for i, id := range data.IDs {
 			ids[i] = EdgeID(id)
 		}
-		return namespacedEngine.BulkDeleteEdges(context.Background(), ids)
+		return namespacedEngine.BulkDeleteEdges(ctx, ids)
 
 	case OpBufferedCommit:
 		// A write-behind commit's full payload. Replay it through the same
@@ -2498,13 +2500,13 @@ func replayWALEntry(engine Engine, entry WALEntry) error {
 		// the destination buffer. Their completion must precede this physical
 		// record, just as snapshot completion precedes WAL replay.
 		if b.writeBehind != nil && b.writeBehind.PendingOps() > 0 {
-			if err := b.FlushWriteBehind(context.Background()); err != nil {
+			if err := b.FlushWriteBehind(ctx); err != nil {
 				return fmt.Errorf("wal: complete preceding writes before buffered replay: %w", err)
 			}
 		}
 		// Physical replay has no caller context at this exported entry.
 		// Preserve its non-cancellable phase through provenance admission.
-		c, err := b.importBufferedWALRecord(context.Background(), &data, walForeignImport)
+		c, err := b.importBufferedWALRecord(ctx, &data, walForeignImport)
 		if err != nil {
 			return err
 		}
@@ -2520,7 +2522,8 @@ func replayWALEntry(engine Engine, entry WALEntry) error {
 // Returns ErrNoUndoData if the entry lacks undo information.
 var ErrNoUndoData = errors.New("wal: entry has no undo data")
 
-func UndoWALEntry(engine Engine, entry WALEntry) error {
+func UndoWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
+	ctx = context.WithoutCancel(ctx)
 	// Determine database name: use entry's database if present, otherwise infer from engine/config.
 	dbName := entry.Database
 	if dbName == "" {
@@ -2554,7 +2557,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.Node == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.DeleteNode(context.Background(), data.Node.ID)
+		return namespacedEngine.DeleteNode(ctx, data.Node.ID)
 
 	case OpUpdateNode:
 		// Undo update = restore old node
@@ -2565,7 +2568,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.UpdateNode(context.Background(), NodeUpdateRequest{After: data.OldNode})
+		return namespacedEngine.UpdateNode(ctx, NodeUpdateRequest{After: data.OldNode})
 
 	case OpDeleteNode:
 		// Undo delete = recreate old node
@@ -2576,7 +2579,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		_, err := namespacedEngine.CreateNode(context.Background(), data.OldNode)
+		_, err := namespacedEngine.CreateNode(ctx, data.OldNode)
 		return err
 
 	case OpCreateEdge:
@@ -2588,7 +2591,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.Edge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.DeleteEdge(context.Background(), data.Edge.ID)
+		return namespacedEngine.DeleteEdge(ctx, data.Edge.ID)
 
 	case OpUpdateEdge:
 		// Undo update = restore old edge
@@ -2599,7 +2602,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.UpdateEdge(context.Background(), EdgeUpdateRequest{After: data.OldEdge})
+		return namespacedEngine.UpdateEdge(ctx, EdgeUpdateRequest{After: data.OldEdge})
 
 	case OpDeleteEdge:
 		// Undo delete = recreate old edge
@@ -2610,7 +2613,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.CreateEdge(context.Background(), data.OldEdge)
+		return namespacedEngine.CreateEdge(ctx, data.OldEdge)
 
 	case OpBulkNodes:
 		// Undo bulk create = delete all
@@ -2622,7 +2625,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		for i, n := range data.Nodes {
 			ids[i] = n.ID
 		}
-		return engine.BulkDeleteNodes(context.Background(), ids)
+		return engine.BulkDeleteNodes(ctx, ids)
 
 	case OpBulkEdges:
 		// Undo bulk create = delete all
@@ -2634,7 +2637,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		for i, e := range data.Edges {
 			ids[i] = e.ID
 		}
-		return engine.BulkDeleteEdges(context.Background(), ids)
+		return engine.BulkDeleteEdges(ctx, ids)
 
 	case OpBulkDeleteNodes:
 		// Undo bulk delete = recreate all
@@ -2645,7 +2648,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.OldNodes) == 0 {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.BulkCreateNodes(context.Background(), data.OldNodes)
+		return namespacedEngine.BulkCreateNodes(ctx, data.OldNodes)
 
 	case OpBulkDeleteEdges:
 		// Undo bulk delete = recreate all
@@ -2656,7 +2659,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.OldEdges) == 0 {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.BulkCreateEdges(context.Background(), data.OldEdges)
+		return namespacedEngine.BulkCreateEdges(ctx, data.OldEdges)
 
 	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
 		// These don't need undo
@@ -2740,8 +2743,10 @@ type TransactionState struct {
 
 // RecoverWithTransactions performs transaction-aware WAL recovery.
 // Incomplete transactions (no commit/abort) are rolled back using undo data.
-// Returns the engine state and recovery statistics.
-func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *TransactionRecoveryResult, error) {
+// Returns the engine state and recovery statistics. Recovery preserves ctx values
+// but completes independently of its cancellation once restoring accepted data.
+func RecoverWithTransactions(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, *TransactionRecoveryResult, error) {
+	ctx = context.WithoutCancel(ctx)
 	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {
 		return nil, nil, fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
@@ -2754,7 +2759,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 
 	// Load snapshot if available
 	if snapshotPath != "" {
-		snapshot, err := LoadSnapshot(snapshotPath)
+		snapshot, err := LoadSnapshot(ctx, snapshotPath)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", err)
 		}
@@ -2768,17 +2773,17 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 			}
 			// Wrap engine with NamespacedEngine for snapshot restore (snapshot nodes have unprefixed IDs)
 			namespacedEngine := NewNamespacedEngine(engine, dbName)
-			if err := namespacedEngine.BulkCreateNodes(context.Background(), snapshot.Nodes); err != nil {
+			if err := namespacedEngine.BulkCreateNodes(ctx, snapshot.Nodes); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 			}
-			if err := namespacedEngine.BulkCreateEdges(context.Background(), snapshot.Edges); err != nil {
+			if err := namespacedEngine.BulkCreateEdges(ctx, snapshot.Edges); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 			}
 		}
 	}
 
 	// Read all WAL entries
-	entries, err := ReadWALEntriesFromDir(walDir)
+	entries, err := ReadWALEntriesFromDir(ctx, walDir)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, result, fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
@@ -2848,7 +2853,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 		if tx.Done && !tx.Aborted {
 			// Transaction committed - apply all its entries
 			for _, entry := range tx.Entries {
-				if err := replayWALEntry(engine, entry); err != nil {
+				if err := replayWALEntry(ctx, engine, entry); err != nil {
 					if !errors.Is(err, ErrAlreadyExists) {
 						result.FailedTransactions = append(result.FailedTransactions, txID)
 					}
@@ -2864,12 +2869,12 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 			// Transaction incomplete - needs rollback
 			// First apply forward (in case partially applied before crash)
 			for _, entry := range tx.Entries {
-				replayWALEntry(engine, entry) // Ignore errors - might already exist
+				replayWALEntry(ctx, engine, entry) // Ignore errors - might already exist
 			}
 			// Then undo in reverse order
 			for i := len(tx.Entries) - 1; i >= 0; i-- {
 				entry := tx.Entries[i]
-				if err := UndoWALEntry(engine, entry); err != nil {
+				if err := UndoWALEntry(ctx, engine, entry); err != nil {
 					if !errors.Is(err, ErrNoUndoData) {
 						result.UndoErrors = append(result.UndoErrors, fmt.Sprintf("tx %s: %v", txID, err))
 					}
@@ -2883,7 +2888,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 
 	// Phase 4: Apply non-transactional entries
 	for _, entry := range nonTxEntries {
-		if err := replayWALEntry(engine, entry); err != nil {
+		if err := replayWALEntry(ctx, engine, entry); err != nil {
 			if !errors.Is(err, ErrAlreadyExists) {
 				result.NonTxErrors = append(result.NonTxErrors, err.Error())
 			}
@@ -2891,7 +2896,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 		result.NonTxApplied++
 	}
 	if result.NonTxApplied > 0 || result.CommittedTransactions > 0 || result.RolledBackTransactions > 0 {
-		if err := engine.BadgerEngine.completeRecoveredCounts(context.Background(), nil); err != nil {
+		if err := engine.BadgerEngine.completeRecoveredCounts(ctx, nil); err != nil {
 			return nil, result, err
 		}
 	}
@@ -2929,19 +2934,19 @@ func (r *TransactionRecoveryResult) HasErrors() bool {
 //
 // Uses a discard *slog.Logger for diagnostics. Callers wanting structured
 // recovery visibility should use RecoverFromWALWithLogger.
-func RecoverFromWAL(walDir, snapshotPath string) (*MemoryEngine, error) {
-	return RecoverFromWALWithLogger(walDir, snapshotPath, discardWALSlog())
+func RecoverFromWAL(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, error) {
+	return RecoverFromWALWithLogger(ctx, walDir, snapshotPath, discardWALSlog())
 }
 
 // RecoverFromWALWithLogger is the slog-aware variant of RecoverFromWAL.
 // D-07: pass a child logger tagged subsystem=wal_recovery so completion-
 // with-errors records land in the structured stream. Operator-actionable
 // fields: failed, errors, summary; per-error attributes seq, operation, error.
-func RecoverFromWALWithLogger(walDir, snapshotPath string, logger *slog.Logger) (*MemoryEngine, error) {
+func RecoverFromWALWithLogger(ctx context.Context, walDir, snapshotPath string, logger *slog.Logger) (*MemoryEngine, error) {
 	if logger == nil {
 		logger = discardWALSlog()
 	}
-	engine, result, err := RecoverFromWALWithResult(walDir, snapshotPath)
+	engine, result, err := RecoverFromWALWithResult(ctx, walDir, snapshotPath)
 	if err != nil {
 		return nil, err
 	}
@@ -2952,12 +2957,12 @@ func RecoverFromWALWithLogger(walDir, snapshotPath string, logger *slog.Logger) 
 	// `recovery_error` when triaging.
 	if result.Failed > 0 {
 		recoveryLog := logger.With("subsystem", "wal_recovery")
-		recoveryLog.Warn("wal recovery completed with errors",
+		recoveryLog.WarnContext(ctx, "wal recovery completed with errors",
 			"failed", result.Failed,
 			"summary", result.Summary(),
 		)
 		for _, e := range result.Errors {
-			recoveryLog.Debug("wal recovery error",
+			recoveryLog.DebugContext(ctx, "wal recovery error",
 				"seq", e.Sequence,
 				"operation", e.Operation,
 			)
@@ -2969,7 +2974,8 @@ func RecoverFromWALWithLogger(walDir, snapshotPath string, logger *slog.Logger) 
 
 // RecoverFromWALWithResult recovers database state and returns detailed results.
 // Use this for programmatic access to replay statistics and errors.
-func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, ReplayResult, error) {
+func RecoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, ReplayResult, error) {
+	ctx = context.WithoutCancel(ctx)
 	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {
 		return nil, ReplayResult{}, fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
@@ -2990,7 +2996,7 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 			if err != nil {
 				return nil, result, fmt.Errorf("wal: failed to open snapshot: %w", err)
 			}
-			metadata, readErr := readSnapshot(file, engineSnapshotVisitor{engine: engine}, nil, materializedSnapshotRecordSize)
+			metadata, readErr := readSnapshot(ctx, file, engineSnapshotVisitor{engine: engine}, nil, materializedSnapshotRecordSize)
 			closeErr := file.Close()
 			if readErr != nil {
 				return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", readErr)
@@ -3000,7 +3006,7 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 			}
 			snapshotSeq = metadata.Sequence
 		} else {
-			snapshot, err := LoadSnapshot(snapshotPath)
+			snapshot, err := LoadSnapshot(ctx, snapshotPath)
 			if err != nil {
 				if !os.IsNotExist(err) {
 					return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", err)
@@ -3038,10 +3044,10 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 				}
 
 				namespacedEngine := NewNamespacedEngine(engine, dbName)
-				if err := namespacedEngine.BulkCreateNodes(context.Background(), snapshot.Nodes); err != nil {
+				if err := namespacedEngine.BulkCreateNodes(ctx, snapshot.Nodes); err != nil {
 					return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 				}
-				if err := namespacedEngine.BulkCreateEdges(context.Background(), snapshot.Edges); err != nil {
+				if err := namespacedEngine.BulkCreateEdges(ctx, snapshot.Edges); err != nil {
 					return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 				}
 			}
@@ -3065,7 +3071,7 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 		return nil, result, fmt.Errorf("wal: failed to inspect recovery log: %w", repairErr)
 	}
 
-	entries, err := ReadWALEntriesAfter(walDir, snapshotSeq, WALReadDirectory)
+	entries, err := ReadWALEntriesAfter(ctx, walDir, snapshotSeq, WALReadDirectory)
 	if err != nil {
 		return nil, result, fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
@@ -3074,10 +3080,10 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 	// Each entry will use its own database name (stored in entry.Database)
 	result.Errors = make([]ReplayError, 0)
 	for _, entry := range entries {
-		result.Record(entry, replayWALEntry(engine, entry))
+		result.Record(entry, replayWALEntry(ctx, engine, entry))
 	}
 	if result.Applied > 0 {
-		if err := engine.BadgerEngine.completeRecoveredCounts(context.Background(), nil); err != nil {
+		if err := engine.BadgerEngine.completeRecoveredCounts(ctx, nil); err != nil {
 			return nil, result, err
 		}
 	}
@@ -3089,16 +3095,16 @@ type engineSnapshotVisitor struct {
 	engine Engine
 }
 
-func (v engineSnapshotVisitor) VisitNode(node *Node) error {
-	_, err := v.engine.CreateNode(context.Background(), qualifyRecoverySnapshotNode(node))
+func (v engineSnapshotVisitor) VisitNode(ctx context.Context, node *Node) error {
+	_, err := v.engine.CreateNode(ctx, qualifyRecoverySnapshotNode(node))
 	if err != nil {
 		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
 	return nil
 }
 
-func (v engineSnapshotVisitor) VisitEdge(edge *Edge) error {
-	if err := v.engine.CreateEdge(context.Background(), qualifyRecoverySnapshotEdge(edge)); err != nil {
+func (v engineSnapshotVisitor) VisitEdge(ctx context.Context, edge *Edge) error {
+	if err := v.engine.CreateEdge(ctx, qualifyRecoverySnapshotEdge(edge)); err != nil {
 		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
 	return nil
@@ -3109,7 +3115,7 @@ func (v engineSnapshotVisitor) VisitEdge(edge *Edge) error {
 // sequence, operation and cause. For example, a caller replaying a slice uses:
 //
 //	for _, entry := range entries {
-//		result.Record(entry, ReplayWALEntry(engine, entry))
+//		result.Record(entry, ReplayWALEntry(ctx, engine, entry))
 //	}
 func (r *ReplayResult) Record(entry WALEntry, err error) {
 	if entry.Operation == OpCheckpoint || errors.Is(err, ErrAlreadyExists) {

@@ -71,7 +71,7 @@ func TestReplayedBufferedCommitReconcilesEdgeTypeCountsWithRestoredBody(t *testi
 	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 	require.NoError(t, tx.Commit())
 
-	entries, err := ReadWALEntriesFromDir(source.bufferedCommitWAL.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), source.bufferedCommitWAL.Config().Dir)
 	require.NoError(t, err)
 
 	for _, destinationKind := range recoveryCountDestinations() {
@@ -88,7 +88,7 @@ func TestReplayedBufferedCommitReconcilesEdgeTypeCountsWithRestoredBody(t *testi
 					continue
 				}
 				replayed++
-				require.NoError(t, ReplayWALEntry(destination, entry))
+				require.NoError(t, ReplayWALEntry(t.Context(), destination, entry))
 			}
 			require.Equal(t, 1, replayed)
 
@@ -147,14 +147,14 @@ func TestRecoveredEdgeTypeRelabelThenDeletedEdgeLeavesNoStaleTypeCount(t *testin
 	require.NoError(t, source.bufferedCommitWAL.Sync())
 
 	walDir := source.bufferedCommitWAL.Config().Dir
-	entries, err := ReadWALEntriesFromDir(walDir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), walDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 
 	for _, destinationKind := range recoveryCountDestinations() {
 		t.Run(destinationKind.name, func(t *testing.T) {
 			destination := destinationKind.open(t)
-			result, _, err := RecoverIntoEngine(destination, walDir, snapshotPath)
+			result, _, err := RecoverIntoEngine(t.Context(), destination, walDir, snapshotPath)
 			require.NoError(t, err)
 			require.Equal(t, 2, result.Applied)
 			require.Zero(t, result.Failed)

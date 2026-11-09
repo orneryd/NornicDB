@@ -37,7 +37,7 @@ func TestOuterWALManagedStoragePublishesRecoverableGraph(t *testing.T) {
 	require.NoError(t, wrapped.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Item"}, Properties: map[string]any{"value": "accepted"}}}))
 	require.NoError(t, wrapped.Close())
 
-	recovered, result, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(dir, ""))
+	recovered, result, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(t.Context(), dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, recovered.Close()) })
 	require.Zero(t, result.Failed)

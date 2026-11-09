@@ -277,7 +277,7 @@ func TestPendingCandidatesWALReplay(t *testing.T) {
 		require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 		payload, err := json.Marshal(WALNodeData{Node: pendingCandidateNode(0)})
 		require.NoError(t, err)
-		require.NoError(t, ReplayWALEntry(e, WALEntry{Operation: OpCreateNode, Database: "test", Data: payload}))
+		require.NoError(t, ReplayWALEntry(t.Context(), e, WALEntry{Operation: OpCreateNode, Database: "test", Data: payload}))
 		require.Equal(t, pendingCandidateNode(0).ID, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding).ID)
 
 	})
@@ -289,7 +289,7 @@ func TestPendingCandidatesWALReplay(t *testing.T) {
 		require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 		payload, err := json.Marshal(WALBufferedCommitData{Namespace: "test", NumericBindings: []byte{1}, Writes: map[string][]byte{string(pendingEmbedKey(pendingCandidateNode(0).ID)): {}}})
 		require.NoError(t, err)
-		require.NoError(t, ReplayWALEntry(e, WALEntry{Operation: OpBufferedCommit, Database: "test", Data: payload}))
+		require.NoError(t, ReplayWALEntry(t.Context(), e, WALEntry{Operation: OpBufferedCommit, Database: "test", Data: payload}))
 		require.Equal(t, 1, e.PendingEmbeddingsCount())
 		node := requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding)
 		require.NotNil(t, node, "buffered replay must publish into the loaded candidate cache")

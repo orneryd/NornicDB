@@ -46,7 +46,7 @@ func TestRecoverFromWALWithResult_RestoresLargeEdgeSnapshot(t *testing.T) {
 		Version:   "1.0",
 	}, snapshotPath))
 
-	recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dataDir, "wal"), snapshotPath))
+	recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), filepath.Join(dataDir, "wal"), snapshotPath))
 	require.NoError(t, err)
 	require.NotNil(t, recovered)
 	require.Zero(t, result.Failed)

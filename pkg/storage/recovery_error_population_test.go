@@ -52,13 +52,13 @@ func TestRecoveryErrorStorePopulation(t *testing.T) {
 					var err error
 					switch api {
 					case "plain":
-						engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(wal, snapshot))
+						engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), wal, snapshot))
 					case "logger":
-						engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWALWithLogger(wal, snapshot, nil))
+						engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWALWithLogger(t.Context(), wal, snapshot, nil))
 					case "with_result":
-						engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(wal, snapshot))
+						engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), wal, snapshot))
 					case "transactions":
-						engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(wal, snapshot))
+						engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), wal, snapshot))
 					}
 					// A directory named wal.log is not an empty WAL. All recovery
 					// APIs must reject it without returning a usable store.

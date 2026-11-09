@@ -96,7 +96,7 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	require.True(t, tx.AcknowledgedBuffered())
 
 	// The WAL must carry the buffered commit payload before the ACK.
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	found := false
 	for _, e := range entries {
@@ -187,7 +187,7 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	var bufferedEntry WALEntry
 	for _, e := range entries {
@@ -205,7 +205,7 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = fresh.Close() })
 
-	require.NoError(t, ReplayWALEntry(fresh, bufferedEntry))
+	require.NoError(t, ReplayWALEntry(t.Context(), fresh, bufferedEntry))
 
 	got, err := fresh.GetNode(t.Context(), "test:n1")
 	require.NoError(t, err)

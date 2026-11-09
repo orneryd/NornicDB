@@ -39,10 +39,10 @@ func TestWALUnknownVersionDoesNotTruncateDuringRecovery(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, original, 0600))
 			if streaming {
 				target := newTestMemoryEngine(t)
-				_, _, err = RecoverIntoEngine(target, dir, "")
+				_, _, err = RecoverIntoEngine(t.Context(), target, dir, "")
 			} else {
 				var target *MemoryEngine
-				target, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+				target, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 				if target != nil {
 					_ = target.Close()
 				}

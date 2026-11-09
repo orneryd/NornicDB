@@ -95,7 +95,7 @@ func TestAtomicWALWriteFormat(t *testing.T) {
 	}
 
 	// Verify we can read back the entry
-	entries, err := ReadWALEntries(walPath, nil)
+	entries, err := ReadWALEntries(t.Context(), walPath, nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestAtomicWALMultipleEntries(t *testing.T) {
 				require.NoError(t, wal.Append(OpCreateNode, WALNodeData{Node: node}), "entry %d", i)
 			}
 			require.NoError(t, wal.Close())
-			entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
+			entries, err := ReadWALEntries(t.Context(), filepath.Join(dir, "wal.log"), nil)
 			require.NoError(t, err)
 			require.Len(t, entries, tc.count)
 			for i, entry := range entries {
@@ -310,7 +310,7 @@ func TestAtomicWALDetectsIncompleteOrCorruptFrames(t *testing.T) {
 			_, err = f.Write(tc.tail(t))
 			require.NoError(t, err)
 			require.NoError(t, f.Close())
-			entries, err := ReadWALEntries(path, nil)
+			entries, err := ReadWALEntries(t.Context(), path, nil)
 			if tc.corrupt {
 				require.ErrorIs(t, err, ErrWALChecksumFailed)
 				return
@@ -359,7 +359,7 @@ func TestLegacyJSONFormatRejected(t *testing.T) {
 	f.Close()
 
 	// The legacy layout is an unsupported format, not a torn current record.
-	result, err := ReadWALEntries(walPath, nil)
+	result, err := ReadWALEntries(t.Context(), walPath, nil)
 	require.ErrorIs(t, err, ErrWALUnsupportedVersion)
 	require.Empty(t, result)
 
@@ -425,7 +425,7 @@ func TestFormatAutoDetection(t *testing.T) {
 		}
 
 		// The legacy layout is refused rather than read.
-		entries, err := ReadWALEntries(walPath, nil)
+		entries, err := ReadWALEntries(t.Context(), walPath, nil)
 		require.ErrorIs(t, err, ErrWALUnsupportedVersion)
 		require.Empty(t, entries)
 	})
@@ -460,7 +460,7 @@ func TestAtomicWALFullRecovery(t *testing.T) {
 
 	// Phase 2: Recover from WAL
 	// Recovery will use the database name from each WAL entry
-	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -508,7 +508,7 @@ func TestAtomicWALRecoveryWithPartialWrite(t *testing.T) {
 
 	// Recovery should work, getting the 2 valid entries
 	// Use the same database name as the WAL entries (testDBName declared above)
-	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery should succeed: %v", err)
 	}
@@ -662,7 +662,7 @@ func TestAtomicWALDetectsMissingTrailer(t *testing.T) {
 	f.Close()
 
 	// Should recover first entry and detect incomplete second entry
-	entries, err := ReadWALEntries(walPath, nil)
+	entries, err := ReadWALEntries(t.Context(), walPath, nil)
 	if err != nil {
 		t.Fatalf("Should recover valid entries, got error: %v", err)
 	}
@@ -716,7 +716,7 @@ func TestAtomicWALDetectsCorruptedTrailer(t *testing.T) {
 	f.Close()
 
 	// Should recover first entry and detect corrupted second entry
-	entries, err := ReadWALEntries(walPath, nil)
+	entries, err := ReadWALEntries(t.Context(), walPath, nil)
 	if err != nil {
 		t.Fatalf("Should recover valid entries, got error: %v", err)
 	}
@@ -768,7 +768,7 @@ func TestAtomicWALBatchWriterTrailer(t *testing.T) {
 	}
 
 	// Verify all entries can be read back
-	entries, err := ReadWALEntries(walPath, nil)
+	entries, err := ReadWALEntries(t.Context(), walPath, nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}

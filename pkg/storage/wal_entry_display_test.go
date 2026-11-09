@@ -212,7 +212,7 @@ func TestAcceptedCommitIDsDoNotChangeTransactionRecoveryGrouping(t *testing.T) {
 
 	// RecoverWithTransactions returns no store: the recovered engine is closed
 	// before it reports, so the result is the only fixture that needs an owner.
-	_, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(wal.Config().Dir, ""))
+	_, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(t.Context(), wal.Config().Dir, ""))
 	require.NoError(t, err)
 	require.Equal(t, 2, result.RolledBackTransactions)
 	require.Empty(t, result.Transactions["buffered-tx"].Entries)
@@ -232,7 +232,7 @@ func decodeBufferedDisplayForTest(t *testing.T, payload string) bufferedWALDispl
 
 func lastEntry(t *testing.T, wal *WAL) WALEntry {
 	t.Helper()
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
 	return entries[len(entries)-1]

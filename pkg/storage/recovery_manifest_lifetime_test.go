@@ -20,11 +20,11 @@ func TestRecoveryMalformedManifestClosesStore(t *testing.T) {
 			require.NotPanics(t, func() {
 				switch api {
 				case "result":
-					engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+					engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 				case "logger":
-					engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWALWithLogger(dir, "", nil))
+					engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWALWithLogger(t.Context(), dir, "", nil))
 				case "plain":
-					engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
+					engine, err = fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), dir, ""))
 				}
 			})
 			require.ErrorContains(t, err, "manifest")

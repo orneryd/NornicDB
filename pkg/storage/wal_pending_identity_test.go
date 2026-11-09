@@ -285,7 +285,7 @@ func pendingEntityCommitIdentities(owner *WALEngine) map[string]int {
 func journalEntityCommitIdentities(t *testing.T, wal *WAL) []string {
 	t.Helper()
 	require.NoError(t, wal.Sync())
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	identities := make([]string, 0, len(entries))
 	for _, entry := range entries {

@@ -26,7 +26,7 @@ func TestRecoveredUpdateDeleteReleasesIntermediateUniqueValue(t *testing.T) {
 			require.NoError(t, tx.DeleteGraphNode(t.Context(), node.ID, CascadeEdges))
 			require.NoError(t, tx.Commit())
 			require.True(t, tx.AcknowledgedBuffered())
-			entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+			entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 			require.NoError(t, err)
 			crashClose(t, engine, wal)
 			recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
@@ -39,7 +39,7 @@ func TestRecoveredUpdateDeleteReleasesIntermediateUniqueValue(t *testing.T) {
 			} else {
 				for _, entry := range entries {
 					if entry.Operation == OpBufferedCommit {
-						require.NoError(t, ReplayWALEntry(recovered, entry))
+						require.NoError(t, ReplayWALEntry(t.Context(), recovered, entry))
 					}
 				}
 			}
