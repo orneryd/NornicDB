@@ -849,22 +849,13 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 
 	var targetLabel, targetProperty string
 	similarityFunc := "cosine"
-	wantDims := 0
+	wantDims := len(queryVector)
 	if schema := e.storage.GetSchema(); schema != nil {
 		if vectorIdx, exists := schema.GetVectorIndex(indexName); exists {
 			targetLabel = vectorIdx.Label
 			targetProperty = vectorIdx.Property
 			similarityFunc = vectorIdx.SimilarityFunc
-			if vectorIdx.Dimensions > 0 {
-				wantDims = vectorIdx.Dimensions
-			}
 		}
-	}
-	if wantDims <= 0 && len(queryVector) > 0 {
-		wantDims = len(queryVector)
-	}
-	if wantDims <= 0 {
-		wantDims = search.DefaultVectorDimensions
 	}
 	if !orderDesc {
 		return e.fetchCosineNodeScoresExact(ctx, targetLabel, targetProperty, similarityFunc, limit, queryVector, orderDesc, wantDims)
@@ -1034,9 +1025,8 @@ func collectNodePropertyRefsForProjection(varName string, expr string, props map
 //   - vectorReadWarm: the vector query procedures warm a lazy service and
 //     read it once it is ready.
 //   - vectorReadPassive: a scalar vector.similarity read in MATCH never warms
-//     the service, and reads the vectors it already holds for the property
-//     before full readiness, so ingest-time reads neither trigger warmup nor
-//     scan storage.
+//     the service. Unbound reads can use vectors it already holds before
+//     full readiness; schema-bound reads use storage until startup completes.
 type vectorQueryRead uint8
 
 const (
@@ -1059,28 +1049,43 @@ var vectorQueryReads = [...]vectorQueryRead{vectorReadWarm, vectorReadPassive}
 //   - The index must be ONLINE: its population state, which the search
 //     service owns (vectorIndexOnline). The publication, which establishes
 //     that state, passes no index.
-//   - For relationships, the service must hold vectors of the type and
-//     property.
+//   - The service must hold vectors of the requested dimensions; relationship
+//     reads also require entries of the requested type and property.
 //   - For nodes, the service must have the index's dimensions and be ready:
 //     a warm read warms it first; a passive read also accepts the
-//     property's vectors the service already holds.
+//     property's vectors the service already holds when no schema index is bound.
+//   - A schema-bound read requires the service ready, so a pre-existing
+//     schema cannot expose a partial startup population; storage answers
+//     until startup succeeds.
 func (e *StorageExecutor) vectorIndexServiceAnswers(ctx context.Context, svc *search.Service, index string, target search.VectorIndexTarget, dims int, read vectorQueryRead) (bool, error) {
 	if svc == nil || (index != "" && !e.vectorIndexOnline(index)) {
+		return false, nil
+	}
+	if svc.VectorIndexDimensions() != dims {
+		return false, nil
+	}
+	// A published schema can outlive a failed startup build. Held entries
+	// alone are not a complete population of that existing index. Warm
+	// readers may finish startup; otherwise its queries read storage until
+	// the service is ready. Publication passes no index and still accounts
+	// for every passive reader while establishing the new population.
+	ready := svc.IsReady()
+	if !ready && read == vectorReadWarm && (!target.Relationship || index != "") {
+		if err := svc.EnsureWarm(ctx); err != nil {
+			return false, err
+		}
+		ready = svc.IsReady()
+	}
+	if index != "" && !ready {
 		return false, nil
 	}
 	if target.Relationship {
 		return target.Property != "" && svc.HasRelationshipVectorEntries(target.Label, target.Property), nil
 	}
-	if svc.VectorIndexDimensions() != dims {
-		return false, nil
-	}
 	if read == vectorReadPassive {
-		return svc.IsReady() || (target.Property != "" && svc.CountPropertyVectorEntries(target.Property) > 0), nil
+		return ready || (target.Property != "" && svc.CountPropertyVectorEntries(target.Property) > 0), nil
 	}
-	if err := svc.EnsureWarm(ctx); err != nil {
-		return false, err
-	}
-	return svc.IsReady(), nil
+	return ready, nil
 }
 
 func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label string, property string, similarity string, limit int, queryVector []float32, orderDesc bool, wantDims int) ([]vectorNodeScore, bool) {
@@ -1247,7 +1252,7 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 		}
 	}
 	svc := e.search()
-	served, _ := e.vectorIndexServiceAnswers(ctx, svc, indexName, search.VectorIndexTarget{Label: targetRelType, Property: targetProperty, Relationship: true}, 0, vectorReadPassive)
+	served, _ := e.vectorIndexServiceAnswers(ctx, svc, indexName, search.VectorIndexTarget{Label: targetRelType, Property: targetProperty, Relationship: true}, len(vec), vectorReadPassive)
 	if orderDesc && served {
 		hits, err := svc.VectorQueryRelationships(ctx, vec, search.RelationshipVectorQuerySpec{
 			IndexName:  indexName,

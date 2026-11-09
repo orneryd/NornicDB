@@ -1898,13 +1898,13 @@ func TestVectorIndexWorkflow(t *testing.T) {
 	t.Run("complete_vector_workflow", func(t *testing.T) {
 		// 1. Create vector index for embeddings
 		result, err := exec.Execute(ctx,
-			"CALL db.index.vector.createNodeIndex('memory_embeddings', 'Memory', 'embedding', 1024, 'cosine')", nil)
+			"CALL db.index.vector.createNodeIndex('memory_embeddings', 'Memory', 'embedding', 4, 'cosine')", nil)
 		require.NoError(t, err)
 		require.Empty(t, result.Columns)
 		require.Empty(t, result.Rows)
 		index, exists := engine.GetSchema().GetVectorIndex("memory_embeddings")
 		require.True(t, exists)
-		assert.Equal(t, 1024, index.Dimensions)
+		assert.Equal(t, 4, index.Dimensions)
 
 		// 2. Create relationship vector index
 		result, err = exec.Execute(ctx,

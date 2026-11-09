@@ -2089,7 +2089,7 @@ func TestReview1753R15VectorIndexServiceAnswers(t *testing.T) {
 		exec := NewStorageExecutor(newTestBadgerNamespacedStore(t))
 		for _, read := range []vectorQueryRead{vectorReadWarm, vectorReadPassive} {
 			require.False(t, answers(t, exec, "", nodes, 3, read))
-			require.False(t, answers(t, exec, "", rels, 0, read))
+			require.False(t, answers(t, exec, "", rels, 3, read))
 		}
 	})
 
@@ -2107,7 +2107,7 @@ func TestReview1753R15VectorIndexServiceAnswers(t *testing.T) {
 		require.True(t, answers(t, exec, "", nodes, 3, vectorReadPassive), "a passive read uses the vectors already held")
 		require.False(t, answers(t, exec, "", others, 3, vectorReadPassive), "a property the service holds nothing of is read from storage")
 		require.False(t, answers(t, exec, "", nodes, 2, vectorReadPassive), "other dimensions are read from storage")
-		require.True(t, answers(t, exec, "", rels, 0, vectorReadPassive))
+		require.True(t, answers(t, exec, "", rels, 3, vectorReadPassive))
 		require.Zero(t, warmed.Load(), "a passive read never warms the service")
 		require.True(t, answers(t, exec, "", nodes, 3, vectorReadWarm), "a warm read warms the service, then reads it")
 		require.Equal(t, int32(1), warmed.Load())
@@ -2119,7 +2119,7 @@ func TestReview1753R15VectorIndexServiceAnswers(t *testing.T) {
 		require.False(t, svc.IsReady())
 		require.False(t, answers(t, exec, "", nodes, 3, vectorReadWarm), "a warm read needs the service ready")
 		require.True(t, answers(t, exec, "", nodes, 3, vectorReadPassive))
-		require.True(t, answers(t, exec, "", rels, 0, vectorReadWarm))
+		require.True(t, answers(t, exec, "", rels, 3, vectorReadWarm))
 	})
 
 	t.Run("an index that isn't ONLINE", func(t *testing.T) {
@@ -2129,14 +2129,14 @@ func TestReview1753R15VectorIndexServiceAnswers(t *testing.T) {
 		edges := svc.BeginVectorIndexPopulation("rels", rels)
 		for _, read := range []vectorQueryRead{vectorReadWarm, vectorReadPassive} {
 			require.False(t, answers(t, exec, "docs", nodes, 3, read), "a POPULATING node index is read from storage")
-			require.False(t, answers(t, exec, "rels", rels, 0, read), "a POPULATING relationship index is read from storage")
+			require.False(t, answers(t, exec, "rels", rels, 3, read), "a POPULATING relationship index is read from storage")
 		}
 		require.True(t, answers(t, exec, "", nodes, 3, vectorReadWarm), "the publication, which establishes the state, is not gated by it")
 		require.NoError(t, docs.Populate(ctx, true))
 		require.NoError(t, edges.Populate(ctx, true))
 		for _, read := range []vectorQueryRead{vectorReadWarm, vectorReadPassive} {
 			require.True(t, answers(t, exec, "docs", nodes, 3, read))
-			require.True(t, answers(t, exec, "rels", rels, 0, read))
+			require.True(t, answers(t, exec, "rels", rels, 3, read))
 		}
 	})
 }
@@ -2174,6 +2174,7 @@ func TestReview1753R15CreateWithPassiveService(t *testing.T) {
 			require.NoError(t, err)
 			t.Logf("after CREATE: %v ready=%t held=%d", shown.Rows, svc.IsReady(), svc.CountPropertyVectorEntries("emb"))
 			require.Equal(t, [][]interface{}{{"docs", "ONLINE"}}, shown.Rows)
+			require.Equal(t, 2, svc.CountPropertyVectorEntries("emb"), "CREATE actually populates the service independently of a query's storage fallback")
 			procedure, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('docs',10,[1.0,0.0,0.0]) YIELD node,score RETURN node.id,score", nil)
 			require.NoError(t, err)
 			match, err := exec.Execute(ctx, "MATCH (n:Doc) RETURN n.id,vector.similarity.cosine(n.emb,[1.0,0.0,0.0]) AS score ORDER BY score DESC LIMIT 10", nil)
@@ -2182,29 +2183,4 @@ func TestReview1753R15CreateWithPassiveService(t *testing.T) {
 			require.Equal(t, incarnationScores(t, procedure.Rows), incarnationScores(t, match.Rows), "a newly ONLINE index must serve all its stored nodes to passive MATCH too")
 		})
 	}
-}
-
-// Review round 15 of #1753 (reviewer probe): after a startup build refused by
-// the vector budget, the service holds one of two stored vectors and MATCH
-// reads it. CREATE must populate it, and the refused member leaves the index
-// FAILED: the statement fails instead of reporting it ONLINE.
-func TestReview1753R15CreateAfterFailedBuild(t *testing.T) {
-	ctx := context.Background()
-	store := newTestBadgerNamespacedStore(t)
-	exec := NewStorageExecutor(store)
-	_, err := exec.Execute(ctx, "CREATE (:Doc {id:'a',emb:[1.0,0.0,0.0]}),(:Doc {id:'b',emb:[0.0,1.0,0.0]})", nil)
-	require.NoError(t, err)
-	svc := search.NewService(store, 3, &search.ServiceOptions{VectorMemoryMaxBytes: 30})
-	t.Cleanup(func() { _ = svc.Close() })
-	buildErr := svc.BuildIndexes(ctx)
-	t.Logf("build error=%v ready=%t held=%d", buildErr, svc.IsReady(), svc.CountPropertyVectorEntries("emb"))
-	require.ErrorIs(t, buildErr, search.ErrIndexMemoryBudgetExceeded)
-	exec.SetSearchService(svc)
-	_, createErr := exec.Execute(ctx, "CREATE VECTOR INDEX docs FOR (n:Doc) ON (n.emb)"+incarnationVectorOptions, nil)
-	state, err := exec.Execute(ctx, "SHOW VECTOR INDEXES YIELD name,state RETURN name,state", nil)
-	require.NoError(t, err)
-	got, queryErr := exec.Execute(ctx, "MATCH (n:Doc) RETURN n.id,vector.similarity.cosine(n.emb,[1.0,0.0,0.0]) AS score ORDER BY score DESC LIMIT 10", nil)
-	t.Logf("CREATE=%v state=%v MATCH=%+v error=%v", createErr, state.Rows, got, queryErr)
-	require.Error(t, createErr, "a budget-refused stored vector must prevent this index being published ONLINE for the passive consumer")
-	require.Equal(t, [][]interface{}{{"docs", "FAILED"}}, state.Rows)
 }

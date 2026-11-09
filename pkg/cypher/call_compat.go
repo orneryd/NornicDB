@@ -396,7 +396,8 @@ func edgeToMap(edge *storage.Edge) map[string]interface{} {
 // callDbIndexVectorQueryRelationshipsWithVector implements the search half of
 // db.index.vector.queryRelationships. The statement has already bound and
 // resolved the procedure's arguments, once, in callVectorQueryArguments.
-func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx context.Context, indexName string, k int, queryVector []float32) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx context.Context, request vectorQueryRequest) (*ExecuteResult, error) {
+	indexName, k, queryVector := request.indexName, request.k, request.vector
 	result := &ExecuteResult{
 		Columns: columnNames(relationshipScoreColumns),
 		Rows:    [][]interface{}{},
@@ -407,10 +408,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 	var similarityFunc string = "cosine"
 
 	// The index's definition is the one its wait for ONLINE ended on.
-	vectorIdx, err := e.awaitVectorIndexDefinition(ctx, indexName)
-	if err != nil {
-		return nil, err
-	}
+	vectorIdx := request.index
 	// Without an index there is no property to read vectors from: Neo4j's
 	// failure, as for queryNodes, not an empty result.
 	if vectorIdx == nil {
@@ -422,7 +420,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 	similarityFunc = vectorIdx.SimilarityFunc
 
 	svc := e.search()
-	served, err := e.vectorIndexServiceAnswers(ctx, svc, indexName, search.VectorIndexTarget{Label: targetRelType, Property: targetProperty, Relationship: true}, 0, vectorReadWarm)
+	served, err := e.vectorIndexServiceAnswers(ctx, svc, indexName, search.VectorIndexTarget{Label: targetRelType, Property: targetProperty, Relationship: true}, len(queryVector), vectorReadWarm)
 	if err != nil {
 		return nil, err
 	}

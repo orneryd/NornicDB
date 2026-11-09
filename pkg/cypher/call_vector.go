@@ -19,19 +19,19 @@ import (
 // Neo4j Vector Index Procedures
 // ========================================
 
-// callDbIndexVectorQueryNodesWithVector implements the search half of
-// db.index.vector.queryNodes. The statement has already bound and resolved the
-// procedure's arguments, once, in callVectorQueryArguments.
-//
-// Parameters:
-//   - indexName: Name of the vector index (from CREATE VECTOR INDEX)
-//   - k: Number of results to return
-//   - queryVector: The query embedding to search with
-//
-// Returns:
-//   - node: The matched node with all properties
-//   - score: Cosine similarity score (0.0 to 1.0)
-func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Context, indexName string, k int, queryVector []float32) (*ExecuteResult, error) {
+// vectorQueryRequest carries arguments and the definition whose ONLINE wait
+// completed, shared by both entity procedures without resolving it twice.
+type vectorQueryRequest struct {
+	indexName string
+	k         int
+	vector    []float32
+	index     *storage.VectorIndex
+}
+
+// callDbIndexVectorQueryNodesWithVector reads the node population selected by
+// the validated procedure request.
+func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Context, request vectorQueryRequest) (*ExecuteResult, error) {
+	indexName, k, queryVector := request.indexName, request.k, request.vector
 	result := &ExecuteResult{
 		Columns: columnNames(nodeScoreColumns),
 		Rows:    [][]interface{}{},
@@ -43,10 +43,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 	var similarityFunc string = "cosine"
 
 	// The index's definition is the one its wait for ONLINE ended on.
-	vectorIdx, err := e.awaitVectorIndexDefinition(ctx, indexName)
-	if err != nil {
-		return nil, err
-	}
+	vectorIdx := request.index
 	wantDims := 0
 	indexFound := vectorIdx != nil
 	if indexFound {
@@ -304,8 +301,16 @@ func (e *StorageExecutor) callVectorQueryArguments(ctx context.Context, args []i
 	if err != nil {
 		return nil, err
 	}
-	if relationships {
-		return e.callDbIndexVectorQueryRelationshipsWithVector(ctx, indexName, int(count), queryVector)
+	index, err := e.awaitVectorIndexDefinition(ctx, indexName)
+	if err != nil {
+		return nil, err
 	}
-	return e.callDbIndexVectorQueryNodesWithVector(ctx, indexName, int(count), queryVector)
+	if len(queryVector) == 0 || (index != nil && index.Dimensions > 0 && len(queryVector) != index.Dimensions) {
+		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "query vector must be nonempty and match the vector index dimensions")
+	}
+	request := vectorQueryRequest{indexName: indexName, k: int(count), vector: queryVector, index: index}
+	if relationships {
+		return e.callDbIndexVectorQueryRelationshipsWithVector(ctx, request)
+	}
+	return e.callDbIndexVectorQueryNodesWithVector(ctx, request)
 }
