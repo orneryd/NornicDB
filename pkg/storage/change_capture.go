@@ -109,19 +109,27 @@ type ChangeEvent struct {
 	EndKeys   map[string][]map[string]any `msgpack:"bk,omitempty"`
 }
 
-// ChangeCaptureEngine is implemented by engines that capture changes; the
-// storage wrappers forward it.
-type ChangeCaptureEngine interface {
-	// SetChangeCapture sets a database's capture mode.
-	SetChangeCapture(namespace string, mode ChangeCaptureMode)
-	// ChangeCapture returns a database's capture mode.
-	ChangeCapture(namespace string) ChangeCaptureMode
+// ChangeFeed reads a database's committed change events at one view of the
+// store: the engine reads the latest committed state, a transaction its
+// snapshot (BadgerTransaction.ChangeEvents), so that every change it lists
+// is visible to the transaction's own reads.
+type ChangeFeed interface {
 	// ChangeEvents returns up to limit of a database's events after
 	// (commitSeq, seq), in commit order; limit <= 0 is no limit.
 	ChangeEvents(namespace string, commitSeq uint64, seq uint32, limit int) ([]ChangeEvent, error)
 	// ChangeBounds returns the commitSeq of a database's earliest retained
 	// event and of its last committed one; 0, 0 when it has none.
 	ChangeBounds(namespace string) (earliest, last uint64, err error)
+}
+
+// ChangeCaptureEngine is implemented by engines that capture changes; the
+// storage wrappers forward it.
+type ChangeCaptureEngine interface {
+	ChangeFeed
+	// SetChangeCapture sets a database's capture mode.
+	SetChangeCapture(namespace string, mode ChangeCaptureMode)
+	// ChangeCapture returns a database's capture mode.
+	ChangeCapture(namespace string) ChangeCaptureMode
 	// SetChangeRetention sets how long change events are kept.
 	SetChangeRetention(retention time.Duration)
 }
@@ -218,25 +226,8 @@ func (b *BadgerEngine) ChangeBounds(namespace string) (earliest, last uint64, er
 	if err := b.pendingNamespaceConflict(namespace); err != nil {
 		return 0, 0, err
 	}
-
-	prefix := changeEventPrefix(namespace)
 	err = b.withView(func(txn *badger.Txn) error {
-		opts := badgerIteratorOptions()
-		opts.Prefix = prefix
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
-		it.Seek(prefix)
-		if it.ValidForPrefix(prefix) {
-			earliest, _, _ = changeEventPosition(it.Item().Key())
-		}
-		it.Close()
-		opts.Reverse = true
-		reverse := txn.NewIterator(opts)
-		defer reverse.Close()
-		reverse.Seek(append(append([]byte(nil), prefix...), 0xFF))
-		if reverse.ValidForPrefix(prefix) {
-			last, _, _ = changeEventPosition(reverse.Item().Key())
-		}
+		earliest, last = changeBoundsIn(txn, namespace)
 		return nil
 	})
 	return earliest, last, err
@@ -248,31 +239,104 @@ func (b *BadgerEngine) ChangeEvents(namespace string, commitSeq uint64, seq uint
 	if err := b.pendingNamespaceConflict(namespace); err != nil {
 		return nil, err
 	}
+	var events []ChangeEvent
+	err := b.withView(func(txn *badger.Txn) (err error) {
+		events, err = changeEventsIn(txn, namespace, commitSeq, seq, limit)
+		return err
+	})
+	return events, err
+}
 
+// ChangeBounds is BadgerEngine.ChangeBounds at the transaction's snapshot:
+// the last change it reports is the last one the transaction can see.
+func (tx *BadgerTransaction) ChangeBounds(namespace string) (earliest, last uint64, err error) {
+	err = tx.withChangeSnapshot(namespace, func(txn *badger.Txn) error {
+		earliest, last = changeBoundsIn(txn, namespace)
+		return nil
+	})
+	return earliest, last, err
+}
+
+// ChangeEvents is BadgerEngine.ChangeEvents at the transaction's snapshot:
+// only changes committed before it began (or before its snapshot last moved,
+// for an implicit transaction that continues after independent commits), so
+// each listed change is visible to the transaction's reads. Change events are
+// written in the same Badger commit as the data they describe, and a
+// capturing database never commits through the write-behind buffer, so the
+// physical snapshot alone bounds them. The transaction's own writes are not
+// change events until it commits.
+func (tx *BadgerTransaction) ChangeEvents(namespace string, commitSeq uint64, seq uint32, limit int) ([]ChangeEvent, error) {
+	var events []ChangeEvent
+	err := tx.withChangeSnapshot(namespace, func(txn *badger.Txn) (err error) {
+		events, err = changeEventsIn(txn, namespace, commitSeq, seq, limit)
+		return err
+	})
+	return events, err
+}
+
+// withChangeSnapshot runs read on the transaction's snapshot, admitted as one
+// of its reads of namespace.
+func (tx *BadgerTransaction) withChangeSnapshot(namespace string, read func(*badger.Txn) error) error {
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return err
+	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
+		return err
+	}
+	if err := tx.engine.pendingNamespaceConflict(namespace); err != nil {
+		return err
+	}
+	return tx.withSnapshotViewLocked(read)
+}
+
+// changeBoundsIn reads a database's change bounds in txn.
+func changeBoundsIn(txn *badger.Txn, namespace string) (earliest, last uint64) {
+	prefix := changeEventPrefix(namespace)
+	opts := badgerIteratorOptions()
+	opts.Prefix = prefix
+	opts.PrefetchValues = false
+	it := txn.NewIterator(opts)
+	it.Seek(prefix)
+	if it.ValidForPrefix(prefix) {
+		earliest, _, _ = changeEventPosition(it.Item().Key())
+	}
+	it.Close()
+	opts.Reverse = true
+	reverse := txn.NewIterator(opts)
+	defer reverse.Close()
+	reverse.Seek(append(append([]byte(nil), prefix...), 0xFF))
+	if reverse.ValidForPrefix(prefix) {
+		last, _, _ = changeEventPosition(reverse.Item().Key())
+	}
+	return earliest, last
+}
+
+// changeEventsIn reads up to limit of a database's events after
+// (commitSeq, seq) in txn.
+func changeEventsIn(txn *badger.Txn, namespace string, commitSeq uint64, seq uint32, limit int) ([]ChangeEvent, error) {
 	prefix := changeEventPrefix(namespace)
 	after := changeEventKey(namespace, commitSeq, seq)
 	var events []ChangeEvent
-	err := b.withView(func(txn *badger.Txn) error {
-		opts := badgerIteratorOptions()
-		opts.Prefix = prefix
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Seek(after); it.ValidForPrefix(prefix); it.Next() {
-			if bytes.Equal(it.Item().Key(), after) {
-				continue
-			}
-			var event ChangeEvent
-			if err := it.Item().Value(func(value []byte) error { return decodeValue(value, &event) }); err != nil {
-				return fmt.Errorf("decoding change event: %w", err)
-			}
-			events = append(events, event)
-			if limit > 0 && len(events) >= limit {
-				return nil
-			}
+	opts := badgerIteratorOptions()
+	opts.Prefix = prefix
+	it := txn.NewIterator(opts)
+	defer it.Close()
+	for it.Seek(after); it.ValidForPrefix(prefix); it.Next() {
+		if bytes.Equal(it.Item().Key(), after) {
+			continue
 		}
-		return nil
-	})
-	return events, err
+		var event ChangeEvent
+		if err := it.Item().Value(func(value []byte) error { return decodeValue(value, &event) }); err != nil {
+			return nil, fmt.Errorf("decoding change event: %w", err)
+		}
+		events = append(events, event)
+		if limit > 0 && len(events) >= limit {
+			break
+		}
+	}
+	return events, nil
 }
 
 // txChangeCapture is a capturing commit's hold on its database's change log.
