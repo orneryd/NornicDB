@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -222,7 +223,7 @@ func (qc *QueryCache) Get(cypher string, params map[string]interface{}) (*Execut
 	qc.hits++
 	qc.mu.Unlock()
 
-	return cached.result, true
+	return cacheOwnedResult(cached.result), true
 }
 
 // Put stores a query result in the cache with the specified TTL (Time To Live).
@@ -298,16 +299,30 @@ func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *
 	qc.moveToFront(key)
 }
 
-// cacheOwnedResult gives a persistent cache its own visible outer row window.
-// The caller may still own a larger allocation, so neither its hidden row
-// headers nor the shared row contents may be cleared during publication.
+// cacheOwnedResult detaches one result graph at both cache publication and
+// delivery. The structural owner preserves value types and nested ownership;
+// map order belongs to the new map identities, not those retained by its source.
 func cacheOwnedResult(result *ExecuteResult) *ExecuteResult {
 	if result == nil {
 		return nil
 	}
-	owned := *result
-	owned.Rows = slices.Clone(result.Rows)
-	return &owned
+	var orders map[uintptr][]string
+	var mapCopied func(source, copied map[string]any)
+	if result.MapKeyOrders != nil {
+		orders = make(map[uintptr][]string, len(result.MapKeyOrders))
+		mapCopied = func(source, copied map[string]any) {
+			if keys, found := result.MapKeyOrders[uintptr(reflect.ValueOf(source).UnsafePointer())]; found {
+				orders[uintptr(reflect.ValueOf(copied).UnsafePointer())] = slices.Clone(keys)
+			}
+		}
+	}
+	// Rebind only orders for maps present in this result, instead of cloning
+	// stale source-pointer keys and retaining intermediate evaluation metadata.
+	source := *result
+	source.MapKeyOrders = nil
+	owned := storage.CopyValue(&source, mapCopied).(*ExecuteResult)
+	owned.MapKeyOrders = orders
+	return owned
 }
 
 // Invalidate clears all cached query results.
@@ -623,7 +638,7 @@ func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint6
 
 	// Plan 04-03 D-12a: cross-cutting cache_hits_total{cache="query_result"}.
 	sc.observeHit()
-	return cached.result, cached.trace, cached.entities, true
+	return cacheOwnedResult(cached.result), cached.trace, cached.entities, true
 }
 
 // PutWithLabels stores a result with associated labels for smart invalidation.

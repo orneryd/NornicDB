@@ -6,6 +6,7 @@ package storage
 
 import (
 	"context"
+	nativestorage "github.com/orneryd/nornicdb/pkg/storage"
 	"maps"
 )
 
@@ -19,6 +20,13 @@ import (
 // unchanged: a missing entity still reports its not-found error, an empty
 // collection is still the empty collection the call documents, and a write that
 // was accepted before the caller stopped keeps the completion it already had.
+//
+// Values carry the same lifetime. A read hands out caller-owned values: the
+// node, relationship, path member or traversal visitor value a caller receives
+// is that caller's own, so mutating it leaves the retained graph, and every
+// later read of it, exactly as it was. A write accepts caller-owned values for
+// the same reason: the store retains its own copy, so a caller that keeps
+// mutating the containers it supplied cannot change the graph afterwards.
 type Storage interface {
 	// Node operations
 	GetNode(ctx context.Context, id int64) (*Node, error)
@@ -117,36 +125,49 @@ func NewInMemoryStorage() *InMemoryStorage {
 	}
 }
 
-func (s *InMemoryStorage) GetNode(ctx context.Context, id int64) (*Node, error) {
+// retainedEntry owns admission and lookup for internal reads and mutations.
+// Its value stays inside the store; public reads detach it before publication.
+func retainedEntry[T any](ctx context.Context, entries map[int64]*T, id int64, notFound error) (*T, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if node, ok := s.nodes[id]; ok {
-		return node, nil
+	if entry, ok := entries[id]; ok {
+		return entry, nil
 	}
-	return nil, ErrNodeNotFound
+	return nil, notFound
+}
+
+func (s *InMemoryStorage) GetNode(ctx context.Context, id int64) (*Node, error) {
+	node, err := retainedEntry(ctx, s.nodes, id, ErrNodeNotFound)
+	if err != nil {
+		return nil, err
+	}
+	return nativestorage.CopyValue(node, nil).(*Node), nil
 }
 
 func (s *InMemoryStorage) CreateNode(ctx context.Context, labels []string, properties map[string]interface{}) (*Node, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	node := &Node{
+	// The accepted labels and properties stay the caller's: the store retains
+	// its own copy so a later mutation of the supplied containers cannot reach
+	// the graph.
+	node := nativestorage.CopyValue(&Node{
 		ID:         s.nextNodeID,
 		Labels:     labels,
 		Properties: properties,
-	}
+	}, nil).(*Node)
 	s.nodes[node.ID] = node
 	s.nextNodeID++
-	return node, nil
+	return nativestorage.CopyValue(node, nil).(*Node), nil
 }
 
 func (s *InMemoryStorage) UpdateNode(ctx context.Context, id int64, properties map[string]interface{}) error {
-	node, err := s.GetNode(ctx, id)
+	node, err := retainedEntry(ctx, s.nodes, id, ErrNodeNotFound)
 	if err != nil {
 		return err
 	}
-	maps.Copy(node.Properties, properties)
+	maps.Copy(node.Properties, nativestorage.CopyValue(properties, nil).(map[string]interface{}))
 	return nil
 }
 
@@ -169,7 +190,7 @@ func (s *InMemoryStorage) DeleteNode(ctx context.Context, id int64) error {
 }
 
 func (s *InMemoryStorage) AddLabels(ctx context.Context, id int64, labels []string) error {
-	node, err := s.GetNode(ctx, id)
+	node, err := retainedEntry(ctx, s.nodes, id, ErrNodeNotFound)
 	if err != nil {
 		return err
 	}
@@ -182,7 +203,7 @@ func (s *InMemoryStorage) AddLabels(ctx context.Context, id int64, labels []stri
 }
 
 func (s *InMemoryStorage) RemoveLabels(ctx context.Context, id int64, labels []string) error {
-	node, err := s.GetNode(ctx, id)
+	node, err := retainedEntry(ctx, s.nodes, id, ErrNodeNotFound)
 	if err != nil {
 		return err
 	}
@@ -201,48 +222,47 @@ func (s *InMemoryStorage) RemoveLabels(ctx context.Context, id int64, labels []s
 }
 
 func (s *InMemoryStorage) GetRelationship(ctx context.Context, id int64) (*Relationship, error) {
-	if err := ctx.Err(); err != nil {
+	rel, err := retainedEntry(ctx, s.relationships, id, ErrRelationshipNotFound)
+	if err != nil {
 		return nil, err
 	}
-	if rel, ok := s.relationships[id]; ok {
-		return rel, nil
-	}
-	return nil, ErrRelationshipNotFound
+	return nativestorage.CopyValue(rel, nil).(*Relationship), nil
 }
 
 func (s *InMemoryStorage) CreateRelationship(ctx context.Context, startID, endID int64, relType string, properties map[string]interface{}) (*Relationship, error) {
-	if _, err := s.GetNode(ctx, startID); err != nil {
+	if _, err := retainedEntry(ctx, s.nodes, startID, ErrNodeNotFound); err != nil {
 		return nil, err
 	}
-	if _, err := s.GetNode(ctx, endID); err != nil {
+	if _, err := retainedEntry(ctx, s.nodes, endID, ErrNodeNotFound); err != nil {
 		return nil, err
 	}
 
-	rel := &Relationship{
+	// The accepted properties stay the caller's: the store retains its own copy.
+	rel := nativestorage.CopyValue(&Relationship{
 		ID:         s.nextRelID,
 		Type:       relType,
 		StartNode:  startID,
 		EndNode:    endID,
 		Properties: properties,
-	}
+	}, nil).(*Relationship)
 	s.relationships[rel.ID] = rel
 	s.nodeRels[startID] = append(s.nodeRels[startID], rel)
 	s.nodeRels[endID] = append(s.nodeRels[endID], rel)
 	s.nextRelID++
-	return rel, nil
+	return nativestorage.CopyValue(rel, nil).(*Relationship), nil
 }
 
 func (s *InMemoryStorage) UpdateRelationship(ctx context.Context, id int64, properties map[string]interface{}) error {
-	rel, err := s.GetRelationship(ctx, id)
+	rel, err := retainedEntry(ctx, s.relationships, id, ErrRelationshipNotFound)
 	if err != nil {
 		return err
 	}
-	maps.Copy(rel.Properties, properties)
+	maps.Copy(rel.Properties, nativestorage.CopyValue(properties, nil).(map[string]interface{}))
 	return nil
 }
 
 func (s *InMemoryStorage) DeleteRelationship(ctx context.Context, id int64) error {
-	rel, err := s.GetRelationship(ctx, id)
+	rel, err := retainedEntry(ctx, s.relationships, id, ErrRelationshipNotFound)
 	if err != nil {
 		return err
 	}
@@ -266,17 +286,18 @@ func (s *InMemoryStorage) removeRelationship(rel *Relationship) {
 const bulkReadInterval = 256
 
 // collectBulk copies one storage map into the collection a whole-graph read
-// returns. The caller context decides the read lifetime: the collection is
-// checked before the result is allocated, every bulkReadInterval entries, and
-// once more before the result is published, so a stopped read returns its
-// context error and no partial collection.
+// returns, detaching each entry through the shared structural value owner. The
+// caller context decides the read lifetime: the collection is checked before
+// the result is allocated, every bulkReadInterval entries, and once more
+// before the result is published, so a stopped read returns its context error
+// and no partial collection.
 func collectBulk[T any](ctx context.Context, entries map[int64]*T) ([]*T, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	items := make([]*T, 0, len(entries))
 	for _, entry := range entries {
-		items = append(items, entry)
+		items = append(items, nativestorage.CopyValue(entry, nil).(*T))
 		if len(items)%bulkReadInterval == 0 {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -294,11 +315,11 @@ func (s *InMemoryStorage) AllNodes(ctx context.Context) ([]*Node, error) {
 }
 
 func (s *InMemoryStorage) UpdateNodeLabels(ctx context.Context, id int64, labels []string) error {
-	node, err := s.GetNode(ctx, id)
+	node, err := retainedEntry(ctx, s.nodes, id, ErrNodeNotFound)
 	if err != nil {
 		return err
 	}
-	node.Labels = labels
+	node.Labels = nativestorage.CopyValue(labels, nil).([]string)
 	return nil
 }
 
@@ -307,7 +328,7 @@ func (s *InMemoryStorage) AllRelationships(ctx context.Context) ([]*Relationship
 }
 
 func (s *InMemoryStorage) UpdateRelationshipType(ctx context.Context, id int64, newType string) error {
-	rel, err := s.GetRelationship(ctx, id)
+	rel, err := retainedEntry(ctx, s.relationships, id, ErrRelationshipNotFound)
 	if err != nil {
 		return err
 	}
@@ -316,7 +337,7 @@ func (s *InMemoryStorage) UpdateRelationshipType(ctx context.Context, id int64, 
 }
 
 func (s *InMemoryStorage) GetNodeRelationships(ctx context.Context, nodeID int64, relType string, direction Direction) ([]*Relationship, error) {
-	if _, err := s.GetNode(ctx, nodeID); err != nil {
+	if _, err := retainedEntry(ctx, s.nodes, nodeID, ErrNodeNotFound); err != nil {
 		return nil, err
 	}
 
@@ -338,14 +359,14 @@ func (s *InMemoryStorage) GetNodeRelationships(ctx context.Context, nodeID int64
 		switch direction {
 		case DirectionOutgoing:
 			if rel.StartNode == nodeID {
-				result = append(result, rel)
+				result = append(result, nativestorage.CopyValue(rel, nil).(*Relationship))
 			}
 		case DirectionIncoming:
 			if rel.EndNode == nodeID {
-				result = append(result, rel)
+				result = append(result, nativestorage.CopyValue(rel, nil).(*Relationship))
 			}
 		case DirectionBoth:
-			result = append(result, rel)
+			result = append(result, nativestorage.CopyValue(rel, nil).(*Relationship))
 		}
 	}
 

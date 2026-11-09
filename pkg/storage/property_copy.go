@@ -19,14 +19,24 @@ type callerCopier interface {
 	CallerCopy() any
 }
 
-// ownedValueCopy returns a caller-owned copy of one storage value. It is the
+// CopyValue returns an independent caller-owned copy of a value. It is the
 // generic copy owner: durable property normalization is a different contract and
 // belongs to ownRetainedValue (property_ownership.go). Concrete types,
 // pointer, map, slice and array shapes and Go scalar widths are preserved, nil
 // containers stay nil, and a caller-declared type that owns a copy protocol is
 // asked once, after which its own copy is used as is.
-func ownedValueCopy(value any) any {
-	walker := callerCopyWalker{}
+//
+// Result holders can use this same owner at their retention and delivery
+// boundaries without durable serialization or type normalization. For example:
+//
+//	owned := storage.CopyValue(map[string]any{"tags": []string{"graph"}}, nil).(map[string]any)
+//
+// mapCopied, when non-nil, observes plain string-keyed maps copied by the
+// structural walk, allowing a result owner to rebind map-identity metadata.
+// Domain-owned Node, Edge and CallerCopy values retain their own copy contract.
+// Callers must synchronize access to a value while it is being copied.
+func CopyValue(value any, mapCopied func(source, copied map[string]any)) any {
+	walker := callerCopyWalker{mapCopied: mapCopied}
 	return walker.value(value)
 }
 
@@ -49,9 +59,10 @@ type callerCopyTracked struct {
 // created only when a graph outgrows them. The state never outlives the call, so
 // no copy shares visited state with another.
 type callerCopyWalker struct {
-	inline [callerCopyInlineReferences]callerCopyTracked
-	count  int
-	seen   map[callerCopyReference]reflect.Value
+	mapCopied func(source, copied map[string]any)
+	inline    [callerCopyInlineReferences]callerCopyTracked
+	count     int
+	seen      map[callerCopyReference]reflect.Value
 }
 
 // callerCopyReference identifies one reference-bearing source. The length keeps
@@ -149,6 +160,9 @@ func (w *callerCopyWalker) mapping(m map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(m))
 	w.remember(key, reflect.ValueOf(out))
+	if w.mapCopied != nil {
+		w.mapCopied(m, out)
+	}
 	for key, item := range m {
 		out[key] = w.value(item)
 	}
@@ -255,6 +269,11 @@ func (w *callerCopyWalker) reference(value reflect.Value) reflect.Value {
 		}
 		out := reflect.MakeMapWithSize(value.Type(), value.Len())
 		w.remember(key, out)
+		if w.mapCopied != nil {
+			if source, ok := value.Interface().(map[string]any); ok {
+				w.mapCopied(source, out.Interface().(map[string]any))
+			}
+		}
 		for it := value.MapRange(); it.Next(); {
 			out.SetMapIndex(w.reference(it.Key()), w.reference(it.Value()))
 		}

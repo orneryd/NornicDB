@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
+	nativestorage "github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Node represents a graph node.
@@ -628,9 +629,10 @@ func (f *Functions) Subgraph(ctx context.Context, startNode *Node, depth int) (m
 	visited[startNode.ID] = true
 	currentDepth := 0
 
+	// The supplied start node stays the caller's: the cache retains its own copy.
 	f.cache.mu.Lock()
 	defer f.cache.mu.Unlock()
-	f.cache.nodes[startNode.ID] = startNode
+	f.cache.nodes[startNode.ID] = nativestorage.CopyValue(startNode, nil).(*Node)
 	nodesLoaded++
 
 	for len(queue) > 0 && currentDepth < depth {
@@ -716,12 +718,13 @@ func (f *Functions) Subgraph(ctx context.Context, startNode *Node, depth int) (m
 func (f *Functions) Path(nodes []*Node, rels []*Relationship) map[string]interface{} {
 	start := time.Now()
 
+	// The supplied values stay the caller's: the cache retains its own copy.
 	f.cache.mu.Lock()
 	for _, node := range nodes {
-		f.cache.nodes[node.ID] = node
+		f.cache.nodes[node.ID] = nativestorage.CopyValue(node, nil).(*Node)
 	}
 	for _, rel := range rels {
-		f.cache.relationships[rel.ID] = rel
+		f.cache.relationships[rel.ID] = nativestorage.CopyValue(rel, nil).(*Relationship)
 	}
 	f.cache.mu.Unlock()
 
@@ -982,7 +985,7 @@ func (f *Functions) GetCachedNode(id int64) (*Node, bool) {
 
 	if node, exists := f.cache.nodes[id]; exists {
 		f.cache.stats.Hits++
-		return node, true
+		return nativestorage.CopyValue(node, nil).(*Node), true
 	}
 	f.cache.stats.Misses++
 	return nil, false
@@ -995,7 +998,7 @@ func (f *Functions) GetCachedRelationship(id int64) (*Relationship, bool) {
 
 	if rel, exists := f.cache.relationships[id]; exists {
 		f.cache.stats.Hits++
-		return rel, true
+		return nativestorage.CopyValue(rel, nil).(*Relationship), true
 	}
 	f.cache.stats.Misses++
 	return nil, false
@@ -1007,7 +1010,7 @@ func (f *Functions) GetNodesByLabel(label string) ([]*Node, bool) {
 	defer f.cache.mu.RUnlock()
 
 	if nodes, exists := f.cache.nodesByLabel[label]; exists {
-		return nodes, true
+		return nativestorage.CopyValue(nodes, nil).([]*Node), true
 	}
 	return nil, false
 }
@@ -1018,7 +1021,7 @@ func (f *Functions) GetRelationshipsByType(relType string) ([]*Relationship, boo
 	defer f.cache.mu.RUnlock()
 
 	if rels, exists := f.cache.relsByType[relType]; exists {
-		return rels, true
+		return nativestorage.CopyValue(rels, nil).([]*Relationship), true
 	}
 	return nil, false
 }
