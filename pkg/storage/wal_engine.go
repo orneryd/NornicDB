@@ -575,13 +575,27 @@ func (w *WALEngine) databaseFromEdge(edge *Edge) (string, error) {
 	return dbName, nil
 }
 
-func cloneNodeForWAL(dbName string, node *Node) *Node {
+func embeddingAuditNodeForWAL(dbName string, node *Node) *Node {
 	if node == nil {
 		return nil
 	}
-	c := *node
-	c.ID = NodeID(StripDatabasePrefix(dbName, string(node.ID)))
-	return &c
+	// OpUpdateEmbedding is audit-only: recovery never consumes a node image.
+	// Copy only fixed scalar outcome fields so vectors, body and chunk texts
+	// cannot make either an embedding save or its failure marker exceed the
+	// reader/writer frame limit. Keep the node-shaped payload for db.txlog.
+	dimensions := 0
+	if len(node.ChunkEmbeddings) > 0 {
+		dimensions = len(node.ChunkEmbeddings[0])
+	}
+	return &Node{
+		ID: NodeID(StripDatabasePrefix(dbName, string(node.ID))),
+		EmbedMeta: map[string]any{
+			"chunk_count":          len(node.ChunkEmbeddings),
+			"embedding_dimensions": dimensions,
+			"has_embedding":        node.EmbedMeta["has_embedding"] == true,
+			"embedding_failed":     node.EmbedMeta["embedding_failed"] == true,
+		},
+	}
 }
 
 // UpdateNodeEmbeddingSidecar logs the OpUpdateEmbedding audit record and
@@ -613,7 +627,7 @@ func (w *WALEngine) persistEmbeddingOutcome(ctx context.Context, node *Node) err
 		// physical action after its journal record was accepted.
 		return DecidePublication(ctx, func() error {
 			dbName := w.databaseFromNode(node)
-			if err := w.wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
+			if err := w.wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: embeddingAuditNodeForWAL(dbName, node)}, dbName); err != nil {
 				return fmt.Errorf("wal: failed to log update_embedding: %w", err)
 			}
 			return action()

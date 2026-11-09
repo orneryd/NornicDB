@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep embedding WAL audit records independent of document and vector size.
+  Large multi-chunk documents can persist their embeddings without exceeding
+  the 16 MiB WAL frame limit; permanent failure markers use the same bounded
+  audit path instead of repeatedly re-embedding a node whose save was refused.
+  Existing oversized embedding audits are authenticated as streams and exposed
+  as bounded omissions during upgrade, recovery, inspection and compaction,
+  preserving every valid later record without raising the WAL frame limit.
+
 - Preserve request/job trace context in WAL read diagnostics. WAL recovery and
   snapshot reader Go APIs, replay/undo and snapshot visitors now take contexts
   explicitly; embedding callers must migrate and rebuild. Recovery retains its

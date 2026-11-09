@@ -1200,6 +1200,17 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
 
 		if payloadLen > walMaxEntrySize {
+			entry, _, err := readOversizedEmbeddingAudit(reader, payloadLen, version)
+			if err == nil {
+				report.TotalEntries++
+				report.ValidEntries++
+				lastGoodSeq = entry.Sequence
+				if report.FirstSeq == 0 {
+					report.FirstSeq = entry.Sequence
+				}
+				report.LastSeq = entry.Sequence
+				continue
+			}
 			report.Healthy = false
 			report.CorruptedEntries++
 			report.Errors = append(report.Errors,
@@ -1986,8 +1997,17 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 		// Read payload length
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
 		if payloadLen > walMaxEntrySize {
-			return fmt.Errorf("%w: entry size %d exceeds maximum %d",
-				ErrWALCorrupted, payloadLen, walMaxEntrySize)
+			entry, length, err := readOversizedEmbeddingAudit(reader, payloadLen, version)
+			if err != nil {
+				return fmt.Errorf("%w: entry size %d exceeds maximum %d: %w", ErrWALCorrupted, payloadLen, walMaxEntrySize, err)
+			}
+			offset += uint64(length)
+			entry.recordEnd = offset
+			if err := visit(entry); err != nil {
+				return err
+			}
+			lastGoodSeq = entry.Sequence
+			continue
 		}
 
 		recordLen := int64(9 + payloadLen + 4)
@@ -2187,7 +2207,16 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 		}
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
 		if payloadLen > walMaxEntrySize {
-			break // Invalid size
+			entry, length, err := readOversizedEmbeddingAudit(reader, payloadLen, version)
+			if err != nil {
+				break // Preserve the existing best-effort boundary for corruption.
+			}
+			offset += uint64(length)
+			entry.recordEnd = offset
+			if err := visit(entry); err != nil {
+				return entries, err
+			}
+			continue
 		}
 
 		recordLen := int64(9 + payloadLen + 4)
