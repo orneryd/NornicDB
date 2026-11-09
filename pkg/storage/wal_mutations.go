@@ -101,24 +101,8 @@ func (w *WALEngine) submitRoutedMutations(ctx context.Context, admission *native
 		}
 		if scope != nil {
 			for i := range operations {
-				op := &operations[i]
-				if op.Node != nil {
-					op.Node, err = scope.NodeWriteInput(preparation, op.Node)
-				}
-				if err != nil {
+				if err = scope.QualifyOperation(preparation, &operations[i]); err != nil {
 					return err
-				}
-				if op.Edge != nil {
-					op.Edge, err = scope.EdgeWriteInput(preparation, op.Edge)
-				}
-				if err != nil {
-					return err
-				}
-				if op.Type == OpDeleteNode {
-					op.NodeID = scope.PrefixNodeID(op.NodeID)
-				}
-				if op.Type == OpDeleteEdge {
-					op.EdgeID = scope.PrefixEdgeID(op.EdgeID)
 				}
 			}
 		}

@@ -334,13 +334,11 @@ func (n *NamespacedEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error
 }
 
 func (n *NamespacedEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateRequest) error {
-	edge := updateRequest.After
-	input, err := n.EdgeWriteInput(ctx, edge)
+	input, err := n.edgeUpdateInput(ctx, updateRequest)
 	if err != nil {
 		return err
 	}
-	updateRequest.After = input
-	return n.inner.UpdateEdge(ctx, updateRequest.InScope(n.scope))
+	return n.inner.UpdateEdge(ctx, input)
 }
 
 func (n *NamespacedEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
@@ -1377,4 +1375,56 @@ func (n *NamespacedEngine) EdgeWriteInput(ctx context.Context, edge *Edge) (*Edg
 	input.StartNode = n.PrefixNodeID(edge.StartNode)
 	input.EndNode = n.PrefixNodeID(edge.EndNode)
 	return &input, nil
+}
+
+// edgeUpdateInput is the one implementation of relationship-update input
+// qualification: the replacement through EdgeWriteInput and the observation
+// with the same scope through EdgeUpdateRequest.InScope, so the native frame
+// compares observed endpoints with stored endpoints in one representation.
+// UpdateEdge (which holds a request) and QualifyOperation (which holds a
+// prepared operation) both use it.
+func (n *NamespacedEngine) edgeUpdateInput(ctx context.Context, request EdgeUpdateRequest) (EdgeUpdateRequest, error) {
+	after, err := n.EdgeWriteInput(ctx, request.After)
+	if err != nil {
+		return request, err
+	}
+	request.After = after
+	return request.InScope(n.scope), nil
+}
+
+// QualifyOperation qualifies one prepared entity operation in place exactly
+// as the direct Engine methods qualify their input: nodes with
+// NodeWriteInput, relationships with EdgeWriteInput, a relationship update
+// together with its observation (edgeUpdateInput, shared with UpdateEdge),
+// and delete IDs. It changes only those identity fields. The managed and
+// routed preparation paths use it instead of their own copies. For example,
+// in namespace "tenant" an update of a->b observed as a->b becomes
+// tenant:a->tenant:b in both images.
+func (n *NamespacedEngine) QualifyOperation(ctx context.Context, op *Operation) error {
+	if op.Type == OpUpdateEdge {
+		request, err := n.edgeUpdateInput(ctx, op.EdgeUpdate())
+		if err != nil {
+			return err
+		}
+		op.Edge, op.OldEdge = request.After, request.Before
+		return nil
+	}
+	var err error
+	if op.Node != nil {
+		if op.Node, err = n.NodeWriteInput(ctx, op.Node); err != nil {
+			return err
+		}
+	}
+	if op.Edge != nil {
+		if op.Edge, err = n.EdgeWriteInput(ctx, op.Edge); err != nil {
+			return err
+		}
+	}
+	switch op.Type {
+	case OpDeleteNode:
+		op.NodeID = n.PrefixNodeID(op.NodeID)
+	case OpDeleteEdge:
+		op.EdgeID = n.PrefixEdgeID(op.EdgeID)
+	}
+	return nil
 }

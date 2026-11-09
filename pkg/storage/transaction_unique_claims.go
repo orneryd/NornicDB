@@ -9,6 +9,9 @@ import (
 // mutationPreimagesLocked folds the first staged predecessor of each live
 // incarnation. Pure distinct updates use their ordered operation images without
 // a map; CREATE-only ingestion and ordinary reads retain no preimage state.
+// Only an UPDATE target can carry a predecessor, so when CREATE/DELETE
+// operations outnumber updates (a mixed import), CREATEs of identities no
+// UPDATE targets add no map entries.
 func mutationPreimagesLocked[ID comparable, Image any](ctx context.Context, operations []Operation, pending int, updateType OperationType, project func(*Operation) (ID, Image)) (map[ID]Image, bool, error) {
 	if pending == 0 {
 		return nil, false, nil
@@ -18,14 +21,21 @@ func mutationPreimagesLocked[ID comparable, Image any](ctx context.Context, oper
 	if len(operations) == 1 && pending == 1 {
 		return nil, operations[0].Type == updateType, ctx.Err()
 	}
-	updates := 0
+	createType, deleteType := OpCreateNode, OpDeleteNode
+	if updateType == OpUpdateEdge {
+		createType, deleteType = OpCreateEdge, OpDeleteEdge
+	}
+	updates, structural := 0, 0
 	var cancellation bulkReadCancellation
 	for i := range operations {
 		if err := cancellation.check(ctx); err != nil {
 			return nil, false, err
 		}
-		if operations[i].Type == updateType {
+		switch operations[i].Type {
+		case updateType:
 			updates++
+		case createType, deleteType:
+			structural++
 		}
 	}
 	if updates == 0 {
@@ -34,9 +44,18 @@ func mutationPreimagesLocked[ID comparable, Image any](ctx context.Context, oper
 	if updates == len(operations) && updates == pending {
 		return nil, true, ctx.Err()
 	}
-	createType, deleteType := OpCreateNode, OpDeleteNode
-	if updateType == OpUpdateEdge {
-		createType, deleteType = OpCreateEdge, OpDeleteEdge
+	var targets map[ID]struct{}
+	if structural > updates {
+		targets = make(map[ID]struct{}, updates)
+		for i := range operations {
+			if err := cancellation.check(ctx); err != nil {
+				return nil, false, err
+			}
+			if operations[i].Type == updateType {
+				id, _ := project(&operations[i])
+				targets[id] = struct{}{}
+			}
+		}
 	}
 	before := make(map[ID]Image, min(updates, pending))
 	for i := range operations {
@@ -47,6 +66,11 @@ func mutationPreimagesLocked[ID comparable, Image any](ctx context.Context, oper
 		switch op.Type {
 		case createType:
 			id, _ := project(op)
+			if targets != nil {
+				if _, updated := targets[id]; !updated {
+					continue
+				}
+			}
 			var empty Image
 			before[id] = empty
 		case deleteType:
@@ -98,18 +122,48 @@ func sameNodeUniqueClaim(ctx context.Context, before, after *Node, label, proper
 	return old == next, nil
 }
 
+// captureBufferedImage records the stored image a write-behind buffer holds
+// for id (nil for a buffered delete), allocating images only on the first
+// buffered hit. Node and relationship predecessor validation share it.
+func captureBufferedImage[ID ~string, Image *Node | *Edge](buffer *WriteBehindBuffer, engine *BadgerEngine, kind bufferedEntityKind, id ID, images *map[ID]Image, image func(*bufferedEntityState) Image) {
+	state := buffer.entityStateLocked(kind, string(id), bufferedReadVisibility{engine: engine, visibility: storedRead})
+	if !state.found {
+		return
+	}
+	if *images == nil {
+		*images = make(map[ID]Image)
+	}
+	if state.deleted {
+		(*images)[id] = nil
+	} else {
+		(*images)[id] = image(&state)
+	}
+}
+
+func bufferedNodeImage(state *bufferedEntityState) *Node { return state.node }
+func bufferedEdgeImage(state *bufferedEntityState) *Edge { return state.edge }
+
 // validateMutationPreimagesLocked rejects a stale full image before it can
 // overwrite an acknowledged predecessor or constraint key change. Entity
 // authority is already held by PublishCommit. The current read bypasses unversioned caches and shares the
 // existing buffered/storage read cut and projected body decoder.
 func (tx *BadgerTransaction) validateMutationPreimagesLocked(ctx context.Context) error {
+	// Node images need validation only with write-behind (whole bodies) or a
+	// node unique constraint (claim keys); relationship images only with
+	// write-behind. Decide that before folding any staged operation.
 	validateBody := tx.engine.writeBehind != nil
-	if len(tx.pendingNodes) == 0 && (!validateBody || len(tx.pendingEdges) == 0) {
+	validateNodes := len(tx.pendingNodes) != 0 && (validateBody || tx.engine.GetSchemaForNamespace(tx.namespace).HasUniqueValueTracking())
+	if !validateNodes && (!validateBody || len(tx.pendingEdges) == 0) {
 		return nil
 	}
-	preimages, distinctUpdates, err := mutationPreimagesLocked(ctx, tx.operations, len(tx.pendingNodes), OpUpdateNode, nodeClaimPreimage)
-	if err != nil {
-		return err
+	var preimages map[NodeID]*Node
+	var distinctUpdates bool
+	var err error
+	if validateNodes {
+		preimages, distinctUpdates, err = mutationPreimagesLocked(ctx, tx.operations, len(tx.pendingNodes), OpUpdateNode, nodeClaimPreimage)
+		if err != nil {
+			return err
+		}
 	}
 	var edgePreimages map[EdgeID]*Edge
 	var distinctEdgeUpdates bool
@@ -162,32 +216,10 @@ func (tx *BadgerTransaction) validateMutationPreimagesLocked(ctx context.Context
 			return
 		}
 		capture := func(id NodeID) {
-			state := buffer.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: tx.engine, visibility: storedRead})
-			if !state.found {
-				return
-			}
-			if buffered == nil {
-				buffered = make(map[NodeID]*Node)
-			}
-			if state.deleted {
-				buffered[id] = nil
-			} else {
-				buffered[id] = state.node
-			}
+			captureBufferedImage(buffer, tx.engine, bufferedNodeEntity, id, &buffered, bufferedNodeImage)
 		}
 		captureEdge := func(id EdgeID) {
-			state := buffer.entityStateLocked(bufferedEdgeEntity, string(id), bufferedReadVisibility{engine: tx.engine, visibility: storedRead})
-			if !state.found {
-				return
-			}
-			if bufferedEdges == nil {
-				bufferedEdges = make(map[EdgeID]*Edge)
-			}
-			if state.deleted {
-				bufferedEdges[id] = nil
-			} else {
-				bufferedEdges[id] = state.edge
-			}
+			captureBufferedImage(buffer, tx.engine, bufferedEdgeEntity, id, &bufferedEdges, bufferedEdgeImage)
 		}
 		if distinctEdgeUpdates {
 			for index := range tx.operations {
