@@ -75,10 +75,13 @@ func nor283OpenStore(t *testing.T, dir string) (*storage.BadgerEngine, func()) {
 	return engine, closeStore
 }
 
-func nor283Service(t *testing.T, source storage.Engine, dir string) (*search.Service, func()) {
+func nor283Service(t *testing.T, source storage.Engine, dir string, overrides *search.ServiceOptions) (*search.Service, func()) {
 	t.Helper()
 	options := search.DefaultServiceOptions("")
 	options.BM25MemoryMaxBytes = 1 << 20
+	if overrides != nil {
+		options = *overrides
+	}
 	service := search.NewService(source, 3, &options)
 	service.FixVectorDimensions()
 	if dir != "" {
@@ -250,7 +253,7 @@ func nor283ReleaseCase(t *testing.T, traversal, lifecycle, kind, entry string) {
 	// reopened counting adapter below intentionally omits snapshots to test
 	// direct traversal; it may admit this existing proof but cannot certify
 	// a newly traversed population without holding its source capture.
-	seed, closeSeed := nor283Service(t, engine, indexDir)
+	seed, closeSeed := nor283Service(t, engine, indexDir, nil)
 	require.NoError(t, seed.BuildIndexes(ctx))
 	seed.PersistIndexesToDisk()
 	closeSeed()
@@ -271,7 +274,7 @@ func nor283ReleaseCase(t *testing.T, traversal, lifecycle, kind, entry string) {
 	// source reads or result state survive in the old engine/service objects.
 	engine, _ = nor283OpenStore(t, dataDir)
 	source, reads := nor283Source(t, engine, traversal)
-	service, _ := nor283Service(t, source, indexDir)
+	service, _ := nor283Service(t, source, indexDir, nil)
 	var lazyErr error
 	if entry == "explicit_build" {
 		require.NoError(t, service.BuildIndexes(ctx))
@@ -299,7 +302,7 @@ func nor283ReleaseCase(t *testing.T, traversal, lifecycle, kind, entry string) {
 	// This independent service has no checkpoint paths and must rebuild from
 	// storage. Keep its traversal counter separate from the candidate's.
 	freshSource, _ := nor283Source(t, engine, traversal)
-	fresh, _ := nor283Service(t, freshSource, "")
+	fresh, _ := nor283Service(t, freshSource, "", nil)
 	require.NoError(t, fresh.BuildIndexes(ctx))
 	actualExecutor, freshExecutor := NewStorageExecutor(source), NewStorageExecutor(freshSource)
 	actualExecutor.SetSearchService(service)
