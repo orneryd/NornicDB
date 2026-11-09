@@ -24,7 +24,7 @@ func readEntityAtWithView[I ~string, T Node | Edge, P any](ctx context.Context, 
 	if err := b.pendingNamespaceConflict(namespace); err != nil {
 		return nil, err
 	}
-	deregister, err := b.beginMVCCSnapshotRead(version)
+	deregister, view, err := b.beginMVCCHistoryRead(ctx, version, view)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, nodeID N
 	default:
 		return nil, ErrInvalidData
 	}
-	deregister, err := b.beginMVCCSnapshotRead(version)
+	deregister, view, err := b.beginMVCCHistoryRead(ctx, version, view)
 	if err != nil {
 		return nil, err
 	}

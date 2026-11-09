@@ -239,7 +239,7 @@
     {
       "space": "prefixMVCCPruneFloor",
       "class": "version-retention",
-      "writes": 5
+      "writes": 6
     },
     {
       "space": "prefixNode",
@@ -364,16 +364,16 @@
     {
       "space": "prefixMVCCMetaNamespaceSeq",
       "class": "mvcc-sequence",
-      "origin": "pkg/storage/badger.go:1416",
-      "func": "pkg/storage.BadgerEngine.persistMVCCSequence$1 pkg/storage/badger.go:1416",
+      "origin": "pkg/storage/badger.go:1424",
+      "func": "pkg/storage.BadgerEngine.persistMVCCSequence$1 pkg/storage/badger.go:1424",
       "where": "pkg/storage.BadgerEngine.persistMVCCSequence -"
     },
     {
       "space": "prefixMVCCMetaSchemaVersion",
       "class": "store-metadata",
-      "origin": "pkg/storage/badger.go:1447",
-      "func": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1447",
-      "where": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1447"
+      "origin": "pkg/storage/badger.go:1455",
+      "func": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1455",
+      "where": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1455"
     },
     {
       "space": "prefixMVCCMeta+\"accessmeta:\"",
@@ -987,15 +987,15 @@
     {
       "space": "prefixMVCCEdge",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_lifecycle.go:244",
-      "func": "pkg/storage.BadgerEngine.DeleteMVCCVersion$1 pkg/storage/badger_lifecycle.go:244",
+      "origin": "pkg/storage/badger_lifecycle.go:260",
+      "func": "pkg/storage.BadgerEngine.DeleteMVCCVersion$1 pkg/storage/badger_lifecycle.go:260",
       "where": "pkg/storage.BadgerEngine.DeleteMVCCVersion -"
     },
     {
       "space": "prefixMVCCNode",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_lifecycle.go:244",
-      "func": "pkg/storage.BadgerEngine.DeleteMVCCVersion$1 pkg/storage/badger_lifecycle.go:244",
+      "origin": "pkg/storage/badger_lifecycle.go:260",
+      "func": "pkg/storage.BadgerEngine.DeleteMVCCVersion$1 pkg/storage/badger_lifecycle.go:260",
       "where": "pkg/storage.BadgerEngine.DeleteMVCCVersion -"
     },
     {
@@ -1038,14 +1038,14 @@
       "class": "entity-head",
       "origin": "pkg/storage/badger_managed.go:572",
       "func": "pkg/storage.managedWriteBatch.Delete$1 pkg/storage/badger_managed.go:572",
-      "where": "pkg/storage.BadgerEngine.RebuildMVCCHeads pkg/storage/badger_mvcc.go:1453"
+      "where": "pkg/storage.BadgerEngine.RebuildMVCCHeads pkg/storage/badger_mvcc.go:1446"
     },
     {
       "space": "prefixMVCCEdgeHead",
       "class": "entity-head",
       "origin": "pkg/storage/badger_managed.go:572",
       "func": "pkg/storage.managedWriteBatch.Delete$1 pkg/storage/badger_managed.go:572",
-      "where": "pkg/storage.BadgerEngine.RebuildMVCCHeads pkg/storage/badger_mvcc.go:1456"
+      "where": "pkg/storage.BadgerEngine.RebuildMVCCHeads pkg/storage/badger_mvcc.go:1449"
     },
     {
       "space": "prefixTemporalIndex",
@@ -1328,186 +1328,193 @@
       "where": "pkg/storage.BadgerEngine.endSuppressions -"
     },
     {
-      "space": "prefixMVCCEdge",
-      "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2014",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2014",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2014"
-    },
-    {
-      "space": "prefixMVCCIncomingAdj",
-      "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2014",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2014",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2014"
-    },
-    {
-      "space": "prefixMVCCNode",
-      "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2014",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2014",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2014"
-    },
-    {
-      "space": "prefixMVCCOutgoingAdj",
-      "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2014",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2014",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2014"
+      "space": "prefixMVCCPruneFloor",
+      "class": "version-retention",
+      "origin": "pkg/storage/badger_mvcc.go:1966",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1966",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1966"
     },
     {
       "space": "prefixMVCCEdge",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2027",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2027",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2027"
+      "origin": "pkg/storage/badger_mvcc.go:1973",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1973",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1973"
     },
     {
       "space": "prefixMVCCIncomingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2027",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2027",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2027"
+      "origin": "pkg/storage/badger_mvcc.go:1973",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1973",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1973"
     },
     {
       "space": "prefixMVCCNode",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2027",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2027",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2027"
+      "origin": "pkg/storage/badger_mvcc.go:1973",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1973",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1973"
     },
     {
       "space": "prefixMVCCOutgoingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2027",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2027",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2027"
-    },
-    {
-      "space": "prefixMVCCPruneFloor",
-      "class": "version-retention",
-      "origin": "pkg/storage/badger_mvcc.go:2042",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2042",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2042"
-    },
-    {
-      "space": "prefixMVCCNodeHead",
-      "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:2045",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2045",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2045"
-    },
-    {
-      "space": "prefixMVCCPruneFloor",
-      "class": "version-retention",
-      "origin": "pkg/storage/badger_mvcc.go:2056",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2056",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2056"
-    },
-    {
-      "space": "prefixMVCCEdgeHead",
-      "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:2059",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2059",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2059"
-    },
-    {
-      "space": "prefixMVCCPruneFloor",
-      "class": "version-retention",
-      "origin": "pkg/storage/badger_mvcc.go:2075",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2075",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2075"
+      "origin": "pkg/storage/badger_mvcc.go:1973",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1973",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1973"
     },
     {
       "space": "prefixMVCCEdge",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2136",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2136",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2136"
+      "origin": "pkg/storage/badger_mvcc.go:1986",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1986",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1986"
     },
     {
       "space": "prefixMVCCIncomingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2136",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2136",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2136"
+      "origin": "pkg/storage/badger_mvcc.go:1986",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1986",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1986"
     },
     {
       "space": "prefixMVCCNode",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2136",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2136",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2136"
+      "origin": "pkg/storage/badger_mvcc.go:1986",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1986",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1986"
     },
     {
       "space": "prefixMVCCOutgoingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2136",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2136",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2136"
+      "origin": "pkg/storage/badger_mvcc.go:1986",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1986",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:1986"
     },
     {
       "space": "prefixMVCCPruneFloor",
       "class": "version-retention",
-      "origin": "pkg/storage/badger_mvcc.go:2147",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2147",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2147"
+      "origin": "pkg/storage/badger_mvcc.go:2001",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2001",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2001"
     },
     {
       "space": "prefixMVCCNodeHead",
       "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:2262",
-      "func": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2262",
-      "where": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2262"
+      "origin": "pkg/storage/badger_mvcc.go:2004",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2004",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2004"
+    },
+    {
+      "space": "prefixMVCCPruneFloor",
+      "class": "version-retention",
+      "origin": "pkg/storage/badger_mvcc.go:2015",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2015",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2015"
     },
     {
       "space": "prefixMVCCEdgeHead",
       "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:2264",
-      "func": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2264",
-      "where": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2264"
+      "origin": "pkg/storage/badger_mvcc.go:2018",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2018",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2018"
+    },
+    {
+      "space": "prefixMVCCPruneFloor",
+      "class": "version-retention",
+      "origin": "pkg/storage/badger_mvcc.go:2034",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2034",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2034"
+    },
+    {
+      "space": "prefixMVCCEdge",
+      "class": "entity-version",
+      "origin": "pkg/storage/badger_mvcc.go:2110",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2110",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2110"
     },
     {
       "space": "prefixMVCCIncomingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:330",
-      "func": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:330",
-      "where": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:330"
+      "origin": "pkg/storage/badger_mvcc.go:2110",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2110",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2110"
+    },
+    {
+      "space": "prefixMVCCNode",
+      "class": "entity-version",
+      "origin": "pkg/storage/badger_mvcc.go:2110",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2110",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2110"
     },
     {
       "space": "prefixMVCCOutgoingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:330",
-      "func": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:330",
-      "where": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:330"
+      "origin": "pkg/storage/badger_mvcc.go:2110",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2110",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2110"
     },
     {
-      "space": "prefixMVCCEdgeHead",
-      "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:589",
-      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:589",
-      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:589"
-    },
-    {
-      "space": "prefixMVCCEdgeHead",
-      "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:589",
-      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCRebuildKind] pkg/storage/badger_mvcc.go:589",
-      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCRebuildKind] pkg/storage/badger_mvcc.go:589"
+      "space": "prefixMVCCPruneFloor",
+      "class": "version-retention",
+      "origin": "pkg/storage/badger_mvcc.go:2121",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2121",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2121"
     },
     {
       "space": "prefixMVCCNodeHead",
       "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:589",
-      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:589",
-      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:589"
+      "origin": "pkg/storage/badger_mvcc.go:2215",
+      "func": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2215",
+      "where": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2215"
+    },
+    {
+      "space": "prefixMVCCEdgeHead",
+      "class": "entity-head",
+      "origin": "pkg/storage/badger_mvcc.go:2217",
+      "func": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2217",
+      "where": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2217"
+    },
+    {
+      "space": "prefixMVCCIncomingAdj",
+      "class": "entity-adjacency",
+      "origin": "pkg/storage/badger_mvcc.go:323",
+      "func": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:323",
+      "where": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:323"
+    },
+    {
+      "space": "prefixMVCCOutgoingAdj",
+      "class": "entity-adjacency",
+      "origin": "pkg/storage/badger_mvcc.go:323",
+      "func": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:323",
+      "where": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:323"
+    },
+    {
+      "space": "prefixMVCCEdgeHead",
+      "class": "entity-head",
+      "origin": "pkg/storage/badger_mvcc.go:582",
+      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:582",
+      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:582"
+    },
+    {
+      "space": "prefixMVCCEdgeHead",
+      "class": "entity-head",
+      "origin": "pkg/storage/badger_mvcc.go:582",
+      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCRebuildKind] pkg/storage/badger_mvcc.go:582",
+      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCRebuildKind] pkg/storage/badger_mvcc.go:582"
     },
     {
       "space": "prefixMVCCNodeHead",
       "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:589",
-      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCRebuildKind] pkg/storage/badger_mvcc.go:589",
-      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCRebuildKind] pkg/storage/badger_mvcc.go:589"
+      "origin": "pkg/storage/badger_mvcc.go:582",
+      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:582",
+      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:582"
+    },
+    {
+      "space": "prefixMVCCNodeHead",
+      "class": "entity-head",
+      "origin": "pkg/storage/badger_mvcc.go:582",
+      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCRebuildKind] pkg/storage/badger_mvcc.go:582",
+      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCRebuildKind] pkg/storage/badger_mvcc.go:582"
     },
     {
       "space": "prefixMVCCIncomingAdj",
@@ -2067,42 +2074,42 @@
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1320",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.NodeID] pkg/storage/id_dictionary.go:1320",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2048"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2007"
     },
     {
       "space": "prefixIDDictEdgeForward",
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1320",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.EdgeID] pkg/storage/id_dictionary.go:1320",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2062"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2021"
     },
     {
       "space": "prefixIDDictNodeReverse",
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1327",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.NodeID] pkg/storage/id_dictionary.go:1327",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2048"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2007"
     },
     {
       "space": "prefixIDDictEdgeReverse",
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1327",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.EdgeID] pkg/storage/id_dictionary.go:1327",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2062"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2021"
     },
     {
       "space": "prefixIDDictNodeForward",
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1331",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.NodeID] pkg/storage/id_dictionary.go:1331",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2048"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2007"
     },
     {
       "space": "prefixIDDictEdgeForward",
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1331",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.EdgeID] pkg/storage/id_dictionary.go:1331",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2062"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$2 pkg/storage/badger_mvcc.go:2021"
     },
     {
       "space": "prefixIDDictCounter",
@@ -2565,19 +2572,19 @@
       "field": "pkg/storage.BadgerEngine.activeMVCCSnapshotReaders",
       "class": "snapshot readers",
       "func": "pkg/storage.BadgerEngine.acquireSnapshotReader",
-      "pos": "pkg/storage/badger_lifecycle.go:116"
+      "pos": "pkg/storage/badger_lifecycle.go:129"
     },
     {
       "field": "pkg/storage.BadgerEngine.activeMVCCSnapshotReaders",
       "class": "snapshot readers",
       "func": "pkg/storage.BadgerEngine.acquireSnapshotReader$1",
-      "pos": "pkg/storage/badger_lifecycle.go:117"
+      "pos": "pkg/storage/badger_lifecycle.go:130"
     },
     {
       "field": "pkg/storage.BadgerEngine.adjCacheMaxNodes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1090"
+      "pos": "pkg/storage/badger.go:1098"
     },
     {
       "field": "pkg/storage.BadgerEngine.cacheHits",
@@ -2607,7 +2614,7 @@
       "field": "pkg/storage.BadgerEngine.edgeCacheMaxItems",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1088"
+      "pos": "pkg/storage/badger.go:1096"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheSources",
@@ -2721,13 +2728,13 @@
       "field": "pkg/storage.BadgerEngine.edgeTypeCacheMaxTypes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1077"
+      "pos": "pkg/storage/badger.go:1085"
     },
     {
       "field": "pkg/storage.BadgerEngine.labelFirstCacheMax",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1080"
+      "pos": "pkg/storage/badger.go:1088"
     },
     {
       "field": "pkg/storage.BadgerEngine.manualSuppressionCount",
@@ -2757,13 +2764,13 @@
       "field": "pkg/storage.BadgerEngine.mvccLegacyGlobalSeed",
       "class": "MVCC sequence",
       "func": "pkg/storage.BadgerEngine.initializeMVCCSequence",
-      "pos": "pkg/storage/badger.go:1317"
+      "pos": "pkg/storage/badger.go:1325"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
       "class": "entity-count",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1094"
+      "pos": "pkg/storage/badger.go:1102"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
@@ -2793,7 +2800,7 @@
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
       "class": "entity-count",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1093"
+      "pos": "pkg/storage/badger.go:1101"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
@@ -2853,7 +2860,7 @@
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheMaxBytes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1074"
+      "pos": "pkg/storage/badger.go:1082"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
@@ -2889,13 +2896,13 @@
       "field": "pkg/storage.BadgerEngine.nodeCacheMaxBytes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1071"
+      "pos": "pkg/storage/badger.go:1079"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheMaxEntries",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1068"
+      "pos": "pkg/storage/badger.go:1076"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCount",
@@ -3742,6 +3749,36 @@
       "class": "validation-local relationship cardinality count",
       "func": "pkg/storage.edgeCardinalityCounter.counts",
       "pos": "pkg/storage/edge_cardinality_counter.go:110"
+    },
+    {
+      "field": "pkg/storage.mvccPrunePass.decided",
+      "class": "prune-pass committed-decision cursor (per-call progress)",
+      "func": "pkg/storage.mvccPrunePass.walk",
+      "pos": "pkg/storage/badger_mvcc_prune.go:380"
+    },
+    {
+      "field": "pkg/storage.mvccPrunePass.decided",
+      "class": "prune-pass committed-decision cursor (per-call progress)",
+      "func": "pkg/storage.mvccPrunePass.walk$1$1",
+      "pos": "pkg/storage/badger_mvcc_prune.go:417"
+    },
+    {
+      "field": "pkg/storage.mvccPrunePass.decided",
+      "class": "prune-pass committed-decision cursor (per-call progress)",
+      "func": "pkg/storage.mvccPrunePass.walk$1",
+      "pos": "pkg/storage/badger_mvcc_prune.go:455"
+    },
+    {
+      "field": "pkg/storage.mvccPrunePass.decided",
+      "class": "prune-pass committed-decision cursor (per-call progress)",
+      "func": "pkg/storage.mvccPrunePass.step",
+      "pos": "pkg/storage/badger_mvcc_prune.go:534"
+    },
+    {
+      "field": "pkg/storage.mvccPrunePass.deleted",
+      "class": "prune-pass deleted version records (per-call result)",
+      "func": "pkg/storage.mvccPrunePass.step",
+      "pos": "pkg/storage/badger_mvcc_prune.go:527"
     },
     {
       "field": "pkg/storage.mvccReservations.count",
