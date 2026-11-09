@@ -10,7 +10,7 @@ import (
 var _ MVCCEnumerationEngine = (*BadgerEngine)(nil)
 
 func (b *BadgerEngine) GetNodeVisibleAt(ctx context.Context, id NodeID, version MVCCVersion) (*Node, error) {
-	return readEntityAtWithView(ctx, b, id, version, mvccEntityRead{vectors: true, visibility: visibleRead}, b.withView, (*BadgerEngine).getNodeAtInTxn)
+	return readEntityAtWithView(ctx, b, id, version, mvccEntityRead{vectors: true, visibility: visibleRead}, nil, (*BadgerEngine).getNodeAtInTxn)
 }
 
 // getNodeAtInTxn resolves logical visibility and hydration against the supplied
@@ -148,13 +148,13 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 }
 
 func (b *BadgerEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
-	return b.getNodesByLabelVisibleAtWithView(ctx, "", label, version, b.withView)
+	return b.getNodesByLabelVisibleAtWithView(ctx, "", label, version, nil)
 }
 
 // GetNodesByLabelVisibleAtInScope is GetNodesByLabelVisibleAt within one
 // database (ScopedLabelNodeReader).
 func (b *BadgerEngine) GetNodesByLabelVisibleAtInScope(ctx context.Context, scope, label string, version MVCCVersion) ([]*Node, error) {
-	return b.getNodesByLabelVisibleAtWithView(ctx, scope, label, version, b.withView)
+	return b.getNodesByLabelVisibleAtWithView(ctx, scope, label, version, nil)
 }
 
 func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(ctx context.Context, scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
@@ -165,7 +165,7 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(ctx context.Context, sco
 		return nil, err
 	}
 
-	deregister, err := b.beginMVCCSnapshotRead(version)
+	deregister, view, err := b.beginMVCCHistoryRead(ctx, version, view)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +232,7 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 	if visit == nil {
 		return ErrInvalidData
 	}
-	deregister, err := b.beginMVCCSnapshotRead(version)
+	deregister, view, err := b.beginMVCCHistoryRead(ctx, version, view)
 	if err != nil {
 		return err
 	}
@@ -431,7 +431,7 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType str
 		return nil, err
 	}
 
-	deregister, err := b.beginMVCCSnapshotRead(version)
+	deregister, err := b.beginMVCCSnapshotRead(ctx, version)
 	if err != nil {
 		return nil, err
 	}
@@ -466,7 +466,7 @@ func (b *BadgerEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, en
 	// The shared MVCC adjacency owner selects this pair before retaining
 	// output, rather than scanning and materializing unrelated graph edges.
 	// Latest reads keep their current between index and acknowledged overlay.
-	return b.readAdjacentEdgesAtWithView(ctx, startID, version, Outgoing, endID, b.withView)
+	return b.readAdjacentEdgesAtWithView(ctx, startID, version, Outgoing, endID, nil)
 }
 
 // yieldLatestVisible is the one owner of the latest-visible enumeration

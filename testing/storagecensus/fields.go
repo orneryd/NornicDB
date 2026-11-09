@@ -173,6 +173,14 @@ var fieldClasses = map[string]fieldRow{
 	// neither an engine total nor quota/publication state; only counts changes
 	// it as the validation streams its selected edge images.
 	"pkg/storage.edgeCardinalityCounter.count": {class: "validation-local relationship cardinality count"},
+	// Author: prune-lockup lane (Claude Opus 5.5), 9 November 2026. One
+	// PruneMVCCVersions call owns its mvccPrunePass: the version records it
+	// deleted (returned to the caller) and the last key whose decision is
+	// committed (the resume cursor). Neither is an entity count, quota,
+	// suppression or publication-order field; each field has its own row so
+	// new state on the type still needs a census decision.
+	"pkg/storage.mvccPrunePass.deleted": {class: "prune-pass deleted version records (per-call result)"},
+	"pkg/storage.mvccPrunePass.decided": {class: "prune-pass committed-decision cursor (per-call progress)"},
 
 	// These are explicit per-field classifications, not type exemptions.
 	// MarshalJSON owns the request buffer; it never publishes stored entities.

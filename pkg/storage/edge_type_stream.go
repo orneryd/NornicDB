@@ -305,7 +305,7 @@ func (b *BadgerEngine) streamEdgesByTypeAtSnapshotWithView(ctx context.Context, 
 		return err
 	}
 
-	deregister, err := b.beginMVCCSnapshotRead(version)
+	deregister, view, err := b.beginMVCCHistoryRead(ctx, version, view)
 	if err != nil {
 		return err
 	}

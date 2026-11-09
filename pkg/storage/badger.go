@@ -376,6 +376,14 @@ type BadgerEngine struct {
 	mvccFloorKeysMu           sync.RWMutex
 	mvccFloorKeys             map[[9]byte]struct{}
 	lifecycleController       MVCCLifecycleController
+	// mvccPruneMu orders whole prune passes against each other and guards
+	// mvccPruneResume; no reader takes it. mvccPruneBatchMu is held by a
+	// prune only while one bounded step reads the reader floors and commits
+	// its deletes; an as-of reader registers under it shared, so it waits
+	// for one step at most, whose scan of its key's remaining history grows
+	// with that chain's length (badger_mvcc_prune.go).
+	mvccPruneBatchMu trackedRWMutex
+	mvccPruneResume  mvccPruneCursor
 
 	// Cached per-namespace counts for O(1) multi-database stats.
 	// Keys are namespace prefixes like "nornic:".
