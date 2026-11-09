@@ -96,8 +96,8 @@
     "sha256": "f1787d8e8924fed5da3b05d0e5c40055ed0b4f2503fa3e90ae6d656bdfa833a6"
   },
   "pkg/auth/allowlist.go:AllowlistStore.SaveMappings": {
-    "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
-    "sha256": "203a6e4754f06fc5d82768cbe08a2c4cb0602af3eee7af3ad1ccf92d02158c2f"
+    "reason": "Typed role-to-database metadata: json.Marshal encodes only []string into the existing databases field. The write-order lock and post-commit cache publication do not introduce graph-property numeric JSON.",
+    "sha256": "da5cb51245155a68d9daadbbd10b4249e2ffe995ebb975dd45d573be4157cbc9"
   },
   "pkg/auth/allowlist.go:databasesFromProperties": {
     "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
@@ -120,8 +120,8 @@
     "sha256": "030fd84612f8ca56a8bf53c450a2fcf37c3d069fcf81adc874008cb16aabd369"
   },
   "pkg/auth/role_entitlements.go:RoleEntitlementsStore.SetMappings": {
-    "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
-    "sha256": "ec98158dded6d245135c65d8d288c0f6d747934f9fb93304e1e37203412ffc32"
+    "reason": "Typed role entitlement metadata: json.Marshal encodes only []string into the existing entitlements field. The write-order lock and post-commit cache publication do not introduce graph-property numeric JSON.",
+    "sha256": "13a89e072866e7eb1783e09b84cba1ffda8fdae95d223c87d46a4c717e08924f"
   },
   "pkg/bolt/discovery.go:buildDiscoveryResponse": {
     "reason": "Discovery URL and version strings; no query result values.",
@@ -644,8 +644,8 @@
     "sha256": "37d7e0cd69fa01fdfda682f394ea463a6efe253ba350710f7ea59f73491717f3"
   },
   "pkg/storage/wal_v4_file_migration.go:scanV4MigrationWAL": {
-    "reason": "Author: #1665 implementation lane (Codex). Historical WAL scanner reads typed WALEntry wrappers and retains version-specific checksums/framing; Data remains opaque bytes handled by the migration owner.",
-    "sha256": "ddbe2343425b89a8aa187e3e076e580152ab1465c8a6e79a2f97d2560a8776cc"
+    "reason": "Historical WAL framing reads typed WALEntry wrappers (uint64 sequence, uint32 checksum, opaque Data bytes); semantic property decoding remains with the WAL migration owner. Oversized embedding audit frames use the existing bounded streaming reader and do not add a JSON property decoder.",
+    "sha256": "1da8422e313ac9e61e8b05712c8ab22cc185977318e16b92401908db0f88d4a6"
   },
   "pkg/storage/wal_v4_gob_entity.go:decodeV4EntityChange": {
     "reason": "Author: #1665 implementation lane (Codex). Version-4-only fallback retains historical untagged JSON property meaning; current typed MessagePack paths do not enter it. Reject-trailing rules are retained.",
