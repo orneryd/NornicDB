@@ -1,9 +1,9 @@
 package fn
 
 import (
-	"context"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -29,13 +29,9 @@ type Context struct {
 	// Nil means not a composite database.
 	Graphs GraphCatalog
 
-	// GraphVisible applies live selection visibility to catalog function output.
-	// Nil preserves trusted embedded use without a request authorization policy.
-	GraphVisible func(context.Context, string) bool
-	// GraphContext is the retained statement metadata used by GraphVisible.
-	// A caller setting GraphVisible must provide this non-nil context; the
-	// execution context remains separate for cancellation.
-	GraphContext context.Context
+	// CatalogVisibility carries only live permission metadata, independently of
+	// execution cancellation. Its zero value preserves trusted embedding use.
+	CatalogVisibility auth.CatalogVisibility
 
 	// Cypher25 is set while a Cypher 25 statement runs: a function whose
 	// results or errors Neo4j 2026.09 changed follows Neo4j 2026.09 then, and

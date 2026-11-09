@@ -14,9 +14,9 @@ and no fresh indexed code baseline is available. This is a manual source review,
 not a clean remote duplicate-check result. CI advisory review remains pending.
 
 Composite graph-name functions, aliases, composite listings and constituent rows
-reuse the same catalog visibility predicate. The function context binds a static
-function pointer rather than a per-row closure; its actual construction remains
-covered by the zero-allocation assertion. Existing context-free raw catalog
+reuse the same catalog visibility predicate. The function context binds a typed
+live permission view rather than a per-row closure or an unused work context;
+its actual construction remains covered by the zero-allocation assertion. Existing context-free raw catalog
 providers remain trusted metadata APIs; request authorization is applied at their
 query consumers.
 
@@ -31,8 +31,8 @@ query consumers.
   A public restricted-scope/partial-read control preserves visible names; the
   server's plugin scope enumerates all allowed databases, not just the URL one.
 - Retained row metadata can differ from the execution context. Its reproduced
-  catalog-function failure is corrected by binding the metadata context as data
-  beside the static visibility function; cancellation still uses execution work.
+  catalog-function failure is corrected by extracting a typed live permission
+  view from retained metadata; cancellation still uses execution work.
 - Public USE graph.byElementId controls prove production predicate wiring;
   unrestricted raw Fabric instances remain trusted Go embedding components.
 - Fabric authorization now runs before lookup. Reference recording has its own
@@ -43,3 +43,9 @@ query consumers.
   under a configured request policy, an unresolvable alias has no selection grant.
 
 These are source and focused-test dispositions, not an exhaustive graph verdict.
+
+The final context audit found that carrying the whole context through fn.Context
+created an unused nullable receiver field at GraphStorage. That field is retired:
+auth.CatalogVisibility carries only mode, scope and the existing selection
+resolver. No census acceptance or rule was added. The full context census must
+confirm the only remaining finding is the separate WAL substitution.

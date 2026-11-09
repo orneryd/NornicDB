@@ -16,13 +16,12 @@ func (e *StorageExecutor) registryFunctionContext(ctx context.Context, eval func
 		metadataCtx = inherited
 	}
 	return cypherfn.Context{
-		Storage:      e.storage,
-		Database:     e.executionDatabaseName(metadataCtx),
-		Eval:         eval,
-		Now:          time.Now,
-		Graphs:       e,
-		GraphVisible: catalogDatabaseVisible,
-		GraphContext: metadataCtx,
-		Cypher25:     cypherVersionFromContext(metadataCtx) == "25",
+		Storage:           e.storage,
+		Database:          e.executionDatabaseName(metadataCtx),
+		Eval:              eval,
+		Now:               time.Now,
+		Graphs:            e,
+		CatalogVisibility: catalogVisibility(metadataCtx),
+		Cypher25:          cypherVersionFromContext(metadataCtx) == "25",
 	}
 }
