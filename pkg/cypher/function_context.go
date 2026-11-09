@@ -22,6 +22,7 @@ func (e *StorageExecutor) registryFunctionContext(ctx context.Context, eval func
 		Now:          time.Now,
 		Graphs:       e,
 		GraphVisible: catalogDatabaseVisible,
+		GraphContext: metadataCtx,
 		Cypher25:     cypherVersionFromContext(metadataCtx) == "25",
 	}
 }

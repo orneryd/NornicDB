@@ -44,3 +44,19 @@ func TestElementIDResolutionUsesCatalogVisibility(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "comp.hidden", name)
 }
+
+func TestGraphReferenceRecordingFollowsSuccessfulResolution(t *testing.T) {
+	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	authorized, resolved := 0, 0
+	exec.SetGraphAuthorizer(func(context.Context, string, string) error { authorized++; return nil })
+	exec.SetGraphResolved(func(context.Context, string) error { resolved++; return nil })
+	_, _, _, err := exec.prepareExecDispatch(context.Background(), nil, &FragmentExec{GraphName: "absent", Query: "RETURN 1"}, nil)
+	require.Error(t, err)
+	require.Equal(t, 1, authorized)
+	require.Zero(t, resolved)
+	exec.catalog.Register("present", &LocationLocal{DBName: "present"})
+	_, _, _, err = exec.prepareExecDispatch(context.Background(), nil, &FragmentExec{GraphName: "present", Query: "RETURN 1"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, authorized)
+	require.Equal(t, 1, resolved)
+}

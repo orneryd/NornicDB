@@ -32,6 +32,10 @@ type Context struct {
 	// GraphVisible applies live selection visibility to catalog function output.
 	// Nil preserves trusted embedded use without a request authorization policy.
 	GraphVisible func(context.Context, string) bool
+	// GraphContext is the retained statement metadata used by GraphVisible.
+	// A caller setting GraphVisible must provide this non-nil context; the
+	// execution context remains separate for cancellation.
+	GraphContext context.Context
 
 	// Cypher25 is set while a Cypher 25 statement runs: a function whose
 	// results or errors Neo4j 2026.09 changed follows Neo4j 2026.09 then, and

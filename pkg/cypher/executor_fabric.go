@@ -206,6 +206,9 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
 			return err
 		}
+		return nil
+	})
+	fabricExecutor.SetGraphResolved(func(ctx context.Context, database string) error {
 		if ownershipRejected {
 			return ownedTransactionControlError()
 		}

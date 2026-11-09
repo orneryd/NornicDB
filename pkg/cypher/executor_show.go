@@ -949,14 +949,6 @@ func functionSignatureDescriptions(signature string) ([]interface{}, string) {
 
 // executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
 func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	nodeCount, err := e.storage.NodeCount(ctx)
-	if err != nil {
-		return nil, err
-	}
-	edgeCount, err := e.storage.EdgeCount(ctx)
-	if err != nil {
-		return nil, err
-	}
 
 	// Try to get database name from context or use default
 	dbName := "nornic" // Default fallback
@@ -975,6 +967,19 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 		// Note: DatabaseManagerInterface doesn't expose DefaultDatabaseName,
 		// so we can't call it directly. The NamespacedEngine namespace should
 		// already be set correctly by the server layer.
+	}
+
+	if !catalogDatabaseVisible(ctx, dbName) {
+		return withShowDefaultColumns(&ExecuteResult{Columns: showDatabasesColumns, Rows: [][]interface{}{}}, showDatabasesDefaultColumns), nil
+	}
+
+	nodeCount, err := e.storage.NodeCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	edgeCount, err := e.storage.EdgeCount(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	return withShowDefaultColumns(&ExecuteResult{

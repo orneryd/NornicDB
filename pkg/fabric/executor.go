@@ -36,6 +36,7 @@ type FabricExecutor struct {
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
 	visibleGraph           func(context.Context, string) bool
+	graphResolved          func(context.Context, string) error
 	remoteStatementPolicy  func(context.Context, string) (RemoteStatementPolicy, error)
 	union                  UnionContract
 	resultColumns          resultmetadata.Provider
@@ -318,6 +319,11 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 	if err != nil {
 		return nil, nil, ctx, err
 	}
+	if e.graphResolved != nil {
+		if err := e.graphResolved(ctx, graph); err != nil {
+			return nil, nil, ctx, err
+		}
+	}
 	ctx = context.WithValue(ctx, graphSelectionContextKey{}, graph)
 	if tx != nil {
 		participant := ParticipantKeyFromLocation(loc)
@@ -340,8 +346,15 @@ func (e *FabricExecutor) SetGraphVisibility(visible func(context.Context, string
 	e.visibleGraph = visible
 }
 
-// SetGraphAuthorizer installs the statement owner's selection check. Dispatch
-// calls it with the original catalog name before opening a participant.
+// SetGraphResolved installs the statement owner's reference-recording boundary.
+// It runs only after authorization and successful catalog resolution, before
+// opening a participant. A failed lookup never records a reference.
+func (e *FabricExecutor) SetGraphResolved(resolved func(context.Context, string) error) {
+	e.graphResolved = resolved
+}
+
+// SetGraphAuthorizer installs the statement owner's selection check. Resolution
+// calls it with the evaluated selection before looking it up in the catalog.
 func (e *FabricExecutor) SetGraphAuthorizer(authorize func(context.Context, string, string) error) {
 	e.authorizeGraph = authorize
 }

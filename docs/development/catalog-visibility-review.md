@@ -19,3 +19,27 @@ function pointer rather than a per-row closure; its actual construction remains
 covered by the zero-allocation assertion. Existing context-free raw catalog
 providers remain trusted metadata APIs; request authorization is applied at their
 query consumers.
+
+## Independent review reconciliation
+
+- The implicit single-statement HTTP route reaches the common statement runner
+  without the explicit-route access gate. Its absent-target regression fails on
+  release and passes after the shared runner checks the existing graph-access
+  owner. Explicit handlers retain their earlier gate before acquiring a lease;
+  callers reuse one predicate rather than implementing permission rules again.
+- Metadata selection needs access, not data-read rights on every listed database.
+  A public restricted-scope/partial-read control preserves visible names; the
+  server's plugin scope enumerates all allowed databases, not just the URL one.
+- Retained row metadata can differ from the execution context. Its reproduced
+  catalog-function failure is corrected by binding the metadata context as data
+  beside the static visibility function; cancellation still uses execution work.
+- Public USE graph.byElementId controls prove production predicate wiring;
+  unrestricted raw Fabric instances remain trusted Go embedding components.
+- Fabric authorization now runs before lookup. Reference recording has its own
+  post-resolution callback so an absent graph never creates a cache dependency.
+- The current-database SHOW row also uses the same predicate. A denied-only
+  context previously returned the system row; the regression now requires no row.
+- Unknown legacy constituent cells retain their trusted unconfigured behavior;
+  under a configured request policy, an unresolvable alias has no selection grant.
+
+These are source and focused-test dispositions, not an exhaustive graph verdict.

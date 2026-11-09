@@ -91,3 +91,55 @@ func TestCatalogConstituentRowsUseSelectionVisibility(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, allowed.Rows, 2)
 }
+
+func TestRowCatalogFunctionsRetainStatementAuthorization(t *testing.T) {
+	exec := newCompositeFixture(t)
+	outer := WithDatabasePermissionResolver(context.Background(), "pcomp", func(database, permission string) bool { return database == "pcomp" })
+	row := pipelineRow{rowStatementContextKey: outer}
+	value, handled, resolved, err := exec.evaluateRowGraphFunction(context.Background(), "graph.names", "", row)
+	require.True(t, handled)
+	require.True(t, resolved)
+	require.NoError(t, err)
+	require.Equal(t, []interface{}{}, value)
+}
+
+func TestCatalogVisibilityDoesNotRequireDataReadOnListedDatabase(t *testing.T) {
+	exec := newCatalogVisibilityExecutor(t)
+	ctx := WithDatabasePermissionResolver(context.Background(), "nornic", func(database, permission string) bool {
+		if permission == "access" {
+			return database == "nornic" || database == "hidden"
+		}
+		return database == "nornic"
+	})
+	ctx = auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScope("nornic", map[string]string{"nornic": "nornic", "hidden": "hidden"}))
+	result, err := exec.Execute(ctx, "SHOW DATABASES YIELD name WHERE name <> 'system' RETURN name ORDER BY name", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"hidden"}, {"nornic"}}, result.Rows)
+}
+
+func TestElementIDCatalogSelectionUsesRequestVisibility(t *testing.T) {
+	exec := newCompositeFixture(t)
+	known, err := exec.Execute(context.Background(), "USE pcomp.other MATCH (n:EI) RETURN elementId(n) AS id", nil)
+	require.NoError(t, err)
+	hiddenID := known.Rows[0][0]
+	ctx := WithDatabasePermissionResolver(context.Background(), "pcomp", func(database, permission string) bool { return database == "pcomp" })
+	for _, id := range []interface{}{hiddenID, "4:absent:node"} {
+		result, err := exec.Execute(ctx, "USE graph.byElementId($id) RETURN 1 AS n", map[string]interface{}{"id": id})
+		requireStatusCode(t, err, "Neo.ClientError.Database.DatabaseNotFound")
+		require.Nil(t, result)
+	}
+	result, err := exec.Execute(context.Background(), "USE graph.byElementId($id) RETURN 1 AS n", map[string]interface{}{"id": hiddenID})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+}
+
+func TestCurrentDatabaseCatalogRowHonorsVisibility(t *testing.T) {
+	exec := newCatalogVisibilityExecutor(t)
+	denied := auth.WithRequestDatabaseAccessMode(context.Background(), auth.DenyAllDatabaseAccessMode)
+	result, err := exec.Execute(denied, "SHOW DATABASE", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	allowed, err := exec.Execute(context.Background(), "SHOW DATABASE", nil)
+	require.NoError(t, err)
+	require.Len(t, allowed.Rows, 1)
+}

@@ -82,7 +82,7 @@ func init() {
 		}
 		out := make([]interface{}, 0, len(graphs))
 		for _, graph := range graphs {
-			if ctx.GraphVisible == nil || ctx.GraphVisible(workCtx, graph) {
+			if ctx.GraphVisible == nil || ctx.GraphVisible(ctx.GraphContext, graph) {
 				out = append(out, graph)
 			}
 		}
@@ -109,7 +109,7 @@ func init() {
 			return nil, &ArgumentTypeError{Function: "graph.propertiesByName", Value: value}
 		}
 		for _, graph := range graphs {
-			if strings.EqualFold(graph, name) && (ctx.GraphVisible == nil || ctx.GraphVisible(workCtx, graph)) {
+			if strings.EqualFold(graph, name) && (ctx.GraphVisible == nil || ctx.GraphVisible(ctx.GraphContext, graph)) {
 				return map[string]interface{}{}, nil
 			}
 		}
