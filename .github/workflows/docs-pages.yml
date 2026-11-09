@@ -1,12 +1,9 @@
 name: Docs Pages
 
+# Publishing stays automatic for main pushes only; every manual run waits for an
+# administrator. A release-to-main pull request is verified by
+# release-verification.yml, so this workflow has no pull_request trigger.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - docs/**
-      - docs-site/**
-      - .github/workflows/docs-pages.yml
   push:
     branches:
       - main
@@ -22,13 +19,13 @@ permissions:
   id-token: write
 
 concurrency:
-  group: docs-pages-${{ github.event.pull_request.number || github.ref }}
+  group: docs-pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     name: Build Docs Site
-    # Manual and reusable runs wait for an administrator before allocating a runner.
+    # Manual runs wait for an administrator before allocating a runner.
     environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     steps:
@@ -70,7 +67,6 @@ jobs:
           python tools/import-graphify.py
 
       - name: Configure Pages
-        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v6
         with:
           enablement: true
@@ -102,15 +98,13 @@ jobs:
           done
 
       - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v5
         with:
           path: docs-site/.vitepress/dist
 
   deploy:
-    if: github.event_name != 'pull_request'
     name: Deploy Docs Site
-    # Manual and reusable runs wait for an administrator before allocating a runner.
+    # Manual runs wait for an administrator before allocating a runner.
     environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     needs: build

@@ -7,6 +7,9 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 verify="${1:-${root}/scripts/verify.sh}"
 # Resolve caller-relative overrides before entering any fixture directories.
 verify="$(cd "$(dirname "${verify}")" && pwd)/$(basename "${verify}")"
+# verify.sh sources the shared Go memory policy from its own scripts/ci/.
+memory_policy="$(dirname "${verify}")/ci/go-memory-policy.sh"
+[[ -f "${memory_policy}" ]] || { echo "FAIL: ${memory_policy} is missing" >&2; exit 1; }
 
 # Load only the matcher and its path filters; do not fetch or run checks.
 # shellcheck disable=SC1091
@@ -85,15 +88,34 @@ fixture="$(mktemp -d)"
 fixture="$(cd "${fixture}" && pwd)"
 trap 'rm -rf "${fixture}"' EXIT
 
+# Each fixture mirrors a real checkout, where verify.sh sources the shared Go
+# memory policy from scripts/ci/. Copying verify.sh alone leaves every fixture
+# run reporting 'go-memory-policy.sh: No such file or directory' and running
+# without the policy.
+install_memory_policy() {
+  mkdir -p "$1/scripts/ci"
+  cp "${memory_policy}" "$1/scripts/ci/go-memory-policy.sh"
+}
+# A fixture must report any missing file it sources, not run without it.
+expect_clean_fixture_run() {
+  local log="$1"
+  if grep -q 'go-memory-policy.sh' "${log}"; then
+    echo 'FAIL: fixture verifier could not load the shared Go memory policy:' >&2
+    cat "${log}" >&2
+    exit 1
+  fi
+}
+
 # Run the real verifier in plan-only mode on isolated, committed file changes.
 # No tools or checks should run; each plan must select exactly the mapped steps.
 mkdir -p "${fixture}/plan/scripts"
+install_memory_policy "${fixture}/plan"
 cp "${verify}" "${fixture}/plan/scripts/verify.sh"
 git init --quiet "${fixture}/plan"
 cd "${fixture}/plan"
 git config user.name 'Verify self-test'
 git config user.email 'verify-test@example.invalid'
-git add scripts/verify.sh
+git add scripts/verify.sh scripts/ci/go-memory-policy.sh
 git commit --quiet -m 'plan fixture base'
 plan_base="$(git rev-parse HEAD)"
 for path in Makefile .github/workflows/ci.yml; do
@@ -103,7 +125,8 @@ for path in Makefile .github/workflows/ci.yml; do
   git add "${path}"
   git commit --quiet -m "change only ${path}"
   plan="$(VERIFY_BASE="${plan_base}" VERIFY_FETCH=0 VERIFY_LIST=1 VERIFY_ALL=0 \
-    VERIFY_ONLY='' VERIFY_SKIP='' VERIFY_BRANCH='' bash scripts/verify.sh)"
+    VERIFY_ONLY='' VERIFY_SKIP='' VERIFY_BRANCH='' bash scripts/verify.sh 2>"${fixture}/plan.stderr")"
+  expect_clean_fixture_run "${fixture}/plan.stderr"
   actual="$(awk '$2 == "run" { steps = steps (steps ? " " : "") $1 } END { print steps }' <<<"${plan}")"
   expected="${ci_steps}"
   [[ "${path}" != Makefile ]] || expected="${expected} ${conformance_steps}"
@@ -124,6 +147,7 @@ for path in Makefile .github/workflows/ci.yml near-miss; do
   for direction in from to; do
     rename_case=$((rename_case + 1))
     mkdir -p "${fixture}/rename-${rename_case}/scripts"
+    install_memory_policy "${fixture}/rename-${rename_case}"
     cp "${verify}" "${fixture}/rename-${rename_case}/scripts/verify.sh"
     cd "${fixture}/rename-${rename_case}"
     git init --quiet
@@ -152,7 +176,8 @@ for path in Makefile .github/workflows/ci.yml near-miss; do
         exit 1
       fi
       plan="$(VERIFY_BASE="${rename_base}" VERIFY_FETCH=0 VERIFY_LIST=1 VERIFY_ALL=0 \
-        VERIFY_ONLY='' VERIFY_SKIP='' VERIFY_BRANCH='' bash scripts/verify.sh)"
+        VERIFY_ONLY='' VERIFY_SKIP='' VERIFY_BRANCH='' bash scripts/verify.sh 2>"${fixture}/rename.stderr")"
+      expect_clean_fixture_run "${fixture}/rename.stderr"
       actual="$(awk '$2 == "run" { steps = steps (steps ? " " : "") $1 } END { print steps }' <<<"${plan}")"
       if [[ "${actual}" != "${expected}" ]]; then
         echo "FAIL: ${state} rename ${old} -> ${new}: expected '${expected}', got:" >&2

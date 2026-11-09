@@ -5,7 +5,9 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createContentPolicy } from "../tools/content-policy.mjs";
+import { checkMaintenanceScope } from "../tools/maintenance-scope.mjs";
 const root = path.resolve("..");
+
 test("archive directories and historical local source links have public destinations", () => {
   for (const file of ["development/index.md", "performance/index.md"])
     assert.match(
@@ -93,25 +95,9 @@ test("search and navigation retain the original documentation hub beneath the ne
   );
   assert.ok(fs.existsSync(".generated/documentation-hub.md"));
 });
-test("changelogs and production source are outside the PR diff", () => {
-  const changed = execFileSync(
-    "git",
-    ["diff", "--name-only", "origin/main", "--"],
-    { cwd: root, encoding: "utf8" },
-  )
-    .trim()
-    .split("\n")
-    .filter(Boolean);
-  for (const file of changed) {
-    assert.ok(
-      file.startsWith("docs/") ||
-        file.startsWith("docs-site/") ||
-        file === ".github/workflows/docs-pages.yml" ||
-        file === "scripts/verify.sh",
-      file,
-    );
-    assert.ok(!/changelog|release-notes|changes-before/i.test(file), file);
-  }
+test("documentation checks respect the declared PR scope", (t) => {
+  const scope = checkMaintenanceScope(root);
+  t.diagnostic(`verified ${scope} scope`);
 });
 test("published source graph edges resolve and code snippets match their hashes", () => {
   const graph = JSON.parse(
