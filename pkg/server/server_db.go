@@ -1418,8 +1418,7 @@ func (s *Server) sessionStatementRunner(lease *txsession.Lease) statementRunner 
 // endpoint (one-shot commit, open, execute-in, commit) uses it, so each
 // statement gets the same handling: :USE, database access and permission
 // checks, comment and BOM removal, the empty-statement error, slow-query
-// logging, CREATE DATABASE access grants, SHOW DATABASES filtering by
-// visibility, and the result conversion.
+// logging, CREATE DATABASE access grants, and the result conversion.
 func (s *Server) runRequestStatements(
 	ctx context.Context,
 	authToken string,
@@ -1449,6 +1448,10 @@ func (s *Server) runRequestStatements(
 	// handling, including localized failure and partial-result publication.
 	runOne := func(stmt StatementRequest) *QueryError {
 		effectiveDB, queryStatement := defaultDB, stmt.Statement
+
+		if !s.canAccessGraph(claims, effectiveDB) {
+			return &QueryError{Code: "Neo.ClientError.Security.Forbidden", Message: localize(localization.DatabaseAccessDenied(effectiveDB))}
+		}
 
 		// Use ExistsOrIsConstituent to accept dotted composite.alias references.
 		if !s.dbManager.ExistsOrIsConstituent(effectiveDB) {
@@ -1501,20 +1504,6 @@ func (s *Server) runRequestStatements(
 		// successful creation. Source spelling and ordinary rows are not authority.
 		if result != nil && result.Administration != nil && result.Administration.CreatedDatabase != "" {
 			s.grantAccessToNewDatabase(ctx, result.Administration.CreatedDatabase, claims)
-		}
-
-		// Per-database RBAC: SHOW DATABASES lists only the databases the principal may see.
-		if isShowDatabasesQuery(queryStatement) && result.Rows != nil {
-			mode := s.getDatabaseAccessMode(claims)
-			filtered := make([][]interface{}, 0, len(result.Rows))
-			for _, row := range result.Rows {
-				if len(row) > 0 {
-					if name, ok := row[0].(string); ok && mode.CanSeeDatabase(name) {
-						filtered = append(filtered, row)
-					}
-				}
-			}
-			result.Rows = filtered
 		}
 
 		if projectionErr := s.appendStatementResult(ctx, response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents); projectionErr != nil {

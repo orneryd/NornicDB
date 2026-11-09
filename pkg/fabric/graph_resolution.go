@@ -54,6 +54,11 @@ func (e *FabricExecutor) resolveExecGraph(ctx context.Context, f *FragmentExec, 
 		}
 		name = resolved
 	}
+	if e.authorizeGraph != nil {
+		if err := e.authorizeGraph(ctx, name, f.Query); err != nil {
+			return "", nil, err
+		}
+	}
 	loc, err := e.catalog.Resolve(name)
 	if err != nil {
 		if f.Graph != nil {

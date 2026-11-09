@@ -317,11 +317,6 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 	if err != nil {
 		return nil, nil, ctx, err
 	}
-	if e.authorizeGraph != nil {
-		if err := e.authorizeGraph(ctx, graph, f.Query); err != nil {
-			return nil, nil, ctx, err
-		}
-	}
 	ctx = context.WithValue(ctx, graphSelectionContextKey{}, graph)
 	if tx != nil {
 		participant := ParticipantKeyFromLocation(loc)
