@@ -359,15 +359,15 @@ func ensureBuiltInProceduresRegistered() {
 
 		registerBuiltInProcedure("db.cdc.current", procedureReturnSignature("db.cdc.current()", cdcPositionColumns), localization.CypherProcedureMetadata("db.cdc.current"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbCdcCurrent()
+				return e.callDbCdcCurrent(ctx)
 			})
 		registerBuiltInProcedure("db.cdc.earliest", procedureReturnSignature("db.cdc.earliest()", cdcPositionColumns), localization.CypherProcedureMetadata("db.cdc.earliest"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbCdcEarliest()
+				return e.callDbCdcEarliest(ctx)
 			})
 		registerAdminBuiltInProcedure("db.cdc.query", procedureReturnSignature("db.cdc.query(from = \"\" :: STRING, selectors = [] :: LIST<MAP>, limit = null :: INTEGER)", dbCdcQueryColumns), localization.CypherProcedureMetadata("db.cdc.query"), ProcedureModeDBMS, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbCdcQuery(args)
+				return e.callDbCdcQuery(ctx, args)
 			})
 		registerAdminBuiltInProcedure("db.txlog.entries", procedureReturnSignature("db.txlog.entries(fromSeq = null :: INTEGER, toSeq = null :: INTEGER)", txlogColumns), localization.CypherProcedureMetadata("db.txlog.entries"), ProcedureModeDBMS, 0, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

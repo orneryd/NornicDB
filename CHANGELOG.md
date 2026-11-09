@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independent completion lifetime. WAL and snapshot encoding, Badger keys and
   storage version are unchanged. See [the migration notes](docs/operations/recovery-format-compatibility.md#local-validation).
 
+- Bound `db.cdc.query`, `db.cdc.current` and `db.cdc.earliest` inside a
+  transaction to that transaction's snapshot. Changes committed after the
+  transaction began are no longer listed, so every listed change is visible to
+  the same transaction's lookups; a cursor taken inside the transaction resumes
+  at the later commits.
 - Require exact database identity for qualified textual element IDs in MATCH
   predicates and graph functions. Arbitrary database prefixes no longer resolve
   to local entities; raw local-ID inputs remain supported.
