@@ -2037,15 +2037,15 @@
     {
       "space": "prefixChangeEvent",
       "class": "change-log",
-      "origin": "pkg/storage/change_capture.go:357",
-      "func": "pkg/storage.BadgerTransaction.writeChangeEventsLocked$1$1 pkg/storage/change_capture.go:357",
+      "origin": "pkg/storage/change_capture.go:421",
+      "func": "pkg/storage.BadgerTransaction.writeChangeEventsLocked$1$1 pkg/storage/change_capture.go:421",
       "where": "pkg/storage.BadgerTransaction.writeChangeEventsLocked$1 -"
     },
     {
       "space": "prefixChangeEvent",
       "class": "change-log",
-      "origin": "pkg/storage/change_capture.go:786",
-      "func": "pkg/storage.BadgerEngine.PruneChangeEvents$2 pkg/storage/change_capture.go:786",
+      "origin": "pkg/storage/change_capture.go:850",
+      "func": "pkg/storage.BadgerEngine.PruneChangeEvents$2 pkg/storage/change_capture.go:850",
       "where": "pkg/storage.BadgerEngine.PruneChangeEvents -"
     },
     {
