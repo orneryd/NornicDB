@@ -209,7 +209,7 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 		var candidates []*storage.Node
 		var err error
 		if len(labels) > 0 {
-			candidates, err = store.GetNodesByLabel(ctx, labels[0])
+			candidates, err = store.GetNodesByLabel(ctx, nodeScanLabels(ctx, store, labels)[0])
 		} else {
 			candidates, err = store.AllNodes(ctx)
 		}
@@ -347,7 +347,9 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 	}
 	e.markMergeScanFallbackUsed()
 
-	nodes, err := store.GetNodesByLabel(ctx, labels[0])
+	// The release scanned the first written label; any pattern label lists
+	// every match, so the one with the fewest nodes is scanned (NOR-414).
+	nodes, err := store.GetNodesByLabel(ctx, nodeScanLabels(ctx, store, labels)[0])
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +406,7 @@ func (e *StorageExecutor) findMergeNodesScanned(ctx context.Context, store stora
 				return nil, false, err
 			}
 		}
-		candidates, complete, lookupErr := lookup.LookupNodesByEquality(ctx, labels[0], props)
+		candidates, complete, lookupErr := lookup.LookupNodesByEquality(ctx, nodeScanLabels(ctx, store, labels)[0], props)
 		if lookupErr != nil {
 			return nil, false, lookupErr
 		}
@@ -429,7 +431,7 @@ func (e *StorageExecutor) findMergeNodesScanned(ctx context.Context, store stora
 		e.markMergeScanFallbackUsed()
 	}
 	if len(labels) > 0 {
-		candidates, err = store.GetNodesByLabel(ctx, labels[0])
+		candidates, err = store.GetNodesByLabel(ctx, nodeScanLabels(ctx, store, labels)[0])
 	} else {
 		candidates, err = store.AllNodes(ctx)
 	}

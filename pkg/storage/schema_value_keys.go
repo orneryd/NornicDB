@@ -85,12 +85,20 @@ func numericIndexKey(value interface{}) (interface{}, bool) {
 		if n == 0 {
 			return float64(0), true
 		}
-		return n, true
+		return value, true // already its own key: no new box
 	case int64:
+		// A negative integer no float64 holds is its own key: return it as
+		// given rather than in a new box (IndexLookupValue's keys come back).
+		if f := float64(n); !constraintIntegerFloatEqual(n, f) && n < 0 {
+			return value, true
+		}
 		return exactIntegerIndexKey(n), true
 	case int:
 		return exactIntegerIndexKey(int64(n)), true
 	case uint64:
+		if f := float64(n); !constraintUnsignedFloatEqual(n, f) {
+			return value, true
+		}
 		return exactUnsignedIndexKey(n), true
 	case uint:
 		return exactUnsignedIndexKey(uint64(n)), true
@@ -101,6 +109,16 @@ func numericIndexKey(value interface{}) (interface{}, bool) {
 		numeric = 0 // float32 -0
 	}
 	return numeric, ok
+}
+
+// IndexLookupValue returns value in the form the indexes key it by when it is
+// a number, so a caller that counts and then reads the same number converts
+// it once; any other value is returned unchanged. Lookups accept either form.
+func IndexLookupValue(value interface{}) interface{} {
+	if key, ok := numericIndexKey(value); ok {
+		return key
+	}
+	return value
 }
 
 func exactIntegerIndexKey(n int64) interface{} {

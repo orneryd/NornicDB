@@ -333,7 +333,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 		alternatives map[string][]*storage.Node
 	}
 	caches := make([]candidateCache, len(templates))
-	prefetched, _ := ctx.Value(pipelinePrefetchedNodeCandidatesKey{}).(map[nodeBatchMatchKey]map[string]*storage.Node)
+	prefetched, _ := ctx.Value(pipelinePrefetchedNodeCandidatesKey{}).(nodeBatchCandidates)
 	return func(yield func(pipelineRow) bool) bool {
 		valid := true
 		current := make(pipelineRow, len(templates))
@@ -395,7 +395,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 					template := templates[index]
 					key, keyed := "", false
 					prefetchedPattern := false
-					var prefetchedBatch map[string]*storage.Node
+					var prefetchedBatch map[string][]*storage.Node
 					if len(pattern.labels) == 1 && len(pattern.properties) == 1 {
 						prefetchedBatch, prefetchedPattern = prefetched[nodeBatchMatchKey{label: pattern.labels[0], prop: template.properties[0].key}]
 					}
@@ -414,11 +414,8 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 							// value hits it directly instead of an index seek
 							// per row (see buildRelationshipBatchNodeMatchIndex).
 							value, _ := pattern.properties[template.properties[0].key]
-							if node, ok := prefetchedBatch[propEqKeyBatch(normalizePropValue(value))]; ok {
-								nodes = []*storage.Node{node}
-							} else {
-								nodes = nil
-							}
+							// The list is the prefetch's own and is only read here.
+							nodes = prefetchedBatch[propEqKeyBatch(normalizePropValue(value))]
 						} else {
 							if !candidatesBound && len(input) > 0 {
 								candidateCtx = withValueBindings(ctx, input)

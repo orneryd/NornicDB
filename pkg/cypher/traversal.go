@@ -365,53 +365,32 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// This avoids traversing from all nodes when we only need one specific node
 	var optimizedStartNodes []*storage.Node
 	usedPropertyIndex := false
+	// startDecided records that the start node's candidates were decided,
+	// possibly as none: an index seek or the start-property pre-scan
+	// answered. An empty answer means no path starts anywhere; scanning the
+	// start label again would only find the same nothing.
+	startDecided := false
+	// A bound end node with an unbound start is where a non-chained pattern
+	// starts (traverseFromEndSeeds): searching the start side first, for
+	// instance for every node whose property the WHERE requires to be non-null,
+	// only finds a population the bound end reaches by its own relationships.
+	endBound := len(seedNodes) == 0 && len(endSeedNodes) > 0 && !matches.IsChained
 	if len(seedNodes) > 0 {
 		optimizedStartNodes = seedNodes
 		usedPropertyIndex = true
-	} else if whereClause != "" {
-		// Direct element/id equality seek on start variable:
-		// MATCH (o)-[:R]->(t) WHERE elementId(o) = '...'
-		// This avoids traversing from all start nodes for single-node lookups.
+	} else if whereClause != "" && !endBound {
+		// The start node's candidates come from the one node-pattern access
+		// decision (collectPipelineIndexedNodeCandidates): an id seek, or the
+		// most selective of the WHERE's and the start pattern's own indexed
+		// predicates (NOR-414). The whole WHERE is applied to the paths
+		// afterwards, so the seed may over-fetch but never under-fetch.
 		if matches.StartNode.variable != "" {
-			if nodes, used, idxErr := e.tryCollectNodesFromIDEqualityCompound(ctx, matches.StartNode, whereClause, nil); idxErr != nil {
+			if nodes, _, used, idxErr := e.collectPipelineIndexedNodeCandidates(ctx, matches.StartNode, whereClause, pipelineMatchPhysicalHint{}); idxErr != nil {
 				return nil, idxErr
 			} else if used {
 				optimizedStartNodes = nodes
 				usedPropertyIndex = true
-			}
-		}
-
-		// Prefer indexed start-node pruning for simple property predicates.
-		if matches.StartNode.variable != "" && len(optimizedStartNodes) == 0 {
-			if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, matches.StartNode, whereClause); idxErr != nil {
-				return nil, idxErr
-			} else if used {
-				optimizedStartNodes = nodes
-				usedPropertyIndex = true
-			}
-			if !usedPropertyIndex {
-				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexNotNull(ctx, matches.StartNode, whereClause); idxErr != nil {
-					return nil, idxErr
-				} else if used {
-					optimizedStartNodes = nodes
-					usedPropertyIndex = true
-				}
-			}
-			// BUG FIX: a start-node `WHERE var.prop IN [...]` / `IN $param`
-			// predicate previously fell through every branch above (none of
-			// them recognize IN-lists) straight to the O(all-label-nodes)
-			// scan below, even though match.go/clauses.go/executor_mutations.go
-			// already use this exact index-seek for plain node MATCH and
-			// single-clause DELETE. Reuse it here so a relationship-pattern
-			// traversal anchored by an IN-list seeds from the property index
-			// instead of scanning every node of the label.
-			if !usedPropertyIndex {
-				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexInCompound(ctx, matches.StartNode, whereClause, getParamsFromContext(ctx)); idxErr != nil {
-					return nil, idxErr
-				} else if used {
-					optimizedStartNodes = nodes
-					usedPropertyIndex = true
-				}
+				startDecided = true
 			}
 			// Fallback optimization: even when no property index exists, pre-prune start
 			// nodes for simple start-variable predicates before traversing relationships.
@@ -421,18 +400,48 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			if !usedPropertyIndex {
 				if nodes, used, scanErr := e.tryCollectNodesFromStartPropertyScan(ctx, matches.StartNode, whereClause); scanErr == nil && used {
 					optimizedStartNodes = nodes
+					startDecided = true
 				}
 			}
 		}
 
 	}
 
+	// A chain's paths are filtered by the WHERE below; its conjuncts also
+	// prune each path prefix as soon as they can be decided on it.
+	matches.pruneWhere = whereClause
+
+	// With neither end bound, the end node's candidates come from the same
+	// access decision as the start node's. The traversal starts from the end
+	// when an index answers it with fewer nodes than the start side's, or when
+	// only the end side has an index answer (NOR-160): a pattern such as
+	// (d:Doc)-[:MENTIONS]->(e:Entity {id: $id}) walks back from the one Entity
+	// instead of scanning every Doc.
+	if len(seedNodes) == 0 && len(endSeedNodes) == 0 && !matches.IsChained && matches.pinnedRelationship == nil {
+		endPattern := matches.EndNode
+		endConstrained := len(endPattern.properties) > 0 || endPattern.variable != "" && whereClause != "" && referencesVariable(whereClause, endPattern.variable)
+		if endConstrained && !(usedPropertyIndex && len(optimizedStartNodes) <= 1) {
+			endNodes, _, endIndexed, idxErr := e.collectPipelineIndexedNodeCandidates(ctx, endPattern, whereClause, pipelineMatchPhysicalHint{})
+			if idxErr != nil {
+				return nil, idxErr
+			}
+			if endIndexed && (!usedPropertyIndex || len(endNodes) < len(optimizedStartNodes)) {
+				// An empty answer decides the pattern: no path ends anywhere.
+				endSeedNodes = endNodes
+				optimizedStartNodes, startDecided = nil, len(endNodes) == 0
+			}
+		}
+	}
+
 	// Execute traversal with optimized start nodes if available
 	var paths []PathResult
-	if endSeededPaths, endSeeded := e.traverseFromEndSeeds(ctx, matches, optimizedStartNodes, endSeedNodes, whereClause); endSeeded {
+	if endSeededPaths, endSeeded := e.traverseFromEndSeeds(ctx, matches, seedNodes, endSeedNodes, whereClause); endSeeded {
 		// Final even when empty: a bound end node with no qualifying path must
 		// not fall through to the store-wide scan below.
 		paths = endSeededPaths
+	} else if startDecided && len(optimizedStartNodes) == 0 {
+		// The start node's access decision found no candidate: no path.
+		paths = nil
 	} else if len(optimizedStartNodes) > 0 {
 		// Use optimized start nodes for non-chained traversal. Chained traversal uses
 		// segment-aware expansion; feeding it through traverseGraphSequential can break
@@ -818,6 +827,10 @@ func reverseTraversalMatch(match *TraversalMatch) *TraversalMatch {
 	reversed.StartNode = match.EndNode
 	reversed.EndNode = match.StartNode
 	reversed.Relationship = match.Relationship
+	// The read tail's endpoint projection names the original end node's
+	// properties; the reversed walk loads the original start node as its end,
+	// so it loads complete endpoints.
+	reversed.endpointProperties = nil
 	switch match.Relationship.Direction {
 	case "outgoing":
 		reversed.Relationship.Direction = "incoming"
@@ -946,6 +959,11 @@ type TraversalMatch struct {
 	// variable relationship binds the next segment's start to it), so the
 	// traversal must not load it labels-only or exist-only.
 	IntermediateNode bool
+	// pruneWhere is the WHERE the caller applies to the chain's complete paths
+	// (filterPathsByWhere). traverseChainedGraph also applies each of its
+	// conjuncts as soon as a path prefix binds every variable it names
+	// (chainPrefixPrune), so a prefix that fails it is not extended.
+	pruneWhere string
 }
 
 // TraversalSegment represents one segment in a chained pattern
@@ -1392,7 +1410,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 	checker temporalCurrentNodeChecker,
 ) ([]PathResult, bool, error) {
 	store := e.getStorage(ctx)
-	labels := match.StartNode.labels
+	labels := nodeScanLabels(ctx, store, match.StartNode.labels)
 	var stream func(func(*storage.Node) error) error
 	if e.queryNodeReader(store) != nil {
 		stream = func(visit func(*storage.Node) error) error {
@@ -1619,6 +1637,7 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 		currentPaths = e.traverseGraph(ctx, simpleMatch)
 	}
 	repeats := chainRepeatedNodes(match.Segments)
+	prune := e.newChainPrefixPrune(ctx, match)
 	kept := currentPaths[:0]
 	for _, path := range currentPaths {
 		path.SegmentLengths = []int{len(path.Relationships)}
@@ -1626,7 +1645,7 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 			kept = append(kept, path)
 		}
 	}
-	currentPaths = kept
+	currentPaths = prune.keep(ctx, e, kept, 1)
 
 	// For each subsequent segment, extend paths
 	for segIdx := 1; segIdx < len(match.Segments); segIdx++ {
@@ -1687,10 +1706,127 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 			}
 		}
 
-		currentPaths = extendedPaths
+		currentPaths = prune.keep(ctx, e, extendedPaths, segIdx+1)
 	}
 
 	return currentPaths
+}
+
+// chainPrefixPrune applies a chain's WHERE (TraversalMatch.pruneWhere) to its
+// path prefixes: after k segments, the conjuncts whose every variable the
+// first k segments bind, which no later segment can change. A prefix that
+// fails one is not extended: its complete paths would fail the same conjunct
+// in the WHERE the caller still applies to them. Conjuncts that name the path
+// variable, a variable bound only later or outside the pattern, or no
+// variable, or that hold a subquery expression, or that are not
+// deterministic, wait for that WHERE.
+type chainPrefixPrune struct {
+	levels []chainPrefixLevel // levels[k-1]: after k segments
+}
+
+type chainPrefixLevel struct {
+	match *TraversalMatch // the chain's first k segments
+	where *preparedRowPredicate
+}
+
+func (e *StorageExecutor) newChainPrefixPrune(ctx context.Context, match *TraversalMatch) *chainPrefixPrune {
+	if match.pruneWhere == "" || len(match.Segments) < 2 || len(match.IntermediateNodes) < len(match.Segments)-1 {
+		return nil
+	}
+	conjuncts := splitTopLevelAndConjuncts(ctx, strings.TrimSpace(match.pruneWhere))
+	decided := make([]bool, len(conjuncts))
+	bound := map[string]bool{}
+	bind := func(name string) {
+		if name != "" {
+			bound[name] = true
+		}
+	}
+	bind(match.Segments[0].FromNode.variable)
+	prune := &chainPrefixPrune{levels: make([]chainPrefixLevel, len(match.Segments)-1)}
+	found := false
+	for k := 1; k < len(match.Segments); k++ {
+		segment := match.Segments[k-1]
+		bind(segment.Relationship.Variable)
+		bind(segment.ToNode.variable)
+		var parts []string
+		for i, conjunct := range conjuncts {
+			if decided[i] || !chainPrefixDecides(ctx, conjunct, bound, match.PathVariable) {
+				continue
+			}
+			decided[i] = true
+			parts = append(parts, "("+conjunct+")")
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		found = true
+		prune.levels[k-1] = chainPrefixLevel{match: chainPrefixMatch(match, k), where: prepareRowPredicate(strings.Join(parts, " AND "))}
+	}
+	if !found {
+		return nil
+	}
+	return prune
+}
+
+// chainPrefixDecides reports whether conjunct can be decided on a path prefix
+// that binds bound.
+func chainPrefixDecides(ctx context.Context, conjunct string, bound map[string]bool, pathVariable string) bool {
+	lower := strings.ToLower(conjunct)
+	if strings.Contains(lower, "rand(") || strings.Contains(lower, "randomuuid(") || referencesVariable(conjunct, pathVariable) {
+		return false
+	}
+	// A subquery expression (EXISTS / COUNT / COLLECT { … }) reads outer
+	// variables in its body, which expressionFreeVariables does not list: a
+	// conjunct that holds one waits for the final WHERE, where every variable
+	// its body may read is bound.
+	if mayContainSubqueryExpression(conjunct) && len(findSubqueryExpressions(conjunct)) > 0 {
+		return false
+	}
+	names := expressionFreeVariables(ctx, conjunct)
+	if len(names) == 0 {
+		return false
+	}
+	for _, name := range names {
+		if name == pathVariable || !bound[name] {
+			return false
+		}
+	}
+	return true
+}
+
+// chainPrefixMatch is match's first k segments as a pattern of their own, so
+// buildPathContext binds a k-segment prefix's variables.
+func chainPrefixMatch(match *TraversalMatch, k int) *TraversalMatch {
+	segments := match.Segments[:k]
+	prefix := &TraversalMatch{
+		StartNode:    match.StartNode,
+		EndNode:      segments[k-1].ToNode,
+		Relationship: segments[k-1].Relationship,
+		Segments:     segments,
+	}
+	if k > 1 {
+		prefix.IsChained = true
+		prefix.IntermediateNodes = match.IntermediateNodes[:k-1]
+	}
+	return prefix
+}
+
+// keep returns the paths of k segments whose prefix passes the conjuncts
+// decided after k segments.
+func (p *chainPrefixPrune) keep(ctx context.Context, e *StorageExecutor, paths []PathResult, k int) []PathResult {
+	if p == nil || k < 1 || k > len(p.levels) || p.levels[k-1].where == nil {
+		return paths
+	}
+	level := p.levels[k-1]
+	kept := paths[:0]
+	for _, path := range paths {
+		values := e.pathContextValues(ctx, e.buildPathContext(path, level.match))
+		bindParameterRow(ctx, values)
+		if level.where.holds(e, ctx, values) {
+			kept = append(kept, path)
+		}
+	}
+	return kept
 }
 
 // chainNodeRepeats lists, for each node position of a chain (position j

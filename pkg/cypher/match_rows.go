@@ -495,6 +495,25 @@ func (e *StorageExecutor) filterNodesByProperties(nodes []*storage.Node, props m
 	return parallelFilterNodes(nodes, filterFn)
 }
 
+// filterOwnedNodesByProperties is filterNodesByProperties for a slice the
+// caller owns and no longer needs: below the parallel filter's size it keeps
+// the matching nodes in place instead of copying them.
+func (e *StorageExecutor) filterOwnedNodesByProperties(nodes []*storage.Node, props map[string]interface{}) []*storage.Node {
+	if len(props) == 0 {
+		return nodes
+	}
+	if parallelConfig.Enabled && len(nodes) >= parallelConfig.MinBatchSize && len(nodes) >= 4*parallelConfig.MinBatchSize {
+		return e.filterNodesByProperties(nodes, props)
+	}
+	kept := nodes[:0]
+	for _, node := range nodes {
+		if e.nodeMatchesProps(node, props) {
+			kept = append(kept, node)
+		}
+	}
+	return kept
+}
+
 // executeMatchWithUnwind handles MATCH ... WITH ... UNWIND ... RETURN queries
 // Complex UNWIND + CALL pattern used by stats queries:
 // MATCH (f:File) WITH f, [...] as list UNWIND list as item WITH item, COUNT(*) RETURN item

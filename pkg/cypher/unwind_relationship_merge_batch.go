@@ -82,7 +82,9 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		return nil, true, err
 	}
 	if !unique {
-		return nil, false, nil
+		// Not this batch: it needs one node per value. The rows still read
+		// the candidates the prefetch verified.
+		return e.executeUnwindRowsWithBatchCandidates(ctx, prefetched, unwindVar, items, restQuery)
 	}
 	ctx = context.WithValue(ctx, pipelinePrefetchedNodeCandidatesKey{}, prefetched)
 	result, handled, err := e.executeUnwindRowsPipeline(ctx, unwindVar, items, restQuery)
@@ -398,8 +400,23 @@ func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwi
 	return true
 }
 
-func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Context, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
-	index := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(matches))
+// nodeBatchCandidates is a batch prefetch's answer: for each (label,
+// property) key of the batch's MATCH patterns, the nodes that hold each
+// looked-up value.
+type nodeBatchCandidates map[nodeBatchMatchKey]map[string][]*storage.Node
+
+// buildRelationshipBatchNodeMatchIndex resolves every distinct lookup value of
+// a batch's single-label, single-property MATCH patterns, for the rows to
+// read instead of seeking per row. The lookup is the release's: the key's own
+// property index is an accelerator, never proof of which nodes hold a value.
+// A value it lists for exactly one node is resolved from it; every other
+// value (none listed, or several) is resolved by one scan of the label for
+// the batch. unique reports whether every value has at most one node, which
+// the batch routes need. Unlike the release, the answer keeps every node the
+// scan found for a value, so the rows of a batch that is not unique read
+// them (executeUnwindRowsWithBatchCandidates) instead of the index again.
+func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Context, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (nodeBatchCandidates, bool, error) {
+	index := make(nodeBatchCandidates, len(matches))
 	schema := store.GetSchema()
 	unique := true
 	matchGroups := make(map[nodeBatchMatchKey][]matchClauseSpec, len(matches))
@@ -408,7 +425,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 		matchGroups[key] = append(matchGroups[key], match)
 	}
 	for key, group := range matchGroups {
-		idx := make(map[string]*storage.Node, len(rows))
+		idx := make(map[string][]*storage.Node, len(rows))
 		distinct := make(map[string]interface{}, len(rows))
 		for _, match := range group {
 			for _, row := range rows {
@@ -425,14 +442,18 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 				return nil, false, indexErr
 			}
 		}
+		unresolved := distinct
 		if indexed {
-			unresolved := make(map[string]interface{})
+			unresolved = make(map[string]interface{})
+			// resolved backs the one-node lists of the values the index resolves.
+			resolved := make([]*storage.Node, 0, len(distinct))
 			for valueKey, value := range distinct {
 				ids, err := propertyIndexLookup(ctx, store, schema, key.label, key.prop, value)
 				if err != nil {
 					return nil, false, err
 				}
 				matched := 0
+				var found *storage.Node
 				for _, id := range ids {
 					if err := ctx.Err(); err != nil {
 						return nil, false, err
@@ -440,49 +461,51 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 					node, err := e.getQueryNode(ctx, store, id)
 					if err == nil && nodeBatchMatchesValue(node, key, value) {
 						matched++
-						idx[valueKey] = node
+						found = node
 					}
 				}
 				if matched != 1 {
-					delete(idx, valueKey)
 					unresolved[valueKey] = value
+					continue
 				}
+				resolved = append(resolved, found)
+				idx[valueKey] = resolved[len(resolved)-1 : len(resolved) : len(resolved)]
 			}
-			if len(unresolved) > 0 {
-				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, unresolved)
-				if err != nil {
-					return nil, false, err
-				}
-				if !scanUnique {
+		}
+		if len(unresolved) > 0 {
+			scanned, err := buildNodeBatchLabelMatchIndex(ctx, store, key, unresolved)
+			if err != nil {
+				return nil, false, err
+			}
+			for valueKey, nodes := range scanned {
+				if len(nodes) > 1 {
 					unique = false
 				}
-				for valueKey, node := range scanned {
-					idx[valueKey] = node
-				}
+				idx[valueKey] = nodes
 			}
-			index[key] = idx
-			continue
 		}
-
-		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, distinct)
-		if err != nil {
-			return nil, false, err
-		}
-		if !scanUnique {
-			unique = false
-		}
-		index[key] = scanned
+		index[key] = idx
 	}
 	return index, unique, nil
 }
 
-func buildNodeBatchLabelMatchIndex(ctx context.Context, store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
-	idx := make(map[string]*storage.Node, len(distinct))
+// executeUnwindRowsWithBatchCandidates runs a batch statement's rows through
+// the row pipeline with the candidates its prefetch resolved
+// (buildRelationshipBatchNodeMatchIndex), for a batch a route declined
+// because a value has several nodes. The rows read the nodes the label scan
+// verified, so a node an index omits is not lost to a second index read.
+func (e *StorageExecutor) executeUnwindRowsWithBatchCandidates(ctx context.Context, candidates nodeBatchCandidates, unwindVar string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
+	return e.executeUnwindRowsPipeline(context.WithValue(ctx, pipelinePrefetchedNodeCandidatesKey{}, candidates), unwindVar, items, restQuery)
+}
+
+// buildNodeBatchLabelMatchIndex scans key's label once and returns, for each
+// of the wanted values, every node that holds it.
+func buildNodeBatchLabelMatchIndex(ctx context.Context, store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string][]*storage.Node, error) {
+	idx := make(map[string][]*storage.Node, len(distinct))
 	nodes, err := store.GetNodesByLabel(ctx, key.label)
 	if err != nil {
-		return nil, false, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
+		return nil, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
 	}
-	unique := true
 	for _, node := range nodes {
 		if node == nil || node.Properties == nil {
 			continue
@@ -496,13 +519,9 @@ func buildNodeBatchLabelMatchIndex(ctx context.Context, store storage.Engine, ke
 		if !wanted || !nodeBatchMatchesValue(node, key, wantedValue) {
 			continue
 		}
-		if _, exists := idx[valueKey]; exists {
-			unique = false
-			continue
-		}
-		idx[valueKey] = node
+		idx[valueKey] = append(idx[valueKey], node)
 	}
-	return idx, unique, nil
+	return idx, nil
 }
 
 func nodeBatchMatchesValue(node *storage.Node, key nodeBatchMatchKey, value interface{}) bool {
@@ -516,12 +535,15 @@ func nodeBatchMatchesValue(node *storage.Node, key nodeBatchMatchKey, value inte
 	return propEqKeyBatch(nodeValue) == propEqKeyBatch(value)
 }
 
-func (e *StorageExecutor) lookupRelationshipBatchMatchedNode(ctx context.Context, index map[nodeBatchMatchKey]map[string]*storage.Node, match matchClauseSpec, row map[string]interface{}) *storage.Node {
+func (e *StorageExecutor) lookupRelationshipBatchMatchedNode(ctx context.Context, index nodeBatchCandidates, match matchClauseSpec, row map[string]interface{}) *storage.Node {
 	value, ok := e.evaluateRelationshipBatchLookupExpr(ctx, match, row)
 	if !ok {
 		return nil
 	}
-	return index[nodeBatchMatchKey{label: match.label, prop: match.propName}][propEqKeyBatch(value)]
+	if nodes := index[nodeBatchMatchKey{label: match.label, prop: match.propName}][propEqKeyBatch(value)]; len(nodes) == 1 {
+		return nodes[0]
+	}
+	return nil
 }
 
 func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(ctx context.Context, match matchClauseSpec, row map[string]interface{}) (interface{}, bool) {

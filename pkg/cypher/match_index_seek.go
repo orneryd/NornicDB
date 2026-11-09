@@ -365,59 +365,278 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 	return nil, false, nil
 }
 
-// tryCollectNodesFromPropertyIndex attempts to satisfy MATCH node candidates from a schema property index.
-// It only applies to simple equality predicates:
-//   - <var>.<prop> = <value>
-//   - <value> = <var>.<prop>
-//
-// It returns (nodes, true, nil) when index planning was used (including empty matches),
-// and (nil, false, nil) when the predicate is not eligible for index lookup.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return e.tryCollectNodesFromPropertyIndexAnyOf(ctx, nodePattern, whereClause, nil)
+// indexSeekPostings is a set of arity-1 index postings a WHERE seek reads:
+// property under value (or, with many, under each of values) on each of
+// labels.
+type indexSeekPostings struct {
+	labels   []string
+	property string
+	value    interface{}
+	values   []interface{}
+	many     bool
 }
 
-// tryCollectNodesFromPropertyIndexAnyOf is tryCollectNodesFromPropertyIndex
-// for a node that must carry one of anyOf (a WHERE label disjunction, #858;
-// nil when there is none): see seekCandidateLabels.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) ([]*storage.Node, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
+func (p *indexSeekPostings) valueCount() int {
+	if p.many {
+		return len(p.values)
 	}
-	property, value, ok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, whereClause)
-	if !ok {
-		return nil, false, nil
-	}
+	return 1
+}
 
-	schema := e.storage.GetSchema()
-	if schema == nil {
-		return nil, false, nil
+func (p *indexSeekPostings) valueAt(i int) interface{} {
+	if p.many {
+		return p.values[i]
 	}
+	return p.value
+}
 
-	labels, anyOf, err := e.seekCandidateLabels(ctx, schema, nodePattern.labels, property, anyOf)
+// nodeIndexSeek is one index read that can seed a node pattern: a WHERE
+// equality, IN or OR seek, whose candidates are the union of its postings
+// (two sets for an OR), or the inline pattern-property seek, whose
+// candidates are the intersection of its reads. It is planned without
+// reading the index; collectNodeIndexSeek reads it.
+type nodeIndexSeek struct {
+	schema   *storage.SchemaManager
+	postings [2]indexSeekPostings
+
+	// A node a WHERE seek lists is admitted while it carries the pattern
+	// labels and one of anyOf (seekCandidateHasLabels), and, for an
+	// equality, still holds postings[0].property = postings[0].value.
+	patternLabels []string
+	anyOf         []string
+	equality      bool
+
+	// The pattern-property seek's reads: up to two in place (inlineSmall,
+	// inlineN of them), or, for more, inline. inlineReads returns them.
+	inlineSmall [2]patternPropertyRead
+	inlineN     int
+	inline      []patternPropertyRead
+	// store is the engine the seek reads and counts through, so an explicit
+	// transaction's estimate includes its own pending writes, as its lookup
+	// does (propertyIndexValueCount).
+	store storage.Engine
+
+	// inList marks a seek that answers a WHERE that is exactly an IN list.
+	inList bool
+}
+
+// isInline reports whether s is the pattern-property seek.
+func (s *nodeIndexSeek) isInline() bool {
+	return s.inlineN > 0 || len(s.inline) > 0
+}
+
+// inlineReads returns the pattern-property seek's reads.
+func (s *nodeIndexSeek) inlineReads() []patternPropertyRead {
+	if s.inlineN > 0 {
+		return s.inlineSmall[:s.inlineN]
+	}
+	return s.inline
+}
+
+// unknownIndexSeekEstimate ranks a seek whose postings cannot be counted after
+// every seek that can.
+const unknownIndexSeekEstimate = int64(^uint64(0) >> 1)
+
+// estimate is the number of index entries the seek reads, from the lengths
+// of the postings in the index (PropertyIndexValueCount): a WHERE seek's
+// postings summed, stopping once past bound, which already beats it; the
+// inline seek's shortest read, which it reads first. A posting the index
+// cannot count makes the estimate unknown. The inline seek counts its
+// single-property reads first and its composite reads only while something
+// can still be saved (patternPropertyRead.worthCounting).
+func (s *nodeIndexSeek) estimate(ctx context.Context, bound int64) (int64, error) {
+	if s.isInline() {
+		reads := s.inlineReads()
+		best := unknownIndexSeekEstimate
+		for pass := 0; pass < 2; pass++ {
+			for i := range reads {
+				if reads[i].hashed() != (pass == 1) || (pass == 1 && !reads[i].worthCounting(min(best, bound))) {
+					continue
+				}
+				count, err := reads[i].count(ctx, s.store, s.schema)
+				if err != nil {
+					return 0, err
+				}
+				if count < best {
+					best = count
+				}
+			}
+		}
+		return best, nil
+	}
+	sum := int64(0)
+	for g := range s.postings {
+		postings := &s.postings[g]
+		for _, label := range postings.labels {
+			for i := 0; i < postings.valueCount(); i++ {
+				count, indexed, err := propertyIndexValueCount(ctx, s.store, s.schema, label, postings.property, postings.valueAt(i))
+				if err != nil {
+					return 0, err
+				}
+				if !indexed {
+					return unknownIndexSeekEstimate, nil
+				}
+				sum += int64(count)
+				if sum > bound {
+					return sum, nil
+				}
+			}
+		}
+	}
+	return sum, nil
+}
+
+// admits reports whether a node a WHERE seek's index listed still matches
+// the seek: an index can list a node that has since lost a label or value.
+func (s *nodeIndexSeek) admits(node *storage.Node) bool {
+	if !seekCandidateHasLabels(node, s.patternLabels, s.anyOf) {
+		return false
+	}
+	if !s.equality {
+		return true
+	}
+	actual, exists := node.Properties[s.postings[0].property]
+	if !exists {
+		return false
+	}
+	matched, known := cypherEquality(actual, s.postings[0].value).(bool)
+	return known && matched
+}
+
+// nodeIndexSeekSet holds the seeks planned for one node pattern: the first
+// few in place, so planning the usual one or two seeks allocates nothing.
+type nodeIndexSeekSet struct {
+	n      int
+	inline [4]nodeIndexSeek
+	more   []nodeIndexSeek
+}
+
+func (s *nodeIndexSeekSet) add(seek nodeIndexSeek) {
+	if s.n < len(s.inline) {
+		s.inline[s.n] = seek
+	} else {
+		s.more = append(s.more, seek)
+	}
+	s.n++
+}
+
+func (s *nodeIndexSeekSet) at(i int) *nodeIndexSeek {
+	if i < len(s.inline) {
+		return &s.inline[i]
+	}
+	return &s.more[i-len(s.inline)]
+}
+
+// bestNodeIndexSeek returns the index of the seek that reads the fewest index
+// entries, so a unique index (one entry per value) is read before a
+// non-unique one and a selective value before a common one, whichever
+// predicate or pattern label names it (NOR-414). Ties keep the first. One
+// seek is not estimated.
+func bestNodeIndexSeek(ctx context.Context, seeks *nodeIndexSeekSet) (int, error) {
+	if seeks.n < 2 {
+		return 0, nil
+	}
+	bestAt, best := 0, unknownIndexSeekEstimate
+	for i := 0; i < seeks.n; i++ {
+		estimate, err := seeks.at(i).estimate(ctx, best)
+		if err != nil {
+			return 0, err
+		}
+		if estimate < best {
+			bestAt, best = i, estimate
+			if best == 0 {
+				break
+			}
+		}
+	}
+	return bestAt, nil
+}
+
+// collectRankedNodeIndexSeek reads the best of seeks (bestNodeIndexSeek), or,
+// when it cannot decide, the others in order; used is false when none does.
+func (e *StorageExecutor) collectRankedNodeIndexSeek(ctx context.Context, seeks *nodeIndexSeekSet) (nodes []*storage.Node, chosen int, used bool, err error) {
+	if seeks.n == 0 {
+		return nil, 0, false, ctx.Err()
+	}
+	bestAt, err := bestNodeIndexSeek(ctx, seeks)
 	if err != nil {
+		return nil, 0, false, err
+	}
+	for i := -1; i < seeks.n; i++ {
+		at := i
+		if i < 0 {
+			at = bestAt
+		} else if i == bestAt {
+			continue
+		}
+		nodes, used, err := e.collectNodeIndexSeek(ctx, seeks.at(at))
+		if err != nil {
+			return nil, 0, false, err
+		}
+		if used {
+			return nodes, at, true, nil
+		}
+	}
+	return nil, 0, false, nil
+}
+
+// collectBestNodeIndexSeek is collectRankedNodeIndexSeek returning the
+// nodes only.
+func (e *StorageExecutor) collectBestNodeIndexSeek(ctx context.Context, seeks *nodeIndexSeekSet) ([]*storage.Node, bool, error) {
+	nodes, _, used, err := e.collectRankedNodeIndexSeek(ctx, seeks)
+	return nodes, used, err
+}
+
+// collectPlannedSeek reads a planned seek, or reports that none applies.
+func (e *StorageExecutor) collectPlannedSeek(ctx context.Context, seek nodeIndexSeek, planned bool, err error) ([]*storage.Node, bool, error) {
+	if err != nil || !planned {
 		return nil, false, err
 	}
-	if len(labels) == 0 {
-		return nil, false, nil
+	return e.collectNodeIndexSeek(ctx, &seek)
+}
+
+// collectNodeIndexSeek reads seek and returns its candidate nodes. A WHERE
+// seek reads the union of its postings and returns the nodes they list in
+// ID order that it admits; no posting entry yields an empty, used candidate
+// set. The inline seek reads its reads (readPatternPropertySeek) and keeps
+// the nodes that carry every pattern label.
+func (e *StorageExecutor) collectNodeIndexSeek(ctx context.Context, seek *nodeIndexSeek) ([]*storage.Node, bool, error) {
+	if seek.isInline() {
+		nodes, used, err := e.readPatternPropertySeek(ctx, seek)
+		if err != nil || !used {
+			return nil, false, err
+		}
+		e.markMergeSchemaLookupUsed()
+		if len(seek.patternLabels) < 2 {
+			return nodes, true, nil
+		}
+		labelled := nodes[:0]
+		for _, node := range nodes {
+			if mergeNodeHasLabels(node, seek.patternLabels) {
+				labelled = append(labelled, node)
+			}
+		}
+		return labelled, true, nil
 	}
 
 	idSet := make(map[storage.NodeID]struct{})
-	for _, label := range labels {
-		lookupIDs, lookupErr := propertyIndexLookup(ctx, e.storage, schema, label, property, value)
-		if lookupErr != nil {
-			return nil, false, lookupErr
-		}
-		for _, id := range lookupIDs {
-			if err := ctx.Err(); err != nil {
-				return nil, false, err
+	for g := range seek.postings {
+		postings := &seek.postings[g]
+		for _, label := range postings.labels {
+			for i := 0; i < postings.valueCount(); i++ {
+				lookupIDs, lookupErr := propertyIndexLookup(ctx, e.storage, seek.schema, label, postings.property, postings.valueAt(i))
+				if lookupErr != nil {
+					return nil, false, lookupErr
+				}
+				for _, id := range lookupIDs {
+					if err := ctx.Err(); err != nil {
+						return nil, false, err
+					}
+					idSet[id] = struct{}{}
+				}
 			}
-			idSet[id] = struct{}{}
 		}
 	}
-
 	if len(idSet) == 0 {
 		return []*storage.Node{}, true, nil
 	}
@@ -444,24 +663,107 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 		if err != nil || node == nil {
 			continue
 		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
-			continue
-		}
-		actual, exists := node.Properties[property]
-		if !exists {
-			continue
-		}
-		equal := cypherEquality(actual, value)
-		if matched, known := equal.(bool); !known || !matched {
+		if !seek.admits(node) {
 			continue
 		}
 		nodes = append(nodes, node)
 	}
-
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
 	return nodes, true, nil
+}
+
+// smallestLabelPosting narrows postings' labels, the indexed labels of a
+// labelled pattern, to the one whose index lists the fewest nodes under the
+// postings' values: every match carries every pattern label, so one label's
+// index lists every match, and reading the others' postings only adds
+// nodes the label check drops (NOR-414). Labels of a pattern without labels
+// are alternatives the seek must union, and one label is already narrow:
+// both are returned as they are, without counting.
+func smallestLabelPosting(ctx context.Context, store storage.Engine, schema *storage.SchemaManager, patternLabels []string, postings *indexSeekPostings) ([]string, error) {
+	labels := postings.labels
+	if len(patternLabels) == 0 || len(labels) < 2 {
+		return labels, nil
+	}
+	bestAt, best := 0, unknownIndexSeekEstimate
+	for at, label := range labels {
+		sum := int64(0)
+		for i := 0; i < postings.valueCount(); i++ {
+			count, indexed, err := propertyIndexValueCount(ctx, store, schema, label, postings.property, postings.valueAt(i))
+			if err != nil {
+				return nil, err
+			}
+			if !indexed {
+				sum = unknownIndexSeekEstimate
+				break
+			}
+			sum += int64(count)
+			if sum >= best {
+				break
+			}
+		}
+		if sum < best {
+			bestAt, best = at, sum
+		}
+	}
+	return labels[bestAt : bestAt+1], nil
+}
+
+// tryCollectNodesFromPropertyIndex attempts to satisfy MATCH node candidates from a schema property index.
+// It only applies to simple equality predicates:
+//   - <var>.<prop> = <value>
+//   - <value> = <var>.<prop>
+//
+// It returns (nodes, true, nil) when index planning was used (including empty matches),
+// and (nil, false, nil) when the predicate is not eligible for index lookup.
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	return e.tryCollectNodesFromPropertyIndexAnyOf(ctx, nodePattern, whereClause, nil)
+}
+
+// tryCollectNodesFromPropertyIndexAnyOf is tryCollectNodesFromPropertyIndex
+// for a node that must carry one of anyOf (a WHERE label disjunction, #858;
+// nil when there is none): see seekCandidateLabels.
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) ([]*storage.Node, bool, error) {
+	seek, planned, err := e.planPropertyIndexEquality(ctx, nodePattern, whereClause, anyOf)
+	return e.collectPlannedSeek(ctx, seek, planned, err)
+}
+
+// planPropertyIndexEquality plans tryCollectNodesFromPropertyIndexAnyOf's
+// seek; planned is false when the predicate is not eligible.
+func (e *StorageExecutor) planPropertyIndexEquality(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) (nodeIndexSeek, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nodeIndexSeek{}, false, err
+	}
+	property, value, ok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, whereClause)
+	if !ok {
+		return nodeIndexSeek{}, false, nil
+	}
+
+	schema := e.storage.GetSchema()
+	if schema == nil {
+		return nodeIndexSeek{}, false, nil
+	}
+
+	labels, anyOf, err := e.seekCandidateLabels(ctx, schema, nodePattern.labels, property, anyOf)
+	if err != nil || len(labels) == 0 {
+		return nodeIndexSeek{}, false, err
+	}
+	seek := nodeIndexSeek{
+		schema:        schema,
+		store:         e.storage,
+		postings:      [2]indexSeekPostings{{labels: labels, property: property, value: storage.IndexLookupValue(value)}},
+		patternLabels: nodePattern.labels,
+		anyOf:         anyOf,
+		equality:      true,
+	}
+	if seek.postings[0].labels, err = smallestLabelPosting(ctx, e.storage, schema, nodePattern.labels, &seek.postings[0]); err != nil {
+		return nodeIndexSeek{}, false, err
+	}
+	return seek, true, nil
 }
 
 // tryCollectNodesFromPropertyIndexIn attempts to satisfy simple IN-list predicates:
@@ -489,76 +791,50 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(ctx context.Co
 	params map[string]interface{},
 	anyOf []string,
 ) ([]*storage.Node, bool, error) {
+	seek, planned, err := e.planPropertyIndexInParam(ctx, nodePattern, whereClause, params, anyOf)
+	return e.collectPlannedSeek(ctx, seek, planned, err)
+}
+
+// planPropertyIndexInParam plans tryCollectNodesFromPropertyIndexInAnyOf's
+// seek; planned is false when the predicate is not eligible.
+func (e *StorageExecutor) planPropertyIndexInParam(ctx context.Context,
+	nodePattern nodePatternInfo,
+	whereClause string,
+	params map[string]interface{},
+	anyOf []string,
+) (nodeIndexSeek, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nodeIndexSeek{}, false, err
 	}
 	property, listValues, ok := e.parseSimpleIndexedInParam(ctx, nodePattern.variable, whereClause, params)
 	if !ok {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
+	return e.planPropertyIndexInList(ctx, nodePattern, property, listValues, anyOf)
+}
 
+// planPropertyIndexInList plans the seek of <var>.<property> IN listValues;
+// planned is false when no pattern label indexes property.
+func (e *StorageExecutor) planPropertyIndexInList(ctx context.Context, nodePattern nodePatternInfo, property string, listValues []interface{}, anyOf []string) (nodeIndexSeek, bool, error) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 	labels, anyOf, err := e.seekCandidateLabels(ctx, schema, nodePattern.labels, property, anyOf)
-	if err != nil {
-		return nil, false, err
+	if err != nil || len(labels) == 0 {
+		return nodeIndexSeek{}, false, err
 	}
-	if len(labels) == 0 {
-		return nil, false, nil
+	seek := nodeIndexSeek{
+		schema:        schema,
+		store:         e.storage,
+		postings:      [2]indexSeekPostings{{labels: labels, property: property, values: listValues, many: true}},
+		patternLabels: nodePattern.labels,
+		anyOf:         anyOf,
 	}
-
-	idSet := make(map[storage.NodeID]struct{}, 256)
-	for _, label := range labels {
-		for _, value := range listValues {
-			lookupIDs, lookupErr := propertyIndexLookup(ctx, e.storage, schema, label, property, value)
-			if lookupErr != nil {
-				return nil, false, lookupErr
-			}
-			for _, id := range lookupIDs {
-				if err := ctx.Err(); err != nil {
-					return nil, false, err
-				}
-				idSet[id] = struct{}{}
-			}
-		}
+	if seek.postings[0].labels, err = smallestLabelPosting(ctx, e.storage, schema, nodePattern.labels, &seek.postings[0]); err != nil {
+		return nodeIndexSeek{}, false, err
 	}
-	if len(idSet) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(idSet))
-	ids := make([]string, 0, len(idSet))
-	for id := range idSet {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		ids = append(ids, string(id))
-	}
-	if err := ctxsort.Sort(ctx, ids, strings.Compare, false); err != nil {
-		return nil, false, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
-		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return nodes, true, nil
+	return seek, true, nil
 }
 
 // tryCollectNodesFromPropertyIndexInLiteral attempts to satisfy simple IN-list
@@ -585,76 +861,22 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 	whereClause string,
 	anyOf []string,
 ) ([]*storage.Node, bool, error) {
+	seek, planned, err := e.planPropertyIndexInLiteral(ctx, nodePattern, whereClause, anyOf)
+	return e.collectPlannedSeek(ctx, seek, planned, err)
+}
+
+// planPropertyIndexInLiteral plans
+// tryCollectNodesFromPropertyIndexInLiteralAnyOf's seek; planned is false
+// when the predicate is not eligible.
+func (e *StorageExecutor) planPropertyIndexInLiteral(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) (nodeIndexSeek, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nodeIndexSeek{}, false, err
 	}
 	property, listValues, ok := e.parseSimpleIndexedInLiteral(ctx, nodePattern.variable, whereClause)
 	if !ok {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
-
-	schema := e.storage.GetSchema()
-	if schema == nil {
-		return nil, false, nil
-	}
-	labels, anyOf, err := e.seekCandidateLabels(ctx, schema, nodePattern.labels, property, anyOf)
-	if err != nil {
-		return nil, false, err
-	}
-	if len(labels) == 0 {
-		return nil, false, nil
-	}
-
-	idSet := make(map[storage.NodeID]struct{}, 256)
-	for _, label := range labels {
-		for _, value := range listValues {
-			lookupIDs, lookupErr := propertyIndexLookup(ctx, e.storage, schema, label, property, value)
-			if lookupErr != nil {
-				return nil, false, lookupErr
-			}
-			for _, id := range lookupIDs {
-				if err := ctx.Err(); err != nil {
-					return nil, false, err
-				}
-				idSet[id] = struct{}{}
-			}
-		}
-	}
-	if len(idSet) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(idSet))
-	ids := make([]string, 0, len(idSet))
-	for id := range idSet {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		ids = append(ids, string(id))
-	}
-	if err := ctxsort.Sort(ctx, ids, strings.Compare, false); err != nil {
-		return nil, false, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
-		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return nodes, true, nil
+	return e.planPropertyIndexInList(ctx, nodePattern, property, listValues, anyOf)
 }
 
 // tryCollectNodesFromPropertyIndexInCompound attempts to satisfy an IN-list
@@ -672,27 +894,52 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 // Mirrors tryCollectNodesFromIDEqualityCompound's AND-conjunct handling
 // (match_index_seek.go) for the IN-list case. Tries the param-bound form
 // first, then the literal-list form, at both the top level and inside each
-// top-level AND conjunct.
+// top-level AND conjunct; of several indexed conjuncts it reads the one that
+// reads the fewest index entries (bestNodeIndexSeek).
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
-	if err := ctx.Err(); err != nil {
+	var seeks nodeIndexSeekSet
+	if err := e.addPropertyIndexInCompoundSeeks(ctx, nodePattern, whereClause, params, &seeks); err != nil {
 		return nil, false, err
+	}
+	return e.collectBestNodeIndexSeek(ctx, &seeks)
+}
+
+// addPropertyIndexInCompoundSeeks adds
+// tryCollectNodesFromPropertyIndexInCompound's seeks to seeks: the whole
+// clause's when it is a simple IN list, otherwise one per indexed IN-list
+// conjunct. Each answers an IN list (inList).
+func (e *StorageExecutor) addPropertyIndexInCompoundSeeks(
+	ctx context.Context,
+	nodePattern nodePatternInfo,
+	whereClause string,
+	params map[string]interface{},
+	seeks *nodeIndexSeekSet,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" {
-		return nil, false, nil
+		return nil
 	}
 
 	// 1) Simple clause (param or literal list).
-	if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(ctx, nodePattern, clause, params); used || err != nil {
-		return nodes, used, err
+	seek, planned, err := e.planPropertyIndexInParam(ctx, nodePattern, clause, params, nil)
+	if err == nil && !planned {
+		seek, planned, err = e.planPropertyIndexInLiteral(ctx, nodePattern, clause, nil)
 	}
-	if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, clause); used || err != nil {
-		return nodes, used, err
+	if err != nil {
+		return err
+	}
+	if planned {
+		seek.inList = true
+		seeks.add(seek)
+		return nil
 	}
 
 	// 2) Conjunction: any recognized IN-list conjunct is safe to use as a
@@ -707,16 +954,20 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 			if term == "" {
 				continue
 			}
-			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInAnyOf(ctx, nodePattern, term, params, anyOf); used || err != nil {
-				return nodes, used, err
+			seek, planned, err := e.planPropertyIndexInParam(ctx, nodePattern, term, params, anyOf)
+			if err == nil && !planned {
+				seek, planned, err = e.planPropertyIndexInLiteral(ctx, nodePattern, term, anyOf)
 			}
-			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteralAnyOf(ctx, nodePattern, term, anyOf); used || err != nil {
-				return nodes, used, err
+			if err != nil {
+				return err
+			}
+			if planned {
+				seek.inList = true
+				seeks.add(seek)
 			}
 		}
 	}
-
-	return nil, false, nil
+	return nil
 }
 
 // tryCollectNodesFromPropertyIndexEqualityCompound attempts to satisfy a
@@ -732,23 +983,45 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 //
 // Mirrors tryCollectNodesFromPropertyIndexInCompound's AND-conjunct handling
 // (match_index_seek.go) for the plain-equality case. Tries the whole clause
-// first (the simple form), then each top-level AND conjunct in order.
+// first (the simple form), then each top-level AND conjunct; of several
+// indexed conjuncts it reads the one that reads the fewest index entries
+// (bestNodeIndexSeek).
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 ) ([]*storage.Node, bool, error) {
-	if err := ctx.Err(); err != nil {
+	var seeks nodeIndexSeekSet
+	if err := e.addPropertyIndexEqualityCompoundSeeks(ctx, nodePattern, whereClause, &seeks); err != nil {
 		return nil, false, err
+	}
+	return e.collectBestNodeIndexSeek(ctx, &seeks)
+}
+
+// addPropertyIndexEqualityCompoundSeeks adds
+// tryCollectNodesFromPropertyIndexEqualityCompound's seeks to seeks: the
+// whole clause's when it is a simple equality, otherwise one per indexed
+// equality conjunct.
+func (e *StorageExecutor) addPropertyIndexEqualityCompoundSeeks(
+	ctx context.Context,
+	nodePattern nodePatternInfo,
+	whereClause string,
+	seeks *nodeIndexSeekSet,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" {
-		return nil, false, nil
+		return nil
 	}
 
 	// 1) Simple clause (a lone equality, no conjunction).
-	if nodes, used, err := e.tryCollectNodesFromPropertyIndex(ctx, nodePattern, clause); used || err != nil {
-		return nodes, used, err
+	if seek, planned, err := e.planPropertyIndexEquality(ctx, nodePattern, clause, nil); err != nil || planned {
+		if planned {
+			seeks.add(seek)
+		}
+		return err
 	}
 
 	// 2) Conjunction: any equality conjunct on an indexed property is safe
@@ -764,13 +1037,16 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 			if term == "" {
 				continue
 			}
-			if nodes, used, err := e.tryCollectNodesFromPropertyIndexAnyOf(ctx, nodePattern, term, anyOf); used || err != nil {
-				return nodes, used, err
+			seek, planned, err := e.planPropertyIndexEquality(ctx, nodePattern, term, anyOf)
+			if err != nil {
+				return err
+			}
+			if planned {
+				seeks.add(seek)
 			}
 		}
 	}
-
-	return nil, false, nil
+	return nil
 }
 
 // tryCollectNodesFromPropertyIndexInOrParam attempts to satisfy OR-combined IN
@@ -785,27 +1061,38 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(ctx context.
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
+	seek, planned, err := e.planPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
+	return e.collectPlannedSeek(ctx, seek, planned, err)
+}
+
+// planPropertyIndexInOrParam plans tryCollectNodesFromPropertyIndexInOrParam's
+// seek; planned is false when the predicate is not eligible.
+func (e *StorageExecutor) planPropertyIndexInOrParam(ctx context.Context,
+	nodePattern nodePatternInfo,
+	whereClause string,
+	params map[string]interface{},
+) (nodeIndexSeek, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nodeIndexSeek{}, false, err
 	}
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" || params == nil {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 	orIdx := findTopLevelKeyword(clause, " OR ")
 	if orIdx <= 0 {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 	left := strings.TrimSpace(clause[:orIdx])
 	right := strings.TrimSpace(clause[orIdx+4:])
 	if left == "" || right == "" {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 
 	lprop, lvals, lok := e.parseSimpleIndexedInParam(ctx, nodePattern.variable, left, params)
 	rprop, rvals, rok := e.parseSimpleIndexedInParam(ctx, nodePattern.variable, right, params)
 	if !lok || !rok {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 
 	// Merge values (keep deterministic and duplicate-free).
@@ -825,85 +1112,39 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(ctx context.
 
 	schema := e.storage.GetSchema()
 	if schema == nil {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 
 	leftLabels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, lprop)
 	if err != nil {
-		return nil, false, err
+		return nodeIndexSeek{}, false, err
 	}
 	rightLabels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, rprop)
 	if err != nil {
-		return nil, false, err
+		return nodeIndexSeek{}, false, err
 	}
 	if len(leftLabels) == 0 || len(rightLabels) == 0 {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
+	return e.orIndexSeek(ctx, schema, nodePattern, [2]indexSeekPostings{
+		{labels: leftLabels, property: lprop, values: merged, many: true},
+		{labels: rightLabels, property: rprop, values: merged, many: true},
+	})
+}
 
-	idSet := make(map[storage.NodeID]struct{}, 256)
-	for _, label := range leftLabels {
-		for _, v := range merged {
-			lookupIDs, lookupErr := propertyIndexLookup(ctx, e.storage, schema, label, lprop, v)
-			if lookupErr != nil {
-				return nil, false, lookupErr
-			}
-			for _, id := range lookupIDs {
-				if err := ctx.Err(); err != nil {
-					return nil, false, err
-				}
-				idSet[id] = struct{}{}
-			}
+// orIndexSeek is the seek of an OR whose two branches are both covered by
+// postings: their union, each branch narrowed to its smallest pattern-label
+// posting (smallestLabelPosting).
+func (e *StorageExecutor) orIndexSeek(ctx context.Context, schema *storage.SchemaManager, nodePattern nodePatternInfo, postings [2]indexSeekPostings) (nodeIndexSeek, bool, error) {
+	seek := nodeIndexSeek{schema: schema, store: e.storage, postings: postings, patternLabels: nodePattern.labels}
+	for i := range seek.postings {
+		labels, err := smallestLabelPosting(ctx, e.storage, schema, nodePattern.labels, &seek.postings[i])
+		if err != nil {
+			return nodeIndexSeek{}, false, err
 		}
+		seek.postings[i].labels = labels
 	}
-	for _, label := range rightLabels {
-		for _, v := range merged {
-			lookupIDs, lookupErr := propertyIndexLookup(ctx, e.storage, schema, label, rprop, v)
-			if lookupErr != nil {
-				return nil, false, lookupErr
-			}
-			for _, id := range lookupIDs {
-				if err := ctx.Err(); err != nil {
-					return nil, false, err
-				}
-				idSet[id] = struct{}{}
-			}
-		}
-	}
-	if len(idSet) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(idSet))
-	ids := make([]string, 0, len(idSet))
-	for id := range idSet {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		ids = append(ids, string(id))
-	}
-	if err := ctxsort.Sort(ctx, ids, strings.Compare, false); err != nil {
-		return nil, false, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
-		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return nodes, true, nil
+	return seek, true, nil
 }
 
 // tryCollectNodesFromPropertyIndexOrEquality attempts to satisfy OR-combined
@@ -921,107 +1162,65 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
+	seek, planned, err := e.planPropertyIndexOrEquality(ctx, nodePattern, whereClause)
+	return e.collectPlannedSeek(ctx, seek, planned, err)
+}
+
+// planPropertyIndexOrEquality plans tryCollectNodesFromPropertyIndexOrEquality's
+// seek; planned is false when the predicate is not eligible.
+func (e *StorageExecutor) planPropertyIndexOrEquality(
+	ctx context.Context,
+	nodePattern nodePatternInfo,
+	whereClause string,
+) (nodeIndexSeek, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nodeIndexSeek{}, false, err
 	}
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 	orIdx := findTopLevelKeyword(clause, " OR ")
 	if orIdx <= 0 {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 	left := strings.TrimSpace(clause[:orIdx])
 	right := strings.TrimSpace(clause[orIdx+4:])
 	if left == "" || right == "" {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 
 	// Try to parse each branch as a simple indexed equality predicate.
 	lprop, lval, lok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, left)
 	rprop, rval, rok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, right)
 	if !lok || !rok {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 
 	schema := e.storage.GetSchema()
 	if schema == nil {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 
 	leftLabels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, lprop)
 	if err != nil {
-		return nil, false, err
+		return nodeIndexSeek{}, false, err
 	}
 	rightLabels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, rprop)
 	if err != nil {
-		return nil, false, err
+		return nodeIndexSeek{}, false, err
 	}
-	if len(leftLabels) == 0 && len(rightLabels) == 0 {
-		return nil, false, nil
+	// An OR seek lists a node only when an index covers each branch: with one
+	// branch unindexed, the nodes that match only that branch are in no
+	// index the seek reads, so it is no candidate source and the pattern
+	// takes another seek or its scan.
+	if len(leftLabels) == 0 || len(rightLabels) == 0 {
+		return nodeIndexSeek{}, false, nil
 	}
-
-	idSet := make(map[storage.NodeID]struct{}, 64)
-	for _, label := range leftLabels {
-		lookupIDs, lookupErr := propertyIndexLookup(ctx, e.storage, schema, label, lprop, lval)
-		if lookupErr != nil {
-			return nil, false, lookupErr
-		}
-		for _, id := range lookupIDs {
-			if err := ctx.Err(); err != nil {
-				return nil, false, err
-			}
-			idSet[id] = struct{}{}
-		}
-	}
-	for _, label := range rightLabels {
-		lookupIDs, lookupErr := propertyIndexLookup(ctx, e.storage, schema, label, rprop, rval)
-		if lookupErr != nil {
-			return nil, false, lookupErr
-		}
-		for _, id := range lookupIDs {
-			if err := ctx.Err(); err != nil {
-				return nil, false, err
-			}
-			idSet[id] = struct{}{}
-		}
-	}
-	if len(idSet) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(idSet))
-	ids := make([]string, 0, len(idSet))
-	for id := range idSet {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		ids = append(ids, string(id))
-	}
-	if err := ctxsort.Sort(ctx, ids, strings.Compare, false); err != nil {
-		return nil, false, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
-		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return nodes, true, nil
+	return e.orIndexSeek(ctx, schema, nodePattern, [2]indexSeekPostings{
+		{labels: leftLabels, property: lprop, value: lval},
+		{labels: rightLabels, property: rprop, value: rval},
+	})
 }
 
 // tryCollectNodesFromIDIn attempts to satisfy simple id/elementId IN-list predicates:
@@ -1547,7 +1746,9 @@ func (e *StorageExecutor) parseSimpleIndexedInParam(ctx context.Context, variabl
 	}
 	list := coerceInterfaceList(raw)
 	if len(list) == 0 {
-		return "", []interface{}{}, true
+		// x IN [] holds for no node: the property's index answers it with
+		// none, as the literal form does.
+		return parsedProp, []interface{}{}, true
 	}
 	out := make([]interface{}, 0, len(list))
 	seen := make(map[string]struct{}, len(list))
@@ -2151,11 +2352,14 @@ func mirroredComparison(operator string) string {
 }
 
 // collectPipelineIndexedNodeCandidates is the index half of
-// collectPipelineInitialNodeCandidates: the candidates of the first index
-// operator that can narrow the MATCH, with used false when none can. Row
-// reads and the filtered count (tryStreamPipelineFilteredNodeCount) both seed
-// from it, so a lookup that uses an index for rows uses it for count(*) too
-// (#820).
+// collectPipelineInitialNodeCandidates: the candidates of the index operator
+// that narrows the MATCH best, with used false when none can. An ordered
+// window or an id seek is read when one applies; otherwise the equality, IN
+// and OR seeks of the WHERE and of the pattern's inline properties, on any
+// pattern label, compete by the index entries they read (bestNodeIndexSeek),
+// and range and IS NOT NULL seeks are the fallbacks. Row reads and the
+// filtered count (tryStreamPipelineFilteredNodeCount) both seed from it, so a
+// lookup that uses an index for rows uses it for count(*) too (#820).
 func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
 	params := getParamsFromContext(ctx)
 	if hint.limit > 0 && hint.orderExpr != "" {
@@ -2199,69 +2403,64 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			}
 		}
 	}
-	// inList marks the plan that answers a WHERE that is exactly an IN list.
-	indexedPlans := []struct {
-		collect func() ([]*storage.Node, bool, error)
-		inList  bool
-	}{
-		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
-		}},
-		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, whereClause, params)
-		}},
-		{inList: true, collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, whereClause, params)
-		}},
-		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, whereClause)
-		}},
-		{collect: func() ([]*storage.Node, bool, error) {
-			// Inline pattern properties ({id: $id}) on an indexed property.
-			nodes, used, err := e.lookupPatternCandidatesUsingPropertyIndex(ctx, nodePattern, e.getStorage(ctx))
-			if err != nil {
-				return nil, false, err
-			}
-			if used {
-				e.markMergeSchemaLookupUsed()
-			}
-			if !used || len(nodePattern.labels) < 2 {
-				return nodes, used, err
-			}
-			labelled := nodes[:0]
-			for _, node := range nodes {
-				if mergeNodeHasLabels(node, nodePattern.labels) {
-					labelled = append(labelled, node)
-				}
-			}
-			return labelled, true, nil
-		}},
-		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexRange(ctx, nodePattern, whereClause, params)
-		}},
-		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexNotNull(ctx, nodePattern, whereClause)
-		}},
+	// The point seeks (equality, IN and OR from the WHERE, and the pattern's
+	// inline properties) compete: the one that reads the fewest index entries
+	// is read, whichever predicate or pattern label names it (NOR-414). A
+	// non-selective WHERE equality used to win over a unique inline lookup
+	// only because its plan was tried first. Range and IS NOT NULL seeks
+	// remain the fallbacks they were.
+	var seeks nodeIndexSeekSet
+	if seek, planned, err := e.planPropertyIndexInOrParam(ctx, nodePattern, whereClause, params); err != nil {
+		return nil, false, false, err
+	} else if planned {
+		seeks.add(seek)
 	}
-	for _, plan := range indexedPlans {
-		nodes, used, err := plan.collect()
-		if err != nil {
+	if seek, planned, err := e.planPropertyIndexOrEquality(ctx, nodePattern, whereClause); err != nil {
+		return nil, false, false, err
+	} else if planned {
+		seeks.add(seek)
+	}
+	if err := e.addPropertyIndexInCompoundSeeks(ctx, nodePattern, whereClause, params, &seeks); err != nil {
+		return nil, false, false, err
+	}
+	if err := e.addPropertyIndexEqualityCompoundSeeks(ctx, nodePattern, whereClause, &seeks); err != nil {
+		return nil, false, false, err
+	}
+	if seek, planned, err := e.planPatternPropertySeek(ctx, nodePattern, e.getStorage(ctx)); err != nil {
+		return nil, false, false, err
+	} else if planned {
+		seeks.add(seek)
+	}
+	nodes, chosen, used, err := e.collectRankedNodeIndexSeek(ctx, &seeks)
+	if err != nil {
+		return nil, false, false, err
+	}
+	inList := used && seeks.at(chosen).inList
+	pointSeek := used
+	if !used {
+		if nodes, used, err = e.tryCollectNodesFromPropertyIndexRange(ctx, nodePattern, whereClause, params); err != nil {
 			return nil, false, false, err
 		}
-		if used {
-			if len(nodePattern.properties) > 0 {
-				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+		if !used {
+			if nodes, used, err = e.tryCollectNodesFromPropertyIndexNotNull(ctx, nodePattern, whereClause); err != nil || !used {
+				return nil, false, false, err
 			}
-			// A WHERE that is exactly <variable>.<property> IN <list> on an
-			// indexed property is answered by the index: one lookup per list
-			// value returns exactly the nodes it selects, so the caller
-			// doesn't test each of them against the whole list again
-			// (quadratic in the list for a list that names every node).
-			// Checked only once the index answered, so a read that takes
-			// another route doesn't parse its WHERE for it.
-			exact := plan.inList && e.whereIsSimpleIndexedIn(ctx, nodePattern.variable, whereClause, params)
-			return nodes, exact, true, nil
 		}
 	}
-	return nil, false, false, nil
+	if len(nodePattern.properties) > 0 {
+		if pointSeek {
+			// A point seek builds its own slice (collectNodeIndexSeek).
+			nodes = e.filterOwnedNodesByProperties(nodes, nodePattern.properties)
+		} else {
+			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+		}
+	}
+	// A WHERE that is exactly <variable>.<property> IN <list> on an indexed
+	// property is answered by the index: one lookup per list value returns
+	// exactly the nodes it selects, so the caller doesn't test each of them
+	// against the whole list again (quadratic in the list for a list that
+	// names every node). Checked only once the index answered, so a read that
+	// takes another route doesn't parse its WHERE for it.
+	exact := inList && e.whereIsSimpleIndexedIn(ctx, nodePattern.variable, whereClause, params)
+	return nodes, exact, true, nil
 }
