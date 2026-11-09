@@ -19,7 +19,7 @@ PUSH_WORKFLOWS = {
     "cd-llama-cuda.yml": {"branches": ["main"], "paths": ["docker/Dockerfile.llama-cuda"]},
     "docs-pages.yml": {
         "branches": ["main"],
-        "paths": ["docs/**", "mkdocs.yml", ".github/workflows/docs-pages.yml", "requirements-docs.txt"],
+        "paths": ["docs/**", "docs-site/**", ".github/workflows/docs-pages.yml"],
     },
 }
 
@@ -141,6 +141,14 @@ def self_test():
     assert violations("release-verification.yml", {**base, "on": {"push": {"tags": ["*"]}}})
     for name, push in PUSH_WORKFLOWS.items():
         assert not violations(name, {**base, "on": {"push": push}})
+    # Docs publishing publishes on main pushes only; the portal paths follow the
+    # VitePress docs-site, and every runner keeps the administrator gate.
+    docs_push = {"branches": ["main"], "paths": ["docs/**", "docs-site/**", ".github/workflows/docs-pages.yml"]}
+    docs = {**base, "on": {"push": docs_push, "workflow_dispatch": None}}
+    assert not violations("docs-pages.yml", docs)
+    assert violations("docs-pages.yml", {**docs, "on": {"pull_request": {"branches": ["main"]}, "push": docs_push}})
+    assert violations("docs-pages.yml", {**docs, "on": {"push": {**docs_push, "paths": ["docs/**", "mkdocs.yml", "requirements-docs.txt"]}}})
+    assert violations("docs-pages.yml", {**docs, "jobs": {"build": {"runs-on": "ubuntu-latest"}}})
     assert violations("ci.yml", {**base, "jobs": {"other": {"uses": "someone/repo/.github/workflows/ci.yml@main"}}})
 
 
