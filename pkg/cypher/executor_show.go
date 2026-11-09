@@ -191,24 +191,28 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 				createStatement = showIndexCreateStatement(idxType, name, entityType, labelsOrTypes, properties, config)
 			}
 
+			state, populationPercent, failureMessage := "ONLINE", 100.0, ""
+			if idxType == "VECTOR" {
+				state, populationPercent, failureMessage = e.vectorIndexShowState(name)
+			}
 			// NornicDB doesn't track index reads: lastRead, readCount and
 			// trackedSince are null, as Neo4j reports untracked reads.
 			rows = append(rows, []interface{}{
-				int64(i + 1),     // id
-				name,             // name
-				"ONLINE",         // state
-				100.0,            // populationPercent
-				idxType,          // type
-				entityType,       // entityType
-				labelsOrTypes,    // labelsOrTypes
-				properties,       // properties
-				provider,         // indexProvider
-				owningConstraint, // owningConstraint
-				nil,              // lastRead
-				nil,              // readCount
-				nil,              // trackedSince
+				int64(i + 1),      // id
+				name,              // name
+				state,             // state
+				populationPercent, // populationPercent
+				idxType,           // type
+				entityType,        // entityType
+				labelsOrTypes,     // labelsOrTypes
+				properties,        // properties
+				provider,          // indexProvider
+				owningConstraint,  // owningConstraint
+				nil,               // lastRead
+				nil,               // readCount
+				nil,               // trackedSince
 				showIndexOptions(provider, config),
-				"", // failureMessage
+				failureMessage, // failureMessage
 				createStatement,
 			})
 		}

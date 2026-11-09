@@ -890,6 +890,10 @@ type Service struct {
 	// refreshRetry, when set, receives a refresh whose storage read failed
 	// (SetRefreshRetry).
 	refreshRetry atomic.Pointer[RefreshRetryOwner]
+
+	// vectorIndexPopulations holds the population state of schema vector
+	// indexes (vector_index_population.go).
+	vectorIndexPopulations vectorIndexPopulations
 	// buildMu orders live node mutations and derived builds against full
 	// population/checkpoint restoration and vector-source clearing.
 	buildMu        sync.RWMutex
@@ -2939,12 +2943,34 @@ func (s *Service) IndexNode(node *storage.Node) error {
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.indexNodeOwned(ctx, node, nil)
+	return s.indexNodeOwned(ctx, node, nil, installPayload)
 }
+
+// nodeInstall is how indexNodeAsLocked treats an entry of the node it cannot
+// index: an embedding of other dimensions than the index's, or text or
+// vectors beyond an index memory budget.
+type nodeInstall int
+
+const (
+	// installPayload is a caller's write (IndexNode): such an entry rejects
+	// the whole write before anything changes, so the caller, who is told,
+	// keeps the previous entries.
+	installPayload nodeInstall = iota
+	// installBuild is one of the build's own stored nodes: an embedding of
+	// other dimensions is skipped and the rest indexed; a budget rejects the
+	// node, and the build fails.
+	installBuild
+	// installStored is a node's stored state, installed by a refresh that
+	// follows storage. Each kind (the BM25 text, the vectors with their
+	// metadata) is decided on its own: what fits is installed, and a kind a
+	// budget refuses is withdrawn whole (admittedUsage). The refusal is
+	// returned.
+	installStored
+)
 
 // indexNodeOwned is IndexNode for a caller holding buildMu (read or write).
 // current, when set, is the temporal decision made at the call.
-func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, current *bool) error {
+func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, current *bool, install nodeInstall) error {
 	// Per-DB master switches: when both indexes are off, IndexNode is a full
 	// no-op — the database has no search and never will until a flag flip
 	// triggers ResetSearchService. When one is off, indexNodeLocked still
@@ -2962,6 +2988,11 @@ func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, curren
 		var err error
 		shouldIndex, err = s.shouldIndexNode(ctx, node)
 		if err != nil {
+			if install == installStored {
+				// The committed replacement cannot keep serving the old image
+				// while its eligibility lookup waits for retry.
+				s.removeNodeOwned(node.ID)
+			}
 			return err
 		}
 	}
@@ -2976,7 +3007,7 @@ func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, curren
 	}
 
 	s.indexMu.Lock()
-	err := s.indexNodeAsLocked(node, false, shouldIndex, true)
+	err := s.indexNodeAsLocked(node, false, shouldIndex, install)
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -3169,35 +3200,24 @@ func (s *Service) checkEmbeddingDimensions(node *storage.Node) error {
 	return nil
 }
 
-// indexStoredNodeLocked indexes one of the build's own stored nodes. Unlike a
-// caller's write it is not rejected for an embedding whose dimensions differ
-// from the index's: the indexer logs and skips that vector and indexes the
-// rest of the node, so one bad stored embedding cannot fail the whole build.
-func (s *Service) indexStoredNodeLocked(node *storage.Node, skipFulltext, current bool) error {
-	return s.indexNodeAsLocked(node, skipFulltext, current, false)
-}
-
-func (s *Service) indexNodeLocked(ctx context.Context, node *storage.Node, skipFulltext bool) error {
-	shouldIndex, err := s.shouldIndexNode(ctx, node)
-	if err != nil {
-		return err
-	}
-	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex, true)
-}
-
-// indexNodeAsLocked is indexNodeLocked with the temporal decision already
-// made: by indexNodeLocked, or at the call for a write handed to a build.
-// validate rejects a caller's write whose embeddings have other dimensions
-// (checkEmbeddingDimensions); the build's own stored nodes do not validate
-// (indexStoredNodeLocked).
-func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex, validate bool) error {
+// indexNodeAsLocked installs a node using the temporal decision already made
+// by the live owner or at admission to the build. install controls whether a
+// refused entry rejects a payload or is omitted from a stored population.
+func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex bool, install nodeInstall) error {
 	var indexErr error
+	// refused is what installStored could not give the node.
+	var refused error
 	// Explicit embeddings are vectors, unlike ordinary numeric properties.
 	// Validate before removing the previous entries so a failed update cannot
-	// silently discard acknowledged vectors (including fixed embedder dimensions).
-	if shouldIndex && validate {
+	// silently discard acknowledged vectors (including fixed embedder
+	// dimensions). A stored node's embedding of other dimensions is refused
+	// on its own: the install skips it and indexes the rest.
+	if shouldIndex && install != installBuild {
 		if err := s.checkEmbeddingDimensions(node); err != nil {
-			return err
+			if install == installPayload {
+				return err
+			}
+			refused = err
 		}
 	}
 	defer s.indexChanged()
@@ -3225,14 +3245,32 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 			}
 		}
 	}
-	capacityUsage, err := s.checkNodeIndexCapacityLocked(node, fulltext)
-	if err != nil {
-		return err
-	}
 	vectorOn := s.vectorEnabled.Load()
 	skipVectorMutation := false
 	if vectorOn && nodeIDStr != "" && !skipFulltext && shouldIndex {
 		skipVectorMutation = s.nodeVectorStateUnchangedLocked(node)
+	}
+	// The full usage is admitted, metadata included, whether or not the
+	// node's vectors changed.
+	capacityUsage := s.nodeIndexUsageLocked(node, fulltext)
+	textOver, vectorOver, over := s.indexCapacityLocked(s.indexCapacityByNode[nodeIDStr], capacityUsage)
+	// withdrawVectors is a vector kind refused: the node's vectors and their
+	// metadata are withdrawn, and none is installed.
+	withdrawVectors := false
+	switch {
+	case over == nil:
+	case install != installStored:
+		return over
+	default:
+		capacityUsage = admittedUsage(capacityUsage, textOver, vectorOver)
+		if textOver != nil {
+			fulltext = nodeFulltext{index: fulltext.index}
+			refused = errors.Join(refused, textOver)
+		}
+		if vectorOver != nil {
+			withdrawVectors, skipVectorMutation = true, false
+			refused = errors.Join(refused, vectorOver)
+		}
 	}
 	if nodeIDStr != "" && !skipFulltext {
 		// CRITICAL: IndexNode is called for both creates and updates.
@@ -3250,7 +3288,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 	if !shouldIndex {
 		return nil
 	}
-	if nodeIDStr != "" {
+	if nodeIDStr != "" && !withdrawVectors {
 		labelsCopy := make([]string, len(node.Labels))
 		copy(labelsCopy, node.Labels)
 		s.nodeLabels[nodeIDStr] = labelsCopy
@@ -3267,7 +3305,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 	// addVectorLocked returns ErrVectorDisabled in that case, but we also
 	// short-circuit at this top level so we don't even iterate node
 	// properties looking for vector-shaped values.
-	indexVectorState := vectorOn && !skipVectorMutation
+	indexVectorState := vectorOn && !skipVectorMutation && !withdrawVectors
 	if indexVectorState {
 		defer s.publishNodeMembersLocked(nodeIDStr)
 	}
@@ -3332,7 +3370,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 	}
 	s.commitNodeIndexCapacityLocked(nodeIDStr, capacityUsage)
 
-	return indexErr
+	return errors.Join(indexErr, refused)
 }
 
 // nodeVectorStateUnchangedLocked reports whether re-indexing node would produce
@@ -3549,25 +3587,73 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 	if node == nil || applyMutation.id != node.ID {
 		return nil
 	}
-	if queued, err := s.readLockOrQueue(ctx, deferredIndexWrite{node: node, valid: func() bool {
-		return claimReservedIndexMutation(applyMutation)
-	}}); queued || err != nil {
-		if err != nil {
-			applyMutation.discard()
+	if queued, err := s.readLockOrQueue(ctx, reservedWrite(deferredIndexWrite{node: node}, applyMutation)); queued || err != nil {
+		var admission *buildNodeAdmissionError
+		if !queued && errors.As(err, &admission) && withoutRefusals(err) != nil {
+			// A failed eligibility lookup cannot leave the build's older snapshot
+			// visible. Order withdrawal after that snapshot, without completing the
+			// reservation; transfer retry ownership after withdrawal and lock release.
+			withdraw := deferredIndexWrite{
+				apply: func() {
+					_ = applyReservedIndexMutation(applyMutation, func() error {
+						// Do not withdraw a later build's newly captured stored image.
+						if s.buildWrites.generation.Load() != admission.generation {
+							return err
+						}
+						s.removeNodeOwned(applyMutation.id)
+						return err
+					})
+				},
+				afterBuild: func() { s.refusedAdmission(RefreshRetry{Node: mutation}, err) },
+			}
+			if deferred, _ := s.readLockOrQueue(s.LifetimeContext(), withdraw); !deferred {
+				withdraw.apply()
+				s.buildMu.RUnlock()
+				withdraw.afterBuild()
+			}
+		} else if !queued {
+			s.refusedAdmission(RefreshRetry{Node: mutation}, err)
 		}
 		return err
 	}
-	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(ctx, node, nil) })
+	err := func() error {
+		defer s.buildMu.RUnlock()
+		return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(ctx, node, nil, installStored) })
+	}()
+	if err != nil && withoutRefusals(err) != nil {
+		s.retryRefresh(RefreshRetry{Node: mutation}, err)
+	}
+	return err
+}
+
+// reservedWrite is write, a reserved refresh's install or removal, as it is
+// handed to a running build: installed only while the reservation is
+// current, which the build's claim completes (claimReservedIndexMutation). A
+// node or relationship it installs is its stored state, installed entry by
+// entry (installStored).
+func reservedWrite[ID ~string](write deferredIndexWrite, mutation identityMutation[ID]) deferredIndexWrite {
+	write.refresh = write.node != nil || write.edge != nil
+	write.valid = func() bool { return claimReservedIndexMutation(mutation) }
+	return write
+}
+
+// refusedAdmission routes a reserved refresh a running build did not admit.
+// Failed preparation retains the same retry owner as a failed live install;
+// only entry refusals are final. Discarding a transient temporal read failure
+// would leave the build's earlier snapshot served with no repair pending.
+func (s *Service) refusedAdmission(work RefreshRetry, err error) {
+	if withoutRefusals(err) != nil {
+		s.retryRefresh(work, err)
+		return
+	}
+	work.Discard()
 }
 
 // applyReservedNodeRemoval is applyReservedNodeIndex for a removal: during a
 // build the removal is handed to the build.
 func (s *Service) applyReservedNodeRemoval(mutation NodeMutation) error {
 	applyMutation := mutation.mutation
-	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{nodeID: string(applyMutation.id), valid: func() bool {
-		return claimReservedIndexMutation(applyMutation)
-	}}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), reservedWrite(deferredIndexWrite{nodeID: string(applyMutation.id)}, applyMutation)); queued || err != nil {
 		if err != nil {
 			applyMutation.discard()
 		}
@@ -3618,7 +3704,7 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.indexEdgeOwned(edge)
+	return s.indexEdgeOwned(edge, false)
 }
 
 // applyReservedEdgeIndex applies a reserved relationship write. The
@@ -3629,25 +3715,21 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 func (s *Service) applyReservedEdgeIndex(edge *storage.Edge, mutation EdgeMutation) error {
 	s.updateRelationshipWithMutation(deferredIndexWrite{edge: edge, relationship: true}, mutation)
 	applyMutation := mutation.mutation
-	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{edge: edge, valid: func() bool {
-		return claimReservedIndexMutation(applyMutation)
-	}}); queued || err != nil {
-		if err != nil {
-			applyMutation.discard()
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), reservedWrite(deferredIndexWrite{edge: edge}, applyMutation)); queued || err != nil {
+		if !queued {
+			s.refusedAdmission(RefreshRetry{Edge: mutation}, err)
 		}
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(applyMutation, func() error { return s.indexEdgeOwned(edge) })
+	return applyReservedIndexMutation(applyMutation, func() error { return s.indexEdgeOwned(edge, true) })
 }
 
 // applyReservedEdgeRemoval is applyReservedEdgeIndex for a removal.
 func (s *Service) applyReservedEdgeRemoval(mutation EdgeMutation) error {
 	applyMutation := mutation.mutation
 	s.updateRelationshipWithMutation(deferredIndexWrite{edgeID: string(applyMutation.id), relationship: true}, mutation)
-	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{edgeID: string(applyMutation.id), valid: func() bool {
-		return claimReservedIndexMutation(applyMutation)
-	}}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), reservedWrite(deferredIndexWrite{edgeID: string(applyMutation.id)}, applyMutation)); queued || err != nil {
 		if err != nil {
 			applyMutation.discard()
 		}
@@ -3661,7 +3743,7 @@ func (s *Service) applyReservedEdgeRemoval(mutation EdgeMutation) error {
 }
 
 // indexEdgeOwned is IndexEdge for a caller holding buildMu.
-func (s *Service) indexEdgeOwned(edge *storage.Edge) error {
+func (s *Service) indexEdgeOwned(edge *storage.Edge, stored bool) error {
 	if !s.vectorEnabled.Load() {
 		return nil
 	}
@@ -3674,7 +3756,7 @@ func (s *Service) indexEdgeOwned(edge *storage.Edge) error {
 	s.maybeAutoSetVectorDimensions(firstEdgeVectorDimensions(edge))
 
 	s.indexMu.Lock()
-	err := s.indexEdgeLocked(edge)
+	err := s.indexEdgeLocked(edge, stored)
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -3683,8 +3765,11 @@ func (s *Service) indexEdgeOwned(edge *storage.Edge) error {
 }
 
 // indexEdgeLocked indexes vector-shaped relationship properties.
-// Caller must hold s.indexMu.
-func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
+// Caller must hold s.indexMu. stored marks the relationship's stored state,
+// installed by a refresh that follows storage: vectors beyond an index memory
+// budget are withdrawn whole with the relationship's type (admittedUsage),
+// and the refusal is returned; a caller's write is rejected whole.
+func (s *Service) indexEdgeLocked(edge *storage.Edge, stored bool) error {
 	defer s.indexChanged()
 	if edge == nil || !s.vectorEnabled.Load() {
 		return nil
@@ -3720,8 +3805,13 @@ func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
 		indexed[key] = copied
 	}
 	capacityUsage, err := s.checkEdgeIndexCapacityLocked(edge, indexed)
+	var refused error
 	if err != nil {
-		return err
+		if !stored {
+			return err
+		}
+		refused = err
+		capacityUsage, indexed = admittedUsage(capacityUsage, nil, err), nil
 	}
 
 	s.mu.Lock()
@@ -3733,7 +3823,7 @@ func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
 	}
 	s.mu.Unlock()
 	s.commitEdgeIndexCapacityLocked(edgeIDStr, capacityUsage)
-	return nil
+	return refused
 }
 
 func (s *Service) removeEdgeLocked(edgeIDStr string) {
@@ -3831,10 +3921,9 @@ func (s *Service) CountPropertyVectorEntries(propertyKey string) int {
 
 // RemovePropertyVectorIndex tears down all in-memory vector entries that
 // were indexed under the given property key (every node's property entry
-// for it). Used by Cypher DROP INDEX so the in-memory index actually goes
-// away — without this, a re-CREATE of the same index leaves orphaned
-// vectors in vectorIndex, HNSW, and the cluster index that still get scored
-// against future queries.
+// for it). Cypher DROP INDEX does not call it: those entries are projections
+// of storage that every vector index on the property reads, so dropping one
+// index keeps them (NOR-404).
 //
 // Safe to call when the property was never indexed: it walks the
 // nodePropVector map and is a no-op if no nodes recorded an entry for
@@ -3913,7 +4002,9 @@ func (s *Service) buildNodeIterator(snapshot storage.ReadSnapshotView) NodeItera
 // streamed from the build's snapshot (the engine itself when the build has
 // none). Writes handed over meanwhile wait in the queue: they are applied
 // after the baseline (completeBuildPopulation), so none is overtaken by this
-// stream's copy.
+// stream's copy. A stored relationship the index cannot serve (a budget
+// refusal) stops the stream with that refusal: the population is incomplete,
+// so the build fails and readiness is not published (endBuildWrites).
 func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, snapshot storage.ReadSnapshotView) error {
 	if s == nil || !s.vectorEnabled.Load() {
 		return nil
@@ -3924,9 +4015,9 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, snapshot s
 		}
 		s.adoptBuildVectorDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
-		_ = s.indexEdgeLocked(edge)
+		err := s.indexEdgeLocked(edge, false)
 		s.indexMu.Unlock()
-		return nil
+		return err
 	}
 	if snapshot != nil {
 		return snapshot.StreamEdges(ctx, install)
@@ -3969,6 +4060,14 @@ type NodeIterator interface {
 // if both load with count > 0 (and semver format version matches), the full iteration
 // is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
 func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
+	var notifications []func()
+	// Retry owners may re-enter the service. Run them after all build locks,
+	// snapshots and the service read lease have been released.
+	defer func() {
+		for _, notify := range notifications {
+			notify()
+		}
+	}()
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return err
@@ -3988,7 +4087,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		if resultErr == nil {
 			resultErr = ctx.Err()
 		}
-		resultErr = s.endBuildWrites(ctx, resultErr)
+		resultErr, notifications = s.endBuildWrites(ctx, resultErr)
 	}()
 	s.startBuildWrites()
 	if err := s.beginPopulationPersistence(); err != nil {
@@ -4483,7 +4582,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 					}
 				}
 				for _, node := range filtered {
-					if err := s.indexStoredNodeLocked(node, false, true); err != nil {
+					if err := s.indexNodeAsLocked(node, false, true, installBuild); err != nil {
 						return err
 					}
 				}
@@ -4521,7 +4620,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			}
 			s.indexMu.Lock()
 			for _, n := range filtered {
-				if err := s.indexStoredNodeLocked(n, true, true); err != nil {
+				if err := s.indexNodeAsLocked(n, true, true, installBuild); err != nil {
 					s.indexMu.Unlock()
 					return err
 				}
@@ -4647,7 +4746,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		}
 		s.indexMu.Lock()
 		for _, n := range filtered {
-			if err := s.indexStoredNodeLocked(n, true, true); err != nil {
+			if err := s.indexNodeAsLocked(n, true, true, installBuild); err != nil {
 				s.indexMu.Unlock()
 				return err
 			}

@@ -435,7 +435,7 @@ func TestMatchVectorCosineFastPath_WriteThenSearchLoop_NoScanRegression(t *testi
 	require.Equal(t, 0, counting.streamNodesCalls, "write-then-search loop should not use stream-scan fallback")
 }
 
-func TestMatchVectorCosineFastPath_LazyWiredServiceUsesLiveIndexWithoutWarmup(t *testing.T) {
+func TestMatchVectorCosineFastPath_SchemaIndexReadsStorageUntilReadyWithoutWarming(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
 	counting := &countingStreamingEngine{Engine: ns}
@@ -457,8 +457,8 @@ func TestMatchVectorCosineFastPath_LazyWiredServiceUsesLiveIndexWithoutWarmup(t 
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'other', group_id:'g', name_embedding:[0.0,1.0,0.0,0.0]})", nil)
 	require.NoError(t, err)
-	require.False(t, searchSvc.IsReady(), "live-indexed vector properties must not be reported as full warmup readiness")
-	require.Equal(t, 2, searchSvc.CountPropertyVectorEntries("name_embedding"), "live-indexed vector properties make indexed queries service-backed before full warmup")
+	require.False(t, searchSvc.IsReady(), "held live-indexed vectors are not a complete startup population")
+	require.Equal(t, 2, searchSvc.CountPropertyVectorEntries("name_embedding"), "the service holds the ingest-updated vectors while startup is incomplete")
 
 	counting.allNodesCalls = 0
 	counting.labelCalls = 0
@@ -472,20 +472,28 @@ RETURN n.uuid AS uuid, score
 ORDER BY score DESC
 LIMIT $limit
 `
-	res, err := exec.Execute(ctx, query, map[string]interface{}{
+	params := map[string]interface{}{
 		"group_id":      "g",
 		"search_vector": []float64{1, 0, 0, 0},
 		"limit":         1,
-	})
+	}
+	res, err := exec.Execute(ctx, query, params)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "best", res.Rows[0][0])
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
-	require.False(t, searchSvc.IsReady(), "scalar cosine fast path should not force full warmup when live indexed vectors can answer")
+
+	// A published schema index outlives an incomplete startup, so the vectors
+	// the service holds are not its population: the row is the exact storage
+	// answer, paid for with one label scan of the index's population.
+	want, err := NewStorageExecutor(ns).Execute(ctx, query, params)
+	require.NoError(t, err)
+	require.Equal(t, want.Rows, res.Rows)
+	require.Equal(t, 1, counting.labelCalls, "a pre-ready schema-bound read scans the index's label population once")
+	require.Equal(t, 0, counting.allNodesCalls, "a labelled schema read must not scan every node")
+	require.Equal(t, 0, counting.streamNodesCalls, "a schema-bound read must not stream-scan nodes")
+	require.False(t, searchSvc.IsReady(), "a scalar cosine read must not warm the service")
 	require.Equal(t, int32(0), atomic.LoadInt32(&warmCalls), "Graphiti-style scalar cosine reads must not trigger lazy BuildIndexes/k-means warmup")
-	require.Equal(t, 0, counting.allNodesCalls)
-	require.Equal(t, 0, counting.labelCalls)
-	require.Equal(t, 0, counting.streamNodesCalls)
 }
 
 func TestMatchVectorCosineFastPath_FileBackedPropertyVectors(t *testing.T) {
@@ -540,7 +548,7 @@ LIMIT $limit
 	require.Equal(t, 0, counting.streamNodesCalls)
 }
 
-func TestMatchVectorCosineFastPath_ProjectedNodeReadSkipsVectorProperty(t *testing.T) {
+func TestMatchVectorCosineFastPath_ReadyServiceProjectsNodeReadsWithoutVectorProperty(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
 	projected := &projectedCountingEngine{Engine: ns}
@@ -558,6 +566,12 @@ func TestMatchVectorCosineFastPath_ProjectedNodeReadSkipsVectorProperty(t *testi
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'other', group_id:'g', name_embedding:[0.0,1.0,0.0,0.0]})", nil)
 	require.NoError(t, err)
 	require.Equal(t, 2, searchSvc.CountPropertyVectorEntries("name_embedding"))
+
+	// The projected read back belongs to the ready path: complete startup
+	// answers this schema-bound query from the service, whose hits are read
+	// with only the properties the statement projects.
+	require.NoError(t, searchSvc.BuildIndexes(ctx))
+	require.True(t, searchSvc.IsReady())
 
 	projected.projectedCalls = 0
 	projected.getNodeCalls = 0
@@ -613,7 +627,7 @@ LIMIT $limit
 	require.NotContains(t, projected.projectedProps[0], "name_embedding")
 }
 
-func TestMatchVectorCosineFastPath_UsesLiveIndexDuringBackgroundWarmup(t *testing.T) {
+func TestMatchVectorCosineFastPath_ReadsStorageWhileBackgroundWarmupIncomplete(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
 	counting := &countingStreamingEngine{Engine: ns}
@@ -668,18 +682,26 @@ RETURN n.uuid AS uuid, score
 ORDER BY score DESC
 LIMIT $limit
 `
-	res, err := exec.Execute(ctx, query, map[string]interface{}{
+	params := map[string]interface{}{
 		"group_id":      "g",
 		"search_vector": []float64{1, 0, 0, 0},
 		"limit":         1,
-	})
+	}
+	res, err := exec.Execute(ctx, query, params)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "best", res.Rows[0][0])
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
-	require.Equal(t, 0, counting.allNodesCalls, "background warmup must not force exact full-scan fallback")
-	require.Equal(t, 0, counting.labelCalls, "background warmup must not force exact label-scan fallback")
-	require.Equal(t, 0, counting.streamNodesCalls, "background warmup must not force stream-scan fallback")
+
+	// The running build has published no complete population yet, so the read
+	// is the exact storage answer at the cost of one label scan of the index's
+	// population: it neither warms the service nor scans every node.
+	want, err := NewStorageExecutor(ns).Execute(ctx, query, params)
+	require.NoError(t, err)
+	require.Equal(t, want.Rows, res.Rows)
+	require.Equal(t, 1, counting.labelCalls, "an incomplete startup reads the index's label population from storage once")
+	require.Equal(t, 0, counting.allNodesCalls, "an incomplete startup must not scan every node")
+	require.Equal(t, 0, counting.streamNodesCalls, "an incomplete startup must not stream-scan nodes")
 
 	releaseBuild()
 	select {
@@ -690,7 +712,7 @@ LIMIT $limit
 	}
 }
 
-func TestMatchVectorCosineFastPath_ExternalEmbeddingsUseLiveIndexBeforeReady(t *testing.T) {
+func TestMatchVectorCosineFastPath_ExternalEmbeddingsReadStorageBeforeReady(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
 	counting := &countingStreamingEngine{Engine: ns}
@@ -725,18 +747,47 @@ RETURN n.uuid AS uuid, score
 ORDER BY score DESC
 LIMIT $limit
 `
-	res, err := exec.Execute(ctx, query, map[string]interface{}{
+	params := map[string]interface{}{
 		"group_id":      "g",
 		"search_vector": []float64{1, 0, 0, 0},
 		"min_score":     -1.0,
 		"limit":         5,
-	})
+	}
+	res, err := exec.Execute(ctx, query, params)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 5)
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
-	require.Equal(t, 0, counting.allNodesCalls, "live-index query must not full-scan storage before full warmup")
-	require.Equal(t, 0, counting.labelCalls, "live-index query must not label-scan storage before full warmup")
-	require.Equal(t, 0, counting.streamNodesCalls, "live-index query must not stream-scan storage before full warmup")
+
+	// External ingest reaches the service before startup completes, so the
+	// schema-bound read answers from storage: the exact ranking the stored
+	// vectors imply, paid for with one label scan of the index's population.
+	want, err := NewStorageExecutor(ns).Execute(ctx, query, params)
+	require.NoError(t, err)
+	require.Equal(t, want.Rows, res.Rows)
+	require.False(t, searchSvc.IsReady())
+	require.Equal(t, 1, counting.labelCalls, "a pre-ready schema-bound read scans the index's label population once")
+	require.Equal(t, 0, counting.allNodesCalls, "the read must not scan every node")
+	require.Equal(t, 0, counting.streamNodesCalls, "the read must not stream-scan nodes")
+
+	// The query's aligned vectors score 1.0 on Neo4j's cosine scale and the
+	// orthogonal ones 0.5, exactly as vector.similarity.cosine computes them.
+	top := make([]string, 0, 4)
+	for i, row := range res.Rows {
+		uuid, ok := row[0].(string)
+		require.Truef(t, ok, "row %d entity column is %T", i, row[0])
+		var index int
+		_, scanErr := fmt.Sscanf(uuid, "e-%02d", &index)
+		require.NoErrorf(t, scanErr, "row %d uuid %q", i, uuid)
+		wantScore := 0.5
+		if index%4 == 0 {
+			wantScore = 1.0
+		}
+		require.InDeltaf(t, wantScore, row[1].(float64), 1e-9, "row %d (%s) must carry the cosine score of its stored vector", i, uuid)
+		if i < 4 {
+			top = append(top, uuid)
+		}
+	}
+	require.ElementsMatch(t, []string{"e-00", "e-04", "e-08", "e-12"}, top, "the vectors aligned with the query rank first")
 }
 
 func TestMatchVectorCosineFastPath_SetNodeVectorPropertyAfterWarmupIsSearchable(t *testing.T) {
@@ -909,11 +960,11 @@ func TestFindCosineVectorIndexName_DisambiguatesByEntityType(t *testing.T) {
 	require.NoError(t, schema.AddVectorIndex("a_rel_idx", "Thing", "emb", 3, "cosine", storage.ConstraintEntityRelationship))
 	require.NoError(t, schema.AddVectorIndex("z_node_idx", "Thing", "emb", 3, "cosine", storage.ConstraintEntityNode))
 
-	nodeIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityNode)
+	nodeIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityNode, nil)
 	require.True(t, ok)
 	require.Equal(t, "z_node_idx", nodeIndex)
 
-	relIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityRelationship)
+	relIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityRelationship, nil)
 	require.True(t, ok)
 	require.Equal(t, "a_rel_idx", relIndex)
 }

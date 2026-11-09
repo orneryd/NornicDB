@@ -648,5 +648,12 @@
     "calls": {
       "property.MarshalState": 1
     }
+  },
+  "docs-site/tools/source-graph/main.go:main": {
+    "write_domain": "property",
+    "contract": "Documentation source-graph artifact: preserve typed integer source positions and JSON-escaped source text through the canonical property writer.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
   }
 }

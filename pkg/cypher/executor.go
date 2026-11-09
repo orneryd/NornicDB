@@ -1694,7 +1694,9 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		// terminal owner's outcome after the same native rollback.
 		return nil, bookkeeping.rejectCommit(ctx, admissionErr, admissionErr.Error())
 	}
+	txWrapper.beginVectorIndexPublications(txExec.search())
 	if err := e.commitStorageTransaction(commitCtx, tx); err != nil {
+		txWrapper.abortVectorIndexPublications()
 		txExec.invalidateNodeLookupCache()
 		err = bookkeeping.rejectCommit(ctx, err, err.Error())
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.

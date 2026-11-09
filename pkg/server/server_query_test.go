@@ -1158,12 +1158,17 @@ func TestTxCommit_VectorQueryNodes_StringInput_UsesConfiguredEmbedder(t *testing
 
 	seedVec := make([]float32, 1024)
 	seedVec[0] = float32(len("seed"))
-	require.NoError(t, searchSvc.IndexNode(&storage.Node{
+	// The managed embedding is stored, as storage decides whether a name with
+	// no vector index has managed data to read.
+	seed := &storage.Node{
 		ID:              storage.NodeID("seed-vector-node"),
 		Labels:          []string{"Seed"},
 		Properties:      map[string]interface{}{"name": "seed"},
 		ChunkEmbeddings: [][]float32{seedVec},
-	}))
+	}
+	_, err = storageEngine.CreateNode(t.Context(), storage.CopyNode(seed))
+	require.NoError(t, err)
+	require.NoError(t, searchSvc.IndexNode(seed))
 
 	resp := makeRequest(t, server, "POST", "/db/"+dbName+"/tx/commit", map[string]interface{}{
 		"statements": []map[string]interface{}{
@@ -1179,6 +1184,10 @@ func TestTxCommit_VectorQueryNodes_StringInput_UsesConfiguredEmbedder(t *testing
 	if errs, ok := payload["errors"].([]interface{}); ok {
 		require.Len(t, errs, 0, "expected no cypher errors for string vector query")
 	}
+	results, _ := payload["results"].([]interface{})
+	require.Len(t, results, 1)
+	data, _ := results[0].(map[string]interface{})["data"].([]interface{})
+	require.Len(t, data, 1, "the embedded string reaches the stored managed embedding")
 
 	emb.mu.Lock()
 	calls := emb.calls

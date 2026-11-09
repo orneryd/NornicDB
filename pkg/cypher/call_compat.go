@@ -396,7 +396,8 @@ func edgeToMap(edge *storage.Edge) map[string]interface{} {
 // callDbIndexVectorQueryRelationshipsWithVector implements the search half of
 // db.index.vector.queryRelationships. The statement has already bound and
 // resolved the procedure's arguments, once, in callVectorQueryArguments.
-func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx context.Context, indexName string, k int, queryVector []float32) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx context.Context, request vectorQueryRequest) (*ExecuteResult, error) {
+	indexName, k, queryVector := request.indexName, request.k, request.vector
 	result := &ExecuteResult{
 		Columns: columnNames(relationshipScoreColumns),
 		Rows:    [][]interface{}{},
@@ -406,24 +407,24 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 	var targetRelType, targetProperty string
 	var similarityFunc string = "cosine"
 
-	schema := e.storage.GetSchema()
-	indexFound := false
-	if schema != nil {
-		if vectorIdx, exists := schema.GetVectorIndex(indexName); exists {
-			// For relationship indexes, Label field stores the relationship type
-			targetRelType = vectorIdx.Label
-			targetProperty = vectorIdx.Property
-			similarityFunc = vectorIdx.SimilarityFunc
-			indexFound = true
-		}
-	}
+	// The index's definition is the one its wait for ONLINE ended on.
+	vectorIdx := request.index
 	// Without an index there is no property to read vectors from: Neo4j's
 	// failure, as for queryNodes, not an empty result.
-	if !indexFound {
+	if vectorIdx == nil {
 		return nil, noSuchVectorIndexError(indexName)
 	}
+	// For relationship indexes, Label field stores the relationship type
+	targetRelType = vectorIdx.Label
+	targetProperty = vectorIdx.Property
+	similarityFunc = vectorIdx.SimilarityFunc
 
-	if svc := e.search(); svc != nil && targetProperty != "" && svc.HasRelationshipVectorEntries(targetRelType, targetProperty) {
+	svc := e.search()
+	served, err := e.vectorIndexServiceAnswers(ctx, svc, indexName, search.VectorIndexTarget{Label: targetRelType, Property: targetProperty, Relationship: true}, len(queryVector), vectorReadWarm)
+	if err != nil {
+		return nil, err
+	}
+	if served {
 		hits, err := svc.VectorQueryRelationships(ctx, queryVector, search.RelationshipVectorQuerySpec{
 			IndexName:  indexName,
 			Type:       targetRelType,
@@ -561,21 +562,30 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 	if dimension <= 0 || (similarity != "cosine" && similarity != "euclidean" && similarity != "dot") {
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
 	}
+	var publication *vectorIndexPublication
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
 		if _, err := admitSchemaIndexCreation(ctx, schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
 			return err
 		}
+		publication = e.declareVectorIndexPublication(ctx, indexName, token, property, int(dimension), entity == storage.ConstraintEntityRelationship)
 		if err := schema.AddVectorIndex(indexName, token, property, int(dimension), similarity, entity); err != nil {
+			publication.abort()
 			return err
-		}
-		if entity == storage.ConstraintEntityNode {
-			return e.afterCommit(ctx, func(context.Context) error {
-				e.registerVectorSpace(indexName, token, property, int(dimension), similarity)
-				return nil
-			})
 		}
 		return nil
 	})
+	if err == nil {
+		// A population the index's publication could not complete is reported
+		// as such, not as a failure to create it.
+		if err := e.afterCommit(ctx, func(ctx context.Context) error {
+			if entity == storage.ConstraintEntityNode {
+				e.registerVectorSpace(indexName, token, property, int(dimension), similarity)
+			}
+			return e.populateVectorIndexPublication(ctx, publication, e.search())
+		}); err != nil {
+			return nil, err
+		}
+	}
 	if err != nil {
 		failure := localization.CypherProceduresCreateVectorIndexFailed(err)
 		if entity == storage.ConstraintEntityRelationship {
@@ -703,7 +713,7 @@ func (e *StorageExecutor) dropIndexOfKind(ctx context.Context, name, kind string
 			return newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex",
 				fmt.Sprintf("there is no %s index named %q", kind, name))
 		}
-		return e.dropIndexByName(name, false)
+		return e.dropIndexByName(ctx, name, false)
 	})
 }
 
