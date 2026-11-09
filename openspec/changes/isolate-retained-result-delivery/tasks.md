@@ -42,3 +42,9 @@ collection census or speculative mutation API. No duplicate-checker changes.
   duplicate advisory. Remove trace-cache forwarding methods; combine ordinary
   and ownership relationship-type tests without dropping missing-type controls.
   PR comment: https://github.com/orneryd/NornicDB/pull/1778#issuecomment-6753995829
+
+- [x] Reproduce copy callbacks running under the warmup mutex; copy immutable
+  published snapshots after releasing the mutex. Full warmup race suite passes.
+- [x] Review regenerated census artifacts: only caller-copy progress source
+  position changed, from property_copy.go:92 to :123. No rules or classifications
+  changed. Fresh current-artifact and ordered-write census checks pass.

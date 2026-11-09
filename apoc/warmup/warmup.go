@@ -45,7 +45,10 @@ func New(backend storage.Storage) *Functions {
 	}
 }
 
-// WarmupCache holds cached data for quick access.
+// WarmupCache holds cached data for quick access. Published records and existing
+// index-slice elements are immutable: writers replace records/maps or append
+// new elements. Getters capture a snapshot under mu and copy after unlocking,
+// so caller copy callbacks cannot hold the cache mutex.
 type WarmupCache struct {
 	mu            sync.RWMutex
 	nodes         map[int64]*Node
@@ -981,49 +984,55 @@ func (f *Functions) Progress(ctx context.Context) (map[string]interface{}, error
 // GetCachedNode retrieves a node from cache (increments hit/miss stats).
 func (f *Functions) GetCachedNode(id int64) (*Node, bool) {
 	f.cache.mu.Lock()
-	defer f.cache.mu.Unlock()
-
-	if node, exists := f.cache.nodes[id]; exists {
+	node, exists := f.cache.nodes[id]
+	if exists {
 		f.cache.stats.Hits++
-		return nativestorage.CopyValue(node, nil).(*Node), true
+	} else {
+		f.cache.stats.Misses++
 	}
-	f.cache.stats.Misses++
-	return nil, false
+	f.cache.mu.Unlock()
+	if !exists {
+		return nil, false
+	}
+	return nativestorage.CopyValue(node, nil).(*Node), true
 }
 
 // GetCachedRelationship retrieves a relationship from cache.
 func (f *Functions) GetCachedRelationship(id int64) (*Relationship, bool) {
 	f.cache.mu.Lock()
-	defer f.cache.mu.Unlock()
-
-	if rel, exists := f.cache.relationships[id]; exists {
+	rel, exists := f.cache.relationships[id]
+	if exists {
 		f.cache.stats.Hits++
-		return nativestorage.CopyValue(rel, nil).(*Relationship), true
+	} else {
+		f.cache.stats.Misses++
 	}
-	f.cache.stats.Misses++
-	return nil, false
+	f.cache.mu.Unlock()
+	if !exists {
+		return nil, false
+	}
+	return nativestorage.CopyValue(rel, nil).(*Relationship), true
 }
 
 // GetNodesByLabel retrieves nodes by label from cache.
 func (f *Functions) GetNodesByLabel(label string) ([]*Node, bool) {
 	f.cache.mu.RLock()
-	defer f.cache.mu.RUnlock()
-
-	if nodes, exists := f.cache.nodesByLabel[label]; exists {
-		return nativestorage.CopyValue(nodes, nil).([]*Node), true
+	nodes, exists := f.cache.nodesByLabel[label]
+	f.cache.mu.RUnlock()
+	if !exists {
+		return nil, false
 	}
-	return nil, false
+	return nativestorage.CopyValue(nodes, nil).([]*Node), true
 }
 
 // GetRelationshipsByType retrieves relationships by type from cache.
 func (f *Functions) GetRelationshipsByType(relType string) ([]*Relationship, bool) {
 	f.cache.mu.RLock()
-	defer f.cache.mu.RUnlock()
-
-	if rels, exists := f.cache.relsByType[relType]; exists {
-		return nativestorage.CopyValue(rels, nil).([]*Relationship), true
+	rels, exists := f.cache.relsByType[relType]
+	f.cache.mu.RUnlock()
+	if !exists {
+		return nil, false
 	}
-	return nil, false
+	return nativestorage.CopyValue(rels, nil).([]*Relationship), true
 }
 
 // Helper function to join strings
