@@ -54,6 +54,11 @@ func (e *FabricExecutor) resolveExecGraph(ctx context.Context, f *FragmentExec, 
 		}
 		name = resolved
 	}
+	if e.authorizeGraph != nil {
+		if err := e.authorizeGraph(ctx, name, f.Query); err != nil {
+			return "", nil, err
+		}
+	}
 	loc, err := e.catalog.Resolve(name)
 	if err != nil {
 		if f.Graph != nil {
@@ -98,13 +103,13 @@ func (e *FabricExecutor) resolveDynamicGraph(ctx context.Context, f *FragmentExe
 		}
 		return value, nil
 	}
-	return e.constituentForElementID(value, f.Scope)
+	return e.constituentForElementID(ctx, value, f.Scope)
 }
 
 // constituentForElementID returns the constituent of scope whose database
 // the element id names ("4:<database>:<id>" for a node, "5:…" for a
 // relationship, storage.NodeElementID / RelationshipElementID).
-func (e *FabricExecutor) constituentForElementID(elementID, scope string) (string, error) {
+func (e *FabricExecutor) constituentForElementID(ctx context.Context, elementID, scope string) (string, error) {
 	parts := strings.SplitN(elementID, ":", 3)
 	if len(parts) != 3 || (parts[0] != "4" && parts[0] != "5") || parts[1] == "" {
 		return "", &GraphReferenceError{Code: "Neo.ClientError.Statement.ArgumentError",
@@ -115,6 +120,9 @@ func (e *FabricExecutor) constituentForElementID(elementID, scope string) (strin
 	sort.Strings(names)
 	for _, name := range names {
 		if !strings.HasPrefix(name, cyphertext.NameLower(scope)+".") {
+			continue
+		}
+		if e.visibleGraph != nil && !e.visibleGraph(ctx, name) {
 			continue
 		}
 		loc, err := e.catalog.Resolve(name)

@@ -953,14 +953,6 @@ func functionSignatureDescriptions(signature string) ([]interface{}, string) {
 
 // executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
 func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	nodeCount, err := e.storage.NodeCount(ctx)
-	if err != nil {
-		return nil, err
-	}
-	edgeCount, err := e.storage.EdgeCount(ctx)
-	if err != nil {
-		return nil, err
-	}
 
 	// Try to get database name from context or use default
 	dbName := "nornic" // Default fallback
@@ -979,6 +971,19 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 		// Note: DatabaseManagerInterface doesn't expose DefaultDatabaseName,
 		// so we can't call it directly. The NamespacedEngine namespace should
 		// already be set correctly by the server layer.
+	}
+
+	if !catalogDatabaseVisible(ctx, dbName) {
+		return withShowDefaultColumns(&ExecuteResult{Columns: showDatabasesColumns, Rows: [][]interface{}{}}, showDatabasesDefaultColumns), nil
+	}
+
+	nodeCount, err := e.storage.NodeCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	edgeCount, err := e.storage.EdgeCount(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	return withShowDefaultColumns(&ExecuteResult{
@@ -1031,6 +1036,9 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 	rows := make([][]interface{}, 0, len(databases))
 
 	for _, db := range databases {
+		if !catalogDatabaseVisible(ctx, db.Name()) {
+			continue
+		}
 		rows = append(rows, showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt()))
 	}
 
@@ -1490,6 +1498,9 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 	// Format results
 	rows := make([][]interface{}, 0, len(aliases))
 	for alias, dbName := range aliases {
+		if !catalogDatabaseVisible(ctx, dbName) {
+			continue
+		}
 		rows = append(rows, []interface{}{alias, dbName})
 	}
 
@@ -1812,6 +1823,10 @@ func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) 
 	databaseName := strings.TrimSpace(cypher[dbNameStart:])
 	if databaseName == "" {
 		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("SHOW LIMITS"), nil)
+	}
+
+	if !catalogDatabaseVisible(ctx, databaseName) {
+		return nil, &PermissionDeniedError{Permission: "access"}
 	}
 
 	// Get limits from database manager

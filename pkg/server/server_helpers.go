@@ -465,15 +465,6 @@ func (s *Server) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDa
 	return dataDatabase, allowed
 }
 
-// isShowDatabasesQuery returns true if the normalized statement is SHOW DATABASES (flexible whitespace).
-// Used to filter SHOW DATABASES results by CanSeeDatabase when per-database RBAC is enabled.
-func isShowDatabasesQuery(query string) bool {
-	// Normalize: collapse whitespace, trim, uppercase (match cypher executor behavior)
-	norm := strings.TrimSpace(query)
-	norm = strings.Join(strings.Fields(norm), " ")
-	return strings.EqualFold(norm, "SHOW DATABASES")
-}
-
 func parseIntQuery(r *http.Request, key string, defaultVal int) int {
 	valStr := r.URL.Query().Get(key)
 	if valStr == "" {
