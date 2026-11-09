@@ -183,6 +183,9 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (
 }
 
 func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]interface{}, forceRerank bool, useConfiguredRerank bool) (*ExecuteResult, error) {
+	// Every search this statement runs (a first page or a continuation
+	// page) evaluates retained where predicates through this executor.
+	ctx = withRetrievalExecutor(ctx, e)
 	query := stringOr(req["query"], stringOr(req["text"], ""))
 	continuation := readRetrievalContinuation(req)
 	qid, discard := continuation.qid, continuation.discard
@@ -243,8 +246,10 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	// from the node. db.retrieveGraph and db.retrieveRelationships check it on
 	// relationship candidates too, bound as relationship with endpoints start
 	// and end. It is checked before the
-	// limit; later continuation pages check it too, so it keeps the
-	// statement's values but not its cancellation.
+	// limit; later continuation pages check it too, after this statement has
+	// ended, so it is a retained predicate: this statement's values, in the
+	// lifetime and execution of the search that checks it
+	// (retained_predicate.go).
 	if raw, present := req["where"]; present && raw != nil {
 		where, isText := raw.(string)
 		if !isText {
@@ -255,17 +260,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if err != nil {
 				return nil, err
 			}
-			opts.Where = e.compileNodeWhereFilter(withStatementClausePlans(context.WithoutCancel(ctx), where), "node", where)
-			if opts.Graph || opts.Relationships {
-				// One predicate serves both kinds: a node candidate reads
-				// relationship, start and end as null, a relationship
-				// candidate reads node as null.
-				whereCtx := withStatementClausePlans(context.WithoutCancel(ctx), where)
-				nodeScope := valueBindingsLayer(whereCtx, 3)
-				nodeScope["relationship"], nodeScope["start"], nodeScope["end"] = nil, nil, nil
-				opts.Where = e.compileNodeWhereFilter(withValueBindings(whereCtx, nodeScope), "node", where)
-				opts.RelationshipWhere = e.compileRelationshipWhereFilter(whereCtx, where)
-			}
+			opts.Where, opts.RelationshipWhere = e.compileRetainedWhere(ctx, where, opts.Graph || opts.Relationships)
 		}
 	}
 	if minSim, ok := ragToFloat64(firstPresent(req, "minSimilarity", "min_similarity")); ok && (!failClosed || isFinite(minSim)) {

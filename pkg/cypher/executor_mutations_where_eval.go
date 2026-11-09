@@ -12,30 +12,52 @@ func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node
 }
 
 func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
-	plan := planRowPredicate(whereClause)
-	if plan == nil || !plan.complete {
+	predicate := e.compileNodeWherePredicate(ctx, variable, whereClause)
+	if predicate.plan == nil {
 		return nil, false
 	}
-	parameters := getParamsFromContext(ctx)
-	values := make(map[string]interface{}, len(e.fabricRecordBindings)+len(valueBindingsFromContext(ctx)))
-	for name, value := range e.fabricRecordBindings {
-		values[name] = value
-	}
-	for name, value := range valueBindingsFromContext(ctx) {
-		values[name] = value
-	}
-	return func(node *storage.Node) bool {
-		return e.evaluateRowPredicatePartScope(ctx, &plan.root, compiledRowScope{values: values, nodes: binding{variable: node}, parameters: parameters}, nil)
-	}, true
+	return func(node *storage.Node) bool { return predicate.holds(e, ctx, node) }, true
 }
 
 func (e *StorageExecutor) compileNodeWhereFilter(ctx context.Context, variable, whereClause string) func(*storage.Node) bool {
-	if compiled, ok := e.getCompiledSimpleWhere(ctx, variable, whereClause); ok {
-		return compiled
+	predicate := e.compileNodeWherePredicate(ctx, variable, whereClause)
+	return func(node *storage.Node) bool { return predicate.holds(e, ctx, node) }
+}
+
+// nodeWherePredicate is a single-node WHERE compiled in a statement: from its
+// plan with the statement's parameters and bindings when the plan is complete,
+// otherwise the clause itself (evaluateWhere). holds evaluates it for one node
+// through the executor and in the context it is given, so a predicate a later
+// search evaluates (compileRetainedWhere) runs in that search's statement.
+type nodeWherePredicate struct {
+	variable, clause   string
+	plan               *rowPredicatePlan
+	values, parameters map[string]interface{}
+}
+
+func (e *StorageExecutor) compileNodeWherePredicate(ctx context.Context, variable, whereClause string) nodeWherePredicate {
+	predicate := nodeWherePredicate{variable: variable, clause: whereClause}
+	plan := planRowPredicate(whereClause)
+	if plan == nil || !plan.complete {
+		return predicate
 	}
-	return func(node *storage.Node) bool {
-		return e.evaluateWhere(ctx, node, variable, whereClause)
+	predicate.plan = plan
+	predicate.parameters = getParamsFromContext(ctx)
+	predicate.values = make(map[string]interface{}, len(e.fabricRecordBindings)+len(valueBindingsFromContext(ctx)))
+	for name, value := range e.fabricRecordBindings {
+		predicate.values[name] = value
 	}
+	for name, value := range valueBindingsFromContext(ctx) {
+		predicate.values[name] = value
+	}
+	return predicate
+}
+
+func (p nodeWherePredicate) holds(e *StorageExecutor, ctx context.Context, node *storage.Node) bool {
+	if p.plan == nil {
+		return e.evaluateWhere(ctx, node, p.variable, p.clause)
+	}
+	return e.evaluateRowPredicatePartScope(ctx, &p.plan.root, compiledRowScope{values: p.values, nodes: binding{p.variable: node}, parameters: p.parameters}, nil)
 }
 
 // evaluateWhere reports whether a single-node WHERE clause holds, i.e. is
@@ -59,31 +81,29 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 	return e.evaluateRowPredicate(ctx, whereClause, values)
 }
 
-// compileRelationshipWhereFilter compiles a retrieval's where for relationship
-// candidates: the candidate bound as relationship, its endpoints as start and
-// end (null when not visible) and node as null, with the statement's
-// parameters and the calling row's variables, as evaluateWhere binds them for
-// a node candidate.
-func (e *StorageExecutor) compileRelationshipWhereFilter(ctx context.Context, whereClause string) func(*storage.Edge, *storage.Node, *storage.Node) bool {
-	return func(edge *storage.Edge, start, end *storage.Node) bool {
-		values := pipelineNodeRow(ctx, "node", nil)
-		for name, value := range e.fabricRecordBindings {
-			values[name] = value
-		}
-		for name, value := range valueBindingsFromContext(ctx) {
-			values[name] = value
-		}
-		values["node"] = nil
-		values["relationship"] = edge
-		values["start"], values["end"] = nil, nil
-		if start != nil {
-			values["start"] = start
-		}
-		if end != nil {
-			values["end"] = end
-		}
-		return e.evaluateRowPredicate(ctx, whereClause, values)
+// relationshipWherePredicate reports whether a retrieval's where holds for a
+// relationship candidate: the candidate bound as relationship, its endpoints
+// as start and end (null when not visible) and node as null, with the
+// statement's parameters and the calling row's variables, as evaluateWhere
+// binds them for a node candidate.
+func (e *StorageExecutor) relationshipWherePredicate(ctx context.Context, whereClause string, edge *storage.Edge, start, end *storage.Node) bool {
+	values := pipelineNodeRow(ctx, "node", nil)
+	for name, value := range e.fabricRecordBindings {
+		values[name] = value
 	}
+	for name, value := range valueBindingsFromContext(ctx) {
+		values[name] = value
+	}
+	values["node"] = nil
+	values["relationship"] = edge
+	values["start"], values["end"] = nil, nil
+	if start != nil {
+		values["start"] = start
+	}
+	if end != nil {
+		values["end"] = end
+	}
+	return e.evaluateRowPredicate(ctx, whereClause, values)
 }
 
 func hasPrefixFold(s, prefix string) bool {

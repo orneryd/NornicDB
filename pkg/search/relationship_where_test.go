@@ -22,9 +22,9 @@ func TestSearchRelationshipsWhereFiltersBeforeLimit(t *testing.T) {
 	svc := startRelationshipService(t, engine, nil, nil)
 
 	var seen []string
-	fromC := func(edge *storage.Edge, start, end *storage.Node) bool {
+	fromC := func(_ context.Context, edge *storage.Edge, start, end *storage.Node) (bool, error) {
 		seen = append(seen, string(edge.ID))
-		return start != nil && start.ID == "c" && end != nil && end.ID == "a"
+		return start != nil && start.ID == "c" && end != nil && end.ID == "a", nil
 	}
 	response, err := svc.SearchRelationships(ctx, "zephyrine", nil, &SearchOptions{Limit: 1, RelationshipWhere: fromC})
 	require.NoError(t, err)
@@ -40,11 +40,11 @@ func TestSearchRelationshipsWhereFiltersBeforeLimit(t *testing.T) {
 	// An endpoint no longer visible is nil.
 	require.NoError(t, engine.DeleteNode(t.Context(), "c"))
 	var starts []*storage.Node
-	response, err = svc.SearchRelationships(ctx, "zephyrine", nil, &SearchOptions{Limit: 100, RelationshipWhere: func(edge *storage.Edge, start, end *storage.Node) bool {
+	response, err = svc.SearchRelationships(ctx, "zephyrine", nil, &SearchOptions{Limit: 100, RelationshipWhere: func(_ context.Context, edge *storage.Edge, start, end *storage.Node) (bool, error) {
 		if edge.ID == "keep" {
 			starts = append(starts, start)
 		}
-		return true
+		return true, nil
 	}})
 	require.NoError(t, err)
 	if len(starts) > 0 {

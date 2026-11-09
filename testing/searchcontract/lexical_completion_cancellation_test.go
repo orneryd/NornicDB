@@ -29,7 +29,7 @@ var lexicalModes = []string{"no_embedder", "single_fallback", "multi_fallback", 
 // the previous gRPC-local fixture did.
 type grpcSearcher struct {
 	service  *search.Service
-	observed func(*storage.Node) bool
+	observed func(context.Context, *storage.Node) (bool, error)
 }
 
 func (s *grpcSearcher) Search(ctx context.Context, query string, embedding []float32, opts *search.SearchOptions) (*search.SearchResponse, error) {
@@ -84,10 +84,10 @@ func lexicalChunks(t *testing.T, mode string) search.ChunkQueryFunc {
 
 // lexicalCancellationPredicate is the shared rendezvous: it is reached inside
 // real search work and cancels the request from the actual Where callback.
-func lexicalCancellationPredicate(t *testing.T, cancel context.CancelFunc) (func(*storage.Node) bool, func() bool) {
+func lexicalCancellationPredicate(t *testing.T, cancel context.CancelFunc) (func(context.Context, *storage.Node) (bool, error), func() bool) {
 	t.Helper()
 	filtered := false
-	return func(*storage.Node) bool { filtered = true; cancel(); return true }, func() bool { return filtered }
+	return func(context.Context, *storage.Node) (bool, error) { filtered = true; cancel(); return true, nil }, func() bool { return filtered }
 }
 
 // TestSearchTextChunksVsSearchTextCancellationDuringLexicalSearch compares the
@@ -118,7 +118,7 @@ func TestSearchTextChunksVsSearchTextCancellationDuringLexicalSearch(t *testing.
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				observed := new(bool)
-				searcher := &grpcSearcher{service: fixture.service, observed: func(*storage.Node) bool { *observed = true; cancel(); return true }}
+				searcher := &grpcSearcher{service: fixture.service, observed: func(context.Context, *storage.Node) (bool, error) { *observed = true; cancel(); return true, nil }}
 				service, err := nornicgrpc.NewService(nornicgrpc.Config{}, nornicgrpc.EmbedQueryFunc(embedding), nornicgrpc.ChunkQueryFunc(chunks), searcher)
 				require.NoError(t, err)
 				response, err := service.SearchText(ctx, &gen.SearchTextRequest{Query: seedContent})
