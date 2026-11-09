@@ -505,32 +505,17 @@ func (t *sizeTrackingEngine) applyEntityOperations(ctx context.Context, ops []st
 }
 
 // qualifyEntityOperations uses the same namespace/token input owner as direct
-// Engine methods. It never materializes a final stored image prematurely.
+// Engine methods (NamespacedEngine.QualifyOperation), including a
+// relationship update's observation. It never materializes a final stored
+// image prematurely.
 func (t *sizeTrackingEngine) qualifyEntityOperations(ctx context.Context, ops []storage.Operation, owner managedEntityOwner) ([]storage.Operation, error) {
 	if owner.namespace == nil {
 		return ops, nil
 	}
 	qualified := append([]storage.Operation(nil), ops...)
 	for i := range qualified {
-		op := &qualified[i]
-		var err error
-		if op.Node != nil {
-			op.Node, err = owner.namespace.NodeWriteInput(ctx, op.Node)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if op.Edge != nil {
-			op.Edge, err = owner.namespace.EdgeWriteInput(ctx, op.Edge)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if op.Type == storage.OpDeleteNode {
-			op.NodeID = owner.namespace.PrefixNodeID(op.NodeID)
-		}
-		if op.Type == storage.OpDeleteEdge {
-			op.EdgeID = owner.namespace.PrefixEdgeID(op.EdgeID)
+		if err := owner.namespace.QualifyOperation(ctx, &qualified[i]); err != nil {
+			return nil, err
 		}
 	}
 	return qualified, nil
