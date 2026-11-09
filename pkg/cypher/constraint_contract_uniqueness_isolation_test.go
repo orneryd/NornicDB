@@ -17,14 +17,15 @@ import (
 // early-out at the top of the function: if `transactionTouchesConstraintContracts`
 // reports zero contracts across every namespace the transaction touches, the
 // expensive per-affected-node adjacency walk is skipped. That early-out reads
-// `SchemaManager.HasAnyConstraintContract()` per namespace. If standard
+// `SchemaManager.HasAnyConstraintContract(ctx)` per namespace. If standard
 // uniqueness DDL leaked into the contracts map, every commit would pay the
 // adjacency-walk cost on workloads that have no boolean predicates to validate
 // at all.
 //
 // Uniqueness constraints belong in `sm.constraints` and `sm.uniqueConstraints`;
 // `sm.constraintContracts` is reserved for the block-form `REQUIRE { ... }`
-// syntax handled by `executeCreateConstraintContract` in `schema_contracts.go`.
+// syntax the contract owner parses (`parseCreateConstraintContractDDL`) and
+// executes (`executeCreateConstraintContract`) in `schema_contracts.go`.
 // This test pins that separation. If the assertion fires, somewhere in the
 // `CREATE CONSTRAINT ... REQUIRE n.X IS UNIQUE` execution path a contract is
 // being registered when it should not be, and the adjacency-walk early-out
@@ -53,7 +54,9 @@ func TestUniqueConstraints_DoNotRegisterAsConstraintContracts(t *testing.T) {
 	schema := baseStore.GetSchemaForNamespace("test")
 	require.NotNil(t, schema, "schema for namespace 'test' must exist after constraint registration")
 
-	require.False(t, schema.HasAnyConstraintContract(),
+	hasContracts1, discoveryErr := schema.HasAnyConstraintContract(t.Context())
+	require.NoError(t, discoveryErr)
+	require.False(t, hasContracts1,
 		"single-property `IS UNIQUE` constraints must NOT register as `ConstraintContract`s; "+
 			"otherwise `transactionTouchesConstraintContracts` returns true and "+
 			"`validateConstraintContracts` activates the per-affected-node adjacency walk on every commit")
@@ -87,13 +90,17 @@ func TestUnwindMergeCanonicalWrite_DoesNotLeakConstraintContracts(t *testing.T) 
 	}
 
 	schema := baseStore.GetSchemaForNamespace("test")
-	require.False(t, schema.HasAnyConstraintContract(),
+	hasContracts2, discoveryErr := schema.HasAnyConstraintContract(t.Context())
+	require.NoError(t, discoveryErr)
+	require.False(t, hasContracts2,
 		"after constraint registration only, no `ConstraintContract`s should exist")
 
 	_, err := exec.Execute(ctx, "CREATE (:File {path: 'src/a.go'})", nil)
 	require.NoError(t, err)
 
-	require.False(t, schema.HasAnyConstraintContract(),
+	hasContracts3, discoveryErr := schema.HasAnyConstraintContract(t.Context())
+	require.NoError(t, discoveryErr)
+	require.False(t, hasContracts3,
 		"after seeding a `File` node, no `ConstraintContract`s should exist")
 
 	_, err = exec.Execute(ctx,
@@ -113,7 +120,9 @@ func TestUnwindMergeCanonicalWrite_DoesNotLeakConstraintContracts(t *testing.T) 
 		})
 	require.NoError(t, err)
 
-	require.False(t, schema.HasAnyConstraintContract(),
+	hasContracts4, discoveryErr := schema.HasAnyConstraintContract(t.Context())
+	require.NoError(t, discoveryErr)
+	require.False(t, hasContracts4,
 		"after a canonical entity-write UNWIND-MERGE batch, no `ConstraintContract`s should exist; "+
 			"if this fires, the canonical-write cypher itself is registering contracts implicitly")
 }

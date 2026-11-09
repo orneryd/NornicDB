@@ -188,7 +188,7 @@ func TestUniqueConstraintCommitLocks_WaitersKeepEntryAlive(t *testing.T) {
 // two transactions touching the SAME (label, property, value) must
 // serialize at the commit boundary, otherwise the silent-duplicate-write
 // race that the lock exists to prevent comes back. The lock guards the
-// validateAllConstraints + commit + RegisterUniqueValue window so a peer
+// validateAllConstraints + commit + ApplyUniqueValue window so a peer
 // observing the cache after a winner's commit sees the registered value
 // and either fails validation (driver retries) or planner-MATCHes the
 // winner's node on a fresh transaction.
@@ -300,9 +300,13 @@ func acquireLocksForTest(sm *SchemaManager, keys []uniqueConstraintLockKey) func
 	return release
 }
 
-// lockNodesForTest is lockConstraintKeysOf for a fresh owner.
+// lockNodesForTest projects node values for a fresh registry owner.
 func lockNodesForTest(sm *SchemaManager, nodes ...*Node) func() {
-	release, err := sm.lockConstraintKeysOf(context.Background(), newEngineWriteLockOwner(), nodes...)
+	keys, err := sm.appendConstraintValueKeys(context.Background(), nil, nodes, nil)
+	if err != nil {
+		panic(err)
+	}
+	release, err := sm.acquireUniqueConstraintCommitLocks(context.Background(), newEngineWriteLockOwner(), keys)
 	if err != nil {
 		panic(err)
 	}

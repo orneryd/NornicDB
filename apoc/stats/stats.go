@@ -4,42 +4,87 @@
 // statistical measures and distributions.
 package stats
 
+import "errors"
+
 import (
+	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
 
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
+// Functions binds this package's storage-dependent helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for.
+type Functions struct {
+	backend storage.Storage
+}
+
+// New returns this package's helpers bound to backend. One instance serves one
+// backend; a reconfiguration builds a new instance instead of rebinding this
+// one.
+func New(backend storage.Storage) *Functions {
+	return &Functions{backend: backend}
+}
 
 // Degrees returns degree statistics for nodes.
 //
 // Example:
 //
 //	apoc.stats.degrees('KNOWS') => {min: 0, max: 100, mean: 5.2, ...}
-func Degrees(relType string) map[string]interface{} {
-	nodes, err := Storage.AllNodes()
+func (f *Functions) Degrees(ctx context.Context, relType string) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	// The caller supplies the lifetime for storage work.
+
+	nodes, err := f.backend.AllNodes(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 		return map[string]interface{}{
 			"min":    0,
 			"max":    0,
 			"mean":   0.0,
 			"median": 0.0,
 			"stdDev": 0.0,
-		}
+		}, nil
 	}
 
 	degrees := make([]float64, 0, len(nodes))
 	for _, node := range nodes {
-		degree, err := Storage.GetNodeDegree(node.ID, relType, storage.DirectionBoth)
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
+		degree, err := f.backend.GetNodeDegree(ctx, node.ID, relType, storage.DirectionBoth)
+		if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+			return nil, err
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if err == nil {
 			degrees = append(degrees, float64(degree))
 		}
 	}
 
 	if len(degrees) == 0 {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 		return map[string]interface{}{
 			"min":    0,
 			"max":    0,
@@ -47,9 +92,12 @@ func Degrees(relType string) map[string]interface{} {
 			"median": 0.0,
 			"stdDev": 0.0,
 			"count":  0,
-		}
+		}, nil
 	}
 
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 	return map[string]interface{}{
 		"min":    Min(degrees),
 		"max":    Max(degrees),
@@ -57,7 +105,7 @@ func Degrees(relType string) map[string]interface{} {
 		"median": Median(degrees),
 		"stdDev": StdDev(degrees),
 		"count":  len(degrees),
-	}
+	}, nil
 }
 
 // Mean calculates arithmetic mean.
@@ -173,8 +221,11 @@ func Percentile(values []float64, p float64) float64 {
 	sort.Float64s(sorted)
 
 	index := p * float64(len(sorted)-1)
-	lower := int(math.Floor(index))
-	upper := int(math.Ceil(index))
+	lower, lowerFits := valueconvert.ToInt(math.Floor(index), valueconvert.IntegerFloat)
+	upper, upperFits := valueconvert.ToInt(math.Ceil(index), valueconvert.IntegerFloat)
+	if !lowerFits || !upperFits || lower < 0 || upper >= len(sorted) {
+		return 0
+	}
 
 	if lower == upper {
 		return sorted[lower]
@@ -446,9 +497,17 @@ func Histogram(values []float64, bins int) []int {
 	binWidth := (max - min) / float64(bins)
 
 	histogram := make([]int, bins)
+	// Equal coordinates occupy the first bin; no zero-width division is needed.
+	if min == max {
+		histogram[0] = len(values)
+		return histogram
+	}
 
 	for _, v := range values {
-		binIndex := int((v - min) / binWidth)
+		binIndex, fits := valueconvert.ToInt((v-min)/binWidth, valueconvert.IntegerFloat)
+		if !fits || binIndex < 0 {
+			return []int{}
+		}
 		if binIndex >= bins {
 			binIndex = bins - 1
 		}

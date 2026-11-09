@@ -62,6 +62,20 @@ top-k limits and TLS/mTLS settings. Mount certificate files into the container
 when using native TLS. For secure deployment topologies, see
 [Qdrant gRPC reverse proxying](../operations/reverse-proxy.md#qdrant-grpc).
 
+## Request logging
+
+Unary and streaming request completion events use NornicDB's configured logger
+and `NORNICDB_LOG_LEVEL`. Successful requests log at debug, so the default info
+level does not write a log for every successful search. Client/protocol failures
+log at warning; `Unknown`, `Internal`, `DataLoss`, and `Unavailable` failures log
+at error. Events include the RPC method/type, status code, outcome and duration;
+request payloads and authentication metadata are not included.
+
+To inspect successful requests, set `NORNICDB_LOG_LEVEL=DEBUG`. Applications that
+embed `qdrantgrpc.NewServer` directly can supply `Config.Logger`; nil uses an
+info-level text logger on stderr. The production server injects its configured
+structured logger, including its output, redaction and level policy.
+
 ## TLS, mTLS, and application authentication
 
 Authenticated public listeners require native TLS. Clients must trust the CA
@@ -125,6 +139,24 @@ NornicDB also supports **named vectors** in Qdrant:
 
 - Qdrant named vectors → `node.NamedEmbeddings[vectorName]`
 - This enables multiple independent embedding fields per point (e.g. `title` and `content`).
+
+### Vector search uses the database's index
+
+A Qdrant `Search` runs on the collection database's search index, the same index and query as Cypher's
+`db.index.vector.queryNodes` on that database:
+
+- **ANN strategy:** the configured strategy applies, `NORNICDB_VECTOR_ANN_QUALITY` included (HNSW presets, `compressed` IVF-PQ, k-means routing,
+  brute force), with the same exact rescoring.
+- **`hnsw_ef`:** `params.hnsw_ef` sets the HNSW beam width for that request on HNSW-based strategies. Without it, a search uses
+  the configured preset's `efSearch` (50 for `fast`, 100 for `balanced`, 200 for `accurate`, or `NORNICDB_VECTOR_HNSW_EF_SEARCH`), as
+  Qdrant does. IVF-PQ, k-means routing and brute force don't search a graph and ignore it.
+- **Exact queries:** `params.exact=true` evaluates the complete indexed population; `Query` and `QueryBatch` preserve `params`, as `Search` and `SearchBatch` do.
+- **Readiness:** lazy indexes warm before the first answer. A failed or incomplete build returns an error rather than a successful partial result.
+- **Collection configuration:** `CreateCollection.hnsw_config` and `quantization_config` are accepted but do not configure per-collection indexes. Configure ANN through NornicDB settings; `GetCollection` reports the configured HNSW preset's M and construction beam. `quantization.rescore` does not disable NornicDB's exact rescoring.
+- **Payload filters:** filters are applied while the search widens, so a selective filter still returns its top matches.
+- **Scores:** Dot and Euclid use original stored magnitudes, including with file-backed indexes. Qdrant's raw similarities: cosine and dot as-is, Euclid as `1 / (1 + distance)`.
+- **Restart:** points stay searchable across a restart, since the index is rebuilt from the stored vectors.
+- **Vector search disabled:** a database with vector search disabled returns no hits, as it does for Cypher.
 
 ### Cypher access (collection = database)
 

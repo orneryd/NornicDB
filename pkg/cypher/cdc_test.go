@@ -338,9 +338,9 @@ func TestChangeDataCaptureIdentifiers(t *testing.T) {
 	require.NoError(t, err)
 	latest := cdcID(t, exec, "db.cdc.current")
 	type pruner interface {
-		PruneChangeEvents(namespace string, cutoff time.Time) (int, error)
+		PruneChangeEvents(_ context.Context, namespace string, cutoff time.Time) (int, error)
 	}
-	pruned, err := capture.(pruner).PruneChangeEvents("test", time.Now().Add(time.Hour))
+	pruned, err := capture.(pruner).PruneChangeEvents(context.Background(), "test", time.Now().Add(time.Hour))
 	require.NoError(t, err)
 	require.Equal(t, 1, pruned)
 	_, err = exec.Execute(ctx, "CALL db.cdc.query($from)", map[string]interface{}{"from": start})
@@ -361,10 +361,10 @@ func TestChangeDataCaptureIdentifiers(t *testing.T) {
 func TestChangeDataCaptureDirectWrites(t *testing.T) {
 	exec, store := newCDCExecutor(t, storage.ChangeCaptureFull)
 	start := cdcID(t, exec, "db.cdc.current")
-	_, err := store.CreateNode(&storage.Node{ID: "direct", Labels: []string{"D"}, Properties: map[string]interface{}{"v": int64(1)}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "direct", Labels: []string{"D"}, Properties: map[string]interface{}{"v": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, store.UpdateNode(&storage.Node{ID: "direct", Labels: []string{"D"}, Properties: map[string]interface{}{"v": int64(2)}}))
-	require.NoError(t, store.DeleteNode("direct"))
+	require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "direct", Labels: []string{"D"}, Properties: map[string]interface{}{"v": int64(2)}}}))
+	require.NoError(t, store.DeleteNode(t.Context(), "direct"))
 	rows := cdcRows(t, exec, start)
 	require.Len(t, rows, 3)
 	require.Equal(t, []interface{}{"c", "u", "d"}, []interface{}{eventOf(rows[0])["operation"], eventOf(rows[1])["operation"], eventOf(rows[2])["operation"]})
@@ -392,10 +392,10 @@ func TestChangeDataCaptureSelectorFields(t *testing.T) {
 	require.NoError(t, err)
 	capture, _ := storage.ChangeCaptureOf(store)
 	engine := capture.(*storage.BadgerEngine)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetMetadata(map[string]interface{}{"app": "pd", "n": int64(1)}))
-	_, err = tx.CreateNode(&storage.Node{ID: "test:m", Labels: []string{"M"}, Properties: map[string]any{"k": int64(3)}})
+	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:m", Labels: []string{"M"}, Properties: map[string]any{"k": int64(3)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	_, err = exec.Execute(ctx, "MATCH (b:B) DETACH DELETE b", nil)
@@ -440,7 +440,7 @@ func TestCDCValue(t *testing.T) {
 	for _, value := range []interface{}{int8(1), int16(1), int32(1), int(1), uint8(1), uint16(1), uint32(1), uint64(1), uint(1)} {
 		require.Equal(t, int64(1), cdcValue(value))
 	}
-	require.Equal(t, float64(1<<63), cdcValue(uint64(1<<63)))
+	require.Equal(t, uint64(1<<63), cdcValue(uint64(1<<63)))
 	require.Equal(t, float64(0.5), cdcValue(float32(0.5)))
 	require.Equal(t, []interface{}{int64(1)}, cdcValue([]interface{}{int8(1)}))
 	require.Equal(t, map[string]interface{}{"k": int64(1)}, cdcValue(map[string]interface{}{"k": uint8(1)}))

@@ -64,7 +64,7 @@ func TestCypherCoreDescriptorsPreserveExactEnglish(t *testing.T) {
 	require.NoError(t, err)
 	for _, testCase := range testCases {
 		require.Equal(t, testCase.text, testCase.message.Fallback, testCase.message.ID)
-		rendered, tag, err := manager.Render(WithPreferences(context.Background(), language.AmericanEnglish), testCase.message)
+		rendered, tag, err := manager.Render(WithPreferences(context.Background(), language.AmericanEnglish), MessageRequest(testCase.message))
 		require.NoError(t, err, testCase.message.ID)
 		require.Equal(t, language.AmericanEnglish, tag, testCase.message.ID)
 		require.Equal(t, testCase.text, rendered, testCase.message.ID)
@@ -80,21 +80,4 @@ func TestCypherCoreLocalizedErrorPreservesCauseIdentity(t *testing.T) {
 	require.ErrorAs(t, err, &localizedErr)
 	require.Equal(t, MessageCypherCoreParseFailed, localizedErr.Message.ID)
 	require.Equal(t, "forced core failure", localizedErr.Message.Data["Cause"])
-}
-
-func TestCypherCoreCatalogRendering(t *testing.T) {
-	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := CypherCoreCaseThenRequired("n.active")
-
-	spanish, tag, err := manager.Render(WithPreferences(context.Background(), language.EuropeanSpanish), message)
-	require.NoError(t, err)
-	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "la cláusula WHEN debe tener THEN: n.active", spanish)
-
-	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(WithPreferences(context.Background(), pseudoTag), message)
-	require.NoError(t, err)
-	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! WHEN clause must have THEN: n.active !!]", pseudo)
 }

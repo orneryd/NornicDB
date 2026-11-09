@@ -41,7 +41,7 @@ type delegationContractEngine interface {
 	NodeWithoutEmbeddingsStreamer
 	PrefixNodeWithoutEmbeddingsReader
 	ProjectedPrefixNodeReader
-	NodeProjectionReader
+	ProjectedNodeReader
 	NodeIterator
 	EdgesBetweenMatcher
 	EmbeddingCountProvider
@@ -50,6 +50,7 @@ type delegationContractEngine interface {
 	NamespaceSchemaProvider
 	PrefixStatsEngine
 	NamespaceLabelStatsProvider
+	CountStoreReadEngine
 	StartupMaintenanceStateEngine
 	MVCCMaintenanceEngine
 	TemporalMaintenanceEngine
@@ -73,8 +74,7 @@ type delegationSpyEngine struct {
 
 func newDelegationSpyEngine(t *testing.T) *delegationSpyEngine {
 	t.Helper()
-	base := NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
+	base := newTestMemoryEngine(t)
 	return &delegationSpyEngine{MemoryEngine: base, calls: map[string]int{}}
 }
 
@@ -92,116 +92,111 @@ func (s *delegationSpyEngine) count(name string) int {
 
 // --- Engine contract ---------------------------------------------------------
 
-func (s *delegationSpyEngine) CreateNode(node *Node) (NodeID, error) {
+func (s *delegationSpyEngine) CreateNode(ctx context.Context, node *Node) (NodeID, error) {
 	s.record("CreateNode")
-	return s.MemoryEngine.CreateNode(node)
+	return s.MemoryEngine.CreateNode(ctx, node)
 }
 
-func (s *delegationSpyEngine) GetNode(id NodeID) (*Node, error) {
+func (s *delegationSpyEngine) GetNode(ctx context.Context, id NodeID) (*Node, error) {
 	s.record("GetNode")
-	return s.MemoryEngine.GetNode(id)
+	return s.MemoryEngine.GetNode(ctx, id)
 }
 
-func (s *delegationSpyEngine) UpdateNode(node *Node) error {
+func (s *delegationSpyEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateRequest) error {
 	s.record("UpdateNode")
-	return s.MemoryEngine.UpdateNode(node)
+	return s.MemoryEngine.UpdateNode(ctx, updateRequest)
 }
 
-func (s *delegationSpyEngine) DeleteNode(id NodeID) error {
+func (s *delegationSpyEngine) DeleteNode(ctx context.Context, id NodeID) error {
 	s.record("DeleteNode")
-	return s.MemoryEngine.DeleteNode(id)
+	return s.MemoryEngine.DeleteNode(ctx, id)
 }
 
-func (s *delegationSpyEngine) CreateEdge(edge *Edge) error {
+func (s *delegationSpyEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 	s.record("CreateEdge")
-	return s.MemoryEngine.CreateEdge(edge)
+	return s.MemoryEngine.CreateEdge(ctx, edge)
 }
 
-func (s *delegationSpyEngine) GetEdge(id EdgeID) (*Edge, error) {
+func (s *delegationSpyEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
 	s.record("GetEdge")
-	return s.MemoryEngine.GetEdge(id)
+	return s.MemoryEngine.GetEdge(ctx, id)
 }
 
-func (s *delegationSpyEngine) UpdateEdge(edge *Edge) error {
+func (s *delegationSpyEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateRequest) error {
 	s.record("UpdateEdge")
-	return s.MemoryEngine.UpdateEdge(edge)
+	return s.MemoryEngine.UpdateEdge(ctx, updateRequest)
 }
 
-func (s *delegationSpyEngine) DeleteEdge(id EdgeID) error {
+func (s *delegationSpyEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
 	s.record("DeleteEdge")
-	return s.MemoryEngine.DeleteEdge(id)
+	return s.MemoryEngine.DeleteEdge(ctx, id)
 }
 
-func (s *delegationSpyEngine) GetNodesByLabel(label string) ([]*Node, error) {
+func (s *delegationSpyEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	s.record("GetNodesByLabel")
-	return s.MemoryEngine.GetNodesByLabel(label)
+	return s.MemoryEngine.GetNodesByLabel(ctx, label)
 }
 
-func (s *delegationSpyEngine) GetFirstNodeByLabel(label string) (*Node, error) {
+func (s *delegationSpyEngine) GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) {
 	s.record("GetFirstNodeByLabel")
-	return s.MemoryEngine.GetFirstNodeByLabel(label)
+	return s.MemoryEngine.GetFirstNodeByLabel(ctx, label)
 }
 
 // The scoped label reads (ScopedLabelNodeReader, #851) are how the wrappers
 // delegate the label reads above; they record under the same names.
-func (s *delegationSpyEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
+func (s *delegationSpyEngine) GetNodesByLabelInScope(ctx context.Context, scope, label string) ([]*Node, error) {
 	s.record("GetNodesByLabel")
-	return s.MemoryEngine.GetNodesByLabelInScope(scope, label)
+	return s.MemoryEngine.GetNodesByLabelInScope(ctx, scope, label)
 }
 
 func (s *delegationSpyEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
 	s.record("GetFirstNodeByLabel")
-	return s.MemoryEngine.GetFirstNodeByLabelInScope(scope, label)
+	return s.MemoryEngine.GetFirstNodeByLabelInScope(context.Background(), scope, label)
 }
 
-func (s *delegationSpyEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
+func (s *delegationSpyEngine) StreamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
 	s.record("StreamNodesByLabelProjected")
-	return s.MemoryEngine.StreamNodesByLabelProjectedInScope(scope, label, properties, visit)
+	return s.MemoryEngine.StreamNodesByLabelProjectedInScope(ctx, scope, label, properties, visit)
 }
 
-func (s *delegationSpyEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
+func (s *delegationSpyEngine) GetNodesByLabelVisibleAtInScope(ctx context.Context, scope, label string, version MVCCVersion) ([]*Node, error) {
 	s.record("GetNodesByLabelVisibleAt")
-	return s.MemoryEngine.GetNodesByLabelVisibleAtInScope(scope, label, version)
+	return s.MemoryEngine.GetNodesByLabelVisibleAtInScope(ctx, scope, label, version)
 }
 
-func (s *delegationSpyEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	s.record("GetOutgoingEdges")
-	return s.MemoryEngine.GetOutgoingEdges(nodeID)
+	return s.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
 }
 
-func (s *delegationSpyEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	s.record("GetIncomingEdges")
-	return s.MemoryEngine.GetIncomingEdges(nodeID)
+	return s.MemoryEngine.GetIncomingEdges(ctx, nodeID)
 }
 
-func (s *delegationSpyEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
 	s.record("GetEdgesBetween")
-	return s.MemoryEngine.GetEdgesBetween(startID, endID)
+	return s.MemoryEngine.GetEdgesBetween(ctx, startID, endID)
 }
 
-func (s *delegationSpyEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
+func (s *delegationSpyEngine) GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error) {
 	s.record("GetEdgeBetween")
-	return s.MemoryEngine.GetEdgeBetween(startID, endID, edgeType)
+	return s.MemoryEngine.GetEdgeBetween(ctx, startID, endID, edgeType)
 }
 
-func (s *delegationSpyEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
 	s.record("GetEdgesByType")
-	return s.MemoryEngine.GetEdgesByType(edgeType)
+	return s.MemoryEngine.GetEdgesByType(ctx, edgeType)
 }
 
-func (s *delegationSpyEngine) AllNodes() ([]*Node, error) {
+func (s *delegationSpyEngine) AllNodes(ctx context.Context) ([]*Node, error) {
 	s.record("AllNodes")
-	return s.MemoryEngine.AllNodes()
+	return s.MemoryEngine.AllNodes(ctx)
 }
 
-func (s *delegationSpyEngine) AllEdges() ([]*Edge, error) {
+func (s *delegationSpyEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 	s.record("AllEdges")
-	return s.MemoryEngine.AllEdges()
-}
-
-func (s *delegationSpyEngine) GetAllNodes() []*Node {
-	s.record("GetAllNodes")
-	return s.MemoryEngine.GetAllNodes()
+	return s.MemoryEngine.AllEdges(ctx)
 }
 
 func (s *delegationSpyEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(node *Node) error) error {
@@ -212,14 +207,14 @@ func (s *delegationSpyEngine) StreamNodesWithOptions(ctx context.Context, opts S
 	return s.MemoryEngine.StreamNodesWithOptions(ctx, opts, fn)
 }
 
-func (s *delegationSpyEngine) GetInDegree(nodeID NodeID) int {
+func (s *delegationSpyEngine) GetInDegree(ctx context.Context, nodeID NodeID) (int, error) {
 	s.record("GetInDegree")
-	return s.MemoryEngine.GetInDegree(nodeID)
+	return s.MemoryEngine.GetInDegree(ctx, nodeID)
 }
 
-func (s *delegationSpyEngine) GetOutDegree(nodeID NodeID) int {
+func (s *delegationSpyEngine) GetOutDegree(ctx context.Context, nodeID NodeID) (int, error) {
 	s.record("GetOutDegree")
-	return s.MemoryEngine.GetOutDegree(nodeID)
+	return s.MemoryEngine.GetOutDegree(ctx, nodeID)
 }
 
 func (s *delegationSpyEngine) GetSchema() *SchemaManager {
@@ -227,29 +222,29 @@ func (s *delegationSpyEngine) GetSchema() *SchemaManager {
 	return s.MemoryEngine.GetSchema()
 }
 
-func (s *delegationSpyEngine) BulkCreateNodes(nodes []*Node) error {
+func (s *delegationSpyEngine) BulkCreateNodes(ctx context.Context, nodes []*Node) error {
 	s.record("BulkCreateNodes")
-	return s.MemoryEngine.BulkCreateNodes(nodes)
+	return s.MemoryEngine.BulkCreateNodes(ctx, nodes)
 }
 
-func (s *delegationSpyEngine) BulkCreateEdges(edges []*Edge) error {
+func (s *delegationSpyEngine) BulkCreateEdges(ctx context.Context, edges []*Edge) error {
 	s.record("BulkCreateEdges")
-	return s.MemoryEngine.BulkCreateEdges(edges)
+	return s.MemoryEngine.BulkCreateEdges(ctx, edges)
 }
 
-func (s *delegationSpyEngine) BulkDeleteNodes(ids []NodeID) error {
+func (s *delegationSpyEngine) BulkDeleteNodes(ctx context.Context, ids []NodeID) error {
 	s.record("BulkDeleteNodes")
-	return s.MemoryEngine.BulkDeleteNodes(ids)
+	return s.MemoryEngine.BulkDeleteNodes(ctx, ids)
 }
 
-func (s *delegationSpyEngine) BulkDeleteEdges(ids []EdgeID) error {
+func (s *delegationSpyEngine) BulkDeleteEdges(ctx context.Context, ids []EdgeID) error {
 	s.record("BulkDeleteEdges")
-	return s.MemoryEngine.BulkDeleteEdges(ids)
+	return s.MemoryEngine.BulkDeleteEdges(ctx, ids)
 }
 
-func (s *delegationSpyEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
+func (s *delegationSpyEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	s.record("BatchGetNodes")
-	return s.MemoryEngine.BatchGetNodes(ids)
+	return s.MemoryEngine.BatchGetNodes(ctx, ids)
 }
 
 func (s *delegationSpyEngine) Close() error {
@@ -257,14 +252,14 @@ func (s *delegationSpyEngine) Close() error {
 	return s.MemoryEngine.Close()
 }
 
-func (s *delegationSpyEngine) NodeCount() (int64, error) {
+func (s *delegationSpyEngine) NodeCount(ctx context.Context) (int64, error) {
 	s.record("NodeCount")
-	return s.MemoryEngine.NodeCount()
+	return s.MemoryEngine.NodeCount(ctx)
 }
 
-func (s *delegationSpyEngine) EdgeCount() (int64, error) {
+func (s *delegationSpyEngine) EdgeCount(ctx context.Context) (int64, error) {
 	s.record("EdgeCount")
-	return s.MemoryEngine.EdgeCount()
+	return s.MemoryEngine.EdgeCount(ctx)
 }
 
 func (s *delegationSpyEngine) DeleteByPrefix(prefix string) (int64, int64, error) {
@@ -274,14 +269,14 @@ func (s *delegationSpyEngine) DeleteByPrefix(prefix string) (int64, int64, error
 
 // --- Optional capabilities ---------------------------------------------------
 
-func (s *delegationSpyEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+func (s *delegationSpyEngine) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	s.record("MatchEdgesBetween")
-	return s.MemoryEngine.MatchEdgesBetween(startID, endID, edgeType, properties, match)
+	return s.MemoryEngine.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match)
 }
 
-func (s *delegationSpyEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
+func (s *delegationSpyEngine) GetNodeProjected(ctx context.Context, id NodeID, properties []string) (*Node, error) {
 	s.record("GetNodeProjected")
-	return s.MemoryEngine.GetNodeProjected(id, properties)
+	return s.MemoryEngine.GetNodeProjected(ctx, id, properties)
 }
 
 func (s *delegationSpyEngine) IterateNodes(fn func(*Node) bool) error {
@@ -294,9 +289,9 @@ func (s *delegationSpyEngine) PendingEmbeddingsCount() int {
 	return s.MemoryEngine.PendingEmbeddingsCount()
 }
 
-func (s *delegationSpyEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+func (s *delegationSpyEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *Node) error {
 	s.record("UpdateNodeEmbeddingSidecar")
-	return s.MemoryEngine.UpdateNodeEmbeddingSidecar(node)
+	return s.MemoryEngine.UpdateNodeEmbeddingSidecar(ctx, node)
 }
 
 func (s *delegationSpyEngine) ListNamespaces() []string {
@@ -309,19 +304,24 @@ func (s *delegationSpyEngine) GetSchemaForNamespace(namespace string) *SchemaMan
 	return s.MemoryEngine.GetSchemaForNamespace(namespace)
 }
 
-func (s *delegationSpyEngine) NodeCountByPrefix(prefix string) (int64, error) {
+func (s *delegationSpyEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	s.record("NodeCountByPrefix")
-	return s.MemoryEngine.NodeCountByPrefix(prefix)
+	return s.MemoryEngine.NodeCountByPrefix(ctx, prefix)
 }
 
-func (s *delegationSpyEngine) EdgeCountByPrefix(prefix string) (int64, error) {
+func (s *delegationSpyEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	s.record("EdgeCountByPrefix")
-	return s.MemoryEngine.EdgeCountByPrefix(prefix)
+	return s.MemoryEngine.EdgeCountByPrefix(ctx, prefix)
 }
 
-func (s *delegationSpyEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
+func (s *delegationSpyEngine) NodeCountByLabelInNamespace(ctx context.Context, namespace, label string) (int64, error) {
 	s.record("NodeCountByLabelInNamespace")
-	return s.MemoryEngine.NodeCountByLabelInNamespace(namespace, label)
+	return s.MemoryEngine.NodeCountByLabelInNamespace(ctx, namespace, label)
+}
+
+func (s *delegationSpyEngine) ReadCountStore(ctx context.Context, request CountStoreReadRequest) (CountStoreRead, error) {
+	s.record("ReadCountStore")
+	return s.MemoryEngine.ReadCountStore(ctx, request)
 }
 
 func (s *delegationSpyEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, error) {
@@ -384,59 +384,59 @@ func (s *delegationSpyEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
 	s.MemoryEngine.OnEdgeDeleted(callback)
 }
 
-func (s *delegationSpyEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
+func (s *delegationSpyEngine) GetNodeLatestEffective(ctx context.Context, id NodeID) (*Node, error) {
 	s.record("GetNodeLatestEffective")
-	return s.MemoryEngine.GetNode(id)
+	return s.MemoryEngine.GetNode(context.Background(), id)
 }
 
-func (s *delegationSpyEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
+func (s *delegationSpyEngine) GetEdgeLatestEffective(ctx context.Context, id EdgeID) (*Edge, error) {
 	s.record("GetEdgeLatestEffective")
-	return s.MemoryEngine.GetEdge(id)
+	return s.MemoryEngine.GetEdge(context.Background(), id)
 }
 
-func (s *delegationSpyEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
+func (s *delegationSpyEngine) GetNodeLatestVisible(ctx context.Context, id NodeID) (*Node, error) {
 	s.record("GetNodeLatestVisible")
-	return s.MemoryEngine.GetNodeLatestVisible(id)
+	return s.MemoryEngine.GetNodeLatestVisible(ctx, id)
 }
 
-func (s *delegationSpyEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
+func (s *delegationSpyEngine) GetEdgeLatestVisible(ctx context.Context, id EdgeID) (*Edge, error) {
 	s.record("GetEdgeLatestVisible")
-	return s.MemoryEngine.GetEdgeLatestVisible(id)
+	return s.MemoryEngine.GetEdgeLatestVisible(ctx, id)
 }
 
-func (s *delegationSpyEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
+func (s *delegationSpyEngine) GetNodeVisibleAt(ctx context.Context, id NodeID, version MVCCVersion) (*Node, error) {
 	s.record("GetNodeVisibleAt")
-	return s.MemoryEngine.GetNodeVisibleAt(id, version)
+	return s.MemoryEngine.GetNodeVisibleAt(ctx, id, version)
 }
 
-func (s *delegationSpyEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
+func (s *delegationSpyEngine) GetEdgeVisibleAt(ctx context.Context, id EdgeID, version MVCCVersion) (*Edge, error) {
 	s.record("GetEdgeVisibleAt")
-	return s.MemoryEngine.GetEdgeVisibleAt(id, version)
+	return s.MemoryEngine.GetEdgeVisibleAt(ctx, id, version)
 }
 
-func (s *delegationSpyEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
+func (s *delegationSpyEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
 	s.record("GetNodesByLabelVisibleAt")
-	return s.MemoryEngine.GetNodesByLabelVisibleAt(label, version)
+	return s.MemoryEngine.GetNodesByLabelVisibleAt(ctx, label, version)
 }
 
-func (s *delegationSpyEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	s.record("GetOutgoingEdgesVisibleAt")
-	return s.MemoryEngine.GetOutgoingEdgesVisibleAt(nodeID, version)
+	return s.MemoryEngine.GetOutgoingEdgesVisibleAt(ctx, nodeID, version)
 }
 
-func (s *delegationSpyEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
 	s.record("GetIncomingEdgesVisibleAt")
-	return s.MemoryEngine.GetIncomingEdgesVisibleAt(nodeID, version)
+	return s.MemoryEngine.GetIncomingEdgesVisibleAt(ctx, nodeID, version)
 }
 
-func (s *delegationSpyEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error) {
 	s.record("GetEdgesByTypeVisibleAt")
-	return s.MemoryEngine.GetEdgesByTypeVisibleAt(edgeType, version)
+	return s.MemoryEngine.GetEdgesByTypeVisibleAt(ctx, edgeType, version)
 }
 
-func (s *delegationSpyEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+func (s *delegationSpyEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
 	s.record("GetEdgesBetweenVisibleAt")
-	return s.MemoryEngine.GetEdgesBetweenVisibleAt(startID, endID, version)
+	return s.MemoryEngine.GetEdgesBetweenVisibleAt(ctx, startID, endID, version)
 }
 
 func (s *delegationSpyEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
@@ -474,14 +474,14 @@ func (s *delegationSpyEngine) TopLifecycleDebtKeys(limit int) []MVCCLifecycleDeb
 	return s.MemoryEngine.TopLifecycleDebtKeys(limit)
 }
 
-func (s *delegationSpyEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
+func (s *delegationSpyEngine) GetNodeCurrentHead(ctx context.Context, id NodeID) (MVCCHead, error) {
 	s.record("GetNodeCurrentHead")
-	return s.MemoryEngine.GetNodeCurrentHead(id)
+	return s.MemoryEngine.GetNodeCurrentHead(ctx, id)
 }
 
-func (s *delegationSpyEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
+func (s *delegationSpyEngine) GetEdgeCurrentHead(ctx context.Context, id EdgeID) (MVCCHead, error) {
 	s.record("GetEdgeCurrentHead")
-	return s.MemoryEngine.GetEdgeCurrentHead(id)
+	return s.MemoryEngine.GetEdgeCurrentHead(ctx, id)
 }
 
 func (s *delegationSpyEngine) StreamNodes(ctx context.Context, fn func(*Node) error) error {
@@ -584,14 +584,14 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			delPrefix := "test:del:"
 
 			// Seed graph: n1 -KNOWS-> n2, plus disposable records.
-			_, err := engine.CreateNode(&Node{ID: id("n1"), Labels: []string{"Person"}, Properties: map[string]any{"name": "alice"}, ChunkEmbeddings: [][]float32{{0.1, 0.2}}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: id("n1"), Labels: []string{"Person"}, Properties: map[string]any{"name": "alice"}, ChunkEmbeddings: [][]float32{{0.1, 0.2}}})
 			require.NoError(t, err)
-			_, err = engine.CreateNode(&Node{ID: id("n2"), Labels: []string{"Person"}})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: id("n2"), Labels: []string{"Person"}})
 			require.NoError(t, err)
-			require.NoError(t, engine.CreateEdge(&Edge{ID: eid("e1"), StartNode: id("n1"), EndNode: id("n2"), Type: "KNOWS"}))
-			_, err = engine.CreateNode(&Node{ID: id("temp"), Labels: []string{"Temp"}})
+			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: eid("e1"), StartNode: id("n1"), EndNode: id("n2"), Type: "KNOWS"}))
+			_, err = engine.CreateNode(t.Context(), &Node{ID: id("temp"), Labels: []string{"Temp"}})
 			require.NoError(t, err)
-			require.NoError(t, engine.CreateEdge(&Edge{ID: eid("temp:e"), StartNode: id("n1"), EndNode: id("temp"), Type: "TEMP"}))
+			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: eid("temp:e"), StartNode: id("n1"), EndNode: id("temp"), Type: "TEMP"}))
 			flushDelegationStack(t, engine)
 
 			check := func(method string, err error) {
@@ -600,22 +600,23 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 				require.GreaterOrEqualf(t, spy.count(method), 1, "%s.%s was not delegated to the inner engine", stack, method)
 			}
 
-			_, err = engine.GetNode(id("n1"))
+			_, err = engine.GetNode(t.Context(), id("n1"))
 			check("GetNode", err)
-			_, err = engine.GetNodesByLabel("Person")
+			_, err = engine.GetNodesByLabel(ctx, "Person")
 			check("GetNodesByLabel", err)
-			_, err = engine.GetFirstNodeByLabel("Person")
+			_, err = engine.GetFirstNodeByLabel(t.Context(), "Person")
 			check("GetFirstNodeByLabel", err)
-			_, err = engine.GetOutgoingEdges(id("n1"))
+			_, err = engine.GetOutgoingEdges(ctx, id("n1"))
 			check("GetOutgoingEdges", err)
-			_, err = engine.GetIncomingEdges(id("n2"))
+			_, err = engine.GetIncomingEdges(ctx, id("n2"))
 			check("GetIncomingEdges", err)
-			_, err = engine.GetEdgesBetween(id("n1"), id("n2"))
+			_, err = engine.GetEdgesBetween(ctx, id("n1"), id("n2"))
 			check("GetEdgesBetween", err)
-			matched, err := engine.MatchEdgesBetween(id("n1"), id("n2"), "KNOWS", []string{}, func(*Edge) bool { return true })
+			matched, err := engine.MatchEdgesBetween(context.Background(), id("n1"), id("n2"), "KNOWS", []string{}, func(*Edge) bool { return true })
 			check("MatchEdgesBetween", err)
 			require.Lenf(t, matched, 1, "%s.MatchEdgesBetween must find the seeded edge", stack)
-			edge := engine.GetEdgeBetween(id("n1"), id("n2"), "KNOWS")
+			edge, err := engine.GetEdgeBetween(t.Context(), id("n1"), id("n2"), "KNOWS")
+			require.NoError(t, err)
 			if stack == "badger" || stack == "wal" {
 				check("GetEdgeBetween", nil)
 			} else {
@@ -623,21 +624,13 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 				// assert the handled result instead of inner delegation.
 				require.NotNilf(t, edge, "%s.GetEdgeBetween must resolve the seeded edge", stack)
 			}
-			_, err = engine.GetEdgesByType("KNOWS")
+			_, err = engine.GetEdgesByType(ctx, "KNOWS")
 			check("GetEdgesByType", err)
-			_, err = engine.AllNodes()
+			_, err = engine.AllNodes(ctx)
 			check("AllNodes", err)
-			_, err = engine.AllEdges()
+			_, err = engine.AllEdges(ctx)
 			check("AllEdges", err)
-			allNodes := engine.GetAllNodes()
-			if stack == "badger" || stack == "wal" {
-				check("GetAllNodes", nil)
-			} else {
-				// AsyncEngine composes GetAllNodes over its merged overlay;
-				// assert the handled result instead of inner delegation.
-				require.NotEmptyf(t, allNodes, "%s.GetAllNodes must return the seeded nodes", stack)
-			}
-			_, err = engine.GetEdge(eid("e1"))
+			_, err = engine.GetEdge(t.Context(), eid("e1"))
 			check("GetEdge", err)
 
 			var streamed int
@@ -648,8 +641,10 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			check("StreamNodesWithOptions", err)
 			require.Positive(t, streamed)
 
-			inDegree := engine.GetInDegree(id("n2"))
-			outDegree := engine.GetOutDegree(id("n1"))
+			inDegree, err := engine.GetInDegree(t.Context(), id("n2"))
+			require.NoError(t, err)
+			outDegree, err := engine.GetOutDegree(t.Context(), id("n1"))
+			require.NoError(t, err)
 			if stack == "badger" || stack == "wal" {
 				check("GetInDegree", nil)
 				check("GetOutDegree", nil)
@@ -667,9 +662,9 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			} else {
 				check("GetSchema", nil)
 			}
-			_, err = engine.BatchGetNodes([]NodeID{id("n1"), id("n2")})
+			_, err = engine.BatchGetNodes(ctx, []NodeID{id("n1"), id("n2")})
 			check("BatchGetNodes", err)
-			_, err = engine.NodeCount()
+			_, err = engine.NodeCount(t.Context())
 			if stack == "namespaced+wal" {
 				// NamespacedEngine scopes NodeCount through the prefix-count
 				// capability instead of a full inner count.
@@ -678,7 +673,7 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			} else {
 				check("NodeCount", err)
 			}
-			_, err = engine.EdgeCount()
+			_, err = engine.EdgeCount(t.Context())
 			if stack == "namespaced+wal" {
 				assertNoNotImplemented(t, stack, "EdgeCount", err)
 				require.GreaterOrEqual(t, spy.count("EdgeCountByPrefix"), 1, "%s.EdgeCount must delegate through the prefix-count capability", stack)
@@ -690,14 +685,14 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			// AsyncEngine stages writes and flushes them as bulk operations, so
 			// on async-bearing stacks the contract is verified by observable
 			// state after flush; synchronous stacks assert exact delegation.
-			require.NoError(t, engine.UpdateNode(&Node{ID: id("n1"), Labels: []string{"Person"}, Properties: map[string]any{"name": "alice2"}}))
-			require.NoError(t, engine.UpdateEdge(&Edge{ID: eid("e1"), StartNode: id("n1"), EndNode: id("n2"), Type: "KNOWS"}))
-			require.NoError(t, engine.BulkCreateNodes([]*Node{{ID: id("b1")}, {ID: id("b2")}}))
-			require.NoError(t, engine.BulkCreateEdges([]*Edge{{ID: eid("b:e"), StartNode: id("b1"), EndNode: id("b2"), Type: "BULK"}}))
-			require.NoError(t, engine.BulkDeleteNodes([]NodeID{id("b1"), id("b2")}))
-			require.NoError(t, engine.BulkDeleteEdges([]EdgeID{eid("b:e")}))
-			require.NoError(t, engine.DeleteEdge(eid("temp:e")))
-			require.NoError(t, engine.DeleteNode(id("temp")))
+			require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: id("n1"), Labels: []string{"Person"}, Properties: map[string]any{"name": "alice2"}}}))
+			require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: eid("e1"), StartNode: id("n1"), EndNode: id("n2"), Type: "KNOWS"}}))
+			require.NoError(t, engine.BulkCreateNodes(t.Context(), []*Node{{ID: id("b1")}, {ID: id("b2")}}))
+			require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{{ID: eid("b:e"), StartNode: id("b1"), EndNode: id("b2"), Type: "BULK"}}))
+			require.NoError(t, engine.BulkDeleteNodes(t.Context(), []NodeID{id("b1"), id("b2")}))
+			require.NoError(t, engine.BulkDeleteEdges(t.Context(), []EdgeID{eid("b:e")}))
+			require.NoError(t, engine.DeleteEdge(t.Context(), eid("temp:e")))
+			require.NoError(t, engine.DeleteNode(t.Context(), id("temp")))
 			flushDelegationStack(t, engine)
 
 			if stack == "badger" || stack == "wal" {
@@ -705,23 +700,25 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 					check(method, nil)
 				}
 			} else {
-				updated, err := engine.GetNode(id("n1"))
+				updated, err := engine.GetNode(t.Context(), id("n1"))
 				require.NoError(t, err)
 				require.Equal(t, "alice2", updated.Properties["name"], "%s.UpdateNode must persist through the stack", stack)
-				require.NotNil(t, engine.GetEdgeBetween(id("n1"), id("n2"), "KNOWS"), "%s.UpdateEdge must persist through the stack", stack)
-				_, err = engine.GetNode(id("b1"))
+				edge, err := engine.GetEdgeBetween(t.Context(), id("n1"), id("n2"), "KNOWS")
+				require.NoError(t, err)
+				require.NotNil(t, edge, "%s.UpdateEdge must persist through the stack", stack)
+				_, err = engine.GetNode(t.Context(), id("b1"))
 				require.ErrorIs(t, err, ErrNotFound, "%s.BulkDeleteNodes must delete through the stack", stack)
-				_, err = engine.GetEdge(eid("b:e"))
+				_, err = engine.GetEdge(t.Context(), eid("b:e"))
 				require.ErrorIs(t, err, ErrNotFound, "%s.BulkDeleteEdges must delete through the stack", stack)
-				_, err = engine.GetNode(id("temp"))
+				_, err = engine.GetNode(t.Context(), id("temp"))
 				require.ErrorIs(t, err, ErrNotFound, "%s.DeleteNode must delete through the stack", stack)
-				_, err = engine.GetEdge(eid("temp:e"))
+				_, err = engine.GetEdge(t.Context(), eid("temp:e"))
 				require.ErrorIs(t, err, ErrNotFound, "%s.DeleteEdge must delete through the stack", stack)
 			}
 
-			_, err = engine.CreateNode(&Node{ID: NodeID(delPrefix + "one")})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(delPrefix + "one")})
 			require.NoError(t, err)
-			require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(delPrefix + "e"), StartNode: NodeID(delPrefix + "one"), EndNode: id("n1"), Type: "DEL"}))
+			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: EdgeID(delPrefix + "e"), StartNode: NodeID(delPrefix + "one"), EndNode: id("n1"), Type: "DEL"}))
 			flushDelegationStack(t, engine)
 			nodesDeleted, edgesDeleted, err := engine.DeleteByPrefix(delPrefix)
 			check("DeleteByPrefix", err)
@@ -744,11 +741,11 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 				namespace = "tenant"
 			}
 
-			_, err := engine.CreateNode(&Node{ID: id("n1"), Labels: []string{"Person"}, Properties: map[string]any{"name": "alice"}, ChunkEmbeddings: [][]float32{{0.1, 0.2}}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: id("n1"), Labels: []string{"Person"}, Properties: map[string]any{"name": "alice"}, ChunkEmbeddings: [][]float32{{0.1, 0.2}}})
 			require.NoError(t, err)
-			_, err = engine.CreateNode(&Node{ID: id("n2"), Labels: []string{"Person"}})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: id("n2"), Labels: []string{"Person"}})
 			require.NoError(t, err)
-			require.NoError(t, engine.CreateEdge(&Edge{ID: eid("e1"), StartNode: id("n1"), EndNode: id("n2"), Type: "KNOWS"}))
+			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: eid("e1"), StartNode: id("n1"), EndNode: id("n2"), Type: "KNOWS"}))
 			flushDelegationStack(t, engine)
 
 			check := func(method string, err error) {
@@ -757,7 +754,7 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 				require.GreaterOrEqualf(t, spy.count(method), 1, "%s.%s was not delegated to the inner engine", stack, method)
 			}
 
-			_, err = engine.GetNodeProjected(id("n1"), []string{"name"})
+			_, err = engine.GetNodeProjected(t.Context(), id("n1"), []string{"name"})
 			check("GetNodeProjected", err)
 			require.NoError(t, engine.IterateNodes(func(node *Node) bool { return true }))
 			check("IterateNodes", nil)
@@ -766,10 +763,10 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			// The sidecar writeback never stages a node body: it lands in the
 			// embedding key space immediately and must be visible through the
 			// stack (a flush is still run to settle async staging of the create).
-			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, id("n1"), [][]float32{{0.3, 0.4}}, map[string]any{"chunk_count": 1}, time.Time{})))
+			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, engine, id("n1"), [][]float32{{0.3, 0.4}}, map[string]any{"chunk_count": 1}, time.Time{})))
 			assertNoNotImplemented(t, stack, "UpdateNodeEmbeddingSidecar", nil)
 			flushDelegationStack(t, engine)
-			updated, err := engine.GetNode(id("n1"))
+			updated, err := engine.GetNode(t.Context(), id("n1"))
 			require.NoError(t, err)
 			require.NotNil(t, updated)
 			require.NotEmptyf(t, updated.ChunkEmbeddings, "%s.UpdateNodeEmbeddingSidecar must persist embeddings through the stack", stack)
@@ -777,11 +774,11 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			check("ListNamespaces", nil)
 			_ = engine.GetSchemaForNamespace("tenant")
 			check("GetSchemaForNamespace", nil)
-			_, err = engine.NodeCountByPrefix("")
+			_, err = engine.NodeCountByPrefix(context.Background(), "")
 			check("NodeCountByPrefix", err)
-			_, err = engine.EdgeCountByPrefix("")
+			_, err = engine.EdgeCountByPrefix(context.Background(), "")
 			check("EdgeCountByPrefix", err)
-			_, err = engine.NodeCountByLabelInNamespace(namespace, "Person")
+			_, err = engine.NodeCountByLabelInNamespace(t.Context(), namespace, "Person")
 			if stack == "badger" || stack == "wal" {
 				check("NodeCountByLabelInNamespace", err)
 			} else {
@@ -789,11 +786,15 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 				// pending-write overlay; assert the handled result instead of
 				// inner delegation.
 				assertNoNotImplemented(t, stack, "NodeCountByLabelInNamespace", err)
-				got, gerr := engine.NodeCountByLabelInNamespace(namespace, "Person")
+				got, gerr := engine.NodeCountByLabelInNamespace(t.Context(), namespace, "Person")
 				require.NoError(t, gerr)
 				require.GreaterOrEqual(t, got, int64(1), "%s.NodeCountByLabelInNamespace must count seeded nodes", stack)
 			}
 
+			answer, readErr := engine.ReadCountStore(ctx, CountStoreReadRequest{Kind: CountStoreNodesByLabel, Namespace: namespace, Name: "Person", HiddenLabelPrefix: "_"})
+			check("ReadCountStore", readErr)
+			require.True(t, answer.DescribesRows)
+			require.GreaterOrEqual(t, answer.Count, int64(2))
 			_, err = engine.ConsumeCleanShutdownMarker(ctx)
 			check("ConsumeCleanShutdownMarker", err)
 			require.NoError(t, engine.MarkCleanShutdown(ctx))
@@ -819,37 +820,37 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			}
 			// Functional contract: a write through the stack must reach the
 			// registered callback.
-			_, err = engine.CreateNode(&Node{ID: id("cb:fire")})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: id("cb:fire")})
 			require.NoError(t, err)
 			flushDelegationStack(t, engine)
 			require.GreaterOrEqual(t, atomic.LoadInt32(&nodeEvents), int32(1), "%s.OnNodeCreated callback must fire for writes through the stack", stack)
 
 			version := MVCCVersion{}
-			_, err = engine.GetNodeLatestEffective(id("n1"))
+			_, err = engine.GetNodeLatestEffective(context.Background(), id("n1"))
 			check("GetNodeLatestEffective", err)
-			_, err = engine.GetEdgeLatestEffective(eid("e1"))
+			_, err = engine.GetEdgeLatestEffective(context.Background(), eid("e1"))
 			check("GetEdgeLatestEffective", err)
-			_, err = engine.GetNodeLatestVisible(id("n1"))
+			_, err = engine.GetNodeLatestVisible(t.Context(), id("n1"))
 			check("GetNodeLatestVisible", err)
-			_, err = engine.GetEdgeLatestVisible(eid("e1"))
+			_, err = engine.GetEdgeLatestVisible(t.Context(), eid("e1"))
 			check("GetEdgeLatestVisible", err)
-			_, err = engine.GetNodeVisibleAt(id("n1"), version)
+			_, err = engine.GetNodeVisibleAt(t.Context(), id("n1"), version)
 			check("GetNodeVisibleAt", err)
-			_, err = engine.GetEdgeVisibleAt(eid("e1"), version)
+			_, err = engine.GetEdgeVisibleAt(t.Context(), eid("e1"), version)
 			check("GetEdgeVisibleAt", err)
-			_, err = engine.GetNodesByLabelVisibleAt("Person", version)
+			_, err = engine.GetNodesByLabelVisibleAt(ctx, "Person", version)
 			check("GetNodesByLabelVisibleAt", err)
-			_, err = engine.GetOutgoingEdgesVisibleAt(id("n1"), version)
+			_, err = engine.GetOutgoingEdgesVisibleAt(ctx, id("n1"), version)
 			check("GetOutgoingEdgesVisibleAt", err)
-			_, err = engine.GetIncomingEdgesVisibleAt(id("n2"), version)
+			_, err = engine.GetIncomingEdgesVisibleAt(ctx, id("n2"), version)
 			check("GetIncomingEdgesVisibleAt", err)
-			_, err = engine.GetEdgesByTypeVisibleAt("KNOWS", version)
+			_, err = engine.GetEdgesByTypeVisibleAt(ctx, "KNOWS", version)
 			check("GetEdgesByTypeVisibleAt", err)
-			_, err = engine.GetEdgesBetweenVisibleAt(id("n1"), id("n2"), version)
+			_, err = engine.GetEdgesBetweenVisibleAt(ctx, id("n1"), id("n2"), version)
 			check("GetEdgesBetweenVisibleAt", err)
-			_, err = engine.GetNodeCurrentHead(id("n1"))
+			_, err = engine.GetNodeCurrentHead(context.Background(), id("n1"))
 			check("GetNodeCurrentHead", err)
-			_, err = engine.GetEdgeCurrentHead(eid("e1"))
+			_, err = engine.GetEdgeCurrentHead(context.Background(), eid("e1"))
 			check("GetEdgeCurrentHead", err)
 
 			release := engine.RegisterSnapshotReader(SnapshotReaderInfo{ReaderID: "contract"})

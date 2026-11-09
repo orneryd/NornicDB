@@ -77,7 +77,7 @@ func TestCypher25FunctionArgumentErrors(t *testing.T) {
 	require.False(t, parameterMayBeFunctionArgument("RETURN $a + $b"))
 	// Only a bare parameter is typed here: $m.k is a property access, and a
 	// parameter the statement doesn't pass has no type.
-	require.NoError(t, validateStaticFunctionParameters("RETURN toUpper($m.k), toUpper($missing), toUpper($s)", map[string]interface{}{"m": map[string]interface{}{"k": "a"}, "s": "b"}, false))
+	require.NoError(t, validateStaticFunctionParameters(ctx, "RETURN toUpper($m.k), toUpper($missing), toUpper($s)", map[string]interface{}{"m": map[string]interface{}{"k": "a"}, "s": "b"}, false))
 
 	value := func(query string, params map[string]interface{}) interface{} {
 		result, err := exec.Execute(ctx, "CYPHER 25 "+query, params)
@@ -108,7 +108,7 @@ func TestCypher25FunctionGuards(t *testing.T) {
 		for index := range values {
 			args[index] = string(rune('a' + index))
 		}
-		value, found, err := cypherfn.EvaluateFunction(name, args, cypherfn.Context{Eval: func(expression string) (interface{}, error) {
+		value, found, err := cypherfn.EvaluateFunction(context.Background(), name, args, cypherfn.Context{Eval: func(expression string) (interface{}, error) {
 			argument := values[expression[0]-'a']
 			if argument == failing {
 				return nil, failing
@@ -196,11 +196,11 @@ func TestReduceFormAndPatternHelpers(t *testing.T) {
 	failing := errors.New("failed")
 	identity := func(accumulator, item interface{}) (interface{}, error) { return item, nil }
 	fail := func(accumulator, item interface{}) (interface{}, error) { return nil, failing }
-	_, err := runReduceForm(form, 0, []interface{}{1}, fail, identity)
+	_, err := runReduceForm(form, 0, []interface{}{1}, fail, identity, nil)
 	require.ErrorIs(t, err, failing)
-	_, err = runReduceForm(form, 0, []interface{}{1}, identity, fail)
+	_, err = runReduceForm(form, 0, []interface{}{1}, identity, fail, nil)
 	require.ErrorIs(t, err, failing)
-	_, err = runReduceForm(form, 0, []interface{}{1}, identity, identity)
+	_, err = runReduceForm(form, 0, []interface{}{1}, identity, identity, nil)
 	require.Error(t, err, "a predicate that isn't a boolean")
 
 	for text, want := range map[string]string{"UTC+01:00": "UTC+01:00", "GMT-05:30:15x": "GMT-05:30:15", "UT+00:00": "UT"} {

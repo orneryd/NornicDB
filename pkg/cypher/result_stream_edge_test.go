@@ -17,12 +17,13 @@ func TestResultStreamStopsOnCancelledContext(t *testing.T) {
 	require.Equal(t, 1, stream.threshold)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.True(t, stream.emit(ctx, []interface{}{1}))
-	require.True(t, stream.emit(ctx, []interface{}{2}))
+	owner := NewStorageExecutor(newTestMemoryEngine(t))
+	require.True(t, stream.emit(ctx, owner, []interface{}{1}))
+	require.True(t, stream.emit(ctx, owner, []interface{}{2}))
 	require.True(t, stream.streamed())
-	require.False(t, stream.emit(ctx, []interface{}{3}), "waiting for demand")
+	require.False(t, stream.emit(ctx, owner, []interface{}{3}), "waiting for demand")
 	stream.want = 1
-	require.False(t, stream.emit(ctx, []interface{}{4}), "waiting to hand over a batch")
+	require.False(t, stream.emit(ctx, owner, []interface{}{4}), "waiting to hand over a batch")
 }
 
 func TestVisitNodeListStopsAndFails(t *testing.T) {
@@ -96,7 +97,9 @@ func TestResultStreamChecksReturnArguments(t *testing.T) {
 // statement before any row was handed on, and fails it after.
 func TestResultStreamDeclineBeforeAndAfterStreaming(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	clauses := []pipelineClause{{kind: pipelineClauseReturn, text: "RETURN x"}}
+	split := parsePipelineClauses(t.Context(), "RETURN x")
+	clauses, valid := split.clauses, split.ok
+	require.True(t, valid)
 	declineAfter := func(rows int) pipelineRowSource {
 		return func(yield func(pipelineRow) bool) bool {
 			for i := 0; i < rows; i++ {
@@ -108,7 +111,8 @@ func TestResultStreamDeclineBeforeAndAfterStreaming(t *testing.T) {
 		}
 	}
 	scope := map[string]struct{}{"x": {}}
-	ctx := context.Background()
+	ctx, bindErr := exec.bindPipelineProgram(context.Background(), clauses, scope)
+	require.NoError(t, bindErr)
 	columns, _, handled, err := exec.pipelineStreamReturn(ctx, NewResultStream(1, nil), nil, declineAfter(0), clauses, clauses, 0, scope, false)
 	require.NoError(t, err)
 	require.False(t, handled)
@@ -175,7 +179,7 @@ func TestStreamedNodeMatchSourceFailures(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	template := exec.pipelineNodeMatchTemplateFor("MATCH (n:Item)")
+	template := exec.pipelineNodeMatchTemplateFor(ctx, "MATCH (n:Item)")
 	source := exec.pipelineStreamedNodeMatchSource(withExpressionFailureSlot(ctx), pipelineRowsSource([]pipelineRow{{}}), template, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, streamScan: true})
 	yielded := 0
 	require.False(t, source(func(pipelineRow) bool { yielded++; return true }))

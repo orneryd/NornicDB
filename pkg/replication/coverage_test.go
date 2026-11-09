@@ -171,7 +171,7 @@ func TestClusterConnectionSignAndVerify(t *testing.T) {
 	conn.signMessage(msg)
 	require.NotEmpty(t, msg.NodeID)
 	require.NotZero(t, msg.Timestamp)
-	require.NotEmpty(t, msg.Signature)
+	require.NotEmpty(t, msg.SignatureV2)
 	require.NoError(t, conn.verifyMessage(msg))
 
 	tampered := *msg
@@ -191,7 +191,7 @@ func TestClusterConnectionSignAndVerify(t *testing.T) {
 		Timestamp: time.Now().Add(-2 * time.Hour).UnixNano(),
 		Payload:   []byte("payload"),
 	}
-	old.Signature = computeMessageSignature(conn.authSecret, old)
+	conn.signMessage(old)
 	err = conn.verifyMessage(old)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timestamp outside allowed skew")
@@ -208,12 +208,12 @@ func TestComputeMessageSignatureAndWireHelpers(t *testing.T) {
 		Payload:   []byte("abc"),
 	}
 
-	sig1 := computeMessageSignature(secret, msg)
-	sig2 := computeMessageSignature(secret, msg)
+	sig1 := computeMessageSignatureV2(secret, msg)
+	sig2 := computeMessageSignatureV2(secret, msg)
 	assert.Equal(t, sig1, sig2)
 
 	msg.Payload = []byte("abcd")
-	sig3 := computeMessageSignature(secret, msg)
+	sig3 := computeMessageSignatureV2(secret, msg)
 	assert.NotEqual(t, sig1, sig3)
 
 	var buf bytes.Buffer

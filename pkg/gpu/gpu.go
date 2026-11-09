@@ -407,7 +407,9 @@ func detectGPU(config *Config) (*DeviceInfo, error) {
 		}
 
 		device, err := probeBackend(backend, config.DeviceID)
-		if err == nil && device != nil {
+		// A probe can describe installed hardware whose compute backend was
+		// not compiled in. Keep probing so an available backend can serve it.
+		if err == nil && device != nil && device.Available {
 			return device, nil
 		}
 	}
@@ -1460,6 +1462,7 @@ func (ei *EmbeddingIndex) Remove(nodeID string) bool {
 	}
 
 	// Truncate
+	ei.nodeIDs[lastIdx] = ""
 	ei.nodeIDs = ei.nodeIDs[:lastIdx]
 	ei.cpuVectors = ei.cpuVectors[:lastIdx*ei.dimensions]
 	delete(ei.idToIndex, nodeID)
@@ -1532,23 +1535,8 @@ func (ei *EmbeddingIndex) shouldAutoSync(delta int) bool {
 //	Uses cosine similarity: score = dot(a,b) / (||a|| × ||b||)
 //	Range: [-1, 1] where 1 = identical, 0 = orthogonal, -1 = opposite
 func (ei *EmbeddingIndex) Search(query []float32, k int) ([]SearchResult, error) {
-	if len(query) != ei.dimensions {
-		return nil, ErrInvalidDimensions
-	}
-
-	ei.mu.RLock()
-	defer ei.mu.RUnlock()
-
-	if len(ei.nodeIDs) == 0 {
-		return nil, nil
-	}
-
-	// Use GPU if enabled and synced
-	if ei.manager != nil && ei.manager.IsEnabled() && ei.gpuSynced {
-		return ei.searchGPU(query, k)
-	}
-
-	return ei.searchCPU(query, k)
+	results, _, err := ei.SearchWithPopulation(query, k)
+	return results, err
 }
 
 // ScoreSubset computes similarity scores for a specific subset of node IDs.
@@ -1807,46 +1795,6 @@ func (ei *EmbeddingIndex) searchMetal(query []float32, k int) ([]SearchResult, e
 	}
 
 	return output, nil
-}
-
-// searchCPU performs similarity search on CPU (fallback).
-func (ei *EmbeddingIndex) searchCPU(query []float32, k int) ([]SearchResult, error) {
-	atomic.AddInt64(&ei.searchesCPU, 1)
-
-	n := len(ei.nodeIDs)
-	if k > n {
-		k = n
-	}
-
-	// Compute all similarities
-	scores := make([]float32, n)
-	for i := 0; i < n; i++ {
-		start := i * ei.dimensions
-		end := start + ei.dimensions
-		scores[i] = cosineSimilarityFlat(query, ei.cpuVectors[start:end])
-	}
-
-	// Find top-k using partial sort
-	indices := make([]int, n)
-	for i := range indices {
-		indices[i] = i
-	}
-
-	// Partial quickselect for top-k
-	partialSort(indices, scores, k)
-
-	// Build results
-	results := make([]SearchResult, k)
-	for i := 0; i < k; i++ {
-		idx := indices[i]
-		results[i] = SearchResult{
-			ID:       ei.nodeIDs[idx],
-			Score:    scores[idx],
-			Distance: 1 - scores[idx],
-		}
-	}
-
-	return results, nil
 }
 
 func (ei *EmbeddingIndex) scoreSubsetCPUByIDs(ids []string, query []float32) []SearchResult {
@@ -2325,6 +2273,7 @@ func (ei *EmbeddingIndex) Clear() {
 	ei.mu.Lock()
 	defer ei.mu.Unlock()
 
+	clear(ei.nodeIDs)
 	ei.nodeIDs = ei.nodeIDs[:0]
 	ei.idToIndex = make(map[string]int)
 	ei.cpuVectors = ei.cpuVectors[:0]
@@ -2525,31 +2474,5 @@ func normalizeFlatVectors(vectors []float32, dims int) {
 		for i := 0; i < dims; i++ {
 			vectors[offset+i] *= norm
 		}
-	}
-}
-
-// partialSort performs partial quicksort to get top-k elements.
-func partialSort(indices []int, scores []float32, k int) {
-	if k >= len(indices) {
-		// Full sort needed
-		for i := 0; i < len(indices)-1; i++ {
-			for j := i + 1; j < len(indices); j++ {
-				if scores[indices[j]] > scores[indices[i]] {
-					indices[i], indices[j] = indices[j], indices[i]
-				}
-			}
-		}
-		return
-	}
-
-	// Simple partial sort: just get top-k
-	for i := 0; i < k; i++ {
-		maxIdx := i
-		for j := i + 1; j < len(indices); j++ {
-			if scores[indices[j]] > scores[indices[maxIdx]] {
-				maxIdx = j
-			}
-		}
-		indices[i], indices[maxIdx] = indices[maxIdx], indices[i]
 	}
 }

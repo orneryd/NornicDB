@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -20,7 +22,7 @@ import (
 
 func newIssue638BenchStore(b *testing.B) (*storage.NamespacedEngine, *storage.BadgerEngine, *StorageExecutor) {
 	b.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -30,7 +32,7 @@ func newIssue638BenchStore(b *testing.B) (*storage.NamespacedEngine, *storage.Ba
 	ctx := context.Background()
 
 	for i := 0; i < 20; i++ {
-		if _, err := store.CreateNode(&storage.Node{
+		if _, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("f%d", i)),
 			Labels: []string{"Function"},
 		}); err != nil {
@@ -66,19 +68,19 @@ func newIssue638BenchStore(b *testing.B) (*storage.NamespacedEngine, *storage.Ba
 	}
 	for start := 0; start < n; start += 2000 {
 		end := min(start+2000, n)
-		if err := store.BulkCreateNodes(calNodes[start:end]); err != nil {
+		if err := store.BulkCreateNodes(b.Context(), calNodes[start:end]); err != nil {
 			b.Fatal(err)
 		}
-		if err := store.BulkCreateNodes(xNodes[start:end]); err != nil {
+		if err := store.BulkCreateNodes(b.Context(), xNodes[start:end]); err != nil {
 			b.Fatal(err)
 		}
-		if err := store.BulkCreateNodes(yNodes[start:end]); err != nil {
+		if err := store.BulkCreateNodes(b.Context(), yNodes[start:end]); err != nil {
 			b.Fatal(err)
 		}
-		if err := store.BulkCreateEdges(callsEdges[start:end]); err != nil {
+		if err := store.BulkCreateEdges(b.Context(), callsEdges[start:end]); err != nil {
 			b.Fatal(err)
 		}
-		if err := store.BulkCreateEdges(linksEdges[start:end]); err != nil {
+		if err := store.BulkCreateEdges(b.Context(), linksEdges[start:end]); err != nil {
 			b.Fatal(err)
 		}
 	}

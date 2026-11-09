@@ -8,13 +8,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newIDSeekTestGraph creates the minimal input graph the ID-equality, -compound
+// and -IN seek tests run against: the seed nodes, in one namespace whose
+// property schema is owned by the created executor (schema writes are only
+// admissible through the executor that created the engine, #1126). The caller
+// supplies each node's labels and properties so the same construction serves
+// the two-node equality population and the larger Person/Movie one.
+func newIDSeekTestGraph(t *testing.T, namespace string, seeds []*storage.Node) (*StorageExecutor, *storage.NamespacedEngine, context.Context) {
+	t.Helper()
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, namespace)
+	exec := NewStorageExecutor(store)
+
+	for i, node := range seeds {
+		_, err := store.CreateNode(t.Context(), node)
+		require.NoError(t, err, "create seek node %d", i)
+	}
+
+	return exec, store, context.Background()
+}
+
+// idSeekEqualSeeds is the two-node population the ID-equality param/compound
+// seek tests look IDs up in: :L n1/k=v1 and n2/k=v2.
+func idSeekEqualSeeds() []*storage.Node {
+	return []*storage.Node{
+		{ID: storage.NodeID("n1"), Labels: []string{"L"}, Properties: map[string]interface{}{"k": "v1"}},
+		{ID: storage.NodeID("n2"), Labels: []string{"L"}, Properties: map[string]interface{}{"k": "v2"}},
+	}
+}
+
 func TestTryCollectNodesFromIDEquality_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "seek_id_eq_cov")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("person-1"),
 		Labels: []string{"Person", "Actor"},
 		Properties: map[string]interface{}{
@@ -55,7 +84,7 @@ func TestTryCollectNodesFromIDEquality_Branches(t *testing.T) {
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("person-1"), nodes[0].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = '4:nornic:person-1'")
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = '"+storage.NodeElementID("seek_id_eq_cov", "person-1")+"'")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
@@ -73,18 +102,7 @@ func TestTryCollectNodesFromIDEquality_Branches(t *testing.T) {
 }
 
 func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "seek_id_param_cov")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	for _, node := range []*storage.Node{
-		{ID: storage.NodeID("n1"), Labels: []string{"Person"}, Properties: map[string]interface{}{"k": "v1"}},
-		{ID: storage.NodeID("n2"), Labels: []string{"Person"}, Properties: map[string]interface{}{"k": "v2"}},
-	} {
-		_, err := store.CreateNode(node)
-		require.NoError(t, err)
-	}
+	exec, _, ctx := newIDSeekTestGraph(t, "seek_id_param_cov", idSeekEqualSeeds())
 
 	nodes, used, err := exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, "id(n) = $id", nil)
 	require.NoError(t, err)
@@ -106,7 +124,7 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = $id", map[string]interface{}{"id": "4:nornic:n1"})
+	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = $id", map[string]interface{}{"id": storage.NodeElementID("seek_id_param_cov", "n1")})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
@@ -146,19 +164,11 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 }
 
 func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "seek_id_in_cov")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	for _, node := range []*storage.Node{
+	exec, store, ctx := newIDSeekTestGraph(t, "seek_id_in_cov", []*storage.Node{
 		{ID: storage.NodeID("p1"), Labels: []string{"Person"}, Properties: map[string]interface{}{"kind": "human", "name": "Ada"}},
 		{ID: storage.NodeID("p2"), Labels: []string{"Person"}, Properties: map[string]interface{}{"kind": "human", "name": "Lin"}},
 		{ID: storage.NodeID("m1"), Labels: []string{"Movie"}, Properties: map[string]interface{}{"kind": "film", "name": "Ada"}},
-	} {
-		_, err := store.CreateNode(node)
-		require.NoError(t, err)
-	}
+	})
 
 	nodes, used, err := exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", nil)
 	require.NoError(t, err)
@@ -178,7 +188,7 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}, properties: map[string]interface{}{"kind": "human"}},
 		"elementId(n) IN $ids",
-		map[string]interface{}{"ids": []interface{}{"p1", "4:nornic:p2", "p1", "", 7}},
+		map[string]interface{}{"ids": []interface{}{"p1", storage.NodeElementID("seek_id_in_cov", "p2"), "p1", "", 7}},
 	)
 	require.NoError(t, err)
 	require.True(t, used)
@@ -221,23 +231,27 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	schema := store.GetSchema()
 	require.NotNil(t, schema)
 
-	labels := exec.indexCandidateLabels(schema, []string{"Person", "Book"}, "name")
+	labels, err := exec.indexCandidateLabels(ctx, schema, []string{"Person", "Book"}, "name")
+	require.NoError(t, err)
 	require.Equal(t, []string{"Person"}, labels)
 
-	labels = exec.indexCandidateLabels(schema, nil, "name")
+	labels, err = exec.indexCandidateLabels(ctx, schema, nil, "name")
+	require.NoError(t, err)
 	require.Empty(t, labels)
 
 	for _, nodeID := range []storage.NodeID{"p1", "p2", "m1"} {
-		node, err := store.GetNode(nodeID)
+		node, err := store.GetNode(t.Context(), nodeID)
 		require.NoError(t, err)
 		node.Labels = append(node.Labels, "All")
-		require.NoError(t, store.UpdateNode(node))
+		require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 	}
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_all_name_cov FOR (n:All) ON (n.name)", nil)
 	require.NoError(t, err)
-	labels = exec.indexCandidateLabels(schema, nil, "name")
+	labels, err = exec.indexCandidateLabels(ctx, schema, nil, "name")
+	require.NoError(t, err)
 	require.Equal(t, []string{"All", "Movie", "Person"}, labels)
 
-	labels = exec.indexCandidateLabels(schema, nil, "unknown")
+	labels, err = exec.indexCandidateLabels(ctx, schema, nil, "unknown")
+	require.NoError(t, err)
 	require.Empty(t, labels)
 }

@@ -1,7 +1,9 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"math/bits"
 	"reflect"
 	"sort"
@@ -11,96 +13,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// validateSetSemanticScopes validates SET expressions against the clause
-// horizon before execution. This is deliberately independent of row count:
-// an undefined variable is a compile-time error even when MATCH yields no rows.
-func (e *StorageExecutor) validateSetSemanticScopes(cypher string) error {
-	if !containsKeywordOutsideStrings(cypher, "SET") && !containsKeywordOutsideStrings(cypher, "REMOVE") &&
-		!containsKeywordOutsideStrings(cypher, "DELETE") && !containsKeywordOutsideStrings(cypher, "FOREACH") {
-		return nil
-	}
-	clauses, ok := splitPipelineClauses(cypher)
-	if !ok {
-		return nil
-	}
-	return e.validateMutationClauseScopes(clauses, newSemanticBindingScope())
-}
-
-func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause, scope *semanticBindingScope) error {
-	for _, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseMerge, pipelineClauseCreate:
-			for _, name := range extractNodeVariables(clause.text) {
-				scope.bind(name)
-			}
-			for _, name := range extractRelationshipVariables(clause.text) {
-				scope.bind(name)
-			}
-			// Path variables (p = (…)), with the pipeline's own binder.
-			patternBindings := make(map[string]struct{})
-			addPipelinePatternBindings(e, patternBindings, clause.text, pipelineClauseKeyword(clause.kind))
-			for name := range patternBindings {
-				scope.bind(name)
-			}
-		case pipelineClauseWith:
-			scope = projectedBindingScope(scope, clause.text)
-		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
-				return err
-			}
-		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
-				scope.bind(alias)
-			}
-		case pipelineClauseSet:
-			if err := e.validateSetClauseScope(scope, clause.text); err != nil {
-				return err
-			}
-		case pipelineClauseForeach:
-			variable, _, updates, err := parsePipelineForeach(clause.text)
-			if err != nil {
-				return err
-			}
-			child := newSemanticBindingScope()
-			for name := range scope.names {
-				child.bind(name)
-			}
-			child.bind(variable)
-			if err := e.validateMutationClauseScopes(updates, child); err != nil {
-				return err
-			}
-		case pipelineClauseRemove:
-			if err := validateRemoveClauseScope(scope, clause.text); err != nil {
-				return err
-			}
-		case pipelineClauseDelete:
-			if err := validateDeleteClauseScope(scope, clause.text); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// pipelineClauseKeyword is the leading keyword of a pattern clause kind.
-func pipelineClauseKeyword(kind pipelineClauseKind) string {
-	switch kind {
-	case pipelineClauseOptionalMatch:
-		return "OPTIONAL MATCH"
-	case pipelineClauseMerge:
-		return "MERGE"
-	case pipelineClauseCreate:
-		return "CREATE"
-	default:
-		return "MATCH"
-	}
-}
-
 // validateRemoveClauseScope rejects a REMOVE item (m.x, m:L, m[k],
 // m:$(e)) whose variable is not bound, as SET does and as Neo4j does
 // ("Variable `m` not defined"), and checks the expressions of its dynamic
 // keys and labels like a SET value's (validateWriteExpressionScope).
-func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error {
+func validateRemoveClauseScope(ctx context.Context, scope *semanticBindingScope, clause string) error {
 	items, err := parseRemoveItems(strings.TrimSpace(clause[len("REMOVE"):]))
 	if err != nil {
 		return err
@@ -119,7 +36,7 @@ func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error
 			}
 		}
 		for _, expression := range expressions {
-			if err := validateWriteExpressionScope(expression, scope); err != nil {
+			if err := validateWriteExpressionScope(ctx, expression, scope); err != nil {
 				return err
 			}
 		}
@@ -157,7 +74,7 @@ func trailingWordAfterOperand(expression string) (string, bool) {
 	for i := 0; i < len(expression); {
 		c := expression[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(expression, i, c)
 			operandEnded = depth == 0
 			continue
@@ -167,14 +84,14 @@ func trailingWordAfterOperand(expression string) (string, bool) {
 		case c == ')' || c == ']' || c == '}':
 			depth--
 			operandEnded = depth == 0
-		case isASCIIWhitespace(c):
-		case depth == 0 && isIdentStartByte(c):
-			word, end, _ := scanIdentifierToken(expression, i)
-			if operandEnded && !isExpressionOperatorWord(word) {
-				return word, true
+		case cyphertext.IsWhitespaceAt(expression, i):
+		case depth == 0 && cyphertext.NameStartAt(expression, i):
+			word, _ := cyphertext.ScanIdentifier(expression, i)
+			if operandEnded && !isExpressionOperatorWord(word.Value) {
+				return word.Value, true
 			}
-			operandEnded = !isExpressionOperatorWord(word)
-			i = end
+			operandEnded = !isExpressionOperatorWord(word.Value)
+			i = word.End
 			continue
 		case depth == 0 && c == '.':
 			// a property name follows: part of the operand
@@ -205,8 +122,8 @@ func isExpressionOperatorWord(word string) bool {
 // false for text that isn't a DELETE clause.
 func deleteClauseTargets(clause string) (targets []string, detach, ok bool) {
 	body := strings.TrimSpace(clause)
-	if startsWithKeywordFold(body, "DETACH DELETE") {
-		detach, body = true, strings.TrimSpace(body[len("DETACH"):])
+	if startsWithKeywordFold(body, "DETACH") {
+		detach, body = true, body[queryGapEnd(body, len("DETACH")):]
 	}
 	if !startsWithKeywordFold(body, "DELETE") {
 		return nil, false, false
@@ -228,7 +145,7 @@ func deleteUndefinedVariableError(expression string) error {
 // shared by every route (MATCH, CREATE, MERGE, pipeline, fast paths): the
 // assignment shapes (validatePipelineSetAssignments), bound target and value
 // variables, and known functions in the assigned values.
-func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, clause string) error {
+func (e *StorageExecutor) validateSetClauseScope(ctx context.Context, scope *semanticBindingScope, clause string) error {
 	body := strings.TrimSpace(clause[len("SET"):])
 	assignments := splitSetAssignments(body)
 	if err := validatePipelineSetAssignments(assignments); err != nil {
@@ -240,7 +157,7 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 			// Label assignment `n:Label[:Label2]`: the variable before the
 			// first colon must be bound, as for a property assignment, and so
 			// must the variables a dynamic label's expression reads.
-			if target = normalizeProjectionColumnName(target); isValidIdentifier(target) && !scope.contains(target) {
+			if target = normalizeProjectionColumnName(target); cyphertext.IsIdentifier(target) && !scope.contains(target) {
 				return createUndefinedVariableError(target)
 			}
 			// The chain was read above (validatePipelineSetAssignments).
@@ -249,7 +166,7 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 				if item.expression == "" {
 					continue
 				}
-				if err := validateWriteExpressionScope(item.expression, scope); err != nil {
+				if err := validateWriteExpressionScope(ctx, item.expression, scope); err != nil {
 					return err
 				}
 			}
@@ -263,16 +180,17 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		}
 		if operator == "[]=" {
 			// x[key] = v: the key is an expression too.
-			if err := validateWriteExpressionScope(property, scope); err != nil {
+			if err := validateWriteExpressionScope(ctx, property, scope); err != nil {
 				return err
 			}
 		}
-		if err := validateWriteExpressionScope(expression, scope); err != nil {
+		if err := validateWriteExpressionScope(ctx, expression, scope); err != nil {
 			return err
 		}
-		// Literal sources here; the statement walker
-		// (validatePropertyAccessClauses) also knows WITH / UNWIND types.
-		if err := setSourceTypeError(property, operator, expression, nil, nil); err != nil {
+		// A literal source here, in item order; the shared clause validator
+		// checks every source with the statement's types
+		// (staticSetItemsTokenError).
+		if err := setSourceTypeError(property, operator, (staticTypeScope{}).operandOf(ctx, expression)); err != nil {
 			return err
 		}
 	}
@@ -282,18 +200,18 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 // validateWriteExpressionScope checks an expression a SET or REMOVE item
 // evaluates (a value, a dynamic key or label): complete operands and bound
 // variables. Its functions are checked with the statement's.
-func validateWriteExpressionScope(expression string, scope *semanticBindingScope) error {
+func validateWriteExpressionScope(ctx context.Context, expression string, scope *semanticBindingScope) error {
 	if err := validateExpressionOperandCompleteness(expression); err != nil {
 		return err
 	}
-	if missing := firstUndefinedSetExpressionVariable(expression, scope); missing != "" {
+	if missing := firstUndefinedSetExpressionVariable(ctx, expression, scope); missing != "" {
 		return createUndefinedVariableError(missing)
 	}
 	return nil
 }
 
-func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindingScope) string {
-	for _, name := range expressionFreeVariables(expression) {
+func firstUndefinedSetExpressionVariable(ctx context.Context, expression string, scope *semanticBindingScope) string {
+	for _, name := range expressionFreeVariables(ctx, expression) {
 		if _, exists := scope.names[name]; !exists {
 			return name
 		}
@@ -307,7 +225,7 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 // or names the expression binds itself (list comprehension iterators, reduce /
 // all / any / none / single).
 // It is the one reference scanner for the static SET and CREATE checks.
-func expressionFreeVariables(expression string) []string {
+func expressionFreeVariables(ctx context.Context, expression string) []string {
 	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
 	// Both maskers blank in place: offsets are the expression's.
 	locals := newLocalReader(expression)
@@ -323,11 +241,11 @@ func expressionFreeVariables(expression string) []string {
 			if closing := findMatchingBracket(expression, index); closing >= 0 {
 				if pattern, projection, comprehension := splitPatternComprehension(expression[index : closing+1]); comprehension {
 					bindings := make(matchSemanticScope)
-					addMatchPatternBindingKinds(bindings, pattern)
-					if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
+					addMatchPatternBindingKinds(ctx, bindings, pattern)
+					if where := topLevelKeywordIndex(ctx, pattern, "WHERE"); where >= 0 {
 						projection += ", " + pattern[where+len("WHERE"):]
 					}
-					for _, reference := range expressionFreeVariables(projection) {
+					for _, reference := range expressionFreeVariables(ctx, projection) {
 						if _, bound := bindings[reference]; bound {
 							continue
 						}
@@ -340,24 +258,8 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if character == '\'' || character == '"' || character == '`' {
-			quote := character
-			index++
-			for index < len(expression) {
-				if expression[index] == quote {
-					if quote == '`' && index+1 < len(expression) && expression[index+1] == '`' {
-						index += 2
-						continue
-					}
-					index++
-					break
-				}
-				if expression[index] == '\\' && quote != '`' && index+1 < len(expression) {
-					index += 2
-					continue
-				}
-				index++
-			}
+		if end, skipped := skipCypherLexicalToken(expression, index); skipped {
+			index = end
 			continue
 		}
 		if character == '(' {
@@ -367,7 +269,7 @@ func expressionFreeVariables(expression string) []string {
 			// are not allowed to introduce new variables").
 			if chainEnd, chain := relationshipChainEnd(expression, index, len(expression)); chain {
 				bindings := make(matchSemanticScope)
-				addMatchPatternBindingKinds(bindings, expression[index:chainEnd])
+				addMatchPatternBindingKinds(ctx, bindings, expression[index:chainEnd])
 				references := make([]string, 0, len(bindings))
 				for reference := range bindings {
 					references = append(references, reference)
@@ -390,23 +292,23 @@ func expressionFreeVariables(expression string) []string {
 				delimiters = delimiters[:len(delimiters)-1]
 			}
 		}
-		name, next, ok := scanIdentifierToken(expression, index)
+		name, ok := cyphertext.ScanIdentifier(expression, index)
 		if !ok {
 			index++
 			continue
 		}
-		if index > 0 && expression[index-1] >= '0' && expression[index-1] <= '9' {
-			index = next
+		if index > 0 && cyphertext.IsDigit(expression[index-1]) {
+			index = name.End
 			continue
 		}
-		previous := previousSetExpressionByte(expression, index)
-		following := nextSetExpressionByte(expression, next)
-		upper := upperASCII(name)
+		previous := cyphertext.NeighborByte(expression, index, cyphertext.Before)
+		following := cyphertext.NeighborByte(expression, name.End, cyphertext.AtOrAfter)
+		upper := upperASCII(name.Value)
 		if following == '(' && (upper == "TRIM" || upper == "NORMALIZE") {
-			open := skipSpaces(expression, next)
+			open := skipSpaces(expression, name.End)
 			if closing := findMatchingParen(expression, open); closing >= 0 {
 				inner := expression[open+1 : closing]
-				parameters, grammar := trimFromArguments(inner)
+				parameters, grammar := trimFromArguments(ctx, inner)
 				if upper == "NORMALIZE" {
 					parameters = splitTopLevelComma(inner)
 					grammar = false
@@ -416,7 +318,7 @@ func expressionFreeVariables(expression string) []string {
 				}
 				if grammar {
 					for _, parameter := range parameters {
-						for _, reference := range expressionFreeVariables(parameter) {
+						for _, reference := range expressionFreeVariables(ctx, parameter) {
 							if !locals.shadows(reference, open) {
 								names = append(names, reference)
 							}
@@ -427,7 +329,7 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if functionEnd, call := qualifiedFunctionNameEnd(expression, next); call {
+		if functionEnd, call := qualifiedFunctionNameEnd(expression, name.End); call {
 			delimiters = append(delimiters, '(')
 			index = functionEnd + 1
 			continue
@@ -435,7 +337,7 @@ func expressionFreeVariables(expression string) []string {
 		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
 		// variables and sees the outer ones; its body isn't an expression.
 		if _, open, subquery := subqueryExpressionKeywordAt(expression, index); subquery {
-			if closing := findMatchingDelimiter(expression, open, '{', '}'); closing > next {
+			if closing := cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter); closing > name.End {
 				index = closing + 1
 				continue
 			}
@@ -445,8 +347,8 @@ func expressionFreeVariables(expression string) []string {
 		normalForm := false
 		switch upper {
 		case "NFC", "NFD", "NFKC", "NFKD":
-			form, _, word := scanIdentifierToken(expression, skipSpaces(expression, next))
-			normalForm = word && strings.EqualFold(form, "NORMALIZED")
+			form, word := cyphertext.ScanIdentifier(expression, skipSpaces(expression, name.End))
+			normalForm = word && strings.EqualFold(form.Value, "NORMALIZED")
 		}
 		keyword := setExpressionKeyword(upper)
 		// END is also a legal variable, notably the operand in NOT end +
@@ -456,15 +358,15 @@ func expressionFreeVariables(expression string) []string {
 			keyword = false
 		}
 		if previous != '$' && previous != '.' && following != '(' && !mapKey && !normalForm && !keyword {
-			if !locals.shadows(name, index) {
-				names = append(names, name)
+			if !locals.shadows(name.Value, index) {
+				names = append(names, name.Value)
 			}
 		}
-		index = next
+		index = name.End
 		if following == ':' && !mapKey {
 			// The labels of n:A:B and of a label expression n:A|B&!C or
 			// n:%: names of labels, not variables.
-			labelStart := skipSpaces(expression, next)
+			labelStart := skipSpaces(expression, name.End)
 			for labelStart < len(expression) && strings.IndexByte(":|&", expression[labelStart]) >= 0 {
 				labelName := skipSpaces(expression, labelStart+1)
 				for labelName < len(expression) && expression[labelName] == '!' {
@@ -472,10 +374,11 @@ func expressionFreeVariables(expression string) []string {
 				}
 				labelEnd := labelName + 1
 				if labelName >= len(expression) || expression[labelName] != '%' {
-					var valid bool
-					if _, labelEnd, valid = scanIdentifierToken(expression, labelName); !valid {
+					label, valid := cyphertext.ScanIdentifier(expression, labelName)
+					if !valid {
 						break
 					}
+					labelEnd = label.End
 				}
 				labelStart = skipSpaces(expression, labelEnd)
 				index = labelStart
@@ -493,8 +396,8 @@ func expressionFreeVariables(expression string) []string {
 func expressionLocalBindings(expression string) map[string]struct{} {
 	locals := make(map[string]struct{})
 	for index := 0; index < len(expression); index++ {
-		switch c := expression[index]; c {
-		case '\'', '"', '`':
+		switch c := expression[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(expression, index, c) - 1
 		case '/':
 			if end := queryCommentEnd(expression, index); end >= 0 {
@@ -509,25 +412,6 @@ func expressionLocalBindings(expression string) map[string]struct{} {
 		}
 	}
 	return locals
-}
-
-func previousSetExpressionByte(text string, index int) byte {
-	for index--; index >= 0; index-- {
-		if !isWhitespace(text[index]) {
-			return text[index]
-		}
-	}
-	return 0
-}
-
-func nextSetExpressionByte(text string, index int) byte {
-	for index < len(text) {
-		if !isWhitespace(text[index]) {
-			return text[index]
-		}
-		index++
-	}
-	return 0
 }
 
 func setExpressionKeyword(token string) bool {

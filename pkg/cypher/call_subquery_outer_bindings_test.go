@@ -13,7 +13,7 @@ func TestPipelineProcedureEmptyInputContracts(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 	_, err := exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL dbms.components()")
-	requireSyntaxErrorStatus(t, err, "non-void procedure requires explicit YIELD inside a query")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "non-void procedure requires explicit YIELD inside a query")
 	result, err := exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL dbms.components() YIELD name AS component, versions RETURN component, versions")
 	require.NoError(t, err)
 	require.Equal(t, []string{"component", "versions"}, result.Columns)
@@ -22,16 +22,16 @@ func TestPipelineProcedureEmptyInputContracts(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Procedure.ProcedureNotFound")
 	_, err = exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL dbms.components(1) YIELD name RETURN name")
-	requireSyntaxErrorStatus(t, err, "invalid argument count even on empty input")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "invalid argument count even on empty input")
 }
 
 func TestPipelineProcedureRequiresWithAfterSet(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	exec, _ := newTestExecutor(t, "test")
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:ProcedureBefore {value:1})", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "MATCH (n:ProcedureBefore) SET n.value = 2 CALL dbms.components() YIELD name RETURN n.value AS value", nil)
-	requireSyntaxErrorStatus(t, err, "SET requires WITH before CALL")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "SET requires WITH before CALL")
 	unchanged, err := exec.Execute(ctx, "MATCH (n:ProcedureBefore) RETURN n.value AS value", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, unchanged.Rows)
@@ -72,7 +72,7 @@ func TestCanonicalTypedProcedureArgumentBoundaries(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{int64(7)}, arguments)
 	_, err = exec.callVectorQueryArguments(context.Background(), nil, false)
-	requireSyntaxErrorStatus(t, err, "no vector arguments")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "no vector arguments")
 	// A value of another type reaching the procedure is a TypeError; the
 	// statement's static check refuses it first, as Neo4j does (Type
 	// mismatch, a SyntaxError).
@@ -86,7 +86,7 @@ func TestCanonicalTypedProcedureArgumentBoundaries(t *testing.T) {
 		"WITH true AS v CALL db.index.vector.queryNodes('i', v, [1.0, 2.0]) YIELD node RETURN node",
 	} {
 		_, err := exec.Execute(context.Background(), query, nil)
-		requireSyntaxErrorStatus(t, err, query)
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
 	}
 	for _, relationships := range []bool{false, true} {
 		_, err := exec.callVectorQueryArguments(context.Background(), []interface{}{"index", int64(1), "text"}, relationships)
@@ -103,7 +103,7 @@ func TestProcedurePipelinePreservesTypedRowArguments(t *testing.T) {
 	var calls [][]interface{}
 	require.NoError(t, RegisterUserProcedure(
 		ProcedureSpec{Name: "custom.pipeline_entities", Mode: ProcedureModeRead, MinArgs: 3, MaxArgs: 3},
-		func(_ context.Context, _ *StorageExecutor, _ string, arguments []interface{}) (*ExecuteResult, error) {
+		func(readerCtx context.Context, _ *StorageExecutor, _ string, arguments []interface{}) (*ExecuteResult, error) {
 			calls = append(calls, arguments)
 			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{arguments[0].(*storage.Node).Properties["name"]}}}, nil
 		},
@@ -272,7 +272,7 @@ func TestCallSubqueryRefreshesOuterNodeAfterWrite(t *testing.T) {
 			require.NoError(t, err)
 
 			if explicitTx {
-				_, err = exec.handleBegin()
+				_, err = exec.handleBegin(t.Context())
 				require.NoError(t, err)
 			}
 			result, err := exec.Execute(ctx, "MATCH (n:C648Refresh {id:'a'}) CALL (n) { SET n.y = 2 } RETURN n.y AS y", nil)
@@ -293,7 +293,7 @@ func TestCallSubqueryRefreshesOuterNodeAfterWrite(t *testing.T) {
 			require.Equal(t, []string{"y", "id"}, result.Columns)
 			require.Equal(t, [][]interface{}{{int64(4), "b"}}, result.Rows)
 			if explicitTx {
-				_, err = exec.handleCommit()
+				_, err = exec.handleCommit(context.Background())
 				require.NoError(t, err)
 			}
 		})

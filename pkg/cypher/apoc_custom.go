@@ -1,8 +1,11 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers are the declared values in procedure_result_headers.go.
+
 import (
 	"context"
 	"encoding/base64"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"time"
 
@@ -39,7 +42,7 @@ func parseCustomSignature(signature string) (customSignature, bool) {
 	}
 	parsed := customSignature{name: strings.TrimPrefix(strings.TrimSpace(signature[:open]), apocCustomPrefix)}
 	for _, part := range strings.Split(parsed.name, ".") {
-		if !isValidIdentifier(part) {
+		if !cyphertext.IsIdentifier(part) {
 			return customSignature{}, false
 		}
 	}
@@ -60,7 +63,7 @@ func parseCustomSignature(signature string) (customSignature, bool) {
 			defaultLiteral, name = strings.TrimSpace(name[equals+1:]), strings.TrimSpace(name[:equals])
 		}
 		name = strings.TrimPrefix(name, "$")
-		if !isValidIdentifier(name) || seen[name] || typeName == "" {
+		if !cyphertext.IsIdentifier(name) || seen[name] || typeName == "" {
 			return customSignature{}, false
 		}
 		if defaultLiteral == "" && len(parsed.defaults) > 0 && parsed.defaults[len(parsed.defaults)-1] != "" {
@@ -89,7 +92,7 @@ func parseCustomSignature(signature string) (customSignature, bool) {
 	for _, part := range splitTopLevelComma(inner) {
 		name, typeName, found := strings.Cut(part, "::")
 		name, typeName = strings.TrimSpace(name), strings.TrimSpace(typeName)
-		if !found || !isValidIdentifier(name) || typeName == "" {
+		if !found || !cyphertext.IsIdentifier(name) || typeName == "" {
 			return customSignature{}, false
 		}
 		parsed.outputs = append(parsed.outputs, ProcedureColumn{Name: name, Type: upperASCII(typeName)})
@@ -216,8 +219,8 @@ func (e *StorageExecutor) callApocCustomDrop(ctx context.Context, args []interfa
 // callApocCustomList lists the custom procedures installed in the current
 // database, in APOC's columns: apoc.custom.list() and apoc.custom.show().
 func (e *StorageExecutor) callApocCustomList(ctx context.Context) (*ExecuteResult, error) {
-	result := &ExecuteResult{Columns: []string{"type", "name", "description", "mode", "statement", "inputs", "outputs", "forceSingle"}, Rows: [][]interface{}{}}
-	nodes, err := e.getStorage(ctx).GetNodesByLabel(procedureCatalogLabel)
+	result := &ExecuteResult{Columns: columnNames(apocCustomListColumns), Rows: [][]interface{}{}}
+	nodes, err := e.getStorage(ctx).GetNodesByLabel(ctx, procedureCatalogLabel)
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCatalogReadFailed(err), err)
 	}

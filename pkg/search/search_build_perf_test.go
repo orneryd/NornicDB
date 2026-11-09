@@ -5,6 +5,8 @@ import (
 	"sort"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -95,8 +97,8 @@ func TestLooksLikeDenseNumericSlice_Branches(t *testing.T) {
 func TestBuildIndexes_IndexesNamedChunkAndPropertyVectors(t *testing.T) {
 	t.Parallel()
 
-	engine := storage.NewMemoryEngine()
-	svc := NewServiceWithDimensions(engine, 3)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	svc := NewService(engine, 3, nil)
 
 	node := &storage.Node{
 		ID:     "nornic:doc-vectors",
@@ -113,42 +115,40 @@ func TestBuildIndexes_IndexesNamedChunkAndPropertyVectors(t *testing.T) {
 			{0, 1, 0},
 		},
 	}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 
-	// Expected vectors:
-	// - named: "nornic:doc-vectors-named-titleVec"
-	// - chunks: chunk 0 under the main id + chunk-1
-	// - custom property vector: "nornic:doc-vectors-prop-customVec"
+	// Expected vectors, under vector_entry_key.go keys:
+	// - named: titleVec
+	// - chunks: chunk 0 under the main id + chunk 1
+	// - custom property vector: customVec
 	require.Equal(t, 4, svc.EmbeddingCount())
 
 	named := svc.nodeNamedVector["nornic:doc-vectors"]
 	require.NotNil(t, named)
-	require.Equal(t, "nornic:doc-vectors-named-titleVec", named["titleVec"])
+	require.Equal(t, nodeNamedVectorKey("nornic:doc-vectors", "titleVec"), named["titleVec"])
 
 	props := svc.nodePropVector["nornic:doc-vectors"]
 	require.NotNil(t, props)
-	require.Equal(t, "nornic:doc-vectors-prop-customVec", props["customVec"])
+	require.Equal(t, nodePropertyVectorKey("nornic:doc-vectors", "customVec"), props["customVec"])
 
 	chunks := svc.nodeChunkVectors["nornic:doc-vectors"]
-	require.Contains(t, chunks, "nornic:doc-vectors")
-	require.NotContains(t, chunks, "nornic:doc-vectors-chunk-0")
-	require.Contains(t, chunks, "nornic:doc-vectors-chunk-1")
+	require.Equal(t, []string{"nornic:doc-vectors", nodeChunkVectorKey("nornic:doc-vectors", 1)}, chunks)
 }
 
 func TestBuildIndexes_IndexesRelationshipPropertyVectors(t *testing.T) {
 	t.Parallel()
 
-	engine := storage.NewMemoryEngine()
-	svc := NewServiceWithDimensions(engine, 3)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	svc := NewService(engine, 3, nil)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:a"})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:a"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:b"})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:b"})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "nornic:r1",
 		StartNode: "nornic:a",
 		EndNode:   "nornic:b",
@@ -177,7 +177,7 @@ func TestBuildIndexes_IndexesRelationshipPropertyVectors(t *testing.T) {
 func TestIndexEdge_ReplacesExistingRelationshipVectors(t *testing.T) {
 	t.Parallel()
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	edge := &storage.Edge{
 		ID:        "r1",
 		StartNode: "a",
@@ -213,16 +213,16 @@ func BenchmarkRelationshipVectorQueryIndexedVsStorageScan(b *testing.B) {
 		limit     = 50
 	)
 
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:a"})
+	_, err = engine.CreateNode(b.Context(), &storage.Node{ID: "nornic:a"})
 	require.NoError(b, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:b"})
+	_, err = engine.CreateNode(b.Context(), &storage.Node{ID: "nornic:b"})
 	require.NoError(b, err)
 	for i := 0; i < edgeCount; i++ {
-		require.NoError(b, engine.CreateEdge(&storage.Edge{
+		require.NoError(b, engine.CreateEdge(b.Context(), &storage.Edge{
 			ID:        storage.EdgeID("nornic:rel-" + formatBenchID(i)),
 			StartNode: "nornic:a",
 			EndNode:   "nornic:b",
@@ -236,7 +236,7 @@ func BenchmarkRelationshipVectorQueryIndexedVsStorageScan(b *testing.B) {
 
 	ctx := context.Background()
 	query := benchmarkRelationshipVector(0, dim)
-	svc := NewServiceWithDimensions(engine, dim)
+	svc := NewService(engine, dim, nil)
 	require.NoError(b, svc.BuildIndexes(ctx))
 	require.True(b, svc.HasRelationshipVectorEntries("RELATES_TO", "fact_embedding"))
 

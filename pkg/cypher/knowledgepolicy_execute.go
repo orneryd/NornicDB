@@ -11,8 +11,7 @@ import (
 )
 
 func (e *StorageExecutor) executeKnowledgePolicyDDL(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	_ = ctx
-	cmd, ok, err := ParseKnowledgePolicyDDL(cypher)
+	cmd, ok, err := ParseKnowledgePolicyDDL(ctx, cypher, AcceptedSource)
 	if err != nil {
 		return nil, err
 	}
@@ -20,7 +19,7 @@ func (e *StorageExecutor) executeKnowledgePolicyDDL(ctx context.Context, cypher 
 		return nil, localizedError(localization.CypherKnowledgePolicyUnsupportedCommand(cypher), nil)
 	}
 
-	schema, err := e.knowledgePolicySchema()
+	_, schema, err := e.knowledgePolicyContext("")
 	if err != nil {
 		return nil, err
 	}

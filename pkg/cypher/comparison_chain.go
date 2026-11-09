@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 type comparisonOperatorSpan struct {
 	offset int
@@ -22,22 +25,15 @@ func (scan *comparisonChainScan) append(span comparisonOperatorSpan) {
 	scan.count++
 }
 
-func (scan *comparisonChainScan) operator(index int) comparisonOperatorSpan {
-	if index < len(scan.inline) {
-		return scan.inline[index]
-	}
-	return scan.overflow[index-len(scan.inline)]
-}
-
 func (scan *comparisonChainScan) operand(expression string, index int) string {
 	start := 0
 	if index > 0 {
-		previous := scan.operator(index - 1)
+		previous := inlineOverflowAt(scan.inline[:], scan.overflow, index-1)
 		start = previous.offset + previous.length
 	}
 	end := len(expression)
 	if index < scan.count {
-		end = scan.operator(index).offset
+		end = inlineOverflowAt(scan.inline[:], scan.overflow, index).offset
 	}
 	return strings.TrimSpace(expression[start:end])
 }
@@ -88,32 +84,30 @@ func evaluateScannedComparisonChain(
 	cypher25 bool,
 ) (interface{}, bool, error) {
 	left, leftOK, leftErr := resolve(0, scan.operand(expression, 0))
-	if normalizeIdentity {
-		left = rowIdentityPayload(left)
-	}
 	hasNull, resolved := false, leftOK
 	firstErr := leftErr
 	for index := 0; index < scan.count; index++ {
-		span := scan.operator(index)
+		span := inlineOverflowAt(scan.inline[:], scan.overflow, index)
 		operator := expression[span.offset : span.offset+span.length]
 		right, rightOK, rightErr := resolve(index+1, scan.operand(expression, index+1))
 		if firstErr == nil {
 			firstErr = rightErr
 		}
 		resolved = resolved && rightOK
-		if normalizeIdentity {
-			right = rowIdentityPayload(right)
-		}
 		// A later false discards an earlier error; a decided false never
 		// evaluates the remaining operands. Each operand is evaluated once.
 		if leftOK && rightOK && leftErr == nil && rightErr == nil {
+			comparisonLeft, comparisonRight := left, right
+			if normalizeIdentity {
+				comparisonLeft, comparisonRight = normalizeRowIdentityValues(left, right)
+			}
 			if left == nil || right == nil {
 				hasNull = true
 			} else {
 				if operator == "!=" {
 					operator = "<>"
 				}
-				leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right, cypher25)
+				leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), comparisonLeft, comparisonRight, cypher25)
 				comparison := compare(leftValue, rightValue, operator)
 				if comparison == nil {
 					hasNull = true
@@ -149,7 +143,7 @@ func splitComparisonChain(expression string) ([]string, []string, bool) {
 	operands := make([]string, scan.count+1)
 	operators := make([]string, scan.count)
 	for index := 0; index < scan.count; index++ {
-		span := scan.operator(index)
+		span := inlineOverflowAt(scan.inline[:], scan.overflow, index)
 		operands[index] = scan.operand(expression, index)
 		operators[index] = expression[span.offset : span.offset+span.length]
 	}
@@ -170,55 +164,14 @@ func scanComparisonChain(expression string) (comparisonChainScan, bool) {
 	var scan comparisonChainScan
 	operandStart := 0
 	parenDepth, bracketDepth, braceDepth, caseDepth := 0, 0, 0, 0
-	var quote byte
-	inLineComment, inBlockComment := false, false
 
 	for index := 0; index < len(expression); index++ {
+		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
+			index = end - 1
+			continue
+		}
 		current := expression[index]
-		if inLineComment {
-			if current == '\n' || current == '\r' {
-				inLineComment = false
-			}
-			continue
-		}
-		if inBlockComment {
-			if current == '*' && index+1 < len(expression) && expression[index+1] == '/' {
-				inBlockComment = false
-				index++
-			}
-			continue
-		}
-		if quote != 0 {
-			if current == '\\' && quote != '`' && index+1 < len(expression) {
-				index++
-				continue
-			}
-			if current == quote {
-				if index+1 < len(expression) && expression[index+1] == quote {
-					index++
-					continue
-				}
-				quote = 0
-			}
-			continue
-		}
-
-		if current == '/' && index+1 < len(expression) {
-			switch expression[index+1] {
-			case '/':
-				inLineComment = true
-				index++
-				continue
-			case '*':
-				inBlockComment = true
-				index++
-				continue
-			}
-		}
 		switch current {
-		case '\'', '"', '`':
-			quote = current
-			continue
 		case '(':
 			parenDepth++
 			continue
@@ -311,8 +264,11 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 	var scan comparisonChainScan
 	operandStart := 0
 	for index := 0; index < len(expression); index++ {
+		if _, quoted := skipCypherLexicalToken(expression, index); quoted {
+			return comparisonChainScan{}, false, true
+		}
 		switch expression[index] {
-		case '\'', '"', '`', '(', ')', '[', ']', '{', '}', ':':
+		case '(', ')', '[', ']', '{', '}', ':':
 			return comparisonChainScan{}, false, true
 		case '/':
 			if index+1 < len(expression) && (expression[index+1] == '/' || expression[index+1] == '*') {
@@ -325,7 +281,7 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 			if incomingArrowAt(expression, index) {
 				continue
 			}
-			if index > 0 && isIdentByte(expression[index-1]) && typeConstructorBefore(expression, index) {
+			if index > 0 && cyphertext.NamePartAt(expression, index-1) && typeConstructorBefore(expression, index) {
 				return comparisonChainScan{}, false, true
 			}
 			operatorLength = 1
@@ -388,7 +344,7 @@ func operandMayContainCase(operand string) bool {
 // position index (LIST<INTEGER> in a type predicate, #838).
 func typeConstructorBefore(expression string, index int) bool {
 	start := index
-	for start > 0 && isIdentByte(expression[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(expression, start-1) {
 		start--
 	}
 	switch upperASCII(expression[start:index]) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"strconv"
@@ -169,16 +171,30 @@ func decodeCypherDateTime(decoder *msgpack.Decoder, value reflect.Value, length 
 type temporalStatementTimeKey struct{}
 
 // rowStatementContextKey binds the statement's context in a row for the row
-// evaluator, which takes no context: its clock calls read the statement's
-// instant from it, and its subquery expressions run with it (#1055).
+// evaluator, which takes no context argument: function calls retain execution
+// identity and version, clock calls share its instant, and subqueries run in it.
 const rowStatementContextKey = "\x00statement_context"
 
-// needsRowStatementContext reports an expression whose row evaluation reads
-// the statement context: a clock call, a subquery expression, or a
-// relationship pattern, which reads the graph of the statement's transaction.
-func needsRowStatementContext(expression string) bool {
-	return containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
-		containsRelationshipPattern(expression) || containsContextPluginCall(expression)
+// needsRowStatementContext preserves statement state for function dispatch and
+// graph expressions. This applies to nested calls as well as whole expressions:
+// every registry function must see the same execution identity and version.
+func needsRowStatementContext(ctx context.Context, expression string) bool {
+	if containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
+		containsRelationshipPattern(expression) || containsContextPluginCall(ctx, expression) {
+		return true
+	}
+	called := false
+	if err := forEachFunctionCall(ctx, expression, func(string, string) error {
+		called = true
+		return nil
+	}); err != nil {
+		// The scan stopped at the caller's cancellation before reading the whole
+		// expression, so it cannot say the expression calls no function: the
+		// statement context is retained rather than dropped for a verdict the
+		// scan never completed.
+		return true
+	}
+	return called
 }
 
 // rowStatementContextOrBackground is the statement context a row carries, or
@@ -207,11 +223,11 @@ func containsStatementClockCall(expression string) bool {
 			continue
 		}
 		end := index
-		for end > 0 && isASCIISpace(expression[end-1]) {
+		for end > 0 && cyphertext.IsWhitespaceAt(expression, end-1) {
 			end--
 		}
 		start := end
-		for start > 0 && (isIdentByte(expression[start-1]) || expression[start-1] == '.') {
+		for start > 0 && (cyphertext.NamePartAt(expression, start-1) || expression[start-1] == '.') {
 			start--
 		}
 		name := expression[start:end]
@@ -253,8 +269,8 @@ func (e *StorageExecutor) temporalClockTime(ctx context.Context, clock string) t
 			return wrapper.tx.StartTime.UTC()
 		}
 	}
-	if instant, ok := ctx.Value(temporalStatementTimeKey{}).(time.Time); ok {
-		return instant
+	if instant, ok := ctx.Value(temporalStatementTimeKey{}).(*time.Time); ok {
+		return *instant
 	}
 	return time.Now().UTC()
 }
@@ -282,9 +298,36 @@ func temporalClockValue(kind string, instant time.Time, zoneID string) (interfac
 // is false for any other expression. A call Neo4j rejects at run time
 // returns its error: an argument of a type the function doesn't take is
 // ProcedureCallFailed ("Invalid call signature for Truncate: …").
-func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEval func(string) interface{}, expression string) (interface{}, bool, error) {
-	name, argument, ok := parseFunctionCallWS(expression)
-	if !ok {
+//
+// callFacts is the call its caller already recognized (inspectFunctionCall):
+// its name and argument text are read from there, so evaluating a call does
+// not parse its expression again. A caller whose expression isn't a function
+// call passes the zero value, which is handled false.
+func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evaluate func(string) (interface{}, bool, error), callFacts functionCallFacts) (result interface{}, handled bool, err error) {
+	var argumentErr error
+	var lastArgument interface{}
+	argumentEvaluated := false
+	ctxEval := func(argument string) interface{} {
+		if argumentErr != nil {
+			return nil
+		}
+		value, resolved, evalErr := evaluate(argument)
+		value, argumentErr = checkedPropertyResult(ctx, argument, value, resolved, evalErr)
+		argumentEvaluated, lastArgument = true, value
+		return value
+	}
+	defer func() {
+		if argumentErr != nil {
+			result, err = nil, argumentErr
+			return
+		}
+		if result == nil && handled && err == nil && argumentEvaluated && lastArgument != nil &&
+			isTemporalConstructor(callFacts.name) && strings.TrimSpace(callFacts.inner) != "" && len(e.splitFunctionArgs(callFacts.inner)) == 1 {
+			err = temporalConstructorError(callFacts.name, lastArgument)
+		}
+	}()
+	name, argument := callFacts.name, callFacts.inner
+	if name == "" {
 		return nil, false, nil
 	}
 	kind := lowerASCII(name)
@@ -546,7 +589,7 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 	value := time.Date(date.Year(), date.Month(), date.Day(), int(hour), int(minute), int(second), int(nanosecond), zone)
 	if kind == "datetime" && zoneID != "" {
 		local := time.Date(date.Year(), date.Month(), date.Day(), int(hour), int(minute), int(second), int(nanosecond), time.UTC)
-		value = resolveNamedZoneLocalTime(local, zone, true)
+		value = ResolveNamedZoneLocalTime(local, zone, true)
 	}
 	value = normalizeTemporalNamedZone(value)
 	switch kind {
@@ -564,6 +607,14 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 }
 
 func projectTemporalValue(kind string, value interface{}) (interface{}, bool) {
+	// Public parameters may carry a pointer to any typed temporal value.
+	// Project the value before reading its source date, clock and offset.
+	if pointer := reflect.ValueOf(value); pointer.IsValid() && pointer.Kind() == reflect.Ptr {
+		if pointer.IsNil() {
+			return nil, false
+		}
+		value = pointer.Elem().Interface()
+	}
 	date, hasDate := temporalBaseDate(value)
 	clock, zoned, hasTime := temporalTimeParts(value)
 	switch kind {
@@ -579,7 +630,11 @@ func projectTemporalValue(kind string, value interface{}) (interface{}, bool) {
 		if hasTime {
 			location := time.UTC
 			if zoned {
-				location = clock.Location()
+				// A TIME carries the offset at the source instant. Reusing a
+				// region on the placeholder date can select a different DST
+				// or historical offset (for example St John's in summer).
+				_, offset := clock.Zone()
+				location = time.FixedZone("", offset)
 			}
 			return CypherTime{Time: time.Date(1970, 1, 1, clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location)}, true
 		}
@@ -778,6 +833,9 @@ func temporalLocation(fields map[string]interface{}, zoned bool) (*time.Location
 }
 
 func parseTemporalOffset(value string) (int, bool) {
+	if value == "Z" {
+		return 0, true
+	}
 	if len(value) == 5 || len(value) == 7 {
 		sign := 1
 		if value[0] == '-' {
@@ -841,29 +899,15 @@ func temporalOptionalInt(fields map[string]interface{}, name string) (int64, boo
 }
 
 func temporalInt(value interface{}) (int64, bool) {
-	switch number := value.(type) {
-	case int64:
-		return number, true
-	case int:
-		return int64(number), true
-	case float64:
-		return int64(number), number == math.Trunc(number)
-	default:
-		return 0, false
-	}
+	return valueconvert.Int64(value, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat)
 }
 
 func temporalFloat(fields map[string]interface{}, name string) float64 {
-	switch number := fields[name].(type) {
-	case int64:
-		return float64(number)
-	case int:
-		return float64(number)
-	case float64:
-		return number
-	default:
+	floating, ok := valueconvert.NumericFloat64(fields[name])
+	if !ok {
 		return 0
 	}
+	return floating
 }
 
 func buildDurationFromFields(fields map[string]interface{}) *CypherDuration {

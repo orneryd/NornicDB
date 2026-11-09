@@ -16,7 +16,7 @@ func TestDeindexCleanup_ProcessesPendingItems(t *testing.T) {
 		Labels:     []string{"Thing"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
@@ -26,7 +26,7 @@ func TestDeindexCleanup_ProcessesPendingItems(t *testing.T) {
 		TargetScope: "NODE",
 		Status:      "pending",
 	}
-	if err := eng.PutDeindexWorkItem(item); err != nil {
+	if err := eng.PutDeindexWorkItem(t.Context(), item); err != nil {
 		t.Fatal(err)
 	}
 
@@ -67,7 +67,7 @@ func TestDeindexCleanup_Idempotent(t *testing.T) {
 		Labels:     []string{"Thing"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,7 +77,7 @@ func TestDeindexCleanup_Idempotent(t *testing.T) {
 		TargetScope: "NODE",
 		Status:      "pending",
 	}
-	if err := eng.PutDeindexWorkItem(item); err != nil {
+	if err := eng.PutDeindexWorkItem(t.Context(), item); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,7 +109,7 @@ func TestDeindexCleanup_NoCatalog(t *testing.T) {
 		TargetScope: "NODE",
 		Status:      "pending",
 	}
-	if err := eng.PutDeindexWorkItem(item); err != nil {
+	if err := eng.PutDeindexWorkItem(t.Context(), item); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,7 +164,7 @@ func TestDeindexCleanupJob_RunOnce_CanceledContext(t *testing.T) {
 	eng := newTestEngine(t)
 
 	for i := 0; i < 3; i++ {
-		require.NoError(t, eng.PutDeindexWorkItem(&DeindexWorkItem{
+		require.NoError(t, eng.PutDeindexWorkItem(t.Context(), &DeindexWorkItem{
 			WorkItemID:  "wi-cancel-" + string(rune('a'+i)),
 			TargetID:    "nornic:cancel-" + string(rune('a'+i)),
 			TargetScope: "NODE",
@@ -189,7 +189,7 @@ func TestDeindexCleanupJob_RetryWorkItemBranches(t *testing.T) {
 		TargetScope: "NODE",
 		Status:      "pending",
 	}
-	job.retryWorkItem(item)
+	job.retryWorkItem(t.Context(), item)
 
 	stored, err := eng.GetDeindexWorkItem("deindex:nornic:retry")
 	require.NoError(t, err)
@@ -200,7 +200,7 @@ func TestDeindexCleanupJob_RetryWorkItemBranches(t *testing.T) {
 
 	item.RetryCount = 20
 	item.Status = "pending"
-	job.retryWorkItem(item)
+	job.retryWorkItem(t.Context(), item)
 	stored, err = eng.GetDeindexWorkItem("deindex:nornic:retry")
 	require.NoError(t, err)
 	require.NotNil(t, stored)

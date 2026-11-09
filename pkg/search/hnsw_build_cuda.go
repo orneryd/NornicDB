@@ -18,6 +18,7 @@ type CudaHNSWBuildAccelerator struct {
 	dim                 int
 	maxFrontierPerShard int
 	maxQueriesPerShard  int
+	resident            residentBuildVectors[*cuda.Buffer]
 }
 
 // NewCudaHNSWBuildAccelerator creates a CUDA-backed HNSW build accelerator.
@@ -40,7 +41,13 @@ func (a *CudaHNSWBuildAccelerator) Prepare(dim int, _ int) error {
 	if dim <= 0 {
 		return localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(dim), nil)
 	}
+	a.resident.close()
 	a.dim = dim
+	a.resident = residentBuildVectors[*cuda.Buffer]{
+		dimensions: dim,
+		upload:     func(flat []float32) (*cuda.Buffer, error) { return a.device.NewBuffer(flat, cuda.MemoryDevice) },
+		score:      a.scoreResidentBuffer,
+	}
 	return nil
 }
 
@@ -55,98 +62,15 @@ func (a *CudaHNSWBuildAccelerator) candidateSearch(ctx context.Context, queries 
 	if a.device == nil {
 		return nil, nil, cuda.ErrCUDANotAvailable
 	}
-	if topK > 256 {
-		topK = 256
-	}
-	shardSize := a.maxFrontierPerShard
-	if shardSize <= 0 {
-		shardSize = 65536
-	}
-	queryShardSize := a.maxQueriesPerShard
-	if queryShardSize <= 0 {
-		queryShardSize = 512
-	}
-	merged := make([][]hnswCandidateDistance, len(queries))
-	flat := make([]float32, 0, min(len(frontier), shardSize)*a.dim)
-	flatQueries := make([]float32, 0, min(len(queries), queryShardSize)*a.dim)
-	for start := 0; start < len(frontier); start += shardSize {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
-		end := start + shardSize
-		if end > len(frontier) {
-			end = len(frontier)
-		}
-		flat = flattenHNSWBuildFrontierInto(flat[:0], frontier[start:end], a.dim)
-		if len(flat) == 0 {
-			continue
-		}
+	return shardedFrontierCandidateSearch(ctx, frontier, a.dim, a.maxFrontierPerShard, topK, queries, wantDistances, func(ctx context.Context, flat []float32, n int, queries [][]float32, k int) ([][]uint32, [][]float32, error) {
 		frontierBuf, err := a.device.NewBuffer(flat, cuda.MemoryDevice)
 		if err != nil {
 			return nil, nil, err
 		}
-		for qStart := 0; qStart < len(queries); qStart += queryShardSize {
-			if err := ctx.Err(); err != nil {
-				frontierBuf.Release()
-				return nil, nil, err
-			}
-			qEnd := qStart + queryShardSize
-			if qEnd > len(queries) {
-				qEnd = len(queries)
-			}
-			flatQueries = flattenHNSWBuildQueriesInto(flatQueries[:0], queries[qStart:qEnd], a.dim)
-			queryBuf, err := a.device.NewBuffer(flatQueries, cuda.MemoryDevice)
-			if err != nil {
-				frontierBuf.Release()
-				return nil, nil, err
-			}
-			indices, scores, err := a.device.HNSWBuildTopK(frontierBuf, queryBuf, uint32(end-start), uint32(qEnd-qStart), uint32(a.dim), topK)
-			queryBuf.Release()
-			if err != nil {
-				frontierBuf.Release()
-				return nil, nil, err
-			}
-			for localQ := 0; localQ < qEnd-qStart; localQ++ {
-				globalQ := qStart + localQ
-				row := localQ * topK
-				for i := 0; i < topK && row+i < len(indices) && row+i < len(scores); i++ {
-					localIdx := int(indices[row+i])
-					idx := start + localIdx
-					if localIdx < 0 || idx < start || idx >= end {
-						continue
-					}
-					merged[globalQ] = append(merged[globalQ], hnswCandidateDistance{
-						index: idx,
-						dist:  float32(1.0) - scores[row+i],
-					})
-				}
-			}
-		}
+		indices, distances, err := a.scoreResidentBuffer(ctx, frontierBuf, n, queries, k)
 		frontierBuf.Release()
-	}
-
-	outIdx := make([][]int, len(queries))
-	var outDist [][]float32
-	if wantDistances {
-		outDist = make([][]float32, len(queries))
-	}
-	for qi := range queries {
-		sortHNSWBuildCandidates(merged[qi])
-		if topK < len(merged[qi]) {
-			merged[qi] = merged[qi][:topK]
-		}
-		outIdx[qi] = make([]int, len(merged[qi]))
-		if wantDistances {
-			outDist[qi] = make([]float32, len(merged[qi]))
-		}
-		for i, c := range merged[qi] {
-			outIdx[qi][i] = c.index
-			if wantDistances {
-				outDist[qi][i] = c.dist
-			}
-		}
-	}
-	return outIdx, outDist, nil
+		return indices, distances, err
+	})
 }
 
 func (a *CudaHNSWBuildAccelerator) CandidateSearchGraph(ctx context.Context, queries [][]float32, graph *hnswBuildGraphSnapshot, topK int) ([][]uint32, [][]float32, error) {
@@ -156,16 +80,62 @@ func (a *CudaHNSWBuildAccelerator) CandidateSearchGraph(ctx context.Context, que
 	if a.device == nil {
 		return nil, nil, cuda.ErrCUDANotAvailable
 	}
-	if topK > 256 {
-		topK = 256
-	}
 	return candidateSearchGraphBatched(ctx, a, queries, graph, topK)
 }
 
 func (a *CudaHNSWBuildAccelerator) Close() error {
+	a.resident.close()
 	if a.device != nil {
 		a.device.Release()
 		a.device = nil
 	}
 	return nil
+}
+
+// ResidentReady reports whether device buffers can be retained for this build.
+func (a *CudaHNSWBuildAccelerator) ResidentReady() bool { return a.device != nil && a.dim > 0 }
+
+// AppendInserted uploads only the newly inserted normalized vectors.
+func (a *CudaHNSWBuildAccelerator) AppendInserted(vecs [][]float32) error {
+	return a.resident.append(vecs)
+}
+
+// CandidateSearchInserted scores resident vectors without re-uploading the corpus.
+func (a *CudaHNSWBuildAccelerator) CandidateSearchInserted(ctx context.Context, queries [][]float32, topK int) ([][]uint32, [][]float32, error) {
+	return a.resident.search(ctx, queries, topK)
+}
+
+func (a *CudaHNSWBuildAccelerator) scoreResidentBuffer(ctx context.Context, frontierBuf *cuda.Buffer, frontierN int, queries [][]float32, topK int) ([][]uint32, [][]float32, error) {
+	ids := make([][]uint32, len(queries))
+	distances := make([][]float32, len(queries))
+	// Bound the score matrix as well as the number of submitted queries.
+	chunk := max(1, min(512, hnswBuildScoreFloats/frontierN))
+	for qStart := 0; qStart < len(queries); qStart += chunk {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		qEnd := min(qStart+chunk, len(queries))
+		flatQueries := flattenHNSWBuildQueriesInto(nil, queries[qStart:qEnd], a.dim)
+		queryBuf, err := a.device.NewBuffer(flatQueries, cuda.MemoryDevice)
+		if err != nil {
+
+			return nil, nil, err
+		}
+		indices, scores, err := a.device.HNSWBuildTopK(frontierBuf, queryBuf, uint32(frontierN), uint32(qEnd-qStart), uint32(a.dim), topK)
+		queryBuf.Release()
+		if err != nil {
+
+			return nil, nil, err
+		}
+		for qi := qStart; qi < qEnd; qi++ {
+			for j := 0; j < topK; j++ {
+				at := (qi-qStart)*topK + j
+				if at < len(indices) && at < len(scores) && uint64(indices[at]) < uint64(frontierN) {
+					ids[qi] = append(ids[qi], uint32(indices[at]))
+					distances[qi] = append(distances[qi], 1-scores[at])
+				}
+			}
+		}
+	}
+	return ids, distances, nil
 }

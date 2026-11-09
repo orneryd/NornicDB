@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -56,8 +58,8 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 	// This enables GraphQL subscriptions to receive real-time updates
 	// Get the underlying storage engine and unwrap layers (NamespacedEngine, WALEngine)
 	// to reach the BadgerEngine that implements StorageEventNotifier
-	// Note: Events from all namespaces will be published. Namespace filtering
-	// can be added later if needed by checking node/edge ID prefixes.
+	// Events from all namespaces reach this notifier. The broker tags each event
+	// with its database and delivers it only to subscriptions bound to that DB.
 	if db != nil {
 		underlyingEngine := db.GetStorage()
 
@@ -72,63 +74,62 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 		}
 
 		if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok {
-			// Get default database name for namespace prefix removal
-			defaultDBName := dbManager.DefaultDatabaseName()
-			namespacePrefix := defaultDBName + ":"
-
-			// Helper to unprefix node ID
+			// Helpers expose user-facing IDs while retaining the namespace as the
+			// event's database routing key.
 			unprefixNodeID := func(id storage.NodeID) storage.NodeID {
-				idStr := string(id)
-				if strings.HasPrefix(idStr, namespacePrefix) {
-					return storage.NodeID(idStr[len(namespacePrefix):])
+				if _, userID, found := strings.Cut(string(id), ":"); found {
+					return storage.NodeID(userID)
 				}
 				return id
 			}
-
-			// Helper to unprefix edge ID
 			unprefixEdgeID := func(id storage.EdgeID) storage.EdgeID {
-				idStr := string(id)
-				if strings.HasPrefix(idStr, namespacePrefix) {
-					return storage.EdgeID(idStr[len(namespacePrefix):])
+				if _, userID, found := strings.Cut(string(id), ":"); found {
+					return storage.EdgeID(userID)
 				}
 				return id
 			}
 
 			// Node events
 			notifier.OnNodeCreated(func(node *storage.Node) {
+				database := storage.ExtractNamespaceFromID(string(node.ID))
 				// Create a copy with unprefixed ID for GraphQL
 				unprefixedNode := *storage.NewNormalEventResultProjection(underlyingEngine).Node(node)
 				unprefixedNode.ID = unprefixNodeID(node.ID)
-				broker.PublishNodeCreated(storageNodeToModel(&unprefixedNode))
+				broker.PublishNodeCreatedInDatabase(database, storageNodeToModel(&unprefixedNode))
 			})
 			notifier.OnNodeUpdated(func(node *storage.Node) {
+				database := storage.ExtractNamespaceFromID(string(node.ID))
 				unprefixedNode := *storage.NewNormalEventResultProjection(underlyingEngine).Node(node)
 				unprefixedNode.ID = unprefixNodeID(node.ID)
-				broker.PublishNodeUpdated(storageNodeToModel(&unprefixedNode))
+				broker.PublishNodeUpdatedInDatabase(database, storageNodeToModel(&unprefixedNode))
 			})
 			notifier.OnNodeDeleted(func(nodeID storage.NodeID) {
+				database := storage.ExtractNamespaceFromID(string(nodeID))
 				unprefixedID := unprefixNodeID(nodeID)
-				broker.PublishNodeDeleted(string(unprefixedID))
+				broker.PublishNodeDeletedInDatabase(database, string(unprefixedID))
 			})
 
 			// Relationship (edge) events
 			notifier.OnEdgeCreated(func(edge *storage.Edge) {
+				database := storage.ExtractNamespaceFromID(string(edge.ID))
 				unprefixedEdge := *storage.NewNormalEventResultProjection(underlyingEngine).Edge(edge)
 				unprefixedEdge.ID = unprefixEdgeID(edge.ID)
 				unprefixedEdge.StartNode = unprefixNodeID(edge.StartNode)
 				unprefixedEdge.EndNode = unprefixNodeID(edge.EndNode)
-				broker.PublishRelationshipCreated(storageEdgeToModel(&unprefixedEdge))
+				broker.PublishRelationshipCreatedInDatabase(database, storageEdgeToModel(&unprefixedEdge))
 			})
 			notifier.OnEdgeUpdated(func(edge *storage.Edge) {
+				database := storage.ExtractNamespaceFromID(string(edge.ID))
 				unprefixedEdge := *storage.NewNormalEventResultProjection(underlyingEngine).Edge(edge)
 				unprefixedEdge.ID = unprefixEdgeID(edge.ID)
 				unprefixedEdge.StartNode = unprefixNodeID(edge.StartNode)
 				unprefixedEdge.EndNode = unprefixNodeID(edge.EndNode)
-				broker.PublishRelationshipUpdated(storageEdgeToModel(&unprefixedEdge))
+				broker.PublishRelationshipUpdatedInDatabase(database, storageEdgeToModel(&unprefixedEdge))
 			})
 			notifier.OnEdgeDeleted(func(edgeID storage.EdgeID) {
+				database := storage.ExtractNamespaceFromID(string(edgeID))
 				unprefixedID := unprefixEdgeID(edgeID)
-				broker.PublishRelationshipDeleted(string(unprefixedID))
+				broker.PublishRelationshipDeletedInDatabase(database, string(unprefixedID))
 			})
 		}
 	}
@@ -155,16 +156,28 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 	}
 
 	executor := cypher.NewStorageExecutor(storage)
-	executor.SetDatabaseManager(&graphqlDatabaseManagerAdapter{manager: r.dbManager})
+	if err := executor.UseDatabaseStatementCaches(r.dbManager, effectiveDb); err != nil {
+		return nil, err
+	}
+	executor.SetDatabaseManager(&graphqlDatabaseManagerAdapter{ExecutionCatalog: catalogadapter.ForExecution(r.dbManager)})
 
 	// Copy configuration from base DB's executor if available
 	if r.DB != nil {
+		// System Cypher uses metadata storage, not a data search service.
+		// Query and mutation share this canonical namespace-aware setup.
+		if effectiveDb != r.dbManager.SystemDatabaseName() {
+			if _, err := r.DB.GetOrCreateSearchService(effectiveDb, storage); err != nil {
+				return nil, err
+			}
+			executor.SetSearchServiceResolver(effectiveDb, r.DB.SearchServiceResolver())
+		}
 		baseExecutor := r.DB.GetCypherExecutor()
 		if baseExecutor != nil {
 			executor.SetLocalizationRenderer(baseExecutor.GetLocalizationRenderer())
 			// Copy embedder for vector search queries (CALL db.index.vector.queryNodes)
 			// This ensures GraphQL queries can use string-based vector search
 			executor.ShareEmbedderFrom(baseExecutor)
+			executor.ShareInferenceManagerFrom(baseExecutor)
 		}
 
 		// Wire up embedding callback to use the base DB's embed queue
@@ -195,6 +208,102 @@ func (r *Resolver) resolveCypherDatabase(ctx context.Context, database string) (
 		return "", fmt.Errorf("database '%s' not found: %w", database, err)
 	}
 	return resolved, nil
+}
+
+// authorizeDirectOperation is the boundary for GraphQL operations that may
+// return without executing a Cypher statement (including empty inputs).
+// Statement-driven fields retain the executor's statement permission owner.
+func (r *Resolver) authorizeDirectOperation(ctx context.Context, permissions ...auth.Permission) error {
+	database, err := r.resolveCypherDatabase(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, permission := range permissions {
+		if !auth.RequestDatabasePermissionAllowed(ctx, database, permission) {
+			return &cypher.PermissionDeniedError{Permission: string(permission)}
+		}
+	}
+	return nil
+}
+
+// The embedding worker scans base storage across namespaces. Its trigger,
+// reset and queue statistics therefore require permission on every database,
+// even when the GraphQL request selects just one database.
+func (r *Resolver) authorizeEmbeddingWorker(ctx context.Context, regenerate bool) error {
+	// Regeneration clears stored embeddings before starting the worker. Like
+	// the HTTP regenerate operation, this destructive branch requires admin.
+	if regenerate {
+		if err := r.authorizeDirectOperation(ctx, auth.PermAdmin); err != nil {
+			return err
+		}
+	}
+	var denied error
+	auth.DatabasePopulationAccess(r.dbManager.ListDatabaseNames(), func(database string) bool {
+		if denied != nil {
+			return false
+		}
+		for _, permission := range []auth.Permission{auth.PermRead, auth.PermWrite} {
+			if !auth.RequestDatabasePermissionAllowed(ctx, database, permission) {
+				denied = &cypher.PermissionDeniedError{Permission: string(permission)}
+				return false
+			}
+		}
+		return true
+	})
+	return denied
+}
+
+// readableDatabase is the database a direct GraphQL reader selects, resolved
+// as executeCypher resolves it, after the shared direct-read decision.
+func (r *Resolver) readableDatabase(ctx context.Context) (string, error) {
+	database, err := r.resolveCypherDatabase(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	readable := auth.RequestDatabasePermissionAllowed(ctx, database, auth.PermRead)
+	if !readable {
+		denied := localization.DatabaseAccessDenied(database)
+		return "", localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+	}
+	return database, nil
+}
+
+// readDatabase is readableDatabase and its storage for search and similarity.
+func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, error) {
+	database, err := r.readableDatabase(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	// A composite's storage reads every constituent, which this one decision
+	// on the composite does not cover; the REST search and similarity routes
+	// refuse it the same way.
+	if r.dbManager.IsCompositeDatabase(database) {
+		return "", nil, fmt.Errorf("search on composite database '%s' is not supported; target a constituent database explicitly", database)
+	}
+	engine, err := r.dbManager.GetStorage(database)
+	if err != nil {
+		return "", nil, fmt.Errorf("database '%s' not found: %w", database, err)
+	}
+	return database, engine, nil
+}
+
+// subscriptionSelection retains the requested default selection for live checks,
+// and the existing explicit-target requirement for
+// composite subscriptions after the shared direct-read decision.
+func (r *Resolver) subscriptionSelection(ctx context.Context) (string, error) {
+	database, err := r.readableDatabase(ctx)
+	if err != nil {
+		return "", err
+	}
+	if r.dbManager.IsCompositeDatabase(database) {
+		return "", fmt.Errorf("subscriptions on composite database '%s' are not supported; target a constituent database explicitly", database)
+	}
+	// The broker binds the canonical database itself. Passing the canonical
+	// name here would discard a selected default alias before live checks.
+	if auth.RequestDatabaseScopeFromContext(ctx) != nil {
+		return "", nil
+	}
+	return database, nil
 }
 
 // executeCypher executes a Cypher query using the specified database's namespaced storage.

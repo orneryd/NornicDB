@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -24,7 +26,7 @@ func TestTopologyChaosRandomGraph(t *testing.T) {
 		for _, density := range densities {
 			name := fmt.Sprintf("size_%d_density_%.1f", size, density)
 			t.Run(name, func(t *testing.T) {
-				engine := buildRandomStorageGraph(size, density, 42)
+				engine := buildRandomStorageGraph(t, size, density, 42)
 
 				config := &TopologyConfig{
 					Enabled:              true,
@@ -79,16 +81,16 @@ func TestTopologyChaosRandomGraph(t *testing.T) {
 
 // TestTopologyChaosStarTopology tests with hub-and-spoke pattern.
 func TestTopologyChaosStarTopology(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 
 	// Create hub
-	engine.CreateNode(&storage.Node{ID: "hub", Labels: []string{"Hub"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "hub", Labels: []string{"Hub"}})
 
 	// Create 100 spokes
 	for i := 0; i < 100; i++ {
 		nodeID := storage.NodeID(fmt.Sprintf("spoke-%d", i))
-		engine.CreateNode(&storage.Node{ID: nodeID, Labels: []string{"Spoke"}})
-		engine.CreateEdge(&storage.Edge{
+		engine.CreateNode(t.Context(), &storage.Node{ID: nodeID, Labels: []string{"Spoke"}})
+		engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("e-%d", i)),
 			StartNode: "hub",
 			EndNode:   nodeID,
@@ -132,18 +134,18 @@ func TestTopologyChaosStarTopology(t *testing.T) {
 
 // TestTopologyChaosCliqueTopology tests with fully connected graph.
 func TestTopologyChaosCliqueTopology(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 
 	// Create clique of 10 nodes
 	for i := 0; i < 10; i++ {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
+		engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
 	}
 
 	// Connect everyone to everyone
 	edgeCount := 0
 	for i := 0; i < 10; i++ {
 		for j := i + 1; j < 10; j++ {
-			engine.CreateEdge(&storage.Edge{
+			engine.CreateEdge(t.Context(), &storage.Edge{
 				ID:        storage.EdgeID(fmt.Sprintf("e-%d", edgeCount)),
 				StartNode: storage.NodeID(fmt.Sprintf("n%d", i)),
 				EndNode:   storage.NodeID(fmt.Sprintf("n%d", j)),
@@ -170,7 +172,7 @@ func TestTopologyChaosCliqueTopology(t *testing.T) {
 
 // TestTopologyChaosEmptyGraph tests with empty storage.
 func TestTopologyChaosEmptyGraph(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 
 	config := DefaultTopologyConfig()
 	config.Enabled = true
@@ -188,7 +190,7 @@ func TestTopologyChaosEmptyGraph(t *testing.T) {
 
 // TestTopologyChaosDisabled tests behavior when disabled.
 func TestTopologyChaosDisabled(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -207,7 +209,7 @@ func TestTopologyChaosDisabled(t *testing.T) {
 
 // TestTopologyChaosConcurrent tests thread safety.
 func TestTopologyChaosConcurrent(t *testing.T) {
-	engine := buildRandomStorageGraph(100, 0.3, 42)
+	engine := buildRandomStorageGraph(t, 100, 0.3, 42)
 
 	config := DefaultTopologyConfig()
 	config.Enabled = true
@@ -246,7 +248,7 @@ func TestTopologyChaosConcurrent(t *testing.T) {
 
 // TestTopologyChaosRapidCacheInvalidation tests rapid cache operations.
 func TestTopologyChaosRapidCacheInvalidation(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -273,12 +275,12 @@ func TestTopologyChaosRapidCacheInvalidation(t *testing.T) {
 
 // TestTopologyComplexMultiLayerNetwork tests with multi-relationship graph.
 func TestTopologyComplexMultiLayerNetwork(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 
 	// Create users
 	users := []string{"alice", "bob", "charlie", "diana", "eve", "frank"}
 	for _, u := range users {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(u), Labels: []string{"Person"}})
+		engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(u), Labels: []string{"Person"}})
 	}
 
 	// Multiple relationship types
@@ -299,7 +301,7 @@ func TestTopologyComplexMultiLayerNetwork(t *testing.T) {
 	}
 
 	for i, rel := range relationships {
-		engine.CreateEdge(&storage.Edge{
+		engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("e%d", i)),
 			StartNode: storage.NodeID(rel.from),
 			EndNode:   storage.NodeID(rel.to),
@@ -339,7 +341,7 @@ func TestTopologyComplexMultiLayerNetwork(t *testing.T) {
 
 // TestTopologyComplexInferenceEngineIntegration tests full Engine integration.
 func TestTopologyComplexInferenceEngineIntegration(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, engine)
 
 	// Create inference engine
@@ -391,7 +393,7 @@ func TestTopologyComplexInferenceEngineIntegration(t *testing.T) {
 
 // TestTopologyComplexCombinedSuggestions tests merging semantic + topological.
 func TestTopologyComplexCombinedSuggestions(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -440,7 +442,7 @@ func TestTopologyComplexCombinedSuggestions(t *testing.T) {
 
 // TestTopologyComplexAlgorithmComparison tests all algorithms on same graph.
 func TestTopologyComplexAlgorithmComparison(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, engine)
 
 	algorithms := []string{
@@ -486,7 +488,7 @@ func TestTopologyComplexAlgorithmComparison(t *testing.T) {
 
 // TestTopologyComplexCacheLifecycle tests full cache lifecycle.
 func TestTopologyComplexCacheLifecycle(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -543,7 +545,7 @@ func TestTopologyComplexCacheLifecycle(t *testing.T) {
 
 // TestTopologyComplexMinScoreFiltering tests minimum score threshold.
 func TestTopologyComplexMinScoreFiltering(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, engine)
 
 	thresholds := []float64{0.0, 0.3, 0.5, 0.7, 0.9, 1.0}
@@ -574,7 +576,7 @@ func TestTopologyComplexMinScoreFiltering(t *testing.T) {
 
 // TestTopologyComplexWeightConfiguration tests weight configuration.
 func TestTopologyComplexWeightConfiguration(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, engine)
 
 	weights := []float64{0.0, 0.25, 0.5, 0.75, 1.0}
@@ -611,7 +613,7 @@ func TestTopologyComplexWeightConfiguration(t *testing.T) {
 
 // TestTopologyComplexProcessSuggestionIntegration tests ProcessSuggestion with topology.
 func TestTopologyComplexProcessSuggestionIntegration(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, engine)
 
 	// Create inference engine with all features
@@ -649,14 +651,14 @@ func TestTopologyComplexProcessSuggestionIntegration(t *testing.T) {
 // =============================================================================
 
 // buildRandomStorageGraph creates a random graph in storage.
-func buildRandomStorageGraph(nodes int, density float64, seed int64) storage.Engine {
+func buildRandomStorageGraph(t testing.TB, nodes int, density float64, seed int64) storage.Engine {
 	r := rand.New(rand.NewSource(seed))
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "test")
 
 	// Create nodes
 	for i := 0; i < nodes; i++ {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("node-%d", i)),
 			Labels: []string{"Test"},
 		})
@@ -667,7 +669,7 @@ func buildRandomStorageGraph(nodes int, density float64, seed int64) storage.Eng
 	for i := 0; i < nodes; i++ {
 		for j := i + 1; j < nodes; j++ {
 			if r.Float64() < density {
-				engine.CreateEdge(&storage.Edge{
+				engine.CreateEdge(t.Context(), &storage.Edge{
 					ID:        storage.EdgeID(fmt.Sprintf("e-%d", edgeCount)),
 					StartNode: storage.NodeID(fmt.Sprintf("node-%d", i)),
 					EndNode:   storage.NodeID(fmt.Sprintf("node-%d", j)),
@@ -801,7 +803,7 @@ func TestTopologyNilStorage(t *testing.T) {
 
 // BenchmarkTopologyIntegration benchmarks topology integration.
 func BenchmarkTopologyIntegrationSmall(b *testing.B) {
-	engine := buildRandomStorageGraph(50, 0.3, 42)
+	engine := buildRandomStorageGraph(b, 50, 0.3, 42)
 	config := DefaultTopologyConfig()
 	config.Enabled = true
 	topo := NewTopologyIntegration(engine, config)
@@ -815,7 +817,7 @@ func BenchmarkTopologyIntegrationSmall(b *testing.B) {
 }
 
 func BenchmarkTopologyIntegrationMedium(b *testing.B) {
-	engine := buildRandomStorageGraph(200, 0.2, 42)
+	engine := buildRandomStorageGraph(b, 200, 0.2, 42)
 	config := DefaultTopologyConfig()
 	config.Enabled = true
 	topo := NewTopologyIntegration(engine, config)
@@ -829,7 +831,7 @@ func BenchmarkTopologyIntegrationMedium(b *testing.B) {
 }
 
 func BenchmarkTopologyIntegrationCached(b *testing.B) {
-	engine := buildRandomStorageGraph(200, 0.2, 42)
+	engine := buildRandomStorageGraph(b, 200, 0.2, 42)
 	config := DefaultTopologyConfig()
 	config.Enabled = true
 	config.GraphRefreshInterval = 1000 // Long cache

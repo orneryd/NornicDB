@@ -18,7 +18,7 @@ func TestRunManyFailedStatementFailsTheTransaction(t *testing.T) {
 			ctx := context.Background()
 			exec, stores := nestedUseRouterExecutor(t, "nornic")
 			if explicit {
-				_, err := exec.handleBegin()
+				_, err := exec.handleBegin(t.Context())
 				require.NoError(t, err)
 				_, err = exec.Execute(ctx, "CREATE (:BeforeRunMany)", nil)
 				require.NoError(t, err)
@@ -26,11 +26,11 @@ func TestRunManyFailedStatementFailsTheTransaction(t *testing.T) {
 			_, err := exec.Execute(ctx, "CALL apoc.cypher.runMany('CREATE (:InRunMany); RETURN __nornic_interpolate(1) AS v;', {}) YIELD row RETURN row", nil)
 			require.ErrorContains(t, err, "unknown function: __nornic_interpolate")
 			if explicit {
-				_, err = exec.handleCommit()
+				_, err = exec.handleCommit(context.Background())
 				require.Error(t, err, "the refused statement failed the transaction")
 			}
 			for _, label := range []string{"BeforeRunMany", "InRunMany"} {
-				nodes, err := stores["nornic"].GetNodesByLabel(label)
+				nodes, err := stores["nornic"].GetNodesByLabel(ctx, label)
 				require.NoError(t, err)
 				require.Empty(t, nodes, label)
 			}
@@ -48,13 +48,13 @@ func TestAdministrationCommandInProcedureStatementIsRefused(t *testing.T) {
 			ctx := context.Background()
 			exec, stores := nestedUseRouterExecutor(t, "nornic")
 			if explicit {
-				_, err := exec.handleBegin()
+				_, err := exec.handleBegin(t.Context())
 				require.NoError(t, err)
 			}
 			_, err := exec.Execute(ctx, "CALL apoc.cypher.run('GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer', {}) YIELD value RETURN value", nil)
 			requireStatusCode(t, err, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType")
 			if explicit {
-				_, err = exec.handleCommit()
+				_, err = exec.handleCommit(context.Background())
 				require.Error(t, err)
 			}
 			grants, err := auth.NewProcedurePrivilegeStore(stores["system"]).List(ctx)

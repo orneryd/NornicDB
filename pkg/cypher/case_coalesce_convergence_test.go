@@ -159,7 +159,7 @@ func TestCaseExpression_Parameters(t *testing.T) {
 func TestCaseExpression_SharedEvaluatorLevel(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "case_shared_level"))
 
-	values := map[string]interface{}{"a": int64(3), "b": int64(2), "s": "x"}
+	values := map[string]interface{}{"a": int64(3), "b": int64(2), "s": "x", "missing": nil}
 	require.Equal(t, "three", exec.evaluateCaseExpressionFromValues("CASE a WHEN 3 THEN 'three' ELSE 'other' END", values))
 	require.Equal(t, "open", exec.evaluateCaseExpressionFromValues("CASE WHEN a = 9 THEN 'closed' ELSE 'open' END", values))
 	require.Nil(t, exec.evaluateCaseExpressionFromValues("CASE WHEN a < 0 THEN 2 END", values))

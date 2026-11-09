@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -13,7 +15,7 @@ import (
 // explicit transaction and on RUN for an auto-commit one, so change events
 // carry it.
 func TestBoltTxMetadataIsTheTransactionMetadata(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
@@ -25,7 +27,7 @@ func TestBoltTxMetadataIsTheTransactionMetadata(t *testing.T) {
 		boltQueryExecutorAdapter: boltQueryExecutorAdapter{executor: executor},
 	})
 
-	require.NoError(t, session.handleBegin(encodePackStreamMap(map[string]any{"tx_metadata": map[string]any{"writer": "explicit"}})))
+	require.NoError(t, session.dispatchInner(MsgBegin, encodePackStreamMap(map[string]any{"tx_metadata": map[string]any{"writer": "explicit"}}), "BEGIN", nil))
 	require.True(t, session.inTransaction)
 	require.NoError(t, session.handleRun(buildRunMessageData("CREATE (:N {v: 1})", nil, nil)))
 	require.NoError(t, session.handleCommit(nil))

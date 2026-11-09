@@ -1,6 +1,10 @@
 package cypher
 
 import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"iter"
+	"slices"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -13,7 +17,7 @@ import (
 // accepts with a SyntaxError "Type mismatch: expected X but was Y", whatever
 // the data (toInteger(n) for a node n, toUpper(1), left('a', 'b'), …). A
 // static type is known for literals, list and map literals, arithmetic over
-// them (staticLiteralTypeName), variables bound to nodes, relationships and
+// them (staticLiteralType), variables bound to nodes, relationships and
 // paths, and variables bound to a literal by WITH … AS or UNWIND
 // (staticTypeScope). Everything else is left to the row evaluator.
 
@@ -30,6 +34,10 @@ type staticArgumentType struct {
 	// unlisted are types accepted although the error doesn't name them
 	// (staticUnlistedArgumentTypes).
 	unlisted []string
+	// nestedLists retains the nested-list contract of a native APOC
+	// constructor. Narrow numeric/boolean lists reach runtime coercion;
+	// string lists, map-list literals and property-value unions do not.
+	nestedLists bool
 	// cypher25 is the check a Cypher 25 statement makes at the position
 	// instead, where Neo4j 2026.09 checks it otherwise than 5.26
 	// (staticCypher25Arguments); nil where both check it alike.
@@ -145,6 +153,10 @@ func buildStaticFunctionArguments() (map[string][]staticArgumentType, map[string
 	built := make(map[string][]staticArgumentType, len(signatures))
 	byCount := make(map[string]map[int][]staticArgumentType)
 	longest := 0
+	// Native APOC constructors are registered outside the built-in catalog.
+	// Keep their signature checks in the same literal/parameter/scope owner.
+	built["apoc.map.frompairs"] = []staticArgumentType{{expected: "List<List<T>>", options: []string{"List<List<T>>"}, nestedLists: true}}
+	longest = len("apoc.map.frompairs")
 	for name, all := range signatures {
 		if extensions[name] {
 			continue
@@ -192,7 +204,7 @@ func attachCypher25Arguments(name string, arguments []staticArgumentType) {
 		}
 		cypher25 := staticArgumentType{}
 		if accepted != "" {
-			cypher25 = staticArgumentType{expected: accepted, options: staticTypeChoices(accepted)}
+			cypher25 = staticArgumentType{expected: accepted, options: slices.Collect(staticTypeChoices(accepted))}
 		}
 		arguments[index].cypher25 = &cypher25
 	}
@@ -238,7 +250,7 @@ func staticArgumentTypesOf(name string, signatures [][]ProcedureParam) ([]static
 	checked := false
 	for index, options := range typed {
 		if override, ok := staticArgumentOverrides[name]; ok && index < len(override) {
-			options = staticTypeChoices(override[index])
+			options = slices.Collect(staticTypeChoices(override[index]))
 		} else if unchecked[index] {
 			continue
 		}
@@ -312,44 +324,62 @@ func lookupLowerASCII[V any](table map[string]V, name string) (V, bool) {
 // accepts reports whether an argument of static type typeName fits. Neo4j
 // coerces an Integer where a Float is expected, so that is accepted too; an
 // unknown type ("") always is.
-// staticTypeChoices splits a static type that names several possible types
-// ("Float, Integer, String or List<T>", the type of 1 + x for an unknown x)
-// into them; a single type is itself.
-func staticTypeChoices(typeName string) []string {
-	return strings.Split(strings.ReplaceAll(typeName, " or ", ", "), ", ")
-}
-
-func (argument staticArgumentType) accepts(typeName string) bool {
-	if typeName == "" || len(argument.options) == 0 {
-		return true
-	}
-	if strings.Contains(typeName, ", ") || strings.Contains(typeName, " or ") {
-		choices := staticTypeChoices(typeName)
-		for _, choice := range choices {
-			if argument.accepts(choice) {
-				return true
+// staticTypeChoices yields each type a static type names, in order: a type
+// that names several possible types ("Float, Integer, String or List<T>",
+// the type of 1 + x for an unknown x) splits at its top-level separators,
+// and a single type is itself. It allocates nothing: a caller that stores,
+// indexes or rewrites the alternatives materializes its own slice
+// (slices.Collect).
+func staticTypeChoices(typeName string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		if !strings.Contains(typeName, ", ") && !strings.Contains(typeName, " or ") {
+			yield(typeName)
+			return
+		}
+		start, depth := 0, 0
+		for index := 0; index < len(typeName); index++ {
+			switch typeName[index] {
+			case '<':
+				depth++
+			case '>':
+				depth--
+			}
+			if depth != 0 {
+				continue
+			}
+			width := 0
+			if strings.HasPrefix(typeName[index:], ", ") {
+				width = 2
+			} else if strings.HasPrefix(typeName[index:], " or ") {
+				width = 4
+			}
+			if width > 0 {
+				if !yield(typeName[start:index]) {
+					return
+				}
+				start = index + width
+				index = start - 1
 			}
 		}
-		return false
+		yield(typeName[start:])
 	}
-	if typeName == "Number" {
-		return argument.accepts("Integer") || argument.accepts("Float")
+}
+
+// staticTypeChoiceCount is how many types a static type names
+// (staticTypeChoices), without materializing them.
+func staticTypeChoiceCount(typeName string) int {
+	count := 0
+	for range staticTypeChoices(typeName) {
+		count++
 	}
-	isList := strings.HasPrefix(typeName, "List<")
-	if isList && argument.acceptsLists || containsString(argument.unlisted, typeName) {
-		return true
-	}
-	for _, option := range argument.options {
-		switch {
-		case option == typeName:
-			return true
-		case option == "Float" && typeName == "Integer":
-			return true
-		case option == "Number" && (typeName == "Integer" || typeName == "Float"):
-			return true
-		case option == "List<T>" && isList:
-			return true
-		case typeName == "List<T>" && strings.HasPrefix(option, "List<"):
+	return count
+}
+
+// staticTypeChoiceNamed reports whether a static type names name among its
+// alternatives, without materializing them.
+func staticTypeChoiceNamed(typeName, name string) bool {
+	for choice := range staticTypeChoices(typeName) {
+		if choice == name {
 			return true
 		}
 	}
@@ -363,73 +393,87 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 }
 
 // forEachStaticFunctionArgument checks every call to a built-in function in
-// text, outside string literals and quoted names, including nested calls: a
+// text, outside string literals, quoted names and comments, including nested
+// calls: a
 // call with an argument count outside the function's arity (functionArities)
 // is Neo4j's compile-time SyntaxError, and check is called for every
 // argument of a function in staticFunctionArguments. A DISTINCT before an aggregate's
 // argument is not part of it, and trim([LEADING | TRAILING | BOTH]
 // [characters] FROM source) checks its characters and source (trimFromArguments).
-func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string, at int) error) error {
+func forEachStaticFunctionArgument(ctx context.Context, text string, check func(argument staticArgumentType, expression string, at int) error) error {
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
 	text = maskTypePredicateTypes(text)
 	for index := 0; index < len(text); {
-		switch text[index] {
-		case '\'', '"':
+		// A comment is trivia: its text is neither a call nor an argument
+		// (range('bad') in /* range('bad') */ is a comment).
+		if text[index] == '/' {
+			if end := queryCommentEnd(text, index); end >= 0 {
+				index = end
+				continue
+			}
+		}
+		switch cypherStringLexicalByte(text[index]) {
+		case cypherStringQuoteClass:
 			index = skipQuotedSemanticText(text, index)
 			continue
 		}
-		name, next, ok := scanIdentifierToken(text, index)
+		name, ok := cyphertext.ScanIdentifier(text, index)
 		if !ok {
 			index++
 			continue
 		}
-		if index > 0 && (text[index-1] == '.' || text[index-1] == '$' || text[index-1] == ':' || isIdentByte(text[index-1])) {
-			index = next
+		if !functionNameStartsAt(text, index) {
+			index = name.End
 			continue
+		}
+		if index > 0 && text[index-1] == ':' {
+			// A label or type name (n:Label, [:TYPE]); a map value written
+			// without a space ({a:toUpper(x)}) is a call like any other.
+			if open := queryGapEnd(text, name.End); open >= len(text) || text[open] != '(' {
+				index = name.End
+				continue
+			}
 		}
 		if precededByTypeAnnotation(text, index) {
 			// `x IS :: DATE` names a type, not a call: in a REQUIRE { ... }
 			// block the next entry may start with "(", which must not read
 			// as DATE(...).
-			index = next
+			index = name.End
 			continue
 		}
 		// A qualified name has one canonical identity in validation and dispatch.
-		parts, end := dottedNameParts(text, next, true)
-		name, next = name+parts, end
+		parts, end := dottedNameParts(text, name.End, true, dottedNameIdentity)
+		name.Value, name.End = name.Value+parts, end
 
-		open := skipSpaces(text, next)
+		// Comments between a name and its argument list are trivia too, so
+		// substring /* … */ (…) is the call its arguments make.
+		open := queryGapEnd(text, name.End)
 		if open >= len(text) || text[open] != '(' {
-			index = next
+			index = name.End
 			continue
 		}
-		if isReduceFormFunction(name) {
-			if err := checkReduceForm(name, text, open, check); err != nil {
+		if isReduceFormFunction(name.Value) {
+			if err := checkReduceForm(name.Value, text, open, check); err != nil {
 				return err
 			}
 			index = open + 1
 			continue
 		}
-		arguments, typed := lookupStaticFunctionArguments(name)
-		arity, counted := lookupFunctionArity(name)
+		arguments, typed := lookupStaticFunctionArguments(name.Value)
+		arity, counted := lookupFunctionArity(name.Value)
 		if !typed && !counted {
 			index = open + 1
 			continue
 		}
-		closing := findMatchingDelimiter(text, open, '(', ')')
+		closing := cyphertext.FindMatchingDelimiter(text, open, '(', ')', cyphertext.OpeningDelimiter)
 		if closing < 0 {
 			return nil
 		}
 		inner := strings.TrimSpace(text[open+1 : closing])
-		inner, _ = cutDistinctArgument(inner)
-		if strings.EqualFold(inner, "ALL") {
-			// f(all) is f's ALL modifier with no argument, as in Neo4j
-			// (count(all) fails "Insufficient parameters"), not a variable
-			// named all (#907).
-			inner = ""
-		}
-		if strings.EqualFold(name, "trim") {
-			if parameters, fromForm := trimFromArguments(inner); fromForm {
+		argumentSource := cyphertext.ReadFunctionArgumentSource(inner, cyphertext.AllArgumentModifier|cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
+		inner = inner[argumentSource.Arguments.Start:argumentSource.Arguments.End]
+		if strings.EqualFold(name.Value, "trim") {
+			if parameters, fromForm := trimFromArguments(ctx, inner); fromForm {
 				for _, expression := range parameters {
 					if err := check(arguments[0], expression, open+1); err != nil {
 						return err
@@ -442,19 +486,19 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		var buffer [8]string
 		expressions := appendTopLevelComma(buffer[:0], inner)
 		if counted {
-			if err := checkFunctionArity(name, arity, len(expressions)); err != nil {
+			if err := checkFunctionArity(name.Value, arity, len(expressions)); err != nil {
 				return err
 			}
 		}
-		byCount, _ := lookupLowerASCII(staticFunctionArgumentsByCount, name)
+		byCount, _ := lookupLowerASCII(staticFunctionArgumentsByCount, name.Value)
 		if overload, found := byCount[len(expressions)]; found {
 			arguments = overload
 		}
-		if strings.EqualFold(name, "format") {
-			arguments, typed = staticFormatArguments(expressions), true
+		if strings.EqualFold(name.Value, "format") {
+			arguments, typed = staticFormatArguments(ctx, expressions), true
 		}
 		if len(expressions) > 0 {
-			if err := checkStaticLiteralArguments(name, expressions); err != nil {
+			if err := checkStaticLiteralArguments(name.Value, expressions); err != nil {
 				return err
 			}
 		}
@@ -481,14 +525,14 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 // type (IS :: ZONED DATETIME, IS TYPED LOCAL TIME).
 func precededByTypeAnnotation(text string, index int) bool {
 	end := index
-	for end > 0 && isSpaceByte(text[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(text, end-1) {
 		end--
 	}
 	if end >= 2 && text[end-2:end] == "::" {
 		return true
 	}
 	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(text, start-1) {
 		start--
 	}
 	word := text[start:end]
@@ -504,8 +548,8 @@ func precededByTypeAnnotation(text string, index int) bool {
 // trimFromArguments reads trim's FROM form, trim([LEADING | TRAILING |
 // BOTH] [characters] FROM source), and returns its STRING arguments: the
 // characters when given, and the source. fromForm is false for trim(source).
-func trimFromArguments(inner string) (arguments []string, fromForm bool) {
-	from := topLevelKeywordIndex(inner, "FROM")
+func trimFromArguments(ctx context.Context, inner string) (arguments []string, fromForm bool) {
+	from := topLevelKeywordIndex(ctx, inner, "FROM")
 	if from < 0 {
 		return nil, false
 	}
@@ -527,13 +571,10 @@ func trimFromArguments(inner string) (arguments []string, fromForm bool) {
 // keys([1]), length(1 + 1), …) anywhere in the statement: projections, WHERE,
 // CASE, ORDER BY, SET values, pattern properties and subquery bodies.
 // Variables are checked clause by clause (validateStaticFunctionVariables).
-func validateStaticFunctionArguments(cypher string, cypher25 bool) error {
-	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string, _ int) error {
+func validateStaticFunctionArguments(ctx context.Context, cypher string, cypher25 bool) error {
+	return forEachStaticFunctionArgument(ctx, cypher, func(argument staticArgumentType, expression string, _ int) error {
 		argument = argument.inVersion(cypher25)
-		typeName := staticLiteralTypeName(expression)
-		if typeName == "" {
-			typeName = staticValueCallType(expression)
-		}
+		typeName := staticTextType(ctx, expression)
 		if !argument.accepts(typeName) {
 			return staticArgumentMismatch(argument, typeName)
 		}
@@ -550,16 +591,12 @@ const staticFormatTemporalTypes = "Duration, Date, Time, LocalTime, LocalDateTim
 // temporal the pattern is a string (format(1, 'yyyy') and
 // format(date(…), 1) are Neo4j's compile-time type mismatch). The printf
 // form's values aren't checked.
-func staticFormatArguments(expressions []string) []staticArgumentType {
-	value := staticTypeChoices(staticFormatTemporalTypes + " or String")
+func staticFormatArguments(ctx context.Context, expressions []string) []staticArgumentType {
+	value := slices.Collect(staticTypeChoices(staticFormatTemporalTypes + " or String"))
 	arguments := []staticArgumentType{{expected: staticFormatTemporalTypes, options: value}}
 	if len(expressions) == 2 {
-		first := strings.TrimSpace(expressions[0])
-		typeName := staticLiteralTypeName(first)
-		if function, inner, call := parseFunctionCallWS(first); call && typeName == "" {
-			typeName = staticFunctionResultType(function, inner)
-		}
-		if typeName != "" && containsString(staticTypeChoices(staticFormatTemporalTypes), typeName) {
+		typeName := staticTextType(ctx, expressions[0])
+		if typeName != "" && staticTypeChoiceNamed(staticFormatTemporalTypes, typeName) {
 			arguments = append(arguments, staticArgumentType{expected: "String", options: []string{"String"}})
 		}
 	}
@@ -575,15 +612,15 @@ func staticFormatArguments(expressions []string) []staticArgumentType {
 // the function's TypeError. It scans the statement only when a parameter
 // follows an opening parenthesis or a comma, so parameterized statements on
 // hot paths cost one byte scan.
-func validateStaticFunctionParameters(cypher string, params map[string]interface{}, cypher25 bool) error {
+func validateStaticFunctionParameters(ctx context.Context, cypher string, params map[string]interface{}, cypher25 bool) error {
 	if len(params) == 0 || !parameterMayBeFunctionArgument(cypher) {
 		return nil
 	}
 	var unwound map[string]string
 	if strings.IndexByte(cypher, '[') >= 0 {
-		unwound = unwindParameterBindings(cypher)
+		unwound = unwindParameterBindings(ctx, cypher)
 	}
-	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string, _ int) error {
+	return forEachStaticFunctionArgument(ctx, cypher, func(argument staticArgumentType, expression string, _ int) error {
 		// A Cypher 25 statement's arguments are checked as Neo4j 2026.09
 		// checks them (toString takes any value there).
 		argument = argument.inVersion(cypher25)
@@ -592,7 +629,7 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 			// UNWIND [$s] AS x binds x to $s's value, typed as Neo4j
 			// types it: radians(x) for s = 'xy' is a type mismatch.
 			operand := staticParameterOperand(params[parameter])
-			if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
+			if !operand.known() || operand.is("Float") || operand.fits(argument.accepts) {
 				return nil
 			}
 			return typeNameMismatchError(argument.expected, operand.display)
@@ -600,17 +637,17 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 		if len(expression) < 2 || expression[0] != '$' {
 			return nil
 		}
-		name, next, ok := scanIdentifierToken(expression, 1)
-		if !ok || next != len(expression) {
+		name, ok := cyphertext.ScanIdentifier(expression, 1)
+		if !ok || name.End != len(expression) {
 			return nil
 		}
 		// A missing parameter (nil) has no static type.
-		operand := staticParameterOperand(params[name])
-		if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
+		operand := staticParameterOperand(params[name.Value])
+		if !operand.known() || operand.is("Float") || operand.fits(argument.accepts) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
-			localization.CypherCoreParameterTypeMismatch(name, argument.expected, operand.display))
+			localization.CypherCoreParameterTypeMismatch(name.Value, argument.expected, operand.display))
 	})
 }
 
@@ -618,36 +655,36 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 // list binds (UNWIND [$s] AS x) to the parameter's name, when the statement
 // binds that name nowhere else (no second AS x), so a later binding can't be
 // taken for it.
-func unwindParameterBindings(cypher string) map[string]string {
+func unwindParameterBindings(ctx context.Context, cypher string) map[string]string {
 	var bindings map[string]string
 	for start := 0; ; {
-		index := findKeywordIndexInContext(cypher[start:], "UNWIND")
+		index := findKeywordIndexInContext(ctx, cypher[start:], "UNWIND")
 		if index < 0 {
 			return bindings
 		}
 		body := cypher[start+index+len("UNWIND"):]
 		start += index + len("UNWIND")
-		as := findKeywordIndexInContext(body, "AS")
+		as := findKeywordIndexInContext(ctx, body, "AS")
 		if as < 0 {
 			continue
 		}
 		source := strings.TrimSpace(body[:as])
-		alias, _, ok := scanIdentifierToken(strings.TrimSpace(body[as+len("AS"):]), 0)
-		if !ok || len(source) < 4 || source[0] != '[' || source[len(source)-1] != ']' {
+		alias, ok := cyphertext.ScanIdentifier(strings.TrimSpace(body[as+len("AS"):]), 0)
+		if !ok || len(source) < 4 || !isListLiteral(source) {
 			continue
 		}
 		parameter := strings.TrimSpace(source[1 : len(source)-1])
-		name, next, isParameter := scanIdentifierToken(parameter, 1)
-		if !isParameter || parameter[0] != '$' || next != len(parameter) {
+		name, isParameter := cyphertext.ScanIdentifier(parameter, 1)
+		if !isParameter || parameter[0] != '$' || name.End != len(parameter) {
 			continue
 		}
-		if strings.Count(cypher, "AS "+alias) != 1 {
+		if strings.Count(cypher, "AS "+alias.Value) != 1 {
 			continue
 		}
 		if bindings == nil {
 			bindings = make(map[string]string)
 		}
-		bindings[alias] = name
+		bindings[alias.Value] = name.Value
 	}
 }
 
@@ -656,7 +693,7 @@ func unwindParameterBindings(cypher string) map[string]string {
 func parameterMayBeFunctionArgument(cypher string) bool {
 	for index := strings.IndexByte(cypher, '$'); index >= 0; {
 		before := index
-		for before > 0 && isASCIISpace(cypher[before-1]) {
+		for before > 0 && cyphertext.IsWhitespaceAt(cypher, before-1) {
 			before--
 		}
 		if before > 0 && (cypher[before-1] == '(' || cypher[before-1] == ',' || cypher[before-1] == '[') {
@@ -730,24 +767,24 @@ func (scope staticTypeScope) typeOf(variable string) string {
 // (staticTypeScope.members).
 func staticMemberAccessBase(expression string) (string, bool) {
 	expression = strings.TrimSpace(expression)
-	base, end, ok := scanIdentifierToken(expression, 0)
-	if !ok || end == len(expression) {
+	base, ok := cyphertext.ScanIdentifier(expression, 0)
+	if !ok || base.End == len(expression) {
 		return "", false
 	}
-	for index := end; index < len(expression); {
+	for index := base.End; index < len(expression); {
 		switch expression[index] {
 		case '.':
-			_, next, ok := scanIdentifierToken(expression, index+1)
+			next, ok := cyphertext.ScanIdentifier(expression, index+1)
 			if !ok {
 				return "", false
 			}
-			index = next
+			index = next.End
 		case '[':
-			closing := findMatchingDelimiter(expression, index, '[', ']')
+			closing := cyphertext.FindMatchingDelimiter(expression, index, '[', ']', cyphertext.OpeningDelimiter)
 			if closing < 0 {
 				return "", false
 			}
-			if _, literal := decodeCypherQuotedString(strings.TrimSpace(expression[index+1 : closing])); !literal {
+			if _, literal := cyphertext.DecodeString(strings.TrimSpace(expression[index+1:closing]), cyphertext.AcceptedSource); !literal {
 				return "", false
 			}
 			index = closing + 1
@@ -755,81 +792,55 @@ func staticMemberAccessBase(expression string) (string, bool) {
 			return "", false
 		}
 	}
-	return base, true
+	return base.Value, true
 }
 
-// staticExpressionType is the static type of expression in scope: a
-// literal's type or a variable's, or in a Cypher 25 statement a known
-// member's (m.a for m bound to {a: 2}).
-func (scope staticTypeScope) staticExpressionType(expression string) string {
+// staticExpressionType is the static type of expression in scope, the
+// operator check's (operandOf); a parameter read with the run's values is
+// the parameter's (propertyAccessExpressionType).
+func (scope staticTypeScope) staticExpressionType(ctx context.Context, expression string) string {
 	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
-		return propertyAccessExpressionType(expression, scope.values, scope.params)
+		return propertyAccessExpressionType(ctx, expression, scope.values, scope.params)
 	}
-	if typeName := staticLiteralTypeName(expression); typeName != "" {
-		return typeName
-	}
-	if variable := simpleSemanticIdentifier(expression); variable != "" {
-		return scope.typeOf(variable)
-	}
-	if _, member := staticMemberAccessBase(expression); member && scope.cypher25 {
-		if operand, err := (staticOperatorChecker{scope: scope}).check(expression); err == nil {
-			return operand.kind
-		}
-		return ""
-	}
-	function, _, call := parseFunctionCallWS(strings.TrimSpace(expression))
-	if mayNeedStaticTypeCheck(expression) || call && strings.EqualFold(function, "coalesce") {
-		operand, err := (staticOperatorChecker{scope: scope}).check(expression)
-		if err == nil {
-			if operand.known() {
-				return operand.kind
-			}
-			if operand.nonBoolean {
-				return operand.display
-			}
-		}
-	}
-	return ""
+	return scope.operandOf(ctx, expression).typeName()
 }
 
-// validateStaticFunctionVariables rejects a function called with a variable
-// whose static type it doesn't accept (toInteger(n) for a node n, type(r) for
-// a variable-length relationship list, toUpper(x) after UNWIND [1] AS x, …) in
-// one clause. A variable the clause binds itself (a list comprehension,
-// reduce, any / all / none / single) shadows the scope where it is bound
-// (localVariableShadowsAt) and is not checked there.
-func validateStaticFunctionVariables(text string, scope staticTypeScope) error {
-	return validateStaticFunctionVariablesIn(text, func() staticTypeScope { return scope })
-}
-
-// validateStaticFunctionVariablesIn is validateStaticFunctionVariables with
-// the scope built only when a function has a variable argument.
-func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope) error {
+// validateStaticFunctionVariablesTyped rejects function arguments whose static
+// type does not fit their signature. scopeOf builds the scope lazily; typeOf
+// uses either the ordinary expression typer or a local scope's cached checker.
+//
+// An argument that reads a variable a comprehension, quantifier or reduce of
+// text binds around it is not typed here: this scope doesn't hold that
+// variable, and the construct's own check (checkScoped) types the argument
+// with it. Typing it here as well typed every nested construct once for each
+// enclosing scope, which grew exponentially with the nesting depth (NOR-150).
+func validateStaticFunctionVariablesTyped(ctx context.Context, text string, scopeOf func() staticTypeScope, typeOf func(staticTypeScope, context.Context, string) string) error {
 	var scope *staticTypeScope
-	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string, at int) error {
+	var locals map[string]struct{}
+	return forEachStaticFunctionArgument(ctx, text, func(argument staticArgumentType, expression string, at int) error {
+		for {
+			// abs((d)) reads d (abs(( (d))) after checkedWithoutUnaryPlus
+			// blanks a unary plus).
+			inner, enclosed := stripEnclosingExpressionParentheses(strings.TrimSpace(expression))
+			if !enclosed {
+				break
+			}
+			expression = inner
+		}
 		variable := simpleSemanticIdentifier(expression)
 		base, property := entityPropertyRead(expression)
-		// A call's result type, when it doesn't depend on its arguments
+		// A call is typed by the operator check like any other argument
 		// (size(properties(m)) is size of a Map, Neo4j's compile-time type
 		// mismatch); the call's own arguments are checked as calls of
 		// their own.
-		function, inner, call := parseFunctionCallWS(strings.TrimSpace(expression))
-		result := ""
-		if call {
-			result = staticFunctionResultType(function, inner)
-		}
+		call := inspectFunctionCall(strings.TrimSpace(expression), qualifiedFunctionCall, "", nil)
 		switch {
 		case property:
 			variable = base
-		case result != "":
-			if !argument.accepts(result) {
-				return staticArgumentMismatch(argument, result)
-			}
-			return nil
 		default:
 			if memberBase, member := staticMemberAccessBase(expression); member {
 				variable = memberBase // its members' types (Cypher 25)
-			} else if variable == "" && !mayNeedStaticTypeCheck(expression) && !strings.EqualFold(function, "coalesce") {
+			} else if variable == "" && !mayNeedStaticTypeCheck(expression) && !call {
 				return nil
 			}
 		}
@@ -838,24 +849,23 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 			scope = &built
 		}
 		argument = argument.inVersion(scope.cypher25)
-		if startsWithKeywordFold(strings.TrimSpace(expression), "CASE") {
-			for _, reference := range semanticExpressionReferences(expression) {
-				if localVariableShadowsAt(text, at, reference) {
-					return nil // the comprehension owner checks its local types
-				}
-			}
+		if locals == nil {
+			locals = expressionLocalBindings(text)
 		}
-		typeName := scope.staticExpressionType(expression)
-		if property {
-			// A node's or relationship's property is a property value,
-			// never an entity or a map (labels(n.x), id(n.x), point(n.x)
-			// are Neo4j's compile-time SyntaxError); another base's member
-			// has the type the scope knows for it (a Cypher 25 map's), or
-			// none.
-			if kind := scope.typeOf(base); kind == "Node" || kind == "Relationship" {
-				typeName = staticPropertyValueType
-			}
+		if !forEachSemanticExpressionReference(expression, func(variable, _ string, _ bool, _ int) bool {
+			_, local := locals[variable]
+			return !local || !localVariableShadowsAt(text, at, variable)
+		}) {
+			return nil // the comprehension owner checks its local types
 		}
+		// The shared CASE result-type owner combines branches before checking
+		// the signature: reject only when no result type fits, otherwise
+		// retain runtime validation of the selected branch.
+		// A node's or relationship's property is a property value, never an
+		// entity or a map (labels(n.x), id(n.x), point(n.x) are Neo4j's
+		// compile-time SyntaxError); another base's member has the type the
+		// scope knows for it (a Cypher 25 map's), or none.
+		typeName := typeOf(*scope, ctx, expression)
 		if typeName == "" || argument.accepts(typeName) {
 			return nil
 		}
@@ -881,86 +891,12 @@ func entityPropertyRead(expression string) (string, bool) {
 	return base, true
 }
 
-// unwindStaticValueType is the element type of an UNWIND over a list literal
-// (UNWIND [1, 2] AS x binds an Integer), or "".
-func unwindStaticValueType(clause string) string {
-	body := strings.TrimSpace(clause[len("UNWIND"):])
-	if asIndex := findKeywordIndexInContext(body, "AS"); asIndex >= 0 {
-		body = strings.TrimSpace(body[:asIndex])
-	}
-	return staticListElementType(body)
-}
-
-// staticListElementType is the element type of a list expression whose
-// elements are typed before the statement runs, "" otherwise.
-func staticListElementType(body string) string {
-	if elementType := literalListElementType(body); elementType != "" {
-		return elementType
-	}
-	// A list of computed expressions of one known type ([date('2020-01-01'),
-	// date('2021-01-01')]) binds that type, as Neo4j types it before the
-	// statement runs; a mixed list ([1, date(…)]) binds no static type.
-	return uniformListElementType(body)
-}
-
-// literalListElementType is the element type of a list literal of literals,
-// as Neo4j names it, "" when the literal typing doesn't type the list.
-func literalListElementType(body string) string {
-	listType := staticLiteralTypeName(body)
-	// A list typed as several list types gives an element of any of their
-	// element types, as Neo4j names it: UNWIND [{k: 1}] binds a "Map, Node or
-	// Relationship", UNWIND [1, 2.5] a "Float, Integer or Number".
-	choices := staticTypeChoices(listType)
-	elements := make([]string, 0, len(choices))
-	for _, choice := range choices {
-		if !strings.HasPrefix(choice, "List<") || choice == "List<T>" {
-			return ""
-		}
-		elements = append(elements, strings.TrimSuffix(strings.TrimPrefix(choice, "List<"), ">"))
-	}
-	return joinTypeNames(elements)
-}
-
-// uniformListElementType is the static type every element of a list literal
-// has (a literal's, or a computed element's as the operator check infers it),
-// "" when the text isn't a list literal, an element's type is
-// unknown or several types, or the elements differ.
-func uniformListElementType(list string) string {
-	inner, isList := stripEnclosingRowDelimiter(strings.TrimSpace(list), '[', ']')
-	if !isList || strings.TrimSpace(inner) == "" {
-		return ""
-	}
-	// A comprehension isn't a list literal: its elements are its
-	// projection's (projectedListOperand), not the one element
-	// at IN l | [at] would read as.
-	if _, _, _, _, comprehension := parseListComprehension(inner); comprehension {
-		return ""
-	}
-	elementType := ""
-	for _, element := range splitTopLevelComma(inner) {
-		element = strings.TrimSpace(element)
-		typeName := staticLiteralTypeName(element)
-		if typeName == "" {
-			// A computed element (date('…')) keeps the type the operator check
-			// infers for it, as a WITH projection does.
-			if operand, err := (staticOperatorChecker{}).check(element); err == nil && operand.known() {
-				typeName = operand.kind
-			}
-		}
-		if typeName == "" || len(staticTypeChoices(typeName)) != 1 || (elementType != "" && typeName != elementType) {
-			return ""
-		}
-		elementType = typeName
-	}
-	return elementType
-}
-
 // checkReduceForm is Neo4j's compile-time check of a reduce or allReduce
 // call whose parentheses open at open: the call must have the function's
 // form (parseReduceForm), a list of a known type must be a list, and an
 // allReduce predicate of a known type a boolean.
 func checkReduceForm(function, text string, open int, check func(staticArgumentType, string, int) error) error {
-	closing := findMatchingDelimiter(text, open, '(', ')')
+	closing := cyphertext.FindMatchingDelimiter(text, open, '(', ')', cyphertext.OpeningDelimiter)
 	if closing < 0 {
 		return nil
 	}

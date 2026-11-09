@@ -2,10 +2,13 @@
 package cypher
 
 import (
+	"context"
 	stderrors "errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -43,8 +46,6 @@ type QueryInfo struct {
 	FirstClause ClauseType
 
 	// Derived properties
-	IsReadOnly      bool
-	IsWriteQuery    bool
 	IsSchemaQuery   bool
 	IsCompoundQuery bool
 
@@ -60,12 +61,39 @@ type QueryInfo struct {
 	// Original query (normalized)
 	NormalizedQuery string
 
+	// Compiled by the determinism owner with this cached analysis. A registry
+	// replacement refreshes it; ordinary hits only evaluate actual bindings.
+	cachePolicy atomic.Pointer[executionDeterminismPolicy]
+
+	// readShape reports that the statement's text returns graph or
+	// introspection rows (MATCH, RETURN, a CALL db.* introspection procedure
+	// or SHOW). With the statement-effect owner's answer it gates the
+	// read-only optimization; it never decides whether the statement writes.
+	readShape bool
+
+	// effect caches the statement-effect owner's answer
+	// (readStatementExecutionContract) for the procedure registry generation
+	// it was read at. Analyze refreshes it before it returns an analysis, so
+	// every Writes and ReadOnly read carries a current answer. Only
+	// refreshStatementEffect writes it; readers load the pointer once.
+	effect atomic.Pointer[queryStatementEffect]
+
 	// Structured AST (lazily built, cached)
 	// Use GetAST() to access - builds on first call
 	ast      *AST
 	astBuilt bool
 	rawQuery string
 	astMu    sync.RWMutex
+}
+
+// queryStatementEffect is the statement-effect owner's answer for one analysis
+// at one procedure registry generation. It is immutable once stored.
+type queryStatementEffect struct {
+	generation uint64
+	effect     statementEffect
+	// callSubqueriesOnly: every CALL of the statement is a CALL subquery run in
+	// line (callSubqueriesOnly).
+	callSubqueriesOnly bool
 }
 
 // ClauseType represents the type of a Cypher clause
@@ -110,34 +138,52 @@ func NewQueryAnalyzer(maxSize int) *QueryAnalyzer {
 	}
 }
 
-// Analyze extracts query information, using cache when available.
-func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
+// Analyze extracts query information, using cache when available. Every
+// returned analysis carries the statement-effect owner's answer; a procedure
+// registry change refreshes the cached answer instead of re-reading it on
+// every hit, and a cancellation while computing one is returned.
+func (a *QueryAnalyzer) Analyze(ctx context.Context, cypher string) (*QueryInfo, error) {
 	// Fast path: exact query text cache hit avoids normalization cost on hot loops.
 	a.cacheMu.RLock()
 	if info, ok := a.raw[cypher]; ok {
 		a.cacheMu.RUnlock()
-		return info
+		if err := info.refreshStatementEffect(ctx, cypher); err != nil {
+			return nil, err
+		}
+		return info, nil
 	}
 	a.cacheMu.RUnlock()
 
 	// The analysis and its cache key read the canonical text, so comments
 	// and spacing don't change it whatever the normalization setting
 	// (classificationText).
-	text := classificationText(cypher)
+	text := classificationText(ctx, cypher)
 	normalized := normalizeQuery(text)
 
 	// Check cache
 	a.cacheMu.RLock()
 	if info, ok := a.cache[normalized]; ok {
 		a.cacheMu.RUnlock()
-		return info
+		if err := info.refreshStatementEffect(ctx, text); err != nil {
+			return nil, err
+		}
+		return info, nil
 	}
 	a.cacheMu.RUnlock()
 
 	// Analyze query
 	info := analyzeQuery(text)
 	info.NormalizedQuery = normalized
+	if err := info.refreshStatementEffect(ctx, text); err != nil {
+		return nil, err
+	}
+	if info.ReadOnly() {
+		info.cachePolicy.Store(cachedExecutionPolicy(ctx, text))
+	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Cache result
 	a.cacheMu.Lock()
 	// Simple eviction if at capacity
@@ -158,7 +204,95 @@ func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
 	a.raw[cypher] = info
 	a.cacheMu.Unlock()
 
-	return info
+	return info, nil
+}
+
+// refreshStatementEffect reads the statement-effect owner when the procedure
+// registry changed since the cached answer, so a registered WRITE procedure is
+// a write on this path as on every other. The generation is read before the
+// owner, so a registration that races this read leaves a stale mark the next
+// access refreshes rather than a fresh one over an older answer. Text the owner
+// cannot read has an unknown effect, which counts as a write for optimizations;
+// its syntax diagnostic belongs to admission, not here. A cancellation while
+// computing a new effect is returned.
+func (info *QueryInfo) refreshStatementEffect(ctx context.Context, text string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ensureBuiltInProceduresRegistered()
+	// +1 keeps a never-read effect (zero value) from matching generation 0.
+	generation := globalProcedureRegistry.generation.Load() + 1
+	if current := info.effect.Load(); current != nil && current.generation == generation {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	effect := queryStatementEffect{generation: generation, effect: statementEffectWrite}
+	if contract, err := readStatementExecutionContract(ctx, text); err == nil {
+		// An unresolvable procedure keeps its effect unknown, which stays a
+		// write here: no optimization may treat it as read-only.
+		effect.effect = contract.effect()
+		// Only a read-only statement with CALL consults the answer, so only it
+		// reads the subqueries and scans for plugin functions
+		// (readsQueryNodesWithoutVectors).
+		effect.callSubqueriesOnly = info.HasCall && effect.effect == statementEffectRead && !contract.calls &&
+			!callSubqueryRunsSeparately(ctx, text) && !callsNativeFunction(ctx, text)
+	} else if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info.effect.Store(&effect)
+	return nil
+}
+
+// Writes reports the statement-effect owner's answer: the statement changes
+// state through the grammar's updating clauses, a registered WRITE procedure,
+// ordinary schema DDL or a catalog/administration mutation. An analysis whose effect was
+// never read counts as a write, so no optimization treats unknown text as a
+// read.
+func (info *QueryInfo) Writes() bool {
+	effect := info.effect.Load()
+	return effect == nil || effect.effect != statementEffectRead
+}
+
+// runtimeEffect reports the statement-effect owner's runtime answer: the
+// statement runs text supplied at execution time and fixes no write of its own,
+// so only the statements it resolved can establish that it wrote. A never-read
+// effect is unknown and is never a resolved runtime read.
+func (info *QueryInfo) runtimeEffect() bool {
+	effect := info.effect.Load()
+	return effect != nil && effect.effect == statementEffectRuntime
+}
+
+// callSubqueriesOnly reports that every CALL of the statement is a CALL
+// subquery the statement's own executor runs in line: no procedure call
+// anywhere (built-in or not, nested ones included), no subquery IN
+// TRANSACTIONS or with USE in its body, which runs on another executor,
+// and no plugin function outside the bundled APOC library, which is native
+// code that may read the stored vectors of a node it is given
+// (readsQueryNodesWithoutVectors). An analysis whose effect was never read
+// doesn't qualify.
+func (info *QueryInfo) callSubqueriesOnly() bool {
+	effect := info.effect.Load()
+	return effect != nil && effect.callSubqueriesOnly
+}
+
+// readResult reports the row-returning, non-schema shape of an analysis. It
+// says nothing about effects: each read-only optimization decides separately
+// whether it needs the statement-effect owner's proof or resolves the bound
+// execution policy instead.
+func (info *QueryInfo) readResult() bool {
+	return info.readShape && !info.HasSchema
+}
+
+// ReadOnly reports a statement that changes nothing and returns rows, so the
+// read-only optimizations (result caching, streaming, vector-free node reads)
+// may serve it.
+func (info *QueryInfo) ReadOnly() bool {
+	return !info.Writes() && info.readResult()
 }
 
 // ClearCache clears the analysis cache.
@@ -179,32 +313,62 @@ func (a *QueryAnalyzer) CacheSize() int {
 // GetAST returns the structured AST for the query.
 // The AST is lazily built on first call and cached for subsequent calls.
 // This is useful for LLM features that need structured query representation.
-func (info *QueryInfo) GetAST() *AST {
-	// Fast path: already built
+//
+// The statement-effect owner is refreshed first so the AST and Writes carry
+// one answer, and a cached analysis keeps the answer it already resolved
+// instead of resolving the effect again. When a registry change turns the
+// statement from a read into a write, GetAST publishes a new AST for the
+// current answer and leaves the AST a caller may still hold untouched. An
+// unchanged warm AST is returned as the same pointer without another
+// allocation.
+func (info *QueryInfo) GetAST(ctx context.Context) (*AST, error) {
+	if err := info.refreshStatementEffect(ctx, info.rawQuery); err != nil {
+		return nil, err
+	}
+	readOnly := !info.Writes()
+
+	// Fast path: a built AST whose effect answer still holds.
 	info.astMu.RLock()
 	if info.astBuilt {
-		ast := info.ast
-		info.astMu.RUnlock()
-		return ast
+		if ast := info.ast; ast.IsReadOnly == readOnly {
+			info.astMu.RUnlock()
+			return ast, nil
+		}
 	}
 	info.astMu.RUnlock()
 
-	// Slow path: build AST
 	info.astMu.Lock()
 	defer info.astMu.Unlock()
-
-	// Double-check after acquiring write lock
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if info.astBuilt {
-		return info.ast
+		if info.ast.IsReadOnly == readOnly {
+			return info.ast, nil
+		}
+		// Publish the refreshed effect without mutating an AST a caller may
+		// still hold.
+		refreshed := *info.ast
+		refreshed.IsReadOnly = readOnly
+		info.ast = &refreshed
+		return info.ast, nil
 	}
 
-	// Build AST
-	builder := NewASTBuilder()
-	ast, _ := builder.Build(info.rawQuery)
+	source := cyphertext.NewSource(ctx, info.rawQuery, cyphertext.AcceptedSource)
+	if source.Err != nil {
+		return nil, source.Err
+	}
+	ast, err := NewASTBuilder().build(ctx, source, readOnly)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	info.ast = ast
 	info.astBuilt = true
 
-	return info.ast
+	return info.ast, nil
 }
 
 // HasAST returns true if the AST has already been built.
@@ -265,8 +429,9 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info.HasLoadCSV = containsKeyword(upper, "LOAD CSV")
 
 	// Special handling
-	info.HasExplain = strings.HasPrefix(upper, "EXPLAIN")
-	info.HasProfile = strings.HasPrefix(upper, "PROFILE")
+	mode, _ := parseExecutionMode(upper)
+	info.HasExplain = mode == ModeExplain
+	info.HasProfile = mode == ModeProfile
 	info.HasShow = strings.HasPrefix(upper, "SHOW")
 	info.HasSchema = containsKeyword(upper, "CREATE INDEX") ||
 		containsKeyword(upper, "CREATE RANGE INDEX") ||
@@ -295,13 +460,11 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info.FirstClause = detectFirstClause(upper)
 
 	// Derive compound flags
-	info.IsWriteQuery = info.HasCreate || info.HasMerge || info.HasDelete ||
-		info.HasSet || info.HasRemove
-	// For CALL, only "CALL db." procedures are read-only (schema introspection).
-	// Other procedures like gds.graph.drop() may be writes.
+	// The row-returning shape gates the read-only optimization (schema
+	// introspection included); whether anything writes is the statement-effect
+	// owner's answer (refreshStatementEffect).
 	isDbCall := info.HasCall && strings.Contains(upperASCII(cypher), "CALL DB.")
-	info.IsReadOnly = !info.IsWriteQuery && !info.HasSchema &&
-		(info.HasMatch || info.HasReturn || isDbCall || info.HasShow)
+	info.readShape = info.HasMatch || info.HasReturn || isDbCall || info.HasShow
 	info.IsSchemaQuery = info.HasSchema || info.HasShow
 
 	// Count major clauses for compound detection
@@ -335,26 +498,27 @@ func analyzeQuery(cypher string) *QueryInfo {
 // The analyzer's keyword flags are conservative (CREATE in ON CREATE SET or
 // in a string sets HasCreate), so when one of them is set the statement's
 // clauses decide (#961): MERGE … ON CREATE SET … is MERGE work, not CREATE.
-func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
-	if info == nil || !info.HasMerge {
+// A canceled classification is not retry-safe; it never replaces the commit error.
+func IsRetrySafeMergeCommitQuery(ctx context.Context, info *QueryInfo) bool {
+	if ctx.Err() != nil || info == nil || !info.HasMerge {
 		return false
 	}
 	if info.HasCreate || info.HasDelete || info.HasDetachDelete || info.HasRemove ||
 		info.HasForeach || info.HasLoadCSV || info.HasCall || info.HasSchema ||
 		info.HasShow || info.HasUnion {
-		return mergeOnlyClauses(info.rawQuery)
+		return mergeOnlyClauses(ctx, info.rawQuery) && ctx.Err() == nil
 	}
-	return true
+	return ctx.Err() == nil
 }
 
 // mergeOnlyClauses reports whether query is a single statement of MERGE
 // clauses combined only with MATCH, OPTIONAL MATCH, SET, WITH, UNWIND and
 // RETURN. A statement the clause splitter can't split, or a UNION, is not.
-func mergeOnlyClauses(query string) bool {
+func mergeOnlyClauses(ctx context.Context, query string) bool {
 	if topLevelUnionCut(query) >= 0 {
 		return false
 	}
-	clauses, ok := splitPipelineClauses(query)
+	clauses, ok := splitPipelineClauses(ctx, query)
 	if !ok {
 		return false
 	}
@@ -398,13 +562,20 @@ type CommitStatement struct {
 // SET o.id = 'sha256:' + $h can't clash on V.id. Every other write may reach a
 // node with more labels than its pattern names (a matched node), so it counts
 // whatever its pattern says.
-func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) bool {
+// A canceled classification returns false, retaining the caller's commit outcome.
+func MergeUniqueConflictIsRetrySafe(ctx context.Context, statements []CommitStatement, err error) bool {
 	var violation *storage.ConstraintViolationError
+	if ctx.Err() != nil {
+		return false
+	}
 	if !stderrors.As(err, &violation) || violation == nil {
 		return false
 	}
 	for _, statement := range statements {
-		items, mergeKeys, ok := mergeStatementSetItems(statement.Query, violation.Label)
+		if ctx.Err() != nil {
+			return false
+		}
+		items, mergeKeys, ok := mergeStatementSetItems(ctx, statement.Query, violation.Label)
 		if !ok {
 			return false
 		}
@@ -419,7 +590,7 @@ func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) boo
 			}
 		}
 	}
-	return true
+	return ctx.Err() == nil
 }
 
 // mergeSetItem is one SET item of a MERGE statement. exactLabels is set when
@@ -434,12 +605,12 @@ type mergeSetItem struct {
 // and its MERGE clauses' ON CREATE SET / ON MATCH SET lists) and the property
 // expressions its MERGE patterns key on for label. ok is false when the
 // statement can't be split into clauses.
-func mergeStatementSetItems(statement, label string) (items []mergeSetItem, mergeKeys map[string][]string, ok bool) {
-	clauses, ok := splitPipelineClauses(statement)
+func mergeStatementSetItems(ctx context.Context, statement, label string) (items []mergeSetItem, mergeKeys map[string][]string, ok bool) {
+	clauses, ok := splitPipelineClauses(ctx, statement)
 	if !ok {
 		return nil, nil, false
 	}
-	addedLabels, dynamicLabels := statementSetLabels(clauses)
+	addedLabels, dynamicLabels := statementSetLabels(ctx, clauses)
 	for index, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseSet:
@@ -447,7 +618,7 @@ func mergeStatementSetItems(statement, label string) (items []mergeSetItem, merg
 				items = append(items, mergeSetItem{text: assignment})
 			}
 		case pipelineClauseMerge:
-			parts := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
+			parts := splitMergeClauseActions(ctx, pipelineClauseBody(clause.text, "MERGE"), nil)
 			mergeKeys = appendPatternPropertyExpressions(mergeKeys, parts.pattern, label)
 			introduced := patternNodeLabels(parts.pattern)
 			for _, assignment := range mergeActionAssignments(parts.onCreate) {
@@ -470,7 +641,7 @@ func mergeStatementSetItems(statement, label string) (items []mergeSetItem, merg
 // statementSetLabels returns the labels each variable gets from the
 // statement's SET x:Label items (SET clauses and ON CREATE / ON MATCH SET
 // lists), and the variables given a label that isn't static (SET x:$(expr)).
-func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dynamic map[string]bool) {
+func statementSetLabels(ctx context.Context, clauses []pipelineClause) (added map[string][]string, dynamic map[string]bool) {
 	added, dynamic = map[string][]string{}, map[string]bool{}
 	note := func(assignments []string) {
 		for _, assignment := range assignments {
@@ -491,7 +662,7 @@ func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dy
 		case pipelineClauseSet:
 			note(splitSetAssignments(strings.TrimSpace(clause.text[len("SET"):])))
 		case pipelineClauseMerge:
-			parts := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
+			parts := splitMergeClauseActions(ctx, pipelineClauseBody(clause.text, "MERGE"), nil)
 			note(mergeActionAssignments(parts.onCreate))
 			note(mergeActionAssignments(parts.onMatch))
 		}
@@ -529,15 +700,15 @@ func patternNodeLabels(pattern string) map[string][]string {
 // "[…]" of pattern, delimiters included, skipping quoted text.
 func eachPatternElement(pattern string, visit func(opener byte, element string)) {
 	for index := 0; index < len(pattern); index++ {
-		switch pattern[index] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(pattern[index]) {
+		case cypherQuoteClass:
 			index = skipQuotedSemanticText(pattern, index) - 1
 		case '(', '[':
 			closer := ')'
 			if pattern[index] == '[' {
 				closer = ']'
 			}
-			closing := findMatchingDelimiter(pattern, index, rune(pattern[index]), closer)
+			closing := cyphertext.FindMatchingDelimiter(pattern, index, rune(pattern[index]), closer, cyphertext.OpeningDelimiter)
 			if closing < 0 {
 				return
 			}
@@ -564,7 +735,7 @@ func appendPatternPropertyExpressions(keys map[string][]string, pattern, label s
 		if labels, err := parseLabelChain(chain); err != nil || !containsString(labels, label) {
 			return
 		}
-		closing := findMatchingDelimiter(inner, brace, '{', '}')
+		closing := cyphertext.FindMatchingDelimiter(inner, brace, '{', '}', cyphertext.OpeningDelimiter)
 		if closing < 0 {
 			return
 		}
@@ -601,13 +772,13 @@ func setItemKeepsMergeKey(item, property string, mergeKeys map[string][]string, 
 	}
 	var written map[string]interface{}
 	switch {
-	case strings.HasPrefix(right, "$") && isValidIdentifier(right[1:]):
+	case strings.HasPrefix(right, "$") && cyphertext.IsIdentifier(right[1:]):
 		parameter, ok := params[right[1:]].(map[string]interface{})
 		if !ok {
 			return false
 		}
 		written = parameter
-	case strings.HasPrefix(right, "{") && findMatchingDelimiter(right, 0, '{', '}') == len(right)-1:
+	case strings.HasPrefix(right, "{") && cyphertext.FindMatchingDelimiter(right, 0, '{', '}', cyphertext.OpeningDelimiter) == len(right)-1:
 		for _, pair := range splitTopLevelComma(right[1 : len(right)-1]) {
 			separator := findTopLevelMapKeyValueSeparator(pair)
 			if separator <= 0 || normalizePropertyKey(pair[:separator]) != property {
@@ -638,13 +809,12 @@ func isMergeKeyValue(value interface{}, expressions []string, params map[string]
 // expression; ok is false for anything else.
 func staticCommitValue(expression string, params map[string]interface{}) (interface{}, bool) {
 	expression = strings.TrimSpace(expression)
-	if strings.HasPrefix(expression, "$") && isValidIdentifier(expression[1:]) {
+	if strings.HasPrefix(expression, "$") && cyphertext.IsIdentifier(expression[1:]) {
 		value, ok := params[expression[1:]]
 		return value, ok
 	}
-	if len(expression) >= 2 && (expression[0] == '\'' || expression[0] == '"') &&
-		expression[len(expression)-1] == expression[0] && !strings.ContainsAny(expression[1:len(expression)-1], "\\'\"") {
-		return expression[1 : len(expression)-1], true
+	if value, quoted := cyphertext.DecodeString(expression, cyphertext.AcceptedSource); quoted {
+		return value, true
 	}
 	if integer, err := strconv.ParseInt(expression, 10, 64); err == nil {
 		return integer, true
@@ -674,9 +844,9 @@ func containsKeyword(upper, keyword string) bool {
 		idx += searchFrom // Adjust to absolute position
 
 		// Check it's not part of a larger word
-		isWordStart := idx == 0 || (!isIdentByte(upper[idx-1]) && upper[idx-1] != '_')
+		isWordStart := idx == 0 || (!cyphertext.NamePartAt(upper, idx-1) && upper[idx-1] != '_')
 		end := idx + len(keyword)
-		isWordEnd := end >= len(upper) || (!isIdentByte(upper[end]) && upper[end] != '_')
+		isWordEnd := end >= len(upper) || (!cyphertext.NamePartAt(upper, end) && upper[end] != '_')
 
 		if isWordStart && isWordEnd {
 			return true
@@ -694,14 +864,7 @@ func containsKeyword(upper, keyword string) bool {
 func detectFirstClause(upper string) ClauseType {
 	upper = strings.TrimSpace(upper)
 
-	// Strip EXPLAIN/PROFILE prefix
-	if strings.HasPrefix(upper, "EXPLAIN ") {
-		upper = strings.TrimPrefix(upper, "EXPLAIN ")
-		upper = strings.TrimSpace(upper)
-	} else if strings.HasPrefix(upper, "PROFILE ") {
-		upper = strings.TrimPrefix(upper, "PROFILE ")
-		upper = strings.TrimSpace(upper)
-	}
+	_, upper = parseExecutionMode(upper)
 
 	switch {
 	case strings.HasPrefix(upper, "MATCH"):

@@ -283,18 +283,22 @@ func TestMatchCreateRelationship_IDSeekFastPath(t *testing.T) {
 	ctx := context.Background()
 
 	// Create two nodes to link.
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "fp-node-a",
 		Labels:     []string{"Widget"},
 		Properties: map[string]interface{}{"name": "alpha"},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "fp-node-b",
 		Labels:     []string{"Widget"},
 		Properties: map[string]interface{}{"name": "beta"},
 	})
 	require.NoError(t, err)
+
+	// These stores return element IDs qualified with their own namespace.
+	fromElementID := storage.NodeElementID("test", "fp-node-a")
+	toElementID := storage.NodeElementID("test", "fp-node-b")
 
 	t.Run("comma-separated MATCH with elementId params creates relationship via ID seek", func(t *testing.T) {
 		result, err := exec.Execute(ctx, `
@@ -303,8 +307,8 @@ func TestMatchCreateRelationship_IDSeekFastPath(t *testing.T) {
 			CREATE (a)-[r:LINKS_TO]->(b)
 			RETURN type(r) AS relType
 		`, map[string]interface{}{
-			"from": "4:nornicdb:fp-node-a",
-			"to":   "4:nornicdb:fp-node-b",
+			"from": fromElementID,
+			"to":   toElementID,
 		})
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Stats.RelationshipsCreated)
@@ -347,8 +351,8 @@ func TestMatchCreateRelationship_IDSeekFastPath(t *testing.T) {
 			CREATE (a)-[r:TYPED_LINK]->(b)
 			RETURN type(r) AS relType
 		`, map[string]interface{}{
-			"from": "4:nornicdb:fp-node-a",
-			"to":   "4:nornicdb:fp-node-b",
+			"from": fromElementID,
+			"to":   toElementID,
 		})
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Stats.RelationshipsCreated)
@@ -361,8 +365,8 @@ func TestMatchCreateRelationship_IDSeekFastPath(t *testing.T) {
 			CREATE (a)-[r:SHOULD_NOT_EXIST]->(b)
 			RETURN type(r) AS relType
 		`, map[string]interface{}{
-			"from": "4:nornicdb:fp-node-a",
-			"to":   "4:nornicdb:fp-node-b",
+			"from": fromElementID,
+			"to":   toElementID,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, 0, result.Stats.RelationshipsCreated)
@@ -396,7 +400,7 @@ func TestMatchCreateRelationship_CompoundHelpersAndDeleteBranches(t *testing.T) 
 		require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 		require.EqualValues(t, 2, result.Stats.RelationshipsCreated)
 
-		positions := findAllKeywordPositions(`MATCH (n {txt: "MATCH"}) RETURN n MATCH (m) RETURN m`, "MATCH")
+		positions := findAllTopLevelPipelineKeywordPositions(ctx, `MATCH (n {txt: "MATCH"}) RETURN n MATCH (m) RETURN m`, "MATCH")
 		require.Len(t, positions, 2)
 		assert.True(t, positions[0] < positions[1])
 		assert.True(t, isInsideQuotes(`'abc'`, 2))

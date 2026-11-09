@@ -1,6 +1,10 @@
 package multidb
 
 import (
+	"context"
+
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 
@@ -18,53 +22,60 @@ type rejectingEngine struct {
 
 var errRejected = errors.New("rejected")
 
-func (e *rejectingEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	if node.ID == e.rejectNode {
-		return "", errRejected
-	}
-	return e.Engine.CreateNode(node)
-}
+func (e *rejectingEngine) GetInnerEngine() storage.Engine { return e.Engine }
 
-func (e *rejectingEngine) CreateEdge(edge *storage.Edge) error {
-	if edge.ID == e.rejectEdge {
+// WithEntityChange is the one rejection policy for direct and atomic staged
+// writes. Its continuation writes only the transaction supplied by the owner.
+func (e *rejectingEngine) WithEntityChange(op storage.Operation, apply func() error) error {
+	if op.Type == storage.OpCreateNode && op.Node != nil && op.Node.ID == e.rejectNode {
 		return errRejected
 	}
-	return e.Engine.CreateEdge(edge)
+	if op.Type == storage.OpCreateEdge && op.Edge != nil && op.Edge.ID == e.rejectEdge {
+		return errRejected
+	}
+	return apply()
+}
+func (e *rejectingEngine) CreateNode(ctx context.Context, node *storage.Node) (id storage.NodeID, err error) {
+	err = e.WithEntityChange(storage.Operation{Type: storage.OpCreateNode, Node: node}, func() error { id, err = e.Engine.CreateNode(ctx, node); return err })
+	return
+}
+func (e *rejectingEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
+	return e.WithEntityChange(storage.Operation{Type: storage.OpCreateEdge, Edge: edge}, func() error { return e.Engine.CreateEdge(ctx, edge) })
 }
 
 // A bulk create through the size-tracking wrapper is all-or-nothing: when one
-// entity of the batch is rejected, the ones created before it are removed.
+// entity of the batch is rejected, no staged prefix becomes visible.
 func TestSizeTrackingEngine_BulkCreateIsAllOrNothing(t *testing.T) {
 	manager, dbName := setupTestManager(t)
 	id := func(name string) string { return dbName + ":" + name }
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	inner := &rejectingEngine{Engine: base, rejectNode: storage.NodeID(id("c")), rejectEdge: storage.EdgeID(id("e2"))}
 	wrapped := newSizeTrackingEngine(inner, manager, dbName)
 
-	err := wrapped.BulkCreateNodes([]*storage.Node{
+	err := wrapped.BulkCreateNodes(t.Context(), []*storage.Node{
 		{ID: storage.NodeID(id("a")), Labels: []string{"L"}},
 		{ID: storage.NodeID(id("b")), Labels: []string{"L"}},
 		{ID: storage.NodeID(id("c")), Labels: []string{"L"}},
 	})
 	require.ErrorIs(t, err, errRejected)
-	count, err := base.NodeCount()
+	count, err := base.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count, "no node of the rejected batch stays")
 
-	require.NoError(t, wrapped.BulkCreateNodes([]*storage.Node{
+	require.NoError(t, wrapped.BulkCreateNodes(t.Context(), []*storage.Node{
 		{ID: storage.NodeID(id("a")), Labels: []string{"L"}},
 		{ID: storage.NodeID(id("b")), Labels: []string{"L"}},
 	}))
-	err = wrapped.BulkCreateEdges([]*storage.Edge{
+	err = wrapped.BulkCreateEdges(t.Context(), []*storage.Edge{
 		{ID: storage.EdgeID(id("e1")), StartNode: storage.NodeID(id("a")), EndNode: storage.NodeID(id("b")), Type: "R"},
 		{ID: storage.EdgeID(id("e2")), StartNode: storage.NodeID(id("b")), EndNode: storage.NodeID(id("a")), Type: "R"},
 	})
 	require.ErrorIs(t, err, errRejected)
-	edges, err := base.EdgeCount()
+	edges, err := base.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, edges, "no relationship of the rejected batch stays")
-	nodes, err := base.NodeCount()
+	nodes, err := base.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 2, nodes)
 }

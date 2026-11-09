@@ -1,0 +1,135 @@
+package gpu
+
+import (
+	"runtime"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+// Centroid readers (GetCentroids, FindNearestCentroid, AssignToClustering)
+// read the published clustering's coordinates under its lock, the lock
+// UpdateCentroidsBatch holds while it rewrites them. Run with -race.
+func TestCentroidReadersHoldTheClusteringLockDuringUpdates(t *testing.T) {
+	ci := NewClusterIndex(testManager(), embConfig(64), &KMeansConfig{NumClusters: 2, MaxIterations: 2})
+	ids, vectors := generateTestEmbeddings(32, 64)
+	for i, v := range vectors {
+		require.NoError(t, ci.Add(ids[i], v))
+	}
+	require.Nil(t, ci.GetCentroids(), "an unclustered index has no centroids")
+	require.Equal(t, -1, ci.FindNearestCentroid(vectors[0]))
+	require.Nil(t, (&Clustering{}).Centroids())
+	require.NoError(t, ci.Cluster())
+
+	const iterations = 2000
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < iterations; i++ {
+			centroids := ci.GetCentroids()
+			if len(centroids) != 2 || len(centroids[0]) != 64 {
+				t.Errorf("GetCentroids returned %d centroids", len(centroids))
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < iterations; i++ {
+			if c := ci.FindNearestCentroid(vectors[0]); c < 0 || c > 1 {
+				t.Errorf("FindNearestCentroid returned %d", c)
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < iterations; i++ {
+			if _, _, _, ok := ci.AssignToClustering(ci.PublishedClustering(), ids[1]); !ok {
+				t.Error("AssignToClustering found no embedding")
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < iterations; i++ {
+			if err := ci.OnNodeUpdate(ids[0], vectors[i%len(vectors)]); err != nil {
+				t.Error(err)
+				return
+			}
+			ci.UpdateCentroidsBatch()
+		}
+	}()
+	close(start)
+	wg.Wait()
+}
+
+// Centroid batch updates and clustering publication (PublishClustering, and
+// RestoreClusteringState through it) take the index's locks in one order, so
+// running them concurrently always completes.
+func TestCentroidBatchAndPublicationDoNotDeadlock(t *testing.T) {
+	ci := NewClusterIndex(testManager(), embConfig(64), &KMeansConfig{NumClusters: 2, MaxIterations: 2})
+	ids, vectors := generateTestEmbeddings(32, 64)
+	for i, v := range vectors {
+		require.NoError(t, ci.Add(ids[i], v))
+	}
+	require.NoError(t, ci.Cluster())
+	published := ci.PublishedClustering()
+	centroids := ci.GetCentroids()
+	assignments := make(map[string]int, len(ids))
+	for i, id := range ids {
+		assignments[id] = i % 2
+	}
+
+	const iterations = 2000
+	start := make(chan struct{})
+	done := make(chan struct{}, 3)
+	go func() {
+		<-start
+		for i := 0; i < iterations; i++ {
+			if err := ci.OnNodeUpdate(ids[0], vectors[i%len(vectors)]); err != nil {
+				t.Error(err)
+				break
+			}
+			ci.UpdateCentroidsBatch()
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		<-start
+		for i := 0; i < iterations; i++ {
+			ci.PublishClustering(published)
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		<-start
+		for i := 0; i < iterations; i++ {
+			if err := ci.RestoreClusteringState(centroids, assignments); err != nil {
+				t.Error(err)
+				break
+			}
+		}
+		done <- struct{}{}
+	}()
+	close(start)
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	for i := 0; i < 3; i++ {
+		select {
+		case <-done:
+		case <-deadline.C:
+			buf := make([]byte, 1<<20)
+			t.Fatalf("centroid batch and publication did not complete; goroutines:\n%s", buf[:runtime.Stack(buf, true)])
+		}
+	}
+}

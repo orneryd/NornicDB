@@ -14,7 +14,7 @@ func seedProcedureDestination(t *testing.T, store storage.Engine, id storage.Nod
 	t.Helper()
 	blob, err := msgpack.Marshal(record)
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: id, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": record.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": record.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
 	require.NoError(t, err)
 }
 func TestProcedureCatalogRejectsUnrelatedMigrationDestination(t *testing.T) {
@@ -28,9 +28,9 @@ func TestProcedureCatalogRejectsUnrelatedMigrationDestination(t *testing.T) {
 			destination := procedureCatalogNodeID("custom.Report")
 			seedProcedureDestination(t, store, legacy, persistedProcedureRecord{Name: "custom.Report", Mode: "READ", Body: "RETURN 1 AS v", Signature: "custom.Report() :: (v :: INTEGER)"})
 			seedProcedureDestination(t, store, destination, persistedProcedureRecord{Name: "custom.Other", Mode: "READ", Body: "RETURN 9 AS v", Signature: "custom.Other() :: (v :: INTEGER)"})
-			beforeLegacy, err := store.GetNode(legacy)
+			beforeLegacy, err := store.GetNode(t.Context(), legacy)
 			require.NoError(t, err)
-			beforeDestination, err := store.GetNode(destination)
+			beforeDestination, err := store.GetNode(t.Context(), destination)
 			require.NoError(t, err)
 			switch operation {
 			case "install lowercase":
@@ -38,13 +38,13 @@ func TestProcedureCatalogRejectsUnrelatedMigrationDestination(t *testing.T) {
 			case "drop lowercase":
 				_, err = exec.Execute(context.Background(), "CALL apoc.custom.dropProcedure('report')", nil)
 			case "load":
-				err = exec.loadPersistedProcedures()
+				err = exec.loadPersistedProcedures(t.Context())
 			}
 			assert.Error(t, err, "an unrelated destination must never supersede a valid legacy definition")
-			after, err := store.GetNode(legacy)
+			after, err := store.GetNode(t.Context(), legacy)
 			require.NoError(t, err, "valid legacy record must survive")
 			require.Equal(t, beforeLegacy.Properties, after.Properties)
-			after, err = store.GetNode(destination)
+			after, err = store.GetNode(t.Context(), destination)
 			require.NoError(t, err)
 			require.Equal(t, beforeDestination.Properties, after.Properties)
 		})
@@ -72,35 +72,35 @@ func TestProcedureCatalogMigrationValidatesDestination(t *testing.T) {
 				destination.Mode = "INVALID"
 			}
 			seedProcedureDestination(t, store, destinationID, destination)
-			node, err := store.GetNode(destinationID)
+			node, err := store.GetNode(t.Context(), destinationID)
 			require.NoError(t, err)
 			if kind == "corrupt payload" {
-				node.Properties["record"] = 17
-				require.NoError(t, store.UpdateNode(node))
+				node.Properties["record"] = int64(17)
+				require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			}
 			if kind == "ordinary node" {
 				node.Labels = []string{"Ordinary"}
-				require.NoError(t, store.UpdateNode(node))
+				require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			}
-			before, err := store.GetNode(legacyID)
+			before, err := store.GetNode(t.Context(), legacyID)
 			require.NoError(t, err)
-			superseded, err := exec.migrateProcedureCatalogIdentity(store, before, original)
+			_, superseded, err := exec.resolveProcedureCatalogIdentity(t.Context(), store, original.Name, before)
 			if kind == "newer exact" {
 				require.NoError(t, err)
 				require.True(t, superseded)
-				_, err = store.GetNode(legacyID)
+				_, err = store.GetNode(t.Context(), legacyID)
 				require.ErrorIs(t, err, storage.ErrNotFound)
-				require.NoError(t, exec.loadPersistedProcedures())
+				require.NoError(t, exec.loadPersistedProcedures(t.Context()))
 				result, err := exec.Execute(context.Background(), "CALL custom.Report() YIELD v RETURN v", nil)
 				require.NoError(t, err)
 				require.Equal(t, [][]interface{}{{int64(9)}}, result.Rows)
 			} else {
 				require.Error(t, err)
 				require.False(t, superseded)
-				after, getErr := store.GetNode(legacyID)
+				after, getErr := store.GetNode(t.Context(), legacyID)
 				require.NoError(t, getErr)
 				require.Equal(t, before.Properties, after.Properties)
-				after, getErr = store.GetNode(destinationID)
+				after, getErr = store.GetNode(t.Context(), destinationID)
 				require.NoError(t, getErr)
 				require.Equal(t, node.Properties, after.Properties)
 				require.Equal(t, node.Labels, after.Labels)

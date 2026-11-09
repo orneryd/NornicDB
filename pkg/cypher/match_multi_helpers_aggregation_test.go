@@ -11,11 +11,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const gh713UnwindReturnPrefix = "MATCH (n:UnwindReturn) WITH n, n.items AS items UNWIND items AS item "
+
+func newGh713UnwindReturnExecutor(t testing.TB, namespace string, count int, node func(int) *storage.Node) (*StorageExecutor, *storage.NamespacedEngine) {
+	t.Helper()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), namespace)
+	for index := 0; index < count; index++ {
+		_, err := store.CreateNode(t.Context(), node(index))
+		require.NoError(t, err)
+	}
+	return NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0}), store
+}
+
 func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match-with-unwind-return")
-	_, err := store.CreateNode(&storage.Node{ID: "items", Labels: []string{"UnwindReturn"}, Properties: map[string]interface{}{"items": []interface{}{int64(3), int64(1), int64(2)}}})
-	require.NoError(t, err)
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec, store := newGh713UnwindReturnExecutor(t, "match-with-unwind-return", 1, func(int) *storage.Node {
+		return &storage.Node{ID: "items", Labels: []string{"UnwindReturn"}, Properties: map[string]interface{}{"items": []interface{}{int64(3), int64(1), int64(2)}}}
+	})
 	params := map[string]interface{}{"skip": int64(1), "limit": int64(1)}
 	for _, test := range []struct {
 		clause, code string
@@ -41,7 +52,7 @@ func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
 		{"RETURN collect(item) AS values", "", []string{"values"}, [][]interface{}{{[]interface{}{int64(3), int64(1), int64(2)}}}},
 	} {
 		t.Run(test.clause, func(t *testing.T) {
-			query := "MATCH (n:UnwindReturn) WITH n, n.items AS items UNWIND items AS item " + test.clause
+			query := gh713UnwindReturnPrefix + test.clause
 			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
 			result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 			public, publicErr := exec.Execute(context.Background(), query, params)
@@ -92,7 +103,7 @@ func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
 		{"empty list", []interface{}{}, [][]interface{}{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(test.name), Labels: []string{"UnwindEdge"}, Properties: map[string]interface{}{"name": test.name, "items": test.items}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(test.name), Labels: []string{"UnwindEdge"}, Properties: map[string]interface{}{"name": test.name, "items": test.items}})
 			require.NoError(t, err)
 			query := "MATCH (n:UnwindEdge) WHERE n.name = $name WITH n.items AS items UNWIND items AS item RETURN item AS value"
 			params := map[string]interface{}{"name": test.name}
@@ -110,12 +121,9 @@ func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
 }
 
 func BenchmarkGh713MatchWithUnwindReturn(b *testing.B) {
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "match-with-unwind-return-bench")
-	for index := 0; index < 32; index++ {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("items-%d", index)), Labels: []string{"UnwindReturn"}, Properties: map[string]interface{}{"items": []string{"one", "two", "three", "four"}}})
-		require.NoError(b, err)
-	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec, _ := newGh713UnwindReturnExecutor(b, "match-with-unwind-return-bench", 32, func(index int) *storage.Node {
+		return &storage.Node{ID: storage.NodeID(fmt.Sprintf("items-%d", index)), Labels: []string{"UnwindReturn"}, Properties: map[string]interface{}{"items": []string{"one", "two", "three", "four"}}}
+	})
 	for _, test := range []struct {
 		name, clause string
 		rows         int
@@ -125,7 +133,7 @@ func BenchmarkGh713MatchWithUnwindReturn(b *testing.B) {
 	} {
 		b.Run(test.name, func(b *testing.B) {
 			ctx := withExpressionFailureSlot(context.Background())
-			query := "MATCH (n:UnwindReturn) WITH n, n.items AS items UNWIND items AS item " + test.clause
+			query := gh713UnwindReturnPrefix + test.clause
 			apply := func() {
 				result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 				if err != nil || len(result.Rows) != test.rows {
@@ -185,11 +193,11 @@ func BenchmarkGh713MultiMatchAggregation(b *testing.B) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "multi-match-aggregate-bench")
 	for index := 0; index < 32; index++ {
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Aggregate" + side}, Properties: map[string]interface{}{"key": int64(index), "value": int64(index)}})
+			_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Aggregate" + side}, Properties: map[string]interface{}{"key": int64(index), "value": int64(index)}})
 			require.NoError(b, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, test := range []struct {
 		name, clause string
 		rows         int
@@ -232,10 +240,10 @@ func TestGh713MultiMatchAggregateSharedReturn(t *testing.T) {
 		{ID: "small", Labels: []string{"ExactSumLeft"}, Properties: map[string]interface{}{"key": "small", "value": int64(2)}},
 		{ID: "right", Labels: []string{"ExactSumRight"}, Properties: map[string]interface{}{"fraction": 0.5}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	params := map[string]interface{}{"skip": int64(1), "limit": int64(1)}
 	for _, test := range []struct {
 		clause, code string
@@ -275,14 +283,14 @@ func TestGh713MultiMatchBorrowedReturn(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "multi-match-borrowed-return")
 	for _, side := range []string{"Left", "Right"} {
 		for index := 1; index <= 2; index++ {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Borrow" + side}, Properties: map[string]interface{}{"value": int64(index)}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Borrow" + side}, Properties: map[string]interface{}{"value": int64(index)}})
 			require.NoError(t, err)
 		}
 	}
 	for index := 1; index <= 2; index++ {
-		require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("edge-%d", index)), StartNode: storage.NodeID(fmt.Sprintf("Left-%d", index)), EndNode: storage.NodeID(fmt.Sprintf("Right-%d", index)), Type: "BORROWED"}))
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("edge-%d", index)), StartNode: storage.NodeID(fmt.Sprintf("Left-%d", index)), EndNode: storage.NodeID(fmt.Sprintf("Right-%d", index)), Type: "BORROWED"}))
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	params := map[string]interface{}{"skip": int64(1), "limit": int64(2)}
 	for _, test := range []struct {
 		query, code string
@@ -343,11 +351,11 @@ func BenchmarkGh713MultiMatchProjection(b *testing.B) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "multi-match-projection-bench")
 	for index := 0; index < 32; index++ {
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"value": int64(index)}})
+			_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"value": int64(index)}})
 			require.NoError(b, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := withExpressionFailureSlot(context.Background())
 	query := "MATCH (a:ProjectionLeft) MATCH (b:ProjectionRight) RETURN a.value + b.value AS total"
 	apply := func() {
@@ -441,7 +449,7 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 		_, _, _, ok = parseCartesianNullTerm("a.name = 1")
 		require.False(t, ok)
 
-		parts := splitTopLevelAndConjuncts("a.x = 1 AND 'x AND y' = 'x AND y' AND [1,2] = [1,2]")
+		parts := splitTopLevelAndConjuncts(t.Context(), "a.x = 1 AND 'x AND y' = 'x AND y' AND [1,2] = [1,2]")
 		require.Equal(t, []string{"a.x = 1", "'x AND y' = 'x AND y'", "[1,2] = [1,2]"}, parts)
 
 		vv, pp, ok := parseCartesianVarProp(" a.`p` ")
@@ -506,9 +514,9 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 		require.False(t, ok)
 
 		for _, value := range []interface{}{nil, "x", 2, int64(3), 2.5, true, false, []int{1, 2}} {
-			require.Equal(t, cypherEquivalenceKey(value), cartesianValueKey(value))
+			require.Equal(t, cypherValueKey(value, cypherValueEqualityContract), cypherValueKey(value, cypherValueEqualityContract))
 		}
-		require.Equal(t, cartesianValueKey(int64(1)), cartesianValueKey(float64(1)))
+		require.Equal(t, cypherValueKey(int64(1), cypherValueEqualityContract), cypherValueKey(float64(1), cypherValueEqualityContract))
 	})
 
 	t.Run("prop collection and filters", func(t *testing.T) {
@@ -519,18 +527,18 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 			{ID: "n3", Properties: map[string]interface{}{"other": 1}},
 		}
 
-		vals := collectPropValues(nodes, "k")
+		vals := collectPropValues(nodes, "k", cypherValueEqualityContract)
 		require.Len(t, vals, 2)
-		_, hasA := vals[cypherEquivalenceKey("a")]
-		_, hasB := vals[cypherEquivalenceKey("b")]
+		_, hasA := vals[cypherValueKey("a", cypherEquivalenceContract)]
+		_, hasB := vals[cypherValueKey("b", cypherEquivalenceContract)]
 		require.True(t, hasA)
 		require.True(t, hasB)
 
-		filtered := filterNodesByAllowedPropSet(nodes, "k", map[string]struct{}{cypherEquivalenceKey("b"): {}})
+		filtered := filterNodesByAllowedPropSet(nodes, "k", map[string]struct{}{cypherValueKey("b", cypherEquivalenceContract): {}}, cypherValueEqualityContract)
 		require.Len(t, filtered, 1)
 		require.Equal(t, storage.NodeID("n2"), filtered[0].ID)
 
-		noFilter := filterNodesByAllowedPropSet(nodes, "k", map[string]struct{}{})
+		noFilter := filterNodesByAllowedPropSet(nodes, "k", map[string]struct{}{}, cypherValueEqualityContract)
 		require.Len(t, noFilter, len(nodes))
 
 		notNull := filterNodesByNullConstraint(nodes, "nullable", true)
@@ -765,9 +773,9 @@ func TestExecuteMatchWithUnwind_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "nornic:n1", Labels: []string{"Thing"}, Properties: map[string]interface{}{"id": "n1", "labels": []string{"b", "a"}}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "nornic:n1", Labels: []string{"Thing"}, Properties: map[string]interface{}{"id": "n1", "labels": []string{"b", "a"}}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "nornic:n2", Labels: []string{"Thing"}, Properties: map[string]interface{}{"id": "n2", "labels": []string{"a"}}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "nornic:n2", Labels: []string{"Thing"}, Properties: map[string]interface{}{"id": "n2", "labels": []string{"a"}}})
 	require.NoError(t, err)
 
 	res, err := exec.Execute(ctx, "MATCH (n:Thing) WITH n, n.labels AS labels UNWIND labels AS label RETURN label, n.id ORDER BY label", getParamsFromContext(ctx))
@@ -793,15 +801,15 @@ func TestEvaluateWhereForContext_RelationshipAndBooleanBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"N"}, Properties: map[string]interface{}{"id": "a", "x": int64(1)}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "nornic:a", Labels: []string{"N"}, Properties: map[string]interface{}{"id": "a", "x": int64(1)}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "nornic:b", Labels: []string{"N"}, Properties: map[string]interface{}{"id": "b", "x": int64(2)}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "nornic:b", Labels: []string{"N"}, Properties: map[string]interface{}{"id": "b", "x": int64(2)}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "nornic:r1", Type: "R", StartNode: "nornic:a", EndNode: "nornic:b"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "nornic:r1", Type: "R", StartNode: "nornic:a", EndNode: "nornic:b"}))
 
-	a, err := store.GetNode("nornic:a")
+	a, err := store.GetNode(t.Context(), "nornic:a")
 	require.NoError(t, err)
-	b, err := store.GetNode("nornic:b")
+	b, err := store.GetNode(t.Context(), "nornic:b")
 	require.NoError(t, err)
 	nodeMap := map[string]*storage.Node{"a": a, "b": b}
 
@@ -823,13 +831,13 @@ func TestCartesianOffsetArithmeticExact(t *testing.T) {
 	require.True(t, cartesianOffsetValuesEqual(int64(9007199254740991), int64(9007199254740992), -1))
 
 	// The shifted lookup key stays exact and keeps the stored type.
-	key, ok := cartesianShiftValueKey(int64(9007199254740992), 1)
+	key, ok := cartesianShiftValueKey(int64(9007199254740992), 1, cypherValueEqualityContract)
 	require.True(t, ok)
-	require.Equal(t, cypherEquivalenceKey(int64(9007199254740993)), key)
-	intKey, ok := cartesianShiftValueKey(5, -2)
+	require.Equal(t, cypherValueKey(int64(9007199254740993), cypherEquivalenceContract), key)
+	intKey, ok := cartesianShiftValueKey(5, -2, cypherValueEqualityContract)
 	require.True(t, ok)
-	require.Equal(t, cypherEquivalenceKey(int64(3)), intKey)
-	_, ok = cartesianShiftValueKey("x", 1)
+	require.Equal(t, cypherValueKey(int64(3), cypherEquivalenceContract), intKey)
+	_, ok = cartesianShiftValueKey("x", 1, cypherValueEqualityContract)
 	require.False(t, ok)
 
 	// Overflow never wraps into a wrong bucket.

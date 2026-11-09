@@ -124,15 +124,26 @@ func (p *PrivilegesStore) Resolve(principalRoles []string, dbName string) Resolv
 // the entitlements decide alone. So removing a role's write entitlement
 // stops its writes on every database at once.
 func ResolveDatabaseAccess(roles []string, database string, privileges *PrivilegesStore, entitlements *RoleEntitlementsStore) ResolvedAccess {
-	global := PermissionsForRoles(roles, entitlements)
-	if !EntitlementsAllow(global, string(PermRead)) {
+	if !RolesAllow(roles, entitlements, string(PermRead)) {
 		return ResolvedAccess{}
 	}
-	write := EntitlementsAllow(global, string(PermWrite))
+	write := RolesAllow(roles, entitlements, string(PermWrite))
 	if granted, found := privileges.Granted(roles, database); found {
 		return ResolvedAccess{Read: granted.Read, Write: granted.Write && write}
 	}
 	return ResolvedAccess{Read: true, Write: write}
+}
+
+// DatabaseReadAllowed checks only read, without constructing unused write
+// capabilities. It uses the same global entitlement and matrix owners.
+func DatabaseReadAllowed(roles []string, database string, privileges *PrivilegesStore, entitlements *RoleEntitlementsStore) bool {
+	if !RolesAllow(roles, entitlements, string(PermRead)) {
+		return false
+	}
+	if granted, found := privileges.Granted(roles, database); found {
+		return granted.Read
+	}
+	return true
 }
 
 // Matrix returns a copy of the full matrix for GET API.
@@ -171,7 +182,7 @@ func (p *PrivilegesStore) SavePrivilege(ctx context.Context, role, dbName string
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err := WithRoleRecords(ctx, p.storage, []string{role}, func(view storage.Engine) error {
-		return putDbPrivilege(view, role, dbName, read, write)
+		return putDbPrivilege(ctx, view, role, dbName, read, write)
 	}); err != nil {
 		return err
 	}
@@ -182,9 +193,9 @@ func (p *PrivilegesStore) SavePrivilege(ctx context.Context, role, dbName string
 	return nil
 }
 
-// putDbPrivilege stores one database privilege record in view.
-func putDbPrivilege(view storage.Engine, role, dbName string, read, write bool) error {
-	return putRoleRecord(view, &storage.Node{
+// putDbPrivilege stores one database privilege record in view under ctx.
+func putDbPrivilege(ctx context.Context, view storage.Engine, role, dbName string, read, write bool) error {
+	return putRoleRecord(ctx, view, &storage.Node{
 		ID:     storage.NodeID(dbPrivPrefix + role + ":" + dbName),
 		Labels: []string{dbPrivLabel, dbPrivSystems},
 		Properties: map[string]any{
@@ -214,7 +225,7 @@ func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 	defer p.mu.Unlock()
 	matrix := make(map[string]map[string]DbPrivilege)
 	err := WithRoleRecords(ctx, p.storage, roles, func(view storage.Engine) error {
-		nodes, err := view.GetNodesByLabel(dbPrivLabel)
+		nodes, err := view.GetNodesByLabel(ctx, dbPrivLabel)
 		if err != nil {
 			return err
 		}
@@ -223,13 +234,13 @@ func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 			if role == "" || database == "" {
 				continue
 			}
-			if err := view.DeleteNode(node.ID); err != nil {
+			if err := view.DeleteNode(ctx, node.ID); err != nil {
 				return err
 			}
 		}
 		for _, e := range entries {
 			role := NormalizeRoleName(e.Role)
-			if err := putDbPrivilege(view, role, e.Database, e.Read, e.Write); err != nil {
+			if err := putDbPrivilege(ctx, view, role, e.Database, e.Read, e.Write); err != nil {
 				return err
 			}
 			if matrix[role] == nil {

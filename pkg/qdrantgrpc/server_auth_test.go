@@ -3,6 +3,7 @@ package qdrantgrpc
 import (
 	"context"
 	"encoding/base64"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -33,25 +34,25 @@ func (s *testServerStream) RecvMsg(any) error            { return nil }
 func TestQdrantGRPC_AuthAndRBAC(t *testing.T) {
 	t.Parallel()
 
-	base := storage.NewMemoryEngine()
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 
-	authStore := storage.NewMemoryEngine()
+	authStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
 	authCfg.SecurityEnabled = true
 	authenticator, err := auth.NewAuthenticator(authCfg, authStore)
 	require.NoError(t, err)
 
-	_, err = authenticator.CreateUser("admin", "AdminPass123!", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "AdminPass123!", []auth.Role{auth.RoleAdmin})
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("viewer", "ViewerPass123!", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "viewer", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
-	adminTok, _, err := authenticator.Authenticate("admin", "AdminPass123!", "127.0.0.1", "test")
+	adminTok, _, err := authenticator.Authenticate(context.Background(), "admin", "AdminPass123!", "127.0.0.1", "test")
 	require.NoError(t, err)
-	viewerTok, _, err := authenticator.Authenticate("viewer", "ViewerPass123!", "127.0.0.1", "test")
+	viewerTok, _, err := authenticator.Authenticate(context.Background(), "viewer", "ViewerPass123!", "127.0.0.1", "test")
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
@@ -140,10 +141,10 @@ func TestQdrantGRPC_AuthAndRBAC(t *testing.T) {
 func TestServer_DatabaseAccessHelpers(t *testing.T) {
 	t.Parallel()
 
-	base := storage.NewMemoryEngine()
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	store, _ := newTestCollectionStore(t)
+	store := newTestCollectionStore(t)
 
 	cfg := DefaultConfig()
 	cfg.ListenAddr = "127.0.0.1:0"
@@ -184,7 +185,7 @@ func TestServer_DatabaseAccessHelpers(t *testing.T) {
 	require.NoError(t, err)
 	visible, err = srvNilMode.VisibleDatabases(context.Background(), []string{"db1", "db2"})
 	require.NoError(t, err)
-	require.Equal(t, []string{"db1", "db2"}, visible)
+	require.Empty(t, visible)
 
 	cfgAllow := DefaultConfig()
 	cfgAllow.DatabaseAccessModeResolver = func(roles []string) auth.DatabaseAccessMode {
@@ -203,19 +204,87 @@ func TestServer_DatabaseAccessHelpers(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestServer_DatabaseReadsRequireResolvedRead(t *testing.T) {
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	store := newTestCollectionStore(t)
+	require.NoError(t, store.Create(context.Background(), "tenant_read", 4, qpb.Distance_Cosine))
+	require.NoError(t, store.Create(context.Background(), "tenant_write_only", 4, qpb.Distance_Cosine))
+
+	for _, tc := range []struct {
+		name     string
+		database string
+		read     bool
+	}{
+		{name: "default allowed", database: "nornic", read: true},
+		{name: "default denied", database: "nornic", read: false},
+		{name: "named allowed", database: "tenant_read", read: true},
+		{name: "named denied", database: "tenant_write_only", read: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.DatabaseAccessModeResolver = func([]string) auth.DatabaseAccessMode { return auth.FullDatabaseAccessMode }
+			cfg.ResolvedAccessResolver = func([]string, string) auth.ResolvedAccess {
+				return auth.ResolvedAccess{Read: tc.read, Write: true}
+			}
+			srv, err := NewServer(cfg, store, base, nil, nil)
+			require.NoError(t, err)
+			err = srv.AllowDatabaseAccess(context.Background(), tc.database, false)
+			if tc.read {
+				require.NoError(t, err)
+			} else {
+				require.Equal(t, codes.PermissionDenied, status.Code(err))
+				// A write-only principal still retains its write operation.
+				require.NoError(t, srv.AllowDatabaseAccess(context.Background(), tc.database, true))
+			}
+			if tc.database != "nornic" {
+				response, callErr := NewCollectionsService(store, srv).Get(context.Background(), &qpb.GetCollectionInfoRequest{CollectionName: tc.database})
+				if tc.read {
+					require.NoError(t, callErr)
+					require.NotNil(t, response)
+				} else {
+					require.Nil(t, response)
+					require.Equal(t, codes.PermissionDenied, status.Code(callErr))
+				}
+			}
+		})
+	}
+
+	// With no RBAC resolver, the compatibility service remains open.
+	open, err := NewServer(DefaultConfig(), store, base, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, open.AllowDatabaseAccess(context.Background(), "nornic", false))
+}
+
+func TestServer_FullSnapshotMethodsAllowAuthenticatedAdmin(t *testing.T) {
+	srv := &Server{config: DefaultConfig()}
+	admin := &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}
+	viewer := &auth.JWTClaims{Roles: []string{string(auth.RoleViewer)}}
+
+	for _, method := range []string{
+		"/qdrant.Snapshots/CreateFull",
+		"/qdrant.Snapshots/ListFull",
+		"/qdrant.Snapshots/DeleteFull",
+	} {
+		t.Run(method, func(t *testing.T) {
+			require.NoError(t, srv.authorizeMethod(context.Background(), method, admin))
+			require.Equal(t, codes.PermissionDenied, status.Code(srv.authorizeMethod(context.Background(), method, viewer)))
+		})
+	}
+}
+
 func TestServer_IsRunning_StreamAuthAndStreamContext(t *testing.T) {
 	t.Parallel()
 
-	base := storage.NewMemoryEngine()
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	authStore := storage.NewMemoryEngine()
+	authStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
 	authCfg.SecurityEnabled = true
 	authenticator, err := auth.NewAuthenticator(authCfg, authStore)
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("viewer2", "ViewerPass123!", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "viewer2", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
@@ -255,7 +324,7 @@ func TestServer_IsRunning_StreamAuthAndStreamContext(t *testing.T) {
 	require.NoError(t, err)
 
 	// Bearer auth path for stream interceptor.
-	token, _, err := authenticator.Authenticate("viewer2", "ViewerPass123!", "127.0.0.1", "test")
+	token, _, err := authenticator.Authenticate(context.Background(), "viewer2", "ViewerPass123!", "127.0.0.1", "test")
 	require.NoError(t, err)
 	bearerCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+token.AccessToken))
 	err = srv.streamAuthInterceptor(nil, &testServerStream{ctx: bearerCtx}, &grpc.StreamServerInfo{
@@ -281,8 +350,8 @@ func TestServer_AuthorizeMethodBranches(t *testing.T) {
 		"Points/Search": auth.PermDelete,
 	}
 
-	store, _ := newTestCollectionStore(t)
-	srv, err := NewServer(cfg, store, storage.NewMemoryEngine(), nil, nil)
+	store := newTestCollectionStore(t)
+	srv, err := NewServer(cfg, store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.NoError(t, err)
 
 	claimsViewer := &auth.JWTClaims{Roles: []string{string(auth.RoleViewer)}}
@@ -300,8 +369,8 @@ func TestServer_AuthorizeMethodBranches(t *testing.T) {
 func TestServer_BasicAuthAndNoAuthInterceptorBranches(t *testing.T) {
 	t.Parallel()
 
-	store, _ := newTestCollectionStore(t)
-	srvNoAuth, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, nil)
+	store := newTestCollectionStore(t)
+	srvNoAuth, err := NewServer(DefaultConfig(), store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.NoError(t, err)
 
 	// Auth disabled paths call handler directly.
@@ -324,16 +393,16 @@ func TestServer_BasicAuthAndNoAuthInterceptorBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// handleBasicAuth input validation branches.
-	authStore := storage.NewMemoryEngine()
+	authStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
 	authCfg.SecurityEnabled = true
 	authenticator, err := auth.NewAuthenticator(authCfg, authStore)
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("viewer3", "ViewerPass123!", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "viewer3", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
-	srvAuth, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, authenticator)
+	srvAuth, err := NewServer(DefaultConfig(), store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, authenticator)
 	require.NoError(t, err)
 
 	_, err = srvAuth.handleBasicAuth(context.Background(), "Basic !!!")
@@ -363,13 +432,13 @@ func TestServer_BasicAuthAndNoAuthInterceptorBranches(t *testing.T) {
 func TestServer_MiscBranches(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewServer(nil, nil, storage.NewMemoryEngine(), nil, nil)
+	_, err := NewServer(nil, nil, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.Error(t, err)
 
 	require.Nil(t, (*Server)(nil).CollectionStore())
 
-	store, _ := newTestCollectionStore(t)
-	srv, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, nil)
+	store := newTestCollectionStore(t)
+	srv, err := NewServer(DefaultConfig(), store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, "", srv.Addr())
@@ -414,31 +483,31 @@ func TestServer_MiscBranches(t *testing.T) {
 		_ = roles
 		return auth.FullDatabaseAccessMode
 	}
-	srvVis, err := NewServer(cfg, store, storage.NewMemoryEngine(), nil, nil)
+	srvVis, err := NewServer(cfg, store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.NoError(t, err)
 	ctxClaims := context.WithValue(context.Background(), contextKeyClaims{}, &auth.JWTClaims{Roles: []string{"viewer"}})
 	visible, err := srvVis.VisibleDatabases(ctxClaims, []string{"d1", "d2"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"d1", "d2"}, visible)
 
-	_, err = NewServerWithDatabaseManager(DefaultConfig(), nil, storage.NewMemoryEngine(), nil, nil)
+	_, err = NewServerWithDatabaseManager(DefaultConfig(), nil, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.Error(t, err)
 }
 
 func TestServer_AuthInterceptorErrorBranches(t *testing.T) {
 	t.Parallel()
 
-	authStore := storage.NewMemoryEngine()
+	authStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
 	authCfg.SecurityEnabled = true
 	authenticator, err := auth.NewAuthenticator(authCfg, authStore)
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("viewer4", "ViewerPass123!", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "viewer4", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
-	store, _ := newTestCollectionStore(t)
-	srv, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, authenticator)
+	store := newTestCollectionStore(t)
+	srv, err := NewServer(DefaultConfig(), store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, authenticator)
 	require.NoError(t, err)
 
 	// Basic malformed then missing bearer token.

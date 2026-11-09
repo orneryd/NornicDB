@@ -11,144 +11,109 @@ type paginationExpression struct {
 	value   string
 }
 
-// extractPaginationExpressions returns the SKIP / LIMIT expressions of the
-// statement's WITH and RETURN clauses. Each UNION branch has its own SKIP /
-// LIMIT, so the branches are read one by one; otherwise the last RETURN of a
-// branch would run into the next branch (LIMIT 2 UNION ALL MATCH …).
-func extractPaginationExpressions(cypher string) []paginationExpression {
-	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
-		var result []paginationExpression
-		for _, branch := range branches {
-			result = append(result, extractPaginationExpressions(branch)...)
-		}
-		return result
-	}
-	clauses, ok := splitPipelineClauses(cypher)
-	if !ok {
+// extractPaginationExpressions consumes the same semantic effect owner as
+// execution, including prefixes, UNION branches and every nested expression.
+func extractPaginationExpressions(ctx context.Context, cypher string) []paginationExpression {
+	if !containsFold(cypher, "SKIP") && !containsFold(cypher, "LIMIT") {
 		return nil
 	}
-	result := make([]paginationExpression, 0, 2)
-	for _, clause := range clauses {
-		if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
-			continue
-		}
-		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if topLevelKeywordIndex(clause.text, keyword) < 0 {
-				continue
-			}
-			result = append(result, paginationExpression{
-				keyword: keyword,
-				value:   pipelinePaginationExpression(clause.text, keyword),
-			})
-		}
+	effects, err := pipelineStatementEffectsFor(ctx, cypher)
+	if err != nil {
+		return nil
 	}
-	return result
-}
-
-func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) error {
-	braces := newSubqueryBraceScanner(cypher, 0)
-	// Check original subquery bodies before imported variables are replaced
-	// with their row values. A substituted integer is still a row dependency.
-	for index := 0; index < len(cypher); index++ {
-		switch cypher[index] {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(cypher, index, cypher[index]) - 1
-			continue
-		case '/':
-			if end := queryCommentEnd(cypher, index); end > index {
-				index = end - 1
-				continue
-			}
-		case '{':
-			if braces.at(index) {
-				if close := findMatchingDelimiter(cypher, index, '{', '}'); close >= 0 {
-					if err := e.validateStaticPaginationExpressions(cypher[index+1 : close]); err != nil {
-						return err
-					}
-					index = close
-				}
-			}
-		}
-	}
-	for _, pagination := range extractPaginationExpressions(cypher) {
-		if err := e.validateStaticPaginationExpression(pagination.keyword, pagination.value); err != nil {
-			return err
-		}
-	}
-	return nil
+	return effects.pagination
 }
 
 // validateStaticPaginationExpression checks one SKIP / LIMIT expression when
 // the statement is compiled: it must not use a row variable, and unless it
 // reads a parameter it must be a non-negative integer. WITH, RETURN and a
 // procedure call's YIELD share it.
-func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression string) error {
-	if expression == "" {
-		return paginationCompileTypeError(keyword, nil)
-	}
-	if paginationExpressionUsesRowVariable(expression) {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"NonConstantExpression",
-			keyword+" requires an expression independent of row variables",
-		)
-	}
-	if strings.Contains(expression, "$") {
-		return nil
-	}
-	value, evaluated, err := e.evaluateRowValue(expression, pipelineRow{})
-	if err != nil {
-		return err
-	}
-	if !evaluated {
-		return paginationCompileTypeError(keyword, value)
-	}
-	integer, valid := cypherIntegerValue(value)
-	if !valid {
-		return paginationCompileTypeError(keyword, value)
-	}
-	if integer < 0 {
-		return paginationCompileNegativeError(keyword)
-	}
-	return nil
-}
-
-func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Context, cypher string) error {
-	if !strings.Contains(cypher, "$") || (!containsFold(cypher, "SKIP") && !containsFold(cypher, "LIMIT")) {
-		return nil
-	}
-	params := getParamsFromContext(ctx)
-	if len(params) == 0 {
-		return nil
-	}
-	values := make(pipelineRow, len(params))
-	bindParameterRow(ctx, values)
-	for _, pagination := range extractPaginationExpressions(cypher) {
-		if !strings.Contains(pagination.value, "$") {
+func (e *StorageExecutor) validateStaticPaginationExpressions(ctx context.Context, expressions ...paginationExpression) error {
+	for _, pagination := range expressions {
+		keyword, expression := pagination.keyword, pagination.value
+		if expression == "" {
+			return paginationCompileTypeError(keyword, nil)
+		}
+		// The shared structural classifier rejects graph-dependent scalar
+		// arguments before the pagination validator can evaluate any expression.
+		shape, err := describeScalarExpression(ctx, expression)
+		if failure := ctx.Err(); failure != nil {
+			return failure
+		}
+		if err != nil {
+			return paginationCompileTypeError(keyword, expression)
+		}
+		if shape.forbidden {
+			return paginationCompileTypeError(keyword, expression)
+		}
+		if paginationExpressionUsesRowVariable(ctx, expression) {
+			return newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"NonConstantExpression",
+				keyword+" requires an expression independent of row variables",
+			)
+		}
+		if strings.Contains(expression, "$") {
 			continue
 		}
-		value, evaluated, err := e.evaluateRowValue(pagination.value, values)
+		value, evaluated, err := e.evaluateRowValue(ctx, expression, pipelineRow{})
 		if err != nil {
 			return err
 		}
 		if !evaluated {
-			// Missing parameters retain the existing ParameterMissing path.
-			continue
+			return paginationCompileTypeError(keyword, value)
 		}
 		integer, valid := cypherIntegerValue(value)
 		if !valid {
-			return newSemanticError(
-				"Neo.ClientError.Statement.ArgumentError",
-				"InvalidArgumentType",
-				fmt.Sprintf("%s requires an INTEGER, got %T", pagination.keyword, value),
-			)
+			return paginationCompileTypeError(keyword, value)
 		}
 		if integer < 0 {
-			return newSemanticError(
-				"Neo.ClientError.Statement.ArgumentError",
-				"NegativeIntegerArgument",
-				pagination.keyword+" requires a non-negative INTEGER",
-			)
+			return paginationCompileNegativeError(keyword)
+		}
+	}
+	return nil
+}
+
+// validateRuntimePaginationClause checks only the projection operator opening
+// now. Nested subqueries and later clauses keep their own runtime boundary.
+func (e *StorageExecutor) validateRuntimePaginationClause(ctx context.Context, clause string) error {
+	if !strings.Contains(clause, "$") {
+		return nil
+	}
+	for _, keyword := range []string{"SKIP", "LIMIT"} {
+		if topLevelKeywordIndex(ctx, clause, keyword) >= 0 {
+			if err := e.validateRuntimePaginationExpressions(ctx, paginationExpression{keyword: keyword, value: pipelinePaginationExpression(ctx, clause, keyword)}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Context, expressions ...paginationExpression) error {
+	for _, pagination := range expressions {
+		if !strings.Contains(pagination.value, "$") {
+			continue
+		}
+		params := getParamsFromContext(ctx)
+		if len(params) == 0 {
+			continue
+		}
+		values := make(pipelineRow, len(params))
+		bindParameterRow(ctx, values)
+		value, evaluated, err := e.evaluateRowValue(ctx, pagination.value, values)
+		if err != nil {
+			return err
+		}
+		if !evaluated {
+			continue
+		} // Preserve the existing ParameterMissing path.
+		integer, valid := cypherIntegerValue(value)
+		if !valid {
+			return newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentType", fmt.Sprintf("%s requires an INTEGER, got %T", pagination.keyword, value))
+		}
+		if integer < 0 {
+			return newSemanticError("Neo.ClientError.Statement.ArgumentError", "NegativeIntegerArgument", pagination.keyword+" requires a non-negative INTEGER")
 		}
 	}
 	return nil
@@ -159,8 +124,8 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 // keys, function names and variables the expression binds itself (list
 // comprehensions, reduce) are not variables; expressionFreeVariables is the
 // one scanner that knows them (#829).
-func paginationExpressionUsesRowVariable(expression string) bool {
-	return len(expressionFreeVariables(expression)) > 0
+func paginationExpressionUsesRowVariable(ctx context.Context, expression string) bool {
+	return len(expressionFreeVariables(ctx, expression)) > 0
 }
 
 func paginationCompileTypeError(keyword string, value interface{}) error {

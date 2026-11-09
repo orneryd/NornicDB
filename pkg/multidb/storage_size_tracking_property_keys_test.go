@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -9,7 +11,7 @@ import (
 
 // The server's per-database wrapper forwards the property-key lookup (#907).
 func TestSizeTrackingEngineForwardsPropertyKeyLookup(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	tracked := &sizeTrackingEngine{Engine: storage.NewNamespacedEngine(inner, "db")}
 	require.False(t, tracked.PropertyKeyKnown("k"))

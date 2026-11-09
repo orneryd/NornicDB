@@ -16,7 +16,7 @@ func TestTransactionQueriesDoNotReadOtherNamespaces(t *testing.T) {
 		{ID: "tenantb:other", Labels: []string{"Shared"}, Properties: map[string]interface{}{"secret": "other"}},
 		{ID: "system:admin", Labels: []string{"_User"}, Properties: map[string]interface{}{"password_hash": "sensitive"}},
 	} {
-		_, err := baseStore.CreateNode(node)
+		_, err := baseStore.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "tenant"))
@@ -40,7 +40,7 @@ func TestTransactionQueriesDoNotReadOtherNamespaces(t *testing.T) {
 	result, err = exec.Execute(ctx, "MERGE (n:Shared {secret: 'other'}) RETURN n.secret AS secret", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	count, err := storage.NewNamespacedEngine(baseStore, "tenant").NodeCountByLabel("Shared")
+	count, err := storage.NewNamespacedEngine(baseStore, "tenant").NodeCountByLabel(t.Context(), "Shared")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), count)
 }

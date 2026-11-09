@@ -57,19 +57,19 @@ func TestTransactionWrapperBulkDeleteEdgesSkipsDeleted(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	_, err := exec.Execute(context.Background(), "CREATE (:P {id: 'a'})-[:R]->(:P {id: 'b'})", nil)
 	require.NoError(t, err)
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 
 	require.NoError(t, base.EnsureNamespaceMVCC("test"))
-	tx, err := base.BeginTransaction()
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("test"))
 	wrapper := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "test", separator: ":", mutatedNodeIDs: make(map[string]struct{})}
-	require.NoError(t, wrapper.BulkDeleteEdges([]storage.EdgeID{edges[0].ID, edges[0].ID, "missing"}))
+	require.NoError(t, wrapper.BulkDeleteEdges(t.Context(), []storage.EdgeID{edges[0].ID, edges[0].ID, "missing"}))
 	require.NoError(t, tx.Commit())
-	count, err := base.EdgeCount()
+	count, err := base.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(0), count)
 }
@@ -79,18 +79,107 @@ type failingDeleteEdgeEngine struct {
 	err error
 }
 
-func (e *failingDeleteEdgeEngine) DeleteEdge(storage.EdgeID) error { return e.err }
+func (e *failingDeleteEdgeEngine) DeleteEdge(ctx context.Context, _ storage.EdgeID) error {
+	return e.err
+}
 
-// A relationship delete that fails for any reason other than the
-// relationship being gone fails the statement.
-func TestRepeatedDeleteOtherErrorsFailTheStatement(t *testing.T) {
-	failure := errors.New("delete failed")
+// The canonical DELETE owner keeps its two-way decision about a relationship
+// delete: a relationship the statement already deleted (or that is gone) is
+// skipped and counted once - storage.ErrNotFound is not the statement's error
+// - while any other storage error fails the statement. This is a COMPONENT
+// proof on pipelineApplyDelete, the one owner of row-scoped DELETE: the store
+// double supplies the storage error, which no public path can inject below the
+// statement's own transaction. The public native pair below proves that
+// transaction's own delete and its real commit-refusal path.
+func TestComponentDeleteSkipsAlreadyGoneButFailsOtherStorageErrors(t *testing.T) {
+	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
-	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:P {id: 'a'})-[:R]->(:P {id: 'b'})", nil)
 	require.NoError(t, err)
+	edges, err := store.AllEdges(ctx)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+
+	rows := []pipelineRow{{"r": edges[0]}}
+	scope := map[string]struct{}{"r": {}}
+
+	// Already gone: the statement skips it, deletes nothing and counts once.
+	gone := NewStorageExecutor(&failingDeleteEdgeEngine{Engine: store, err: storage.ErrNotFound})
+	stats, handled, err := gone.pipelineApplyDelete(ctx, rows, scope, "DELETE r")
+	require.True(t, handled)
+	require.NoError(t, err, "an already-gone relationship is not the statement's error")
+	require.Zero(t, stats.RelationshipsDeleted)
+
+	// Any other storage error is the statement's error, unchanged.
+	failure := errors.New("delete failed")
 	failing := NewStorageExecutor(&failingDeleteEdgeEngine{Engine: store, err: failure})
-	_, err = failing.Execute(ctx, "MATCH ()-[r:R]->() WITH collect(r) + collect(r) AS rs UNWIND rs AS r DELETE r", nil)
+	_, handled, err = failing.pipelineApplyDelete(ctx, rows, scope, "DELETE r")
+	require.True(t, handled)
 	require.ErrorIs(t, err, failure)
+
+	// Sensitivity control: the same canonical owner deletes the relationship
+	// through a store that does not refuse it, so the cases above are not
+	// satisfied by an owner that never deletes anything.
+	deleting := NewStorageExecutor(store)
+	stats, handled, err = deleting.pipelineApplyDelete(ctx, rows, scope, "DELETE r")
+	require.True(t, handled)
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.RelationshipsDeleted)
+	edges, err = store.AllEdges(ctx)
+	require.NoError(t, err)
+	require.Empty(t, edges)
+}
+
+// The public native pair for the relationship DELETE: the statement's own
+// delete commits through the implicit transaction, and a delete the
+// transaction's snapshot still sees after a peer removed the relationship is
+// refused at commit with the storage conflict error - the transaction-level
+// refusal, not a per-relationship statement error. Nothing of the refused
+// transaction reaches the store.
+func TestPublicDeleteCommitsAndRefusesSnapshotConflict(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "delete_public")
+	writer := NewStorageExecutor(store)
+	peer := NewStorageExecutor(store)
+	_, err := writer.Execute(ctx, "CREATE (:P {id: 'a'})-[:R]->(:P {id: 'b'})", nil)
+	require.NoError(t, err)
+
+	// Correct public delete.
+	deleted, err := writer.Execute(ctx, "MATCH ()-[r:R]->() DELETE r", nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, deleted.Stats.RelationshipsDeleted)
+	edges, err := store.AllEdges(ctx)
+	require.NoError(t, err)
+	require.Empty(t, edges)
+
+	// The conflict case: the writer's snapshot still sees a relationship the
+	// peer removed and committed after the writer's BEGIN.
+	_, err = writer.Execute(ctx, "CREATE (:P {id: 'a'})-[:R]->(:P {id: 'b'})", nil)
+	require.NoError(t, err)
+	_, err = writer.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	rolledBack := false
+	defer func() {
+		if !rolledBack {
+			_, _ = writer.Execute(ctx, "ROLLBACK", nil)
+		}
+	}()
+
+	_, err = peer.Execute(ctx, "MATCH ()-[r:R]->() DELETE r", nil)
+	require.NoError(t, err)
+
+	deleted, err = writer.Execute(ctx, "MATCH ()-[r:R]->() DELETE r", nil)
+	require.NoError(t, err, "the writer's snapshot still sees the relationship")
+	require.Equal(t, 1, deleted.Stats.RelationshipsDeleted)
+
+	_, err = writer.Execute(ctx, "COMMIT", nil)
+	rolledBack = true
+	require.Error(t, err, "the peer's committed delete must refuse this transaction")
+	require.ErrorIs(t, err, storage.ErrConflict)
+	require.Contains(t, err.Error(), "changed after transaction start")
+
+	edges, err = store.AllEdges(ctx)
+	require.NoError(t, err)
+	require.Empty(t, edges, "the refused transaction wrote nothing and the peer's delete stands")
 }

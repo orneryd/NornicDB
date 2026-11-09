@@ -1,7 +1,9 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -35,11 +37,11 @@ func (s *semanticBindingScope) contains(name string) bool {
 // any of the specialized CREATE executors. It intentionally consumes the same
 // top-level clause decomposition as the semantic pipeline so fast paths cannot
 // disagree about whether a name is new, bound, or undefined.
-func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 bool) error {
-	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isCreateSchemaOrAdministrationCommand(cypher) {
+func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cypher string, cypher25 bool) error {
+	if findKeywordIndexInContext(ctx, cypher, "CREATE") < 0 || isMetadataCommand(ctx, cypher, metadataCreateAdmission) {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(cypher)
+	clauses, ok := splitPipelineClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
@@ -55,14 +57,14 @@ func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 b
 				scope.bind(name)
 			}
 		case pipelineClauseWith:
-			scope = projectedBindingScope(scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause.text)
 		case pipelineClauseLet:
 			if err := bindPipelineLet(scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
-				scope.bind(alias)
+			if iteration, found := iterationClauseFor(clause); found {
+				scope.bind(iteration.variable)
 			}
 		case pipelineClauseMerge:
 			for _, name := range extractNodeVariables(clause.text) {
@@ -72,7 +74,7 @@ func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 b
 				scope.bind(name)
 			}
 		case pipelineClauseCreate:
-			if err := e.validateCreateClauseBindings(scope, clause.text, cypher25); err != nil {
+			if err := e.validateCreateClauseBindings(ctx, scope, clause.text, cypher25); err != nil {
 				return err
 			}
 		}
@@ -80,26 +82,12 @@ func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 b
 	return nil
 }
 
-func isCreateSchemaOrAdministrationCommand(cypher string) bool {
-	return isSystemCommandNoGraph(cypher) || isCreateProcedureCommand(cypher) ||
-		startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") ||
-		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") ||
-		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") ||
-		startsWithKeywords(cypher, "CREATE", "CONSTRAINT") ||
-		startsWithKeywords(cypher, "CREATE", "INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "RANGE INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "TEXT INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "POINT INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX")
-}
-
-func projectedBindingScope(input *semanticBindingScope, clause string) *semanticBindingScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+func projectedBindingScope(ctx context.Context, input *semanticBindingScope, clause string) *semanticBindingScope {
+	body, _ := projectionSemanticBodyAndTail(ctx, clause, "WITH")
 	output := newSemanticBindingScope()
 	for _, raw := range splitTopLevelComma(body) {
-		expr, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+		expr, alias := itemSource.expression, itemSource.alias
 		if expr == "*" {
 			for name := range input.names {
 				output.bind(name)
@@ -108,44 +96,28 @@ func projectedBindingScope(input *semanticBindingScope, clause string) *semantic
 		}
 		if alias != "" {
 			output.bind(alias)
-		} else if name, next, ok := scanIdentifierToken(expr, 0); ok && strings.TrimSpace(expr[next:]) == "" {
-			output.bind(name)
+		} else if name, ok := cyphertext.ScanIdentifier(expr, 0); ok && strings.TrimSpace(expr[name.End:]) == "" {
+			output.bind(name.Value)
 		}
 	}
 	return output
 }
 
-// validateUnwindAlias rejects an UNWIND clause whose alias isn't exactly one
-// variable, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x WHERE …"
-// and "UNWIND l AS x y" are SyntaxErrors (Invalid input 'WHERE').
-func validateUnwindAlias(clause string) error {
-	_, alias, ok := parsePipelineIteration(clause)
-	if !ok {
+// validateUnwindAlias rejects an iteration clause whose variable is followed
+// by more tokens, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x
+// WHERE …" is a SyntaxError (Invalid input 'WHERE').
+func validateUnwindAlias(iteration iterationClause, found bool) error {
+	if !found {
 		return sharedClauseSyntaxError("iteration requires a variable and an expression")
 	}
-	_, next, identifier := scanIdentifierToken(alias, 0)
-	if !identifier {
-		return nil
-	}
-	if rest := strings.TrimSpace(alias[next:]); rest != "" {
-		token := strings.Fields(rest)[0]
+	if iteration.trailing != "" {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			localization.CypherCoreInvalidInput(token))
+			localization.CypherCoreInvalidInput(iteration.trailing))
 	}
 	return nil
 }
 
-// unwindBindingName is the variable an UNWIND clause binds (splitUnwindBody).
-func unwindBindingName(clause string) string {
-	if _, alias, ok := parsePipelineIteration(clause); ok {
-		if name, _, symbolic := scanSymbolicName(alias, 0); symbolic {
-			return normalizeProjectionColumnName(name)
-		}
-	}
-	return ""
-}
-
-func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingScope, clause string, cypher25 bool) error {
+func (e *StorageExecutor) validateCreateClauseBindings(ctx context.Context, scope *semanticBindingScope, clause string, cypher25 bool) error {
 	body := strings.TrimSpace(clause[len("CREATE"):])
 	created := make(map[string]string)
 	for _, pattern := range e.splitCreatePatterns(body) {
@@ -164,12 +136,12 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 			}
 		}
 		if isRelationshipPattern {
-			if err := validateCreateRelationshipShape(pattern); err != nil {
+			if err := validateRelationshipMutation(pattern, createRelationshipMutation); err != nil {
 				return err
 			}
 		}
 
-		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, created, "CREATE"); err != nil {
+		if err := e.validateCreateSamePatternReferences(ctx, scope, pattern, relationshipVariables, created, "CREATE"); err != nil {
 			return err
 		}
 
@@ -200,79 +172,16 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 	return nil
 }
 
-func validateCreateRelationshipShape(pattern string) error {
-	open, close := firstRelationshipBracket(pattern)
-	if open < 0 || close < 0 {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"NoSingleRelationshipType",
-			"CREATE relationships require exactly one relationship type",
-		)
-	}
-
-	left := strings.TrimSpace(pattern[:open])
-	right := strings.TrimSpace(pattern[close+1:])
-	leftDirected := strings.HasSuffix(left, "<-")
-	rightDirected := strings.HasPrefix(right, "->")
-	if leftDirected == rightDirected {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"RequiresDirectedRelationship",
-			"CREATE relationships require exactly one direction",
-		)
-	}
-
-	return validateSingleRelationshipDeclaration("CREATE", "created", pattern[open+1:close])
-}
-
-// validateSingleRelationshipDeclaration applies CREATE's and MERGE's rules to
-// a relationship's inside (relationshipDeclarationOf), read outside
-// backticks: no variable length (verb is the clause's action, "created" or
-// "merged"), and exactly one type, unless the type is dynamic ($(e), whose
-// types are counted per row by resolveRowDynamicTokens). Alternatives
-// ([:R|S]) are Neo4j's NoSingleRelationshipType error naming the clause.
-func validateSingleRelationshipDeclaration(clause, verb, content string) error {
-	declaration := relationshipDeclarationOf(content)
-	if declaration.hasLength {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"CreatingVarLength",
-			"variable-length relationships cannot be "+verb,
-		)
-	}
-	if declaration.hasColon && hasDynamicToken(declaration.typeText) {
-		return nil
-	}
-	if declaration.hasColon && indexByteOutsideBackticks(declaration.typeText, '|') >= 0 {
-		return singleRelationshipTypeError(clause)
-	}
-	if declaration.invalidType != "" {
-		return &classifiedCypherError{
-			cause:  localizedError(localization.CypherMutationsInvalidRelationshipType(declaration.invalidType), nil),
-			code:   "Neo.ClientError.Statement.SyntaxError",
-			detail: "InvalidRelationshipType",
-		}
-	}
-	if len(declaration.types) != 1 {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"NoSingleRelationshipType",
-			clause+" relationships require exactly one relationship type",
-		)
-	}
-	return nil
-}
-
 func createNodePatternVariable(pattern string) string {
 	trimmed := strings.TrimSpace(pattern)
 	if strings.HasPrefix(trimmed, "(") {
 		trimmed = strings.TrimSpace(trimmed[1:])
 	}
-	name, _, ok := scanIdentifierToken(trimmed, 0)
+	name, ok := cyphertext.ScanIdentifier(trimmed, 0)
 	if !ok {
 		return ""
 	}
-	return name
+	return name.Value
 }
 
 func createNodePatternHasDecoration(pattern string) bool {
@@ -280,11 +189,11 @@ func createNodePatternHasDecoration(pattern string) bool {
 	if strings.HasPrefix(trimmed, "(") {
 		trimmed = strings.TrimSpace(trimmed[1:])
 	}
-	_, next, ok := scanIdentifierToken(trimmed, 0)
+	next, ok := cyphertext.ScanIdentifier(trimmed, 0)
 	if !ok {
 		return false
 	}
-	remainder := strings.TrimSpace(trimmed[next:])
+	remainder := strings.TrimSpace(trimmed[next.End:])
 	return strings.HasPrefix(remainder, ":") || strings.HasPrefix(remainder, "{")
 }
 
@@ -297,11 +206,15 @@ func createVariableAlreadyBoundError(variable string) error {
 }
 
 func createUndefinedVariableError(variable string) error {
-	return newSemanticError(
-		"Neo.ClientError.Statement.SyntaxError",
-		"UndefinedVariable",
-		fmt.Sprintf("variable %s is not defined", variable),
-	)
+	message := localization.CypherAdminVariableNotDefined(variable)
+	// Preserve the semantic error in the chain for callers that inspect its
+	// detail, while the client-visible text uses the localized constructor.
+	semantic := newSemanticError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable", message.Fallback)
+	return &classifiedCypherError{
+		cause:  localizedError(message, semantic),
+		code:   "Neo.ClientError.Statement.SyntaxError",
+		detail: "UndefinedVariable",
+	}
 }
 
 func (e *StorageExecutor) validateCreatePatternExpressions(scope *semanticBindingScope, pattern string) error {
@@ -366,7 +279,7 @@ func createRelationshipPropertyMapBodies(pattern string) []string {
 // pattern's): a fresh map per pattern for a Cypher 5 statement, one map per
 // clause for a Cypher 25 statement, where a pattern may not read an entity an
 // earlier pattern of the same CREATE creates either (Neo4j 2026.09).
-func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
+func (e *StorageExecutor) validateCreateSamePatternReferences(ctx context.Context, scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
 	nodePatterns := e.splitNodePatterns(pattern)
 	for _, nodePattern := range nodePatterns {
 		if variable := createNodePatternVariable(nodePattern); variable != "" && !scope.contains(variable) {
@@ -386,12 +299,12 @@ func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBin
 		}
 	}
 	for _, properties := range maps {
-		for _, pair := range e.splitPropertyPairs(properties) {
+		for _, pair := range splitTopLevelComma(properties) {
 			separator := findTopLevelMapKeyValueSeparator(pair)
 			if separator <= 0 {
 				continue
 			}
-			for _, variable := range expressionFreeVariables(pair[separator+1:]) {
+			for _, variable := range expressionFreeVariables(ctx, pair[separator+1:]) {
 				if kind, ok := created[variable]; ok {
 					return createSamePatternReferenceError(variable, kind, clause)
 				}
@@ -407,7 +320,7 @@ func createSamePatternReferenceError(variable, kind, clause string) error {
 }
 
 func (e *StorageExecutor) validateCreatePropertyExpressions(scope *semanticBindingScope, properties string) error {
-	for _, pair := range e.splitPropertyPairs(properties) {
+	for _, pair := range splitTopLevelComma(properties) {
 		separator := findTopLevelMapKeyValueSeparator(pair)
 		if separator <= 0 {
 			continue
@@ -441,13 +354,18 @@ func simpleCreatePropertyReference(expression string) (string, bool) {
 	if _, err := strconv.ParseFloat(expression, 64); err == nil {
 		return "", false
 	}
-	root, next, ok := scanIdentifierToken(expression, 0)
+	root, ok := cyphertext.ScanIdentifier(expression, 0)
 	if !ok {
 		return "", false
 	}
-	remainder := strings.TrimSpace(expression[next:])
+	// A qualified call can be followed by a property/subscript access. Its
+	// namespace is not a variable, as in the shared free-reference reader.
+	if _, call := qualifiedFunctionNameEnd(expression, root.End); call {
+		return "", false
+	}
+	remainder := strings.TrimSpace(expression[root.End:])
 	if remainder == "" || strings.HasPrefix(remainder, ".") || strings.HasPrefix(remainder, "[") {
-		return root, true
+		return root.Value, true
 	}
 	return "", false
 }

@@ -1,12 +1,13 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 )
 
-func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string, values map[string]interface{}) (value interface{}, matched bool, resolved bool, err error) {
+func (e *StorageExecutor) evaluateRowExtensionFunction(ctx context.Context, function, argument string, values map[string]interface{}) (value interface{}, matched bool, resolved bool, err error) {
 	name := lowerASCII(function)
 	// An argument's error is the function's: eval keeps the first one, and it
 	// replaces whatever the function would return.
@@ -17,7 +18,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 	}()
 	eval := func(expression string) (interface{}, bool) {
-		value, ok, err := e.evaluateRowValue(strings.TrimSpace(expression), values)
+		value, ok, err := e.evaluateRowValue(ctx, strings.TrimSpace(expression), values)
 		if err != nil {
 			if argumentErr == nil {
 				argumentErr = err
@@ -50,7 +51,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !ok {
 			return nil, true, false, nil
 		}
-		result, handled, err := callPluginFunction(rowStatementContextOrBackground(values), function, handler, arguments)
+		result, handled, err := callPluginFunction(ctx, function, handler, arguments)
 		if err != nil {
 			return nil, true, false, err
 		}
@@ -63,10 +64,10 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !ok {
 			return nil, true, false, nil
 		}
-		value, matched, err := e.evaluateNativeAPOCFunction(rowStatementContextOrBackground(values), function, arguments)
+		value, matched, err := e.evaluateNativeAPOCFunction(ctx, function, arguments)
 		return value, matched, err == nil, err
 	}
-	if value, matched, resolved, err := e.evaluateRowTemporalComponent(name, argument, values); matched {
+	if value, matched, resolved, err := e.evaluateRowTemporalComponent(ctx, name, argument, values); matched {
 		return value, true, resolved, err
 	}
 	switch name {
@@ -81,10 +82,10 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		return e.generateUUID(), true, true, nil
 	case "toupper", "tolower", "tostring", "tostringornull", "tointeger", "toint", "tointegerornull", "tofloat", "tofloatornull", "toboolean", "tobooleanornull":
-		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		value, _, resolved, err := e.evaluateRowGraphFunction(ctx, function, argument, values)
 		return value, true, resolved, err
 	case "substring", "left", "right", "replace", "split", "tail":
-		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		value, _, resolved, err := e.evaluateRowGraphFunction(ctx, function, argument, values)
 		return value, true, resolved, err
 	case "lpad", "rpad":
 		arguments, ok := args()
@@ -106,7 +107,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		return padRowString(text, length, padding, name == "lpad"), true, true, nil
 	case "format":
-		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		value, _, resolved, err := e.evaluateRowGraphFunction(ctx, function, argument, values)
 		return value, true, resolved, err
 	case "apoc.create.uuid":
 		return e.generateUUID(), true, true, nil
@@ -119,7 +120,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !separatorOK {
 			return nil, true, false, nil
 		}
-		items := toAnySlice(values[0])
+		items, _ := cypherListValue(values[0])
 		parts := make([]string, len(items))
 		for index, item := range items {
 			parts[index] = fmt.Sprint(item)
@@ -138,7 +139,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		switch name {
 		case "apoc.coll.toset":
-			return toSet(value), true, true, nil
+			return apocCollToSet(value), true, true, nil
 		case "apoc.coll.sum":
 			return apocCollSum(value), true, true, nil
 		case "apoc.coll.avg":
@@ -162,8 +163,8 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !ok {
 			return nil, true, false, nil
 		}
-		result, decoded := apocConvertFromJSON(name == "apoc.convert.fromjsonmap", value)
-		return result, true, decoded, nil
+		result, err := apocConvertFromJSON(name == "apoc.convert.fromjsonmap", value)
+		return result, true, err == nil, err
 	case "apoc.meta.type":
 		value, ok := one()
 		return apocValueTypeName(value), true, ok, nil
@@ -174,18 +175,6 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		typeName, typeOK := values[1].(string)
 		return strings.EqualFold(apocValueTypeName(values[0]), typeName), true, typeOK, nil
-	case "apoc.map.merge", "apoc.map.fromlists":
-		values, ok := args()
-		if !ok || len(values) != 2 {
-			return nil, true, false, nil
-		}
-		if name == "apoc.map.merge" {
-			return mergeMaps(values[0], values[1]), true, true, nil
-		}
-		return fromLists(values[0], values[1]), true, true, nil
-	case "apoc.map.frompairs":
-		value, ok := one()
-		return fromPairs(value), true, ok, nil
 	case "kalman.init", "kalman.adaptive.init":
 		var config map[string]interface{}
 		if strings.TrimSpace(argument) != "" {
@@ -229,7 +218,7 @@ func padRowString(value string, length int, padding string, left bool) string {
 	return string(result)
 }
 
-func (e *StorageExecutor) evaluateRowTemporalComponent(name, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
+func (e *StorageExecutor) evaluateRowTemporalComponent(ctx context.Context, name, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	if name == "timestamp" {
 		if strings.TrimSpace(argument) != "" {
 			return nil, true, false, nil
@@ -247,7 +236,7 @@ func (e *StorageExecutor) evaluateRowTemporalComponent(name, argument string, va
 	if kind != "date" && kind != "datetime" {
 		return nil, false, false, nil
 	}
-	value, ok, err := e.evaluateRowValue(strings.TrimSpace(argument), values)
+	value, ok, err := e.evaluateRowValue(ctx, strings.TrimSpace(argument), values)
 	if err != nil {
 		return nil, true, false, err
 	}

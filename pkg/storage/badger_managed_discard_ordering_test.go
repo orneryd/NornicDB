@@ -19,8 +19,7 @@ import (
 // With the recording seam the test asserts the publish sequence directly;
 // without the fix it fails deterministically-ish under the race detector.
 func TestManagedDB_DiscardPublishOrdering(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 	db := e.BadgerEngine.db
 
 	var mu sync.Mutex
@@ -65,8 +64,7 @@ func TestManagedDB_DiscardPublishOrdering(t *testing.T) {
 // the ordering fix this intermittently tripped Badger's fatal
 // "Assert failed" in cleanupCommittedTransactions.
 func TestManagedDB_ConcurrentUpdatesNoBadgerAssert(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 	db := e.BadgerEngine.db
 
 	const goroutines = 8

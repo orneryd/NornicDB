@@ -71,7 +71,7 @@ func TestExecuteCallTailSingleRow_NodeAndScalarBindings(t *testing.T) {
 		Labels:     []string{"N"},
 		Properties: map[string]interface{}{"id": "n1", "name": "first"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	seedCols := []string{"n", "score"}
@@ -112,21 +112,26 @@ func TestExecuteCallTailSingleRow_NodeAndScalarBindings(t *testing.T) {
 }
 
 func TestSplitCallAndTail_AndExpectedReturnColumns(t *testing.T) {
-	split := splitCallAndTail("MATCH (n) RETURN n")
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "headers"))
+	split := splitCallAndTail(t.Context(), "MATCH (n) RETURN n")
 	require.Equal(t, "MATCH (n) RETURN n", split.callOnly)
 	require.Empty(t, split.tail)
 
-	split = splitCallAndTail("CALL db.labels() YIELD label CREATE (:Seen {name:label})")
+	split = splitCallAndTail(t.Context(), "CALL db.labels() YIELD label CREATE (:Seen {name:label})")
 	require.Equal(t, "CALL db.labels() YIELD label", split.callOnly)
 	require.Equal(t, "CREATE (:Seen {name:label})", split.tail)
 
-	split = splitCallAndTail("CALL db.labels() YIELD label ORDER BY label")
+	split = splitCallAndTail(t.Context(), "CALL db.labels() YIELD label ORDER BY label")
 	require.Equal(t, "CALL db.labels() YIELD label ORDER BY label", split.callOnly)
 	require.Empty(t, split.tail)
 
-	cols := expectedReturnColumnsFromTail("WITH n RETURN n AS node, count(*) AS c ORDER BY c DESC SKIP 1 LIMIT 2")
+	cols := exec.StatementColumns("MATCH (n) WITH n RETURN n AS node, count(*) AS c ORDER BY c DESC SKIP 1 LIMIT 2")
 	require.Equal(t, []string{"node", "c"}, cols)
 
-	cols = expectedReturnColumnsFromTail("WITH n")
+	_, err := exec.StatementResultColumns("WITH n RETURN n AS node, count(*) AS c", RawSource)
+	require.ErrorContains(t, err, "Variable `n` not defined")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+
+	cols = exec.StatementColumns("WITH n")
 	require.Nil(t, cols)
 }

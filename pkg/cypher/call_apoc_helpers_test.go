@@ -1,8 +1,10 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,9 +18,9 @@ func TestApocHelpers_FindMatchingParen(t *testing.T) {
 }
 
 func TestMatchingDelimiterSkipsCommentsAndBackticks(t *testing.T) {
-	require.Equal(t, len("(a /* ) */ + b)")-1, findMatchingDelimiter("(a /* ) */ + b)", 0, '(', ')'))
-	require.Equal(t, len("(a // )\n+ b)")-1, findMatchingDelimiter("(a // )\n+ b)", 0, '(', ')'))
-	require.Equal(t, len("(`a)b`)")-1, findMatchingDelimiter("(`a)b`)", 0, '(', ')'))
+	require.Equal(t, len("(a /* ) */ + b)")-1, cyphertext.FindMatchingDelimiter("(a /* ) */ + b)", 0, '(', ')', cyphertext.OpeningDelimiter))
+	require.Equal(t, len("(a // )\n+ b)")-1, cyphertext.FindMatchingDelimiter("(a // )\n+ b)", 0, '(', ')', cyphertext.OpeningDelimiter))
+	require.Equal(t, len("(`a)b`)")-1, cyphertext.FindMatchingDelimiter("(`a)b`)", 0, '(', ')', cyphertext.OpeningDelimiter))
 	require.Equal(t, len("(a /* ) */ + b)")-1, findMatchingParen("(a /* ) */ + b)", 0))
 	require.Equal(t, len("(a /* ) */ + b)")-1, findMatchingParenAt("(a /* ) */ + b)", 0))
 	require.Equal(t, -1, findMatchingParen("(a /* ) */ + b", 0))
@@ -39,12 +41,24 @@ func TestApocHelpers_SplitBySemicolon(t *testing.T) {
 }
 
 func TestApocHelpers_ExtractProcedureName(t *testing.T) {
-	assert.Equal(t, "db.labels", extractProcedureName("CALL db.labels()"))
-	assert.Equal(t, "apoc.cypher.run", extractProcedureName("call apoc.cypher.run('RETURN 1',{})"))
+	name, err := extractProcedureName(t.Context(), "CALL db.labels()")
+	require.NoError(t, err)
+	assert.Equal(t, "db.labels", name)
+	name, err = extractProcedureName(t.Context(), "call apoc.cypher.run('RETURN 1',{})")
+	require.NoError(t, err)
+	assert.Equal(t, "apoc.cypher.run", name)
 	long := "THIS TEXT HAS NO PROC KEYWORD AND SHOULD FALL BACK TO TRUNCATED QUERY STRING BEHAVIOR"
-	got := extractProcedureName(long)
-	assert.Len(t, got, 63)
-	assert.Equal(t, long[:60]+"...", got)
+	name, err = extractProcedureName(t.Context(), long)
+	require.Error(t, err, "an unparseable fragment is the reader's error, not a name")
+	assert.Empty(t, name, "a declined syntax read must not invent a procedure name")
+
+	// A context that ended before the read is the read's error, not an empty
+	// name: callers may not look up a procedure the fragment never named.
+	ended, cancel := context.WithCancel(t.Context())
+	cancel()
+	name, err = extractProcedureName(ended, "CALL db.labels()")
+	assert.Empty(t, name)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestApocHelpers_SharedCallUtilities(t *testing.T) {

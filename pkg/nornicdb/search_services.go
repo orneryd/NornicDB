@@ -3,22 +3,24 @@ package nornicdb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/collection"
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
-	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -27,41 +29,32 @@ type dbSearchService struct {
 	engine storage.Engine
 	svc    *search.Service
 
-	buildOnce  sync.Once
-	buildDone  chan struct{}
-	buildErr   error
-	buildErrMu sync.RWMutex
+	// build is the initial index build: its completion and its outcome.
+	build lifecycle.OnceCompletion
 
 	clusterMu               sync.Mutex
 	lastClusteredEmbedCount int
+	// growthObservedCount is the vector count the last growth check saw
+	// (clusteringGrowthDue).
+	growthObservedCount int
 
+	// pendingOps and pendingEdgeOps hold the refreshes reserved for queued
+	// storage events, by local ID. The drain reads storage, so no payload is kept.
 	pendingMu           sync.Mutex
-	pendingOps          map[string]pendingSearchMutation
+	pendingOps          map[string]search.NodeMutation
+	pendingEdgeOps      map[string]search.EdgeMutation
 	pendingFlushMu      sync.Mutex
-	pendingFlushTimer   *time.Timer
+	pendingFlushTimer   *lifecycle.OwnedTimer
 	pendingFlushRunning bool
 	pendingFlushDelay   time.Duration
-}
-
-func (e *dbSearchService) closeBuildDone() {
-	if e == nil || e.buildDone == nil {
-		return
-	}
-	defer func() {
-		if recover() != nil {
-			// Tests and shutdown races may observe a pre-closed buildDone channel.
-			// Treat repeated close attempts as idempotent completion.
-		}
-	}()
-	close(e.buildDone)
+	// Delayed retry ownership and entry retirement are protected by pendingMu.
+	refreshRetries map[string]*pendingSearchRetry
+	retired        bool
+	// generation is the database's search-state generation this entry is.
+	generation uint64
 }
 
 const searchMutationDebounceDelay = 250 * time.Millisecond
-
-type pendingSearchMutation struct {
-	node   *storage.Node
-	remove bool
-}
 
 func (db *DB) shouldIgnoreSearchIndexingError(err error) bool {
 	if err == nil {
@@ -71,47 +64,42 @@ func (db *DB) shouldIgnoreSearchIndexingError(err error) bool {
 		return true
 	}
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.RUnlock()
 	return closed
 }
 
-func (e *dbSearchService) queueIndex(node *storage.Node) {
-	if e == nil || node == nil {
-		return
-	}
-	e.pendingMu.Lock()
-	if e.pendingOps == nil {
-		e.pendingOps = make(map[string]pendingSearchMutation)
-	}
-	e.pendingOps[string(node.ID)] = pendingSearchMutation{node: storage.CopyNode(node), remove: false}
-	e.pendingMu.Unlock()
-}
-
-func (e *dbSearchService) queueRemove(localID string) {
-	if e == nil || localID == "" {
-		return
-	}
-	e.pendingMu.Lock()
-	if e.pendingOps == nil {
-		e.pendingOps = make(map[string]pendingSearchMutation)
-	}
-	e.pendingOps[localID] = pendingSearchMutation{remove: true}
-	e.pendingMu.Unlock()
-}
-
-func (e *dbSearchService) drainPending() map[string]pendingSearchMutation {
+func (e *dbSearchService) drainPending() (map[string]search.NodeMutation, map[string]search.EdgeMutation) {
 	if e == nil {
-		return nil
+		return nil, nil
 	}
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
-	if len(e.pendingOps) == 0 {
-		return nil
+	var nodes map[string]search.NodeMutation
+	var edges map[string]search.EdgeMutation
+	if len(e.pendingOps) != 0 {
+		nodes, e.pendingOps = e.pendingOps, nil
 	}
-	out := e.pendingOps
-	e.pendingOps = make(map[string]pendingSearchMutation)
-	return out
+	if len(e.pendingEdgeOps) != 0 {
+		edges, e.pendingEdgeOps = e.pendingEdgeOps, nil
+	}
+	return nodes, edges
+}
+
+// reusePending clears a completed batch and reuses its maps when producers
+// have not already created the next batch. A newer batch, including a retry
+// queued while this one ran, always keeps its own reservations.
+func (e *dbSearchService) reusePending(nodes map[string]search.NodeMutation, edges map[string]search.EdgeMutation) {
+	clear(nodes)
+	clear(edges)
+	e.pendingMu.Lock()
+	if e.pendingOps == nil {
+		e.pendingOps = nodes
+	}
+	if e.pendingEdgeOps == nil {
+		e.pendingEdgeOps = edges
+	}
+	e.pendingMu.Unlock()
 }
 
 func (e *dbSearchService) hasPending() bool {
@@ -120,7 +108,7 @@ func (e *dbSearchService) hasPending() bool {
 	}
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
-	return len(e.pendingOps) > 0
+	return len(e.pendingOps)+len(e.pendingEdgeOps) > 0
 }
 
 func (e *dbSearchService) flushDelay() time.Duration {
@@ -132,21 +120,28 @@ func (e *dbSearchService) flushDelay() time.Duration {
 
 // DatabaseSearchStatus exposes per-database search service readiness/progress.
 type DatabaseSearchStatus struct {
-	Ready           bool    `json:"ready"`
-	Building        bool    `json:"building"`
-	Initialized     bool    `json:"initialized"`
-	Strategy        string  `json:"strategy,omitempty"`
-	Phase           string  `json:"phase,omitempty"`
-	Error           string  `json:"error,omitempty"`
-	ProcessedNodes  int64   `json:"processed_nodes,omitempty"`
-	TotalNodes      int64   `json:"total_nodes,omitempty"`
-	RateNodesPerSec float64 `json:"rate_nodes_per_sec,omitempty"`
-	ETASeconds      int64   `json:"eta_seconds,omitempty"`
+	// FulltextRetention reports optional procedure copies without changing
+	// readiness: released indexes continue searching through storage.
+	FulltextRetention []search.FulltextRetentionStatus `json:"fulltext_retention,omitempty"`
+	Ready             bool                             `json:"ready"`
+	Building          bool                             `json:"building"`
+	Initialized       bool                             `json:"initialized"`
+	Strategy          string                           `json:"strategy,omitempty"`
+	Phase             string                           `json:"phase,omitempty"`
+	Error             string                           `json:"error,omitempty"`
+	ProcessedNodes    int64                            `json:"processed_nodes,omitempty"`
+	TotalNodes        int64                            `json:"total_nodes,omitempty"`
+	RateNodesPerSec   float64                          `json:"rate_nodes_per_sec,omitempty"`
+	ETASeconds        int64                            `json:"eta_seconds,omitempty"`
 	// BM25Enabled / VectorEnabled mirror the resolved per-DB master switches.
 	// Search handler uses these to decide between 200-with-empty-half,
 	// 503 search_disabled_for_database (both off), and the lazy-trigger 503.
 	BM25Enabled   bool `json:"bm25_enabled"`
 	VectorEnabled bool `json:"vector_enabled"`
+	// VectorStorage reports the configured and active vector backing. An
+	// explicit disk database that fell back to memory is visible here instead
+	// of appearing as a successfully persisted vector index.
+	VectorStorage search.VectorStorageStatus `json:"vector_storage"`
 	// LazyTriggerNeeded is true when at least one resolved-as-enabled index
 	// is configured warming=lazy and has not yet started building.
 	LazyTriggerNeeded bool `json:"lazy_trigger_needed,omitempty"`
@@ -184,30 +179,51 @@ func (db *DB) kmeansNumClusters() int {
 	return 0
 }
 
-func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engine) (*search.Service, error) {
+// ensureSearchClustering upgrades an existing service when clustering is
+// enabled after creation. Both lookup and indexing events share this owner.
+func (db *DB) ensureSearchClustering(svc *search.Service) {
+	if svc == nil || !featureflags.IsGPUClusteringEnabled() || svc.IsClusteringEnabled() {
+		return
+	}
+	db.gpuManagerMu.RLock()
+	mgr, _ := db.gpuManager.(*gpu.Manager)
+	db.gpuManagerMu.RUnlock()
+	if mgr != nil && !mgr.IsEnabled() {
+		mgr = nil
+	}
+	svc.EnableClustering(mgr, db.kmeansNumClusters())
+}
+
+// GetOrCreateSearchService admits construction under the database's search
+// registry and lifetime, or returns the already-owned service. Admission and
+// retirement are checked together without taking db.mu inside storage callbacks.
+func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engine) (service *search.Service, resultErr error) {
+	// This path is also entered by storage callbacks while db.mu is held.
+	// Enroll in the DB owner and the current constructor epoch under the
+	// registry lock, before any resolver or construction.
+	db.searchServicesMu.Lock()
+	if db.searchRetirement != nil || !db.work.Enter() {
+		db.searchServicesMu.Unlock()
+		return nil, ErrClosed
+	}
+	if db.searchConstruction == nil {
+		db.searchConstruction = &lifecycle.WorkLifetime{}
+	}
+	// A reset seals the epoch only after publishing searchRetirement under
+	// this lock, so entering here cannot be refused.
+	epoch := db.searchConstruction
+	entered := epoch.Enter()
+	db.searchServicesMu.Unlock()
+	defer db.work.Leave()
+	if !entered {
+		return nil, ErrClosed
+	}
+	defer epoch.Leave()
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
 	if dbName == "system" {
 		return nil, localizedError(localization.NornicDBCoreSearchSystemDatabaseUnsupported(), nil)
-	}
-
-	dims := db.embeddingDims
-	minSim := db.searchMinSimilarity
-	bm25Engine := search.DefaultBM25Engine()
-	db.dbConfigResolverMu.RLock()
-	resolver := db.dbConfigResolver
-	optionsResolver := db.dbSearchOptionsResolver
-	db.dbConfigResolverMu.RUnlock()
-	if resolver != nil {
-		rd, rs, re := resolver(dbName)
-		if rd > 0 {
-			dims = rd
-		}
-		minSim = rs
-		if re != "" {
-			bm25Engine = re
-		}
 	}
 
 	var gpuMgr *gpu.Manager
@@ -227,16 +243,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 			reranker = rr(dbName)
 		}
 
-		// If clustering is enabled globally, ensure cached services have clustering enabled too.
-		// Services may be created before the feature flag is turned on (e.g., early HTTP calls),
-		// in which case they need to be upgraded in place. Use configured cluster count.
-		if svc != nil && featureflags.IsGPUClusteringEnabled() && !svc.IsClusteringEnabled() {
-			var mgr *gpu.Manager
-			if gpuMgr != nil && gpuMgr.IsEnabled() {
-				mgr = gpuMgr
-			}
-			svc.EnableClustering(mgr, db.kmeansNumClusters())
-		}
+		db.ensureSearchClustering(svc)
 		// If a Stage-2 reranker is configured (e.g. Heimdall LLM), ensure it is applied.
 		// This keeps behavior consistent even if the reranker is configured after the
 		// service was created (e.g. Heimdall initializes later in server startup).
@@ -247,11 +254,8 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	}
 	db.searchServicesMu.RUnlock()
 
-	// Serialize creation so only one goroutine is in the create+insert path at a time,
-	// avoiding RWMutex deadlock when background build, flush indexNodeFromEvent, and CreateNode contend.
-	db.searchServiceCreationMu.Lock()
-	defer db.searchServiceCreationMu.Unlock()
-
+	// Construct outside host locks. Publication below selects one cache owner;
+	// a losing candidate is disposed before its DB retention is released.
 	// Re-check after acquiring creation lock; another goroutine may have created it.
 	db.searchServicesMu.RLock()
 	if entry, ok := db.searchServices[dbName]; ok {
@@ -266,6 +270,21 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 			return nil, localizedError(localization.NornicDBCoreSearchBaseStorageUnavailable(), nil)
 		}
 		storageEngine = storage.NewNamespacedEngine(db.baseStorage, dbName)
+	}
+
+	// Construction settings are not consumed by an existing cached service.
+	dims := db.embeddingDims
+	minSim := db.searchMinSimilarity
+	db.dbConfigResolverMu.RLock()
+	resolver := db.dbConfigResolver
+	optionsResolver := db.dbSearchOptionsResolver
+	db.dbConfigResolverMu.RUnlock()
+	if resolver != nil {
+		rd, rs := resolver(dbName)
+		if rd > 0 {
+			dims = rd
+		}
+		minSim = rs
 	}
 
 	if dims <= 0 {
@@ -285,6 +304,10 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	// database managed by this service, including services created before the
 	// server installs its per-database options resolver.
 	resolvedOptions.DatabaseID = dbName
+	resolvedOptions.MemoryPolicy = db.memoryPolicy
+	if db.config != nil {
+		resolvedOptions.SearchCursorMaxPageSize = db.config.Memory.SearchCursorMaxPageSize
+	}
 	selectedStemmer := stemmer.NormalizeSelection(resolvedOptions.BM25StemmerID)
 	if selectedStemmer != stemmer.NoneID {
 		reg, ok := stemmer.Lookup(selectedStemmer)
@@ -296,7 +319,18 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 			resolvedOptions.BM25Stemmer = &reg
 		}
 	}
-	svc := search.NewServiceWithDimensionsAndBM25EngineAndOptions(storageEngine, dims, bm25Engine, &resolvedOptions)
+	svc := search.NewService(storageEngine, dims, &resolvedOptions)
+	adopted := false
+	defer func() {
+		if adopted {
+			return
+		}
+		if err := svc.Close(); err != nil {
+			cleanupErr := fmt.Errorf("search service %s construction cleanup: %w", dbName, err)
+			db.recordBackgroundError(cleanupErr)
+			resultErr = compose.Outcomes(resultErr, cleanupErr)
+		}
+	}()
 	if db.config != nil && db.config.Memory.EmbeddingEnabled {
 		// Embeddings have the configured dimension: the index keeps it.
 		svc.FixVectorDimensions()
@@ -310,7 +344,6 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	}
 	continuations, err := db.getOrCreateSearchContinuationRegistry()
 	if err != nil {
-		_ = svc.Close()
 		return nil, err
 	}
 	svc.SetContinuationRegistry(continuations)
@@ -328,8 +361,8 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	// concurrent indexNodeFromEvent / pendingFlush goroutine that races
 	// the boot orchestrator does NOT call startSearchIndexBuild — its
 	// GetBuildProgress.Ready check will see true and skip the build.
-	// Without this, a write event firing between getOrCreateSearchService
-	// and EnsureSearchIndexesBuilt's MarkReadyDisabled call would trigger
+	// Without this, a write event firing between GetOrCreateSearchService
+	// and EnsureSearchIndexes's MarkReadyDisabled call would trigger
 	// a real BuildIndexes run before the gate could land.
 	if !bm25On && !vectorOn {
 		svc.MarkReadyDisabled()
@@ -344,41 +377,17 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		// find the service warm.
 		warmDBName := dbName
 		svc.SetLazyWarming(true, search.WarmFunc(func() {
-			ctx := db.buildCtx
-			if ctx == nil {
-				ctx = context.Background()
-			}
+			ctx := db.LifetimeContext()
 			log.Printf("🔍 Search lazy-warm trigger fired for db %s", warmDBName)
 			// Use the lowercase variant which does NOT re-check the lazy
-			// gate (EnsureSearchIndexesBuilt would defer right back). The
+			// gate (EnsureSearchIndexes would defer right back). The
 			// service entry is already in db.searchServices because the
-			// outer getOrCreateSearchService call inserted it before
+			// outer GetOrCreateSearchService call inserted it before
 			// SetLazyWarming ran.
 			if err := db.ensureSearchIndexesBuilt(ctx, warmDBName); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
 				log.Printf("⚠️  Search lazy-warm build failed for db %s: %v", warmDBName, err)
 			}
 		}))
-	}
-	persistSearchIndexesEnabled := db.config != nil && db.config.Database.DataDir != "" && db.config.Database.PersistSearchIndexes
-	svc.SetPersistenceEnabled(persistSearchIndexesEnabled)
-
-	// EXPERIMENTAL: when PersistSearchIndexes is true, set paths so BuildIndexes saves indexes after a
-	// build and loads them on startup (skipping the full iteration when both are present).
-	// HNSW is also persisted so the approximate nearest-neighbor index does not need rebuilding.
-	// If a rebuild is required (e.g., missing/incompatible artifacts), IVF-HNSW rebuild at startup
-	// can be long on large datasets (~30 minutes for ~1M embeddings on observed hardware).
-	if persistSearchIndexesEnabled {
-		base, err := searchPersistenceBasePath(db.config.Database.DataDir, dbName)
-		if err != nil {
-			return nil, err
-		}
-		fulltextFilename := "bm25"
-		if strings.EqualFold(strings.TrimSpace(bm25Engine), search.BM25EngineV2) {
-			fulltextFilename = "bm25.v2"
-		}
-		svc.SetFulltextIndexPath(filepath.Join(base, fulltextFilename))
-		svc.SetVectorIndexPath(filepath.Join(base, "vectors"))
-		svc.SetHNSWIndexPath(filepath.Join(base, "hnsw"))
 	}
 
 	// Enable GPU brute-force search if a GPU manager is configured.
@@ -412,20 +421,58 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		svc.SetRelationshipEmbedPolicy(relationshipEmbedPolicy(db.config))
 	}
 
-	entry := &dbSearchService{
-		dbName:    dbName,
-		engine:    storageEngine,
-		svc:       svc,
-		buildDone: make(chan struct{}),
+	db.searchServiceCreationMu.Lock()
+	defer db.searchServiceCreationMu.Unlock()
+	db.searchServicesMu.RLock()
+	// This construction was admitted before a retiring phase. That phase
+	// joins admitted preparation before advancing the native generation, so
+	// its original publication must complete and then be retired by Reset.
+	unavailable := db.work.Closing()
+	db.searchServicesMu.RUnlock()
+	if unavailable {
+		return nil, ErrClosed
+	}
+	persistSearchIndexesEnabled := db.config != nil && db.config.Database.DataDir != "" && db.config.Database.PersistSearchIndexes
+	svc.SetPersistenceEnabled(persistSearchIndexesEnabled)
+
+	// EXPERIMENTAL: when PersistSearchIndexes is true, set paths so BuildIndexes saves indexes after a
+	// build and loads them on startup (skipping the full iteration when both are present).
+	// HNSW is also persisted so the approximate nearest-neighbor index does not need rebuilding.
+	// If a rebuild is required (e.g., missing/incompatible artifacts), IVF-HNSW rebuild at startup
+	// can be long on large datasets (~30 minutes for ~1M embeddings on observed hardware).
+	if persistSearchIndexesEnabled {
+		base, err := db.activeSearchStateDir(dbName)
+		if err != nil {
+			return nil, err
+		}
+		svc.SetFulltextIndexPath(filepath.Join(base, "bm25.v2"))
+		svc.SetVectorIndexPath(filepath.Join(base, "vectors"))
+		svc.SetHNSWIndexPath(filepath.Join(base, "hnsw"))
 	}
 
+	entry := &dbSearchService{
+		dbName: dbName,
+		engine: storageEngine,
+		svc:    svc,
+	}
+	svc.SetRefreshRetryOwner(db.searchRefreshRetry(entry))
+
 	db.searchServicesMu.Lock()
+	if db.work.Closing() {
+		db.searchServicesMu.Unlock()
+		return nil, ErrClosed
+	}
 	// Double-check in case another goroutine created it while we were building.
 	if existing, ok := db.searchServices[dbName]; ok {
 		db.searchServicesMu.Unlock()
 		return existing.svc, nil
 	}
+	entry.generation = db.searchGenerations[dbName]
+	if db.defaultSearchMetrics != nil && dbName == db.defaultDatabaseName() {
+		svc.AttachMetrics(db.defaultSearchMetrics)
+	}
 	db.searchServices[dbName] = entry
+	adopted = true
 	db.searchServicesMu.Unlock()
 	svc.StartRelationshipIndex()
 
@@ -439,15 +486,18 @@ func (db *DB) getOrCreateSearchContinuationRegistry() (*resultstream.Registry, e
 		return db.searchContinuation, nil
 	}
 	maxStreams := int64(0)
+	maxPageSize := 0
 	ttl := 5 * time.Minute
 	if db.config != nil {
 		maxStreams = db.config.Memory.SearchCursorMax
+		maxPageSize = db.config.Memory.SearchCursorMaxPageSize
 		if db.config.Memory.SearchCursorTTL > 0 {
 			ttl = db.config.Memory.SearchCursorTTL
 		}
 	}
 	registry, err := resultstream.NewRegistry(resultstream.Config{
 		Disabled: maxStreams == 0, MaxStreams: maxStreams, TTL: ttl,
+		MaxPageSize: maxPageSize,
 	})
 	if err != nil {
 		return nil, err
@@ -466,6 +516,16 @@ func (db *DB) ResolveSearchContinuationDatabase(owner, qid, requested string) (s
 	return registry.ResolveDatabase(owner, qid, requested)
 }
 
+// DiscardSearchContinuation releases a signed cursor, including after its
+// database has been dropped or its final page consumed.
+func (db *DB) DiscardSearchContinuation(owner, qid, database string) error {
+	registry, err := db.getOrCreateSearchContinuationRegistry()
+	if err != nil {
+		return err
+	}
+	return registry.Discard(resultstream.Scope{Owner: owner, Database: database}, qid)
+}
+
 // SetSearchResultCachePolicy applies a dynamic cache policy to an existing database service.
 func (db *DB) SetSearchResultCachePolicy(dbName string, maxEntries int, ttl time.Duration) {
 	db.searchServicesMu.RLock()
@@ -481,6 +541,11 @@ func (db *DB) SetSearchResultCachePolicy(dbName string, maxEntries int, ttl time
 // This is typically set by the server when Heimdall is enabled and the
 // vector rerank feature flag is turned on.
 func (db *DB) SetSearchReranker(r search.Reranker) {
+	if local, ok := r.(*search.LocalReranker); ok {
+		if _, accepted := db.OwnProvider("local reranker model", local.UnderlyingScorer()); !accepted {
+			return
+		}
+	}
 	db.searchServicesMu.Lock()
 	db.searchReranker = r
 	entries := make([]*dbSearchService, 0, len(db.searchServices))
@@ -498,59 +563,48 @@ func (db *DB) SetSearchReranker(r search.Reranker) {
 }
 
 // SetRerankerResolver sets an optional function that returns the reranker for a given database.
-// When set, getOrCreateSearchService uses it instead of the single global searchReranker (enables per-DB rerankers).
+// When set, GetOrCreateSearchService uses it instead of the single global searchReranker (enables per-DB rerankers).
 func (db *DB) SetRerankerResolver(fn func(dbName string) search.Reranker) {
 	db.searchServicesMu.Lock()
 	db.rerankerResolver = fn
 	db.searchServicesMu.Unlock()
 }
 
-// GetOrCreateSearchService returns the per-database search service for dbName.
-//
-// storageEngine should be a *storage.NamespacedEngine for dbName (typically
-// obtained via multidb.DatabaseManager). If nil, db.baseStorage is wrapped with
-// a NamespacedEngine for dbName.
-func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engine) (*search.Service, error) {
-	db.mu.RLock()
-	closed := db.closed
-	db.mu.RUnlock()
-	if closed {
-		return nil, ErrClosed
-	}
-	return db.getOrCreateSearchService(dbName, storageEngine)
-}
-
-// ResetSearchService drops the cached search service for a database.
-// The next call to GetOrCreateSearchService will create a fresh, empty service.
+// ResetSearchService ends the database's current search state: its service,
+// pending refreshes and persisted files. The next call to
+// GetOrCreateSearchService creates a fresh service, built from storage.
 func (db *DB) ResetSearchService(dbName string) {
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
-	db.searchServicesMu.Lock()
-	if entry, ok := db.searchServices[dbName]; ok && entry != nil && entry.svc != nil {
-		// Stop pending persist timers and close file-backed vector store
-		// so removed databases cannot later re-persist stale index state.
-		entry.svc.SetPersistenceEnabled(false)
-	}
-	delete(db.searchServices, dbName)
-	db.searchServicesMu.Unlock()
+	db.invalidateSearchState(func(name string) bool { return name == dbName }, true)
 }
 
-// DropSearchServiceState removes cached search service state and best-effort purges
-// on-disk persisted index artifacts for the database.
+// DropSearchServiceState is ResetSearchService, for a database being removed.
 func (db *DB) DropSearchServiceState(dbName string) {
-	if dbName == "" {
-		dbName = db.defaultDatabaseName()
-	}
 	db.ResetSearchService(dbName)
-	if db.config == nil || db.config.Database.DataDir == "" {
-		return
+}
+
+// dropSearchForPrefix ends the search state of every database a
+// DeleteByPrefix of prefix removed entities from: a dropped database ("<db>:"),
+// several, or part of one, whether its service is loaded or only persisted. A
+// database recreated under the same name then starts from its stored state,
+// not the dropped one's index.
+func (db *DB) dropSearchForPrefix(prefix string) {
+	db.invalidateSearchState(func(name string) bool {
+		namespace := name + ":"
+		return strings.HasPrefix(namespace, prefix) || strings.HasPrefix(prefix, namespace)
+	}, true)
+}
+
+func (db *DB) searchServiceNames() []string {
+	db.searchServicesMu.RLock()
+	defer db.searchServicesMu.RUnlock()
+	names := make([]string, 0, len(db.searchServices))
+	for name := range db.searchServices {
+		names = append(names, name)
 	}
-	searchPath, err := searchPersistenceBasePath(db.config.Database.DataDir, dbName)
-	if err != nil {
-		return
-	}
-	_ = security.RemoveAllRootedPath(searchPath)
+	return names
 }
 
 // GetDatabaseSearchStatus returns readiness and progress for the database search service.
@@ -589,12 +643,10 @@ func (db *DB) GetDatabaseSearchStatus(dbName string) DatabaseSearchStatus {
 	phase := p.Phase
 	buildError := ""
 	if !p.Ready && !p.Building {
-		entry.buildErrMu.RLock()
-		if entry.buildErr != nil {
+		if buildErr := entry.build.Err(); buildErr != nil {
 			phase = "failed"
-			buildError = entry.buildErr.Error()
+			buildError = buildErr.Error()
 		}
-		entry.buildErrMu.RUnlock()
 	}
 	// The lazy-trigger signal flips on once the service is created but the
 	// build hasn't started. After Service.EnsureWarm fires the WarmFunc on
@@ -605,6 +657,7 @@ func (db *DB) GetDatabaseSearchStatus(dbName string) DatabaseSearchStatus {
 		!(bm25On == false && vectorOn == false)
 	return DatabaseSearchStatus{
 		Ready:             p.Ready,
+		FulltextRetention: entry.svc.FulltextRetention(),
 		Building:          p.Building,
 		Initialized:       true,
 		Strategy:          entry.svc.CurrentStrategy(),
@@ -617,6 +670,7 @@ func (db *DB) GetDatabaseSearchStatus(dbName string) DatabaseSearchStatus {
 		BM25Enabled:       bm25On,
 		VectorEnabled:     vectorOn,
 		LazyTriggerNeeded: lazyNeeded,
+		VectorStorage:     entry.svc.VectorStorageStatus(),
 	}
 }
 
@@ -645,41 +699,35 @@ func (db *DB) ensurePendingFlushAfterSuccessfulBuild(entry *dbSearchService) {
 }
 
 func (db *DB) startSearchIndexBuild(entry *dbSearchService, ctx context.Context) {
-	if entry == nil || entry.svc == nil {
+	if entry == nil || entry.svc == nil || entry.isRetired() {
 		return
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	select {
+	case <-entry.build.Done():
+		return
+	default:
 	}
-	// Run the build on its own goroutine: the Once body takes db.mu.RLock
-	// through startBackgroundTask, and callers may hold db.mu.Lock while a
-	// storage write event fires (e.g. RecordConsent). Running the Once
-	// synchronously here would deadlock those callers against the in-flight
-	// build (db.mu → once.mu → db.mu).
-	go entry.buildOnce.Do(func() {
-		if !db.startBackgroundTask(func() {
-			_ = db.runInitialSearchIndexBuild(entry, ctx)
-		}) {
-			entry.buildErrMu.Lock()
-			entry.buildErr = ErrClosed
-			entry.buildErrMu.Unlock()
-			entry.closeBuildDone()
-		}
-	})
+	// Run the build on its own goroutine: callers may hold db.mu.Lock while a
+	// storage write event fires (e.g. RecordConsent), and the build takes
+	// db.mu.RLock. Each dispatch is an enrolled DB task joining the one build
+	// completion; the first to run executes the build. A refused dispatch
+	// completes a build that never started with ErrClosed, so no waiter is
+	// stranded.
+	if !db.RunBackgroundTask(func(backgroundCtx context.Context) {
+		entry.build.Do(func() error { return db.runInitialSearchIndexBuild(entry, ctx) })
+	}) {
+		entry.build.Do(func() error { return ErrClosed })
+	}
 }
 
 // runInitialSearchIndexBuild runs a database's initial search-index build and
-// records its outcome: the build error, clustering state, the buildDone
-// signal, and the flush of writes queued while it ran. It must run inside
-// entry.buildOnce, in the background (startSearchIndexBuild) or synchronously
-// (DB.BuildSearchIndexes).
+// returns its outcome to the build completion, records clustering state and
+// flushes writes queued while it ran. It runs only inside entry.build.
 func (db *DB) runInitialSearchIndexBuild(entry *dbSearchService, ctx context.Context) error {
 	err := entry.svc.BuildIndexes(ctx)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("search index build failed for database %s: %v", entry.dbName, err)
 	}
-	entry.buildErrMu.Lock()
-	entry.buildErr = err
 	if err == nil {
 		// Mark clustering as current so runClusteringOnceAllDatabases skips this db
 		// (we either restored IVF-HNSW from disk or ran k-means in warmup).
@@ -687,8 +735,6 @@ func (db *DB) runInitialSearchIndexBuild(entry *dbSearchService, ctx context.Con
 		entry.lastClusteredEmbedCount = entry.svc.EmbeddingCount()
 		entry.clusterMu.Unlock()
 	}
-	entry.buildErrMu.Unlock()
-	entry.closeBuildDone()
 	if err == nil {
 		db.ensurePendingFlushAfterSuccessfulBuild(entry)
 	}
@@ -696,7 +742,7 @@ func (db *DB) runInitialSearchIndexBuild(entry *dbSearchService, ctx context.Con
 }
 
 func (db *DB) ensurePendingFlush(entry *dbSearchService) {
-	if entry == nil || entry.svc == nil {
+	if entry == nil || entry.svc == nil || entry.isRetired() {
 		return
 	}
 	entry.pendingFlushMu.Lock()
@@ -704,7 +750,7 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 		entry.pendingFlushTimer.Stop()
 	}
 	delay := entry.flushDelay()
-	entry.pendingFlushTimer = time.AfterFunc(delay, func() {
+	entry.pendingFlushTimer = entry.svc.AfterFunc(delay, func() {
 		entry.pendingFlushMu.Lock()
 		entry.pendingFlushTimer = nil
 		if entry.pendingFlushRunning {
@@ -714,7 +760,7 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 		entry.pendingFlushRunning = true
 		entry.pendingFlushMu.Unlock()
 
-		started := db.startBackgroundTask(func() {
+		started := db.RunBackgroundTask(func(backgroundCtx context.Context) {
 			reschedulePending := true
 			defer func() {
 				entry.pendingFlushMu.Lock()
@@ -727,52 +773,39 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 
 			progress := entry.svc.GetBuildProgress()
 			if db.shouldStartSearchBuildForWriteEvent(entry.dbName, progress) {
-				ctx := db.buildCtx
-				if ctx == nil {
-					ctx = context.Background()
-				}
+				ctx := db.LifetimeContext()
 				db.startSearchIndexBuild(entry, ctx)
-				<-entry.buildDone
+				<-entry.build.Done()
 			} else if !progress.Ready {
 				reschedulePending = false
 				return
 			}
 
+			// Accepted refreshes retain this admitted task credit through completion,
+			// even when database stop cancels its scheduling lifetime.
+			completionCtx := context.WithoutCancel(backgroundCtx)
 			for {
-				ops := entry.drainPending()
-				if len(ops) == 0 {
+				nodes, edges := entry.drainPending()
+				if len(nodes)+len(edges) == 0 {
 					return
 				}
-				ids := make([]string, 0, len(ops))
-				for id := range ops {
-					ids = append(ids, id)
-				}
-				sort.Strings(ids)
-				for _, id := range ids {
-					op := ops[id]
-					if op.remove {
-						if err := entry.svc.RemoveNode(storage.NodeID(id)); err != nil {
-							if db.shouldIgnoreSearchIndexingError(err) {
-								continue
-							}
-							log.Printf("⚠️ Failed to remove node %s from deferred search mutation in db %s: %v", id, entry.dbName, err)
-						}
-						continue
-					}
-					if op.node == nil {
-						continue
-					}
-					node := op.node
-					if !carriesChunkEmbedding(node) && entry.svc.VectorEnabled() {
-						node = db.storedNodeForSearch(entry.dbName, id, node)
-					}
-					if err := entry.svc.IndexNode(node); err != nil {
-						if db.shouldIgnoreSearchIndexingError(err) {
-							continue
-						}
-						log.Printf("⚠️ Failed to index node %s from deferred search mutation in db %s: %v", id, entry.dbName, err)
+				// A refresh whose read fails is retried (searchRefreshRetry),
+				// not taken for a deletion.
+				for _, id := range collection.SortedKeys(nodes) {
+					err := entry.svc.RefreshNodeWithMutation(completionCtx, nodes[id])
+					db.logSearchRefreshError("node", id, entry, err)
+					if err == nil {
+						db.finishSearchRefresh(entry, search.RefreshRetry{Node: nodes[id]})
 					}
 				}
+				for _, id := range collection.SortedKeys(edges) {
+					err := entry.svc.RefreshEdgeWithMutation(completionCtx, edges[id])
+					db.logSearchRefreshError("relationship", id, entry, err)
+					if err == nil {
+						db.finishSearchRefresh(entry, search.RefreshRetry{Edge: edges[id]})
+					}
+				}
+				entry.reusePending(nodes, edges)
 			}
 		})
 		if !started {
@@ -784,27 +817,10 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 	entry.pendingFlushMu.Unlock()
 }
 
-// carriesChunkEmbedding reports whether node carries its managed embedding.
-func carriesChunkEmbedding(node *storage.Node) bool {
-	return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0
-}
-
-// storedNodeForSearch is the stored state of a node whose queued copy came
-// without an embedding, or queued when the node can't be read. A write
-// event's copy can be older than the node's embedding: the embed worker
-// writes the embedding without a node event and queues its own copy, which a
-// bulk write's creation event, still being delivered, can replace. Indexing
-// that copy would drop the vector for good.
-func (db *DB) storedNodeForSearch(dbName, localID string, queued *storage.Node) *storage.Node {
-	engine, err := db.resolveDatabaseStorage(dbName)
-	if err != nil || engine == nil {
-		return queued
+func (db *DB) logSearchRefreshError(kind, id string, entry *dbSearchService, err error) {
+	if err != nil && !db.shouldIgnoreSearchIndexingError(err) {
+		log.Printf("⚠️ Failed to apply deferred search refresh for %s %s in db %s: %v", kind, id, entry.dbName, err)
 	}
-	stored, err := engine.GetNode(storage.NodeID(localID))
-	if err != nil || stored == nil {
-		return queued
-	}
-	return stored
 }
 
 func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error {
@@ -819,27 +835,44 @@ func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error
 		return localizedError(localization.NornicDBCoreSearchDatabaseNotInitialized(dbName), nil)
 	}
 	db.startSearchIndexBuild(entry, ctx)
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	select {
-	case <-entry.buildDone:
-		entry.buildErrMu.RLock()
-		err := entry.buildErr
-		entry.buildErrMu.RUnlock()
-		return err
+	case <-entry.build.Done():
+		return entry.build.Err()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
-// EnsureSearchIndexesBuilt ensures the per-database search indexes are built exactly once.
-// If the service doesn’t exist yet, it is created (using storageEngine if provided).
-// Honours the per-DB master switches: when both are off, the service is marked
-// ready (no-op stub for BM25, vector flag guard) and no build runs. When both
-// are warming=lazy, the build is deferred to the first inbound search query.
-func (db *DB) EnsureSearchIndexesBuilt(ctx context.Context, dbName string, storageEngine storage.Engine) (*search.Service, error) {
-	svc, err := db.getOrCreateSearchService(dbName, storageEngine)
+// SearchIndexBuildMode selects what EnsureSearchIndexes does once it has
+// resolved the database's search service and its per-DB warming decision.
+type SearchIndexBuildMode int
+
+const (
+	// SearchIndexBuildWait waits for the initial build to finish and reports
+	// its outcome, or ctx's error if ctx ends first. When this call starts
+	// the build, the build uses ctx; an already-started build keeps its context.
+	SearchIndexBuildWait SearchIndexBuildMode = iota
+	// SearchIndexBuildStart starts the initial build on the database
+	// lifetime's context if it has not started, and returns without waiting
+	// for it to finish.
+	SearchIndexBuildStart
+)
+
+// EnsureSearchIndexes resolves the per-database search service and ensures its
+// indexes are built exactly once. If the service does not exist yet it is
+// created, using storageEngine if provided. It honours the per-DB master
+// switches: when both are off, the service is marked ready (no-op stub for
+// BM25, vector flag guard) and no build runs. When every enabled index is
+// warming=lazy, the build is deferred to the first inbound search query, which
+// fires the WarmFunc registered in GetOrCreateSearchService.
+//
+// Otherwise the build is initiated according to mode: SearchIndexBuildWait
+// waits for the build's outcome, SearchIndexBuildStart only starts it.
+func (db *DB) EnsureSearchIndexes(ctx context.Context, dbName string, storageEngine storage.Engine, mode SearchIndexBuildMode) (*search.Service, error) {
+	if mode != SearchIndexBuildStart && mode != SearchIndexBuildWait {
+		return nil, localizedError(localization.NornicDBCoreSearchIndexBuildModeInvalid(int(mode)), nil)
+	}
+	svc, err := db.GetOrCreateSearchService(dbName, storageEngine)
 	if err != nil {
 		return nil, err
 	}
@@ -857,149 +890,168 @@ func (db *DB) EnsureSearchIndexesBuilt(ctx context.Context, dbName string, stora
 		// All enabled indexes are configured warming=lazy — defer the
 		// build. The first inbound read path goes through Service.Search
 		// (or VectorSearchCandidates) which calls Service.EnsureWarm,
-		// which fires the WarmFunc registered in getOrCreateSearchService
+		// which fires the WarmFunc registered in GetOrCreateSearchService
 		// to drive the synchronous build.
 		return svc, nil
 	}
-	if err := db.ensureSearchIndexesBuilt(ctx, dbName); err != nil {
-		return svc, err
+	if mode == SearchIndexBuildStart {
+		db.startSearchIndexBuildForDatabase(dbName)
+		return svc, nil
 	}
-	return svc, nil
+	return svc, db.ensureSearchIndexesBuilt(ctx, dbName)
 }
 
-func (db *DB) removeNodeFromSearchIndexes(ctx context.Context, dbName string, storageEngine storage.Engine, id storage.NodeID) error {
-	if id == "" {
-		return nil
-	}
-	svc, err := db.EnsureSearchIndexesBuilt(ctx, dbName, storageEngine)
-	if err != nil {
-		return err
-	}
-	if svc == nil {
-		return nil
-	}
-	return svc.RemoveNode(id)
-}
-
-// EnsureSearchIndexesBuildStarted starts per-database search indexing if not already started
-// and returns immediately without waiting for completion. Honours the per-DB
-// warming triggers: when both BM25 and vector are configured warming=lazy, the
-// build is deferred until the first inbound read fires the WarmFunc through
-// Service.EnsureWarm.
-func (db *DB) EnsureSearchIndexesBuildStarted(dbName string, storageEngine storage.Engine) (*search.Service, error) {
-	if dbName == "" {
-		dbName = db.defaultDatabaseName()
-	}
-	svc, err := db.getOrCreateSearchService(dbName, storageEngine)
-	if err != nil {
-		return nil, err
-	}
+// startSearchIndexBuildForDatabase starts the database's initial search build
+// on the database lifetime's context, if its service is loaded.
+func (db *DB) startSearchIndexBuildForDatabase(dbName string) {
 	db.searchServicesMu.RLock()
 	entry := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
 	if entry == nil {
-		return svc, nil
+		return
 	}
-	// Lazy-warming check: if both indexes are configured warming=lazy, defer
-	// the boot-time build. The first inbound read path (Service.Search,
-	// VectorSearchCandidates, or any handler that calls Service.EnsureWarm
-	// directly) drives the build through the WarmFunc registered in
-	// getOrCreateSearchService. If at least one index is startup-warmed,
-	// start the build now (the disabled / lazy index simply doesn't
-	// materialize during BuildIndexes).
-	bm25On, vectorOn, bm25Warming, vectorWarming := db.resolveSearchFlags(dbName)
-	bothOff := !bm25On && !vectorOn
-	bothLazy := (!bm25On || bm25Warming == "lazy") && (!vectorOn || vectorWarming == "lazy")
-	if bothOff {
-		// Mark service "ready" (handler short-circuits to 503 anyway) so
-		// status probes don't report perpetual building.
-		svc.MarkReadyDisabled()
-		return svc, nil
-	}
-	if bothLazy {
-		// Defer the build to first-query trigger.
-		return svc, nil
-	}
-	ctx := db.buildCtx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := db.LifetimeContext()
 	db.startSearchIndexBuild(entry, ctx)
-	return svc, nil
 }
 
+// indexNodeFromEvent queues a refresh for a node a storage event reports as
+// written. Only its ID is used: the refresh reads the node's stored state.
 func (db *DB) indexNodeFromEvent(node *storage.Node) {
 	if node == nil {
 		return
 	}
-
-	dbName, local, ok := splitQualifiedID(string(node.ID))
-	if !ok {
-		// Unprefixed IDs are not supported. This indicates a bug in the storage event pipeline.
-		log.Printf("⚠️ storage event had unprefixed node ID: %q", node.ID)
+	// This accepted callback has no request-context contract; its independent
+	// completion context lives only on this stack, never in stored metadata.
+	// Accepted embedding outcomes publish before storage delivers the worker
+	// completion callback. Body events and outcomes awaiting a build use the
+	// same deferred refresh owner below.
+	if node.EmbeddingAttempt() != nil && db.publishEmbeddedNode(context.Background(), node) {
 		return
+	}
+	db.queueSearchRefreshEvent(searchNodeWrite, string(node.ID))
+}
+
+type searchRefreshEventKind uint8
+
+const (
+	searchNodeWrite searchRefreshEventKind = iota
+	searchNodeDelete
+	searchRelationshipChange
+)
+
+// queueSearchRefreshEvent resolves a storage event to its database, reserves
+// the newest node or relationship refresh under pendingMu, and schedules the
+// deferred flush. Node writes can create a service; deletes and relationship
+// events only use an existing one.
+func (db *DB) queueSearchRefreshEvent(kind searchRefreshEventKind, id string) {
+	if kind > searchRelationshipChange {
+		return
+	}
+	dbName, local, ok := splitQualifiedID(id)
+	if !ok {
+		if kind == searchNodeDelete {
+			// Node deletes from an unprefixed engine belong to the default DB.
+			dbName, local = db.defaultDatabaseName(), id
+		} else {
+			if kind == searchNodeWrite {
+				log.Printf("⚠️ storage event had unprefixed node ID: %q", id)
+			}
+			return
+		}
 	}
 	// Qdrant gRPC points are stored under a reserved sub-namespace and are indexed
 	// by the Qdrant vector index cache, not the hybrid search service.
-	if strings.HasPrefix(local, "qdrant:") {
+	if kind == searchNodeWrite && strings.HasPrefix(local, "qdrant:") {
 		return
 	}
 
-	svc, err := db.getOrCreateSearchService(dbName, nil)
-	if err != nil || svc == nil {
-		return
-	}
-
-	userNode := storage.CopyNode(node)
-	userNode.ID = storage.NodeID(local)
-
+	// An indexing event needs the existing service, not query-time reranker
+	// resolution. Query-facing lookups continue to resolve the current reranker.
 	db.searchServicesMu.RLock()
 	entry := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
-	if entry == nil {
+	if kind == searchNodeWrite && (entry == nil || entry.svc == nil) {
+		svc, err := db.GetOrCreateSearchService(dbName, nil)
+		if err != nil || svc == nil {
+			return
+		}
+		db.searchServicesMu.RLock()
+		entry = db.searchServices[dbName]
+		db.searchServicesMu.RUnlock()
+	}
+	if entry == nil || entry.svc == nil {
 		return
+	}
+	switch kind {
+	case searchNodeWrite:
+		if !entry.svc.BM25Enabled() && !entry.svc.VectorEnabled() {
+			return
+		}
+		db.ensureSearchClustering(entry.svc)
+	case searchRelationshipChange:
+		if !entry.svc.VectorEnabled() && !entry.svc.RelationshipSearchEnabled() {
+			return
+		}
 	}
 
-	entry.queueIndex(userNode)
-	progress := svc.GetBuildProgress()
-	if db.shouldStartSearchBuildForWriteEvent(dbName, progress) {
-		ctx := db.buildCtx
-		if ctx == nil {
-			ctx = context.Background()
+	// Reserve and replace work while holding the queue lock: a later event
+	// must supersede older work, including a refresh already being drained.
+	entry.pendingMu.Lock()
+	var work search.RefreshRetry
+	if !entry.retired {
+		if kind == searchRelationshipChange {
+			work.Edge = entry.svc.ReserveEdgeMutation(storage.EdgeID(local))
+		} else {
+			work.Node = entry.svc.ReserveNodeMutation(storage.NodeID(local))
 		}
-		db.startSearchIndexBuild(entry, ctx)
-		db.ensurePendingFlush(entry)
-		return
+		entry.queueReservedRefreshLocked(local, work)
 	}
-	if progress.Ready {
-		db.ensurePendingFlush(entry)
-	}
+	entry.pendingMu.Unlock()
+	db.scheduleQueuedRefreshes(entry)
 }
 
-func (db *DB) removeNodeFromEvent(nodeID storage.NodeID) {
-	dbName, local, ok := splitQualifiedID(string(nodeID))
-	if !ok {
-		// Unprefixed ID (e.g. single-db or callback from engine that doesn't prefix).
-		// Use default database and the ID as-is so embeddings are still removed.
-		dbName = db.defaultDatabaseName()
-		local = string(nodeID)
+// publishEmbeddedNode indexes a node the embed worker has just persisted into
+// its database's search service at once, when that service is ready and not
+// building, and reports whether it did. Otherwise (no service yet, a build
+// running or not yet run, or indexing failed) the caller queues the node like
+// any write event, and the build or the deferred flush publishes it.
+//
+// Only the node's ID is used: the refresh reads its stored state, so a newer
+// write or delete wins over the worker's copy, and supersedes older queued work.
+func (db *DB) publishEmbeddedNode(ctx context.Context, node *storage.Node) bool {
+	if db == nil || node == nil {
+		return false
 	}
-
+	dbName, local, ok := splitQualifiedID(string(node.ID))
+	if !ok || strings.HasPrefix(local, "qdrant:") {
+		return false
+	}
 	db.searchServicesMu.RLock()
-	entry, ok := db.searchServices[dbName]
+	entry := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
-	if !ok || entry == nil {
-		// Service not in cache yet; nothing to remove.
-		return
+	if entry == nil || entry.svc == nil || entry.isRetired() {
+		return false
 	}
-
-	entry.queueRemove(local)
-	progress := entry.svc.GetBuildProgress()
-	if db.shouldStartSearchBuildForWriteEvent(dbName, progress) {
-		ctx := db.buildCtx
-		if ctx == nil {
-			ctx = context.Background()
+	if progress := entry.svc.GetBuildProgress(); !progress.Ready || progress.Building {
+		return false
+	}
+	if err := entry.svc.RefreshNode(ctx, storage.NodeID(local)); err != nil {
+		if db.shouldIgnoreSearchIndexingError(err) {
+			return true
 		}
+		// The caller queues a retry.
+		log.Printf("⚠️ Failed to index embedded node %s in db %s: %v", local, dbName, err)
+		return false
+	}
+	return true
+}
+
+// scheduleQueuedRefreshes has queued refreshes applied: by the deferred flush
+// once the service is ready, after starting the build a write may trigger.
+func (db *DB) scheduleQueuedRefreshes(entry *dbSearchService) {
+	progress := entry.svc.GetBuildProgress()
+	if db.shouldStartSearchBuildForWriteEvent(entry.dbName, progress) {
+		ctx := db.LifetimeContext()
 		db.startSearchIndexBuild(entry, ctx)
 		db.ensurePendingFlush(entry)
 		return
@@ -1019,7 +1071,7 @@ func (db *DB) GetDatabaseManagedEmbeddingStats(dbName string) (embeddingCount in
 		return 0, 0, 0
 	}
 
-	svc, err := db.getOrCreateSearchService(dbName, nil)
+	svc, err := db.GetOrCreateSearchService(dbName, nil)
 	if err != nil || svc == nil {
 		return 0, 0, 0
 	}
@@ -1035,12 +1087,9 @@ func (db *DB) GetDatabaseManagedEmbeddingStats(dbName string) (embeddingCount in
 
 // runClusteringOnceAllDatabases runs k-means for each database. Stops when ctx is cancelled (e.g. shutdown).
 func (db *DB) runClusteringOnceAllDatabases(ctx context.Context) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// Ensure the default database service exists so an immediate clustering run
 	// produces deterministic behavior even before the first search request.
-	if _, err := db.getOrCreateSearchService(db.defaultDatabaseName(), db.storage); err != nil {
+	if _, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); err != nil {
 		log.Printf("⚠️  K-means clustering: failed to initialize default search service: %v", err)
 	}
 
@@ -1051,12 +1100,39 @@ func (db *DB) runClusteringOnceAllDatabases(ctx context.Context) {
 			if ns == "" || ns == "system" {
 				continue
 			}
-			if _, err := db.getOrCreateSearchService(ns, nil); err != nil {
+			if _, err := db.GetOrCreateSearchService(ns, nil); err != nil {
 				log.Printf("⚠️  K-means clustering: failed to initialize search service for db %s: %v", ns, err)
 			}
 		}
 	}
 
+	db.runClusteringAllDatabases(ctx, clusteringStale, true)
+}
+
+// clusteringStale is the timer's and manual trigger's rule: a database is
+// clustered when its vector count changed since its last clustering.
+func clusteringStale(entry *dbSearchService, count int) bool {
+	return count != entry.lastClusteredEmbedCount || entry.lastClusteredEmbedCount == 0
+}
+
+// clusteringGrowthDue is the growth check's rule: a database is clustered once
+// its vector count has grown by at least ratio since its last clustering and
+// then held still for one check, so a bulk load is clustered when it finishes
+// instead of at the next timer tick. It records the count it observed.
+func clusteringGrowthDue(ratio float64) func(entry *dbSearchService, count int) bool {
+	return func(entry *dbSearchService, count int) bool {
+		previous := entry.growthObservedCount
+		entry.growthObservedCount = count
+		grown := float64(count-entry.lastClusteredEmbedCount) >= ratio*float64(max(entry.lastClusteredEmbedCount, 1))
+		return grown && count > entry.lastClusteredEmbedCount && count == previous
+	}
+}
+
+// runClusteringAllDatabases runs k-means for each open database for which due
+// (called under the entry's clusterMu with its vector count) reports true.
+// logDeferred logs a due database skipped because its search build is not
+// ready.
+func (db *DB) runClusteringAllDatabases(ctx context.Context, due func(entry *dbSearchService, count int) bool, logDeferred bool) {
 	db.searchServicesMu.RLock()
 	entries := make([]*dbSearchService, 0, len(db.searchServices))
 	for _, entry := range db.searchServices {
@@ -1082,7 +1158,7 @@ func (db *DB) runClusteringOnceAllDatabases(ctx context.Context) {
 		// A clustering run already in progress is skipped quietly.
 		clustering := entry.svc.ClusteringInProgress()
 		if progress.Building || !progress.Ready || clustering {
-			if !clustering {
+			if !clustering && logDeferred {
 				log.Printf("🔬 K-means clustering deferred for db %s: search build in progress or not ready (building=%t, phase=%s)", entry.dbName, progress.Building, progress.Phase)
 			}
 			continue
@@ -1096,7 +1172,7 @@ func (db *DB) runClusteringOnceAllDatabases(ctx context.Context) {
 		// holds vector index read lock).
 		entry.clusterMu.Lock()
 		currentCount := entry.svc.EmbeddingCount()
-		shouldRun := currentCount != entry.lastClusteredEmbedCount || entry.lastClusteredEmbedCount == 0
+		shouldRun := due(entry, currentCount)
 		entry.clusterMu.Unlock()
 		if !shouldRun {
 			continue

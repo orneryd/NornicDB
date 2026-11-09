@@ -16,41 +16,12 @@ import (
 )
 
 func TestServer_QdrantGRPCFeatureFlag_StartsAndCreatesCollectionDatabases(t *testing.T) {
-	server, authenticator := setupTestServer(t)
-
-	// Allow Qdrant clients to manage vectors by disabling NornicDB-managed embeddings.
-	server.config.EmbeddingEnabled = false
-
-	server.config.Features = &nornicConfig.FeatureFlagsConfig{
-		QdrantGRPCEnabled:        true,
-		QdrantGRPCListenAddr:     "127.0.0.1:0",
-		QdrantGRPCMaxVectorDim:   4096,
-		QdrantGRPCMaxBatchPoints: 1000,
-		QdrantGRPCMaxTopK:        1000,
-	}
-
-	require.NoError(t, server.Start())
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Stop(ctx)
-	})
+	server, ctx, collections, points := qdrantGRPCTestClients(t, false)
 
 	require.NotNil(t, server.qdrantGRPCServer)
 	require.True(t, server.qdrantGRPCServer.IsRunning())
 
-	conn, err := grpc.Dial(server.qdrantGRPCServer.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+getAuthToken(t, authenticator, "admin")))
-
-	collections := qpb.NewCollectionsClient(conn)
-	points := qpb.NewPointsClient(conn)
-
-	_, err = collections.Create(ctx, &qpb.CreateCollection{
+	_, err := collections.Create(ctx, &qpb.CreateCollection{
 		CollectionName: "grpc_col",
 		VectorsConfig: &qpb.VectorsConfig{
 			Config: &qpb.VectorsConfig_Params{
@@ -84,7 +55,7 @@ func TestServer_QdrantGRPCFeatureFlag_StartsAndCreatesCollectionDatabases(t *tes
 	require.NoError(t, err)
 
 	// Verify the point exists in the collection database namespace.
-	exec, err := server.getExecutorForDatabase("grpc_col")
+	exec, err := server.executorCache.Get("grpc_col")
 	require.NoError(t, err)
 
 	res, err := exec.Execute(ctx, "MATCH (n:QdrantPoint) RETURN count(n) AS c", nil)
@@ -93,7 +64,7 @@ func TestServer_QdrantGRPCFeatureFlag_StartsAndCreatesCollectionDatabases(t *tes
 	require.Equal(t, int64(1), res.Rows[0][0])
 
 	// Sanity check: default database should not contain the collection points.
-	defaultExec, err := server.getExecutorForDatabase(server.dbManager.DefaultDatabaseName())
+	defaultExec, err := server.executorCache.Get(server.dbManager.DefaultDatabaseName())
 	require.NoError(t, err)
 	defaultRes, err := defaultExec.Execute(ctx, "MATCH (n:QdrantPoint) RETURN count(n) AS c", nil)
 	require.NoError(t, err)
@@ -102,10 +73,39 @@ func TestServer_QdrantGRPCFeatureFlag_StartsAndCreatesCollectionDatabases(t *tes
 }
 
 func TestServer_QdrantGRPC_ManagedEmbeddings_DisablesVectorMutations(t *testing.T) {
+	_, ctx, collections, points := qdrantGRPCTestClients(t, true)
+	_, err := collections.Create(ctx, &qpb.CreateCollection{
+		CollectionName: "grpc_col",
+		VectorsConfig: &qpb.VectorsConfig{
+			Config: &qpb.VectorsConfig_Params{
+				Params: &qpb.VectorParams{Size: 4, Distance: qpb.Distance_Cosine},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = points.Upsert(ctx, &qpb.UpsertPoints{
+		CollectionName: "grpc_col",
+		Points: []*qpb.PointStruct{{
+			Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}},
+			Vectors: &qpb.Vectors{VectorsOptions: &qpb.Vectors_Vector{
+				Vector: &qpb.Vector{Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{1, 0, 0, 0}}}},
+			}},
+		}},
+	})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	require.Equal(t, codes.FailedPrecondition, st.Code())
+}
+
+// qdrantGRPCTestClients owns the identical transport fixture used by both
+// managed and client-managed vector tests.
+func qdrantGRPCTestClients(t *testing.T, managedEmbeddings bool) (*Server, context.Context, qpb.CollectionsClient, qpb.PointsClient) {
+	t.Helper()
 	server, authenticator := setupTestServer(t)
 
-	// Managed embeddings enabled (default) => Qdrant vector mutation endpoints should be rejected.
-	server.config.EmbeddingEnabled = true
+	server.config.EmbeddingEnabled = managedEmbeddings
 	server.config.Features = &nornicConfig.FeatureFlagsConfig{
 		QdrantGRPCEnabled:        true,
 		QdrantGRPCListenAddr:     "127.0.0.1:0",
@@ -126,40 +126,7 @@ func TestServer_QdrantGRPC_ManagedEmbeddings_DisablesVectorMutations(t *testing.
 	t.Cleanup(func() { _ = conn.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+getAuthToken(t, authenticator, "admin")))
-
-	collections := qpb.NewCollectionsClient(conn)
-	points := qpb.NewPointsClient(conn)
-
-	_, err = collections.Create(ctx, &qpb.CreateCollection{
-		CollectionName: "grpc_col",
-		VectorsConfig: &qpb.VectorsConfig{
-			Config: &qpb.VectorsConfig_Params{
-				Params: &qpb.VectorParams{
-					Size:     4,
-					Distance: qpb.Distance_Cosine,
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	_, err = points.Upsert(ctx, &qpb.UpsertPoints{
-		CollectionName: "grpc_col",
-		Points: []*qpb.PointStruct{
-			{
-				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}},
-				Vectors: &qpb.Vectors{
-					VectorsOptions: &qpb.Vectors_Vector{
-						Vector: &qpb.Vector{Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{1, 0, 0, 0}}}},
-					},
-				},
-			},
-		},
-	})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	require.Equal(t, codes.FailedPrecondition, st.Code())
+	return server, ctx, qpb.NewCollectionsClient(conn), qpb.NewPointsClient(conn)
 }

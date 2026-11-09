@@ -78,11 +78,15 @@ func (b *BadgerEngine) embeddingTextPolicyOrDefault() EmbeddingTextPolicy {
 // Writers that decide themselves whether to keep a node's embeddings use it
 // with the engine's policy (#963).
 func (p EmbeddingTextPolicy) SameSource(x, y *Node) bool {
-	if p.IncludeLabels && !sameLabelSet(x.Labels, y.Labels) {
+	return sameEmbeddingTextSource(x, y, p.IncludeLabels, p.FeedsText)
+}
+
+func sameEmbeddingTextSource(x, y *Node, includeLabels bool, feedsText func(string) bool) bool {
+	if includeLabels && !sameLabelSet(x.Labels, y.Labels) {
 		return false
 	}
 	for name, value := range x.Properties {
-		if !p.FeedsText(name) {
+		if !feedsText(name) {
 			continue
 		}
 		other, ok := y.Properties[name]
@@ -91,16 +95,17 @@ func (p EmbeddingTextPolicy) SameSource(x, y *Node) bool {
 		}
 	}
 	for name := range y.Properties {
-		if _, ok := x.Properties[name]; !ok && p.FeedsText(name) {
+		if _, ok := x.Properties[name]; !ok && feedsText(name) {
 			return false
 		}
 	}
 	return true
 }
 
-// sameEmbeddingSource is SameSource under the engine's policy.
+// sameEmbeddingSource uses the recorded consumed source, with the engine text
+// policy for legacy vectors that have no descriptor.
 func (b *BadgerEngine) sameEmbeddingSource(x, y *Node) bool {
-	return b.embeddingTextPolicyOrDefault().SameSource(x, y)
+	return EmbeddingSourceMatches(x, y, b.embeddingTextPolicyOrDefault())
 }
 
 // embeddingSourceJudge is an engine that decides whether two copies of a
@@ -119,17 +124,31 @@ type embeddingSourceJudge interface {
 // The policy is the one of the engine judge wraps (UnwrapEngine), or the
 // default policy when it has none.
 func dropStaleCarriedEmbeddings(judge Engine, prev, node *Node) {
-	if prev == nil || len(prev.EmbedMeta) == 0 || len(node.ChunkEmbeddings) == 0 || !sameChunkEmbeddings(node.ChunkEmbeddings, prev.ChunkEmbeddings) {
+	if prev == nil || len(prev.EmbedMeta) == 0 || !sameChunkEmbeddings(node.ChunkEmbeddings, prev.ChunkEmbeddings) {
 		return
 	}
-	same := defaultEmbeddingTextPolicy.SameSource(prev, node)
-	if engine, ok := UnwrapEngine(judge).(embeddingSourceJudge); ok {
-		same = engine.sameEmbeddingSource(prev, node)
+	failed, _ := prev.EmbedMeta["embedding_failed"].(bool)
+	if len(node.ChunkEmbeddings) == 0 && !failed {
+		return
 	}
-	if !same {
+	if !canCarryManagedEmbeddings(judge, prev, node) {
 		node.ChunkEmbeddings = nil
 		node.EmbedMeta = nil
 	}
+}
+
+// A body update starts a new attempt even for an idempotent upsert whose caller
+// kept the timestamp. Terminal metadata is never carried into that attempt;
+// actual vectors still obey the provider's consumed-source contract.
+func canCarryManagedEmbeddings(judge Engine, prev, node *Node) bool {
+	if failed, _ := prev.EmbedMeta["embedding_failed"].(bool); failed {
+		return false
+	}
+	same := EmbeddingSourceMatches(prev, node, defaultEmbeddingTextPolicy)
+	if engine, ok := UnwrapEngine(judge).(embeddingSourceJudge); ok {
+		same = engine.sameEmbeddingSource(prev, node)
+	}
+	return same
 }
 
 // sameLabelSet reports whether two label lists hold the same labels in any

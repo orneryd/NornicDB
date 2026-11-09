@@ -15,27 +15,27 @@ type countingHeaderEngine struct {
 	decline       bool
 }
 
-func (e *countingHeaderEngine) OutgoingEdgeHeaders(id storage.NodeID) ([]*storage.Edge, bool, error) {
+func (e *countingHeaderEngine) OutgoingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
 	e.headers++
 	if e.decline {
 		return nil, false, nil
 	}
-	return e.NamespacedEngine.OutgoingEdgeHeaders(id)
+	return e.NamespacedEngine.OutgoingEdgeHeaders(ctx, id)
 }
 
-func (e *countingHeaderEngine) IncomingEdgeHeaders(id storage.NodeID) ([]*storage.Edge, bool, error) {
+func (e *countingHeaderEngine) IncomingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
 	e.headers++
-	return e.NamespacedEngine.IncomingEdgeHeaders(id)
+	return e.NamespacedEngine.IncomingEdgeHeaders(ctx, id)
 }
 
-func (e *countingHeaderEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *countingHeaderEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	e.full++
-	return e.NamespacedEngine.GetOutgoingEdges(id)
+	return e.NamespacedEngine.GetOutgoingEdges(ctx, id)
 }
 
-func (e *countingHeaderEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *countingHeaderEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	e.full++
-	return e.NamespacedEngine.GetIncomingEdges(id)
+	return e.NamespacedEngine.GetIncomingEdges(ctx, id)
 }
 
 func TestTraversalRelationshipsNeedOnlyHeaders(t *testing.T) {
@@ -119,17 +119,17 @@ func TestTransactionTraversalListsRelationshipHeaders(t *testing.T) {
 // strips its namespace only from answered headers.
 func TestTransactionWrapperUserEdgeHeaders(t *testing.T) {
 	w := &transactionStorageWrapper{namespace: "test", separator: ":"}
-	edges, answered, err := w.userEdgeHeaders(nil, false, nil)
+	edges, answered, err := w.userEdgeHeaders(t.Context(), nil, false, nil)
 	require.NoError(t, err)
 	require.False(t, answered)
 	require.Nil(t, edges)
-	_, answered, err = w.userEdgeHeaders(nil, true, storage.ErrNotFound)
+	_, answered, err = w.userEdgeHeaders(t.Context(), nil, true, storage.ErrNotFound)
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	require.True(t, answered)
-	edges, _, _ = w.userEdgeHeaders([]*storage.Edge{{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K"}}, true, nil)
+	edges, _, _ = w.userEdgeHeaders(t.Context(), []*storage.Edge{{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K"}}, true, nil)
 	require.Equal(t, storage.EdgeID("e"), edges[0].ID)
 	require.Equal(t, storage.NodeID("a"), edges[0].StartNode)
 	root := &transactionStorageWrapper{}
-	edges, _, _ = root.userEdgeHeaders([]*storage.Edge{{ID: "e"}}, true, nil)
+	edges, _, _ = root.userEdgeHeaders(t.Context(), []*storage.Edge{{ID: "e"}}, true, nil)
 	require.Equal(t, storage.EdgeID("e"), edges[0].ID)
 }

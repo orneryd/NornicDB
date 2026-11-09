@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -76,11 +77,21 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 	}
 }
 
-func (tx *BadgerTransaction) committedNodeLabelsLocked(identifier NodeID) ([]string, error) {
+func (tx *BadgerTransaction) committedNodeLabelsLocked(ctx context.Context, identifier NodeID) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if tx.engine.writeBehind != nil {
+		node, err := tx.engine.getNodeProjected(ctx, identifier, []string{}, storedRead)
+		if err != nil {
+			return nil, err
+		}
+		return node.Labels, nil
+	}
 	if labels, cached := tx.snapshotNodeLabels[identifier]; cached {
 		return labels, nil
 	}
-	node, err := tx.getCommittedNodeLocked(identifier)
+	node, err := tx.getCommittedNodeLocked(ctx, identifier)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +154,7 @@ func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(node *No
 	for len(tx.snapshotPrefixNodeOrder) >= maxSnapshotPrefixNodeCacheNodes ||
 		tx.snapshotPrefixNodeBytes > maxSnapshotPrefixNodeCacheBytes-nodeBytes {
 		oldest := tx.snapshotPrefixNodeOrder[0]
+		tx.snapshotPrefixNodeOrder[0] = ""
 		tx.snapshotPrefixNodeOrder = tx.snapshotPrefixNodeOrder[1:]
 		tx.snapshotPrefixNodeBytes -= tx.snapshotPrefixNodeBytesByID[oldest]
 		delete(tx.snapshotPrefixNodeBytesByID, oldest)
@@ -168,7 +180,7 @@ func (tx *BadgerTransaction) clearSnapshotLabelPrefixLocked(key snapshotLabelCac
 }
 
 func snapshotLabelPrefixNodeBytes(node *Node) (int, bool) {
-	if node == nil || node.EmbeddingsStoredSeparately || len(node.NamedEmbeddings) > 0 || len(node.ChunkEmbeddings) > 0 || len(node.EmbedMeta) > 0 {
+	if node == nil || node.RuntimeMetadata().EmbeddingsStoredSeparately || len(node.NamedEmbeddings) > 0 || len(node.ChunkEmbeddings) > 0 || len(node.EmbedMeta) > 0 {
 		return 0, false
 	}
 	bytes := 64 + len(node.ID)
@@ -261,6 +273,7 @@ func (tx *BadgerTransaction) cacheSnapshotEdgeByIDLocked(edge *Edge) {
 	}
 	for len(tx.snapshotEdgeOrder) >= maxSnapshotEdgeCacheEntries || tx.snapshotEdgeBytes > maxSnapshotEdgeCacheBytes-edgeBytes {
 		oldest := tx.snapshotEdgeOrder[0]
+		tx.snapshotEdgeOrder[0] = ""
 		tx.snapshotEdgeOrder = tx.snapshotEdgeOrder[1:]
 		tx.snapshotEdgeBytes -= tx.snapshotEdgeBytesByID[oldest]
 		delete(tx.snapshotEdgeBytesByID, oldest)
@@ -290,14 +303,14 @@ func snapshotEdgeBytes(edge *Edge) (int, bool) {
 	return bytes, true
 }
 
-func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]*Node, error) {
+func (tx *BadgerTransaction) getAllCommittedNodesLocked(ctx context.Context) ([]*Node, error) {
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		return tx.engine.AllNodes()
+		return tx.engine.AllNodes(ctx)
 	}
-	return tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
+	return tx.engine.getNodesByLabelVisibleAtWithView(ctx, "", "", tx.readTS, tx.withSnapshotViewLocked)
 }
 
 // EdgeDirection selects which adjacency side an adjacency read resolves. It is
@@ -359,7 +372,7 @@ func (cache *snapshotAdjacencyCache) clear() {
 // scanned every visible edge in the graph and filtered by endpoint in memory,
 // which degraded linearly with the total edge count on large graphs. Pending
 // transaction writes are merged by the caller.
-func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection) ([]*Edge, error) {
+func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(ctx context.Context, nodeID NodeID, direction EdgeDirection) ([]*Edge, error) {
 	// Write-behind reads are read-committed: the flusher may land a buffered
 	// commit after the pinned snapshot, and buffered-but-unflushed edges are
 	// invisible to the pinned view. Read the latest overlaid engine view
@@ -367,56 +380,39 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		switch direction {
 		case Outgoing:
-			return tx.engine.GetOutgoingEdges(nodeID)
+			return tx.engine.GetOutgoingEdges(ctx, nodeID)
 		case Incoming:
-			return tx.engine.GetIncomingEdges(nodeID)
+			return tx.engine.GetIncomingEdges(ctx, nodeID)
 		default:
 			return nil, ErrInvalidData
 		}
 	}
 	if tx.snapshotDeregister != nil {
-		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false)
+		return tx.readCachedSnapshotAdjacentEdgesLocked(ctx, nodeID, direction, false)
 	}
+	return tx.engine.readAdjacentEdgesAtWithView(ctx, nodeID, tx.readTS, direction, "", tx.withSnapshotViewLocked)
+}
+
+// readCachedSnapshotAdjacentEdgesLocked reads nodeID's relationships visible at
+// the pinned snapshot, reusing and filling the per-transaction adjacency cache
+// without materializing the adjacency twice. With headersOnly, a relationship
+// whose adjacency entry value carries its type and other end is listed from
+// that value when its MVCC head in the snapshot view is live and not newer than
+// the read version, so no later change can differ from it; otherwise its
+// snapshot record is read. The adjacency cache is filled only after the whole
+// view succeeds: a partial edge ID list would make a later read of the same
+// node report a truncated adjacency as complete.
+func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(ctx context.Context, nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]*Edge, error) {
+	var cache *snapshotAdjacencyCache
 	switch direction {
 	case Outgoing:
-		if tx.snapshotDeregister != nil {
-			return tx.engine.getOutgoingEdgesVisibleAtWithPinnedSnapshot(nodeID, tx.readTS, tx.withSnapshotViewLocked)
-		}
-		return tx.engine.getOutgoingEdgesVisibleAtWithView(nodeID, tx.readTS, tx.withSnapshotViewLocked)
+		cache = &tx.snapshotOutgoingAdjacency
 	case Incoming:
-		if tx.snapshotDeregister != nil {
-			return tx.engine.getIncomingEdgesVisibleAtWithPinnedSnapshot(nodeID, tx.readTS, tx.withSnapshotViewLocked)
-		}
-		return tx.engine.getIncomingEdgesVisibleAtWithView(nodeID, tx.readTS, tx.withSnapshotViewLocked)
+		cache = &tx.snapshotIncomingAdjacency
 	default:
 		return nil, ErrInvalidData
 	}
-}
-
-// readCachedSnapshotAdjacentEdgesLocked reads nodeID's relationships at the
-// pinned snapshot, reusing and filling the per-transaction adjacency cache.
-func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]*Edge, error) {
-	cache := &tx.snapshotOutgoingAdjacency
-	if direction == Incoming {
-		cache = &tx.snapshotIncomingAdjacency
-	}
 	edgeIDs, cached := cache.load(nodeID)
-	edges, snapshotEdgeIDs, err := tx.readSnapshotAdjacentEdgesLocked(nodeID, direction, edgeIDs, cached, headersOnly)
-	if err != nil {
-		return nil, err
-	}
-	if !cached {
-		cache.store(nodeID, snapshotEdgeIDs)
-	}
-	return edges, nil
-}
-
-// readSnapshotAdjacentEdgesLocked returns nodeID's relationships visible at
-// the snapshot. With headersOnly, a relationship whose adjacency entry value
-// carries its type and other end is listed from that value when its MVCC head
-// in the snapshot view is live and not newer than the read version, so no
-// later change can differ from it; otherwise its snapshot record is read.
-func (tx *BadgerTransaction) readSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, edgeIDs []EdgeID, cached, headersOnly bool) ([]*Edge, []EdgeID, error) {
 	edges := make([]*Edge, 0, len(edgeIDs))
 	err := tx.withSnapshotViewLocked(func(snapshot *badger.Txn) error {
 		var err error
@@ -427,10 +423,8 @@ func (tx *BadgerTransaction) readSnapshotAdjacentEdgesLocked(nodeID NodeID, dire
 				prefix = tx.engine.mvccOutgoingAdjacencyPrefixString(nodeID)
 			case Incoming:
 				prefix = tx.engine.mvccIncomingAdjacencyPrefixString(nodeID)
-			default:
-				return ErrInvalidData
 			}
-			edgeIDs, err = tx.engine.collectVisibleAdjacencyEdgeIDsInTxn(snapshot, prefix, tx.readTS)
+			edgeIDs, err = tx.engine.collectVisibleAdjacencyEdgeIDsInTxn(ctx, snapshot, prefix, tx.readTS)
 			if err != nil {
 				return err
 			}
@@ -449,7 +443,7 @@ func (tx *BadgerTransaction) readSnapshotAdjacentEdgesLocked(nodeID NodeID, dire
 				edge = header
 			} else {
 				var edgeErr error
-				edge, edgeErr = tx.engine.getEdgeVisibleAtInTxn(snapshot, edgeID, tx.readTS)
+				edge, edgeErr = tx.engine.getEdgeAtInTxn(snapshot, edgeID, tx.readTS, mvccEntityRead{visibility: visibleRead})
 				if edgeErr == ErrNotFound || edgeErr == ErrNotVisibleAtSnapshot {
 					continue
 				}
@@ -469,29 +463,37 @@ func (tx *BadgerTransaction) readSnapshotAdjacentEdgesLocked(nodeID NodeID, dire
 		}
 		return nil
 	})
-	return edges, edgeIDs, err
+	if err != nil {
+		return nil, err
+	}
+	if !cached {
+		cache.store(nodeID, edgeIDs)
+	}
+	return edges, nil
 }
 
 // OutgoingEdgeHeaders implements EdgeHeaderReader at the transaction's
 // snapshot, with its own writes merged as GetOutgoingEdges merges them.
-func (tx *BadgerTransaction) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
-	return tx.edgeHeaders(nodeID, Outgoing)
+func (tx *BadgerTransaction) OutgoingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
+	return tx.edgeHeaders(ctx, nodeID, Outgoing)
 }
 
 // IncomingEdgeHeaders implements EdgeHeaderReader at the transaction's
 // snapshot, with its own writes merged as GetIncomingEdges merges them.
-func (tx *BadgerTransaction) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
-	return tx.edgeHeaders(nodeID, Incoming)
+func (tx *BadgerTransaction) IncomingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
+	return tx.edgeHeaders(ctx, nodeID, Incoming)
 }
 
 // edgeHeaders lists the snapshot's relationships of nodeID as
 // getCommittedAdjacentEdgesLocked does, taking each one's type and other end
 // from its adjacency entry value where it can. It declines without a pinned
 // snapshot and under decay filtering.
-func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection) ([]*Edge, bool, error) {
-	tx.mu.Lock()
+func (tx *BadgerTransaction) edgeHeaders(ctx context.Context, nodeID NodeID, direction EdgeDirection) ([]*Edge, bool, error) {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, true, err
+	}
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, true, err
 	}
 	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
@@ -507,30 +509,40 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 		var committed []*Edge
 		var err error
 		if direction == Outgoing {
-			committed, _, err = tx.engine.OutgoingEdgeHeaders(nodeID)
+			committed, _, err = tx.engine.OutgoingEdgeHeaders(ctx, nodeID)
 		} else {
-			committed, _, err = tx.engine.IncomingEdgeHeaders(nodeID)
+			committed, _, err = tx.engine.IncomingEdgeHeaders(ctx, nodeID)
 		}
 		if err != nil {
 			return nil, true, err
 		}
-		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+		edges, mergeErr := tx.mergePendingEdgesLocked(ctx, committed, func(edge *Edge) bool {
 			if direction == Outgoing {
 				return edge.StartNode == nodeID
 			}
 			return edge.EndNode == nodeID
-		}), true, nil
+		})
+		if mergeErr != nil {
+			return nil, true, mergeErr
+		}
+		return edges, true, nil
 	}
-	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, true)
+	// The statement's context bounds the snapshot adjacency read and the pending
+	// merge; it never outlives this call on the handle.
+	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(ctx, nodeID, direction, true)
 	if err != nil {
 		return nil, true, err
 	}
-	return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+	edges, mergeErr := tx.mergePendingEdgesLocked(ctx, committed, func(edge *Edge) bool {
 		if direction == Outgoing {
 			return edge.StartNode == nodeID
 		}
 		return edge.EndNode == nodeID
-	}), true, nil
+	})
+	if mergeErr != nil {
+		return nil, true, mergeErr
+	}
+	return edges, true, nil
 }
 
 // snapshotHeaderLocked returns edgeID's header from headers when its MVCC head
@@ -552,6 +564,12 @@ func (tx *BadgerTransaction) snapshotHeaderLocked(snapshot *badger.Txn, headers 
 // reservation. Fresh Views would admit that peer halfway through this reader.
 // The separate read-only transaction does not enlarge the writer's SSI read set.
 func (tx *BadgerTransaction) withSnapshotViewLocked(read func(*badger.Txn) error) error {
+	if tx.namespace != "" && tx.engine != nil {
+		if err := tx.engine.pendingNamespaceConflict(tx.namespace); err != nil {
+			return err
+		}
+	}
+
 	tx.observed = true
 	if tx.snapshotTx != nil {
 		return read(tx.snapshotTx)
@@ -560,14 +578,31 @@ func (tx *BadgerTransaction) withSnapshotViewLocked(read func(*badger.Txn) error
 	return tx.engine.withView(read)
 }
 
-// snapshotHeadConflict also compares physical publication versions: namespace
-// MVCC reservations can predate this reader even when their data commits later.
-// A separate read transaction preserves the existing consumer conflict shape
-// without adding planning reads to the writer's Badger SSI set.
-func (tx *BadgerTransaction) snapshotHeadConflict(key []byte, version MVCCVersion) (bool, error) {
+// snapshotHeadConflict is the one rule for whether a peer's head of entity
+// id was published after this transaction's cut: its version is newer than
+// the boundary (snapshotIsolationConflict), or it is in the cut's copy of the
+// reservation ledger and neither the transaction's snapshot nor its buffer
+// prefix holds it (publishedBeforeCut). The same rule answers for a peer the
+// write-behind flusher has replayed and for one that committed to Badger
+// itself (mvccReservations). Without write-behind it also compares physical
+// publication versions: namespace MVCC reservations can predate this reader
+// even when their data commits later. A separate read transaction preserves
+// the existing consumer conflict shape without adding planning reads to the
+// writer's Badger SSI set.
+func (tx *BadgerTransaction) snapshotHeadConflict(kind bufferedEntityKind, id string, version MVCCVersion) (bool, error) {
 	if tx.snapshotIsolationConflict(version) {
 		return true, nil
 	}
+	if tx.inflightAtBegin.holds(tx.namespace, version) {
+		seen, err := tx.publishedBeforeCut(kind, id, version)
+		if err != nil {
+			return false, err
+		}
+		if !seen {
+			return true, nil
+		}
+	}
+	key := tx.mvccHeadKey(kind, id)
 	// The physical-version guard exists for peers that committed after the
 	// pinned snapshot. Under write-behind the flusher is the only writer
 	// landing heads mid-transaction and its heads are backdated to ACK
@@ -602,9 +637,55 @@ func (tx *BadgerTransaction) snapshotHeadConflictInView(view *badger.Txn, key []
 	return item.Version() > tx.snapshotTx.ReadTs(), nil
 }
 
-func (tx *BadgerTransaction) snapshotHeadVersionConflict(version MVCCVersion, physicalVersion uint64) bool {
+// snapshotHeadVersionConflict is snapshotHeadConflict for a head whose
+// physical version the caller already read.
+func (tx *BadgerTransaction) snapshotHeadVersionConflict(kind bufferedEntityKind, id string, version MVCCVersion, physicalVersion uint64) (bool, error) {
 	if tx.snapshotIsolationConflict(version) {
-		return true
+		return true, nil
 	}
-	return tx.snapshotTx != nil && tx.engine.writeBehind == nil && physicalVersion > tx.snapshotTx.ReadTs()
+	if tx.inflightAtBegin.holds(tx.namespace, version) {
+		seen, err := tx.publishedBeforeCut(kind, id, version)
+		if err != nil {
+			return false, err
+		}
+		if !seen {
+			return true, nil
+		}
+	}
+	return tx.snapshotTx != nil && tx.engine.writeBehind == nil && physicalVersion > tx.snapshotTx.ReadTs(), nil
+}
+
+// mvccHeadKey is the head key of entity id for the physical-version check.
+func (tx *BadgerTransaction) mvccHeadKey(kind bufferedEntityKind, id string) []byte {
+	if kind == bufferedEdgeEntity {
+		return tx.engine.mvccEdgeHeadKeyStringLookup(EdgeID(id))
+	}
+	return tx.engine.mvccNodeHeadKeyStringLookup(NodeID(id))
+}
+
+// publishedBeforeCut reports whether this transaction's cut already holds
+// version of entity id: its buffer prefix acknowledged it, or its physical
+// snapshot holds that head. A version in the cut's copy of the reservation
+// ledger that the cut does not hold was published after the cut.
+func (tx *BadgerTransaction) publishedBeforeCut(kind bufferedEntityKind, id string, version MVCCVersion) (bool, error) {
+	if tx.beginPresence.holdsVersion(tx.namespace, version) {
+		return true, nil
+	}
+	if tx.snapshotTx == nil {
+		return false, nil
+	}
+	var head MVCCHead
+	var err error
+	if kind == bufferedEdgeEntity {
+		head, err = tx.engine.loadEdgeMVCCHeadInTxn(tx.snapshotTx, EdgeID(id))
+	} else {
+		head, err = tx.engine.loadNodeMVCCHeadInTxn(tx.snapshotTx, NodeID(id))
+	}
+	if err == ErrNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return head.Version.CommitSequence == version.CommitSequence, nil
 }

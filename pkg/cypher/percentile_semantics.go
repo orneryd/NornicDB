@@ -34,7 +34,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 		original interface{}
 	}
 	values := make([]percentileValue, 0, len(rows))
-	seen := make(map[string]struct{}, len(rows))
+	var seen cypherValueIndex
 	for _, row := range rows {
 		value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[0]), row)
 		if !resolved {
@@ -51,11 +51,9 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 			return nil, false
 		}
 		if distinct {
-			key := cypherEquivalenceKey(value)
-			if _, exists := seen[key]; exists {
+			if _, exists := seen.addByContract(value, cypherEquivalenceContract); exists {
 				continue
 			}
-			seen[key] = struct{}{}
 		}
 		values = append(values, percentileValue{numeric: numeric, original: value})
 	}
@@ -85,14 +83,14 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 	return values[lower].numeric + (values[upper].numeric-values[lower].numeric)*fraction, true
 }
 
-func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelineRow) error {
+func (e *StorageExecutor) validatePercentileCalls(ctx context.Context, expression string, row pipelineRow) error {
 	for _, function := range []string{"percentilecont", "percentiledisc"} {
 		for _, argumentText := range namedFunctionArguments(expression, function) {
 			arguments := e.splitFunctionArgs(argumentText)
 			if len(arguments) != 2 {
 				continue
 			}
-			value, resolved, err := e.evaluateRowValue(strings.TrimSpace(arguments[1]), row)
+			value, resolved, err := e.evaluateRowValue(ctx, strings.TrimSpace(arguments[1]), row)
 			if err != nil {
 				return err
 			}
@@ -118,12 +116,16 @@ func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelin
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelinePercentileArguments(rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelinePercentileArguments(ctx context.Context, rows []pipelineRow, clause pipelineClause, keyword string) error {
+	return e.validatePipelinePercentileExpressions(ctx, rows, projectionExpressions(ctx, clause, keyword))
+}
+
+func (e *StorageExecutor) validatePipelinePercentileExpressions(ctx context.Context, rows []pipelineRow, expressions []string) error {
 	if len(rows) == 0 {
 		rows = []pipelineRow{{}}
 	}
-	for _, expression := range projectionExpressions(clause, keyword) {
-		if err := e.validatePercentileCalls(expression, rows[0]); err != nil {
+	for _, expression := range expressions {
+		if err := e.validatePercentileCalls(ctx, expression, rows[0]); err != nil {
 			return err
 		}
 	}

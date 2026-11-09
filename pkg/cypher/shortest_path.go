@@ -9,6 +9,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -39,7 +40,7 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 				continue
 			}
 			openParen := idx + len(upperFunc)
-			for openParen < len(cypher) && (cypher[openParen] == ' ' || cypher[openParen] == '\t' || cypher[openParen] == '\n' || cypher[openParen] == '\r') {
+			for openParen < len(cypher) && (cyphertext.IsWhitespaceAt(cypher, openParen)) {
 				openParen++
 			}
 			if openParen >= len(cypher) || cypher[openParen] != '(' {
@@ -71,12 +72,24 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 // (WHERE) both call it. handled=false lets the ordinary evaluator report its
 // own error when the argument is not a traversal pattern.
 func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcName, pattern string, nodes map[string]*storage.Node) (interface{}, bool, error) {
-	match := e.parseTraversalPattern(ctx, pattern)
+	match := e.parseTraversalPatternStructure(ctx, pattern)
 	if match == nil {
 		return nil, false, nil
 	}
 	if err := shortestPathPatternError(funcName, pattern, match); err != nil {
 		return nil, true, err
+	}
+	rowCtx, prepared, err := e.bindPatternProperties(ctx, pattern, entityRow(ctx, nodes, nil))
+	if err != nil {
+		return nil, true, err
+	}
+	ctx, pattern = rowCtx, prepared
+	match = e.parseTraversalPattern(ctx, pattern)
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, true, failure
+	}
+	if match == nil {
+		return nil, false, nil
 	}
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(pattern)
 	if !ok {
@@ -134,11 +147,7 @@ func labelStringSlice(in []string) []interface{} {
 	return out
 }
 
-// pathToMap converts a PathResult to a map representation
-func (e *StorageExecutor) pathToMap(path PathResult) map[string]interface{} {
-	return e.pathToMapContext(context.Background(), path)
-}
-
+// pathToMapContext converts a PathResult to a map representation while retaining cancellation.
 func (e *StorageExecutor) pathToMapContext(ctx context.Context, path PathResult) map[string]interface{} {
 	if ctx.Err() != nil {
 		return nil

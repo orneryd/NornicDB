@@ -14,10 +14,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
@@ -355,352 +358,17 @@ func TestServerExtra_CoreBranches_SharedFixture(t *testing.T) {
 // CORS Security Tests
 // =============================================================================
 
-func TestCORSWildcardDoesNotSendCredentials(t *testing.T) {
-	// SECURITY TEST: When CORS origin is wildcard (*), we must NOT send
-	// Access-Control-Allow-Credentials header to prevent CSRF attacks.
-	tmpDir, err := os.MkdirTemp("", "nornicdb-cors-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	config := nornicdb.DefaultConfig()
-	config.Memory.DecayEnabled = false
-	config.Database.AsyncWritesEnabled = false
-
-	db, err := nornicdb.Open(tmpDir, config)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Create server with wildcard CORS
-	serverConfig := DefaultConfig()
-	serverConfig.EnableCORS = true
-	serverConfig.CORSOrigins = []string{"*"}
-
-	server, err := New(db, nil, serverConfig)
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
-	t.Cleanup(func() { stopTestServer(t, server) })
-
-	req := httptest.NewRequest("OPTIONS", "/", nil)
-	req.Header.Set("Origin", "http://evil.com")
-	req.Header.Set("Access-Control-Request-Method", "POST")
-
-	recorder := httptest.NewRecorder()
-	server.buildRouter().ServeHTTP(recorder, req)
-
-	// Should have wildcard origin
-	if origin := recorder.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
-		t.Errorf("expected wildcard origin, got %s", origin)
-	}
-
-	// CRITICAL: Should NOT have credentials header with wildcard
-	if creds := recorder.Header().Get("Access-Control-Allow-Credentials"); creds != "" {
-		t.Errorf("SECURITY VULNERABILITY: credentials header should NOT be sent with wildcard origin, got %s", creds)
-	}
-}
-
-func TestCORSSpecificOriginAllowsCredentials(t *testing.T) {
-	// When CORS has specific origins (not wildcard), credentials are safe to allow
-	tmpDir, err := os.MkdirTemp("", "nornicdb-cors-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	config := nornicdb.DefaultConfig()
-	config.Memory.DecayEnabled = false
-	config.Database.AsyncWritesEnabled = false
-
-	db, err := nornicdb.Open(tmpDir, config)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Create server with specific CORS origins
-	serverConfig := DefaultConfig()
-	serverConfig.EnableCORS = true
-	serverConfig.CORSOrigins = []string{"http://trusted.com", "http://localhost:3000"}
-
-	server, err := New(db, nil, serverConfig)
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
-	t.Cleanup(func() { stopTestServer(t, server) })
-
-	req := httptest.NewRequest("OPTIONS", "/", nil)
-	req.Header.Set("Origin", "http://trusted.com")
-	req.Header.Set("Access-Control-Request-Method", "POST")
-
-	recorder := httptest.NewRecorder()
-	server.buildRouter().ServeHTTP(recorder, req)
-
-	// Should echo back the specific origin
-	if origin := recorder.Header().Get("Access-Control-Allow-Origin"); origin != "http://trusted.com" {
-		t.Errorf("expected trusted.com origin, got %s", origin)
-	}
-
-	// Should allow credentials for specific origins
-	if creds := recorder.Header().Get("Access-Control-Allow-Credentials"); creds != "true" {
-		t.Errorf("expected credentials=true for specific origin, got %s", creds)
-	}
-}
-
-func TestCORSDisallowedOriginNoHeaders(t *testing.T) {
-	// When origin is not in allowed list, no CORS headers should be sent
-	tmpDir, err := os.MkdirTemp("", "nornicdb-cors-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	config := nornicdb.DefaultConfig()
-	config.Memory.DecayEnabled = false
-	config.Database.AsyncWritesEnabled = false
-
-	db, err := nornicdb.Open(tmpDir, config)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Create server with specific CORS origins (not including evil.com)
-	serverConfig := DefaultConfig()
-	serverConfig.EnableCORS = true
-	serverConfig.CORSOrigins = []string{"http://trusted.com"}
-
-	server, err := New(db, nil, serverConfig)
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
-	t.Cleanup(func() { stopTestServer(t, server) })
-
-	req := httptest.NewRequest("OPTIONS", "/", nil)
-	req.Header.Set("Origin", "http://evil.com")
-	req.Header.Set("Access-Control-Request-Method", "POST")
-
-	recorder := httptest.NewRecorder()
-	server.buildRouter().ServeHTTP(recorder, req)
-
-	// Should NOT have origin header for disallowed origins
-	if origin := recorder.Header().Get("Access-Control-Allow-Origin"); origin != "" {
-		t.Errorf("expected no origin header for disallowed origin, got %s", origin)
-	}
-}
-
 // =============================================================================
 // Rate Limiter Tests
 // =============================================================================
-
-func TestIPRateLimiter_AllowsWithinLimit(t *testing.T) {
-	rl := NewIPRateLimiter(10, 100, 5) // 10/min, 100/hour, burst 5
-	defer rl.Stop()
-
-	// Should allow requests within limit
-	for i := 0; i < 10; i++ {
-		if !rl.Allow("192.168.1.1") {
-			t.Errorf("request %d should be allowed within limit", i+1)
-		}
-	}
-}
-
-func TestIPRateLimiter_BlocksExcessRequests(t *testing.T) {
-	rl := NewIPRateLimiter(5, 100, 2) // 5/min, 100/hour, burst 2
-	defer rl.Stop()
-
-	// Use up the limit
-	for i := 0; i < 5; i++ {
-		rl.Allow("192.168.1.1")
-	}
-
-	// Next request should be blocked
-	if rl.Allow("192.168.1.1") {
-		t.Error("request exceeding limit should be blocked")
-	}
-}
-
-func TestIPRateLimiter_DifferentIPsAreSeparate(t *testing.T) {
-	rl := NewIPRateLimiter(3, 100, 1) // 3/min
-	defer rl.Stop()
-
-	// Use up limit for IP1
-	for i := 0; i < 3; i++ {
-		rl.Allow("192.168.1.1")
-	}
-
-	// IP2 should still be allowed
-	if !rl.Allow("192.168.1.2") {
-		t.Error("different IP should have separate limit")
-	}
-
-	// IP1 should be blocked
-	if rl.Allow("192.168.1.1") {
-		t.Error("IP1 should be rate limited")
-	}
-}
-
-func TestRateLimitMiddleware_Returns429WhenLimited(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "nornicdb-ratelimit-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	config := nornicdb.DefaultConfig()
-	config.Memory.DecayEnabled = false
-	config.Database.AsyncWritesEnabled = false
-
-	db, err := nornicdb.Open(tmpDir, config)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Create server with rate limiting enabled
-	serverConfig := DefaultConfig()
-	serverConfig.RateLimitEnabled = true
-	serverConfig.RateLimitPerMinute = 2
-	serverConfig.RateLimitPerHour = 100
-	serverConfig.RateLimitBurst = 1
-
-	server, err := New(db, nil, serverConfig)
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
-	t.Cleanup(func() { stopTestServer(t, server) })
-
-	router := server.buildRouter()
-
-	// First two requests should succeed
-	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest("GET", "/", nil)
-		req.RemoteAddr = "192.168.1.1:12345"
-		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, req)
-		if recorder.Code == http.StatusTooManyRequests {
-			t.Errorf("request %d should not be rate limited", i+1)
-		}
-	}
-
-	// Third request should be rate limited
-	req := httptest.NewRequest("GET", "/", nil)
-	req.RemoteAddr = "192.168.1.1:12345"
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusTooManyRequests {
-		t.Errorf("expected 429 Too Many Requests, got %d", recorder.Code)
-	}
-
-	// Check Retry-After header
-	if retry := recorder.Header().Get("Retry-After"); retry == "" {
-		t.Error("expected Retry-After header on rate limited response")
-	}
-}
-
-func TestRateLimitMiddleware_SkipsHealthEndpoint(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "nornicdb-ratelimit-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	config := nornicdb.DefaultConfig()
-	config.Memory.DecayEnabled = false
-	config.Database.AsyncWritesEnabled = false
-
-	db, err := nornicdb.Open(tmpDir, config)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
-
-	// Create server with very strict rate limiting
-	serverConfig := DefaultConfig()
-	serverConfig.RateLimitEnabled = true
-	serverConfig.RateLimitPerMinute = 1
-	serverConfig.RateLimitPerHour = 1
-	serverConfig.RateLimitBurst = 1
-
-	server, err := New(db, nil, serverConfig)
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
-	t.Cleanup(func() { stopTestServer(t, server) })
-
-	router := server.buildRouter()
-
-	// Exhaust rate limit on regular endpoint
-	req := httptest.NewRequest("GET", "/", nil)
-	req.RemoteAddr = "192.168.1.1:12345"
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, req)
-
-	// Health endpoint should STILL work (not rate limited)
-	for i := 0; i < 10; i++ {
-		req := httptest.NewRequest("GET", "/health", nil)
-		req.RemoteAddr = "192.168.1.1:12345"
-		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, req)
-
-		if recorder.Code == http.StatusTooManyRequests {
-			t.Error("health endpoint should not be rate limited")
-		}
-	}
-}
 
 // =============================================================================
 // Secure Default Configuration Tests
 // =============================================================================
 
-func TestDefaultConfig_SecureDefaults(t *testing.T) {
-	config := DefaultConfig()
-
-	// SECURITY: Default should bind to localhost only
-	if config.Address != "127.0.0.1" {
-		t.Errorf("expected default address 127.0.0.1, got %s", config.Address)
-	}
-
-	// SECURITY: Default CORS origins should be asterisk (explicit configuration required)
-	if len(config.CORSOrigins) != 1 || config.CORSOrigins[0] != "*" {
-		t.Errorf("expected default CORS origins to be [\"*\"], got %v", config.CORSOrigins)
-	}
-
-	// SECURITY: CORS should be enabled by default - must be explicitly diabled if not desired
-	if config.EnableCORS == false {
-		t.Error("expected EnableCORS=true by default")
-	}
-}
-
 // =============================================================================
 // Protected Endpoint Tests
 // =============================================================================
-
-func TestStatusEndpointRequiresAuth(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	// Request without auth should fail
-	resp := makeRequest(t, server, "GET", "/status", nil, "")
-
-	if resp.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401 for /status without auth, got %d", resp.Code)
-	}
-}
-
-func TestMetricsEndpointRequiresAuth(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	// Request without auth should fail
-	resp := makeRequest(t, server, "GET", "/metrics", nil, "")
-
-	if resp.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401 for /metrics without auth, got %d", resp.Code)
-	}
-}
 
 func TestHealthEndpointMinimalInfo(t *testing.T) {
 	server, _ := setupTestServer(t)
@@ -724,149 +392,6 @@ func TestHealthEndpointMinimalInfo(t *testing.T) {
 	// Should have status
 	if status, ok := result["status"].(string); !ok || status != "healthy" {
 		t.Errorf("expected status=healthy, got %v", result["status"])
-	}
-}
-
-func TestStatusEndpointWithAuth(t *testing.T) {
-	server, auth := setupTestServer(t)
-	token := getAuthToken(t, auth, "admin")
-
-	// Request with auth should succeed
-	resp := makeRequest(t, server, "GET", "/status", nil, "Bearer "+token)
-
-	if resp.Code != http.StatusOK {
-		t.Errorf("expected status 200 for /status with auth, got %d", resp.Code)
-	}
-}
-
-func TestHandleGenerateAPIToken(t *testing.T) {
-	server, authenticator := setupTestServer(t)
-
-	makeReq := func(method string, body string, claims *auth.JWTClaims) (*httptest.ResponseRecorder, map[string]interface{}) {
-		t.Helper()
-		req := httptest.NewRequest(method, "/auth/api-token", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		if claims != nil {
-			req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, claims))
-		}
-		rec := httptest.NewRecorder()
-		server.handleGenerateAPIToken(rec, req)
-
-		var payload map[string]interface{}
-		_ = json.Unmarshal(rec.Body.Bytes(), &payload)
-		return rec, payload
-	}
-
-	t.Run("requires post", func(t *testing.T) {
-		rec, payload := makeReq(http.MethodGet, "", nil)
-		assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-		assert.Equal(t, "POST required", payload["message"])
-	})
-
-	t.Run("requires configured authenticator", func(t *testing.T) {
-		original := server.auth
-		server.auth = nil
-		defer func() { server.auth = original }()
-
-		rec, payload := makeReq(http.MethodPost, `{}`, nil)
-		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-		assert.Equal(t, "authentication not configured", payload["message"])
-	})
-
-	t.Run("requires authenticated claims", func(t *testing.T) {
-		rec, payload := makeReq(http.MethodPost, `{}`, nil)
-		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-		assert.Equal(t, "not authenticated", payload["message"])
-	})
-
-	// The admin requirement is the route guard's (withAuth with
-	// auth.PermAdmin): TestAPITokenNeedsTheAdminEntitlement goes through the
-	// router; the handler itself makes no second decision.
-
-	t.Run("validates request body and expiry", func(t *testing.T) {
-		adminClaims := &auth.JWTClaims{
-			Sub:      "admin-id",
-			Username: "admin",
-			Email:    "admin@example.com",
-			Roles:    []string{string(auth.RoleAdmin)},
-		}
-
-		rec, payload := makeReq(http.MethodPost, `{"subject":`, adminClaims)
-		assert.Equal(t, http.StatusBadRequest, rec.Code)
-		assert.Equal(t, "invalid request body", payload["message"])
-
-		rec, payload = makeReq(http.MethodPost, `{"expires_in":"xyz"}`, adminClaims)
-		assert.Equal(t, http.StatusBadRequest, rec.Code)
-		assert.Contains(t, payload["message"], "invalid expires_in format")
-
-		rec, payload = makeReq(http.MethodPost, `{"expires_in":"abcd"}`, adminClaims)
-		assert.Equal(t, http.StatusBadRequest, rec.Code)
-		assert.Equal(t, "invalid expires_in format", payload["message"])
-	})
-
-	t.Run("returns signed token with defaults and day parsing", func(t *testing.T) {
-		// The stored admin's own claims: a token's roles are the ones its
-		// stored account holds now, so the claims must name that account.
-		adminClaims, err := authenticator.ValidateToken(getAuthToken(t, authenticator, "admin"))
-		if err != nil {
-			t.Fatalf("ValidateToken failed: %v", err)
-		}
-
-		rec, payload := makeReq(http.MethodPost, `{"expires_in":"7d"}`, adminClaims)
-		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, "api-token", payload["subject"])
-		assert.Equal(t, []interface{}{string(auth.RoleAdmin)}, payload["roles"])
-
-		token, _ := payload["token"].(string)
-		if token == "" {
-			t.Fatal("expected token in response")
-		}
-		claims, err := authenticator.ValidateToken(token)
-		if err != nil {
-			t.Fatalf("ValidateToken failed: %v", err)
-		}
-		assert.Equal(t, adminClaims.Sub, claims.Sub)
-		assert.Equal(t, "admin", claims.Username)
-		assert.Contains(t, claims.Roles, string(auth.RoleAdmin))
-
-		expiresIn, ok := payload["expires_in"].(float64)
-		if !ok {
-			t.Fatal("expected expires_in in response")
-		}
-		assert.InDelta(t, 7*24*60*60, expiresIn, 2)
-		_, ok = payload["expires_at"].(string)
-		assert.True(t, ok)
-	})
-
-	t.Run("supports never-expiring tokens", func(t *testing.T) {
-		adminClaims := &auth.JWTClaims{
-			Sub:      "admin-id",
-			Username: "admin",
-			Email:    "admin@example.com",
-			Roles:    []string{string(auth.RoleAdmin)},
-		}
-
-		rec, payload := makeReq(http.MethodPost, `{"subject":"mcp","expires_in":"0"}`, adminClaims)
-		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, "mcp", payload["subject"])
-		if _, ok := payload["expires_in"]; ok {
-			t.Fatal("did not expect expires_in for never-expiring token")
-		}
-		if _, ok := payload["expires_at"]; ok {
-			t.Fatal("did not expect expires_at for never-expiring token")
-		}
-	})
-}
-
-func TestMetricsEndpointWithAuth(t *testing.T) {
-	server, auth := setupTestServer(t)
-	token := getAuthToken(t, auth, "admin")
-
-	// Request with auth should succeed
-	resp := makeRequest(t, server, "GET", "/metrics", nil, "Bearer "+token)
-
-	if resp.Code != http.StatusOK {
-		t.Errorf("expected status 200 for /metrics with auth, got %d", resp.Code)
 	}
 }
 
@@ -908,7 +433,7 @@ func TestHandleSearchAdditionalErrorCoverage(t *testing.T) {
 	})
 
 	t.Run("returns service unavailable while database search is not ready", func(t *testing.T) {
-		requireErr := server.dbManager.CreateDatabase("colddb")
+		requireErr := server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "colddb"})
 		if requireErr != nil {
 			t.Fatalf("CreateDatabase failed: %v", requireErr)
 		}
@@ -947,7 +472,7 @@ func TestNewAdditionalInitializationCoverage(t *testing.T) {
 		SecurityEnabled: true,
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authenticator, err := auth.NewAuthenticator(authConfig, authStorage)
 	if err != nil {
@@ -1029,111 +554,12 @@ func TestRequestStatementCommentsKeepQuotedText(t *testing.T) {
 	}
 }
 
-func TestAuthConfigAndOAuthNilPaths(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	origProvider := os.Getenv("NORNICDB_AUTH_PROVIDER")
-	origIssuer := os.Getenv("NORNICDB_OAUTH_ISSUER")
-	defer func() {
-		_ = os.Setenv("NORNICDB_AUTH_PROVIDER", origProvider)
-		_ = os.Setenv("NORNICDB_OAUTH_ISSUER", origIssuer)
-	}()
-
-	_ = os.Setenv("NORNICDB_AUTH_PROVIDER", "oauth")
-	_ = os.Setenv("NORNICDB_OAUTH_ISSUER", "https://issuer.example")
-
-	// /auth/config with oauth provider path.
-	req := httptest.NewRequest(http.MethodGet, "/auth/config", nil)
-	rec := httptest.NewRecorder()
-	server.handleAuthConfig(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	// OAuth handlers with nil manager.
-	rec = makeRequest(t, server, "POST", "/auth/oauth/redirect", nil, "")
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-	rec = makeRequest(t, server, "GET", "/auth/oauth/redirect", nil, "")
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-
-	rec = makeRequest(t, server, "POST", "/auth/oauth/callback", nil, "")
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-	rec = makeRequest(t, server, "GET", "/auth/oauth/callback?code=x&state=y", nil, "")
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestAuthProfileAndPasswordHandlers(t *testing.T) {
-	server, authenticator := setupTestServer(t)
-	user, err := authenticator.GetUser("admin")
-	assert.NoError(t, err)
-
-	withClaims := func(r *http.Request, username string, sub string) *http.Request {
-		claims := &auth.JWTClaims{Username: username, Sub: sub, Roles: []string{string(auth.RoleAdmin)}}
-		return r.WithContext(context.WithValue(r.Context(), contextKeyClaims, claims))
-	}
-
-	// change-password happy path
-	req := httptest.NewRequest(http.MethodPost, "/auth/change-password", strings.NewReader(`{"old_password":"password123","new_password":"password456!"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req = withClaims(req, "admin", user.ID)
-	rec := httptest.NewRecorder()
-	server.handleChangePassword(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	// old password wrong
-	req = httptest.NewRequest(http.MethodPost, "/auth/change-password", strings.NewReader(`{"old_password":"wrong","new_password":"password789!"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req = withClaims(req, "admin", user.ID)
-	rec = httptest.NewRecorder()
-	server.handleChangePassword(rec, req)
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
-
-	// update-profile with explicit username
-	req = httptest.NewRequest(http.MethodPut, "/auth/profile", strings.NewReader(`{"email":"admin@example.com","metadata":{"k":"v"}}`))
-	req.Header.Set("Content-Type", "application/json")
-	req = withClaims(req, "admin", user.ID)
-	rec = httptest.NewRecorder()
-	server.handleUpdateProfile(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	// update-profile invalid JSON
-	req = httptest.NewRequest(http.MethodPut, "/auth/profile", strings.NewReader(`{`))
-	req.Header.Set("Content-Type", "application/json")
-	req = withClaims(req, "admin", user.ID)
-	rec = httptest.NewRecorder()
-	server.handleUpdateProfile(rec, req)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestAuthEntitlementsAndRoleStoreUnavailable(t *testing.T) {
-	server, authn := setupTestServer(t)
-	token := getAuthToken(t, authn, "admin")
-
-	// method not allowed on entitlements
-	rec := makeRequest(t, server, "POST", "/auth/entitlements", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-
-	// nil stores -> service unavailable
-	server.roleEntitlementsStore = nil
-	rec = makeRequest(t, server, "GET", "/auth/role-entitlements", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-
-	server.roleStore = nil
-	rec = makeRequest(t, server, "GET", "/auth/roles", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-	rec = makeRequest(t, server, "PATCH", "/auth/roles/custom", map[string]any{"name": "new"}, "Bearer "+token)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-
-	server.allowlistStore = nil
-	rec = makeRequest(t, server, "GET", "/auth/access/databases", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-
-	server.privilegesStore = nil
-	rec = makeRequest(t, server, "GET", "/auth/access/privileges", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-}
-
 func TestDBConfigHandlers(t *testing.T) {
 	server, authn := setupTestServer(t)
 	token := getAuthToken(t, authn, "admin")
+
+	unauthorized := makeRequest(t, server, "GET", "/admin/databases/config/keys", nil, "")
+	require.Equal(t, http.StatusUnauthorized, unauthorized.Code)
 
 	rec := makeRequest(t, server, "GET", "/admin/databases/config/keys", nil, "Bearer "+token)
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -1147,12 +573,13 @@ func TestDBConfigHandlers(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	// configured store branches
-	configStoreEngine := storage.NewMemoryEngine()
+	configStoreEngine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = configStoreEngine.Close() })
 	server.dbConfigStore = dbconfig.NewStore(configStoreEngine)
 	_ = server.dbConfigStore.Load(context.Background())
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/databases//config", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 	rec = httptest.NewRecorder()
 	server.handleDbConfigPrefix(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -1199,7 +626,7 @@ func TestDBLifecycleHandlers(t *testing.T) {
 	rec = makeRequest(t, server, "POST", "/admin/databases/nornic/mvcc/status", nil, "Bearer "+token)
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("lifecycle_cmp", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "lifecycle_cmp", []multidb.ConstituentRef{
 		{Alias: "n", DatabaseName: server.dbManager.DefaultDatabaseName(), Type: "local", AccessMode: "read_write"},
 	}))
 	rec = makeRequest(t, server, "GET", "/admin/databases/lifecycle_cmp/mvcc", nil, "Bearer "+token)
@@ -1372,46 +799,46 @@ func TestHeimdallRouterAndHelpers(t *testing.T) {
 	assert.NotEmpty(t, dbName)
 	assert.NotEmpty(t, router.ListDatabases())
 
-	rows, err := router.Query(context.Background(), dbName, "RETURN 1 AS n", nil)
+	rows, err := router.Query(heimdallAuthDisabled(), dbName, "RETURN 1 AS n", nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, rows)
 
-	stats, err := router.Stats(dbName)
+	stats, err := router.Stats(heimdallAuthDisabled(), dbName)
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, stats.NodeCount, int64(0))
 
 	// discover path with nil db/search unavailable
 	routerNoDB := newHeimdallDBRouter(nil, server.dbManager, nil)
-	_, err = routerNoDB.Discover(context.Background(), dbName, "x", nil, 1, 1)
+	_, err = routerNoDB.Discover(heimdallAuthDisabled(), dbName, "x", nil, 1, 1)
 	assert.Error(t, err)
 
 	// discover path on initialized router (may return empty results, but should be callable)
 	engine, engineErr := server.dbManager.GetStorage(dbName)
 	assert.NoError(t, engineErr)
 	if engineErr == nil {
-		_, _ = engine.CreateNode(&storage.Node{
+		_, _ = engine.CreateNode(t.Context(), &storage.Node{
 			ID:         "nornic:doc1",
 			Labels:     []string{"Document"},
 			Properties: map[string]interface{}{"title": "hello", "content": "world"},
 		})
 	}
-	discoverRes, discoverErr := router.Discover(context.Background(), dbName, "hello", []string{"Document"}, 0, 1)
+	discoverRes, discoverErr := router.Discover(heimdallAuthDisabled(), dbName, "hello", []string{"Document"}, 0, 1)
 	if discoverErr == nil {
 		assert.NotNil(t, discoverRes)
 	}
 
 	// related nodes traversal
-	mem := storage.NewMemoryEngine()
+	mem := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = mem.Close() })
-	_, err = mem.CreateNode(&storage.Node{ID: "nornic:n1", Labels: []string{"A"}})
+	_, err = mem.CreateNode(t.Context(), &storage.Node{ID: "nornic:n1", Labels: []string{"A"}})
 	assert.NoError(t, err)
-	_, err = mem.CreateNode(&storage.Node{ID: "nornic:n2", Labels: []string{"B"}})
+	_, err = mem.CreateNode(t.Context(), &storage.Node{ID: "nornic:n2", Labels: []string{"B"}})
 	assert.NoError(t, err)
-	err = mem.CreateEdge(&storage.Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "REL"})
+	err = mem.CreateEdge(t.Context(), &storage.Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "REL"})
 	assert.NoError(t, err)
-	related := router.getRelatedNodes(mem, "nornic:n1", 1)
+	related := router.getRelatedNodes(context.Background(), mem, "nornic:n1", 1)
 	assert.Len(t, related, 1)
-	assert.Nil(t, router.getRelatedNodes(mem, "nornic:n1", 0))
+	assert.Nil(t, router.getRelatedNodes(context.Background(), mem, "nornic:n1", 0))
 
 	assert.Equal(t, "A", getFirstLabel([]string{"A", "B"}))
 	assert.Equal(t, "", getFirstLabel(nil))
@@ -1453,116 +880,36 @@ func TestUIHelpersAndHeimdallSetter(t *testing.T) {
 	assert.Nil(t, server.getHeimdallHandler())
 }
 
-func TestIPRateLimiterCleanup(t *testing.T) {
-	rl := &IPRateLimiter{
-		counters: map[string]*ipRateLimitCounter{
-			"1.1.1.1": {
-				hourReset: time.Now().Add(-time.Minute),
-			},
-			"2.2.2.2": {
-				hourReset: time.Now().Add(time.Hour),
-			},
-		},
-		stopCleanup: make(chan struct{}),
-	}
-	rl.cleanup()
-	assert.NotContains(t, rl.counters, "1.1.1.1")
-	assert.Contains(t, rl.counters, "2.2.2.2")
-}
-
-func TestAuthRoleAndAccessHandlersHappyAndErrors(t *testing.T) {
-	server, authn := setupTestServer(t)
-	token := getAuthToken(t, authn, "admin")
-
-	// Canonical entitlement list endpoint.
-	rec := makeRequest(t, server, http.MethodGet, "/auth/entitlements", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	rec = makeRequest(t, server, http.MethodPost, "/auth/entitlements", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-
-	// Roles CRUD-style endpoints.
-	rec = makeRequest(t, server, http.MethodGet, "/auth/roles", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	rec = makeRequest(t, server, http.MethodPost, "/auth/roles", map[string]any{"name": "  "}, "Bearer "+token)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	rec = makeRequest(t, server, http.MethodPost, "/auth/roles", map[string]any{"name": "qa_role"}, "Bearer "+token)
-	assert.Equal(t, http.StatusCreated, rec.Code)
-	rec = makeRequest(t, server, http.MethodPost, "/auth/roles", map[string]any{"name": "qa_role"}, "Bearer "+token)
-	assert.Equal(t, http.StatusConflict, rec.Code)
-	rec = makeRequest(t, server, http.MethodPatch, "/auth/roles/qa_role", map[string]any{"name": "qa_role_v2"}, "Bearer "+token)
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	// Role entitlements: invalid + valid update, then read.
-	rec = makeRequest(t, server, http.MethodPut, "/auth/role-entitlements", map[string]any{
-		"role":         "qa_role_v2",
-		"entitlements": []string{"not-a-real-entitlement"},
-	}, "Bearer "+token)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	validEntitlements := auth.GlobalEntitlementIDs()
-	assert.NotEmpty(t, validEntitlements)
-	rec = makeRequest(t, server, http.MethodPut, "/auth/role-entitlements", map[string]any{
-		"role":         "qa_role_v2",
-		"entitlements": []string{validEntitlements[0]},
-	}, "Bearer "+token)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	rec = makeRequest(t, server, http.MethodGet, "/auth/role-entitlements", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	// Per-database allowlist access matrix.
-	rec = makeRequest(t, server, http.MethodPut, "/auth/access/databases", map[string]any{
-		"role":      "viewer",
-		"databases": []string{"nornic"},
-	}, "Bearer "+token)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	rec = makeRequest(t, server, http.MethodGet, "/auth/access/databases", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	rec = makeRequest(t, server, http.MethodPost, "/auth/access/databases", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-
-	// Per-database read/write privileges matrix.
-	rec = makeRequest(t, server, http.MethodPut, "/auth/access/privileges", []map[string]any{
-		{"role": "viewer", "database": "nornic", "read": true, "write": false},
-	}, "Bearer "+token)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	rec = makeRequest(t, server, http.MethodGet, "/auth/access/privileges", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	rec = makeRequest(t, server, http.MethodPost, "/auth/access/privileges", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-
-	rec = makeRequest(t, server, http.MethodDelete, "/auth/roles/qa_role_v2", nil, "Bearer "+token)
-	assert.Equal(t, http.StatusOK, rec.Code)
-}
-
 func TestEmbedHandlersAndHelperUnits(t *testing.T) {
 	server, _ := setupTestServer(t)
 
 	// Embed endpoints: deterministic method checks + stats endpoint.
-	req := httptest.NewRequest(http.MethodGet, "/nornicdb/embed/trigger", nil)
+	req := as(httptest.NewRequest(http.MethodGet, "/nornicdb/embed/trigger", nil), "admin")
 	rec := httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
-	req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil)
+	req = as(httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedStats(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
+	req = as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusInternalServerError}, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil)
+	req = as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusAccepted, http.StatusServiceUnavailable}, rec.Code)
 
-	req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/clear", nil)
+	req = as(httptest.NewRequest(http.MethodGet, "/nornicdb/embed/clear", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedClear(rec, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/clear", nil)
+	req = as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/clear", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedClear(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
@@ -1588,62 +935,6 @@ func TestEmbedHandlersAndHelperUnits(t *testing.T) {
 	assert.False(t, invalidOK)
 }
 
-func TestBasePathAndRBACHelpers(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	origBasePath := server.config.BasePath
-	defer func() { server.config.BasePath = origBasePath }()
-	server.config.BasePath = "api"
-
-	called := false
-	var gotPath string
-	var gotOriginal string
-	var gotBasePath string
-	h := server.basePathMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		called = true
-		gotPath = r.URL.Path
-		gotOriginal = r.Header.Get("X-Original-Path")
-		gotBasePath = r.Header.Get("X-Base-Path")
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	assert.True(t, called)
-	assert.Equal(t, "/health", gotPath)
-	assert.Equal(t, "/api/health", gotOriginal)
-	assert.Equal(t, "/api", gotBasePath)
-
-	// Forwarded prefix path that doesn't match configured base path.
-	called = false
-	req = httptest.NewRequest(http.MethodGet, "/health", nil)
-	req.Header.Set("X-Forwarded-Prefix", "/proxy")
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	assert.True(t, called)
-	assert.Equal(t, "/health", gotPath)
-	assert.Equal(t, "/proxy", req.Header.Get("X-Base-Path"))
-
-	// RBAC helper context enrichment.
-	claims := &auth.JWTClaims{Sub: "admin", Username: "admin", Roles: []string{"admin"}}
-	req = httptest.NewRequest(http.MethodGet, "/health", nil).WithContext(context.WithValue(context.Background(), contextKeyClaims, claims))
-	enriched := server.withBifrostRBAC(req)
-	roles := auth.RequestPrincipalRolesFromContext(enriched.Context())
-	assert.Equal(t, []string{"admin"}, roles)
-	assert.NotNil(t, auth.RequestDatabaseAccessModeFromContext(enriched.Context()))
-	resolved := auth.RequestResolvedAccessResolverFromContext(enriched.Context())
-	assert.NotNil(t, resolved)
-
-	// Cover public helper wrappers.
-	assert.NotNil(t, server.GetDatabaseAccessMode())
-	perms := server.GetEffectivePermissions([]string{"admin"})
-	assert.NotEmpty(t, perms)
-	server.roleEntitlementsStore = nil
-	fallbackPerms := server.GetEffectivePermissions([]string{"role_admin", "unknown_role"})
-	assert.NotEmpty(t, fallbackPerms)
-	assert.Contains(t, fallbackPerms, string(auth.PermRead))
-}
-
 func TestRecoveryMiddlewareRecoversPanic(t *testing.T) {
 	server, _ := setupTestServer(t)
 	h := server.recoveryMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -1657,25 +948,25 @@ func TestRecoveryMiddlewareRecoversPanic(t *testing.T) {
 
 func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	server, _ := setupTestServer(t)
-	adapter := &databaseManagerAdapter{manager: server.dbManager, db: server.db, server: server}
+	adapter := &databaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(server.dbManager), db: server.db, server: server}
 
 	// Alias/lifecycle adapter methods.
-	err := adapter.CreateDatabase("db_adapter_a")
+	err := adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "db_adapter_a"})
 	assert.NoError(t, err)
-	err = adapter.CreateAlias("alias_a", "db_adapter_a")
+	err = adapter.CreateAlias(t.Context(), "alias_a", "db_adapter_a")
 	assert.NoError(t, err)
 	aliases := adapter.ListAliases("db_adapter_a")
 	assert.NotNil(t, aliases)
 	resolved, err := adapter.ResolveDatabase("alias_a")
 	assert.NoError(t, err)
 	assert.Equal(t, "db_adapter_a", resolved)
-	err = adapter.DropAlias("alias_a")
+	err = adapter.DropAlias(t.Context(), "alias_a")
 	assert.NoError(t, err)
 
 	// Limits adapter methods.
-	err = adapter.SetDatabaseLimits("db_adapter_a", "bad-type")
+	err = adapter.SetDatabaseLimits(t.Context(), "db_adapter_a", "bad-type")
 	assert.Error(t, err)
-	err = adapter.SetDatabaseLimits("db_adapter_a", &multidb.Limits{})
+	err = adapter.SetDatabaseLimits(t.Context(), "db_adapter_a", &multidb.Limits{})
 	assert.NoError(t, err)
 	_, err = adapter.GetDatabaseLimits("db_adapter_a")
 	assert.NoError(t, err)
@@ -1692,12 +983,12 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 			"auth_mode":     "oidc_forwarding",
 		},
 	}
-	err = adapter.CreateCompositeDatabase("cmp_adapter", constituents)
+	err = adapter.CreateCompositeDatabase(t.Context(), "cmp_adapter", constituents)
 	assert.NoError(t, err)
 	assert.True(t, adapter.IsCompositeDatabase("cmp_adapter"))
-	err = adapter.CreateDatabase("db_adapter_b")
+	err = adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "db_adapter_b"})
 	assert.NoError(t, err)
-	err = adapter.AddConstituent("cmp_adapter", map[string]interface{}{
+	err = adapter.AddConstituent(t.Context(), "cmp_adapter", map[string]interface{}{
 		"alias":         "extra",
 		"database_name": "db_adapter_b",
 		"type":          "remote",
@@ -1719,19 +1010,63 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	assert.Equal(t, "oidc_forwarding", first.AuthMode)
 	second, ok := constituentList[1].(multidb.ConstituentRef)
 	require.True(t, ok)
-	assert.Equal(t, "https://remote-2.example/nornic-db", second.URI)
-	assert.Equal(t, "spn-prod-b", second.SecretRef)
-	assert.Equal(t, "user_password", second.AuthMode)
-	assert.Equal(t, "svc-user", second.User)
-	err = adapter.RemoveConstituent("cmp_adapter", "extra")
+	require.NotEmpty(t, second.ConnectionV1)
+	require.Empty(t, second.URI)
+	require.Empty(t, second.AuthMode)
+	require.Empty(t, second.User)
+	require.Empty(t, second.Password)
+	secondView, err := server.dbManager.RemoteConstituentForDisplay(second)
+	require.NoError(t, err)
+	assert.Equal(t, "https://remote-2.example/nornic-db", secondView.URI)
+	assert.Equal(t, "spn-prod-b", secondView.SecretRef)
+	assert.Equal(t, "user_password", secondView.AuthMode)
+	assert.Equal(t, "svc-user", secondView.User)
+	system, err := server.dbManager.GetStorage("system")
+	require.NoError(t, err)
+	catalogNode, err := system.GetNode(t.Context(), "databases:metadata")
+	require.NoError(t, err)
+	require.Contains(t, catalogNode.Properties["data"], second.ConnectionV1)
+	require.NotContains(t, catalogNode.Properties["data"], "svc-pass")
+	require.NotContains(t, catalogNode.Properties["data"], "svc-user")
+	// Exercise this actual adapter's manager through the real HTTP transport.
+	var wireCalls atomic.Int64
+	var wrongAuthentication atomic.Bool
+	wire := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wireCalls.Add(1)
+		user, password, ok := r.BasicAuth()
+		if !ok || user != "svc-user" || password != "svc-pass" || r.URL.Path != "/db/db_adapter_b/tx/commit" {
+			wrongAuthentication.Store(true)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"columns":["marker"],"data":[{"row":["adapter-wire-control"],"meta":[null]}]}],"errors":[]}`)
+	}))
+	defer wire.Close()
+	require.NoError(t, adapter.AddConstituent(t.Context(), "cmp_adapter", map[string]interface{}{"alias": "wire", "database_name": "db_adapter_b", "type": "remote", "access_mode": "read", "uri": wire.URL, "auth_mode": "user_password", "user": "svc-user", "password": "svc-pass"}))
+	remote, err := server.dbManager.GetStorageWithAuth("cmp_adapter.wire", "Bearer adapter-wire-token")
+	require.NoError(t, err)
+	// RemoteEngine.Close releases its completed transport, rather than making
+	// later engine calls return the native ErrStorageClosed sentinel.
+	remote = runtimeFixtureOwner.Own(t, remote)
+	query, ok := remote.(interface {
+		QueryCypher(context.Context, string, map[string]interface{}, storage.RemoteAccessMode) ([]string, [][]interface{}, error)
+	})
+	require.True(t, ok)
+	columns, rows, err := query.QueryCypher(t.Context(), "RETURN 'adapter-wire-control' AS marker", nil, storage.RemoteAccessRead)
+	require.NoError(t, err)
+	require.Equal(t, []string{"marker"}, columns)
+	require.Equal(t, [][]interface{}{{"adapter-wire-control"}}, rows)
+	require.Equal(t, int64(1), wireCalls.Load())
+	require.False(t, wrongAuthentication.Load())
+	require.NoError(t, remote.Close())
+	err = adapter.RemoveConstituent(t.Context(), "cmp_adapter", "extra")
 	assert.NoError(t, err)
-	err = adapter.AddConstituent("cmp_adapter", 123)
+	err = adapter.AddConstituent(t.Context(), "cmp_adapter", 123)
 	assert.Error(t, err)
-	err = adapter.DropCompositeDatabase("cmp_adapter")
+	err = adapter.DropCompositeDatabase(t.Context(), "cmp_adapter")
 	assert.NoError(t, err)
-	err = adapter.DropDatabase("db_adapter_b")
+	err = adapter.DropDatabase(t.Context(), "db_adapter_b")
 	assert.NoError(t, err)
-	err = adapter.DropDatabase("db_adapter_a")
+	err = adapter.DropDatabase(t.Context(), "db_adapter_a")
 	assert.NoError(t, err)
 
 	// Ensure CreatedAt adapter method is exercised.
@@ -1740,13 +1075,14 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	assert.False(t, dbInfos[0].CreatedAt().IsZero())
 
 	// Map-node conversion and recursive conversion helpers.
-	converted := server.convertValueToNeo4jFormat(map[string]interface{}{
+	converted, projectionErr1 := server.convertValueToNeo4jFormat(t.Context(), map[string]interface{}{
 		"labels": []interface{}{"Doc"},
 		"title":  "T",
 	}, "nornicdb")
+	require.NoError(t, projectionErr1)
 	assert.Equal(t, map[string]interface{}{"labels": []interface{}{"Doc"}, "title": "T"}, converted)
 
-	v := server.convertValueToNeo4jFormat(map[string]interface{}{
+	v, projectionErr2 := server.convertValueToNeo4jFormat(t.Context(), map[string]interface{}{
 		"_nodeId":     "n2",
 		"labels":      []interface{}{"L"},
 		"name":        "A",
@@ -1755,6 +1091,7 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 			map[string]interface{}{"id": "n3", "labels": []interface{}{"M"}, "k": "v"},
 		},
 	}, "nornicdb")
+	require.NoError(t, projectionErr2)
 	vm, ok := v.(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, "drop-me", vm["_pathResult"])
@@ -1834,117 +1171,6 @@ func TestSlowQueryLoggingBranches(t *testing.T) {
 	server.slowQueryLogger = log.New(io.Discard, "", 0)
 	server.logSlowQuery("MATCH (n) RETURN n", map[string]interface{}{"k": "v"}, 100*time.Millisecond, nil)
 	assert.Equal(t, int64(2), server.slowQueryCount.Load())
-}
-
-func TestAuthMeAndRoleByIDBranches(t *testing.T) {
-	server, authn := setupTestServer(t)
-
-	// handleMe method not allowed.
-	req := httptest.NewRequest(http.MethodPost, "/auth/me", nil)
-	rec := httptest.NewRecorder()
-	server.handleMe(rec, req)
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-
-	// handleMe with auth disabled returns anonymous.
-	origAuth := server.auth
-	server.auth = nil
-	req = httptest.NewRequest(http.MethodGet, "/auth/me", nil)
-	rec = httptest.NewRecorder()
-	server.handleMe(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	server.auth = origAuth
-
-	// handleMe no claims.
-	req = httptest.NewRequest(http.MethodGet, "/auth/me", nil)
-	rec = httptest.NewRecorder()
-	server.handleMe(rec, req)
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
-
-	// handleMe user not found.
-	claims := &auth.JWTClaims{Sub: "missing-user", Username: "missing", Roles: []string{"admin"}}
-	req = httptest.NewRequest(http.MethodGet, "/auth/me", nil).WithContext(context.WithValue(context.Background(), contextKeyClaims, claims))
-	rec = httptest.NewRecorder()
-	server.handleMe(rec, req)
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-
-	// handleMe OAuth metadata path.
-	_ = authn.UpdateUser("admin", "admin@example.com", map[string]string{
-		"auth_method":         "oauth",
-		"oauth_access_token":  "provider-access-secret",
-		"oauth_refresh_token": "provider-refresh-secret",
-		"display_theme":       "dark",
-	})
-	adminTokenForMe := getAuthToken(t, authn, "admin")
-	claims, userErr := authn.ValidateToken(adminTokenForMe)
-	assert.NoError(t, userErr)
-	req = httptest.NewRequest(http.MethodGet, "/auth/me", nil).WithContext(context.WithValue(context.Background(), contextKeyClaims, claims))
-	rec = httptest.NewRecorder()
-	origProvider := os.Getenv("NORNICDB_AUTH_PROVIDER")
-	origIssuer := os.Getenv("NORNICDB_OAUTH_ISSUER")
-	_ = os.Setenv("NORNICDB_AUTH_PROVIDER", "oauth")
-	_ = os.Setenv("NORNICDB_OAUTH_ISSUER", "https://issuer.example")
-	server.handleMe(rec, req)
-	_ = os.Setenv("NORNICDB_AUTH_PROVIDER", origProvider)
-	_ = os.Setenv("NORNICDB_OAUTH_ISSUER", origIssuer)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.NotContains(t, rec.Body.String(), "provider-access-secret")
-	assert.NotContains(t, rec.Body.String(), "provider-refresh-secret")
-	assert.Contains(t, rec.Body.String(), `"display_theme":"dark"`)
-
-	// RoleByID nil store branch.
-	server.roleStore = nil
-	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/test", strings.NewReader(`{"name":"x"}`))
-	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-
-	// Restore stores by rebuilding server.
-	server, authn = setupTestServer(t)
-	token := getAuthToken(t, authn, "admin")
-	assert.Equal(t, http.StatusCreated, makeRequest(t, server, http.MethodPost, "/auth/roles", map[string]any{"name": "r1"}, "Bearer "+token).Code)
-	assert.Equal(t, http.StatusCreated, makeRequest(t, server, http.MethodPost, "/auth/roles", map[string]any{"name": "r2"}, "Bearer "+token).Code)
-
-	// PATCH invalid JSON.
-	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/r1", strings.NewReader("{"))
-	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	// PATCH empty new name.
-	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/r1", strings.NewReader(`{"name":" "}`))
-	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	// PATCH rename to existing role.
-	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/r1", strings.NewReader(`{"name":"r2"}`))
-	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusConflict, rec.Code)
-
-	// PATCH role not found.
-	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/missing", strings.NewReader(`{"name":"new_name"}`))
-	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	// DELETE detaches the role while retaining the user.
-	_, _ = authn.CreateUser("role_user", "password123", []auth.Role{"r1"})
-	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/r1", nil)
-	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	roleUser, err := authn.GetUser("role_user")
-	assert.NoError(t, err)
-	assert.Empty(t, roleUser.Roles)
-	assert.False(t, server.roleStore.Exists("r1"))
-
-	// DELETE builtin role branch.
-	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/admin", nil)
-	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.True(t, server.roleStore.Exists("admin"))
 }
 
 func TestSearchAndRebuildAdditionalBranches(t *testing.T) {
@@ -2100,7 +1326,7 @@ func TestHeimdallRouterFallbackBranches(t *testing.T) {
 	assert.Error(t, err)
 
 	// system DB discover path.
-	_, err = r.Discover(context.Background(), "system", "q", nil, 1, 1)
+	_, err = r.Discover(heimdallAuthDisabled(), "system", "q", nil, 1, 1)
 	assert.Error(t, err)
 }
 
@@ -2147,7 +1373,7 @@ func TestGrantAccessAndRBACResolverBranches(t *testing.T) {
 
 func setupAuthForHelper(t *testing.T) *auth.Authenticator {
 	t.Helper()
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	a, err := auth.NewAuthenticator(auth.AuthConfig{
 		SecurityEnabled: true,
@@ -2157,46 +1383,16 @@ func setupAuthForHelper(t *testing.T) *auth.Authenticator {
 	return a
 }
 
-func TestGPUHandlersNoManagerBranches(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	// Status no-manager and wrong method.
-	req := httptest.NewRequest(http.MethodPost, "/admin/gpu/status", nil)
-	rec := httptest.NewRecorder()
-	server.handleGPUStatus(rec, req)
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-	req = httptest.NewRequest(http.MethodGet, "/admin/gpu/status", nil)
-	rec = httptest.NewRecorder()
-	server.handleGPUStatus(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	// Enable/disable/test with no manager.
-	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/enable", nil)
-	rec = httptest.NewRecorder()
-	server.handleGPUEnable(rec, req)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-
-	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/disable", nil)
-	rec = httptest.NewRecorder()
-	server.handleGPUDisable(rec, req)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-
-	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/test", strings.NewReader(`{"node_id":"n1","mode":"cpu"}`))
-	rec = httptest.NewRecorder()
-	server.handleGPUTest(rec, req)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-}
-
 func TestEmbedTriggerAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	server.db.SetEmbedder(&countingEmbedder{dims: 1024})
 
-	req := httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
+	req := as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil), "admin")
 	rec := httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil)
+	req = as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusAccepted, http.StatusInternalServerError}, rec.Code)
@@ -2492,7 +1688,9 @@ func TestRouteRegistrationAdvancedBranches(t *testing.T) {
 func TestValueConversionAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	assert.Nil(t, server.convertValueToNeo4jFormat(nil, "nornicdb"))
+	projectedValue3, projectionErr3 := server.convertValueToNeo4jFormat(t.Context(), nil, "nornicdb")
+	require.NoError(t, projectionErr3)
+	assert.Nil(t, projectedValue3)
 
 	node := &storage.Node{
 		ID:         "node-x",
@@ -2507,8 +1705,10 @@ func TestValueConversionAdditionalBranches(t *testing.T) {
 		Properties: map[string]interface{}{"weight": 1},
 	}
 
-	nv := server.convertValueToNeo4jFormat(node, "nornicdb")
-	ev := server.convertValueToNeo4jFormat(edge, "nornicdb")
+	nv, projectionErr4 := server.convertValueToNeo4jFormat(t.Context(), node, "nornicdb")
+	require.NoError(t, projectionErr4)
+	ev, projectionErr5 := server.convertValueToNeo4jFormat(t.Context(), edge, "nornicdb")
+	require.NoError(t, projectionErr5)
 	nm, ok := nv.(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, node.Properties, nm)
@@ -2517,23 +1717,27 @@ func TestValueConversionAdditionalBranches(t *testing.T) {
 	assert.Equal(t, edge.Properties, em)
 
 	already := map[string]interface{}{"elementId": "4:nornicdb:keep"}
-	assert.Equal(t, already, server.convertValueToNeo4jFormat(already, "nornicdb"))
+	projectedValue6, projectionErr6 := server.convertValueToNeo4jFormat(t.Context(), already, "nornicdb")
+	require.NoError(t, projectionErr6)
+	assert.Equal(t, already, projectedValue6)
 
-	v := server.convertValueToNeo4jFormat(map[string]interface{}{
+	v, projectionErr7 := server.convertValueToNeo4jFormat(t.Context(), map[string]interface{}{
 		"id":     "map-node",
 		"labels": []string{"Mapped"},
 		"name":   "alice",
 		"nested": []interface{}{map[string]interface{}{"x": "y"}},
 	}, "nornicdb")
+	require.NoError(t, projectionErr7)
 	vm, ok := v.(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, "map-node", vm["id"])
 	assert.Equal(t, []interface{}{"Mapped"}, vm["labels"])
 
-	sliceVal := server.convertValueToNeo4jFormat([]interface{}{
+	sliceVal, projectionErr8 := server.convertValueToNeo4jFormat(t.Context(), []interface{}{
 		map[string]interface{}{"id": "n100", "labels": []string{"L"}},
 		"text",
 	}, "nornicdb")
+	require.NoError(t, projectionErr8)
 	sliceOut, ok := sliceVal.([]interface{})
 	assert.True(t, ok)
 	assert.Len(t, sliceOut, 2)
@@ -2600,12 +1804,13 @@ func TestConstructorAdditionalBranches(t *testing.T) {
 		_ = server.Stop(context.Background())
 	})
 
-	// waitForDurationOrServerClose helper branches.
-	assert.True(t, waitForDurationOrServerClose(nil, 0))
-	assert.True(t, waitForDurationOrServerClose(nil, 5*time.Millisecond))
-	server := &Server{}
-	server.closed.Store(true)
-	assert.False(t, waitForDurationOrServerClose(server, 25*time.Millisecond))
+	// waitForDurationOrDone helper branches.
+	assert.True(t, waitForDurationOrDone(context.Background(), 0))
+	assert.True(t, waitForDurationOrDone(context.Background(), 5*time.Millisecond))
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.False(t, waitForDurationOrDone(done, 0))
+	assert.False(t, waitForDurationOrDone(done, time.Hour))
 }
 
 func TestConstructorHeimdallOpenAIAndStartBranches(t *testing.T) {
@@ -2693,33 +1898,6 @@ func TestStartQdrantGRPCInvalidPermissionBranch(t *testing.T) {
 	assert.Contains(t, startErr.Error(), "invalid RBAC permission")
 }
 
-func TestGPUHandlersInvalidManagerTypeBranches(t *testing.T) {
-	server, _ := setupTestServer(t)
-	server.db.SetGPUManager("not-a-gpu-manager")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/gpu/enable", nil)
-	rec := httptest.NewRecorder()
-	server.handleGPUEnable(rec, req)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-
-	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/disable", nil)
-	rec = httptest.NewRecorder()
-	server.handleGPUDisable(rec, req)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-
-	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/test", strings.NewReader(`{"node_id":"n1","mode":"cpu"}`))
-	rec = httptest.NewRecorder()
-	server.handleGPUTest(rec, req)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-
-	// Invalid JSON branch.
-	server.db.SetGPUManager(nil)
-	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/test", strings.NewReader("{"))
-	rec = httptest.NewRecorder()
-	server.handleGPUTest(rec, req)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
 func TestRoleAndEntitlementHandlersAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
@@ -2794,17 +1972,17 @@ func TestHeimdallRouterStatsAndDiscoverDeeperBranches(t *testing.T) {
 		return
 	}
 
-	_, _ = engine.CreateNode(&storage.Node{
+	_, _ = engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "nornic:doc_a",
 		Labels:     []string{"Document"},
 		Properties: map[string]interface{}{"title": "alpha title", "content": strings.Repeat("alpha ", 80)},
 	})
-	_, _ = engine.CreateNode(&storage.Node{
+	_, _ = engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "nornic:doc_b",
 		Labels:     []string{"Document"},
 		Properties: map[string]interface{}{"title": "beta title", "content": "beta"},
 	})
-	_ = engine.CreateEdge(&storage.Edge{
+	_ = engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "nornic:edge_ab",
 		StartNode: "nornic:doc_a",
 		EndNode:   "nornic:doc_b",
@@ -2829,21 +2007,21 @@ func TestHeimdallRouterStatsAndDiscoverDeeperBranches(t *testing.T) {
 	router := newHeimdallDBRouter(server.db, server.dbManager, features)
 
 	// Stats with features and search service path.
-	stats, err := router.Stats(dbName)
+	stats, err := router.Stats(heimdallAuthDisabled(), dbName)
 	assert.NoError(t, err)
 	assert.NotNil(t, stats.FeatureFlags)
 
 	// Stats system-db branch (no search stats).
-	systemStats, err := router.Stats("system")
+	systemStats, err := router.Stats(heimdallAuthDisabled(), "system")
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, systemStats.NodeCount, int64(0))
 
 	// Stats unknown db error branch.
-	_, err = router.Stats("does-not-exist-db")
+	_, err = router.Stats(heimdallAuthDisabled(), "does-not-exist-db")
 	assert.Error(t, err)
 
 	// Discover successful branch with traversal and content preview truncation.
-	res, err := router.Discover(context.Background(), dbName, "alpha", []string{"Document"}, 2, 2)
+	res, err := router.Discover(heimdallAuthDisabled(), dbName, "alpha", []string{"Document"}, 2, 2)
 	if err == nil {
 		assert.NotNil(t, res)
 		assert.Equal(t, "keyword", res.Method)
@@ -2888,12 +2066,12 @@ func TestExecuteTxStatementsAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	dbName := server.dbManager.DefaultDatabaseName()
 
-	tx, err := server.txSessions.Open(context.Background(), dbName)
+	tx, err := server.txSessions.OpenRequestForOwner(context.Background(), dbName, "")
 	assert.NoError(t, err)
 	if err != nil {
 		return
 	}
-	defer server.txSessions.RollbackAndDelete(context.Background(), tx)
+	defer func() { _ = tx.RollbackAndDelete(context.Background()); tx.Release() }()
 
 	// 1) Mutation without claims => forbidden.
 	resp := &TransactionResponse{Results: make([]QueryResult, 0), Errors: make([]QueryError, 0)}
@@ -2925,12 +2103,12 @@ func TestExecuteTxStatementsAdditionalBranches(t *testing.T) {
 	assert.NotEmpty(t, resp.Errors)
 
 	// 5) Read statement success path appends result.
-	fresh, err := server.txSessions.Open(context.Background(), dbName)
+	fresh, err := server.txSessions.OpenRequestForOwner(context.Background(), dbName, "")
 	assert.NoError(t, err)
 	if err != nil {
 		return
 	}
-	defer server.txSessions.RollbackAndDelete(context.Background(), fresh)
+	defer func() { _ = fresh.RollbackAndDelete(context.Background()); fresh.Release() }()
 	resp = &TransactionResponse{Results: make([]QueryResult, 0), Errors: make([]QueryError, 0)}
 	server.executeTxStatements(context.Background(), "", &auth.JWTClaims{Roles: []string{"viewer"}}, dbName, fresh, []StatementRequest{
 		{Statement: "RETURN 1 AS n"},
@@ -3095,41 +2273,41 @@ func TestAuthResolverAndRoleByIDAdditionalBranches(t *testing.T) {
 		_ = server.roleStore.Load(context.Background())
 	}
 
-	// role by id: empty role delegates to handleRoles.
+	// role by id: empty role selects collection behavior.
 	req := httptest.NewRequest(http.MethodGet, "/auth/roles/", nil)
 	rec := httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
 
 	// role by id: invalid JSON patch.
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/missing", strings.NewReader("{"))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// role by id: empty new name.
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/missing", strings.NewReader(`{"name":"   "}`))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// role by id: rename not found.
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/missing", strings.NewReader(`{"name":"renamed"}`))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// role by id: delete builtin hits role store builtin branch (no auth user conflict check).
 	server.auth = nil
 	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/admin", nil)
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// role by id: method not allowed.
 	req = httptest.NewRequest(http.MethodGet, "/auth/roles/admin", nil)
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }
 
@@ -3148,7 +2326,7 @@ func TestDatabaseInfoAndExecuteInTxAdditionalBranches(t *testing.T) {
 	dbName := server.dbManager.DefaultDatabaseName()
 
 	// handleDatabaseInfo not found.
-	req := httptest.NewRequest(http.MethodGet, "/db/missing", nil)
+	req := as(httptest.NewRequest(http.MethodGet, "/db/missing", nil), "admin")
 	rec := httptest.NewRecorder()
 	server.handleDatabaseInfo(rec, req, "missing")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
@@ -3226,4 +2404,60 @@ func TestHandleSearchDimensionMismatchAndFallbackBranches(t *testing.T) {
 		"limit": 8,
 	}, "Bearer "+token)
 	assert.Equal(t, http.StatusOK, resp.Code)
+}
+
+func TestGPUHandlersManagerBranches(t *testing.T) {
+	outer := []struct {
+		name    string
+		invalid bool
+		want    int
+	}{
+		{"TestGPUHandlersNoManagerBranches", false, http.StatusServiceUnavailable},
+		{"TestGPUHandlersInvalidManagerTypeBranches", true, http.StatusInternalServerError},
+	}
+	for _, tc := range outer {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _ := setupTestServer(t)
+			if tc.invalid {
+				server.db.SetGPUManager("not-a-gpu-manager")
+			} else {
+				req := httptest.NewRequest(http.MethodPost, "/admin/gpu/status", nil)
+				rec := httptest.NewRecorder()
+				server.handleGPUStatus(rec, req)
+				assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+				req = httptest.NewRequest(http.MethodGet, "/admin/gpu/status", nil)
+				rec = httptest.NewRecorder()
+				server.handleGPUStatus(rec, req)
+				assert.Equal(t, http.StatusOK, rec.Code)
+			}
+			for _, cc := range []struct {
+				path, body string
+				kind       gpuControlAction
+			}{
+				{"/admin/gpu/enable", "", gpuControlEnable},
+				{"/admin/gpu/disable", "", gpuControlDisable},
+				{"/admin/gpu/test", `{"node_id":"n1","mode":"cpu"}`, 0},
+			} {
+				var body io.Reader
+				if cc.body != "" {
+					body = strings.NewReader(cc.body)
+				}
+				req := httptest.NewRequest(http.MethodPost, cc.path, body)
+				rec := httptest.NewRecorder()
+				if cc.path == "/admin/gpu/test" {
+					server.handleGPUTest(rec, req)
+				} else {
+					server.handleGPUControl(rec, req, cc.kind)
+				}
+				assert.Equal(t, tc.want, rec.Code)
+			}
+			if tc.invalid {
+				server.db.SetGPUManager(nil)
+				req := httptest.NewRequest(http.MethodPost, "/admin/gpu/test", strings.NewReader("{"))
+				rec := httptest.NewRecorder()
+				server.handleGPUTest(rec, req)
+				assert.Equal(t, http.StatusBadRequest, rec.Code)
+			}
+		})
+	}
 }

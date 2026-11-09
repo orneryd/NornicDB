@@ -3,33 +3,41 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-func (e *StorageExecutor) validateStatementFraming(cypher string) error {
-	if containsOutsideStrings(cypher, ";") {
+func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher string) error {
+	multiple, unclosed := inspectOutsideStrings(cypher, ";")
+	if unclosed >= 0 {
+		return unclosedCommentError(cypher, unclosed, ModeNormal)
+	}
+	if multiple {
 		statements := e.splitBySemicolon(cypher)
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			localization.CypherCommandRoutingMultipleStatements(len(statements)))
 	}
-	if explainProfileConflict(cypher) {
-		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
-			"Can't specify multiple conflicting values for execution mode"))
+	mode, body, conflict := statementExecutionModes(cypher)
+	if mode != ModeNormal && queryGapEnd(body, 0) == len(body) {
+		return emptyStatementError()
+	}
+	if conflict {
+		return executionModeConflictError()
 	}
 	// Only a statement with the word UNION in it can have UNION branches.
-	if findKeywordIndex(cypher, "UNION") < 0 {
+	if findKeywordIndex(ctx, cypher, "UNION") < 0 || findKeywordIndex(ctx, cypher, "FINISH") < 0 {
 		return nil
 	}
-	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
+	if branches, _, _, ok := parseTopLevelUnionBranches(ctx, cypher); ok && len(branches) > 1 {
 		hasFinish, hasColumns := false, false
 		for _, branch := range branches {
-			_, finishes := stripTrailingFinish(branch)
+			_, finishes := readTrailingFinish(ctx, branch, stripPermittedFinish)
 			if finishes {
 				hasFinish = true
-			} else if len(e.StatementColumns(branch)) > 0 {
+			} else if e.statementProducesColumns(ctx, branch) {
 				hasColumns = true
 			}
 		}
@@ -88,24 +96,34 @@ var cypherPreambleOptionValues = map[string]string{
 
 func validateCypherPreamble(query string) error {
 	rest := strings.TrimSpace(query)
+	restOffset := strings.Index(query, rest)
 	argumentError := func(message string) error {
 		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", message))
 	}
+	consumeGap := func(index int) error {
+		end, unclosed := readQueryGap(rest, index)
+		if unclosed >= 0 {
+			return unclosedCommentError(query, restOffset+unclosed, ModeNormal)
+		}
+		restOffset += end
+		rest = rest[end:]
+		return nil
+	}
 	var seenVersion string
 	for rest != "" {
-		if matchKeywordAt(rest, 0, "EXPLAIN") || matchKeywordAt(rest, 0, "PROFILE") {
-			rest = strings.TrimSpace(rest[len("EXPLAIN"):])
+		if mode, inner := executionModePrefix(rest); mode != ModeNormal {
+			restOffset += len(rest) - len(inner)
+			rest = inner
 			continue
 		}
 		if !matchKeywordAt(rest, 0, "CYPHER") {
 			return nil
 		}
-		rest = strings.TrimSpace(rest[len("CYPHER"):])
-		if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
-			end := 0
-			for end < len(rest) && ((rest[end] >= '0' && rest[end] <= '9') || rest[end] == '.') {
-				end++
-			}
+		if err := consumeGap(len("CYPHER")); err != nil {
+			return err
+		}
+		if token, ok := cyphertext.ScanNumber(rest, 0); ok {
+			end := token.TailEnd
 			version := rest[:end]
 			if version != "5" && version != "25" {
 				return argumentError(fmt.Sprintf("%s is not a valid option for cypher version. Valid options are: 5, 25", version))
@@ -114,28 +132,38 @@ func validateCypherPreamble(query string) error {
 				return argumentError("Can't specify multiple conflicting values for cypher version")
 			}
 			seenVersion = version
-			rest = strings.TrimSpace(rest[end:])
+			if err := consumeGap(end); err != nil {
+				return err
+			}
+		}
+		// Comments between the preamble and its body are still source text.
+		// Admit their terminator while consuming this existing prefix gap,
+		// before option parsing can misreport an unfinished comment as syntax.
+		if err := consumeGap(0); err != nil {
+			return err
 		}
 		for rest != "" && !startsWithClauseKeyword(rest) {
 			end := 0
-			for end < len(rest) && isIdentByte(rest[end]) {
-				end++
-			}
+			end = cyphertext.NamePartEnd(rest, end)
 			name := strings.ToLower(rest[:end])
-			rest = strings.TrimSpace(rest[end:])
+			if err := consumeGap(end); err != nil {
+				return err
+			}
 			if end == 0 || rest == "" || rest[0] != '=' {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected name=value")
 			}
-			rest = strings.TrimSpace(rest[1:])
-			end = 0
-			for end < len(rest) && isIdentByte(rest[end]) {
-				end++
+			if err := consumeGap(1); err != nil {
+				return err
 			}
+			end = 0
+			end = cyphertext.NamePartEnd(rest, end)
 			if end == 0 {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected a value")
 			}
 			value := strings.ToLower(rest[:end])
-			rest = strings.TrimSpace(rest[end:])
+			if err := consumeGap(end); err != nil {
+				return err
+			}
 			allowed, known := cypherPreambleOptionValues[name]
 			if !known {
 				return argumentError("Unsupported options: " + name)
@@ -156,53 +184,67 @@ func validateCypherPreamble(query string) error {
 }
 
 func stripCypherPreamble(query string) (string, bool) {
+	text, changed, _ := readCypherPreamble(query)
+	return text, changed
+}
+
+func readCypherPreamble(query string) (string, bool, *queryRewrite) {
 	rest := query
+	offset := 0
 	changed := false
 	var modes []string
+	trim := func() {
+		left := strings.TrimLeftFunc(rest, cyphertext.IsWhitespace)
+		offset += len(rest) - len(left)
+		rest = strings.TrimRightFunc(left, cyphertext.IsWhitespace)
+	}
+	consume := func(count int) { offset += count; rest = rest[count:]; trim() }
 	for {
-		trimmed := strings.TrimSpace(rest)
-		if matchKeywordAt(trimmed, 0, "EXPLAIN") || matchKeywordAt(trimmed, 0, "PROFILE") {
-			modes = append(modes, trimmed[:len("EXPLAIN")])
-			rest = strings.TrimSpace(trimmed[len("EXPLAIN"):])
+		trim()
+		if mode, inner := executionModePrefix(rest); mode != ModeNormal {
+			modes = append(modes, string(mode))
+			offset += len(rest) - len(inner)
+			rest = inner
 			continue
 		}
-		if !matchKeywordAt(trimmed, 0, "CYPHER") {
+		if !matchKeywordAt(rest, 0, "CYPHER") {
 			break
 		}
 		changed = true
-		rest = strings.TrimSpace(trimmed[len("CYPHER"):])
-		// Optional version number (e.g. CYPHER 5, CYPHER 25).
-		if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
-			i := 0
-			for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
-				i++
-			}
-			rest = strings.TrimSpace(rest[i:])
+		consume(queryGapEnd(rest, len("CYPHER")))
+		if token, ok := cyphertext.ScanNumber(rest, 0); ok {
+			consume(queryGapEnd(rest, token.TailEnd))
 		}
-		// Option tokens until the next clause keyword starts the statement.
 		for rest != "" && !startsWithClauseKeyword(rest) {
-			if rest[0] == '\'' || rest[0] == '"' {
+			if isCypherStringQuoteByte(rest[0]) {
 				end := skipCypherQuotedText(rest, 0, rest[0])
-				rest = strings.TrimSpace(rest[end:])
+				consume(queryGapEnd(rest, end))
 				continue
 			}
-			i := 0
-			for i < len(rest) && !isASCIISpace(rest[i]) {
-				i++
+			end := 0
+			for end < len(rest) && !cyphertext.IsWhitespaceAt(rest, end) && queryCommentEnd(rest, end) < 0 {
+				end++
 			}
-			rest = strings.TrimSpace(rest[i:])
+			consume(queryGapEnd(rest, end))
 		}
 		if rest == "" {
 			break
 		}
 	}
-	if changed {
-		if len(modes) > 0 {
-			return strings.Join(modes, " ") + " " + strings.TrimSpace(rest), true
-		}
-		return strings.TrimSpace(rest), true
+	if !changed {
+		return query, false, nil
 	}
-	return query, false
+	prefix := ""
+	if len(modes) > 0 {
+		prefix = strings.Join(modes, " ") + " "
+	}
+	canonical := prefix + rest
+	rewrite := &queryRewrite{Source: cyphertext.Source{Original: query, Text: canonical}}
+	rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: 0, End: offset}, Accepted: cyphertext.Span{Start: 0, End: len(prefix)}})
+	if end := offset + len(rest); end < len(query) {
+		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: end, End: len(query)}, Accepted: cyphertext.Span{Start: len(canonical), End: len(canonical)}})
+	}
+	return canonical, true, rewrite
 }
 
 // finishProhibitedClauses are the clause keywords a statement may not end
@@ -214,45 +256,35 @@ var finishProhibitedClauses = map[string]bool{
 	"RETURN": true,
 }
 
-// trailingBareFinish reports whether the statement ends with a standalone
-// FINISH keyword outside quotes and comments. A trailing `finish` where a
-// name or an expression is read (RETURN finish, x AS finish, DELETE finish,
-// m.finish) is a variable, not the clause: FINISH is not a reserved word in
-// Neo4j (#958).
-func trailingBareFinish(cypher string) (string, bool) {
+type finishSuffixPolicy uint8
+
+const (
+	detectFinishSuffix finishSuffixPolicy = iota
+	stripPermittedFinish
+)
+
+// readTrailingFinish recognizes one name-aware FINISH suffix. Validation can
+// detect every suffix; execution strips only those allowed after the preceding
+// top-level clause, leaving prohibited RETURN/FINISH forms for validation.
+func readTrailingFinish(ctx context.Context, cypher string, policy finishSuffixPolicy) (string, bool) {
 	last := lastLiveByte(cypher, len(cypher))
-	if last < 0 || !isIdentByte(cypher[last]) {
-		return "", false
+	if last < 0 || !cyphertext.NamePartAt(cypher, last) {
+		return cypher, false
 	}
 	end := last + 1
 	start := end
-	for start > 0 && isIdentByte(cypher[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(cypher, start-1) {
 		start--
 	}
 	if !strings.EqualFold(cypher[start:end], "FINISH") {
-		return "", false
+		return cypher, false
 	}
 	remainder := strings.TrimSpace(cypher[:start])
 	// A FINISH with nothing before it is the whole statement, the clause.
-	if remainder != "" && clauseKeywordUsedAsName(cypher, start, end, "FINISH") {
-		return "", false
-	}
-	return remainder, true
-}
-
-// stripTrailingFinish removes a trailing FINISH clause terminator (Neo4j 5.19+:
-// FINISH ends a query without returning rows). FINISH counts unless the
-// preceding top-level clause is RETURN (finishProhibitedClauses); a trailing
-// FINISH after RETURN stays in the text so validation rejects it. The
-// preceding clause comes from the shared name-aware scanner
-// lastTopLevelClauseWord (validator_strictness.go): one clause scanner for
-// both the FINISH position and the dangling-UNWIND rule.
-func stripTrailingFinish(cypher string) (string, bool) {
-	remainder, ok := trailingBareFinish(cypher)
-	if !ok {
+	if remainder != "" && clauseKeywordUsedAsName(ctx, cypher, start, end, "FINISH") {
 		return cypher, false
 	}
-	if finishProhibitedClauses[lastTopLevelClauseWord(remainder)] {
+	if policy == stripPermittedFinish && finishProhibitedClauses[lastTopLevelClauseWord(ctx, remainder)] {
 		return cypher, false
 	}
 	return remainder, true
@@ -279,43 +311,14 @@ func endsInFinish(ctx context.Context, statement string) bool {
 // topLevelUnionCut returns the offset of the first top-level UNION keyword
 // (outside quotes, comments and nested delimiters), or -1.
 func topLevelUnionCut(s string) int {
-	inQuote := byte(0)
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if inQuote != 0 {
-			if c == '\\' && inQuote != '`' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == inQuote {
-				if i+1 < len(s) && s[i+1] == inQuote {
-					i++
-					continue
-				}
-				inQuote = 0
-			}
+		if end, quoted := skipCypherLexicalToken(s, i); quoted {
+			i = end - 1
 			continue
 		}
+		c := s[i]
 		switch c {
-		case '\'', '"', '`':
-			inQuote = c
-			continue
-		case '/':
-			if i+1 < len(s) && s[i+1] == '/' {
-				for i < len(s) && s[i] != '\n' && s[i] != '\r' {
-					i++
-				}
-				continue
-			}
-			if i+1 < len(s) && s[i+1] == '*' {
-				end := strings.Index(s[i+2:], "*/")
-				if end < 0 {
-					return -1
-				}
-				i += 2 + end + 1
-				continue
-			}
 		case '(':
 			parenDepth++
 		case ')':
@@ -339,16 +342,16 @@ func topLevelUnionCut(s string) int {
 
 // stripUnionBranchFinishes strips a trailing FINISH from each UNION branch of
 // the statement. If no branch ends in FINISH the text is unchanged.
-func stripUnionBranchFinishes(cypher string) (string, bool) {
+func stripUnionBranchFinishes(ctx context.Context, cypher string) (string, bool) {
 	cut := topLevelUnionCut(cypher)
 	if cut < 0 {
-		return stripTrailingFinish(cypher)
+		return readTrailingFinish(ctx, cypher, stripPermittedFinish)
 	}
 	before := strings.TrimSpace(cypher[:cut])
 	after := strings.TrimSpace(cypher[cut:])
 	// Consume UNION and an optional ALL.
 	wordEnd := 0
-	for wordEnd < len(after) && !isASCIISpace(after[wordEnd]) {
+	for wordEnd < len(after) && !cyphertext.IsWhitespaceAt(after, wordEnd) {
 		wordEnd++
 	}
 	unionWord := after[:wordEnd]
@@ -357,13 +360,13 @@ func stripUnionBranchFinishes(cypher string) (string, bool) {
 		unionWord += " ALL"
 		tail = strings.TrimSpace(tail[len("ALL"):])
 	}
-	right, rightStripped := stripUnionBranchFinishes(tail)
-	left, leftStripped := stripTrailingFinish(before)
+	right, rightStripped := stripUnionBranchFinishes(ctx, tail)
+	left, leftStripped := readTrailingFinish(ctx, before, stripPermittedFinish)
 	if !leftStripped && !rightStripped {
 		return cypher, false
 	}
 	if leftStripped && rightStripped && left == "" && right == "" {
-		if _, _, mixed, _ := parseTopLevelUnionBranches(cypher); !mixed {
+		if _, _, mixed, _ := parseTopLevelUnionBranches(ctx, cypher); !mixed {
 			return "", true
 		}
 		return cypher, false
@@ -373,7 +376,7 @@ func stripUnionBranchFinishes(cypher string) (string, bool) {
 
 func firstWordUpper(s string) (string, bool) {
 	i := 0
-	for i < len(s) && !isASCIISpace(s[i]) {
+	for i < len(s) && !cyphertext.IsWhitespaceAt(s, i) {
 		i++
 	}
 	if i == 0 {
@@ -382,26 +385,16 @@ func firstWordUpper(s string) (string, bool) {
 	return upperASCII(s[:i]), true
 }
 
-// explainProfileConflict reports whether the statement starts with both
-// EXPLAIN and PROFILE (either order), which Neo4j rejects.
 func explainProfileConflict(cypher string) bool {
-	query := strings.TrimSpace(cypher)
-	first := ""
-	for {
-		query = strings.TrimSpace(query[queryGapEnd(query, 0):])
-		query, _ = stripCypherPreamble(query)
-		mode := ""
-		if matchKeywordAt(query, 0, "EXPLAIN") {
-			mode = "EXPLAIN"
-		} else if matchKeywordAt(query, 0, "PROFILE") {
-			mode = "PROFILE"
-		} else {
-			return false
-		}
-		if first != "" && first != mode {
-			return true
-		}
-		first = mode
-		query = strings.TrimSpace(query[len(mode):])
+	_, statement, conflict := statementExecutionModes(cypher)
+	return conflict && queryGapEnd(statement, 0) < len(statement)
+}
+
+// completeFinishedResult applies FINISH before the declared schema is checked.
+// Internal and public execution share this terminal projection.
+func completeFinishedResult(result *ExecuteResult) {
+	if result != nil {
+		result.Columns = nil
+		result.Rows = nil
 	}
 }

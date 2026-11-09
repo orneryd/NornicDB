@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"fmt"
 	"strings"
@@ -164,7 +166,7 @@ func TestMonster531FulltextTargetAdmission(t *testing.T) {
 	} {
 		t.Run(test.pattern, func(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-			parsed, err := exec.parseCreateFulltextIndexDDL("CREATE FULLTEXT INDEX ft FOR (n:" + test.pattern + ") ON EACH [n.t]")
+			parsed, err := exec.parseCreateFulltextIndexDDL(t.Context(), "CREATE FULLTEXT INDEX ft FOR (n:"+test.pattern+") ON EACH [n.t]")
 			if test.labels == nil {
 				require.Error(t, err)
 			} else {
@@ -354,7 +356,7 @@ func TestMonster531TypedIndexDDLMatrix(t *testing.T) {
 			result, err := exec.Execute(ctx, "SHOW INDEXES YIELD name, type, createStatement WHERE type <> 'LOOKUP' RETURN name, type, createStatement", nil)
 			require.NoError(t, err)
 			require.Len(t, result.Rows, 1)
-			_, err = exec.Execute(ctx, "DROP INDEX "+quoteSchemaName(result.Rows[0][0].(string)), nil)
+			_, err = exec.Execute(ctx, "DROP INDEX "+cyphertext.PrintIdentifier(result.Rows[0][0].(string), nil, cyphertext.RawSource), nil)
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, result.Rows[0][2].(string), nil)
 			require.NoError(t, err)
@@ -449,9 +451,7 @@ func TestCreateConstraint_BranchMatrix_NodeAndRelationshipVariants(t *testing.T)
 }
 
 func TestCreateConstraint_BranchMatrix_DuplicateAndErrorPaths(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "schema_constraint_matrix_err")
-	exec := NewStorageExecutor(store)
+	exec, _ := newTestExecutor(t, "schema_constraint_matrix_err")
 	ctx := context.Background()
 
 	// Duplicate name with different shape must surface conflict.

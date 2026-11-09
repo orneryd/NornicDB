@@ -8,8 +8,8 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math/rand"
 	"strings"
 	"time"
@@ -33,11 +33,9 @@ func Sleep(milliseconds int64) {
 //
 // Example:
 //
-//	apoc.util.md5('hello') => '5d41402abc4b2a76b9719d911017c592'
+//	apoc.util.md5(['hello']) => '5d41402abc4b2a76b9719d911017c592'
 func MD5(value interface{}) string {
-	str := fmt.Sprintf("%v", value)
-	hash := md5.Sum([]byte(str))
-	return hex.EncodeToString(hash[:])
+	return hexDigest(md5.New(), value)
 }
 
 // SHA1 computes the SHA1 hash of a value.
@@ -49,22 +47,18 @@ func MD5(value interface{}) string {
 //
 // Example:
 //
-//	apoc.util.sha1('hello') => 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d'
+//	apoc.util.sha1(['hello']) => 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d'
 func SHA1(value interface{}) string {
-	str := fmt.Sprintf("%v", value)
-	hash := sha1.Sum([]byte(str))
-	return hex.EncodeToString(hash[:])
+	return hexDigest(sha1.New(), value)
 }
 
 // SHA256 computes the SHA256 hash of a value.
 //
 // Example:
 //
-//	apoc.util.sha256('hello') => '2cf24dba5fb0a30e...'
+//	apoc.util.sha256(['hello']) => '2cf24dba5fb0a30e...'
 func SHA256(value interface{}) string {
-	str := fmt.Sprintf("%v", value)
-	hash := sha256.Sum256([]byte(str))
-	return hex.EncodeToString(hash[:])
+	return hexDigest(sha256.New(), value)
 }
 
 // Compress compresses a string.
@@ -213,19 +207,22 @@ func When(condition bool, trueValue, falseValue interface{}) interface{} {
 //	apoc.util.typeOf('hello') => 'STRING'
 //	apoc.util.typeOf(42) => 'INTEGER'
 func TypeOf(value interface{}) string {
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if number.IsInteger() {
+			return "INTEGER"
+		}
+		return "FLOAT"
+	}
+	if _, list := valueconvert.ReadList(value); list {
+		return "LIST"
+	}
 	switch value.(type) {
 	case nil:
 		return "NULL"
 	case bool:
 		return "BOOLEAN"
-	case int, int64, int32:
-		return "INTEGER"
-	case float64, float32:
-		return "FLOAT"
 	case string:
 		return "STRING"
-	case []interface{}:
-		return "LIST"
 	case map[string]interface{}:
 		return "MAP"
 	default:

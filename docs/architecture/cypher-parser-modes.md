@@ -51,7 +51,12 @@ flowchart TB
     style RESULT fill:#238636,stroke:#3fb950
 ```
 
-## Real-World Benchmarks (Northwind Database)
+## Historical Northwind measurements
+
+These recorded figures describe an earlier implementation. They do not qualify
+v1.4.4 or establish its current parser-mode ratios. Measure the complete query
+workload, including shared semantic and result-column compilation, on the
+revision and hardware being deployed.
 
 | Query |  Nornic |  ANTLR | Slowdown |
 |-------|----------|----------|----------|
@@ -77,7 +82,7 @@ flowchart TB
 | **Worst Case** | - | **4,753x slower** |
 | **Error Messages** | Classified with restored line/column positions | Detailed (line/column) |
 | **Syntax Validation** | Strict, TCK-vetted (see below) | Strict OpenCypher |
-| **Memory Usage** | Lowest (scannerless recursive descent, no parse tree) | Higher |
+| **Memory Usage** | Scannerless syntax path plus shared retained grammar products | Grammar syntax validation plus shared retained products |
 | **Best For** | **Production** | Development/Debugging |
 
 > **Note:** both modes share a single converged execution pipeline. There are no
@@ -85,6 +90,43 @@ flowchart TB
 > through the same typed router (`Handled` / `NotApplicable` / `ParseRejected` /
 > `Failed`), and unhandled statements fail with Neo4j's `Neo.ClientError.Statement.SyntaxError`
 > classification rather than being re-routed.
+
+### Retained syntax in shared readers
+
+The default Nornic parser remains scannerless recursive descent. Both modes also
+use the same grammar products for semantic scope, result columns, CALL imports,
+projection items and iteration bindings. Those shared readers can allocate a
+retained tree even when the Nornic syntax parser itself needs no lexer or tree.
+
+A reader that already holds a statement or clause consumes its original syntax
+node. It does not rebuild each WITH item as a RETURN statement or parse every
+CALL body and query suffix again. Genuine standalone source inputs still enter
+through the same grammar owner. SLL prediction retries with LL when required;
+the runtime and generated grammar remain unchanged.
+
+For Go consumers, `StatementSyntax.LeadingCall(from)` now takes an original-source
+byte offset. Pass `0` for a standalone source, or the clause's original offset
+to select its frame in a retained statement. Leading whitespace/comments are
+allowed; a window cutting a live token is refused, and a later CALL cannot
+replace the frame at that window. Returned spans remain absolute, including
+OPTIONAL CALL and rewritten Unicode source. For example, a standalone
+`CALL () { RETURN 1 AS value }` uses `syntax.LeadingCall(0)`. An admitted
+`MATCH (n) CALL (n) { RETURN n AS value } RETURN value` uses the retained
+CALL token's offset with `syntax.LeadingCall(offset)`.
+
+### Cancellation granularity in the ANTLR runtime
+
+NornicDB pins `github.com/antlr4-go/antlr/v4` v4.13.1. Its internal prediction expansion does not provide a cancellation checkpoint. NornicDB's character and token streams check the request context, but an in-progress prediction step can finish before the runtime observes those streams again. A query deadline therefore does not impose a hard allocation or elapsed-time bound on that step, especially with cold prediction state.
+
+This also affects shared grammar-based semantic and result-column readers reached from the default `nornic` mode; changing parser modes does not guarantee avoiding the limitation.
+
+Earlier integrated revisions reproduced allocations above the unchanged `TestSelectedPathCountedCompilation` 8 MiB cap with a 5 ms deadline in three fresh processes. After the completed reader and owner convergence, the unchanged test passed in three fresh processes, with the million-step empty-graph cases allocating 7,578,048–8,229,080 bytes. These passing controls do not establish a hard allocation bound across cold prediction states: the runtime checkpoint limitation above remains. No test was skipped and no assertion or threshold was relaxed. Run the focused guard with:
+
+```bash
+go test ./pkg/cypher -run '^TestSelectedPathCountedCompilation$' -count=1 -v
+```
+
+As checked on 24 October 2026, [the official Go runtime release](https://github.com/antlr4-go/antlr/releases/tag/v4.13.1) is still v4.13.1 and [upstream prediction source](https://github.com/antlr4-go/antlr/blob/4d7e18847d8881a176db3d7cca909e3f3942a05f/parser_atn_simulator.go) matches the pinned dependency. No newer released fix was available. The runtime remains unmodified.
 
 ### Nornic validation is TCK-vetted
 
@@ -141,13 +183,12 @@ config.SetParserType(config.ParserTypeNornic)
 
 **Pros:**
 - **Fastest execution** — 3,000-4,200 ops/sec
--  **Lowest memory** — No parse tree allocation
+-  **Scannerless syntax validation** — shared readers retain their own grammar products
 -  **Battle-tested** — Original implementation, converged single pipeline
--  **Zero parsing overhead** — scannerless recursive descent, no lexer or parse tree
+-  **Direct syntax path** — scannerless recursive descent without a separate lexer
 
 **Cons:**
--  **No structured parse tree** — debugging uses restored positions, not AST inspection
--  **Semantic scope checks** are clause-targeted rather than grammar-derived; the TCK ratchet gates the supported surface
+-  **Shared compilation still has a cost** — semantic and result-column readers use retained grammar products; measure the whole request
 
 ---
 

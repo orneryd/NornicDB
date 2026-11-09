@@ -303,7 +303,7 @@ func TestEvaluateLogicalExpressionHoldsOperandErrors(t *testing.T) {
 	// A CASE WHEN the row evaluator can't read as a value (EXISTS { … })
 	// is evaluated as a predicate.
 	node := &storage.Node{ID: "lonely", Labels: []string{"C"}}
-	value, ok, err := exec.evaluateRowCaseExpression("CASE WHEN EXISTS { (n)-->() } THEN 1 ELSE 0 END", map[string]interface{}{"n": node})
+	value, ok, err := exec.evaluateRowCaseExpression(t.Context(), "CASE WHEN EXISTS { (n)-->() } THEN 1 ELSE 0 END", map[string]interface{}{"n": node})
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, int64(0), value)

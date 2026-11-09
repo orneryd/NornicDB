@@ -14,6 +14,11 @@ type ivfpqMetaSnapshot struct {
 	FormatVersion   int          `msgpack:"format_version"`
 	Profile         IVFPQProfile `msgpack:"profile"`
 	BuiltAtUnixNano int64        `msgpack:"built_at_unix_nano"`
+	// MaxResidual bounds PQ scores (IVFPQIndex.scoreBound); a bundle saved
+	// before it loads with no bound.
+	MaxResidual        float64   `msgpack:"max_residual,omitempty"`
+	ResidualKnown      bool      `msgpack:"residual_known,omitempty"`
+	MaxCoordinateError []float64 `msgpack:"max_coordinate_error,omitempty"`
 }
 
 type ivfpqCodebooksSnapshot struct {
@@ -39,7 +44,7 @@ func SaveIVFPQBundle(basePath string, idx *IVFPQIndex) error {
 
 func saveIVFPQBundle(basePath string, idx *IVFPQIndex, overlay *annMutationOverlay, vectorStore *VectorFileStore) error {
 	mutations := overlay.snapshot()
-	mutations.VectorStoreCount, mutations.VectorStoreSlots = vectorStore.stateVersion()
+	mutations.VectorStoreCount, mutations.VectorStoreSlots, mutations.VectorStoreGeneration = vectorStore.stateVersion()
 	return saveIVFPQBundleSnapshot(basePath, idx, mutations)
 }
 
@@ -52,7 +57,7 @@ func saveIVFPQBundleSnapshot(basePath string, idx *IVFPQIndex, mutations annMuta
 		return nil
 	}
 	return writeMsgpackSnapshotsAtomic(dir, map[string]any{
-		"meta":      ivfpqMetaSnapshot{FormatVersion: ivfpqBundleFormatVersion, Profile: idx.profile, BuiltAtUnixNano: idx.builtAtUnixNano},
+		"meta":      ivfpqMetaSnapshot{FormatVersion: ivfpqBundleFormatVersion, Profile: idx.profile, BuiltAtUnixNano: idx.builtAtUnixNano, MaxResidual: idx.maxResidual, ResidualKnown: idx.residualKnown, MaxCoordinateError: idx.maxCoordinateError},
 		"centroids": idx.centroids,
 		"codebooks": ivfpqCodebooksSnapshot{Codebooks: idx.codebooks},
 		"lists":     ivfpqListsSnapshot{Lists: idx.lists, Overflow: idx.overflow},
@@ -105,15 +110,19 @@ func loadIVFPQBundle(basePath string) (*IVFPQIndex, annMutationOverlaySnapshot, 
 		return nil, annMutationOverlaySnapshot{}, err
 	}
 	idx := &IVFPQIndex{
-		profile:         meta.Profile,
-		centroids:       centroids,
-		centroidNorm:    normalizeCentroids(centroids),
-		codebooks:       codebooks.Codebooks,
-		lists:           lists.Lists,
-		overflow:        lists.Overflow,
-		formatVersion:   meta.FormatVersion,
-		builtAtUnixNano: meta.BuiltAtUnixNano,
+		profile:            meta.Profile,
+		centroids:          centroids,
+		centroidNorm:       normalizeCentroids(centroids),
+		codebooks:          codebooks.Codebooks,
+		lists:              lists.Lists,
+		overflow:           lists.Overflow,
+		formatVersion:      meta.FormatVersion,
+		builtAtUnixNano:    meta.BuiltAtUnixNano,
+		maxResidual:        meta.MaxResidual,
+		residualKnown:      meta.ResidualKnown,
+		maxCoordinateError: meta.MaxCoordinateError,
 	}
+	idx.population() // deduplicate the immutable union before publication
 	idx.initScratchPool()
 	return idx, mutations, nil
 }
@@ -144,31 +153,31 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 	}
 	s.indexMu.Lock()
 	s.ivfpqMu.RLock()
-	idx := s.ivfpqIndex
+	idx := s.servingIVFPQ()
 	mutations := s.ivfpqOverlay.snapshot()
 	s.ivfpqMu.RUnlock()
 	s.mu.RLock()
 	vectorStore := s.vectorFileStore
 	s.mu.RUnlock()
-	mutations.VectorStoreCount, mutations.VectorStoreSlots = vectorStore.stateVersion()
+	mutations.VectorStoreCount, mutations.VectorStoreSlots, mutations.VectorStoreGeneration = vectorStore.stateVersion()
 	s.indexMu.Unlock()
 	if idx == nil || idx.Count() == 0 {
 		return
 	}
 	if err := saveIVFPQBundleSnapshot(basePath, idx, mutations); err != nil {
+		s.recordLifetimeOutcome("IVFPQ save", err)
 		logSearchPrintf("⚠️ Background persist: failed to save IVFPQ bundle (%s): %v", basePath, err)
 		return
 	}
 	logSearchPrintf("📇 Background persist: IVFPQ bundle saved (%s, vectors=%d)", basePath, idx.Count())
 }
 
-func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile, vfs *VectorFileStore) (*IVFPQIndex, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+// seedIDs (pipelineBuildSeeds) are resolved by the caller before pipelineMu,
+// since they read the node metadata under indexMu.
+func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile, vfs *VectorFileStore, seedIDs []string) (*IVFPQIndex, error) {
 	s.ivfpqMu.RLock()
-	if s.ivfpqIndex != nil && s.ivfpqIndex.compatibleProfile(profile) {
-		idx := s.ivfpqIndex
+	if s.servingIVFPQ() != nil && s.servingIVFPQ().compatibleProfile(profile) {
+		idx := s.servingIVFPQ()
 		s.ivfpqMu.RUnlock()
 		return idx, nil
 	}
@@ -176,14 +185,13 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 
 	s.ivfpqMu.Lock()
 	defer s.ivfpqMu.Unlock()
-	if s.ivfpqIndex != nil && s.ivfpqIndex.compatibleProfile(profile) {
-		return s.ivfpqIndex, nil
+	if s.servingIVFPQ() != nil && s.servingIVFPQ().compatibleProfile(profile) {
+		return s.servingIVFPQ(), nil
 	}
 
 	s.mu.RLock()
 	vectorPath := s.vectorIndexPath
 	hnswPath := s.hnswIndexPath
-	fulltext := s.fulltext()
 	s.mu.RUnlock()
 	basePath := s.ivfpqPersistenceBasePath(vectorPath, hnswPath)
 
@@ -192,22 +200,27 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 		// Query-only knobs do not require rebuilding the compressed codes.
 		loaded.profile.NProbe = profile.NProbe
 		loaded.profile.RerankTopK = profile.RerankTopK
-		s.ivfpqOverlay.restore(mutations)
-		s.ivfpqIndex = loaded
-		return s.ivfpqIndex, nil
+		// The caller is creating the pipeline under pipelineMu: publish
+		// without retiring it.
+		s.publishVectorServing(func() {
+			s.ivfpqOverlay.restore(mutations)
+			s.ivfpqIndex = loaded
+		}, false)
+		return s.servingIVFPQ(), nil
 	}
 
 	if vfs == nil {
 		return nil, localizedError(localization.SearchIVFPQVectorStoreUnavailable(), nil)
 	}
-	seedIDs := bm25SeedDocIDs(fulltext)
 	built, stats, err := BuildIVFPQFromVectorStore(ctx, vfs, profile, seedIDs)
 	if err != nil {
 		return nil, err
 	}
 	logSearchPrintf("[IVFPQ] ✅ built | vectors=%d sample=%d lists=%d avg_list=%.1f max_list=%d bytes_per_vector=%.2f duration=%v",
 		stats.VectorCount, stats.TrainingSampleCount, stats.ListCount, stats.AvgListSize, stats.MaxListSize, stats.BytesPerVector, stats.BuildDuration)
-	s.ivfpqIndex = built
-	s.ivfpqOverlay.Reset()
-	return s.ivfpqIndex, nil
+	s.publishVectorServing(func() {
+		s.ivfpqIndex = built
+		s.ivfpqOverlay.Reset()
+	}, false)
+	return s.servingIVFPQ(), nil
 }

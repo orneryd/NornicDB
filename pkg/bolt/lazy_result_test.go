@@ -2,17 +2,19 @@ package bolt
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// pullBatch sends PULL {n} and reads its records and summary: the SUCCESS
-// metadata, or the FAILURE code.
-func pullBatch(t *testing.T, conn net.Conn, n int64) (records [][]any, success map[string]any, failureCode string) {
+// pullBatch sends PULL with options and reads its records and summary: the
+// SUCCESS metadata, or the FAILURE code. It is the one PULL/read owner for
+// Bolt test statements; pullStatement adds the strict contract on top.
+func pullBatch(t *testing.T, conn net.Conn, options map[string]any) (records [][]any, success map[string]any, failureCode string) {
 	t.Helper()
-	requireNoError(t, SendPull(t, conn, map[string]any{"n": n}))
+	requireNoError(t, SendPull(t, conn, options))
 	return readBatch(t, conn)
 }
 
@@ -43,6 +45,18 @@ func readBatch(t *testing.T, conn net.Conn) (records [][]any, success map[string
 	}
 }
 
+// pullStatement sends PULL with options and requires the whole batch to
+// succeed: a FAILURE or IGNORED response fails the statement, as an
+// unexpected message does.
+func pullStatement(t *testing.T, conn net.Conn, options map[string]any) ([][]any, map[string]any) {
+	t.Helper()
+	records, metadata, failure := pullBatch(t, conn, options)
+	if failure != "" {
+		t.Fatalf("unexpected Bolt message for PULL %v: %s", options, failure)
+	}
+	return records, metadata
+}
+
 func sendDiscard(t *testing.T, conn net.Conn, n int64) {
 	t.Helper()
 	message := append([]byte{0xB1, MsgDiscard}, encodePackStreamMap(map[string]any{"n": n})...)
@@ -51,11 +65,11 @@ func sendDiscard(t *testing.T, conn net.Conn, n int64) {
 
 func lazyResultTestConn(t *testing.T, items int) net.Conn {
 	t.Helper()
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
-	_, port := startBoltIntegrationServer(t, store)
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 	if items > 0 {
-		runBoltQueryAndCollectRecords(t, conn, fmt.Sprintf("UNWIND range(0, %d) AS i CREATE (:Item {k: i})", items-1))
+		runBoltQueryWithParams(t, conn, fmt.Sprintf("UNWIND range(0, %d) AS i CREATE (:Item {k: i})", items-1), nil)
 	}
 	return conn
 }
@@ -82,13 +96,13 @@ func TestBoltLazyResultDeliversEveryRowInBatches(t *testing.T) {
 		}
 	}
 	for _, n := range []int64{10, 500, 1200} {
-		records, success, failure := pullBatch(t, conn, n)
+		records, success, failure := pullBatch(t, conn, map[string]any{"n": n})
 		if failure != "" || len(records) != int(n) || success["has_more"] != true {
 			t.Fatalf("PULL %d: %d records, %v, failure %q", n, len(records), success, failure)
 		}
 		collect(records)
 	}
-	records, success, failure := pullBatch(t, conn, -1)
+	records, success, failure := pullBatch(t, conn, map[string]any{"n": int64(-1)})
 	if failure != "" || success["has_more"] != nil || success["type"] != "r" {
 		t.Fatalf("last PULL: %v, failure %q", success, failure)
 	}
@@ -97,7 +111,7 @@ func TestBoltLazyResultDeliversEveryRowInBatches(t *testing.T) {
 		t.Fatalf("got %d distinct rows, want 3000", len(seen))
 	}
 	// The session takes the next statement.
-	if rows := runBoltQueryAndCollectRecords(t, conn, "RETURN 1 AS one"); len(rows) != 1 {
+	if rows := runBoltQueryWithParams(t, conn, "RETURN 1 AS one", nil); len(rows) != 1 {
 		t.Fatalf("next statement rows = %v", rows)
 	}
 }
@@ -110,16 +124,16 @@ func TestBoltLazyResultErrorFailsThePullThatReachesIt(t *testing.T) {
 	conn := lazyResultTestConn(t, 0)
 	requireNoError(t, SendRun(t, conn, "UNWIND range(1, 5000) AS i RETURN 10 / (i - 2000) AS x", nil, nil))
 	requireNoError(t, ReadSuccess(t, conn))
-	records, success, failure := pullBatch(t, conn, 1000)
+	records, success, failure := pullBatch(t, conn, map[string]any{"n": int64(1000)})
 	if failure != "" || len(records) != 1000 || success["has_more"] != true {
 		t.Fatalf("first PULL: %d records, %v, failure %q", len(records), success, failure)
 	}
-	records, _, failure = pullBatch(t, conn, 1000)
+	records, _, failure = pullBatch(t, conn, map[string]any{"n": int64(1000)})
 	if failure != "Neo.ClientError.Statement.ArithmeticError" || len(records) != 999 {
 		t.Fatalf("second PULL: %d records, failure %q", len(records), failure)
 	}
 	// Failed until RESET, as after any FAILURE.
-	_, _, failure = pullBatch(t, conn, 10)
+	_, _, failure = pullBatch(t, conn, map[string]any{"n": int64(10)})
 	if failure != "IGNORED" {
 		t.Fatalf("PULL after FAILURE = %q, want IGNORED", failure)
 	}
@@ -130,11 +144,11 @@ func TestBoltLazyResultErrorFailsThePullThatReachesIt(t *testing.T) {
 	// past them: RUN succeeds and the PULL asking past them fails.
 	requireNoError(t, SendRun(t, conn, "UNWIND range(1, 5000) AS i RETURN 10 / (i - 1001) AS x", nil, nil))
 	requireNoError(t, ReadSuccess(t, conn))
-	records, success, failure = pullBatch(t, conn, 1000)
+	records, success, failure = pullBatch(t, conn, map[string]any{"n": int64(1000)})
 	if failure != "" || len(records) != 1000 || success["has_more"] != true {
 		t.Fatalf("boundary first PULL: %d records, %v, failure %q", len(records), success, failure)
 	}
-	records, _, failure = pullBatch(t, conn, 1000)
+	records, _, failure = pullBatch(t, conn, map[string]any{"n": int64(1000)})
 	if failure != "Neo.ClientError.Statement.ArithmeticError" || len(records) != 0 {
 		t.Fatalf("boundary second PULL: %d records, failure %q", len(records), failure)
 	}
@@ -166,13 +180,13 @@ func TestBoltLazyResultEndsOnDiscardResetAndRun(t *testing.T) {
 	if _, success, failure := readBatch(t, conn); failure != "" || success["has_more"] != true {
 		t.Fatalf("DISCARD 2500: %v, failure %q", success, failure)
 	}
-	if records, success, failure := pullBatch(t, conn, -1); failure != "" || len(records) != 500 || success["has_more"] != nil {
+	if records, success, failure := pullBatch(t, conn, map[string]any{"n": int64(-1)}); failure != "" || len(records) != 500 || success["has_more"] != nil {
 		t.Fatalf("PULL after DISCARD: %d records, %v, failure %q", len(records), success, failure)
 	}
 
 	requireNoError(t, SendRun(t, conn, query, nil, nil))
 	requireNoError(t, ReadSuccess(t, conn))
-	if records, _, failure := pullBatch(t, conn, 10); failure != "" || len(records) != 10 {
+	if records, _, failure := pullBatch(t, conn, map[string]any{"n": int64(10)}); failure != "" || len(records) != 10 {
 		t.Fatalf("PULL before RESET: %d records, failure %q", len(records), failure)
 	}
 	requireNoError(t, SendReset(t, conn))
@@ -180,7 +194,7 @@ func TestBoltLazyResultEndsOnDiscardResetAndRun(t *testing.T) {
 
 	requireNoError(t, SendRun(t, conn, query, nil, nil))
 	requireNoError(t, ReadSuccess(t, conn))
-	rows := runBoltQueryAndCollectRecords(t, conn, "MATCH (n:Item) WHERE n.k < 3 RETURN n.k AS k ORDER BY k")
+	rows := runBoltQueryWithParams(t, conn, "MATCH (n:Item) WHERE n.k < 3 RETURN n.k AS k ORDER BY k", nil)
 	if len(rows) != 3 {
 		t.Fatalf("RUN after an unread lazy result: rows = %v", rows)
 	}
@@ -194,7 +208,7 @@ func TestBoltLazyResultLeavesOtherStatementsWhole(t *testing.T) {
 		"MATCH (n:Item) RETURN n.k AS k ORDER BY k",
 		"MATCH (n:Item) SET n.seen = true RETURN n.k AS k",
 	} {
-		rows := runBoltQueryAndCollectRecords(t, conn, query)
+		rows := runBoltQueryWithParams(t, conn, query, nil)
 		if len(rows) != 3000 {
 			t.Fatalf("%s: %d rows", query, len(rows))
 		}

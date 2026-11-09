@@ -15,7 +15,7 @@ import (
 // the macOS Swift File Indexer flows by parsing/planning them with EXPLAIN. This
 // avoids mutating storage while still exercising parser compatibility.
 func TestSwiftFileIndexerQueriesParseWithExplain(t *testing.T) {
-	t.Parallel()
+	// Not parallel: its subtests switch the process-wide parser.
 
 	store := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(store)
@@ -209,7 +209,7 @@ FOREACH (chunk IN chunks | DETACH DELETE chunk)
 // This intentionally executes (not EXPLAINs) SET clauses using reduce(...)
 // to catch cases where expressions are stored as literal strings.
 func TestSwiftFileIndexerTagQueriesExecuteReduceExpressions(t *testing.T) {
-	t.Parallel()
+	// Not parallel: its subtests switch the process-wide parser.
 
 	run := func(t *testing.T) {
 		t.Helper()
@@ -218,7 +218,7 @@ func TestSwiftFileIndexerTagQueriesExecuteReduceExpressions(t *testing.T) {
 		exec := NewStorageExecutor(store)
 		ctx := context.Background()
 
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("nornic:file-main-go"),
 			Labels: []string{"File", "Node"},
 			Properties: map[string]any{
@@ -267,12 +267,17 @@ RETURN f.file_tags as file_tags, f.tags as tags
 			assert.ElementsMatch(t, []interface{}{"File", "ws", "backend", "existing", "hello"}, tags)
 		}
 
-		node, err := store.GetNode(storage.NodeID("nornic:file-main-go"))
+		node, err := store.GetNode(t.Context(), storage.NodeID("nornic:file-main-go"))
 		require.NoError(t, err)
 		require.NotNil(t, node)
 		_, storedAsString := node.Properties["file_tags"].(string)
 		assert.False(t, storedAsString, "file_tags must not be stored as literal expression text")
-		storedFileTags, ok := node.Properties["file_tags"].([]interface{})
+		// Storage returns a list of strings as the typed slice its codec keeps.
+		var storedFileTags []interface{}
+		strs, ok := node.Properties["file_tags"].([]string)
+		for _, tag := range strs {
+			storedFileTags = append(storedFileTags, tag)
+		}
 		assert.True(t, ok, "stored file_tags should be list, got %T (%v)", node.Properties["file_tags"], node.Properties["file_tags"])
 		if ok {
 			assert.ElementsMatch(t, []interface{}{"existing", "hello"}, storedFileTags)

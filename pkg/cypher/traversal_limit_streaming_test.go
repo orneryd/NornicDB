@@ -14,12 +14,12 @@ type projectedTraversalCountingEngine struct {
 	startNodeVisits int
 }
 
-func (engine *projectedTraversalCountingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+func (engine *projectedTraversalCountingEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
 	reader, ok := engine.Engine.(storage.ProjectedLabelNodeReader)
 	if !ok {
 		return storage.ErrNotImplemented
 	}
-	return reader.StreamNodesByLabelProjected(label, properties, func(node *storage.Node) error {
+	return reader.StreamNodesByLabelProjected(ctx, label, properties, func(node *storage.Node) error {
 		engine.startNodeVisits++
 		return visit(node)
 	})
@@ -30,7 +30,7 @@ func TestTraversalLimitStopsStreamingStartNodes(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "traversal")
 	for index := 0; index < 40; index++ {
 		id := storage.NodeID(fmt.Sprintf("person-%02d", index))
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:         id,
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": string(id)},
@@ -38,7 +38,7 @@ func TestTraversalLimitStopsStreamingStartNodes(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for index := 0; index < 40; index++ {
-		err := store.CreateEdge(&storage.Edge{
+		err := store.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("knows-%02d", index)),
 			StartNode: storage.NodeID(fmt.Sprintf("person-%02d", index)),
 			EndNode:   storage.NodeID(fmt.Sprintf("person-%02d", (index+1)%40)),
@@ -53,14 +53,14 @@ func TestTraversalLimitStopsStreamingStartNodes(t *testing.T) {
 	require.Len(t, result.Rows, 2)
 	require.Equal(t, 2, probe.startNodeVisits, "LIMIT should stop the start-node scan after two matching anchors")
 
-	tx, err := base.BeginTransaction()
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	txStore := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "traversal", separator: ":"}
 	txProbe := &projectedTraversalCountingEngine{Engine: txStore}
 	txResult, err := NewStorageExecutor(txProbe).executeMatchWithRelationshipsWithPathSeeded(
 		context.Background(), "(a:Person)-[:KNOWS]->(b:Person)", "",
-		[]returnItem{{expr: "a.name"}, {expr: "b.name"}}, nil, nil, "", nil, 2,
+		[]returnItem{{expr: "a.name"}, {expr: "b.name"}}, nil, nil, nil, "", nil, 2,
 	)
 	require.NoError(t, err)
 	require.Len(t, txResult.Rows, 2)

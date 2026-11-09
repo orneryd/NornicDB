@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -8,38 +9,89 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-func (b *BadgerEngine) ensureOpen() error {
+// ensureOpen rejects a closed engine; write admission also rejects Close in progress.
+func (b *BadgerEngine) ensureOpen(writing bool) error {
 	b.mu.RLock()
-	closed := b.closed
-	b.mu.RUnlock()
-	if closed {
+	defer b.mu.RUnlock()
+	return b.ensureOpenLocked(writing)
+}
+
+// ensureOpenLocked is the same decider for a caller that already holds b.mu:
+// reads (writing false) are refused once the owner sealed admission, writes
+// already once Close began. It is the engine's one reader of its owner's
+// sealed phase outside Close. Author: NOR-288 lane (Claude), 2026-10-30.
+func (b *BadgerEngine) ensureOpenLocked(writing bool) error {
+	if b.work.Closing() || (writing && b.closing) {
 		return ErrStorageClosed
 	}
 	return nil
 }
 
-// beginWrite marks a durable write in flight so Close waits for it before
-// releasing engine state. It returns the release func the caller must defer,
+// beginBarrierWrite marks a durable write in flight so Close waits for it before
+// releasing engine state. It returns a stack lease the caller must release,
 // or ErrStorageClosed when the engine has already closed (the caller must
 // not touch Badger in that case). The closed check runs under the barrier so
 // a Close that has completed is always observed and a Close that has not
 // started yet cannot slip in between the check and the write.
-func (b *BadgerEngine) beginWrite() (func(), error) {
-	b.writeBarrier.RLock()
-	if err := b.ensureOpen(); err != nil {
-		b.writeBarrier.RUnlock()
-		return nil, err
+func (b *BadgerEngine) beginBarrierWrite(ctx context.Context, exclusive bool, publication bool) (writeBarrierLease, error) {
+	lease := writeBarrierLease{engine: b, exclusive: exclusive}
+	lease.embeddingDelivery, _ = ctx.Value(embeddingDeliveryKey{}).(*embeddingDelivery)
+	var err error
+	if exclusive {
+		err = b.writeBarrier.LockContext(ctx)
+	} else {
+		err = b.writeBarrier.RLockContext(ctx)
 	}
-	return b.writeBarrier.RUnlock, nil
+	if err != nil {
+		return writeBarrierLease{}, err
+	}
+	if err := b.ensureOpen(true); err != nil {
+		lease.release()
+		return writeBarrierLease{}, err
+	}
+	if publication {
+		lease.held = b.holdPublication()
+	}
+	return lease, nil
 }
 
-func (b *BadgerEngine) beginSchemaWrite() (func(), error) {
-	b.writeBarrier.Lock()
-	if err := b.ensureOpen(); err != nil {
-		b.writeBarrier.Unlock()
-		return nil, err
+// writeBarrierLease retains admission on the writer's stack. A function value
+// is needed only when a transaction stores its release for publication.
+type writeBarrierLease struct {
+	engine            *BadgerEngine
+	exclusive         bool
+	held              *commitNotification
+	embeddingDelivery *embeddingDelivery
+}
+
+func (lease writeBarrierLease) release() {
+	if lease.exclusive {
+		lease.engine.writeBarrier.Unlock()
+	} else {
+		lease.engine.writeBarrier.RUnlock()
 	}
-	return b.writeBarrier.Unlock, nil
+}
+
+// releaseCallback returns the mutex's existing bound method when a transaction
+// must keep admission through publication. Capturing the whole lease would
+// retain its unused notification state in every transaction's callback.
+func (lease writeBarrierLease) releaseCallback() func() {
+	if lease.exclusive {
+		return lease.engine.writeBarrier.Unlock
+	}
+	return lease.engine.writeBarrier.RUnlock
+}
+
+// finish releases lifecycle admission before delivering its publication hold.
+// Plain release remains available to transactions that deliver notifications
+// separately after all of their other locks have been released.
+func (lease writeBarrierLease) finish() {
+	lease.release()
+	if lease.embeddingDelivery != nil && lease.held != nil {
+		lease.embeddingDelivery.completions = append(lease.embeddingDelivery.completions, func() { lease.engine.completeCommitNotification(lease.held) })
+		return
+	}
+	lease.engine.completeCommitNotification(lease.held)
 }
 
 func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
@@ -47,39 +99,81 @@ func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
 	if err != nil {
 		return err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 	return recoverBadgerClosedPanic(func() error {
 		return db.View(fn)
 	})
 }
 
+// beginHelperTxn admits one helper as the engine owner's accepted work, without
+// allocating. The helper calls b.work.Leave on its actual return; Close's
+// retirement waits for it.
 func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if b.closed {
+	if !b.work.Enter() {
 		return nil, ErrStorageClosed
 	}
-	b.txnWG.Add(1)
 	return b.db, nil
+}
+
+// updateRequest carries what a withUpdate caller knows about its write before
+// the callback runs: the cache scope its writes belong to and whether it
+// writes metadata only. The owning context is withUpdate's first argument, so
+// every call site states the phase its write runs in exactly once. It never
+// carries the written entities; those stay the trailing variadic argument, so
+// a literal entity list at the call site remains the static proof that the
+// write is ordered.
+type updateRequest struct {
+	scope    cacheWriteScope
+	metadata bool
 }
 
 // withUpdate runs fn as one atomic engine write, committed through the same
 // commit writer as a transaction. fn reads and writes in one Badger
 // transaction and cannot be repeated, so its writes must fit one Badger
 // batch (badger.ErrTxnTooBig otherwise); writes of any size go through
-// withUpdateUnits.
-func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
-	return b.commitEngineWrite(func(cw *commitWriter) error { return cw.writeOnce(fn) })
+// commitEngineWrite repeatable units. Optional entities acquire their write-behind order first;
+// their notifications are delivered only after that order is released. ctx is
+// the write's owning phase, required: a context-free caller establishes its
+// own explicit root at its entry instead of leaving this helper to guess one.
+func (b *BadgerEngine) withUpdate(ctx context.Context, request updateRequest, fn func(txn *badger.Txn) error, entities ...writtenEntities) error {
+	if len(entities) > 0 && b.writeBehind != nil {
+		var order orderHold
+		if _, err := b.orderAfterBufferedCommits(ctx, &order, entities[0]); err != nil {
+			return err
+		}
+		defer b.drainCommitNotifications()
+		defer order.release()
+	}
+	scope, metadata := request.scope, request.metadata
+	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
+		cw.declaredCache, cw.metadata = &scope, metadata
+		return fn(cw.txn)
+	})
 }
 
-// withUpdateUnits commits units as one atomic engine write of any size. Each
-// unit is a repeatable group of blind writes: when one does not fit the open
-// Badger batch, the commit becomes a large commit and the unit is repeated in
-// the next batch, and nothing is visible until every unit is written (#703).
-func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) error {
-	return b.commitEngineWrite(func(cw *commitWriter) error {
-		for _, unit := range units {
-			if err := cw.write(unit); err != nil {
+// withPublishingUpdate binds a memory-only delta to the existing atomic writer.
+// keys reads the prior/written images captured by fn, after fn succeeds.
+func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger.Txn) error, publish func(*commitCacheImages), keys func(context.Context) ([]any, error), notification *commitNotification, operations *[]Operation, stages ...func(*commitWriter) error) error {
+	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
+		cw.notification = notification
+		if err := fn(cw.txn); err != nil {
+			return err
+		}
+		cw.publish = publish
+		if keys != nil {
+			var err error
+			cw.publishKeys, err = keys(ctx)
+			if err != nil {
+				return err
+			}
+		}
+		if operations != nil {
+			cw.entityOperations = *operations
+		}
+		for _, stage := range stages {
+			if err := stage(cw); err != nil {
 				return err
 			}
 		}
@@ -87,8 +181,12 @@ func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) erro
 	})
 }
 
-// commitEngineWrite is the one commit of the engine's own writes (withUpdate,
-// withUpdateUnits): write fills the commit writer, which then commits. A
+type engineWriteOptions struct {
+	units     []func(*badger.Txn) error
+	lifecycle *lifecycleWrite
+}
+
+// commitEngineWrite is the one commit of the engine's own writes (withUpdate callbacks or repeatable units): write fills the commit writer, which then commits. A
 // failure rolls back any batches a large commit already wrote.
 //
 // Property-key tokens are made durable before the entity bytes that
@@ -96,20 +194,37 @@ func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) erro
 // matching Neo4j's token-before-entity invariant), and the numeric-ID
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
-func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) error {
+func (b *BadgerEngine) commitEngineWrite(ctx context.Context, write func(cw *commitWriter) error, options ...engineWriteOptions) error {
+	var option engineWriteOptions
+	if len(options) > 0 {
+		option = options[0]
+	}
+	if option.lifecycle != nil && (option.lifecycle.b != b || !option.lifecycle.suppressions) {
+		return ErrInvalidData
+	}
 	db, err := b.beginHelperTxn()
 	if err != nil {
 		return err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 	var nodeMax, edgeMax uint64
 	err = recoverBadgerClosedPanic(func() error {
-		txn, readTs, err := db.beginTxn(true)
+		var txn *badger.Txn
+		var readTs uint64
+		if option.lifecycle != nil {
+			readTs = db.oracle.beginReadHeld()
+			txn = db.newTxnAt(readTs, true)
+		} else {
+			txn, readTs, err = db.beginTxn(true)
+		}
 		if err != nil {
 			return err
 		}
 		defer db.endRead(readTs)
-		cw := b.newCommitWriter(db, txn)
+		// Every version the write reserves under txn is published with its
+		// commit, or abandoned with its failure.
+		defer b.mvccReservations.publishTxn(txn)
+		cw := b.newCommitWriter(ctx, db, txn)
 		defer cw.discard()
 		fail := func(err error) error {
 			b.idDict.discardTxnCounters(cw.txn)
@@ -119,8 +234,18 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) err
 			}
 			return err
 		}
-		if err := write(cw); err != nil {
-			return fail(err)
+		var writeErr error
+		if option.units != nil {
+			for _, unit := range option.units {
+				if writeErr = cw.write(cw.ctx, unit); writeErr != nil {
+					break
+				}
+			}
+		} else {
+			writeErr = write(cw)
+		}
+		if writeErr != nil {
+			return fail(writeErr)
 		}
 		nodeMax, edgeMax = b.idDict.flushTxnCounters(cw.txn)
 		committing := cw.txn

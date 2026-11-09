@@ -1,16 +1,20 @@
 package cypher
 
-import "strings"
+import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // validateStaticMapKeys rejects malformed symbolic map keys before either
 // parser frontend or executor can normalize them. Braces without a top-level
 // key/value separator are ignored because they may delimit a subquery.
-func validateStaticMapKeys(query string) error {
+func validateStaticMapKeys(ctx context.Context, query string) error {
 	upper := upperASCII(strings.TrimSpace(query))
-	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(query, "OPTIONS") >= 0 {
+	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(ctx, query, "OPTIONS") >= 0 {
 		return nil
 	}
-	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && findKeywordIndex(query, "REQUIRE") >= 0 {
+	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && findKeywordIndex(ctx, query, "REQUIRE") >= 0 {
 		return nil
 	}
 	var patternContext *mapPatternContext
@@ -18,8 +22,8 @@ func validateStaticMapKeys(query string) error {
 	// zero for each brace makes a flat list of ordinary maps quadratic.
 	lastLive := -1
 	for index := 0; index < len(query); index++ {
-		if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
-			index = numericValidationSkipQuoted(query, index) - 1
+		if isCypherQuoteByte(query[index]) {
+			index = skipCypherQuotedText(query, index, query[index]) - 1
 			lastLive = index
 			continue
 		}
@@ -41,8 +45,8 @@ func validateStaticMapKeys(query string) error {
 		if subqueryExpressionAfterLiveByte(query, index, previous) {
 			// Validate in the nearest statement scope: an outer RETURN must
 			// not turn a nested MATCH property map into a map projection.
-			if close := findMatchingDelimiter(query, index, '{', '}'); close >= 0 {
-				if err := validateStaticMapKeys(query[index+1 : close]); err != nil {
+			if close := cyphertext.FindMatchingDelimiter(query, index, '{', '}', cyphertext.OpeningDelimiter); close >= 0 {
+				if err := validateStaticMapKeys(ctx, query[index+1:close]); err != nil {
 					return err
 				}
 				index = close
@@ -55,16 +59,25 @@ func validateStaticMapKeys(query string) error {
 		if quantifiedGroupQuantifierAt(query, index) {
 			continue
 		}
-		close := findMatchingDelimiter(query, index, '{', '}')
+		close := cyphertext.FindMatchingDelimiter(query, index, '{', '}', cyphertext.OpeningDelimiter)
 		if close < 0 {
 			continue
 		}
-		parts := splitTopLevelComma(query[index+1 : close])
+		parts := splitTopLevelCommaKeepEmpty(query[index+1 : close])
 		mapLiteral := false
+		projection := false
 		for _, part := range parts {
 			if findTopLevelMapKeyValueSeparator(part) >= 0 {
 				mapLiteral = true
-				break
+			}
+			_, selector := mapProjectionPropertySelector(strings.TrimSpace(part))
+			projection = projection || selector || strings.TrimSpace(part) == ".*"
+		}
+		if mapLiteral || projection {
+			for _, part := range parts {
+				if strings.TrimSpace(part) == "" {
+					return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "map entries cannot be empty")
+				}
 			}
 		}
 		if !mapLiteral {
@@ -74,7 +87,7 @@ func validateStaticMapKeys(query string) error {
 			if patternContext == nil {
 				patternContext = newMapPatternContext(query)
 			}
-			if patternContext.insidePatternDelimiter(query, index) && !inProjectionClause(query, index) {
+			if patternContext.insidePatternDelimiter(ctx, query, index) && !inProjectionClause(ctx, query, index) {
 				return newSemanticError(
 					"Neo.ClientError.Statement.SyntaxError",
 					"UnexpectedSyntax",
@@ -149,17 +162,17 @@ func subqueryExpressionAfterLiveByte(query string, braceIndex, index int) bool {
 			return false
 		}
 		index--
-		for index >= 0 && isCypherWhitespace(query[index]) {
+		for index >= 0 && cyphertext.IsWhitespaceAt(query, index) {
 			index--
 		}
 		wordEnd := index + 1
-		for index >= 0 && isIdentByte(query[index]) {
+		for index >= 0 && cyphertext.NamePartAt(query, index) {
 			index--
 		}
 		return strings.EqualFold(query[index+1:wordEnd], "CALL")
 	}
 	end := index + 1
-	for index >= 0 && isIdentByte(query[index]) {
+	for index >= 0 && cyphertext.NamePartAt(query, index) {
 		index--
 	}
 	start := index + 1
@@ -172,21 +185,19 @@ func subqueryExpressionAfterLiveByte(query string, braceIndex, index int) bool {
 // subqueryExpressionKeywordBeforeBrace validates a known keyword token and its
 // brace without rescanning its prefix when the forward reader already found it.
 func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex int) bool {
-	switch upperASCII(query[start:end]) {
-	case "EXISTS", "COUNT", "COLLECT", "CALL":
-	default:
+	if !queryBodyContainerKeyword(query[start:end]) {
 		return false
 	}
 	precedingToken := start - 1
-	for precedingToken >= 0 && isCypherWhitespace(query[precedingToken]) {
+	for precedingToken >= 0 && cyphertext.IsWhitespaceAt(query, precedingToken) {
 		precedingToken--
 	}
 	if precedingToken >= 0 {
-		switch query[precedingToken] {
-		case '`':
-			// Backtick-quoted identifier (`` `count` {bad} ``), never the
-			// keyword.
+		if isCypherBacktickByte(query[precedingToken]) {
+			// Backtick-quoted identifier (`count` {bad}), never the keyword.
 			return false
+		}
+		switch query[precedingToken] {
 		case ':':
 			// Label/type name (`:Count {bad}`), unless the colon separates
 			// a map key from its value ({k: COUNT { … }}).
@@ -205,7 +216,7 @@ func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex i
 func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 	index := braceIndex + 1
 	for index < len(query) {
-		if isCypherWhitespace(query[index]) {
+		if cyphertext.IsWhitespaceAt(query, index) {
 			index++
 			continue
 		}
@@ -224,9 +235,7 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 		return true
 	}
 	start := index
-	for index < len(query) && isIdentByte(query[index]) {
-		index++
-	}
+	index = cyphertext.NamePartEnd(query, index)
 	if index == start {
 		return false
 	}
@@ -235,24 +244,23 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 		return false
 	}
 
+	// Any clause opens a body, an update clause too: EXISTS { CREATE () } is
+	// a body Neo4j rejects for its update, not a map.
 	switch upperASCII(query[start:index]) {
-	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN", "ORDER", "LIMIT", "SKIP", "OFFSET":
+	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN", "ORDER", "LIMIT", "SKIP", "OFFSET",
+		"CREATE", "MERGE", "DELETE", "DETACH", "NODETACH", "SET", "REMOVE", "FOREACH", "USE", "LET", "FILTER", "FINISH", "LOAD":
 		return true
 	default:
 		return false
 	}
 }
 
-func isCypherWhitespace(c byte) bool {
-	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
-}
-
 // inProjectionClause reports whether position lies in a RETURN, WITH, UNWIND
 // or SET clause, where parentheses group an expression, such as a map
 // projection (n {.k}).k, rather than delimit a node pattern.
-func inProjectionClause(query string, position int) bool {
+func inProjectionClause(ctx context.Context, query string, position int) bool {
 
-	switch mapClauseBefore(query[:position]) {
+	switch mapClauseBefore(ctx, query[:position]) {
 	case "RETURN", "WITH", "UNWIND", "SET":
 		return true
 	}
@@ -260,25 +268,10 @@ func inProjectionClause(query string, position int) bool {
 }
 
 func validMapLiteralKey(key string) bool {
-	if isValidIdentifier(key) {
+	if _, ok := isOneSymbolicName(key); ok {
 		return true
 	}
-	if isWholeCypherQuotedString(key) {
-		return true
-	}
-	if len(key) < 2 || key[0] != '`' || key[len(key)-1] != '`' {
-		return false
-	}
-	for index := 1; index < len(key)-1; index++ {
-		if key[index] != '`' {
-			continue
-		}
-		if index+1 >= len(key)-1 || key[index+1] != '`' {
-			return false
-		}
-		index++
-	}
-	return true
+	return isWholeCypherQuotedString(key)
 }
 
 func undefinedStandaloneMapValue(expression string) string {
@@ -292,7 +285,7 @@ func undefinedStandaloneMapValue(expression string) string {
 			continue
 		}
 		value := strings.TrimSpace(part[separator+1:])
-		if isValidIdentifier(value) && !strings.EqualFold(value, "null") &&
+		if cyphertext.IsIdentifier(value) && !strings.EqualFold(value, "null") &&
 			!strings.EqualFold(value, "true") && !strings.EqualFold(value, "false") {
 			return value
 		}
@@ -306,29 +299,22 @@ func undefinedStandaloneMapValue(expression string) string {
 // colonIsMapKeySeparator reports whether the ':' at colon follows a map key
 // ({key: …} or {…, key: …}) rather than a variable or label in a pattern.
 func colonIsMapKeySeparator(query string, colon int) bool {
-	index := colon - 1
-	for index >= 0 && isCypherWhitespace(query[index]) {
-		index--
+	if colon <= 0 || colon > len(query) {
+		return false
 	}
-	if index >= 0 && query[index] == '`' {
-		index--
-		for index >= 0 && query[index] != '`' {
-			index--
+	// Test every possible entry boundary. Delimiter-looking bytes inside
+	// strings, comments or quoted names cannot win: the shared symbolic-name
+	// reader must consume the complete candidate between boundary and colon.
+	for boundary := colon - 1; boundary >= 0; boundary-- {
+		if query[boundary] != '{' && query[boundary] != ',' {
+			continue
 		}
-		index--
-	} else {
-		end := index
-		for index >= 0 && isIdentByte(query[index]) {
-			index--
-		}
-		if index == end {
-			return false
+		candidate := strings.TrimSpace(StripComments(query[boundary+1 : colon]))
+		if _, ok := isOneSymbolicName(candidate); ok {
+			return true
 		}
 	}
-	for index >= 0 && isCypherWhitespace(query[index]) {
-		index--
-	}
-	return index >= 0 && (query[index] == '{' || query[index] == ',')
+	return false
 }
 
 // subqueryBraceScanner retains lexical progress across increasing brace offsets.
@@ -349,7 +335,7 @@ func (scanner *subqueryBraceScanner) at(brace int) bool {
 	for scanner.position < brace {
 		i := scanner.position
 		c := scanner.query[i]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			scanner.position = skipCypherQuotedText(scanner.query, i, c)
 			scanner.lastLive = scanner.position - 1
 			continue

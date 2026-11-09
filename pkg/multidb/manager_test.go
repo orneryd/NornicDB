@@ -1,49 +1,28 @@
 package multidb
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestDatabaseManager_DefaultConfig(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Default database should be "nornic"
-	assert.Equal(t, "nornic", manager.DefaultDatabaseName())
-
-	// System database should exist
-	assert.True(t, manager.Exists("system"))
-
-	// Default database should exist
-	assert.True(t, manager.Exists("nornic"))
-
-	// Default database should be marked as default
-	info, err := manager.GetDatabase("nornic")
-	require.NoError(t, err)
-	assert.True(t, info.IsDefault)
-	assert.Equal(t, "standard", info.Type)
-	assert.Equal(t, "online", info.Status)
-}
-
 func TestDatabaseManagerPersistentIdentity(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, inner.Close()) })
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
-	require.NoError(t, manager.CreateDatabase("identity_test"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "identity_test"}))
 	metadata := func() (*storage.Node, map[string]map[string]interface{}) {
-		node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+		node, err := storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 		require.NoError(t, err)
 		var databases map[string]map[string]interface{}
 		require.NoError(t, json.Unmarshal([]byte(node.Properties["data"].(string)), &databases))
@@ -66,14 +45,14 @@ func TestDatabaseManagerPersistentIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, createdAt.IsZero())
 	require.WithinDuration(t, node.CreatedAt, createdAt, time.Second)
-	reloaded, err := NewDatabaseManager(inner, nil)
+	reloaded, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	nextNode, nextDatabases := metadata()
 	require.Equal(t, serverID, nextNode.Properties["server_id"])
 	require.Equal(t, node.Properties["server_created_at"], nextNode.Properties["server_created_at"])
 	require.Equal(t, databaseID, nextDatabases["identity_test"]["id"])
-	require.NoError(t, reloaded.DropDatabase("identity_test"))
-	require.NoError(t, reloaded.CreateDatabase("identity_test"))
+	require.NoError(t, reloaded.DropDatabase(t.Context(), "identity_test"))
+	require.NoError(t, reloaded.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "identity_test"}))
 	nextNode, nextDatabases = metadata()
 	require.Equal(t, serverID, nextNode.Properties["server_id"])
 	require.NotEqual(t, databaseID, nextDatabases["identity_test"]["id"])
@@ -86,12 +65,12 @@ type identityReadOnlyEngine struct {
 func (e *identityReadOnlyEngine) IsLeader() bool { return false }
 
 func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, inner.Close()) })
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	engine := storage.NewNamespacedEngine(inner, "system")
-	node, err := engine.GetNode(storage.NodeID(metadataNodeID))
+	node, err := engine.GetNode(t.Context(), storage.NodeID(metadataNodeID))
 	require.NoError(t, err)
 	var databases map[string]map[string]interface{}
 	require.NoError(t, json.Unmarshal([]byte(node.Properties["data"].(string)), &databases))
@@ -103,16 +82,16 @@ func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
 	node.Properties["data"] = string(data)
 	delete(node.Properties, "server_id")
 	delete(node.Properties, "server_created_at")
-	require.NoError(t, engine.UpdateNode(node))
-	standby, err := NewDatabaseManager(&identityReadOnlyEngine{Engine: inner}, nil)
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
+	standby, err := NewDatabaseManager(t.Context(), &identityReadOnlyEngine{Engine: inner}, nil)
 	require.NoError(t, err)
 	serverID, createdAt := standby.ServerIdentity()
 	require.Empty(t, serverID)
 	require.Equal(t, node.CreatedAt.UTC(), createdAt.UTC())
-	unchanged, err := engine.GetNode(storage.NodeID(metadataNodeID))
+	unchanged, err := engine.GetNode(t.Context(), storage.NodeID(metadataNodeID))
 	require.NoError(t, err)
 	require.Equal(t, node.Properties, unchanged.Properties)
-	upgraded, err := NewDatabaseManager(inner, nil)
+	upgraded, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	serverID, createdAt = upgraded.ServerIdentity()
 	require.NotEmpty(t, serverID)
@@ -125,49 +104,80 @@ func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
 	id, unknownCreatedAt := upgraded.DatabaseIdentity("missing")
 	require.Empty(t, id)
 	require.True(t, unknownCreatedAt.IsZero())
-	reloaded, err := NewDatabaseManager(&identityReadOnlyEngine{Engine: inner}, nil)
+	reloaded, err := NewDatabaseManager(t.Context(), &identityReadOnlyEngine{Engine: inner}, nil)
 	require.NoError(t, err)
 	actualID, actualCreatedAt := reloaded.ServerIdentity()
 	require.Equal(t, serverID, actualID)
 	require.Equal(t, createdAt.UTC(), actualCreatedAt.UTC())
-	node, err = engine.GetNode(storage.NodeID(metadataNodeID))
+	node, err = engine.GetNode(t.Context(), storage.NodeID(metadataNodeID))
 	require.NoError(t, err)
 	node.Properties["server_created_at"] = "not-a-date"
-	require.NoError(t, engine.UpdateNode(node))
-	_, err = NewDatabaseManager(inner, nil)
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
+	_, err = NewDatabaseManager(t.Context(), inner, nil)
 	require.Error(t, err)
 }
 
-func TestDatabaseManager_CustomConfig(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
+// TestDatabaseManager_ConfigCatalogFixture preserves the original independent
+// default and custom constructor fixtures and every assertion each made: the
+// nil default config yields the built-in nornic/system catalog, while the exact
+// custom config yields customdb/system with its own default-database metadata.
+func TestDatabaseManager_ConfigCatalogFixture(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		config    *Config
+		wantName  string
+		wantDBs   []string
+		assertion func(t *testing.T, manager *DatabaseManager)
+	}{
+		{
+			name:     "TestDatabaseManager_DefaultConfig",
+			config:   nil,
+			wantName: "nornic",
+			wantDBs:  []string{"system", "nornic"},
+			assertion: func(t *testing.T, manager *DatabaseManager) {
+				info, err := manager.GetDatabase("nornic")
+				require.NoError(t, err)
+				assert.True(t, info.IsDefault)
+				assert.Equal(t, "standard", info.Type)
+				assert.Equal(t, "online", info.Status)
+			},
+		},
+		{
+			name:     "TestDatabaseManager_CustomConfig",
+			config:   &Config{DefaultDatabase: "customdb", SystemDatabase: "system", MaxDatabases: 10, AllowDropDefault: false},
+			wantName: "customdb",
+			wantDBs:  []string{"customdb", "system"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			defer inner.Close()
 
-	config := &Config{
-		DefaultDatabase:  "customdb",
-		SystemDatabase:   "system",
-		MaxDatabases:     10,
-		AllowDropDefault: false,
+			manager, err := NewDatabaseManager(t.Context(), inner, test.config)
+			require.NoError(t, err)
+			defer manager.Close()
+
+			assert.Equal(t, test.wantName, manager.DefaultDatabaseName())
+			for _, database := range test.wantDBs {
+				assert.True(t, manager.Exists(database), "expected database %q to exist", database)
+			}
+			if test.assertion != nil {
+				test.assertion(t, manager)
+			}
+		})
 	}
-
-	manager, err := NewDatabaseManager(inner, config)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	assert.Equal(t, "customdb", manager.DefaultDatabaseName())
-	assert.True(t, manager.Exists("customdb"))
-	assert.True(t, manager.Exists("system"))
 }
 
 func TestDatabaseManager_CreateDatabase(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
 	// Create a new database
-	err = manager.CreateDatabase("tenant_a")
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"})
 	require.NoError(t, err)
 
 	// Verify it exists
@@ -181,57 +191,45 @@ func TestDatabaseManager_CreateDatabase(t *testing.T) {
 	assert.Equal(t, "online", info.Status)
 	assert.False(t, info.IsDefault)
 
+	// Duplicate admission shares the same created database and must not replace it.
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"})
+	assert.Error(t, err)
+	assert.Equal(t, ErrDatabaseExists, err)
+
 	// Create another database
-	err = manager.CreateDatabase("tenant_b")
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_b"})
 	require.NoError(t, err)
 	assert.True(t, manager.Exists("tenant_b"))
 }
 
-func TestDatabaseManager_CreateDatabase_Duplicate(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	err = manager.CreateDatabase("tenant_a")
-	require.NoError(t, err)
-
-	// Try to create duplicate
-	err = manager.CreateDatabase("tenant_a")
-	assert.Error(t, err)
-	assert.Equal(t, ErrDatabaseExists, err)
-}
-
 func TestDatabaseManagerDropClearsLimitChecker(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	manager, err := NewDatabaseManager(inner, nil)
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
-	require.NoError(t, manager.CreateDatabase("tenant"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant"}))
 
 	_, err = manager.GetStorage("tenant")
 	require.NoError(t, err)
 	first := manager.limitCheckers["tenant"]
 	require.NotNil(t, first)
-	require.NoError(t, manager.DropDatabase("tenant"))
+	require.NoError(t, manager.DropDatabase(t.Context(), "tenant"))
 	require.NotContains(t, manager.limitCheckers, "tenant")
 
-	require.NoError(t, manager.CreateDatabase("tenant"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant"}))
 	_, err = manager.GetStorage("tenant")
 	require.NoError(t, err)
 	require.NotSame(t, first, manager.limitCheckers["tenant"])
 }
 
 func TestResolveConnectionLimitOwner(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	manager, err := NewDatabaseManager(inner, nil)
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
-	require.NoError(t, manager.CreateDatabase("tenant"))
-	require.NoError(t, manager.CreateAlias("tenant-alias", "tenant"))
-	require.NoError(t, manager.CreateCompositeDatabase("fabric", []ConstituentRef{{
+	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant"}))
+	require.NoError(t, manager.CreateAlias(t.Context(), "tenant-alias", "tenant"))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "fabric", []ConstituentRef{{
 		Alias: "part", DatabaseName: "tenant", Type: "local", AccessMode: "read_write",
 	}}))
 
@@ -244,69 +242,55 @@ func TestResolveConnectionLimitOwner(t *testing.T) {
 }
 
 func TestDatabaseManagerStorageEnforcesRuntimeLimitReplacement(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
 
 	limits := &Limits{Storage: StorageLimits{MaxNodes: 1}}
-	require.NoError(t, manager.SetDatabaseLimits("nornic", limits))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "nornic", limits))
 	limits.Storage.MaxNodes = 100
 
 	engine, err := manager.GetStorage("nornic")
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "first"})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "first"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "blocked"})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "blocked"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 
-	require.NoError(t, manager.SetDatabaseLimits("nornic", &Limits{Storage: StorageLimits{MaxNodes: 2}}))
-	_, err = engine.CreateNode(&storage.Node{ID: "second"})
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "nornic", &Limits{Storage: StorageLimits{MaxNodes: 2}}))
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "second"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "still-blocked"})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "still-blocked"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 }
 
 func TestDatabaseManagerStorageEnforcesMaxBytesUpdateDelta(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
 
 	engine, err := manager.GetStorage("nornic")
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "node", Properties: map[string]any{"value": "small"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "node", Properties: map[string]any{"value": "small"}})
 	require.NoError(t, err)
-	currentBytes, _, _ := manager.GetStorageSize("nornic")
+	currentBytes, _, _ := manager.GetStorageSize(context.Background(), "nornic")
 	require.Positive(t, currentBytes)
-	require.NoError(t, manager.SetDatabaseLimits("nornic", &Limits{Storage: StorageLimits{MaxBytes: currentBytes + 32}}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "nornic", &Limits{Storage: StorageLimits{MaxBytes: currentBytes + 32}}))
 
-	err = engine.UpdateNode(&storage.Node{ID: "node", Properties: map[string]any{"value": string(make([]byte, 4096))}})
+	err = engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "node", Properties: map[string]any{"value": string(make([]byte, 4096))}}})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 
-	stored, err := engine.GetNode("node")
+	stored, err := engine.GetNode(t.Context(), "node")
 	require.NoError(t, err)
 	require.Equal(t, "small", stored.Properties["value"])
 }
 
-func TestDatabaseManager_CreateDatabase_InvalidName(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Empty name should fail
-	err = manager.CreateDatabase("")
-	assert.Error(t, err)
-	assert.Equal(t, ErrInvalidDatabaseName, err)
-}
-
 func TestDatabaseManager_CreateDatabase_MaxLimit(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	config := &Config{
@@ -315,304 +299,129 @@ func TestDatabaseManager_CreateDatabase_MaxLimit(t *testing.T) {
 		MaxDatabases:    3, // system + nornic + 1 more
 	}
 
-	manager, err := NewDatabaseManager(inner, config)
+	manager, err := NewDatabaseManager(t.Context(), inner, config)
 	require.NoError(t, err)
 	defer manager.Close()
 
 	// Create one more (should succeed)
-	err = manager.CreateDatabase("tenant_a")
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"})
 	require.NoError(t, err)
 
 	// Try to create another (should fail)
-	err = manager.CreateDatabase("tenant_b")
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_b"})
 	assert.Error(t, err)
 	assert.Equal(t, ErrMaxDatabasesReached, err)
 }
 
-func TestDatabaseManager_DropDatabase(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Create database
-	err = manager.CreateDatabase("tenant_a")
-	require.NoError(t, err)
-
-	// Add some data to the database
-	store, err := manager.GetStorage("tenant_a")
-	require.NoError(t, err)
-
-	node := &storage.Node{
-		ID:     storage.NodeID("test-node"),
-		Labels: []string{"Test"},
-		Properties: map[string]any{
-			"name": "test",
-		},
-	}
-	_, err = store.CreateNode(node)
-	require.NoError(t, err)
-
-	// Drop database
-	err = manager.DropDatabase("tenant_a")
-	require.NoError(t, err)
-
-	// Verify it's gone
-	assert.False(t, manager.Exists("tenant_a"))
-
-	// Verify data is deleted (try to get storage - should fail)
-	_, err = manager.GetStorage("tenant_a")
-	assert.Error(t, err)
-	assert.Equal(t, ErrDatabaseNotFound, err)
-}
-
-func TestDatabaseManager_DropDatabase_NotFound(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	err = manager.DropDatabase("nonexistent")
-	assert.Error(t, err)
-	assert.Equal(t, ErrDatabaseNotFound, err)
-}
-
-func TestDatabaseManager_DropDatabase_System(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Cannot drop system database
-	err = manager.DropDatabase("system")
-	assert.Error(t, err)
-	assert.Equal(t, ErrCannotDropSystemDB, err)
-}
-
 func TestDatabaseManager_DropDatabase_Default(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Cannot drop default database (by default)
-	err = manager.DropDatabase("nornic")
-	assert.Error(t, err)
-	assert.Equal(t, ErrCannotDropDefaultDB, err)
-}
-
-func TestDatabaseManager_DropDatabase_Default_Allowed(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	config := &Config{
-		DefaultDatabase:  "nornic",
-		SystemDatabase:   "system",
-		AllowDropDefault: true,
+	for _, allowed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("allowed=%t", allowed), func(t *testing.T) {
+			inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			defer inner.Close()
+			manager, err := NewDatabaseManager(t.Context(), inner, &Config{DefaultDatabase: "nornic", SystemDatabase: "system", AllowDropDefault: allowed})
+			require.NoError(t, err)
+			defer manager.Close()
+			err = manager.DropDatabase(t.Context(), "nornic")
+			if allowed {
+				require.NoError(t, err)
+				assert.False(t, manager.Exists("nornic"))
+			} else {
+				assert.Error(t, err)
+				assert.Equal(t, ErrCannotDropDefaultDB, err)
+			}
+		})
 	}
-
-	manager, err := NewDatabaseManager(inner, config)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Should be able to drop default if allowed
-	err = manager.DropDatabase("nornic")
-	require.NoError(t, err)
-	assert.False(t, manager.Exists("nornic"))
 }
 
-// TestDatabaseManager_DropDatabase_DeletesNodesAndEdges verifies that dropping
-// a database actually deletes all nodes and edges from the underlying storage.
-// This is a critical test to ensure DeleteByPrefix works correctly.
 func TestDatabaseManager_DropDatabase_DeletesNodesAndEdges(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Create a test database
-	dbName := "test_db"
-	err = manager.CreateDatabase(dbName)
-	require.NoError(t, err)
-
-	// Get namespaced storage for the database
-	store, err := manager.GetStorage(dbName)
-	require.NoError(t, err)
-
-	// Create multiple nodes in the database
-	node1 := &storage.Node{
-		ID:     storage.NodeID("node1"),
-		Labels: []string{"Person"},
-		Properties: map[string]any{
-			"name": "Alice",
-			"age":  30,
-		},
+	cases := []struct {
+		name  string
+		nodes []*storage.Node
+		edges []*storage.Edge
+	}{
+		{name: "tenant_a", nodes: []*storage.Node{{ID: "test-node", Labels: []string{"Test"}, Properties: map[string]any{"name": "test"}}}},
+		{name: "test_db", nodes: []*storage.Node{
+			{ID: "node1", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice", "age": 30}},
+			{ID: "node2", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob", "age": 25}},
+			{ID: "node3", Labels: []string{"Company"}, Properties: map[string]any{"name": "Acme Corp"}},
+		}, edges: []*storage.Edge{
+			{ID: "edge1", StartNode: "node1", EndNode: "node3", Type: "WORKS_FOR", Properties: map[string]any{"since": "2020-01-01"}},
+			{ID: "edge2", StartNode: "node2", EndNode: "node3", Type: "WORKS_FOR", Properties: map[string]any{"since": "2021-01-01"}},
+		}},
 	}
-	_, err = store.CreateNode(node1)
-	require.NoError(t, err)
-
-	node2 := &storage.Node{
-		ID:     storage.NodeID("node2"),
-		Labels: []string{"Person"},
-		Properties: map[string]any{
-			"name": "Bob",
-			"age":  25,
-		},
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			defer inner.Close()
+			manager, err := NewDatabaseManager(t.Context(), inner, nil)
+			require.NoError(t, err)
+			defer manager.Close()
+			require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: tc.name}))
+			store, err := manager.GetStorage(tc.name)
+			require.NoError(t, err)
+			for _, node := range tc.nodes {
+				_, err = store.CreateNode(t.Context(), node)
+				require.NoError(t, err)
+			}
+			for _, edge := range tc.edges {
+				require.NoError(t, store.CreateEdge(t.Context(), edge))
+			}
+			nodes, err := store.AllNodes(context.Background())
+			require.NoError(t, err)
+			assert.Len(t, nodes, len(tc.nodes))
+			edges, err := store.AllEdges(context.Background())
+			require.NoError(t, err)
+			assert.Len(t, edges, len(tc.edges))
+			for _, node := range tc.nodes {
+				_, err = inner.GetNode(t.Context(), storage.NodeID(tc.name+":"+string(node.ID)))
+				require.NoError(t, err)
+			}
+			for _, edge := range tc.edges {
+				_, err = inner.GetEdge(t.Context(), storage.EdgeID(tc.name+":"+string(edge.ID)))
+				require.NoError(t, err)
+			}
+			beforeNodes, err := inner.AllNodes(context.Background())
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, len(beforeNodes), len(tc.nodes))
+			beforeEdges, err := inner.AllEdges(context.Background())
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, len(beforeEdges), len(tc.edges))
+			require.NoError(t, manager.DropDatabase(t.Context(), tc.name))
+			assert.False(t, manager.Exists(tc.name))
+			for _, node := range tc.nodes {
+				_, err = inner.GetNode(t.Context(), storage.NodeID(tc.name+":"+string(node.ID)))
+				assert.Error(t, err)
+				assert.Equal(t, storage.ErrNotFound, err)
+			}
+			for _, edge := range tc.edges {
+				_, err = inner.GetEdge(t.Context(), storage.EdgeID(tc.name+":"+string(edge.ID)))
+				assert.Error(t, err)
+				assert.Equal(t, storage.ErrNotFound, err)
+			}
+			afterNodes, err := inner.AllNodes(context.Background())
+			require.NoError(t, err)
+			assert.Len(t, afterNodes, len(beforeNodes)-len(tc.nodes))
+			afterEdges, err := inner.AllEdges(context.Background())
+			require.NoError(t, err)
+			assert.Len(t, afterEdges, len(beforeEdges)-len(tc.edges))
+			_, err = manager.GetStorage(tc.name)
+			assert.Error(t, err)
+			assert.Equal(t, ErrDatabaseNotFound, err)
+		})
 	}
-	_, err = store.CreateNode(node2)
-	require.NoError(t, err)
-
-	node3 := &storage.Node{
-		ID:     storage.NodeID("node3"),
-		Labels: []string{"Company"},
-		Properties: map[string]any{
-			"name": "Acme Corp",
-		},
-	}
-	_, err = store.CreateNode(node3)
-	require.NoError(t, err)
-
-	// Create edges between nodes
-	edge1 := &storage.Edge{
-		ID:        storage.EdgeID("edge1"),
-		StartNode: storage.NodeID("node1"),
-		EndNode:   storage.NodeID("node3"),
-		Type:      "WORKS_FOR",
-		Properties: map[string]any{
-			"since": "2020-01-01",
-		},
-	}
-	err = store.CreateEdge(edge1)
-	require.NoError(t, err)
-
-	edge2 := &storage.Edge{
-		ID:        storage.EdgeID("edge2"),
-		StartNode: storage.NodeID("node2"),
-		EndNode:   storage.NodeID("node3"),
-		Type:      "WORKS_FOR",
-		Properties: map[string]any{
-			"since": "2021-01-01",
-		},
-	}
-	err = store.CreateEdge(edge2)
-	require.NoError(t, err)
-
-	// Verify nodes exist in the database
-	nodes, err := store.AllNodes()
-	require.NoError(t, err)
-	assert.Equal(t, 3, len(nodes), "Should have 3 nodes before drop")
-
-	edges, err := store.AllEdges()
-	require.NoError(t, err)
-	assert.Equal(t, 2, len(edges), "Should have 2 edges before drop")
-
-	// Verify nodes exist in underlying storage (with namespace prefix)
-	// The actual IDs in storage should be prefixed: "test_db:node1", etc.
-	prefixedNode1ID := storage.NodeID(dbName + ":node1")
-	prefixedNode2ID := storage.NodeID(dbName + ":node2")
-	prefixedNode3ID := storage.NodeID(dbName + ":node3")
-
-	_, err = inner.GetNode(prefixedNode1ID)
-	require.NoError(t, err, "Node1 should exist in underlying storage")
-
-	_, err = inner.GetNode(prefixedNode2ID)
-	require.NoError(t, err, "Node2 should exist in underlying storage")
-
-	_, err = inner.GetNode(prefixedNode3ID)
-	require.NoError(t, err, "Node3 should exist in underlying storage")
-
-	// Verify edges exist in underlying storage (with namespace prefix)
-	prefixedEdge1ID := storage.EdgeID(dbName + ":edge1")
-	prefixedEdge2ID := storage.EdgeID(dbName + ":edge2")
-
-	_, err = inner.GetEdge(prefixedEdge1ID)
-	require.NoError(t, err, "Edge1 should exist in underlying storage")
-
-	_, err = inner.GetEdge(prefixedEdge2ID)
-	require.NoError(t, err, "Edge2 should exist in underlying storage")
-
-	// Count total nodes in underlying storage (should include our 3 nodes)
-	allNodesBefore, err := inner.AllNodes()
-	require.NoError(t, err)
-	initialNodeCount := len(allNodesBefore)
-	assert.GreaterOrEqual(t, initialNodeCount, 3, "Underlying storage should have at least 3 nodes")
-
-	// Count total edges in underlying storage
-	allEdgesBefore, err := inner.AllEdges()
-	require.NoError(t, err)
-	initialEdgeCount := len(allEdgesBefore)
-	assert.GreaterOrEqual(t, initialEdgeCount, 2, "Underlying storage should have at least 2 edges")
-
-	// Drop the database
-	err = manager.DropDatabase(dbName)
-	require.NoError(t, err)
-
-	// Verify database is gone from metadata
-	assert.False(t, manager.Exists(dbName))
-
-	// Verify nodes are deleted from underlying storage
-	_, err = inner.GetNode(prefixedNode1ID)
-	assert.Error(t, err, "Node1 should be deleted from underlying storage")
-	assert.Equal(t, storage.ErrNotFound, err)
-
-	_, err = inner.GetNode(prefixedNode2ID)
-	assert.Error(t, err, "Node2 should be deleted from underlying storage")
-	assert.Equal(t, storage.ErrNotFound, err)
-
-	_, err = inner.GetNode(prefixedNode3ID)
-	assert.Error(t, err, "Node3 should be deleted from underlying storage")
-	assert.Equal(t, storage.ErrNotFound, err)
-
-	// Verify edges are deleted from underlying storage
-	_, err = inner.GetEdge(prefixedEdge1ID)
-	assert.Error(t, err, "Edge1 should be deleted from underlying storage")
-	assert.Equal(t, storage.ErrNotFound, err)
-
-	_, err = inner.GetEdge(prefixedEdge2ID)
-	assert.Error(t, err, "Edge2 should be deleted from underlying storage")
-	assert.Equal(t, storage.ErrNotFound, err)
-
-	// Verify node count decreased
-	allNodesAfter, err := inner.AllNodes()
-	require.NoError(t, err)
-	finalNodeCount := len(allNodesAfter)
-	assert.Equal(t, initialNodeCount-3, finalNodeCount, "Node count should decrease by 3 after drop")
-
-	// Verify edge count decreased
-	allEdgesAfter, err := inner.AllEdges()
-	require.NoError(t, err)
-	finalEdgeCount := len(allEdgesAfter)
-	assert.Equal(t, initialEdgeCount-2, finalEdgeCount, "Edge count should decrease by 2 after drop")
-
-	// Verify we can't access the database storage anymore
-	_, err = manager.GetStorage(dbName)
-	assert.Error(t, err)
-	assert.Equal(t, ErrDatabaseNotFound, err)
 }
 
-// TestDatabaseManager_NodeNamespacePrefix verifies that nodes created in a database
-// get the proper namespace prefix. This ensures database isolation works correctly.
 func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
 	// Create a test database
 	dbName := "test_db"
-	err = manager.CreateDatabase(dbName)
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: dbName})
 	require.NoError(t, err)
 
 	// Get namespaced storage for the database
@@ -628,28 +437,28 @@ func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
 			"name": "Test Person",
 		},
 	}
-	_, err = store.CreateNode(node)
+	_, err = store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Verify the node exists in the namespaced storage
-	retrieved, err := store.GetNode(nodeID)
+	retrieved, err := store.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	assert.Equal(t, "Test Person", retrieved.Properties["name"])
 
 	// Verify the underlying storage has the prefixed ID
 	prefixedID := storage.NodeID(dbName + ":" + string(nodeID))
-	prefixedNode, err := inner.GetNode(prefixedID)
+	prefixedNode, err := inner.GetNode(t.Context(), prefixedID)
 	require.NoError(t, err)
 	assert.Equal(t, prefixedID, prefixedNode.ID, "Node ID should be prefixed in underlying storage")
 	assert.Equal(t, "Test Person", prefixedNode.Properties["name"])
 
 	// Verify the unprefixed ID does NOT exist in underlying storage
-	_, err = inner.GetNode(nodeID)
+	_, err = inner.GetNode(t.Context(), nodeID)
 	assert.Error(t, err, "Unprefixed node ID should not exist in underlying storage")
 	assert.Equal(t, storage.ErrNotFound, err)
 
 	// Verify AllNodes in namespaced storage only returns this node
-	allNodes, err := store.AllNodes()
+	allNodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(allNodes), "Namespaced storage should only see 1 node")
 	assert.Equal(t, nodeID, allNodes[0].ID, "Node ID should be unprefixed in namespaced view")
@@ -657,7 +466,7 @@ func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
 	// Verify the node is NOT visible in default database
 	defaultStore, err := manager.GetStorage("nornic")
 	require.NoError(t, err)
-	defaultNodes, err := defaultStore.AllNodes()
+	defaultNodes, err := defaultStore.AllNodes(context.Background())
 	require.NoError(t, err)
 	// Filter out system nodes
 	nonSystemNodes := []*storage.Node{}
@@ -676,11 +485,11 @@ func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
 	assert.Equal(t, 0, len(nonSystemNodes), "Default database should not see nodes from test_db")
 }
 
-func TestDatabaseManager_GetStorage(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+func TestDatabaseManagerStorageRoutes(t *testing.T) {
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -697,7 +506,7 @@ func TestDatabaseManager_GetStorage(t *testing.T) {
 			"name": "test",
 		},
 	}
-	_, err = store.CreateNode(node)
+	_, err = store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Get the same storage again (should be cached)
@@ -705,22 +514,36 @@ func TestDatabaseManager_GetStorage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, store, store2) // Should be same instance (cached)
 
+	t.Run("configured default route", func(t *testing.T) {
+		storage, err := manager.GetDefaultStorage()
+		require.NoError(t, err)
+		assert.NotNil(t, storage)
+
+		// GetDefaultStorage must resolve the configured default database name.
+		assert.Equal(t, "nornic", manager.DefaultDatabaseName())
+
+		// Should be the same as getting "nornic"
+		storage2, err := manager.GetStorage("nornic")
+		require.NoError(t, err)
+		assert.Equal(t, storage, storage2)
+	})
+
 	t.Run("composite storage resolves aliases and is not cached as namespaced engine", func(t *testing.T) {
-		require.NoError(t, manager.CreateDatabase("tenant_a"))
-		require.NoError(t, manager.CreateDatabase("tenant_b"))
-		require.NoError(t, manager.CreateAlias("tenant_b_alias", "tenant_b"))
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"}))
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_b"}))
+		require.NoError(t, manager.CreateAlias(t.Context(), "tenant_b_alias", "tenant_b"))
 
 		tenantAStore, err := manager.GetStorage("tenant_a")
 		require.NoError(t, err)
-		_, err = tenantAStore.CreateNode(&storage.Node{ID: "node-a", Labels: []string{"Shared"}})
+		_, err = tenantAStore.CreateNode(t.Context(), &storage.Node{ID: "node-a", Labels: []string{"Shared"}})
 		require.NoError(t, err)
 
 		tenantBStore, err := manager.GetStorage("tenant_b")
 		require.NoError(t, err)
-		_, err = tenantBStore.CreateNode(&storage.Node{ID: "node-b", Labels: []string{"Shared"}})
+		_, err = tenantBStore.CreateNode(t.Context(), &storage.Node{ID: "node-b", Labels: []string{"Shared"}})
 		require.NoError(t, err)
 
-		err = manager.CreateCompositeDatabase("composite_db", []ConstituentRef{
+		err = manager.CreateCompositeDatabase(t.Context(), "composite_db", []ConstituentRef{
 			{DatabaseName: "tenant_a", Alias: "a", Type: "local", AccessMode: "read_write"},
 			{DatabaseName: "tenant_b_alias", Alias: "b", Type: "local", AccessMode: "read"},
 		})
@@ -738,67 +561,97 @@ func TestDatabaseManager_GetStorage(t *testing.T) {
 }
 
 func TestDatabaseManagerLazilyReconcilesStorageSizes(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	seed, err := NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	engine, err := seed.GetStorage(seed.DefaultDatabaseName())
-	require.NoError(t, err)
-	node := &storage.Node{ID: "persisted", Labels: []string{"Record"}, Properties: map[string]any{"name": "alpha"}}
-	_, err = engine.CreateNode(node)
-	require.NoError(t, err)
-	restarted, err := NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	restartedStorage, err := restarted.GetStorage(restarted.DefaultDatabaseName())
-	require.NoError(t, err)
-	storedNode, err := restartedStorage.GetNode("persisted")
-	require.NoError(t, err)
-	wantNodeSize, err := calculateNodeSize(storedNode)
-	require.NoError(t, err)
-	restarted.mu.RLock()
-	info := restarted.databases[restarted.DefaultDatabaseName()]
-	restarted.mu.RUnlock()
-	require.NotNil(t, info)
-	info.sizeMu.RLock()
-	require.False(t, info.sizeInitialized)
-	info.sizeMu.RUnlock()
-
-	totalSize, nodeSize, edgeSize := restarted.GetStorageSize(restarted.DefaultDatabaseName())
-	require.Equal(t, wantNodeSize, totalSize)
-	require.Equal(t, wantNodeSize, nodeSize)
-	require.Zero(t, edgeSize)
-
-	info.sizeMu.RLock()
-	require.True(t, info.sizeInitialized)
-	require.Equal(t, wantNodeSize, info.nodeSize)
-	require.Equal(t, wantNodeSize, info.totalSize)
-	info.sizeMu.RUnlock()
-}
-
-func TestDatabaseManager_GetStorage_NotFound(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	_, err = manager.GetStorage("nonexistent")
-	assert.Error(t, err)
-	assert.Equal(t, ErrDatabaseNotFound, err)
+	for _, tc := range []struct {
+		name     string
+		restart  bool
+		database string
+		nodes    []*storage.Node
+		edge     *storage.Edge
+	}{
+		{name: "restart-default-node", restart: true, nodes: []*storage.Node{{ID: "persisted", Labels: []string{"Record"}, Properties: map[string]any{"name": "alpha"}}}},
+		{name: "live-tenant-graph", database: "tenant_size", nodes: []*storage.Node{{ID: "a", Labels: []string{"Person"}, Properties: map[string]any{"name": "alice", "age": int64(42)}}, {ID: "b", Labels: []string{"Person"}, Properties: map[string]any{"name": "bob"}}}, edge: &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS", Properties: map[string]any{"since": int64(2020)}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			seed, err := NewDatabaseManager(t.Context(), inner, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = seed.Close() })
+			database := tc.database
+			if database == "" {
+				database = seed.DefaultDatabaseName()
+			} else {
+				require.NoError(t, seed.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: database}))
+			}
+			store, err := seed.GetStorage(database)
+			require.NoError(t, err)
+			for _, node := range tc.nodes {
+				_, err = store.CreateNode(t.Context(), node)
+				require.NoError(t, err)
+			}
+			if tc.edge != nil {
+				require.NoError(t, store.CreateEdge(t.Context(), tc.edge))
+			}
+			manager := seed
+			var wantSingle int64
+			if tc.restart {
+				manager, err = NewDatabaseManager(t.Context(), inner, nil)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = manager.Close() })
+				restartedStorage, err := manager.GetStorage(database)
+				require.NoError(t, err)
+				storedNode, err := restartedStorage.GetNode(t.Context(), "persisted")
+				require.NoError(t, err)
+				wantSingle, err = calculateNodeSize(storedNode)
+				require.NoError(t, err)
+			}
+			manager.mu.RLock()
+			info := manager.databases[database]
+			manager.mu.RUnlock()
+			require.NotNil(t, info)
+			info = info.accountingOwner()
+			info.sizeMu.RLock()
+			initialized := info.sizeInitialized
+			info.sizeMu.RUnlock()
+			require.False(t, initialized)
+			total, nodeBytes, edgeBytes := manager.GetStorageSize(context.Background(), database)
+			wantNodes, wantEdges, calcErr := manager.calculateStorageSizeFromEngine(context.Background(), storage.NewNamespacedEngine(inner, database))
+			require.NoError(t, calcErr)
+			assert.Equal(t, wantNodes+wantEdges, total)
+			assert.Equal(t, wantNodes, nodeBytes)
+			assert.Equal(t, wantEdges, edgeBytes)
+			if tc.restart {
+				require.Equal(t, wantSingle, total)
+				require.Equal(t, wantSingle, nodeBytes)
+				require.Zero(t, edgeBytes)
+			} else {
+				assert.Greater(t, total, int64(0))
+				assert.Greater(t, nodeBytes, int64(0))
+				assert.Greater(t, edgeBytes, int64(0))
+				assert.Equal(t, total, nodeBytes+edgeBytes)
+			}
+			info.sizeMu.RLock()
+			initialized = info.sizeInitialized
+			cachedNodes, cachedTotal := info.nodeSize, info.totalSize
+			info.sizeMu.RUnlock()
+			require.True(t, initialized)
+			require.Equal(t, nodeBytes, cachedNodes)
+			require.Equal(t, total, cachedTotal)
+		})
+	}
 }
 
 func TestDatabaseManager_GetStorage_Isolation(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
 	// Create two databases
-	err = manager.CreateDatabase("tenant_a")
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"})
 	require.NoError(t, err)
-	err = manager.CreateDatabase("tenant_b")
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_b"})
 	require.NoError(t, err)
 
 	// Get storage for each
@@ -815,7 +668,7 @@ func TestDatabaseManager_GetStorage_Isolation(t *testing.T) {
 			"tenant": "a",
 		},
 	}
-	_, err = storeA.CreateNode(nodeA)
+	_, err = storeA.CreateNode(t.Context(), nodeA)
 	require.NoError(t, err)
 
 	// Create node in tenant_b
@@ -826,34 +679,34 @@ func TestDatabaseManager_GetStorage_Isolation(t *testing.T) {
 			"tenant": "b",
 		},
 	}
-	_, err = storeB.CreateNode(nodeB)
+	_, err = storeB.CreateNode(t.Context(), nodeB)
 	require.NoError(t, err)
 
 	// Verify isolation: tenant_a should only see its node
-	nodesA, err := storeA.AllNodes()
+	nodesA, err := storeA.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, nodesA, 1)
 	assert.Equal(t, "node-a", string(nodesA[0].ID))
 
 	// Verify isolation: tenant_b should only see its node
-	nodesB, err := storeB.AllNodes()
+	nodesB, err := storeB.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, nodesB, 1)
 	assert.Equal(t, "node-b", string(nodesB[0].ID))
 }
 
 func TestDatabaseManager_ListDatabases(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
 	// Create some databases
-	err = manager.CreateDatabase("tenant_a")
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"})
 	require.NoError(t, err)
-	err = manager.CreateDatabase("tenant_b")
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_b"})
 	require.NoError(t, err)
 
 	// List all databases
@@ -874,18 +727,22 @@ func TestDatabaseManager_ListDatabases(t *testing.T) {
 }
 
 func TestDatabaseManager_SetDatabaseStatus(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
-	err = manager.CreateDatabase("tenant_a")
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"})
 	require.NoError(t, err)
 
+	// Reject invalid transitions before checking the valid offline/online cycle.
+	err = manager.SetDatabaseStatus(t.Context(), "tenant_a", "invalid")
+	assert.Error(t, err)
+
 	// Set to offline
-	err = manager.SetDatabaseStatus("tenant_a", "offline")
+	err = manager.SetDatabaseStatus(t.Context(), "tenant_a", "offline")
 	require.NoError(t, err)
 
 	info, err := manager.GetDatabase("tenant_a")
@@ -898,7 +755,7 @@ func TestDatabaseManager_SetDatabaseStatus(t *testing.T) {
 	assert.Equal(t, ErrDatabaseOffline, err)
 
 	// Set back to online
-	err = manager.SetDatabaseStatus("tenant_a", "online")
+	err = manager.SetDatabaseStatus(t.Context(), "tenant_a", "online")
 	require.NoError(t, err)
 
 	// Should be able to get storage now
@@ -906,64 +763,30 @@ func TestDatabaseManager_SetDatabaseStatus(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestDatabaseManager_SetDatabaseStatus_Invalid(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	err = manager.CreateDatabase("tenant_a")
-	require.NoError(t, err)
-
-	// Invalid status
-	err = manager.SetDatabaseStatus("tenant_a", "invalid")
-	assert.Error(t, err)
-}
-
-func TestDatabaseManager_GetDefaultStorage(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	storage, err := manager.GetDefaultStorage()
-	require.NoError(t, err)
-	assert.NotNil(t, storage)
-
-	// Should be the same as getting "nornic"
-	storage2, err := manager.GetStorage("nornic")
-	require.NoError(t, err)
-	assert.Equal(t, storage, storage2)
-}
-
 func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
 	t.Run("getStorageInternal handles cache not found and offline", func(t *testing.T) {
-		require.NoError(t, manager.CreateDatabase("tenant_a"))
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"}))
 		manager.mu.Lock()
-		engine1, err := manager.getStorageInternal("tenant_a")
+		engine1, _, err := manager.databaseViewLocked("tenant_a", true)
 		require.NoError(t, err)
-		engine2, err := manager.getStorageInternal("tenant_a")
+		engine2, _, err := manager.databaseViewLocked("tenant_a", true)
 		require.NoError(t, err)
 		manager.mu.Unlock()
 		assert.Same(t, engine1, engine2)
 
 		manager.mu.Lock()
-		_, err = manager.getStorageInternal("missing")
+		_, _, err = manager.databaseViewLocked("missing", true)
 		require.ErrorIs(t, err, ErrDatabaseNotFound)
 		manager.databases["tenant_a"].Status = "offline"
 		delete(manager.engines, "tenant_a")
-		_, err = manager.getStorageInternal("tenant_a")
+		_, _, err = manager.databaseViewLocked("tenant_a", true)
 		require.ErrorIs(t, err, ErrDatabaseOffline)
 		manager.mu.Unlock()
 	})
@@ -971,7 +794,7 @@ func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
 	t.Run("default database name and alias validation branches", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.DefaultDatabase = cfg.SystemDatabase
-		manager2, err := NewDatabaseManager(storage.NewMemoryEngine(), cfg)
+		manager2, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), cfg)
 		require.NoError(t, err)
 		defer manager2.Close()
 		assert.Equal(t, "nornic", manager2.DefaultDatabaseName())
@@ -984,9 +807,9 @@ func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
 	})
 
 	t.Run("list aliases all databases and decrement size underflow", func(t *testing.T) {
-		require.NoError(t, manager.CreateDatabase("tenant_b"))
-		require.NoError(t, manager.CreateAlias("alias_a", "nornic"))
-		require.NoError(t, manager.CreateAlias("alias_b", "tenant_b"))
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_b"}))
+		require.NoError(t, manager.CreateAlias(t.Context(), "alias_a", "nornic"))
+		require.NoError(t, manager.CreateAlias(t.Context(), "alias_b", "tenant_b"))
 
 		allAliases := manager.ListAliases("")
 		assert.Equal(t, "nornic", allAliases["alias_a"])
@@ -995,7 +818,7 @@ func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
 
 		manager.IncrementStorageSize("tenant_b", 100, 50)
 		manager.DecrementStorageSize("tenant_b", 200, 100)
-		total, nodeSize, edgeSize := manager.GetStorageSize("tenant_b")
+		total, nodeSize, edgeSize := manager.GetStorageSize(context.Background(), "tenant_b")
 		assert.Zero(t, total)
 		assert.Zero(t, nodeSize)
 		assert.Zero(t, edgeSize)
@@ -1005,22 +828,22 @@ func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
 }
 
 func TestDatabaseManager_MetadataPersistence(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	// Create first manager
-	manager1, err := NewDatabaseManager(inner, nil)
+	manager1, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 
-	err = manager1.CreateDatabase("tenant_a")
+	err = manager1.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"})
 	require.NoError(t, err)
-	err = manager1.CreateDatabase("tenant_b")
+	err = manager1.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_b"})
 	require.NoError(t, err)
 
 	// Don't close the manager - just create a new one with same storage
 	// (In real usage, the storage would persist to disk, but for memory engine
 	// we just reuse the same instance)
-	manager2, err := NewDatabaseManager(inner, nil)
+	manager2, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager2.Close()
 
@@ -1033,11 +856,11 @@ func TestDatabaseManager_MetadataPersistence(t *testing.T) {
 
 func TestDatabaseManager_BackwardsCompatibility(t *testing.T) {
 	// Test that existing code without multi-db still works
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	// Create manager with default config (simulates old behavior)
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -1053,85 +876,34 @@ func TestDatabaseManager_BackwardsCompatibility(t *testing.T) {
 			"name": "legacy",
 		},
 	}
-	_, err = store.CreateNode(node)
+	_, err = store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Can query nodes
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, nodes, 1)
 }
 
-func TestDatabaseManager_GetStorageSize_LazyInitFromRealData(t *testing.T) {
-	inner := storage.NewMemoryEngine()
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	require.NoError(t, manager.CreateDatabase("tenant_size"))
-	store, err := manager.GetStorage("tenant_size")
-	require.NoError(t, err)
-
-	_, err = store.CreateNode(&storage.Node{
-		ID:     storage.NodeID("a"),
-		Labels: []string{"Person"},
-		Properties: map[string]any{
-			"name": "alice",
-			"age":  int64(42),
-		},
-	})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
-		ID:     storage.NodeID("b"),
-		Labels: []string{"Person"},
-		Properties: map[string]any{
-			"name": "bob",
-		},
-	})
-	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
-		ID:         storage.EdgeID("ab"),
-		StartNode:  storage.NodeID("a"),
-		EndNode:    storage.NodeID("b"),
-		Type:       "KNOWS",
-		Properties: map[string]any{"since": int64(2020)},
-	}))
-
-	total, nodeBytes, edgeBytes := manager.GetStorageSize("tenant_size")
-	assert.Greater(t, total, int64(0))
-	assert.Greater(t, nodeBytes, int64(0))
-	assert.Greater(t, edgeBytes, int64(0))
-	assert.Equal(t, total, nodeBytes+edgeBytes)
-
-	base := storage.NewNamespacedEngine(inner, "tenant_size")
-	wantNodeBytes, wantEdgeBytes, calcErr := manager.calculateStorageSizeFromEngine(base)
-	require.NoError(t, calcErr)
-	assert.Equal(t, wantNodeBytes+wantEdgeBytes, total)
-	assert.Equal(t, wantNodeBytes, nodeBytes)
-	assert.Equal(t, wantEdgeBytes, edgeBytes)
-}
-
 func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
-	require.NoError(t, manager.CreateDatabase("tenant_delta"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_delta"}))
 	store, err := manager.GetStorage("tenant_delta")
 	require.NoError(t, err)
 
 	// Seed cache at zero to force incremental path for later writes.
-	total, nodeBytes, edgeBytes := manager.GetStorageSize("tenant_delta")
+	total, nodeBytes, edgeBytes := manager.GetStorageSize(context.Background(), "tenant_delta")
 	assert.Zero(t, total)
 	assert.Zero(t, nodeBytes)
 	assert.Zero(t, edgeBytes)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("n1"),
 		Labels: []string{"Item"},
 		Properties: map[string]any{
@@ -1139,7 +911,7 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("n2"),
 		Labels: []string{"Item"},
 		Properties: map[string]any{
@@ -1147,7 +919,7 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         storage.EdgeID("e1"),
 		StartNode:  storage.NodeID("n1"),
 		EndNode:    storage.NodeID("n2"),
@@ -1156,21 +928,21 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 	}))
 
 	// Update node to change byte footprint.
-	require.NoError(t, store.UpdateNode(&storage.Node{
+	require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{
 		ID:     storage.NodeID("n1"),
 		Labels: []string{"Item"},
 		Properties: map[string]any{
 			"name":  "one",
 			"extra": "payload",
 		},
-	}))
+	}}))
 
 	// Delete node with connected edge; cached edge bytes should also decrement.
-	require.NoError(t, store.DeleteNode(storage.NodeID("n1")))
+	require.NoError(t, store.DeleteNode(t.Context(), storage.NodeID("n1")))
 
-	gotTotal, gotNodeBytes, gotEdgeBytes := manager.GetStorageSize("tenant_delta")
+	gotTotal, gotNodeBytes, gotEdgeBytes := manager.GetStorageSize(context.Background(), "tenant_delta")
 	base := storage.NewNamespacedEngine(inner, "tenant_delta")
-	wantNodeBytes, wantEdgeBytes, calcErr := manager.calculateStorageSizeFromEngine(base)
+	wantNodeBytes, wantEdgeBytes, calcErr := manager.calculateStorageSizeFromEngine(context.Background(), base)
 	require.NoError(t, calcErr)
 	assert.Equal(t, wantNodeBytes+wantEdgeBytes, gotTotal)
 	assert.Equal(t, wantNodeBytes, gotNodeBytes)
@@ -1178,18 +950,18 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 }
 
 func TestDatabaseManager_StorageSizeSnapshot_NoRaceWithListDatabases(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
-	require.NoError(t, manager.CreateDatabase("tenant_race"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_race"}))
 	store, err := manager.GetStorage("tenant_race")
 	require.NoError(t, err)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("n1"),
 		Labels: []string{"Item"},
 		Properties: map[string]any{
@@ -1212,7 +984,7 @@ func TestDatabaseManager_StorageSizeSnapshot_NoRaceWithListDatabases(t *testing.
 			default:
 				// Force re-init writes on size cache while other goroutine snapshots metadata.
 				manager.markStorageSizeDirty("tenant_race")
-				manager.GetStorageSize("tenant_race")
+				manager.GetStorageSize(context.Background(), "tenant_race")
 			}
 		}
 	}()
@@ -1251,5 +1023,37 @@ func TestDatabaseManager_StorageSizeSnapshot_NoRaceWithListDatabases(t *testing.
 	case msg := <-errCh:
 		t.Fatalf("concurrent metadata read failed: %s", msg)
 	default:
+	}
+}
+
+// TestDatabaseManagerRejectedCatalogRequests preserves the original native
+// error identities and isolated manager fixture for each rejected operation.
+func TestDatabaseManagerRejectedCatalogRequests(t *testing.T) {
+	for _, test := range []struct {
+		name, operation, database string
+		want                      error
+	}{
+		{"TestDatabaseManager_CreateDatabase_InvalidName", "create", "", ErrInvalidDatabaseName},
+		{"TestDatabaseManager_DropDatabase_NotFound", "drop", "nonexistent", ErrDatabaseNotFound},
+		{"TestDatabaseManager_DropDatabase_System", "drop", "system", ErrCannotDropSystemDB},
+		{"TestDatabaseManager_GetStorage_NotFound", "storage", "nonexistent", ErrDatabaseNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			defer inner.Close()
+			manager, err := NewDatabaseManager(t.Context(), inner, nil)
+			require.NoError(t, err)
+			defer manager.Close()
+			switch test.operation {
+			case "create":
+				err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: test.database})
+			case "drop":
+				err = manager.DropDatabase(t.Context(), test.database)
+			case "storage":
+				_, err = manager.GetStorage(test.database)
+			}
+			assert.Error(t, err)
+			assert.Equal(t, test.want, err)
+		})
 	}
 }

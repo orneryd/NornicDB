@@ -10,6 +10,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sync"
 	"sync/atomic"
@@ -60,7 +62,7 @@ func gatherBytesByKind(t *testing.T, reg *prometheus.Registry) map[string]float6
 // setupSweeperEnv creates an in-memory engine + StorageMetrics + sweeper.
 func setupSweeperEnv(t *testing.T, interval time.Duration) (*BadgerEngine, *prometheus.Registry, *observability.StorageMetrics, *BytesMetricsSweeper) {
 	t.Helper()
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -79,15 +81,17 @@ type storageProbeAdapter struct {
 	be *BadgerEngine
 }
 
+// NodeCount and EdgeCount stay context-free: observability.StorageProbe is a
+// context-free collector contract, so each probe read owns its own lifetime.
 func (a storageProbeAdapter) NodeCount() int64 {
-	n, err := a.be.NodeCount()
+	n, err := a.be.NodeCount(context.Background())
 	if err != nil {
 		return 0
 	}
 	return n
 }
 func (a storageProbeAdapter) EdgeCount() int64 {
-	n, err := a.be.EdgeCount()
+	n, err := a.be.EdgeCount(context.Background())
 	if err != nil {
 		return 0
 	}
@@ -202,7 +206,7 @@ func TestBytesMetricsSweeper_RaceSafe(t *testing.T) {
 					ID:     NodeID("race-" + idStr(id) + "-" + idStr(i)),
 					Labels: []string{"L"},
 				}
-				_, _ = be.CreateNode(node)
+				_, _ = be.CreateNode(t.Context(), node)
 			}
 		}(g)
 	}

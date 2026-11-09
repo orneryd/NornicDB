@@ -3,6 +3,7 @@ package embeddingutil
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ func BuildText(properties map[string]interface{}, labels []string, opts *EmbedTe
 // EmbedText is a node's embedding text, with where each string property's
 // value lies in it, so a chunk of the text can be traced to its properties.
 type EmbedText struct {
+	Policy storage.EmbeddingTextPolicy
 	Text   string
 	fields []embedTextField
 }
@@ -64,7 +66,7 @@ func BuildEmbedText(properties map[string]interface{}, labels []string, opts *Em
 	// One rule decides which properties feed the text: storage's, which also
 	// decides when an update changes a node's embedding source (#963). Keys
 	// are taken in order so the same content always gives the same text.
-	policy := storage.EmbeddingTextPolicy{Include: opts.Include, Exclude: opts.Exclude, IncludeLabels: opts.IncludeLabels}
+	policy := storage.EmbeddingTextPolicy{Include: append([]string(nil), opts.Include...), Exclude: append([]string(nil), opts.Exclude...), IncludeLabels: opts.IncludeLabels}
 	keys := make([]string, 0, len(properties))
 	for key := range properties {
 		if policy.FeedsText(key) {
@@ -116,9 +118,9 @@ func BuildEmbedText(properties map[string]interface{}, labels []string, opts *Em
 
 	result := strings.Join(parts, "\n")
 	if result == "" {
-		return EmbedText{Text: "node"}
+		return EmbedText{Text: "node", Policy: policy}
 	}
-	return EmbedText{Text: result, fields: fields}
+	return EmbedText{Text: result, fields: fields, Policy: policy}
 }
 
 // ChunkSpan is where a chunk of a node's embedding text lies in one of its
@@ -223,27 +225,19 @@ func ChunkCount(meta map[string]any) int {
 }
 
 func storedInt(value any) (int, bool) {
-	switch number := value.(type) {
-	case int:
-		return number, true
-	case int8:
-		return int(number), true
-	case int16:
-		return int(number), true
-	case int32:
-		return int(number), true
-	case int64:
-		return int(number), true
-	case uint8:
-		return int(number), true
-	case uint16:
-		return int(number), true
-	case uint32:
-		return int(number), true
-	case uint64:
-		return int(number), true
+	// Metadata accepts the historical concrete integer carriers, without
+	// extending admission to floats, strings, named scalars or native uint.
+	switch value.(type) {
+	case int, int8, int16, int32, int64, uint8, uint16, uint32, uint64:
+		number, _ := convert.ReadNumber(value)
+		if signed, ok := number.Signed(); ok {
+			return int(signed), true
+		}
+		unsigned, _ := number.Unsigned()
+		return int(unsigned), true
+	default:
+		return 0, false
 	}
-	return 0, false
 }
 
 // IsMetadataPropertyKey reports whether a property key is internal embedding metadata.
@@ -256,7 +250,7 @@ func TextPolicy(opts *EmbedTextOptions) storage.EmbeddingTextPolicy {
 	if opts == nil {
 		return storage.EmbeddingTextPolicy{IncludeLabels: true}
 	}
-	return storage.EmbeddingTextPolicy{Include: opts.Include, Exclude: opts.Exclude, IncludeLabels: opts.IncludeLabels}
+	return storage.EmbeddingTextPolicy{Include: append([]string(nil), opts.Include...), Exclude: append([]string(nil), opts.Exclude...), IncludeLabels: opts.IncludeLabels}
 }
 
 // InvalidateManagedEmbeddings clears worker-managed embedding state on a node.

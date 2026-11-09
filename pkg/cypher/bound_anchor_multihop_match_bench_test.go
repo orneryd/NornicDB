@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -9,10 +11,10 @@ import (
 )
 
 func BenchmarkBoundAnchorMultiHopTraversal(b *testing.B) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "bound-anchor-multihop-bench")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 
 	for index := 0; index < 100; index++ {
@@ -20,14 +22,14 @@ func BenchmarkBoundAnchorMultiHopTraversal(b *testing.B) {
 		file := &storage.Node{ID: storage.NodeID(fmt.Sprintf("file-%d", index)), Labels: []string{"File"}, Properties: map[string]interface{}{"relative_path": fmt.Sprintf("file-%d.go", index)}}
 		function := &storage.Node{ID: storage.NodeID(fmt.Sprintf("function-%d", index)), Labels: []string{"Function"}, Properties: map[string]interface{}{"active": true}}
 		for _, node := range []*storage.Node{repository, file, function} {
-			if _, err := store.CreateNode(node); err != nil {
+			if _, err := store.CreateNode(b.Context(), node); err != nil {
 				b.Fatal(err)
 			}
 		}
-		if err := store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("repo-file-%d", index)), Type: "REPO_CONTAINS", StartNode: repository.ID, EndNode: file.ID}); err != nil {
+		if err := store.CreateEdge(b.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("repo-file-%d", index)), Type: "REPO_CONTAINS", StartNode: repository.ID, EndNode: file.ID}); err != nil {
 			b.Fatal(err)
 		}
-		if err := store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("file-function-%d", index)), Type: "CONTAINS", StartNode: file.ID, EndNode: function.ID}); err != nil {
+		if err := store.CreateEdge(b.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("file-function-%d", index)), Type: "CONTAINS", StartNode: file.ID, EndNode: function.ID}); err != nil {
 			b.Fatal(err)
 		}
 	}

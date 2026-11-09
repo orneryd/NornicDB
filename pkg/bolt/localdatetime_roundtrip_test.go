@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 	"time"
@@ -102,15 +103,15 @@ func TestBoltIntegration_LocalDateTimeParamRoundTrip_ServerStack(t *testing.T) {
 func roundTripLocalDateTimeScenario(t *testing.T, writeMessage []byte, readQuery string, want time.Time) {
 	t.Helper()
 
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "bolt_localdatetime_roundtrip")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
 	runBoltStatementNoRecords(t, conn, BuildRunMessage("MATCH (n:T) DETACH DELETE n", nil, nil))
 	runBoltStatementNoRecords(t, conn, writeMessage)
 
-	rows := runBoltQueryAndCollectRecords(t, conn, readQuery)
+	rows := runBoltQueryWithParams(t, conn, readQuery, nil)
 	if len(rows) != 1 || len(rows[0]) != 1 {
 		t.Fatalf("expected one row with one field, got %#v", rows)
 	}

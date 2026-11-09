@@ -26,6 +26,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -55,22 +56,18 @@ func findAggregateSpans(expr string) []aggregateSpan {
 	var spans []aggregateSpan
 	i := 0
 	for i < len(expr) {
-		c := expr[i]
-		if c == '\'' || c == '"' || c == '`' {
-			j := i + 1
-			for j < len(expr) && (expr[j] != c || isBackslashEscaped(expr, j)) {
-				j++
-			}
-			i = j + 1
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end
 			continue
 		}
+		c := expr[i]
 		// Only a letter at a word start can begin an aggregate or a subquery
 		// expression. A qualified function whose terminal component happens to
 		// have an aggregate name (for example apoc.coll.sum()) is not a Cypher
 		// aggregate. It is evaluated once per row by the same expression path.
 		folded := asciiUpper(c)
 		if folded < 'A' || folded > 'Z' || prefixMask&(uint32(1)<<(folded-'A')) == 0 ||
-			i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.') {
+			!functionNameStartsAt(expr, i) {
 			i++
 			continue
 		}
@@ -83,7 +80,7 @@ func findAggregateSpans(expr string) []aggregateSpan {
 				continue
 			}
 			j := i + len(fn.lower)
-			for j < len(expr) && isWhitespace(expr[j]) {
+			for j < len(expr) && cyphertext.IsWhitespaceAt(expr, j) {
 				j++
 			}
 			if j >= len(expr) || expr[j] != '(' {
@@ -129,7 +126,11 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 	for index, row := range rows {
 		bindings[index] = pipelineRowFromTraversalOptionalRow(row)
 	}
-	plan := returnProjectionPlanFromItems(items)
+	plan := &returnProjectionPlan{}
+	for _, item := range items {
+		plan.addProjection(item.expr, item.column())
+	}
+	plan.valid = len(plan.projections) > 0
 	if result, ok := e.pipelineApplyReturnPlan(ctx, bindings, plan, pipelineRowsSource(bindings), false); ok {
 		return result.Rows, nil
 	}
@@ -145,14 +146,12 @@ func subqueryExpressionEnd(expr string, i int) int {
 	// A subquery's keyword is followed by '{': any other word ends here,
 	// before the keyword comparisons.
 	end := i
-	for end < len(expr) && isIdentByte(expr[end]) {
-		end++
-	}
+	end = cyphertext.NamePartEnd(expr, end)
 	if open := skipSpaces(expr, end); end == i || open >= len(expr) || expr[open] != '{' {
 		return -1
 	}
 	if _, open, ok := subqueryExpressionKeywordAt(expr, i); ok {
-		if closing := findMatchingDelimiter(expr, open, '{', '}'); closing > open {
+		if closing := cyphertext.FindMatchingDelimiter(expr, open, '{', '}', cyphertext.OpeningDelimiter); closing > open {
 			return closing + 1
 		}
 	}

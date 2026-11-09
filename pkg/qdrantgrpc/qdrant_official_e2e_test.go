@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -17,15 +18,15 @@ func TestOfficialQdrantGRPC_BasicFlow(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
 	cfg.ListenAddr = "127.0.0.1:0"
 	cfg.EnableReflection = false
 
-	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, nil, nil)
+	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, sharedSearchProvider(), nil)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	t.Cleanup(srv.Stop)
@@ -177,15 +178,15 @@ func TestOfficialQdrantGRPC_NamedVectorsRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
 	cfg.ListenAddr = "127.0.0.1:0"
 	cfg.EnableReflection = false
 
-	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, nil, nil)
+	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, sharedSearchProvider(), nil)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	t.Cleanup(srv.Stop)
@@ -254,8 +255,8 @@ func TestOfficialQdrantGRPC_AdvancedFlow(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
@@ -263,7 +264,7 @@ func TestOfficialQdrantGRPC_AdvancedFlow(t *testing.T) {
 	cfg.EnableReflection = false
 	cfg.AllowVectorMutations = true
 
-	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, nil, nil)
+	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, sharedSearchProvider(), nil)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	t.Cleanup(srv.Stop)

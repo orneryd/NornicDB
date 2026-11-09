@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +51,8 @@ func TestGh514_StatementsEndingInsideAClauseAreSyntaxErrors(t *testing.T) {
 		t.Run(statement, func(t *testing.T) {
 			_, err := exec.Execute(ctx, statement, nil)
 			require.Error(t, err, "statement must be a syntax error: %s", statement)
-			require.Contains(t, err.Error(), "SyntaxError", "statement must be classified as a SyntaxError: %s", statement)
+			code, _ := nornicerrors.Neo4jStatus(err)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, statement)
 		})
 	}
 
@@ -76,7 +78,8 @@ func TestGh514_UnevaluableCreateMapValuesAreSyntaxErrors(t *testing.T) {
 		t.Run(statement, func(t *testing.T) {
 			_, err := exec.Execute(ctx, statement, nil)
 			require.Error(t, err, "statement must be a syntax error: %s", statement)
-			require.Contains(t, err.Error(), "SyntaxError", "statement must be classified as a SyntaxError: %s", statement)
+			code, _ := nornicerrors.Neo4jStatus(err)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, statement)
 		})
 	}
 

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"strconv"
 	"strings"
@@ -42,7 +44,7 @@ const (
 
 // fnVector is vector(value, dimension, coordinateType): value a list of
 // numbers or its text ('[1, 2]'); null in, null out.
-func fnVector(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnVector(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 3 {
 		return nil, argumentCountError("vector", "3", len(args))
 	}
@@ -90,7 +92,7 @@ func vectorTypeText(coordinateType VectorCoordinateType, dimension int) string {
 func vectorItems(value interface{}) ([]interface{}, error) {
 	if text, ok := value.(string); ok {
 		trimmed := strings.TrimSpace(text)
-		if !strings.HasPrefix(trimmed, "[") || !strings.HasSuffix(trimmed, "]") {
+		if !isListLiteral(trimmed) {
 			return nil, vectorCoordinateTypeError("vector", text)
 		}
 		var items []interface{}
@@ -125,47 +127,35 @@ func vectorCoordinateTypeError(function, got string) error {
 // and, like float64 ones, must be finite.
 func newCypherVector(items []interface{}, coordinateType VectorCoordinateType) (CypherVector, error) {
 	vector := CypherVector{Type: coordinateType}
-	limits := map[VectorCoordinateType]float64{VectorInteger64: math.MaxInt64, VectorInteger32: math.MaxInt32, VectorInteger16: math.MaxInt16, VectorInteger8: math.MaxInt8}
+	widths := map[VectorCoordinateType]int{VectorInteger64: 64, VectorInteger32: 32, VectorInteger16: 16, VectorInteger8: 8}
 	for _, item := range items {
 		if item == nil {
 			return vector, vectorCoordinateTypeError("vector()", "NO_VALUE")
 		}
-		var number float64
-		var integer int64
-		isInteger := false
-		switch typed := item.(type) {
-		case float64:
-			number = typed
-		case float32:
-			number = float64(typed)
-		default:
-			value, ok := cypherIntegerValue(item)
-			if !ok {
-				return vector, &cypherfn.TypeMismatchError{Function: "vector", Expected: "String, List<Float>, List<Integer> or List<Number>", Value: items}
-			}
-			integer, number, isInteger = value, float64(value), true
+		number, ok := valueconvert.ReadNumber(item)
+		if !ok {
+			return vector, &cypherfn.TypeMismatchError{Function: "vector", Expected: "String, List<Float>, List<Integer> or List<Number>", Value: items}
 		}
 		if coordinateType.IsFloat() {
+			floating := number.Float64()
 			if coordinateType == VectorFloat32 {
-				number = float64(float32(number))
+				narrowed, fits := number.Float32()
+				if !fits {
+					return vector, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentValue", localization.CypherCoreVectorCoordinatesNotFinite())
+				}
+				floating = float64(narrowed)
 			}
-			if math.IsInf(number, 0) || math.IsNaN(number) {
+			if math.IsInf(floating, 0) || math.IsNaN(floating) {
 				return vector, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentValue", localization.CypherCoreVectorCoordinatesNotFinite())
 			}
-			vector.Floats = append(vector.Floats, number)
-			continue
-		}
-		if !isInteger {
-			truncated := math.Trunc(number)
-			if math.IsNaN(truncated) || truncated > limits[coordinateType] || truncated < -limits[coordinateType]-1 {
+			vector.Floats = append(vector.Floats, floating)
+		} else {
+			integer, fits := number.Int64Bits(widths[coordinateType], valueconvert.IntegerFloat)
+			if !fits {
 				return vector, vectorRangeError()
 			}
-			integer = int64(truncated)
+			vector.Ints = append(vector.Ints, integer)
 		}
-		if limit := int64(limits[coordinateType]); coordinateType != VectorInteger64 && (integer > limit || integer < -limit-1) {
-			return vector, vectorRangeError()
-		}
-		vector.Ints = append(vector.Ints, integer)
 	}
 	return vector, nil
 }
@@ -177,7 +167,7 @@ func vectorRangeError() error {
 }
 
 // fnVectorDimensionCount is vector_dimension_count(vector).
-func fnVectorDimensionCount(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnVectorDimensionCount(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("vector_dimension_count", "1", len(args))
 	}
@@ -204,7 +194,7 @@ func vectorArgument(value interface{}) (CypherVector, error) {
 }
 
 // fnVectorDistance is vector_distance(a, b, metric).
-func fnVectorDistance(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnVectorDistance(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 3 {
 		return nil, argumentCountError("vector_distance", "3", len(args))
 	}
@@ -258,7 +248,7 @@ func fnVectorDistance(ctx cypherfn.Context, args []string) (interface{}, error) 
 }
 
 // fnVectorNorm is vector_norm(vector, metric): EUCLIDEAN or MANHATTAN.
-func fnVectorNorm(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnVectorNorm(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 2 {
 		return nil, argumentCountError("vector_norm", "2", len(args))
 	}
@@ -289,7 +279,7 @@ func fnVectorNorm(ctx cypherfn.Context, args []string) (interface{}, error) {
 
 // fnUUID is uuid() (a random version 7 UUID), uuid(text) or
 // uuid(msb, lsb); null in, null out.
-func fnUUID(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnUUID(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	switch len(args) {
 	case 0:
 		return newVersion7UUID(time.Now()), nil
@@ -335,7 +325,7 @@ func fnUUIDHalf(most bool) cypherfn.Func {
 	if most {
 		name = "uuid.mostSignificantBits"
 	}
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
 		}

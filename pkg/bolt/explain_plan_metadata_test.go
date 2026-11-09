@@ -5,6 +5,8 @@ package bolt
 // plan for PROFILE, read straight from the PULL SUCCESS metadata.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -16,9 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newStatementFramingSession(t *testing.T) neo4jdriver.SessionWithContext {
+func newStatementFramingSession(t *testing.T, modes ...neo4jdriver.AccessMode) neo4jdriver.SessionWithContext {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})
@@ -34,7 +36,7 @@ func newStatementFramingSession(t *testing.T) neo4jdriver.SessionWithContext {
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, &mockExecutor{}, mgr)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(
@@ -47,8 +49,12 @@ func newStatementFramingSession(t *testing.T) neo4jdriver.SessionWithContext {
 	})
 	require.NoError(t, driver.VerifyConnectivity(ctx))
 
+	mode := neo4jdriver.AccessModeWrite
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
 	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode:   neo4jdriver.AccessModeWrite,
+		AccessMode:   mode,
 		DatabaseName: "nornic",
 	})
 	t.Cleanup(func() {

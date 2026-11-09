@@ -20,7 +20,7 @@ func TestPrivateReproCachedExecutorsRejectBareTransactionCommands(t *testing.T) 
 	server, _ := setupTestServer(t)
 	ctx := context.Background()
 
-	shared, err := server.getExecutorForDatabase("nornic")
+	shared, err := server.executorCache.Get("nornic")
 	require.NoError(t, err)
 	for _, query := range []string{"BEGIN", "COMMIT", "ROLLBACK", "BEGIN TRANSACTION"} {
 		_, err := shared.Execute(ctx, query, nil)
@@ -87,7 +87,7 @@ func TestPrivateReproHTTPBareBeginRollbackOtherRequest(t *testing.T) {
 	script := request("BEGIN CREATE (:PrivateScriptProbe) COMMIT")
 	require.Empty(t, script.Errors)
 	t.Cleanup(func() {
-		executor, err := server.getExecutorForDatabase("nornic")
+		executor, err := server.executorCache.Get("nornic")
 		if err == nil && executor.HasActiveTransaction() {
 			request("ROLLBACK")
 		}
@@ -99,13 +99,13 @@ func TestPrivateReproHTTPBareBeginRollbackOtherRequest(t *testing.T) {
 
 func TestPrivateReproCompositeConstituentAccess(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("private_allowed"))
-	require.NoError(t, server.dbManager.CreateDatabase("private_denied"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("private_cmp", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_allowed"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_denied"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "private_cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "private_allowed", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "private_denied", Type: "local", AccessMode: "read_write"},
 	}))
-	_, err := authenticator.CreateUser("private_editor", "password123", []auth.Role{auth.RoleEditor})
+	_, err := authenticator.CreateUser(context.Background(), "private_editor", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "editor", []string{"private_allowed", "private_cmp"}))
 	for _, database := range []string{"private_allowed", "private_cmp"} {
@@ -148,13 +148,13 @@ func TestPrivateReproCompositeConstituentAccess(t *testing.T) {
 // denied constituents.
 func TestPrivateReproCompositePatternFormsRequireConstituentTarget(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("private_allowed"))
-	require.NoError(t, server.dbManager.CreateDatabase("private_denied"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("private_cmp", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_allowed"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_denied"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "private_cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "private_allowed", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "private_denied", Type: "local", AccessMode: "read_write"},
 	}))
-	_, err := authenticator.CreateUser("private_editor", "password123", []auth.Role{auth.RoleEditor})
+	_, err := authenticator.CreateUser(context.Background(), "private_editor", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "editor", []string{"private_allowed", "private_cmp"}))
 	for _, database := range []string{"private_allowed", "private_cmp"} {
@@ -207,7 +207,7 @@ func TestPrivateReproCompositePatternFormsRequireConstituentTarget(t *testing.T)
 // caller of the same database, and neither can clear or overwrite them.
 func TestPrivateReproShellParamsAreScopedPerClient(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	_, err := authenticator.CreateUser("zz_reader", "password123", []auth.Role{auth.RoleViewer})
+	_, err := authenticator.CreateUser(context.Background(), "zz_reader", "password123", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "viewer", []string{"nornic"}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", "nornic", true, true))
@@ -255,7 +255,7 @@ func TestPrivateReproShellParamsAreScopedPerClient(t *testing.T) {
 // silently doing nothing.
 func TestPrivateReproCreateOrReplaceDatabaseRequiresAdmin(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	_, err := authenticator.CreateUser("zz_editor", "password123", []auth.Role{auth.RoleEditor})
+	_, err := authenticator.CreateUser(context.Background(), "zz_editor", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "editor", []string{"nornic"}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "editor", "nornic", true, true))

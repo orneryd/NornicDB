@@ -15,17 +15,30 @@ import (
 // BenchmarkStatementRouting compares the same read statements executed as
 // auto-commit statements and inside one explicit transaction (BEGIN ... ROLLBACK).
 func BenchmarkStatementRouting(b *testing.B) {
-	queries := []struct{ name, cypher string }{
+	benchmarkStatementRouting(b, []statementRoutingBenchQuery{
 		{"simple_match_limit", "MATCH (n:Person) RETURN n.name LIMIT 10"},
 		{"property_lookup", "MATCH (n:Person {id: 42}) RETURN n.name"},
 		{"filter_count", "MATCH (n:Person) WHERE n.age > 30 RETURN count(n)"},
 		{"one_hop_limit", "MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN a.name, b.name LIMIT 20"},
 		{"return_literal", "RETURN 1"},
-	}
+	})
+}
+
+type statementRoutingBenchQuery struct{ name, cypher string }
+
+// The same fixture isolates the property-lookup control without timing the
+// other routing workloads in a transactional CALL comparison.
+func BenchmarkTransactionalCallPropertyLookupControl(b *testing.B) {
+	benchmarkStatementRouting(b, []statementRoutingBenchQuery{
+		{"property_lookup", "MATCH (n:Person {id: 42}) RETURN n.name"},
+	})
+}
+
+func benchmarkStatementRouting(b *testing.B, queries []statementRoutingBenchQuery) {
 	setup := func(b *testing.B) (*StorageExecutor, context.Context) {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "bench")
 		for i := 0; i < 2000; i++ {
-			_, err := store.CreateNode(&storage.Node{
+			_, err := store.CreateNode(b.Context(), &storage.Node{
 				ID:         storage.NodeID(fmt.Sprintf("person-%d", i)),
 				Labels:     []string{"Person"},
 				Properties: map[string]interface{}{"id": i, "name": fmt.Sprintf("p%d", i), "age": i % 60},
@@ -33,7 +46,7 @@ func BenchmarkStatementRouting(b *testing.B) {
 			require.NoError(b, err)
 		}
 		for i := 0; i < 500; i++ {
-			err := store.CreateEdge(&storage.Edge{
+			err := store.CreateEdge(b.Context(), &storage.Edge{
 				ID:        storage.EdgeID(fmt.Sprintf("knows-%d", i)),
 				StartNode: storage.NodeID(fmt.Sprintf("person-%d", i)),
 				EndNode:   storage.NodeID(fmt.Sprintf("person-%d", i+1)),

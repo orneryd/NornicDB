@@ -4,6 +4,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -76,10 +77,22 @@ func (b *BadgerEngine) initializeCounts() error {
 	return nil
 }
 
-func (b *BadgerEngine) NodeCount() (int64, error) {
-	b.totalCountWriteMu.RLock()
+func (b *BadgerEngine) NodeCount(ctx context.Context) (int64, error) {
+	// A counter read has no materialization step to cancel, but a canceled
+	// request must not be answered with a successful count: it already owns no
+	// result, and reporting one would let a canceled statement publish a total.
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return 0, err
+	}
+
+	if err := b.totalCountWriteMu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer b.totalCountWriteMu.RUnlock()
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
 
@@ -88,40 +101,94 @@ func (b *BadgerEngine) NodeCount() (int64, error) {
 	// at ACK: fold in the buffered delta so the count is read-your-writes
 	// (PR #1043 read-overlay parity).
 	if b.writeBehind != nil {
-		count += b.writeBehind.NodeCountDeltaForPrefix("")
+		delta, err := b.writeBehind.totalCountDeltaForPrefix(ctx, "", false)
+		if err != nil {
+			return 0, err
+		}
+		count += delta
 	}
 	return count, nil
 }
 
+// adjacencyCountRequest binds direction and ID without constructing an index
+// key before lifecycle admission. It is used only by the public degree adapters.
+type adjacencyCountRequest struct {
+	nodeID   NodeID
+	incoming bool
+}
+
 // countByPrefix counts records whose ID key starts with the given ID prefix.
 // NodeCountByPrefix and EdgeCountByPrefix are thin wrappers over this kernel;
-// the two differ only in the key-type byte and the namespace count cache
+// the two differ only in the key-type byte and the namespace count cache.
+// An explicitly supplied adjacency request admits and counts the raw index;
+// it neither consults namespace caches nor changes
+// the degree API convention of returning the count while discarding view errors
 // (HARD_CONVERGENCE.md item 5: node/edge twin consolidation).
-func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[string]int64) (int64, error) {
-	if err := b.ensureOpen(); err != nil {
+// Author: storage-format-owners lane (Codex), 1 November 2026.
+func (b *BadgerEngine) countByPrefix(ctx context.Context, prefix string, keyType byte, cache map[string]int64, adjacency ...adjacencyCountRequest) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	readPrefix := prefix
+	if len(adjacency) > 0 {
+		readPrefix = string(adjacency[0].nodeID)
+	}
+	if err := b.pendingPrefixConflict(readPrefix); err != nil {
 		return 0, err
 	}
 
-	b.namespaceCountsMu.RLock()
-	if count, ok := cache[prefix]; ok {
-		b.namespaceCountsMu.RUnlock()
-		return count, nil
-	}
-	b.namespaceCountsMu.RUnlock()
+	if len(adjacency) == 0 {
+		if err := b.ensureOpen(false); err != nil {
+			return 0, err
+		}
 
+		b.namespaceCountsMu.RLock()
+		if count, ok := cache[prefix]; ok {
+			b.namespaceCountsMu.RUnlock()
+			return count, nil
+		}
+		b.namespaceCountsMu.RUnlock()
+	}
+	var keyPrefix []byte
+	if len(adjacency) != 0 {
+		request := adjacency[0]
+		if request.nodeID == "" {
+			return 0, nil
+		}
+		if err := b.ensureOpen(false); err != nil {
+			return 0, err
+		}
+		if request.incoming {
+			keyPrefix = b.incomingIndexPrefixString(request.nodeID)
+		} else {
+			keyPrefix = b.outgoingIndexPrefixString(request.nodeID)
+		}
+		if keyPrefix == nil {
+			return 0, nil
+		}
+	}
 	var count int64
 	err := b.withView(func(txn *badger.Txn) error {
-		keyPrefix := make([]byte, 0, 1+len(prefix))
-		keyPrefix = append(keyPrefix, keyType)
-		keyPrefix = append(keyPrefix, []byte(prefix)...)
+		if len(adjacency) == 0 {
+			keyPrefix = make([]byte, 0, 1+len(prefix))
+			keyPrefix = append(keyPrefix, keyType)
+			keyPrefix = append(keyPrefix, []byte(prefix)...)
+		}
 
 		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 		defer it.Close()
+		var cancel bulkReadCancellation
 		for it.Rewind(); it.Valid(); it.Next() {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			count++
 		}
 		return nil
 	})
+	if len(adjacency) != 0 {
+		return count, err
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -133,30 +200,28 @@ func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[stri
 //
 // This is an optional fast-path used by NamespacedEngine to provide accurate
 // per-database counts without decoding values.
-func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	b.totalCountWriteMu.RLock()
-	defer b.totalCountWriteMu.RUnlock()
-	if err := b.ensureOpen(); err != nil {
-		return 0, err
-	}
-	count, err := b.countByPrefix(prefix, prefixNode, b.namespaceNodeCounts)
-	if err != nil {
-		return 0, err
-	}
-	// Namespace counts advance at flush, not at ACK: fold in the buffered
-	// delta (PR #1043 read-overlay parity).
-	if b.writeBehind != nil {
-		count += b.writeBehind.NodeCountDeltaForPrefix(prefix)
-	}
-	return count, nil
+func (b *BadgerEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	return b.entityCountByPrefix(ctx, prefix, prefixNode)
 }
 
 // EdgeCount returns the total number of valid, decodable edges.
 // This is consistent with AllEdges() - only counts edges that can be successfully decoded.
-func (b *BadgerEngine) EdgeCount() (int64, error) {
-	b.totalCountWriteMu.RLock()
+func (b *BadgerEngine) EdgeCount(ctx context.Context) (int64, error) {
+	// A counter read has no materialization step to cancel, but a canceled
+	// request must not be answered with a successful count: it already owns no
+	// result, and reporting one would let a canceled statement publish a total.
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return 0, err
+	}
+
+	if err := b.totalCountWriteMu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer b.totalCountWriteMu.RUnlock()
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
 
@@ -165,29 +230,19 @@ func (b *BadgerEngine) EdgeCount() (int64, error) {
 	// at ACK: fold in the buffered delta so the count is read-your-writes
 	// (PR #1043 read-overlay parity).
 	if b.writeBehind != nil {
-		count += b.writeBehind.EdgeCountDelta()
+		delta, err := b.writeBehind.totalCountDeltaForPrefix(ctx, "", true)
+		if err != nil {
+			return 0, err
+		}
+		count += delta
 	}
 	return count, nil
 }
 
 // EdgeCountByPrefix counts edges whose EdgeID begins with the provided prefix.
 // The prefix refers to the EdgeID string prefix (e.g., database namespace "nornic:").
-func (b *BadgerEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	b.totalCountWriteMu.RLock()
-	defer b.totalCountWriteMu.RUnlock()
-	if err := b.ensureOpen(); err != nil {
-		return 0, err
-	}
-	count, err := b.countByPrefix(prefix, prefixEdge, b.namespaceEdgeCounts)
-	if err != nil {
-		return 0, err
-	}
-	// Namespace counts advance at flush, not at ACK: fold in the buffered
-	// delta (PR #1043 read-overlay parity).
-	if b.writeBehind != nil {
-		count += b.writeBehind.EdgeCountDeltaForPrefix(prefix)
-	}
-	return count, nil
+func (b *BadgerEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	return b.entityCountByPrefix(ctx, prefix, prefixEdge)
 }
 
 // GetSchema returns the schema manager.
@@ -197,30 +252,72 @@ func (b *BadgerEngine) GetSchema() *SchemaManager {
 	return b.GetSchemaForNamespace("nornic")
 }
 
-// Close closes the BadgerDB database.
+// Close closes the BadgerDB database. It is the engine owner's one stop: the
+// first caller stops the producers and seals admission, and every caller,
+// first or repeated, joins the same retirement and receives the same outcome.
 func (b *BadgerEngine) Close() error {
+	b.closeMu.Lock()
+	defer b.closeMu.Unlock()
+	if !b.work.Closing() {
+		b.sealAdmission()
+	}
+	b.work.BeginStop(b.retire)
+	return b.work.JoinStopped()
+}
+
+// sealAdmission stops the engine's producers while admission is still open
+// (their final writes are admitted work), then seals admission once every
+// durable write published. Outcomes go to the owner for every Close caller.
+func (b *BadgerEngine) sealAdmission() {
+	// Reject new writers first, then wait for every admitted one to finish,
+	// so the final drain below meets every acknowledged commit: a listener
+	// it delivers that writes again observes ErrStorageClosed instead of
+	// being acknowledged into a generation nothing drains.
+	b.mu.Lock()
+	b.closing = true
+	b.mu.Unlock()
+	b.writeBarrier.Lock()
+	b.writeBarrier.Unlock()
 	// Stop the background backfills before taking the write barrier: they
 	// write through withUpdate and must not be left waiting on a barrier
 	// this goroutine holds while it waits for them to stop.
-	b.stopEdgeBetweenIndexBackfill()
-	b.stopLabelIndexBackfill()
+	b.stopIndexBackfill(startupEdgeBetweenIndex)
+	b.stopIndexBackfill(startupLabelIndex)
 	b.stopDeleteCleanup()
 	b.stopChangeRetention()
 	b.stopCountDeltaFoldWorker()
 
 	// Drain acknowledged write-behind commits before tearing down Badger so
-	// a shutdown never loses writes that were acknowledged to clients.
+	// a shutdown never loses writes that were acknowledged to clients. The
+	// drain keeps the engine's own work context without its cancellation:
+	// Close seals admission before BeginStop cancels that context, and the
+	// final drain must stay the uncancellable waiter that performs the drain
+	// instead of depending on a background flusher that may already be gone.
 	if b.writeBehind != nil {
-		if err := b.FlushWriteBehind(); err != nil && b.log != nil {
-			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", err)
+		drainErr := b.FlushWriteBehind(context.WithoutCancel(b.work.Context()))
+		if drainErr != nil && b.log != nil {
+			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", drainErr)
 		}
+		b.work.RecordError("", drainErr)
 		b.writeBehind.Close()
+		b.writeBehind.releaseTransactionBegins()
+	}
+	// The suppressions the deletes so far ended are deleted before the store
+	// closes (forgetManualSuppression). The read hold is taken through the same
+	// engine work context this phase already runs on, so a stopping owner ends
+	// the pass instead of leaving it on an unowned root; the error stays visible
+	// in the owner's outcomes and the ends are not deleted without the barrier.
+	if err := b.writeBarrier.RLockContext(b.work.Context()); err != nil {
+		b.work.RecordError("", fmt.Errorf("suppression ends before the write barrier: %w", err))
+	} else {
+		b.work.RecordError("", b.endSuppressions(&entityWriteContext{ctx: b.work.Context(), engine: b, owner: newEngineWriteLockOwner()}))
+		b.writeBarrier.RUnlock()
 	}
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call
-	// is idempotent, so the lifecycle stop under b.mu below stays as the
-	// guard for a controller installed after this point.
+	// Controller injection is part of the unpublished DB construction frame;
+	// invoke its one stop outside the engine publication lock.
 	b.mu.RLock()
 	lifecycle := b.lifecycleController
 	b.mu.RUnlock()
@@ -230,43 +327,41 @@ func (b *BadgerEngine) Close() error {
 
 	// Wait for every in-flight durable write (see writeBarrier) so no
 	// commit that already reached Badger has its publication tail torn by
-	// the release below, and hold the barrier through db.Close so no new
-	// write reaches a closing Badger handle.
+	// the release below. Seal before releasing the barrier; later helpers
+	// and writers fail before reaching Badger, while listeners can re-enter.
 	b.writeBarrier.Lock()
-	defer b.writeBarrier.Unlock()
-
 	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return nil
-	}
-	if b.lifecycleController != nil {
-		b.lifecycleController.StopLifecycle()
-	}
-
-	b.closed = true
-	db := b.db
+	b.work.CloseAdmission()
 	b.mu.Unlock()
+	// Do not retain the barrier while listeners re-enter storage; the owner
+	// keeps state until their notifications' tickets return.
+	b.writeBarrier.Unlock()
+	// Deliver what is ready but undelivered (a replay queues its events for
+	// whoever retired it); each delivery returns its notification's ticket.
+	b.drainCommitNotifications()
+}
 
-	// Drain in-flight node-deleted notifications before releasing the
-	// callback fields and other engine state they run against (#726). No
-	// new notifications can start: BulkDeleteNodes adds them under mu only
-	// when the engine is not closed.
-	b.txnWG.Wait()
-	b.notifyWG.Wait()
-
+// retire is the owner's dispose: it runs once, after every admitted helper
+// and reserved notification returned, so nothing runs against the state it
+// releases (#726).
+func (b *BadgerEngine) retire() error {
+	b.mu.RLock()
+	db := b.db
+	b.mu.RUnlock()
 	// Fold any derived-count deltas the last commits left behind so a clean
 	// reopen has no open-time write to perform (PR #1043 item #2).
-	b.foldRemainingCountDeltasOnClose(db)
+	countErr := b.foldRemainingCountDeltasOnClose(context.Background(), db)
+	b.releasePendingEmbeddingCandidates()
+	propertyErr := b.finishPropertyWALOnClose(db)
 
 	b.mu.Lock()
 	b.releaseClosedStateLocked()
 	b.mu.Unlock()
 
 	if db == nil {
-		return nil
+		return errors.Join(countErr, propertyErr)
 	}
-	return db.Close()
+	return errors.Join(countErr, propertyErr, db.Close())
 }
 
 // releaseClosedStateLocked drops large heap graphs that are not needed after
@@ -274,15 +369,24 @@ func (b *BadgerEngine) Close() error {
 // process exit; retaining the closed Badger handle behind those shells pins
 // in-memory memtable arenas and caches long after the engine is unusable.
 //
-// b.mu must be held and b.closed must already be true.
+// b.mu must be held and the engine owner must have sealed admission.
 func (b *BadgerEngine) releaseClosedStateLocked() {
+	b.acceptedApplications = nil
+	b.transitionPending(namespaceDropRelease, "", nil)
 	b.db = nil
 	b.nodeCache = nil
+	b.queryNodeCache = nil
+	b.nodeCacheBytes = 0
 	b.nodeBodyCache = nil
 	b.nodeBodyCacheLRU.Init()
 	b.nodeBodyCacheBytes = 0
 	b.edgeTypeCache = nil
 	b.edgeCache = nil
+	b.edgeCacheVersions = nil
+	b.edgeCacheSources = nil
+	b.durableCaches.mu.Lock()
+	b.durableCaches.advanceFloorLocked()
+	b.durableCaches.mu.Unlock()
 	b.outgoingAdjCache = nil
 	b.incomingAdjCache = nil
 	b.labelFirstNodeCache = nil
@@ -304,9 +408,17 @@ func (b *BadgerEngine) releaseClosedStateLocked() {
 
 // Sync forces a sync of all data to disk.
 // This is useful for ensuring durability before a crash.
+// A commit's settlement can call it after its worker left the lifecycle owner,
+// so it takes its own short admission: Close joins a Sync in progress and
+// refuses a later one, and it holds nothing a settlement that closes the engine
+// would wait for. Author: NOR-288 lane (Claude), 2026-10-31.
 func (b *BadgerEngine) Sync() error {
-	if err := b.ensureOpen(); err != nil {
-		return err
+	if !b.work.Enter() {
+		return ErrStorageClosed
+	}
+	defer b.work.Leave()
+	if b.nativeSyncHook != nil {
+		b.nativeSyncHook()
 	}
 	return b.db.Sync()
 }
@@ -314,97 +426,171 @@ func (b *BadgerEngine) Sync() error {
 // RunGC runs garbage collection on the BadgerDB value log.
 // Should be called periodically for long-running applications.
 func (b *BadgerEngine) RunGC() error {
-	if err := b.ensureOpen(); err != nil {
-		return err
+	if !b.work.Enter() {
+		return ErrStorageClosed
 	}
+	defer b.work.Leave()
 	return b.db.RunValueLogGC(0.5)
 }
 
 // Size returns the approximate size of the database in bytes.
 func (b *BadgerEngine) Size() (lsm, vlog int64) {
-	if b.ensureOpen() != nil {
+	if !b.work.Enter() {
 		return 0, 0
 	}
-
+	defer b.work.Leave()
 	return b.db.Size()
 }
 
+// EstimateSize returns the approximate key and value bytes under prefix, or
+// zero once Close sealed admission.
+func (b *BadgerEngine) EstimateSize(prefix []byte) (keys, values uint64) {
+	if !b.work.Enter() {
+		return 0, 0
+	}
+	defer b.work.Leave()
+	return b.db.EstimateSize(prefix)
+}
+
 // FindNodeNeedingEmbedding returns a node that needs embedding.
-// Uses Badger's secondary index (prefixPendingEmbed) for O(1) lookup.
-//
-// This is highly optimized:
-// - O(1) to find next node (just seek to prefix and get first key)
-// - No in-memory index needed
-// - Persistent across restarts
-// - Atomic with node operations
-//
-// CRITICAL: This method aggressively cleans up stale entries to prevent
-// processing non-existent nodes. It will skip up to 100 stale entries
-// before giving up to prevent infinite loops.
-func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
-	if b.ensureOpen() != nil {
-		return nil
+// The durable prefixPendingEmbed index is authoritative. A derived candidate
+// heap avoids reopening/rewinding that range for every claim: Badger's rewind
+// and read-ahead revisit deleted marker versions even with a prefix bound.
+// After one lazy index load, a live candidate needs only point validation;
+// stale candidates are removed once. Each returned node is validated in the
+// engine write that cleans the markers before it; cleanup larger than one
+// Badger batch commits batch by batch, so it always makes progress. Claim
+// serialization remains with the worker. This exported optional-interface
+// method carries the worker job context through catalog admission, iteration
+// and cleanup preparation. An actual storage error is returned, while no
+// eligible candidate is (nil, nil).
+func (b *BadgerEngine) FindNodeNeedingEmbedding(ctx context.Context) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return nil, err
+	}
+
+	if err := b.ensureOpen(false); err != nil {
+		return nil, err
+	}
+	p := &b.pendingCandidates
+	if err := p.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
+	defer p.mu.Unlock()
+	// Hints can be lost: an empty catalog cannot prove an empty durable
+	// index. Reconcile at the empty boundary; a previously verified empty
+	// snapshot is reusable until storage publishes another commit. Live
+	// claims keep their point-read path; worker scheduling owns idle backoff.
+	reconciled := len(p.ids) == 0 || !p.loaded || p.generation != b.pendingCandidatesGeneration.Load()
+	if err := p.load(ctx, b); err != nil {
+		return nil, err
+	}
+	if len(p.ids) == 0 {
+		return nil, nil
 	}
 
 	var found *Node
 	removedStale := 0
 	removedNoLongerNeeds := 0
 
-	_ = b.withUpdate(func(txn *badger.Txn) error {
-		prefix := []byte{prefixPendingEmbed}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
+	for len(p.ids) > 0 {
+		// Cleanup deletions are committed one Badger batch at a time: a
+		// prefix of stale markers larger than one batch must still make
+		// durable progress toward the live candidates behind it.
+		batchFull := false
+		err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+			for len(p.ids) > 0 && !batchFull {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				nodeID := p.ids[0]
+				if _, err := txn.Get(pendingEmbedKey(nodeID)); err == badger.ErrKeyNotFound {
+					p.removeFirst()
+					continue
+				} else if err != nil {
+					return err
+				}
+				remove := func(counter *int) error {
+					if err := txn.Delete(pendingEmbedKey(nodeID)); errors.Is(err, badger.ErrTxnTooBig) {
+						// Commit the deletions that fit; this marker stays
+						// first and is revalidated in the next batch.
+						batchFull = true
+						return nil
+					} else if err != nil {
+						return err
+					}
+					p.removeFirst()
+					*counter++
+					return nil
+				}
 
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().Key()
-			if len(key) <= 1 {
-				continue
-			}
-			nodeID := NodeID(key[1:])
+				// Never embed the system database; remove any stale/system entries.
+				if isSystemNamespaceID(string(nodeID)) {
+					if err := remove(&removedNoLongerNeeds); err != nil {
+						return err
+					}
+					continue
+				}
 
-			// Never embed the system database; remove any stale/system entries.
-			if isSystemNamespaceID(string(nodeID)) {
-				_ = txn.Delete(pendingEmbedKey(nodeID))
-				removedNoLongerNeeds++
-				continue
-			}
+				// Verify node exists in the same transaction for consistency.
+				item, err := txn.Get(nodeKey(nodeID))
+				if err == badger.ErrKeyNotFound {
+					if err := remove(&removedStale); err != nil {
+						return err
+					}
+					continue
+				}
+				if err != nil {
+					return err
+				}
 
-			// Verify node exists in the same transaction for consistency.
-			item, err := txn.Get(nodeKey(nodeID))
-			if err == badger.ErrKeyNotFound {
-				_ = txn.Delete(pendingEmbedKey(nodeID))
-				removedStale++
-				continue
-			}
-			if err != nil {
-				// Conservatively skip on unexpected errors.
-				continue
-			}
+				var node *Node
+				if err := item.Value(func(val []byte) error {
+					var decErr error
+					node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
+					return decErr
+				}); err != nil || node == nil {
+					if err := remove(&removedStale); err != nil {
+						return err
+					}
+					continue
+				}
 
-			var node *Node
-			if err := item.Value(func(val []byte) error {
-				var decErr error
-				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				return decErr
-			}); err != nil || node == nil {
-				_ = txn.Delete(pendingEmbedKey(nodeID))
-				removedStale++
-				continue
-			}
+				// If node no longer needs embedding, remove it from the pending index.
+				if !b.shouldIndexPendingEmbed(node) {
+					if err := remove(&removedNoLongerNeeds); err != nil {
+						return err
+					}
+					continue
+				}
 
-			// If node no longer needs embedding, remove it from the pending index.
-			if !b.shouldIndexPendingEmbed(node) {
-				_ = txn.Delete(pendingEmbedKey(nodeID))
-				removedNoLongerNeeds++
-				continue
+				found = node
+				break
 			}
+			return nil
+		})
 
-			found = node
+		if err != nil {
+			// A failed cleanup commit must not discard still-durable candidates.
+			b.InvalidatePendingEmbeddingsIndex()
+			return nil, err
+		}
+		if batchFull {
+			continue
+		}
+		if found != nil || reconciled {
 			break
 		}
-		return nil
-	})
-
+		// The last cached hints were stale. A committed marker whose hint was
+		// lost may still exist, so check the durable index before returning nil.
+		reconciled = true
+		if err := p.load(ctx, b); err != nil {
+			return nil, err
+		}
+	}
 	// Log at most once per call (avoid per-entry spam on large stale indexes).
 	if removedStale > 0 || removedNoLongerNeeds > 0 {
 		b.log.Info("pending embeddings cleanup",
@@ -414,27 +600,27 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		)
 	}
 
-	return found
+	return found, nil
 }
 
 // MarkNodeEmbedded removes a node from the pending embeddings index.
 // Call this after successfully embedding a node.
 func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
-	_ = b.withUpdate(func(txn *badger.Txn) error {
+	_ = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
 		return txn.Delete(pendingEmbedKey(nodeID))
-	})
+	}, nil, func(context.Context) ([]any, error) { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))}, nil }, nil, nil)
 }
 
 // AddToPendingEmbeddings adds a node to the pending embeddings index.
 // Call this when creating a node that needs embedding.
 func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	_ = b.withUpdate(func(txn *badger.Txn) error {
+	_ = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(nodeID))
 		if err == nil {
 			var node *Node
 			if err = item.Value(func(value []byte) error {
 				var decodeErr error
-				node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), value)
+				node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), value, nil)
 				return decodeErr
 			}); err != nil {
 				return err
@@ -445,44 +631,37 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 		} else if err != badger.ErrKeyNotFound {
 			return err
 		}
-		return txn.Set(pendingEmbedKey(nodeID), []byte{})
-	})
+		return b.setPendingEmbeddingInTxn(txn, nodeID)
+	}, nil, func(context.Context) ([]any, error) { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))}, nil }, nil, nil)
 }
 
 // PendingEmbeddingsCount returns the number of nodes waiting for embedding.
 // Note: This requires a scan of the pending index, so use sparingly.
 func (b *BadgerEngine) PendingEmbeddingsCount() int {
-	count := 0
-	_ = b.withView(func(txn *badger.Txn) error {
-		prefix := []byte{prefixPendingEmbed}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			count++
-		}
-		return nil
-	})
-	return count
+	return b.CountPendingEmbeddingIDs(b.work.Context(), nil)
 }
 
-// InvalidatePendingEmbeddingsIndex is a no-op for Badger index.
-// The index is persistent and doesn't need invalidation.
+// InvalidatePendingEmbeddingsIndex discards only the derived candidate catalog.
+// The durable pending index is unchanged. The generation needs no queue lock,
+// including during Restore while new read transactions are held off.
 func (b *BadgerEngine) InvalidatePendingEmbeddingsIndex() {
-	// No-op - Badger index is persistent and self-maintaining
+	b.pendingCandidatesGeneration.Add(1)
 }
 
 // RefreshPendingEmbeddingsIndex rebuilds the pending embeddings index.
 // This scans all nodes and adds any missing ones to the index.
 // It also removes stale entries for nodes that no longer exist or already have embeddings.
-// Use this on startup or after bulk imports.
+// Use this on startup or after bulk imports. Its caller context is erased by
+// the exported optional interface, so this entry passes its own explicit
+// unbounded lifetime for the index rebuild's writes.
 func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
+	b.InvalidatePendingEmbeddingsIndex()
 	added := 0
 	removed := 0
 
 	// First pass: Clean up stale entries in the pending index
 	// Remove entries for nodes that don't exist or already have embeddings
-	cleanupErr := b.withUpdate(func(txn *badger.Txn) error {
+	cleanupErr := b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		pendingPrefix := []byte{prefixPendingEmbed}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(pendingPrefix))
 		defer it.Close()
@@ -566,7 +745,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	}
 
 	// Second pass: Add missing nodes to the index
-	_ = b.withUpdate(func(txn *badger.Txn) error {
+	_ = b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -601,7 +780,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 					// Check if already in pending index
 					_, err := txn.Get(pendingEmbedKey(node.ID))
 					if err == badger.ErrKeyNotFound {
-						txn.Set(pendingEmbedKey(node.ID), []byte{})
+						b.setPendingEmbeddingInTxn(txn, node.ID)
 						added++
 					}
 				}
@@ -627,36 +806,9 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 // IterateNodes iterates through all nodes one at a time without loading all into memory.
 // The callback returns true to continue, false to stop.
 func (b *BadgerEngine) IterateNodes(fn func(*Node) bool) error {
-	if err := b.ensureOpen(); err != nil {
-		return err
-	}
-
-	return b.withView(func(txn *badger.Txn) error {
-		prefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			// Extract nodeID from key (skip prefix byte)
-			key := item.Key()
-			if len(key) <= 1 {
-				continue
-			}
-			nodeID := NodeID(key[1:])
-
-			var node *Node
-			err := item.Value(func(val []byte) error {
-				var decErr error
-				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				return decErr
-			})
-			if err != nil {
-				continue // Skip invalid nodes
-			}
-			if !fn(node) {
-				break // Callback requested stop
-			}
+	return b.StreamNodesWithOptions(context.Background(), StreamNodesOptions{WithEmbeddings: true}, func(n *Node) error {
+		if !fn(n) {
+			return ErrIterationStopped
 		}
 		return nil
 	})
@@ -669,13 +821,19 @@ func (b *BadgerEngine) IterateNodes(fn func(*Node) bool) error {
 // lines across four engines into one kernel per engine (HARD_CONVERGENCE.md
 // item 4) means future scan fixes land in one place.
 type StreamNodesOptions struct {
+	// Label is an optional index hint. Callers still check label membership.
+	Label string
+	// QueryNodes settles embedding metadata without loading stored vectors,
+	// as QueryNodeReader does. It applies to whole-node reads without
+	// WithEmbeddings; resident vectors may be shared, never copied.
+	QueryNodes bool
 	// Prefix limits the scan to IDs starting with this string ("" scans all).
 	Prefix string
 	// Projection, when non-nil, decodes only these properties.
 	Projection []string
 	// WithEmbeddings loads separately stored chunk vectors.
 	WithEmbeddings bool
-	// ApplyDecayFilter drops nodes failing decay scoring (full scans only).
+	// ApplyDecayFilter drops nodes failing decay scoring, including label scans.
 	ApplyDecayFilter bool
 	// StripEmbeddings removes inline/legacy embedding payloads from results.
 	StripEmbeddings bool
@@ -684,12 +842,29 @@ type StreamNodesOptions struct {
 	// (#824). It is a hint: an engine may ignore it, and pending writes are
 	// not filtered, so the caller still tests every node it receives.
 	PropertyFilter func(properties map[string]interface{}) bool
+	// PropertyFilterProjection names the properties PropertyFilter reads, so an
+	// engine can settle the filter before it decodes the rest of a body. It
+	// applies to a scan without a Projection, whose row is the whole node: a
+	// Projection already names what the filter reads. Like PropertyFilter it
+	// is a hint an engine may ignore, and pending writes are not filtered,
+	// so the caller still tests every node it receives.
+	PropertyFilterProjection []string
 	// PropertyStringEquals, for projected properties, lets the engine skip a
 	// node whose stored value of a property is not that string by comparing
 	// the stored bytes, without decoding the node (#857). A stored string
 	// equals a Cypher string exactly when its bytes do, and a value of any
 	// other type never equals a string. Like PropertyFilter it is a hint.
 	PropertyStringEquals map[string]string
+}
+
+// fullNodeStreamOptions is the one read policy of a full node stream a
+// consumer sees: StreamNodes, StreamNodeChunks and StreamNodesByPrefix, on the
+// engine and on every wrapper. It reads complete bodies with their stored
+// vectors and applies the visibility layer, as a visible read does. A stored
+// read of every node, hidden ones included, sets its own options
+// (StreamStoredNodes).
+func fullNodeStreamOptions(prefix string) StreamNodesOptions {
+	return StreamNodesOptions{Prefix: prefix, WithEmbeddings: true, ApplyDecayFilter: true}
 }
 
 // StreamNodesWithOptions iterates nodes one at a time without materializing
@@ -699,22 +874,52 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if fn == nil {
 		return ErrInvalidData
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
+		return err
+	}
+	// A property filter does not disqualify the label route: the scoped label
+	// owner decodes each candidate through the scan's own decoder and settles the
+	// filter before it materializes the node (#1682), so this route keeps its
+	// label index and skips another label's bodies as well.
+	if opts.Projection == nil && opts.Label != "" && ((opts.QueryNodes && !opts.WithEmbeddings) || opts.scanDecodesFilter()) {
+		visit := func(node *Node) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if opts.StripEmbeddings {
+				node = copyNodeWithoutEmbeddings(node)
+			}
+			return fn(node)
+		}
+		err := b.streamNodesByLabelProjectedInScope(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, opts)
+		if err == ErrIterationStopped {
+			return nil
+		}
 		return err
 	}
 	// Write-behind overlay: acknowledged-but-unflushed nodes shadow
 	// committed rows for their IDs and are visited after the scan.
 	var overlay []*Node
 	var touched map[NodeID]bool
-	if b.writeBehind != nil {
-		overlay, touched = b.writeBehind.AllNodesOverlay()
+	v := storedRead
+	if opts.ApplyDecayFilter {
+		v = visibleRead
+	}
+	var captureErr error
+	capture := func(w *WriteBehindBuffer) {
+		pendingNodes, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+		if err != nil {
+			captureErr = err
+			return
+		}
+		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
 	}
-	nowNanos := DecayScoringTime()
 	// streamNodesWithOptionsInTxn already applies the projection, decay and
 	// strip filters; this wrapper only shadows rows the overlay replaces.
+	stopped := false
 	emit := func(node *Node) error {
 		if node == nil {
 			return nil
@@ -722,22 +927,30 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if len(touched) > 0 && touched[node.ID] {
 			return nil // the write-behind overlay shadows this committed row
 		}
-		return fn(node)
+		err := fn(node)
+		if err == ErrIterationStopped {
+			stopped = true
+		}
+		return err
 	}
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr // the canceled capture retires the scan
+		}
 		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
-	})
+	}, readViewOptions{scope: opts.Prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return err
+	}
+	if stopped {
+		return nil
 	}
 	for _, node := range overlay {
 		if !inScope(node.ID) {
 			continue
 		}
-		if opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos) {
-			continue
-		}
-		if err := fn(copyNode(node)); err != nil {
+		projected := opts.copyResidentNode(node)
+		if err := fn(projected); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}
@@ -753,46 +966,38 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 // from fn ends the scan and is not returned.
 func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *badger.Txn, opts StreamNodesOptions, fn func(node *Node) error) error {
 	nowNanos := DecayScoringTime()
-	// A projected scan decodes through one scan-scoped decoder (#857).
+	// A projected or filtered scan decodes through one scan-scoped decoder
+	// (#857). It resolves each stored property token through this read
+	// snapshot, so the names it selects are the ones the bodies were written
+	// with, and it applies the property filter before a node is materialized.
 	var projected *projectedNodeDecoder
-	if opts.Projection != nil && !opts.WithEmbeddings {
-		projected = newProjectedNodeDecoder(b, opts)
+	if opts.scanDecodesFilter() || (!opts.WithEmbeddings && opts.Projection != nil) {
+		projected = newProjectedNodeDecoder(b, txn, opts)
+	}
+	// A single prefix check in the same snapshot proves that no sidecar or
+	// chunk exists for any node in this scan. Avoid one missing-key lookup per
+	// node when a database (or scoped prefix) has no embedding records.
+	embeddingRecordsAbsent := false
+	if opts.WithEmbeddings && projected == nil {
+		prefix := append([]byte{prefixEmbedding}, opts.Prefix...)
+		iteratorOptions := badger.DefaultIteratorOptions
+		iteratorOptions.Prefix = prefix
+		iteratorOptions.PrefetchValues = false
+		it := txn.NewIterator(iteratorOptions)
+		it.Seek(prefix)
+		embeddingRecordsAbsent = !it.ValidForPrefix(prefix)
+		it.Close()
 	}
 
 	visit := func(txn *badger.Txn, item *badger.Item) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		node, err := b.readStreamNodeItem(ctx, txn, item, opts, projected, nowNanos, embeddingRecordsAbsent)
+		if err != nil {
+			// A record this scan cannot decode fails the scan: skipping it would
+			// return the rest of the population as if it were all of it.
+			return fmt.Errorf("scanning node %q: %w", NodeID(item.Key()[1:]), err)
 		}
-		var node *Node
-		err := item.Value(func(val []byte) error {
-			key := item.Key()
-			if len(key) <= 1 {
-				return nil
-			}
-			if projected != nil {
-				var decodeErr error
-				node, decodeErr = projected.decode(key, val)
-				return decodeErr
-			}
-			nodeID := NodeID(key[1:])
-			var decodeErr error
-			if opts.WithEmbeddings {
-				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-			} else {
-				node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), val)
-			}
-			return decodeErr
-		})
-		if err != nil || node == nil {
-			return nil // Skip invalid nodes
-		}
-		if opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos) {
-			return nil
-		}
-		if opts.StripEmbeddings {
-			node = copyNodeWithoutEmbeddings(node)
+		if node == nil {
+			return nil // the scan's decoder rejected this node
 		}
 		if err := fn(node); err != nil {
 			if err == ErrIterationStopped {
@@ -830,10 +1035,67 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 	return nil
 }
 
+// readStreamNodeItem is the one native node hydration, visibility and projection
+// policy. The streaming scan applies it to every committed row, and captured
+// output materialization applies the same reader to the row it selects, so an
+// emitted entity image is the one the native scan would emit. A nil node with no
+// error is a row the decoder rejected; a decode failure is returned to the
+// caller, which fails its read rather than publishing a partial population.
+func (b *BadgerEngine) readStreamNodeItem(ctx context.Context, txn *badger.Txn, item *badger.Item, opts StreamNodesOptions, projected *projectedNodeDecoder, nowNanos int64, embeddingRecordsAbsent bool) (*Node, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	var node *Node
+	var err error
+	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && !opts.scanDecodesFilter() {
+		node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemQueryMetadata)
+	} else if opts.WithEmbeddings && projected == nil && len(item.Key()) > 1 {
+		// Reuse the version-keyed body cache through the same snapshot owner
+		// as point reads. Unlike the current-value cache, it never requires
+		// replaying a user callback when concurrent writes advance the view.
+		node, err = b.readNodeItemInTxnWithEmbeddingAbsence(txn, item, NodeID(item.Key()[1:]), nodeItemFullEmbeddings, embeddingRecordsAbsent)
+	} else {
+		err = item.Value(func(val []byte) error {
+			key := item.Key()
+			if len(key) <= 1 {
+				return nil
+			}
+			if projected != nil {
+				var decodeErr error
+				node, decodeErr = projected.decode(key, val)
+				return decodeErr
+			}
+			nodeID := NodeID(key[1:])
+			var decodeErr error
+			if opts.WithEmbeddings {
+				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
+			} else {
+				node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), val, nil)
+			}
+			return decodeErr
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, nil
+	}
+	if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, node, nowNanos) {
+		return nil, nil
+	}
+	if opts.StripEmbeddings {
+		node = copyNodeWithoutEmbeddings(node)
+	}
+	return node, nil
+}
+
 // StreamNodes implements StreamingEngine.StreamNodes for memory-efficient iteration.
 // Iterates through all nodes one at a time without loading all into memory.
 func (b *BadgerEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
-	return b.StreamNodesWithOptions(ctx, StreamNodesOptions{WithEmbeddings: true, ApplyDecayFilter: true}, fn)
+	return b.StreamNodesWithOptions(ctx, fullNodeStreamOptions(""), fn)
 }
 
 // StreamNodesWithoutEmbeddings iterates complete node records without reading
@@ -846,7 +1108,7 @@ func (b *BadgerEngine) StreamNodesWithoutEmbeddings(ctx context.Context, fn func
 // This is significantly faster than full StreamNodes + callback filtering when
 // tenants/databases share a physical store.
 func (b *BadgerEngine) StreamNodesByPrefix(ctx context.Context, prefix string, fn func(node *Node) error) error {
-	return b.StreamNodesWithOptions(ctx, StreamNodesOptions{Prefix: prefix, WithEmbeddings: true, ApplyDecayFilter: true}, fn)
+	return b.StreamNodesWithOptions(ctx, fullNodeStreamOptions(prefix), fn)
 }
 
 // StreamNodesByPrefixProjected streams nodes whose IDs start with prefix while
@@ -869,17 +1131,24 @@ func (b *BadgerEngine) StreamNodesByPrefixWithoutEmbeddings(ctx context.Context,
 // StreamEdges implements StreamingEngine.StreamEdges for memory-efficient iteration.
 // Iterates through all edges one at a time without loading all into memory.
 func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	// Write-behind overlay: acknowledged-but-unflushed edges shadow
 	// committed rows for their IDs and are visited after the scan.
 	var overlay []*Edge
 	var touched map[EdgeID]bool
-	if b.writeBehind != nil {
-		overlay, touched = b.writeBehind.AllEdgesOverlay()
+	var captureErr error
+	capture := func(w *WriteBehindBuffer) {
+		pendingEdges, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
+		if err != nil {
+			captureErr = err
+			return
+		}
+		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}
 	nowNanos := DecayScoringTime()
+	stopped := false
 	emit := func(edge *Edge) error {
 		if edge == nil {
 			return nil
@@ -887,12 +1156,19 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		if len(touched) > 0 && touched[edge.ID] {
 			return nil // the write-behind overlay shadows this committed row
 		}
-		if b.filterEdgeByDecay(edge, nowNanos) {
+		if b.filterEntityByDecay(visibleRead, edge, nowNanos) {
 			return nil
 		}
-		return fn(edge)
+		err := fn(edge)
+		if err == ErrIterationStopped {
+			stopped = true
+		}
+		return err
 	}
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr // the canceled capture retires the scan
+		}
 		prefix := []byte{prefixEdge}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -905,18 +1181,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 			default:
 			}
 
-			item := it.Item()
-			key := item.Key()
-			var edgeID EdgeID
-			if len(key) > 1 {
-				edgeID = EdgeID(key[1:])
-			}
-			var edge *Edge
-			err := item.Value(func(val []byte) error {
-				var decErr error
-				edge, decErr = b.decodeEdgeBodyByID(val, edgeID)
-				return decErr
-			})
+			edge, err := b.readStreamEdgeItem(txn, it.Item())
 			if err != nil {
 				continue // Skip invalid edges
 			}
@@ -932,10 +1197,10 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	if err != nil {
 		return err
 	}
+	if stopped {
+		return nil
+	}
 	for _, edge := range overlay {
-		if b.filterEdgeByDecay(edge, nowNanos) {
-			continue
-		}
 		if err := fn(copyEdge(edge)); err != nil {
 			if err == ErrIterationStopped {
 				return nil
@@ -946,74 +1211,34 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	return nil
 }
 
-// StreamNodeChunks implements StreamingEngine.StreamNodeChunks for batch processing.
-// Iterates through nodes in chunks, more efficient for batch operations.
+// StreamNodeChunks implements StreamingEngine.StreamNodeChunks for batch
+// processing. It batches the node stream, so a chunk holds exactly the nodes
+// StreamNodes publishes: the same bodies, vectors and visibility.
 func (b *BadgerEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
 	if chunkSize <= 0 {
 		chunkSize = 1000
 	}
-
-	if err := b.ensureOpen(); err != nil {
+	chunk := make([]*Node, 0, chunkSize)
+	stopped := false
+	err := b.StreamNodes(ctx, func(node *Node) error {
+		chunk = append(chunk, node)
+		if len(chunk) < chunkSize {
+			return nil
+		}
+		err := fn(chunk)
+		chunk = chunk[:0]
+		stopped = err == ErrIterationStopped
+		return err
+	})
+	if err != nil || stopped {
 		return err
 	}
-
-	return b.withView(func(txn *badger.Txn) error {
-		prefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		chunk := make([]*Node, 0, chunkSize)
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			// Check context cancellation
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			item := it.Item()
-			var node *Node
-			err := item.Value(func(val []byte) error {
-				key := item.Key()
-				if len(key) <= 1 {
-					return nil
-				}
-				nodeID := NodeID(key[1:])
-				var decErr error
-				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				return decErr
-			})
-			if err != nil {
-				continue // Skip invalid nodes
-			}
-
-			chunk = append(chunk, node)
-
-			if len(chunk) >= chunkSize {
-				if err := fn(chunk); err != nil {
-					if err == ErrIterationStopped {
-						return nil
-					}
-					return err
-				}
-				// Reset chunk, reuse capacity
-				chunk = chunk[:0]
-			}
+	if len(chunk) > 0 {
+		if err := fn(chunk); err != ErrIterationStopped {
+			return err
 		}
-
-		// Process remaining nodes
-		if len(chunk) > 0 {
-			if err := fn(chunk); err != nil {
-				if err == ErrIterationStopped {
-					return nil
-				}
-				return err
-			}
-		}
-
-		return nil
-	})
+	}
+	return nil
 }
 
 // ============================================================================
@@ -1036,7 +1261,7 @@ func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
 //
 // If idPrefix is empty, clears embeddings for all nodes.
 func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error) {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
 
@@ -1081,14 +1306,16 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 		return 0, fmt.Errorf("error scanning nodes: %w", err)
 	}
 
-	// Now update each node to clear its embedding
+	// Now update each node to clear its embedding, hidden ones included: they
+	// must not keep an embedding of the model being replaced.
 	for _, id := range nodeIDs {
-		node, err := b.GetNode(id)
+		node, err := b.GetStoredNode(context.Background(), id)
 		if err != nil {
 			continue // Skip if node no longer exists
 		}
+		before := *node
 		node.ChunkEmbeddings = nil
-		if err := b.UpdateNode(node); err != nil {
+		if err := b.UpdateNode(context.Background(), NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages}); err != nil {
 			b.log.Warn("failed to clear embedding for node",
 				"subsystem", "embeddings_index",
 				"node_id", string(id),
@@ -1114,4 +1341,55 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 	}
 
 	return cleared, nil
+}
+
+// entityCountByPrefix keeps namespace-cache and committed-buffer visibility in
+// one owner; total-count synchronization precedes lifecycle admission as before.
+func (b *BadgerEngine) entityCountByPrefix(ctx context.Context, prefix string, keyType byte) (int64, error) {
+	if err := b.totalCountWriteMu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
+	defer b.totalCountWriteMu.RUnlock()
+	if err := b.ensureOpen(false); err != nil {
+		return 0, err
+	}
+	cache := b.namespaceNodeCounts
+	if keyType == prefixEdge {
+		cache = b.namespaceEdgeCounts
+	}
+	count, err := b.countByPrefix(ctx, prefix, keyType, cache)
+	if err != nil {
+		return 0, err
+	}
+	if b.writeBehind != nil {
+		delta, err := b.writeBehind.totalCountDeltaForPrefix(ctx, prefix, keyType == prefixEdge)
+		if err != nil {
+			return 0, err
+		}
+		count += delta
+	}
+	return count, nil
+}
+
+// readStreamEdgeItem is the one native relationship hydration policy: the
+// relationship stream and captured output materialization both read a committed
+// row through it. Renderable rows come back whole; a row this reader cannot
+// decode is absent from both populations, as the relationship stream omits it
+// today, so a captured image never differs from the streamed one.
+func (b *BadgerEngine) readStreamEdgeItem(txn *badger.Txn, item *badger.Item) (*Edge, error) {
+	key := item.Key()
+	var edgeID EdgeID
+	if len(key) > 1 {
+		edgeID = EdgeID(key[1:])
+	}
+	var edge *Edge
+	err := item.Value(func(value []byte) error {
+		var decodeErr error
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), value, edgeID)
+		return decodeErr
+	})
+	if err != nil {
+		return nil, nil // Skip invalid edges, as the release stream does.
+	}
+	return edge, nil
 }

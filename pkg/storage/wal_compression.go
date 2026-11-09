@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/klauspost/compress/zstd"
@@ -9,18 +11,17 @@ import (
 
 // WAL buffered-commit payload compression. Every acknowledged write-behind
 // commit serializes its full payload (operations, raw KV writes/deletes,
-// property-key tokens) into the WAL for kill -9 recovery; that payload is
-// JSON with repetitive structure and previously blew the WAL up to several
-// times the Badger data size. Lossless zstd shrinks it by ~5-10× with no
-// durability impact: the decompressed bytes are identical to what was
-// acknowledged, so replay is byte-for-byte equivalent.
+// property-key tokens) into the WAL for kill -9 recovery. The typed payload
+// preserves binary keys and is compressed without changing its contents.
 
 var (
 	walZstdEncOnce sync.Once
 	walZstdEnc     *zstd.Encoder
-	walZstdDecOnce sync.Once
-	walZstdDec     *zstd.Decoder
 )
+
+// A buffered commit is a single recovery unit. Its decoded payload must stay
+// bounded even when a tiny zstd frame expands dramatically during restart.
+const maxBufferedWALPayloadBytes = 64 << 20
 
 func walZstdEncoder() *zstd.Encoder {
 	walZstdEncOnce.Do(func() {
@@ -30,16 +31,6 @@ func walZstdEncoder() *zstd.Encoder {
 		}
 	})
 	return walZstdEnc
-}
-
-func walZstdDecoder() *zstd.Decoder {
-	walZstdDecOnce.Do(func() {
-		dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
-		if err == nil {
-			walZstdDec = dec
-		}
-	})
-	return walZstdDec
 }
 
 // compressWALBufferedCommitPayload zstd-compresses a buffered-commit payload.
@@ -61,15 +52,22 @@ func compressWALBufferedCommitPayload(data []byte) []byte {
 // payloads pass through unchanged.
 func decompressWALBufferedCommitPayload(data []byte) ([]byte, error) {
 	if len(data) < 4 || data[0] != 0x28 || data[1] != 0xB5 || data[2] != 0x2F || data[3] != 0xFD {
+		if len(data) > maxBufferedWALPayloadBytes {
+			return nil, fmt.Errorf("wal: buffered commit exceeds decoded payload limit")
+		}
 		return data, nil
 	}
-	dec := walZstdDecoder()
-	if dec == nil {
-		return nil, fmt.Errorf("wal: zstd decoder unavailable")
+	dec, err := zstd.NewReader(bytes.NewReader(data), zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(maxBufferedWALPayloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("wal: zstd decoder unavailable: %w", err)
 	}
-	out, err := dec.DecodeAll(data, nil)
+	defer dec.Close()
+	out, err := io.ReadAll(io.LimitReader(dec, maxBufferedWALPayloadBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("wal: failed to decompress buffered commit: %w", err)
+	}
+	if len(out) > maxBufferedWALPayloadBytes {
+		return nil, fmt.Errorf("wal: buffered commit exceeds decoded payload limit")
 	}
 	return out, nil
 }

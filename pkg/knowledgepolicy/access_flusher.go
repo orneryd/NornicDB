@@ -2,20 +2,16 @@ package knowledgepolicy
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
-
-// AccessMetaStore is the persistence interface for AccessMetaEntry.
-type AccessMetaStore interface {
-	GetAccessMeta(entityID string) (*AccessMetaEntry, error)
-	PutAccessMeta(entityID string, entry *AccessMetaEntry) error
-}
 
 // EntityMeta describes the storage metadata the flusher needs to resolve
 // access-time policy bindings and property visibility.
@@ -31,7 +27,7 @@ type EntityMeta struct {
 // EntityMetaLookup provides entity metadata needed by flusher policy and
 // property suppression evaluation.
 type EntityMetaLookup interface {
-	GetEntityMeta(entityID string) (EntityMeta, error)
+	GetEntityMeta(ctx context.Context, entityID string) (EntityMeta, error)
 }
 
 // ScorerFunc returns a Scorer for the given namespace. Returns nil if none.
@@ -40,8 +36,11 @@ type ScorerFunc func(namespace string) *Scorer
 // EmbedInvalidateFunc is called when property suppression state changes.
 type EmbedInvalidateFunc func(entityID string)
 
-// SuppressionRecheckFunc re-evaluates entity visibility after access metadata changes.
-type SuppressionRecheckFunc func(entityID string, meta EntityMeta)
+// SuppressionRecheckFunc re-evaluates entity visibility after access metadata
+// changes. ctx is the flush cycle's own accepted lifetime, so a recheck that
+// mutates metadata (a decay resuppression) runs under the work that produced it
+// rather than a request or run lifetime that has already ended.
+type SuppressionRecheckFunc func(ctx context.Context, entityID string, meta EntityMeta)
 
 // AccessFlusher periodically drains the accumulator and persists deltas.
 type AccessFlusher struct {
@@ -49,8 +48,8 @@ type AccessFlusher struct {
 	store              AccessMetaStore
 	interval           time.Duration
 	mu                 sync.Mutex
-	cancel             context.CancelFunc
-	done               chan struct{}
+	active             *lifecycle.WorkLifetime // mu; the current run, replaced only after it has stopped
+	outcomes           lifecycle.Outcomes      // native outcomes of every run
 	flushNow           chan struct{}
 	scorerFunc         ScorerFunc
 	entityMeta         EntityMetaLookup
@@ -122,39 +121,59 @@ func (f *AccessFlusher) BufferFullness() float64 {
 }
 
 // Start begins the flush loop. It exits immediately if the accumulator is disabled.
+// The run is enrolled in its own lifetime before its goroutine can start. The
+// caller's context is foreign code, so the run is built outside the host lock
+// and published under it; a run that loses publication is retired unused.
 func (f *AccessFlusher) Start(ctx context.Context) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	if !f.accumulator.enabled {
+	skip := !f.accumulator.enabled || f.runLive()
+	f.mu.Unlock()
+	if skip {
 		return
 	}
-	if f.cancel != nil {
+	run := lifecycle.NewWorkLifetime(ctx)
+	_, release, _ := run.Acquire(context.Background())
+	f.mu.Lock()
+	if f.runLive() {
+		f.mu.Unlock()
+		release()
+		run.BeginStop(nil)
 		return
 	}
-
-	ctx, f.cancel = context.WithCancel(ctx)
-	f.done = make(chan struct{})
-
-	go f.run(ctx)
+	f.active = run
+	f.mu.Unlock()
+	go func() { defer release(); f.run(run.Context()) }()
 }
 
-// Stop stops the flush loop and performs a final flush.
-func (f *AccessFlusher) Stop() {
-	f.mu.Lock()
-	cancel := f.cancel
-	done := f.done
-	f.cancel = nil
-	f.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-		<-done
+// runLive reports whether the current run has not finished its stop; a new
+// run is published only after the previous one stopped. f.mu must be held.
+func (f *AccessFlusher) runLive() bool {
+	if f.active == nil {
+		return false
 	}
+	select {
+	case <-f.active.Stopped():
+		return false
+	default:
+		return true
+	}
+}
+
+// Stop is the current run's one stop: it seals and signals the run, joins its
+// actual completion and returns every accumulated native outcome. Every
+// caller joins the same stop; a stopping run cannot be replaced.
+func (f *AccessFlusher) Stop() error {
+	f.mu.Lock()
+	run := f.active
+	f.mu.Unlock()
+	if run != nil {
+		run.BeginStop(nil)
+		f.outcomes.Record("", run.JoinStopped())
+	}
+	return f.outcomes.Err()
 }
 
 func (f *AccessFlusher) run(ctx context.Context) {
-	defer close(f.done)
 	ticker := time.NewTicker(f.interval)
 	defer ticker.Stop()
 
@@ -195,8 +214,12 @@ func (f *AccessFlusher) flush() {
 		return
 	}
 
-	// Wrap the non-empty flush in a span so downstream storage writes nest
-	// beneath it (one coherent trace per flush batch).
+	// A flush cycle is its own accepted unit of work: DrainAll has already
+	// removed these deltas from the accumulator, and the run lifetime is
+	// canceled before its own final flush, so the cycle persists them under
+	// its own lifetime rather than a caller or run lifetime that would
+	// abandon them. The span nests the storage writes beneath it (one
+	// coherent trace per flush batch).
 	flushCtx := context.Background()
 	var span trace.Span
 	flushCtx, span = otel.Tracer("nornicdb/knowledge_policy").Start(
@@ -218,10 +241,12 @@ func (f *AccessFlusher) flush() {
 
 	now := time.Now().UnixNano()
 	for entityID, delta := range merged {
-		entry, err := f.store.GetAccessMeta(entityID)
+		result, err := f.store.ReadAccessMeta(AccessMetaReadRequest{Mode: AccessMetaReadPoint, EntityID: entityID})
 		if err != nil {
+			f.outcomes.Record("access metadata read", err)
 			continue
 		}
+		entry := result.Entry
 		if entry == nil {
 			entry = &AccessMetaEntry{
 				TargetID:    entityID,
@@ -231,60 +256,74 @@ func (f *AccessFlusher) flush() {
 
 		meta := EntityMeta{Scope: entry.TargetScope}
 		if f.entityMeta != nil {
-			if resolved, err := f.entityMeta.GetEntityMeta(entityID); err == nil {
+			if resolved, err := f.entityMeta.GetEntityMeta(flushCtx, entityID); err == nil {
 				meta = resolved
 				if meta.Scope != "" {
 					entry.TargetScope = meta.Scope
 				}
+			} else {
+				if !errors.Is(err, ErrEntityMetaNotFound) {
+					f.outcomes.Record("access entity metadata", err)
+				}
+				continue
 			}
 		}
 
 		appliedFixed := f.applyOnAccessMutations(entityID, entry, meta, now)
 
 		if !appliedFixed["accessCount"] {
-			entry.Fixed.AccessCount += delta.accessCount
+			entry.Fixed.AccessCount = int64(counter(entry.Fixed.AccessCount).merge(delta.accessCount))
 		}
 		if !appliedFixed["traversalCount"] {
-			entry.Fixed.TraversalCount += delta.traversalCount
+			entry.Fixed.TraversalCount = int64(counter(entry.Fixed.TraversalCount).merge(delta.traversalCount))
 		}
-		if !appliedFixed["lastAccessedAt"] && delta.lastAccessedAt > entry.Fixed.LastAccessedAt {
-			entry.Fixed.LastAccessedAt = delta.lastAccessedAt
+		if !appliedFixed["lastAccessedAt"] {
+			entry.Fixed.LastAccessedAt = int64(timestamp(entry.Fixed.LastAccessedAt).merge(delta.lastAccessedAt))
 		}
-		if !appliedFixed["lastTraversedAt"] && delta.lastTraversedAt > entry.Fixed.LastTraversedAt {
-			entry.Fixed.LastTraversedAt = delta.lastTraversedAt
+		if !appliedFixed["lastTraversedAt"] {
+			entry.Fixed.LastTraversedAt = int64(timestamp(entry.Fixed.LastTraversedAt).merge(delta.lastTraversedAt))
 		}
 
-		if delta.overflow != nil {
+		// Custom values merge onto the stored ones by their own kind's rule. A
+		// stored value that isn't an int64 is replaced, as before.
+		if len(delta.counters) > 0 || len(delta.timestamps) > 0 {
 			if entry.Overflow == nil {
 				entry.Overflow = make(map[string]interface{})
 			}
-			for k, v := range delta.overflow {
-				if existing, ok := entry.Overflow[k]; ok {
-					if ev, ok := existing.(int64); ok {
-						entry.Overflow[k] = ev + v
-					} else {
-						entry.Overflow[k] = v
-					}
-				} else {
-					entry.Overflow[k] = v
+			for k, v := range delta.counters {
+				stored, _ := entry.Overflow[k].(int64)
+				entry.Overflow[k] = int64(counter(stored).merge(v))
+			}
+			for k, v := range delta.timestamps {
+				stored, ok := entry.Overflow[k].(int64)
+				if !ok {
+					entry.Overflow[k] = int64(v)
+					continue
 				}
+				entry.Overflow[k] = int64(timestamp(stored).merge(v))
 			}
 		}
 
 		entry.LastMutatedAt = now
 		entry.MutationCount++
 
-		if f.evaluatePropertySuppression(entityID, entry, meta, now) {
+		changed := f.evaluatePropertySuppression(entityID, entry, meta, now)
+		written, err := f.store.WriteAccessMeta(flushCtx, AccessMetaWriteRequest{Mode: FlushExistingEntity, EntityID: entityID, Entry: entry})
+		if err != nil {
+			f.outcomes.Record("access metadata write", err)
+			continue
+		}
+		if !written {
+			continue
+		}
+		if changed {
 			propertySuppressionChanges++
-			// Suppression state changed — trigger re-embedding.
 			if f.embedInvalidate != nil && entry.TargetScope != ScopeEdge {
 				f.embedInvalidate(entityID)
 			}
 		}
-
-		_ = f.store.PutAccessMeta(entityID, entry)
 		if f.suppressionRecheck != nil {
-			f.suppressionRecheck(entityID, meta)
+			f.suppressionRecheck(flushCtx, entityID, meta)
 		}
 	}
 }

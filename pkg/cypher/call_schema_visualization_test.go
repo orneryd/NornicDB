@@ -13,11 +13,11 @@ func TestCallDbSchemaVisualization(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
-	_, err := store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Company"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Company"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r1", Type: "WORKS_AT", StartNode: "n1", EndNode: "n2"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r1", Type: "WORKS_AT", StartNode: "n1", EndNode: "n2"}))
 	result, err := exec.Execute(ctx, "CALL db.schema.visualization()", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
@@ -39,7 +39,7 @@ func TestCallDbSchemaVisualization(t *testing.T) {
 	require.Equal(t, "WORKS_AT", virtualEdges[0].Properties["name"])
 	require.Equal(t, byLabel["Person"].ID, virtualEdges[0].StartNode)
 	require.Equal(t, byLabel["Company"].ID, virtualEdges[0].EndNode)
-	count, err := store.NodeCount()
+	count, err := store.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)
 	_, err = exec.Execute(ctx, "CREATE INDEX person_schema_viz FOR (n:Person) ON (n.value, n.other)", nil)
@@ -81,14 +81,14 @@ type visualizationErrorEngine struct {
 	err       error
 }
 
-func (engine visualizationErrorEngine) AllNodes() ([]*storage.Node, error) {
+func (engine visualizationErrorEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	if engine.failNodes {
 		return nil, engine.err
 	}
-	return engine.Engine.AllNodes()
+	return engine.Engine.AllNodes(ctx)
 }
 
-func (engine visualizationErrorEngine) AllEdges() ([]*storage.Edge, error) {
+func (engine visualizationErrorEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	return nil, engine.err
 }
 

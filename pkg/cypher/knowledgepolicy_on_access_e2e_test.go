@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -12,7 +14,7 @@ import (
 
 func setupOnAccessE2E(t *testing.T, bundles map[string]*knowledgepolicy.DecayProfileBundle, bindings map[string]*knowledgepolicy.DecayProfileBinding, policies map[string]*knowledgepolicy.PromotionPolicyDef) (*storage.BadgerEngine, *knowledgepolicy.AccessAccumulator, *knowledgepolicy.AccessFlusher, *StorageExecutor, context.Context) {
 	t.Helper()
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -30,8 +32,8 @@ func setupOnAccessE2E(t *testing.T, bundles map[string]*knowledgepolicy.DecayPro
 		be,
 		func(entityID string) { be.AddToPendingEmbeddings(storage.NodeID(entityID)) },
 	)
-	flusher.SetSuppressionRecheck(func(entityID string, meta knowledgepolicy.EntityMeta) {
-		becameSuppressed, err := be.EnqueueDeindexIfSuppressed(entityID, meta.Scope == knowledgepolicy.ScopeEdge)
+	flusher.SetSuppressionRecheck(func(ctx context.Context, entityID string, meta knowledgepolicy.EntityMeta) {
+		becameSuppressed, err := be.EnqueueDeindexIfSuppressed(ctx, entityID, meta.Scope == knowledgepolicy.ScopeEdge)
 		if err == nil && becameSuppressed {
 			tokens := append([]string(nil), meta.Labels...)
 			if meta.EdgeType != "" {
@@ -119,11 +121,11 @@ func TestE2E_OnAccessAcceleratesDecayUntilSuppressed(t *testing.T) {
 	be, acc, flusher, exec, ctx := setupOnAccessE2E(t, bundles, bindings, policies)
 
 	now := time.Now()
-	_, err := be.CreateNode(&storage.Node{ID: "test:source-1", Labels: []string{"DecaySource"}, Properties: map[string]interface{}{"title": "source", "body": "volatile"}, CreatedAt: now, UpdatedAt: now})
+	_, err := be.CreateNode(t.Context(), &storage.Node{ID: "test:source-1", Labels: []string{"DecaySource"}, Properties: map[string]interface{}{"title": "source", "body": "volatile"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&storage.Node{ID: "test:target-1", Labels: []string{"DecayTarget"}, Properties: map[string]interface{}{"title": "target"}, CreatedAt: now, UpdatedAt: now})
+	_, err = be.CreateNode(t.Context(), &storage.Node{ID: "test:target-1", Labels: []string{"DecayTarget"}, Properties: map[string]interface{}{"title": "target"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
-	err = be.CreateEdge(&storage.Edge{ID: "test:edge-1", StartNode: "test:source-1", EndNode: "test:target-1", Type: "DECAYS_TO", Properties: map[string]interface{}{"summary": "edge text", "weight": int64(7)}, CreatedAt: now, UpdatedAt: now})
+	err = be.CreateEdge(t.Context(), &storage.Edge{ID: "test:edge-1", StartNode: "test:source-1", EndNode: "test:target-1", Type: "DECAYS_TO", Properties: map[string]interface{}{"summary": "edge text", "weight": int64(7)}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
 
 	query := `MATCH (s:DecaySource)-[r:DECAYS_TO]->(t:DecayTarget) RETURN s, r, t`
@@ -148,10 +150,10 @@ func TestE2E_OnAccessAcceleratesDecayUntilSuppressed(t *testing.T) {
 		}
 	}
 
-	nodes, err := be.GetNodesByLabel("DecaySource")
+	nodes, err := be.GetNodesByLabel(ctx, "DecaySource")
 	require.NoError(t, err)
 	require.Len(t, nodes, 0, "storage node reads should already honor suppression after 10 accesses")
-	edges, err := be.GetEdgesByType("DECAYS_TO")
+	edges, err := be.GetEdgesByType(ctx, "DECAYS_TO")
 	require.NoError(t, err)
 	require.Len(t, edges, 0, "storage edge reads should already honor suppression after 10 accesses")
 
@@ -236,11 +238,11 @@ func TestE2E_OnAccessPropertyPreservationKeepsOnlyAllowedFields(t *testing.T) {
 	be, acc, flusher, exec, ctx := setupOnAccessE2E(t, bundles, bindings, policies)
 
 	now := time.Now()
-	_, err := be.CreateNode(&storage.Node{ID: "test:prop-source-1", Labels: []string{"PropertySource"}, Properties: map[string]interface{}{"title": "keep-me", "body": "hide-me"}, CreatedAt: now, UpdatedAt: now})
+	_, err := be.CreateNode(t.Context(), &storage.Node{ID: "test:prop-source-1", Labels: []string{"PropertySource"}, Properties: map[string]interface{}{"title": "keep-me", "body": "hide-me"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&storage.Node{ID: "test:prop-target-1", Labels: []string{"PropertyTarget"}, Properties: map[string]interface{}{"title": "target"}, CreatedAt: now, UpdatedAt: now})
+	_, err = be.CreateNode(t.Context(), &storage.Node{ID: "test:prop-target-1", Labels: []string{"PropertyTarget"}, Properties: map[string]interface{}{"title": "target"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
-	err = be.CreateEdge(&storage.Edge{ID: "test:prop-edge-1", StartNode: "test:prop-source-1", EndNode: "test:prop-target-1", Type: "PRESERVES", Properties: map[string]interface{}{"summary": "drop-me", "weight": int64(42)}, CreatedAt: now, UpdatedAt: now})
+	err = be.CreateEdge(t.Context(), &storage.Edge{ID: "test:prop-edge-1", StartNode: "test:prop-source-1", EndNode: "test:prop-target-1", Type: "PRESERVES", Properties: map[string]interface{}{"summary": "drop-me", "weight": int64(42)}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
 
 	query := `MATCH (s:PropertySource)-[r:PRESERVES]->(t:PropertyTarget) RETURN s, r`
@@ -262,7 +264,7 @@ func TestE2E_OnAccessPropertyPreservationKeepsOnlyAllowedFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1, "entity should remain visible while only selected properties suppress")
 
-	nodes, err := be.GetNodesByLabel("PropertySource")
+	nodes, err := be.GetNodesByLabel(ctx, "PropertySource")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	nodeProps, ok := exec.nodeToMap(nodes[0])["properties"].(map[string]interface{})
@@ -271,7 +273,7 @@ func TestE2E_OnAccessPropertyPreservationKeepsOnlyAllowedFields(t *testing.T) {
 	_, hasBody := nodeProps["body"]
 	require.False(t, hasBody, "body should be suppressed after repeated access")
 
-	edges, err := be.GetEdgesByType("PRESERVES")
+	edges, err := be.GetEdgesByType(ctx, "PRESERVES")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	edgeProps, ok := exec.edgeToMap(edges[0])["properties"].(map[string]interface{})
@@ -317,7 +319,7 @@ func TestE2E_OnAccessDoesNotTriggerForWhereOnlyEvaluation(t *testing.T) {
 	be, acc, flusher, exec, ctx := setupOnAccessE2E(t, bundles, bindings, policies)
 
 	now := time.Now()
-	_, err := be.CreateNode(&storage.Node{
+	_, err := be.CreateNode(t.Context(), &storage.Node{
 		ID:         "test:where-only-1",
 		Labels:     []string{"WhereOnlySource"},
 		Properties: map[string]interface{}{"title": "candidate", "kind": "ignore-me"},
@@ -325,7 +327,7 @@ func TestE2E_OnAccessDoesNotTriggerForWhereOnlyEvaluation(t *testing.T) {
 		UpdatedAt:  now,
 	})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&storage.Node{
+	_, err = be.CreateNode(t.Context(), &storage.Node{
 		ID:         "test:where-only-2",
 		Labels:     []string{"WhereOnlySource"},
 		Properties: map[string]interface{}{"title": "other", "kind": "other-kind"},
@@ -344,12 +346,12 @@ func TestE2E_OnAccessDoesNotTriggerForWhereOnlyEvaluation(t *testing.T) {
 
 	flusher.Flush()
 
-	entry, err := be.GetAccessMeta("test:where-only-1")
+	entry, err := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:where-only-1"})
 	require.NoError(t, err)
-	require.Nil(t, entry, "WHERE evaluation must not trigger ON ACCESS mutations")
-	entry, err = be.GetAccessMeta("test:where-only-2")
+	require.Nil(t, entry.Entry, "WHERE evaluation must not trigger ON ACCESS mutations")
+	entry, err = be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:where-only-2"})
 	require.NoError(t, err)
-	require.Nil(t, entry, "non-materialized peers must not be queued for ON ACCESS")
+	require.Nil(t, entry.Entry, "non-materialized peers must not be queued for ON ACCESS")
 
 	result, err = exec.Execute(ctx, `MATCH (n:WhereOnlySource) WHERE n.kind = 'ignore-me' RETURN n`, nil)
 	require.NoError(t, err)
@@ -364,13 +366,13 @@ func TestE2E_OnAccessDoesNotTriggerForWhereOnlyEvaluation(t *testing.T) {
 
 	flusher.Flush()
 
-	entry, err = be.GetAccessMeta("test:where-only-1")
+	entry, err = be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:where-only-1"})
 	require.NoError(t, err)
-	require.NotNil(t, entry, "materialized RETURN should trigger ON ACCESS")
-	require.Equal(t, int64(1), entry.Fixed.AccessCount)
-	entry, err = be.GetAccessMeta("test:where-only-2")
+	require.NotNil(t, entry.Entry, "materialized RETURN should trigger ON ACCESS")
+	require.Equal(t, int64(1), entry.Entry.Fixed.AccessCount)
+	entry, err = be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:where-only-2"})
 	require.NoError(t, err)
-	require.Nil(t, entry, "only the materialized node should be flushed")
+	require.Nil(t, entry.Entry, "only the materialized node should be flushed")
 }
 
 func TestE2E_OnAccessDoesNotTriggerForScalarProjection(t *testing.T) {
@@ -409,7 +411,7 @@ func TestE2E_OnAccessDoesNotTriggerForScalarProjection(t *testing.T) {
 	be, acc, flusher, exec, ctx := setupOnAccessE2E(t, bundles, bindings, policies)
 
 	now := time.Now()
-	_, err := be.CreateNode(&storage.Node{
+	_, err := be.CreateNode(t.Context(), &storage.Node{
 		ID:         "test:scalar-only-1",
 		Labels:     []string{"WhereOnlySource"},
 		Properties: map[string]interface{}{"title": "candidate", "kind": "ignore-me"},
@@ -429,9 +431,9 @@ func TestE2E_OnAccessDoesNotTriggerForScalarProjection(t *testing.T) {
 
 	flusher.Flush()
 
-	entry, err := be.GetAccessMeta("test:scalar-only-1")
+	entry, err := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:scalar-only-1"})
 	require.NoError(t, err)
-	require.Nil(t, entry, "scalar projection must not count as materializing the node")
+	require.Nil(t, entry.Entry, "scalar projection must not count as materializing the node")
 }
 
 func TestE2E_OnAccessOnlyTriggersAfterScoringGate(t *testing.T) {
@@ -492,9 +494,9 @@ func TestE2E_OnAccessOnlyTriggersAfterScoringGate(t *testing.T) {
 
 	be, acc, flusher, exec, ctx := setupOnAccessE2E(t, bundles, bindings, policies)
 	now := time.Now()
-	_, err := be.CreateNode(&storage.Node{ID: "test:blocked-reverse", Labels: []string{"BlockedReverse"}, Properties: map[string]interface{}{"name": "blocked"}, CreatedAt: now, UpdatedAt: now})
+	_, err := be.CreateNode(t.Context(), &storage.Node{ID: "test:blocked-reverse", Labels: []string{"BlockedReverse"}, Properties: map[string]interface{}{"name": "blocked"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&storage.Node{ID: "test:passing-reverse", Labels: []string{"PassingReverse"}, Properties: map[string]interface{}{"name": "passing"}, CreatedAt: now, UpdatedAt: now})
+	_, err = be.CreateNode(t.Context(), &storage.Node{ID: "test:passing-reverse", Labels: []string{"PassingReverse"}, Properties: map[string]interface{}{"name": "passing"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
 
 	result, err := exec.Execute(ctx, `MATCH (n:BlockedReverse) RETURN n`, nil)
@@ -502,17 +504,17 @@ func TestE2E_OnAccessOnlyTriggersAfterScoringGate(t *testing.T) {
 	require.Len(t, result.Rows, 0, "scoreFloor below threshold should fail the scoring gate")
 	requireBufferedAccessCounts(t, acc, map[string]int64{"test:blocked-reverse": 0})
 	flusher.Flush()
-	entry, err := be.GetAccessMeta("test:blocked-reverse")
+	entry, err := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:blocked-reverse"})
 	require.NoError(t, err)
-	require.Nil(t, entry, "ON ACCESS must not run for rows rejected by the scoring gate")
+	require.Nil(t, entry.Entry, "ON ACCESS must not run for rows rejected by the scoring gate")
 
 	result, err = exec.Execute(ctx, `MATCH (n:PassingReverse) RETURN n`, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1, "scoreFloor above threshold should pass the scoring gate")
 	requireBufferedAccessCounts(t, acc, map[string]int64{"test:passing-reverse": 1})
 	flusher.Flush()
-	entry, err = be.GetAccessMeta("test:passing-reverse")
+	entry, err = be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:passing-reverse"})
 	require.NoError(t, err)
-	require.NotNil(t, entry)
-	require.Equal(t, int64(1), entry.Fixed.AccessCount)
+	require.NotNil(t, entry.Entry)
+	require.Equal(t, int64(1), entry.Entry.Fixed.AccessCount)
 }

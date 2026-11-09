@@ -9,7 +9,7 @@ import (
 )
 
 func TestLabelsRejectsStaticallyKnownPathArguments(t *testing.T) {
-	err := validateStaticFunctionVariables("labels(path)", staticTypeScope{kinds: matchSemanticScope{"path": matchBindingPath}})
+	err := validateStaticFunctionVariablesTyped(t.Context(), "labels(path)", func() staticTypeScope { return staticTypeScope{kinds: matchSemanticScope{"path": matchBindingPath}} }, staticTypeScope.staticExpressionType)
 	require.Error(t, err)
 	var semanticError *SemanticError
 	require.True(t, errors.As(err, &semanticError))
@@ -18,7 +18,7 @@ func TestLabelsRejectsStaticallyKnownPathArguments(t *testing.T) {
 
 func TestLabelsRejectsNonNodeValuesResolvedAtRuntime(t *testing.T) {
 	executor := &StorageExecutor{}
-	_, _, err := executor.evaluateRowValue("labels(items[1])", pipelineRow{
+	_, _, err := executor.evaluateRowValue(t.Context(), "labels(items[1])", pipelineRow{
 		"items": []interface{}{&storage.Node{}, int64(1)},
 	})
 	require.Error(t, err)
@@ -28,7 +28,7 @@ func TestLabelsRejectsNonNodeValuesResolvedAtRuntime(t *testing.T) {
 }
 
 func TestTypeRejectsStaticallyKnownNodeArguments(t *testing.T) {
-	err := validateStaticFunctionVariables("type(node)", staticTypeScope{kinds: matchSemanticScope{"node": matchBindingNode}})
+	err := validateStaticFunctionVariablesTyped(t.Context(), "type(node)", func() staticTypeScope { return staticTypeScope{kinds: matchSemanticScope{"node": matchBindingNode}} }, staticTypeScope.staticExpressionType)
 	require.Error(t, err)
 	var semanticError *SemanticError
 	require.True(t, errors.As(err, &semanticError))
@@ -37,7 +37,7 @@ func TestTypeRejectsStaticallyKnownNodeArguments(t *testing.T) {
 
 func TestTypeValidatesEveryListComprehensionValueAtRuntime(t *testing.T) {
 	executor := &StorageExecutor{}
-	_, _, err := executor.evaluateRowValue("[value IN items | type(value)]", pipelineRow{
+	_, _, err := executor.evaluateRowValue(t.Context(), "[value IN items | type(value)]", pipelineRow{
 		"items": []interface{}{&storage.Edge{Type: "T"}, int64(1)},
 	})
 	require.Error(t, err)
@@ -52,15 +52,15 @@ func TestPropertiesRejectsStaticallyIncompatibleArguments(t *testing.T) {
 		"properties('text')":        "Type mismatch: expected Map, Node or Relationship but was String",
 		"properties([true, false])": "Type mismatch: expected Map, Node or Relationship but was List<Boolean>",
 	} {
-		err := validateStaticFunctionArguments("RETURN "+expression, false)
+		err := validateStaticFunctionArguments(t.Context(), "RETURN "+expression, false)
 		require.Error(t, err)
 		var semanticError *SemanticError
 		require.ErrorAs(t, err, &semanticError)
 		require.Equal(t, "InvalidArgumentType", semanticError.Detail)
 		require.Contains(t, err.Error(), message)
 	}
-	require.NoError(t, validateStaticFunctionArguments("RETURN properties({name: 'Popeye'})", false))
-	require.NoError(t, validateStaticFunctionArguments("RETURN properties(null)", false))
+	require.NoError(t, validateStaticFunctionArguments(t.Context(), "RETURN properties({name: 'Popeye'})", false))
+	require.NoError(t, validateStaticFunctionArguments(t.Context(), "RETURN properties(null)", false))
 }
 
 // A graph function's literal argument is type-checked wherever it appears in
@@ -85,7 +85,7 @@ func TestStaticGraphFunctionArgumentsCheckedEverywhere(t *testing.T) {
 		"UNWIND [1] AS i CALL { WITH i RETURN type('x') AS t } RETURN t":       "expected Relationship but was String",
 	}
 	for statement, message := range rejected {
-		err := validateStaticFunctionArguments(statement, false)
+		err := validateStaticFunctionArguments(t.Context(), statement, false)
 		require.Error(t, err, statement)
 		require.Contains(t, err.Error(), "Type mismatch: "+message, statement)
 	}
@@ -97,7 +97,7 @@ func TestStaticGraphFunctionArgumentsCheckedEverywhere(t *testing.T) {
 		"RETURN apoc.labels(1), `labels`(n)",
 		"RETURN [x IN [1] | labels(x)]",
 	} {
-		require.NoError(t, validateStaticFunctionArguments(statement, false), statement)
+		require.NoError(t, validateStaticFunctionArguments(t.Context(), statement, false), statement)
 	}
 }
 
@@ -113,13 +113,13 @@ func TestLengthRejectsGraphEntitiesAndAcceptsPaths(t *testing.T) {
 		"node":         matchBindingNode,
 		"relationship": matchBindingRelationship,
 	} {
-		err := validateStaticFunctionVariables("length("+variable+")", staticTypeScope{kinds: matchSemanticScope{variable: kind}})
+		err := validateStaticFunctionVariablesTyped(t.Context(), "length("+variable+")", func() staticTypeScope { return staticTypeScope{kinds: matchSemanticScope{variable: kind}} }, staticTypeScope.staticExpressionType)
 		require.Error(t, err)
 		var semanticError *SemanticError
 		require.ErrorAs(t, err, &semanticError)
 		require.Equal(t, "InvalidArgumentType", semanticError.Detail)
 	}
-	require.NoError(t, validateStaticFunctionVariables("length(path)", staticTypeScope{kinds: matchSemanticScope{"path": matchBindingPath}}))
+	require.NoError(t, validateStaticFunctionVariablesTyped(t.Context(), "length(path)", func() staticTypeScope { return staticTypeScope{kinds: matchSemanticScope{"path": matchBindingPath}} }, staticTypeScope.staticExpressionType))
 }
 
 // TestGraphFunctionsOfNullAreNull: a graph function of null is null, as in

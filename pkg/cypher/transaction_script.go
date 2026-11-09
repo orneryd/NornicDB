@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal outcome context propagation,29October2026.
 package cypher
 
 import (
@@ -100,26 +101,26 @@ func splitTransactionScriptTailAction(script string) (string, string, bool) {
 }
 
 func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, queryBody string, action string) (*ExecuteResult, error) {
-	if _, err := e.handleBegin(); err != nil {
+	if _, err := e.handleBegin(ctx); err != nil {
 		return nil, err
 	}
 
 	queryUpper := upperASCII(strings.TrimSpace(queryBody))
 	result, err := e.executeInTransaction(ctx, queryBody, queryUpper)
 	if err != nil {
-		return nil, e.abortTransaction(err)
+		return nil, e.abortTransaction(ctx, err)
 	}
 
 	switch action {
 	case "COMMIT":
-		if _, err := e.handleCommit(); err != nil {
+		if _, err := e.handleCommit(ctx); err != nil {
 			return nil, err
 		}
 		return result, nil
 	case "ROLLBACK":
-		return e.handleRollback()
+		return e.handleRollback(ctx, nil)
 	default:
-		return nil, e.abortTransaction(localizedError(localization.CypherTransactionsInvalidScriptAction(action), nil))
+		return nil, e.abortTransaction(ctx, localizedError(localization.CypherTransactionsInvalidScriptAction(action), nil))
 	}
 }
 
@@ -139,14 +140,14 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	conditionExpr := strings.TrimSpace(matches[1])
 	returnExpr := strings.TrimSpace(matches[2])
 
-	if _, err := e.handleBegin(); err != nil {
+	if _, err := e.handleBegin(ctx); err != nil {
 		return nil, err
 	}
 
 	callUpper := upperASCII(strings.TrimSpace(callQuery))
 	callResult, err := e.executeInTransaction(ctx, callQuery, callUpper)
 	if err != nil {
-		return nil, e.abortTransaction(err)
+		return nil, e.abortTransaction(ctx, err)
 	}
 
 	rollbackRequired := false
@@ -154,7 +155,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		nodes, rels := buildRowGraphContext(callResult.Columns, row)
 		shouldRollback, err := e.evaluateConditionExpression(ctx, conditionExpr, nodes, rels)
 		if err != nil {
-			return nil, e.abortTransaction(err)
+			return nil, e.abortTransaction(ctx, err)
 		}
 		if shouldRollback {
 			rollbackRequired = true
@@ -162,15 +163,15 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		}
 	}
 	if rollbackRequired {
-		return e.handleRollback()
+		return e.handleRollback(ctx, nil)
 	}
 
 	projected, err := e.projectTransactionReturn(ctx, callResult, returnExpr)
 	if err != nil {
-		return nil, e.abortTransaction(err)
+		return nil, e.abortTransaction(ctx, err)
 	}
 
-	if _, err := e.handleCommit(); err != nil {
+	if _, err := e.handleCommit(ctx); err != nil {
 		return nil, err
 	}
 	return projected, nil

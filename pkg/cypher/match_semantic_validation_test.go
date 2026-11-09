@@ -85,13 +85,12 @@ func TestReturnScopeRejectsUndefinedAndEmptyWildcardProjections(t *testing.T) {
 }
 
 func TestUndirectedMatchEmitsSelfRelationshipOnce(t *testing.T) {
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_self_relationship")
-	exec := NewStorageExecutor(store)
+	exec, store := newCypherTestExecutor(t, "match_self_relationship")
 	ctx := context.Background()
 
-	nodeID, err := store.CreateNode(&storage.Node{ID: "node"})
+	nodeID, err := store.CreateNode(t.Context(), &storage.Node{ID: "node"})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "relationship",
 		Type:      "LOOP",
 		StartNode: nodeID,
@@ -104,12 +103,23 @@ func TestUndirectedMatchEmitsSelfRelationshipOnce(t *testing.T) {
 	require.Equal(t, [][]interface{}{{"LOOP"}}, result.Rows)
 }
 
-func TestMatchRejectsRelationshipReuseWithinOnePattern(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_relationship_uniqueness"))
-	ctx := context.Background()
-
-	_, err := exec.Execute(ctx, "MATCH (a)-[r]->()-[r]->(a) RETURN r", nil)
-	requireMatchSemanticDetail(t, err, "RelationshipUniquenessViolation")
+// TestMalformedMatchStatementsRejectedLikeNeo4j shares query admission and
+// fixture ownership while retaining syntax-only and semantic-detail contracts.
+func TestMalformedMatchStatementsRejectedLikeNeo4j(t *testing.T) {
+	for _, test := range []struct{ name, namespace, query, detail string }{
+		{"dangling comparison", "where_reject", "MATCH (n) WHERE n.x = RETURN n", ""},
+		{"relationship reuse", "match_relationship_uniqueness", "MATCH (a)-[r]->()-[r]->(a) RETURN r", "RelationshipUniquenessViolation"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			exec, _ := newTestExecutor(t, test.namespace)
+			_, err := exec.Execute(context.Background(), test.query, nil)
+			if test.detail != "" {
+				requireMatchSemanticDetail(t, err, test.detail)
+			} else {
+				requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", test.query)
+			}
+		})
+	}
 }
 
 func TestMatchRejectsPathVariableAlreadyBoundByAnotherEntity(t *testing.T) {
@@ -144,11 +154,11 @@ func TestUndirectedMatchFiltersUntypedRelationshipProperties(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	leftID, err := store.CreateNode(&storage.Node{ID: "left", Labels: []string{"Left"}})
+	leftID, err := store.CreateNode(t.Context(), &storage.Node{ID: "left", Labels: []string{"Left"}})
 	require.NoError(t, err)
-	rightID, err := store.CreateNode(&storage.Node{ID: "right", Labels: []string{"Right"}})
+	rightID, err := store.CreateNode(t.Context(), &storage.Node{ID: "right", Labels: []string{"Right"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "relationship",
 		Type:       "LINK",
 		StartNode:  leftID,
@@ -166,14 +176,14 @@ func TestBidirectionalArrowMatchesRelationshipInEitherDirection(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	leftID, err := store.CreateNode(&storage.Node{ID: "left", Properties: map[string]interface{}{"name": "A"}})
+	leftID, err := store.CreateNode(t.Context(), &storage.Node{ID: "left", Properties: map[string]interface{}{"name": "A"}})
 	require.NoError(t, err)
-	middleID, err := store.CreateNode(&storage.Node{ID: "middle", Properties: map[string]interface{}{"name": "X"}})
+	middleID, err := store.CreateNode(t.Context(), &storage.Node{ID: "middle", Properties: map[string]interface{}{"name": "X"}})
 	require.NoError(t, err)
-	rightID, err := store.CreateNode(&storage.Node{ID: "right", Properties: map[string]interface{}{"name": "B"}})
+	rightID, err := store.CreateNode(t.Context(), &storage.Node{ID: "right", Properties: map[string]interface{}{"name": "B"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "left-middle", Type: "LINK", StartNode: leftID, EndNode: middleID}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "right-middle", Type: "LINK", StartNode: rightID, EndNode: middleID}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "left-middle", Type: "LINK", StartNode: leftID, EndNode: middleID}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "right-middle", Type: "LINK", StartNode: rightID, EndNode: middleID}))
 
 	result, err := exec.Execute(ctx, "MATCH (a {name: 'A'}), (b {name: 'B'}) MATCH (a)-->(x)<-->(b) RETURN x", nil)
 	require.NoError(t, err)

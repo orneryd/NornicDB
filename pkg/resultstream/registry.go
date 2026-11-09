@@ -26,8 +26,9 @@ var (
 
 // Scope binds a stream to one authenticated owner and canonical database.
 type Scope struct {
-	Owner    string
-	Database string
+	Owner         string
+	Database      string
+	databaseEpoch *databaseEpoch
 }
 
 // Observer receives bounded cursor lifecycle and aggregate usage signals.
@@ -50,7 +51,6 @@ type Config struct {
 }
 
 type registryEntry struct {
-	scopeHash     [32]byte
 	ownerHash     [32]byte
 	database      string
 	expires       int64
@@ -82,6 +82,8 @@ type Registry struct {
 	scopeMAC    sync.Pool
 	scopeInput  sync.Pool
 	admissionMu sync.Mutex
+	databaseMu  sync.RWMutex
+	databases   map[string]*databaseEpoch
 	owners      map[[32]byte]ownerUsage
 	observer    atomic.Pointer[observerHolder]
 	stop        chan struct{}
@@ -114,7 +116,7 @@ func NewRegistry(config Config) (*Registry, error) {
 		config.MaxStreamsPerOwner = 64
 	}
 	if config.MaxPageSize == 0 {
-		config.MaxPageSize = 500
+		config.MaxPageSize = DefaultMaxPageSize
 	}
 	if config.MaxRetainedBytes == 0 {
 		config.MaxRetainedBytes = 1 << 30
@@ -147,13 +149,26 @@ func NewRegistry(config Config) (*Registry, error) {
 // available.
 func (r *Registry) Start(ctx context.Context, scope Scope, stream Stream, n int) (*Page, error) {
 	if err := r.validate(scope, n); err != nil {
+		_ = stream.Close()
 		r.observeError(err)
 		return nil, err
 	}
+	scope = r.BindScope(scope)
+	if !r.validDatabaseScope(scope) {
+		_ = stream.Close()
+		return nil, ErrInvalidated
+	}
 	page, err := stream.Pull(ctx, 0, n)
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		_ = stream.Close()
 		return nil, err
+	}
+	if !r.validDatabaseScope(scope) {
+		_ = stream.Close()
+		return nil, ErrInvalidated
 	}
 	if !page.HasMore {
 		_ = stream.Close()
@@ -169,19 +184,29 @@ func (r *Registry) Start(ctx context.Context, scope Scope, stream Stream, n int)
 	}
 	ownerHash := r.ownerDigest(scope.Owner)
 	if !r.reserve(ownerHash, retainedBytes) {
-		r.observe("capacity")
-		_ = stream.Close()
-		return nil, ErrCapacity
+		// Invalidated and expired cursors must not block new admissions even
+		// when the owner never attempts another pull.
+		r.sweepExpired(time.Now().Unix())
+		if !r.reserve(ownerHash, retainedBytes) {
+			r.observe("capacity")
+			_ = stream.Close()
+			return nil, ErrCapacity
+		}
 	}
 
 	entry := &registryEntry{
-		scopeHash: r.scopeDigest(scope),
 		ownerHash: ownerHash,
 		database:  scope.Database,
 		expires:   time.Now().Add(r.config.TTL).Unix(),
 		stream:    stream,
 	}
 	entry.retainedBytes.Store(retainedBytes)
+	r.databaseMu.RLock()
+	if r.databases[scope.Database] != scope.databaseEpoch {
+		r.databaseMu.RUnlock()
+		r.release(entry)
+		return nil, ErrInvalidated
+	}
 	var streamID [16]byte
 	inserted := false
 	for attempt := 0; attempt < 4; attempt++ {
@@ -199,9 +224,9 @@ func (r *Registry) Start(ctx context.Context, scope Scope, stream Stream, n int)
 			break
 		}
 	}
+	r.databaseMu.RUnlock()
 	if !inserted {
 		r.release(entry)
-		_ = stream.Close()
 		if r.closed.Load() {
 			r.observe("release")
 			return nil, ErrClosed
@@ -221,19 +246,17 @@ func (r *Registry) Start(ctx context.Context, scope Scope, stream Stream, n int)
 	}
 	r.observe("start")
 	r.observeUsage()
-	page.QID = encodeToken(r.secret, r.instance, streamID, page.Next, entry.expires)
+	page.QID = encodeToken(r.secret, r.instance, streamID, page.Next, entry.expires, entry.ownerHash, entry.database)
+	r.trackDelivery(ctx, scope, page.QID)
 	page.ExpiresAt = time.Unix(entry.expires, 0).UTC()
 	return page, nil
 }
 
-// ResolveDatabase returns the database bound to a signed qid after validating
-// its authenticated owner. A nonempty requested database must match exactly.
+// ResolveDatabase authenticates a qid's owner and database binding, including
+// after its stream ends. Pull checks liveness; Discard remains idempotent.
 func (r *Registry) ResolveDatabase(owner, qid, requested string) (string, error) {
 	if r.disabled {
 		return "", ErrDisabled
-	}
-	if r.closed.Load() {
-		return "", ErrClosed
 	}
 	if owner == "" {
 		return "", ErrInvalidScope
@@ -242,22 +265,18 @@ func (r *Registry) ResolveDatabase(owner, qid, requested string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	if time.Now().Unix() >= token.expires {
-		r.remove(token.streamID, nil)
-		return "", ErrExpiredQID
-	}
-	entry := r.lookup(token.streamID)
-	if entry == nil || entry.released.Load() {
-		return "", ErrGoneQID
-	}
+	return r.tokenDatabase(token, owner, requested)
+}
+
+func (r *Registry) tokenDatabase(token decodedToken, owner, requested string) (string, error) {
 	wantOwner := r.ownerDigest(owner)
-	if entry.expires != token.expires || !hmac.Equal(entry.ownerHash[:], wantOwner[:]) {
+	if !hmac.Equal(token.ownerHash[:], wantOwner[:]) {
 		return "", ErrInvalidQID
 	}
-	if requested != "" && requested != entry.database {
+	if requested != "" && requested != token.database {
 		return "", ErrInvalidQID
 	}
-	return entry.database, nil
+	return token.database, nil
 }
 
 // Pull resolves a signed qid and invokes the stream without holding a registry
@@ -276,28 +295,43 @@ func (r *Registry) Pull(ctx context.Context, scope Scope, qid string, n int) (*P
 		r.observe("invalid")
 		return nil, err
 	}
+	if _, err := r.tokenDatabase(token, scope.Owner, scope.Database); err != nil {
+		r.observeError(err)
+		return nil, err
+	}
 	if time.Now().Unix() >= token.expires {
 		r.remove(token.streamID, nil)
 		r.observe("expiry")
 		return nil, ErrExpiredQID
 	}
 	entry := r.lookup(token.streamID)
-	wantScope := r.scopeDigest(scope)
 	if entry == nil || entry.released.Load() {
 		r.observe("gone")
 		return nil, ErrGoneQID
 	}
-	if entry.expires != token.expires || !hmac.Equal(entry.scopeHash[:], wantScope[:]) {
+	if entry.expires != token.expires {
 		r.observe("invalid")
 		return nil, ErrInvalidQID
 	}
 	page, err := entry.stream.Pull(ctx, token.position, n)
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
-		if errors.Is(err, ErrCapacity) {
+		// A request cancellation or step deadline does not end an issued
+		// stream. Its replayable position can be retried with a fresh context;
+		// stream expiry and terminal producer failures still release admission.
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			r.remove(token.streamID, entry)
 		}
 		r.observeError(err)
 		return nil, err
+	}
+	if !page.HasMore {
+		r.remove(token.streamID, entry)
+		page.ExpiresAt = time.Unix(entry.expires, 0).UTC()
+		r.observe("pull")
+		return page, nil
 	}
 	if reporter, ok := entry.stream.(RetainedBytesReporter); ok {
 		retainedBytes := reporter.RetainedBytes()
@@ -308,20 +342,22 @@ func (r *Registry) Pull(ctx context.Context, scope Scope, qid string, n int) (*P
 		}
 	}
 	if page.HasMore {
-		page.QID = encodeToken(r.secret, r.instance, token.streamID, page.Next, entry.expires)
+		page.QID = encodeToken(r.secret, r.instance, token.streamID, page.Next, entry.expires, entry.ownerHash, entry.database)
+		r.trackDelivery(ctx, scope, page.QID)
 	}
 	page.ExpiresAt = time.Unix(entry.expires, 0).UTC()
 	r.observe("pull")
 	return page, nil
 }
 
-// Discard releases the complete stream addressed by any of its qids.
+// Discard releases the complete stream addressed by any of its qids. Repeating
+// it after any terminal outcome succeeds; signed scope checks still apply.
 func (r *Registry) Discard(scope Scope, qid string) error {
 	if r.disabled {
 		r.observe("disabled")
 		return ErrDisabled
 	}
-	if scope.Owner == "" || scope.Database == "" {
+	if scope.Owner == "" || scope.Database == "" || len(scope.Database) > maxTokenDatabaseBytes {
 		return ErrInvalidScope
 	}
 	token, err := decodeToken(r.secret, r.instance, qid)
@@ -329,22 +365,11 @@ func (r *Registry) Discard(scope Scope, qid string) error {
 		r.observe("invalid")
 		return err
 	}
-	if time.Now().Unix() >= token.expires {
-		r.remove(token.streamID, nil)
-		r.observe("expiry")
-		return ErrExpiredQID
+	if _, err := r.tokenDatabase(token, scope.Owner, scope.Database); err != nil {
+		r.observeError(err)
+		return err
 	}
-	entry := r.lookup(token.streamID)
-	wantScope := r.scopeDigest(scope)
-	if entry == nil || entry.released.Load() {
-		r.observe("gone")
-		return ErrGoneQID
-	}
-	if entry.expires != token.expires || !hmac.Equal(entry.scopeHash[:], wantScope[:]) {
-		r.observe("invalid")
-		return ErrInvalidQID
-	}
-	r.remove(token.streamID, entry)
+	r.remove(token.streamID, nil)
 	r.observe("discard")
 	return nil
 }
@@ -385,10 +410,13 @@ func (r *Registry) validate(scope Scope, n int) error {
 	if r.closed.Load() {
 		return ErrClosed
 	}
-	if scope.Owner == "" || scope.Database == "" {
+	if scope.Owner == "" || scope.Database == "" || len(scope.Database) > maxTokenDatabaseBytes {
 		return ErrInvalidScope
 	}
-	if n <= 0 || n > r.config.MaxPageSize {
+	if n > r.config.MaxPageSize {
+		return r.pageSizeExceeded()
+	}
+	if n <= 0 {
 		return ErrInvalidPageSize
 	}
 	return nil
@@ -408,12 +436,10 @@ func (r *Registry) remove(id [16]byte, expected *registryEntry) {
 	entry := shard.entries[id]
 	if entry != nil && (expected == nil || expected == entry) {
 		delete(shard.entries, id)
-		entry.released.Store(true)
 	}
 	shard.mu.Unlock()
 	if entry != nil && (expected == nil || expected == entry) {
 		r.release(entry)
-		_ = entry.stream.Close()
 	}
 }
 
@@ -462,6 +488,10 @@ func (r *Registry) resize(entry *registryEntry, bytes int64) bool {
 
 func (r *Registry) release(entry *registryEntry) {
 	r.admissionMu.Lock()
+	if !entry.released.CompareAndSwap(false, true) {
+		r.admissionMu.Unlock()
+		return
+	}
 	retainedBytes := entry.retainedBytes.Load()
 	usage := r.owners[entry.ownerHash]
 	usage.streams--
@@ -474,6 +504,7 @@ func (r *Registry) release(entry *registryEntry) {
 	r.count.Add(-1)
 	r.retained.Add(-retainedBytes)
 	r.admissionMu.Unlock()
+	_ = entry.stream.Close()
 	r.observeUsage()
 }
 
@@ -508,7 +539,7 @@ func (r *Registry) scopeDigest(scope Scope) [32]byte {
 }
 
 func (r *Registry) ownerDigest(owner string) [32]byte {
-	return scopeDigest(r.secret, Scope{Owner: owner})
+	return r.scopeDigest(Scope{Owner: owner})
 }
 
 func (r *Registry) reapExpired() {
@@ -535,21 +566,46 @@ func (r *Registry) reapExpired() {
 func (r *Registry) sweepExpired(now int64) {
 	for index := range r.shards {
 		shard := &r.shards[index]
-		var expired []*registryEntry
+		entries := make(map[[16]byte]*registryEntry)
+		shard.mu.RLock()
+		for id, entry := range shard.entries {
+			entries[id] = entry
+		}
+		shard.mu.RUnlock()
+		for id, entry := range entries {
+			if now >= entry.expires {
+				r.remove(id, entry)
+				r.observe("expiry")
+			} else if checker, ok := entry.stream.(ValidityChecker); ok {
+				if err := checker.CheckValid(); err != nil {
+					r.remove(id, entry)
+					r.observeError(err)
+				}
+			}
+		}
+	}
+}
+
+// DiscardDatabase releases all cursors belonging to a reset or dropped database.
+// Other databases using the shared registry are unaffected.
+func (r *Registry) DiscardDatabase(database string) {
+	r.databaseMu.Lock()
+	delete(r.databases, database)
+	var removed []*registryEntry
+	for index := range r.shards {
+		shard := &r.shards[index]
 		shard.mu.Lock()
 		for id, entry := range shard.entries {
-			if now >= entry.expires {
+			if entry.database == database {
 				delete(shard.entries, id)
-				entry.released.Store(true)
-				expired = append(expired, entry)
+				removed = append(removed, entry)
 			}
 		}
 		shard.mu.Unlock()
-		for _, entry := range expired {
-			r.release(entry)
-			_ = entry.stream.Close()
-			r.observe("expiry")
-		}
+	}
+	r.databaseMu.Unlock()
+	for _, entry := range removed {
+		r.release(entry)
 	}
 }
 
@@ -567,9 +623,7 @@ func (r *Registry) Close() {
 		shard.entries = make(map[[16]byte]*registryEntry)
 		shard.mu.Unlock()
 		for _, entry := range entries {
-			entry.released.Store(true)
 			r.release(entry)
-			_ = entry.stream.Close()
 		}
 	}
 	r.observe("release")

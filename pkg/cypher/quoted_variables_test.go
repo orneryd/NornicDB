@@ -123,22 +123,22 @@ func TestQuotedVariablesStayInternal(t *testing.T) {
 // TestCanonicalizeQuotedVariables: the rewrite itself.
 func TestCanonicalizeQuotedVariables(t *testing.T) {
 	query := "MATCH (n) RETURN n"
-	canonical, names := canonicalizeQuotedVariables(query)
+	canonical, names := canonicalizeQuotedVariablesWithBindings(t.Context(), query, nil)
 	require.Nil(t, names, "no backtick, nothing scanned")
 	require.Equal(t, query, canonical)
 
-	canonical, names = canonicalizeQuotedVariables("MATCH (n:`L L` {`k k`: 1}) RETURN n.`p q`")
+	canonical, names = canonicalizeQuotedVariablesWithBindings(t.Context(), "MATCH (n:`L L` {`k k`: 1}) RETURN n.`p q`", nil)
 	require.Nil(t, names, "labels, keys and property names stay as written")
 	require.Equal(t, "MATCH (n:`L L` {`k k`: 1}) RETURN n.`p q`", canonical)
 
 	// An identifier the statement already uses is never the internal one.
-	first, firstNames := canonicalizeQuotedVariables("WITH 1 AS `a b` RETURN `a b`")
+	first, firstNames := canonicalizeQuotedVariablesWithBindings(t.Context(), "WITH 1 AS `a b` RETURN `a b`", nil)
 	require.NotNil(t, firstNames)
 	var internal string
 	for identifier := range firstNames.internal {
 		internal = identifier
 	}
-	collided, _ := canonicalizeQuotedVariables("WITH 1 AS `a b`, 2 AS " + internal + " RETURN `a b`, " + internal)
+	collided, _ := canonicalizeQuotedVariablesWithBindings(t.Context(), "WITH 1 AS `a b`, 2 AS "+internal+" RETURN `a b`, "+internal, nil)
 	require.Contains(t, collided, " 2 AS "+internal+" RETURN", "the user's own variable keeps its name: %s", collided)
 	require.NotContains(t, collided, "`a b`")
 	require.NotEqual(t, first, collided)
@@ -168,4 +168,24 @@ func TestMissingParameterIsParameterMissing(t *testing.T) {
 	result, err := exec.Execute(ctx, "EXPLAIN RETURN $later AS v", nil)
 	require.NoError(t, err, "EXPLAIN runs nothing and needs no parameters")
 	require.NotNil(t, result)
+}
+
+// Statements with the same executable expression can have different public
+// column identities. A cached rejection or success must not cross that boundary.
+func TestQuotedProjectionCacheKeepsClientColumnIdentity(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec, _ := newTestExecutor(t)
+		const distinct = "WITH $value AS x RETURN x + 1, `x` + 1"
+		const duplicate = "WITH $value AS x RETURN x + 1, x + 1"
+		for _, query := range []string{duplicate, distinct, distinct, duplicate, distinct} {
+			result, err := exec.Execute(t.Context(), query, map[string]interface{}{"value": int64(8)})
+			if query == duplicate {
+				require.ErrorContains(t, err, "Multiple RETURN items project the same column name")
+				continue
+			}
+			require.NoError(t, err)
+			require.Equal(t, []string{"x + 1", "`x` + 1"}, result.Columns)
+			require.Equal(t, [][]interface{}{{int64(9), int64(9)}}, result.Rows)
+		}
+	})
 }

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strconv"
 	"strings"
@@ -165,7 +166,7 @@ var showUsersColumns = []string{"user", "roles", "passwordChangeRequired", "susp
 // (SHOW CURRENT USER). home is null: NornicDB has no per-user home database.
 func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	current, signedIn := authenticatedUserFromContext(ctx)
-	currentOnly := startsWithKeywords(cypher, "SHOW", "CURRENT USER")
+	currentOnly := startsWithKeywords(ctx, cypher, "SHOW", "CURRENT USER")
 	var users []UserListing
 	if identity := requestIdentityFromContext(ctx); identity != nil && identity.Users != nil {
 		users = identity.Users()
@@ -188,13 +189,13 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 // unsupportedAdministrationCommandError is Neo4j Community's error for an
 // administration command it doesn't offer (SHOW ROLES, SHOW PRIVILEGES,
 // SHOW USER … PRIVILEGES); SHOW SERVERS is NotSystemDatabaseError.
-func unsupportedAdministrationCommandError(cypher string) error {
+func unsupportedAdministrationCommandError(ctx context.Context, cypher string) error {
 	code := "Neo.ClientError.Statement.UnsupportedAdministrationCommand"
-	if startsWithKeywords(cypher, "SHOW", "SERVERS") || startsWithKeywords(cypher, "SHOW", "SERVER") {
+	if startsWithKeywords(ctx, cypher, "SHOW", "SERVERS") || startsWithKeywords(ctx, cypher, "SHOW", "SERVER") {
 		code = "Neo.ClientError.Statement.NotSystemDatabaseError"
 	}
 	return localizedStatusError(code, "UnsupportedAdministrationCommand",
-		localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(showCommandHead(cypher))))
+		localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(showCommandHead(ctx, cypher))))
 }
 
 // runningTransaction is one SHOW TRANSACTIONS row: an explicit transaction
@@ -213,10 +214,9 @@ type runningTransaction struct {
 	connection ClientConnection
 	started    time.Time
 	terminated atomic.Bool
-	// committed is set when an auto-commit statement's transaction has
-	// committed: a TERMINATE that arrives after that doesn't fail the
-	// statement, whose writes are stored (Execute).
-	committed atomic.Bool
+	// memory is the running statement's memory estimate, nil while no
+	// limit is configured (#1343).
+	memory atomic.Pointer[transactionMemoryTracker]
 
 	mu           sync.Mutex
 	query        string
@@ -269,9 +269,20 @@ func (r *runningTransactionRegistry) end(tx *runningTransaction) {
 	if tx == nil {
 		return
 	}
+	tx.releaseMemory()
 	r.mu.Lock()
 	delete(r.byNumber, tx.number)
 	r.mu.Unlock()
+}
+
+func (tx *runningTransaction) releaseMemory() {
+	if tx == nil {
+		return
+	}
+	if tracker := tx.memory.Swap(nil); tracker != nil {
+		tracker.end()
+		transactionMemoryTrackers.Put(tracker)
+	}
 }
 
 // startQuery records the statement tx runs, started at started; TERMINATE
@@ -317,7 +328,7 @@ func (r *runningTransactionRegistry) terminate(id string) (*runningTransaction, 
 	}
 	r.mu.RLock()
 	tx, ok := r.byNumber[number]
-	r.mu.RUnlock()
+	defer r.mu.RUnlock()
 	if !ok || !strings.EqualFold(tx.database, id[:separator]) {
 		return nil, false
 	}
@@ -331,10 +342,14 @@ func (r *runningTransactionRegistry) terminate(id string) (*runningTransaction, 
 	return tx, true
 }
 
+// transactionTerminatedCode is Neo4j's status for a statement of a
+// terminated transaction.
+const transactionTerminatedCode = "Neo.ClientError.Transaction.Terminated"
+
 // transactionTerminatedError is Neo4j's error for a statement of a
 // terminated transaction.
 func transactionTerminatedError() error {
-	return localizedStatusError("Neo.ClientError.Transaction.Terminated", "Terminated",
+	return localizedStatusError(transactionTerminatedCode, "Terminated",
 		localization.CypherAdminTransactionTerminated())
 }
 
@@ -344,18 +359,41 @@ type runningStatement struct {
 	tx         *runningTransaction
 	statement  *statementContext
 	autoCommit bool
+	// memory is a nested execution's memory scope, and memoryMark its use
+	// when the execution started: done gives back what it took (#1343).
+	memory     *memoryScope
+	memoryMark int64
 }
 
-func (s runningStatement) done() {
+func (s runningStatement) done() bool {
 	if s.tx == nil {
-		return
+		s.memory.releaseSince(s.memoryMark)
+		return false
 	}
+	if tracker := s.tx.memory.Load(); tracker != nil {
+		if s.autoCommit {
+			tracker.end()
+			s.tx.memory.Store(nil)
+			transactionMemoryTrackers.Put(tracker)
+		} else {
+			tracker.mu.Lock()
+			tracker.statement = nil
+			tracker.mu.Unlock()
+			tracker.retireStatementLists()
+		}
+	}
+	// Serialize final statement retirement with successful TERMINATE lookup.
+	// Once retired, a later termination belongs to the next statement.
+	runningTransactions.mu.Lock()
 	if s.autoCommit {
-		runningTransactions.end(s.tx)
+		delete(runningTransactions.byNumber, s.tx.number)
 	} else {
 		s.tx.endQuery()
 	}
+	terminated := s.tx.terminated.Load()
+	runningTransactions.mu.Unlock()
 	s.statement.cancel(context.Canceled)
+	return terminated
 }
 
 // statementContext is a running statement's context: TERMINATE and the
@@ -396,6 +434,13 @@ func (c *statementContext) Value(key any) any {
 		if c.failureActive.Load() {
 			return &c.failure
 		}
+	case memoryScopeKey:
+		if c.tx != nil {
+			if tracker := c.tx.memory.Load(); tracker != nil {
+				return &tracker.root
+			}
+		}
+		return nil
 	}
 	return c.parent.Value(key)
 }
@@ -441,6 +486,11 @@ func (c *statementContext) cancel(err error) {
 		c.mu.Unlock()
 		return
 	}
+	// A caller whose context was already canceled owns the first cause even
+	// when the memory tracker reaches this checkpoint a moment later.
+	if parentErr := c.parent.Err(); parentErr != nil {
+		err = parentErr
+	}
 	c.err = err
 	if c.done != nil {
 		close(c.done)
@@ -465,6 +515,11 @@ type autoCommitStatementContext struct {
 // part of the outer one.
 func (e *StorageExecutor) withRunningStatement(ctx context.Context, query string) (context.Context, runningStatement, error) {
 	if ctx.Value(ctxKeyRunningTransaction{}) != nil {
+		// A nested execution's memory goes back when it ends; what its
+		// caller keeps of its result counts where the caller keeps it.
+		if scope := memoryScopeFromContext(ctx); scope != nil {
+			return ctx, runningStatement{memory: scope, memoryMark: scope.mark()}, nil
+		}
 		return ctx, runningStatement{}, nil
 	}
 	if e.txContext != nil && e.txContext.active && e.txContext.running != nil {
@@ -473,6 +528,7 @@ func (e *StorageExecutor) withRunningStatement(ctx context.Context, query string
 			return ctx, runningStatement{}, transactionTerminatedError()
 		}
 		statement := &statementContext{parent: ctx, tx: tx}
+		e.beginTransactionMemory(tx, statement)
 		tx.startQuery(query, statement, time.Now())
 		return statement, runningStatement{tx: tx, statement: statement}, nil
 	}
@@ -482,7 +538,8 @@ func (e *StorageExecutor) withRunningStatement(ctx context.Context, query string
 	// An auto-commit transaction and its statement start together: one
 	// clock reading for both.
 	started := time.Now()
-	runningTransactions.register(ctx, tx, e.currentDatabaseName(), started)
+	runningTransactions.register(ctx, tx, e.databaseName(), started)
+	e.beginTransactionMemory(tx, &statement.statementContext)
 	tx.startQuery(query, &statement.statementContext, started)
 	return &statement.statementContext, runningStatement{tx: tx, statement: &statement.statementContext, autoCommit: true}, nil
 }
@@ -500,15 +557,15 @@ var (
 // expression that starts with anything else (a function call, a literal).
 func undefinedVariableError(expression string) (err error, undefined bool) {
 	expression = strings.TrimSpace(expression)
-	name, end, isName := scanIdentifierToken(expression, 0)
+	name, isName := cyphertext.ScanIdentifier(expression, 0)
 	if !isName {
 		return nil, false
 	}
-	if rest := strings.TrimSpace(expression[end:]); rest != "" && rest[0] == '(' {
+	if rest := strings.TrimSpace(expression[name.End:]); rest != "" && rest[0] == '(' {
 		return nil, false
 	}
 	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable",
-		localization.CypherAdminVariableNotDefined(name)), true
+		localization.CypherAdminVariableNotDefined(name.Value)), true
 }
 
 // transactionIDFilter reads the transaction ids after SHOW / TERMINATE
@@ -664,6 +721,12 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 				row[i] = durationFromGo(now.Sub(tx.started))
 			case "currentQueryElapsedTime":
 				row[i] = currentQueryElapsed
+			case "estimatedUsedHeapMemory":
+				// The statement's estimate while a memory limit is
+				// configured (#1343); unknown (null) otherwise.
+				if tracker := tx.memory.Load(); tracker != nil {
+					row[i] = tracker.used.Load()
+				}
 			}
 		}
 		if cypher25 {

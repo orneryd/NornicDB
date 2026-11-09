@@ -1,21 +1,22 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
-	require.NoError(t, engine.BulkCreateNodes([]*Node{
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), []*Node{
 		{ID: "snapshot_bulk:owner", Labels: []string{"Owner"}},
 		{ID: "snapshot_bulk:item", Labels: []string{"Item"}},
 	}))
 
-	beforeCreate, err := engine.BeginTransaction()
+	beforeCreate, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, beforeCreate.SetNamespace("snapshot_bulk"))
 	t.Cleanup(func() {
@@ -24,19 +25,19 @@ func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
 		}
 	})
 
-	require.NoError(t, engine.BulkCreateEdges([]*Edge{{
+	require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{{
 		ID:        "snapshot_bulk:relationship",
 		StartNode: "snapshot_bulk:owner",
 		EndNode:   "snapshot_bulk:item",
 		Type:      "HAS",
 	}}))
 
-	beforeOutgoing, err := beforeCreate.GetOutgoingEdges("snapshot_bulk:owner")
+	beforeOutgoing, err := beforeCreate.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "snapshot_bulk:owner"})
 	require.NoError(t, err)
 	require.Empty(t, beforeOutgoing, "a snapshot opened before the create must not observe the relationship")
 	require.NoError(t, beforeCreate.Rollback())
 
-	afterCreate, err := engine.BeginTransaction()
+	afterCreate, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, afterCreate.SetNamespace("snapshot_bulk"))
 	t.Cleanup(func() {
@@ -45,12 +46,12 @@ func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
 		}
 	})
 
-	outgoing, err := afterCreate.GetOutgoingEdges("snapshot_bulk:owner")
+	outgoing, err := afterCreate.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "snapshot_bulk:owner"})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, EdgeID("snapshot_bulk:relationship"), outgoing[0].ID)
 
-	incoming, err := afterCreate.GetIncomingEdges("snapshot_bulk:item")
+	incoming, err := afterCreate.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "snapshot_bulk:item"})
 	require.NoError(t, err)
 	require.Len(t, incoming, 1)
 	require.Equal(t, EdgeID("snapshot_bulk:relationship"), incoming[0].ID)

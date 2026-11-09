@@ -1,8 +1,11 @@
 package storage
 
+// Repair context adoption: storage-format-owners lane (Codex), 1 November 2026.
+
 import (
+	"context"
 	"errors"
-	"fmt"
+	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -18,16 +21,41 @@ import (
 // call, and match must not change or keep it. The edges it accepts are
 // returned whole, as GetEdgesBetween returns them, from the same read.
 type EdgesBetweenMatcher interface {
-	MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error)
+	MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error)
 }
 
 // MatchEdgesBetween is engine's EdgesBetweenMatcher, or GetEdgesBetween and
 // the same filter for an engine without one: both give the same edges.
-func MatchEdgesBetween(engine Engine, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
-	if matcher, ok := engine.(EdgesBetweenMatcher); ok {
-		return matcher.MatchEdgesBetween(startID, endID, edgeType, properties, match)
+func MatchEdgesBetween(ctx context.Context, engine Engine, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	edges, err := engine.GetEdgesBetween(startID, endID)
+	if match == nil {
+		return nil, ErrInvalidData
+	}
+	if matcher, ok := engine.(EdgesBetweenMatcher); ok {
+		return matcher.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match)
+	}
+	// These decorators preserve the logical read view. A namespace is a
+	// boundary, not a transparent unwrap: translate IDs on both sides and
+	// never expose another namespace to the predicate.
+	switch wrapped := engine.(type) {
+	case *TracedEngine:
+		span := wrapped.startOperation("nornicdb.storage.MatchEdgesBetween", "edge")
+		defer span.End()
+		return MatchEdgesBetween(ctx, wrapped.Engine, startID, endID, edgeType, properties, match)
+	case *WALEngine:
+		return MatchEdgesBetween(ctx, wrapped.engine, startID, endID, edgeType, properties, match)
+	case *NamespacedEngine:
+		edges, err := MatchEdgesBetween(ctx, wrapped.inner, wrapped.PrefixNodeID(startID), wrapped.PrefixNodeID(endID), edgeType, properties, func(edge *Edge) bool {
+			return edge != nil && wrapped.hasEdgePrefix(edge.ID) && match(wrapped.toUserEdge(edge))
+		})
+		if err != nil {
+			return nil, err
+		}
+		return wrapped.toUserEdgesInNamespace(ctx, edges, true, true)
+	}
+	edges, err := engine.GetEdgesBetween(ctx, startID, endID)
 	if err != nil {
 		return nil, err
 	}
@@ -42,35 +70,11 @@ func filterEdgesBetween(edges []*Edge, startID, endID NodeID, edgeType string, p
 		if edge == nil || edge.StartNode != startID || edge.EndNode != endID || edge.Type != edgeType {
 			continue
 		}
-		if match(projectEdgeProperties(edge, properties)) {
+		if match((QueryResultProjection{}).Edge(edge, properties)) {
 			matched = append(matched, edge)
 		}
 	}
 	return matched
-}
-
-// projectEdgeProperties returns a copy of edge's identity with only the
-// listed properties (all of them when properties is nil).
-func projectEdgeProperties(edge *Edge, properties []string) *Edge {
-	if properties == nil {
-		return copyEdge(edge)
-	}
-	projected := &Edge{
-		ID:                   edge.ID,
-		Type:                 edge.Type,
-		StartNode:            edge.StartNode,
-		EndNode:              edge.EndNode,
-		VisibilitySuppressed: edge.VisibilitySuppressed,
-	}
-	for _, key := range properties {
-		if value, ok := edge.Properties[key]; ok {
-			if projected.Properties == nil {
-				projected.Properties = make(map[string]any, len(properties))
-			}
-			projected.Properties[key] = value
-		}
-	}
-	return projected
 }
 
 // MatchEdgesBetween matches the engine's edges between two nodes. Under
@@ -78,20 +82,45 @@ func projectEdgeProperties(edge *Edge, properties []string) *Edge {
 // buffered endpoint delete hides committed rows, a buffered edge delete
 // hides that row, and buffered live edges of the type are appended
 // (PR #1043 read-overlay parity — MERGE identity reads).
-func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
-	if b.writeBehind == nil {
-		return b.committedMatchEdgesBetween(startID, endID, edgeType, properties, match)
+func (b *BadgerEngine) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+	// ctx is the caller's read context: it owns admission and the read capture,
+	// so a canceled MERGE identity read never answers with candidates.
+	if err := b.pendingReadConflict(readNodePairScope, "", []NodeID{endID, startID}, ctx); err != nil {
+		return nil, err
 	}
-	live, suppressed, sourceDeleted, targetDeleted := b.writeBehind.EdgesBetweenOverlay(startID, endID)
+
+	if b.writeBehind == nil {
+		return b.committedMatchEdgesBetween(ctx, startID, endID, edgeType, properties, match)
+	}
+	var live []*Edge
+	var suppressed map[EdgeID]struct{}
+	var sourceDeleted, targetDeleted bool
+	var captureErr error
+	view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) {
+		pendingBetween, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
+		if err != nil {
+			captureErr = err
+			return
+		}
+		live, suppressed, sourceDeleted, targetDeleted = pendingBetween.edges, pendingBetween.suppressed, pendingBetween.sourceDeleted, pendingBetween.targetDeleted
+	}, readViewOptions{scope: namespaceForNodeID(startID)})
+	if err != nil {
+		return nil, err
+	}
+	if captureErr != nil {
+		view.Close()
+		return nil, captureErr
+	}
+	defer view.Close()
 	if sourceDeleted || targetDeleted {
 		return nil, nil
 	}
-	matched, err := b.committedMatchEdgesBetween(startID, endID, edgeType, properties, func(edge *Edge) bool {
+	matched, err := b.committedMatchEdgesBetween(ctx, startID, endID, edgeType, properties, func(edge *Edge) bool {
 		if _, dead := suppressed[edge.ID]; dead {
 			return false
 		}
 		return match(edge)
-	})
+	}, view.withView)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +128,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 		if e == nil || e.Type != edgeType {
 			continue
 		}
-		if match(projectEdgeProperties(e, properties)) {
+		if match((QueryResultProjection{}).Edge(e, properties)) {
 			matched = append(matched, copyEdge(e))
 		}
 	}
@@ -111,14 +140,14 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 // only the requested properties, and returns the accepted ones whole. A pair with no set-index entry at all may
 // predate the index: its legacy outgoing index is read as GetEdgesBetween
 // reads it.
-func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+func (b *BadgerEngine) committedMatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool, views ...func(context.Context, func(*badger.Txn) error) error) ([]*Edge, error) {
 	if startID == "" || endID == "" {
 		return nil, ErrInvalidID
 	}
 	if match == nil {
 		return nil, ErrInvalidData
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return nil, err
 	}
 	startNum, startOK := b.idDict.lookupNodeNumID(startID)
@@ -129,7 +158,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 	include := propertyProjectionSet(properties)
 	var matched []*Edge
 	indexed := false
-	err := b.withView(func(txn *badger.Txn) error {
+	read := func(txn *badger.Txn) error {
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		nowNanos := DecayScoringTime()
 		prefix := typedEdgeBetweenIndexPrefix(startNum, endNum, edgeType)
@@ -154,9 +183,9 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 			// A cached body is the committed edge GetEdge would return:
 			// match it without reading or decoding (the cache is read-only;
 			// a match is returned as a copy).
-			if cached, hit := b.cacheLoadEdge(edgeID); hit {
+			if cached, hit := b.cacheLoadEdge(edgeID); hit && b.writeBehind == nil {
 				if cached.StartNode != startID || cached.EndNode != endID || cached.Type != edgeType ||
-					b.filterEdgeByDecay(cached, nowNanos) || !match(cached) {
+					b.filterEntityByDecay(visibleRead, cached, nowNanos) || !match(cached) {
 					continue
 				}
 				matched = append(matched, copyEdge(cached))
@@ -170,18 +199,18 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 				return err
 			}
 			if err := item.Value(func(data []byte) error {
-				candidate, err := b.projectedEdge(data, edgeID, startNum, endNum, include)
+				candidate, _, _, err := b.decodeEdgeCompactV2(txn, namespaceForEdgeID(edgeID), data, compactEdgeProjection{Start: startNum, End: endNum, Include: include})
 				if err != nil {
 					return err
 				}
 				if candidate == nil {
 					return nil
 				}
-				candidate.StartNode, candidate.EndNode = startID, endID
-				if candidate.Type != edgeType || b.filterEdgeByDecay(candidate, nowNanos) || !match(candidate) {
+				candidate.ID, candidate.StartNode, candidate.EndNode = edgeID, startID, endID
+				if candidate.Type != edgeType || b.filterEntityByDecay(visibleRead, candidate, nowNanos) || !match(candidate) {
 					return nil
 				}
-				edge, err := b.decodeEdgeBodyByID(data, edgeID)
+				edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), data, edgeID)
 				if err != nil {
 					return err
 				}
@@ -199,49 +228,37 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 			indexed = pairIt.Valid()
 		}
 		return nil
-	})
+	}
+	var err error
+	if len(views) > 0 {
+		err = views[0](ctx, read)
+	} else {
+		err = b.withView(read)
+	}
 	if err != nil || indexed {
 		return matched, err
 	}
-	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(startID, endID, edgeType)
+	// Keep the lifetime selected by the context-free matcher entry through
+	// its legacy scan and metadata repair.
+	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(ctx, startID, endID, edgeType, views...)
 	if err != nil {
 		return nil, err
 	}
 	if len(legacy) > 0 {
-		_ = b.selfHealEdgeBetweenIndexes(legacy)
+		_ = b.selfHealEdgeBetweenIndexes(ctx, legacy)
 	}
 	return filterEdgesBetween(legacy, startID, endID, edgeType, properties, match), nil
-}
-
-// projectedEdge decodes an edge body's header and the properties in include
-// (all of them when include is nil). It returns nil for an edge whose
-// endpoints aren't startNum / endNum.
-func (b *BadgerEngine) projectedEdge(data []byte, edgeID EdgeID, startNum, endNum uint64, include map[string]struct{}) (*Edge, error) {
-	edge, gotStart, gotEnd, offset, err := decodeEdgeCompactHeader(data, edgeFormatCompactV2)
-	if err != nil {
-		return nil, err
-	}
-	if gotStart != startNum || gotEnd != endNum {
-		return nil, nil
-	}
-	edge.ID = edgeID
-	if offset < len(data) && (include == nil || len(include) > 0) {
-		props, err := b.decodeTokenizedPropertiesProjected(namespaceForEdgeID(edgeID), data[offset:], include)
-		if err != nil {
-			return nil, fmt.Errorf("compact edge v2: %w", err)
-		}
-		edge.Properties = props
-	}
-	return edge, nil
 }
 
 // MatchEdgesBetween matches the engine's edges as this transaction sees
 // them: its deleted edges are gone, and its created or updated ones replace
 // the stored versions, as in GetEdgesBetween.
-func (tx *BadgerTransaction) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
-	tx.mu.Lock()
+func (tx *BadgerTransaction) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
 	if err := tx.pinNamespaceFromIDLocked(string(startID)); err != nil {
@@ -250,7 +267,7 @@ func (tx *BadgerTransaction) MatchEdgesBetween(startID, endID NodeID, edgeType s
 	if err := tx.pinNamespaceFromIDLocked(string(endID)); err != nil {
 		return nil, err
 	}
-	matched, err := tx.engine.MatchEdgesBetween(startID, endID, edgeType, properties, func(edge *Edge) bool {
+	matched, err := tx.engine.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, func(edge *Edge) bool {
 		if _, deleted := tx.deletedEdges[edge.ID]; deleted {
 			return false
 		}
@@ -266,7 +283,7 @@ func (tx *BadgerTransaction) MatchEdgesBetween(startID, endID NodeID, edgeType s
 		if edge == nil || edge.StartNode != startID || edge.EndNode != endID || edge.Type != edgeType {
 			continue
 		}
-		if match(projectEdgeProperties(edge, properties)) {
+		if match((QueryResultProjection{}).Edge(edge, properties)) {
 			matched = append(matched, copyEdge(edge))
 		}
 	}
@@ -274,14 +291,14 @@ func (tx *BadgerTransaction) MatchEdgesBetween(startID, endID NodeID, edgeType s
 }
 
 // MatchEdgesBetween matches the engine's edges with this namespace's IDs.
-func (n *NamespacedEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+func (n *NamespacedEngine) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	var candidate Edge
-	edges, err := MatchEdgesBetween(n.inner, n.prefixNodeID(startID), n.prefixNodeID(endID), edgeType, properties, func(edge *Edge) bool {
+	edges, err := MatchEdgesBetween(ctx, n.inner, n.PrefixNodeID(startID), n.PrefixNodeID(endID), edgeType, properties, func(edge *Edge) bool {
 		if !n.hasEdgePrefix(edge.ID) {
 			return false
 		}
 		candidate = *edge
-		candidate.ID = n.unprefixEdgeID(edge.ID)
+		candidate.ID = EdgeID(strings.TrimPrefix(string(edge.ID), n.scope))
 		candidate.StartNode, candidate.EndNode = startID, endID
 		return match(&candidate)
 	})
@@ -295,13 +312,13 @@ func (n *NamespacedEngine) MatchEdgesBetween(startID, endID NodeID, edgeType str
 }
 
 // MatchEdgesBetween delegates to the underlying engine.
-func (w *WALEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
-	return MatchEdgesBetween(w.engine, startID, endID, edgeType, properties, match)
+func (w *WALEngine) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+	return MatchEdgesBetween(ctx, w.engine, startID, endID, edgeType, properties, match)
 }
 
 // MatchEdgesBetween matches the edges of every readable constituent, each
 // once, as GetEdgesBetween reads them.
-func (c *CompositeEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+func (c *CompositeEngine) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	seen := make(map[EdgeID]struct{})
 	var matched []*Edge
 	for _, alias := range c.getConstituentsForRead() {
@@ -309,7 +326,7 @@ func (c *CompositeEngine) MatchEdgesBetween(startID, endID NodeID, edgeType stri
 		if err != nil {
 			continue
 		}
-		edges, err := MatchEdgesBetween(engine, startID, endID, edgeType, properties, func(edge *Edge) bool {
+		edges, err := MatchEdgesBetween(ctx, engine, startID, endID, edgeType, properties, func(edge *Edge) bool {
 			if _, dup := seen[edge.ID]; dup {
 				return false
 			}

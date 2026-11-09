@@ -1,0 +1,133 @@
+package storage
+
+import (
+	"context"
+	"github.com/dgraph-io/badger/v4"
+)
+
+// EmbeddingBodyRevision is an opaque snapshot identity. A durable read uses
+// Badger's body-key version. An acknowledged buffered read uses its existing
+// MVCC commit sequence, which remains the same when replay materializes it.
+// Neither representation depends on the caller-controlled UpdatedAt.
+type EmbeddingBodyRevision struct {
+	physical         uint64
+	bufferedSequence uint64
+}
+
+func (revision EmbeddingBodyRevision) isZero() bool {
+	return revision.physical == 0 && revision.bufferedSequence == 0
+}
+
+// MatchesNode is the common body-change decision for claims, DLQ recovery and
+// publication. A buffered ACK and its materialized body are the same revision;
+// caller timestamps and notification delivery are not revision evidence. The
+// capture read that resolves a buffered revision runs under the caller's
+// context, so a cancelled operation stops it; a comparison the revision
+// already answers performs no read.
+func (revision EmbeddingBodyRevision) MatchesNode(ctx context.Context, node *Node) (bool, error) {
+	if node == nil {
+		return false, nil
+	}
+	state := node.runtimeState()
+	current := state.embeddingRevision
+	if revision == current {
+		return true, nil
+	}
+	if revision.bufferedSequence == 0 || current.physical == 0 || state.embeddingOwner == nil {
+		return false, nil
+	}
+	var same bool
+	err := state.embeddingOwner.withReadView(ctx, nil, func(txn *badger.Txn) error {
+		item, err := txn.Get(nodeKey(state.embeddingOwnerID))
+		if err != nil {
+			return err
+		}
+		if item.Version() != current.physical {
+			return nil
+		}
+		same, err = revision.matches(state.embeddingOwner, txn, state.embeddingOwnerID, item.Version())
+		return err
+	})
+	return same, err
+}
+
+func (revision EmbeddingBodyRevision) matches(b *BadgerEngine, txn *badger.Txn, id NodeID, physical uint64) (bool, error) {
+	if revision.bufferedSequence == 0 {
+		return revision.physical == physical, nil
+	}
+	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
+	if err != nil {
+		return false, err
+	}
+	return head.Version.CommitSequence == revision.bufferedSequence, nil
+}
+
+// Publication needs only the identity, not a decoded body or hydrated vectors.
+// The ordered event drainer supplies the publication boundary; an acknowledged
+// buffered body takes precedence over the physical body, as in snapshot reads.
+// The read view runs under ctx: the accepted-publication boundary passes the
+// engine's retained completion context with cancellation detached, so delivery survives a cancelled
+// client, while callers still holding the request pass that request.
+func (b *BadgerEngine) embeddingRevisionIsCurrent(ctx context.Context, id NodeID, revision EmbeddingBodyRevision, proof ...embeddingPublicationProof) (bool, error) {
+	var buffered *Node
+	proven := false
+	view, err := b.captureReadView(ctx, nil, readViewOptions{scope: namespaceForNodeID(id), cached: func(w *WriteBehindBuffer) (bool, error) {
+		state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
+		if !state.found {
+			if len(proof) != 0 && proof[0].matches(b, id, revision) {
+				proven = true
+				return true, nil
+			}
+			return false, nil
+		}
+		if state.deleted {
+			return true, ErrNotFound
+		}
+		buffered = state.node
+		return true, nil
+	}})
+	if err != nil {
+		return false, err
+	}
+	if view == nil {
+		if proven {
+			return true, nil
+		}
+		return revision.MatchesNode(ctx, buffered)
+	}
+	var same bool
+	err = view.readAndClose(ctx, func(txn *badger.Txn) error {
+		item, err := txn.Get(nodeKey(id))
+		if err == badger.ErrKeyNotFound {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		same, err = revision.matches(b, txn, id, item.Version())
+		return err
+	})
+	return same, err
+}
+
+// SnapshotNodeForEmbedding binds a body and its revision in one read. Ordinary
+// reads keep their existing write-cache fast path; only an embedding claim
+// needs to acquire a revision when that cache came from a body write. Copies
+// and namespace decorators preserve the private reader provenance. The
+// fallback read runs under ctx, the same lifetime as the read that produced
+// node, so it cannot outlive a cancelled operation.
+func SnapshotNodeForEmbedding(ctx context.Context, node *Node) (*Node, error) {
+	if node == nil {
+		return node, nil
+	}
+	state := node.runtimeState()
+	if !state.embeddingRevision.isZero() || state.embeddingOwner == nil {
+		return node, nil
+	}
+	b, id := state.embeddingOwner, state.embeddingOwnerID
+	snapshot, err := b.getNodeSnapshot(ctx, id, true)
+	if err == nil {
+		snapshot.ID = node.ID
+	}
+	return snapshot, err
+}

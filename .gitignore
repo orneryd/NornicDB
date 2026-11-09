@@ -83,6 +83,7 @@ northwind_power_bench_ladybug
 bench-data
 lib-ladybug
 scripts/benchmark_reports
+testing/benchmarks/vector_ann/reports
 # Local localization review artifacts (regenerate with scripts/localization_inventory).
 /docs/plans/localization-*.csv
 metrics-doc-gen
@@ -103,3 +104,7 @@ testing/cypher/tck/testdata/differential/sweep.json.gz
 
 # Local coordination notes must never be recommitted.
 /AGENT_STATUS.md
+
+# Optional local code-intelligence tools and private configuration
+.venv-code-intelligence/
+.env.code-intelligence

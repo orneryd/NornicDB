@@ -20,10 +20,11 @@
 //			"name": "Alice",
 //		},
 //	}
-//	engine.CreateNode(node)
+//	engine.CreateNode(ctx, node)
 package storage
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -44,6 +45,12 @@ type MemoryEngine struct {
 	*BadgerEngine
 }
 
+// GetInnerEngine exposes the actual storage owner to canonical capability
+// discovery, including query reveal scopes through namespaced decorators.
+func (m *MemoryEngine) GetInnerEngine() Engine { return m.BadgerEngine }
+
+var _ EngineUnwrapper = (*MemoryEngine)(nil)
+
 // NewMemoryEngine creates a new in-memory storage engine for testing.
 // It uses BadgerDB's in-memory mode internally.
 //
@@ -54,18 +61,30 @@ type MemoryEngine struct {
 //
 // Note: For tests, prefer storage.NewTestEngine(t) which handles cleanup.
 func NewMemoryEngine() *MemoryEngine {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := NewMemoryEngineWithOptions(BadgerOptions{})
 	if err != nil {
 		// In testing context, panic is acceptable for setup failures
 		panic(fmt.Sprintf("failed to create in-memory BadgerEngine: %v", err))
 	}
-	return &MemoryEngine{BadgerEngine: engine}
+	return engine
+}
+
+// NewMemoryEngineWithOptions creates an in-memory storage engine with opts,
+// such as the engine-wide policy (EngineOptions) and logger a database opens
+// with; opts.InMemory is implied.
+func NewMemoryEngineWithOptions(opts BadgerOptions) (*MemoryEngine, error) {
+	opts.InMemory = true
+	engine, err := NewBadgerEngineWithOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	return &MemoryEngine{BadgerEngine: engine}, nil
 }
 
 // BeginTransaction starts a new transaction.
 // Returns *BadgerTransaction for compatibility with the executor.
-func (m *MemoryEngine) BeginTransaction() (*BadgerTransaction, error) {
-	return m.BadgerEngine.BeginTransaction()
+func (m *MemoryEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction, error) {
+	return m.BadgerEngine.BeginTransaction(ctx)
 }
 
 // DeleteByPrefix delegates to the underlying BadgerEngine.

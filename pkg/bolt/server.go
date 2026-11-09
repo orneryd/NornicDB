@@ -137,14 +137,20 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -215,17 +221,23 @@ type Server struct {
 	config                         *Config
 	listener                       net.Listener
 	lifecycleMu                    sync.Mutex
+	work                           atomic.Pointer[lifecycle.WorkLifetime]
+	serving                        bool
 	mu                             sync.RWMutex
 	sessions                       map[string]*Session
 	connectionListings             map[string]cypher.ConnectionListing
-	closed                         atomic.Bool
 	rawTransactionExecutorPoisoned atomic.Bool
 	// nextConnectionID numbers connections for SHOW TRANSACTIONS
 	// (connectionId bolt-N).
 	nextConnectionID atomic.Uint64
 
-	executorsMu sync.RWMutex
-	executors   map[string]QueryExecutor
+	statementCacheIndex multidb.StatementCacheIndex
+	executorsMu         sync.RWMutex
+	executors           map[string]QueryExecutor
+	// Auth-scoped executors remain fresh; only their text caches live here.
+	statementCaches     *cypher.StatementCaches
+	statementCachesOnce sync.Once
+	memoryPolicy        *memory.Policy
 
 	// Query executor (injected dependency) - used if dbManager is nil
 	executor QueryExecutor
@@ -285,8 +297,8 @@ type Server struct {
 	// to plain GET / probes on the Bolt port. Refreshed by a 1s ticker so
 	// the Date header stays current.
 	discoveryResponse atomic.Pointer[[]byte]
-	// discoveryStop cancels the discovery refresh goroutine on Close.
-	discoveryStop chan struct{}
+	// The shared lifetime cancels and joins the one discovery worker.
+	discoveryStarted bool
 
 	// upgrader is the gorilla/websocket Upgrader configured per Config at
 	// ListenAndServe time. Reused across all WS upgrades.
@@ -404,11 +416,12 @@ type QueryResult struct {
 	Columns  []string
 	Rows     [][]any
 	Metadata map[string]any
-	Stats    *QueryStats // Write counters for ResultSummary
+	Stats    *QueryStats // Write counters for ResultSummary.
 }
 
 type resultStream struct {
 	result   *QueryResult
+	delivery *resultstream.Delivery
 	index    int
 	isWrite  bool
 	database string
@@ -566,6 +579,10 @@ func (r *BoltAuthResult) HasPermission(perm string) bool {
 //	config = bolt.DefaultConfig()
 //	config.Port = 7688 // Use different port
 type Config struct {
+	// Lifetime binds resources constructed before New (such as TLS polling)
+	// to the same native service admission, cancellation and completion owner.
+	// Nil gives New a fresh owner. A supplied owner is immutable for this service.
+	Lifetime        *lifecycle.WorkLifetime
 	Host            string
 	Port            int
 	MaxConnections  int
@@ -592,6 +609,21 @@ type Config struct {
 
 	// Localizer renders human-readable Bolt failures. Nil preserves en-US.
 	Localizer *localization.Manager
+
+	// DatabaseExecutorOptions, when set, is the host's canonical
+	// per-database executor factory: it returns the complete
+	// cypher.DatabaseScopedExecutorOptions the host publishes for dbName
+	// (query-result cache policy, statement-cache owner, localization, base
+	// executor and the runtime wiring such as settings, catalog, search and
+	// logging). cmd/nornicdb wires it directly to
+	// (*server.Server).DatabaseScopedExecutorOptions so HTTP and Bolt build
+	// database-scoped executors from one configuration.
+	//
+	// The callback runs once per executor construction, never per query.
+	// Bolt supplies its own database manager, resolved database name,
+	// forwarded auth token and authenticated-storage decision.
+	// Leave nil to keep a standalone server configuring its own executors.
+	DatabaseExecutorOptions func(dbName, authToken string) cypher.DatabaseScopedExecutorOptions
 
 	// TLSConfig, when non-nil, enables TLS-on-first-byte sniffing on the
 	// Bolt port. Mirrors Neo4j's sslContext + requiresEncryption pattern:
@@ -896,7 +928,7 @@ func NewWithDatabaseManager(config *Config, executor QueryExecutor, dbManager Da
 		config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
-	return &Server{
+	s := &Server{
 		config:    config,
 		sessions:  make(map[string]*Session),
 		executors: make(map[string]QueryExecutor),
@@ -906,6 +938,10 @@ func NewWithDatabaseManager(config *Config, executor QueryExecutor, dbManager Da
 		// prefix; every record emitted via s.log automatically carries it.
 		log: config.Logger.With("component", "bolt"),
 	}
+	if config.Lifetime != nil {
+		s.work.Store(config.Lifetime)
+	}
+	return s
 }
 
 // discardBoltLogger is the package-level fallback logger used when a Server
@@ -979,6 +1015,12 @@ func (s *Server) SetDatabaseConnectionAdmission(resolve func(string) (string, er
 	s.databaseConnectionRelease = release
 }
 
+// SetMemoryPolicy uses the database-owned soft admission policy for Bolt RUN.
+// Configure it before ListenAndServe so all sessions share one budget.
+func (s *Server) SetMemoryPolicy(policy *memory.Policy) {
+	s.memoryPolicy = policy
+}
+
 // ListenAndServe starts the Bolt server and begins accepting connections.
 //
 // The server listens on the configured port and handles incoming Bolt
@@ -998,17 +1040,24 @@ func (s *Server) SetDatabaseConnectionAdmission(resolve func(string) (string, er
 //	}
 //
 // The server will print its listening address when started successfully.
-func (s *Server) ListenAndServe() error {
-	host := strings.TrimSpace(s.config.Host)
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	addr := net.JoinHostPort(host, strconv.Itoa(s.config.Port))
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
-	}
-	return s.Serve(listener)
+func (s *Server) ListenAndServe() error { return s.Run(context.Background()) }
+
+// Run bounds its caller by ctx while retaining actual native startup/serving
+// work in the service owner. Cancellation initiates that same retirement.
+func (s *Server) Run(ctx context.Context) error {
+	err, _ := s.runServing(ctx, func(native context.Context) (net.Listener, error) {
+		host := strings.TrimSpace(s.config.Host)
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		addr := net.JoinHostPort(host, strconv.Itoa(s.config.Port))
+		listener, err := (&net.ListenConfig{}).Listen(native, "tcp", addr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
+		}
+		return listener, nil
+	})
+	return err
 }
 
 // Serve accepts Bolt connections from an already-bound listener.
@@ -1029,14 +1078,37 @@ func (s *Server) Serve(listener net.Listener) error {
 	if listener == nil {
 		return fmt.Errorf("bolt listener is nil")
 	}
-	s.lifecycleMu.Lock()
-	if s.closed.Load() {
-		s.lifecycleMu.Unlock()
-		_ = listener.Close()
-		return fmt.Errorf("bolt server is closed")
+	err, accepted := s.runServing(context.Background(), func(context.Context) (net.Listener, error) { return listener, nil })
+	if !accepted {
+		return compose.Outcomes(err, listener.Close())
 	}
+	return err
+}
+
+func (s *Server) serveListener(ctx context.Context, listener net.Listener) error {
+	s.lifecycleMu.Lock()
 	s.listener = listener
 	s.lifecycleMu.Unlock()
+	recordClose := func(err error) {
+		if !util.ErrorIsOnly(err, net.ErrClosed) {
+			s.lifetime().RecordError("close Bolt listener", err)
+		}
+	}
+	// Stopping closes the listener so Accept returns. The stop signal is
+	// accepted work, so quiescence waits for the native close to return while
+	// this worker never joins a close its own caller is executing.
+	if !s.lifetime().OnStop(func() error {
+		recordClose(s.closeListener())
+		return nil
+	}) {
+		// A refused enrollment means the stop already began: this attempt
+		// closes its own listener and reports the cancelled start.
+		recordClose(s.closeListener())
+		return errServerClosed
+	}
+	// Startup failure and serve-loop exit transfer the published listener
+	// before closing, so exactly one path closes it.
+	defer func() { recordClose(s.closeListener()) }()
 
 	announceHost := strings.TrimSpace(s.config.Host)
 	if announceHost == "0.0.0.0" || announceHost == "::" || announceHost == "" {
@@ -1050,12 +1122,11 @@ func (s *Server) Serve(listener net.Listener) error {
 
 	// Validate the discovery body once at startup and start the 1s Date
 	// refresh ticker. Startup fails if OAuthConfig has malformed URLs.
-	if err := s.startDiscoveryRefresher(); err != nil {
-		_ = listener.Close()
+	if err := s.startDiscoveryRefresher(ctx); err != nil {
 		return fmt.Errorf("discovery response startup: %w", err)
 	}
 
-	return s.serve()
+	return s.serveAccepted(ctx)
 }
 
 func (s *Server) listenerSnapshot() net.Listener {
@@ -1064,48 +1135,53 @@ func (s *Server) listenerSnapshot() net.Listener {
 	return s.listener
 }
 
-// serve accepts connections in a loop.
-func (s *Server) serve() error {
-	listener := s.listenerSnapshot()
-	for {
-		if s.closed.Load() {
-			return nil
-		}
-
-		conn, err := listener.Accept()
-		if err != nil {
-			if s.closed.Load() {
-				return nil // Clean shutdown
-			}
-			continue
-		}
-
-		go s.handleConnection(conn)
-	}
-}
-
-// Close stops the Bolt server.
-func (s *Server) Close() error {
+// Startup failure and shutdown can overlap. Transfer ownership before closing
+// so only one path closes the published listener.
+func (s *Server) closeListener() error {
 	s.lifecycleMu.Lock()
-	s.closed.Store(true)
 	listener := s.listener
+	s.listener = nil
 	s.lifecycleMu.Unlock()
-	s.stopDiscoveryRefresher()
 	if listener != nil {
 		return listener.Close()
 	}
 	return nil
 }
 
+// serve accepts connections in a loop.
+func (s *Server) serve() error { return s.Serve(s.listenerSnapshot()) }
+
+func (s *Server) serveAccepted(ctx context.Context) error {
+	listener := s.listenerSnapshot()
+	for {
+		if s.lifetime().Closing() || ctx.Err() != nil {
+			return nil
+		}
+
+		conn, err := listener.Accept()
+		if err != nil {
+			if s.lifetime().Closing() || ctx.Err() != nil {
+				if !util.ErrorIsOnly(err, net.ErrClosed) && !util.ErrorIsOnly(err, ctx.Err()) {
+					s.lifetime().RecordError("finish Bolt accept", err)
+				}
+				return nil // Clean shutdown
+			}
+			continue
+		}
+
+		s.startConnection(ctx, conn)
+	}
+}
+
 // IsClosed returns whether the server is closed.
 func (s *Server) IsClosed() bool {
-	return s.closed.Load()
+	return s.lifetime().Closing()
 }
 
 // handleConnection handles a single client connection. It performs
 // transport selection (raw TCP / TLS / WS / WS+TLS) before constructing
 // the Bolt Session and then drives the message loop.
-func (s *Server) handleConnection(conn net.Conn) {
+func (s *Server) handleConnectionOwned(workCtx context.Context, conn net.Conn) {
 	// MaxConnections enforcement (single shared cap across all four
 	// transports). Atomic CAS — no channel, no syscall on the hot path.
 	if max := s.config.MaxConnections; max > 0 {
@@ -1115,7 +1191,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 				incBoltConnectionsRejected(ms.bag, "max_connections")
 			}
 			s.logConnectionLimit(conn, max, time.Now())
-			_ = conn.Close()
+			if err := conn.Close(); !util.ErrorIsOnly(err, net.ErrClosed) {
+				s.lifetime().RecordError("close excess Bolt connection", err)
+			}
 			return
 		}
 	} else {
@@ -1129,13 +1207,22 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// close_notify, wsConn writes a WS close frame, etc. Closing the
 	// raw conn directly would skip those.
 	closeTarget := conn
-	defer func() { _ = closeTarget.Close() }()
-
-	// Disable Nagle's algorithm on the underlying TCP socket for lower
-	// latency. Harmless no-op for non-TCP wrappers (tls.Conn, wsConn).
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		tcpConn.SetNoDelay(true)
+	joinInterrupt := s.interruptConnection(conn)
+	var transportClose lifecycle.OnceCompletion
+	closeTransport := func() {
+		transportClose.Run(func() {
+			joinInterrupt()
+			if native, ok := conn.(*lifetimeConn); ok {
+				native.closing.Store(true)
+			}
+			if err := closeTarget.Close(); !util.ErrorIsOnly(err, net.ErrClosed) {
+				s.lifetime().RecordError("close Bolt connection", err)
+			}
+		})
 	}
+	defer func() {
+		closeTransport()
+	}()
 
 	// Plan 04-02 D-11 session-lifecycle instrumentation. We defer Inc
 	// until after transport selection so the label that gets Inc'd
@@ -1263,7 +1350,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 
 	// TRC-13: session-level span wraps the entire connection lifetime.
-	sessionCtx, sessionSpan := startSessionSpan(remoteAddr)
+	_, sessionSpan := startSessionSpan(remoteAddr)
 	defer func() {
 		sessionSpan.SetAttributes(attribute.String("bolt.result", sessionResult))
 		sessionSpan.SetAttributes(attribute.String("bolt.transport", transportLabel))
@@ -1280,17 +1367,23 @@ func (s *Server) handleConnection(conn net.Conn) {
 		writeBufSize = s.config.WebSocketWriteBufferSize
 	}
 
+	sessionCtx := trace.ContextWithSpan(workCtx, sessionSpan)
 	connCtx, connCancel := context.WithCancel(sessionCtx)
+	stopCancellation := lifecycle.AfterFuncJoined(s.lifetime().Context(), connCancel)
 	// Cancel the connection-scoped context the moment handleConnection
 	// returns. This is the load-bearing signal that propagates client
 	// disconnects to in-flight RUN handlers — see Session.connCtx for
 	// the full bug context.
-	defer connCancel()
+	defer func() {
+		connCancel()
+		stopCancellation()
+	}()
 
 	session := &Session{
 		connectionID:   "bolt-" + strconv.FormatUint(s.nextConnectionID.Add(1), 10),
 		connectedAt:    time.Now().UTC(),
 		conn:           sniffedConn,
+		closeTransport: closeTransport,
 		reader:         br, // load-bearing: holds peeked bytes from peekTransport
 		writer:         bufio.NewWriterSize(sniffedConn, writeBufSize),
 		server:         s,
@@ -1305,6 +1398,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 		implicitBearer: implicitBearer,
 	}
 	session.publishConnectionListing()
+	session.connCtx = resultstream.WithDelivery(session.connCtx, &session.continuationDelivery)
+	defer session.continuationDelivery.Fail()
+	defer session.abandonContinuationResults()
 	defer session.removeConnectionListing()
 	_, sourceTransactional := s.executor.(TransactionalExecutor)
 	if factory, ok := s.executor.(SessionExecutorFactory); ok {
@@ -1332,10 +1428,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 	defer func() {
 		session.releaseDatabaseConnection()
-		_ = session.rollbackExplicitTransaction(transactionTerminalDisconnect)
+		s.lifetime().RecordError("rollback disconnected Bolt transaction", session.rollbackExplicitTransaction(transactionTerminalDisconnect))
 		if !session.transactionCleanupFailed && session.pendingFlush {
 			if flushable, ok := session.executor.(FlushableExecutor); ok {
-				_ = flushable.Flush()
+				s.lifetime().RecordError("flush disconnected Bolt session", flushable.Flush())
 			}
 			session.pendingFlush = false
 		}
@@ -1377,10 +1473,11 @@ func (s *Server) handleConnection(conn net.Conn) {
 		_ = sniffedConn.SetReadDeadline(time.Time{})
 	}
 	session.startMessageReader()
+	defer session.releaseIncomingReservations()
 
 	keepaliveStarted := false
 	for {
-		if s.closed.Load() {
+		if s.lifetime().Closing() {
 			return
 		}
 		if err := session.handleQueuedMessage(); err != nil {
@@ -1401,7 +1498,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		// (no-op for raw TCP). Idempotent guard prevents re-installing.
 		if !keepaliveStarted && session.authenticated {
 			if wc, ok := sniffedConn.(*wsConn); ok {
-				s.startWebSocketKeepalive(wc)
+				s.startWebSocketKeepalive(connCtx, wc)
 			}
 			keepaliveStarted = true
 		}
@@ -1485,6 +1582,7 @@ func unwrapTLS(conn net.Conn) (net.Conn, bool) {
 
 // Session represents a client session.
 type Session struct {
+	closeTransport func() // same physical-close owner for timeout and teardown
 	// connectionID identifies the connection in SHOW TRANSACTIONS.
 	connectionID string
 	connectedAt  time.Time
@@ -1508,8 +1606,10 @@ type Session struct {
 	// contexts derive from this so a long-running Cypher query
 	// terminates promptly when the connection drops, instead of pinning
 	// a CPU core indefinitely (the v1.1.2 #184 bug).
-	connCtx    context.Context
-	connCancel context.CancelFunc
+	connCtx              context.Context
+	connCancel           context.CancelFunc
+	continuationDelivery resultstream.Delivery
+	lastDelivery         *resultstream.Delivery
 
 	// Database context (from HELLO message)
 	database         string // Database name for this session (defaults to default database)
@@ -1534,7 +1634,7 @@ type Session struct {
 	txHasMerge                      bool
 	txHasNonMergeWrite              bool
 	txMergeStatements               []cypher.CommitStatement
-	txWriteInfos                    []*cypher.QueryInfo // write statements; MERGE-only shape decided when a commit fails
+	txWriteInfos                    []*cypher.QueryInfo
 	txLifecycle                     transactionLifecycle
 	failedUntilReset                bool
 	transactionCleanupFailed        bool
@@ -1542,9 +1642,15 @@ type Session struct {
 	rawTransactionExecutor          bool
 
 	// Query result state (for streaming with PULL)
-	lastResult  *QueryResult
-	resultIndex int
-	lastLazy    *lazyResult
+	lastResult            *QueryResult
+	lastResultMemoryLease *memory.Lease
+	resultMemoryLeases    map[int64]*memory.Lease
+	resultIndex           int
+	lastLazy              *lazyResult
+	// Author: Codex, NOR-180. A lazy result abandoned by the next request can
+	// still finish with a failed terminal WAL write. The session response owner
+	// consumes that outcome once, after the helper has joined.
+	pendingResultFailure *lazyStatementError
 	// pendingMessage and pendingErr are what a lazy result's helper read
 	// and handed back to the message loop (serveLazyResult).
 	pendingMessage    *boltMessage
@@ -1573,12 +1679,13 @@ type Session struct {
 	recordBuf  []byte  // Reusable buffer for PackStream message encoding
 
 	// Async message processing (Neo4j-style batching)
-	messageQueue chan *boltMessage // Incoming messages queue
-	readErrQueue chan error        // Terminal read errors from the reader loop
-	writeMu      sync.Mutex        // Protects writer for concurrent access
-	activeRunMu  sync.Mutex
-	activeRun    context.CancelFunc
-	activeReason byte
+	messageQueue      chan *boltMessage // Incoming messages queue
+	messageReaderDone chan struct{}     // reader joined before queued reservations are released
+	readErrQueue      chan error        // Terminal read errors from the reader loop
+	writeMu           sync.Mutex        // Protects writer for concurrent access
+	activeRunMu       sync.Mutex
+	activeRun         context.CancelFunc
+	activeReason      byte
 
 	// implicitBearer carries a JWT pulled from the WS-upgrade cookie
 	// (nornicdb_token / token). It is set by acceptWebSocket BEFORE the
@@ -1642,8 +1749,9 @@ func selectBoltVersion(offers []uint32) (version uint32, reply uint32, ok bool) 
 
 // boltMessage represents a parsed Bolt message ready for processing
 type boltMessage struct {
-	msgType byte
-	data    []byte
+	msgType     byte
+	data        []byte
+	memoryLease *memory.WireRequest
 }
 
 // handshake performs the Bolt handshake.
@@ -1701,72 +1809,15 @@ func (s *Session) handshake() error {
 // readMessage reads a single Bolt message from the connection.
 // Returns the parsed message or nil for empty messages.
 func (s *Session) readMessage() (*boltMessage, error) {
-	// Create a new buffer for this message (since we're async, can't reuse)
-	var msgBuf []byte
-
-	// Read chunks until we get a zero-size chunk (message terminator)
-	var headerBuf [2]byte
-	for {
-		if _, err := io.ReadFull(s.reader, headerBuf[:]); err != nil {
-			return nil, err
-		}
-
-		size := int(headerBuf[0])<<8 | int(headerBuf[1])
-		if size == 0 {
-			break
-		}
-
-		// Grow buffer
-		oldLen := len(msgBuf)
-		newLen := oldLen + size
-		if cap(msgBuf) < newLen {
-			newBuf := make([]byte, newLen, newLen*2)
-			copy(newBuf, msgBuf)
-			msgBuf = newBuf
-		} else {
-			msgBuf = msgBuf[:newLen]
-		}
-
-		if _, err := io.ReadFull(s.reader, msgBuf[oldLen:newLen]); err != nil {
-			return nil, err
-		}
-	}
-
-	if len(msgBuf) == 0 {
-		return nil, nil // Empty message (no-op)
-	}
-
-	// Parse message type
-	if len(msgBuf) < 2 {
-		return nil, fmt.Errorf("message too short: %d bytes", len(msgBuf))
-	}
-
-	// Bolt messages are PackStream structures
-	structMarker := msgBuf[0]
-	var msgType byte
-	var data []byte
-
-	if structMarker >= 0xB0 && structMarker <= 0xBF {
-		msgType = msgBuf[1]
-		data = msgBuf[2:]
-	} else {
-		msgType = msgBuf[0]
-		data = msgBuf[1:]
-	}
-
-	// Make a copy of data since buffer might be reused
-	dataCopy := make([]byte, len(data))
-	copy(dataCopy, data)
-
-	return &boltMessage{msgType: msgType, data: dataCopy}, nil
+	msg, _, err := s.readWireMessage(nil)
+	return msg, err
 }
 
 // processMessage processes a parsed Bolt message.
 func (s *Session) processMessage(msg *boltMessage) error {
 	// No mutex needed - messages are processed sequentially from the queue
-	return s.dispatchMessage(msg.msgType, msg.data)
+	return msg.memoryLease.Run(func() error { return s.dispatchMessage(msg.msgType, msg.data, msg.memoryLease) })
 }
-
 
 func (s *Session) handleQueuedMessage() error {
 	if s.messageQueue == nil || s.readErrQueue == nil {
@@ -1774,6 +1825,12 @@ func (s *Session) handleQueuedMessage() error {
 	}
 	msg, err := s.nextQueuedMessage()
 	if err != nil {
+		var admission *wireAdmissionError
+		if errors.As(err, &admission) {
+			if sendErr := s.rejectWireAdmission(admission); sendErr != nil {
+				return sendErr
+			}
+		}
 		return err
 	}
 	return s.processMessage(msg)
@@ -1799,6 +1856,19 @@ func (s *Session) nextQueuedMessage() (*boltMessage, error) {
 		return msg, nil
 	case err := <-s.readErrQueue:
 		return nil, err
+	case <-s.messageReaderDone:
+		// The reader has actually exited, for example after its connection
+		// was canceled at shutdown. Deliver what it queued, then end.
+		select {
+		case msg := <-s.messageQueue:
+			if msg != nil {
+				return msg, nil
+			}
+		case err := <-s.readErrQueue:
+			return nil, err
+		default:
+		}
+		return nil, io.EOF
 	}
 }
 
@@ -1837,65 +1907,21 @@ func (s *Session) activeRunReason() byte {
 // handleMessage handles a single Bolt message synchronously (for compatibility).
 // Bolt messages can span multiple chunks - we read until we get a 0-size chunk.
 func (s *Session) handleMessage() error {
-	// Reuse message buffer - reset length but keep capacity
-	s.messageBuf = s.messageBuf[:0]
-
-	// Read chunks until we get a zero-size chunk (message terminator)
-	for {
-		// Read chunk header using reusable buffer (no allocation)
-		if _, err := io.ReadFull(s.reader, s.headerBuf[:]); err != nil {
-			return err
-		}
-
-		size := int(s.headerBuf[0])<<8 | int(s.headerBuf[1])
-		if size == 0 {
-			// Zero-size chunk marks end of message
-			break
-		}
-
-		// Ensure message buffer has capacity
-		oldLen := len(s.messageBuf)
-		newLen := oldLen + size
-		if cap(s.messageBuf) < newLen {
-			// Need to grow - double capacity or use needed size
-			newCap := cap(s.messageBuf) * 2
-			if newCap < newLen {
-				newCap = newLen
+	msg, buffer, err := s.readWireMessage(s.messageBuf)
+	s.messageBuf = buffer
+	if err != nil {
+		var admission *wireAdmissionError
+		if errors.As(err, &admission) {
+			if sendErr := s.rejectWireAdmission(admission); sendErr != nil {
+				return sendErr
 			}
-			newBuf := make([]byte, newLen, newCap)
-			copy(newBuf, s.messageBuf)
-			s.messageBuf = newBuf
-		} else {
-			s.messageBuf = s.messageBuf[:newLen]
 		}
-
-		// Read chunk data directly into message buffer
-		if _, err := io.ReadFull(s.reader, s.messageBuf[oldLen:newLen]); err != nil {
-			return err
-		}
+		return err
 	}
-
-	if len(s.messageBuf) == 0 {
-		return nil // Empty message (no-op)
+	if msg == nil {
+		return nil
 	}
-
-	// Parse and handle message
-	if len(s.messageBuf) < 2 {
-		return fmt.Errorf("message too short: %d bytes", len(s.messageBuf))
-	}
-
-	// Bolt messages are PackStream structures
-	structMarker := s.messageBuf[0]
-
-	// Check if it's a tiny struct (0xB0-0xBF)
-	if structMarker >= 0xB0 && structMarker <= 0xBF {
-		msgType := s.messageBuf[1]
-		msgData := s.messageBuf[2:]
-		return s.dispatchMessage(msgType, msgData)
-	}
-
-	// For non-struct markers, try direct message type (fallback)
-	return s.dispatchMessage(s.messageBuf[0], s.messageBuf[1:])
+	return s.processMessage(msg)
 }
 
 // dispatchMessage routes the message to the appropriate handler.
@@ -1908,7 +1934,7 @@ func (s *Session) handleMessage() error {
 // observed separately). The observation runs in a deferred closure so
 // even handler panics still emit a metric (result="error") before the
 // panic re-propagates to the connection-handler's outer recover.
-func (s *Session) dispatchMessage(msgType byte, data []byte) (retErr error) {
+func (s *Session) dispatchMessage(msgType byte, data []byte, reservations ...*memory.WireRequest) (retErr error) {
 	op := boltOpName(msgType)
 	start := time.Now()
 
@@ -1945,14 +1971,21 @@ func (s *Session) dispatchMessage(msgType byte, data []byte) (retErr error) {
 		}
 	}
 
-	return s.dispatchInner(msgType, data, op)
+	var lease *memory.WireRequest
+	if len(reservations) > 0 {
+		lease = reservations[0]
+	}
+	if lease == nil && messageDecodesPayload(msgType) && s.server != nil {
+		lease = memory.NewWireRequest(s.server.memoryPolicy)
+	}
+	return lease.Run(func() error { return s.dispatchInner(msgType, data, op, lease) })
 }
 
 // dispatchInner is the unobserved body of dispatchMessage; kept as a
 // sibling so the metrics wrapper above stays a thin chokepoint.
-func (s *Session) dispatchInner(msgType byte, data []byte, op string) error {
+func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *memory.WireRequest) error {
 	// TRC-13: per-message span, child of session span.
-	_, msgSpan := startMessageSpan(s.spanCtx, op)
+	_, msgSpan := startMessageSpan(s.parentContext(), op)
 	defer func() {
 		msgSpan.End()
 	}()
@@ -1970,13 +2003,23 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string) error {
 		}
 		return errors.New("raw transaction executor is quarantined")
 	}
+	if failure := s.pendingResultFailure; failure != nil && msgType != MsgReset && msgType != MsgGoodbye {
+		s.pendingResultFailure = nil
+		return s.sendRunQueryFailure(failure.err, failure.query)
+	}
 	if s.failedUntilReset && msgType != MsgReset && msgType != MsgGoodbye {
 		return s.sendIgnored()
 	}
 	if s.txLifecycle.isTimedOut() && msgType != MsgReset && msgType != MsgGoodbye {
 		return s.sendTransactionTimeoutAfterJoin()
 	}
-
+	// Framed messages already carry their accumulation reservation. Synthetic
+	// dispatchers still pass through the same pre-decode admission owner.
+	if lease != nil && messageDecodesPayload(msgType) {
+		if err := lease.Grow(int64(len(data))); err != nil {
+			return s.sendApplicationAdmissionFailure(err)
+		}
+	}
 	var err error
 	switch msgType {
 	case MsgHello:
@@ -1993,7 +2036,131 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string) error {
 	case MsgReset:
 		err = s.handleReset(data)
 	case MsgBegin:
-		err = s.handleBegin(data)
+
+		if s.explicitTransactionsUnsupported {
+			err = s.sendTransactionControlError(nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, errors.New("explicit transactions require a SessionExecutorFactory that returns a distinct executor per connection")))
+			break
+		}
+		// Reject a protocol-invalid nested BEGIN before decoding metadata or
+		// resolving another database executor. The active transaction retains its
+		// original executor and remains the sole owner of its storage transaction.
+		if s.inTransaction {
+			err = s.sendTransactionControlError(nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, errors.New("an explicit transaction is already active")))
+			break
+		}
+		s.refreshAuthResult()
+
+		// Parse BEGIN metadata (contains tx_timeout, bookmarks, etc.)
+		var metadata map[string]any
+		if len(data) > 0 {
+			m, _, beginErr := decodePackStreamMap(data, 0, s.useUTCDateTimeStructs())
+			if beginErr != nil {
+				if errors.Is(beginErr, errDateTimeSignature) {
+					err = beginErr
+					break
+				}
+				invalid := fmt.Errorf("Failed to parse BEGIN metadata: %w", beginErr)
+				err = s.sendTransactionControlError(nornicerrors.WithStatus(invalid, "Neo.ClientError.Request.Invalid", localization.ExternalDiagnostic(invalid)))
+				break
+			}
+			metadata = m
+		}
+		txTimeout, beginErr := validateTransactionTimeout(metadata)
+		if beginErr != nil {
+			err = s.sendTransactionControlError(nornicerrors.WithStatus(beginErr, "Neo.ClientError.Request.Invalid", localization.ExternalDiagnostic(beginErr)))
+			break
+		}
+
+		// Pin every explicit transaction provider to the BEGIN database, not only
+		// database-manager adapters. Factory and single-connection raw executors are
+		// session-scoped rather than database-resolving, so a later RUN naming a
+		// different database must fail before it reaches that executor.
+		txDatabase := s.database
+		if metadataDB, ok := databaseFromMetadata(metadata); ok {
+			txDatabase = metadataDB
+		}
+		if txDatabase == "" {
+			txDatabase = "nornic"
+		}
+		if s.server != nil && s.server.dbManager != nil {
+			dbName := txDatabase
+			if _, explicitlyNamed := databaseFromMetadata(metadata); !explicitlyNamed && s.database == "" {
+				dbName = s.server.dbManager.DefaultDatabaseName()
+			}
+			txExec, beginErr := s.getExecutorForDatabase(dbName, true)
+			if beginErr != nil {
+				err = s.sendTransactionControlError(nornicerrors.WithStatus(beginErr, "Neo.ClientError.Database.DatabaseNotFound", localization.BoltDatabaseNotFoundWithCause(dbName, beginErr)))
+				break
+			}
+			s.executor = txExec
+			txDatabase = dbName
+		}
+		if beginErr := s.bindDatabaseConnection(txDatabase); beginErr != nil {
+			err = s.sendTransactionControlError(nornicerrors.WithStatus(beginErr, "Neo.TransientError.General.DatabaseUnavailable", localization.ExternalDiagnostic(beginErr)))
+			break
+		}
+
+		// TRC-14: extract traceparent from BEGIN metadata for distributed tracing.
+		txParent := s.parentContext()
+		txParent = extractTraceparent(txParent, metadata)
+		// BEGIN's tx_metadata is the transaction's metadata.
+		txParent = cypher.WithTransactionMetadata(txParent, boltTxMetadata(metadata))
+		// The transaction is the session's: SHOW TRANSACTIONS lists it with the
+		// session's connection and user from BEGIN on.
+		txParent = s.withSessionIdentity(txParent)
+
+		txExec, _ := s.executor.(TransactionalExecutor)
+		s.txLifecycle.setTimeoutCleanupFailureHandler(s.failClosedTransactionCleanup)
+		var owner *lifecycle.WorkLifetime
+		if s.server != nil {
+			owner = s.server.lifetime()
+		}
+		if beginErr := s.txLifecycle.begin(
+			txParent,
+			owner,
+			txTimeout,
+			txDatabase,
+			txExec,
+			metadata,
+			s.observeTransactionTerminal,
+		); beginErr != nil {
+			if s.baseExec != nil {
+				s.executor = s.baseExec
+			}
+			if s.txLifecycle.isDefunct() {
+				s.markTransactionCleanupFailed()
+				if sendErr := s.sendTransactionControlError(beginErr); sendErr != nil {
+					err = sendErr
+					break
+				}
+				if flushErr := s.flushIfPending(); flushErr != nil {
+					err = flushErr
+					break
+				}
+				err = fmt.Errorf("BEGIN transaction cleanup failed: %w", beginErr)
+				break
+			}
+			err = s.sendTransactionControlError(beginErr)
+			break
+		}
+
+		s.inTransaction = true
+		s.txMetadata = metadata
+		s.txDatabase = txDatabase
+		s.txHasMerge = false
+		s.txHasNonMergeWrite = false
+		s.txMergeStatements = nil
+		s.txWriteInfos = nil
+		s.queryId = 0
+		s.latestStatementID = -1
+		s.resultStreams = make(map[int64]*resultStream)
+		if beginErr := s.sendSuccessNoFlush(nil); beginErr != nil {
+			err = beginErr
+			break
+		}
+		err = s.flushIfPending()
+		break
+
 	case MsgCommit:
 		err = s.handleCommit(data)
 	case MsgRollback:
@@ -2003,339 +2170,24 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string) error {
 	default:
 		err = fmt.Errorf("unknown message type: 0x%02X", msgType)
 	}
+	// Neo4j reports a disallowed temporal signature as a decode failure
+	// before applying the message's state transition. Preserve the current
+	// transaction/stream and permit a subsequent valid message without RESET.
+	if errors.Is(err, errDateTimeSignature) {
+		return s.sendFailure("Neo.ClientError.Request.Invalid", err.Error())
+	}
 	recordBoltError(msgSpan, err)
 	return err
 }
 
-// handleHello handles the HELLO message with authentication.
-// Neo4j HELLO message format:
-//
-//	HELLO { user_agent: String, scheme: String, principal: String, credentials: String, ... }
-//
-// Authentication schemes:
-//   - "none": No-auth access when auth is disabled, or implicit WebSocket bearer
-//   - "basic": Username/password authentication
-//   - "bearer": JWT token authentication (credentials contains the token)
-//
-// For cluster authentication with shared JWT:
-//   - All nodes share the same JWT secret (NORNICDB_JWT_SECRET)
-//   - Generate a cluster token: POST /api/v1/auth/cluster-token
-//   - Connect using bearer scheme with the token as credentials
-//
-// Server-to-server clustering uses the same auth mechanism with service accounts.
-func (s *Session) handleHello(data []byte) error {
-	defer s.publishConnectionListing()
-	s.utcPatchNegotiated = false
-	// Plan 04-02 D-11 / D-05e auth-attempts crosswire: observe a single
-	// auth attempt per HELLO message at the function-exit chokepoint.
-	// Result enum closed (success | failure | denied):
-	//   - success: handshake completed and session.authenticated = true
-	//   - failure: auth credentials rejected by the authenticator
-	//   - denied:  request lacked auth when RequireAuth was true (or
-	//              an unsupported scheme was offered).
-	// No-op until Plan 04-06 wires the AuthMetrics bag.
-	wasAuthenticatedBefore := s.authenticated
-	defer func() {
-		if s.server == nil {
-			return
-		}
-		var result string
-		switch {
-		case s.authenticated && !wasAuthenticatedBefore:
-			result = "success"
-		case !s.authenticated:
-			// Either auth failed (failure) or auth was required but
-			// rejected the request before any credentials could
-			// validate (denied). The two are bucketed as "failure" /
-			// "denied" by the Phase 5 K8s-side aggregation; the Bolt
-			// path classifies based on whether the failure path took a
-			// scheme decision (failure) vs. a require-auth gate (denied).
-			// Keep the call site simple: any non-success outcome is
-			// "failure"; "denied" is reserved for explicit rejection
-			// without credential evaluation.
-			result = "failure"
-		default:
-			// Already authenticated (re-HELLO) — no new attempt.
-			return
-		}
-		s.server.observeAuthAttempt(result)
-	}()
-
-	// Parse HELLO message to extract authentication details
-	authParams, err := s.parseHelloAuth(data)
-	if err != nil {
-		return s.sendFailure("Neo.ClientError.Request.Invalid", fmt.Sprintf("Failed to parse HELLO: %v", err))
-	}
-
-	// Check if authentication is required
-	if s.server != nil && s.server.config.Authenticator != nil {
-		scheme := authParams["scheme"]
-		principal := authParams["principal"]
-		credentials := authParams["credentials"]
-
-		// Handle anonymous auth
-		if scheme == "none" || scheme == "" {
-			// Cookie-as-implicit-bearer: if the WS upgrade carried a
-			// nornicdb_token cookie that validated, treat scheme=none as
-			// scheme=bearer with that token. This lets first-party browser
-			// clients (the NornicDB UI) connect via neo4j.auth.none() and
-			// have the same-origin cookie carry the credential. HELLO
-			// bearer always wins over the cookie because we only enter
-			// this branch when the driver explicitly chose scheme=none.
-			s.server.logEvent(context.Background(), slog.LevelDebug,
-				localization.BoltHelloSchemeNoneEvent(s.implicitBearer != "", s.server.config.AllowAnonymous))
-			cookieAuthed := false
-			if s.implicitBearer != "" {
-				result, err := s.server.config.Authenticator.Authenticate("bearer", "", s.implicitBearer)
-				if err == nil {
-					s.authenticated = true
-					s.authResult = result
-					s.forwardedAuthHeader = "Bearer " + s.implicitBearer
-					cookieAuthed = true
-				} else {
-					// Logging at warn keeps the operator-visible signal
-					// without leaking the token; we do NOT short-circuit
-					// to a failure response — the driver still has the
-					// AllowAnonymous fallback below.
-					remoteAddr := "unknown"
-					if s.conn != nil {
-						remoteAddr = s.conn.RemoteAddr().String()
-					}
-					s.server.logEvent(context.Background(), slog.LevelWarn,
-						localization.BoltWebSocketCookieBearerRejectedEvent(remoteAddr, err))
-				}
-			}
-			if !cookieAuthed {
-				return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltAuthenticationRequired())
-			}
-		} else if scheme == "basic" {
-			// Authenticate with provided credentials
-			result, err := s.server.config.Authenticator.Authenticate(scheme, principal, credentials)
-			if err != nil {
-				remoteAddr := "unknown"
-				if s.conn != nil {
-					remoteAddr = s.conn.RemoteAddr().String()
-				}
-				s.server.logEvent(context.Background(), slog.LevelWarn,
-					localization.BoltBasicAuthenticationFailedEvent(principal, remoteAddr, err))
-				return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltInvalidCredentials())
-			}
-			s.authenticated = true
-			s.authResult = result
-			s.forwardedAuthHeader = ""
-		} else if scheme == "bearer" {
-			// JWT token authentication - used for cluster inter-node auth
-			result, err := s.server.config.Authenticator.Authenticate(scheme, principal, credentials)
-			if err != nil {
-				remoteAddr := "unknown"
-				if s.conn != nil {
-					remoteAddr = s.conn.RemoteAddr().String()
-				}
-				s.server.logEvent(context.Background(), slog.LevelWarn,
-					localization.BoltBearerAuthenticationFailedEvent(remoteAddr, err))
-				return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltInvalidOrExpiredToken())
-			}
-			s.authenticated = true
-			s.authResult = result
-			if strings.TrimSpace(credentials) != "" {
-				s.forwardedAuthHeader = "Bearer " + credentials
-			}
-		} else {
-			return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltUnsupportedAuthScheme(scheme))
-		}
-	} else if s.server != nil && s.server.config.RequireAuth {
-		// Auth required but no authenticator configured - reject all
-		return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltAuthenticationNotConfigured())
-	} else {
-		// No auth configured - allow all (development mode, canonical role from auth)
-		s.authenticated = true
-		s.authResult = &BoltAuthResult{
-			Authenticated: true,
-			Username:      "anonymous",
-			PrincipalID:   auth.PrincipalID(nil),
-			Roles:         []string{string(auth.RoleAdmin)},
-		}
-		s.forwardedAuthHeader = ""
-	}
-
-	// Extract and validate database name
-	dbName := authParams["database"]
-	if dbName == "" && s.server != nil && s.server.dbManager != nil {
-		// Use default database if not specified
-		dbName = s.server.dbManager.DefaultDatabaseName()
-	}
-
-	// Validate database exists (if dbManager is configured).
-	// Use constituentAwareExists to accept dotted composite.alias references.
-	if dbName != "" && s.server != nil && s.server.dbManager != nil {
-		if !constituentAwareExists(s.server.dbManager, dbName) {
-			return s.sendLocalizedFailure("Neo.ClientError.Database.DatabaseNotFound", localization.DatabaseNotFound(dbName))
-		}
-	}
-	if err := s.bindDatabaseConnection(dbName); err != nil {
-		return s.sendFailure("Neo.TransientError.General.DatabaseUnavailable", err.Error())
-	}
-
-	// Store database for this session
-	s.database = dbName
-
-	// SEC-03 / TRC-13: enrich session span with auth outcome (never credentials).
-	if s.spanCtx != nil {
-		if span := trace.SpanFromContext(s.spanCtx); span.IsRecording() {
-			span.SetAttributes(
-				attribute.String("bolt.user", s.authResult.Username),
-				attribute.String("bolt.database", dbName),
-			)
-		}
-	}
-
-	if s.server != nil && s.server.config.LogQueries {
-		remoteAddr := "unknown"
-		if s.conn != nil {
-			remoteAddr = s.conn.RemoteAddr().String()
-		}
-		// D-10a: drop the "[BOLT]" bracket — component=bolt is already
-		// baked in via .With at ctor time. D-03a: any "credentials" attr
-		// would be auto-redacted by the redactingHandler chain (it is in
-		// DefaultRedactKeys); we deliberately do NOT log credentials
-		// here, but the redaction guard remains in force as a defense
-		// in depth.
-		s.server.logEvent(context.Background(), slog.LevelInfo,
-			localization.BoltHelloEvent(remoteAddr, s.authResult.Username, s.authResult.Roles, dbName))
-	}
-
-	return s.sendSuccess(map[string]any{
-		"server":        s.server.config.serverAnnouncement(),
-		"connection_id": "nornic-1",
-		"hints":         map[string]any{},
-		"patch_bolt":    []any{"utc"},
-	})
-}
-
-func (s *Session) bindDatabaseConnection(databaseName string) error {
-	if s == nil || s.server == nil || databaseName == "" || s.server.databaseConnectionAdmit == nil {
-		return nil
-	}
-	owner := databaseName
-	if s.server.databaseConnectionResolve != nil {
-		resolved, err := s.server.databaseConnectionResolve(databaseName)
-		if err != nil {
-			return err
-		}
-		owner = resolved
-	}
-	if owner == s.admittedDatabase {
-		return nil
-	}
-	if err := s.server.databaseConnectionAdmit(owner); err != nil {
-		return err
-	}
-	previous := s.admittedDatabase
-	s.admittedDatabase = owner
-	if previous != "" && s.server.databaseConnectionRelease != nil {
-		s.server.databaseConnectionRelease(previous)
-	}
-	return nil
-}
-
-func (s *Session) releaseDatabaseConnection() {
-	if s == nil || s.server == nil || s.admittedDatabase == "" {
-		return
-	}
-	databaseName := s.admittedDatabase
-	s.admittedDatabase = ""
-	if s.server.databaseConnectionRelease != nil {
-		s.server.databaseConnectionRelease(databaseName)
-	}
-}
-
-// parseHelloAuth parses authentication parameters and database from a HELLO message.
-// Returns a map with keys: scheme, principal, credentials, database
-func (s *Session) parseHelloAuth(data []byte) (map[string]string, error) {
-	result := map[string]string{
-		"scheme":      "",
-		"principal":   "",
-		"credentials": "",
-		"database":    "",
-	}
-
-	if len(data) == 0 {
-		return result, nil
-	}
-
-	// HELLO is a structure: [extra: Map]
-	// First byte is marker for structure
-	marker := data[0]
-
-	// Check for tiny struct marker (0xB0-0xBF = struct with 0-15 fields)
-	// HELLO has signature 0x01 and one field (the extra map)
-	offset := 0
-	if marker >= 0xB0 && marker <= 0xBF {
-		offset = 2 // Skip struct marker and signature byte
-	} else {
-		// Try to find the map directly
-		offset = 0
-	}
-
-	if offset >= len(data) {
-		return result, nil
-	}
-
-	// Parse the extra map
-	extraMap, _, err := decodePackStreamMap(data, offset)
-	if err != nil {
-		return result, fmt.Errorf("failed to decode HELLO extra map: %w", err)
-	}
-
-	// Extract auth fields
-	if scheme, ok := extraMap["scheme"].(string); ok {
-		result["scheme"] = scheme
-	}
-	if principal, ok := extraMap["principal"].(string); ok {
-		result["principal"] = principal
-	}
-	if credentials, ok := extraMap["credentials"].(string); ok {
-		result["credentials"] = credentials
-	}
-	if userAgent, ok := extraMap["user_agent"].(string); ok {
-		s.userAgent = userAgent
-	}
-
-	// Extract database parameter (Neo4j 4.x multi-database support)
-	if db, ok := extraMap["db"].(string); ok {
-		result["database"] = db
-	} else if db, ok := extraMap["database"].(string); ok {
-		// Some drivers use "database" instead of "db"
-		result["database"] = db
-	}
-	s.utcPatchNegotiated = helloExtraRequestsUTCPatch(extraMap)
-
-	return result, nil
-}
-
-func helloExtraRequestsUTCPatch(extraMap map[string]any) bool {
-	raw, ok := extraMap["patch_bolt"]
-	if !ok {
-		return false
-	}
-	items, ok := raw.([]any)
-	if !ok {
-		return false
-	}
-	for _, item := range items {
-		if token, ok := item.(string); ok && strings.EqualFold(strings.TrimSpace(token), "utc") {
-			return true
-		}
-	}
-	return false
-}
-
 // getExecutorForDatabase returns a Cypher executor for the specified database.
 // This is used when DatabaseManager is configured to route queries to the correct database.
-func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
+func (s *Session) getExecutorForDatabase(dbName string, transaction ...bool) (QueryExecutor, error) {
 	if s.server == nil || s.server.dbManager == nil {
 		return nil, fmt.Errorf("database manager not available")
 	}
+
+	s.server.bindStatementCacheIndex()
 
 	useAuthScopedResolver := false
 	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && strings.TrimSpace(s.forwardedAuthHeader) != "" {
@@ -2343,43 +2195,47 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 		useAuthScopedResolver = true
 	}
 
-	if !useAuthScopedResolver {
-		s.server.executorsMu.RLock()
-		if executor, ok := s.server.executors[dbName]; ok {
-			s.server.executorsMu.RUnlock()
-			return executor, nil
-		}
-		s.server.executorsMu.RUnlock()
+	explicit := len(transaction) > 0 && transaction[0]
+	if !useAuthScopedResolver && !explicit {
+		return cypher.CachedDatabaseExecutor(&s.server.executorsMu, &s.server.executors, dbName,
+			func(executor QueryExecutor) bool { return !boltExecutorCachesDisposed(executor) },
+			func() (QueryExecutor, error) {
+				executor, err := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, false))
+				if err != nil {
+					return nil, err
+				}
+				// Auto-commit shares this view; explicit transactions build fresh ones.
+				executor.SetSharedExecutor(true)
+				return &boltQueryExecutorAdapter{executor: executor}, nil
+			})
 	}
 
-	executor, err := s.newDatabaseScopedCypherExecutor(dbName, useAuthScopedResolver)
+	// Auth-scoped resolvers cannot be cached under a database-only key.
+	executor, err := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, useAuthScopedResolver))
 	if err != nil {
 		return nil, err
 	}
 
+	if explicit {
+		base, err := s.getExecutorForDatabase(dbName)
+		if err != nil {
+			return nil, err
+		}
+		if adapter, ok := base.(*boltQueryExecutorAdapter); ok {
+			executor.ShareQueryStatisticsFrom(adapter.executor)
+		}
+		return &transactionalBoltQueryExecutorAdapter{
+			boltQueryExecutorAdapter: boltQueryExecutorAdapter{executor: executor},
+		}, nil
+	}
+
 	// The cached executor is shared by every auto-commit RUN of this
 	// database: a statement must never leave it inside a transaction.
-	// Explicit transactions use getTransactionalExecutorForDatabase, which
+	// Explicit transactions use getExecutorForDatabase with explicit ownership, which
 	// builds a fresh per-connection executor.
 	executor.SetSharedExecutor(true)
 
-	dbExecutor := &boltQueryExecutorAdapter{executor: executor}
-	if useAuthScopedResolver {
-		return dbExecutor, nil
-	}
-
-	s.server.executorsMu.Lock()
-	if s.server.executors == nil {
-		s.server.executors = make(map[string]QueryExecutor)
-	}
-	if existing, ok := s.server.executors[dbName]; ok {
-		s.server.executorsMu.Unlock()
-		return existing, nil
-	}
-	s.server.executors[dbName] = dbExecutor
-	s.server.executorsMu.Unlock()
-
-	return dbExecutor, nil
+	return &boltQueryExecutorAdapter{executor: executor}, nil
 }
 
 type authAwareStorageResolver interface {
@@ -2394,64 +2250,52 @@ type baseCypherExecutorProvider interface {
 	BaseCypherExecutor() *cypher.StorageExecutor
 }
 
-func (s *Session) getTransactionalExecutorForDatabase(dbName string) (QueryExecutor, error) {
-	if s.server == nil || s.server.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available")
+func (s *Session) databaseScopedExecutorOptions(dbName string, useAuthScopedResolver bool) cypher.DatabaseScopedExecutorOptions {
+	// A host that owns the canonical per-database executor factory supplies
+	// the complete configuration (result-cache policy, statement-cache owner,
+	// settings, logger, search and mutation wiring), so this session neither
+	// re-derives it nor post-configures the executor afterwards. Bolt keeps
+	// its database manager and the session's resolved database name,
+	// forwarded auth token and authenticated-storage decision.
+	if s.server.config != nil && s.server.config.DatabaseExecutorOptions != nil {
+		options := s.server.config.DatabaseExecutorOptions(dbName, s.forwardedAuthHeader)
+		options.Name = dbName
+		options.Storage = s.server.dbManager
+		options.AuthToken = s.forwardedAuthHeader
+		options.UseAuthenticatedStorage = useAuthScopedResolver
+		return options
 	}
-	useAuthScopedResolver := false
-	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && strings.TrimSpace(s.forwardedAuthHeader) != "" {
-		_ = resolver
-		useAuthScopedResolver = true
+	options := cypher.DatabaseScopedExecutorOptions{
+		Name: dbName, Storage: s.server.dbManager,
+		AuthToken: s.forwardedAuthHeader, UseAuthenticatedStorage: useAuthScopedResolver,
 	}
-	executor, err := s.newDatabaseScopedCypherExecutor(dbName, useAuthScopedResolver)
-	if err != nil {
-		return nil, err
-	}
-	base, err := s.getExecutorForDatabase(dbName)
-	if err != nil {
-		return nil, err
-	}
-	if adapter, ok := base.(*boltQueryExecutorAdapter); ok {
-		executor.ShareQueryStatisticsFrom(adapter.executor)
-	}
-	return &transactionalBoltQueryExecutorAdapter{
-		boltQueryExecutorAdapter: boltQueryExecutorAdapter{executor: executor},
-	}, nil
-}
-
-func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedResolver bool) (*cypher.StorageExecutor, error) {
-	var (
-		storageEngine storage.Engine
-		err           error
-	)
-	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && useAuthScopedResolver {
-		storageEngine, err = resolver.GetStorageWithAuth(dbName, s.forwardedAuthHeader)
+	if manager, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
+		options.StatementCacheManager = manager
 	} else {
-		storageEngine, err = s.server.dbManager.GetStorage(dbName)
+		// Injected managers without catalog lifecycle use one bounded server owner.
+		options.FallbackStatementCaches = s.server.fallbackStatementCaches()
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	executor := cypher.NewStorageExecutor(storageEngine)
 	if s.server.config != nil {
-		executor.SetLocalizationRenderer(s.server.config.Localizer)
+		options.LocalizationRenderer = s.server.config.Localizer
 	}
 	if baseAdapter, ok := s.server.executor.(*boltQueryExecutorAdapter); ok && baseAdapter != nil && baseAdapter.executor != nil {
-		executor.ShareEmbedderFrom(baseAdapter.executor)
+		options.BaseExecutor = baseAdapter.executor
 	}
-	if cfg, ok := s.server.executor.(databaseExecutorConfigurator); ok && cfg != nil {
-		cfg.ConfigureDatabaseExecutor(executor, dbName, storageEngine)
-	}
-	if provider, ok := s.server.executor.(baseCypherExecutorProvider); ok && provider != nil {
-		if baseExec := provider.BaseCypherExecutor(); baseExec != nil {
-			executor.ShareEmbedderFrom(baseExec)
+	options.Configure = func(executor *cypher.StorageExecutor, storageEngine storage.Engine) {
+		if cfg, ok := s.server.executor.(databaseExecutorConfigurator); ok && cfg != nil {
+			cfg.ConfigureDatabaseExecutor(executor, dbName, storageEngine)
+		}
+		if provider, ok := s.server.executor.(baseCypherExecutorProvider); ok && provider != nil {
+			if baseExec := provider.BaseCypherExecutor(); baseExec != nil {
+				executor.ShareEmbedderFrom(baseExec)
+				executor.ShareInferenceManagerFrom(baseExec)
+			}
+		}
+		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
+			executor.SetDatabaseManager(&boltDatabaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(mgr)})
 		}
 	}
-	if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
-		executor.SetDatabaseManager(&boltDatabaseManagerAdapter{manager: mgr})
-	}
-	return executor, nil
+	return options
 }
 
 // boltQueryExecutorAdapter adapts cypher.StorageExecutor to bolt.QueryExecutor interface.
@@ -2500,4 +2344,31 @@ func (a *boltQueryExecutorAdapter) Execute(ctx context.Context, query string, pa
 		}
 	}
 	return qr, nil
+}
+
+func (s *Server) fallbackStatementCaches() *cypher.StatementCaches {
+	s.statementCachesOnce.Do(func() { s.statementCaches = cypher.NewStatementCaches() })
+	return s.statementCaches
+}
+
+func boltExecutorCachesDisposed(executor QueryExecutor) bool {
+	adapter, ok := executor.(*boltQueryExecutorAdapter)
+	return ok && !adapter.executor.StatementCacheSelectionValid()
+}
+
+// One registration covers every cached execution view owned by this server.
+func (s *Server) bindStatementCacheIndex() {
+	manager, ok := s.dbManager.(*multidb.DatabaseManager)
+	if !ok {
+		return
+	}
+	s.statementCacheIndex.Bind(manager, func() {
+		s.executorsMu.Lock()
+		defer s.executorsMu.Unlock()
+		for name, executor := range s.executors {
+			if boltExecutorCachesDisposed(executor) {
+				delete(s.executors, name)
+			}
+		}
+	})
 }

@@ -133,7 +133,7 @@ func TestScenario_Standalone_A_BasicOperations(t *testing.T) {
 				Data:      []byte(fmt.Sprintf("node-%d", i)),
 				Timestamp: time.Now(),
 			}
-			err := replicator.Apply(cmd, time.Second)
+			err := replicator.Apply(ctx, cmd, time.Second)
 			require.NoError(t, err)
 		}
 		assert.Equal(t, 10, storage.GetApplyCount())
@@ -175,7 +175,7 @@ func TestScenario_Standalone_B_Resilience(t *testing.T) {
 
 		// Write data
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("before-restart")}
-		require.NoError(t, replicator.Apply(cmd, time.Second))
+		require.NoError(t, replicator.Apply(t.Context(), cmd, time.Second))
 
 		replicator.Shutdown()
 
@@ -185,7 +185,7 @@ func TestScenario_Standalone_B_Resilience(t *testing.T) {
 
 		// Should be able to continue writing
 		cmd2 := &Command{Type: CmdCreateNode, Data: []byte("after-restart")}
-		require.NoError(t, replicator2.Apply(cmd2, time.Second))
+		require.NoError(t, replicator2.Apply(t.Context(), cmd2, time.Second))
 
 		assert.Equal(t, 2, storage.GetApplyCount())
 		replicator2.Shutdown()
@@ -206,7 +206,7 @@ func TestScenario_Standalone_B_Resilience(t *testing.T) {
 			go func(n int) {
 				defer wg.Done()
 				cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(n)}}
-				if err := replicator.Apply(cmd, time.Second); err != nil {
+				if err := replicator.Apply(ctx, cmd, time.Second); err != nil {
 					errors <- err
 				}
 			}(i)
@@ -239,7 +239,7 @@ func TestScenario_Standalone_C_EdgeCases(t *testing.T) {
 		require.NoError(t, replicator.Start(ctx))
 
 		cmd := &Command{Type: CmdCreateNode, Data: nil}
-		err := replicator.Apply(cmd, time.Second)
+		err := replicator.Apply(t.Context(), cmd, time.Second)
 		assert.NoError(t, err) // Should handle gracefully
 
 		replicator.Shutdown()
@@ -254,7 +254,7 @@ func TestScenario_Standalone_C_EdgeCases(t *testing.T) {
 
 		largeData := make([]byte, 1024*1024) // 1MB
 		cmd := &Command{Type: CmdCreateNode, Data: largeData}
-		err := replicator.Apply(cmd, time.Second)
+		err := replicator.Apply(t.Context(), cmd, time.Second)
 		assert.NoError(t, err)
 
 		replicator.Shutdown()
@@ -269,7 +269,7 @@ func TestScenario_Standalone_C_EdgeCases(t *testing.T) {
 
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("test")}
 		// Zero timeout should still work for standalone
-		err := replicator.Apply(cmd, 0)
+		err := replicator.Apply(t.Context(), cmd, 0)
 		assert.NoError(t, err)
 
 		replicator.Shutdown()
@@ -297,7 +297,7 @@ func TestScenario_Standalone_D_Performance(t *testing.T) {
 
 		for i := 0; i < count; i++ {
 			cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i % 256)}}
-			require.NoError(t, replicator.Apply(cmd, time.Second))
+			require.NoError(t, replicator.Apply(ctx, cmd, time.Second))
 		}
 
 		elapsed := time.Since(start)
@@ -339,7 +339,7 @@ func TestScenario_HAStandby_Primary_A_BasicOperations(t *testing.T) {
 	// Test A1: Primary should accept writes
 	t.Run("A1_AcceptWrites", func(t *testing.T) {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("from-primary")}
-		err := primary.Apply(cmd, time.Second)
+		err := primary.Apply(t.Context(), cmd, time.Second)
 		assert.NoError(t, err)
 	})
 
@@ -355,7 +355,7 @@ func TestScenario_HAStandby_Primary_A_BasicOperations(t *testing.T) {
 		// Apply more commands
 		for i := 0; i < 5; i++ {
 			cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-			require.NoError(t, primary.Apply(cmd, time.Second))
+			require.NoError(t, primary.Apply(ctx, cmd, time.Second))
 		}
 		// WAL position should advance
 		pos, err := primaryNode.Storage.GetWALPosition()
@@ -398,7 +398,7 @@ func TestScenario_HAStandby_Primary_B_StandbyConnection(t *testing.T) {
 	t.Run("B1_StandbyDisconnect", func(t *testing.T) {
 		// Even with disconnected standby, primary should accept writes
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("during-disconnect")}
-		err := primary.Apply(cmd, time.Second)
+		err := primary.Apply(t.Context(), cmd, time.Second)
 		assert.NoError(t, err)
 	})
 
@@ -446,7 +446,7 @@ func TestScenario_HAStandby_Primary_C_Failover(t *testing.T) {
 	t.Run("C2_ContinueWithoutStandby", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-			err := primary.Apply(cmd, time.Second)
+			err := primary.Apply(ctx, cmd, time.Second)
 			assert.NoError(t, err)
 		}
 	})
@@ -491,7 +491,7 @@ func TestScenario_HAStandby_Primary_D_HighLatency(t *testing.T) {
 	// Test D1: Handle 2000ms+ latency
 	t.Run("D1_HighLatencyOperations", func(t *testing.T) {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("high-latency")}
-		err := primary.Apply(cmd, 10*time.Second) // Generous timeout
+		err := primary.Apply(t.Context(), cmd, 10*time.Second) // Generous timeout
 		assert.NoError(t, err)
 	})
 
@@ -528,7 +528,7 @@ func TestScenario_HAStandby_Standby_A_BasicOperations(t *testing.T) {
 	// Test A1: Standby should reject writes
 	t.Run("A1_RejectWrites", func(t *testing.T) {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("from-standby")}
-		err := standby.Apply(cmd, time.Second)
+		err := standby.Apply(t.Context(), cmd, time.Second)
 		assert.Error(t, err) // Should be rejected
 	})
 
@@ -599,7 +599,7 @@ func TestScenario_HAStandby_Standby_B_WALReplication(t *testing.T) {
 			{Position: 3, Command: &Command{Type: CmdCreateNode, Data: []byte("3")}},
 		}
 
-		lastPos, err := applier.ApplyBatch(entries)
+		lastPos, err := applier.ApplyBatch(context.Background(), entries)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3), lastPos)
 		assert.Equal(t, 3, standbyStorage.GetApplyCount())
@@ -616,14 +616,14 @@ func TestScenario_HAStandby_Standby_B_WALReplication(t *testing.T) {
 			{Position: 2, Command: &Command{Type: CmdCreateNode, Data: []byte("2")}},
 			{Position: 3, Command: &Command{Type: CmdCreateNode, Data: []byte("3")}},
 		}
-		_, err := applier.ApplyBatch(entries1)
+		_, err := applier.ApplyBatch(context.Background(), entries1)
 		require.NoError(t, err)
 
 		// Skip to position 10 (gap from 4-9)
 		entries2 := []*WALEntry{
 			{Position: 10, Command: &Command{Type: CmdCreateNode, Data: []byte("10")}},
 		}
-		_, err = applier.ApplyBatch(entries2)
+		_, err = applier.ApplyBatch(context.Background(), entries2)
 		require.NoError(t, err)
 	})
 
@@ -740,7 +740,7 @@ func TestScenario_Raft_Leader_A_BasicOperations(t *testing.T) {
 	// Test A1: Leader should accept writes
 	t.Run("A1_AcceptWrites", func(t *testing.T) {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("from-leader")}
-		err := leader.Apply(cmd, time.Second)
+		err := leader.Apply(t.Context(), cmd, time.Second)
 		assert.NoError(t, err)
 	})
 
@@ -814,7 +814,7 @@ func TestScenario_Raft_Leader_B_Consensus(t *testing.T) {
 		for _, rep := range replicators {
 			if rep.IsLeader() {
 				cmd := &Command{Type: CmdCreateNode, Data: []byte("consensus-write")}
-				err := rep.Apply(cmd, time.Second)
+				err := rep.Apply(ctx, cmd, time.Second)
 				assert.NoError(t, err)
 				break
 			}
@@ -848,7 +848,7 @@ func TestScenario_Raft_Leader_C_FollowerFailure(t *testing.T) {
 	t.Run("C1_ContinueWithMajority", func(t *testing.T) {
 		// Single-node cluster has majority of 1
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("with-majority")}
-		err := leader.Apply(cmd, time.Second)
+		err := leader.Apply(t.Context(), cmd, time.Second)
 		assert.NoError(t, err)
 	})
 
@@ -887,7 +887,7 @@ func TestScenario_Raft_Leader_D_HighLatency(t *testing.T) {
 	// Test D1: Handle high latency commits
 	t.Run("D1_HighLatencyCommit", func(t *testing.T) {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("high-latency-commit")}
-		err := leader.Apply(cmd, 10*time.Second)
+		err := leader.Apply(t.Context(), cmd, 10*time.Second)
 		assert.NoError(t, err)
 	})
 
@@ -919,7 +919,7 @@ func TestScenario_Raft_Follower_A_BasicOperations(t *testing.T) {
 	// Test A1: Follower should reject direct writes
 	t.Run("A1_RejectDirectWrites", func(t *testing.T) {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("from-follower")}
-		err := follower.Apply(cmd, time.Second)
+		err := follower.Apply(t.Context(), cmd, time.Second)
 		// Should be ErrNotLeader or similar
 		assert.Error(t, err)
 	})
@@ -974,7 +974,7 @@ func TestScenario_Raft_Follower_B_LogReplication(t *testing.T) {
 			{Position: 2, Command: &Command{Type: CmdCreateNode, Data: []byte("2")}},
 		}
 
-		lastPos, err := applier.ApplyBatch(entries)
+		lastPos, err := applier.ApplyBatch(context.Background(), entries)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(2), lastPos)
 	})
@@ -1078,7 +1078,7 @@ func TestScenario_MultiRegion_A_LocalCluster(t *testing.T) {
 	// Test A1: Local writes should succeed
 	t.Run("A1_LocalWrites", func(t *testing.T) {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("local-write")}
-		err := region.Apply(cmd, time.Second)
+		err := region.Apply(t.Context(), cmd, time.Second)
 		assert.NoError(t, err)
 	})
 
@@ -1092,7 +1092,7 @@ func TestScenario_MultiRegion_A_LocalCluster(t *testing.T) {
 	t.Run("A3_LocalConsensus", func(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-			err := region.Apply(cmd, time.Second)
+			err := region.Apply(ctx, cmd, time.Second)
 			assert.NoError(t, err)
 		}
 	})
@@ -1145,10 +1145,10 @@ func TestScenario_MultiRegion_B_CrossRegion(t *testing.T) {
 	// Test B1: Both regions should accept local writes
 	t.Run("B1_BothRegionsAcceptWrites", func(t *testing.T) {
 		cmdUS := &Command{Type: CmdCreateNode, Data: []byte("us-write")}
-		require.NoError(t, usEast.Apply(cmdUS, time.Second))
+		require.NoError(t, usEast.Apply(t.Context(), cmdUS, time.Second))
 
 		cmdEU := &Command{Type: CmdCreateNode, Data: []byte("eu-write")}
-		require.NoError(t, euWest.Apply(cmdEU, time.Second))
+		require.NoError(t, euWest.Apply(t.Context(), cmdEU, time.Second))
 	})
 
 	// Test B2: Both regions should report healthy
@@ -1187,7 +1187,7 @@ func TestScenario_MultiRegion_C_RegionFailover(t *testing.T) {
 	t.Run("C1_PrimaryHandlesWrites", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-			err := primaryRegion.Apply(cmd, time.Second)
+			err := primaryRegion.Apply(ctx, cmd, time.Second)
 			assert.NoError(t, err)
 		}
 	})
@@ -1229,7 +1229,7 @@ func TestScenario_MultiRegion_D_HighLatency(t *testing.T) {
 
 		for i := 0; i < 10; i++ {
 			cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-			err := us.Apply(cmd, time.Second)
+			err := us.Apply(ctx, cmd, time.Second)
 			require.NoError(t, err)
 		}
 
@@ -1244,7 +1244,7 @@ func TestScenario_MultiRegion_D_HighLatency(t *testing.T) {
 	t.Run("D2_HighCrossRegionLatency", func(t *testing.T) {
 		// The async replication should handle high latency without blocking
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("cross-region-latency")}
-		err := us.Apply(cmd, time.Second) // Local write should still be fast
+		err := us.Apply(t.Context(), cmd, time.Second) // Local write should still be fast
 		assert.NoError(t, err)
 	})
 
@@ -1271,7 +1271,7 @@ func TestScenario_CrossCutting_A_ModeTransitions(t *testing.T) {
 
 		// Write some data
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("standalone-data")}
-		require.NoError(t, standalone.Apply(cmd, time.Second))
+		require.NoError(t, standalone.Apply(t.Context(), cmd, time.Second))
 
 		standalone.Shutdown()
 
@@ -1292,7 +1292,7 @@ func TestScenario_CrossCutting_A_ModeTransitions(t *testing.T) {
 
 		// Should still work
 		cmd2 := &Command{Type: CmdCreateNode, Data: []byte("ha-data")}
-		require.NoError(t, ha.Apply(cmd2, time.Second))
+		require.NoError(t, ha.Apply(t.Context(), cmd2, time.Second))
 
 		cancel()
 		transport.Close()
@@ -1319,7 +1319,7 @@ func TestScenario_CrossCutting_A_ModeTransitions(t *testing.T) {
 		require.NoError(t, ha.Start(haCtx))
 
 		cmd := &Command{Type: CmdCreateNode, Data: []byte("ha-data")}
-		require.NoError(t, ha.Apply(cmd, time.Second))
+		require.NoError(t, ha.Apply(t.Context(), cmd, time.Second))
 
 		cancel()
 		transport.Close()
@@ -1338,7 +1338,7 @@ func TestScenario_CrossCutting_A_ModeTransitions(t *testing.T) {
 		require.NoError(t, raft.Start(raftCtx))
 
 		cmd2 := &Command{Type: CmdCreateNode, Data: []byte("raft-data")}
-		require.NoError(t, raft.Apply(cmd2, time.Second))
+		require.NoError(t, raft.Apply(t.Context(), cmd2, time.Second))
 
 		cancel2()
 		raft.Shutdown()
@@ -1371,7 +1371,7 @@ func TestScenario_CrossCutting_B_ConcurrentModes(t *testing.T) {
 
 				for j := 0; j < 100; j++ {
 					cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(j)}}
-					if err := rep.Apply(cmd, time.Second); err != nil {
+					if err := rep.Apply(ctx, cmd, time.Second); err != nil {
 						errors <- err
 						return
 					}
@@ -1450,7 +1450,7 @@ func TestScenario_CrossCutting_D_Metrics(t *testing.T) {
 		// Apply some commands
 		for i := 0; i < 100; i++ {
 			cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-			require.NoError(t, rep.Apply(cmd, time.Second))
+			require.NoError(t, rep.Apply(ctx, cmd, time.Second))
 		}
 
 		// Check WAL position
@@ -1945,7 +1945,7 @@ func TestMultiRegion_SingleRegion_Bootstrap(t *testing.T) {
 
 	// Should be able to apply commands
 	cmd := &Command{Type: CmdCreateNode, Data: []byte("test")}
-	require.NoError(t, replicator.Apply(cmd, time.Second))
+	require.NoError(t, replicator.Apply(t.Context(), cmd, time.Second))
 
 	// Health check
 	health := replicator.Health()
@@ -2080,7 +2080,7 @@ func TestMultiRegion_RegionFailover(t *testing.T) {
 
 	// Should still be able to write
 	cmd := &Command{Type: CmdCreateNode, Data: []byte("after failover")}
-	require.NoError(t, region2.Apply(cmd, time.Second))
+	require.NoError(t, region2.Apply(t.Context(), cmd, time.Second))
 
 	region2.Shutdown()
 }
@@ -2169,7 +2169,7 @@ func TestMultiRegion_WALStreaming(t *testing.T) {
 	// Apply some commands
 	for i := 0; i < 5; i++ {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte(fmt.Sprintf("node-%d", i))}
-		require.NoError(t, region1.Apply(cmd, time.Second))
+		require.NoError(t, region1.Apply(ctx, cmd, time.Second))
 	}
 
 	// Verify WAL position increased
@@ -2267,7 +2267,7 @@ func TestMultiRegion_ApplyBeforeStart(t *testing.T) {
 	require.NoError(t, err)
 
 	cmd := &Command{Type: CmdCreateNode, Data: []byte("test")}
-	err = region.Apply(cmd, time.Second)
+	err = region.Apply(t.Context(), cmd, time.Second)
 	assert.Equal(t, ErrNotReady, err)
 }
 
@@ -2291,7 +2291,7 @@ func TestMultiRegion_ApplyAfterShutdown(t *testing.T) {
 	region.Shutdown()
 
 	cmd := &Command{Type: CmdCreateNode, Data: []byte("test")}
-	err = region.Apply(cmd, time.Second)
+	err = region.Apply(t.Context(), cmd, time.Second)
 	assert.Equal(t, ErrClosed, err)
 }
 
@@ -2321,7 +2321,7 @@ func TestMultiRegion_ConcurrentApply(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			cmd := &Command{Type: CmdCreateNode, Data: []byte(fmt.Sprintf("node-%d", idx))}
-			if err := region.Apply(cmd, time.Second); err != nil {
+			if err := region.Apply(ctx, cmd, time.Second); err != nil {
 				errChan <- err
 			}
 		}(i)

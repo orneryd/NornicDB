@@ -124,6 +124,8 @@
   other: "el nodo inicial {{.NodeID}} no existe"
 - id: storage.transaction.end_node_missing
   other: "el nodo final {{.NodeID}} no existe"
+- id: storage.transaction.hidden_edge_identity_conflict
+  other: "la relación oculta almacenada {{.EdgeID}} tiene una imagen final diferente"
 - id: storage.transaction.constraint_violation
   other: "infracción de restricción: {{.Cause}}"
 - id: storage.transaction.commit_namespace_missing
@@ -138,6 +140,8 @@
   other: "conflicto detectado: la relación {{.EdgeID}} cambió después de iniciar la transacción"
 - id: storage.transaction.deadlock_detected
   other: "interbloqueo detectado: esperar el bloqueo de una clave {{.Label}}.{{.Property}} significaría esperar a esta misma transacción"
+- id: storage.transaction.lock_wait_timed_out
+  other: "tiempo de espera de la transacción agotado: esperó {{.Timeout}}, el tiempo límite de la transacción, por el bloqueo de una clave {{.Label}}.{{.Property}} que otra transacción mantiene"
 - id: storage.transaction.node_changed
   other: "conflicto detectado: el nodo {{.NodeID}} cambió después de iniciar la transacción"
 - id: storage.transaction.node_changed_detailed

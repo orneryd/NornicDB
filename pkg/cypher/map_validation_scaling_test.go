@@ -18,7 +18,7 @@ func coldMapListQuery(count int) string {
 // sample performs the work a first execution must do. Eight times the input
 // may take generous linear overhead, but must not approach 64 times the work.
 func TestStaticMapKeysColdScaling(t *testing.T) {
-	assertColdMapScaling(t, validateStaticMapKeys)
+	assertColdMapScaling(t, func(text string) error { return validateStaticMapKeys(t.Context(), text) })
 }
 
 func TestPatternDetectionColdMapScaling(t *testing.T) {
@@ -31,20 +31,29 @@ func TestPatternDetectionColdMapScaling(t *testing.T) {
 func assertColdMapScaling(t *testing.T, validate func(string) error) {
 	t.Helper()
 	small, large := coldMapListQuery(512), coldMapListQuery(4096)
+	measure := func(query string, count int) time.Duration {
+		start := time.Now()
+		for range count {
+			require.NoError(t, validate(query))
+		}
+		return time.Since(start)
+	}
+	// Measure equal batches that exceed clock resolution. A single short scan
+	// can measure as zero on Windows, producing an infinite scaling ratio.
+	batch := 1
+	for measure(small, batch) < 20*time.Millisecond {
+		batch *= 2
+	}
 	var smallTimes, largeTimes []time.Duration
 	for range 5 {
-		start := time.Now()
-		require.NoError(t, validate(small))
-		smallTimes = append(smallTimes, time.Since(start))
-		start = time.Now()
-		require.NoError(t, validate(large))
-		largeTimes = append(largeTimes, time.Since(start))
+		smallTimes = append(smallTimes, measure(small, batch))
+		largeTimes = append(largeTimes, measure(large, batch))
 	}
 	slices.Sort(smallTimes)
 	slices.Sort(largeTimes)
 	smallMedian, largeMedian := smallTimes[len(smallTimes)/2], largeTimes[len(largeTimes)/2]
 	ratio := float64(largeMedian) / float64(smallMedian)
-	t.Logf("cold map-list scan: 512=%s 4096=%s ratio=%.2f", smallMedian, largeMedian, ratio)
+	t.Logf("cold map-list scan (%d scans): 512=%s 4096=%s ratio=%.2f", batch, smallMedian, largeMedian, ratio)
 	require.Less(t, ratio, 24.0, "8x fixed-size maps must not cause quadratic prefix rescanning")
 }
 
@@ -56,7 +65,7 @@ func BenchmarkStaticMapKeysColdLists(b *testing.B) {
 			b.SetBytes(int64(len(query)))
 			b.ResetTimer()
 			for range b.N {
-				if err := validateStaticMapKeys(query); err != nil {
+				if err := validateStaticMapKeys(b.Context(), query); err != nil {
 					b.Fatal(err)
 				}
 			}

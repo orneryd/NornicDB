@@ -3,6 +3,8 @@ package cypher
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 
@@ -14,16 +16,16 @@ import (
 // parseLeadingUseClause extracts a leading `USE <database>` clause from a
 // top-level query: the graph's name (empty for a dynamic reference), the
 // remaining query, and whether a USE clause was found. See parseUseClause.
-func parseLeadingUseClause(cypher string) (database, remaining string, hasUse bool, err error) {
-	clause, remaining, hasUse, err := parseUseClause(cypher, false)
+func parseLeadingUseClause(ctx context.Context, cypher string, stage cyphertext.SourceStage) (database, remaining string, hasUse bool, err error) {
+	clause, remaining, hasUse, err := parseUseClause(ctx, cypher, false, stage)
 	return clause.Name, remaining, hasUse, err
 }
 
 // parseUseClause reads a leading USE clause with the one USE grammar
 // (fabric.ParseUseClause, Neo4j 5.26's) and reports a rejected clause as
 // Neo4j's SyntaxError. inSubquery is true for a CALL { } body.
-func parseUseClause(cypher string, inSubquery bool) (fabric.UseClause, string, bool, error) {
-	clause, remaining, hasUse, err := fabric.ParseUseClause(cypher, inSubquery)
+func parseUseClause(ctx context.Context, cypher string, inSubquery bool, stage cyphertext.SourceStage) (fabric.UseClause, string, bool, error) {
+	clause, remaining, hasUse, err := fabric.ParseUseClause(ctx, cypher, inSubquery, stage)
 	if err == nil {
 		return clause, remaining, hasUse, nil
 	}
@@ -32,6 +34,18 @@ func parseUseClause(cypher string, inSubquery bool) (fabric.UseClause, string, b
 		err = localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntaxErr.Message)
 	}
 	return clause, remaining, hasUse, err
+}
+
+// useClauseReferenceEnd is where the graph reference of the USE clause
+// starting at s[start:] ends: the offset of the text after it. It is -1 when
+// no valid USE clause starts there. Lexical scanners use it so that a graph
+// spelled like a clause keyword (USE GRAPH limit CALL { … }) stays a name.
+func useClauseReferenceEnd(ctx context.Context, s string, start int, inSubquery bool) int {
+	reference, _, hasUse, err := fabric.ReadUseClause(ctx, s[start:], inSubquery, cyphertext.AcceptedSource)
+	if !hasUse || err != nil {
+		return -1
+	}
+	return start + reference.End
 }
 
 // dynamicUseError is Neo4j's SyntaxError for a dynamic graph reference
@@ -53,11 +67,11 @@ func (e *StorageExecutor) CompositeGraphs() (graphs []string, composite bool) {
 	if !e.sessionIsComposite() {
 		return nil, false
 	}
-	name := e.currentDatabaseName()
+	name := e.databaseName()
 	if e.dbManager != nil {
 		if constituents, err := e.dbManager.GetCompositeConstituents(name); err == nil {
 			for _, raw := range constituents {
-				if ref, ok := toConstituentRef(raw); ok && strings.TrimSpace(ref.Alias) != "" {
+				if ref, ok := catalogadapter.ConstituentRef(raw, catalogadapter.StoredConstituentRecord); ok && ref.Alias != "" {
 					graphs = append(graphs, name+"."+ref.Alias)
 				}
 			}
@@ -73,52 +87,31 @@ func (e *StorageExecutor) sessionIsComposite() bool {
 	return isCompositeRoot(e.storage)
 }
 
-func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor {
-	cloned := NewStorageExecutor(store)
-	cloned.deferFlush = e.deferFlush
-	cloned.ShareEmbedderFrom(e)
-	cloned.sharedExecutor = e.sharedExecutor
-	// Do not propagate the parent's search service to composite engines —
-	// composite search must come from constituent-scoped executors, not
-	// from a parent-namespace-scoped service.
-	if !isCompositeRoot(store) {
-		cloned.searchService = e.searchService
-	}
-	cloned.inferenceManager = e.inferenceManager
-	cloned.onNodeMutated = e.onNodeMutated
-	cloned.inlineEmbeddingTextOptions = e.inlineEmbeddingTextOptions
-	cloned.inlineEmbeddingChunkSize = e.inlineEmbeddingChunkSize
-	cloned.inlineEmbeddingChunkOverlap = e.inlineEmbeddingChunkOverlap
-	cloned.allowLocalAPOCImportFileAccess = e.allowLocalAPOCImportFileAccess
-	cloned.allowLocalAPOCExportFileAccess = e.allowLocalAPOCExportFileAccess
-	cloned.allowRemoteAPOCURLAccess = e.allowRemoteAPOCURLAccess
-	cloned.apocRemoteURLAllowlist = append([]string(nil), e.apocRemoteURLAllowlist...)
-	cloned.apocRemoteHTTPClient = e.apocRemoteHTTPClient
-	cloned.apocRemoteHostResolver = e.apocRemoteHostResolver
-	cloned.apocLocalFileAccessRoot = e.apocLocalFileAccessRoot
-	cloned.defaultEmbeddingDimensions = e.defaultEmbeddingDimensions
-	cloned.dbManager = e.dbManager
-	cloned.vectorRegistry = e.vectorRegistry
-	cloned.vectorIndexSpaces = e.vectorIndexSpaces
-	cloned.txContext = e.txContext
-	cloned.fabricPlanCache = e.fabricPlanCache
-	cloned.hotPathTraceState = e.hotPathTraceState
-
-	e.shellParamsMu.RLock()
-	if len(e.shellParams) > 0 {
-		cloned.shellParams = make(map[string]interface{}, len(e.shellParams))
-		for k, v := range e.shellParams {
-			cloned.shellParams[k] = v
+func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (scoped *StorageExecutor, resolved string, retErr error) {
+	// Select a view before binding a catalog generation; never reconfigure the
+	// shared parent when USE names its own database through a removable alias.
+	defer func() {
+		if retErr != nil {
+			return
 		}
-	}
-	e.shellParamsMu.RUnlock()
-	cloned.shellParamsByToken = cloneShellParamsByToken(e)
-
-	return cloned
-}
-
-func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*StorageExecutor, string, error) {
-	targetDB := strings.TrimSpace(db)
+		resolver, ok := e.dbManager.(statementCacheScopeResolver)
+		if !ok {
+			return
+		}
+		scope, err := resolver.StatementCacheScope(db)
+		if err != nil {
+			retErr = err
+			return
+		}
+		if scoped == e {
+			if scope == e.statementCacheScope {
+				return
+			}
+			scoped = e.cloneWithStorage(e.storage, selectedDatabaseStorage)
+		}
+		scoped.statementCacheScope = scope
+	}()
+	targetDB := db
 	if targetDB == "" {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseDatabaseRequired(), nil)
 	}
@@ -129,8 +122,8 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 		if dotIdx := strings.IndexByte(targetDB, '.'); dotIdx > 0 {
 			compositeName := targetDB[:dotIdx]
 			if e.dbManager.IsCompositeDatabase(compositeName) {
-				currentDB := strings.TrimSpace(e.currentDatabaseName())
-				if currentDB != "" && e.dbManager.IsCompositeDatabase(currentDB) && !strings.EqualFold(currentDB, compositeName) {
+				currentDB := e.databaseName()
+				if currentDB != "" && e.dbManager.IsCompositeDatabase(currentDB) && !cyphertext.NameEqualFold(currentDB, compositeName) {
 					return nil, "", localizedError(localization.CypherCommandRoutingUseConstituentOutsideComposite(targetDB, compositeName, currentDB), nil)
 				}
 				// Resolve the full composite.constituent via GetStorageForUse.
@@ -153,7 +146,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 	}
 
 	// The executor's own database runs here.
-	if strings.EqualFold(e.currentDatabaseName(), targetDB) {
+	if cyphertext.NameEqualFold(e.databaseName(), targetDB) {
 		return e, targetDB, nil
 	}
 	if e.dbManager != nil {
@@ -165,7 +158,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 		if !ok {
 			return nil, "", localizedError(localization.CypherCommandRoutingUseStorageTypeInvalid(targetDB), nil)
 		}
-		return e.cloneForStorage(store), targetDB, nil
+		return e.cloneWithStorage(store, selectedDatabaseStorage), targetDB, nil
 	}
 
 	// Without a database manager (embedded), a namespaced store switches
@@ -174,7 +167,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 	if !ok {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseBackendUnsupported(targetDB), nil)
 	}
-	return e.cloneForStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB)), targetDB, nil
+	return e.cloneWithStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB), selectedDatabaseStorage), targetDB, nil
 }
 
 // TransactionDatabases resolves database names for TransactionDatabaseError:
@@ -197,13 +190,13 @@ type TransactionDatabases interface {
 // Community has one user database, so its error for a read of a second one
 // could not be observed; a read gets the same code with the message worded
 // for a read.
-func TransactionDatabaseError(databases TransactionDatabases, txDB, target, query string) error {
+func TransactionDatabaseError(ctx context.Context, databases TransactionDatabases, txDB, target, query string) error {
 	txDB = StatementDatabase(txDB, query)
 	target = StatementDatabase(target, query)
 	if sameTransactionDatabase(databases, txDB, target) {
 		return nil
 	}
-	requirements := QueryPermissionRequirements(query)
+	requirements := QueryPermissionRequirements(ctx, query, AcceptedSource)
 	if requirements.Write || requirements.Schema {
 		return localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
 			localization.CypherCommandRoutingTransactionSecondDatabaseWrite(target, txDB))
@@ -215,7 +208,7 @@ func TransactionDatabaseError(databases TransactionDatabases, txDB, target, quer
 // sameTransactionDatabase reports whether target is txDB, by name or alias,
 // or a constituent of composite txDB.
 func sameTransactionDatabase(databases TransactionDatabases, txDB, target string) bool {
-	if strings.EqualFold(txDB, target) {
+	if cyphertext.NameEqualFold(txDB, target) {
 		return true
 	}
 	if databases == nil {
@@ -234,14 +227,7 @@ func sameTransactionDatabase(databases TransactionDatabases, txDB, target string
 // statement it is nested in (an implicit transaction's storage wrapper
 // carried on ctx), or the transaction pinned to this executor's storage view.
 func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
-	if e.txContext != nil && e.txContext.active {
-		return true
-	}
-	if _, nested := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); nested {
-		return true
-	}
-	_, scoped := e.storage.(*transactionStorageWrapper)
-	return scoped
+	return e.membership(ctx).owned()
 }
 
 // executeOnDatabase is the one database router: it runs query on database
@@ -259,7 +245,7 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 	if nested {
 		result, err = scopedExec.executeInternal(ctx, query, params)
 	} else {
-		result, err = scopedExec.Execute(ctx, query, params)
+		result, err = scopedExec.executeRouted(ctx, query, params)
 	}
 	if result != nil {
 		// A routed result can come from a shared cache. Attach the selected
@@ -281,20 +267,30 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 // transaction (explicit, or the one the statement is nested in) stays on
 // that transaction's database. It returns db's executor and ctx scoped to db.
 func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*StorageExecutor, context.Context, error) {
-	if err := e.authorizeSelectedDatabase(ctx, db, query); err != nil {
+	selection := e
+	if owner := e.membership(ctx).statement; owner != nil && owner.executor.nativeOrigin != nil {
+		// Issued storage carries the statement's catalog authority. Rebuilding
+		// an executor (or attaching a replacement manager) cannot redirect it.
+		selection = owner.executor.base
+	}
+	if err := selection.authorizeSelectedDatabase(ctx, db, query); err != nil {
 		return nil, ctx, err
 	}
-	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
+	scopedExec, resolvedDB, err := selection.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
 	if err != nil {
 		return nil, ctx, err
 	}
 	if strings.EqualFold(resolvedDB, "system") {
-		if err := systemDatabaseStatementError(query); err != nil {
+		if err := systemDatabaseStatementError(ctx, query); err != nil {
 			return nil, ctx, err
 		}
 	}
+	if statement, ownedCtx := e.compositeStatementOf(ctx); statement != nil {
+		selected, selectedCtx, err := statement.on(ownedCtx, resolvedDB, scopedExec, scopedExec.storage)
+		return selected, withExecutionDatabase(selectedCtx, resolvedDB), err
+	}
 	if scopedExec != e && e.inTransaction(ctx) {
-		if err := TransactionDatabaseError(e.dbManager, e.currentDatabaseName(), resolvedDB, query); err != nil {
+		if err := TransactionDatabaseError(ctx, e.dbManager, e.databaseName(), resolvedDB, query); err != nil {
 			return nil, ctx, err
 		}
 	}
@@ -319,17 +315,17 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 // of the system database's records (systemProcedureScope). This is the one
 // policy, applied on every route: the request's or session's database, USE,
 // a statement a procedure runs, and CALL { USE … }.
-func systemDatabaseStatementError(query string) error {
+func systemDatabaseStatementError(ctx context.Context, query string) error {
 	_, query = parseExecutionMode(query)
 	query = strings.TrimSpace(query)
 	// A SHOW command runs, and its tail is held to Neo4j's rules for it
 	// (systemShowTailError).
 	if startsWithKeywordFold(query, "SHOW") {
-		return systemShowTailError(query)
+		return systemShowTailError(ctx, query)
 	}
 	// Transaction control (BEGIN, COMMIT, ROLLBACK) is no statement on a
 	// graph; a BEGIN … COMMIT script is its statement.
-	if isSystemCommandNoGraph(query) || bareTransactionCommand(query) != "" {
+	if isMetadataCommand(ctx, query, metadataCatalogExecution) || bareTransactionCommand(query) != "" {
 		return nil
 	}
 	if startsWithKeywordFold(query, "BEGIN") && transactionScriptShape(query) {
@@ -337,26 +333,26 @@ func systemDatabaseStatementError(query string) error {
 		if statement, _, ok := splitTransactionScriptTailAction(body); ok {
 			body = statement
 		}
-		return systemDatabaseStatementError(body)
+		return systemDatabaseStatementError(ctx, body)
 	}
 	notRecognised := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError",
 		localization.CypherAdminSystemProcedureUnsupported(query))
-	for _, procedure := range registeredProceduresForCalls(query) {
+	for _, procedure := range RegisteredProceduresForCalls(ctx, query, AcceptedSource) {
 		if !procedure.WorksOnSystem {
 			return notRecognised
 		}
 	}
-	requirements := QueryPermissionRequirements(query)
+	requirements := QueryPermissionRequirements(ctx, query, AcceptedSource)
 	graphAccess := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError", localization.CypherAdminSystemGraphAccessUnsupported())
 	if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
 		return graphAccess
 	}
-	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(query) {
+	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(ctx, query) {
 		return nil
 	}
 	if startsWithKeywordFold(query, "CALL") {
 		if _, procedureCall := procedureNameAt(query, len("CALL")); procedureCall {
-			if expressionReadsGraphText(query) {
+			if expressionReadsGraphText(ctx, query) {
 				return graphAccess
 			}
 			return nil
@@ -376,9 +372,9 @@ func systemDatabaseStatementError(query string) error {
 // user database a SHOW tail is not limited this way (the Cypher 25 clauses
 // after YIELD and graph-reading expressions run there, as Neo4j runs the
 // expressions).
-func systemShowTailError(query string) error {
+func systemShowTailError(ctx context.Context, query string) error {
 	query = strings.TrimSpace(strings.TrimSuffix(query, ";"))
-	tail := strings.TrimSpace(query[len(showCommandHead(query)):])
+	tail := strings.TrimSpace(query[len(showCommandHead(ctx, query)):])
 	if tail == "" {
 		return nil
 	}
@@ -389,13 +385,11 @@ func systemShowTailError(query string) error {
 	if start := showContinuationStart(body); start >= 0 {
 		clause := body[start:]
 		end := 0
-		for end < len(clause) && isIdentByte(clause[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(clause, end)
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			localization.CypherAdminShowClauseUnexpected(clause[:end]))
 	}
-	switch kind := graphReadingExpression(tail); kind {
+	switch kind := graphReadingExpression(ctx, tail); kind {
 	case "":
 		return nil
 	case "COUNT", "EXISTS", "COLLECT":
@@ -413,15 +407,15 @@ func systemShowTailError(query string) error {
 // systemDatabaseWriteError is systemDatabaseStatementError for a statement
 // run on this executor's own database (a request's or session's database,
 // not one a USE selects): nil unless that is the system database.
-func (e *StorageExecutor) systemDatabaseWriteError(query string) error {
-	database := e.currentDatabaseName()
+func (e *StorageExecutor) systemDatabaseWriteError(ctx context.Context, query string) error {
+	database := e.databaseName()
 	if e.txContext != nil && e.txContext.active && e.txContext.statementKind == "Administration" {
 		database = "system"
 	}
 	if !strings.EqualFold(database, "system") {
 		return nil
 	}
-	return systemDatabaseStatementError(query)
+	return systemDatabaseStatementError(ctx, query)
 }
 
 // resolveCompositeStorage resolves USE <composite> to a CompositeEngine-backed executor.
@@ -440,7 +434,7 @@ func (e *StorageExecutor) resolveCompositeStorage(compositeName string, authToke
 		return nil, "", localizedError(localization.CypherCommandRoutingUseStorageTypeInvalid(compositeName), nil)
 	}
 
-	return e.cloneForStorage(engine), compositeName, nil
+	return e.cloneWithStorage(engine, selectedDatabaseStorage), compositeName, nil
 }
 
 // resolveCompositeConstituent resolves USE <composite.alias> to a specific
@@ -462,10 +456,48 @@ func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, a
 	}
 
 	// Resolve the specific constituent by alias.
-	constituentEngine, err := compositeEngine.GetConstituentByAlias(alias)
+	constituentEngine, err := compositeEngine.GetConstituentByAlias(cyphertext.NameLower(alias))
 	if err != nil {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(fullName, err), err)
 	}
 
-	return e.cloneForStorage(constituentEngine), fullName, nil
+	return e.cloneWithStorage(constituentEngine, selectedDatabaseStorage), fullName, nil
+}
+
+// USE token recognition stays with the existing USE owner. Consumers locate
+// clauses through these boundary-aware operations, then read the grammar product.
+func isUseKeyword(word string) bool         { return strings.EqualFold(word, "USE") }
+func startsWithUseClause(query string) bool { return startsWithKeywordFold(query, "USE") }
+func useKeywordIndexFrom(ctx context.Context, query string, from int, opts keywordScanOpts) int {
+	return keywordIndexFrom(ctx, query, "USE", from, opts)
+}
+
+// USE owns graph-name boundaries, including the optional GRAPH keyword.
+// Reuse that owner when a graph is spelled like a clause keyword.
+func useGraphNameAt(ctx context.Context, s string, pos int) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	// A graph name directly follows USE or USE GRAPH. Unless a comment can
+	// sit between them, the raw preceding word decides without a full scan.
+	if word := rawWordBefore(s, pos); !strings.EqualFold(word, "USE") && !strings.EqualFold(word, "GRAPH") &&
+		!strings.Contains(s[:pos], "//") && !strings.Contains(s[:pos], "*/") {
+		return false
+	}
+	end := lastLiveByte(s, pos) + 1
+	start := end
+	for start > 0 && cyphertext.NamePartAt(s, start-1) {
+		start--
+	}
+	if strings.EqualFold(s[start:end], "GRAPH") {
+		end = lastLiveByte(s, start) + 1
+		start = end
+		for start > 0 && cyphertext.NamePartAt(s, start-1) {
+			start--
+		}
+	}
+	if !strings.EqualFold(s[start:end], "USE") {
+		return false
+	}
+	return pos < useClauseReferenceEnd(ctx, s, start, true)
 }

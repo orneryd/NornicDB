@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -202,15 +203,23 @@ func (b *BadgerEngine) EnsureNamespaceMVCC(namespace string) error {
 // silently violating snapshot isolation for any reader that pinned
 // after a peer commit. The snapshot is a point-in-time copy, so peer
 // commits after BeginTransaction do NOT mutate it.
-func (b *BadgerEngine) snapshotNamespaceVersions() map[string]MVCCVersion {
+func (b *BadgerEngine) snapshotNamespaceVersions(ctx context.Context) (map[string]MVCCVersion, error) {
+	return b.snapshotNamespaceVersionsAt(ctx, time.Now().UTC())
+}
+
+// snapshotNamespaceVersionsAt is snapshotNamespaceVersions at the wall clock
+// a transaction cut supplies (mvccReservations.cutTaken).
+func (b *BadgerEngine) snapshotNamespaceVersionsAt(ctx context.Context, now time.Time) (map[string]MVCCVersion, error) {
 	b.mvccByNamespaceMu.RLock()
 	defer b.mvccByNamespaceMu.RUnlock()
 	if len(b.mvccByNamespace) == 0 {
-		return nil
+		return nil, ctx.Err()
 	}
 	out := make(map[string]MVCCVersion, len(b.mvccByNamespace))
-	now := time.Now().UTC()
 	for ns, state := range b.mvccByNamespace {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if state == nil {
 			continue
 		}
@@ -224,7 +233,7 @@ func (b *BadgerEngine) snapshotNamespaceVersions() map[string]MVCCVersion {
 			CommitSequence:  state.seq.Load(),
 		}
 	}
-	return out
+	return out, ctx.Err()
 }
 
 // loadPersistedNamespaceSequence reads the persisted commit sequence for

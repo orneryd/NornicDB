@@ -260,7 +260,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			if getExpressionFailure(ctx) != nil {
 				return nil
 			}
-			result, err := e.relationshipEndpointValue(value, function == "endnode")
+			result, err := e.relationshipEndpointValue(ctx, value, function == "endnode")
 			if err != nil {
 				recordExpressionFailure(ctx, err)
 				return nil
@@ -407,7 +407,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// reduce(acc = initial, x IN list | step) and allReduce(…, predicate)
 	if matchFuncStartAndSuffix(expr, "reduce") || matchFuncStartAndSuffix(expr, "allreduce") {
-		if function, inner, isCall := parseFunctionCallWS(expr); isCall && isReduceFormFunction(function) {
+		var callFacts1 functionCallFacts
+		if isCall := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); isCall && isReduceFormFunction(callFacts1.name) {
+			function, inner := callFacts1.name, callFacts1.inner
+
 			return e.evaluateReduceForm(ctx, function, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 	}
@@ -902,7 +905,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		inner := extractFuncArgs(expr, "polygon")
 
 		// Check if inner is a list literal [...]
-		if strings.HasPrefix(inner, "[") && strings.HasSuffix(inner, "]") {
+		if isListLiteral(inner) {
 			// Parse and evaluate list elements manually
 			listContent := inner[1 : len(inner)-1]
 			pointExprs := e.splitFunctionArgs(listContent)
@@ -927,7 +930,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 		// Otherwise try evaluating as variable or expression
 		pointsVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if pointList, ok := pointsVal.([]interface{}); ok {
+		if pointList, ok := cypherListValue(pointsVal); ok {
 			if len(pointList) < 3 {
 				return nil
 			}
@@ -944,7 +947,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		inner := extractFuncArgs(expr, "linestring")
 
 		// Check if inner is a list literal [...]
-		if strings.HasPrefix(inner, "[") && strings.HasSuffix(inner, "]") {
+		if isListLiteral(inner) {
 			// Parse and evaluate list elements manually
 			listContent := inner[1 : len(inner)-1]
 			pointExprs := e.splitFunctionArgs(listContent)
@@ -969,7 +972,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 		// Otherwise try evaluating as variable or expression
 		pointsVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if pointList, ok := pointsVal.([]interface{}); ok {
+		if pointList, ok := cypherListValue(pointsVal); ok {
 			if len(pointList) < 2 {
 				return nil
 			}
@@ -1079,7 +1082,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	for _, function := range []string{"filter", "extract"} {
 		if matchFuncStartAndSuffix(expr, function) {
 			comprehension := "[" + extractFuncArgs(expr, function) + "]"
-			if list, ok := e.evaluateExpressionWithContextFull(ctx, comprehension, nodes, rels, paths, allPathEdges, allPathNodes, pathLength).([]interface{}); ok {
+			if list, ok := cypherListValue(e.evaluateExpressionWithContextFull(ctx, comprehension, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)); ok {
 				return list
 			}
 			return []interface{}{}
@@ -1115,17 +1118,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 // arguments of any other shape before evaluation; here they, and a list
 // expression this evaluator can't evaluate, are null.
 func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
-	varName, listExpr, predicate, parsed := parseQuantifierArguments(inner)
+	varName, listExpr, predicate, parsed := parseQuantifierArguments(ctx, inner)
 	if !parsed {
 		return nil
 	}
 	list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	if list == nil {
-		return nil
-	}
-	if text, isText := list.(string); isText && text == listExpr {
-		// This evaluator returns an expression it can't evaluate as its
-		// own text; that is no list value, so the result is unknown.
 		return nil
 	}
 	// The predicate sees the path variables too (r[i], nodes(p)[i], #882),
@@ -1135,7 +1133,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 		pathValues = make(map[string]interface{}, len(paths))
 		for name, path := range paths {
 			if path != nil {
-				pathValues[name] = e.pathContextRowValue(path)
+				pathValues[name] = e.pathContextRowValue(ctx, path)
 			}
 		}
 	}
@@ -1165,7 +1163,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 	for name, value := range parameterRowValues(ctx) {
 		bindAbsent(name, value)
 	}
-	if needsRowStatementContext(predicate) {
+	if needsRowStatementContext(ctx, predicate) {
 		bindAbsent(rowStatementContextKey, ctx)
 	}
 	value, _, err := rowQuantifierLoop(function, coerceToUnwindItems(list), func(item interface{}) { values[varName] = item }, func() (interface{}, bool, error) {
@@ -1252,7 +1250,7 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 	if list == nil {
 		return nil
 	}
-	items, isList := list.([]interface{})
+	items, isList := cypherListValue(list)
 	if !isList {
 		items = []interface{}{list}
 	}
@@ -1275,7 +1273,13 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 			return e.evaluateExpressionWithContextFull(itemCtx, expression, tempNodes, tempRels, paths, allPathEdges, allPathNodes, pathLength), nil
 		}
 	}
-	result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate))
+	var appender *reduceAppender
+	if plan := form.appendPlan(ctx); plan.usable(values) {
+		appender = &reduceAppender{plan: plan, term: func(index int, accumulator, item interface{}) (interface{}, error) {
+			return evaluate(plan.terms[index])(accumulator, item)
+		}}
+	}
+	result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate), appender)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil

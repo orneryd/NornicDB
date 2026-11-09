@@ -117,7 +117,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		}
 		validBlob, err := msgpack.Marshal(valid)
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     procedureCatalogNodeID("nornic.loadedProc"),
 			Labels: []string{procedureCatalogLabel},
 			Properties: map[string]interface{}{
@@ -127,7 +127,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		require.NoError(t, err)
 
 		ClearUserProcedures()
-		require.NoError(t, exec.loadPersistedProcedures())
+		require.NoError(t, exec.loadPersistedProcedures(t.Context()))
 
 		res, err := exec.Execute(ctx, "CALL nornic.loadedProc()", nil)
 		require.NoError(t, err)
@@ -140,7 +140,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		store := storage.NewNamespacedEngine(base, "test")
 		exec := NewStorageExecutor(store)
 
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     procedureCatalogNodeID("nornic.badb64"),
 			Labels: []string{procedureCatalogLabel},
 			Properties: map[string]interface{}{
@@ -149,7 +149,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = exec.loadPersistedProcedures()
+		err = exec.loadPersistedProcedures(t.Context())
 		require.Error(t, err)
 		require.True(t, errors.Is(err, nerrors.ErrProcedureCatalogRecordDecodeFailed))
 	})
@@ -167,7 +167,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		}
 		invalidBlob, err := msgpack.Marshal(invalidMode)
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     procedureCatalogNodeID("nornic.invalidMode"),
 			Labels: []string{procedureCatalogLabel},
 			Properties: map[string]interface{}{
@@ -176,7 +176,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = exec.loadPersistedProcedures()
+		err = exec.loadPersistedProcedures(t.Context())
 		require.Error(t, err)
 		require.True(t, errors.Is(err, nerrors.ErrProcedureCatalogRecordInvalid))
 	})
@@ -210,7 +210,7 @@ func TestDropProcedure_ErrorBranches(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE OR REPLACE PROCEDURE nornic.to_drop() MODE READ AS RETURN 1 AS value", nil)
 		require.NoError(t, err)
 
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     procedureCatalogNodeID("nornic.bad_reload"),
 			Labels: []string{procedureCatalogLabel},
 			Properties: map[string]interface{}{
@@ -223,4 +223,25 @@ func TestDropProcedure_ErrorBranches(t *testing.T) {
 		require.Error(t, err)
 		require.True(t, errors.Is(err, nerrors.ErrProcedureRegistryReloadFailed))
 	})
+}
+
+func TestDropProcedureRecognitionAvoidsQueryCopies(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  bool
+	}{
+		{"DROP PROCEDURE app.refresh", true},
+		{"  drop procedure app.refresh  ", true},
+		{"MATCH (n:Person) WHERE n.age > 21 RETURN n.name", false},
+		{"RETURN 'DROP PROCEDURE' AS text", false},
+	} {
+		require.Equal(t, tc.want, isDropProcedureCommand(tc.query), tc.query)
+	}
+	query := "MATCH (n:Person) WHERE n.age > 21 RETURN n.name"
+	var recognized bool
+	allocations := testing.AllocsPerRun(100, func() {
+		recognized = isDropProcedureCommand(query)
+	})
+	require.False(t, recognized)
+	require.Zero(t, allocations, "recognition must not uppercase-copy the statement")
 }

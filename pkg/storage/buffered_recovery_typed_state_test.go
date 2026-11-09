@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,15 +30,19 @@ func assertRecoveredTypedProperties(t *testing.T, expected, actual map[string]an
 }
 
 func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
 	for _, startup := range []bool{false, true} {
 		for _, mutation := range []string{"update", "equal_type", "repeat", "delete"} {
 			t.Run(mutation+map[bool]string{false: "/replay", true: "/startup"}[startup], func(t *testing.T) {
 				dir := t.TempDir()
 				open := func() (*BadgerEngine, *WAL) {
-					engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}})
+					engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+					if engine != nil {
+						fixtureowner.Own(t, engine)
+					}
 					require.NoError(t, err)
 					cfg := DefaultWALConfig()
-					cfg.Dir = dir + "/wal"
+					cfg.Dir = filepath.Join(dir, "wal")
 					cfg.BatchSyncInterval = time.Hour
 					wal, err := NewWAL(cfg.Dir, cfg)
 					require.NoError(t, err)
@@ -44,20 +51,20 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 				}
 				engine, wal := open()
 				initial := map[string]any{"v": float64(1), "time": time.Date(2026, 10, 15, 1, 2, 3, 0, time.UTC), "bytes": []byte{1, 2, 3}}
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
-				_, err = tx.CreateNode(&Node{ID: "test:a", Properties: initial})
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "test:a", Properties: initial})
 				require.NoError(t, err)
-				_, err = tx.CreateNode(&Node{ID: "test:b"})
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "test:b"})
 				require.NoError(t, err)
-				require.NoError(t, tx.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: initial}))
+				require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: initial}))
 				require.NoError(t, tx.Commit())
 				nodeHead, err := engine.loadNodeMVCCHead("test:a")
 				require.NoError(t, err)
 				edgeHead, err := engine.loadEdgeMVCCHead("test:r")
 				require.NoError(t, err)
-				tx, err = engine.BeginTransaction()
+				tx, err = engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(true))
@@ -66,31 +73,31 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 					final["v"] = int64(1)
 				}
 				if mutation == "repeat" {
-					node, err := tx.GetNode("test:a")
+					node, err := tx.GetNode(t.Context(), "test:a")
 					require.NoError(t, err)
 					node.Properties = map[string]any{"v": float64(4)}
-					require.NoError(t, tx.UpdateNode(node))
-					edge, err := tx.GetEdge("test:r")
+					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+					edge, err := tx.GetEdge(t.Context(), "test:r")
 					require.NoError(t, err)
 					edge.Properties = map[string]any{"v": float64(4)}
-					require.NoError(t, tx.UpdateEdge(edge))
+					require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 				}
 				if mutation == "delete" {
-					require.NoError(t, tx.DeleteEdge("test:r"))
-					require.NoError(t, tx.DeleteNode("test:a"))
+					require.NoError(t, tx.DeleteEdge(t.Context(), "test:r"))
+					require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
 				} else {
-					node, err := tx.GetNode("test:a")
+					node, err := tx.GetNode(t.Context(), "test:a")
 					require.NoError(t, err)
 					node.Properties = final
-					require.NoError(t, tx.UpdateNode(node))
-					edge, err := tx.GetEdge("test:r")
+					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+					edge, err := tx.GetEdge(t.Context(), "test:r")
 					require.NoError(t, err)
 					edge.Properties = final
-					require.NoError(t, tx.UpdateEdge(edge))
+					require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 				}
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())
-				entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+				entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 				require.NoError(t, err)
 				crashClose(t, engine, wal)
 				recovered, wal2 := open()
@@ -108,24 +115,24 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 				} else {
 					for _, entry := range entries {
 						if entry.Operation == OpBufferedCommit {
-							require.NoError(t, ReplayWALEntry(recovered, entry))
+							require.NoError(t, ReplayWALEntry(t.Context(), recovered, entry))
 						}
 					}
 				}
 				check := func(stage string) {
 					t.Helper()
 					if mutation != "delete" {
-						node, err := recovered.GetNode("test:a")
+						node, err := recovered.GetNode(t.Context(), "test:a")
 						require.NoError(t, err)
 						assertRecoveredTypedProperties(t, final, node.Properties, stage+" current node")
-						edge, err := recovered.GetEdge("test:r")
+						edge, err := recovered.GetEdge(t.Context(), "test:r")
 						require.NoError(t, err)
 						assertRecoveredTypedProperties(t, final, edge.Properties, stage+" current edge")
 					}
-					node, err := recovered.GetNodeVisibleAt("test:a", nodeHead.Version)
+					node, err := recovered.GetNodeVisibleAt(t.Context(), "test:a", nodeHead.Version)
 					require.NoError(t, err)
 					assertRecoveredTypedProperties(t, initial, node.Properties, stage+" historic node")
-					edge, err := recovered.GetEdgeVisibleAt("test:r", edgeHead.Version)
+					edge, err := recovered.GetEdgeVisibleAt(t.Context(), "test:r", edgeHead.Version)
 					require.NoError(t, err)
 					assertRecoveredTypedProperties(t, initial, edge.Properties, stage+" historic edge")
 				}
@@ -151,7 +158,7 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 func TestSnapshotEmptyNamedVectorsDoNotAdvertiseAvailability(t *testing.T) {
 	for _, vector := range [][]float32{nil, {}, {1, 2}} {
 		t.Run(string(rune('0'+len(vector))), func(t *testing.T) {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			chunks := make([][]float32, 16)
@@ -159,18 +166,18 @@ func TestSnapshotEmptyNamedVectorsDoNotAdvertiseAvailability(t *testing.T) {
 				chunks[i] = make([]float32, 1536)
 				chunks[i][0] = 1
 			}
-			_, err = engine.CreateNode(&Node{ID: "test:n", ChunkEmbeddings: chunks, NamedEmbeddings: map[string][]float32{"title": vector}, EmbedMeta: map[string]any{"has_embedding": true, "has_chunks": true, "chunk_count": int64(16)}})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n", ChunkEmbeddings: chunks, NamedEmbeddings: map[string][]float32{"title": vector}, EmbedMeta: map[string]any{"has_embedding": true, "has_chunks": true, "chunk_count": int64(16)}})
 			require.NoError(t, err)
 			var out bytes.Buffer
 			require.NoError(t, WriteSnapshot(context.Background(), engine, &out, SnapshotOptions{}))
 			visitor := &recoveryFieldsVisitor{}
-			_, err = ReadSnapshot(bytes.NewReader(out.Bytes()), visitor)
+			_, err = ReadSnapshot(t.Context(), bytes.NewReader(out.Bytes()), visitor)
 			require.NoError(t, err)
 			require.Len(t, visitor.nodes, 1)
 			restored := visitor.nodes[0]
 			require.Empty(t, restored.ChunkEmbeddings)
 			assert.Equal(t, len(vector) > 0, restored.EmbedMeta["has_embedding"] == true)
-			original, err := engine.GetNode("test:n")
+			original, err := engine.GetNode(t.Context(), "test:n")
 			require.NoError(t, err)
 			require.Equal(t, true, original.EmbedMeta["has_embedding"])
 		})
@@ -182,17 +189,20 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 		t.Run(map[bool]string{false: "replay", true: "startup"}[startup], func(t *testing.T) {
 			dir := t.TempDir()
 			open := func() (*BadgerEngine, *WAL) {
-				b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
+				b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+				if b != nil {
+					fixtureowner.Own(t, b)
+				}
 				require.NoError(t, err)
 				cfg := DefaultWALConfig()
-				cfg.Dir = dir + "/wal"
+				cfg.Dir = filepath.Join(dir, "wal")
 				w, err := NewWAL(cfg.Dir, cfg)
 				require.NoError(t, err)
 				b.SetBufferedCommitWAL(w)
 				return b, w
 			}
 			b, w := open()
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("test"))
 			require.NoError(t, tx.SetImplicit(true))
@@ -201,14 +211,14 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 				chunks[i] = make([]float32, 1536)
 				chunks[i][0] = float32(i) + 0.25
 			}
-			_, err = tx.CreateNode(&Node{ID: "test:new-a", ChunkEmbeddings: chunks, NamedEmbeddings: map[string][]float32{"title": {1, 2}}, EmbedMeta: map[string]any{"has_embedding": true, "has_chunks": true, "chunk_count": int64(16), "custom": float64(1)}})
+			_, err = tx.CreateNode(t.Context(), &Node{ID: "test:new-a", ChunkEmbeddings: chunks, NamedEmbeddings: map[string][]float32{"title": {1, 2}}, EmbedMeta: map[string]any{"has_embedding": true, "has_chunks": true, "chunk_count": int64(16), "custom": float64(1)}})
 			require.NoError(t, err)
-			_, err = tx.CreateNode(&Node{ID: "test:new-b"})
+			_, err = tx.CreateNode(t.Context(), &Node{ID: "test:new-b"})
 			require.NoError(t, err)
-			require.NoError(t, tx.CreateEdge(&Edge{ID: "test:new-r", StartNode: "test:new-a", EndNode: "test:new-b", Type: "R", Properties: map[string]any{"v": float64(1)}}))
+			require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:new-r", StartNode: "test:new-a", EndNode: "test:new-b", Type: "R", Properties: map[string]any{"v": float64(1)}}))
 			require.NoError(t, tx.Commit())
 			require.True(t, tx.AcknowledgedBuffered())
-			entries, err := ReadWALEntriesFromDir(w.Config().Dir)
+			entries, err := ReadWALEntriesFromDir(t.Context(), w.Config().Dir)
 			require.NoError(t, err)
 			crashClose(t, b, w)
 			b, w = open()
@@ -219,16 +229,16 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 			} else {
 				for _, entry := range entries {
 					if entry.Operation == OpBufferedCommit {
-						require.NoError(t, ReplayWALEntry(b, entry))
+						require.NoError(t, ReplayWALEntry(t.Context(), b, entry))
 					}
 				}
 			}
-			n, err := b.GetNode("test:new-a")
+			n, err := b.GetNode(t.Context(), "test:new-a")
 			require.NoError(t, err)
 			require.Equal(t, chunks, n.ChunkEmbeddings)
 			require.Equal(t, []float32{1, 2}, n.NamedEmbeddings["title"])
 			require.Equal(t, float64(1), n.EmbedMeta["custom"])
-			edge, err := b.GetEdge("test:new-r")
+			edge, err := b.GetEdge(t.Context(), "test:new-r")
 			require.NoError(t, err)
 			require.Equal(t, NodeID("test:new-a"), edge.StartNode)
 			require.Equal(t, NodeID("test:new-b"), edge.EndNode)
@@ -240,7 +250,7 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 func TestBufferedRecoveryRejectsCorruptAuthoritativeBodies(t *testing.T) {
 	for _, edge := range []bool{false, true} {
 		t.Run(map[bool]string{false: "node", true: "edge"}[edge], func(t *testing.T) {
-			b, err := NewBadgerEngineInMemory()
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			data := WALBufferedCommitData{TxID: "corrupt", Namespace: "test", Writes: map[string][]byte{}}
@@ -253,13 +263,13 @@ func TestBufferedRecoveryRejectsCorruptAuthoritativeBodies(t *testing.T) {
 			}
 			payload, err := json.Marshal(data)
 			require.NoError(t, err)
-			require.Error(t, ReplayWALEntry(b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
-			present, err := b.bufferedFlushMarkerExists("corrupt")
+			require.Error(t, ReplayWALEntry(t.Context(), b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
+			marker, err := b.observeBufferedCommitReceipt(t.Context(), bufferedReceiptRead{txID: "corrupt"})
 			require.NoError(t, err)
-			require.False(t, present)
-			_, err = b.GetNode("test:n")
+			require.False(t, marker.present)
+			_, err = b.GetNode(t.Context(), "test:n")
 			require.ErrorIs(t, err, ErrNotFound)
-			_, err = b.GetEdge("test:r")
+			_, err = b.GetEdge(t.Context(), "test:r")
 			require.ErrorIs(t, err, ErrNotFound)
 		})
 	}

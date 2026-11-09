@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 	"time"
@@ -60,12 +61,12 @@ func TestBoltExplicitTransactionTerminalPathsReleaseResources(t *testing.T) {
 				"%s must roll back and release the transaction reader", tt.name)
 
 			fresh := openBoltTestConn(t, port)
-			records := runBoltQueryAndCollectRecords(t, fresh,
-				"MATCH (r:Repository {repo_id: 'terminal-abandoned'}) RETURN count(r)")
+			records := runBoltQueryWithParams(t, fresh,
+				"MATCH (r:Repository {repo_id: 'terminal-abandoned'}) RETURN count(r)", nil)
 			require.Equal(t, [][]any{{int64(0)}}, records,
 				"%s must not persist the abandoned write", tt.name)
-			runBoltQueryAndCollectRecords(t, fresh,
-				"CREATE (r:Repository {repo_id: 'terminal-fresh'})")
+			runBoltQueryWithParams(t, fresh,
+				"CREATE (r:Repository {repo_id: 'terminal-fresh'})", nil)
 		})
 	}
 }
@@ -112,7 +113,10 @@ func TestBoltExplicitTransactionTerminalPathsRecordSinglePersistentWALAbort(t *t
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			badger, err := storage.NewBadgerEngine(t.TempDir())
+			badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+			if badger != nil {
+				fixtureowner.Own(t, badger)
+			}
 			require.NoError(t, err)
 			walDir := t.TempDir()
 			wal, err := storage.NewWAL(walDir, nil)
@@ -137,12 +141,12 @@ func TestBoltExplicitTransactionTerminalPathsRecordSinglePersistentWALAbort(t *t
 				"%s must release the persistent Badger transaction reader", tt.name)
 
 			fresh := openBoltTestConn(t, port)
-			records := runBoltQueryAndCollectRecords(t, fresh,
-				"MATCH (r:Repository {repo_id: 'persistent-terminal-abandoned'}) RETURN count(r)")
+			records := runBoltQueryWithParams(t, fresh,
+				"MATCH (r:Repository {repo_id: 'persistent-terminal-abandoned'}) RETURN count(r)", nil)
 			require.Equal(t, [][]any{{int64(0)}}, records)
 
 			require.NoError(t, wal.Sync())
-			entries, err := storage.ReadWALEntriesFromDir(walDir)
+			entries, err := storage.ReadWALEntriesFromDir(t.Context(), walDir)
 			require.NoError(t, err)
 			operations := make(map[storage.OperationType]int)
 			for _, entry := range entries {

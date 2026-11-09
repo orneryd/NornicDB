@@ -5,8 +5,9 @@
 package multidb
 
 import (
-	"strings"
 	"sync"
+
+	"github.com/orneryd/nornicdb/internal/labelrouting"
 )
 
 // RoutingStrategy defines how queries are routed to constituent databases.
@@ -41,14 +42,14 @@ type QueryInfo struct {
 // LabelRouting routes queries based on node labels.
 // Each label is mapped to one or more constituent aliases.
 type LabelRouting struct {
-	labelMap map[string][]string // label -> []constituent aliases
+	labelMap labelrouting.Table // label -> []constituent aliases
 	mu       sync.RWMutex
 }
 
 // NewLabelRouting creates a new label-based routing strategy.
 func NewLabelRouting() *LabelRouting {
 	return &LabelRouting{
-		labelMap: make(map[string][]string),
+		labelMap: labelrouting.New(),
 	}
 }
 
@@ -56,40 +57,18 @@ func NewLabelRouting() *LabelRouting {
 func (r *LabelRouting) SetLabelRouting(label string, constituents []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.labelMap[strings.ToLower(label)] = constituents
+	r.labelMap.Set(label, constituents)
 }
 
 // RouteQuery routes a query based on labels.
 func (r *LabelRouting) RouteQuery(queryInfo *QueryInfo) []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-
-	if len(queryInfo.Labels) == 0 {
-		// No labels - route to all constituents (full scan)
-		return nil // nil means all constituents
+	selection := r.labelMap.Select(queryInfo.Labels)
+	if !selection.Kind.Complete() {
+		return nil
 	}
-
-	// Collect all constituents for all labels
-	constituentSet := make(map[string]bool)
-	for _, label := range queryInfo.Labels {
-		labelLower := strings.ToLower(label)
-		if constituents, exists := r.labelMap[labelLower]; exists {
-			for _, alias := range constituents {
-				constituentSet[alias] = true
-			}
-		} else {
-			// Label not in routing map - route to all (full scan)
-			return nil
-		}
-	}
-
-	// Convert set to list
-	result := make([]string, 0, len(constituentSet))
-	for alias := range constituentSet {
-		result = append(result, alias)
-	}
-
-	return result
+	return selection.Aliases
 }
 
 // RouteWrite routes a write operation based on labels.
@@ -102,8 +81,7 @@ func (r *LabelRouting) RouteWrite(operation string, labels []string, properties 
 	}
 
 	// Use first label for routing
-	labelLower := strings.ToLower(labels[0])
-	if constituents, exists := r.labelMap[labelLower]; exists && len(constituents) > 0 {
+	if constituents, exists := r.labelMap.Lookup(labels[0]); exists && len(constituents) > 0 {
 		// Route to first constituent for this label
 		return constituents[0]
 	}

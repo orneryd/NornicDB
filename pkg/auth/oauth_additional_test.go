@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,7 +22,7 @@ func newOAuthTestManager(t *testing.T, issuer string) *OAuthManager {
 
 	cfg := DefaultAuthConfig()
 	cfg.JWTSecret = []byte("oauth-additional-test-secret-32bytes")
-	auth, err := NewAuthenticator(cfg, storage.NewMemoryEngine())
+	auth, err := NewAuthenticator(cfg, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	if err != nil {
 		t.Fatalf("new authenticator: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestOAuthManager_HandleCallbackAndRefreshFlow(t *testing.T) {
 
 	state := "state-1"
 	mgr.states[state] = time.Now().Add(time.Minute)
-	user, token, expiry, err := mgr.HandleCallback("code-1", state)
+	user, token, expiry, err := mgr.HandleCallback(context.Background(), "code-1", state)
 	if err != nil {
 		t.Fatalf("handle callback failed: %v", err)
 	}
@@ -110,7 +112,7 @@ func TestOAuthManager_HandleCallbackAndRefreshFlow(t *testing.T) {
 
 	existingState := "state-2"
 	mgr.states[existingState] = time.Now().Add(time.Minute)
-	_, existingToken, _, err := mgr.HandleCallback("code-2", existingState)
+	_, existingToken, _, err := mgr.HandleCallback(context.Background(), "code-2", existingState)
 	if err != nil {
 		t.Fatalf("handle callback for existing OAuth user failed: %v", err)
 	}

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -26,7 +29,8 @@ func (e *StorageExecutor) sharedForeachForTest(ctx context.Context, query string
 		row[name] = edge
 	}
 	bindParameterRow(ctx, row)
-	clauses, ok, _ := parsePipelineClauses(query)
+	split := parsePipelineClauses(ctx, query)
+	clauses, ok := split.clauses, split.ok
 	if !ok {
 		return e.Execute(withValueBindings(ctx, row), query, getParamsFromContext(ctx))
 	}
@@ -35,7 +39,7 @@ func (e *StorageExecutor) sharedForeachForTest(ctx context.Context, query string
 		scope[name] = struct{}{}
 	}
 	ctx = withExpressionFailureSlot(ctx)
-	result, _, err := e.runPipelineClauses(ctx, []pipelineRow{row}, scope, clauses, clauses)
+	result, _, err := e.runPipelineClauseRows(ctx, []pipelineRow{row}, scope, clauses, clauses, nil)
 	if err == nil {
 		err = getExpressionFailure(ctx)
 	}
@@ -64,7 +68,8 @@ func (e *StorageExecutor) sharedPathComparisonForTest(left, right interface{}, o
 }
 
 func (e *StorageExecutor) sharedTrailingRowsHandledForTest(ctx context.Context, query string, input, output *ExecuteResult) (*ExecuteResult, bool, error) {
-	clauses, ok, _ := parsePipelineClauses(query)
+	split := parsePipelineClauses(ctx, query)
+	clauses, ok := split.clauses, split.ok
 	if !ok {
 		return nil, false, fmt.Errorf("invalid pipeline clauses: %s", query)
 	}
@@ -79,11 +84,12 @@ func (e *StorageExecutor) sharedTrailingRowsHandledForTest(ctx context.Context, 
 		bindParameterRow(ctx, row)
 		rows = append(rows, row)
 	}
-	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, clauses, nil)
 	if err == nil {
 		err = getExpressionFailure(ctx)
 	}
 	if err != nil {
+		recordExpressionFailure(ctx, err)
 		return nil, handled, err
 	}
 	if result != nil {
@@ -97,10 +103,10 @@ func (e *StorageExecutor) sharedTrailingRowsForTest(ctx context.Context, query s
 	return result, err
 }
 
-func sharedSetAssignmentForTest(entity interface{}, assignment unwindSimpleSetAssignment, values map[string]interface{}, _ func(string, map[string]interface{}) interface{}, _ *setWrites) (int, error) {
+func sharedSetAssignmentForTest(t testing.TB, entity interface{}, assignment unwindSimpleSetAssignment, values map[string]interface{}, _ func(string, map[string]interface{}) interface{}, _ *setWrites) (int, error) {
 	// NamespacedEngine.Close does not close its shared owner. This fixture owns
 	// the MemoryEngine and must close it directly.
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer base.Close()
 	store := storage.NewNamespacedEngine(base, "fixture")
 	row := pipelineRow(maps.Clone(values))
@@ -110,7 +116,7 @@ func sharedSetAssignmentForTest(entity interface{}, assignment unwindSimpleSetAs
 		copy := *original
 		copy.Properties = maps.Clone(original.Properties)
 		before = maps.Clone(original.Properties)
-		if _, err := store.CreateNode(&copy); err != nil {
+		if _, err := store.CreateNode(t.Context(), &copy); err != nil {
 			return 0, err
 		}
 		row["subject"] = &copy
@@ -124,15 +130,15 @@ func sharedSetAssignmentForTest(entity interface{}, assignment unwindSimpleSetAs
 		if copy.EndNode == "" {
 			copy.EndNode = "fixture-end"
 		}
-		if _, err := store.CreateNode(&storage.Node{ID: copy.StartNode}); err != nil {
+		if _, err := store.CreateNode(t.Context(), &storage.Node{ID: copy.StartNode}); err != nil {
 			return 0, err
 		}
 		if copy.EndNode != copy.StartNode {
-			if _, err := store.CreateNode(&storage.Node{ID: copy.EndNode}); err != nil {
+			if _, err := store.CreateNode(t.Context(), &storage.Node{ID: copy.EndNode}); err != nil {
 				return 0, err
 			}
 		}
-		if err := store.CreateEdge(&copy); err != nil {
+		if err := store.CreateEdge(t.Context(), &copy); err != nil {
 			return 0, err
 		}
 		row["subject"] = &copy
@@ -180,7 +186,12 @@ func (e *StorageExecutor) sharedSeededCallForTest(ctx context.Context, input *Ex
 
 func (e *StorageExecutor) sharedCorrelatedCallForTest(ctx context.Context, input *ExecuteResult, body string, imports []string) (*ExecuteResult, error) {
 	columns := append([]string(nil), input.Columns...)
-	for _, column := range e.StatementColumns(body) {
+	call := "CALL (" + strings.Join(imports, ", ") + ") { " + body + " }"
+	outputs, err := e.ResultColumns(ctx, call, resultmetadata.KnownScope(input.Columns), cypherVersionFromContext(ctx) == "25", RawSource)
+	if err != nil {
+		return nil, err
+	}
+	for _, column := range outputs {
 		if !slices.Contains(columns, column) {
 			columns = append(columns, column)
 		}
@@ -189,7 +200,7 @@ func (e *StorageExecutor) sharedCorrelatedCallForTest(ctx context.Context, input
 	if len(columns) > 0 {
 		projection = strings.Join(columns, ", ")
 	}
-	return e.sharedSeededCallForTest(ctx, input, "CALL ("+strings.Join(imports, ", ")+") { "+body+" } RETURN "+projection)
+	return e.sharedSeededCallForTest(ctx, input, call+" RETURN "+projection)
 }
 
 func (e *StorageExecutor) sharedTransactionalCallForTest(ctx context.Context, body string, batchSize int) (*ExecuteResult, error) {
@@ -209,7 +220,7 @@ func (e *StorageExecutor) sharedScopedTransactionalCallForTest(ctx context.Conte
 }
 
 func (e *StorageExecutor) sharedCallTailForTest(ctx context.Context, input *ExecuteResult, tail string) (*ExecuteResult, error) {
-	if _, parsed, _ := parsePipelineClauses(tail); !parsed {
+	if split := parsePipelineClauses(ctx, tail); !split.ok {
 		tail = "RETURN * " + tail
 	}
 	return e.sharedTrailingRowsForTest(ctx, tail, input, input)
@@ -313,8 +324,14 @@ func (e *StorageExecutor) sharedPipelineRowsForTest(ctx context.Context, query s
 }
 
 func (e *StorageExecutor) sharedCreateBindingsForTest(ctx context.Context, query string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
-	clauses, ok, _ := parsePipelineClauses(query)
+	split := parsePipelineClauses(ctx, query)
+	clauses, ok := split.clauses, split.ok
 	if !ok || len(clauses) == 0 || clauses[0].kind != pipelineClauseCreate {
+		if pattern := strings.TrimSpace(strings.TrimPrefix(query, "CREATE")); patternHasRelationship(pattern) {
+			if err := validateRelationshipMutation(pattern, createRelationshipMutation); err != nil {
+				return nil, nil, nil, fmt.Errorf("invalid relationship pattern: %w", err)
+			}
+		}
 		return nil, nil, nil, fmt.Errorf("invalid CREATE pipeline")
 	}
 	ctx = withExpressionFailureSlot(ctx)
@@ -1103,7 +1120,7 @@ func TestSetRejectsEmptyCommaSegmentsBeforeWrites(t *testing.T) {
 	} {
 		t.Run(query, func(t *testing.T) {
 			_, err := exec.Execute(ctx, query, nil)
-			requireSyntaxErrorStatus(t, err, query)
+			requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
 		})
 	}
 
@@ -1119,9 +1136,9 @@ func TestSetRejectsEmptyCommaSegmentsBeforeWrites(t *testing.T) {
 func TestMergeValidationTracksBindingsAcrossClauseComposition(t *testing.T) {
 	exec, _ := newConvergenceExecutor(t)
 
-	require.NoError(t, exec.validateMergeSemanticScopes("MATCH (source), (target) MERGE (source)-[relationship:LINK]->(target)", false))
-	require.NoError(t, exec.validateMergeSemanticScopes("MERGE (node:Item {value: $value})", false))
-	require.NoError(t, exec.validateMergeSemanticScopes("RETURN 1", false))
+	require.NoError(t, exec.validateMergeSemanticScopes(t.Context(), "MATCH (source), (target) MERGE (source)-[relationship:LINK]->(target)", false))
+	require.NoError(t, exec.validateMergeSemanticScopes(t.Context(), "MERGE (node:Item {value: $value})", false))
+	require.NoError(t, exec.validateMergeSemanticScopes(t.Context(), "RETURN 1", false))
 
 	tests := []struct {
 		name  string
@@ -1136,7 +1153,7 @@ func TestMergeValidationTracksBindingsAcrossClauseComposition(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := exec.validateMergeSemanticScopes(test.query, false)
+			err := exec.validateMergeSemanticScopes(t.Context(), test.query, false)
 			require.Error(t, err)
 			var semanticError *SemanticError
 			require.ErrorAs(t, err, &semanticError)
@@ -1152,11 +1169,11 @@ func TestMergeActionsRejectUndefinedVariablesBeforeExecution(t *testing.T) {
 		"MERGE (node) ON CREATE SET missing.value = 1",
 		"MERGE (node) ON MATCH SET missing.value = 1",
 	} {
-		clauses, ok := splitPipelineClauses(query)
+		clauses, ok := splitPipelineClauses(t.Context(), query)
 		require.True(t, ok)
 		require.Len(t, clauses, 1)
 		require.Equal(t, query, clauses[0].text)
-		require.Error(t, exec.validateMergeSemanticScopes(query, false))
+		require.Error(t, exec.validateMergeSemanticScopes(t.Context(), query, false))
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err)
 		var semanticError *SemanticError
@@ -1265,7 +1282,7 @@ func TestGh908CreateCompositionUsesPipeline(t *testing.T) {
 			require.NoError(t, err)
 			require.EqualValues(t, test.created, result.Stats.NodesCreated)
 			require.EqualValues(t, test.deleted, result.Stats.NodesDeleted)
-			nodes, err := exec.storage.GetNodesByLabel("X")
+			nodes, err := exec.storage.GetNodesByLabel(ctx, "X")
 			require.NoError(t, err)
 			require.Len(t, nodes, test.remainingX)
 			if test.columns != nil {
@@ -1297,7 +1314,7 @@ func TestGh908CreateCompositionDeleteSafety(t *testing.T) {
 				require.Error(t, err)
 				require.Contains(t, statusText(err), "Neo.ClientError.Schema.ConstraintValidationFailed")
 			}
-			nodes, err := exec.storage.AllNodes()
+			nodes, err := exec.storage.AllNodes(ctx)
 			require.NoError(t, err)
 			if detach {
 				require.Len(t, nodes, 1)
@@ -1305,11 +1322,21 @@ func TestGh908CreateCompositionDeleteSafety(t *testing.T) {
 			} else {
 				require.Empty(t, nodes)
 			}
-			edges, err := exec.storage.AllEdges()
+			edges, err := exec.storage.AllEdges(ctx)
 			require.NoError(t, err)
 			require.Empty(t, edges)
 		})
 	}
+}
+
+// requireNoStoredNodes asserts a failed pipeline left no node behind. It reads
+// through the caller's original, live parent context so the statement context
+// that failed or was cancelled cannot hide the stored state.
+func requireNoStoredNodes(t *testing.T, exec *StorageExecutor, ctx context.Context) {
+	t.Helper()
+	nodes, err := exec.storage.AllNodes(ctx)
+	require.NoError(t, err)
+	require.Empty(t, nodes)
 }
 
 func TestGh908RequiredPipelineDeclineHasNoEffects(t *testing.T) {
@@ -1318,23 +1345,19 @@ func TestGh908RequiredPipelineDeclineHasNoEffects(t *testing.T) {
 	require.Nil(t, result)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-	nodes, err := exec.storage.AllNodes()
-	require.NoError(t, err)
-	require.Empty(t, nodes)
+	requireNoStoredNodes(t, exec, ctx)
 }
 
 func TestGh908PipelineCreateCancellationHasNoEffects(t *testing.T) {
 	exec, ctx := newConvergenceExecutor(t)
-	ctx, cancel := context.WithCancel(ctx)
+	statementCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	rows, created, handled, err := exec.pipelineApplyCreateClauses(ctx, []pipelineRow{{}}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (a:Cancelled)"}})
+	rows, created, handled, err := exec.pipelineApplyCreateClauses(statementCtx, []pipelineRow{{}}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (a:Cancelled)"}})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, rows)
 	require.Nil(t, created)
 	require.False(t, handled)
-	nodes, err := exec.storage.AllNodes()
-	require.NoError(t, err)
-	require.Empty(t, nodes)
+	requireNoStoredNodes(t, exec, ctx)
 }
 
 func TestGh908FlatCreatePlanScopeAndReturnFailure(t *testing.T) {
@@ -1346,7 +1369,7 @@ func TestGh908FlatCreatePlanScopeAndReturnFailure(t *testing.T) {
 		require.NoError(t, outcome.err)
 		require.Equal(t, []string{"value"}, outcome.result.Columns)
 		require.Equal(t, [][]interface{}{{int64(7)}}, outcome.result.Rows)
-		nodes, err := exec.storage.GetNodesByLabel("Bound")
+		nodes, err := exec.storage.GetNodesByLabel(ctx, "Bound")
 		require.NoError(t, err)
 		require.Len(t, nodes, 1)
 		require.Equal(t, int64(7), nodes[0].Properties["value"])
@@ -1356,9 +1379,7 @@ func TestGh908FlatCreatePlanScopeAndReturnFailure(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (n:Failed) SET n.value = 1 RETURN n.value / 0", nil)
 		require.Error(t, err)
 		require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
-		nodes, err := exec.storage.AllNodes()
-		require.NoError(t, err)
-		require.Empty(t, nodes)
+		requireNoStoredNodes(t, exec, ctx)
 	})
 }
 
@@ -1384,28 +1405,55 @@ func TestGh908CreateDeleteRelationshipUsesMatchedRows(t *testing.T) {
 				require.Equal(t, []string{"count(r)"}, result.Columns)
 				require.Equal(t, [][]interface{}{{int64(test.writes)}}, result.Rows)
 			}
-			nodes, err := exec.storage.AllNodes()
+			nodes, err := exec.storage.AllNodes(ctx)
 			require.NoError(t, err)
 			require.Len(t, nodes, 4)
-			edges, err := exec.storage.AllEdges()
+			edges, err := exec.storage.AllEdges(ctx)
 			require.NoError(t, err)
 			require.Empty(t, edges)
 		})
 	}
 }
 
+// A relationship create the statement cannot perform fails the statement,
+// and the DELETE of that relationship in the same statement neither hides the
+// failure nor leaves an edge behind.
+//
+// The rejected write is a real one: the statement gives the relationship a
+// property value the storage schema cannot hold (a map), so the CREATE clause
+// rejects the relationship at its own write boundary. The former fake engine
+// injected the rejection below the executor, which the statement's atomic
+// owner no longer routes writes to: a local write statement stages its writes
+// in one transaction and never calls the engine the executor was built with.
+// Nothing here claims a storage-level fault - the schema rejection is the
+// supported public control, and the rollback and error transport it exercises
+// are the atomic owner's own.
 func TestGh908CreateDeleteRelationshipPropagatesWriteFailure(t *testing.T) {
 	base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "rejected-create-delete")
-	exec := NewStorageExecutor(&edgeRejectingEngine{Engine: base})
+	exec := NewStorageExecutor(base)
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:Actor), (:Movie)", nil)
 	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r:TEMP]->(m) DELETE r", nil)
-	require.ErrorIs(t, err, errEdgeRejected)
-	nodes, err := base.AllNodes()
+	_, err = exec.Execute(ctx, "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r:TEMP {props: {x: 1}}]->(m) DELETE r", nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "property value has unsupported type")
+	nodes, err := base.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
-	edges, err := base.AllEdges()
+	edges, err := base.AllEdges(ctx)
+	require.NoError(t, err)
+	require.Empty(t, edges)
+
+	// Sensitivity control: the same statement writes its relationship when it
+	// does not reject it, and the DELETE then leaves the graph as it was, so the
+	// assertions above are not satisfied by a query that never creates anything.
+	result, err := exec.Execute(ctx, "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r2:TEMP]->(m) DELETE r2 RETURN count(r2) AS deleted", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+	nodes, err = base.AllNodes(ctx)
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+	edges, err = base.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Empty(t, edges)
 }
@@ -1415,7 +1463,7 @@ func BenchmarkSetExecutionPaths(b *testing.B) {
 	benchmark := func(b *testing.B, execute func(*StorageExecutor, context.Context) error) {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "set-benchmark")
 		for index := 0; index < 100; index++ {
-			_, err := store.CreateNode(&storage.Node{
+			_, err := store.CreateNode(b.Context(), &storage.Node{
 				ID:     storage.NodeID(fmt.Sprintf("set-benchmark-%d", index)),
 				Labels: []string{"SetBenchmark"},
 				Properties: map[string]interface{}{

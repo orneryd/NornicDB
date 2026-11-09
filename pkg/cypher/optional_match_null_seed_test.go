@@ -48,14 +48,21 @@ func TestBug_OptionalMatchNullSeedDoesNotMatch(t *testing.T) {
 	require.Equal(t, []interface{}{int64(2), int64(1), int64(1), int64(1)}, res.Rows[0])
 }
 
-// fullScanCountingEngine counts full node scans; it exposes no transaction
-// support, so the executor reads through it directly.
+// fullScanCountingEngine counts full node scans. It is a transparent decorator:
+// every operation is the wrapped engine's, so it declares itself a
+// storage.EngineUnwrapper and the executor's implicit-transaction resolution
+// opens the write transaction on the engine underneath while this wrapper keeps
+// observing the statements' direct reads.
 type fullScanCountingEngine struct {
 	storage.Engine
 	allNodes atomic.Int64
 }
 
-func (e *fullScanCountingEngine) AllNodes() ([]*storage.Node, error) {
+// GetInnerEngine is the canonical EngineUnwrapper accessor; this wrapper adds
+// no behavior of its own.
+func (e *fullScanCountingEngine) GetInnerEngine() storage.Engine { return e.Engine }
+
+func (e *fullScanCountingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	e.allNodes.Add(1)
-	return e.Engine.AllNodes()
+	return e.Engine.AllNodes(ctx)
 }

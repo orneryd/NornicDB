@@ -109,6 +109,75 @@ def check_balance(examples: List[Dict]) -> List[str]:
     return issues
 
 
+# Structural delimiter characters whose counts the Cypher syntax check compares.
+STRUCTURAL_DELIMITERS = ("(", ")", "[", "]", "{", "}")
+
+
+def lexical_span_end(output: str, index: int) -> int:
+    """Return the index after Cypher lexical data starting at index, or -1.
+
+    This reader is the validator's single owner for quoted text and comments.
+    It mirrors the extent rules of internal/cyphertext (ScanQuotedText and
+    CommentEndStatus) and its browser peer ui/src/utils/cypherText.mjs:
+    backslash escapes apply to '...' and "..." strings but not to `...`
+    quoted identifiers, where a doubled backtick escapes the delimiter; //
+    runs to the line break and /* to the first */, each consuming the rest of
+    the query when unterminated. Callers skip the returned span only, so an
+    unterminated literal gains no diagnostic of its own.
+    """
+    if index < 0 or index >= len(output):
+        return -1
+
+    quote = output[index]
+    if quote in ("'", '"', "`"):
+        cursor = index + 1
+        while cursor < len(output):
+            character = output[cursor]
+            if character == "\\" and quote != "`":
+                cursor += 2
+                continue
+            if character != quote:
+                cursor += 1
+                continue
+            if quote == "`" and output.startswith("``", cursor):
+                cursor += 2
+                continue
+            return cursor + 1
+        return len(output)
+
+    if output.startswith("//", index):
+        cursor = index + 2
+        while cursor < len(output) and output[cursor] not in "\r\n":
+            cursor += 1
+        return cursor
+
+    if output.startswith("/*", index):
+        close = output.find("*/", index + 2)
+        return len(output) if close < 0 else close + 2
+
+    return -1
+
+
+def count_structural_delimiters(output: str) -> Dict[str, int]:
+    """Count each structural delimiter outside Cypher lexical data.
+
+    One streaming pass produces all three pair counts, so a query is never
+    copied. Callers keep the existing per-delimiter count comparison: only
+    what is counted changes, not the imbalance policy or report messages.
+    """
+    counts = {delimiter: 0 for delimiter in STRUCTURAL_DELIMITERS}
+    index = 0
+    while index < len(output):
+        span_end = lexical_span_end(output, index)
+        if span_end >= 0:
+            index = span_end
+            continue
+        if output[index] in counts:
+            counts[output[index]] += 1
+        index += 1
+    return counts
+
+
 def validate_cypher_syntax(examples: List[Dict]) -> List[str]:
     """Basic Cypher syntax validation."""
     issues = []
@@ -116,15 +185,16 @@ def validate_cypher_syntax(examples: List[Dict]) -> List[str]:
     # Simple syntax checks
     for i, ex in enumerate(examples, 1):
         output = ex["output"]
+        counts = count_structural_delimiters(output)
         
-        # Check for common syntax errors
-        if output.count("(") != output.count(")"):
+        # Check for common syntax errors, ignoring quoted text and comments
+        if counts["("] != counts[")"]:
             issues.append(f"Line {i}: Unbalanced parentheses")
         
-        if output.count("[") != output.count("]"):
+        if counts["["] != counts["]"]:
             issues.append(f"Line {i}: Unbalanced brackets")
         
-        if output.count("{") != output.count("}"):
+        if counts["{"] != counts["}"]:
             issues.append(f"Line {i}: Unbalanced braces")
         
         # Check for valid Cypher keywords

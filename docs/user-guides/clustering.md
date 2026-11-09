@@ -220,12 +220,21 @@ docker compose -f docker-compose.ha.yml logs -f
 
 ### Write Acknowledgment
 
-| Mode        | Description                 | Latency | Data Safety       |
-| ----------- | --------------------------- | ------- | ----------------- |
-| `async`     | Acknowledge immediately     | Lowest  | Risk of data loss |
-| `quorum`    | Wait for standby to apply   | Highest | Strongest         |
+| Mode        | Description                                                  | Latency | Data Safety       |
+| ----------- | ------------------------------------------------------------ | ------- | ----------------- |
+| `async`     | Acknowledge immediately, without waiting for the write's own replication WAL record to publish | Lowest  | Risk of data loss |
+| `quorum`    | Wait until the primary's own record is published, then until the standby acknowledges that exact record | Highest | Strongest         |
 
 `NORNICDB_CLUSTER_HA_SYNC_MODE` controls this behavior. Default is `async`.
+
+`quorum` spends one deadline on both steps: record publication and the standby
+acknowledgement share the write timeout, and publication delay reduces the time
+left for the acknowledgement instead of granting a second full timeout. The
+deadline ends your wait only. Accepted work is not retracted: the primary keeps
+applying and publishing the write and the standby may still receive it, so a
+timed-out `quorum` write can be present after the client saw an error. Retry
+writes with an application idempotency key rather than assuming the write was
+rejected. `async` never waits for publication and acquires no per-write timer.
 
 ### Local Dev (Two Processes)
 
@@ -707,6 +716,33 @@ The cluster transport listens on its own port (default `7000`) — separate from
 | `NORNICDB_CLUSTER_CROSS_REGION_MODE` | `async`           | Cross-region sync mode: `async`, `quorum` |
 | `NORNICDB_CLUSTER_CONFLICT_STRATEGY` | `last_write_wins` | Conflict resolution          |
 
+### Securing Replication Traffic
+
+The cluster port carries WAL batches, Raft votes and appends, fencing and forwarded writes. Protect it with a shared secret and TLS on every node:
+
+| Variable                                    | Default  | Description |
+| ------------------------------------------- | -------- | ----------- |
+| `NORNICDB_CLUSTER_REPLICATION_SECRET`       | -        | Shared secret, at least 32 characters, identical on every node. Every cluster message is signed with it, and messages without a valid signature are refused. |
+| `NORNICDB_CLUSTER_TLS_ENABLED`              | `false`  | TLS on the cluster port and on connections to peers. Needs `NORNICDB_CLUSTER_TLS_CERT_FILE` and `NORNICDB_CLUSTER_TLS_KEY_FILE`. |
+| `NORNICDB_CLUSTER_TLS_CA_FILE`              | -        | CA that peer certificates must chain to. |
+| `NORNICDB_CLUSTER_TLS_VERIFY_CLIENT`        | `true`   | Peers must present a client certificate from the CA (mutual TLS). Needs `NORNICDB_CLUSTER_TLS_CA_FILE`. |
+| `NORNICDB_CLUSTER_TLS_INSECURE_SKIP_VERIFY` | `false`  | Skip verification of peer server certificates. Testing only. |
+
+Boolean settings accept `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off`. Any other value, or a certificate, key or CA that can't be read, stops replication from starting rather than letting it run unprotected.
+
+**Replay protection.** When the replication secret is configured, every message must carry a fresh 16-byte nonce and `SignatureV2`, covering the message type, sender, timestamp, nonce and payload. Replay protection is always enabled for signed traffic. Old-format (v1 or nonce-less) messages are rejected. Each receiver remembers a sender's nonce until the message leaves the 30-second timestamp window; a replay within that window is rejected. The cache is per receiving node and starts empty after a restart.
+
+**Cluster upgrade requirement.** Upgrade every node in a cluster before resuming replication with this version. The cluster wire format is now MessagePack; older nodes use gob. Nodes running this version also reject old-format signed messages. Plan a coordinated cluster upgrade with an interruption to replication; a mixed-version rolling upgrade does not keep the cluster operational.
+
+During a mixed-version window, peers cannot decode each other's cluster messages and close the connection. Heartbeats, WAL replication, fencing and promotion between old and upgraded nodes fail; standbys stop catching up, Raft peers can lose quorum, and forwarded writes across the version boundary fail. Resume normal cluster service only after every node has been upgraded.
+
+**Embedding applications.** The cluster wire format is unchanged, but the Go
+`replication.Storage` contract changed: `ApplyCommand` now takes a wait context
+and a `WALPublicationMode` and returns a `CommandPublication`. Rebuild any custom
+`Storage` implementation or caller against it; see
+[replication architecture](../architecture/replication.md#migrating-a-custom-storage-implementation).
+The built-in `StorageAdapter` and all shipped replicators are already migrated.
+
 ---
 
 ## Best Practices
@@ -806,11 +842,11 @@ Client                  Leader               Follower 1         Follower 2
 
 ### Wire Protocol
 
-The cluster protocol uses a simple length-prefixed JSON format:
+The cluster protocol uses length-prefixed MessagePack messages:
 
 ```
 ┌─────────────┬─────────────────────────────────────┐
-│ Length (4B) │          JSON Payload               │
+│ Length (4B) │       MessagePack Payload           │
 │ Big Endian  │                                     │
 └─────────────┴─────────────────────────────────────┘
 ```
@@ -848,10 +884,10 @@ Formula: heartbeat_timeout < election_timeout / 2
 
 #### Write Ack Mode (`NORNICDB_CLUSTER_HA_SYNC_MODE`)
 
-| Mode        | Acknowledgment    | Data Safety       | Latency |
-| ----------- | ----------------- | ----------------- | ------- |
-| `async`     | Primary only      | Risk of data loss | Lowest  |
-| `quorum`    | Standby applied   | Strongest         | Highest |
+| Mode        | Acknowledgment                                                 | Data Safety       | Latency |
+| ----------- | -------------------------------------------------------------- | ----------------- | ------- |
+| `async`     | Primary only                                                   | Risk of data loss | Lowest  |
+| `quorum`    | Primary record published and standby applied that same record   | Strongest         | Highest |
 
 Default is `async` for lowest write latency; opt into `quorum` only when you need replication-acknowledged writes.
 

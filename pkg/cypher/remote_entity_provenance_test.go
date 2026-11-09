@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,15 +33,15 @@ func TestFabricRemoteEntityGraphFunctions(t *testing.T) {
 		_, _ = w.Write(wire)
 	}))
 	t.Cleanup(server.Close)
-	base := storage.NewMemoryEngine()
-	mgr, err := multidb.NewDatabaseManager(base, &multidb.Config{
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, &multidb.Config{
 		RemoteEngineFactory: func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
 			return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})
 		},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
-	require.NoError(t, mgr.CreateCompositeDatabase("remote_graph", []multidb.ConstituentRef{{Alias: "source", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: server.URL, AuthMode: "oidc_forwarding"}}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "remote_graph", []multidb.ConstituentRef{{Alias: "source", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: server.URL, AuthMode: "oidc_forwarding"}}))
 	store, err := mgr.GetStorage(mgr.DefaultDatabaseName())
 	require.NoError(t, err)
 	exec := NewStorageExecutor(store)
@@ -54,7 +55,7 @@ func TestFabricRemoteEntityGraphFunctions(t *testing.T) {
 		{"elementId(node)", "4:remote:node"},
 		{"elementId(relationship)", "5:remote:rel"},
 		{"properties(node)", map[string]interface{}{"id": "local-node", "name": "Remote"}},
-		{"properties(relationship)", map[string]interface{}{"id": "local-rel", "weight": float64(2)}},
+		{"properties(relationship)", map[string]interface{}{"id": "local-rel", "weight": int64(2)}},
 		{"keys(node)", []interface{}{"id", "name"}},
 		{"keys(relationship)", []interface{}{"id", "weight"}},
 		{"id(node)", nil}, // HTTP has always preserved only elementId at top level.
@@ -83,7 +84,7 @@ func TestRemoteHTTPGraphValueParameterBinding(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: server.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, query := range []string{
@@ -114,7 +115,7 @@ func TestRemoteEntityCacheIdentity(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: server.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	node := rows[0][0].(storage.RemoteEntityValue)
 	ordinary := map[string]interface{}(node)
@@ -157,7 +158,7 @@ func TestRemoteHTTPGraphValueParameterFunctions(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: server.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, tt := range []struct {
@@ -169,7 +170,7 @@ func TestRemoteHTTPGraphValueParameterFunctions(t *testing.T) {
 		{"id($node)", nil}, {"id($relationship)", nil},
 		{"keys($node)", []interface{}{"id", "name"}}, {"keys($relationship)", []interface{}{"id", "weight"}},
 		{"properties($node)", map[string]interface{}{"id": "local-node", "name": "Remote"}},
-		{"properties($relationship)", map[string]interface{}{"id": "local-rel", "weight": float64(2)}},
+		{"properties($relationship)", map[string]interface{}{"id": "local-rel", "weight": int64(2)}},
 		{"startNode($relationship)", nil}, {"endNode($relationship)", nil},
 	} {
 		t.Run(tt.expression, func(t *testing.T) {

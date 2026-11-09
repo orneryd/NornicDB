@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"sync"
 
@@ -10,9 +11,6 @@ import (
 
 // SearchApprox searches compressed IVF/PQ lists and returns approximate candidates.
 func (i *IVFPQIndex) SearchApprox(ctx context.Context, query []float32, k int, minSimilarity float64, nprobe int) ([]Candidate, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -110,7 +108,9 @@ func (i *IVFPQIndex) SearchApprox(ctx context.Context, query []float32, k int, m
 	if len(candidates) > boundCandidateLimit(k) {
 		candidates = candidates[:boundCandidateLimit(k)]
 	}
-	return candidates, nil
+	// The deferred pool return may immediately clear or reuse the heap.
+	// Readers own their result window independently of that scratch.
+	return slices.Clone(candidates), nil
 }
 
 func ivfpqQueryLUT(query []float32, codebooks []ivfpqCodebook) [][]float32 {
@@ -299,5 +299,8 @@ func (i *IVFPQIndex) putScratch(s *ivfpqScratch) {
 	if s == nil || i.scratchPool.New == nil {
 		return
 	}
+	// The heap fills a local header while heapData can still have length zero.
+	clear(s.heapData[:cap(s.heapData)])
+	s.heapData = s.heapData[:0]
 	i.scratchPool.Put(s)
 }

@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"strings"
 	"testing"
 )
@@ -11,34 +14,34 @@ func BenchmarkNodeBodyCacheStoreAndEvict(b *testing.B) {
 		nodeCacheMaxEntries:   64,
 		nodeBodyCacheMaxBytes: 64 << 10,
 	}
-	node := &Node{Labels: []string{"Document"}, Properties: map[string]any{"text": strings.Repeat("x", 2<<10)}, ChunkEmbeddings: [][]float32{make([]float32, 1024)}, EmbeddingsStoredSeparately: true}
+	node := &Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{EmbeddingsStoredSeparately: true}}, Labels: []string{"Document"}, Properties: map[string]any{"text": strings.Repeat("x", 2<<10)}, ChunkEmbeddings: [][]float32{make([]float32, 1024)}}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		node.ID = NodeID(itoaBench(i % 128))
-		engine.cacheStoreNodeBody(node.ID, uint64(i+1), node)
+		engine.cacheStoreNodeBody(node.ID, uint64(i+1), node, uint64(i+1))
 	}
 }
 
 func BenchmarkBadger_GetNode_CacheHit(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer engine.Close()
 
 	node := testNode("n1")
-	if _, err := engine.CreateNode(node); err != nil {
+	if _, err := engine.CreateNode(b.Context(), node); err != nil {
 		b.Fatal(err)
 	}
-	if _, err := engine.GetNode(node.ID); err != nil {
+	if _, err := engine.GetNode(b.Context(), node.ID); err != nil {
 		b.Fatal(err)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := engine.GetNode(node.ID); err != nil {
+		if _, err := engine.GetNode(b.Context(), node.ID); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -46,7 +49,7 @@ func BenchmarkBadger_GetNode_CacheHit(b *testing.B) {
 }
 
 func BenchmarkBadger_GetEdgesByType_CacheHit(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -54,23 +57,23 @@ func BenchmarkBadger_GetEdgesByType_CacheHit(b *testing.B) {
 
 	n1 := testNode("n1")
 	n2 := testNode("n2")
-	if _, err := engine.CreateNode(n1); err != nil {
+	if _, err := engine.CreateNode(b.Context(), n1); err != nil {
 		b.Fatal(err)
 	}
-	if _, err := engine.CreateNode(n2); err != nil {
+	if _, err := engine.CreateNode(b.Context(), n2); err != nil {
 		b.Fatal(err)
 	}
 
 	const edgeType = "KNOWS"
 	for i := 0; i < 100; i++ {
 		e := testEdge("e"+itoaBench(i), n1.ID, n2.ID, edgeType)
-		if err := engine.CreateEdge(e); err != nil {
+		if err := engine.CreateEdge(b.Context(), e); err != nil {
 			b.Fatal(err)
 		}
 	}
 
 	// Warm cache.
-	edges, err := engine.GetEdgesByType(edgeType)
+	edges, err := engine.GetEdgesByType(context.Background(), edgeType)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -81,7 +84,7 @@ func BenchmarkBadger_GetEdgesByType_CacheHit(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		edges, err := engine.GetEdgesByType(edgeType)
+		edges, err := engine.GetEdgesByType(context.Background(), edgeType)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -5,7 +5,7 @@ package cypher
 
 import (
 	"context"
-	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"sync"
 
@@ -47,8 +47,8 @@ func (p *createPlan) release() {
 	if cap(p.nodes) > 256 || cap(p.edges) > 256 || len(p.nodeBindings) > 64 || len(p.edgeBindings) > 64 {
 		return
 	}
-	clear(p.nodes)
-	clear(p.edges)
+	clear(p.nodes[:cap(p.nodes)])
+	clear(p.edges[:cap(p.edges)])
 	clear(p.nodeBindings)
 	clear(p.edgeBindings)
 	p.nodes = p.nodes[:0]
@@ -117,24 +117,15 @@ func (e *StorageExecutor) pipelineCreateSource(ctx context.Context, source pipel
 	return out, created, true, nil
 }
 
-func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, result *ExecuteResult) (map[string]PathResult, error) {
-	plan := acquireCreatePlan()
-	defer plan.release()
-	createdPaths, err := e.planCreatePatterns(ctx, pattern, createdNodes, createdEdges, plan)
-	if err != nil {
-		return nil, err
-	}
-	if err := e.applyCreatePlan(ctx, plan, result); err != nil {
-		return nil, err
-	}
-	return createdPaths, nil
-}
-
 // planCreatePatterns plans one CREATE clause into plan without writing:
 // every node and relationship is parsed, evaluated and validated, and bound
 // into createdNodes / createdEdges for later patterns and clauses. Adjacent
 // pipeline CREATE clauses share one plan and are published atomically.
-func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) {
+func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan, publication ...*ExecuteResult) (map[string]PathResult, error) {
+	if plan == nil {
+		plan = acquireCreatePlan()
+		defer plan.release()
+	}
 	for _, fragment := range splitTopLevelComma(pattern) {
 		_, body := parseCreatePathAssignment(strings.TrimSpace(fragment))
 		if !strings.HasPrefix(body, "(") || !strings.HasSuffix(strings.TrimSpace(body), ")") {
@@ -150,8 +141,16 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 		if nodePatternStr == "" {
 			continue
 		}
-		if _, err := e.planCreateNode(ctx, nodePatternStr, createdNodes, createdEdges, plan); err != nil {
+		pathVar, nodePattern := parseCreatePathAssignment(nodePatternStr)
+		node, err := e.planCreateNode(ctx, nodePattern, createdNodes, createdEdges, plan)
+		if err != nil {
 			return nil, err
+		}
+		if pathVar != "" {
+			if createdPaths == nil {
+				createdPaths = make(map[string]PathResult)
+			}
+			createdPaths[pathVar] = PathResult{Nodes: []*storage.Node{node}}
 		}
 	}
 
@@ -177,7 +176,7 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 			// The relationship is parsed and validated before its endpoints
 			// are created, so a rejected pattern writes nothing.
 			// Parse relationship type and properties
-			relType, relProps, err := e.parseRelationshipTypeAndProps(ctx, relStr)
+			relType, relProps, err := e.parseRelationshipTypeAndProps(ctx, relStr, entityRow(ctx, createdNodes, createdEdges))
 			if err != nil {
 				return nil, err
 			}
@@ -195,7 +194,7 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 
 			// Property keys follow the map-key rule (a symbolic name, or a
 			// backtick-quoted name holding any character).
-			if err := validateCreatePropertyKeys("["+relStr+"]", relProps); err != nil {
+			if err := validateCreatePropertyKeys(ctx, "["+relStr+"]", relProps); err != nil {
 				return nil, err
 			}
 
@@ -231,6 +230,9 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 				Type:       relType,
 				Properties: relProps,
 			}
+			if err := edge.SetEndpoints(startNode, endNode); err != nil {
+				return nil, err
+			}
 			plan.edges = append(plan.edges, edge)
 			if relVar != "" {
 				createdEdges[relVar] = edge
@@ -263,6 +265,11 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 			}
 		}
 	}
+	if len(publication) > 0 {
+		if err := e.applyCreatePlan(ctx, plan, publication[0]); err != nil {
+			return nil, err
+		}
+	}
 	return createdPaths, nil
 }
 
@@ -280,11 +287,26 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		return failure
 	}
 	store := e.getStorage(ctx)
+	for _, node := range plan.nodes {
+		if node.RuntimeMetadata().Database == "" {
+			{
+				metadata := node.RuntimeMetadata()
+				metadata.Database = storage.DatabaseOf(store)
+				node.SetRuntimeMetadata(metadata)
+			}
+		}
+	}
+	for _, edge := range plan.edges {
+		if edge.Database == "" {
+			edge.Database = storage.DatabaseOf(store)
+		}
+	}
+	// Every ID a create plan writes was minted for it (generateID).
 	switch len(plan.nodes) {
 	case 0:
 	case 1:
 		node := plan.nodes[0]
-		actualID, err := store.CreateNode(node)
+		actualID, err := createMintedNode(ctx, store, node)
 		if err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
@@ -292,7 +314,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			node.ID = actualID
 		}
 	default:
-		if err := store.BulkCreateNodes(plan.nodes); err != nil {
+		if err := bulkCreateMintedNodes(ctx, store, plan.nodes); err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
 	}
@@ -300,9 +322,9 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	switch len(plan.edges) {
 	case 0:
 	case 1:
-		edgeErr = store.CreateEdge(plan.edges[0])
+		edgeErr = createMintedEdge(ctx, store, plan.edges[0])
 	default:
-		edgeErr = store.BulkCreateEdges(plan.edges)
+		edgeErr = bulkCreateMintedEdges(ctx, store, plan.edges)
 	}
 	if edgeErr != nil {
 		// The clause's nodes are already written; remove them so the clause
@@ -312,7 +334,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			for i, node := range plan.nodes {
 				ids[i] = node.ID
 			}
-			_ = store.BulkDeleteNodes(ids)
+			_ = store.BulkDeleteNodes(ctx, ids)
 		}
 		return localizedError(localization.CypherMutationsCreateRelationshipFailed(edgeErr), edgeErr)
 	}
@@ -380,7 +402,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 	}
 	row := e.mergeBindingRow(ctx, out.nodes, out.edges)
 	for name, path := range out.paths {
-		row[name] = e.pathToMap(path)
+		row[name] = e.pathToMapContext(ctx, path)
 	}
 	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher[out.returnIdx:])
 	if err != nil {
@@ -413,11 +435,16 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	if err := e.validateCreatePatternPropertyMap(ctx, pattern); err != nil {
 		return nodePatternInfo{}, err
 	}
-	nodePattern := e.parseNodePattern(ctx, pattern)
+	head, propertyText := splitNodePatternProperties(pattern)
+	variable, labels, labelErr := parseNodeHead(head)
+	properties, err := e.materializePropertyMap(ctx, propertyText, entityRow(ctx, nodes, relationships), false, false)
+	if err != nil {
+		return nodePatternInfo{}, err
+	}
+	nodePattern := nodePatternInfo{variable: variable, labels: labels, labelErr: labelErr, properties: properties}
 	if parameterProperties != nil {
 		nodePattern.properties = parameterProperties
 	}
-	e.resolveCreatePropertyReferences(ctx, pattern, nodePattern.properties, nodes, relationships)
 	for key, value := range nodePattern.properties {
 		if value == nil {
 			delete(nodePattern.properties, key)
@@ -425,7 +452,7 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	}
 
 	// An empty label (e.g. "n:" or ":") - only check before properties.
-	head, _ := splitNodePatternProperties(pattern)
+	head, _ = splitNodePatternProperties(pattern)
 	if indexByteOutsideBackticks(head, ':') >= 0 && len(nodePattern.labels) == 0 {
 		return nodePatternInfo{}, localizedError(localization.CypherResidualEmptyLabelAfterColon(pattern), nil)
 	}
@@ -437,7 +464,7 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	// SECURITY: Validate property keys and values. Keys follow the map-key
 	// rule (a symbolic name, or a backtick-quoted name holding any
 	// character).
-	if err := validateCreatePropertyKeys(pattern, nodePattern.properties); err != nil {
+	if err := validateCreatePropertyKeys(ctx, pattern, nodePattern.properties); err != nil {
 		return nodePatternInfo{}, err
 	}
 	for key, val := range nodePattern.properties {
@@ -448,9 +475,7 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	if err := validatePropertyValues(nodePattern.properties); err != nil {
 		return nodePatternInfo{}, err
 	}
-	if err := e.validateNoTextFallthrough(ctx, pattern, nodePattern.properties, nodes, relationships); err != nil {
-		return nodePatternInfo{}, err
-	}
+
 	return nodePattern, nil
 }
 
@@ -462,130 +487,11 @@ func namedPathAssignmentPrefix(pattern string) bool {
 		return false
 	}
 	name := strings.TrimSpace(pattern[:i])
-	if len(name) >= 2 && name[0] == '`' && name[len(name)-1] == '`' {
-		return strings.TrimSpace(pattern[i+1:]) != ""
-	}
-	if name == "" || !isIdentStartByte(name[0]) {
+	end, ok := cyphertext.ScanIdentifier(name, 0)
+	if !ok || end.End != len(name) {
 		return false
 	}
-	for k := 1; k < len(name); k++ {
-		if !isIdentByte(name[k]) {
-			return false
-		}
-	}
 	return strings.TrimSpace(pattern[i+1:]) != ""
-}
-
-// validateNoTextFallthrough rejects a CREATE property map whose value is the
-// expression's own source text: the evaluator's "return as string" fallback
-// fires for expressions it cannot evaluate (an unbound variable, a malformed
-// expression), and Neo4j rejects those as syntax errors instead of storing
-// the query text as data (#514). A quoted string literal never trips this:
-// its stored value differs from the expression text by its quotes. Before
-// rejecting, the expression is re-run through the error-propagating row
-// evaluator with the pattern's bound nodes and relationships in scope: a
-// genuine evaluation failure (1 / 0) keeps its ArithmeticError, and an
-// expression the row evaluator resolves is fine — only a truly unevaluable
-// expression is a syntax error.
-func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern string, properties map[string]interface{}, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) error {
-	open := indexByteOutsideBackticks(pattern, '{')
-	if open < 0 {
-		return nil
-	}
-	close := e.findMatchingBrace(pattern, open)
-	if close < 0 {
-		return nil
-	}
-	for _, pair := range e.splitPropertyPairs(pattern[open+1 : close]) {
-		separator := findTopLevelMapKeyValueSeparator(pair)
-		if separator <= 0 {
-			continue
-		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
-		expression := strings.TrimSpace(pair[separator+1:])
-		if expression == "" {
-			continue
-		}
-		value, ok := properties[key]
-		if !ok {
-			continue
-		}
-		text, isString := value.(string)
-		if !isString || text != expression {
-			continue
-		}
-		if isWholeCypherQuotedString(expression) {
-			continue
-		}
-		values := make(map[string]interface{}, len(nodes)+len(relationships)+len(valueBindingsFromContext(ctx)))
-		for name, value := range valueBindingsFromContext(ctx) {
-			values[name] = value
-		}
-		for name, node := range nodes {
-			values[name] = node.Properties
-		}
-		for name, edge := range relationships {
-			values[name] = edge.Properties
-		}
-		if _, resolved, evalErr := e.evaluateRowValue(expression, values); evalErr != nil {
-			return evalErr
-		} else if resolved {
-			continue
-		}
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			fmt.Sprintf("Invalid input '%s': unknown expression", truncateQuery(expression, 80)))
-	}
-	return nil
-}
-
-func (e *StorageExecutor) resolveCreatePropertyReferences(
-	ctx context.Context,
-	pattern string,
-	properties map[string]interface{},
-	nodes map[string]*storage.Node,
-	relationships map[string]*storage.Edge,
-) {
-	if len(nodes) == 0 && len(relationships) == 0 && valueBindingsFromContext(ctx) == nil {
-		return // no variable in scope that a property could reference
-	}
-	open := indexByteOutsideBackticks(pattern, '{')
-	if open < 0 || strings.IndexByte(pattern[open:], '.') < 0 {
-		return
-	}
-	close := e.findMatchingBrace(pattern, open)
-	if close < 0 {
-		return
-	}
-	for _, pair := range e.splitPropertyPairs(pattern[open+1 : close]) {
-		separator := findTopLevelMapKeyValueSeparator(pair)
-		if separator <= 0 {
-			continue
-		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
-		expression := strings.TrimSpace(pair[separator+1:])
-		if expression == "" || isWholeCypherQuotedString(expression) {
-			continue
-		}
-		dot := strings.IndexByte(expression, '.')
-		if dot <= 0 {
-			continue
-		}
-		root := strings.TrimSpace(expression[:dot])
-		if nodes[root] == nil && relationships[root] == nil {
-			// Bound loop variables (FOREACH x, UNWIND rows): a dotted
-			// reference whose root lives in the value scope resolves
-			// through the binding-aware evaluator.
-			if _, ok := e.boundValue(ctx, root); !ok {
-				continue
-			}
-		}
-		value := e.evaluateExpressionWithContext(ctx, expression, nodes, relationships)
-		if value == nil {
-			delete(properties, key)
-			continue
-		}
-		properties[key] = normalizePropValue(value)
-	}
 }
 
 func (e *StorageExecutor) validateCreatePatternPropertyMap(ctx context.Context, pattern string) error {
@@ -606,17 +512,10 @@ func (e *StorageExecutor) validateCreatePatternPropertyMap(ctx context.Context, 
 }
 
 func parseCreatePathAssignment(pattern string) (string, string) {
-	trimmed := strings.TrimSpace(pattern)
-	eqIdx := strings.Index(trimmed, "=")
-	if eqIdx <= 0 {
-		return "", pattern
+	if name, _, start, ok := namedPathDeclaration(pattern, 0); ok {
+		return name, strings.TrimSpace(pattern[start:])
 	}
-	left := strings.TrimSpace(trimmed[:eqIdx])
-	right := strings.TrimSpace(trimmed[eqIdx+1:])
-	if left == "" || !isValidIdentifier(left) || !strings.HasPrefix(right, "(") {
-		return "", pattern
-	}
-	return left, right
+	return "", pattern
 }
 
 // splitCreatePatterns splits a CREATE pattern into individual patterns (nodes and relationships)
@@ -637,7 +536,7 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 	for i := 0; i < len(pattern); i++ {
 		c := pattern[i]
 
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			end := skipCypherQuotedText(pattern, i, c)
 			current.WriteString(pattern[i:end])
 			i = end - 1
@@ -653,7 +552,7 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 
 		if c == '$' && dynamicLabelStartsAt(pattern, i) {
 			// $(e): a dynamic label's or type's expression, not a node.
-			if end := findMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')'); end >= 0 {
+			if end := cyphertext.FindMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')', cyphertext.OpeningDelimiter); end >= 0 {
 				current.WriteString(pattern[i : end+1])
 				i = end
 				continue
@@ -661,6 +560,12 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 		}
 
 		// Normal parsing outside string literals
+		if cyphertext.IsWhitespaceAt(pattern, i) {
+			if depth > 0 || inRelationship {
+				current.WriteByte(c)
+			}
+			continue
+		}
 		switch c {
 		case '{':
 			braceDepth++
@@ -684,7 +589,7 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 				if depth == 0 {
 					// Check if next non-whitespace is a relationship operator
 					j := i + 1
-					for j < len(pattern) && (pattern[j] == ' ' || pattern[j] == '\t' || pattern[j] == '\n' || pattern[j] == '\r') {
+					for j < len(pattern) && (cyphertext.IsWhitespaceAt(pattern, j)) {
 						j++
 					}
 					if j < len(pattern) && (pattern[j] == '-' || pattern[j] == '<') {
@@ -710,11 +615,6 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 				continue
 			}
 			current.WriteByte(c)
-		case ' ', '\t', '\n', '\r':
-			if depth > 0 || inRelationship {
-				// Only keep whitespace inside patterns
-				current.WriteByte(c)
-			}
 		default:
 			if depth > 0 || inRelationship || c == '-' || c == '<' || c == '[' || c == ']' || c == '>' || c == ':' {
 				current.WriteByte(c)
@@ -726,7 +626,7 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 			// Preserve path assignment prefixes like "p=(:A)-[:R]->(:B)".
 			// We drop whitespace, but keep identifiers and "=" before the first "(".
 			if depth == 0 && !inRelationship {
-				if isIdentByte(byte(c)) || c == '=' {
+				if cyphertext.NamePartAt(pattern, i) || c == '=' {
 					current.WriteByte(c)
 				}
 			}
@@ -758,7 +658,7 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 
 	for i := 0; i < len(pattern); i++ {
 		c := pattern[i]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			end := skipCypherQuotedText(pattern, i, c)
 			if depth > 0 {
 				current.WriteString(pattern[i:end])
@@ -777,7 +677,7 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 		}
 		if c == '$' && dynamicLabelStartsAt(pattern, i) {
 			// $(e): a dynamic label's or type's expression, not a node.
-			if end := findMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')'); end >= 0 {
+			if end := cyphertext.FindMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')', cyphertext.OpeningDelimiter); end >= 0 {
 				if depth > 0 {
 					current.WriteString(pattern[i : end+1])
 				}
@@ -842,7 +742,7 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 // pattern with no type ("r", ":") yields an empty type. The type's shape
 // (one type, a quoted or identifier name) is checked before, by
 // validateSingleRelationshipDeclaration.
-func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string) (string, map[string]interface{}, error) {
+func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string, row pipelineRow) (string, map[string]interface{}, error) {
 	relStr = strings.TrimSpace(relStr)
 	relType := ""
 	var relProps map[string]interface{}
@@ -862,8 +762,12 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 	// rejects a relationship without exactly one type.
 	declaration := relationshipDeclarationOf(relStr)
 	if declaration.properties != "" {
-		if propsEnd := findMatchingDelimiter(declaration.properties, 0, '{', '}'); propsEnd > 0 {
-			relProps = e.parseProperties(ctx, declaration.properties[:propsEnd+1])
+		if propsEnd := cyphertext.FindMatchingDelimiter(declaration.properties, 0, '{', '}', cyphertext.OpeningDelimiter); propsEnd > 0 {
+			var err error
+			relProps, err = e.materializePropertyMap(ctx, declaration.properties[:propsEnd+1], row, false, false)
+			if err != nil {
+				return "", nil, err
+			}
 		}
 	}
 	relType = declaration.singleType()
@@ -881,13 +785,13 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 // inside or follows whitespace; after a name's character it is part of the
 // name, as in Neo4j.
 func splitPatternParameterMap(text string) (rest, parameter string, ok bool) {
-	trimmed := strings.TrimRight(text, " \t\r\n")
+	trimmed := strings.TrimRightFunc(text, cyphertext.IsWhitespace)
 	// The trailing token holds its own $s: $a$b is the parameter a$b.
 	start := len(trimmed)
-	for start > 0 && isIdentByte(trimmed[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(trimmed, start-1) {
 		start--
 	}
-	if start+1 >= len(trimmed) || trimmed[start] != '$' || start > 0 && !isASCIIWhitespace(trimmed[start-1]) {
+	if start+1 >= len(trimmed) || trimmed[start] != '$' || start > 0 && !cyphertext.IsWhitespaceAt(trimmed, start-1) {
 		return text, "", false
 	}
 	return trimmed[:start], trimmed[start:], true
@@ -898,67 +802,39 @@ func splitPatternParameterMap(text string) (rest, parameter string, ok bool) {
 // mismatch for parameter 'p': expected Map, Node or Relationship but was
 // Integer") when it isn't a map.
 func createParameterProperties(ctx context.Context, parameter string) (map[string]interface{}, error) {
-	value, _ := resolveDirectParamRef(ctx, parameter)
+	value, resolved := resolveValueReference(ctx, parameter, parameterName)
+	if err := getExpressionFailure(ctx); err != nil {
+		return nil, err
+	}
+	var evalErr error
+	value, evalErr = checkedPropertyResult(ctx, parameter, value, resolved, nil)
+	if evalErr != nil {
+		return nil, evalErr
+	}
+	if resolved && value == nil {
+		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "Expected a map but was Null")
+	}
 	properties, isMap := toStringAnyMap(value)
-	if !isMap {
+	if !resolved || !isMap {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
 			localization.CypherCoreParameterTypeMismatch(parameter[1:], "Map, Node or Relationship", staticParameterOperand(value).display))
 	}
 	return cloneNodePropertiesMap(properties), nil
 }
 
-// findAllKeywordPositions finds all positions of a keyword in the query
-func findAllKeywordPositions(cypher string, keyword string) []int {
-	var positions []int
-	keywordLen := len(keyword)
-
-	for i := 0; i <= len(cypher)-keywordLen; i++ {
-		// Check if keyword matches at this position (case insensitive)
-		if strings.EqualFold(cypher[i:i+keywordLen], keyword) {
-			// Check word boundary before
-			if i > 0 {
-				prevChar := cypher[i-1]
-				if isIdentByte(prevChar) {
-					continue // Part of another word
-				}
-			}
-			// Check word boundary after
-			if i+keywordLen < len(cypher) {
-				nextChar := cypher[i+keywordLen]
-				if isIdentByte(nextChar) {
-					continue // Part of another word
-				}
-			}
-			positions = append(positions, i)
-		}
-	}
-
-	// Handle nested MATCH in strings - check if position is inside quotes
-	var validPositions []int
-	for _, pos := range positions {
-		if !isInsideQuotes(cypher, pos) {
-			validPositions = append(validPositions, pos)
-		}
-	}
-
-	return validPositions
-}
-
 // isInsideQuotes checks if a position is inside quotes
 func isInsideQuotes(s string, pos int) bool {
-	inSingleQuote := false
-	inDoubleQuote := false
-
-	for i := 0; i < pos; i++ {
-		c := s[i]
-		if c == '\'' && !inDoubleQuote {
-			inSingleQuote = !inSingleQuote
-		} else if c == '"' && !inSingleQuote {
-			inDoubleQuote = !inDoubleQuote
+	for index := 0; index < pos && index < len(s); index++ {
+		if !isCypherQuoteByte(s[index]) {
+			continue
 		}
+		end := skipCypherQuotedText(s, index, s[index])
+		if end > pos {
+			return true
+		}
+		index = end - 1
 	}
-
-	return inSingleQuote || inDoubleQuote
+	return false
 }
 
 // parseCreateRelationshipContent splits a relationship's inside ("r:TYPE
@@ -983,7 +859,7 @@ func isSimpleVariable(content string) bool {
 		return false
 	}
 	for _, r := range content {
-		if !isIdentRune(r) {
+		if !cyphertext.NamePart(r) {
 			return false
 		}
 	}
@@ -997,48 +873,6 @@ func getKeys(m map[string]*storage.Node) []string {
 		keys = append(keys, k)
 	}
 	return keys
-}
-
-// resolveSetMergeSourceFromParams resolves identifier or dotted-path map sources from params.
-// Supported forms:
-//   - row
-//   - row.properties
-func resolveSetMergeSourceFromParams(params map[string]interface{}, source string) (interface{}, bool) {
-	if params == nil {
-		return nil, false
-	}
-	source = strings.TrimSpace(source)
-	if source == "" {
-		return nil, false
-	}
-	parts, ok := parseParamPathParts(source)
-	if !ok || len(parts) == 0 {
-		return nil, false
-	}
-
-	current, ok := params[parts[0]]
-	if !ok {
-		return nil, false
-	}
-	for _, part := range parts[1:] {
-		switch m := current.(type) {
-		case map[string]interface{}:
-			next, exists := m[part]
-			if !exists {
-				return nil, false
-			}
-			current = next
-		case map[interface{}]interface{}:
-			next, exists := m[part]
-			if !exists {
-				return nil, false
-			}
-			current = next
-		default:
-			return nil, false
-		}
-	}
-	return current, true
 }
 
 // parseParamPathParts parses dotted and bracketed map access paths.
@@ -1056,65 +890,44 @@ func parseParamPathParts(source string) ([]string, bool) {
 
 	parts := make([]string, 0, 4)
 	i := 0
-	readIdent := func(start int) (string, int, bool) {
-		if start >= len(source) {
-			return "", start, false
-		}
-		ch := source[start]
-		if !isIdentStartByte(ch) {
-			return "", start, false
-		}
-		j := start + 1
-		for j < len(source) {
-			c := source[j]
-			if !isIdentByte(c) {
-				break
-			}
-			j++
-		}
-		return source[start:j], j, true
-	}
-
-	root, next, ok := readIdent(i)
-	if !ok {
+	root, ok := cyphertext.ScanIdentifier(source, i)
+	if !ok || root.Quoted {
 		return nil, false
 	}
-	parts = append(parts, root)
-	i = next
+	parts = append(parts, root.Value)
+	i = root.End
 
 	for i < len(source) {
 		switch source[i] {
 		case '.':
 			i++
-			part, j, ok := readIdent(i)
-			if !ok {
+			part, ok := cyphertext.ScanIdentifier(source, i)
+			if !ok || part.Quoted {
 				return nil, false
 			}
-			parts = append(parts, part)
-			i = j
+			parts = append(parts, part.Value)
+			i = part.End
 		case '[':
 			i++
-			for i < len(source) && isWhitespace(source[i]) {
+			for i < len(source) && cyphertext.IsWhitespaceAt(source, i) {
 				i++
 			}
 			if i >= len(source) {
 				return nil, false
 			}
-			quote := source[i]
-			if quote != '\'' && quote != '"' {
+			if !isCypherStringQuoteByte(source[i]) {
 				return nil, false
 			}
-			i++
-			start := i
-			for i < len(source) && source[i] != quote {
-				i++
-			}
-			if i >= len(source) {
+			end, closed := scanCypherQuotedText(source, i, source[i])
+			if !closed {
 				return nil, false
 			}
-			key := source[start:i]
-			i++ // close quote
-			for i < len(source) && isWhitespace(source[i]) {
+			key, quoted := cyphertext.DecodeString(source[i:end], cyphertext.AcceptedSource)
+			if !quoted {
+				return nil, false
+			}
+			i = end
+			for i < len(source) && cyphertext.IsWhitespaceAt(source, i) {
 				i++
 			}
 			if i >= len(source) || source[i] != ']' {
@@ -1132,7 +945,7 @@ func parseParamPathParts(source string) ([]string, bool) {
 	return parts, true
 }
 
-func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
+func (e *StorageExecutor) buildCombinationsUsingWhereJoin(ctx context.Context,
 	patternMatches []struct {
 		variable string
 		nodes    []*storage.Node
@@ -1156,7 +969,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 	}
 
 	eqConstraints := make([]cartesianEqConstraint, 0, 4)
-	for _, term := range splitTopLevelAndConjuncts(whereClause) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, whereClause) {
 		term = strings.TrimSpace(term)
 		if term == "" {
 			continue
@@ -1238,7 +1051,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 			if !ok {
 				continue
 			}
-			k := cartesianValueKey(v)
+			k := cypherValueKey(v, cypherValueEqualityContract)
 			idx[k] = append(idx[k], n)
 		}
 		indexCache[cacheKey] = idx
@@ -1309,16 +1122,16 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 					if !ok {
 						continue
 					}
-					lookupKey := cartesianValueKey(baseVal)
+					lookupKey := cypherValueKey(baseVal, cypherValueEqualityContract)
 					if lookupOffset != 0 {
 						// Shift the value exactly: integer offsets use integer
 						// arithmetic (no float64 rounding above 2^53, #692).
 						// Floats keep their float keys so float offset joins
 						// still find their index entries.
-						if key, ok := cartesianShiftValueKey(baseVal, lookupOffset); ok {
+						if key, ok := cartesianShiftValueKey(baseVal, lookupOffset, cypherValueEqualityContract); ok {
 							lookupKey = key
 						} else if baseNum, numeric := toFloat64(baseVal); numeric {
-							lookupKey = cartesianValueKey(baseNum + float64(lookupOffset))
+							lookupKey = cypherValueKey(baseNum+float64(lookupOffset), cypherValueEqualityContract)
 						} else {
 							continue
 						}
@@ -1358,7 +1171,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 					break
 				}
 				if c.offset == 0 {
-					if cartesianValueKey(lv) != cartesianValueKey(rv) {
+					if cypherValueKey(lv, cypherValueEqualityContract) != cypherValueKey(rv, cypherValueEqualityContract) {
 						keep = false
 						break
 					}
@@ -1441,7 +1254,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 	for _, clause := range matchClauses {
 		whereForClause := ""
 		patternPart := clause
-		if whereIdx := findKeywordIndex(clause, "WHERE"); whereIdx > 0 {
+		if whereIdx := findKeywordIndex(ctx, clause, "WHERE"); whereIdx > 0 {
 			whereForClause = strings.TrimSpace(clause[whereIdx+5:])
 			patternPart = strings.TrimSpace(clause[:whereIdx])
 		}
@@ -1457,7 +1270,11 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 			if patternHasRelationship(p) {
 				return nil, false
 			}
-			info := e.parseNodePattern(ctx, p)
+			info, parseErr := e.parseNodePattern(ctx, p)
+			if parseErr != nil {
+				recordExpressionFailure(ctx, parseErr)
+				return nil, false
+			}
 			if info.variable == "" {
 				continue
 			}
@@ -1468,7 +1285,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 		}
 
 		if whereForClause != "" {
-			for _, term := range splitTopLevelAndConjuncts(whereForClause) {
+			for _, term := range splitTopLevelAndConjuncts(ctx, whereForClause) {
 				term = strings.TrimSpace(term)
 				if term != "" {
 					allWhereTerms = append(allWhereTerms, term)
@@ -1484,7 +1301,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 	// Try to resolve each variable from an ID equality predicate.
 	resolved := make(map[string]*storage.Node, len(variables))
 	for _, term := range allWhereTerms {
-		varName, node := e.resolveNodeFromIDEqualityTerm(term, params)
+		varName, node := e.resolveNodeFromIDEqualityTerm(ctx, term, params)
 		if varName == "" || node == nil {
 			continue
 		}
@@ -1519,7 +1336,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 // elementId(<var>) = <value> or id(<var>) = <value> and resolves the node.
 // Returns the variable name and resolved node, or ("", nil) if the term
 // doesn't match the expected shape.
-func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
+func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(ctx context.Context,
 	term string,
 	params map[string]interface{},
 ) (string, *storage.Node) {
@@ -1584,26 +1401,22 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 	} else {
 		// Literal value — strip surrounding quotes.
 		idValue = strings.TrimSpace(right)
-		if len(idValue) >= 2 {
-			if (idValue[0] == '\'' && idValue[len(idValue)-1] == '\'') ||
-				(idValue[0] == '"' && idValue[len(idValue)-1] == '"') {
-				idValue = idValue[1 : len(idValue)-1]
-			}
+		if decoded, quoted := cyphertext.DecodeString(idValue, cyphertext.AcceptedSource); quoted {
+			idValue = decoded
 		}
 		if idValue == "" {
 			return "", nil
 		}
 	}
 
-	// Strip canonical element ID prefix (4:dbname:rawid).
-	lookupID := idValue
-	if kind == "elementId" || strings.HasPrefix(lookupID, "4:") {
-		if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 && parts[0] == "4" {
-			lookupID = parts[2]
-		}
+	// Endpoint seeks use the same source selection as ordinary MATCH seeks.
+	// Ambiguous composite raw IDs stay on the normal predicate path.
+	lookupID, found, applicable := e.entitySeekLookup(idValue, "4", kind)
+	if !applicable || !found {
+		return "", nil
 	}
 
-	node, err := e.storage.GetNode(storage.NodeID(lookupID))
+	node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(lookupID))
 	if err != nil || node == nil {
 		return "", nil
 	}
@@ -1616,12 +1429,12 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 // (holding any character) in the pattern text. Only a key that is neither
 // is checked on the text by validateStaticMapKeys, which reports it, so a
 // pattern with plain keys isn't scanned again.
-func validateCreatePropertyKeys(text string, properties map[string]interface{}) error {
+func validateCreatePropertyKeys(ctx context.Context, text string, properties map[string]interface{}) error {
 	for key := range properties {
-		if isValidIdentifier(key) || strings.Contains(text, "`"+strings.ReplaceAll(key, "`", "``")+"`") {
+		if cyphertext.IsIdentifier(key) || strings.Contains(text, cyphertext.PrintIdentifier(key, nil, cyphertext.AcceptedSource)) {
 			continue
 		}
-		if err := validateStaticMapKeys(text); err != nil {
+		if err := validateStaticMapKeys(ctx, text); err != nil {
 			return err
 		}
 		return localizedError(localization.CypherMutationsInvalidPropertyKey(key), nil)

@@ -50,63 +50,13 @@ echo "    - /usr/local/var/nornicdb/data (database)"
 echo "    - /usr/local/var/nornicdb/models (AI models)"
 echo "    - /usr/local/var/log/nornicdb (logs)"
 
-# Copy default config if it doesn't exist
+# An upgrade must retain configuration, private environment, server arguments,
+# and the existing first-run state. Fresh installs wait for explicit setup.
 if [ ! -f "$USER_HOME/.nornicdb/config.yaml" ]; then
-    # Config should be bundled in package, copy from Resources
-    RESOURCES_PATH="$2/Contents/Resources"
-    if [ -f "$RESOURCES_PATH/default-config.yaml" ]; then
-        sudo -u $ACTUAL_USER cp "$RESOURCES_PATH/default-config.yaml" \
-            "$USER_HOME/.nornicdb/config.yaml"
-        echo "✓ Installed default configuration from package"
-    elif [ -f "$RESOURCES_PATH/nornicdb.example.yaml" ]; then
-        sudo -u $ACTUAL_USER cp "$RESOURCES_PATH/nornicdb.example.yaml" \
-            "$USER_HOME/.nornicdb/config.yaml"
-        echo "✓ Installed default configuration (fallback)"
-    else
-        sudo -u "$ACTUAL_USER" tee "$USER_HOME/.nornicdb/config.yaml" > /dev/null << 'EOF'
-# NornicDB Configuration
-# Edit via Settings app (⌘,) or manually
-
-server:
-  port: 7687
-  host: "localhost"
-  auth: "admin:admin"
-
-storage:
-  path: "/usr/local/var/nornicdb/data"
-
-embedding:
-  enabled: false
-  provider: "local"
-
-kmeans:
-  enabled: false
-
-auto_tlp:
-  enabled: false
-
-heimdall:
-  enabled: false
-EOF
-        echo "✓ Created minimal configuration"
-    fi
+    sudo -u "$ACTUAL_USER" cp /usr/local/share/nornicdb/default-config.yaml "$USER_HOME/.nornicdb/config.yaml"
+    sudo -u "$ACTUAL_USER" chmod 600 "$USER_HOME/.nornicdb/config.yaml"
+    sudo -u "$ACTUAL_USER" touch "$USER_HOME/.nornicdb/.first_run"
 fi
-
-# NOTE: We do NOT create the server LaunchAgent plist here!
-# The plist will be created by the menu bar app when the user completes
-# the first-run wizard. This ensures:
-# 1. User can configure encryption BEFORE any data is written
-# 2. launchd's KeepAlive doesn't auto-start the server prematurely
-
-# Make absolutely sure no old service is running
-sudo -u $ACTUAL_USER launchctl bootout gui/$USER_UID/com.nornicdb.server 2>/dev/null || true
-sudo -u $ACTUAL_USER launchctl remove com.nornicdb.server 2>/dev/null || true
-pkill -9 -f "nornicdb serve" 2>/dev/null || true
-
-# Remove any existing server plist to prevent auto-start
-rm -f "$USER_HOME/Library/LaunchAgents/com.nornicdb.server.plist" 2>/dev/null || true
-
-echo "✓ Server will start after first-run wizard completes"
 
 # Install menu bar app LaunchAgent for auto-start
 repair_legacy_user_file "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar.plist"
@@ -119,9 +69,7 @@ sudo -u "$ACTUAL_USER" tee "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar
     <string>com.nornicdb.menubar</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/open</string>
-        <string>-a</string>
-        <string>/Applications/NornicDB.app</string>
+        <string>/Applications/NornicDB.app/Contents/MacOS/NornicDB</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -133,18 +81,13 @@ sudo -u "$ACTUAL_USER" tee "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar
 </plist>
 EOF
 
-# Load the menu bar app LaunchAgent as the user
-sudo -u $ACTUAL_USER launchctl load "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar.plist" 2>/dev/null || true
+# Review saved settings after every installation, without replacing them or
+# auto-starting the database before the user sees the upgrade authorization.
+sudo -u "$ACTUAL_USER" touch "$USER_HOME/.nornicdb/.setup_review"
 
-# Launch menu bar app immediately
-if sudo -u "$ACTUAL_USER" open -a "/Applications/NornicDB.app"; then
-  echo "✓ Launched menu bar app (will auto-start on login)"
-else
-  echo "Menu bar app could not launch now; it will start at login" >&2
-fi
-
-# Create welcome file to trigger first-run wizard
-sudo -u "$ACTUAL_USER" touch "$USER_HOME/.nornicdb/.first_run"
+# One launch owner and an exact executable path: no LaunchServices lookup of
+# similarly named apps in old installer staging directories or source trees.
+sudo -u "$ACTUAL_USER" launchctl bootstrap "gui/$USER_UID" "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar.plist"
 
 echo ""
 echo "✅ NornicDB installation complete!"

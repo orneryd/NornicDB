@@ -36,17 +36,17 @@ func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate fun
 		break
 	}
 	beginner, ok := inner.(interface {
-		BeginTransaction() (*storage.BadgerTransaction, error)
+		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 	})
 	if !ok {
 		return storage.ErrNotImplemented
 	}
-	if drainer, ok := inner.(interface{ FlushWriteBehind() error }); ok {
-		if err := drainer.FlushWriteBehind(); err != nil {
+	if drainer, ok := inner.(interface{ FlushWriteBehind(context.Context) error }); ok {
+		if err := drainer.FlushWriteBehind(ctx); err != nil {
 			return err
 		}
 	}
-	tx, err := beginner.BeginTransaction()
+	tx, err := beginner.BeginTransaction(ctx)
 	if err != nil {
 		return err
 	}
@@ -78,20 +78,25 @@ func (s *storeTransaction) WithStoreTransaction(ctx context.Context, mutate func
 	return mutate(s)
 }
 
-func (s *storeTransaction) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	return s.tx.CreateNode(node)
+func (s *storeTransaction) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	return s.tx.CreateNode(ctx, node)
 }
 
-func (s *storeTransaction) UpdateNode(node *storage.Node) error { return s.tx.UpdateNode(node) }
-func (s *storeTransaction) DeleteNode(id storage.NodeID) error  { return s.tx.DeleteNode(id) }
-func (s *storeTransaction) GetNode(id storage.NodeID) (*storage.Node, error) {
-	return s.tx.GetNode(id)
+func (s *storeTransaction) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
+	return s.tx.UpdateGraphNode(ctx, updateRequest)
 }
-func (s *storeTransaction) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	return s.tx.GetNodesByLabel(label)
+func (s *storeTransaction) DeleteNode(ctx context.Context, id storage.NodeID) error {
+	return s.tx.DeleteGraphNode(ctx, id, storage.CascadeEdges)
 }
-func (s *storeTransaction) AllNodes() ([]*storage.Node, error) { return s.tx.AllNodes() }
-func (s *storeTransaction) GetAllNodes() []*storage.Node       { return s.tx.GetAllNodes() }
+func (s *storeTransaction) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	return s.tx.GetNode(ctx, id)
+}
+func (s *storeTransaction) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return s.tx.GetNodesByLabel(ctx, label)
+}
+func (s *storeTransaction) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return s.tx.AllNodes(ctx)
+}
 
 func (s *storeTransaction) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
 	return s.tx.StreamNodesWithOptions(ctx, opts, visit)

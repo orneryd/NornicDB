@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"path/filepath"
 	"testing"
@@ -13,7 +15,7 @@ import (
 // between two databases (#953). The result cache is off.
 func BenchmarkTxlogEntries(b *testing.B) {
 	dir := b.TempDir()
-	badger, err := storage.NewBadgerEngine(dir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -23,18 +25,18 @@ func BenchmarkTxlogEntries(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer wal.Close()
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(storage.NewWALEngine(badger, wal), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewWALEngine(badger, wal), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for i := 0; i < 10000; i++ {
 		database := "test"
 		if i%2 == 1 {
 			database = "other"
 		}
-		if _, err := wal.AppendTxBegin(database, "tx-bench", nil); err != nil {
+		if _, err := wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: "tx-bench", Metadata: nil}, database); err != nil {
 			b.Fatal(err)
 		}
 	}
 	for i := 0; i < 10000; i++ {
-		if _, err := wal.AppendTxCommit("other", "tx-other", 1); err != nil {
+		if _, err := wal.AppendWithDatabaseReturningSeq(storage.OpTxCommit, storage.WALTxData{TxID: "tx-other", OpCount: 1}, "other"); err != nil {
 			b.Fatal(err)
 		}
 	}

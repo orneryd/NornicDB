@@ -2,7 +2,6 @@ package adminimport
 
 import (
 	"archive/zip"
-	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/csv"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -117,7 +118,7 @@ func ImportFull(ctx context.Context, engine storage.Engine, opts Options) (Repor
 	}
 
 	target := storage.NewNamespacedEngine(engine, opts.DatabaseName)
-	if err := ensureEmpty(target); err != nil {
+	if err := ensureEmpty(ctx, target); err != nil {
 		return report, err
 	}
 
@@ -147,7 +148,8 @@ func ImportFull(ctx context.Context, engine storage.Engine, opts Options) (Repor
 		}
 	}
 	if opts.BuildIndexes {
-		svc := search.NewService(target)
+		svc := search.NewService(target, search.DefaultVectorDimensions, nil)
+		defer svc.Close()
 		if opts.DataDir != "" {
 			base := filepath.Join(opts.DataDir, "search", opts.DatabaseName)
 			svc.SetPersistenceEnabled(true)
@@ -284,7 +286,7 @@ func importNodeSource(ctx context.Context, engine storage.Engine, opts Options, 
 		}
 		nodes = append(nodes, node)
 		if len(nodes) >= opts.ChunkSize {
-			if err := engine.BulkCreateNodes(nodes); err != nil {
+			if err := engine.BulkCreateNodes(ctx, nodes); err != nil {
 				return err
 			}
 			report.NodesImported += int64(len(nodes))
@@ -292,7 +294,7 @@ func importNodeSource(ctx context.Context, engine storage.Engine, opts Options, 
 		}
 	}
 	if len(nodes) > 0 {
-		if err := engine.BulkCreateNodes(nodes); err != nil {
+		if err := engine.BulkCreateNodes(ctx, nodes); err != nil {
 			return err
 		}
 		report.NodesImported += int64(len(nodes))
@@ -351,7 +353,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		}
 		edges = append(edges, edge)
 		if len(edges) >= opts.ChunkSize {
-			if err := engine.BulkCreateEdges(edges); err != nil {
+			if err := engine.BulkCreateEdges(ctx, edges); err != nil {
 				if errors.Is(err, storage.ErrAlreadyExists) {
 					return newImportError(ExitDuplicateID, localization.AdminImportDuplicateRelationshipID(), err)
 				}
@@ -362,7 +364,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		}
 	}
 	if len(edges) > 0 {
-		if err := engine.BulkCreateEdges(edges); err != nil {
+		if err := engine.BulkCreateEdges(ctx, edges); err != nil {
 			if errors.Is(err, storage.ErrAlreadyExists) {
 				return newImportError(ExitDuplicateID, localization.AdminImportDuplicateRelationshipID(), err)
 			}
@@ -949,7 +951,7 @@ func (c closers) Close() error {
 
 func applySchema(ctx context.Context, engine storage.Engine, path string) error {
 	if strings.EqualFold(filepath.Ext(path), ".json") {
-		return applySchemaDefinition(engine, path)
+		return applySchemaDefinition(ctx, engine, path)
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -967,88 +969,65 @@ func applySchema(ctx context.Context, engine storage.Engine, path string) error 
 	return nil
 }
 
-func applySchemaDefinition(engine storage.Engine, path string) error {
+func applySchemaDefinition(ctx context.Context, engine storage.Engine, path string) error {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	var def storage.SchemaDefinition
-	if err := json.Unmarshal(contents, &def); err != nil {
+	if err := storage.DecodeSchemaDefinition(contents, &def); err != nil {
 		return err
 	}
-	schema := engine.GetSchema()
-	if err := schema.ReplaceFromDefinition(&def); err != nil {
-		return err
-	}
-	if err := rebuildSchemaDerivedState(engine, schema); err != nil {
-		return err
-	}
-	for _, constraint := range schema.GetAllConstraints() {
-		if err := storage.ValidateConstraintOnCreationForEngine(engine, constraint); err != nil {
-			return err
-		}
-	}
-	for _, typeConstraint := range schema.GetAllPropertyTypeConstraints() {
-		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(engine, typeConstraint); err != nil {
-			return err
-		}
-	}
-	for _, contract := range schema.GetAllConstraintContracts() {
-		if err := storage.ValidateConstraintContractOnCreationForEngine(engine, contract); err != nil {
-			return err
-		}
-	}
-	return nil
+	return engine.GetSchema().ReplaceDefinitionDurable(ctx, engine, &def)
 }
 
-func rebuildSchemaDerivedState(engine storage.Engine, schema *storage.SchemaManager) error {
-	if err := storage.RefreshUniqueConstraintValuesForEngine(engine, schema); err != nil {
-		return err
-	}
-	nodes, err := engine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		for _, label := range node.Labels {
-			for _, idx := range schema.GetCompositeIndexesForLabel(label) {
-				if idx == nil {
-					continue
-				}
-				if err := idx.IndexNode(node.ID, node.Properties); err != nil {
-					return err
-				}
+func splitCypherStatements(source string) []string {
+	// Hash-prefixed lines belong to the import script wrapper, not Cypher.
+	// Remove wrapper/full-line comments only outside opaque Cypher tokens.
+	var text strings.Builder
+	lineStart := true
+	for index := 0; index < len(source); {
+		character := source[index]
+		if lineStart && character == '#' {
+			// Hash comments are the script wrapper's separate line grammar.
+			end := strings.IndexAny(source[index:], "\r\n")
+			if end < 0 {
+				break
 			}
-		}
-	}
-	schema.MarkPropertyIndexesFilled()
-	return nil
-}
-
-func splitCypherStatements(s string) []string {
-	var out []string
-	scanner := bufio.NewScanner(strings.NewReader(s))
-	var b strings.Builder
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "//") || strings.HasPrefix(line, "#") {
+			index += end
 			continue
 		}
-		b.WriteString(line)
-		b.WriteByte('\n')
+		if lineStart && strings.HasPrefix(source[index:], "//") {
+			index = cyphertext.CommentEnd(source, index)
+			continue
+		}
+		if end, opaque := cyphertext.SkipToken(source, index); opaque {
+			text.WriteString(source[index:end])
+			index, lineStart = end, false
+			continue
+		}
+		text.WriteByte(character)
+		if character == '\n' || character == '\r' {
+			lineStart = true
+		} else if !cyphertext.IsWhitespaceAt(source, index) {
+			lineStart = false
+		}
+		index++
 	}
-	for _, stmt := range strings.Split(b.String(), ";") {
-		out = append(out, strings.TrimSpace(stmt))
+	script := text.String()
+	var out []string
+	for _, span := range cyphertext.StatementSpans(script) {
+		out = append(out, strings.TrimSpace(script[span.Start:span.End]))
 	}
 	return out
 }
 
-func ensureEmpty(engine storage.Engine) error {
-	nodes, err := engine.NodeCount()
+func ensureEmpty(ctx context.Context, engine storage.Engine) error {
+	nodes, err := engine.NodeCount(ctx)
 	if err != nil {
 		return err
 	}
-	edges, err := engine.EdgeCount()
+	edges, err := engine.EdgeCount(ctx)
 	if err != nil {
 		return err
 	}

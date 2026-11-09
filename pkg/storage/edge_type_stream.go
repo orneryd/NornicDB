@@ -55,13 +55,12 @@ func StreamEdgesByType(ctx context.Context, engine Engine, edgeType string, visi
 	if engine == nil || visit == nil {
 		return ErrInvalidData
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if streamer, ok := engine.(EdgeTypeStreamer); ok {
 		return streamer.StreamEdgesByType(ctx, edgeType, visit)
 	}
-	return visitEdgeSlice(ctx, engine.GetEdgesByType, edgeType, visit)
+	return visitEdgeSlice(ctx, func(edgeType string) ([]*Edge, error) {
+		return engine.GetEdgesByType(ctx, edgeType)
+	}, edgeType, visit)
 }
 
 // streamEdgesByTypeInScope is the scoped stream of an inner engine for the
@@ -70,9 +69,6 @@ func StreamEdgesByType(ctx context.Context, engine Engine, edgeType string, visi
 func streamEdgesByTypeInScope(ctx context.Context, engine Engine, scope, edgeType string, visit func(*Edge) error) error {
 	if engine == nil || visit == nil {
 		return ErrInvalidData
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if scoped, ok := engine.(ScopedEdgeTypeStreamer); ok {
 		return scoped.StreamEdgesByTypeInScope(ctx, scope, edgeType, visit)
@@ -121,15 +117,26 @@ func (b *BadgerEngine) StreamEdgesByType(ctx context.Context, edgeType string, v
 // records are read or decoded. An empty edgeType streams every edge, matching
 // GetEdgesByType("").
 func (b *BadgerEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edgeType string, visit func(*Edge) error) error {
+	return b.streamEdgesByTypeInScope(ctx, scope, edgeType, visibleRead, visit)
+}
+
+// StreamStoredEdgesByType is StreamEdgesByType for integrity work: it also
+// visits the relationships the visibility layer hides (StoredEntityReader).
+func (b *BadgerEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
+	return b.streamEdgesByTypeInScope(ctx, "", edgeType, storedRead, visit)
+}
+
+func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edgeType string, v readVisibility, visit func(*Edge) error) error {
+	return b.streamEdgesByTypeInScopeWithBodies(ctx, scope, edgeType, v, visit, nil)
+}
+
+func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, scope, edgeType string, v readVisibility, visit func(*Edge) error, body storedEdgeBodyVisitor) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 
@@ -139,17 +146,23 @@ func (b *BadgerEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edge
 	// edge overlay.
 	var overlay []*Edge
 	var touched map[EdgeID]bool
-	if b.writeBehind != nil {
+	var captureErr error
+	capture := func(w *WriteBehindBuffer) {
+		request := bufferedEntityRead{kind: bufferedEdges, prefix: scope}
 		if edgeType != "" {
-			overlay, touched = b.writeBehind.TypeOverlay(edgeType)
-		} else {
-			overlay, touched = b.writeBehind.AllEdgesOverlay()
+			request = bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope}
 		}
+		pendingEdges, err := b.readBufferedEntities(ctx, w, v, request)
+		if err != nil {
+			captureErr = err
+			return
+		}
+		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}
 
 	nowNanos := DecayScoringTime()
 	emit := func(edge *Edge) error {
-		if edge == nil || b.filterEdgeByDecay(edge, nowNanos) {
+		if edge == nil || b.filterEntityByDecay(v, edge, nowNanos) {
 			return nil
 		}
 		if len(touched) > 0 && touched[edge.ID] {
@@ -157,14 +170,26 @@ func (b *BadgerEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edge
 		}
 		return visit(edge)
 	}
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr // the canceled capture retires the scan
+		}
 		if edgeType == "" {
-			return b.streamAllEdgesInScopeTxn(ctx, txn, scope, emit)
+			var offer storedEdgeBodyVisitor
+			if body != nil && v == storedRead {
+				offer = func(id EdgeID, data []byte) (bool, error) {
+					if touched[id] {
+						return true, nil
+					}
+					return body(id, data)
+				}
+			}
+			return b.streamAllEdgesInScopeTxnWithBodies(ctx, txn, scope, emit, offer)
 		}
 		prefix := edgeTypeIndexPrefix(edgeType)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
-		checkTombstones := b.decayEnabled && !b.revealAll.Load()
+		checkTombstones := b.checksIndexTombstones(v)
 		for it.Rewind(); it.Valid(); it.Next() {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -190,12 +215,12 @@ func (b *BadgerEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edge
 			}
 		}
 		return nil
-	})
+	}, readViewOptions{scope: scope, scopeKind: readPrefixScope})
 	if err != nil {
 		return err
 	}
 	for _, e := range overlay {
-		if !edgeIDInScope(e.ID, scope) || b.filterEdgeByDecay(e, nowNanos) {
+		if !edgeIDInScope(e.ID, scope) {
 			continue
 		}
 		if err := visit(copyEdge(e)); err != nil {
@@ -220,13 +245,18 @@ func (b *BadgerEngine) readEdgeInTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, err
 	var edge *Edge
 	err = item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 		return decodeErr
 	})
 	return edge, err
 }
 
-func (b *BadgerEngine) streamAllEdgesInScopeTxn(ctx context.Context, txn *badger.Txn, scope string, emit func(*Edge) error) error {
+// storedEdgeBodyVisitor consumes a borrowed body inside Item.Value, or returns
+// false to request the ordinary strict reader. The caller owns visibility and
+// captured-overlay shadowing before it offers a body to this optional consumer.
+type storedEdgeBodyVisitor func(EdgeID, []byte) (bool, error)
+
+func (b *BadgerEngine) streamAllEdgesInScopeTxnWithBodies(ctx context.Context, txn *badger.Txn, scope string, emit func(*Edge) error, body storedEdgeBodyVisitor) error {
 	prefix := []byte{prefixEdge}
 	if scope != "" {
 		prefix = edgeKey(EdgeID(scope))
@@ -243,12 +273,23 @@ func (b *BadgerEngine) streamAllEdgesInScopeTxn(ctx context.Context, txn *badger
 		}
 		edgeID := EdgeID(key[1:])
 		var edge *Edge
+		var handled bool
 		if err := it.Item().Value(func(val []byte) error {
+			if body != nil {
+				var err error
+				handled, err = body(edgeID, val)
+				if err != nil || handled {
+					return err
+				}
+			}
 			var decodeErr error
-			edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+			edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 			return decodeErr
 		}); err != nil {
 			return err
+		}
+		if handled {
+			continue
 		}
 		if err := emit(edge); err != nil {
 			return err
@@ -257,26 +298,26 @@ func (b *BadgerEngine) streamAllEdgesInScopeTxn(ctx context.Context, txn *badger
 	return nil
 }
 
-// streamEdgesByTypeVisibleAtSnapshotWithView is the streaming form of
-// getEdgesByTypeVisibleAtSnapshotWithView: type candidates come from the same
-// physical snapshot an explicit transaction reads, one edge at a time.
-func (b *BadgerEngine) streamEdgesByTypeVisibleAtSnapshotWithView(ctx context.Context, scope, edgeType string, version MVCCVersion, view func(func(*badger.Txn) error) error, visit func(*Edge) error) error {
+// streamEdgesByTypeAtSnapshotWithView reads scoped type candidates and bodies
+// from the supplied physical snapshot using the requested visibility policy.
+func (b *BadgerEngine) streamEdgesByTypeAtSnapshotWithView(ctx context.Context, scope, edgeType string, version MVCCVersion, view func(func(*badger.Txn) error) error, v readVisibility, visit func(*Edge) error) error {
+	if err := b.pendingPrefixConflict(scope); err != nil {
+		return err
+	}
+
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return err
 	}
 	defer deregister()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	return view(func(txn *badger.Txn) error {
 		if edgeType == "" {
-			return b.iterateEdgesVisibleAtInTxn(txn, version, func(edge *Edge) error {
+			return b.iterateEdgesAtInTxn(ctx, txn, version, v, func(edge *Edge) error {
 				if edge == nil || !edgeIDInScope(edge.ID, scope) {
 					return nil
 				}
 				return visit(edge)
-			})
+			}, scope)
 		}
 		prefix := edgeTypeIndexPrefix(edgeType)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
@@ -293,7 +334,7 @@ func (b *BadgerEngine) streamEdgesByTypeVisibleAtSnapshotWithView(ctx context.Co
 			if !ok || edgeID == "" || !edgeIDInScope(edgeID, scope) {
 				continue
 			}
-			edge, getErr := b.getEdgeVisibleAtInTxn(txn, edgeID, version)
+			edge, getErr := b.getEdgeAtInTxn(txn, edgeID, version, mvccEntityRead{visibility: v})
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
 			}
@@ -355,7 +396,6 @@ func (c *CompositeEngine) StreamEdgesByType(ctx context.Context, edgeType string
 	if visit == nil {
 		return ErrInvalidData
 	}
-	seen := make(map[EdgeID]struct{})
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
@@ -366,11 +406,7 @@ func (c *CompositeEngine) StreamEdgesByType(ctx context.Context, edgeType string
 			if edge == nil {
 				return nil
 			}
-			if _, exists := seen[edge.ID]; exists {
-				return nil
-			}
-			seen[edge.ID] = struct{}{}
-			if err := visit(edge); err != nil {
+			if err := visit(c.sourceEdge(alias, engine, edge)); err != nil {
 				visitErr = err
 				return err
 			}

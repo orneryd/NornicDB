@@ -1,6 +1,8 @@
 package storage
 
-import "context"
+import (
+	"context"
+)
 
 // StreamEdgesByType visits the relationships of edgeType visible to the
 // transaction one at a time (EdgeTypeStreamer): the committed edges of its
@@ -8,23 +10,37 @@ import "context"
 // GetEdgesByType merges them, without collecting the type into a slice.
 // Committed reads are scoped to the transaction's database. Visited edges are
 // copies, so the callback may keep them.
+// Admission follows IncidentEdges: the caller's context ends a wait for the
+// transaction's lock, and a closed transaction reports ErrTransactionClosed
+// first. It also ends the retake after each visitor callback, so a canceled
+// stream stops when its visitor returns rather than waiting for that lock, and
+// a transaction the client closed or detached while the visitor ran is reported
+// the same way, before that retake waits.
 func (tx *BadgerTransaction) StreamEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
+	return tx.streamEdgesByType(ctx, edgeType, visibleRead, visit)
+}
+
+func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType string, v readVisibility, visit func(*Edge) error) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return err
 	}
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
+	frame := streamVisitFrame{held: true}
+	defer func() {
+		if frame.held {
+			tx.mu.Unlock()
+		}
+	}()
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
 	invokeVisit := func(edge *Edge) error {
-		tx.mu.Unlock()
-		err := visit(edge)
-		tx.mu.Lock()
-		return err
+		return streamVisitUnlocked(tx, ctx, &frame, edge, visit)
 	}
 	matches := func(edge *Edge) bool {
 		return edge != nil && (edgeType == "" || edge.Type == edgeType)
@@ -60,9 +76,9 @@ func (tx *BadgerTransaction) StreamEdgesByType(ctx context.Context, edgeType str
 		// Write-behind reads are read-committed: the engine's latest
 		// (overlaid) stream includes flushes that landed after the pinned
 		// snapshot.
-		err = tx.engine.StreamEdgesByTypeInScope(ctx, scope, edgeType, emitCommitted)
+		err = tx.engine.streamEdgesByTypeInScope(ctx, scope, edgeType, v, emitCommitted)
 	} else {
-		err = tx.engine.streamEdgesByTypeVisibleAtSnapshotWithView(ctx, scope, edgeType, tx.readTS, tx.withSnapshotViewLocked, emitCommitted)
+		err = tx.engine.streamEdgesByTypeAtSnapshotWithView(ctx, scope, edgeType, tx.readTS, tx.withSnapshotViewLocked, v, emitCommitted)
 	}
 	if err != nil {
 		return err

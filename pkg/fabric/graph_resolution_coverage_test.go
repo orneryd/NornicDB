@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"testing"
 
@@ -237,10 +238,6 @@ type recordingCypherExecutor struct {
 	databases []string
 }
 
-func (r *recordingCypherExecutor) ExecuteQuery(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	return r.ExecuteQueryWithRecord(ctx, dbName, engine, query, params, nil)
-}
-
 func (r *recordingCypherExecutor) ExecuteQueryWithRecord(_ context.Context, dbName string, _ storage.Engine, _ string, _ map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 	r.databases = append(r.databases, dbName)
 	return []string{"db"}, [][]interface{}{{dbName}}, nil
@@ -252,7 +249,7 @@ func (r *recordingCypherExecutor) ExecuteQueryWithRecord(_ context.Context, dbNa
 // the query on the constituent it names.
 func TestFabricExecutor_DynamicUseRunsOnResolvedConstituent(t *testing.T) {
 	catalog := graphResolutionCatalog()
-	fragment, err := NewFabricPlanner(catalog).Plan("USE graph.byName($g) MATCH (n) RETURN n", "cmp")
+	fragment, err := NewFabricPlanner(catalog, readDeclaredEffects()).Plan(t.Context(), "USE graph.byName($g) MATCH (n) RETURN n", "cmp", cyphertext.RawSource)
 	require.NoError(t, err)
 
 	recorder := &recordingCypherExecutor{}

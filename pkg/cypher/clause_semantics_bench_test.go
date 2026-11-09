@@ -19,7 +19,7 @@ func newClauseSemanticsBenchmarkExecutor(b *testing.B) (*StorageExecutor, storag
 
 func createBenchmarkNode(b *testing.B, store storage.Engine, id, label string) storage.NodeID {
 	b.Helper()
-	nodeID, err := store.CreateNode(&storage.Node{
+	nodeID, err := store.CreateNode(b.Context(), &storage.Node{
 		ID:     storage.NodeID(id),
 		Labels: []string{label},
 		Properties: map[string]interface{}{
@@ -34,7 +34,7 @@ func createBenchmarkNode(b *testing.B, store storage.Engine, id, label string) s
 
 func createBenchmarkEdge(b *testing.B, store storage.Engine, id, edgeType string, start, end storage.NodeID) {
 	b.Helper()
-	if err := store.CreateEdge(&storage.Edge{
+	if err := store.CreateEdge(b.Context(), &storage.Edge{
 		ID:        storage.EdgeID(id),
 		Type:      edgeType,
 		StartNode: start,
@@ -47,13 +47,13 @@ func createBenchmarkEdge(b *testing.B, store storage.Engine, id, edgeType string
 func BenchmarkMatchSemanticValidationCached(b *testing.B) {
 	exec, _ := newClauseSemanticsBenchmarkExecutor(b)
 	const query = `MATCH (source:Source)-[relationship:LINK]->(target:Target) RETURN source, relationship, target`
-	if err := exec.validateMatchSemanticScopes(query, false); err != nil {
+	if err := exec.validateMatchSemanticScopes(b.Context(), query, false); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := exec.validateMatchSemanticScopes(query, false); err != nil {
+		if err := exec.validateMatchSemanticScopes(b.Context(), query, false); err != nil {
 			b.Fatal(err)
 		}
 	}

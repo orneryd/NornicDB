@@ -24,14 +24,14 @@
 //	wal.SaveSnapshot(snapshot, "/path/to/snapshot.json")
 //
 //	// Recovery after crash
-//	engine, err = RecoverFromWAL("/path/to/wal", "/path/to/snapshot.json")
+//	engine, err = RecoverFromWAL(ctx, "/path/to/wal", "/path/to/snapshot.json")
 package storage
 
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -46,6 +46,9 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -126,14 +129,9 @@ const (
 	// "WALE" = WAL Entry
 	walMagic uint32 = 0x454C4157 // "WALE" in little-endian
 
-	// walFormatVersion for future format changes
-	// v1: original format (magic + version + length + payload + crc)
-	// v2: corruption-proof format with trailer canary and 8-byte alignment
-	walFormatVersion uint8 = 2
-
-	// walFormatVersionV3 stores the entry Data field as raw bytes instead of
-	// base64 JSON. v1/v2 payloads remain readable; new writes use v3.
-	walFormatVersionV3 uint8 = 3
+	// walFormatVersionCurrent identifies the v1.4.4 WAL record contract.
+	// Older frames are converted only by the authorized V4 startup migration.
+	walFormatVersionCurrent uint8 = 6
 
 	// walTrailer is written after every record to detect incomplete writes.
 	// If a crash occurs mid-write, the trailer will be missing or corrupted.
@@ -163,6 +161,12 @@ type WALEntry struct {
 	Data      []byte        `json:"data"`               // JSON-serialized operation data
 	Checksum  uint32        `json:"checksum"`           // CRC32 checksum for integrity
 	Database  string        `json:"database,omitempty"` // Database/namespace name (for multi-database support)
+	// Readers attach immutable file authority; JSON transport preserves it.
+	// Native writers leave this nil and encode authority once at epoch boundaries.
+	PropertyEpoch      *WALPropertyEpoch `json:"property_epoch,omitempty"`
+	framingVersion     uint8
+	recordEnd          uint64
+	propertyScopeReset bool
 }
 
 // WALNodeData holds node data for WAL entries with optional undo support.
@@ -224,10 +228,9 @@ type WALTxData struct {
 	OpCount  int               `json:"op_count,omitempty"` // For commit: number of operations
 }
 
-// WALPropKeyEntry is one staged property-key dictionary token of a buffered
-// commit. Replay must persist these before materializing the commit, or the
-// tokenized node/edge bodies reference property-key IDs the fresh engine's
-// dictionary does not know.
+// WALPropKeyEntry binds a source-store property token to its namespace and
+// name. Replay resolves that name through the destination dictionary before
+// applying the physical body; source numeric IDs are never installed there.
 type WALPropKeyEntry struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
@@ -242,6 +245,7 @@ type WALPropKeyEntry struct {
 // committed entities after replay (crash recovery is rare, so the full
 // rebuild is acceptable).
 type WALBufferedCommitData struct {
+	LogicalTxID string            `json:"logical_tx_id,omitempty"`
 	TxID        string            `json:"tx_id"`
 	Namespace   string            `json:"namespace,omitempty"`
 	Ops         []Operation       `json:"ops"`
@@ -251,27 +255,23 @@ type WALBufferedCommitData struct {
 	NodeMax     uint64            `json:"node_max,omitempty"`
 	EdgeMax     uint64            `json:"edge_max,omitempty"`
 	HasCounters bool              `json:"has_counters,omitempty"`
+	// NumericBindings identifies source-local node and edge IDs used by
+	// physical keys and compact bodies. Foreign replay resolves their names
+	// against the destination dictionary before applying those bytes.
+	NumericBindings []byte `json:"numeric_bindings,omitempty"`
 
-	// PropKeys / PropKeyCounters are the property-key dictionary tokens the
-	// commit staged; replay persists them before materializing the bodies.
+	// PropertyBindings binds every property token referenced by Writes,
+	// including persisted names. Import remaps tokens into the destination.
+	PropertyBindings             []byte `json:"property_bindings,omitempty"`
+	PropertyDictionaryID         string `json:"property_dictionary_id,omitempty"`
+	namedPropertiesAuthoritative bool
+	propertyEpoch                *walPropertyEpochState
+	// numericAliases exists only during the original store's historical WAL replay.
+	numericAliases map[walNumericToken]string
+
+	// Historical writers carried only newly staged keys and source counters.
 	PropKeys        []WALPropKeyEntry `json:"prop_keys,omitempty"`
 	PropKeyCounters map[string]uint64 `json:"prop_key_counters,omitempty"`
-}
-
-// propKeyDrain reconstructs the staged property-key dictionary drain the
-// buffered commit carried at ACK time.
-func (d *WALBufferedCommitData) propKeyDrain() propKeyTxnDrain {
-	var out propKeyTxnDrain
-	if len(d.PropKeys) > 0 {
-		out.pending = make([]propKeyPersistEntry, 0, len(d.PropKeys))
-		for _, entry := range d.PropKeys {
-			out.pending = append(out.pending, propKeyPersistEntry{namespace: entry.Namespace, name: entry.Name, id: entry.ID})
-		}
-	}
-	if len(d.PropKeyCounters) > 0 {
-		out.counters = d.PropKeyCounters
-	}
-	return out
 }
 
 // WALConfig configures WAL behavior.
@@ -357,7 +357,16 @@ func DefaultWALConfig() *WALConfig {
 // WAL provides write-ahead logging for durability.
 // Thread-safe for concurrent writes.
 type WAL struct {
-	mu sync.Mutex
+	mu                         trackedRWMutex
+	propertyDictionary         *propertyKeyDictionary
+	propertyEpoch              *WALPropertyEpoch
+	propertyEpochRevision      uint64
+	propertyEpochError         error
+	propertyEpochKnown         bool // physical stream state; never writer provenance
+	propertyEpochFormatChecked bool
+	// propertyEpochUnsealed mirrors the durable marker: the log may hold v4
+	// controls. Clean close and compaction convert only while it is set.
+	propertyEpochUnsealed bool
 	// syncMu serializes fsync syscalls without blocking Append. w.mu
 	// only guards Go-side state (bufio writer, encoder, segment
 	// bookkeeping) — the kernel-level fsync on w.file is independent
@@ -370,20 +379,28 @@ type WAL struct {
 	config   *WALConfig
 	file     *os.File
 	writer   *bufio.Writer
-	encoder  *json.Encoder
+	encoder  *valueconvert.JSONEncoder
 	sequence atomic.Uint64
 	entries  atomic.Int64
 	bytes    atomic.Int64
-	closed   atomic.Bool
+	// work is the WAL's one owner: the batch sync loop is its accepted work,
+	// its seal is the closed state, and Close is its one stop.
+	work lifecycle.WorkLifetime
+	// handleReleased (mu) records that the owner's dispose released the
+	// append handle. Admission is the owner's seal; this is only the handle.
+	handleReleased bool
 
 	segmentFirstSeq  uint64
 	segmentEntries   int64
 	segmentBytes     int64
 	segmentCreatedAt time.Time
+	// Per-instance fault injection for the compaction replacement boundary.
+	truncateReplace func(string, string) error
+	// Per-instance synchronization for the snapshot/close race regression.
+	beforeSnapshotLock func()
 
 	// Background sync goroutine
 	syncTicker *time.Ticker
-	stopSync   chan struct{}
 
 	// Stats
 	totalWrites   atomic.Int64
@@ -457,6 +474,9 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 	// This truncates only the *incomplete tail* (or the first corrupted tail record)
 	// back to the last known-good record boundary.
 	walPath := walActivePath(cfg.Dir)
+	if err := ValidateWALFormat(cfg.Dir, WALValidateCurrent); err != nil {
+		return nil, err
+	}
 	if repaired, diag, err := repairWALTailIfNeeded(walPath, cfg.Logger); err != nil {
 		return nil, err
 	} else if repaired && diag != nil {
@@ -486,51 +506,60 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 	}
 
 	w := &WAL{
-		config:   cfg,
-		file:     file,
-		writer:   bufio.NewWriterSize(file, 64*1024), // 64KB buffer
-		stopSync: make(chan struct{}),
+		config: cfg,
+		file:   file,
+		writer: bufio.NewWriterSize(file, 64*1024), // 64KB buffer
 		// D-07 subsystem-tag once: walLog inherits cfg.SlogLogger with
 		// subsystem=wal. Recovery, truncation, and corruption paths reuse it.
 		walLog: cfg.SlogLogger.With("subsystem", "wal"),
 	}
 	// cfg.Logger is guaranteed non-nil above.
-	w.encoder = json.NewEncoder(w.writer)
+	w.encoder = valueconvert.PropertyJSON.NewEncoder(w.writer)
+	// An unreadable marker is treated as present: conversion is then attempted.
+	if _, err := os.Stat(walPropertyEpochUnsealedPath(cfg.Dir)); !os.IsNotExist(err) {
+		w.propertyEpochUnsealed = true
+	}
 
 	// Load existing sequence number
-	if seq, err := w.loadLastSequence(); err == nil {
-		w.sequence.Store(seq)
+	seq, err := w.loadLastSequence()
+	if err != nil {
+		file.Close()
+		return nil, err
 	}
+	w.sequence.Store(seq)
 	w.loadActiveSegmentState()
 
 	// Start batch sync if configured
 	if cfg.SyncMode == "batch" && cfg.BatchSyncInterval > 0 {
 		w.syncTicker = time.NewTicker(cfg.BatchSyncInterval)
-		go w.batchSyncLoop()
+		if w.work.Enter() {
+			go w.batchSyncLoop()
+		}
 	}
 
 	return w, nil
 }
 
-// loadLastSequence reads the last sequence number from existing WAL.
-// Handles both legacy JSON format and new atomic format automatically.
+// loadLastSequence reads the last sequence number from the current-format WAL.
 func (w *WAL) loadLastSequence() (uint64, error) {
-	entries, err := ReadWALEntriesFromDir(w.config.Dir)
+	entries, err := ReadWALEntriesFromDir(w.work.Context(), w.config.Dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, err
-		}
-		return 0, nil
+		return 0, err
 	}
-	if len(entries) == 0 {
-		return 0, nil
+	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
+	if err != nil {
+		return 0, err
 	}
-	return entries[len(entries)-1].Sequence, nil
+	last := manifest.RetiredThrough
+	if len(entries) > 0 && entries[len(entries)-1].Sequence > last {
+		last = entries[len(entries)-1].Sequence
+	}
+	return last, nil
 }
 
 func (w *WAL) loadActiveSegmentState() {
 	activePath := walActivePath(w.config.Dir)
-	entries, err := ReadWALEntries(activePath)
+	entries, err := ReadWALEntries(w.work.Context(), activePath, nil)
 	if err != nil || len(entries) == 0 {
 		return
 	}
@@ -546,11 +575,13 @@ func (w *WAL) loadActiveSegmentState() {
 
 // batchSyncLoop periodically syncs writes to disk.
 func (w *WAL) batchSyncLoop() {
+	defer w.work.Leave()
+	stop := w.work.Context().Done()
 	for {
 		select {
 		case <-w.syncTicker.C:
 			w.Sync()
-		case <-w.stopSync:
+		case <-stop:
 			return
 		}
 	}
@@ -593,7 +624,7 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 		return 0, nil // WAL disabled, skip
 	}
 
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return 0, ErrWALClosed
 	}
 
@@ -602,10 +633,10 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
 	defer walJSONBufPool.Put(entryBuf)
 
-	// Retain the pooled legacy JSON projection and append its lossless recovery sidecar.
+	// Entity-bearing records use their single lossless recovery representation.
 	dataBytes, err := marshalWALRecoveryPayload(dataBuf, data)
 	if err != nil {
-		return 0, fmt.Errorf("wal: failed to marshal data: %w", err)
+		return 0, &walRecordRejection{cause: fmt.Errorf("wal: failed to marshal data: %w", err)}
 	}
 
 	// Create entry
@@ -621,15 +652,18 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if err := w.prepareUnboundWALRecordLocked(op); err != nil {
+		return 0, err
+	}
 
-	entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
+	entryBytes, err := processWALEntryPayload(walPayloadEncode, entryBuf, &entry, nil, 0)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
 	}
 
 	// Write atomically: full record in one Write when using bufio so the last record
 	// is never split across a buffer flush (avoids partial-write on recovery after close).
-	alignedRecordLen, err := writeAtomicRecordBufio(w.writer, entryBytes, walFormatVersionV3)
+	alignedRecordLen, err := writeAtomicRecordBufio(w.writer, entryBytes, walFormatVersionCurrent)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
@@ -674,40 +708,17 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 	return seq, nil
 }
 
-// AppendTxBegin writes a transaction-begin marker to the WAL.
-func (w *WAL) AppendTxBegin(database, txID string, metadata map[string]string) (uint64, error) {
-	return w.AppendWithDatabaseReturningSeq(OpTxBegin, WALTxData{
-		TxID:     txID,
-		Metadata: metadata,
-	}, database)
-}
-
-// AppendTxCommit writes a transaction-commit marker to the WAL.
-func (w *WAL) AppendTxCommit(database, txID string, opCount int) (uint64, error) {
-	return w.AppendWithDatabaseReturningSeq(OpTxCommit, WALTxData{
-		TxID:    txID,
-		OpCount: opCount,
-	}, database)
-}
-
-// AppendTxAbort writes a transaction-abort marker to the WAL.
-func (w *WAL) AppendTxAbort(database, txID, reason string) (uint64, error) {
-	return w.AppendWithDatabaseReturningSeq(OpTxAbort, WALTxData{
-		TxID:   txID,
-		Reason: reason,
-	}, database)
-}
-
 // AppendBufferedCommit writes the full payload of an acknowledged
 // write-behind commit to the WAL and pushes it to the kernel page cache
 // (write(2)) before returning, so the ACK never outruns the record that
 // survives kill -9. It deliberately skips fsync: power-loss durability
 // remains the durable synchronous path's contract.
-func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
+func (w *WAL) AppendBufferedCommit(c *bufferedCommit, dictionary *propertyKeyDictionary) error {
 	if w == nil || c == nil {
 		return nil
 	}
-	data := WALBufferedCommitData{
+	data := walBufferedCommitPayload{
+		LogicalTxID: c.logicalTxID,
 		TxID:        c.txID,
 		Namespace:   c.namespace,
 		Ops:         c.ops,
@@ -716,6 +727,13 @@ func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
 		NodeMax:     c.counterNodeMax,
 		EdgeMax:     c.counterEdgeMax,
 		HasCounters: c.hasCounters,
+	}
+	if c.walIDs != nil {
+		var err error
+		data.NumericBindings, err = captureWALNumericBindings(c.walIDs, c.writes, c.deletes, nil)
+		if err != nil {
+			return fmt.Errorf("wal: failed to bind buffered numeric IDs: %w", err)
+		}
 	}
 	if len(c.deletes) > 0 {
 		data.Deletes = make([]string, 0, len(c.deletes))
@@ -732,7 +750,7 @@ func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
 		}
 		data.PropKeyCounters = c.propKeyDrain.counters
 	}
-	if _, err := w.appendWithDatabaseForcedFlush(OpBufferedCommit, &data, c.namespace); err != nil {
+	if _, err := w.appendWithDatabaseForcedFlush(OpBufferedCommit, &data, c.namespace, dictionary); err != nil {
 		return fmt.Errorf("wal: failed to log buffered commit %q: %w", c.txID, err)
 	}
 	return nil
@@ -742,25 +760,36 @@ func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
 // difference: it flushes the userspace buffer to the kernel after the write,
 // regardless of DeferAppendFlush, so a crash cannot lose the record from the
 // userspace buffer before the ACK.
-func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, database string) (uint64, error) {
+func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, database string, dictionaries ...*propertyKeyDictionary) (uint64, error) {
 	if !config.IsWALEnabled() {
 		return 0, nil
 	}
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return 0, ErrWALClosed
 	}
 	if op != OpBufferedCommit {
 		return w.AppendWithDatabaseReturningSeq(op, data, database)
 	}
 
-	dataBuf := walJSONBufPool.Get().(*bytes.Buffer)
 	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
-	defer walJSONBufPool.Put(dataBuf)
 	defer walJSONBufPool.Put(entryBuf)
 
-	dataBytes, err := marshalJSONCompact(dataBuf, data)
+	// Physical Badger keys are arbitrary bytes, not UTF-8 text. The typed
+	// recovery codec preserves those keys and the operation images exactly.
+	// Keep the encoder's buffer until the entry has been written: compression
+	// can return its input unchanged for a small record.
+	payload, ok := data.(*walBufferedCommitPayload)
+	if !ok || payload == nil {
+		return 0, fmt.Errorf("wal: buffered commit requires its recovery payload")
+	}
+	encoder := getValueEncoder()
+	defer putValueEncoder(encoder)
+	dataBytes, err := encoder.recovery(payload)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to marshal data: %w", err)
+	}
+	if len(dataBytes) > maxBufferedWALPayloadBytes {
+		return 0, fmt.Errorf("wal: buffered commit exceeds decoded payload limit")
 	}
 	// The buffered-commit payload is the dominant WAL cost (it carries every
 	// write for kill -9 recovery); losslessly compress it so the WAL stays
@@ -778,12 +807,21 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	}
 
 	w.mu.Lock()
-	entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
+	if len(dictionaries) != 0 {
+		if err := w.ensurePropertyEpochLocked(dictionaries[0], false); err != nil {
+			w.mu.Unlock()
+			return 0, err
+		}
+	} else if err := w.prepareUnboundWALRecordLocked(op); err != nil {
+		w.mu.Unlock()
+		return 0, err
+	}
+	entryBytes, err := processWALEntryPayload(walPayloadEncode, entryBuf, &entry, nil, 0)
 	if err != nil {
 		w.mu.Unlock()
 		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
 	}
-	alignedRecordLen, err := writeAtomicRecordBufio(w.writer, entryBytes, walFormatVersionV3)
+	alignedRecordLen, err := writeAtomicRecordBufio(w.writer, entryBytes, walFormatVersionCurrent)
 	if err != nil {
 		w.mu.Unlock()
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
@@ -825,7 +863,7 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 // bulk seed: batchSyncLoop's 100ms ticks used to block every Append
 // for the duration of each fsync.
 func (w *WAL) Sync() error {
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return ErrWALClosed
 	}
 
@@ -920,7 +958,7 @@ func (w *WAL) rotateSegmentLocked(lastSeq uint64) error {
 	}
 	_ = syncDir(segmentDir)
 
-	manifest, err := loadWALManifest(w.config.Dir)
+	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
 	if err != nil {
 		return err
 	}
@@ -929,17 +967,28 @@ func (w *WAL) rotateSegmentLocked(lastSeq uint64) error {
 	if err == nil {
 		sizeBytes = info.Size()
 	}
-	manifest.Segments = append(manifest.Segments, WALSegment{
+	segment := WALSegment{
 		FirstSeq:  w.segmentFirstSeq,
 		LastSeq:   lastSeq,
 		SizeBytes: sizeBytes,
 		CreatedAt: w.segmentCreatedAt,
 		Path:      segmentName,
-	})
+	}
+	listed := false
+	for i := range manifest.Segments {
+		if manifest.Segments[i].Path == segmentName {
+			manifest.Segments[i] = segment
+			listed = true
+			break
+		}
+	}
+	if !listed {
+		manifest.Segments = append(manifest.Segments, segment)
+	}
 	sort.Slice(manifest.Segments, func(i, j int) bool {
 		return manifest.Segments[i].FirstSeq < manifest.Segments[j].FirstSeq
 	})
-	if err := writeWALManifest(w.config.Dir, manifest); err != nil {
+	if _, err := accessWALManifest(w.config.Dir, walPublishManifest, manifest); err != nil {
 		return err
 	}
 
@@ -954,12 +1003,19 @@ func (w *WAL) rotateSegmentLocked(lastSeq uint64) error {
 
 	w.file = file
 	w.writer = bufio.NewWriterSize(file, 64*1024)
-	w.encoder = json.NewEncoder(w.writer)
+	w.encoder = valueconvert.PropertyJSON.NewEncoder(w.writer)
 	w.segmentFirstSeq = 0
 	w.segmentEntries = 0
 	w.segmentBytes = 0
 	w.segmentCreatedAt = time.Time{}
 
+	w.propertyEpochKnown, w.propertyEpochFormatChecked = true, true
+	if w.propertyEpoch != nil || w.propertyDictionary != nil {
+		if err := w.writePropertyEpochLocked(w.propertyEpoch); err != nil {
+			return err
+		}
+		return w.writer.Flush()
+	}
 	return nil
 }
 
@@ -973,25 +1029,28 @@ func (w *WAL) Checkpoint() error {
 
 // Close closes the WAL, flushing all pending writes.
 func (w *WAL) Close() error {
-	if w.closed.Swap(true) {
-		return nil // Already closed
-	}
-
-	// Stop sync goroutine
-	if w.syncTicker != nil {
+	// The seal and the final handle release share the file owner. Epoch
+	// sealing also owns mu and must never mistake a Close waiting here for
+	// an already flushed and closed handle.
+	w.mu.Lock()
+	if w.work.CloseAdmission() && w.syncTicker != nil {
 		w.syncTicker.Stop()
-		close(w.stopSync)
 	}
+	w.mu.Unlock()
+	// Every caller, first or repeated, joins the one stop: the sync loop
+	// returns, then the final sync and handle release run once.
+	w.work.BeginStop(w.closeFile)
+	return w.work.JoinStopped()
+}
 
+// closeFile is the WAL owner's dispose, after the sync loop returned.
+func (w *WAL) closeFile() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-
-	// Final sync
-	if err := w.syncLocked(); err != nil {
-		// Log but continue closing
-	}
-
-	return w.file.Close()
+	syncErr := w.syncLocked()
+	closeErr := w.file.Close()
+	w.handleReleased = true
+	return compose.Outcomes(syncErr, closeErr)
 }
 
 // Stats returns current WAL statistics.
@@ -1012,7 +1071,7 @@ func (w *WAL) Stats() WALStats {
 		TotalSyncs:    w.totalSyncs.Load(),
 		LastSyncTime:  lastSync,
 		LastEntryTime: lastEntry,
-		Closed:        w.closed.Load(),
+		Closed:        w.work.Closing(),
 	}
 }
 
@@ -1102,8 +1161,7 @@ func CheckWALIntegrity(walPath string) (*WALIntegrityReport, error) {
 		return checkAtomicWALIntegrity(file, report)
 	}
 
-	report.Format = "legacy"
-	return checkLegacyWALIntegrity(file, report)
+	return nil, fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
 }
 
 func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALIntegrityReport, error) {
@@ -1136,6 +1194,9 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 		}
 
 		version := headerBuf[4]
+		if version != walFormatVersionCurrent {
+			return nil, unsupportedWALVersion(version)
+		}
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
 
 		if payloadLen > walMaxEntrySize {
@@ -1206,62 +1267,19 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 		}
 
 		// Decode entry for sequence tracking
-		entry, err := decodeWALEntry(payload, version)
+		entry, err := WALEntry{}, error(nil)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
 		if err != nil {
-			report.CorruptedEntries++
+			if storedCRC == computedCRC {
+				report.CorruptedEntries++
+			}
+			report.Healthy = false
+			report.Errors = append(report.Errors, fmt.Sprintf("cannot decode entry after seq %d: %v", lastGoodSeq, err))
 			continue
 		}
 
 		report.TotalEntries++
 		if storedCRC == computedCRC {
-			report.ValidEntries++
-			lastGoodSeq = entry.Sequence
-
-			if report.FirstSeq == 0 {
-				report.FirstSeq = entry.Sequence
-			}
-			report.LastSeq = entry.Sequence
-		}
-	}
-
-	return report, nil
-}
-
-func checkLegacyWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALIntegrityReport, error) {
-	decoder := json.NewDecoder(file)
-	var lastGoodSeq uint64
-
-	for {
-		var entry WALEntry
-		if err := decoder.Decode(&entry); err != nil {
-			if err == io.EOF {
-				break
-			}
-			report.Errors = append(report.Errors, fmt.Sprintf("JSON decode error: %v", err))
-			break
-		}
-
-		report.TotalEntries++
-		expected := crc32Checksum(entry.Data)
-
-		if entry.Checksum != expected {
-			report.Healthy = false
-			report.CorruptedEntries++
-
-			if entry.Operation == OpUpdateEmbedding {
-				report.SkippedEmbeddings++
-			} else {
-				diag := CorruptionDiagnostics{
-					CorruptedSeq: entry.Sequence,
-					Operation:    string(entry.Operation),
-					ExpectedCRC:  expected,
-					ActualCRC:    entry.Checksum,
-					LastGoodSeq:  lastGoodSeq,
-				}
-				diag.diagnoseCause()
-				report.CorruptionDetails = append(report.CorruptionDetails, diag)
-			}
-		} else {
 			report.ValidEntries++
 			lastGoodSeq = entry.Sequence
 
@@ -1290,8 +1308,12 @@ type Snapshot struct {
 
 // CreateSnapshot creates a point-in-time snapshot from the engine.
 func (w *WAL) CreateSnapshot(engine Engine) (*Snapshot, error) {
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return nil, ErrWALClosed
+	}
+
+	if err := checkNativeSnapshotPublication(engine); err != nil {
+		return nil, err
 	}
 
 	// Get current sequence
@@ -1302,14 +1324,14 @@ func (w *WAL) CreateSnapshot(engine Engine) (*Snapshot, error) {
 		return nil, fmt.Errorf("wal: checkpoint failed: %w", err)
 	}
 
-	// Get all nodes
-	nodes, err := engine.AllNodes()
+	// Every stored node and edge: the ones the visibility layer hides from
+	// reads are stored data too.
+	nodes, err := CollectStoredNodes(context.Background(), engine)
 	if err != nil {
 		return nil, fmt.Errorf("wal: failed to get nodes: %w", err)
 	}
 
-	// Get all edges
-	edges, err := engine.AllEdges()
+	edges, err := CollectStoredEdges(context.Background(), engine)
 	if err != nil {
 		return nil, fmt.Errorf("wal: failed to get edges: %w", err)
 	}
@@ -1374,7 +1396,7 @@ func saveSnapshot(snapshot *Snapshot, path string, syncDirectory func(string) er
 }
 
 // LoadSnapshot reads legacy JSON or NDS2 v1/v2 framed snapshots from disk.
-func LoadSnapshot(path string) (*Snapshot, error) {
+func LoadSnapshot(ctx context.Context, path string) (*Snapshot, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("wal: failed to open snapshot: %w", err)
@@ -1388,7 +1410,7 @@ func LoadSnapshot(path string) (*Snapshot, error) {
 	var snapshot Snapshot
 	if streaming {
 		snapshot.Version = "1.0"
-		metadata, err := readSnapshot(file, snapshotCollectionVisitor{snapshot: &snapshot}, &snapshot, materializedSnapshotRecordSize)
+		metadata, err := readSnapshot(ctx, file, snapshotCollectionVisitor{snapshot: &snapshot}, &snapshot, materializedSnapshotRecordSize)
 		if err != nil {
 			return nil, fmt.Errorf("wal: failed to decode snapshot: %w", err)
 		}
@@ -1462,47 +1484,98 @@ func PruneOldSnapshotFiles(dir string, cfg *WALConfig) error {
 	return nil
 }
 
-// TruncateAfterSnapshot truncates the WAL after a successful snapshot.
-// This removes all entries up to and including the snapshot sequence number,
-// preventing unbounded WAL growth. Call this after SaveSnapshot succeeds.
+// WALSnapshotMode selects the post-snapshot WAL work ManageSnapshot performs.
+type WALSnapshotMode uint8
+
+const (
+	// WALSnapshotTruncate reclaims the entries a snapshot covers. With WAL
+	// retention configured (RetentionMaxAge or RetentionMaxSegments, e.g.
+	// NORNICDB_WAL_RETENTION_MAX_AGE) entries are not dropped: the active WAL is
+	// sealed into a segment and retention removes only the sealed segments the
+	// snapshot covers that are past their age or count. Those entries stay
+	// readable (db.txlog.entries, replication, audit) for the retention period;
+	// recovery replays only entries after the snapshot. Without retention the
+	// covered entries are dropped.
+	WALSnapshotTruncate WALSnapshotMode = iota
+	// WALSnapshotRetention applies segment retention to sealed segments only. It
+	// never rotates or rewrites the active WAL and never seals property epochs.
+	WALSnapshotRetention
+)
+
+// String returns the stable mode name used in logs and test subtests.
+func (m WALSnapshotMode) String() string {
+	switch m {
+	case WALSnapshotTruncate:
+		return "truncate"
+	case WALSnapshotRetention:
+		return "retention"
+	default:
+		return "unknown"
+	}
+}
+
+// ManageSnapshot is the single owner of post-snapshot WAL management. Call it
+// after SaveSnapshot succeeds. Both modes take w.mu once and report ErrWALClosed
+// on a closed WAL.
 //
-// The process is crash-safe:
-//  1. Close current WAL file
-//  2. Read entries after snapshot sequence
-//  3. Write new WAL with only post-snapshot entries
-//  4. Atomically rename new WAL over old
-//  5. Reopen WAL for appends
+// WALSnapshotTruncate validates the WAL first. It is crash-safe:
+//  1. Validate and read the current WAL before closing it
+//  2. Write and sync a new WAL with only post-snapshot entries
+//  3. Atomically rename the new WAL over the old file
+//  4. Reopen the WAL for appends
 //
 // If the system crashes during truncation:
 //   - Old WAL remains intact (rename is atomic)
 //   - Recovery will replay full WAL (safe, just slower)
 //   - Retry truncation on next snapshot
 //
-// With WAL retention configured (RetentionMaxAge or RetentionMaxSegments,
-// e.g. NORNICDB_WAL_RETENTION_MAX_AGE), entries are not dropped here: the
-// active WAL is sealed into a segment and retention removes only the sealed
-// segments the snapshot covers that are past their age or count. The
-// entries stay readable (db.txlog.entries, replication, audit) for the
-// retention period; recovery replays only entries after the snapshot.
+// WALSnapshotRetention deletes sealed segments a snapshot covers that retention
+// no longer keeps. A zero snapshot sequence is a no-op.
 //
 // Example:
 //
 //	snapshot, _ := wal.CreateSnapshot(engine)
 //	SaveSnapshot(snapshot, "data/snapshot.json")
-//	wal.TruncateAfterSnapshot(snapshot.Sequence) // Reclaim disk space
-func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
-	if w.closed.Load() {
+//	wal.ManageSnapshot(ctx, snapshot.Sequence, WALSnapshotTruncate)  // Reclaim disk space
+//	wal.ManageSnapshot(ctx, snapshot.Sequence, WALSnapshotRetention) // Retention only
+func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSnapshotMode) error {
+	if w.work.Closing() {
 		return ErrWALClosed
+	}
+	if mode != WALSnapshotTruncate && mode != WALSnapshotRetention {
+		return fmt.Errorf("wal: invalid WAL snapshot mode %d", mode)
+	}
+	if w.beforeSnapshotLock != nil {
+		w.beforeSnapshotLock()
 	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	// Close publishes the closed state while holding the same lock. It may
+	// have won after the optimistic check above and before this acquisition.
+	if w.work.Closing() {
+		return ErrWALClosed
+	}
+
+	if mode != WALSnapshotTruncate {
+		return w.retainSealedSegmentsLocked(snapshotSeq)
+	}
+
+	// A missing or unreadable segment, unsupported format, or malformed manifest
+	// is not a corrupt tail that can be safely discarded after a snapshot.
+	// Check before closing the active file or changing any retained WAL state.
+	if err := ValidateWALFormat(w.config.Dir, WALValidateCurrent); err != nil {
+		return fmt.Errorf("wal: cannot truncate before validating WAL: %w", err)
+	}
 
 	if w.retainsSegments() {
 		if err := w.rotateSegmentLocked(w.sequence.Load()); err != nil {
 			return fmt.Errorf("wal: failed to seal segment before retention: %w", err)
 		}
-		return w.applyRetentionLocked(snapshotSeq)
+		if err := w.retainSealedSegmentsLocked(snapshotSeq); err != nil {
+			return err
+		}
+		return w.sealPropertyEpochsLocked()
 	}
 
 	// Flush pending writes before truncation
@@ -1510,8 +1583,65 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 		return fmt.Errorf("wal: failed to flush before truncate: %w", err)
 	}
 
-	// Close current WAL file
 	walPath := walActivePath(w.config.Dir)
+	// A failed read may include entries newer than the snapshot. Rewriting the
+	// file from a best-effort subset would turn an observable failure into data
+	// loss, so leave the active handle and WAL intact for recovery.
+	allEntries, readErr := ReadWALEntriesFromDir(ctx, w.config.Dir)
+	if readErr != nil {
+		if errors.Is(readErr, ErrWALCorrupted) || errors.Is(readErr, ErrWALChecksumFailed) {
+			diag := &CorruptionDiagnostics{
+				Timestamp:      time.Now(),
+				WALPath:        walPath,
+				BackupPath:     w.backupCorruptedWAL(walPath),
+				RecoveryAction: "truncate_refused",
+			}
+			if fi, err := os.Stat(walPath); err == nil {
+				diag.FileSize = fi.Size()
+			}
+			diag.diagnoseCause()
+			w.reportCorruption(diag, readErr)
+		}
+		return fmt.Errorf("wal: cannot truncate unreadable WAL: %w", readErr)
+	}
+	activeEntries, err := ReadWALEntries(ctx, walPath, nil)
+	if err != nil {
+		return fmt.Errorf("wal: cannot truncate unreadable active WAL: %w", err)
+	}
+	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
+	if err != nil {
+		return fmt.Errorf("wal: cannot load segments for truncation: %w", err)
+	}
+	var retainedSegments, coveredSegments []WALSegment
+	var retainedSegmentBytes int64
+	for _, segment := range manifest.Segments {
+		covered := segment.LastSeq <= snapshotSeq
+		if covered {
+			// Never discard a segment based solely on inaccurate range metadata.
+			path, pathErr := resolveWALSegmentPath(w.config.Dir, segment.Path)
+			if pathErr != nil {
+				return pathErr
+			}
+			entries, segmentErr := ReadWALEntries(ctx, path, nil)
+			if segmentErr != nil {
+				return fmt.Errorf("wal: cannot inspect segment for truncation: %w", segmentErr)
+			}
+			for _, entry := range entries {
+				if entry.Sequence > snapshotSeq {
+					covered = false
+					break
+				}
+			}
+		}
+		if covered {
+			coveredSegments = append(coveredSegments, segment)
+		} else {
+			retainedSegments = append(retainedSegments, segment)
+			retainedSegmentBytes += segment.SizeBytes
+		}
+	}
+
+	// Close current WAL file only after all entries have been read safely.
 	tmpPath := walPath + ".truncate.tmp"
 	tmpFile, err := os.Create(tmpPath)
 	if err != nil {
@@ -1523,56 +1653,13 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 		return fmt.Errorf("wal: failed to close for truncate: %w", err)
 	}
 
-	// Read all entries from current WAL
-	// Use best-effort read for truncation - corrupted entries before snapshotSeq
-	// can be safely discarded since the snapshot captured the state.
-	allEntries, readErr := ReadWALEntriesFromDir(w.config.Dir)
-
 	// Filter entries AFTER snapshot sequence
 	var keptEntries []WALEntry
-	if readErr != nil {
-		// WAL is corrupted, but snapshot was saved successfully.
-		// CRITICAL: Backup corrupted WAL for forensic analysis before modifying
-		backupPath := w.backupCorruptedWAL(walPath)
-
-		// Log detailed diagnostics
-		diag := &CorruptionDiagnostics{
-			Timestamp:      time.Now(),
-			WALPath:        walPath,
-			BackupPath:     backupPath,
-			RecoveryAction: "truncate_after_snapshot",
-		}
-		if fi, err := os.Stat(walPath); err == nil {
-			diag.FileSize = fi.Size()
-		}
-		diag.diagnoseCause()
-		w.reportCorruption(diag, readErr)
-
-		// Try to salvage entries after snapshot sequence using best-effort read.
-		keptEntries, _ = ReadWALEntriesAfterFromDir(w.config.Dir, snapshotSeq)
-		// D-07 single-record-per-event: collapse the original two-line
-		// fmt.Printf pair into a single structured WARN with backup_path
-		// as an attribute so log aggregators key on a single event.
-		if len(keptEntries) == 0 {
-			// No entries to keep - just start fresh with empty WAL
-			w.walLog.Warn("wal corrupted; snapshot saved; starting fresh wal",
-				"backup_path", backupPath,
-				"snapshot_seq", snapshotSeq,
-				"action", "truncate_after_snapshot",
-			)
-		} else {
-			w.walLog.Warn("wal partially corrupted; salvaged entries after snapshot",
-				"backup_path", backupPath,
-				"snapshot_seq", snapshotSeq,
-				"salvaged", len(keptEntries),
-				"action", "truncate_after_snapshot",
-			)
-		}
-	} else {
-		for _, entry := range allEntries {
-			if entry.Sequence > snapshotSeq {
-				keptEntries = append(keptEntries, entry)
-			}
+	// Retained segments stay in place. Folding them into the new active file
+	// would duplicate their records if the process stopped before cleanup.
+	for _, entry := range activeEntries {
+		if entry.Sequence > snapshotSeq {
+			keptEntries = append(keptEntries, entry)
 		}
 	}
 
@@ -1584,16 +1671,25 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
 	defer walJSONBufPool.Put(entryBuf)
 
+	var retainedEpoch *WALPropertyEpoch
 	for _, entry := range keptEntries {
+		headerBytes, err := w.writeRetainedPropertyEpochLocked(tmpWriter, &retainedEpoch, entry)
+		if err != nil {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			w.reopenWAL()
+			return fmt.Errorf("wal: retain property epoch: %w", err)
+		}
+		bytesWritten += headerBytes
 		// Serialize entry
-		entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
+		entryBytes, err := processWALEntryPayload(walPayloadEncode, entryBuf, &entry, nil, 0)
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
 			w.reopenWAL()
 			return fmt.Errorf("wal: failed to serialize entry seq %d: %w", entry.Sequence, err)
 		}
-		alignedRecordLen, err := writeAtomicRecordBufio(tmpWriter, entryBytes, walFormatVersionV3)
+		alignedRecordLen, err := writeAtomicRecordBufio(tmpWriter, entryBytes, walFormatVersionCurrent)
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
@@ -1618,12 +1714,12 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	}
 	tmpFile.Close()
 
-	_ = os.RemoveAll(walSegmentsDir(w.config.Dir))
-	_ = os.MkdirAll(walSegmentsDir(w.config.Dir), 0755)
-	_ = writeWALManifest(w.config.Dir, &WALManifest{Version: walManifestVersion})
-
 	// Atomically rename temp WAL over old WAL
-	if err := os.Rename(tmpPath, walPath); err != nil {
+	replace := os.Rename
+	if w.truncateReplace != nil {
+		replace = w.truncateReplace
+	}
+	if err := replace(tmpPath, walPath); err != nil {
 		os.Remove(tmpPath)
 		w.reopenWAL()
 		return fmt.Errorf("wal: failed to rename truncated WAL: %w", err)
@@ -1640,6 +1736,30 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 		return fmt.Errorf("wal: failed to reopen after truncate: %w", err)
 	}
 
+	// Publish the retained segment set only after the active replacement is
+	// durable. Removed segments contain no entries newer than the snapshot.
+	manifest.Segments = retainedSegments
+	if snapshotSeq > manifest.RetiredThrough {
+		manifest.RetiredThrough = snapshotSeq
+	}
+	if _, err := accessWALManifest(w.config.Dir, walPublishManifest, manifest); err != nil {
+		return fmt.Errorf("wal: failed to publish truncated segments: %w", err)
+	}
+	for _, segment := range coveredSegments {
+		path, pathErr := resolveWALSegmentPath(w.config.Dir, segment.Path)
+		if pathErr != nil {
+			return pathErr
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("wal: failed to remove covered segment: %w", err)
+		}
+	}
+	if len(coveredSegments) > 0 {
+		if err := syncDir(walSegmentsDir(w.config.Dir)); err != nil {
+			return fmt.Errorf("wal: failed to sync truncated segments: %w", err)
+		}
+	}
+
 	w.segmentFirstSeq = 0
 	w.segmentEntries = 0
 	w.segmentBytes = 0
@@ -1647,36 +1767,38 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	w.loadActiveSegmentState()
 
 	// Update stats
-	w.entries.Store(int64(len(keptEntries)))
-	w.bytes.Store(bytesWritten)
+	var retainedCount int64
+	for _, entry := range allEntries {
+		if entry.Sequence > snapshotSeq {
+			retainedCount++
+		}
+	}
+	w.entries.Store(retainedCount)
+	w.bytes.Store(bytesWritten + retainedSegmentBytes)
 
-	return nil
+	w.propertyEpoch, w.propertyEpochKnown, w.propertyEpochFormatChecked = retainedEpoch, true, true
+	return w.sealPropertyEpochsLocked()
 }
 
 // retainsSegments reports whether WAL retention is configured: sealed
 // segments are then kept for their age or count after a snapshot instead of
-// being dropped by TruncateAfterSnapshot.
+// being dropped by WALSnapshotTruncate.
 func (w *WAL) retainsSegments() bool {
 	return w.config.RetentionMaxAge > 0 || w.config.RetentionMaxSegments > 0
 }
 
-// ApplyRetention deletes sealed segments that are safe to drop after a snapshot.
-// Segments are only deleted if their last sequence is <= snapshotSeq.
-func (w *WAL) ApplyRetention(snapshotSeq uint64) error {
-	if w.closed.Load() {
-		return ErrWALClosed
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.applyRetentionLocked(snapshotSeq)
-}
-
-func (w *WAL) applyRetentionLocked(snapshotSeq uint64) error {
+// retainSealedSegmentsLocked deletes sealed segments that are safe to drop
+// after a snapshot. Segments are only deleted if their last sequence is
+// <= snapshotSeq, and the manifest is published before their files are removed.
+// Only segments already listed in the manifest are touched: the active WAL is
+// neither rotated nor rewritten and no property epoch is sealed. The caller
+// owns w.mu.
+func (w *WAL) retainSealedSegmentsLocked(snapshotSeq uint64) error {
 	if snapshotSeq == 0 {
 		return nil
 	}
 
-	manifest, err := loadWALManifest(w.config.Dir)
+	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
 	if err != nil {
 		return err
 	}
@@ -1718,16 +1840,28 @@ func (w *WAL) applyRetentionLocked(snapshotSeq uint64) error {
 		candidates = candidates[:len(candidates)-keepCount]
 	}
 
-	for _, seg := range candidates {
-		_ = os.Remove(filepath.Join(walSegmentsDir(w.config.Dir), seg.Path))
-	}
-
 	manifest.Segments = keep
+	for _, segment := range candidates {
+		if segment.LastSeq > manifest.RetiredThrough {
+			manifest.RetiredThrough = segment.LastSeq
+		}
+	}
 	sort.Slice(manifest.Segments, func(i, j int) bool {
 		return manifest.Segments[i].FirstSeq < manifest.Segments[j].FirstSeq
 	})
 
-	return writeWALManifest(w.config.Dir, manifest)
+	if _, err := accessWALManifest(w.config.Dir, walPublishManifest, manifest); err != nil {
+		return err
+	}
+	for _, seg := range candidates {
+		if err := os.Remove(filepath.Join(walSegmentsDir(w.config.Dir), seg.Path)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("wal: remove retained segment: %w", err)
+		}
+	}
+	if len(candidates) > 0 {
+		return syncDir(walSegmentsDir(w.config.Dir))
+	}
+	return nil
 }
 
 // reopenWAL reopens the WAL file for appending.
@@ -1739,9 +1873,10 @@ func (w *WAL) reopenWAL() error {
 		return fmt.Errorf("wal: failed to reopen: %w", err)
 	}
 
+	w.propertyEpochKnown, w.propertyEpochFormatChecked = false, false
 	w.file = file
 	w.writer = bufio.NewWriterSize(file, 64*1024)
-	w.encoder = json.NewEncoder(w.writer)
+	w.encoder = valueconvert.PropertyJSON.NewEncoder(w.writer)
 	w.segmentFirstSeq = 0
 	w.segmentEntries = 0
 	w.segmentBytes = 0
@@ -1752,31 +1887,22 @@ func (w *WAL) reopenWAL() error {
 }
 
 // ReadWALEntries reads all entries from a WAL file.
-// Supports both legacy JSON format and new atomic format with automatic detection.
+// Reads the current atomic WAL format; older WAL formats are rejected.
 // Returns error on corruption of critical entries (nodes, edges).
 // Embedding updates are safe to skip as they can be regenerated.
 //
-// Uses a discard *slog.Logger for recovery diagnostics. Callers that want
-// structured visibility into partial-write detection / skipped embedding
-// entries should use ReadWALEntriesWithLogger.
-func ReadWALEntries(walPath string) ([]WALEntry, error) {
-	return ReadWALEntriesWithLogger(walPath, discardWALSlog())
-}
-
-// ReadWALEntriesWithLogger is the slog-aware variant of ReadWALEntries.
-// D-07: callers (notably WAL recovery in pkg/nornicdb/storage_recovery.go)
-// thread a subsystem=wal_recovery logger so partial-write and corrupted-
-// embedding diagnostics land in the structured log stream.
-func ReadWALEntriesWithLogger(walPath string, logger *slog.Logger) ([]WALEntry, error) {
+// A nil logger discards recovery diagnostics. ctx supplies diagnostic provenance;
+// reading the WAL does not cancel accepted recovery work.
+func ReadWALEntries(ctx context.Context, walPath string, logger *slog.Logger) ([]WALEntry, error) {
 	entries := make([]WALEntry, 0)
-	err := visitWALEntriesWithLogger(walPath, logger, func(entry WALEntry) error {
+	err := visitWALEntriesWithLogger(ctx, walPath, logger, func(entry WALEntry) error {
 		entries = append(entries, entry)
 		return nil
 	})
 	return entries, err
 }
 
-func visitWALEntriesWithLogger(walPath string, logger *slog.Logger, visit func(WALEntry) error) error {
+func visitWALEntriesWithLogger(ctx context.Context, walPath string, logger *slog.Logger, visit func(WALEntry) error) error {
 	if logger == nil {
 		logger = discardWALSlog()
 	}
@@ -1789,11 +1915,14 @@ func visitWALEntriesWithLogger(walPath string, logger *slog.Logger, visit func(W
 	// Peek at first 4 bytes to detect format
 	header := make([]byte, 4)
 	n, err := file.Read(header)
-	if err == io.EOF || n == 0 {
+	if err == io.EOF {
 		return nil // Empty file
 	}
 	if err != nil {
 		return fmt.Errorf("wal: failed to read header: %w", err)
+	}
+	if n == 0 {
+		return nil
 	}
 
 	// Reset to beginning
@@ -1801,39 +1930,24 @@ func visitWALEntriesWithLogger(walPath string, logger *slog.Logger, visit func(W
 		return fmt.Errorf("wal: failed to seek: %w", err)
 	}
 
-	// Detect format: new format starts with magic "WALE", legacy starts with '{'
+	// The current atomic format starts with magic "WALE".
 	magic := binary.LittleEndian.Uint32(header)
 	if magic == walMagic {
-		return visitAtomicWALEntries(file, logger, visit)
+		return visitAtomicWALEntries(ctx, file, logger, visit)
 	}
 
-	// Legacy JSON format (for backward compatibility)
-	return visitLegacyWALEntries(file, logger, visit)
+	return fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
 }
 
-// readAtomicWALEntries reads entries in the new atomic format.
-// Format v1: [magic:4][version:1][length:4][payload:N][crc:4]
-// Format v2: [magic:4][version:1][length:4][payload:N][crc:4][trailer:8][padding:0-7]
-//
-// D-07: logger is a pre-bound (subsystem=wal_recovery) child; callers that
-// pass nil get an internal discard logger. No allocations in the steady
-// path beyond what the slog handler emits per record.
-func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error) {
-	entries := make([]WALEntry, 0)
-	err := visitAtomicWALEntries(file, logger, func(entry WALEntry) error {
-		entries = append(entries, entry)
-		return nil
-	})
-	return entries, err
-}
-
-func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
+func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
+	visit = withWALPropertyEpochs(visit)
 	if logger == nil {
 		logger = discardWALSlog()
 	}
 	var skippedEmbeddings int
 	var partialWriteDetected bool
 	var lastGoodSeq uint64
+	var offset uint64
 
 	reader := bufio.NewReader(file)
 	headerBuf := make([]byte, 9) // magic(4) + version(1) + length(4)
@@ -1865,9 +1979,8 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 
 		// Read version (for future compatibility)
 		version := headerBuf[4]
-		if version > walFormatVersionV3 {
-			return fmt.Errorf("%w: unsupported WAL version %d (max supported: %d)",
-				ErrWALCorrupted, version, walFormatVersionV3)
+		if version != walFormatVersionCurrent {
+			return unsupportedWALVersion(version)
 		}
 
 		// Read payload length
@@ -1877,6 +1990,11 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 				ErrWALCorrupted, payloadLen, walMaxEntrySize)
 		}
 
+		recordLen := int64(9 + payloadLen + 4)
+		if version >= 2 {
+			recordLen = alignUp(recordLen + 8)
+		}
+		offset += uint64(recordLen)
 		// Read payload
 		payload := make([]byte, payloadLen)
 		n, err = io.ReadFull(reader, payload)
@@ -1901,21 +2019,20 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 			return fmt.Errorf("wal: failed to read CRC: %w", err)
 		}
 
-		// Verify CRC
+		// If a regenerable embedding is corrupt, consume the entire frame before
+		// advancing; its trailer and alignment padding are not the next header.
 		storedCRC := binary.LittleEndian.Uint32(crcBuf)
 		computedCRC := crc32Checksum(payload)
+		skipEmbedding := false
 		if storedCRC != computedCRC {
-			// CRC mismatch - but check if it's an embedding we can skip
-			var entry WALEntry
-			if decoded, derr := decodeWALEntry(payload, version); derr == nil {
-				entry = decoded
-				if entry.Operation == OpUpdateEmbedding {
-					skippedEmbeddings++
-					continue
-				}
+			entry, decodeErr := WALEntry{}, error(nil)
+			_, decodeErr = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
+			if decodeErr == nil && entry.Operation == OpUpdateEmbedding {
+				skipEmbedding = true
+			} else {
+				return fmt.Errorf("%w: CRC mismatch (stored=%x, computed=%x) after seq %d",
+					ErrWALChecksumFailed, storedCRC, computedCRC, lastGoodSeq)
 			}
-			return fmt.Errorf("%w: CRC mismatch (stored=%x, computed=%x) after seq %d",
-				ErrWALChecksumFailed, storedCRC, computedCRC, lastGoodSeq)
 		}
 
 		// Version 2+: Read and verify trailer canary
@@ -1958,13 +2075,20 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 			}
 		}
 
+		if skipEmbedding {
+			skippedEmbeddings++
+			continue
+		}
+
 		// Decode entry
-		entry, err := decodeWALEntry(payload, version)
+		entry, err := WALEntry{}, error(nil)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
 		if err != nil {
 			return fmt.Errorf("%w: failed to decode entry after seq %d: %v",
 				ErrWALCorrupted, lastGoodSeq, err)
 		}
 
+		entry.recordEnd = offset
 		// Also verify the inner data checksum
 		expectedDataCRC := crc32Checksum(entry.Data)
 		if entry.Checksum != expectedDataCRC {
@@ -1983,57 +2107,10 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 	}
 
 	if partialWriteDetected {
-		logWALRecoveryEvent(logger, localization.StorageWALIncompleteWriteEvent())
+		logStorageEvent(ctx, logger, slog.LevelWarn, localization.StorageWALIncompleteWriteEvent())
 	}
 	if skippedEmbeddings > 0 {
-		logWALRecoveryEvent(logger, localization.StorageWALCorruptedEmbeddingsSkippedEvent(skippedEmbeddings, "atomic"))
-	}
-
-	return nil
-}
-
-func visitLegacyWALEntries(file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
-	if logger == nil {
-		logger = discardWALSlog()
-	}
-	var skippedEmbeddings int
-	var lastGoodSeq uint64
-	decoder := json.NewDecoder(file)
-
-	for {
-		var entry WALEntry
-		if err := decoder.Decode(&entry); err != nil {
-			if err == io.EOF {
-				break
-			}
-			// JSON decode failed - entry is malformed
-			// This could be a partial write from a crash
-			return fmt.Errorf("%w: JSON decode failed at entry after seq %d: %v",
-				ErrWALCorrupted, lastGoodSeq, err)
-		}
-
-		// Verify checksum
-		expected := crc32Checksum(entry.Data)
-		if entry.Checksum != expected {
-			// Checksum mismatch - data corrupted
-			if entry.Operation == OpUpdateEmbedding {
-				// Embedding updates are safe to skip - will be regenerated
-				skippedEmbeddings++
-				continue
-			}
-			// Critical operation corrupted - fail recovery
-			return fmt.Errorf("%w: checksum mismatch at seq %d, op %s (expected %d, got %d)",
-				ErrWALCorrupted, entry.Sequence, entry.Operation, expected, entry.Checksum)
-		}
-
-		if err := visit(entry); err != nil {
-			return err
-		}
-		lastGoodSeq = entry.Sequence
-	}
-
-	if skippedEmbeddings > 0 {
-		logWALRecoveryEvent(logger, localization.StorageWALCorruptedEmbeddingsSkippedEvent(skippedEmbeddings, "legacy"))
+		logStorageEvent(ctx, logger, slog.LevelWarn, localization.StorageWALCorruptedEmbeddingsSkippedEvent(skippedEmbeddings, "atomic"))
 	}
 
 	return nil
@@ -2071,12 +2148,19 @@ func readWALEntriesForTruncation(walPath string, afterSeq uint64) ([]WALEntry, e
 	if magic == walMagic {
 		return readAtomicWALEntriesForTruncation(file, afterSeq)
 	}
-	return readLegacyWALEntriesForTruncation(file, afterSeq)
+	return nil, fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
 }
 
 // readAtomicWALEntriesForTruncation reads atomic format entries, skipping corrupted ones.
 func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEntry, error) {
 	var entries []WALEntry
+	var offset uint64
+	visit := withWALPropertyEpochs(func(entry WALEntry) error {
+		if entry.Sequence > afterSeq {
+			entries = append(entries, entry)
+		}
+		return nil
+	})
 	reader := bufio.NewReader(file)
 	headerBuf := make([]byte, 9)
 
@@ -2098,11 +2182,19 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 		}
 
 		version := headerBuf[4]
+		if version != walFormatVersionCurrent {
+			return entries, unsupportedWALVersion(version)
+		}
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
 		if payloadLen > walMaxEntrySize {
 			break // Invalid size
 		}
 
+		recordLen := int64(9 + payloadLen + 4)
+		if version >= 2 {
+			recordLen = alignUp(recordLen + 8)
+		}
+		offset += uint64(recordLen)
 		payload := make([]byte, payloadLen)
 		n, err = io.ReadFull(reader, payload)
 		if err != nil || uint32(n) != payloadLen {
@@ -2115,7 +2207,8 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 			break
 		}
 
-		// Skip CRC verification for truncation - we just want to find valid entries
+		outerValid := binary.LittleEndian.Uint32(crcBuf) == crc32Checksum(payload)
+		trailerValid := true
 
 		// Version 2+: Read trailer
 		if version >= 2 {
@@ -2124,6 +2217,7 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 			if err != nil || n != 8 {
 				break
 			}
+			trailerValid = binary.LittleEndian.Uint64(trailerBuf) == walTrailer
 			// Skip alignment padding
 			rawRecordLen := int64(9 + payloadLen + 4 + 8)
 			alignedRecordLen := alignUp(rawRecordLen)
@@ -2137,33 +2231,23 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 			}
 		}
 
-		entry, err := decodeWALEntry(payload, version)
+		entry, err := WALEntry{}, error(nil)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
 		if err != nil {
-			continue // Skip malformed entries
+			_ = visit(WALEntry{propertyScopeReset: true})
+			continue // Unknown record cannot carry dictionary authority across the gap
 		}
 
-		if entry.Sequence > afterSeq {
-			entries = append(entries, entry)
+		entry.recordEnd = offset
+		if isWALPropertyEpoch(entry) && (!outerValid || !trailerValid || entry.Checksum != crc32Checksum(entry.Data)) {
+			return entries, fmt.Errorf("%w: invalid retained property epoch", ErrWALCorrupted)
 		}
-	}
-
-	return entries, nil
-}
-
-// readLegacyWALEntriesForTruncation reads legacy JSON format entries, skipping corrupted ones.
-func readLegacyWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEntry, error) {
-	var entries []WALEntry
-	decoder := json.NewDecoder(file)
-
-	for {
-		var entry WALEntry
-		if err := decoder.Decode(&entry); err != nil {
-			break // Stop on any decode error
+		if !outerValid || !trailerValid {
+			_ = visit(WALEntry{propertyScopeReset: true})
+			entry.PropertyEpoch = nil
 		}
-
-		// Skip checksum verification for truncation - we just want entries after snapshot
-		if entry.Sequence > afterSeq {
-			entries = append(entries, entry)
+		if err := visit(entry); err != nil {
+			return entries, err
 		}
 	}
 
@@ -2203,14 +2287,32 @@ func (r ReplayResult) Summary() string {
 	return fmt.Sprintf("applied=%d skipped=%d failed=%d", r.Applied, r.Skipped, r.Failed)
 }
 
-// ReadWALEntriesAfter reads entries after a given sequence number.
-func ReadWALEntriesAfter(walPath string, afterSeq uint64) ([]WALEntry, error) {
-	all, err := ReadWALEntries(walPath)
+// WALReadScope selects whether a WAL read covers one file or its complete directory.
+type WALReadScope uint8
+
+const (
+	// WALReadFile reads only the named WAL file.
+	WALReadFile WALReadScope = iota
+	// WALReadDirectory reads the active WAL and retained segments in order.
+	WALReadDirectory
+)
+
+// ReadWALEntriesAfter reads entries after a sequence from the selected WAL scope.
+func ReadWALEntriesAfter(ctx context.Context, path string, afterSeq uint64, scope WALReadScope) ([]WALEntry, error) {
+	var all []WALEntry
+	var err error
+	switch scope {
+	case WALReadFile:
+		all, err = ReadWALEntries(ctx, path, nil)
+	case WALReadDirectory:
+		all, err = ReadWALEntriesFromDir(ctx, path)
+	default:
+		return nil, fmt.Errorf("wal: invalid read scope %d", scope)
+	}
 	if err != nil {
 		return nil, err
 	}
-
-	var filtered []WALEntry
+	filtered := make([]WALEntry, 0, len(all))
 	for _, entry := range all {
 		if entry.Sequence > afterSeq {
 			filtered = append(filtered, entry)
@@ -2219,9 +2321,56 @@ func ReadWALEntriesAfter(walPath string, afterSeq uint64) ([]WALEntry, error) {
 	return filtered, nil
 }
 
-// ReplayWALEntry applies a single WAL entry to the engine.
-// Uses the database name from the entry if present, otherwise wraps with default database.
-func ReplayWALEntry(engine Engine, entry WALEntry) error {
+// ReplayWALEntry applies a single WAL entry to the engine as its own recovery
+// boundary. Uses the database name from the entry if present, otherwise wraps
+// with default database. As with batch recovery, destination must be quiescent:
+// no concurrent application writers may change the recovered graph or counts.
+//
+// A physical buffered commit transports entity bodies without the
+// destination-local count deltas that justified them, so this boundary ends
+// with the same authoritative count reconciliation the recovery batch owners
+// run. A caller replaying a sequence as one recovery batch applies each record
+// with replayWALEntry and completes the batch itself, so that reconciliation
+// stays once per batch rather than once per record. ctx must be non-nil;
+// its values are retained, while cancellation is detached to finish recovery.
+func ReplayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
+	ctx = context.WithoutCancel(ctx)
+	if err := replayWALEntry(ctx, engine, entry); err != nil {
+		return err
+	}
+	if entry.Operation != OpBufferedCommit {
+		return nil
+	}
+	if native, ok := UnwrapEngine(engine).(*BadgerEngine); ok && native != nil {
+		return native.completeRecoveredCounts(ctx, nil)
+	}
+	return nil
+}
+
+// replayWALEntry applies a single WAL entry to the engine without completing
+// the derived counts its physical replay did not transport.
+func replayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
+	switch entry.Operation {
+	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
+		// Control records do not change graph state. Embedding audit records
+		// are regenerable, not semantic replay instructions.
+		return nil
+	}
+	{
+		// Retain engine state through provenance, import and physical apply.
+		// A lifetime lease permits delegated CRUD to acquire its own write
+		// barrier; holding that barrier here would risk recursive-read deadlock.
+		if b, ok := UnwrapEngine(engine).(*BadgerEngine); ok {
+			_, err := b.beginHelperTxn()
+			if err != nil {
+				return err
+			}
+			defer b.work.Leave()
+		}
+		if err := markRecoveryPropertyForeign(engine); err != nil {
+			return err
+		}
+	}
 	// Determine database name: use entry's database if present, otherwise infer from engine/config.
 	dbName := entry.Database
 	if dbName == "" {
@@ -2246,12 +2395,18 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 	namespacedEngine := NewNamespacedEngine(baseEngine, dbName)
 
 	switch entry.Operation {
+	case OpEntityCommit:
+		var data walEntityCommitData
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
+			return err
+		}
+		return ApplyAcceptedEntityTransaction(baseEngine, data.Payload)
 	case OpCreateNode:
 		var data WALNodeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		_, err := namespacedEngine.CreateNode(data.Node)
+		_, err := namespacedEngine.CreateNode(ctx, data.Node)
 		return err
 
 	case OpUpdateNode:
@@ -2259,49 +2414,49 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		return namespacedEngine.UpdateNode(data.Node)
+		return namespacedEngine.UpdateNode(ctx, NodeUpdateRequest{After: data.Node})
 
 	case OpDeleteNode:
 		var data WALDeleteData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
-		return namespacedEngine.DeleteNode(NodeID(data.ID))
+		return namespacedEngine.DeleteNode(ctx, NodeID(data.ID))
 
 	case OpCreateEdge:
 		var data WALEdgeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return namespacedEngine.CreateEdge(data.Edge)
+		return namespacedEngine.CreateEdge(ctx, data.Edge)
 
 	case OpUpdateEdge:
 		var data WALEdgeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return namespacedEngine.UpdateEdge(data.Edge)
+		return namespacedEngine.UpdateEdge(ctx, EdgeUpdateRequest{After: data.Edge})
 
 	case OpDeleteEdge:
 		var data WALDeleteData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
-		return namespacedEngine.DeleteEdge(EdgeID(data.ID))
+		return namespacedEngine.DeleteEdge(ctx, EdgeID(data.ID))
 
 	case OpBulkNodes:
 		var data WALBulkNodesData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk nodes: %w", err)
 		}
-		return namespacedEngine.BulkCreateNodes(data.Nodes)
+		return namespacedEngine.BulkCreateNodes(ctx, data.Nodes)
 
 	case OpBulkEdges:
 		var data WALBulkEdgesData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk edges: %w", err)
 		}
-		return namespacedEngine.BulkCreateEdges(data.Edges)
+		return namespacedEngine.BulkCreateEdges(ctx, data.Edges)
 
 	case OpBulkDeleteNodes:
 		var data WALBulkDeleteNodesData
@@ -2312,7 +2467,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		for i, id := range data.IDs {
 			ids[i] = NodeID(id)
 		}
-		return namespacedEngine.BulkDeleteNodes(ids)
+		return namespacedEngine.BulkDeleteNodes(ctx, ids)
 
 	case OpBulkDeleteEdges:
 		var data WALBulkDeleteEdgesData
@@ -2323,68 +2478,54 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		for i, id := range data.IDs {
 			ids[i] = EdgeID(id)
 		}
-		return namespacedEngine.BulkDeleteEdges(ids)
+		return namespacedEngine.BulkDeleteEdges(ctx, ids)
 
 	case OpBufferedCommit:
 		// A write-behind commit's full payload. Replay it through the same
 		// commit application path the flusher uses, so MVCC heads, ID
 		// counters, indexes and caches all land identically. Only
-		// BadgerEngine destinations support this; anything else skips.
-		var data WALBufferedCommitData
-		payload, err := decompressWALBufferedCommitPayload(entry.Data)
+		// Native Badger destinations, including their canonical engine wrappers,
+		// support physical replay; other engines cannot materialize these keys.
+		data, err := decodeBufferedWALRecord(entry)
 		if err != nil {
 			return err
 		}
-		if err := decodeRecoveryPayload(payload, &data); err != nil {
-			return fmt.Errorf("wal: failed to unmarshal buffered commit: %w", err)
-		}
-		b, ok := baseEngine.(*BadgerEngine)
+		b, ok := UnwrapEngine(baseEngine).(*BadgerEngine)
 		if !ok || b == nil {
 			return fmt.Errorf("wal: buffered commit replay requires a BadgerEngine destination, got %T", baseEngine)
 		}
 		if len(data.Ops) == 0 && len(data.Writes) == 0 && len(data.Deletes) == 0 {
 			return nil
 		}
-		c := bufferedCommit{
-			recovered:      true,
-			namespace:      data.Namespace,
-			txID:           data.TxID,
-			ops:            data.Ops,
-			writes:         data.Writes,
-			version:        data.Version,
-			counterNodeMax: data.NodeMax,
-			counterEdgeMax: data.EdgeMax,
-			hasCounters:    data.HasCounters,
-			propKeyDrain:   data.propKeyDrain(),
-		}
-		if len(data.Deletes) > 0 {
-			c.deletes = make(map[string]bool, len(data.Deletes))
-			for _, key := range data.Deletes {
-				c.deletes[key] = true
+		// Earlier semantic WAL records can have acknowledged bulk writes into
+		// the destination buffer. Their completion must precede this physical
+		// record, just as snapshot completion precedes WAL replay.
+		if b.writeBehind != nil && b.writeBehind.PendingOps() > 0 {
+			if err := b.FlushWriteBehind(ctx); err != nil {
+				return fmt.Errorf("wal: complete preceding writes before buffered replay: %w", err)
 			}
 		}
+		// The recovery boundary supplies its completion context, retaining
+		// operation provenance independently of initiating cancellation.
+		c, err := b.importBufferedWALRecord(ctx, &data, walForeignImport)
+		if err != nil {
+			return err
+		}
 		return b.applyBufferedCommits([]bufferedCommit{c})
-
-	case OpCheckpoint:
-		// Checkpoints are markers, no action needed
-		return nil
-
-	case OpTxBegin, OpTxCommit, OpTxAbort:
-		// Transaction boundaries are markers handled at a higher level
-		// Individual replay doesn't need to process them
-		return nil
 
 	default:
 		return fmt.Errorf("wal: unknown operation: %s", entry.Operation)
 	}
 }
 
-// UndoWALEntry reverses a WAL entry using its stored "before image".
-// This is used for transaction rollback on crash recovery.
-// Returns ErrNoUndoData if the entry lacks undo information.
+// ErrNoUndoData means a WAL entry lacks the before image needed for undo.
 var ErrNoUndoData = errors.New("wal: entry has no undo data")
 
-func UndoWALEntry(engine Engine, entry WALEntry) error {
+// UndoWALEntry reverses a WAL entry using its stored before image during crash
+// recovery. ctx must be non-nil; its values are retained, while cancellation is
+// detached so compensation completes. Missing undo data returns ErrNoUndoData.
+func UndoWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
+	ctx = context.WithoutCancel(ctx)
 	// Determine database name: use entry's database if present, otherwise infer from engine/config.
 	dbName := entry.Database
 	if dbName == "" {
@@ -2418,7 +2559,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.Node == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.DeleteNode(data.Node.ID)
+		return namespacedEngine.DeleteNode(ctx, data.Node.ID)
 
 	case OpUpdateNode:
 		// Undo update = restore old node
@@ -2429,7 +2570,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.UpdateNode(data.OldNode)
+		return namespacedEngine.UpdateNode(ctx, NodeUpdateRequest{After: data.OldNode})
 
 	case OpDeleteNode:
 		// Undo delete = recreate old node
@@ -2440,7 +2581,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		_, err := namespacedEngine.CreateNode(data.OldNode)
+		_, err := namespacedEngine.CreateNode(ctx, data.OldNode)
 		return err
 
 	case OpCreateEdge:
@@ -2452,7 +2593,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.Edge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.DeleteEdge(data.Edge.ID)
+		return namespacedEngine.DeleteEdge(ctx, data.Edge.ID)
 
 	case OpUpdateEdge:
 		// Undo update = restore old edge
@@ -2463,7 +2604,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.UpdateEdge(data.OldEdge)
+		return namespacedEngine.UpdateEdge(ctx, EdgeUpdateRequest{After: data.OldEdge})
 
 	case OpDeleteEdge:
 		// Undo delete = recreate old edge
@@ -2474,7 +2615,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.CreateEdge(data.OldEdge)
+		return namespacedEngine.CreateEdge(ctx, data.OldEdge)
 
 	case OpBulkNodes:
 		// Undo bulk create = delete all
@@ -2486,7 +2627,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		for i, n := range data.Nodes {
 			ids[i] = n.ID
 		}
-		return engine.BulkDeleteNodes(ids)
+		return engine.BulkDeleteNodes(ctx, ids)
 
 	case OpBulkEdges:
 		// Undo bulk create = delete all
@@ -2498,7 +2639,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		for i, e := range data.Edges {
 			ids[i] = e.ID
 		}
-		return engine.BulkDeleteEdges(ids)
+		return engine.BulkDeleteEdges(ctx, ids)
 
 	case OpBulkDeleteNodes:
 		// Undo bulk delete = recreate all
@@ -2509,7 +2650,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.OldNodes) == 0 {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.BulkCreateNodes(data.OldNodes)
+		return namespacedEngine.BulkCreateNodes(ctx, data.OldNodes)
 
 	case OpBulkDeleteEdges:
 		// Undo bulk delete = recreate all
@@ -2520,7 +2661,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.OldEdges) == 0 {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.BulkCreateEdges(data.OldEdges)
+		return namespacedEngine.BulkCreateEdges(ctx, data.OldEdges)
 
 	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
 		// These don't need undo
@@ -2577,6 +2718,17 @@ func GetEntryTxID(entry WALEntry) string {
 		if decodeRecoveryPayload(entry.Data, &data) == nil {
 			txID = data.TxID
 		}
+	case OpBufferedCommit:
+		if data, err := decodeBufferedWALRecord(entry); err == nil {
+			txID = data.TxID
+		}
+	case OpEntityCommit:
+		var data walEntityCommitData
+		if decodeRecoveryPayload(entry.Data, &data) == nil {
+			if envelope, _, err := DecodeEntityTransaction(data.Payload); err == nil {
+				txID = envelope.LogicalTxID
+			}
+		}
 	}
 
 	return txID
@@ -2593,16 +2745,23 @@ type TransactionState struct {
 
 // RecoverWithTransactions performs transaction-aware WAL recovery.
 // Incomplete transactions (no commit/abort) are rolled back using undo data.
-// Returns the engine state and recovery statistics.
-func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *TransactionRecoveryResult, error) {
-	engine := NewMemoryEngine()
+// Returns the engine state and recovery statistics. Recovery preserves ctx values
+// but completes independently of its cancellation once restoring accepted data.
+func RecoverWithTransactions(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, *TransactionRecoveryResult, error) {
+	ctx = context.WithoutCancel(ctx)
+	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {
+		return nil, nil, fmt.Errorf("wal: failed to read WAL: %w", err)
+	}
+	store := newRecoveredStore()
+	defer store.close()
+	engine := store.engine
 	result := &TransactionRecoveryResult{
 		Transactions: make(map[string]*TransactionState),
 	}
 
 	// Load snapshot if available
 	if snapshotPath != "" {
-		snapshot, err := LoadSnapshot(snapshotPath)
+		snapshot, err := LoadSnapshot(ctx, snapshotPath)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", err)
 		}
@@ -2616,17 +2775,17 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 			}
 			// Wrap engine with NamespacedEngine for snapshot restore (snapshot nodes have unprefixed IDs)
 			namespacedEngine := NewNamespacedEngine(engine, dbName)
-			if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
+			if err := namespacedEngine.BulkCreateNodes(ctx, snapshot.Nodes); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 			}
-			if err := namespacedEngine.BulkCreateEdges(snapshot.Edges); err != nil {
+			if err := namespacedEngine.BulkCreateEdges(ctx, snapshot.Edges); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 			}
 		}
 	}
 
 	// Read all WAL entries
-	entries, err := ReadWALEntriesFromDir(walDir)
+	entries, err := ReadWALEntriesFromDir(ctx, walDir)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, result, fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
@@ -2635,6 +2794,13 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 	nonTxEntries := []WALEntry{}
 	for _, entry := range entries {
 		if entry.Sequence <= result.SnapshotSeq {
+			continue
+		}
+		// These are already accepted, self-contained commits. Their IDs are
+		// useful for inspection but do not make them children of a matching
+		// begin/commit marker in the transaction recovery stream.
+		if entry.Operation == OpBufferedCommit || entry.Operation == OpEntityCommit {
+			nonTxEntries = append(nonTxEntries, entry)
 			continue
 		}
 
@@ -2689,7 +2855,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 		if tx.Done && !tx.Aborted {
 			// Transaction committed - apply all its entries
 			for _, entry := range tx.Entries {
-				if err := ReplayWALEntry(engine, entry); err != nil {
+				if err := replayWALEntry(ctx, engine, entry); err != nil {
 					if !errors.Is(err, ErrAlreadyExists) {
 						result.FailedTransactions = append(result.FailedTransactions, txID)
 					}
@@ -2705,12 +2871,12 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 			// Transaction incomplete - needs rollback
 			// First apply forward (in case partially applied before crash)
 			for _, entry := range tx.Entries {
-				ReplayWALEntry(engine, entry) // Ignore errors - might already exist
+				replayWALEntry(ctx, engine, entry) // Ignore errors - might already exist
 			}
 			// Then undo in reverse order
 			for i := len(tx.Entries) - 1; i >= 0; i-- {
 				entry := tx.Entries[i]
-				if err := UndoWALEntry(engine, entry); err != nil {
+				if err := UndoWALEntry(ctx, engine, entry); err != nil {
 					if !errors.Is(err, ErrNoUndoData) {
 						result.UndoErrors = append(result.UndoErrors, fmt.Sprintf("tx %s: %v", txID, err))
 					}
@@ -2724,15 +2890,20 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 
 	// Phase 4: Apply non-transactional entries
 	for _, entry := range nonTxEntries {
-		if err := ReplayWALEntry(engine, entry); err != nil {
+		if err := replayWALEntry(ctx, engine, entry); err != nil {
 			if !errors.Is(err, ErrAlreadyExists) {
 				result.NonTxErrors = append(result.NonTxErrors, err.Error())
 			}
 		}
 		result.NonTxApplied++
 	}
+	if result.NonTxApplied > 0 || result.CommittedTransactions > 0 || result.RolledBackTransactions > 0 {
+		if err := engine.BadgerEngine.completeRecoveredCounts(ctx, nil); err != nil {
+			return nil, result, err
+		}
+	}
 
-	return engine, result, nil
+	return store.release(), result, nil
 }
 
 // TransactionRecoveryResult contains detailed statistics from transaction-aware recovery.
@@ -2761,23 +2932,25 @@ func (r *TransactionRecoveryResult) HasErrors() bool {
 }
 
 // RecoverFromWAL recovers database state from a snapshot and WAL.
-// Returns a new MemoryEngine with the recovered state.
+// Returns a new MemoryEngine with the recovered state. Recovery retains ctx
+// values but completes independently of its cancellation.
 //
 // Uses a discard *slog.Logger for diagnostics. Callers wanting structured
 // recovery visibility should use RecoverFromWALWithLogger.
-func RecoverFromWAL(walDir, snapshotPath string) (*MemoryEngine, error) {
-	return RecoverFromWALWithLogger(walDir, snapshotPath, discardWALSlog())
+func RecoverFromWAL(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, error) {
+	return RecoverFromWALWithLogger(ctx, walDir, snapshotPath, discardWALSlog())
 }
 
 // RecoverFromWALWithLogger is the slog-aware variant of RecoverFromWAL.
+// Recovery retains ctx values but completes independently of its cancellation.
 // D-07: pass a child logger tagged subsystem=wal_recovery so completion-
 // with-errors records land in the structured stream. Operator-actionable
 // fields: failed, errors, summary; per-error attributes seq, operation, error.
-func RecoverFromWALWithLogger(walDir, snapshotPath string, logger *slog.Logger) (*MemoryEngine, error) {
+func RecoverFromWALWithLogger(ctx context.Context, walDir, snapshotPath string, logger *slog.Logger) (*MemoryEngine, error) {
 	if logger == nil {
 		logger = discardWALSlog()
 	}
-	engine, result, err := RecoverFromWALWithResult(walDir, snapshotPath)
+	engine, result, err := RecoverFromWALWithResult(ctx, walDir, snapshotPath)
 	if err != nil {
 		return nil, err
 	}
@@ -2788,12 +2961,12 @@ func RecoverFromWALWithLogger(walDir, snapshotPath string, logger *slog.Logger) 
 	// `recovery_error` when triaging.
 	if result.Failed > 0 {
 		recoveryLog := logger.With("subsystem", "wal_recovery")
-		recoveryLog.Warn("wal recovery completed with errors",
+		recoveryLog.WarnContext(ctx, "wal recovery completed with errors",
 			"failed", result.Failed,
 			"summary", result.Summary(),
 		)
 		for _, e := range result.Errors {
-			recoveryLog.Debug("wal recovery error",
+			recoveryLog.DebugContext(ctx, "wal recovery error",
 				"seq", e.Sequence,
 				"operation", e.Operation,
 			)
@@ -2804,9 +2977,16 @@ func RecoverFromWALWithLogger(walDir, snapshotPath string, logger *slog.Logger) 
 }
 
 // RecoverFromWALWithResult recovers database state and returns detailed results.
-// Use this for programmatic access to replay statistics and errors.
-func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, ReplayResult, error) {
-	engine := NewMemoryEngine()
+// Use this for programmatic access to replay statistics and errors. ctx must
+// be non-nil; values survive but cancellation is detached to finish recovery.
+func RecoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, ReplayResult, error) {
+	ctx = context.WithoutCancel(ctx)
+	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {
+		return nil, ReplayResult{}, fmt.Errorf("wal: failed to read WAL: %w", err)
+	}
+	store := newRecoveredStore()
+	defer store.close()
+	engine := store.engine
 	result := ReplayResult{}
 
 	// Load snapshot if available
@@ -2821,7 +3001,7 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 			if err != nil {
 				return nil, result, fmt.Errorf("wal: failed to open snapshot: %w", err)
 			}
-			metadata, readErr := readSnapshot(file, engineSnapshotVisitor{engine: engine}, nil, materializedSnapshotRecordSize)
+			metadata, readErr := readSnapshot(ctx, file, engineSnapshotVisitor{engine: engine}, nil, materializedSnapshotRecordSize)
 			closeErr := file.Close()
 			if readErr != nil {
 				return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", readErr)
@@ -2831,7 +3011,7 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 			}
 			snapshotSeq = metadata.Sequence
 		} else {
-			snapshot, err := LoadSnapshot(snapshotPath)
+			snapshot, err := LoadSnapshot(ctx, snapshotPath)
 			if err != nil {
 				if !os.IsNotExist(err) {
 					return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", err)
@@ -2869,10 +3049,10 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 				}
 
 				namespacedEngine := NewNamespacedEngine(engine, dbName)
-				if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
+				if err := namespacedEngine.BulkCreateNodes(ctx, snapshot.Nodes); err != nil {
 					return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 				}
-				if err := namespacedEngine.BulkCreateEdges(snapshot.Edges); err != nil {
+				if err := namespacedEngine.BulkCreateEdges(ctx, snapshot.Edges); err != nil {
 					return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 				}
 			}
@@ -2881,85 +3061,74 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 
 	// Replay WAL entries after snapshot
 	activePath := walActivePath(walDir)
-	manifest, _ := loadWALManifest(walDir)
+	manifest, err := accessWALManifest(walDir, walReadManifest, nil)
+	if err != nil {
+		return nil, result, fmt.Errorf("wal: failed to load recovery manifest: %w", err)
+	}
 	if _, statErr := os.Stat(activePath); os.IsNotExist(statErr) && len(manifest.Segments) == 0 {
-		return engine, result, nil // No WAL to replay, return engine as-is
+		return store.release(), result, nil // No WAL to replay, return engine as-is
 	}
 
 	// Ensure we don't have a torn tail record before reading for recovery.
 	// This is critical when recovery is invoked because the main server never started,
 	// so NewWAL() (which also repairs tails) was never called.
 	if _, _, repairErr := repairWALTailIfNeeded(activePath, defaultWALLogger{}); repairErr != nil {
-		_ = engine.Close()
 		return nil, result, fmt.Errorf("wal: failed to inspect recovery log: %w", repairErr)
 	}
 
-	entries, err := ReadWALEntriesAfterFromDir(walDir, snapshotSeq)
+	entries, err := ReadWALEntriesAfter(ctx, walDir, snapshotSeq, WALReadDirectory)
 	if err != nil {
 		return nil, result, fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
 
 	// Replay entries with proper error tracking
 	// Each entry will use its own database name (stored in entry.Database)
-	result = ReplayWALEntries(engine, entries)
+	result.Errors = make([]ReplayError, 0)
+	for _, entry := range entries {
+		result.Record(entry, replayWALEntry(ctx, engine, entry))
+	}
+	if result.Applied > 0 {
+		if err := engine.BadgerEngine.completeRecoveredCounts(ctx, nil); err != nil {
+			return nil, result, err
+		}
+	}
 
-	return engine, result, nil
+	return store.release(), result, nil
 }
 
 type engineSnapshotVisitor struct {
 	engine Engine
 }
 
-func (v engineSnapshotVisitor) VisitNode(node *Node) error {
-	_, err := v.engine.CreateNode(qualifyRecoverySnapshotNode(node))
+func (v engineSnapshotVisitor) VisitNode(ctx context.Context, node *Node) error {
+	_, err := v.engine.CreateNode(ctx, qualifyRecoverySnapshotNode(node))
 	if err != nil {
 		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
 	return nil
 }
 
-func (v engineSnapshotVisitor) VisitEdge(edge *Edge) error {
-	if err := v.engine.CreateEdge(qualifyRecoverySnapshotEdge(edge)); err != nil {
+func (v engineSnapshotVisitor) VisitEdge(ctx context.Context, edge *Edge) error {
+	if err := v.engine.CreateEdge(ctx, qualifyRecoverySnapshotEdge(edge)); err != nil {
 		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
 	return nil
 }
 
-// ReplayWALEntries replays multiple entries and tracks results.
-// Expected errors (duplicates, checkpoints) are counted as skipped.
-// Unexpected errors (corruption, constraint violations) are counted as failed.
-func ReplayWALEntries(engine Engine, entries []WALEntry) ReplayResult {
-	result := ReplayResult{
-		Errors: make([]ReplayError, 0),
+// Record accumulates the actual outcome of ReplayWALEntry. Checkpoints and
+// duplicate creates are expected skips; every other error retains its original
+// sequence, operation and cause. For example, a caller replaying a slice uses:
+//
+//	for _, entry := range entries {
+//		result.Record(entry, ReplayWALEntry(ctx, engine, entry))
+//	}
+func (r *ReplayResult) Record(entry WALEntry, err error) {
+	if entry.Operation == OpCheckpoint || errors.Is(err, ErrAlreadyExists) {
+		r.Skipped++
+	} else if err == nil {
+		r.Applied++
+	} else {
+		r.Failed++
+		r.Errors = append(r.Errors, ReplayError{Sequence: entry.Sequence, Operation: entry.Operation, Error: err})
 	}
-
-	for _, entry := range entries {
-		// Checkpoints are markers only - skip them (no-op, don't count as applied)
-		if entry.Operation == OpCheckpoint {
-			result.Skipped++
-			continue
-		}
-
-		err := ReplayWALEntry(engine, entry)
-		if err == nil {
-			result.Applied++
-			continue
-		}
-
-		// Classify the error
-		if errors.Is(err, ErrAlreadyExists) {
-			// Duplicate during replay - expected (idempotency)
-			result.Skipped++
-		} else {
-			// Unexpected error - track it
-			result.Failed++
-			result.Errors = append(result.Errors, ReplayError{
-				Sequence:  entry.Sequence,
-				Operation: entry.Operation,
-				Error:     err,
-			})
-		}
-	}
-
-	return result
 }

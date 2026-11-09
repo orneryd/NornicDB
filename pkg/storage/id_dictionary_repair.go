@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 
 	"github.com/dgraph-io/badger/v4"
@@ -35,7 +36,7 @@ type IDDictionaryReport struct {
 func (b *BadgerEngine) CheckIDDictionary() (*IDDictionaryReport, error) {
 	report := &IDDictionaryReport{}
 	var unlabelled []NodeID
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		labelled := numIDsInKeys(txn, prefixLabelIndex)
 		linked := numIDsInKeys(txn, prefixOutgoingIndex)
 		for _, prefix := range []byte{prefixNode, prefixEdge} {
@@ -65,7 +66,7 @@ func (b *BadgerEngine) CheckIDDictionary() (*IDDictionaryReport, error) {
 	}
 	// A node in no label index key is mismatched only if it has labels.
 	for _, id := range unlabelled {
-		if node, err := b.GetNode(id); err == nil && len(node.Labels) > 0 {
+		if node, err := b.GetStoredNode(context.Background(), id); err == nil && len(node.Labels) > 0 {
 			report.MismatchedNodes = append(report.MismatchedNodes, id)
 		}
 	}
@@ -103,6 +104,15 @@ func numIDsInKeys(txn *badger.Txn, prefix byte) map[uint64]bool {
 // An entity that isn't identified unambiguously (an unlabelled node, two
 // lost relationships alike) is listed as unresolved and left unchanged.
 func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
+	// The check and the repair rewrite dictionary entries and MVCC heads: a
+	// maintenance write (beginMaintenanceWrite), so every write-behind commit
+	// acknowledged before it is applied first and no write runs across it.
+	ctx := context.Background()
+	lifecycle, err := b.beginMaintenanceWrite(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer lifecycle.finish()
 	report, err := b.CheckIDDictionary()
 	if err != nil {
 		return nil, err
@@ -118,6 +128,7 @@ func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
 				report.UnresolvedNodes = append(report.UnresolvedNodes, id)
 				continue
 			}
+			maintenancePause(pauseIDRepairRestore)
 			if err := b.restoreIDEntry(id, "", num); err != nil {
 				return report, err
 			}
@@ -136,6 +147,7 @@ func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
 				report.UnresolvedEdges = append(report.UnresolvedEdges, id)
 				continue
 			}
+			maintenancePause(pauseIDRepairRestore)
 			if err := b.restoreIDEntry("", id, num); err != nil {
 				return report, err
 			}
@@ -149,13 +161,13 @@ func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
 		// relationship whose endpoint didn't resolve isn't counted).
 		b.invalidateCachesAfterRestore()
 		b.labelCountWriteMu.Lock()
-		err := b.rebuildAuthoritativeLabelCountsLocked()
+		err := b.rebuildAuthoritativeLabelCountsLocked(ctx)
 		b.labelCountWriteMu.Unlock()
 		if err != nil {
 			return report, err
 		}
 		b.edgeTypeCountWriteMu.Lock()
-		err = b.rebuildAuthoritativeEdgeTypeCountsLocked()
+		err = b.rebuildAuthoritativeEdgeTypeCountsLocked(ctx)
 		b.edgeTypeCountWriteMu.Unlock()
 		if err != nil {
 			return report, err
@@ -167,7 +179,7 @@ func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
 // lostNodeNumID finds a lost node's numeric ID: the one unresolved, unclaimed
 // ID in the label index of every one of its labels.
 func (b *BadgerEngine) lostNodeNumID(id NodeID, claimed map[uint64]bool) (uint64, bool, error) {
-	node, err := b.GetNode(id)
+	node, err := b.GetStoredNode(context.Background(), id)
 	if err != nil || len(node.Labels) == 0 {
 		return 0, false, nil
 	}
@@ -192,7 +204,7 @@ func (b *BadgerEngine) lostNodeNumID(id NodeID, claimed map[uint64]bool) (uint64
 // unclaimed ID in its start node's outgoing keys, its end node's incoming
 // keys and its type's index.
 func (b *BadgerEngine) lostEdgeNumID(id EdgeID, claimed map[uint64]bool) (uint64, bool, error) {
-	edge, err := b.GetEdge(id)
+	edge, err := b.GetStoredEdge(context.Background(), id)
 	if err != nil {
 		return 0, false, nil
 	}
@@ -308,11 +320,11 @@ func (b *BadgerEngine) restoreIDEntry(node NodeID, edge EdgeID, num uint64) erro
 	// The entry's previous pair (its reverse only when it still names this
 	// ID) goes, and the repaired pair takes its place.
 	if edge != "" {
-		d.edgePairRemoveByID(edge)
-		d.edgePairStore(edge, num, nil)
+		removeIDPair(&d.edges, edgeForwardShard, edgeReverseShard, edge, 0, idPairByString)
+		storeIDPair(&d.edges, edgeForwardShard, edgeReverseShard, edge, num, nil)
 	} else {
-		d.nodePairRemoveByID(node)
-		d.nodePairStore(node, num, nil)
+		removeIDPair(&d.nodes, nodeForwardShard, nodeReverseShard, node, 0, idPairByString)
+		storeIDPair(&d.nodes, nodeForwardShard, nodeReverseShard, node, num, nil)
 	}
 	return nil
 }

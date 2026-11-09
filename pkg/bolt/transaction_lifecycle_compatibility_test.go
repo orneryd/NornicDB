@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ const (
 func startTransactionLifecycleServer(t *testing.T) (*storage.MemoryEngine, int) {
 	t.Helper()
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})
@@ -52,10 +53,10 @@ func beginExplicitTransaction(t *testing.T, conn net.Conn, metadata map[string]a
 func TestBoltExplicitTransactionTimeoutTerminatesBeforeCommit(t *testing.T) {
 	base, port := startTransactionLifecycleServer(t)
 	setup := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, setup,
-		"CREATE CONSTRAINT repository_id IF NOT EXISTS FOR (r:Repository) REQUIRE r.repo_id IS UNIQUE")
-	runBoltQueryAndCollectRecords(t, setup,
-		"MERGE (r:Repository {repo_id: 'same'}) SET r.owner = 'seed'")
+	runBoltQueryWithParams(t, setup,
+		"CREATE CONSTRAINT repository_id IF NOT EXISTS FOR (r:Repository) REQUIRE r.repo_id IS UNIQUE", nil)
+	runBoltQueryWithParams(t, setup,
+		"MERGE (r:Repository {repo_id: 'same'}) SET r.owner = 'seed'", nil)
 	require.NoError(t, setup.Close())
 	baselineReaders := base.ActiveReaders()
 
@@ -80,8 +81,8 @@ func TestBoltExplicitTransactionTimeoutTerminatesBeforeCommit(t *testing.T) {
 	require.Equal(t, "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration", code)
 
 	fresh := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (r:Repository {repo_id: 'same', owner: 'timed'}) RETURN count(r)")
+	records := runBoltQueryWithParams(t, fresh,
+		"MATCH (r:Repository {repo_id: 'same', owner: 'timed'}) RETURN count(r)", nil)
 	require.Equal(t, [][]any{{int64(0)}}, records,
 		"a transaction terminated by tx_timeout must not commit its buffered write")
 }
@@ -111,8 +112,8 @@ func TestBoltExplicitTransactionTimeoutStartsAtBegin(t *testing.T) {
 func TestBoltExplicitTransactionLongTimeoutDoesNotExpireEarly(t *testing.T) {
 	base, port := startTransactionLifecycleServer(t)
 	setup := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, setup,
-		"CREATE (r:Repository {repo_id: 'long-timeout-seed'})")
+	runBoltQueryWithParams(t, setup,
+		"CREATE (r:Repository {repo_id: 'long-timeout-seed'})", nil)
 	require.NoError(t, setup.Close())
 	baselineReaders := base.ActiveReaders()
 
@@ -135,8 +136,8 @@ func TestBoltExplicitTransactionLongTimeoutDoesNotExpireEarly(t *testing.T) {
 		"successful COMMIT must release its snapshot reader")
 
 	fresh := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (r:Repository {repo_id: 'long-timeout-result'}) RETURN count(r)")
+	records := runBoltQueryWithParams(t, fresh,
+		"MATCH (r:Repository {repo_id: 'long-timeout-result'}) RETURN count(r)", nil)
 	require.Equal(t, [][]any{{int64(1)}}, records)
 }
 
@@ -153,8 +154,8 @@ func TestBoltExplicitTransactionWithoutPositiveTimeoutCommits(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			base, port := startTransactionLifecycleServer(t)
 			setup := openBoltTestConn(t, port)
-			runBoltQueryAndCollectRecords(t, setup,
-				"CREATE (r:Repository {repo_id: 'timeout-control-seed'})")
+			runBoltQueryWithParams(t, setup,
+				"CREATE (r:Repository {repo_id: 'timeout-control-seed'})", nil)
 			require.NoError(t, setup.Close())
 			baselineReaders := base.ActiveReaders()
 
@@ -175,8 +176,8 @@ func TestBoltExplicitTransactionWithoutPositiveTimeoutCommits(t *testing.T) {
 				"successful COMMIT must release its snapshot reader")
 
 			fresh := openBoltTestConn(t, port)
-			records := runBoltQueryAndCollectRecords(t, fresh,
-				"MATCH (r:Repository {repo_id: 'timeout-control-result'}) RETURN count(r)")
+			records := runBoltQueryWithParams(t, fresh,
+				"MATCH (r:Repository {repo_id: 'timeout-control-result'}) RETURN count(r)", nil)
 			require.Equal(t, [][]any{{int64(1)}}, records)
 		})
 	}
@@ -193,7 +194,7 @@ func TestBoltExplicitTransactionRejectsInvalidTimeoutBeforeStorageAllocation(t *
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			counting := &countingTransactionEngine{Engine: base, inner: base}
 			store := storage.NewNamespacedEngine(counting, "nornic")
@@ -216,14 +217,14 @@ func TestBoltExplicitTransactionRejectsInvalidTimeoutBeforeStorageAllocation(t *
 			require.NoError(t, err, "failed BEGIN must ignore RUN until RESET")
 			require.NoError(t, SendReset(t, conn))
 			require.NoError(t, ReadSuccess(t, conn))
-			require.Equal(t, [][]any{{int64(1)}}, runBoltQueryAndCollectRecords(t, conn, "RETURN 1"))
+			require.Equal(t, [][]any{{int64(1)}}, runBoltQueryWithParams(t, conn, "RETURN 1", nil))
 		})
 	}
 }
 
 func TestBoltDuplicateBeginPreservesOriginalTransactionExecutor(t *testing.T) {
-	originalBase := storage.NewMemoryEngine()
-	otherBase := storage.NewMemoryEngine()
+	originalBase := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	otherBase := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, originalBase.Close())
 		require.NoError(t, otherBase.Close())
@@ -243,7 +244,7 @@ func TestBoltDuplicateBeginPreservesOriginalTransactionExecutor(t *testing.T) {
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, &mockExecutor{}, mgr)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	originalReaders := originalBase.ActiveReaders()
 	otherReaders := otherBase.ActiveReaders()
 	conn := openBoltTestConn(t, port)
@@ -257,7 +258,7 @@ func TestBoltDuplicateBeginPreservesOriginalTransactionExecutor(t *testing.T) {
 	require.NoError(t, SendBegin(t, conn, map[string]any{"db": "other"}))
 	code, _, err := AssertFailure(t, conn)
 	require.NoError(t, err)
-	require.Equal(t, "Neo.ClientError.Transaction.TransactionStartFailed", code)
+	require.Equal(t, "Neo.DatabaseError.Transaction.TransactionStartFailed", code)
 	require.Equal(t, int64(1), original.begins.Load(),
 		"duplicate BEGIN must not replace or reallocate the original executor")
 	require.Zero(t, other.begins.Load(),
@@ -273,6 +274,6 @@ func TestBoltDuplicateBeginPreservesOriginalTransactionExecutor(t *testing.T) {
 		return originalBase.ActiveReaders() == originalReaders
 	}, time.Second, 10*time.Millisecond)
 	fresh := openBoltTestConn(t, port)
-	require.Equal(t, [][]any{{int64(0)}}, runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (r:Repository {repo_id: 'duplicate-begin-original'}) RETURN count(r)"))
+	require.Equal(t, [][]any{{int64(0)}}, runBoltQueryWithParams(t, fresh,
+		"MATCH (r:Repository {repo_id: 'duplicate-begin-original'}) RETURN count(r)", nil))
 }

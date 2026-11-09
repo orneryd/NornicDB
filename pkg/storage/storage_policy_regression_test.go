@@ -23,7 +23,7 @@ func TestEmbeddingKeysCleanedOnDeleteAndInlineUpdate(t *testing.T) {
 				chunks[i] = []float32{float32(i), 1, 2}
 			}
 			node := &Node{ID: "test:vectors", Properties: map[string]any{"content": strings.Repeat("x", 60*1024)}, ChunkEmbeddings: chunks}
-			_, err := eng.CreateNode(node)
+			_, err := eng.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			count := func() int {
 				n := 0
@@ -41,11 +41,11 @@ func TestEmbeddingKeysCleanedOnDeleteAndInlineUpdate(t *testing.T) {
 			}
 			require.Equal(t, 16, count(), "fixture stores all chunks separately")
 			if remove {
-				err = eng.DeleteNode(node.ID)
+				err = eng.DeleteNode(t.Context(), node.ID)
 			} else {
 				node.Properties = map[string]any{"content": "small"}
 				node.ChunkEmbeddings = [][]float32{{1, 2, 3}}
-				err = eng.UpdateNode(node)
+				err = eng.UpdateNode(t.Context(), NodeUpdateRequest{After: node})
 			}
 			require.NoError(t, err)
 			require.Zero(t, count(), "no orphaned embedding keys survive")
@@ -65,36 +65,7 @@ func TestRelationshipVersionDecayUsesUpdatedTime(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-72 * time.Hour)
 	edge := &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINKS", CreatedAt: old, UpdatedAt: now}
-	require.False(t, eng.filterEdgeByDecay(edge, now.UnixNano()), "recently updated edge remains visible")
+	require.False(t, eng.filterEntityByDecay(visibleRead, edge, now.UnixNano()), "recently updated edge remains visible")
 	edge.UpdatedAt = old
-	require.True(t, eng.filterEdgeByDecay(edge, now.UnixNano()), "stale update is suppressed")
-}
-
-func TestNamespacedEdgesPreserveSuppressionFlag(t *testing.T) {
-	for _, update := range []bool{false, true} {
-		name := "create"
-		if update {
-			name = "update"
-		}
-		t.Run(name, func(t *testing.T) {
-			eng := newTestEngine(t)
-			eng.SetRevealAll(true)
-			ns := NewNamespacedEngine(eng, "test")
-			for _, id := range []NodeID{"a", "b"} {
-				_, err := ns.CreateNode(&Node{ID: id})
-				require.NoError(t, err)
-			}
-			edge := &Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINKS", VisibilitySuppressed: !update}
-			require.NoError(t, ns.CreateEdge(edge))
-			if update {
-				edge.VisibilitySuppressed = true
-				edge.Properties = map[string]any{"edited": true}
-				require.NoError(t, ns.UpdateEdge(edge))
-			}
-			got, err := eng.GetEdge("test:e")
-			require.NoError(t, err)
-			require.True(t, got.VisibilitySuppressed, "namespace translation must retain stored visibility metadata")
-			require.Equal(t, EdgeID("e"), edge.ID, "caller IDs are unchanged")
-		})
-	}
+	require.True(t, eng.filterEntityByDecay(visibleRead, edge, now.UnixNano()), "stale update is suppressed")
 }

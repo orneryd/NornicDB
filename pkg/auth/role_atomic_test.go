@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -19,7 +20,7 @@ type roleFailureEngine struct {
 	failRoleDelete  bool
 }
 
-func (e *roleFailureEngine) DeleteNode(id storage.NodeID) error {
+func (e *roleFailureEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	if strings.HasPrefix(string(id), "proc_priv:") {
 		e.grantDeletes++
 		if e.grantDeletes == e.failGrantDelete {
@@ -29,7 +30,7 @@ func (e *roleFailureEngine) DeleteNode(id storage.NodeID) error {
 	if e.failRoleDelete && id == "role:ops" {
 		return errRoleMutation
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(ctx, id)
 }
 
 func (e *roleFailureEngine) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
@@ -43,18 +44,18 @@ type roleFailureView struct {
 	failure *roleFailureEngine
 }
 
-func (v *roleFailureView) DeleteNode(id storage.NodeID) error {
+func (v *roleFailureView) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	original := v.failure.Engine
 	v.failure.Engine = v.Engine
 	defer func() { v.failure.Engine = original }()
-	return v.failure.DeleteNode(id)
+	return v.failure.DeleteNode(ctx, id)
 }
 
 func TestDeleteRoleFailureChangesNothing(t *testing.T) {
 	for _, stage := range []string{"second grant delete", "role delete"} {
 		t.Run(stage, func(t *testing.T) {
 			ctx := context.Background()
-			inner := storage.NewMemoryEngine()
+			inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			base := storage.NewNamespacedEngine(inner, "system")
 			t.Cleanup(func() { _ = base.Close() })
 			engine := &roleFailureEngine{Engine: base}
@@ -72,7 +73,7 @@ func TestDeleteRoleFailureChangesNothing(t *testing.T) {
 			}
 			require.ErrorIs(t, roles.DeleteRole(ctx, "ops"), errRoleMutation)
 			require.True(t, roles.Exists("ops"))
-			_, err = base.GetNode("role:ops")
+			_, err = base.GetNode(context.Background(), "role:ops")
 			require.NoError(t, err)
 			after, err := privileges.List(ctx)
 			require.NoError(t, err)

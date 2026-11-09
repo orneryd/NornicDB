@@ -3,6 +3,9 @@ package cypher
 import (
 	"context"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -13,8 +16,8 @@ import (
 // arguments, as Neo4j does when it compiles the statement: whether the call
 // runs on its own or as a clause of a larger query, and whatever rows reach
 // it.
-func validateProcedureCallArguments(callCypher string) error {
-	if procedureCallContainsAggregation(callCypher) {
+func validateProcedureCallArguments(ctx context.Context, callCypher string) error {
+	if procedureCallContainsAggregation(ctx, callCypher) {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"InvalidAggregation",
@@ -25,7 +28,7 @@ func validateProcedureCallArguments(callCypher string) error {
 }
 
 func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
-	if err := validateProcedureCallArguments(callCypher); err != nil {
+	if err := validateProcedureCallArguments(ctx, callCypher); err != nil {
 		return nil, err
 	}
 	if strings.Index(callCypher, "(") >= 0 {
@@ -36,7 +39,7 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 		if err := validateProcedureArgCount(spec, args); err != nil {
 			return nil, err
 		}
-		return validateAndCoerceProcedureArguments(spec, args, explicitProcedureArgumentTexts(callCypher))
+		return validateAndCoerceProcedureArguments(spec, args, explicitProcedureArgumentTexts(ctx, callCypher))
 	}
 
 	params := getParamsFromContext(ctx)
@@ -64,7 +67,7 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
 	ctx = withExpressionFailureSlot(ctx)
 	bindings := valueBindingsFromContext(ctx)
-	texts := explicitProcedureArgumentTexts(callCypher)
+	texts := explicitProcedureArgumentTexts(ctx, callCypher)
 	if texts == nil {
 		return extractProcedureInvocationArguments(ctx, spec, callCypher)
 	}
@@ -72,7 +75,7 @@ func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.C
 		bindings = make(map[string]interface{})
 		bindParameterRow(ctx, pipelineRow(bindings))
 	}
-	if err := validateProcedureCallArguments(callCypher); err != nil {
+	if err := validateProcedureCallArguments(ctx, callCypher); err != nil {
 		return nil, err
 	}
 	args := make([]interface{}, len(texts))
@@ -93,11 +96,11 @@ func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.C
 	return validateAndCoerceProcedureArguments(spec, args, texts)
 }
 
-func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string, hasTail bool) error {
+func validateProcedureArgumentPassingMode(ctx context.Context, spec ProcedureSpec, callCypher string, hasTail bool) error {
 	if len(spec.Params) == 0 || strings.Contains(callCypher, "(") {
 		return nil
 	}
-	if parseYieldClause(callCypher) == nil && !hasTail {
+	if parseYieldClause(ctx, callCypher) == nil && !hasTail {
 		return nil
 	}
 	return newSemanticError(
@@ -112,7 +115,7 @@ func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string,
 // after the YIELD) can't have any of them, a WHERE must come before
 // ORDER BY / SKIP / LIMIT, and SKIP / LIMIT follow the same rules as in a
 // WITH or RETURN.
-func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail bool) error {
+func (e *StorageExecutor) validateYieldModifiers(ctx context.Context, yield *yieldClause, hasTail bool) error {
 	if yield == nil || !yield.hasModifiers() {
 		return nil
 	}
@@ -125,12 +128,12 @@ func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail boo
 			localization.CypherCoreYieldWhereMisplaced())
 	}
 	if yield.skip != "" {
-		if err := e.validateStaticPaginationExpression("SKIP", yield.skip); err != nil {
+		if err := e.validateStaticPaginationExpressions(ctx, paginationExpression{"SKIP", yield.skip}); err != nil {
 			return err
 		}
 	}
 	if yield.limit != "" {
-		if err := e.validateStaticPaginationExpression("LIMIT", yield.limit); err != nil {
+		if err := e.validateStaticPaginationExpressions(ctx, paginationExpression{"LIMIT", yield.limit}); err != nil {
 			return err
 		}
 	}
@@ -151,10 +154,7 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 
 	bindings := make(map[string]struct{}, len(yield.items))
 	for _, item := range yield.items {
-		binding := item.name
-		if item.alias != "" {
-			binding = item.alias
-		}
+		binding := item.column()
 		binding = normalizeProjectionColumnName(binding)
 		if _, exists := bindings[binding]; exists {
 			return newSemanticError(
@@ -168,26 +168,31 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 	return nil
 }
 
-func explicitProcedureArgumentTexts(callCypher string) []string {
-	open := strings.Index(callCypher, "(")
-	if open < 0 {
+func explicitProcedureArgumentTexts(ctx context.Context, source string) []string {
+	clause, ok := canonicalQueryClause(ctx, source)
+	if !ok {
 		return nil
 	}
-	close := findMatchingCallParen(callCypher, open)
-	if close < 0 {
-		return nil
-	}
-	body := strings.TrimSpace(callCypher[open+1 : close])
-	if body == "" {
-		return []string{}
-	}
-	parts := splitProcedureTopLevelComma(body)
-	for index := range parts {
-		parts[index] = strings.TrimSpace(parts[index])
-	}
-	return parts
+	return procedureArgumentTextsFromSyntax(clause)
 }
 
+func procedureArgumentTextsFromSyntax(clause cypherantlr.SyntaxNode) []string {
+	arguments := clause.ChildRule(cypherantlr.CypherParserRULE_parenExpressionChain)
+	if !arguments.Valid() {
+		return nil
+	}
+	expressions := arguments.ChildRule(cypherantlr.CypherParserRULE_expressionChain)
+	texts := []string{}
+	if expressions.Valid() {
+		for i := 0; i < expressions.ChildCount(); i++ {
+			expression := expressions.Child(i)
+			if expression.Rule() == cypherantlr.CypherParserRULE_expression {
+				texts = append(texts, expression.Code())
+			}
+		}
+	}
+	return texts
+}
 func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{}, explicitTexts []string) ([]interface{}, error) {
 	coerced := append([]interface{}(nil), args...)
 	for index := range coerced {
@@ -221,29 +226,36 @@ func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{},
 // itself checks (coerceProcedureArgument) are checked here: a NODE, MAP or
 // LIST parameter also takes NornicDB's other forms (a node id, a label, a
 // request's short form).
-func staticProcedureArgumentTypeError(clause string, scope staticTypeScope, unwound map[string]struct{}) error {
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(clause))
+func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope staticTypeScope, unwound map[string]struct{}) error {
+	name, err := extractProcedureName(ctx, clause)
+	if err != nil {
+		// A clause the reader could not parse gets no static type verdict; the
+		// owner that runs the CALL reports the parse error.
+		return nil
+	}
+	procedure, found := globalProcedureRegistry.Get(name)
 	if !found {
 		return nil
 	}
-	texts := explicitProcedureArgumentTexts(clause)
+	texts := explicitProcedureArgumentTexts(ctx, clause)
 	if len(texts) == 0 {
 		return nil
 	}
-	if len(unwound) > 0 && len(scope.values) > 0 {
-		values := make(map[string]string, len(scope.values))
-		for name, typeName := range scope.values {
-			if _, fromUnwind := unwound[name]; !fromUnwind {
-				values[name] = typeName
-			}
+	if len(unwound) > 0 {
+		// The whole binding is left to the call: its type name and its
+		// derived operand alike.
+		scope.values = maps.Clone(scope.values)
+		scope.derived = maps.Clone(scope.derived)
+		for name := range unwound {
+			delete(scope.values, name)
+			delete(scope.derived, name)
 		}
-		scope.values = values
 	}
 	for index, text := range texts {
 		if index >= len(procedure.Spec.Params) {
 			break
 		}
-		typeName := scope.staticExpressionType(text)
+		typeName := scope.staticExpressionType(ctx, text)
 		if typeName == "" {
 			continue
 		}
@@ -257,11 +269,11 @@ func staticProcedureArgumentTypeError(clause string, scope staticTypeScope, unwo
 // projectUnwoundValues returns which of the variables a WITH clause binds
 // carry a type that came from UNWIND: an alias of such a variable, or the
 // variable itself under WITH *.
-func projectUnwoundValues(unwound map[string]struct{}, clause string) map[string]struct{} {
+func projectUnwoundValues(ctx context.Context, unwound map[string]struct{}, clause string) map[string]struct{} {
 	if len(unwound) == 0 {
 		return nil
 	}
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	body, _ := projectionSemanticBodyAndTail(ctx, clause, "WITH")
 	var projected map[string]struct{}
 	keep := func(name string) {
 		if projected == nil {
@@ -270,7 +282,8 @@ func projectUnwoundValues(unwound map[string]struct{}, clause string) map[string
 		projected[name] = struct{}{}
 	}
 	for _, raw := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+		expression, alias := itemSource.expression, itemSource.alias
 		if expression == "*" {
 			for name := range unwound {
 				keep(name)
@@ -311,25 +324,8 @@ func procedureParameterAcceptsStaticType(parameterType, typeName string) (string
 	default:
 		return "", true
 	}
-	for _, choice := range staticTypeChoices(typeName) {
-		if choice == "Any" || containsString(accepted, choice) {
-			return expected, true
-		}
-	}
-	return expected, false
-}
-
-// procedureArgumentTypeName is how Neo4j names an argument's static type in a
-// procedure call's type mismatch: a list of numbers or booleans is a List<T>,
-// while a List<String> or a list of maps keeps its element type.
-func procedureArgumentTypeName(typeName string) string {
-	if typeName == "List<Float>, List<Integer> or List<Number>" {
-		return "List<T>"
-	}
-	for _, element := range []string{"Integer", "Float", "Boolean", "Number"} {
-		typeName = strings.ReplaceAll(typeName, "List<"+element+">", "List<T>")
-	}
-	return typeName
+	// The typing owner decides: one fitting alternative is enough.
+	return expected, typeName != "" && !typedOperand(typeName).proved().excludes(typeNameIn(append(accepted, "Any")...))
 }
 
 func isStaticallyTypedProcedureArgument(text string) bool {
@@ -387,55 +383,19 @@ func coerceProcedureArgument(parameter ProcedureParam, value interface{}) (inter
 }
 
 func procedureFloat64(value interface{}) (float64, bool) {
-	switch number := value.(type) {
-	case int:
-		return float64(number), true
-	case int8:
-		return float64(number), true
-	case int16:
-		return float64(number), true
-	case int32:
-		return float64(number), true
-	case int64:
-		return float64(number), true
-	case uint:
-		return float64(number), true
-	case uint8:
-		return float64(number), true
-	case uint16:
-		return float64(number), true
-	case uint32:
-		return float64(number), true
-	case uint64:
-		return float64(number), true
-	case float32:
-		return float64(number), true
-	case float64:
-		return number, true
-	default:
-		return 0, false
-	}
+	return valueconvert.NumericFloat64(value)
 }
 
 func isIntegerProcedureValue(value interface{}) bool {
-	switch value.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return true
-	default:
-		return false
-	}
+	return valueconvert.IsInteger(value)
 }
 
 func isFloatProcedureValue(value interface{}) bool {
-	switch value.(type) {
-	case float32, float64:
-		return true
-	default:
-		return false
-	}
+	_, ok := valueconvert.FloatValue(value)
+	return ok
 }
 
-func procedureCallContainsAggregation(callCypher string) bool {
+func procedureCallContainsAggregation(ctx context.Context, callCypher string) bool {
 	open := strings.Index(callCypher, "(")
 	if open < 0 {
 		return false
@@ -446,9 +406,14 @@ func procedureCallContainsAggregation(callCypher string) bool {
 	}
 	body := callCypher[open+1 : close]
 	for _, name := range []string{"count", "sum", "avg", "min", "max", "collect", "stdev", "stdevp", "percentilecont", "percentiledisc"} {
-		if findKeywordIndexInContext(body, name) >= 0 && strings.Contains(lowerASCII(body), name+"(") {
+		if findKeywordIndexInContext(ctx, body, name) >= 0 && strings.Contains(lowerASCII(body), name+"(") {
 			return true
 		}
 	}
 	return false
+}
+
+// unknownProcedureError is the shared planning/execution terminal for a missing procedure.
+func unknownProcedureError(name string) error {
+	return newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", fmt.Sprintf("There is no procedure with the name `%s` registered for this database instance. Please ensure you've spelled the procedure name correctly and that the procedure is properly deployed.", name))
 }

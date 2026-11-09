@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -14,12 +16,12 @@ import (
 // back to a label scan in this state; MERGE planning must do the same so it can
 // MATCH the committed node instead of choosing CREATE and failing at commit.
 func TestMergeUniqueConstraintIncompleteCacheFallsBackToScan(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		_ = baseStore.Close()
 	})
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "existing",
 		Labels: []string{"TerraformResource"},
 		Properties: map[string]interface{}{
@@ -55,12 +57,12 @@ func TestMergeUniqueConstraintIncompleteCacheFallsBackToScan(t *testing.T) {
 // upserts. It has the same cache rule as scalar MERGE; an incomplete
 // missing UNIQUE value must fall back to storage before CREATE is chosen.
 func TestUnwindMergeUniqueConstraintIncompleteCacheFallsBackToScan(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		_ = baseStore.Close()
 	})
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "existing",
 		Labels: []string{"TerraformResource"},
 		Properties: map[string]interface{}{

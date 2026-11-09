@@ -1,6 +1,9 @@
 package replication
 
 import (
+	"fmt"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bufio"
 	"bytes"
 	"context"
@@ -8,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -113,20 +118,23 @@ func (c *raftForwardPeerConn) SendForwardApply(context.Context, *Command, time.D
 }
 
 func (m *coverageReplicator) Start(context.Context) error { return nil }
-func (m *coverageReplicator) Apply(cmd *Command, timeout time.Duration) error {
+func (m *coverageReplicator) Apply(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	m.applied = append(m.applied, cmd)
 	m.lastTimeout = timeout
 	return m.applyErr
 }
-func (m *coverageReplicator) ApplyBatch([]*Command, time.Duration) error { return nil }
-func (m *coverageReplicator) IsLeader() bool                             { return m.isLeader }
-func (m *coverageReplicator) LeaderAddr() string                         { return "" }
-func (m *coverageReplicator) LeaderID() string                           { return "leader" }
-func (m *coverageReplicator) Health() *HealthStatus                      { return &HealthStatus{} }
-func (m *coverageReplicator) WaitForLeader(context.Context) error        { return nil }
-func (m *coverageReplicator) Shutdown() error                            { return nil }
-func (m *coverageReplicator) Mode() ReplicationMode                      { return ModeStandalone }
-func (m *coverageReplicator) NodeID() string                             { return m.nodeID }
+func (m *coverageReplicator) ApplyBatch(ctx context.Context, _ []*Command, _ time.Duration) error {
+	return nil
+}
+func (m *coverageReplicator) IsLeader() bool                      { return m.isLeader }
+func (m *coverageReplicator) LeaderAddr() string                  { return "" }
+func (m *coverageReplicator) LeaderID() string                    { return "leader" }
+func (m *coverageReplicator) Health() *HealthStatus               { return &HealthStatus{} }
+func (m *coverageReplicator) WaitForLeader(context.Context) error { return nil }
+func (m *coverageReplicator) LifetimeContext() context.Context    { return context.Background() }
+func (m *coverageReplicator) Shutdown() error                     { return nil }
+func (m *coverageReplicator) Mode() ReplicationMode               { return ModeStandalone }
+func (m *coverageReplicator) NodeID() string                      { return m.nodeID }
 func (m *coverageReplicator) HandleWALBatch(entries []*WALEntry) (*WALBatchResponse, error) {
 	m.walEntries = entries
 	return &WALBatchResponse{AckedPosition: 42, ReceivedPosition: 42}, nil
@@ -151,7 +159,7 @@ func (m *coverageReplicator) HandleRaftAppendEntries(req *RaftAppendEntriesReque
 	m.appendReq = req
 	return &RaftAppendEntriesResponse{Term: req.Term, Success: true, MatchIndex: req.PrevLogIndex}, nil
 }
-func (m *coverageReplicator) HandleForwardApply(cmd *Command, timeout time.Duration) error {
+func (m *coverageReplicator) HandleForwardApply(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	m.lastForwardCmd = cmd
 	m.lastTimeout = timeout
 	return m.forwardApplyErr
@@ -159,11 +167,36 @@ func (m *coverageReplicator) HandleForwardApply(cmd *Command, timeout time.Durat
 
 func TestReplicatedEngine_MethodCoverage(t *testing.T) {
 	t.Parallel()
+	t.Run("standalone backing", func(t *testing.T) {
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+		t.Cleanup(func() { _ = base.Close() })
+
+		engine := setupTestAdapter(t, adapterFixtureOptions{backing: base, standalone: true, timeout: 5 * time.Second}).engine
+		var err error
+
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "db1:n1", Labels: []string{"Person"}})
+		require.NoError(t, err)
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "db2:n2", Labels: []string{"Person"}})
+		require.NoError(t, err)
+
+		// Write must be visible on the underlying engine.
+		_, err = base.GetNode(t.Context(), "db1:n1")
+		require.NoError(t, err)
+
+		// Drop prefix must remove only matching IDs.
+		_, _, err = engine.DeleteByPrefix("db1:")
+		require.NoError(t, err)
+		_, err = base.GetNode(t.Context(), "db1:n1")
+		require.ErrorIs(t, err, storage.ErrNotFound)
+		_, err = base.GetNode(t.Context(), "db2:n2")
+		require.NoError(t, err)
+
+	})
 
 	var nilEngine *ReplicatedEngine
 	assert.True(t, nilEngine.IsLeader())
 
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	noRepl := NewReplicatedEngine(base, nil, 0)
@@ -173,19 +206,19 @@ func TestReplicatedEngine_MethodCoverage(t *testing.T) {
 	engine := NewReplicatedEngine(base, mock, 0)
 	assert.False(t, engine.IsLeader())
 
-	_, err := engine.CreateNode(nil)
+	_, err := engine.CreateNode(t.Context(), nil)
 	require.ErrorContains(t, err, "nil node")
-	require.ErrorContains(t, engine.UpdateNode(nil), "nil node")
-	require.ErrorContains(t, engine.CreateEdge(nil), "nil edge")
-	require.ErrorContains(t, engine.UpdateEdge(nil), "nil edge")
+	require.ErrorContains(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: nil}), "nil node")
+	require.ErrorContains(t, engine.CreateEdge(t.Context(), nil), "nil edge")
+	require.ErrorContains(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: nil}), "nil edge")
 
-	createdID, err := engine.CreateNode(&storage.Node{ID: storage.NodeID("created-1"), Labels: []string{"Person"}})
+	createdID, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("created-1"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	assert.Equal(t, storage.NodeID("created-1"), createdID)
 
 	node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Person"}}
-	require.NoError(t, engine.UpdateNode(node))
-	require.NoError(t, engine.DeleteNode("n1"))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
+	require.NoError(t, engine.DeleteNode(t.Context(), "n1"))
 	require.Len(t, mock.applied, 3)
 	assert.Equal(t, CmdCreateNode, mock.applied[0].Type)
 	assert.Equal(t, CmdUpdateNode, mock.applied[1].Type)
@@ -193,42 +226,42 @@ func TestReplicatedEngine_MethodCoverage(t *testing.T) {
 	assert.Equal(t, 30*time.Second, mock.lastTimeout)
 
 	edge := &storage.Edge{ID: storage.EdgeID("e1"), StartNode: "n1", EndNode: "n2", Type: "KNOWS"}
-	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.UpdateEdge(edge))
-	require.NoError(t, engine.DeleteEdge("e1"))
+	require.NoError(t, engine.CreateEdge(t.Context(), edge))
+	require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
+	require.NoError(t, engine.DeleteEdge(t.Context(), "e1"))
 	require.Len(t, mock.applied, 6)
 	assert.Equal(t, CmdCreateEdge, mock.applied[3].Type)
 	assert.Equal(t, CmdUpdateEdge, mock.applied[4].Type)
 	assert.Equal(t, CmdDeleteEdge, mock.applied[5].Type)
 
-	require.NoError(t, engine.BulkCreateNodes([]*storage.Node{
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), []*storage.Node{
 		{ID: storage.NodeID("n3"), Labels: []string{"L"}},
 		{ID: storage.NodeID("n4"), Labels: []string{"L"}},
 	}))
-	require.NoError(t, engine.BulkCreateEdges([]*storage.Edge{
+	require.NoError(t, engine.BulkCreateEdges(t.Context(), []*storage.Edge{
 		{ID: storage.EdgeID("e2"), StartNode: "n3", EndNode: "n4", Type: "REL"},
 	}))
-	require.NoError(t, engine.BulkDeleteNodes([]storage.NodeID{"n3"}))
-	require.NoError(t, engine.BulkDeleteEdges([]storage.EdgeID{"e2"}))
+	require.NoError(t, engine.BulkDeleteNodes(t.Context(), []storage.NodeID{"n3"}))
+	require.NoError(t, engine.BulkDeleteEdges(t.Context(), []storage.EdgeID{"e2"}))
 	_, _, err = engine.DeleteByPrefix("db1:")
 	require.NoError(t, err)
 
-	require.NoError(t, decodeGob(mock.applied[6].Data, &[][]byte{}))
-	require.NoError(t, decodeGob(mock.applied[7].Data, &[][]byte{}))
-	require.NoError(t, decodeGob(mock.applied[8].Data, &[]storage.NodeID{}))
-	require.NoError(t, decodeGob(mock.applied[9].Data, &[]storage.EdgeID{}))
+	require.NoError(t, storage.DecodeCommandPayload(mock.applied[6].Data, &[][]byte{}))
+	require.NoError(t, storage.DecodeCommandPayload(mock.applied[7].Data, &[][]byte{}))
+	require.NoError(t, storage.DecodeCommandPayload(mock.applied[8].Data, &[]storage.NodeID{}))
+	require.NoError(t, storage.DecodeCommandPayload(mock.applied[9].Data, &[]storage.EdgeID{}))
 
 	mock.applyErr = errors.New("replicate failed")
-	_, err = engine.CreateNode(&storage.Node{ID: "n-fail-create", Labels: []string{"L"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "n-fail-create", Labels: []string{"L"}})
 	require.ErrorContains(t, err, "replicate failed")
-	err = engine.DeleteNode("n-fail")
+	err = engine.DeleteNode(t.Context(), "n-fail")
 	require.ErrorContains(t, err, "replicate failed")
 	_, _, err = engine.DeleteByPrefix("db-fail:")
 	require.ErrorContains(t, err, "replicate failed")
-	require.ErrorContains(t, engine.DeleteEdge("e-fail"), "replicate failed")
-	require.ErrorContains(t, engine.BulkDeleteNodes([]storage.NodeID{"n-fail"}), "replicate failed")
-	require.ErrorContains(t, engine.BulkDeleteEdges([]storage.EdgeID{"e-fail"}), "replicate failed")
-	_, err = engine.CreateNode(&storage.Node{
+	require.ErrorContains(t, engine.DeleteEdge(t.Context(), "e-fail"), "replicate failed")
+	require.ErrorContains(t, engine.BulkDeleteNodes(t.Context(), []storage.NodeID{"n-fail"}), "replicate failed")
+	require.ErrorContains(t, engine.BulkDeleteEdges(t.Context(), []storage.EdgeID{"e-fail"}), "replicate failed")
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "n-bad-encode",
 		Labels: []string{"L"},
 		Properties: map[string]any{
@@ -237,8 +270,8 @@ func TestReplicatedEngine_MethodCoverage(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "encode node")
 
-	require.ErrorContains(t, engine.BulkCreateNodes([]*storage.Node{nil}), "encode node")
-	require.ErrorContains(t, engine.BulkCreateEdges([]*storage.Edge{nil}), "encode edge")
+	require.ErrorContains(t, engine.BulkCreateNodes(t.Context(), []*storage.Node{nil}), "encode node")
+	require.ErrorContains(t, engine.BulkCreateEdges(t.Context(), []*storage.Edge{nil}), "encode edge")
 }
 
 func TestRegisterClusterHandlers_AndDispatch(t *testing.T) {
@@ -253,7 +286,7 @@ func TestRegisterClusterHandlers_AndDispatch(t *testing.T) {
 	RegisterClusterHandlers(tr, mock)
 	require.Len(t, tr.handlers, 7)
 
-	walPayload, err := encodeGob([]*WALEntry{{Position: 7, Command: &Command{Type: CmdCreateNode}}})
+	walPayload, err := storage.EncodeCommandPayload([]*WALEntry{{Position: 7, Command: &Command{Type: CmdCreateNode}}})
 	require.NoError(t, err)
 	walResp, err := tr.handlers[ClusterMsgWALBatch](context.Background(), "peer-1", &ClusterMessage{Payload: walPayload})
 	require.NoError(t, err)
@@ -261,7 +294,7 @@ func TestRegisterClusterHandlers_AndDispatch(t *testing.T) {
 	require.Len(t, mock.walEntries, 1)
 	assert.Equal(t, uint64(7), mock.walEntries[0].Position)
 
-	heartbeatPayload, err := encodeGob(HeartbeatRequest{NodeID: "peer-1", Role: "standby"})
+	heartbeatPayload, err := storage.EncodeCommandPayload(HeartbeatRequest{NodeID: "peer-1", Role: "standby"})
 	require.NoError(t, err)
 	heartbeatResp, err := tr.handlers[ClusterMsgHeartbeat](context.Background(), "peer-1", &ClusterMessage{Payload: heartbeatPayload})
 	require.NoError(t, err)
@@ -272,35 +305,35 @@ func TestRegisterClusterHandlers_AndDispatch(t *testing.T) {
 	_, err = tr.handlers[ClusterMsgHeartbeat](context.Background(), "peer-1", &ClusterMessage{Payload: []byte("bad")})
 	require.ErrorContains(t, err, "decode heartbeat")
 
-	fencePayload, err := encodeGob(FenceRequest{Reason: "failover"})
+	fencePayload, err := storage.EncodeCommandPayload(FenceRequest{Reason: "failover"})
 	require.NoError(t, err)
 	fenceResp, err := tr.handlers[ClusterMsgFence](context.Background(), "peer-1", &ClusterMessage{Payload: fencePayload})
 	require.NoError(t, err)
 	assert.Equal(t, ClusterMsgFenceResponse, fenceResp.Type)
 	assert.Equal(t, "failover", mock.fenceReq.Reason)
 
-	promotePayload, err := encodeGob(PromoteRequest{Reason: "planned"})
+	promotePayload, err := storage.EncodeCommandPayload(PromoteRequest{Reason: "planned"})
 	require.NoError(t, err)
 	promoteResp, err := tr.handlers[ClusterMsgPromote](context.Background(), "peer-1", &ClusterMessage{Payload: promotePayload})
 	require.NoError(t, err)
 	assert.Equal(t, ClusterMsgPromoteResponse, promoteResp.Type)
 	assert.Equal(t, "planned", mock.promoteReq.Reason)
 
-	votePayload, err := encodeGob(RaftVoteRequest{Term: 5, CandidateID: "cand"})
+	votePayload, err := storage.EncodeCommandPayload(RaftVoteRequest{Term: 5, CandidateID: "cand"})
 	require.NoError(t, err)
 	voteResp, err := tr.handlers[ClusterMsgVoteRequest](context.Background(), "peer-1", &ClusterMessage{Payload: votePayload})
 	require.NoError(t, err)
 	assert.Equal(t, ClusterMsgVoteResponse, voteResp.Type)
 	assert.Equal(t, uint64(5), mock.voteReq.Term)
 
-	appendPayload, err := encodeGob(RaftAppendEntriesRequest{Term: 7, LeaderID: "l1", PrevLogIndex: 9})
+	appendPayload, err := storage.EncodeCommandPayload(RaftAppendEntriesRequest{Term: 7, LeaderID: "l1", PrevLogIndex: 9})
 	require.NoError(t, err)
 	appendResp, err := tr.handlers[ClusterMsgAppendEntries](context.Background(), "peer-1", &ClusterMessage{Payload: appendPayload})
 	require.NoError(t, err)
 	assert.Equal(t, ClusterMsgAppendEntriesResponse, appendResp.Type)
 	assert.Equal(t, uint64(9), mock.appendReq.PrevLogIndex)
 
-	forwardPayload, err := encodeGob(Command{Type: CmdCreateNode, Data: []byte("x")})
+	forwardPayload, err := storage.EncodeCommandPayload(Command{Type: CmdCreateNode, Data: []byte("x")})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
 	defer cancel()
@@ -316,21 +349,21 @@ func TestRegisterClusterHandlers_AndDispatch(t *testing.T) {
 	forwardResp, err = tr.handlers[ClusterMsgForwardApply](context.Background(), "peer-1", &ClusterMessage{Payload: forwardPayload})
 	require.NoError(t, err)
 	var fr forwardApplyResponse
-	require.NoError(t, decodeGob(forwardResp.Payload, &fr))
+	require.NoError(t, storage.DecodeCommandPayload(forwardResp.Payload, &fr))
 	assert.Equal(t, "forward apply failed", fr.Err)
 }
 
 func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 	t.Parallel()
 
-	adapter, _ := setupTestAdapter(t)
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
-	_, err := adapter.engine.CreateNode(&storage.Node{ID: "n1", Labels: []string{"L"}})
+	_, err := adapter.engine.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"L"}})
 	require.NoError(t, err)
-	_, err = adapter.engine.CreateNode(&storage.Node{ID: "n2", Labels: []string{"L"}})
+	_, err = adapter.engine.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"L"}})
 	require.NoError(t, err)
-	require.NoError(t, adapter.engine.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}))
+	require.NoError(t, adapter.engine.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}))
 
 	updatedEdge := &storage.Edge{
 		ID:         "e1",
@@ -339,55 +372,55 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 		Type:       "KNOWS",
 		Properties: map[string]any{"weight": float64(2)},
 	}
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	require.NoError(t, applyQueued(t, adapter, &Command{
 		Type:      CmdUpdateEdge,
-		Data:      encodeEdgeForTest(t, updatedEdge),
+		Data:      runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, updatedEdge),
 		Timestamp: time.Now(),
 	}))
-	gotEdge, err := adapter.engine.GetEdge("e1")
+	gotEdge, err := adapter.engine.GetEdge(t.Context(), "e1")
 	require.NoError(t, err)
 	assert.Equal(t, float64(2), gotEdge.Properties["weight"])
 
-	nodeBytes1 := encodeNodeForTest(t, &storage.Node{ID: "n3", Labels: []string{"L"}})
-	nodeBytes2 := encodeNodeForTest(t, &storage.Node{ID: "n4", Labels: []string{"L"}})
-	bulkNodesPayload := encodeGobForTest(t, [][]byte{nodeBytes1, nodeBytes2})
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	nodeBytes1 := runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: "n3", Labels: []string{"L"}})
+	nodeBytes2 := runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: "n4", Labels: []string{"L"}})
+	bulkNodesPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{nodeBytes1, nodeBytes2})
+	require.NoError(t, applyQueued(t, adapter, &Command{
 		Type:      CmdBulkCreateNodes,
 		Data:      bulkNodesPayload,
 		Timestamp: time.Now(),
 	}))
-	_, err = adapter.engine.GetNode("n3")
+	_, err = adapter.engine.GetNode(t.Context(), "n3")
 	require.NoError(t, err)
-	_, err = adapter.engine.GetNode("n4")
+	_, err = adapter.engine.GetNode(t.Context(), "n4")
 	require.NoError(t, err)
 
-	edgeBytes := encodeEdgeForTest(t, &storage.Edge{ID: "e2", StartNode: "n3", EndNode: "n4", Type: "REL"})
-	bulkEdgesPayload := encodeGobForTest(t, [][]byte{edgeBytes})
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	edgeBytes := runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: "e2", StartNode: "n3", EndNode: "n4", Type: "REL"})
+	bulkEdgesPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{edgeBytes})
+	require.NoError(t, applyQueued(t, adapter, &Command{
 		Type:      CmdBulkCreateEdges,
 		Data:      bulkEdgesPayload,
 		Timestamp: time.Now(),
 	}))
-	_, err = adapter.engine.GetEdge("e2")
+	_, err = adapter.engine.GetEdge(t.Context(), "e2")
 	require.NoError(t, err)
 
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	require.NoError(t, applyQueued(t, adapter, &Command{
 		Type:      CmdBulkDeleteNodes,
-		Data:      encodeGobForTest(t, []storage.NodeID{"n4"}),
+		Data:      runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, []storage.NodeID{"n4"}),
 		Timestamp: time.Now(),
 	}))
-	_, err = adapter.engine.GetNode("n4")
+	_, err = adapter.engine.GetNode(t.Context(), "n4")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	require.NoError(t, applyQueued(t, adapter, &Command{
 		Type:      CmdBulkDeleteEdges,
-		Data:      encodeGobForTest(t, []storage.EdgeID{"e2"}),
+		Data:      runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, []storage.EdgeID{"e2"}),
 		Timestamp: time.Now(),
 	}))
-	_, err = adapter.engine.GetEdge("e2")
+	_, err = adapter.engine.GetEdge(t.Context(), "e2")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
-	err = adapter.ApplyCommand(&Command{Type: CmdBulkDeleteEdges, Data: []byte("bad"), Timestamp: time.Now()})
+	err = applyQueued(t, adapter, &Command{Type: CmdBulkDeleteEdges, Data: []byte("bad"), Timestamp: time.Now()})
 	require.ErrorContains(t, err, "decode bulk delete edges")
 }
 
@@ -422,13 +455,12 @@ func TestHAStandbyReplicator_UncoveredHelpers(t *testing.T) {
 	require.NoError(t, err)
 	r.transport = NewMockTransport()
 	r.started.Store(true)
-	r.stopCh = make(chan struct{})
 
 	cmds := []*Command{
 		{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()},
 		{Type: CmdUpdateNode, Data: []byte("y"), Timestamp: time.Now()},
 	}
-	require.Error(t, r.ApplyBatch(cmds, 50*time.Millisecond))
+	require.Error(t, r.ApplyBatch(t.Context(), cmds, 50*time.Millisecond))
 
 	r.isPrimary.Store(true)
 	assert.Equal(t, cfg.NodeID, r.LeaderID())
@@ -533,8 +565,8 @@ func TestRaftReplicator_UncoveredHandlersAndAdminMethods(t *testing.T) {
 	r.started.Store(true)
 	r.state = StateFollower
 	r.leaderAddr = ""
-	assert.ErrorIs(t, r.HandleForwardApply(&Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}, 20*time.Millisecond), ErrNoLeader)
-	assert.ErrorIs(t, r.ApplyBatch([]*Command{{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}}, 20*time.Millisecond), ErrNoLeader)
+	assert.ErrorIs(t, r.HandleForwardApply(t.Context(), &Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}, 20*time.Millisecond), ErrNoLeader)
+	assert.ErrorIs(t, r.ApplyBatch(t.Context(), []*Command{{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}}, 20*time.Millisecond), ErrNoLeader)
 
 	r.state = StateLeader
 	assert.Equal(t, r.config.NodeID, r.LeaderID())
@@ -577,7 +609,6 @@ func TestMultiRegionReplicator_UncoveredWrapperMethods(t *testing.T) {
 		config:      cfg,
 		storage:     NewMockStorage(),
 		localRaft:   local,
-		stopCh:      make(chan struct{}),
 		remoteConns: make(map[string]PeerConnection),
 	}
 	r.started.Store(true)
@@ -586,7 +617,7 @@ func TestMultiRegionReplicator_UncoveredWrapperMethods(t *testing.T) {
 	assert.Equal(t, "leader-x", r.LeaderID())
 	assert.Equal(t, "region-node-1", r.NodeID())
 
-	err := r.ApplyBatch([]*Command{{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}}, 10*time.Millisecond)
+	err := r.ApplyBatch(t.Context(), []*Command{{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}}, 10*time.Millisecond)
 	require.ErrorIs(t, err, ErrNotLeader)
 
 	remote := &MockPeerConn{connected: true}
@@ -605,7 +636,7 @@ func TestMultiRegionReplicator_UncoveredWrapperMethods(t *testing.T) {
 func TestStorageAdapter_PruneWALEntries(t *testing.T) {
 	t.Parallel()
 
-	adapter, _ := setupTestAdapter(t)
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
 	adapter.memWAL = []*WALEntry{
@@ -800,9 +831,14 @@ func TestHAStandbyReplicator_StartAndAckPaths(t *testing.T) {
 	t.Cleanup(func() { _ = primary.Shutdown() })
 
 	primary.walStreamer.AcknowledgePosition(5)
-	require.NoError(t, primary.waitForReplicationAck(5, 20*time.Millisecond))
 
-	err = primary.waitForReplicationAck(10, 20*time.Millisecond)
+	ackCtx, cancelAck := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelAck()
+	require.NoError(t, primary.waitForReplicationAck(ackCtx, 5))
+
+	missCtx, cancelMiss := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelMiss()
+	err = primary.waitForReplicationAck(missCtx, 10)
 	require.ErrorContains(t, err, "replication ack timeout")
 
 	standbyCfg := DefaultConfig()
@@ -842,36 +878,44 @@ func TestRaftReplicator_ApplyBranchCoverage(t *testing.T) {
 	r, _ := newCoverageRaftReplicator(t)
 	cmd := &Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}
 
-	r.closed.Store(true)
-	require.ErrorIs(t, r.Apply(cmd, 10*time.Millisecond), ErrClosed)
+	r.work.CloseAdmission()
+	require.ErrorIs(t, r.Apply(t.Context(), cmd, 10*time.Millisecond), ErrClosed)
 
-	r.closed.Store(false)
-	require.ErrorIs(t, r.Apply(cmd, 10*time.Millisecond), ErrNotReady)
+	// Owner admission never reopens: a fresh replicator is the not-started
+	// case and carries the open-admission branches below.
+	r, _ = newCoverageRaftReplicator(t)
+	require.ErrorIs(t, r.Apply(t.Context(), cmd, 10*time.Millisecond), ErrNotReady)
 
 	r.started.Store(true)
 	r.state = StateFollower
 	r.leaderAddr = ""
-	require.ErrorIs(t, r.Apply(cmd, 10*time.Millisecond), ErrNoLeader)
+	require.ErrorIs(t, r.Apply(t.Context(), cmd, 10*time.Millisecond), ErrNoLeader)
 
 	r.leaderAddr = "127.0.0.1:17130"
 	r.transport = nil
-	require.ErrorIs(t, r.Apply(cmd, 10*time.Millisecond), ErrNotLeader)
+	require.ErrorIs(t, r.Apply(t.Context(), cmd, 10*time.Millisecond), ErrNotLeader)
 
 	r.transport = &raftCoverageTransport{connectErr: errors.New("dial failed")}
-	err := r.Apply(cmd, 10*time.Millisecond)
+	err := r.Apply(t.Context(), cmd, 10*time.Millisecond)
 	require.ErrorContains(t, err, "forward to leader")
 
 	fwdConn := &raftForwardPeerConn{raftCoveragePeerConn: raftCoveragePeerConn{connected: true}}
 	r.transport = &raftCoverageTransport{conn: fwdConn}
-	require.NoError(t, r.Apply(cmd, 10*time.Millisecond))
+	require.NoError(t, r.Apply(t.Context(), cmd, 10*time.Millisecond))
 
 	fwdConn.forwardErr = errors.New("leader rejected")
-	err = r.Apply(cmd, 10*time.Millisecond)
-	require.ErrorContains(t, err, "leader rejected")
+	err = r.Apply(t.Context(), cmd, 10*time.Millisecond)
+	// Author: NOR-288 lane (Claude), 2026-10-30. Once forwarded, a failed reply
+	// cannot establish that the leader did not apply the command: the outcome is
+	// committed-pending or unknown, and the reply error stays its cause.
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, err, &accepted)
+	require.Equal(t, storage.CommitRecoveryPending, accepted.State)
+	require.ErrorContains(t, accepted.Err, "leader rejected")
 
 	r.state = StateLeader
 	r.applyCh = make(chan *applyFuture)
-	err = r.Apply(cmd, 10*time.Millisecond)
+	err = r.Apply(t.Context(), cmd, 10*time.Millisecond)
 	require.ErrorContains(t, err, "apply queue full")
 }
 
@@ -902,32 +946,22 @@ func TestRaftReplicator_HandleTransportWrappers(t *testing.T) {
 	assert.True(t, appendResp.Success)
 }
 
-func TestStorageAdapter_ApplyBatchWriteBranches(t *testing.T) {
-	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
+func TestStorageAdapter_TypedMixedTransactionReplacesLegacyBatch(t *testing.T) {
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
-
-	_, err := adapter.engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"L"}})
+	for _, id := range []storage.NodeID{"a", "b"} {
+		_, err := adapter.engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"L"}})
+		require.NoError(t, err)
+	}
+	require.ErrorIs(t, applyQueued(t, adapter, &Command{Type: cmdRetiredBatchWrite, Data: []byte("bad")}), ErrRetiredCommand)
+	ops := []storage.Operation{{Type: storage.OpCreateNode, Node: &storage.Node{ID: "test:n-batch", Labels: []string{"L"}}}, {Type: storage.OpCreateEdge, Edge: &storage.Edge{ID: "test:e-batch", StartNode: "test:a", EndNode: "test:b", Type: "REL"}}}
+	payload, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Namespace: "test", LogicalID: "mixed-replacement", Operations: ops})
 	require.NoError(t, err)
-	_, err = adapter.engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"L"}})
+	require.NoError(t, storage.ApplyAcceptedEntityTransaction(adapter.engine, payload))
+	_, err = adapter.engine.GetNode(t.Context(), "n-batch")
 	require.NoError(t, err)
-
-	nodeBytes := encodeNodeForTest(t, &storage.Node{ID: "n-batch", Labels: []string{"L"}})
-	edgeBytes := encodeEdgeForTest(t, &storage.Edge{ID: "e-batch", StartNode: "a", EndNode: "b", Type: "REL"})
-	batchPayload := encodeGobForTest(t, struct {
-		Nodes [][]byte
-		Edges [][]byte
-	}{Nodes: [][]byte{nodeBytes}, Edges: [][]byte{edgeBytes}})
-
-	require.NoError(t, adapter.applyBatchWrite(batchPayload))
-	_, err = adapter.engine.GetNode("n-batch")
+	_, err = adapter.engine.GetEdge(t.Context(), "e-batch")
 	require.NoError(t, err)
-	_, err = adapter.engine.GetEdge("e-batch")
-	require.NoError(t, err)
-
-	err = adapter.applyBatchWrite([]byte("bad"))
-	require.ErrorContains(t, err, "decode batch")
 }
 
 func TestNewDefaultTransportFromConfig_Branches(t *testing.T) {
@@ -971,7 +1005,7 @@ func TestHAStandbyReplicator_Start_DefaultTransportInitFailure(t *testing.T) {
 
 	err = r.Start(context.Background())
 	require.ErrorContains(t, err, "init transport")
-	assert.True(t, r.started.Load())
+	assert.False(t, r.started.Load(), "failed native construction must not publish readiness")
 }
 
 func TestHAStandbyReplicator_Start_DefaultTransportSuccessPaths(t *testing.T) {
@@ -1015,7 +1049,7 @@ func TestHAStandbyReplicator_Start_DefaultTransportSuccessPaths(t *testing.T) {
 func TestStorageAdapter_RestoreSnapshot_ErrorPaths(t *testing.T) {
 	t.Parallel()
 
-	adapter, _ := setupTestAdapter(t)
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
 	badReader := io.NopCloser(io.Reader(&errReader{err: errors.New("read boom")}))
@@ -1026,15 +1060,11 @@ func TestStorageAdapter_RestoreSnapshot_ErrorPaths(t *testing.T) {
 	require.ErrorContains(t, err, "decode snapshot")
 
 	node := &storage.Node{ID: "n1", Labels: []string{"L"}}
-	snapshot := struct {
-		WALPosition uint64
-		Nodes       []*storage.Node
-		Edges       []*storage.Edge
-	}{
+	snapshot := storage.ReplicationSnapshot{
 		WALPosition: 3,
 		Nodes:       []*storage.Node{node, node},
 	}
-	payload, encErr := encodeGob(snapshot)
+	payload, encErr := storage.EncodeCommandPayload(snapshot)
 	require.NoError(t, encErr)
 	err = adapter.RestoreSnapshot(io.NopCloser(bytes.NewReader(payload)))
 	require.ErrorContains(t, err, "restore node")
@@ -1053,7 +1083,7 @@ func TestRaftReplicator_WaitForCommitCancelAndStop(t *testing.T) {
 	require.ErrorIs(t, <-f1.errCh, context.Canceled)
 
 	f2 := &applyFuture{index: 1, errCh: make(chan error, 1)}
-	close(r.stopCh)
+	r.work.Cancel()
 	r.waitForCommit(context.Background(), f2)
 	require.ErrorIs(t, <-f2.errCh, ErrClosed)
 }
@@ -1062,182 +1092,79 @@ type errReader struct{ err error }
 
 func (r *errReader) Read([]byte) (int, error) { return 0, r.err }
 
-func TestStorageAdapter_ApplyCommand_SyncWALFallbackPath(t *testing.T) {
+func TestClusterTransport_SendMethods_ErrorMatrix(t *testing.T) {
 	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
-	t.Cleanup(func() { _ = adapter.Close() })
-
-	// Force the non-blocking queue send to hit default: path, exercising
-	// the synchronous WAL append fallback branch. We stop the async
-	// writer first so the queue swap doesn't race with walWriterLoop
-	// reading the channel (caught by go test -race when this test runs
-	// alongside others that don't stop the writer).
-	adapter.stopWALWriterForTest()
-	adapter.walQueue = make(chan *walWriteRequest)
-
-	cmd := &Command{
-		Type:      CmdCreateNode,
-		Data:      encodeNodeForTest(t, &storage.Node{ID: "fallback-n1", Labels: []string{"L"}}),
-		Timestamp: time.Now(),
-	}
-	require.NoError(t, adapter.ApplyCommand(cmd))
-
-	_, err := adapter.engine.GetNode("fallback-n1")
-	require.NoError(t, err)
-}
-
-func TestStorageAdapter_ApplyCommand_SyncWALFallbackError(t *testing.T) {
-	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
-	t.Cleanup(func() { _ = adapter.Close() })
-
-	// Force fallback branch and make WAL append fail. Stop the async
-	// writer first so the queue swap doesn't race with walWriterLoop.
-	adapter.stopWALWriterForTest()
-	adapter.walQueue = make(chan *walWriteRequest)
-	require.NoError(t, adapter.wal.Close())
-
-	cmd := &Command{
-		Type:      CmdCreateNode,
-		Data:      encodeNodeForTest(t, &storage.Node{ID: "fallback-fail", Labels: []string{"L"}}),
-		Timestamp: time.Now(),
-	}
-	err := adapter.ApplyCommand(cmd)
-	if err != nil {
-		require.ErrorContains(t, err, "failed to append to WAL")
-		return
-	}
-	_, getErr := adapter.engine.GetNode("fallback-fail")
-	require.NoError(t, getErr)
-}
-
-func TestClusterTransport_SendMethods_DecodeAndErrorBranches(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	server := NewClusterTransport(&ClusterTransportConfig{
-		NodeID:   "server-decode",
-		BindAddr: "127.0.0.1:0",
-	})
-
-	// Return intentionally invalid payloads to exercise decode error paths.
-	server.RegisterHandler(ClusterMsgWALBatch, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgWALBatchResponse, Payload: []byte("bad")}, nil
-	})
-	server.RegisterHandler(ClusterMsgHeartbeat, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgHeartbeatResponse, Payload: []byte("bad")}, nil
-	})
-	server.RegisterHandler(ClusterMsgFence, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgFenceResponse, Payload: []byte("bad")}, nil
-	})
-	server.RegisterHandler(ClusterMsgPromote, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgPromoteResponse, Payload: []byte("bad")}, nil
-	})
-	server.RegisterHandler(ClusterMsgVoteRequest, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgVoteResponse, Payload: []byte("bad")}, nil
-	})
-	server.RegisterHandler(ClusterMsgAppendEntries, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgAppendEntriesResponse, Payload: []byte("bad")}, nil
-	})
+	server := NewClusterTransport(&ClusterTransportConfig{NodeID: "server-errors", BindAddr: "127.0.0.1:0"})
+	for request, response := range map[ClusterMessageType]ClusterMessageType{ClusterMsgWALBatch: ClusterMsgWALBatchResponse, ClusterMsgHeartbeat: ClusterMsgHeartbeatResponse, ClusterMsgFence: ClusterMsgFenceResponse, ClusterMsgPromote: ClusterMsgPromoteResponse, ClusterMsgVoteRequest: ClusterMsgVoteResponse, ClusterMsgAppendEntries: ClusterMsgAppendEntriesResponse} {
+		server.RegisterHandler(request, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
+			return &ClusterMessage{Type: response, Payload: []byte("bad")}, nil
+		})
+	}
 	server.RegisterHandler(ClusterMsgForwardApply, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		payload, err := encodeGob(forwardApplyResponse{Err: "leader apply failed"})
-		require.NoError(t, err)
-		return &ClusterMessage{Type: ClusterMsgForwardApplyResponse, Payload: payload}, nil
+		return &ClusterMessage{Type: ClusterMsgForwardApplyResponse, Payload: runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, forwardApplyResponse{Err: "leader apply failed"})}, nil
 	})
-
-	go func() {
-		_ = server.Listen(ctx, server.bindAddr, nil)
-	}()
-
-	deadline := time.Now().Add(2 * time.Second)
-	var boundAddr string
-	for time.Now().Before(deadline) {
-		server.mu.RLock()
-		ln := server.listener
-		boundAddr = server.bindAddr
-		server.mu.RUnlock()
-		if ln != nil {
-			break
+	listenDone := make(chan struct{})
+	go func() { defer close(listenDone); _ = server.Listen(ctx, server.bindAddr, nil) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = server.Close()
+		select {
+		case <-listenDone:
+		case <-time.After(5 * time.Second):
+			t.Error("server listen did not join")
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	client := NewClusterTransport(&ClusterTransportConfig{NodeID: "client-decode"})
-	conn, err := client.Connect(ctx, boundAddr)
+	})
+	var address string
+	require.Eventually(t, func() bool {
+		server.resources.mu.RLock()
+		defer server.resources.mu.RUnlock()
+		address = server.bindAddr
+		return server.resources.listener != nil
+	}, 2*time.Second, 10*time.Millisecond)
+	client := NewClusterTransport(&ClusterTransportConfig{NodeID: "client-errors"})
+	t.Cleanup(func() { _ = client.Close() })
+	conn, err := client.Connect(ctx, address)
 	require.NoError(t, err)
-	defer conn.Close()
+	t.Cleanup(func() { _ = conn.Close() })
 	require.True(t, waitForConnected(conn, 2*time.Second))
 	cc := conn.(*ClusterConnection)
-
-	_, err = cc.SendWALBatch(ctx, []*WALEntry{{Position: 1}})
-	require.ErrorContains(t, err, "decode")
-	_, err = cc.SendHeartbeat(ctx, &HeartbeatRequest{NodeID: "n1"})
-	require.ErrorContains(t, err, "decode")
-	_, err = cc.SendFence(ctx, &FenceRequest{Reason: "r"})
-	require.ErrorContains(t, err, "decode")
-	_, err = cc.SendPromote(ctx, &PromoteRequest{Reason: "r"})
-	require.ErrorContains(t, err, "decode")
-	_, err = cc.SendRaftVote(ctx, &RaftVoteRequest{Term: 1})
-	require.ErrorContains(t, err, "decode")
-	_, err = cc.SendRaftAppendEntries(ctx, &RaftAppendEntriesRequest{Term: 1})
-	require.ErrorContains(t, err, "decode")
-
-	err = cc.SendForwardApply(ctx, &Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}, 100*time.Millisecond)
-	require.ErrorContains(t, err, "leader apply failed")
-}
-
-func TestClusterTransport_SendMethods_SendRPCErrorBranches(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	server := NewClusterTransport(&ClusterTransportConfig{
-		NodeID:   "server-rpc-err",
-		BindAddr: "127.0.0.1:0",
-	})
-	go func() {
-		_ = server.Listen(ctx, server.bindAddr, nil)
-	}()
-
-	deadline := time.Now().Add(2 * time.Second)
-	var boundAddr string
-	for time.Now().Before(deadline) {
-		server.mu.RLock()
-		ln := server.listener
-		boundAddr = server.bindAddr
-		server.mu.RUnlock()
-		if ln != nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	cases := []struct {
+		name        string
+		send        func(context.Context) error
+		decodeError string
+	}{
+		{"WALBatch", func(c context.Context) error { _, e := cc.SendWALBatch(c, []*WALEntry{{Position: 1}}); return e }, "decode"},
+		{"Heartbeat", func(c context.Context) error { _, e := cc.SendHeartbeat(c, &HeartbeatRequest{NodeID: "n1"}); return e }, "decode"},
+		{"Fence", func(c context.Context) error { _, e := cc.SendFence(c, &FenceRequest{Reason: "r"}); return e }, "decode"},
+		{"Promote", func(c context.Context) error { _, e := cc.SendPromote(c, &PromoteRequest{Reason: "r"}); return e }, "decode"},
+		{"RaftVote", func(c context.Context) error { _, e := cc.SendRaftVote(c, &RaftVoteRequest{Term: 1}); return e }, "decode"},
+		{"RaftAppendEntries", func(c context.Context) error {
+			_, e := cc.SendRaftAppendEntries(c, &RaftAppendEntriesRequest{Term: 1})
+			return e
+		}, "decode"},
+		{"ForwardApply", func(c context.Context) error {
+			return cc.SendForwardApply(c, &Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}, 100*time.Millisecond)
+		}, "leader apply failed"},
 	}
-
-	client := NewClusterTransport(&ClusterTransportConfig{NodeID: "client-rpc-err"})
-	conn, err := client.Connect(context.Background(), boundAddr)
-	require.NoError(t, err)
-	defer conn.Close()
-	require.True(t, waitForConnected(conn, 2*time.Second))
-	cc := conn.(*ClusterConnection)
-
-	cancelCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = cc.SendWALBatch(cancelCtx, []*WALEntry{{Position: 1}})
-	require.Error(t, err)
-	_, err = cc.SendHeartbeat(cancelCtx, &HeartbeatRequest{NodeID: "n1"})
-	require.Error(t, err)
-	_, err = cc.SendFence(cancelCtx, &FenceRequest{Reason: "r"})
-	require.Error(t, err)
-	_, err = cc.SendPromote(cancelCtx, &PromoteRequest{Reason: "r"})
-	require.Error(t, err)
-	_, err = cc.SendRaftVote(cancelCtx, &RaftVoteRequest{Term: 1})
-	require.Error(t, err)
-	_, err = cc.SendRaftAppendEntries(cancelCtx, &RaftAppendEntriesRequest{Term: 1})
-	require.Error(t, err)
-	err = cc.SendForwardApply(cancelCtx, &Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}, 100*time.Millisecond)
-	require.Error(t, err)
+	for _, canceled := range []bool{false, true} {
+		callCtx := ctx
+		if canceled {
+			var stop context.CancelFunc
+			callCtx, stop = context.WithCancel(ctx)
+			stop()
+		}
+		for _, test := range cases {
+			t.Run(fmt.Sprintf("%s/canceled=%v", test.name, canceled), func(t *testing.T) {
+				err := test.send(callCtx)
+				if canceled {
+					require.Error(t, err)
+				} else {
+					require.ErrorContains(t, err, test.decodeError)
+				}
+			})
+		}
+	}
 }
 
 func TestHAStandby_HelperBranches(t *testing.T) {
@@ -1255,7 +1182,6 @@ func TestHAStandby_HelperBranches(t *testing.T) {
 	r, err := NewHAStandbyReplicator(cfg, store)
 	require.NoError(t, err)
 	r.transport = NewMockTransport()
-	r.stopCh = make(chan struct{})
 
 	// LeaderAddr branch for standby and primary.
 	r.isPrimary.Store(false)
@@ -1263,9 +1189,15 @@ func TestHAStandby_HelperBranches(t *testing.T) {
 	r.isPrimary.Store(true)
 	assert.Equal(t, cfg.AdvertiseAddr, r.LeaderAddr())
 
-	// Default-timeout branch (timeout<=0) with quorum mode and no ack.
+	// Default-budget branch (timeout<=0) resolved once by its owner, then a
+	// single deadline for the ACK wait that never creates another timeout.
 	r.walStreamer = NewWALStreamer(store, 8)
-	err = r.waitForReplicationAck(1, 0)
+	r.config.HAStandby.HeartbeatInterval = 10 * time.Millisecond
+	require.Equal(t, 250*time.Millisecond, r.quorumWaitTimeout(0), "default quorum budget keeps the existing floor")
+	require.Equal(t, 30*time.Millisecond, r.quorumWaitTimeout(30*time.Millisecond), "a caller-supplied budget is used unchanged")
+	ackCtx, cancelAck := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelAck()
+	err = r.waitForReplicationAck(ackCtx, 1)
 	require.ErrorContains(t, err, "replication ack timeout")
 
 	// triggerAutoFailover failure path: Promote fails because WAL flush fails.
@@ -1299,115 +1231,104 @@ func TestHAStandbyReplicator_Apply_TraceWritesPath(t *testing.T) {
 	r.started.Store(true)
 	r.isPrimary.Store(true)
 
-	err = r.Apply(&Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}, 100*time.Millisecond)
+	err = r.Apply(t.Context(), &Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}, 100*time.Millisecond)
 	require.NoError(t, err)
 }
 
 func TestCodec_DecodePayloadErrorPaths(t *testing.T) {
 	t.Parallel()
 
-	_, err := decodeNodePayload([]byte("bad-node-payload"))
+	_, err := storage.DecodeNodePayload([]byte("bad-node-payload"))
 	require.Error(t, err)
 
-	_, err = decodeEdgePayload([]byte("bad-edge-payload"))
+	_, err = storage.DecodeEdgePayload([]byte("bad-edge-payload"))
 	require.Error(t, err)
 }
 
 func TestStorageAdapter_ApplyHelpers_ErrorAndFallbackBranches(t *testing.T) {
 	t.Parallel()
 
-	adapter, _ := setupTestAdapter(t)
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
-	require.ErrorContains(t, adapter.applyCreateNode([]byte("bad")), "decode node")
-	require.ErrorContains(t, adapter.applyUpdateNode([]byte("bad")), "decode node")
-	require.ErrorContains(t, adapter.applyCreateEdge([]byte("bad")), "decode edge")
-	require.ErrorContains(t, adapter.applyUpdateEdge([]byte("bad")), "decode edge")
-	require.ErrorContains(t, adapter.applyDeleteEdge([]byte("bad")), "decode delete edge request")
-	require.ErrorContains(t, adapter.applySetProperty([]byte("bad")), "decode set property request")
-	require.ErrorContains(t, adapter.applyDeleteByPrefix([]byte("bad")), "decode delete by prefix request")
-	require.ErrorContains(t, adapter.applyBulkCreateNodes([]byte("bad")), "decode bulk create nodes")
-	require.ErrorContains(t, adapter.applyBulkCreateEdges([]byte("bad")), "decode bulk create edges")
-	require.ErrorContains(t, adapter.applyBulkDeleteNodes([]byte("bad")), "decode bulk delete nodes")
-	require.ErrorContains(t, adapter.applyBulkDeleteEdges([]byte("bad")), "decode bulk delete edges")
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdCreateNode, Data: []byte("bad")}), "decode node")
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdUpdateNode, Data: []byte("bad")}), "decode node")
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdCreateEdge, Data: []byte("bad")}), "decode edge")
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdUpdateEdge, Data: []byte("bad")}), "decode edge")
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdDeleteEdge, Data: []byte("bad")}), "decode delete edge request")
+	require.ErrorIs(t, applyQueued(t, adapter, &Command{Type: cmdRetiredSetProperty, Data: []byte("bad")}), ErrRetiredCommand)
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdDeleteByPrefix, Data: []byte("bad")}), "decode delete by prefix request")
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdBulkCreateNodes, Data: []byte("bad")}), "decode bulk create nodes")
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdBulkCreateEdges, Data: []byte("bad")}), "decode bulk create edges")
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdBulkDeleteNodes, Data: []byte("bad")}), "decode bulk delete nodes")
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdBulkDeleteEdges, Data: []byte("bad")}), "decode bulk delete edges")
 
-	_, err := adapter.engine.CreateNode(&storage.Node{ID: "raw-fallback-node", Labels: []string{"L"}})
+	_, err := adapter.engine.CreateNode(t.Context(), &storage.Node{ID: "raw-fallback-node", Labels: []string{"L"}})
 	require.NoError(t, err)
-	require.NoError(t, adapter.applyDeleteNode([]byte("raw-fallback-node")))
-	_, err = adapter.engine.GetNode("raw-fallback-node")
+	require.NoError(t, applyQueued(t, adapter, &Command{Type: CmdDeleteNode, Data: []byte("raw-fallback-node")}))
+	_, err = adapter.engine.GetNode(t.Context(), "raw-fallback-node")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
-	emptyPrefixPayload := encodeGobForTest(t, struct{ Prefix string }{Prefix: ""})
-	require.ErrorContains(t, adapter.applyDeleteByPrefix(emptyPrefixPayload), "prefix is required")
+	emptyPrefixPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, struct{ Prefix string }{Prefix: ""})
+	require.ErrorContains(t, applyQueued(t, adapter, &Command{Type: CmdDeleteByPrefix, Data: emptyPrefixPayload}), "prefix is required")
 
-	badNodePayload := encodeGobForTest(t, [][]byte{[]byte("bad-node")})
-	require.Error(t, adapter.applyBulkCreateNodes(badNodePayload))
+	badNodePayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{[]byte("bad-node")})
+	require.Error(t, applyQueued(t, adapter, &Command{Type: CmdBulkCreateNodes, Data: badNodePayload}))
 
-	badEdgePayload := encodeGobForTest(t, [][]byte{[]byte("bad-edge")})
-	require.Error(t, adapter.applyBulkCreateEdges(badEdgePayload))
+	badEdgePayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{[]byte("bad-edge")})
+	require.Error(t, applyQueued(t, adapter, &Command{Type: CmdBulkCreateEdges, Data: badEdgePayload}))
 
 	// Edge create should fail when endpoints don't exist.
-	validEdgeBytes := encodeEdgeForTest(t, &storage.Edge{ID: "edge-missing-nodes", StartNode: "no-a", EndNode: "no-b", Type: "REL"})
-	edgeOnlyBatch := encodeGobForTest(t, struct {
+	validEdgeBytes := runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: "edge-missing-nodes", StartNode: "no-a", EndNode: "no-b", Type: "REL"})
+	edgeOnlyBatch := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, struct {
 		Nodes [][]byte
 		Edges [][]byte
 	}{
 		Edges: [][]byte{validEdgeBytes},
 	})
-	require.Error(t, adapter.applyBatchWrite(edgeOnlyBatch))
+	require.ErrorIs(t, applyQueued(t, adapter, &Command{Type: cmdRetiredBatchWrite, Data: edgeOnlyBatch}), ErrRetiredCommand)
 
-	emptyCypherPayload := encodeGobForTest(t, struct {
+	emptyCypherPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, struct {
 		Query  string
 		Params map[string]interface{}
 	}{})
-	require.ErrorContains(t, adapter.applyCypher(emptyCypherPayload), "cypher query is empty")
+	require.ErrorIs(t, applyQueued(t, adapter, &Command{Type: cmdRetiredCypher, Data: emptyCypherPayload}), ErrRetiredCommand)
 }
 
 func TestStorageAdapter_GetWALEntries_ReadErrorPath(t *testing.T) {
 	t.Parallel()
 
-	adapter, _ := setupTestAdapter(t)
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
 	// Force persistent WAL read failure branch (path is not a directory).
-	adapter.walDir = "/dev/null"
+	adapter.walDir = filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(adapter.walDir, []byte("file"), 0o600))
 	_, err := adapter.GetWALEntries(0, 10)
 	require.ErrorContains(t, err, "failed to read WAL entries")
 }
 
-func TestStorageAdapter_Close_WhenWALAlreadyNil(t *testing.T) {
+func TestStorageAdapter_WriteSnapshot_Failures(t *testing.T) {
 	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
-	adapter.walMu.Lock()
-	if adapter.wal != nil {
-		_ = adapter.wal.Close()
-		adapter.wal = nil
+	for _, test := range []struct {
+		name          string
+		encodeFailure bool
+		want          string
+	}{
+		{name: "writer", want: "write failed"},
+		{name: "codec", encodeFailure: true, want: "encode snapshot"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			adapter := setupTestAdapter(t).adapter
+			var writer io.Writer = &errWriter{err: errors.New("write failed")}
+			if test.encodeFailure {
+				adapter.engine = &snapshotEncodeErrorEngine{}
+				writer = &bytes.Buffer{}
+			}
+			err := adapter.WriteSnapshot(writer)
+			require.ErrorContains(t, err, test.want)
+		})
 	}
-	adapter.walMu.Unlock()
-
-	require.NoError(t, adapter.Close())
-}
-
-func TestStorageAdapter_WriteSnapshot_WriterError(t *testing.T) {
-	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
-	t.Cleanup(func() { _ = adapter.Close() })
-
-	err := adapter.WriteSnapshot(&errWriter{err: errors.New("write failed")})
-	require.ErrorContains(t, err, "write failed")
-}
-
-func TestStorageAdapter_WriteSnapshot_EncodeError(t *testing.T) {
-	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
-	t.Cleanup(func() { _ = adapter.Close() })
-
-	adapter.engine = &snapshotEncodeErrorEngine{}
-	err := adapter.WriteSnapshot(&bytes.Buffer{})
-	require.ErrorContains(t, err, "encode snapshot")
 }
 
 type errWriter struct{ err error }
@@ -1418,7 +1339,7 @@ type snapshotEncodeErrorEngine struct {
 	storage.Engine
 }
 
-func (e *snapshotEncodeErrorEngine) AllNodes() ([]*storage.Node, error) {
+func (e *snapshotEncodeErrorEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	return []*storage.Node{
 		{
 			ID:     "bad-node",
@@ -1430,8 +1351,19 @@ func (e *snapshotEncodeErrorEngine) AllNodes() ([]*storage.Node, error) {
 	}, nil
 }
 
-func (e *snapshotEncodeErrorEngine) AllEdges() ([]*storage.Edge, error) {
+func (e *snapshotEncodeErrorEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	return nil, nil
+}
+
+// The snapshot streams stored nodes: the fake serves AllNodes' node.
+func (e *snapshotEncodeErrorEngine) StreamNodesWithOptions(_ context.Context, _ storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	nodes, _ := e.AllNodes(context.Background())
+	for _, node := range nodes {
+		if err := visit(node); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func TestTransport_WireReadWriteHelpers(t *testing.T) {
@@ -1441,37 +1373,38 @@ func TestTransport_WireReadWriteHelpers(t *testing.T) {
 
 	var out bytes.Buffer
 	bw := bufio.NewWriter(&out)
-	require.NoError(t, writeClusterMessage(bw, msg))
+	require.NoError(t, transferClusterMessage(msg, nil, bw, 0))
 	require.NoError(t, bw.Flush())
 
-	readMsg, err := readClusterMessage(bufio.NewReader(bytes.NewReader(out.Bytes())), 1024)
+	readMsg := new(ClusterMessage)
+	err := transferClusterMessage(readMsg, bufio.NewReader(bytes.NewReader(out.Bytes())), nil, 1024)
 	require.NoError(t, err)
 	require.Equal(t, ClusterMsgHeartbeat, readMsg.Type)
 	require.Equal(t, []byte("ok"), readMsg.Payload)
 
 	errBuf := bufio.NewWriter(&errWriter{err: errors.New("write boom")})
-	require.NoError(t, writeClusterMessage(errBuf, msg))
+	require.NoError(t, transferClusterMessage(msg, nil, errBuf, 0))
 	require.ErrorContains(t, errBuf.Flush(), "write boom")
 
-	_, err = readClusterMessage(bufio.NewReader(bytes.NewReader(nil)), 1024)
+	err = transferClusterMessage(new(ClusterMessage), bufio.NewReader(bytes.NewReader(nil)), nil, 1024)
 	require.Error(t, err)
 
 	var tooLarge bytes.Buffer
 	require.NoError(t, binary.Write(&tooLarge, binary.BigEndian, uint32(4096)))
-	_, err = readClusterMessage(bufio.NewReader(bytes.NewReader(tooLarge.Bytes())), 64)
+	err = transferClusterMessage(new(ClusterMessage), bufio.NewReader(bytes.NewReader(tooLarge.Bytes())), nil, 64)
 	require.ErrorContains(t, err, "message too large")
 
 	var truncated bytes.Buffer
 	require.NoError(t, binary.Write(&truncated, binary.BigEndian, uint32(8)))
 	truncated.Write([]byte{1, 2, 3})
-	_, err = readClusterMessage(bufio.NewReader(bytes.NewReader(truncated.Bytes())), 1024)
+	err = transferClusterMessage(new(ClusterMessage), bufio.NewReader(bytes.NewReader(truncated.Bytes())), nil, 1024)
 	require.Error(t, err)
 
 	var badPayload bytes.Buffer
 	payload := []byte("not-gob")
 	require.NoError(t, binary.Write(&badPayload, binary.BigEndian, uint32(len(payload))))
 	badPayload.Write(payload)
-	_, err = readClusterMessage(bufio.NewReader(bytes.NewReader(badPayload.Bytes())), 1024)
+	err = transferClusterMessage(new(ClusterMessage), bufio.NewReader(bytes.NewReader(badPayload.Bytes())), nil, 1024)
 	require.Error(t, err)
 
 	cc := &ClusterConnection{}
@@ -1601,8 +1534,8 @@ func TestRaftReplicator_ListenForPeers(t *testing.T) {
 	r.config.AdvertiseAddr = "127.0.0.1:17310"
 
 	ctx, cancel := context.WithCancel(context.Background())
-	r.wg.Add(1)
-	go r.listenForPeers(ctx)
+	listenDone := make(chan struct{})
+	go func() { defer close(listenDone); r.listenForPeers(ctx) }()
 
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
@@ -1618,7 +1551,7 @@ func TestRaftReplicator_ListenForPeers(t *testing.T) {
 	mt.SimulateIncomingConnection()
 	cancel()
 	_ = mt.Close()
-	r.wg.Wait()
+	<-listenDone
 }
 
 func TestApplyBatchWrappers_SuccessAndErrorPaths(t *testing.T) {
@@ -1632,7 +1565,7 @@ func TestApplyBatchWrappers_SuccessAndErrorPaths(t *testing.T) {
 		store.SetApplyError(errors.New("apply fail"))
 		r := NewStandaloneReplicator(cfg, store)
 		require.NoError(t, r.Start(context.Background()))
-		err := r.ApplyBatch([]*Command{{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}}, time.Second)
+		err := r.ApplyBatch(t.Context(), []*Command{{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}}, time.Second)
 		require.ErrorContains(t, err, "apply fail")
 	})
 
@@ -1648,7 +1581,7 @@ func TestApplyBatchWrappers_SuccessAndErrorPaths(t *testing.T) {
 		require.NoError(t, err)
 		r.started.Store(true)
 		r.isPrimary.Store(true)
-		err = r.ApplyBatch([]*Command{
+		err = r.ApplyBatch(t.Context(), []*Command{
 			{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()},
 			{Type: CmdUpdateNode, Data: []byte("y"), Timestamp: time.Now()},
 		}, 100*time.Millisecond)
@@ -1663,14 +1596,14 @@ func TestApplyBatchWrappers_SuccessAndErrorPaths(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		r.wg.Add(1)
-		go r.runApplyLoop(ctx)
+		applyDone := make(chan struct{})
+		go func() { defer close(applyDone); r.runApplyLoop(ctx) }()
 		defer func() {
 			cancel()
-			r.wg.Wait()
+			<-applyDone
 		}()
 
-		err := r.ApplyBatch([]*Command{
+		err := r.ApplyBatch(t.Context(), []*Command{
 			{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()},
 			{Type: CmdUpdateNode, Data: []byte("y"), Timestamp: time.Now()},
 		}, time.Second)
@@ -1685,11 +1618,11 @@ func TestApplyBatchWrappers_SuccessAndErrorPaths(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		local.wg.Add(1)
-		go local.runApplyLoop(ctx)
+		applyDone := make(chan struct{})
+		go func() { defer close(applyDone); local.runApplyLoop(ctx) }()
 		defer func() {
 			cancel()
-			local.wg.Wait()
+			<-applyDone
 		}()
 
 		cfg := DefaultConfig()
@@ -1700,12 +1633,11 @@ func TestApplyBatchWrappers_SuccessAndErrorPaths(t *testing.T) {
 			config:      cfg,
 			storage:     NewMockStorage(),
 			localRaft:   local,
-			stopCh:      make(chan struct{}),
 			remoteConns: make(map[string]PeerConnection),
 		}
 		r.started.Store(true)
 
-		err := r.ApplyBatch([]*Command{
+		err := r.ApplyBatch(t.Context(), []*Command{
 			{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()},
 			{Type: CmdUpdateNode, Data: []byte("y"), Timestamp: time.Now()},
 		}, time.Second)

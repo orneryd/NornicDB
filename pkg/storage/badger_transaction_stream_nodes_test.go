@@ -5,6 +5,8 @@ package storage
 // PropertyFilter and prefix, without materialising the population (#824).
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"sort"
@@ -26,7 +28,7 @@ func streamTxIDs(t *testing.T, tx *BadgerTransaction, opts StreamNodesOptions) (
 }
 
 func TestBadgerTransactionStreamNodesWithOptions(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, node := range []*Node{
@@ -35,11 +37,11 @@ func TestBadgerTransactionStreamNodesWithOptions(t *testing.T) {
 		{ID: "a:3", Labels: []string{"Q"}, Properties: map[string]interface{}{"id": "x", "body": "three"}},
 		{ID: "b:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -49,11 +51,11 @@ func TestBadgerTransactionStreamNodesWithOptions(t *testing.T) {
 
 	// Pending writes: a new node, an update that changes the filtered
 	// property, an update that keeps it, and a delete.
-	_, err = tx.CreateNode(&Node{ID: "a:4", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x", "body": "four"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "a:4", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x", "body": "four"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateNode(&Node{ID: "a:2", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x", "body": "two-updated"}}))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "a:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "z", "body": "one-updated"}}))
-	require.NoError(t, tx.DeleteNode("a:3"))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "a:2", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x", "body": "two-updated"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "a:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "z", "body": "one-updated"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "a:3", CascadeEdges))
 
 	ids, props = streamTxIDs(t, tx, StreamNodesOptions{})
 	require.Equal(t, []string{"a:1", "a:2", "a:4", "b:1"}, ids)
@@ -82,17 +84,17 @@ func TestBadgerTransactionStreamNodesWithOptions(t *testing.T) {
 	require.ErrorIs(t, tx.StreamNodesWithOptions(context.Background(), StreamNodesOptions{}, nil), ErrInvalidData)
 
 	// A node created after the transaction began is not in its snapshot.
-	_, err = engine.CreateNode(&Node{ID: "a:9", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "a:9", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x"}})
 	require.NoError(t, err)
 	ids, _ = streamTxIDs(t, tx, StreamNodesOptions{Prefix: "a:"})
 	require.NotContains(t, ids, "a:9")
 }
 
 func TestBadgerTransactionStreamNodesAfterCommitFails(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.Error(t, tx.StreamNodesWithOptions(context.Background(), StreamNodesOptions{}, func(*Node) error { return nil }))
@@ -102,7 +104,7 @@ func TestBadgerTransactionStreamNodesAfterCommitFails(t *testing.T) {
 // stream the engine's current view when they have no read version, and the
 // MVCC view at their read version otherwise.
 func TestBadgerTransactionStreamNodesWithoutPinnedSnapshot(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, node := range []*Node{
@@ -110,11 +112,11 @@ func TestBadgerTransactionStreamNodesWithoutPinnedSnapshot(t *testing.T) {
 		{ID: "a:2", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "y", "body": "two"}},
 		{ID: "b:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	legacy := func(readTS MVCCVersion) *BadgerTransaction {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		tx.snapshotTx.Discard()
@@ -124,7 +126,7 @@ func TestBadgerTransactionStreamNodesWithoutPinnedSnapshot(t *testing.T) {
 	}
 	atBegin := legacy(engine.currentMVCCReadVersion("a"))
 	current := legacy(MVCCVersion{})
-	_, err = engine.CreateNode(&Node{ID: "a:3", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "a:3", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "x"}})
 	require.NoError(t, err)
 
 	ids, _ := streamTxIDs(t, current, StreamNodesOptions{Prefix: "a:"})
@@ -136,14 +138,14 @@ func TestBadgerTransactionStreamNodesWithoutPinnedSnapshot(t *testing.T) {
 
 // Errors and stops from the visitor end the pending-only part of the stream.
 func TestBadgerTransactionStreamNodesPendingVisitErrors(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for _, id := range []NodeID{"a:1", "a:2"} {
-		_, err = tx.CreateNode(&Node{ID: id, Labels: []string{"P"}})
+		_, err = tx.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"P"}})
 		require.NoError(t, err)
 	}
 	failure := errors.New("visit failed")
@@ -156,7 +158,7 @@ func TestBadgerTransactionStreamNodesPendingVisitErrors(t *testing.T) {
 	require.Equal(t, 1, visited)
 
 	// The engine's prefix scan returns a visitor's error as well.
-	_, err = engine.CreateNode(&Node{ID: "a:9", Labels: []string{"P"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "a:9", Labels: []string{"P"}})
 	require.NoError(t, err)
 	require.ErrorIs(t, engine.StreamNodesWithOptions(context.Background(), StreamNodesOptions{Prefix: "a:"}, func(*Node) error { return failure }), failure)
 	require.NoError(t, engine.StreamNodesWithOptions(context.Background(), StreamNodesOptions{Prefix: "a:"}, func(*Node) error { return ErrIterationStopped }))

@@ -3,9 +3,10 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// buildAtomicIntegrityPayload encodes a create_node entry with the current
+// payload codec, as an Append to the active WAL writes it.
 func buildAtomicIntegrityPayload(t *testing.T, seq uint64) []byte {
 	t.Helper()
 	entry := WALEntry{
@@ -27,7 +30,8 @@ func buildAtomicIntegrityPayload(t *testing.T, seq uint64) []byte {
 		Data:      mustMarshal(WALNodeData{Node: &Node{ID: NodeID(prefixTestID(fmt.Sprintf("ic-%d", seq)))}}),
 	}
 	entry.Checksum = crc32Checksum(entry.Data)
-	payload, err := json.Marshal(entry)
+	var buf bytes.Buffer
+	payload, err := processWALEntryPayload(walPayloadEncode, &buf, &entry, nil, 0)
 	require.NoError(t, err)
 	return payload
 }
@@ -38,18 +42,33 @@ type snapshotErrorEngine struct {
 	allEdgesErr error
 }
 
-func (e *snapshotErrorEngine) AllNodes() ([]*Node, error) {
-	if e.allNodesErr != nil {
-		return nil, e.allNodesErr
-	}
-	return e.MemoryEngine.AllNodes()
+func (e *snapshotErrorEngine) AllNodes(ctx context.Context) ([]*Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.allNodesErr, func(ctx context.Context) ([]*Node, error) {
+		return e.MemoryEngine.AllNodes(ctx)
+	})
 }
 
-func (e *snapshotErrorEngine) AllEdges() ([]*Edge, error) {
-	if e.allEdgesErr != nil {
-		return nil, e.allEdgesErr
+func (e *snapshotErrorEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.allEdgesErr, func(ctx context.Context) ([]*Edge, error) {
+		return e.MemoryEngine.AllEdges(ctx)
+	})
+}
+
+// A snapshot collects stored nodes and relationships (CollectStoredNodes,
+// CollectStoredEdges): the fake fails those reads as it fails AllNodes and
+// AllEdges.
+func (e *snapshotErrorEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(*Node) error) error {
+	if e.allNodesErr != nil {
+		return e.allNodesErr
 	}
-	return e.MemoryEngine.AllEdges()
+	return e.MemoryEngine.StreamNodesWithOptions(ctx, opts, fn)
+}
+
+func (e *snapshotErrorEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string, fn func(*Edge) error) error {
+	if e.allEdgesErr != nil {
+		return e.allEdgesErr
+	}
+	return e.MemoryEngine.StreamStoredEdgesByType(ctx, edgeType, fn)
 }
 
 // TestWALCompactionConfig tests WAL configuration options for compaction.
@@ -94,7 +113,7 @@ func TestCheckWALIntegrity_AtomicBranches(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "wal.log")
 		header := make([]byte, 9)
 		binary.LittleEndian.PutUint32(header[0:4], walMagic)
-		header[4] = walFormatVersion
+		header[4] = walFormatVersionCurrent
 		binary.LittleEndian.PutUint32(header[5:9], walMaxEntrySize+1)
 		require.NoError(t, os.WriteFile(path, header, 0o644))
 
@@ -108,7 +127,7 @@ func TestCheckWALIntegrity_AtomicBranches(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "wal.log")
 		header := make([]byte, 9)
 		binary.LittleEndian.PutUint32(header[0:4], walMagic)
-		header[4] = walFormatVersion
+		header[4] = walFormatVersionCurrent
 		binary.LittleEndian.PutUint32(header[5:9], 32)
 		require.NoError(t, os.WriteFile(path, header, 0o644))
 
@@ -121,7 +140,7 @@ func TestCheckWALIntegrity_AtomicBranches(t *testing.T) {
 	t.Run("missing trailer is reported", func(t *testing.T) {
 		payload := buildAtomicIntegrityPayload(t, 1)
 		var buf bytes.Buffer
-		_, err := writeAtomicRecordV2(&buf, payload)
+		_, err := writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
 		require.NoError(t, err)
 		record := buf.Bytes()
 		require.Greater(t, len(record), 8)
@@ -138,10 +157,10 @@ func TestCheckWALIntegrity_AtomicBranches(t *testing.T) {
 	t.Run("invalid magic after good record is reported", func(t *testing.T) {
 		payload := buildAtomicIntegrityPayload(t, 1)
 		var buf bytes.Buffer
-		_, err := writeAtomicRecordV2(&buf, payload)
+		_, err := writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
 		require.NoError(t, err)
 		// Append malformed header-like bytes with wrong magic.
-		_, err = buf.Write([]byte{0x00, 0x01, 0x02, 0x03, walFormatVersion, 0, 0, 0, 0})
+		_, err = buf.Write([]byte{0x00, 0x01, 0x02, 0x03, walFormatVersionCurrent, 0, 0, 0, 0})
 		require.NoError(t, err)
 
 		path := filepath.Join(t.TempDir(), "wal.log")
@@ -159,7 +178,7 @@ func TestSnapshotAndSaveSnapshot_ErrorBranches(t *testing.T) {
 		wal, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 		require.NoError(t, err)
 		require.NoError(t, wal.Close())
-		_, err = wal.CreateSnapshot(NewMemoryEngine())
+		_, err = wal.CreateSnapshot(newTestMemoryEngine(t))
 		require.ErrorIs(t, err, ErrWALClosed)
 	})
 
@@ -168,7 +187,7 @@ func TestSnapshotAndSaveSnapshot_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 		engine := &snapshotErrorEngine{
-			MemoryEngine: NewMemoryEngine(),
+			MemoryEngine: newTestMemoryEngine(t),
 			allNodesErr:  fmt.Errorf("nodes-fail"),
 		}
 		_, err = wal.CreateSnapshot(engine)
@@ -180,7 +199,7 @@ func TestSnapshotAndSaveSnapshot_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 		engine := &snapshotErrorEngine{
-			MemoryEngine: NewMemoryEngine(),
+			MemoryEngine: newTestMemoryEngine(t),
 			allEdgesErr:  fmt.Errorf("edges-fail"),
 		}
 		_, err = wal.CreateSnapshot(engine)
@@ -297,13 +316,13 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Create 100 nodes
 		for i := 1; i <= 100; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-			_, err := walEngine.CreateNode(node)
+			_, err := walEngine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 
@@ -322,7 +341,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		sizeBefore := statBefore.Size()
 
 		// Truncate WAL
-		err = wal.TruncateAfterSnapshot(snapshot.Sequence)
+		err = wal.ManageSnapshot(t.Context(), snapshot.Sequence, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// WAL should be empty or near-empty (only entries after snapshot)
@@ -344,13 +363,13 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Create 50 nodes before snapshot
 		for i := 1; i <= 50; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Create snapshot at seq 50
@@ -361,16 +380,16 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		// Add 50 more nodes AFTER snapshot
 		for i := 51; i <= 100; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Truncate WAL (should keep entries after snapshot)
-		err = wal.TruncateAfterSnapshot(snapshotSeq)
+		err = wal.ManageSnapshot(t.Context(), snapshotSeq, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// Read remaining entries
 		walPath := filepath.Join(walDir, "wal.log")
-		entries, err := ReadWALEntries(walPath)
+		entries, err := ReadWALEntries(t.Context(), walPath, nil)
 		require.NoError(t, err)
 
 		// Should have ~50 entries (from after snapshot)
@@ -392,13 +411,13 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 			wal, err := NewWAL("", cfg)
 			require.NoError(t, err)
 
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			walEngine := NewWALEngine(engine, wal)
 
 			// Create nodes
 			for i := 1; i <= 100; i++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-				walEngine.CreateNode(node)
+				walEngine.CreateNode(t.Context(), node)
 			}
 
 			// Create and save snapshot
@@ -410,12 +429,12 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 			require.NoError(t, SaveSnapshot(snapshot, snapshotPath))
 
 			// Truncate WAL
-			require.NoError(t, wal.TruncateAfterSnapshot(snapshot.Sequence))
+			require.NoError(t, wal.ManageSnapshot(t.Context(), snapshot.Sequence, WALSnapshotTruncate))
 
 			// Add more nodes after truncation
 			for i := 101; i <= 150; i++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-				walEngine.CreateNode(node)
+				walEngine.CreateNode(t.Context(), node)
 			}
 
 			walEngine.Close()
@@ -423,21 +442,21 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 
 		// Session 2: Recover from snapshot + truncated WAL
 		snapshotPath := filepath.Join(snapshotDir, "snapshot.json")
-		recovered, err := RecoverFromWAL(walDir, snapshotPath)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, snapshotPath))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
 		// Should have all 150 nodes
-		count, err := recoveredNS.NodeCount()
+		count, err := recoveredNS.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(150), count, "Should recover all nodes from snapshot + WAL")
 
 		// Verify specific nodes
-		n1, err := recoveredNS.GetNode("n1")
+		n1, err := recoveredNS.GetNode(t.Context(), "n1")
 		assert.NoError(t, err)
 		assert.NotNil(t, n1, "Node 1 should be recovered")
 
-		n150, err := recoveredNS.GetNode("n150")
+		n150, err := recoveredNS.GetNode(t.Context(), "n150")
 		assert.NoError(t, err)
 		assert.NotNil(t, n150, "Node 150 should be recovered")
 	})
@@ -457,7 +476,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable auto-compaction
@@ -481,7 +500,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable first time - should succeed
@@ -511,13 +530,13 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Add some data before enabling compaction
 		for i := 1; i <= 20; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Enable auto-compaction
@@ -569,7 +588,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable auto-compaction
@@ -615,7 +634,7 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -633,7 +652,7 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 				for i := 0; i < writeCount; i++ {
 					nodeID := fmt.Sprintf("w%d_n%d", writerID, i)
 					node := &Node{ID: NodeID(prefixTestID(nodeID)), Labels: []string{"Test"}}
-					_, err := walEngine.CreateNode(node)
+					_, err := walEngine.CreateNode(t.Context(), node)
 					if err != nil {
 						t.Errorf("Writer %d failed to create node %d: %v", writerID, i, err)
 					}
@@ -653,13 +672,13 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 		for w := 0; w < writers; w++ {
 			for i := 0; i < writeCount; i++ {
 				nodeID := NodeID(prefixTestID(fmt.Sprintf("w%d_n%d", w, i)))
-				node, err := walEngine.GetNode(nodeID)
+				node, err := walEngine.GetNode(t.Context(), nodeID)
 				assert.NoError(t, err, "Node %s should exist", nodeID)
 				assert.NotNil(t, node, "Node %s should not be nil", nodeID)
 			}
 		}
 
-		totalNodes, err := walEngine.GetInnerEngine().NodeCount()
+		totalNodes, err := walEngine.GetInnerEngine().NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(writers*writeCount), totalNodes, "Should have all nodes")
 
@@ -685,7 +704,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Write a lot of data to grow the WAL
@@ -699,7 +718,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 					"counter":     i,
 				},
 			}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Get WAL size before compaction
@@ -731,7 +750,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 		assert.Less(t, sizeAfter, sizeBefore/2, "WAL should be at least 50% smaller after compaction")
 
 		// But data should still be intact
-		count, err := engine.NodeCount()
+		count, err := engine.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(500), count, "All nodes should still exist")
 
@@ -759,7 +778,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			wal, err := NewWAL("", cfg)
 			require.NoError(t, err)
 
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			walEngine := NewWALEngine(engine, wal)
 
 			err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -770,7 +789,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 				for i := 0; i < 20; i++ {
 					nodeID := prefixTestID(fmt.Sprintf("b%d_n%d", batch, i))
 					node := &Node{ID: NodeID(nodeID), Labels: []string{"Test"}}
-					_, err := walEngine.CreateNode(node)
+					_, err := walEngine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 				}
 				time.Sleep(80 * time.Millisecond) // Allow snapshot between batches
@@ -795,11 +814,11 @@ func TestWALSnapshotRecovery(t *testing.T) {
 		latestSnapshot := filepath.Join(snapshotDir, names[len(names)-1])
 
 		// Session 2: Recover
-		recovered, err := RecoverFromWAL(walDir, latestSnapshot)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, latestSnapshot))
 		require.NoError(t, err)
 
 		// Should have all 100 nodes (5 batches x 20 nodes)
-		count, err := recovered.NodeCount()
+		count, err := recovered.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(100), count, "Should recover all nodes")
 	})
@@ -814,22 +833,22 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			wal, err := NewWAL("", cfg)
 			require.NoError(t, err)
 
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			walEngine := NewWALEngine(engine, wal)
 
 			for i := 1; i <= 50; i++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-				walEngine.CreateNode(node)
+				walEngine.CreateNode(t.Context(), node)
 			}
 
 			walEngine.Close()
 		}()
 
 		// Session 2: Recover without snapshot
-		recovered, err := RecoverFromWAL(walDir, "")
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, ""))
 		require.NoError(t, err)
 
-		count, err := recovered.NodeCount()
+		count, err := recovered.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(50), count, "Should recover all nodes from WAL")
 	})
@@ -853,7 +872,7 @@ func TestWALCompactionEdgeCases(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable auto-compaction on empty WAL
@@ -879,7 +898,7 @@ func TestWALCompactionEdgeCases(t *testing.T) {
 		wal.Close()
 
 		// Truncate should return error
-		err = wal.TruncateAfterSnapshot(100)
+		err = wal.ManageSnapshot(t.Context(), 100, WALSnapshotTruncate)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrWALClosed)
 	})
@@ -916,13 +935,13 @@ func BenchmarkWALCompaction(b *testing.B) {
 			cfg := &WALConfig{Dir: dir, SyncMode: "none"}
 			wal, _ := NewWAL("", cfg)
 
-			engine := NewMemoryEngine()
+			engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 			walEngine := NewWALEngine(engine, wal)
 
 			// Create data
 			for j := 0; j < 1000; j++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", j)))}
-				walEngine.CreateNode(node)
+				walEngine.CreateNode(b.Context(), node)
 			}
 
 			// Create snapshot
@@ -931,7 +950,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 			b.StartTimer()
 
 			// Benchmark truncation
-			wal.TruncateAfterSnapshot(snapshot.Sequence)
+			wal.ManageSnapshot(b.Context(), snapshot.Sequence, WALSnapshotTruncate)
 
 			b.StopTimer()
 			walEngine.Close()
@@ -943,13 +962,13 @@ func BenchmarkWALCompaction(b *testing.B) {
 		cfg := &WALConfig{Dir: dir, SyncMode: "none"}
 		wal, _ := NewWAL("", cfg)
 
-		engine := NewMemoryEngine()
+		engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 		walEngine := NewWALEngine(engine, wal)
 
 		// Create test data
 		for j := 0; j < 10000; j++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", j)))}
-			engine.CreateNode(node)
+			engine.CreateNode(b.Context(), node)
 		}
 
 		b.ResetTimer()

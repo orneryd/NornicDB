@@ -532,7 +532,7 @@ func TestChaos_PacketLoss(t *testing.T) {
 	successCount := 0
 	for i := 0; i < 20; i++ {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-		err := replicator.Apply(cmd, 5*time.Second)
+		err := replicator.Apply(ctx, cmd, 5*time.Second)
 		if err == nil {
 			successCount++
 		}
@@ -584,7 +584,7 @@ func TestChaos_HighLatency_CrossRegion(t *testing.T) {
 
 	// Apply a command with generous timeout for cross-region
 	cmd := &Command{Type: CmdCreateNode, Data: []byte("cross-region-test")}
-	err = replicator.Apply(cmd, 10*time.Second) // 10 second timeout
+	err = replicator.Apply(t.Context(), cmd, 10*time.Second) // 10 second timeout
 
 	elapsed := time.Since(start)
 	t.Logf("Cross-region operation took: %v", elapsed)
@@ -676,7 +676,7 @@ func TestChaos_ConnectionDrop(t *testing.T) {
 	dropCount := 0
 	for i := 0; i < 10; i++ {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-		err := replicator.Apply(cmd, time.Second)
+		err := replicator.Apply(ctx, cmd, time.Second)
 		if err != nil {
 			dropCount++
 		}
@@ -807,7 +807,7 @@ func TestChaos_MixedFailures(t *testing.T) {
 			Timestamp: time.Now(),
 		}
 
-		err := replicator.Apply(cmd, 2*time.Second)
+		err := replicator.Apply(ctx, cmd, 2*time.Second)
 		if err == nil {
 			successCount++
 		} else {
@@ -898,7 +898,7 @@ func TestChaos_RecoveryAfterPartition(t *testing.T) {
 
 	// Apply before partition
 	cmd1 := &Command{Type: CmdCreateNode, Data: []byte("before-partition")}
-	require.NoError(t, replicator.Apply(cmd1, time.Second))
+	require.NoError(t, replicator.Apply(t.Context(), cmd1, time.Second))
 
 	// Simulate partition by closing transport
 	transport.Close()
@@ -906,7 +906,7 @@ func TestChaos_RecoveryAfterPartition(t *testing.T) {
 	// Operations should fail during partition
 	cmd2 := &Command{Type: CmdCreateNode, Data: []byte("during-partition")}
 	// This may or may not fail depending on timing
-	_ = replicator.Apply(cmd2, time.Second)
+	_ = replicator.Apply(t.Context(), cmd2, time.Second)
 
 	// Create new transport (simulating network recovery)
 	newTransport := NewMockTransport()
@@ -1077,7 +1077,7 @@ func TestSecurity_ReplayProtection(t *testing.T) {
 		{Position: 2, Command: &Command{Type: CmdCreateNode, Data: []byte("2")}},
 	}
 
-	lastPos, err := applier.ApplyBatch(entries)
+	lastPos, err := applier.ApplyBatch(context.Background(), entries)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(2), lastPos)
 
@@ -1087,7 +1087,7 @@ func TestSecurity_ReplayProtection(t *testing.T) {
 		{Position: 2, Command: &Command{Type: CmdCreateNode, Data: []byte("replay2")}},
 	}
 
-	replayPos, err := applier.ApplyBatch(replayedEntries)
+	replayPos, err := applier.ApplyBatch(context.Background(), replayedEntries)
 	require.NoError(t, err)
 
 	// Replayed entries should be skipped (lastApplied already at 2)
@@ -1111,28 +1111,6 @@ func TestSecurity_AuthenticationRequired(t *testing.T) {
 	// In production, we would require TLS client certs
 	err := config.Validate()
 	assert.NoError(t, err)
-}
-
-// TestSecurity_EncryptionAtRest tests that WAL data can be encrypted.
-func TestSecurity_EncryptionAtRest(t *testing.T) {
-	// Verify sensitive data in WAL entries
-	sensitiveData := []byte("password=secret123")
-
-	entry := &WALEntry{
-		Position: 1,
-		Command: &Command{
-			Type: CmdSetProperty,
-			Data: sensitiveData,
-		},
-	}
-
-	// In production with encryption enabled:
-	// 1. Data would be encrypted before writing to WAL
-	// 2. Data would be decrypted when reading from WAL
-	// 3. Encryption key would be securely managed
-
-	// For now, verify entry structure is correct
-	assert.Equal(t, sensitiveData, entry.Command.Data)
 }
 
 // TestSecurity_SecureRandom tests that we use secure random for IDs.

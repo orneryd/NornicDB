@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -34,7 +35,7 @@ func TestCompositeEngineLocalizedRoutingErrors(t *testing.T) {
 	t.Run("write validation has typed identity", func(t *testing.T) {
 		composite := NewCompositeEngine(nil, nil, nil)
 
-		_, err := composite.CreateNode(&Node{})
+		_, err := composite.CreateNode(t.Context(), &Node{})
 		requireCompositeLocalizedError(t, err, localization.MessageStorageCompositeNoWritableConstituents, "no writable constituents available", nil)
 	})
 }
@@ -46,44 +47,44 @@ func TestCompositeEngineLocalizedQueryWrappersPreserveCause(t *testing.T) {
 	}{
 		{name: "outgoing edges", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.outgoingErr = ErrConflict
-			_, err := composite.GetOutgoingEdges("node-1")
+			_, err := composite.GetOutgoingEdges(context.Background(), "node-1")
 			return err
 		}},
 		{name: "incoming edges", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.incomingErr = ErrConflict
-			_, err := composite.GetIncomingEdges("node-1")
+			_, err := composite.GetIncomingEdges(context.Background(), "node-1")
 			return err
 		}},
 		{name: "edges between", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.betweenErr = ErrConflict
-			_, err := composite.GetEdgesBetween("node-1", "node-2")
+			_, err := composite.GetEdgesBetween(context.Background(), "node-1", "node-2")
 			return err
 		}},
 		{name: "edges by type", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.byTypeErr = ErrConflict
-			_, err := composite.GetEdgesByType("REL")
+			_, err := composite.GetEdgesByType(context.Background(), "REL")
 			return err
 		}},
 		{name: "all nodes", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.allNodesErr = ErrConflict
-			_, err := composite.AllNodes()
+			_, err := composite.AllNodes(context.Background())
 			return err
 		}},
 		{name: "all edges", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.allEdgesErr = ErrConflict
-			_, err := composite.AllEdges()
+			_, err := composite.AllEdges(context.Background())
 			return err
 		}},
 		{name: "batch nodes", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.batchGetErr = ErrConflict
-			_, err := composite.BatchGetNodes([]NodeID{"node-1"})
+			_, err := composite.BatchGetNodes(context.Background(), []NodeID{"node-1"})
 			return err
 		}},
 	}
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			engine := &compositeErrorEngine{MemoryEngine: NewMemoryEngine()}
+			engine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t)}
 			t.Cleanup(func() { _ = engine.MemoryEngine.Close() })
 			composite := NewCompositeEngine(
 				map[string]Engine{"tenant-a": engine},
@@ -100,7 +101,7 @@ func TestCompositeEngineLocalizedQueryWrappersPreserveCause(t *testing.T) {
 
 func TestCompositeEngineLocalizedBulkWrapperPreservesCause(t *testing.T) {
 	cause := errors.New("bulk write failed")
-	engine := &compositeErrorEngine{MemoryEngine: NewMemoryEngine(), bulkCreateNodesErr: cause}
+	engine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t), bulkCreateNodesErr: cause}
 	t.Cleanup(func() { _ = engine.MemoryEngine.Close() })
 	composite := NewCompositeEngine(
 		map[string]Engine{"tenant-a": engine},
@@ -108,7 +109,7 @@ func TestCompositeEngineLocalizedBulkWrapperPreservesCause(t *testing.T) {
 		map[string]string{"tenant-a": "read_write"},
 	)
 
-	err := composite.BulkCreateNodes([]*Node{{ID: "node-1"}})
+	err := composite.BulkCreateNodes(t.Context(), []*Node{{ID: "node-1"}})
 	localizedErr := requireCompositeLocalizedError(t, err, localization.MessageStorageCompositeNodeBulkCreateFailed, "failed to create nodes in constituent 'tenant-a': bulk write failed", cause)
 	require.Equal(t, "tenant-a", localizedErr.Message.Data["Alias"])
 }

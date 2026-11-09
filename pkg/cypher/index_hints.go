@@ -35,6 +35,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -100,12 +101,18 @@ func (h *IndexHint) String() string {
 //	hints, cleanQuery := ParseIndexHints(query)
 //	// hints = [{Type: HintIndex, Variable: "n", Label: "Person", Property: "name"}]
 //	// cleanQuery = "MATCH (n:Person)  WHERE n.name = 'Alice' RETURN n"
-func ParseIndexHints(query string) ([]IndexHint, string) {
+func ParseIndexHints(ctx context.Context, query string) ([]IndexHint, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	var hints []IndexHint
 	var clean strings.Builder
 	pos := 0
 	for {
-		usingIdx := keywordIndexFrom(query, "USING", pos, defaultKeywordScanOpts())
+		usingIdx := keywordIndexFrom(ctx, query, "USING", pos, defaultKeywordScanOpts())
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
 		if usingIdx < 0 {
 			clean.WriteString(query[pos:])
 			break
@@ -123,7 +130,11 @@ func ParseIndexHints(query string) ([]IndexHint, string) {
 		pos = usingIdx + 5
 	}
 
-	return hints, strings.Join(strings.Fields(clean.String()), " ")
+	cleanQuery := strings.Join(strings.Fields(clean.String()), " ")
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	return hints, cleanQuery, nil
 }
 
 func parseSingleIndexHint(query string, usingIdx int) (IndexHint, int, bool) {
@@ -323,6 +334,7 @@ func (ctx *IndexHintContext) ShouldForceScan(variable, label string) bool {
 // Returns nodes matching the index lookup, or nil if index doesn't exist.
 //
 // Parameters:
+//   - ctx: The caller's context; its cancellation ends the label-scan fallback
 //   - storage: The storage engine to query
 //   - schema: The schema manager for index lookup
 //   - hint: The index hint to apply
@@ -332,7 +344,7 @@ func (ctx *IndexHintContext) ShouldForceScan(variable, label string) bool {
 //   - Matching nodes if index exists and value found
 //   - nil, nil if index doesn't exist (fall back to scan)
 //   - nil, error if lookup fails
-func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint IndexHint, propertyValue interface{}) ([]*storage.Node, error) {
+func ApplyIndexHint(ctx context.Context, store storage.Engine, schema *storage.SchemaManager, hint IndexHint, propertyValue interface{}) ([]*storage.Node, error) {
 	if hint.Type != HintIndex {
 		return nil, nil // Not an index hint
 	}
@@ -343,12 +355,18 @@ func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint In
 	}
 
 	// Try to use the property index for O(1) lookup
-	nodeIDs := propertyIndexLookup(store, schema, hint.Label, hint.Property, propertyValue)
+	nodeIDs, err := propertyIndexLookup(ctx, store, schema, hint.Label, hint.Property, propertyValue)
+	if err != nil {
+		return nil, err
+	}
 	if nodeIDs != nil {
 		// Index exists and was used! Get the actual nodes.
 		var result []*storage.Node
 		for _, nodeID := range nodeIDs {
-			node, err := store.GetNode(nodeID)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			node, err := store.GetNode(ctx, nodeID)
 			if err == nil && node != nil {
 				result = append(result, node)
 			}
@@ -357,7 +375,7 @@ func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint In
 	}
 
 	// No index found - fall back to label scan with property filter
-	nodes, err := store.GetNodesByLabel(hint.Label)
+	nodes, err := store.GetNodesByLabel(ctx, hint.Label)
 	if err != nil {
 		return nil, err
 	}

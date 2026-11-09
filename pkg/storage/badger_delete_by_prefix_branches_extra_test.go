@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -13,18 +14,18 @@ func TestBadgerEngine_DeleteByPrefix_MalformedSecondaryIndexKeysIgnored(t *testi
 	const targetPrefix = "target:"
 	n1 := &Node{ID: NodeID(targetPrefix + "n1"), Labels: []string{"Person"}}
 	n2 := &Node{ID: NodeID(targetPrefix + "n2"), Labels: []string{"Person"}}
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(targetPrefix + "e1"), StartNode: n1.ID, EndNode: n2.ID, Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: EdgeID(targetPrefix + "e1"), StartNode: n1.ID, EndNode: n2.ID, Type: "KNOWS"}))
 
 	validLabelIdx := append(append([]byte{prefixLabelIndex}, []byte("Person")...), 0x00)
 	validLabelIdx = append(validLabelIdx, []byte(targetPrefix+"orphan-node")...)
 	validEdgeTypeIdx := append(append([]byte{prefixEdgeTypeIndex}, []byte("KNOWS")...), 0x00)
 	validEdgeTypeIdx = append(validEdgeTypeIdx, []byte(targetPrefix+"orphan-edge")...)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// len(key) < 3 branch
 		require.NoError(t, txn.Set([]byte{prefixLabelIndex, 'x'}, []byte{1}))
 		// sep < 0 branch (no separator after prefix byte)
@@ -55,7 +56,7 @@ func TestBadgerEngine_DeleteByPrefix_MalformedSecondaryIndexKeysIgnored(t *testi
 func TestBadgerEngine_DeleteByPrefix_DBClosedDuringOperationReturnsError(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: NodeID("test:n1")})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID("test:n1")})
 	require.NoError(t, err)
 
 	require.NoError(t, engine.db.Close())

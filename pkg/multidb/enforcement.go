@@ -24,7 +24,7 @@
 //	}
 //
 //	// Check if creating this node would exceed limits
-//	if err := checker.CheckStorageLimits("create_node", node, nil); err != nil {
+//	if err := checker.CheckStorageLimits(ctx, "create_node", node, nil); err != nil {
 //		return fmt.Errorf("cannot create node: %w", err)
 //	}
 //
@@ -33,11 +33,10 @@
 //
 // MaxBytes Enforcement:
 //
-// MaxBytes enforcement uses exact size calculation, not estimation. When checking
-// limits for a create operation, the actual serialized size of the node/edge is
-// calculated using gob encoding (matching the storage format). The current total
-// storage size is tracked incrementally in DatabaseInfo, and the check verifies
-// that currentSize + newEntitySize <= MaxBytes.
+// MaxBytes enforcement charges the MessagePack size of a canonical logical
+// entity. This is a consistent quota measure, not the physical Badger size.
+// The current total is tracked incrementally in DatabaseInfo, and the check
+// verifies that currentSize + newEntitySize <= MaxBytes.
 //
 // Storage size is tracked incrementally:
 //   - Initialized lazily on first access (calculated from all existing nodes/edges)
@@ -46,14 +45,15 @@
 package multidb
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // LimitChecker provides an interface for checking resource limits.
@@ -63,7 +63,7 @@ type LimitChecker interface {
 	// CheckStorageLimits checks if storage operations are within limits.
 	// Returns error if limit would be exceeded.
 	// For create operations, pass the node/edge being created to calculate exact size.
-	CheckStorageLimits(operation string, node *storage.Node, edge *storage.Edge) error
+	CheckStorageLimits(ctx context.Context, operation string, node *storage.Node, edge *storage.Edge) error
 
 	// CheckQueryLimits checks if query execution is allowed.
 	// Returns error if limit would be exceeded.
@@ -86,74 +86,21 @@ type LimitChecker interface {
 type databaseLimitChecker struct {
 	manager      *DatabaseManager
 	databaseName string
-	limitsMu     sync.RWMutex
-	limits       *Limits
+	info         atomic.Pointer[DatabaseInfo]
+	localPolicy  *databaseLimitPolicy
 
 	// Query tracking
 	activeQueries   int
 	activeQueriesMu sync.Mutex
-
-	// Rate limiting
-	queryRateLimiter *rateLimiter
-	writeRateLimiter *rateLimiter
-
-	// Cached size info (from DatabaseInfo)
-	nodeSize int64
-	edgeSize int64
 }
 
-// newDatabaseLimitChecker creates a limit checker for a specific database.
-func newDatabaseLimitChecker(manager *DatabaseManager, databaseName string) (*databaseLimitChecker, error) {
-	manager.mu.RLock()
-	info, exists := manager.databases[databaseName]
-	manager.mu.RUnlock()
-
-	if !exists {
-		return nil, ErrDatabaseNotFound
-	}
-
-	return newDatabaseLimitCheckerWithLimits(manager, databaseName, info.Limits), nil
-}
-
-func newDatabaseLimitCheckerWithLimits(manager *DatabaseManager, databaseName string, limits *Limits) *databaseLimitChecker {
-	checker := &databaseLimitChecker{manager: manager, databaseName: databaseName}
-	checker.updateLimits(limits)
-	return checker
-}
-
-func (c *databaseLimitChecker) updateLimits(limits *Limits) {
-	limits = cloneLimits(limits)
-	c.limitsMu.Lock()
-	defer c.limitsMu.Unlock()
-	c.limits = limits
-	c.queryRateLimiter = nil
-	c.writeRateLimiter = nil
-	if limits != nil {
-		if limits.Rate.MaxQueriesPerSecond > 0 {
-			c.queryRateLimiter = newRateLimiter(limits.Rate.MaxQueriesPerSecond)
-		}
-		if limits.Rate.MaxWritesPerSecond > 0 {
-			c.writeRateLimiter = newRateLimiter(limits.Rate.MaxWritesPerSecond)
+func (c *databaseLimitChecker) policy() *databaseLimitPolicy {
+	if info := c.info.Load(); info != nil {
+		if runtime := info.managed.Load(); runtime != nil {
+			return runtime.policy
 		}
 	}
-}
-
-func (c *databaseLimitChecker) limitsSnapshot() *Limits {
-	c.limitsMu.RLock()
-	defer c.limitsMu.RUnlock()
-	return cloneLimits(c.limits)
-}
-
-func (c *databaseLimitChecker) queryRateSnapshot() (*Limits, *rateLimiter) {
-	c.limitsMu.RLock()
-	defer c.limitsMu.RUnlock()
-	return cloneLimits(c.limits), c.queryRateLimiter
-}
-
-func (c *databaseLimitChecker) writeRateSnapshot() (*Limits, *rateLimiter) {
-	c.limitsMu.RLock()
-	defer c.limitsMu.RUnlock()
-	return cloneLimits(c.limits), c.writeRateLimiter
+	return c.localPolicy
 }
 
 // CheckStorageLimits checks if storage operations are within limits.
@@ -165,9 +112,8 @@ func (c *databaseLimitChecker) writeRateSnapshot() (*Limits, *rateLimiter) {
 //
 // Returns an error if the operation would exceed any configured limits.
 //
-// For MaxBytes enforcement, the exact serialized size of the node/edge is calculated
-// using gob encoding (matching the actual storage format). This ensures accurate
-// limit checking without estimation.
+// MaxBytes charges the MessagePack size of the canonical logical node or
+// relationship, consistently with the incremental usage counter.
 //
 // Example:
 //
@@ -177,7 +123,7 @@ func (c *databaseLimitChecker) writeRateSnapshot() (*Limits, *rateLimiter) {
 //		Labels: []string{"User"},
 //		Properties: map[string]any{"name": "Alice", "email": "alice@example.com"},
 //	}
-//	if err := checker.CheckStorageLimits("create_node", node, nil); err != nil {
+//	if err := checker.CheckStorageLimits(ctx, "create_node", node, nil); err != nil {
 //		// Error message: "storage limit exceeded: database 'tenant_a' would exceed
 //		// max_bytes limit (current: 500 bytes, limit: 1024 bytes, new entity: 600 bytes)"
 //		return err
@@ -192,24 +138,24 @@ func (c *databaseLimitChecker) writeRateSnapshot() (*Limits, *rateLimiter) {
 //   - MaxNodes: "has reached max_nodes limit (1000/1000)"
 //   - MaxEdges: "has reached max_edges limit (5000/5000)"
 //   - MaxBytes: "would exceed max_bytes limit (current: 500 bytes, limit: 1024 bytes, new entity: 600 bytes)"
-func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storage.Node, edge *storage.Edge) error {
-	limits := c.limitsSnapshot()
+func (c *databaseLimitChecker) CheckStorageLimits(ctx context.Context, operation string, node *storage.Node, edge *storage.Edge) error {
+	limits := c.policy().snapshot()
 	if limits == nil || limits.IsUnlimited() {
 		return nil // No limits
 	}
 
 	// Get current usage
-	storage, err := c.manager.GetStorage(c.databaseName)
+	engine, err := c.manager.GetStorage(c.databaseName)
 	if err != nil {
 		return err
 	}
 
-	nodeCount, err := storage.NodeCount()
+	nodeCount, err := engine.NodeCount(ctx)
 	if err != nil {
 		return localizedError(localization.MultidbStorageGetNodeCountFailed(err), err)
 	}
 
-	edgeCount, err := storage.EdgeCount()
+	edgeCount, err := engine.EdgeCount(ctx)
 	if err != nil {
 		return localizedError(localization.MultidbStorageGetEdgeCountFailed(err), err)
 	}
@@ -231,7 +177,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 
 	// Check MaxBytes limit if set
 	if storageLimits.MaxBytes > 0 {
-		currentSize, err := c.getCurrentStorageSize(storage)
+		currentSize, _, _, err := c.manager.readStorageSize(ctx, c.databaseName, engine, sizeForAdmission)
 		if err != nil {
 			return localizedError(localization.MultidbStorageGetSizeFailed(err), err)
 		}
@@ -244,7 +190,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 				return localizedError(localization.MultidbStorageCalculateNodeSizeFailed(err), err)
 			}
 		} else if operation == "update_node" && node != nil {
-			existing, getErr := storage.GetNode(node.ID)
+			existing, getErr := storage.GetStoredNode(ctx, engine, node.ID)
 			if getErr != nil {
 				return nil
 			}
@@ -263,7 +209,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 				return localizedError(localization.MultidbStorageCalculateEdgeSizeFailed(err), err)
 			}
 		} else if operation == "update_edge" && edge != nil {
-			existing, getErr := storage.GetEdge(edge.ID)
+			existing, getErr := storage.GetStoredEdge(ctx, engine, edge.ID)
 			if getErr != nil {
 				return nil
 			}
@@ -291,90 +237,10 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 	return nil
 }
 
-// getCurrentStorageSize gets the current storage size, initializing it if needed.
-// Uses tracked size from DatabaseInfo for efficiency.
-func (c *databaseLimitChecker) getCurrentStorageSize(engine storage.Engine) (int64, error) {
-	// Get database info to access tracked size
-	c.manager.mu.RLock()
-	info, exists := c.manager.databases[c.databaseName]
-	c.manager.mu.RUnlock()
-
-	if !exists {
-		return 0, ErrDatabaseNotFound
-	}
-
-	// Check if size has been initialized
-	info.sizeMu.RLock()
-	initialized := info.sizeInitialized
-	currentSize := info.totalSize
-	nodeSize := info.nodeSize
-	edgeSize := info.edgeSize
-	info.sizeMu.RUnlock()
-
-	if !initialized {
-		// Calculate size on first access (lazy initialization)
-		calcNodeSize, calcEdgeSize, err := c.calculateCurrentStorageSize(engine)
-		if err != nil {
-			return 0, err
-		}
-		totalSize := calcNodeSize + calcEdgeSize
-
-		// Update tracked size
-		info.sizeMu.Lock()
-		info.totalSize = totalSize
-		info.nodeSize = calcNodeSize
-		info.edgeSize = calcEdgeSize
-		info.sizeInitialized = true
-		info.sizeMu.Unlock()
-
-		return totalSize, nil
-	}
-
-	// Store node/edge sizes for use in estimation
-	c.nodeSize = nodeSize
-	c.edgeSize = edgeSize
-
-	return currentSize, nil
-}
-
-// calculateCurrentStorageSize calculates the total size of all nodes and edges in storage.
-// Returns nodeSize, edgeSize, and error.
-// This is only called once for lazy initialization, then size is tracked incrementally.
-func (c *databaseLimitChecker) calculateCurrentStorageSize(engine storage.Engine) (int64, int64, error) {
-	var nodeSize int64
-	var edgeSize int64
-
-	err := storage.StreamNodesWithFallback(context.Background(), engine, 1000, func(node *storage.Node) error {
-		size, err := calculateNodeSize(node)
-		if err != nil {
-			size = 1024
-		}
-		nodeSize += size
-		return nil
-	})
-	if err != nil {
-		return 0, 0, localizedError(localization.MultidbStorageGetAllNodesFailed(err), err)
-	}
-
-	err = storage.StreamEdgesWithFallback(context.Background(), engine, 1000, func(edge *storage.Edge) error {
-		size, err := calculateEdgeSize(edge)
-		if err != nil {
-			size = 512
-		}
-		edgeSize += size
-		return nil
-	})
-	if err != nil {
-		return 0, 0, localizedError(localization.MultidbStorageGetAllEdgesFailed(err), err)
-	}
-
-	return nodeSize, edgeSize, nil
-}
-
-// calculateNodeSize calculates the ACTUAL serialized size of a node using gob encoding.
-//
-// This matches the exact storage format used by BadgerEngine - no estimation, this is the real size.
-// The size returned is the exact number of bytes that will be stored on disk.
+// calculateNodeSize measures the MessagePack logical byte quota. Persistent
+// bodies have their own encoding, so this is not the physical Badger/WAL footprint.
+// Empty and nil properties represent the same propertyless entity across
+// point/stream readers and staged writes, so they must have one quota size.
 //
 // Example:
 //
@@ -388,20 +254,28 @@ func (c *databaseLimitChecker) calculateCurrentStorageSize(engine storage.Engine
 //		},
 //	}
 //	size, err := calculateNodeSize(node)
-//	// size is the exact byte count that will be stored
+//	// size is the logical byte quota charged for the entity
 func calculateNodeSize(node *storage.Node) (int64, error) {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(node); err != nil {
+	if node != nil {
+		canonical := *node
+		{
+			metadata := canonical.RuntimeMetadata()
+			metadata.Database = "" // Query provenance does not consume stored-byte quota.
+			canonical.SetRuntimeMetadata(metadata)
+		}
+		if len(canonical.Properties) == 0 {
+			canonical.Properties = nil
+		}
+		node = &canonical
+	}
+	encoded, err := msgpack.Marshal(node)
+	if err != nil {
 		return 0, localizedError(localization.MultidbStorageEncodeNodeFailed(err), err)
 	}
-	return int64(buf.Len()), nil
+	return int64(len(encoded)), nil
 }
 
-// calculateEdgeSize calculates the ACTUAL serialized size of an edge using gob encoding.
-//
-// This matches the exact storage format used by BadgerEngine - no estimation, this is the real size.
-// The size returned is the exact number of bytes that will be stored on disk.
+// calculateEdgeSize uses the same canonical logical quota model as nodes.
 //
 // Example:
 //
@@ -416,19 +290,26 @@ func calculateNodeSize(node *storage.Node) (int64, error) {
 //		},
 //	}
 //	size, err := calculateEdgeSize(edge)
-//	// size is the exact byte count that will be stored
+//	// size is the logical byte quota charged for the entity
 func calculateEdgeSize(edge *storage.Edge) (int64, error) {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(edge); err != nil {
+	if edge != nil {
+		canonical := *edge
+		canonical.Database = ""
+		if len(canonical.Properties) == 0 {
+			canonical.Properties = nil
+		}
+		edge = &canonical
+	}
+	encoded, err := msgpack.Marshal(edge)
+	if err != nil {
 		return 0, localizedError(localization.MultidbStorageEncodeEdgeFailed(err), err)
 	}
-	return int64(buf.Len()), nil
+	return int64(len(encoded)), nil
 }
 
 // CheckQueryLimits checks if query execution is allowed and returns a context with timeout.
 func (c *databaseLimitChecker) CheckQueryLimits(ctx context.Context) (context.Context, context.CancelFunc, error) {
-	limits := c.limitsSnapshot()
+	limits := c.policy().snapshot()
 	if limits == nil || limits.IsUnlimited() {
 		return ctx, func() {}, nil // No limits
 	}
@@ -446,10 +327,11 @@ func (c *databaseLimitChecker) CheckQueryLimits(ctx context.Context) (context.Co
 		c.activeQueriesMu.Unlock()
 	}
 
-	// Create context with timeout if limit is set
+	// Create context with timeout if limit is set. Its cause names the
+	// database's limit as the deadline that ended the statement.
 	var cancel context.CancelFunc
 	if queryLimits.MaxQueryTime > 0 {
-		ctx, cancel = context.WithTimeout(ctx, queryLimits.MaxQueryTime)
+		ctx, cancel = context.WithTimeoutCause(ctx, queryLimits.MaxQueryTime, nornicerrors.ErrDatabaseQueryTimeLimit)
 	} else {
 		cancel = func() {}
 	}
@@ -468,7 +350,7 @@ func (c *databaseLimitChecker) CheckQueryLimits(ctx context.Context) (context.Co
 // GetQueryLimits returns the query limits for this database.
 // Implements storage.QueryLimitChecker interface.
 func (c *databaseLimitChecker) GetQueryLimits() interface{} {
-	limits := c.limitsSnapshot()
+	limits := c.policy().snapshot()
 	if limits == nil {
 		return nil
 	}
@@ -477,7 +359,7 @@ func (c *databaseLimitChecker) GetQueryLimits() interface{} {
 
 // GetRateLimits returns the rate limits for this database.
 func (c *databaseLimitChecker) GetRateLimits() *RateLimits {
-	limits := c.limitsSnapshot()
+	limits := c.policy().snapshot()
 	if limits == nil {
 		return nil
 	}
@@ -485,27 +367,26 @@ func (c *databaseLimitChecker) GetRateLimits() *RateLimits {
 }
 
 // CheckQueryRate checks if query rate limit is allowed.
-func (c *databaseLimitChecker) CheckQueryRate() error {
-	limits, limiter := c.queryRateSnapshot()
-	if limiter == nil {
-		return nil // No limit
-	}
-	if !limiter.Allow() {
-		return localizedError(localization.MultidbQueryRateExceeded(c.databaseName, limits.Rate.MaxQueriesPerSecond), ErrRateLimitExceeded)
-	}
-	return nil
-}
+func (c *databaseLimitChecker) CheckQueryRate() error { return c.checkRate(queryRate) }
 
 // CheckWriteRate checks if write rate limit is allowed.
-func (c *databaseLimitChecker) CheckWriteRate() error {
-	limits, limiter := c.writeRateSnapshot()
+func (c *databaseLimitChecker) CheckWriteRate() error { return c.checkRate(writeRate) }
+
+// checkRate uses one atomic policy snapshot and the namespace's shared bucket.
+func (c *databaseLimitChecker) checkRate(kind rateKind) error {
+	limits, limiter := c.policy().rateSnapshot(kind)
 	if limiter == nil {
-		return nil // No limit
+		return nil
 	}
-	if !limiter.Allow() {
+	if limiter.Allow() {
+		return nil
+	}
+	switch kind {
+	case queryRate:
+		return localizedError(localization.MultidbQueryRateExceeded(c.databaseName, limits.Rate.MaxQueriesPerSecond), ErrRateLimitExceeded)
+	default:
 		return localizedError(localization.MultidbWriteRateExceeded(c.databaseName, limits.Rate.MaxWritesPerSecond), ErrRateLimitExceeded)
 	}
-	return nil
 }
 
 // rateLimiter implements a simple token bucket rate limiter.
@@ -591,7 +472,8 @@ func (t *ConnectionTracker) CheckConnectionLimit(manager *DatabaseManager, datab
 		return ErrDatabaseNotFound
 	}
 
-	if info.Limits == nil || info.Limits.Connection.MaxConnections == 0 {
+	limits := info.limitsSnapshot()
+	if limits == nil || limits.Connection.MaxConnections == 0 {
 		return nil // No limit
 	}
 
@@ -599,8 +481,8 @@ func (t *ConnectionTracker) CheckConnectionLimit(manager *DatabaseManager, datab
 	defer t.mu.Unlock()
 
 	current := t.connections[databaseName]
-	if current >= info.Limits.Connection.MaxConnections {
-		return localizedError(localization.MultidbMaxConnectionsReached(databaseName, current, info.Limits.Connection.MaxConnections), ErrConnectionLimitExceeded)
+	if current >= limits.Connection.MaxConnections {
+		return localizedError(localization.MultidbMaxConnectionsReached(databaseName, current, limits.Connection.MaxConnections), ErrConnectionLimitExceeded)
 	}
 
 	return nil
@@ -620,8 +502,8 @@ func (t *ConnectionTracker) TryIncrementConnection(manager *DatabaseManager, dat
 	}
 
 	limit := 0
-	if info.Limits != nil {
-		limit = info.Limits.Connection.MaxConnections
+	if limits := info.limitsSnapshot(); limits != nil {
+		limit = limits.Connection.MaxConnections
 	}
 	if limit == 0 {
 		t.mu.Lock()

@@ -1,6 +1,9 @@
 package multidb
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"strings"
 	"testing"
@@ -13,14 +16,14 @@ const startupBenchmarkEntityCount = 2000
 func newStartupBenchmarkEngine(b *testing.B, includeEdges bool) *storage.BadgerEngine {
 	b.Helper()
 	dataDir := b.TempDir()
-	engine, err := storage.NewBadgerEngine(dataDir)
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
 	if err != nil {
 		b.Fatal(err)
 	}
 	payload := strings.Repeat("x", 1024)
 	for index := 0; index < startupBenchmarkEntityCount; index++ {
 		nodeID := storage.NodeID(fmt.Sprintf("nornic:node-%06d", index))
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(b.Context(), &storage.Node{
 			ID:         nodeID,
 			Labels:     []string{"Application"},
 			Properties: map[string]interface{}{"payload": payload, "index": int64(index)},
@@ -29,7 +32,7 @@ func newStartupBenchmarkEngine(b *testing.B, includeEdges bool) *storage.BadgerE
 			b.Fatal(err)
 		}
 		if includeEdges {
-			err = engine.CreateEdge(&storage.Edge{
+			err = engine.CreateEdge(b.Context(), &storage.Edge{
 				ID:         storage.EdgeID(fmt.Sprintf("nornic:edge-%06d", index)),
 				StartNode:  nodeID,
 				EndNode:    nodeID,
@@ -45,10 +48,10 @@ func newStartupBenchmarkEngine(b *testing.B, includeEdges bool) *storage.BadgerE
 		b.Fatal(err)
 	}
 
-	reopened, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	reopened, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             dataDir,
 		NodeCacheMaxEntries: 512,
-	})
+	}))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -77,12 +80,12 @@ func BenchmarkStartupLeakedSystemCleanup(b *testing.B) {
 func BenchmarkStartupStorageSizeReconciliation(b *testing.B) {
 	engine := newStartupBenchmarkEngine(b, true)
 	namespaced := storage.NewNamespacedEngine(engine, "nornic")
-	checker := &databaseLimitChecker{}
+	manager := &DatabaseManager{}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
-		if _, _, err := checker.calculateCurrentStorageSize(namespaced); err != nil {
+		if _, _, err := manager.calculateStorageSizeFromEngine(context.Background(), namespaced); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -93,14 +96,14 @@ func BenchmarkStartupStorageSizeReconciliation(b *testing.B) {
 // but is deferred until a byte limit or explicit size query needs it.
 func BenchmarkStartupDatabaseManagerWithoutSizeScan(b *testing.B) {
 	engine := newStartupBenchmarkEngine(b, true)
-	if _, err := NewDatabaseManager(engine, nil); err != nil {
+	if _, err := NewDatabaseManager(b.Context(), engine, nil); err != nil {
 		b.Fatal(err)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
-		manager, err := NewDatabaseManager(engine, nil)
+		manager, err := NewDatabaseManager(b.Context(), engine, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

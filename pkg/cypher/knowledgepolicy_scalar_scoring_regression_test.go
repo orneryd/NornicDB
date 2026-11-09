@@ -30,17 +30,17 @@ func TestDecayScalarRelationshipVersionAndPropertyScores(t *testing.T) {
 			}
 			require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{Name: "links", TargetEdgeType: "LINKS", IsEdge: true, ProfileRef: "entity_version", PropertyRules: []knowledgepolicy.DecayProfilePropertyRule{{PropertyPath: "summary", ProfileRef: "property_fast"}}}))
 			for _, id := range []storage.NodeID{"a", "b"} {
-				_, err := store.CreateNode(&storage.Node{ID: id})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 				require.NoError(t, err)
 			}
 			now := time.Now()
 			old := now.Add(-72 * time.Hour)
 			edge := &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINKS", Properties: map[string]any{"summary": "old text"}, CreatedAt: old, UpdatedAt: now.Add(-time.Minute)}
-			require.NoError(t, store.CreateEdge(edge))
+			require.NoError(t, store.CreateEdge(t.Context(), edge))
 			for _, recent := range []bool{true, false} {
 				if !recent {
 					edge.UpdatedAt = old
-					require.NoError(t, store.UpdateEdge(edge))
+					require.NoError(t, store.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 				}
 				executor := NewStorageExecutor(store)
 				result, err := executor.Execute(context.Background(), `MATCH ()-[r:LINKS]->() RETURN decayScore(r), decay(r), decayScore(r, {property:'summary'}), decay(r, {property:'summary'})`, nil)
@@ -69,13 +69,13 @@ func TestDecayScalarRelationshipVersionAndPropertyScores(t *testing.T) {
 			// must remain separate from the entity's longer version half-life.
 			require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{Name: "node_version", Scope: knowledgepolicy.ScopeNode, Function: knowledgepolicy.DecayFunctionExponential, HalfLifeSeconds: 3600, VisibilityThreshold: 0.1, ScoreFrom: knowledgepolicy.ScoreFromVersion, Enabled: true, DecayEnabled: true}))
 			require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{Name: "docs", TargetLabels: []string{"Doc"}, ProfileRef: "node_version", PropertyRules: []knowledgepolicy.DecayProfilePropertyRule{{PropertyPath: "summary", ProfileRef: "property_fast"}}}))
-			node, err := store.GetNode("a")
+			node, err := store.GetNode(t.Context(), "a")
 			require.NoError(t, err)
 			node.Labels = []string{"Doc"}
 			node.Properties = map[string]any{"summary": "old text"}
 			node.CreatedAt = old
 			node.UpdatedAt = now.Add(-time.Minute)
-			require.NoError(t, store.UpdateNode(node))
+			require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			result, err := NewStorageExecutor(store).Execute(context.Background(), `MATCH (n:Doc) RETURN decayScore(n), decay(n), decayScore(n, {property:'summary'}), decay(n, {property:'summary'})`, nil)
 			require.NoError(t, err)
 			require.Len(t, result.Rows, 1)

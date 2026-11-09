@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/fabric"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 const (
 	transactionCleanupRequestTimeout = 5 * time.Second
-	transactionTimedOutCode          = "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration"
-	transactionTimedOutMsg           = "The transaction has timed out according to the timeout configured by the client."
+	transactionTimedOutCode          = nornicerrors.TransactionTimedOutClientConfiguration
+	transactionTimedOutMsg           = nornicerrors.TransactionTimedOutClientConfigurationMessage
 )
 
 var (
@@ -55,7 +59,7 @@ type transactionLifecycle struct {
 	ctx                     context.Context
 	cancel                  context.CancelFunc
 	cleanupBase             context.Context
-	timer                   *time.Timer
+	timer                   *lifecycle.OwnedTimer // retained until its callback returns or Stop succeeds
 	executor                TransactionalExecutor
 	startedAt               time.Time
 	database                string
@@ -73,14 +77,34 @@ type transactionLifecycle struct {
 // accepted transaction as Active or already TimingOut without an expired gap.
 func (l *transactionLifecycle) begin(
 	parent context.Context,
+	owner *lifecycle.WorkLifetime,
 	timeout time.Duration,
 	database string,
 	executor TransactionalExecutor,
 	metadata map[string]any,
 	observe func(transactionTerminalReason, string, time.Duration, error),
-) error {
-	if parent == nil {
-		parent = context.Background()
+) (retErr error) {
+	// Every failure returned here is a BEGIN failure, classified here.
+	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, retErr) }()
+	var timerRelease func()
+	timerTransferred := false
+	if timeout > 0 {
+		// The timeout timer is retained by the server's lifetime, which joins
+		// it on shutdown. A transaction cannot begin outside that owner.
+		if owner == nil {
+			return errors.New("bolt transaction has no server lifetime")
+		}
+		var accepted bool
+		_, timerRelease, accepted = owner.Acquire(parent)
+		if !accepted {
+			return context.Canceled
+		}
+		timerRelease = sync.OnceFunc(timerRelease)
+		defer func() {
+			if !timerTransferred {
+				timerRelease()
+			}
+		}()
 	}
 
 	l.mu.Lock()
@@ -98,7 +122,10 @@ func (l *transactionLifecycle) begin(
 	var beginErr error
 	var beginPanic any
 	if executor != nil {
-		beginPanic, beginErr = invokeTransactionBegin(txCtx, executor, metadata)
+		// Query cancellation belongs to txCtx. Participant completion must
+		// survive that cancellation so timeout/ROLLBACK can finish cleanup.
+		// The connection owner still cancels completion on disconnect/shutdown.
+		beginPanic, beginErr = invokeTransactionBegin(fabric.WithTransactionLifetime(txCtx, parent), executor, metadata)
 	}
 	if beginErr == nil && beginPanic == nil {
 		beginErr = txCtx.Err()
@@ -124,10 +151,9 @@ func (l *transactionLifecycle) begin(
 		if beginPanic != nil {
 			panic(beginPanic)
 		}
-		if cleanupErr != nil {
-			return fmt.Errorf("BEGIN failed: %w; rollback cleanup failed: %v", beginErr, cleanupErr)
-		}
-		return beginErr
+		// Author: Codex/Claude, NOR-180. The BEGIN failure stays the primary with
+		// its own status; the compensating rollback's failure is retained.
+		return nornicerrors.CombineTerminalOutcomes(nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, beginErr), cleanupErr)
 	}
 
 	remaining := timeout - time.Since(startedAt)
@@ -156,7 +182,12 @@ func (l *transactionLifecycle) begin(
 		if l.afterFunc != nil {
 			afterFunc = l.afterFunc
 		}
-		l.timer = afterFunc(remaining, func() { l.expireGeneration(generation) })
+		// The timer takes over the admission acquired before BEGIN.
+		// The timer stops when its owner retires, releasing that admission.
+		l.timer = lifecycle.AfterFuncOwned(owner.Context(), afterFunc, remaining, func() (func(), bool) { return timerRelease, true }, func() {
+			l.expireGeneration(generation)
+		})
+		timerTransferred = true
 	} else {
 		l.timer = nil
 	}
@@ -324,7 +355,9 @@ func (l *transactionLifecycle) abortCommitPanic() error {
 
 // rollback either claims synchronous cleanup or joins timeout-owned cleanup;
 // cleanup failure remains sticky for every later waiter.
-func (l *transactionLifecycle) rollback(reason transactionTerminalReason) error {
+func (l *transactionLifecycle) rollback(reason transactionTerminalReason) (retErr error) {
+	// A rollback's own failure is classified here, where it is produced.
+	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalRollback, retErr) }()
 	l.mu.Lock()
 	switch l.state {
 	case transactionStateDefunct:
@@ -505,4 +538,17 @@ func (l *transactionLifecycle) clearOwnedLocked() {
 	l.cleanupPending = false
 	l.cleanupDone = nil
 	l.cleanupErr = nil
+}
+
+// commitContext is the lifecycle-owned context after COMMIT claims the terminal
+// operation. The timeout timer has stopped; disconnect/parent cancellation is
+// still meaningful until storage publication starts. Without a transaction
+// context the session's own lifetime (session) applies.
+func (l *transactionLifecycle) commitContext(session context.Context) context.Context {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.ctx != nil {
+		return l.ctx
+	}
+	return session
 }

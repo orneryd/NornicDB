@@ -109,8 +109,8 @@ func TestNewClusterIndex(t *testing.T) {
 		if ci.config == nil {
 			t.Error("config should not be nil")
 		}
-		if ci.clusterMap == nil {
-			t.Error("clusterMap should not be nil")
+		if ci.IsClustered() {
+			t.Error("a new index is not clustered")
 		}
 	})
 
@@ -864,23 +864,7 @@ func TestClusterIndexSeedAndIndexHelpers(t *testing.T) {
 	}
 }
 
-func TestBuildClusterMapAndNearestCentroidHelpers(t *testing.T) {
-	clusterMap := buildClusterMapFromAssignments([]int{2, 1, 2, 1, 2})
-	if len(clusterMap) != 2 {
-		t.Fatalf("buildClusterMapFromAssignments() produced %d clusters, want 2", len(clusterMap))
-	}
-	for cluster, want := range map[int][]int{1: {1, 3}, 2: {0, 2, 4}} {
-		got := clusterMap[cluster]
-		if len(got) != len(want) {
-			t.Fatalf("cluster %d indices = %v, want %v", cluster, got, want)
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Fatalf("cluster %d indices = %v, want %v", cluster, got, want)
-			}
-		}
-	}
-
+func TestNearestCentroidHelpers(t *testing.T) {
 	if got := nearestCentroidFromList([]float32{0.2, 0.1}, [][]float32{{0, 0}, {5, 5}}); got != 0 {
 		t.Fatalf("nearestCentroidFromList() = %d, want 0", got)
 	}
@@ -974,7 +958,7 @@ func TestClusterIndex_SearchCandidates(t *testing.T) {
 
 		// Search only first 5 candidates
 		candidates := []int{0, 1, 2, 3, 4}
-		results, err := ci.SearchCandidates(nil, query, candidates, 3)
+		results, err := ci.SearchCandidates(t.Context(), query, candidates, 3)
 		if err != nil {
 			t.Fatalf("SearchCandidates() error = %v", err)
 		}
@@ -985,7 +969,7 @@ func TestClusterIndex_SearchCandidates(t *testing.T) {
 
 	t.Run("empty candidates", func(t *testing.T) {
 		query := make([]float32, testDims)
-		results, err := ci.SearchCandidates(nil, query, []int{}, 3)
+		results, err := ci.SearchCandidates(t.Context(), query, []int{}, 3)
 		if err != nil {
 			t.Fatalf("SearchCandidates() error = %v", err)
 		}
@@ -996,7 +980,7 @@ func TestClusterIndex_SearchCandidates(t *testing.T) {
 
 	t.Run("wrong dimensions", func(t *testing.T) {
 		query := make([]float32, testDims+1) // Wrong dimensions
-		_, err := ci.SearchCandidates(nil, query, []int{0, 1}, 1)
+		_, err := ci.SearchCandidates(t.Context(), query, []int{0, 1}, 1)
 		if err != ErrInvalidDimensions {
 			t.Errorf("expected ErrInvalidDimensions, got %v", err)
 		}
@@ -1004,7 +988,7 @@ func TestClusterIndex_SearchCandidates(t *testing.T) {
 
 	t.Run("topK larger than candidates", func(t *testing.T) {
 		query := make([]float32, testDims)
-		results, err := ci.SearchCandidates(nil, query, []int{0, 1, 2}, 100)
+		results, err := ci.SearchCandidates(t.Context(), query, []int{0, 1, 2}, 100)
 		if err != nil {
 			t.Fatalf("SearchCandidates() error = %v", err)
 		}

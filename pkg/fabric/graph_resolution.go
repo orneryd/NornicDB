@@ -6,12 +6,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // GraphArgumentEvaluator evaluates the argument expressions of a dynamic
 // graph reference (USE graph.byName(g)) with the statement's parameters and
-// the current row's variables (params holds both). graph.byName and
+// the current row's variables in the context. graph.byName and
 // graph.byElementId take a STRING: the evaluator returns one string per
 // expression, or Neo4j's error for an argument that isn't one (the Cypher
 // executor owns value types and their names).
@@ -42,8 +43,8 @@ func (e *FabricExecutor) SetGraphArgumentEvaluator(evaluate GraphArgumentEvaluat
 }
 
 // resolveExecGraph returns the graph a fragment runs on: its static name,
-// or its dynamic reference evaluated with params (the statement's
-// parameters and the row's variables).
+// or its dynamic reference evaluated with the statement's parameters and
+// the current row's variables in ctx.
 func (e *FabricExecutor) resolveExecGraph(ctx context.Context, f *FragmentExec, params map[string]interface{}) (string, Location, error) {
 	name := f.GraphName
 	if f.Graph != nil && f.Graph.IsDynamic() {
@@ -113,11 +114,11 @@ func (e *FabricExecutor) constituentForElementID(elementID, scope string) (strin
 	names := e.catalog.ListGraphs()
 	sort.Strings(names)
 	for _, name := range names {
-		if !strings.HasPrefix(name, strings.ToLower(scope)+".") {
+		if !strings.HasPrefix(name, cyphertext.NameLower(scope)+".") {
 			continue
 		}
 		loc, err := e.catalog.Resolve(name)
-		if err == nil && strings.EqualFold(loc.DatabaseName(), database) {
+		if err == nil && cyphertext.NameEqualFold(loc.DatabaseName(), database) {
 			return name, nil
 		}
 	}
@@ -126,7 +127,7 @@ func (e *FabricExecutor) constituentForElementID(elementID, scope string) (strin
 
 // inScope reports whether graph is a constituent of the composite scope.
 func inScope(graph, scope string) bool {
-	return scope != "" && len(graph) > len(scope)+1 && strings.EqualFold(graph[:len(scope)+1], scope+".")
+	return scope != "" && len(graph) > len(scope)+1 && cyphertext.NameEqualFold(graph[:len(scope)+1], scope+".")
 }
 
 // graphFunctionParameterCount is Neo4j's message for a graph function called

@@ -27,8 +27,7 @@ func TestMVCCBootstrapTime_Priority(t *testing.T) {
 }
 
 func TestWriteNodeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
 	id := NodeID("test:fresh-1")
 	require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
@@ -53,8 +52,7 @@ func TestWriteNodeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
 }
 
 func TestAllocateMVCCVersion_FallsBackToTimestampOrderingWhenSequenceExhausted(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
 	state, err := be.namespaceMVCC("test")
 	require.NoError(t, err)
@@ -82,8 +80,7 @@ func TestAllocateMVCCVersion_FallsBackToTimestampOrderingWhenSequenceExhausted(t
 }
 
 func TestWriteEdgeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
 	id := EdgeID("test:fresh-edge-1")
 	require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
@@ -103,11 +100,38 @@ func TestWriteEdgeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
 	}))
 }
 
-func TestBootstrapNodeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+// bootstrapNodeMVCCInUpdateTxn runs the node bootstrap pass in its own update
+// transaction. Both node bootstrap cases share this call shell; what each case
+// does to the head before the pass, and what it observes afterwards, stays in
+// the test.
+func bootstrapNodeMVCCInUpdateTxn(t *testing.T, be *MemoryEngine) {
+	t.Helper()
 
-	_, err := be.CreateNode(&Node{
+	require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
+		return bootstrapMVCCFromCurrentStateInTxn[*Node, NodeID, nodeMVCCBootstrapKind](be.BadgerEngine, txn)
+	}))
+}
+
+// loadNodeMVCCHeadInViewTxn reads a node's persisted head inside a read
+// transaction and hands back the load error, so each case keeps its own
+// expectation (ErrNotFound after a deleted head, an unchanged version after
+// re-bootstrap).
+func loadNodeMVCCHeadInViewTxn(t *testing.T, be *MemoryEngine, id NodeID) (MVCCHead, error) {
+	t.Helper()
+
+	var head MVCCHead
+	var loadErr error
+	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
+		head, loadErr = be.loadNodeMVCCHeadInTxn(txn, id)
+		return nil
+	}))
+	return head, loadErr
+}
+
+func TestBootstrapNodeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
+	be := newTestMemoryEngine(t)
+
+	_, err := be.CreateNode(t.Context(), &Node{
 		ID:        "test:bootstrap-1",
 		Labels:    []string{"L"},
 		CreatedAt: time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC),
@@ -122,34 +146,25 @@ func TestBootstrapNodeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
 		return txn.Delete(key)
 	}))
 
-	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
-		_, err := be.loadNodeMVCCHeadInTxn(txn, "test:bootstrap-1")
-		require.ErrorIs(t, err, ErrNotFound)
-		return nil
-	}))
+	_, err = loadNodeMVCCHeadInViewTxn(t, be, "test:bootstrap-1")
+	require.ErrorIs(t, err, ErrNotFound)
 
-	require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
-		return be.bootstrapNodeMVCCFromCurrentStateInTxn(txn)
-	}))
+	bootstrapNodeMVCCInUpdateTxn(t, be)
 
-	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
-		head, err := be.loadNodeMVCCHeadInTxn(txn, "test:bootstrap-1")
-		require.NoError(t, err)
-		require.False(t, head.Version.CommitTimestamp.IsZero())
-		require.False(t, head.Tombstoned)
-		return nil
-	}))
+	head, err := loadNodeMVCCHeadInViewTxn(t, be, "test:bootstrap-1")
+	require.NoError(t, err)
+	require.False(t, head.Version.CommitTimestamp.IsZero())
+	require.False(t, head.Tombstoned)
 }
 
 func TestBootstrapEdgeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{ID: "test:n-from", Labels: []string{"X"}})
+	_, err := be.CreateNode(t.Context(), &Node{ID: "test:n-from", Labels: []string{"X"}})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&Node{ID: "test:n-to", Labels: []string{"X"}})
+	_, err = be.CreateNode(t.Context(), &Node{ID: "test:n-to", Labels: []string{"X"}})
 	require.NoError(t, err)
-	require.NoError(t, be.CreateEdge(&Edge{
+	require.NoError(t, be.CreateEdge(t.Context(), &Edge{
 		ID:        "test:e-1",
 		StartNode: "test:n-from",
 		EndNode:   "test:n-to",
@@ -168,7 +183,7 @@ func TestBootstrapEdgeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
 	}))
 
 	require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
-		return be.bootstrapEdgeMVCCFromCurrentStateInTxn(txn)
+		return bootstrapMVCCFromCurrentStateInTxn[*Edge, EdgeID, edgeMVCCBootstrapKind](be.BadgerEngine, txn)
 	}))
 
 	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
@@ -181,29 +196,18 @@ func TestBootstrapEdgeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
 }
 
 func TestBootstrapNodeMVCCFromCurrentStateInTxn_SkipsExistingHead(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{ID: "test:skip-1", Labels: []string{"L"}})
+	_, err := be.CreateNode(t.Context(), &Node{ID: "test:skip-1", Labels: []string{"L"}})
 	require.NoError(t, err)
 
-	var headBefore MVCCHead
-	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
-		var err error
-		headBefore, err = be.loadNodeMVCCHeadInTxn(txn, "test:skip-1")
-		return err
-	}))
+	headBefore, err := loadNodeMVCCHeadInViewTxn(t, be, "test:skip-1")
+	require.NoError(t, err)
 
-	require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
-		return be.bootstrapNodeMVCCFromCurrentStateInTxn(txn)
-	}))
+	bootstrapNodeMVCCInUpdateTxn(t, be)
 
-	var headAfter MVCCHead
-	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
-		var err error
-		headAfter, err = be.loadNodeMVCCHeadInTxn(txn, "test:skip-1")
-		return err
-	}))
+	headAfter, err := loadNodeMVCCHeadInViewTxn(t, be, "test:skip-1")
+	require.NoError(t, err)
 	require.Equal(t, 0, headBefore.Version.Compare(headAfter.Version),
 		"existing head must not be overwritten by re-bootstrap")
 }
@@ -211,12 +215,11 @@ func TestBootstrapNodeMVCCFromCurrentStateInTxn_SkipsExistingHead(t *testing.T) 
 // TestApplyEdgeBootstrapBatch_SkipsExistingHead exercises the public-facing
 // batch apply for an already-headed edge: head version must not move.
 func TestApplyEdgeBootstrapBatch_SkipsExistingHead(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{ID: "test:n-from", Labels: []string{"X"}})
+	_, err := be.CreateNode(t.Context(), &Node{ID: "test:n-from", Labels: []string{"X"}})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&Node{ID: "test:n-to", Labels: []string{"X"}})
+	_, err = be.CreateNode(t.Context(), &Node{ID: "test:n-to", Labels: []string{"X"}})
 	require.NoError(t, err)
 	edge := &Edge{
 		ID:        "test:e-batch",
@@ -224,7 +227,7 @@ func TestApplyEdgeBootstrapBatch_SkipsExistingHead(t *testing.T) {
 		EndNode:   "test:n-to",
 		Type:      "REL",
 	}
-	require.NoError(t, be.CreateEdge(edge))
+	require.NoError(t, be.CreateEdge(t.Context(), edge))
 
 	var before MVCCHead
 	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
@@ -233,7 +236,7 @@ func TestApplyEdgeBootstrapBatch_SkipsExistingHead(t *testing.T) {
 		return err
 	}))
 
-	require.NoError(t, be.applyEdgeBootstrapBatch([]*Edge{edge}))
+	require.NoError(t, applyMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](be.BadgerEngine, context.Background(), []*Edge{edge}))
 
 	var after MVCCHead
 	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
@@ -242,29 +245,27 @@ func TestApplyEdgeBootstrapBatch_SkipsExistingHead(t *testing.T) {
 		return err
 	}))
 	require.Equal(t, 0, before.Version.Compare(after.Version),
-		"applyEdgeBootstrapBatch must skip edges that already have a head")
+		"applyMVCCBootstrapBatch must skip edges that already have a head")
 }
 
 func TestApplyEdgeBootstrapBatch_NilAndEmpty(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
 	// Empty batch is a no-op.
-	require.NoError(t, be.applyEdgeBootstrapBatch(nil))
+	require.NoError(t, applyMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](be.BadgerEngine, context.Background(), nil))
 
 	// Batch containing a nil entry is also a no-op (skipped).
-	require.NoError(t, be.applyEdgeBootstrapBatch([]*Edge{nil}))
+	require.NoError(t, applyMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](be.BadgerEngine, context.Background(), []*Edge{nil}))
 }
 
 func TestBootstrapMVCCHeadsFromCurrentState_FullPath(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{ID: "test:b-n1", Labels: []string{"L"}})
+	_, err := be.CreateNode(t.Context(), &Node{ID: "test:b-n1", Labels: []string{"L"}})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&Node{ID: "test:b-n2", Labels: []string{"L"}})
+	_, err = be.CreateNode(t.Context(), &Node{ID: "test:b-n2", Labels: []string{"L"}})
 	require.NoError(t, err)
-	require.NoError(t, be.CreateEdge(&Edge{
+	require.NoError(t, be.CreateEdge(t.Context(), &Edge{
 		ID: "test:b-e1", StartNode: "test:b-n1", EndNode: "test:b-n2", Type: "REL",
 	}))
 

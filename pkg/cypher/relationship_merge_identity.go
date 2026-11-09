@@ -1,8 +1,10 @@
 package cypher
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"strconv"
@@ -116,6 +118,7 @@ func (e *StorageExecutor) newRelationshipMergeEdgeID(
 }
 
 func createRelationshipForMerge(
+	ctx context.Context,
 	e *StorageExecutor,
 	store storage.Engine,
 	edge *storage.Edge,
@@ -124,13 +127,13 @@ func createRelationshipForMerge(
 	if err := validatePropertyValues(edge.Properties); err != nil {
 		return nil, false, err
 	}
-	const maxBareCreateAttempts = 3
-	bareAttempts := 0
+	const maxCreateAttempts = 3
+	createAttempts := 0
 
 	for {
 		nonReflexiveIdentity := relationshipMergeIdentityContainsNaN(matchProps)
 		if len(matchProps) > 0 && !nonReflexiveIdentity {
-			existing, err := selectRelationshipMergeCreateID(store, edge, matchProps)
+			existing, err := selectRelationshipMergeCreateID(ctx, store, edge, matchProps)
 			if err != nil {
 				return nil, false, err
 			}
@@ -138,11 +141,15 @@ func createRelationshipForMerge(
 				return existing, false, nil
 			}
 		}
-		if err := store.CreateEdge(edge); err != nil {
-			if err != storage.ErrAlreadyExists {
+		if err := store.CreateEdge(ctx, edge); err != nil {
+			var hiddenConflict *storage.HiddenEdgeIdentityConflictError
+			if errors.As(err, &hiddenConflict) {
 				return nil, false, err
 			}
-			existing, lookupErr := findRelationshipForMerge(
+			if !errors.Is(err, storage.ErrAlreadyExists) {
+				return nil, false, err
+			}
+			existing, lookupErr := findRelationshipForMerge(ctx,
 				store,
 				edge.StartNode,
 				edge.EndNode,
@@ -155,17 +162,19 @@ func createRelationshipForMerge(
 			if existing != nil {
 				return existing, false, nil
 			}
-
-			if len(matchProps) == 0 || nonReflexiveIdentity {
-				bareAttempts++
-				if bareAttempts >= maxBareCreateAttempts {
-					return nil, false, localizedError(localization.CypherMergeRelationshipCreateCollisions(maxBareCreateAttempts), nil)
-				}
-				edge.ID = storage.EdgeID(e.generateID())
-				continue
+			createAttempts++
+			if createAttempts >= maxCreateAttempts {
+				return nil, false, localizedError(localization.CypherMergeRelationshipCreateCollisions(maxCreateAttempts), nil)
 			}
-
+			if len(matchProps) == 0 || nonReflexiveIdentity {
+				edge.ID = storage.EdgeID(e.generateID())
+			}
 			continue
+		}
+		if reporter, ok := store.(interface {
+			EdgeCreateWasNoOp(storage.EdgeID) bool
+		}); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
+			return edge, false, nil
 		}
 		return edge, true, nil
 	}
@@ -176,6 +185,7 @@ func createRelationshipForMerge(
 // is required before transactional CreateEdge because a transaction can buffer
 // a snapshot-visible committed ID without returning ErrAlreadyExists.
 func selectRelationshipMergeCreateID(
+	ctx context.Context,
 	store storage.Engine,
 	edge *storage.Edge,
 	matchProps map[string]interface{},
@@ -184,7 +194,7 @@ func selectRelationshipMergeCreateID(
 		return nil, nil
 	}
 
-	candidate, err := store.GetEdge(edge.ID)
+	candidate, err := store.GetEdge(ctx, edge.ID)
 	if err == nil {
 		if candidate.StartNode == edge.StartNode &&
 			candidate.EndNode == edge.EndNode &&
@@ -197,7 +207,7 @@ func selectRelationshipMergeCreateID(
 		return nil, nil
 	}
 
-	edges, err := store.GetEdgesBetween(edge.StartNode, edge.EndNode)
+	edges, err := store.GetEdgesBetween(ctx, edge.StartNode, edge.EndNode)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +220,7 @@ func selectRelationshipMergeCreateID(
 			matchProps,
 			firstOrdinal+offset,
 		)
-		candidate, err = store.GetEdge(edge.ID)
+		candidate, err = store.GetEdge(ctx, edge.ID)
 		switch {
 		case err == storage.ErrNotFound:
 			return nil, nil
@@ -295,14 +305,14 @@ func relationshipMergeScalarsEqual(got, want interface{}) (equal bool, decided b
 // findRelationshipForMerge returns the first relationship
 // findRelationshipsForMerge finds, or nil: for callers that bind one
 // relationship per row.
-func findRelationshipForMerge(
+func findRelationshipForMerge(ctx context.Context,
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
 	relType string,
 	matchProps map[string]interface{},
 ) (*storage.Edge, error) {
-	matches, err := findRelationshipsForMerge(store, startID, endID, relType, matchProps)
+	matches, err := findRelationshipsForMerge(ctx, store, startID, endID, relType, matchProps)
 	if err != nil || len(matches) == 0 {
 		return nil, err
 	}
@@ -314,7 +324,7 @@ func findRelationshipForMerge(
 // endpoints matches them in Neo4j (Expand(Into) and a property filter). It
 // reads only the relationships of that type between the two nodes, and of
 // each only the identity properties; a match is read whole.
-func findRelationshipsForMerge(
+func findRelationshipsForMerge(ctx context.Context,
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
@@ -328,7 +338,7 @@ func findRelationshipsForMerge(
 	for key := range matchProps {
 		keys = append(keys, key)
 	}
-	return storage.MatchEdgesBetween(store, startID, endID, relType, keys, func(edge *storage.Edge) bool {
+	return storage.MatchEdgesBetween(ctx, store, startID, endID, relType, keys, func(edge *storage.Edge) bool {
 		return relationshipMatchesMergePattern(edge, relType, matchProps)
 	})
 }

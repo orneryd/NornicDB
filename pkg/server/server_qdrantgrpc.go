@@ -18,11 +18,16 @@ import (
 	"google.golang.org/grpc"
 )
 
+func (s *Server) grpcDatabaseAccessForRoles(roles []string, database string) auth.ResolvedAccess {
+	_, access := s.databaseAccessForRoles(roles, database, s.GetDatabaseAccessModeForRoles(roles), true)
+	return access
+}
+
 func (s *Server) startQdrantGRPC() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.qdrantGRPCServer != nil && s.qdrantGRPCServer.IsRunning() {
+	provider := s.qdrantGRPCServer
+	s.mu.Unlock()
+	if provider != nil && provider.IsRunning() {
 		return nil
 	}
 
@@ -51,6 +56,7 @@ func (s *Server) startQdrantGRPC() error {
 	baseStorage := s.db.GetBaseStorageForManager()
 
 	cfg := qdrantgrpc.DefaultConfig()
+	cfg.Logger = s.config.Logger
 	cfg.Localizer = s.localizer
 	if features.QdrantGRPCListenAddr != "" {
 		cfg.ListenAddr = features.QdrantGRPCListenAddr
@@ -104,7 +110,8 @@ func (s *Server) startQdrantGRPC() error {
 	// Per-database RBAC: when auth is enabled, gRPC enforces same allowlist + privileges as HTTP/Bolt.
 	if s.isRBACEnforced() {
 		cfg.DatabaseAccessModeResolver = s.GetDatabaseAccessModeForRoles
-		cfg.ResolvedAccessResolver = s.GetResolvedAccessForRoles
+		cfg.ResolvedAccessResolver = s.grpcDatabaseAccessForRoles
+		cfg.DatabaseOperationAccessResolver = s.databaseAccessForRoles
 	}
 
 	searchProvider := func(database string, store storage.Engine) (*search.Service, error) {
@@ -112,24 +119,25 @@ func (s *Server) startQdrantGRPC() error {
 		if err != nil {
 			return nil, err
 		}
-		// Per-DB master switch: the Qdrant gRPC bridge serves vector
-		// queries; if the database has vector search disabled, surface a
-		// deterministic error rather than handing back a service whose
-		// ANN substrate isn't populated. External Qdrant clients see
-		// the same "off" semantics they'd get against a database that
-		// simply has no vectors.
+		// An intentionally disabled vector service has no hits. Provider
+		// failures remain errors, so an unavailable index cannot acknowledge a
+		// write or disguise an incomplete search as an empty successful answer.
 		if !svc.VectorEnabled() {
-			return nil, fmt.Errorf("qdrant grpc: vector search is disabled for database %q (set NORNICDB_SEARCH_VECTOR_ENABLED=true or per-DB override to enable)", database)
+			return nil, nil
 		}
 		return svc, nil
 	}
+
+	// A dropped collection's database loses its search index too, as with
+	// Cypher's DROP DATABASE.
+	cfg.DropDatabase = s.databaseManager().DropDatabase
 
 	grpcServer, err := qdrantgrpc.NewServerWithDatabaseManager(cfg, s.dbManager, baseStorage, searchProvider, s.auth)
 	if err != nil {
 		return fmt.Errorf("qdrant grpc: failed to initialize server: %w", err)
 	}
 
-	rerankEnabled := searchSvc.RerankerAvailable(context.Background())
+	rerankEnabled := searchSvc.RerankerAvailable(s.shutdown.work.Context())
 	nornicSearchSvc, err := nornicgrpc.NewService(
 		nornicgrpc.Config{
 			DefaultDatabase:  dbName,
@@ -141,6 +149,7 @@ func (s *Server) startQdrantGRPC() error {
 				return grpcServer.AllowDatabaseAccess(ctx, database, false)
 			},
 			ResolveContinuationDatabase: s.db.ResolveSearchContinuationDatabase,
+			DiscardContinuation:         s.db.DiscardSearchContinuation,
 			PrepareQueryEmbedding: func(_ context.Context, database string) (nornicgrpc.EmbedQueryFunc, nornicgrpc.ChunkQueryFunc) {
 				queryEmbedding := s.db.QueryEmbeddingForDB(database)
 				return queryEmbedding.EmbedQuery, queryEmbedding.ChunkQuery
@@ -170,12 +179,22 @@ func (s *Server) startQdrantGRPC() error {
 		return fmt.Errorf("qdrant grpc: failed to register nornic search service: %w", err)
 	}
 
+	s.mu.Lock()
+	if s.shutdown.work.Closing() {
+		s.mu.Unlock()
+		return ErrServerClosed
+	}
+	s.qdrantGRPCServer = grpcServer
+	s.qdrantCollectionStore = grpcServer.CollectionStore()
+	s.mu.Unlock()
+	// Publish, then enroll its stop; a refused enrollment stops it now.
+	if !s.shutdown.work.OnStop(func() error { s.stopQdrantGRPC(); return nil }) {
+		s.stopQdrantGRPC()
+		return ErrServerClosed
+	}
 	if err := grpcServer.Start(); err != nil {
 		return fmt.Errorf("qdrant grpc: failed to start: %w", err)
 	}
-
-	s.qdrantGRPCServer = grpcServer
-	s.qdrantCollectionStore = grpcServer.CollectionStore()
 
 	s.logEvent(context.Background(), slog.LevelInfo, localization.ServerQdrantGRPCEnabledEvent(dbName, grpcServer.Addr()))
 	return nil
@@ -205,11 +224,18 @@ func parsePermissionString(v string) (auth.Permission, bool) {
 
 func (s *Server) stopQdrantGRPC() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.qdrantGRPCServer != nil {
-		s.qdrantGRPCServer.Stop()
-		s.qdrantGRPCServer = nil
+	provider := s.qdrantGRPCServer
+	s.mu.Unlock()
+	// RPC callbacks can acquire Server.mu too. Keep it released while the
+	// provider waits for their actual completion.
+	if provider != nil {
+		provider.Stop()
+		s.shutdown.work.RecordError("", provider.WaitStopped(context.Background()))
 	}
-	s.qdrantCollectionStore = nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.qdrantGRPCServer == provider {
+		s.qdrantGRPCServer = nil
+		s.qdrantCollectionStore = nil
+	}
 }

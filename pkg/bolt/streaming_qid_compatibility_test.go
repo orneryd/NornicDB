@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"net"
 	"testing"
 
@@ -9,10 +11,10 @@ import (
 )
 
 func TestExplicitTransactionStreamsResultsByQID(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 	conn := openBoltTestConn(t, port)
 
 	beginExplicitTransaction(t, conn, nil)
@@ -63,10 +65,10 @@ func TestExplicitTransactionStreamsResultsByQID(t *testing.T) {
 }
 
 func TestExplicitTransactionRejectsUnknownQIDUntilReset(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 	conn := openBoltTestConn(t, port)
 
 	beginExplicitTransaction(t, conn, nil)
@@ -103,14 +105,14 @@ func TestAddDurableQIDMetadataPreservesNumericQID(t *testing.T) {
 }
 
 func TestBoltRunEmitsDurableQIDForContinuation(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for _, id := range []string{"bolt-a", "bolt-b"} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
 	require.NoError(t, SendRun(t, conn, "CALL db.retrieve({mode: 'id', n: 1})", nil, nil))
@@ -160,28 +162,6 @@ func runStatementAndQID(t *testing.T, conn net.Conn, query string) int64 {
 	qid, ok := metadata["qid"].(int64)
 	require.True(t, ok, "RUN metadata must contain an integer qid: %v", metadata)
 	return qid
-}
-
-func pullStatement(t *testing.T, conn net.Conn, options map[string]any) ([][]any, map[string]any) {
-	t.Helper()
-	require.NoError(t, SendPull(t, conn, options))
-	var records [][]any
-	for {
-		messageType, data, err := ReadMessage(conn)
-		require.NoError(t, err)
-		switch messageType {
-		case MsgRecord:
-			record, _, err := decodePackStreamList(data, 0)
-			require.NoError(t, err)
-			records = append(records, record)
-		case MsgSuccess:
-			metadata, _, err := decodePackStreamMap(data, 0)
-			require.NoError(t, err)
-			return records, metadata
-		default:
-			t.Fatalf("unexpected Bolt message 0x%02x", messageType)
-		}
-	}
 }
 
 func buildDiscardMessage(options map[string]any) []byte {

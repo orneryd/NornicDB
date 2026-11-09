@@ -1,7 +1,9 @@
 package cypher
 
 import (
+	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"testing"
 	"time"
@@ -17,23 +19,26 @@ type cypherVisibleMemoryEngine struct {
 	edges []*storage.Edge
 }
 
-func (e *cypherVisibleMemoryEngine) GetNodesByLabelVisibleAt(label string, version storage.MVCCVersion) ([]*storage.Node, error) {
+// Pin the optional capability: a signature drift must fail compilation.
+var _ storage.MVCCIndexedVisibilityEngine = (*cypherVisibleMemoryEngine)(nil)
+
+func (e *cypherVisibleMemoryEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version storage.MVCCVersion) ([]*storage.Node, error) {
 	return e.nodes, nil
 }
 
-func (e *cypherVisibleMemoryEngine) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (e *cypherVisibleMemoryEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	return e.edges, nil
 }
 
-func (e *cypherVisibleMemoryEngine) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (e *cypherVisibleMemoryEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	return e.edges, nil
 }
 
-func (e *cypherVisibleMemoryEngine) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (e *cypherVisibleMemoryEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	return e.edges, nil
 }
 
-func (e *cypherVisibleMemoryEngine) GetEdgesBetweenVisibleAt(startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (e *cypherVisibleMemoryEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	return e.edges, nil
 }
 
@@ -75,10 +80,11 @@ func TestSmallCypherHelperBranches(t *testing.T) {
 		"MATCH (n) SET n.name = 'a'",
 		"MATCH (n) REMOVE n.name",
 	}
+	analyzer := NewQueryAnalyzer(16)
 	for _, query := range writeQueries {
-		require.True(t, looksLikeWriteQuery(query), query)
+		require.True(t, mustAnalyze(t, analyzer, t.Context(), query).Writes(), query)
 	}
-	require.False(t, looksLikeWriteQuery("MATCH (n) RETURN n"))
+	require.False(t, mustAnalyze(t, analyzer, t.Context(), "MATCH (n) RETURN n").Writes())
 }
 
 func TestSliceAndNumericCoercionHelpers(t *testing.T) {
@@ -113,22 +119,24 @@ func TestQueryPatternIdentifierHelpers(t *testing.T) {
 	require.Equal(t, []string{"_anon"}, extractNodeVariables("MATCH (_anon)"))
 	require.Empty(t, extractNodeVariables("MATCH (:Label)-[]->()"))
 
-	name, next, ok := scanIdentifierToken("abc_123 rest", 0)
+	name, ok := cyphertext.ScanIdentifier("abc_123 rest", 0)
 	require.True(t, ok)
-	require.Equal(t, "abc_123", name)
-	require.Equal(t, len("abc_123"), next)
+	require.Equal(t, "abc_123", name.Value)
+	require.Equal(t, len("abc_123"), name.End)
 
-	_, _, ok = scanIdentifierToken("1abc", 0)
+	_, ok = cyphertext.ScanIdentifier("1abc", 0)
 	require.False(t, ok)
-	_, _, ok = scanIdentifierToken("abc", -1)
+	_, ok = cyphertext.ScanIdentifier("abc", -1)
 	require.False(t, ok)
 }
 
-func TestRedactSilentErrorListenerSyntaxError(t *testing.T) {
-	listener := &redactSilentErrorListener{}
-	require.False(t, listener.hadError)
-	listener.SyntaxError(nil, nil, 0, 0, "boom", nil)
-	require.True(t, listener.hadError)
+func TestRedactLexicalErrorsFailClosed(t *testing.T) {
+	for _, query := range []string{"RETURN '\"secret", "RETURN \x00", "MATCH ("} {
+		_, ok := redactLexCheckedContext(t.Context(), query)
+		require.False(t, ok)
+		exec := NewStorageExecutor(newTestMemoryEngine(t))
+		require.Equal(t, RedactedPlaceholder, exec.redactForLog(t.Context(), query))
+	}
 }
 
 func TestNormalizeInterfaceMap(t *testing.T) {
@@ -166,19 +174,19 @@ func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 	visibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: newTestMemoryEngine(t), nodes: []*storage.Node{node}, edges: []*storage.Edge{edge}}
 	wrapper := &transactionStorageWrapper{underlying: visibleEngine}
 
-	nodes, err := wrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
+	nodes, err := wrapper.GetNodesByLabelVisibleAt(context.Background(), "Doc", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, []*storage.Node{node}, nodes)
-	outgoing, err := wrapper.GetOutgoingEdgesVisibleAt("nornic:n1", storage.MVCCVersion{})
+	outgoing, err := wrapper.GetOutgoingEdgesVisibleAt(context.Background(), "nornic:n1", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, []*storage.Edge{edge}, outgoing)
-	incoming, err := wrapper.GetIncomingEdgesVisibleAt("nornic:n2", storage.MVCCVersion{})
+	incoming, err := wrapper.GetIncomingEdgesVisibleAt(context.Background(), "nornic:n2", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, []*storage.Edge{edge}, incoming)
-	edges, err := wrapper.GetEdgesByTypeVisibleAt("LINKS", storage.MVCCVersion{})
+	edges, err := wrapper.GetEdgesByTypeVisibleAt(context.Background(), "LINKS", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, []*storage.Edge{edge}, edges)
-	edges, err = wrapper.GetEdgesBetweenVisibleAt("nornic:n1", "nornic:n2", storage.MVCCVersion{})
+	edges, err = wrapper.GetEdgesBetweenVisibleAt(context.Background(), "nornic:n1", "nornic:n2", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, []*storage.Edge{edge}, edges)
 
@@ -188,37 +196,37 @@ func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 	otherTenantNode := &storage.Node{ID: "other:n1", Labels: []string{"Doc"}}
 	nsVisibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: newTestMemoryEngine(t), nodes: []*storage.Node{nsNode, otherTenantNode}, edges: []*storage.Edge{nsEdge, otherTenantEdge}}
 	nsWrapper := &transactionStorageWrapper{underlying: nsVisibleEngine, namespace: "tenant", separator: ":"}
-	nodes, err = nsWrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
+	nodes, err = nsWrapper.GetNodesByLabelVisibleAt(context.Background(), "Doc", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
-	edges, err = nsWrapper.GetEdgesByTypeVisibleAt("LINKS", storage.MVCCVersion{})
+	edges, err = nsWrapper.GetEdgesByTypeVisibleAt(context.Background(), "LINKS", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, storage.EdgeID("e1"), edges[0].ID)
-	edges, err = nsWrapper.GetEdgesBetweenVisibleAt("n1", "n2", storage.MVCCVersion{})
+	edges, err = nsWrapper.GetEdgesBetweenVisibleAt(context.Background(), "n1", "n2", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, storage.EdgeID("e1"), edges[0].ID)
 
 	scopedWrapper := &transactionStorageWrapper{underlying: storage.NewNamespacedEngine(nsVisibleEngine, "tenant"), namespace: "tenant", separator: ":"}
-	edges, err = scopedWrapper.GetEdgesByTypeVisibleAt("LINKS", storage.MVCCVersion{})
+	edges, err = scopedWrapper.GetEdgesByTypeVisibleAt(context.Background(), "LINKS", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, storage.EdgeID("e1"), edges[0].ID)
-	outgoing, err = scopedWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	outgoing, err = scopedWrapper.GetOutgoingEdgesVisibleAt(context.Background(), "n1", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, storage.EdgeID("e1"), outgoing[0].ID)
 
-	outgoing, err = nsWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	outgoing, err = nsWrapper.GetOutgoingEdgesVisibleAt(context.Background(), "n1", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, storage.EdgeID("e1"), outgoing[0].ID)
 	require.Equal(t, storage.NodeID("n1"), outgoing[0].StartNode)
 	require.Equal(t, storage.NodeID("n2"), outgoing[0].EndNode)
 
-	incoming, err = nsWrapper.GetIncomingEdgesVisibleAt("n2", storage.MVCCVersion{})
+	incoming, err = nsWrapper.GetIncomingEdgesVisibleAt(context.Background(), "n2", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, incoming, 1)
 	require.Equal(t, storage.EdgeID("e1"), incoming[0].ID)
@@ -226,15 +234,15 @@ func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 	require.Equal(t, storage.NodeID("n2"), incoming[0].EndNode)
 
 	plainWrapper := &transactionStorageWrapper{}
-	_, err = plainWrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
+	_, err = plainWrapper.GetNodesByLabelVisibleAt(context.Background(), "Doc", storage.MVCCVersion{})
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
-	_, err = plainWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	_, err = plainWrapper.GetOutgoingEdgesVisibleAt(context.Background(), "n1", storage.MVCCVersion{})
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
-	_, err = plainWrapper.GetIncomingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	_, err = plainWrapper.GetIncomingEdgesVisibleAt(context.Background(), "n1", storage.MVCCVersion{})
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
-	_, err = plainWrapper.GetEdgesByTypeVisibleAt("LINKS", storage.MVCCVersion{})
+	_, err = plainWrapper.GetEdgesByTypeVisibleAt(context.Background(), "LINKS", storage.MVCCVersion{})
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
-	_, err = plainWrapper.GetEdgesBetweenVisibleAt("n1", "n2", storage.MVCCVersion{})
+	_, err = plainWrapper.GetEdgesBetweenVisibleAt(context.Background(), "n1", "n2", storage.MVCCVersion{})
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
 
 	value := nodeToValue(node)

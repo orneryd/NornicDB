@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -14,12 +16,12 @@ type failFirstDeleteNodeEngine struct {
 	failuresRemaining int
 }
 
-func (e *failFirstDeleteNodeEngine) DeleteNode(id storage.NodeID) error {
+func (e *failFirstDeleteNodeEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	if e.failuresRemaining > 0 {
 		e.failuresRemaining--
 		return fmt.Errorf("forced delete failure for %s", id)
 	}
-	return e.MemoryEngine.DeleteNode(id)
+	return e.MemoryEngine.DeleteNode(ctx, id)
 }
 
 func TestExecuteDeleteStreaming_UnsupportedMatchShapeReturnsEmpty(t *testing.T) {
@@ -47,14 +49,14 @@ func TestExecuteDeleteStreaming_FallbackMapEdgeBranch(t *testing.T) {
 }
 
 func TestExecuteDeleteStreaming_FallbackDeletesAfterInitialDeleteFailure(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &failFirstDeleteNodeEngine{MemoryEngine: base, failuresRemaining: 1}
 	store := storage.NewNamespacedEngine(eng, "delete_stream_fallback_delete_cov")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: storage.NodeID("n-retry"), Labels: []string{"Retry"}, Properties: map[string]interface{}{"id": "n-retry"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n-retry"), Labels: []string{"Retry"}, Properties: map[string]interface{}{"id": "n-retry"}})
 	require.NoError(t, err)
 
 	res, err := exec.Execute(ctx, "MATCH (n:Retry)"+" DELETE "+"n", getParamsFromContext(ctx))

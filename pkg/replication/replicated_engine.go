@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -17,6 +18,9 @@ import (
 //
 // This wrapper intentionally operates on the *base* storage (the engine that stores
 // fully-qualified IDs like "<db>:<id>") so multi-database isolation is preserved.
+// Write contexts control leader preparation and admission; accepted native work
+// retains an independent completion lifetime. Reads pass their context to the
+// embedded local engine.
 type ReplicatedEngine struct {
 	storage.Engine
 
@@ -95,126 +99,115 @@ func (e *ReplicatedEngine) IsLeader() bool {
 	return e.replicator.IsLeader()
 }
 
-func (e *ReplicatedEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	if node == nil {
-		return "", localizedError(localization.ReplicationEngineNodeRequired(), nil)
-	}
-	data, err := encodeNodePayload(node)
-	if err != nil {
-		return "", localizedError(localization.ReplicationEngineEncodeNodeFailed(err), err)
-	}
-	if err := e.replicator.Apply(&Command{Type: CmdCreateNode, Data: data, Timestamp: time.Now()}, e.timeout); err != nil {
+func (e *ReplicatedEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	if err := e.applyEntityCommand(ctx, CmdCreateNode, node); err != nil {
 		return "", err
 	}
 	return node.ID, nil
 }
 
-func (e *ReplicatedEngine) UpdateNode(node *storage.Node) error {
-	if node == nil {
-		return localizedError(localization.ReplicationEngineNodeRequired(), nil)
+// UpdateNode sends the blind update image when the caller supplied no observed
+// preimage and kept the client-edit policy, and otherwise forwards the typed
+// request so its leader can plan against Before.
+func (e *ReplicatedEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
+	if updateRequest.Before == nil && updateRequest.Policy == storage.ClientNodeEdits {
+		return e.applyEntityCommand(ctx, CmdUpdateNode, updateRequest.After)
 	}
-	data, err := encodeNodePayload(node)
-	if err != nil {
-		return localizedError(localization.ReplicationEngineEncodeNodeFailed(err), err)
-	}
-	return e.replicator.Apply(&Command{Type: CmdUpdateNode, Data: data, Timestamp: time.Now()}, e.timeout)
+	return e.applyEntityCommand(ctx, CmdUpdateNodeRequest, updateRequest)
 }
 
-func (e *ReplicatedEngine) DeleteNode(id storage.NodeID) error {
-	return e.replicator.Apply(&Command{Type: CmdDeleteNode, Data: []byte(string(id)), Timestamp: time.Now()}, e.timeout)
+func (e *ReplicatedEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
+	return e.applyEntityCommand(ctx, CmdDeleteNode, id)
 }
 
-func (e *ReplicatedEngine) CreateEdge(edge *storage.Edge) error {
-	if edge == nil {
-		return localizedError(localization.ReplicationEngineEdgeRequired(), nil)
-	}
-	data, err := encodeEdgePayload(edge)
-	if err != nil {
-		return localizedError(localization.ReplicationEngineEncodeEdgeFailed(err), err)
-	}
-	return e.replicator.Apply(&Command{Type: CmdCreateEdge, Data: data, Timestamp: time.Now()}, e.timeout)
+func (e *ReplicatedEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
+	return e.applyEntityCommand(ctx, CmdCreateEdge, edge)
 }
 
-func (e *ReplicatedEngine) UpdateEdge(edge *storage.Edge) error {
-	if edge == nil {
-		return localizedError(localization.ReplicationEngineEdgeRequired(), nil)
+// UpdateEdge keeps the blind update image for a request with no observed
+// preimage and otherwise forwards the typed relationship request.
+func (e *ReplicatedEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
+	if updateRequest.Before == nil {
+		return e.applyEntityCommand(ctx, CmdUpdateEdge, updateRequest.After)
 	}
-	data, err := encodeEdgePayload(edge)
-	if err != nil {
-		return localizedError(localization.ReplicationEngineEncodeEdgeFailed(err), err)
-	}
-	return e.replicator.Apply(&Command{Type: CmdUpdateEdge, Data: data, Timestamp: time.Now()}, e.timeout)
+	return e.applyEntityCommand(ctx, CmdUpdateEdgeRequest, updateRequest)
 }
 
-func (e *ReplicatedEngine) DeleteEdge(id storage.EdgeID) error {
-	// Gob payload; JSON tags are unnecessary/confusing here.
-	payload, err := encodeGob(struct {
-		EdgeID string
-	}{EdgeID: string(id)})
-	if err != nil {
-		return localizedError(localization.ReplicationEngineEncodeDeleteEdgeFailed(err), err)
-	}
-	return e.replicator.Apply(&Command{Type: CmdDeleteEdge, Data: payload, Timestamp: time.Now()}, e.timeout)
+func (e *ReplicatedEngine) DeleteEdge(ctx context.Context, id storage.EdgeID) error {
+	return e.applyEntityCommand(ctx, CmdDeleteEdge, id)
 }
 
-func (e *ReplicatedEngine) BulkCreateNodes(nodes []*storage.Node) error {
-	encoded := make([][]byte, 0, len(nodes))
-	for _, n := range nodes {
-		data, err := encodeNodePayload(n)
-		if err != nil {
-			return localizedError(localization.ReplicationEngineEncodeNodeFailed(err), err)
-		}
-		encoded = append(encoded, data)
-	}
-	payload, err := encodeGob(encoded)
-	if err != nil {
-		return localizedError(localization.ReplicationEngineEncodeBulkCreateNodesFailed(err), err)
-	}
-	return e.replicator.Apply(&Command{Type: CmdBulkCreateNodes, Data: payload, Timestamp: time.Now()}, e.timeout)
+func (e *ReplicatedEngine) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
+	return e.applyEntityCommand(ctx, CmdBulkCreateNodes, nodes)
 }
 
-func (e *ReplicatedEngine) BulkCreateEdges(edges []*storage.Edge) error {
-	encoded := make([][]byte, 0, len(edges))
-	for _, edge := range edges {
-		data, err := encodeEdgePayload(edge)
-		if err != nil {
-			return localizedError(localization.ReplicationEngineEncodeEdgeFailed(err), err)
-		}
-		encoded = append(encoded, data)
-	}
-	payload, err := encodeGob(encoded)
-	if err != nil {
-		return localizedError(localization.ReplicationEngineEncodeBulkCreateEdgesFailed(err), err)
-	}
-	return e.replicator.Apply(&Command{Type: CmdBulkCreateEdges, Data: payload, Timestamp: time.Now()}, e.timeout)
+func (e *ReplicatedEngine) BulkCreateEdges(ctx context.Context, edges []*storage.Edge) error {
+	return e.applyEntityCommand(ctx, CmdBulkCreateEdges, edges)
 }
 
-func (e *ReplicatedEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	payload, err := encodeGob(ids)
-	if err != nil {
-		return localizedError(localization.ReplicationEngineEncodeBulkDeleteNodesFailed(err), err)
-	}
-	return e.replicator.Apply(&Command{Type: CmdBulkDeleteNodes, Data: payload, Timestamp: time.Now()}, e.timeout)
+func (e *ReplicatedEngine) BulkDeleteNodes(ctx context.Context, ids []storage.NodeID) error {
+	return e.applyEntityCommand(ctx, CmdBulkDeleteNodes, ids)
 }
 
-func (e *ReplicatedEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	payload, err := encodeGob(ids)
-	if err != nil {
-		return localizedError(localization.ReplicationEngineEncodeBulkDeleteEdgesFailed(err), err)
-	}
-	return e.replicator.Apply(&Command{Type: CmdBulkDeleteEdges, Data: payload, Timestamp: time.Now()}, e.timeout)
+func (e *ReplicatedEngine) BulkDeleteEdges(ctx context.Context, ids []storage.EdgeID) error {
+	return e.applyEntityCommand(ctx, CmdBulkDeleteEdges, ids)
 }
 
 func (e *ReplicatedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
-	payload, err := encodeGob(struct {
+	payload, err := storage.EncodeCommandPayload(struct {
 		Prefix string `json:"prefix"`
 	}{Prefix: prefix})
 	if err != nil {
 		return 0, 0, localizedError(localization.ReplicationEngineEncodeDeletePrefixFailed(err), err)
 	}
-	if err := e.replicator.Apply(&Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}, e.timeout); err != nil {
+	if err := e.replicator.Apply(context.Background(), &Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}, e.timeout); err != nil {
 		return 0, 0, err
 	}
 	// Best-effort counts are not returned by the replication protocol today.
 	return 0, 0, nil
+}
+
+// OpenReadSnapshot forwards to the local engine reads are served from.
+func (r *ReplicatedEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
+	return storage.OpenReadSnapshot(ctx, r.Engine)
+}
+
+var _ storage.ReadSnapshotter = (*ReplicatedEngine)(nil)
+var _ storage.EventSubscriber = (*ReplicatedEngine)(nil)
+
+// SubscribeEvents forwards to the local storage chain: leader and follower
+// writes are both applied to it, and it publishes them.
+func (e *ReplicatedEngine) SubscribeEvents(handlers storage.EventHandlers) error {
+	if e == nil || e.Engine == nil {
+		return storage.ErrStorageClosed
+	}
+	return storage.SubscribeEvents(e.Engine, handlers)
+}
+
+// PreservesEventView declares that local reads and replicated writes use the
+// wrapped engine's identifiers, committed rows and storage notifications.
+func (e *ReplicatedEngine) PreservesEventView() {}
+
+var _ storage.EventViewForwarder = (*ReplicatedEngine)(nil)
+
+// EventNotificationsSettled reports delivery from the same local publisher.
+func (e *ReplicatedEngine) EventNotificationsSettled() bool {
+	return storage.EventNotificationsSettled(e.Engine)
+}
+
+// applyEntityCommand keeps native direct/bulk wire kinds and their producer policy.
+func (e *ReplicatedEngine) applyEntityCommand(ctx context.Context, kind CommandType, value any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	data, err := encodeEntityCommandPayload(kind, value)
+	if err != nil {
+		return err
+	}
+	return e.replicator.Apply(ctx, &Command{Type: kind, Data: data, Timestamp: time.Now()}, e.timeout)
+}
+
+// IndexSourceStamp forwards through the declared read-preserving wrapper.
+func (e *ReplicatedEngine) IndexSourceStamp(ctx context.Context) (string, error) {
+	return storage.ReadIndexSourceStamp(ctx, e.Engine)
 }

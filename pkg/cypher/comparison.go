@@ -48,6 +48,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -72,7 +73,24 @@ func (e *StorageExecutor) nodeMatchesProps(node *storage.Node, props map[string]
 	if len(props) == 0 {
 		return true
 	}
-	return nodePropertiesMatch(e.queryVisibleValue(node).(*storage.Node), props)
+	if e.statementPropertyViews != nil {
+		return nodePropertiesMatch(e.queryVisibleValue(node).(*storage.Node), props)
+	}
+	if !e.queryPropertyDecayEnabled() {
+		return nodePropertiesMatch(node, props)
+	}
+	// A pattern only observes its named properties. Avoid scoring and reading
+	// access metadata for every unrelated property on every candidate node.
+	var local [8]string
+	keys := local[:0]
+	if len(props) > len(local) {
+		keys = make([]string, 0, len(props))
+	}
+	for key := range props {
+		keys = append(keys, key)
+	}
+	visible := storage.NewQueryResultProjection(e.storage).NodeProperties(node, keys)
+	return nodePropertiesMatch(&storage.Node{Properties: visible}, props)
 }
 
 // nodePropertiesMatch is the one property test of a node pattern
@@ -232,7 +250,7 @@ func (e *StorageExecutor) evaluateInOpTruth(ctx context.Context, node *storage.N
 	value := e.evaluateExpressionWithContext(ctx, left, nodes, nil)
 	rightIdent := strings.TrimSpace(right)
 	var listVal interface{}
-	if isValidIdentifier(rightIdent) {
+	if cyphertext.IsIdentifier(rightIdent) {
 		if v, ok := e.boundValue(ctx, rightIdent); ok {
 			listVal = v
 		}
@@ -276,7 +294,7 @@ func containsIdentifierToken(expr, ident string) bool {
 	}
 
 	for _, r := range expr {
-		if isIdentRune(r) {
+		if cyphertext.NamePart(r) {
 			token.WriteRune(r)
 			continue
 		}

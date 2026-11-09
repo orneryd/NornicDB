@@ -148,6 +148,9 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 	var firstSeq uint64
 	var lastSeq uint64
 	for _, pending := range b.pending {
+		if err := b.wal.prepareUnboundWALRecordLocked(pending.Operation); err != nil {
+			return 0, 0, err
+		}
 		// Assign sequence number NOW, at commit time
 		seq := b.wal.sequence.Add(1)
 		if firstSeq == 0 {
@@ -165,12 +168,12 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 
 		// Serialize entry into the v3 raw-Data payload (reduces allocs vs
 		// json.Marshal and avoids the base64 tax on Data).
-		entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
+		entryBytes, err := processWALEntryPayload(walPayloadEncode, entryBuf, &entry, nil, 0)
 		if err != nil {
 			return 0, 0, fmt.Errorf("wal batch: failed to serialize entry seq %d: %w", seq, err)
 		}
 
-		alignedRecordLen, err := writeAtomicRecord(b.wal.writer, entryBytes, walFormatVersionV3)
+		alignedRecordLen, err := writeAtomicRecord(b.wal.writer, entryBytes, walFormatVersionCurrent)
 		if err != nil {
 			return 0, 0, fmt.Errorf("wal batch: failed to write entry seq %d: %w", seq, err)
 		}
@@ -189,6 +192,7 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 	b.wal.lastEntryTime.Store(time.Now().UnixNano())
 
 	// Clear batch
+	clear(b.pending)
 	b.pending = b.pending[:0]
 	return firstSeq, lastSeq, nil
 }
@@ -197,6 +201,7 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 func (b *BatchWriter) Rollback() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	clear(b.pending)
 	b.pending = b.pending[:0]
 }
 

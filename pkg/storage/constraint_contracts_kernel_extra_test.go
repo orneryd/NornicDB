@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,7 +49,7 @@ func TestConstraintContracts_ValidateKernel_DeterministicOrderAndParity(t *testi
 	}
 	require.NoError(t, sm.AddConstraintContractBundle(edgeBeta, nil, nil, false))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -57,14 +59,14 @@ func TestConstraintContracts_ValidateKernel_DeterministicOrderAndParity(t *testi
 
 	// Node path: target order follows label order, so alpha (Person) is the
 	// first violated contract.
-	err = tx.validateConstraintContractsForNodeLocked(node)
+	err = tx.validateConstraintContractsForNodeLocked(t.Context(), node)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "constraint contract alpha_rule violated")
 	require.NotContains(t, err.Error(), "beta_rule")
 
 	// Edge path: a single target in the schema's name order, so edge_alpha is
 	// reported first — identical wrapping through the shared kernel.
-	err = tx.validateConstraintContractsForEdgeLocked(edge)
+	err = tx.validateConstraintContractsForEdgeLocked(t.Context(), edge)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "constraint contract edge_alpha violated")
 	require.NotContains(t, err.Error(), "edge_beta")
@@ -72,7 +74,7 @@ func TestConstraintContracts_ValidateKernel_DeterministicOrderAndParity(t *testi
 	// Reversing the label order flips the reported contract: the same kernel,
 	// the same deterministic rule.
 	node.Labels = []string{"Employee", "Person"}
-	err = tx.validateConstraintContractsForNodeLocked(node)
+	err = tx.validateConstraintContractsForNodeLocked(t.Context(), node)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "constraint contract beta_rule violated")
 	require.NotContains(t, err.Error(), "alpha_rule")
@@ -82,7 +84,7 @@ func TestConstraintContracts_ValidateKernel_DeterministicOrderAndParity(t *testi
 // kernel cost (schema resolution + contract collection + evaluator) after the
 // node/edge validator convergence.
 func BenchmarkConstraintContracts_ValidateLocked_Node(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -98,10 +100,10 @@ func BenchmarkConstraintContracts_ValidateLocked_Node(b *testing.B) {
 	if err := sm.AddConstraintContractBundle(contract, nil, nil, false); err != nil {
 		b.Fatal(err)
 	}
-	if _, err := engine.CreateNode(&Node{ID: "test:p1", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}}); err != nil {
+	if _, err := engine.CreateNode(b.Context(), &Node{ID: "test:p1", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}}); err != nil {
 		b.Fatal(err)
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(b.Context())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -109,7 +111,7 @@ func BenchmarkConstraintContracts_ValidateLocked_Node(b *testing.B) {
 	if err := tx.SetNamespace("test"); err != nil {
 		b.Fatal(err)
 	}
-	node, err := tx.currentNodeLocked("test:p1")
+	node, err := tx.currentNodeLocked(b.Context(), "test:p1")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -117,7 +119,7 @@ func BenchmarkConstraintContracts_ValidateLocked_Node(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := tx.validateConstraintContractsForNodeLocked(node); err != nil {
+		if err := tx.validateConstraintContractsForNodeLocked(b.Context(), node); err != nil {
 			b.Fatal(err)
 		}
 	}

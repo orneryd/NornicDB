@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -97,16 +98,64 @@ func decodeStoredTime(decoder *msgpack.Decoder, value reflect.Value, length int)
 // is no longer a runtime serializer choice — msgpack is the only format
 // the engine emits.
 func encodeValue(value any) ([]byte, error) {
-	payload, err := msgpack.Marshal(value)
+	encoder := getValueEncoder()
+	defer putValueEncoder(encoder)
+	payload, err := encoder.encode(value, storedValueFraming)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]byte, 0, len(serializationMagic)+2+len(payload))
-	out = append(out, []byte(serializationMagic)...)
-	out = append(out, serializationVersion)
-	out = append(out, serializerIDMsgpack)
-	out = append(out, payload...)
-	return out, nil
+	return bytes.Clone(payload), nil
+}
+
+// valueEncoder owns its output until the next encode. Streams retain one;
+// callers that need owned bytes clone the result before returning it to the pool.
+type valueEncoder struct {
+	buffer   bytes.Buffer
+	msgpack  *msgpack.Encoder
+	semantic semanticTransactionScratch
+}
+
+var valueEncoders = sync.Pool{New: func() any { return new(valueEncoder) }}
+
+func getValueEncoder() *valueEncoder { return valueEncoders.Get().(*valueEncoder) }
+
+func putValueEncoder(encoder *valueEncoder) {
+	encoder.semantic.release()
+	// Do not retain unusually large materialized records between requests.
+	if encoder.buffer.Cap() > defaultSnapshotRecordSize {
+		return
+	}
+	valueEncoders.Put(encoder)
+}
+
+type valueFraming bool
+
+const (
+	storedValueFraming    valueFraming = true
+	rawMessagePackFraming valueFraming = false
+)
+
+func (e *valueEncoder) encode(value any, framing valueFraming) ([]byte, error) {
+	e.reset(framing)
+	if err := e.msgpack.Encode(value); err != nil {
+		return nil, err
+	}
+	return e.buffer.Bytes(), nil
+}
+
+func (e *valueEncoder) reset(framing valueFraming) {
+	e.buffer.Reset()
+	if framing == storedValueFraming {
+		e.buffer.WriteString(serializationMagic)
+		e.buffer.WriteByte(serializationVersion)
+		e.buffer.WriteByte(serializerIDMsgpack)
+	}
+	if e.msgpack == nil {
+		e.msgpack = msgpack.NewEncoder(&e.buffer)
+	} else {
+		// Reset options and dictionaries just as msgpack.Marshal does.
+		e.msgpack.Reset(&e.buffer)
+	}
 }
 
 // decodeValue reads a value emitted by encodeValue OR a legacy
@@ -123,13 +172,13 @@ func decodeValue(data []byte, value any) error {
 		case serializerIDMsgpack:
 			return util.DecodeMsgpackBytes(payload, value)
 		case serializerIDGob:
-			return gob.NewDecoder(bytes.NewReader(payload)).Decode(value)
+			return decodeStoredGob(payload, value)
 		default:
 			return fmt.Errorf("unsupported storage serializer id: %d", headerSerializer)
 		}
 	}
 	// Legacy fallback: pre-header gob bodies.
-	return gob.NewDecoder(bytes.NewReader(data)).Decode(value)
+	return decodeStoredGob(data, value)
 }
 
 // splitSerializationHeader returns the serializer id from the leading

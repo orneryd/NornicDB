@@ -7,6 +7,940 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Go USE/clause preparation scanners now require operation contexts and explicit
+  errors across thirteen existing Cypher APIs. Fabric keyword-name and import
+  readers are context-first stateless callbacks; canceled preparation is not
+  cached. See [the migration guide](docs/development/cypher-preparation-context-api.md#use-and-clause-scanner-migration).
+
+### Fixed
+
+- Preserve request/job trace context in WAL read diagnostics. WAL recovery and
+  snapshot reader Go APIs, replay/undo and snapshot visitors now take contexts
+  explicitly; embedding callers must migrate and rebuild. Recovery retains its
+  independent completion lifetime. WAL and snapshot encoding, Badger keys and
+  storage version are unchanged. See [the migration notes](docs/operations/recovery-format-compatibility.md#local-validation).
+
+- Require exact database identity for qualified textual element IDs in MATCH
+  predicates and graph functions. Arbitrary database prefixes no longer resolve
+  to local entities; raw local-ID inputs remain supported.
+- Stop false "changed after transaction start" conflicts on observed relationship
+  updates in databases with storage limits. Managed and routed write preparation
+  now scope the observed relationship exactly like the database's own writes.
+  Ordinary commits without write-behind or unique constraints skip predecessor
+  validation again before doing any work, and mixed imports no longer record
+  their creates as predecessors (NOR-418).
+
+- Keep lightweight CALL-subquery and metadata reads lightweight after full node
+  reads warm the cache. Full and query node images now share an estimated
+  256 MiB byte budget, including vectors, with individual eviction instead of
+  whole-cache clearing. Full-vector reads remain cached within that budget.
+  See [NOR-413 verification](docs/performance/nor413-call-reads-and-node-cache.md).
+- Exclude internal nodes consistently from indexed and bound MATCH rows and
+  counts, preserving visible ordering and pagination without scanning a visible
+  population merely because unrelated internal metadata exists.
+- Require every pattern label before filling ordered index pages and evaluating
+  relationship-cosine endpoints; keep one-hop relationship-ID reads independent
+  of endpoint degree while retaining bound and composite source identities.
+  See [count-store visibility and Go API notes](docs/development/count-store-visibility.md).
+
+- Keep accepted replication transactions distinct across databases when Go callers
+  reuse a logical ID, while preserving retry identity across journal reopen.
+  Transaction envelopes, rather than transport request IDs, define that identity.
+  Scope pending WAL receipts to the database too, so an overlapping commit in
+  another database cannot return success for a write that was never applied.
+- Publish vector compaction checkpoints with recoverable payload/ordinal metadata.
+  Reject corrupt or stale search checkpoints and rebuild from the current database;
+  explicit disk mode reports file failures instead of silently using memory.
+  Uncertified live-update checkpoints rebuild once after restart, avoiding a
+  durable acknowledgement ledger on normal writes. See
+  [vector checkpoint recovery](docs/architecture/vector-checkpoints.md).
+
+- Keep the creation time of a node or relationship that is created and then
+  edited in the same Cypher statement or transaction (`SET`, `SET +=`,
+  `MERGE ... ON CREATE SET`, `REMOVE`, label changes). Such entities were stored
+  with a zero `CreatedAt` in every named database, so creation-time decay,
+  retention and ordering treated them as ancient.
+
+- Bound a MERGE's wait for a uniquely constrained node key that another
+  transaction holds by the configured transaction timeout
+  (`database.transaction_timeout`, `NORNICDB_TRANSACTION_TIMEOUT`, 30s by
+  default; 0 disables it), so a holder that never ends no longer blocks it
+  indefinitely: the MERGE fails with
+  `Neo.ClientError.Transaction.TransactionTimedOut` and releases its keys, and
+  an explicit transaction ended by a timeout or `TERMINATE TRANSACTIONS` is
+  rolled back at once. A wait longer than the slow-query threshold logs one
+  `storage.transaction.lock_wait_prolonged` warning naming the waiting and
+  holding transactions. Client deadlines, cancellation and deadlock detection
+  end the wait as before. `NORNICDB_TRANSACTION_TIMEOUT=0` now disables the
+  timeout instead of being ignored (and suppresses the legacy
+  `NEO4J_dbms_transaction_timeout`), and `NORNICDB_SLOW_QUERY_THRESHOLD=0`
+  now disables slow-query reporting (that warning, the Cypher slow-query log
+  and metric, and the HTTP slow-query log, which used to log every query at
+  a zero threshold). A negative or invalid value for either setting, in any
+  source, stops startup.
+
+- Preserve quoted dotted property names in constraints and projected reads.
+  Keep quoted commas inside composite constraint properties and reject property
+  references to a variable other than the declared FOR variable, including list
+  constraints and primitive contract entries. Reject empty schema-list members
+  without discarding quoted punctuation. Keep quoted variable identities distinct
+  from property accesses during ordering and grouping validation.
+
+- Keep CSV export values under their matching property headers by selecting
+  the column order once and reusing it for every row.
+
+- Reconcile recovered label and relationship-type counts with replayed graph
+  bodies after single-entry WAL replay and mixed physical/semantic recovery.
+  Prevent relabel-then-delete recovery from failing with a count underflow.
+- Complete APOC calls containing relationship-pattern COLLECT subqueries
+  without recursive evaluator handoff, including RETURN, CASE and WITH forms.
+  Preserve statement cancellation while evaluating their subquery arguments.
+- Preserve recreated node and relationship identities when rebuilding MVCC
+  heads, so later version pruning keeps live compact relationships readable
+  across database restarts.
+- Reject stale relationship property updates under write-behind, including
+  peers whose commit version was reserved before BEGIN. Preserve the observed
+  relationship namespace across implicit and explicit query updates.
+- Require the existing APOC export capability for Go file exporters and share
+  the rooted destination writer with native procedures. File helpers are now
+  context-first; redundant Go aliases are retired in favor of canonical writers.
+  See [the migration guide](docs/development/graphml-go-api.md).
+
+- Preserve XML-special characters and Unicode in GraphML export; reject text XML
+  cannot represent and report file export failures. Go `GraphML` now returns
+  `(string, error)`; see [the migration guide](docs/development/graphml-go-api.md).
+- Normalize labels by their complete first codepoint, preserving multibyte
+  Unicode and admitted UTF-16 name units. Avoid unnecessary allocations when
+  the initial character is already unchanged by uppercase mapping.
+
+- Return the normal syntax error for zero-argument `normalize()` calls instead
+  of closing the Bolt connection. Preserve ambiguous-aggregation diagnostics
+  for invalid ORDER BY expressions following RETURN or WITH grouping.
+- Reject repeated relationship removals when a peer reserved its version before
+  BEGIN but published its deletion afterward, preserving write-behind counts.
+  Report invalid nested CALL composition before Fabric participant execution.
+
+- Keep composite query parameters separate from same-named imported variables,
+  including dynamic graph selection. Preserve keyword-named imports through
+  graph routing and type validation without rewriting them into parameters.
+
+- Keep CALL import visibility separate from wildcard output membership across
+  UNION branches, nested scalar subqueries, and empty results. Preserve implicit
+  input values through updates, sequential LET dependencies, and DISTINCT/ORDER
+  BY followed by CALL when a column is named `next`.
+
+- Preserve user `_pathResult` fields and ordinary map types over Bolt while
+  continuing to encode typed Cypher paths as path structures.
+
+- Read comments and quoted names consistently across function calls, indexed
+  receivers, aggregate map values and native vector expressions. Preserve
+  predicate precedence and DISTINCT grouping while avoiding repeated prefix
+  scans for ordinary subscript receivers. Keep deleted-entity read errors and
+  property-null tests consistent across comments and quoted identifiers.
+
+- Report WAL snapshot admission interrupted by shutdown as a closed WAL,
+  consistently with snapshots that acquire the barrier during shutdown.
+  Cancellation on an open engine still returns the caller cancellation error.
+
+- Preserve quoted relationship type identity in correlated COUNT and EXISTS
+  subqueries, including literal pipes and escaped backticks. Keep quoted spaces
+  in graph identifiers used by schema declarations and full-text type filters, and retain whitespace-only
+  property keys in retrieval filters instead of dropping their constraints.
+  Ignore arrow spellings inside quoted endpoint names when determining
+  relationship-cardinality constraint direction.
+
+- Reject a node cascade when a peer has already deleted one of its staged
+  relationships, including after the peer's write-behind generation is flushed.
+  Prevent duplicate relationship-count decrements that made valid backups fail
+  restore with a derived-count underflow.
+
+- Reduce continued retrieval scratch allocations by reusing the exact-stage
+  membership proof during HNSW candidate selection. Retain repeated bound-chain
+  predicate syntax per statement while rebinding current parameter values.
+
+- Consolidate schema DDL readers and transaction property ownership without
+  changing admitted syntax or storage formats. Preserve parser-specific
+  rejection boundaries and command-specific result scope.
+
+- Reject stale write-behind node updates when a peer reserved its version before
+  BEGIN but published its image afterward, preserving acknowledged increments.
+  Unchanged stored NaN properties remain valid mutation preimages. Settle
+  direct-commit replay ordering before WAL acceptance so rejected mixed-mode
+  writes remain retryable without stranding later writers. Preserve the existing
+  snapshot/rebase criteria and cascade relationship counters. Property/label
+  preimage validation avoids loading separately stored embedding chunks.
+
+- Preserve acknowledged write-behind updates and increments by validating
+  unflushed competing writes. Complete snapshot/semantic WAL writes before
+  physical replay and reconcile recovered label/relationship counts, preventing
+  stale restore images and a later delete from making the database unreopenable.
+  Preserve UNIQUE, deletion and restart behavior without a storage format change.
+- Reuse bounded complete node snapshots for repeated explicit-transaction reads,
+  and avoid copying already-owned relationship properties twice during namespace
+  projection. Preserve caller-owned storage values and vectors; buffered
+  relationship reads no longer expose acknowledged mutable property maps.
+- Align CREATE DATABASE and EXPLAIN CREATE DATABASE with Neo4j's empty result
+  schema, including replacement and supported composite forms. EXPLAIN returns
+  a plan without catalog changes. Reject bare schema OPTIONS consistently,
+  bind map parameters, and apply typed vector options without substring parsing.
+- Maintain scoped full-text scoring documents between queries instead of rebuilding
+  the entire corpus. Preserve exact case-sensitive indexed fields, deterministic
+  relationship-property order, per-field phrase matching, committed snapshots and
+  cancellation; release optional copies under the existing memory limits.
+- Northwind benchmark seeds now check terminal write results and every generated
+  relationship population, and retry CREATE batches only for typed retriable
+  server statuses. Unknown commit outcomes are surfaced without replay.
+- Reuse retained syntax through CALL, projection and iteration readers to avoid
+  repeatedly parsing generated query fragments. Preserve Neo4j DISTINCT
+  rejection and comment/newline-separated projection aliases.
+- Filter property-restricted scans before materializing rejected nodes, resolve
+  property names at the scan snapshot, and preserve embedding sidecar read
+  contracts. Malformed node bodies now fail scans instead of silently returning
+  an incomplete population.
+- Read-only auto-commit statements whose only `CALL`s are `CALL { }`
+  subqueries no longer load the stored chunk vectors of the nodes they match,
+  like the same statement without the subquery. A statement that calls any
+  procedure, runs a subquery `IN TRANSACTIONS` or under `USE`, or calls a
+  plugin function outside the bundled APOC library keeps its full node reads,
+  as do statements that write.
+- Batch Graphify relationship inventory by at most 200 source nodes per request,
+  retaining complete fan-out, repository isolation and stale-deletion guards.
+- Honor the host's per-database result-cache size and TTL for Bolt, including
+  `--query-cache-size 0`, using the same executor configuration as HTTP.
+
+- Preserve runtime type errors for duration-plus-property expressions, avoid
+  redundant reveal-lease and non-recording trace allocations, and honor optional
+  Bolt peer-probe cleanup callbacks in the cross-platform regression test.
+
+- Preserve exact JSON INTEGER values and whole-FLOAT kind through import, public results, remote parameters, export and supported backup/recovery boundaries. Numeric text and typed wire output retain accepted value and kind.
+- Match equal INTEGER/FLOAT CDC selectors without rounding adjacent large integers; preserve native unsigned event values and observable numeric-kind changes.
+- Decode float32 extrema and midpoint decimals at destination precision, avoiding rejected valid values and double rounding.
+
+- Go query metadata and permission readers now require an explicit raw or accepted source stage; see [the source-stage migration guide](docs/development/cypher-source-stage-api.md).
+- Require Go 1.27.3 (go.mod, CI, release and Docker builders). Go embedders and
+  `.so` plugins must rebuild with Go 1.27.3. Roll up dependency updates: gqlgen
+  0.17.98 (regenerated GraphQL executor), godog 0.16.0 (cucumber messages v34),
+  gRPC 1.85.0, OpenTelemetry 1.47.0, qdrant client 1.20.1, google.golang.org/api
+  0.310.0, docker/login-action 4.7.0, and UI dependencies.
+
+### Added
+
+- Add opt-in CUDA and Vulkan HNSW qualification beyond 4 GiB of resident
+  1,024-dimensional vectors, sharing the full-scale Metal construction fixture.
+
+- Heimdall plugin actions can opt into the public MCP server with `External: true`; combined tool registration retains the first name and logs collisions. Default examples remain internal. Plugins compile independently of the optional local inference adapter and load with the agentic harness disabled.
+  Failed starts roll back; exported tools retire with their owners; server shutdown
+  stops plugin-only installations; standalone MCP shutdown drains active requests
+  without holding the registry lock.
+- Normalize duration seconds/nanoseconds and preserve TIME offset versus DATETIME region identity in canonical temporal equality. Use typed temporal keys for allocation-free collection lookup.
+
+### Changed
+
+- Reduce native ingestion allocations by compacting physical cache facts.
+  Preserve emitted facts and ordering, durability and storage formats.
+- Go grammar consumers now pass an original-source byte offset to
+  `StatementSyntax.LeadingCall(from)`; standalone callers pass `0`. See
+  [retained syntax](docs/architecture/cypher-parser-modes.md#retained-syntax-in-shared-readers).
+- Reduce per-record MessagePack metadata allocations using private decode state;
+  failed decoders are discarded and large payloads remain supported without
+  retaining their scratch buffers in the pool.
+- Reduce temporary path, binding and predicate-row allocations while preserving
+  retained path ownership and statement-context lifetimes.
+- Revoke large-commit cache facts once at final publication instead of repeating
+  the full projection for preparation batches; preserve snapshot and rollback
+  semantics and conservative invalidation for unknown scopes.
+
+- Go callers of `cypher.FormatFloat` now call the canonical `convert.FormatFloat` owner directly. Numeric JSON callers select the property or external-input domain; see [the numeric JSON contract](pkg/convert/numeric_wire_contract.md).
+
+- Search candidate serving and local/LLM reranking require the supplied operation
+  context instead of retaining test-only nil-to-background compatibility.
+- Go storage, search, Bolt, Fabric, transaction-session, replication, auth, MCP
+  and lifecycle APIs touched by this release require a non-nil context; nil
+  no longer falls back to `context.Background()`. Embedders passing nil must
+  pass their operation or owner context and rebuild. Accepted compensation and
+  post-acceptance completion (session-close rollback, accepted replication
+  apply, namespace index cleanup, server stop) now detach from cancellation with
+  `context.WithoutCancel` of the owning context instead of a fresh background.
+- Go parser and MERGE retry classifiers take an explicit operation context;
+  canceled classification preserves the original commit error. See the
+  [preparation API guide](docs/development/cypher-preparation-context-api.md).
+- Go label-count capabilities receive the caller context through native metadata
+  and wrapper scans; see [label counts](docs/api-reference/storage-label-counts.md).
+  Reveal-lease inheritance uses an opaque `RevealScopes` handle instead of
+  retaining a statement context; see [reveal handles](docs/development/reveal-scope-metadata-api.md).
+
+- Plugin host configuration uses typed `heimdall.SubsystemHost` metadata;
+  registration work retains its own context. Go hosts and plugins must rebuild
+  and migrate loader calls and keyed literals; see [the migration guide](docs/development/plugin-host-metadata-api.md).
+
+- Owned shutdowns join the existing completion channel with `WorkLifetime.JoinStopped`; bounded waits retain their caller budgets. See the [lifetime guide](docs/development/work-lifetime.md).
+
+- Composite index and node-key tuple hashes frame each property separately, so
+  delimiter-shaped values cannot collide before hashing and reject valid bulk
+  writes. These hashes are process-local; persisted temporal keys are unchanged.
+
+- Embedded Go index discovery, candidate/ordered reads, unique-value, transaction
+  pending-merge, composite-key and keyed-digest APIs take the caller context and
+  return errors. Migrate callers
+  using the [index-read guide](docs/development/index-read-cancellation.md).
+
+- Storage-backed Go APOC helpers use immutable `New(backend)` instances instead
+  of module storage globals. Backend replacement publishes a new registry for
+  future lookups; retained handlers and warmup caches stay bound to their
+  original backend. `apoc.SetStorage` now returns an error. Rebuild Go consumers
+  and plugins using the [APOC migration guide](docs/features/apoc-functions.md).
+
+- Retire the graph-free Go `apoc/algo.PageRank` stub and bundled scalar
+  registration. Native `CALL apoc.algo.pageRank` remains the supported graph
+  ranking entry point; Go consumers/plugins must rebuild without the removed API.
+- Go bulk storage readers and Louvain APIs receive the caller context; bulk
+  read callers and custom storage implementations must rebuild against the
+  [bulk-read API](docs/development/storage-bulk-read-go-api.md) and
+  [Louvain API](docs/development/louvain-context-go-api.md) guides.
+- Both Cypher `apoc.load.binary` and `apoc.load.stream` return serializable
+  bytes read and closed within the statement. The Go `Stream` reader remains
+  available; the canonical `Binary` loader accepts one optional config map.
+
+- Registered Go Cypher functions receive an explicit caller context; bundled
+  APOC I/O loaders are context-first and share the native file/URL capability.
+  Rebuild embedding consumers and plugins using the [function migration guide](docs/development/function-context-go-api.md)
+  and [APOC loader guide](docs/features/apoc-functions.md).
+
+- Go write-behind mutations use `Append(BufferedMutation)`; index visibility
+  markers use `SetIndexTombstones(keys, present)`. Flushes and retained authority
+  accept the caller context directly. Retired per-kind and context forwarding
+  entry points have migrated canonical callers; see the
+  [transaction guide](docs/development/replicated-entity-commits.md).
+
+- Go full-text and vector index creation use canonical `AddFulltextIndex` and
+  `AddVectorIndex` operations with an explicit entity kind. Property-type
+  creation uses `AddPropertyTypeConstraint` with typed options; parallel
+  forwarding entry points are retired. See the [Go migration guide](docs/development/schema-fulltext-go-api.md).
+
+- Go account state changes use `ChangeUserState(username, UserEnable | UserDisable | UserUnlock)` in place of separate enable/disable/unlock methods. User edits share one durable publication and audit boundary; see the [account mutation guide](docs/development/account-state-api.md).
+
+- Go node runtime provenance and flags use `RuntimeMetadata` / `SetRuntimeMetadata`
+  and immutable shared records. Stored and replication wire formats stay unchanged;
+  see the [Go migration guide](docs/development/node-runtime-metadata.md).
+
+- Go native transaction schemas use `Schema(SchemaPurpose)` for ordinary DDL or
+  knowledge-policy edits. Composite participant callbacks bind their complete
+  terminal contract together. Fabric terminal callbacks are context-first;
+  commits require explicit `TerminalContexts` and rollbacks an explicit cleanup
+  dispatch context. Rebuild Go consumers using the
+  [participant lifecycle guide](docs/development/fabric-participant-lifecycle.md).
+
+- Go entity commits use typed preparation, publication and encoding requests.
+  Replication encodes accepted snapshots directly; public diagnostic operation
+  images are detached. See the [transaction migration guide](docs/development/replicated-entity-commits.md#typed-go-admission-and-publication).
+
+- Persisted relationship-search vectors use MessagePack with packed float32
+  values. Authorized upgrades convert the active historical snapshot without
+  rewriting Badger records; see the [recovery format guide](docs/operations/recovery-format-compatibility.md#persisted-relationship-search-vectors).
+
+- WAL snapshots transcode eligible stored relationship properties through the shared
+  frame writer, reducing temporary allocations while retaining stored visibility,
+  buffered writes and recovery types. Values that normalize use the strict reader.
+
+- Standard Go database creation uses `DatabaseCreateRequest{Name, Options}`.
+  CREATE DATABASE initial options now publish atomically with its name through
+  one authoritative catalog commit; standalone ALTER options remain separate.
+
+- Go catalog construction and all catalog mutations now take an explicit context.
+  Custom catalog storage must expose authoritative commit receipts; migrate
+  callers and adapters using the [catalog API guide](docs/development/catalog-context-api.md).
+
+- Go access-metadata reads use `ReadAccessMeta(AccessMetaReadRequest)` with
+  `AccessMetaReadPoint` or `AccessMetaReadAll`. Migrate `GetAccessMeta` results
+  to `.Entry` and `ScanAccessMeta` results to `.Entries` on the typed result.
+
+- Transaction Go node updates use `UpdateGraphNode(node, policy)` with per-operation
+  `ClientNodeEdits` or `StoredNodeImages`. Manual visibility uses
+  `SetManualSuppression(kind, id, suppressed)` for nodes and relationships.
+  Migrate removed methods and optional capabilities using the
+  [storage Go migration guide](docs/development/transaction-node-deletion-api.md).
+
+- Go batch WAL replay uses the canonical `ReplayWALEntry` applier and
+  `ReplayResult.Record`; migrate the removed `ReplayWALEntries` convenience
+  wrapper using the [WAL replay guide](docs/architecture/wal-property-bindings.md#go-batch-replay).
+
+- Retire low-level raw Cypher, property and legacy batch replication commands;
+  use normal Bolt/HTTP APIs or prepared entity transactions. Preserve their numeric
+  slots as explicit errors. See the [replication migration guide](docs/development/replicated-entity-commits.md).
+
+- Transactional Go node deletion now uses `DeleteGraphNode(id, mode)` with
+  `CascadeEdges` or `RejectConnected`. Migrate the removed transaction methods
+  and custom deletion capabilities using the
+  [transaction deletion migration guide](docs/development/transaction-node-deletion-api.md).
+
+- Embedded Go query readers now take explicit request contexts, and executor cache
+  policy is configured on `NewStorageExecutor`. Migrate callers using the
+  [Go API migration guide](docs/api-reference/README.md#embedded-go-query-readers-v144-migration).
+
+- Update llama.cpp libraries and headers to v0.7.0, the Windows yzma adapter
+  to v1.30.0, and Vite to 8.3.5 from Dependabot PR #1626.
+
+### Cluster upgrade requirement
+
+- Replay protection is always enabled for signed cluster traffic: every message requires a nonce and
+  SignatureV2, and repeated messages are rejected. Old-format (v1 or nonce-less) messages are rejected.
+  Upgrade every node in a cluster before resuming replication with this version. During a mixed-version
+  window, peers reject messages and close connections; heartbeats, WAL replication, fencing, promotion, Raft consensus and
+  forwarded writes across the version boundary fail. Plan a coordinated upgrade with a replication
+  interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
+
+### Fixed
+
+- Preserve authoritative wrapper admission and namespace preparation for WAL
+  entity mutations, including accepted-failure outcomes and replay identity.
+- Finish pending-index bookkeeping with its staged write so cancellation cannot
+  make transaction point, label and property reads disagree.
+- Retain caller cancellation, values and the existing default timeout through
+  remote storage operations.
+
+- Preserve the caller's cancellation error when a `CALL` fragment is read
+  after its transaction opens; do not report an empty procedure name instead.
+- Keep acknowledged replay, token persistence and post-durable count updates on
+  one explicit completion lifetime, independent of client cancellation.
+- Preserve transaction-memory inheritance when process defaults change or a
+  database override is removed, including overrides equal to inherited values.
+  Go configuration callers use per-setting optional overrides described in the
+  [memory-limit guide](docs/operations/transaction-memory-limits.md).
+- `gds.graph.project` retains request cancellation through node and relationship
+  streams and checks it before publishing the graph projection.
+- Transaction streams cancel lock reacquisition after a visitor returns, preserve
+  intentional prefix completion, and never release another operation's lock.
+- Explicit composite transactions see their own staged index drops in
+  `USE ... SHOW INDEXES`; leading comments no longer route that statement through
+  a different transaction when query normalization is disabled. Comment-only
+  prefixes before Fabric subqueries are not executed as empty statements, and
+  comment-led `WITH ... USE` prefixes retain their real row bindings.
+
+- Snapshot/read-view admission observes caller cancellation while waiting for
+  the write-behind retirement lock, including completed-cache admission.
+- Sorted property-index readers retain their rebuilt key cache through an atomic
+  write-to-read lock handoff, preventing repeated rebuild starvation under writes.
+
+- Keep namespace-scoped label reads complete during index rebuilding and retain
+  snapshot property names and node identities across database DROP/recreate.
+  Low-memory backfills reduce their transaction batch after a size rejection.
+- Stop indexed statement preparation on caller cancellation, retain accepted
+  work until shutdown completion, and preserve terminal cleanup errors across
+  repeated Close calls. Stored keys, payloads and storage version are unchanged.
+
+- Escape CSV export identifiers, relationship types and headers containing
+  commas, quotes or line breaks while preserving ordinary export bytes.
+- Stop native bulk and buffered-overlay enumeration when its caller cancels;
+  never publish a partial bulk collection after cancellation.
+
+- Preserve warm graph caches when an explicit read-only transaction commits;
+  actual or unclassified writes retain their cache publication and invalidation.
+- Stop materialized candidate scans, projection and stable ordering when the
+  caller cancels; retain stable ties without a second graph-sized sort buffer.
+  Account for each keyed row reference against the query memory limit.
+- Return cancellation instead of panicking when a canceled WITH scope flows
+  into UNWIND.
+- Apply the configured file/URL capability to bundled scalar APOC loaders and
+  reject prohibited default-transport socket destinations after DNS resolution.
+  Local loader reads observe caller cancellation at their I/O boundaries.
+
+- Keep durable cache publication scoped to affected entities, publish final
+  relationship images, and detach nested mutable read values. Preserve accepted
+  native commit ownership when a waiting client checks activity or rolls back.
+
+- Classify concurrent non-key updates as ordinary retryable write conflicts,
+  preserve genuine unique-key claim violations, and prevent stale cached key
+  images from overwriting acknowledged renames. Native commit validation refreshes
+  endpoint heads after metadata callbacks, and buffered begin snapshots retain
+  their target-presence cut across flushes. Infrastructure commit-read failures
+  preserve their cause and database-level transaction failure status. Preserve
+  UNIQUE ownership across prefix deletion, restart, buffered key reuse and crash
+  recovery. Typed Go update requests retain observed images without read tracking;
+  rejected observed updates never enter the WAL (#1655).
+
+- Unify database-info metadata projection and range/vector index creation while
+  preserving their public result, schema-transaction and vector-registration contracts.
+
+- Preserve canonical parse diagnostics for malformed statements under both parser
+  modes, including extra UNWIND aliases; standalone validator diagnostics retain
+  their API identity.
+- Composite statements claim their sole write database at the first actual
+  storage mutation, so zero-row updates do not block a later write. Readers end
+  before the writer commits; failed cleanup and unknown remote commit outcomes
+  remain distinguishable. Issued transaction storage rejects nested transaction
+  control, and transaction scripts retain bound parameters. No storage-format
+  migration is introduced. See [participant lifecycle](docs/development/fabric-participant-lifecycle.md).
+
+<!-- Author: Codex NOR-184 implementation lane, 2026-10-29. -->
+- Share one checked integer owner for APOC math/number GCD and LCM. Return
+  nonnegative values, apply the zero identities, and reject unrepresentable
+  results without signed-magnitude or multiplication overflow. Registered calls
+  reject null, fractional and out-of-range integer arguments through the existing
+  checked numeric policy. The four Go exports now return `(int64, error)`;
+  published handler fields now use admitted `registry.Callable` values, so
+  registry and plugin consumers cannot silently discard an error result. Ordinary
+  and error-bearing functions share the same checked callable invoker; root APOC
+  and Cypher retain their argument policies without separate scalar invokers.
+  See [the integer API and handler migration](docs/api-reference/apoc-integer-values.md).
+
+- Preserve ordinary query text in `db.stats.retrieve('QUERIES')` while excluding
+  administration and system history, matching Neo4j collection behavior.
+- Recheck transaction detachment under the publication lock and detach returned
+  before-images so client calls cannot mutate accepted commit ownership.
+
+- Align remote composite database administration across native and ANTLR parsers,
+  preserve quoted catalog names in SHOW/DROP commands, and reject trailing input
+  before an existing database or alias can be changed.
+
+- Preserve named single-node CREATE path bindings and their node labels, properties
+  and publication atomicity.
+
+- Preserve keyword-shaped ORDER BY operands and comment-separated ORDER BY spans
+  without introducing additional query parsing.
+
+- Accept whitespace and comment separators between `DETACH` and `DELETE` in
+  row-scoped mutations when query normalization is disabled.
+
+- Read compound keyword spans consistently for OPTIONAL MATCH, DISTINCT,
+  MERGE actions and string/null predicates when query normalization is disabled.
+
+- Report invalid Fabric CALL scopes before missing parameters; retain parameter
+  checks before execution and EXPLAIN's existing missing-parameter behavior.
+
+- Qdrant point deletion reports rejected storage mutations instead of returning
+  `Completed` while the point remains stored. Missing points remain idempotent.
+
+- Accept flexible whitespace in CREATE OR REPLACE DATABASE and reject malformed
+  IF NOT EXISTS suffixes before creating or replacing catalog state.
+
+- Reject malformed database DROP targets and invalid trailing clauses before
+  catalog deletion. Standard and composite commands share quoted-name handling.
+- Reduce Unicode lexer-input allocations and repeated Fabric keyword scans.
+
+- Fix recursive graph-component JSON encoding while preserving exact admitted UTF-16 identities through an opt-in decoder policy.
+
+- Encrypt saved remote constituent credentials and resolve runtime identities
+  through the database manager. Enforce constituent access modes before remote
+  dispatch, including dynamic graph selections and execution without a grant
+  resolver; preserve read-only alias reads and writable-alias writes.
+
+<!-- Author: Codex, NOR-180 implementation lane, updated 2026-10-29. -->
+- Report logical WAL commit and abort record failures from explicit and implicit
+  transactions through HTTP, Bolt, GraphQL and the CLI shell, retaining primary
+  statuses, localized diagnostics and the actual native graph outcome across
+  cleanup, cancellation, callback and procedure aggregation, and response
+  formatting. Keep independently failed terminal records visible together.
+  <!-- Author: Claude, NOR-180, 2026-10-30. -->
+  A transaction start, commit or rollback failure without a more specific
+  status now reports Neo4j's `Neo.DatabaseError.Transaction.Transaction{Start,Commit,Rollback}Failed`
+  on every route, auto-commit statements included (previously `ClientError`,
+  or `Statement.SyntaxError` on some routes).
+  A failure after a transaction's work was committed (a failed post-commit
+  step, or a failed WAL commit record), or a WAL failure of one part of an
+  operation whose other parts committed, is never reported with a status drivers
+  retry, alone or combined with other failures in any order: a retryable status
+  becomes `Neo.DatabaseError.Transaction.TransactionCommitFailed`, and each
+  combined failure keeps its own status in the message (previously, for example,
+  `Neo.TransientError.General.DatabaseUnavailable`, so a managed transaction
+  repeated stored work).
+
+- Finish native application of accepted entity commands after transient commit
+  conflicts, without another log entry. Release entity authority at successful
+  publication and preserve explicit pending outcomes for recovery when native
+  completion is unavailable. Keep pending replication work attached to its
+  original receipt after uncertain WAL acknowledgement. Accepted errors expose
+  their cause separately from their non-retryable public outcome. (Author:
+  NOR-288 implementation lane, Codex.)
+- Accepted native replay materializes stored timestamp images without stamping
+  new creation times or normalizing the Unix epoch. Semantic transaction version 3
+  preserves unset and real epoch timestamps separately for nodes and relationships,
+  including nanosecond precision and instants outside the UnixNano range. Version 2
+  payloads retain their existing decoding. New compact V2 relationship bodies
+  preserve unset creation/update times with reserved flag bits; existing bodies
+  retain their meaning and header size. No storage key change or in-place
+  migration is required; readers must be upgraded before writing the new flags.
+  (Author: NOR-288/NOR-292/NOR-303 implementation lane, Codex.)
+- DROP DATABASE whose intent was accepted but whose acknowledgement failed
+  now reports its applied or recovery-pending state as a non-retryable outcome, and
+  the server finishes the drop itself, also when the client stopped waiting
+  (timeout, disconnect, replication wait). Drivers honoring the non-retryable
+  status no longer automatically replay the accepted DROP by name against a
+  replacement database; an explicitly submitted new DROP remains a new command. Every DROP
+  form, CREATE OR REPLACE and Qdrant collection delete finish a drop left pending
+  by a failed final sync.
+  (Author: NOR-288 implementation lane, Claude.)
+
+- Keep typed relationship counts scoped through WAL, tracing, replication and
+  managed database views. Journal catalog DROP intent before deleting data;
+  retry or reopen completes interrupted cleanup without reopening an empty
+  database as live. Preserve accepted write outcomes when acknowledgement fails.
+
+- Keep a failed database DROP unavailable until durable cleanup completes, with
+  recovery on retry, reopen and Restore. Refresh attached quota accounting before
+  writes resume after Restore, preserving configured limits and accepted reservations.
+
+<!-- Author: Codex implementation lane for NOR-207, 2026-10-26. -->
+- Match APOC word-initial capitalize/decapitalize values, including ASCII-space
+  boundaries and trimming. Plain capitalize changes only its initial character;
+  camelCase and upperCamelCase retain their existing outputs.
+
+- Publish each replication command to the in-memory WAL once; complete transport
+  shutdown without holding admission locks or missing late connections.
+- Prevent native node-deletion/relationship lock cycles and retain temporal
+  uniqueness through commit completion.
+- Clearing an absent database configuration succeeds when storage wraps its
+  not-found error.
+
+- Publish derived storage indexes and caches in commit order for overlapping
+  entities and unique values, while allowing disjoint publications to progress
+  independently. Preserve replacement property-index entries after deletion.
+- Persist replacement transaction embedding chunks and remove obsolete chunks
+  across repeated updates, rollback and database reopen.
+
+- Preserve hidden stored node and relationship identity, quota usage and cascades.
+  Order buffered, direct and maintenance writes together so flushes and restarts
+  retain acknowledged graph changes, counts and indexes. Go storage reads normalize
+  integers to `int64`; identical hidden relationship retries preserve the stored record.
+
+- Preserve public parser RETURN items, aliases and DISTINCT through the shared AST
+  owner, and keep quoted clause keywords inside their expressions.
+
+- Propagate request cancellation through shared query readers, semantic validation,
+  result metadata and cache admission, preserving live query and permission behavior.
+- Share retained FOREACH bodies and CALL/UNION projection owners while preserving
+  declared null fields, statistics and variable scope.
+
+- Migrate the Go URL validator to `ValidateURL(url, URLPolicy)` with production
+  defaults and explicit development/eval policies; update callers and examples.
+
+- Register WAL recovery, snapshot and replication test databases with the shared
+  fixture lifetime owner so assertion failures still close their resources.
+- Keep generated plugin test sources outside repository package discovery.
+
+- Keep configured credentials out of CLI help, startup and configuration errors,
+  diagnostic URLs, logs, traces, profiler command-line output and provider errors,
+  while preserving runtime authentication and explicit command-line precedence (#1505).
+
+- Keep registered and dynamic procedure writes in the caller's rollback owner,
+  enforce one writable composite database, and preserve periodic autocommit batch boundaries.
+
+- Retain declared UNION branch schemas when participant metadata is absent, align both branch streams before DISTINCT, and keep nested planning on the UNION-aware entry.
+
+- Preserve remote CALL imports, outer bindings and typed Bolt/HTTP values, including exact integer numbers and temporal offsets. Reject invalid scope imports before writes and retain scoped imports across constituent WITH clauses.
+
+- Keep the compile-time type check of nested list comprehensions, quantifiers and reduce linear in their nesting: each
+  local scope types its arguments once, and enclosing scopes no longer type arguments that read its variables.
+  Deeply nested reads in new explicit transactions no longer spend seconds in validation.
+
+- Keep transactional CALL batches independent while rolling back ordinary outer writes; preserve CREATE read phases, list element admission, and pagination opening order.
+
+- Keep transaction adjacency reads local to incident pending relationships and reuse bounded snapshot equality candidates for row MERGE. Reuse newly created edge bodies during same-transaction cascades instead of repeatedly sorting pending Badger writes.
+
+- Select only usable compiled GPU backends, and close replaced vector-file
+  stores and slow-query log files through their owning lifecycle.
+- Preserve pre-pin MVCC scan visibility at tied clock timestamps and use the
+  shared platform directory-sync policy when writing recovery manifests.
+- Deliver Bolt memory-pressure and HTTP body-limit responses before transport
+  teardown; detect queued-client disconnects on Windows without reading payloads.
+- Compute AMD64 vector norms with a correctly rounded square root, retaining
+  SIMD reduction and multiplication without changing unit-axis vectors.
+- Install Windows llama DLLs with the pinned yzma module and llama version,
+  including the supported Vulkan installer wrapper.
+- Build reusable CUDA llama archives without host-native CPU instructions.
+- Distinguish invalid WAL directory paths from absent WAL data on Windows.
+- Use device pointer mode for CUDA vector norms and wide coordinate offsets.
+- Keep Vulkan push-constant data alive across the native binding and Go stack
+  movement; cover normalization, search, and HNSW construction under forced
+  stack relocation and garbage collection.
+- Read pooled sequence embeddings through the Windows yzma adapter so BGE-M3
+  returns normalized embeddings rather than zero token-output vectors.
+- Resolve HNSW construction coordinates from its supplied file store when
+  memory mapping is unavailable. Correct Windows test paths, resource cleanup,
+  system database fixtures, and clock-dependent continuation deadline coverage.
+- Run Windows build GPU detection from a PowerShell file so shell expansion
+  cannot corrupt its variables; support Windows documentation virtualenv paths.
+- Drain rejected GraphQL WebSocket messages within the transport limits before
+  closing so Windows delivers the memory-capacity close frame instead of a reset.
+- Isolate evaluation file-error fixtures and restrict native Go plugin and
+  POSIX self-signal tests to platforms that support those operations.
+- Recognize native Windows drive paths as local APOC files. Parameterize file
+  paths in procedure tests and normalize documentation line endings when
+  extracting executable Cypher examples.
+- Make deferred-log outcome tests independent of clock resolution, calibrate
+  cold-scan timing batches, and retain positive elapsed-time checks using
+  collection work that spans a clock tick.
+- Correct legacy Bolt DateTime seconds for clients that do not negotiate the `utc` patch, including properties on relationships inside paths. Named-zone parameters share the temporal constructor's DST resolution: choose the earlier overlap instant and shift gaps forward. Offset and named-zone values, nanoseconds and nested lists/maps retain their proper representation. UTC-patched Bolt 4.4 and Bolt 5.x retain their existing encodings.
+
+- Concurrent identical `MERGE` statements on a uniquely constrained key now all succeed when they write the node they match (`ON MATCH SET`, or a later `SET`/`REMOVE`/`DELETE` of it), as in Neo4j: a later writer waits for the earlier one and writes on top of its commit, instead of failing with a UNIQUE violation. MERGEs that only read the node do not wait.
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
+- Preserve node properties and source metadata in retrieval procedure rows, graph
+  hits and continuation pages when property decay is enabled.
+- Evaluate EXISTS, COUNT and COLLECT subqueries through one expression owner in every clause. Preserve statement context for NOT EXISTS and reuse the cached indexed lookup for correlated predicates without OPTIONAL-row materialization.
+- Share retained statement syntax, bound variable scopes and ordered result
+  columns across execution, EXPLAIN, PROFILE and empty CALL results. Decode
+  quoted YIELD aliases, preserve comment boundaries and bind every clause's
+  input expressions before effects. Expand wildcards from the known scope and
+  procedure registry, and expose complete facts to composite query planning;
+  unresolved metadata is a terminal error rather than a guessed or empty header.
+- Close internally allocated stores and WAL resources when recovery or startup fails; propagate malformed WAL manifests without panicking. Check test package boundaries for leaked stores and follow allocator identities through fields and call parameters.
+- Preserve property names when buffered WAL records are replayed after snapshot
+  restoration, including stores with different property-token assignments. Ambiguous
+  historical records report missing name bindings instead of silently exchanging values;
+  original-store upgrades retain verbatim recovery through the constructor; foreign
+  records require their own bindings or lossless named properties. Durable dictionary
+  identity and explicit dictionary epochs preserve names across repeated rebuilds
+  and writes. Ordinary buffered records keep their existing v3 bytes; name tables
+  are written only at dictionary and snapshot boundaries.
+  Keep provenance and import under the engine lifetime owner: late replay returns
+  the closed-engine error, and admitted work drains before teardown.
+  Clean shutdown and successful snapshot compaction seal dictionary controls into
+  v3 checkpoints so the previous release can reopen the store, including native
+  backup restoration with write-behind disabled and no snapshot compaction. After an unclean
+  stop, that release refuses without truncating the log with
+  `unsupported WAL version 4 (max supported: 3)`. Start this release once and stop
+  it cleanly, then the older release can open the store. The storage version is
+  unchanged. This prevents new corruption; it cannot repair data already corrupted
+  by an older binary during cross-store recovery.
+
+
+- Configure sampler recovery spacing and unleased rearm with positive-millisecond
+  `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
+  and matching YAML keys; preserve the 5000 / 30000 ms defaults.
+
+- Snapshot transaction-pool ceilings for each statement so hot reload applies
+  only to newly starting work. Keep usage counters shared across generations.
+
+- Preserve serving databases' process-wide transaction-memory settings when a
+  later embedded `Open` fails; publish defaults only after a successful open.
+
+- Bound upgraded GraphQL WebSocket messages by available application-policy
+  capacity before JSON decoding, and admit GraphQL GET variables. Use gqlgen's
+  supported adapter hook with an unconditional handler lifetime owner, including
+  invalid initialization and cancellation. Charge full query/header bytes
+  independently of body limits; retain the default transport when admission is off.
+
+- Admit Bolt client payloads while accumulating chunks and before decoding, and
+  admit HTTP metadata before all application middleware through the same policy,
+  including Bolt's HTTP upgrade parser. Preserve bodyless control requests only
+  with an empty raw query; retain credit through timed-out decoder workers.
+  Admit all routed HTTP request bodies through the shared owner.
+  Permit only bodyless h2c upgrades before admission; process body-bearing or
+  chunked upgrade proposals as HTTP/1.1 through normal admission and body limits.
+  Preserve bodyless upgrade, prior-knowledge h2c and TLS h2 request ownership.
+  Release queued/disconnected reservations; preserve default unlimited Bolt
+  framing when the opt-in application policy is disabled.
+
+- Rearm application memory reclamation after 30 seconds without a released lease,
+  allowing later unleased allocations to recover admission. Collection remains
+  sampler-only, single-flight and conditional on fresh physical pressure.
+- Preserve local variable bindings inside correlated subqueries in quantified
+  path predicates, so nested list predicates count only qualifying paths.
+- Bound retained traversal endpoint bodies to the requested fields after canonical visibility checks.
+- Match Neo4j 5.26/APOC pair-list coercion, map keys and argument errors across embedded, HTTP and Bolt queries.
+- Match Neo4j 5.26 vector similarity argument descriptions to their list-only signatures.
+- Reuse bound nodes in MATCH before discovering candidates, preserving bounded WITH/MATCH streaming and avoiding unnecessary scans.
+
+- Recover application memory admission after rejected queries leave idle Go heap
+  pages resident in the cgroup. The shared sampler performs bounded, rate-limited
+  reclamation and requires a fresh physical reading before reopening admission
+  for HTTP, Bolt and buffered commits. Opt-in transaction/application limits keep
+  their existing unlimited defaults (#1618).
+
+- `recall-bench ingest` enables embedding when an embedding provider is set and
+  fails when no corpus vectors were stored. It previously left embedding
+  disabled, so hybrid runs silently fell back to BM25. Add OpenAI-compatible
+  embeddings, Cohere-compatible HTTP reranking and `--embedding-workers`, and
+  record the SciFact Titan V2 + Cohere Rerank 3.5 result in the README.
+
+- Preserve issued search continuation qids when page production is canceled or
+  exceeds a request/search-step deadline, allowing the same position to be
+  retried before the fixed expiry. Other producer errors and failed delivery of
+  a produced page still retire the stream and release capacity (#1580).
+- Preserve typed-list parameters and stored list properties across collection
+  functions and plugin adapters through one shared runtime-list reader.
+
+- Stream fixed-length relationship MATCH inputs into aggregation and Bolt output,
+  and preserve canonical query visibility before selecting scalar endpoint properties (#1496, #1497).
+
+- Register existing quantization localization IDs in the typed catalog and repair
+  benchmark-guide links required by strict release verification.
+
+- Restore the list-index error source catalogs and existing translations so
+  localization generation succeeds; check every typed message for source coverage.
+
+- macOS installer/settings: preserve provider/startup configuration, replace old executable payloads safely, enforce one tray instance, and review existing settings after install. Configure independent AI services and Advanced overrides; confirm server stop/restart actions.
+
+- Avoid allocating and filling an unused predicate scope for streaming WITH
+  projections without WHERE; preserve ordered WITH scope handling (#1472).
+
+- Reuse recovery encoding buffers across snapshot frames and WAL appends without changing their formats.
+  Reclaim interrupted automatic snapshot temporary files at startup and compaction while retaining completed snapshots.
+- Bound slow-query log redaction to avoid parsing large statements, reuse
+  exact-text grammar verdicts, and redact hex/octal integer literals (#1358).
+- Share syntax-verdict and upper-cased statement caches with Bolt and HTTP
+  transactions, authenticated requests, GraphQL requests, USE and Fabric
+  clones through a stable owner to avoid repeated validation. Release cached
+  statement text after database, alias or constituent removal and shutdown (#1371).
+  Keep live owners warm, evict dropped execution views, and key Fabric results
+  by target identity and selection generation to survive retargeting.
+- Find cgroup memory limits through mountinfo roots and namespaces, including
+  inherited v1 limits, without reading unrelated cgroups (#1390).
+- Derive the Go soft memory limit from the container's cgroup limit by default,
+  and clamp configured limits above it with a startup warning (#1369).
+- Own embedding providers through initialization, foreground/background use and
+  shutdown. Join actual batch calls before model release and remove the locale
+  test's shutdown-race workaround (#1487).
+- Bound aggregate ANTLR prediction generations with an exactly counted ledger,
+  and detach completed parsers so idle validators and kept trees release retired
+  prediction state (#1382).
+- Preserve the prompt wire format for custom legacy Ollama endpoints during batching and use array input for scalar calls to modern /api/embed endpoints.
+
+- Batch Voyage text documents and Ollama inputs in real HTTP arrays, split provider requests within input/token budgets, and retain returned embedding usage without changing the public API (#1488).
+- Parse transactional CALL batch clauses structurally and share static size/context admission between execution and EXPLAIN.
+  Include every expression position in shared graph-effect and chain-dependency analysis, including graph-reading projections and predicates.
+  Bind runtime sizes at the resulting chain boundaries and preserve every earlier committed batch when a later batch fails.
+- Use canonical temporal equality for APOC collection membership and set operations, including typed Go parameters and temporal values nested in lists and maps.
+- Idle automatic embedding workers wait for enqueue notifications. Recovery scans have a 30-second minimum
+  interval, and all embedding batch paths honor foreground-pressure pauses. Model readiness and resume
+  wake the worker pool; skipping deleted candidates continues draining pending work (#1230).
+- Reuse pending embedding candidates between active claims so deleted index markers are not traversed again for every document. Durable markers and atomic storage writes remain authoritative across replay and restart.
+- Keep a node findable by its indexed key while a concurrent write publishes it.
+  Property, composite and uniqueness-backed node postings replace entries under
+  one lock and retain unchanged keys. Transactions publish their committed-before
+  and final node images, including repeated updates, label remove/restore, drain,
+  recovery and replay. Cache and claim publishers consume that selected frame;
+  their policies and operation-based counts and notifications are preserved.
+
+
+- Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
+  macOS 27 plugin-linker fix. Real Heimdall and function/procedure plugin loading
+  tests retain their assertions and debug information (#1366).
+- Enforce database node, relationship, byte and write-rate quotas when committing
+  implicit and explicit transactions, including HTTP and Bolt. Reject an entire
+  over-quota transaction before publication and keep cached byte usage in sync
+  with committed updates and cascading deletes. Release admission/accounting
+  before ordered synchronous listener delivery, allow concurrent unlimited
+  transactions, honor cancellation while waiting, and preserve explicit quota
+  statuses and Bolt connection reuse after rejection (#1366). Preserve the
+  managed system-database owner for routed administration commits and canonical
+  byte accounting across propertyless staged/point/stream representations.
+- Reject unfinished comments consistently before HTTP, Bolt and native execution; preserve comment-aware CYPHER options, EXPLAIN schemas and PROFILE FINISH completion through re-entry.
+
+### Added
+
+- Optional local code-intelligence Git hooks: block staged reuse/refactor findings, refresh the
+  existing code graph after main pulls, and align Graphify ingestion with the reference action.
+  Supports standalone global installation, per-repository databases, every local main-ref update,
+  and complete cursor-driven function scans. Endpoints and credentials use environment
+  configuration with setup guidance.
+
+- Default application HNSW traversal to scalar int8 with original-vector rescoring;
+  `NORNICDB_VECTOR_HNSW_QUANTIZATION=none` retains full-precision traversal.
+- Add HNSW scalar int8, product (4×–64×), and binary coordinate compression
+  (with binary or 4/8-bit scalar queries),
+  preserving original-vector construction, lexical hints, exact rescoring and checkpoints.
+  Persist Qdrant collection quantization policies and honor request ignore/rescore/oversampling.
+  Extend the full-corpus ANN benchmark to exercise the same compressed modes on both engines.
+
+### Fixed
+
+- Keep scoped CALL imports available after WITH while excluding unprojected imports from DISTINCT and grouping keys.
+  Use structural value comparison for DISTINCT, grouping and collection deduplication without serializing lists or maps.
+- Treat CALL (*) as a scope clause and keep imported variable types, including aggregate imports, in static validation.
+  A CASE result keeps every alternative through list, function, operator and binding checks, which reject it only where none fits.
+
+- Use store-owned read-only mappings for file-backed query rescoring and final
+  vector selection, avoiding repeated file reads and internal vector copies.
+  Keep public owning-copy semantics and retire mappings on growth, reload,
+  compaction and close. The portable ReadAt path remains available (`nommap` build tag).
+
+- Separate cached search responses by effective quantization ignore/rescore/oversampling
+  and HNSW beam settings; retire cached responses when compression policy changes.
+  Drop/recreate clears collection-owned compression overrides while embedding regeneration
+  preserves them, so reused services return to their configured defaults.
+
+- Build IVF-HNSW graphs for every nonempty cluster, retire minimum-size/maximum-count
+  build filters, and return an error for missing routed graphs instead of exact scans.
+- Search selected IVF-HNSW cluster graphs concurrently with at most four workers per
+  query, retaining full per-cluster candidate budgets and merging in route order.
+
+- Resolve named/property/chunk lexical HNSW seeds using indexed identities while preserving
+  direct document anchors in insertion order.
+  Train PQ codebooks with the same squared-distance assignments used by encoding, retaining
+  subvector magnitudes; coarse IVF routing keeps cosine training. Pool CPU build scratch and
+  encode HNSW coordinates while construction can borrow the existing mapped read lease.
+
+- Honor the configured logger for unary/streaming gRPC request completion: successful requests log at debug,
+  client failures at warning, and internal/service failures at error. Suppressed requests avoid log formatting/output.
+
+- Accelerate ARM64 CPU dot-product scoring with independent NEON fused multiply-add accumulators,
+  preserving block/tail handling and normalized signed-vector accuracy.
+
+- Admit managed model-space chunks before dimension validation and restrict persisted exact queries to admitted
+  vector identities. Retire fulltext and capacity accounting through both default Qdrant server constructors on drop.
+  Serialize the first GPU brute-force snapshot/upload/publication with live index mutations before pipeline locking.
+  Successful compressed pipelines avoid an unused flat GPU copy; compressed fallback uploads only after selection.
+
+- Preserve global IVF-HNSW candidate budgets when nearest neighbours concentrate in one cluster, and retain lexical
+  cluster selection when a small list falls back to exact scoring. Resolve BM25 document hints to named, property and
+  chunk embedding IDs consistently for HNSW construction, k-means/PQ seeds and cluster lexical profiles.
+- Complete Qdrant shared-index lifecycle handling: warm lazy reads, reject incomplete builds and provider failures,
+  order acknowledged mutations after population/checkpoint restoration, retain Dot/Euclid magnitudes with file-backed
+  vectors, and purge memory and persisted ANN state when an embedded server drops a collection.
+- Delete Qdrant storage before final shared-index removal, so population cannot restore a point while its durable
+  deletion is in flight.
+- Honor Qdrant `params.exact`, forward `Query` search parameters, and report configured HNSW collection settings.
+- Retain inserted HNSW build vectors on CUDA and Vulkan devices as well as Metal. Shared shard ordering and top-K
+  merging reuse the existing kernels. Graph search explores the retained beam completely instead of truncating it
+  at a round cap; the candidate-depth setting remains effective above the construction-quality floor.
+- Recreate the cluster backend when an unfixed collection adopts a new vector dimension, retaining its k-means policy.
+- Support `--gpu-backend cpu` / `NORNICDB_GPU_BACKEND=cpu` to disable all GPU-manager paths, including clustering.
+- Replace a full HNSW result beam's worst heap member with one sift rather than a push/pop pair.
+
+- Run Qdrant gRPC searches on the collection database's search index, the same index, ANN strategy and query as Cypher's
+  `db.index.vector.queryNodes`, instead of a separate in-memory HNSW graph per collection. `NORNICDB_VECTOR_ANN_QUALITY`
+  (including `compressed` IVF-PQ), k-means routing and exact rescoring now apply to Qdrant searches. `hnsw_ef` sets the
+  request's HNSW beam, and a search without it uses the configured preset's `efSearch`, as Qdrant does. Selective payload filters widen the search instead of returning short. Points stay searchable
+  across a restart. A database with vector search disabled returns no hits. Vectors are no longer indexed twice (#1370).
+- Rebuild a search index from storage with the dimension of the first stored vector, not of the first stored node, when
+  the dimension isn't fixed by an embedder, so a database storing its own vectors (such as a Qdrant collection) keeps
+  them searchable after a restart.
+- Drop a Qdrant collection's search index with the collection, as Cypher's `DROP DATABASE` does.
+- Fix the GPU-assisted HNSW build (on by default on macOS) building a poor graph: on 88k 1024-d vectors recall@10 fell
+  to 0.60. Every query of a GPU graph search started from the global entry point and searched two hops inside one
+  4,096-node set shared by 512 queries. Each vector's search now starts at its own level-0 entry point (the upper-layer
+  descent an insert makes), adds inserted vectors sharing a BM25 lexical signature band as seeds when hints exist,
+  expands until its beam stops changing, and groups queries by entry point so each group keeps its own region; equal
+  distances are ordered by lexical closeness. Vectors of one build batch also get each other as candidates (the batch
+  scored against itself), which the graph search cannot see. CUDA, Metal and Vulkan share the fixed search.
+- Use resident inserted vectors for native GPU HNSW construction. Metal scores its contiguous buffer with Metal
+  Performance Shaders; CUDA and Vulkan score immutable device shards with their existing kernels. Their graph-search
+  implementations remain available. Construction time and recall are workload/hardware measurements, not a universal
+  speedup guarantee; see the vector ANN benchmark and hardware handoff.
+- Build HNSW indexes on the CPU in parallel: each batch's level-0 candidate searches run concurrently (the insert's own
+  search), then vectors are linked in order. Construction regressions compare recall with one-at-a-time inserts.
+- Keep exact-search results in a bounded heap and score in parallel instead of sorting the complete scored population.
+- Lower the default IVF-PQ exact re-rank depth (`NORNICDB_VECTOR_IVFPQ_RERANK_TOPK`) from 2000 to 200. This reduces
+  exact rescoring work and can affect recall; compare explicit depths on the same corpus before choosing the tradeoff.
+- Probe an eighth of the k-means clusters (at least 16) per query instead of a fixed 3, the rule IVF-PQ already used
+  (recall@10 was 0.80 with 210 clusters); `NORNICDB_KMEANS_NPROBE` overrides it.
+- Cluster a database with k-means soon after a bulk load finishes instead of at the next
+  `NORNICDB_KMEANS_CLUSTER_INTERVAL` tick (15 minutes by default): a check every 10 seconds clusters a database whose
+  vectors grew by a fifth since its last clustering and then stopped changing. `NORNICDB_KMEANS_GROWTH_RATIO` (0
+  disables) and `NORNICDB_KMEANS_GROWTH_CHECK_INTERVAL` tune it.
+- Build the GPU brute-force copy of the vectors only when a search first chooses GPU brute force. Attaching the GPU
+  built it for every database, which held every vector again in host and GPU memory (about 690 MB for 88k 1024-d
+  vectors) even when the vector count was outside the GPU brute-force range and it was never searched.
+- Report IVF-PQ, k-means and IVF-HNSW strategies by name in a database's `searchStrategy` instead of `unknown`; runtime
+  strategy transitions still only move between brute force and HNSW.
+- Keep a Qdrant collection usable after its metadata is read back from storage. Stored numbers decode as the smallest
+  integer type that fits (`int8` for 4 dimensions), which the collection reader rejected once roughly 10,000 points had
+  pushed the metadata out of the node cache: the collection then reported "not found", or a Dot/Euclid collection fell
+  back to Cosine. `convert.ToInt64` now accepts `int8`, `int16`, `uint8` and `uint16`.
+- A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
+  limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
+  `Neo.ClientError.Statement.SyntaxError` (#1339).
+
 ## [1.4.3] - 2026-10-15
 
 ### Fixed

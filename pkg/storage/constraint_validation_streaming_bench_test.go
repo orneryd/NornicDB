@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 )
 
@@ -27,7 +30,7 @@ const (
 
 func setupLargeOtherDatabase(b *testing.B) *NamespacedEngine {
 	b.Helper()
-	inner := NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = inner.Close() })
 	populateOtherDatabase(b, inner, benchOtherDBNodes, benchOtherDBEdges-benchOtherDBSameTypes, benchOtherDBSameTypes)
 	return NewNamespacedEngine(inner, "a")
@@ -39,7 +42,7 @@ func BenchmarkCreateRelationshipConstraint_WithLargeOtherDatabase(b *testing.B) 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := ValidateConstraintOnCreationForEngine(nsA, c); err != nil {
+		if err := ValidateConstraintOnCreationForEngine(context.Background(), nsA, c); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -54,7 +57,7 @@ func BenchmarkRefreshUniqueConstraint_WithLargeOtherDatabase(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := RefreshUniqueConstraintValuesForEngine(nsA, schema); err != nil {
+		if err := RefreshUniqueConstraintValuesForEngine(context.Background(), nsA, schema); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -2,24 +2,29 @@
 package label
 
 import (
+	"context"
 	"fmt"
 	"strings"
-	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
-var (
-	store storage.Storage
-	mu    sync.RWMutex
-)
+// Functions binds this package's storage-backed label helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for, and no
+// lookup locks a shared owner.
+type Functions struct {
+	backend storage.Storage
+}
 
-// SetStorage sets the storage backend for label operations.
-// Called by the parent apoc package during initialization.
-func SetStorage(s storage.Storage) {
-	mu.Lock()
-	defer mu.Unlock()
-	store = s
+// New returns this package's storage-backed helpers bound to backend. The
+// label helpers that only reshape a node argument stay free functions; one
+// instance serves one backend.
+func New(backend storage.Storage) *Functions {
+	return &Functions{backend: backend}
 }
 
 // Node represents a graph node.
@@ -34,28 +39,54 @@ type Node struct {
 // Example:
 //
 //	apoc.label.exists('Person') => true
-func Exists(label string) bool {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
-
-	if s == nil {
-		return false
+func (f *Functions) Exists(ctx context.Context, label string) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
 	}
 
-	nodes, err := s.AllNodes()
+	s := f.backend
+
+	if s == nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+		return false, nil
+	}
+
+	nodes, err := s.AllNodes(ctx)
 	if err != nil {
-		return false
+		return false, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+		return false, nil
 	}
 
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+
 		for _, l := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return false, operationError
+			}
+
 			if l == label {
-				return true
+				if operationError := ctx.Err(); operationError != nil {
+					return false, operationError
+				}
+				return true, nil
 			}
 		}
 	}
-	return false
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+	return false, nil
 }
 
 // List returns all labels in the database.
@@ -63,32 +94,59 @@ func Exists(label string) bool {
 // Example:
 //
 //	apoc.label.list() => ['Person', 'Company', 'Product']
-func List() []string {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
-
-	if s == nil {
-		return []string{}
+func (f *Functions) List(ctx context.Context) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
 
-	nodes, err := s.AllNodes()
+	s := f.backend
+
+	if s == nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
+	}
+
+	nodes, err := s.AllNodes(ctx)
 	if err != nil {
-		return []string{}
+		return nil, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	labelSet := make(map[string]bool)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			labelSet[label] = true
 		}
 	}
 
 	labels := make([]string, 0, len(labelSet))
 	for label := range labelSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		labels = append(labels, label)
 	}
-	return labels
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return labels, nil
 }
 
 // Count returns the count of nodes with a specific label.
@@ -96,30 +154,53 @@ func List() []string {
 // Example:
 //
 //	apoc.label.count('Person') => 42
-func Count(label string) int {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
-
-	if s == nil {
-		return 0
+func (f *Functions) Count(ctx context.Context, label string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
 	}
 
-	nodes, err := s.AllNodes()
+	s := f.backend
+
+	if s == nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
+	}
+
+	nodes, err := s.AllNodes(ctx)
 	if err != nil {
-		return 0
+		return 0, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
 	}
 
 	count := 0
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+
 		for _, l := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return 0, operationError
+			}
+
 			if l == label {
 				count++
 				break
 			}
 		}
 	}
-	return count
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return count, nil
 }
 
 // Nodes returns all nodes with a specific label.
@@ -127,24 +208,44 @@ func Count(label string) int {
 // Example:
 //
 //	apoc.label.nodes('Person') => [node1, node2, ...]
-func Nodes(label string) []*Node {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
-
-	if s == nil {
-		return []*Node{}
+func (f *Functions) Nodes(ctx context.Context, label string) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
 
-	storageNodes, err := s.AllNodes()
+	s := f.backend
+
+	if s == nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Node{}, nil
+	}
+
+	storageNodes, err := s.AllNodes(ctx)
 	if err != nil {
-		return []*Node{}
+		return nil, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Node{}, nil
 	}
 
 	result := make([]*Node, 0)
 	for _, sn := range storageNodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		hasLabel := false
 		for _, l := range sn.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			if l == label {
 				hasLabel = true
 				break
@@ -158,7 +259,10 @@ func Nodes(label string) []*Node {
 			})
 		}
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // Add adds a label to a node.
@@ -410,10 +514,24 @@ func Validate(label string) map[string]interface{} {
 // Example:
 //
 //	apoc.label.normalize(' person ') => 'Person'
+//
+// Valid Unicode uses simple one-codepoint uppercase mapping (no expansion),
+// with the remainder unchanged. Admitted lone UTF-16 name units retain their bytes.
+// As before, this helper does not validate arbitrary Go string bytes: a
+// malformed leading byte becomes RuneError, while the remaining bytes
+// are preserved.
 func Normalize(label string) string {
 	label = strings.TrimSpace(label)
 	if len(label) > 0 {
-		label = strings.ToUpper(label[:1]) + label[1:]
+		initial, size := cyphertext.ReadCodepoint(label, 0)
+		upper := unicode.ToUpper(initial)
+		// Unchanged codepoints, including admitted lone UTF-16 units, retain
+		// their exact bytes. A malformed leading byte keeps the established
+		// RuneError replacement rather than being mistaken for an unchanged rune.
+		if upper == initial && !(initial == utf8.RuneError && size == 1) {
+			return label
+		}
+		label = string(upper) + label[size:]
 	}
 	return label
 }
@@ -448,37 +566,60 @@ func FromPattern(pattern string) []string {
 // Example:
 //
 //	apoc.label.stats() => {total: 5, counts: {...}}
-func Stats() map[string]interface{} {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
-
-	if s == nil {
-		return map[string]interface{}{
-			"total":  0,
-			"counts": map[string]int{},
-		}
+func (f *Functions) Stats(ctx context.Context) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
 
-	nodes, err := s.AllNodes()
-	if err != nil {
+	s := f.backend
+
+	if s == nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 		return map[string]interface{}{
 			"total":  0,
 			"counts": map[string]int{},
+		}, nil
+	}
+
+	nodes, err := s.AllNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
 		}
+		return map[string]interface{}{
+			"total":  0,
+			"counts": map[string]int{},
+		}, nil
 	}
 
 	counts := make(map[string]int)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			counts[label]++
 		}
 	}
 
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 	return map[string]interface{}{
 		"total":  len(counts),
 		"counts": counts,
-	}
+	}, nil
 }
 
 // Search searches for labels matching a pattern.
@@ -487,23 +628,43 @@ func Stats() map[string]interface{} {
 // Example:
 //
 //	apoc.label.search('Per*') => ['Person', 'Permission']
-func Search(pattern string) []string {
-	mu.RLock()
-	s := store
-	mu.RUnlock()
-
-	if s == nil {
-		return []string{}
+func (f *Functions) Search(ctx context.Context, pattern string) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
 
-	nodes, err := s.AllNodes()
+	s := f.backend
+
+	if s == nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
+	}
+
+	nodes, err := s.AllNodes(ctx)
 	if err != nil {
-		return []string{}
+		return nil, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	labelSet := make(map[string]bool)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			labelSet[label] = true
 		}
 	}
@@ -512,11 +673,18 @@ func Search(pattern string) []string {
 	// * = any characters, ? = single character
 	result := make([]string, 0)
 	for label := range labelSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if matchPattern(label, pattern) {
 			result = append(result, label)
 		}
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // matchPattern matches a string against a pattern with wildcards.

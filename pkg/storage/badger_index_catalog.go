@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+
 	badger "github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 )
@@ -19,14 +21,17 @@ func indexEntryCatalogKey(entityID string) []byte {
 	return accessMetaKey(entityID)
 }
 
-func (b *BadgerEngine) PutIndexEntryCatalog(entityID string, cat *IndexEntryCatalog) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+// PutIndexEntryCatalog records an entity's secondary-index keys under the
+// caller's operation lifetime. ctx owns admission; an admitted catalog write
+// completes in the store and a canceled ctx returns its own error unwritten.
+func (b *BadgerEngine) PutIndexEntryCatalog(ctx context.Context, entityID string, cat *IndexEntryCatalog) error {
+	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return putIndexEntryCatalogInTxn(txn, entityID, cat)
 	})
 }
 
 func putIndexEntryCatalogInTxn(txn *badger.Txn, entityID string, cat *IndexEntryCatalog) error {
-	entry, err := getAccessMetaInTxn(txn, entityID)
+	entry, err := accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 	if err != nil {
 		return err
 	}
@@ -36,14 +41,19 @@ func putIndexEntryCatalogInTxn(txn *badger.Txn, entityID string, cat *IndexEntry
 	entry.IndexKeys = cat.IndexKeys
 	entry.HasIndexKeys = true
 	entry.Deindexed = cat.Deindexed
-	return putAccessMetaInTxn(txn, entityID, entry)
+	_, err = accessMetaInTxn(txn, entityID, accessMetaWrite, entry)
+	return err
 }
 
 func (b *BadgerEngine) GetIndexEntryCatalog(entityID string) (*IndexEntryCatalog, error) {
+	if err := b.pendingPrefixConflict(entityID); err != nil {
+		return nil, err
+	}
+
 	var entry *knowledgepolicy.AccessMetaEntry
 	err := b.withView(func(txn *badger.Txn) error {
 		var err error
-		entry, err = getAccessMetaInTxn(txn, entityID)
+		entry, err = accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 		return err
 	})
 	if err != nil {
@@ -55,21 +65,25 @@ func (b *BadgerEngine) GetIndexEntryCatalog(entityID string) (*IndexEntryCatalog
 	return &IndexEntryCatalog{TargetID: entry.TargetID, TargetScope: string(entry.TargetScope), IndexKeys: entry.IndexKeys, Deindexed: entry.Deindexed}, nil
 }
 
+// DeleteIndexEntryCatalog is the catalog write's exported context-free entry,
+// as PutIndexEntryCatalog is: its own unbounded lifetime, not a default for a
+// context a caller did supply.
 func (b *BadgerEngine) DeleteIndexEntryCatalog(entityID string) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return deleteIndexEntryCatalogInTxn(txn, entityID)
 	})
 }
 
-func deleteIndexEntryCatalogInTxn(txn *badger.Txn, entityID string) error {
-	entry, err := getAccessMetaInTxn(txn, entityID)
+func deleteIndexEntryCatalogInTxn(txn kvWriter, entityID string) error {
+	entry, err := accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 	if err != nil || entry == nil {
 		return err
 	}
 	entry.IndexKeys = nil
 	entry.HasIndexKeys = false
 	entry.Deindexed = false
-	return putAccessMetaInTxn(txn, entityID, entry)
+	_, err = accessMetaInTxn(txn, entityID, accessMetaWrite, entry)
+	return err
 }
 
 // collectNodeIndexKeys returns all secondary-index keys written for a node.

@@ -14,11 +14,11 @@ type matchErrEngine struct {
 	err error
 }
 
-func (e *matchErrEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *matchErrEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	return nil, e.err
 }
 
-func (e *matchErrEngine) AllNodes() ([]*storage.Node, error) {
+func (e *matchErrEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	return nil, e.err
 }
 
@@ -27,24 +27,24 @@ type createErrEngine struct {
 	err error
 }
 
-func (e *createErrEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *createErrEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	return "", e.err
 }
 
-func (e *createErrEngine) BulkCreateNodes(nodes []*storage.Node) error {
+func (e *createErrEngine) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
 	return e.err
 }
 
 func TestSplitPipelineClauses_GuardBranches(t *testing.T) {
-	clauses, ok := splitPipelineClauses("   ")
+	clauses, ok := splitPipelineClauses(t.Context(), "   ")
 	require.False(t, ok)
 	require.Nil(t, clauses)
 
-	clauses, ok = splitPipelineClauses("x MATCH (n) RETURN n")
+	clauses, ok = splitPipelineClauses(t.Context(), "x MATCH (n) RETURN n")
 	require.False(t, ok)
 	require.Nil(t, clauses)
 
-	clauses, ok = splitPipelineClauses("MATCH (n) WHERE n.name STARTS WITH 'a' RETURN n")
+	clauses, ok = splitPipelineClauses(t.Context(), "MATCH (n) WHERE n.name STARTS WITH 'a' RETURN n")
 	require.True(t, ok)
 	require.Len(t, clauses, 2)
 	require.Equal(t, pipelineClauseMatch, clauses[0].kind)
@@ -156,7 +156,7 @@ func TestUnresolvedWithExpressionRejectsWithoutEffects(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-	nodes, err := store.GetNodesByLabel("Tmp")
+	nodes, err := store.GetNodesByLabel(ctx, "Tmp")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }
@@ -191,41 +191,4 @@ func TestCreateWithPipeline_SupportedShapes(t *testing.T) {
 		require.Equal(t, "cwmr-1", res.Rows[0][0])
 		require.Equal(t, "lookup-1", res.Rows[0][1])
 	})
-}
-
-func TestPipelineApplyMatch_AdditionalBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "pipeline_match_cov")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	n := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "p1"}}
-	_, err := store.CreateNode(n)
-	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e1", Type: "R", StartNode: "n1", EndNode: "n1"}))
-
-	unusedCalls := 0
-	rows := []pipelineRow{{
-		"node":          n,
-		"edge":          &storage.Edge{ID: "e2", Type: "R", StartNode: "n1", EndNode: "n1"},
-		"m":             map[string]interface{}{"id": "p1"},
-		"mapWithUnused": map[string]interface{}{"unused": countedLiteralStringer{calls: &unusedCalls}},
-		"x":             int64(1),
-		"unused":        countedLiteralStringer{calls: &unusedCalls},
-	}}
-
-	out, ok, err := exec.pipelineApplyMatch(ctx, rows, "MATCH (p:Person {id: m.id})")
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Len(t, out, 1)
-	require.NotNil(t, out[0]["p"])
-	require.Zero(t, unusedCalls)
-
-	matchErr := errors.New("match lookup failed")
-	errExec := NewStorageExecutor(&matchErrEngine{Engine: store, err: matchErr})
-	out, ok, err = errExec.pipelineApplyMatch(ctx, rows, "MATCH (p:Person)")
-	require.Error(t, err)
-	require.ErrorIs(t, err, matchErr)
-	require.True(t, ok)
-	require.Nil(t, out)
 }

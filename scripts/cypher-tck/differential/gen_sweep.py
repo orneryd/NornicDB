@@ -373,6 +373,51 @@ for sq in SUBQUERY_BOOLS:
         add("subquery-scope", "qpp", f"MATCH (s:Q {{id: 1}}) ((x)-[e:R WHERE {b}]->(y))+ (t) RETURN t.id AS v ORDER BY v")
         add("subquery-scope", "qpp", f"MATCH (s:Q {{id: 1}}) ((x)-[e:R]->(y) WHERE e.w = 2 OR {b})+ (t) RETURN t.id AS v ORDER BY v")
 
+# Procedure YIELD predicates use the same correlated scope as WITH (#1226).
+# Cover scalars independently of any particular search procedure.
+YIELD_SCOPE_PREDICATES = [
+    "EXISTS {{ MATCH (x) WHERE {v} IN labels(x) }}",
+    "COUNT {{ MATCH (x) WHERE {v} IN labels(x) }} > 0",
+    "size(COLLECT {{ MATCH (x) WHERE {v} IN labels(x) RETURN x.id }}) > 0",
+    "size([(x:Q)-->(y) WHERE {v} IN labels(x) | y.id]) > 0",
+    "EXISTS {{ MATCH (x) WHERE {v} IN labels(x) AND COUNT {{ (x)-->() }} > 0 }}",
+    "EXISTS {{ WITH 1 AS {v} RETURN {v} }}",
+    "EXISTS {{ UNWIND [1] AS {v} RETURN {v} }}",
+    "EXISTS {{ RETURN 1 AS {v} }}",
+    "EXISTS {{ WITH {v} AS {v} RETURN {v} }}",
+    "EXISTS {{ WITH {v} RETURN {v} }}",
+    "EXISTS {{ MATCH (x) WHERE missing IN labels(x) }}",
+    "EXISTS {{ MATCH (x) WHERE label IN labels(x) }}",
+]
+# Parenthesized identity projections preserve the enclosing variable, both
+# directly in YIELD's WHERE and after an explicit WITH.
+for expression in ["({v})", "(({v}))", "( ( {v} ) )", "((`{v}`))"]:
+    for body in ["WITH " + expression + " AS {v} RETURN {v}", "RETURN " + expression + " AS {v}"]:
+        for keyword in ["EXISTS", "COUNT", "COLLECT"]:
+            subquery = keyword + " {{ " + body + " }}"
+            predicate = subquery if keyword == "EXISTS" else (
+                subquery + " = 1" if keyword == "COUNT" else "size(" + subquery + ") = 1")
+            YIELD_SCOPE_PREDICATES.append(predicate)
+for prefix in ["", "WITH 'Q' AS wanted ", "MATCH (seed:Q {id: 1}) "]:
+    for yielded, variable in [("label", "label"), ("label AS l", "l")]:
+        for predicate in YIELD_SCOPE_PREDICATES:
+            for position in ["yield-where", "yield-with-where"]:
+                bridge = f" WITH {variable}" if position == "yield-with-where" else ""
+                query = (prefix +
+                         f"CALL db.labels() YIELD {yielded}{bridge} WHERE " +
+                         predicate.format(v=variable) + f" RETURN {variable} AS v ORDER BY v")
+                add("subquery-scope", position, query)
+for prefix in ["WITH 'Q' AS wanted ", "MATCH (seed:Q {id: 1}) WITH seed, 'Q' AS wanted "]:
+    add("subquery-scope", "yield-where", prefix + "CALL db.labels() YIELD label "
+        "WHERE EXISTS { MATCH (x) WHERE label IN labels(x) AND label = wanted } RETURN label AS v ORDER BY v")
+
+# The same declaration owner checks ordinary expression subqueries too.
+for expression in ["n", "(n)", "((n))", "( ( n ) )", "((`n`))", "(n.x)", "((n.x))", "( ( n.x ) )", "(n.x) + 0"]:
+    source = "{x: 7}" if ".x" in expression else "1"
+    for body in ["WITH " + expression + " AS n RETURN n", "RETURN " + expression + " AS n"]:
+        for keyword in ["EXISTS", "COUNT", "COLLECT"]:
+            add("subquery-scope", "grouped-binding", "WITH " + source + " AS n RETURN " + keyword + " { " + body + " } AS v")
+
 # 12b'. A quantified group's step variables (#1211): inside the group's
 # predicates (an element's inline WHERE, the group's own WHERE) its node and
 # relationship variables are one iteration's node and relationship in every
@@ -1029,6 +1074,56 @@ for value in ["point({x:1.25,y:2.5})", "[true,false]"]:
             read = "MATCH (:TypedStart)-[n:TYPED_BINDING]->(:TypedEnd)"
         add("temporal-map-offset", "typed-predicate", f"WITH {value} AS p CREATE {pattern} SET n.v=p WITH p {read} WHERE n.v=p MERGE (h:TypedHit) RETURN count(h)", "tx")
         add("temporal-map-offset", "typed-case", f"WITH {value} AS p MERGE {pattern} SET n.v=CASE WHEN true THEN p ELSE null END RETURN n.v=p", "tx")
+# Scoped imports remain visible but are not implicit DISTINCT/grouping keys.
+# Exercise the same equivalence owner through WITH, RETURN, aggregates and
+# UNION, with containers, mixed numeric values and nulls.
+for payload in ["[]", "[{k: 1}]", "[{k: [1, null]}, {k: [2, null]}]"]:
+    for keys in ["[1, 1.0, null, null, 2]", "[[1], [1.0], [null], [null]]",
+                 "[{a: 1, b: null}, {b: null, a: 1.0}, {a: 2, b: null}]"]:
+        prefix = f"WITH {payload} AS payload, {keys} AS keys "
+        for scope in ["(payload, keys)", "(keys)", "(*)"]:
+            add("scoped-distinct", "projected-value", prefix + f"CALL {scope} {{ UNWIND keys AS each WITH DISTINCT each AS thing RETURN count(*) AS things }} RETURN things")
+        for projection in ["payload, each AS thing", "payload AS retained, each AS thing"]:
+            add("scoped-distinct", "projected-import", prefix + f"CALL (payload, keys) {{ UNWIND keys AS each WITH DISTINCT {projection} RETURN count(*) AS things }} RETURN things")
+        add("scoped-distinct", "nested", prefix + "CALL (payload, keys) { WITH keys CALL (keys) { UNWIND keys AS each WITH DISTINCT each RETURN count(*) AS c } RETURN c AS things } RETURN things")
+        add("scoped-distinct", "union", prefix + "CALL (payload, keys) { UNWIND keys AS each WITH DISTINCT each RETURN each AS thing UNION UNWIND keys AS each RETURN DISTINCT each AS thing } RETURN count(*) AS things")
+        add("scoped-distinct", "aggregate", prefix + "CALL (payload, keys) { UNWIND keys AS each WITH each AS thing, count(*) AS occurrences RETURN count(*) AS things } RETURN things")
+        add("scoped-distinct", "aggregate-distinct", prefix + "CALL (payload, keys) { UNWIND keys AS each RETURN collect(DISTINCT each) AS things } RETURN things")
+for body in ["UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a",
+             "UNWIND [2,3] AS y WITH y RETURN x*y AS a",
+             "UNWIND [2,2,3] AS y WITH DISTINCT x, y RETURN x*y AS a",
+             "UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x RETURN x*y AS a",
+             "UNWIND [2,2,3] AS y WITH y, count(*) AS c ORDER BY x RETURN x*y AS a",
+             "UNWIND [2,2,3] AS y RETURN DISTINCT x*y AS a ORDER BY x"]:
+    add("scoped-distinct", "retained-import", "WITH 11 AS x CALL (x) { " + body + " } RETURN a ORDER BY a")
+add("scoped-distinct", "dropped-local", "CALL () { WITH 11 AS x UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a } RETURN a")
+add("scoped-distinct", "dropped-legacy-import", "WITH 11 AS x CALL { WITH x UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a } RETURN a")
+add("scoped-distinct", "retained-map-order", "WITH {factor:11} AS x CALL (x) { UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x.factor RETURN x.factor*y AS a } RETURN a ORDER BY a")
+add("scoped-distinct", "dropped-local-order", "CALL () { WITH 11 AS x UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x RETURN y AS a } RETURN a")
+add("scoped-distinct", "dropped-local-return-order", "CALL () { WITH 11 AS x UNWIND [2,2,3] AS y RETURN DISTINCT y AS a ORDER BY x } RETURN a")
+add("scoped-distinct", "dropped-legacy-order", "WITH 11 AS x CALL { WITH x UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x RETURN y AS a } RETURN a")
+
+# Correlated subquery bodies (#1317 slice 7): every body shape a statement
+# shortcut accepts (label count, typed relationship count, LIMIT projection,
+# filtered count) over an imported node (a) or scalar (k), as EXISTS, COUNT,
+# COLLECT and CALL, plus uncorrelated controls that keep the shortcuts.
+CORRELATED_OUTER = "MATCH (a:Q) WITH a, a.id AS k"
+for match, ret in [("MATCH (a:Q)", "RETURN count(a) AS c"),
+                   ("MATCH (a)-[r:R]->()", "RETURN count(r) AS c"),
+                   ("MATCH (a)<-[r:R]-()", "RETURN count(r) AS c"),
+                   ("MATCH (a)", "RETURN a.id AS c LIMIT 5"),
+                   ("MATCH (b:Q) WHERE b.id > k", "RETURN count(b) AS c"),
+                   ("MATCH (b:Q) WHERE b.id > a.id", "RETURN count(b) AS c"),
+                   ("MATCH (b:Q {id: k})", "RETURN count(b) AS c"),
+                   ("MATCH (b:Q {id: a.id})", "RETURN b.id AS c LIMIT 5"),
+                   ("MATCH (b:Q)", "RETURN count(b) AS c"),
+                   ("MATCH ()-[r:R]->()", "RETURN count(r) AS c"),
+                   ("MATCH (b:Q)", "RETURN b.id AS c ORDER BY c LIMIT 2")]:
+    add("correlated-body", "exists", f"{CORRELATED_OUTER} RETURN k AS id, EXISTS {{ {match} }} AS v ORDER BY id")
+    add("correlated-body", "count", f"{CORRELATED_OUTER} RETURN k AS id, COUNT {{ {match} }} AS v ORDER BY id")
+    add("correlated-body", "collect", f"{CORRELATED_OUTER} RETURN k AS id, COLLECT {{ {match} {ret} }} AS v ORDER BY id")
+    add("correlated-body", "where", f"{CORRELATED_OUTER} WHERE COUNT {{ {match} }} > 0 RETURN k AS id ORDER BY id")
+    add("correlated-body", "call", f"{CORRELATED_OUTER} CALL (a, k) {{ {match} {ret} }} RETURN k AS id, c AS v ORDER BY id, v")
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:

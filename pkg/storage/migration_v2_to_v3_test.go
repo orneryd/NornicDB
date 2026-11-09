@@ -2,8 +2,10 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,7 +92,7 @@ func rewriteAsVersion3(t *testing.T, engine *BadgerEngine) {
 				for index, key := range entry.IndexKeys {
 					entry.IndexKeys[index] = legacyLowerCaseKey(key)
 				}
-				if err := putAccessMetaInTxn(txn, string(e.key[len(accessMetaKey("")):]), &entry); err != nil {
+				if _, err := accessMetaInTxn(txn, string(e.key[len(accessMetaKey("")):]), accessMetaWrite, &entry); err != nil {
 					return err
 				}
 			default:
@@ -156,7 +158,10 @@ func TestInstalledSnapshotCombinedUpgrade(t *testing.T) {
 	require.True(t, strings.HasPrefix(resolved, "/private/tmp/nornicdb-v3-installed-snapshot-"), "only scratch snapshots are allowed")
 	copyDir := filepath.Join(t.TempDir(), "badger")
 	require.NoError(t, exec.Command("/bin/cp", "-cR", source, copyDir).Run())
-	raw, err := badger.Open(badger.DefaultOptions(copyDir).WithLogger(nil))
+	raw, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(copyDir).WithLogger(nil)))
+	if raw != nil {
+		fixtureowner.Own(t, raw)
+	}
 	require.NoError(t, err)
 	before, nodes, edges := snapshotGraphDigest(t, raw)
 	var observed uint64
@@ -177,13 +182,19 @@ func TestInstalledSnapshotCombinedUpgrade(t *testing.T) {
 	}))
 	require.NoError(t, raw.Close())
 	t.Logf("offline snapshot version=%d, nodes=%d, edges=%d; only scratch clone replays the combined upgrade", observed, nodes, edges)
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: copyDir, AllowStorageUpgrade: true})
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: copyDir, AllowStorageUpgrade: true}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
 	require.Equal(t, storageVersionEdgeAdjacencyV3, version)
 	require.NoError(t, engine.Close())
-	raw, err = badger.Open(badger.DefaultOptions(copyDir).WithReadOnly(true).WithLogger(nil))
+	raw, err = fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(copyDir).WithReadOnly(true).WithLogger(nil)))
+	if raw != nil {
+		fixtureowner.Own(t, raw)
+	}
 	require.NoError(t, err)
 	after, afterNodes, afterEdges := snapshotGraphDigest(t, raw)
 	require.NoError(t, raw.Close())
@@ -218,8 +229,11 @@ func TestStoragePrefixAssignmentsRemainStable(t *testing.T) {
 }
 
 func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
-	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger"), AllowStorageUpgrade: true}
-	engine, err := NewBadgerEngineWithOptions(options)
+	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger"), AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -227,7 +241,7 @@ func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
 		}
 	})
 	node := &Node{ID: "test:legacy", Labels: []string{"Person"}}
-	_, err = engine.CreateNode(node)
+	_, err = engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	catalog, err := engine.GetIndexEntryCatalog(string(node.ID))
 	require.NoError(t, err)
@@ -263,10 +277,14 @@ func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
 	require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
 	require.NoError(t, engine.Close())
 	engine = nil
-	engine, err = NewBadgerEngineWithOptions(options)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
-	got, err := engine.GetAccessMeta(string(node.ID))
+	gotResult, err := engine.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: string(node.ID)})
 	require.NoError(t, err)
+	got := gotResult.Entry
 	require.NotNil(t, got)
 	require.Equal(t, int64(42), got.Fixed.AccessCount)
 	require.Equal(t, int64(7), got.Overflow["custom"])
@@ -279,8 +297,11 @@ func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
 }
 
 func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
-	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger"), AllowStorageUpgrade: true}
-	engine, err := NewBadgerEngineWithOptions(options)
+	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger"), AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -290,11 +311,11 @@ func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 	start := NodeID("nornic:007a09cd-ab24-4fbf-a307-07cb74ed2469")
 	end := NodeID("nornic:f2e09b17-6bc2-4f12-ac71-85ae3b346949")
 	for _, id := range []NodeID{start, end} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Room"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Room"}})
 		require.NoError(t, err)
 	}
 	edge := &Edge{ID: "nornic:legacy-edge", StartNode: start, EndNode: end, Type: "in_room"}
-	require.NoError(t, engine.CreateEdge(edge))
+	require.NoError(t, engine.CreateEdge(t.Context(), edge))
 	legacyKey := append([]byte{0x12}, []byte(string(start)+"\x00"+string(end)+"\x00"+edge.Type)...)
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
 		return txn.Set(legacyKey, []byte(edge.ID))
@@ -302,12 +323,15 @@ func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 	require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
 	require.NoError(t, engine.Close())
 	engine = nil
-	engine, err = NewBadgerEngineWithOptions(options)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
-	require.Equal(t, storageVersionEdgeAdjacencyV3, version)
-	got, err := engine.GetEdge(edge.ID)
+	require.Equal(t, storageVersionCurrent, version)
+	got, err := engine.GetEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	require.Equal(t, edge.ID, got.ID)
 	catalog, err := engine.GetIndexEntryCatalog(string(edge.ID))
@@ -323,8 +347,11 @@ func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 
 func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "badger")
-	options := BadgerOptions{DataDir: dataDir}
-	engine, err := NewBadgerEngineWithOptions(options)
+	options := BadgerOptions{DataDir: dataDir, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -338,7 +365,7 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 		{ID: lower, Labels: []string{"person"}},
 		{ID: both, Labels: []string{"Person", "Other"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	for _, edge := range []*Edge{
@@ -346,7 +373,7 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 		{ID: "case:knows", StartNode: upper, EndNode: lower, Type: "knows"},
 		{ID: "case:KNOWS2", StartNode: both, EndNode: lower, Type: "KNOWS"},
 	} {
-		require.NoError(t, engine.CreateEdge(edge))
+		require.NoError(t, engine.CreateEdge(t.Context(), edge))
 	}
 	// A deindexed node and relationship: their tombstones must follow the
 	// new keys.
@@ -354,9 +381,9 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 		catalog, err := engine.GetIndexEntryCatalog(id)
 		require.NoError(t, err)
 		require.NotNil(t, catalog)
-		require.NoError(t, engine.WriteIndexTombstones(catalog.IndexKeys))
+		require.NoError(t, engine.SetIndexTombstones(context.Background(), catalog.IndexKeys, true))
 		catalog.Deindexed = true
-		require.NoError(t, engine.PutIndexEntryCatalog(id, catalog))
+		require.NoError(t, engine.PutIndexEntryCatalog(context.Background(), id, catalog))
 	}
 	exactLabelKeys := keysUnder(t, engine, prefixLabelIndex)
 	exactTypeKeys := keysUnder(t, engine, prefixEdgeTypeIndex)
@@ -370,17 +397,23 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 	require.NoError(t, engine.Close())
 	engine = nil
 
-	_, err = NewBadgerEngineWithOptions(options)
+	unexpected, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if unexpected != nil {
+		fixtureowner.Own(t, unexpected)
+	}
 	var upgradeErr *ErrStorageUpgradeRequired
 	require.ErrorAs(t, err, &upgradeErr)
 	require.Equal(t, storageVersionPropKeyDictV2, upgradeErr.OnDisk)
 
 	options.AllowStorageUpgrade = true
-	engine, err = NewBadgerEngineWithOptions(options)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
-	require.Equal(t, storageVersionEdgeAdjacencyV3, version)
+	require.Equal(t, storageVersionCurrent, version)
 
 	require.Equal(t, exactLabelKeys, keysUnder(t, engine, prefixLabelIndex))
 	require.Equal(t, exactTypeKeys, keysUnder(t, engine, prefixEdgeTypeIndex))
@@ -409,34 +442,38 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 		sort.Strings(out)
 		return out
 	}
-	nodes, err := engine.GetNodesByLabel("Person")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"case:both", "case:upper"}, ids(nodes))
-	nodes, err = engine.GetNodesByLabel("person")
+	nodes, err = engine.GetNodesByLabel(context.Background(), "person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"case:lower"}, ids(nodes))
-	nodes, err = engine.GetNodesByLabel("PERSON")
+	nodes, err = engine.GetNodesByLabel(context.Background(), "PERSON")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 
 	for label, want := range map[string]int64{"Person": 2, "person": 1, "PERSON": 0, "Other": 1} {
-		count, err := engine.NodeCountByLabel(label)
+		count, err := engine.NodeCountByLabel(t.Context(), label)
 		require.NoError(t, err)
 		require.Equal(t, want, count, label)
 	}
 	for edgeType, want := range map[string]int64{"KNOWS": 2, "knows": 1, "Knows": 0} {
-		count, err := engine.EdgeCountByType(edgeType)
+		count, err := engine.EdgeCountByType(context.Background(), edgeType)
 		require.NoError(t, err)
 		require.Equal(t, want, count, edgeType)
 	}
-	edge := engine.GetEdgeBetween(upper, lower, "knows")
+	edge, err := engine.GetEdgeBetween(t.Context(), upper, lower, "knows")
+	require.NoError(t, err)
 	require.NotNil(t, edge)
 	require.Equal(t, EdgeID("case:knows"), edge.ID)
-	edge = engine.GetEdgeBetween(upper, lower, "KNOWS")
+	edge, err = engine.GetEdgeBetween(t.Context(), upper, lower, "KNOWS")
+	require.NoError(t, err)
 	require.NotNil(t, edge)
 	require.Equal(t, EdgeID("case:KNOWS"), edge.ID)
-	require.Nil(t, engine.GetEdgeBetween(upper, lower, "Knows"))
-	edges, err := engine.GetEdgesByType("knows")
+	edge, err = engine.GetEdgeBetween(t.Context(), upper, lower, "Knows")
+	require.NoError(t, err)
+	require.Nil(t, edge)
+	edges, err := engine.GetEdgesByType(context.Background(), "knows")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.True(t, strings.HasSuffix(string(edges[0].ID), "knows"))

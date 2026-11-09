@@ -15,12 +15,12 @@ import (
 // is saved (#945).
 func TestCachedSearchProcedureSeesIndexChanges(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	svc := search.NewServiceWithDimensions(store, 2)
+	svc := search.NewService(store, 2, nil)
 	exec := NewStorageExecutor(store)
 	exec.SetSearchService(svc)
 	ctx := context.Background()
 	node := &storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]any{"id": "source", "text": "source"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	const query = "CALL db.rretrieve({query: 'source', embedding: $v, limit: 10, minSimilarity: 0.01}) YIELD node RETURN node.id AS id"
 	params := map[string]any{"v": []float32{1, 0}}

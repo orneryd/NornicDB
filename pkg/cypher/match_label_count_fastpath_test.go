@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -15,42 +17,49 @@ type labelCountGuardEngine struct {
 	labelCountCalls int
 }
 
-func (e *labelCountGuardEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	if e.forbidLabelScan {
-		return nil, fmt.Errorf("GetNodesByLabel should not be called for simple labeled count")
-	}
-	return e.Engine.GetNodesByLabel(label)
+func (e *labelCountGuardEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return guardedNodeScan(e.forbidLabelScan, "GetNodesByLabel should not be called for simple labeled count", func() ([]*storage.Node, error) {
+		return e.Engine.GetNodesByLabel(ctx, label)
+	})
 }
 
-func (e *labelCountGuardEngine) AllNodes() ([]*storage.Node, error) {
-	if e.forbidLabelScan {
-		return nil, fmt.Errorf("AllNodes should not be called for simple labeled count")
-	}
-	return e.Engine.AllNodes()
+func (e *labelCountGuardEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return guardedNodeScan(e.forbidLabelScan, "AllNodes should not be called for simple labeled count", func() ([]*storage.Node, error) {
+		return e.Engine.AllNodes(ctx)
+	})
 }
 
-func (e *labelCountGuardEngine) NodeCountByLabel(label string) (int64, error) {
+func (e *labelCountGuardEngine) NodeCountByLabel(ctx context.Context, label string) (int64, error) {
 	e.labelCountCalls++
-	if counter, ok := e.Engine.(interface {
-		NodeCountByLabel(string) (int64, error)
-	}); ok {
-		return counter.NodeCountByLabel(label)
+	if counter, ok := e.Engine.(storage.LabelStatsEngine); ok {
+		return counter.NodeCountByLabel(ctx, label)
 	}
-	return storage.CountNodesWithLabel(context.Background(), e.Engine, label)
+	return storage.CountNodesWithLabel(ctx, e.Engine, label)
+}
+
+// ReadCountStore forwards the label-presence probe the count owners ask
+// before they read a counter, so counting through this guard still answers from
+// the counters.
+func (e *labelCountGuardEngine) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	e.labelCountCalls++
+	if reader, ok := e.Engine.(storage.CountStoreReadEngine); ok {
+		return reader.ReadCountStore(ctx, request)
+	}
+	return storage.CountStoreRead{}, nil
 }
 
 func TestMatchCountUsesLabelCountFastPath(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &labelCountGuardEngine{Engine: base}
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
-		_, err := eng.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:p-%d", i)), Labels: []string{"Person"}})
+		_, err := eng.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:p-%d", i)), Labels: []string{"Person"}})
 		require.NoError(t, err)
 	}
-	_, err := eng.CreateNode(&storage.Node{ID: "nornic:o-1", Labels: []string{"Other"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "nornic:o-1", Labels: []string{"Other"}})
 	require.NoError(t, err)
 
 	eng.forbidLabelScan = true
@@ -63,19 +72,19 @@ func TestMatchCountUsesLabelCountFastPath(t *testing.T) {
 }
 
 func TestMatchCountUsesLabelCountFastPathInsideTransaction(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	eng := &labelCountGuardEngine{Engine: base}
 
 	for i := 0; i < 3; i++ {
-		_, err = eng.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:person-%d", i)), Labels: []string{"Person"}})
+		_, err = eng.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:person-%d", i)), Labels: []string{"Person"}})
 		require.NoError(t, err)
 	}
-	_, err = eng.CreateNode(&storage.Node{ID: "nornic:other", Labels: []string{"Other"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "nornic:other", Labels: []string{"Other"}})
 	require.NoError(t, err)
 
-	tx, err := base.BeginTransaction()
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	txStore := &transactionStorageWrapper{
@@ -92,7 +101,7 @@ func TestMatchCountUsesLabelCountFastPathInsideTransaction(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
 	require.Equal(t, 1, eng.labelCountCalls)
 
-	_, err = txStore.CreateNode(&storage.Node{ID: "nornic:person-pending", Labels: []string{"Person"}})
+	_, err = txStore.CreateNode(t.Context(), &storage.Node{ID: "nornic:person-pending", Labels: []string{"Person"}})
 	require.NoError(t, err)
 	result, err = exec.Execute(context.Background(), "MATCH (person:Person) RETURN count(person) AS total", nil)
 	require.NoError(t, err)

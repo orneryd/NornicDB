@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -43,11 +45,11 @@ func runInt(t *testing.T, exec *StorageExecutor, ctx context.Context, q string) 
 // FlushWriteBehind, including the shapes that previously missed buffered edges
 // (unnamed-relationship expansion, relationship-property reads in type scans).
 func TestWriteBehind_AdjacencyParity(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour, // buffer never drains mid-test
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -102,7 +104,7 @@ func TestWriteBehind_AdjacencyParity(t *testing.T) {
 		buffered[q] = runInt(t, exec, ctx, q)
 	}
 
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	for _, q := range queries {
 		require.Equal(t, buffered[q], runInt(t, exec, ctx, q), "query differs after flush: %s", q)
@@ -117,11 +119,11 @@ func TestWriteBehind_AdjacencyParity(t *testing.T) {
 // SET on a buffered relationship must succeed (not report a conflict) and the
 // write must survive the flush.
 func TestWriteBehind_SetBufferedRelationship(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -142,7 +144,7 @@ func TestWriteBehind_SetBufferedRelationship(t *testing.T) {
 
 	require.Equal(t, int64(999), runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN r.w"))
 
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Equal(t, int64(999), runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN r.w"))
 }
 
@@ -150,114 +152,76 @@ func TestWriteBehind_SetBufferedRelationship(t *testing.T) {
 // drift: right after a DETACH DELETE of a node whose relationships are all
 // buffered, the type count must equal the post-flush count (no transient
 // under- or over-count).
+// The default-cache case also pins buffered GraphMutationVersion invalidation:
+// a warmed whole-type relationship count must change before the flush.
 func TestWriteBehind_DetachDeleteCountConsistency(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
-		DataDir:             t.TempDir(),
-		WriteBehind:         true,
-		WriteBehindInterval: time.Hour,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
+	for _, mode := range []struct {
+		name   string
+		policy []QueryCachePolicy
+		cached bool
+	}{
+		{"storage overlay cache disabled", []QueryCachePolicy{{MaxEntries: 0, TTL: 0}}, false},
+		{"query cache invalidation", nil, true},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+				DataDir:             t.TempDir(),
+				WriteBehind:         true,
+				WriteBehindInterval: time.Hour,
+			}))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = engine.Close() })
 
-	// Cache-less executor: this test pins the storage overlay, not the query
-	// result cache.
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(engine, "nornic"), 0, 0)
-	ctx := context.Background()
+			// Both cache modes must observe the buffered detach before and after flush.
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"), mode.policy...)
+			ctx := context.Background()
 
-	_, err = exec.Execute(ctx, "CREATE INDEX user_id IF NOT EXISTS FOR (n:User) ON (n.id)", nil)
-	require.NoError(t, err)
+			_, err = exec.Execute(ctx, "CREATE INDEX user_id IF NOT EXISTS FOR (n:User) ON (n.id)", nil)
+			require.NoError(t, err)
 
-	users := make([]map[string]any, 0, 50)
-	for i := 1; i <= 50; i++ {
-		users = append(users, map[string]any{"id": int64(i)})
+			users := make([]map[string]any, 0, 50)
+			for i := 1; i <= 50; i++ {
+				users = append(users, map[string]any{"id": int64(i)})
+			}
+			_, err = exec.Execute(ctx, "UNWIND $rows AS r CREATE (:User {id: r.id})", map[string]any{"rows": users})
+			require.NoError(t, err)
+
+			pairs := make([][]int64, 0, 50)
+			for i := 1; i <= 10; i++ {
+				for j := 0; j < 4; j++ {
+					pairs = append(pairs, []int64{int64(i), int64(11 + (i-1)*4 + j)})
+				}
+			}
+			for i := 11; i <= 20; i++ {
+				pairs = append(pairs, []int64{int64(i), int64(10 + i)})
+			}
+			_, err = exec.Execute(ctx,
+				"UNWIND $pairs AS p MATCH (n:User {id: p[0]}), (m:User {id: p[1]}) CREATE (n)-[:Friend {w: 1}]->(m)",
+				map[string]any{"pairs": pairs})
+			require.NoError(t, err)
+
+			before := runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN count(r)")
+			if mode.cached {
+				require.Equal(t, int64(50), before)
+			}
+
+			_, err = exec.Execute(ctx, "MATCH (n:User {id: 14}) DETACH DELETE n", nil)
+			require.NoError(t, err)
+
+			afterBuffered := runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN count(r)")
+			if mode.cached {
+				require.Equal(t, int64(48), afterBuffered, "cached whole-type count must be invalidated by the buffered delete")
+			}
+
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
+			afterFlushed := runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN count(r)")
+
+			require.Equal(t, before-2, afterFlushed, "user 14 has exactly two buffered :Friend edges")
+			require.Equal(t, afterFlushed, afterBuffered, "count right after DETACH DELETE must match the post-flush count")
+
+			if mode.cached {
+				require.Equal(t, int64(48), afterFlushed)
+			}
+		})
 	}
-	_, err = exec.Execute(ctx, "UNWIND $rows AS r CREATE (:User {id: r.id})", map[string]any{"rows": users})
-	require.NoError(t, err)
-
-	pairs := make([][]int64, 0, 50)
-	for i := 1; i <= 10; i++ {
-		for j := 0; j < 4; j++ {
-			pairs = append(pairs, []int64{int64(i), int64(11 + (i-1)*4 + j)})
-		}
-	}
-	for i := 11; i <= 20; i++ {
-		pairs = append(pairs, []int64{int64(i), int64(10 + i)})
-	}
-	_, err = exec.Execute(ctx,
-		"UNWIND $pairs AS p MATCH (n:User {id: p[0]}), (m:User {id: p[1]}) CREATE (n)-[:Friend {w: 1}]->(m)",
-		map[string]any{"pairs": pairs})
-	require.NoError(t, err)
-
-	before := runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN count(r)")
-
-	_, err = exec.Execute(ctx, "MATCH (n:User {id: 14}) DETACH DELETE n", nil)
-	require.NoError(t, err)
-
-	afterBuffered := runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN count(r)")
-
-	require.NoError(t, engine.FlushWriteBehind())
-	afterFlushed := runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN count(r)")
-
-	require.Equal(t, before-2, afterFlushed, "user 14 has exactly two buffered :Friend edges")
-	require.Equal(t, afterFlushed, afterBuffered, "count right after DETACH DELETE must match the post-flush count")
-}
-
-// TestWriteBehind_QueryCacheInvalidatesOnBufferedCommit pins monster's retest
-// @39f0f03f issue A: the executor's query-result cache keys on
-// GraphMutationVersion, which the buffered ACK did not advance. A cached read
-// that shares no label with the write (a whole-type relationship count) stayed
-// stale until flush. With the default cache enabled the count must reflect a
-// buffered DETACH DELETE immediately.
-func TestWriteBehind_QueryCacheInvalidatesOnBufferedCommit(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
-		DataDir:             t.TempDir(),
-		WriteBehind:         true,
-		WriteBehindInterval: time.Hour,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	// Default executor: query result cache ON (the regression path).
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
-	ctx := context.Background()
-
-	_, err = exec.Execute(ctx, "CREATE INDEX user_id IF NOT EXISTS FOR (n:User) ON (n.id)", nil)
-	require.NoError(t, err)
-
-	users := make([]map[string]any, 0, 50)
-	for i := 1; i <= 50; i++ {
-		users = append(users, map[string]any{"id": int64(i)})
-	}
-	_, err = exec.Execute(ctx, "UNWIND $rows AS r CREATE (:User {id: r.id})", map[string]any{"rows": users})
-	require.NoError(t, err)
-
-	pairs := make([][]int64, 0, 50)
-	for i := 1; i <= 10; i++ {
-		for j := 0; j < 4; j++ {
-			pairs = append(pairs, []int64{int64(i), int64(11 + (i-1)*4 + j)})
-		}
-	}
-	for i := 11; i <= 20; i++ {
-		pairs = append(pairs, []int64{int64(i), int64(10 + i)})
-	}
-	_, err = exec.Execute(ctx,
-		"UNWIND $pairs AS p MATCH (n:User {id: p[0]}), (m:User {id: p[1]}) CREATE (n)-[:Friend {w: 1}]->(m)",
-		map[string]any{"pairs": pairs})
-	require.NoError(t, err)
-
-	// Warm the cache with the pre-delete count.
-	before := runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN count(r)")
-	require.Equal(t, int64(50), before)
-
-	// Buffered DETACH DELETE: user 14 is involved in two :Friend edges
-	// (one incoming from user 1, one outgoing to user 24).
-	_, err = exec.Execute(ctx, "MATCH (n:User {id: 14}) DETACH DELETE n", nil)
-	require.NoError(t, err)
-
-	after := runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN count(r)")
-	require.Equal(t, int64(48), after, "cached whole-type count must be invalidated by the buffered delete")
-
-	// The flush must not change the answer.
-	require.NoError(t, engine.FlushWriteBehind())
-	require.Equal(t, int64(48), runInt(t, exec, ctx, "MATCH ()-[r:Friend]->() RETURN count(r)"))
 }

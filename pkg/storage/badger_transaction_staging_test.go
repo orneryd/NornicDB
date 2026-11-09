@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -13,9 +15,9 @@ import (
 // checks see them, its Badger transaction does not.
 func TestStagedKV_ExistenceSeesStagedWrites(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:committed", Labels: []string{"X"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:committed", Labels: []string{"X"}})
 	require.NoError(t, err)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	w := tx.staged()
@@ -57,31 +59,31 @@ func TestStagedKV_ExistenceSeesStagedWrites(t *testing.T) {
 // once: a transaction stages its freelist pops, so each later pop skips the
 // entries it already took.
 func TestTransaction_ReusesEachFreedNumericIDOnce(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory:      true,
 		EngineOptions: EngineOptions{IDFreelistTTL: 20 * time.Millisecond},
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
 	freed := map[uint64]bool{}
 	for i := 0; i < 3; i++ {
 		id := NodeID(fmt.Sprintf("test:old-%d", i))
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"X"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"X"}})
 		require.NoError(t, err)
 		num, ok := engine.idDict.lookupNodeNumID(id)
 		require.True(t, ok)
 		freed[num] = true
-		require.NoError(t, engine.DeleteNode(id))
+		require.NoError(t, engine.DeleteNode(t.Context(), id))
 	}
 	_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{})
 	require.NoError(t, err)
 	time.Sleep(40 * time.Millisecond)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		_, err := tx.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:new-%d", i)), Labels: []string{"X"}})
+		_, err := tx.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:new-%d", i)), Labels: []string{"X"}})
 		require.NoError(t, err)
 	}
 	require.NoError(t, tx.Commit())
@@ -101,16 +103,16 @@ func TestTransaction_ReusesEachFreedNumericIDOnce(t *testing.T) {
 func TestMatchEdgesBetween_OtherTypeBetweenThePair(t *testing.T) {
 	engine := newTestEngine(t)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"X"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"X"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS"}))
 	all := func(*Edge) bool { return true }
 
-	edges, err := engine.MatchEdgesBetween("test:a", "test:b", "LIKES", nil, all)
+	edges, err := engine.MatchEdgesBetween(context.Background(), "test:a", "test:b", "LIKES", nil, all)
 	require.NoError(t, err)
 	require.Empty(t, edges)
-	edges, err = engine.MatchEdgesBetween("test:a", "test:b", "KNOWS", nil, all)
+	edges, err = engine.MatchEdgesBetween(context.Background(), "test:a", "test:b", "KNOWS", nil, all)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 }

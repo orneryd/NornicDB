@@ -7,7 +7,7 @@ import (
 )
 
 func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -24,7 +24,7 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 			Labels:     []string{"User"},
 			Properties: map[string]interface{}{"email": "alice@example.com", "name": "Alice"},
 		}
-		_, err := engine.CreateNode(node1)
+		_, err := engine.CreateNode(t.Context(), node1)
 		if err != nil {
 			t.Fatalf("Failed to create first node: %v", err)
 		}
@@ -43,7 +43,7 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 			},
 		}
 
-		err = engine.BulkCreateNodes(nodes)
+		err = engine.BulkCreateNodes(t.Context(), nodes)
 		if err == nil {
 			t.Fatal("Expected constraint violation error, got nil")
 		}
@@ -53,7 +53,7 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 		}
 
 		// Verify no nodes were created (atomic - all or nothing)
-		_, err = engine.GetNode("user-2")
+		_, err = engine.GetNode(t.Context(), "user-2")
 		if err == nil {
 			t.Error("Node user-2 should not exist after failed bulk create")
 		}
@@ -61,7 +61,7 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 
 	t.Run("bulk create registers unique values", func(t *testing.T) {
 		// Create a new engine for this test
-		base2 := NewMemoryEngine()
+		base2 := newTestMemoryEngine(t)
 		defer base2.Close()
 		engine2 := NewNamespacedEngine(base2, "test")
 
@@ -84,7 +84,7 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 			},
 		}
 
-		err = engine2.BulkCreateNodes(nodes)
+		err = engine2.BulkCreateNodes(t.Context(), nodes)
 		if err != nil {
 			t.Fatalf("Bulk create should succeed: %v", err)
 		}
@@ -96,7 +96,7 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 			Properties: map[string]interface{}{"email": "a@test.com"},
 		}
 
-		_, err = engine2.CreateNode(node)
+		_, err = engine2.CreateNode(t.Context(), node)
 		if err == nil {
 			t.Fatal("Expected constraint violation error when creating duplicate after bulk create")
 		}
@@ -107,7 +107,7 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 	})
 
 	t.Run("bulk create with no constraints succeeds", func(t *testing.T) {
-		base3 := NewMemoryEngine()
+		base3 := newTestMemoryEngine(t)
 		defer base3.Close()
 		engine3 := NewNamespacedEngine(base3, "test")
 
@@ -125,7 +125,7 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 			},
 		}
 
-		err := engine3.BulkCreateNodes(nodes)
+		err := engine3.BulkCreateNodes(t.Context(), nodes)
 		if err != nil {
 			t.Fatalf("Bulk create without constraints should succeed: %v", err)
 		}

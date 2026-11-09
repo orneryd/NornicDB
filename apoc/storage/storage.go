@@ -4,42 +4,65 @@
 // with the underlying graph database storage engine.
 package storage
 
+import (
+	"context"
+	"maps"
+)
+
 // Storage defines the interface for graph database operations.
+//
+// Every point, path and traversal method is context-first: the caller's context
+// is the lifetime of that operation. It decides admission - a caller that has
+// already stopped is refused before any state is read or written - and it
+// decides whether a read may be published, so a read whose caller stopped
+// returns that caller's own error instead of a value. Ordinary results are
+// unchanged: a missing entity still reports its not-found error, an empty
+// collection is still the empty collection the call documents, and a write that
+// was accepted before the caller stopped keeps the completion it already had.
 type Storage interface {
 	// Node operations
-	GetNode(id int64) (*Node, error)
-	CreateNode(labels []string, properties map[string]interface{}) (*Node, error)
-	UpdateNode(id int64, properties map[string]interface{}) error
-	DeleteNode(id int64) error
-	AddLabels(id int64, labels []string) error
-	RemoveLabels(id int64, labels []string) error
+	GetNode(ctx context.Context, id int64) (*Node, error)
+	CreateNode(ctx context.Context, labels []string, properties map[string]interface{}) (*Node, error)
+	UpdateNode(ctx context.Context, id int64, properties map[string]interface{}) error
+	// DeleteNode also removes incident relationships, matching the native backend.
+	DeleteNode(ctx context.Context, id int64) error
+	AddLabels(ctx context.Context, id int64, labels []string) error
+	RemoveLabels(ctx context.Context, id int64, labels []string) error
 
 	// Bulk node operations
-	AllNodes() ([]*Node, error)
-	UpdateNodeLabels(id int64, labels []string) error
+	//
+	// A bulk read context is the read lifetime: a read whose context has already
+	// stopped returns that context error instead of a collection, so a caller
+	// never receives a partial whole-graph result. A completed read returns every
+	// entry, and an empty store still returns a non-nil empty collection.
+	AllNodes(ctx context.Context) ([]*Node, error)
+	UpdateNodeLabels(ctx context.Context, id int64, labels []string) error
 
 	// Relationship operations
-	GetRelationship(id int64) (*Relationship, error)
-	CreateRelationship(startID, endID int64, relType string, properties map[string]interface{}) (*Relationship, error)
-	UpdateRelationship(id int64, properties map[string]interface{}) error
-	DeleteRelationship(id int64) error
-	UpdateRelationshipType(id int64, newType string) error
+	GetRelationship(ctx context.Context, id int64) (*Relationship, error)
+	CreateRelationship(ctx context.Context, startID, endID int64, relType string, properties map[string]interface{}) (*Relationship, error)
+	UpdateRelationship(ctx context.Context, id int64, properties map[string]interface{}) error
+	DeleteRelationship(ctx context.Context, id int64) error
+	UpdateRelationshipType(ctx context.Context, id int64, newType string) error
 
 	// Bulk relationship operations
-	AllRelationships() ([]*Relationship, error)
+	//
+	// AllRelationships is context-first like AllNodes and follows the same
+	// contract.
+	AllRelationships(ctx context.Context) ([]*Relationship, error)
 
 	// Query operations
-	GetNodeRelationships(nodeID int64, relType string, direction Direction) ([]*Relationship, error)
-	GetNodeNeighbors(nodeID int64, relType string, direction Direction) ([]*Node, error)
-	GetNodeDegree(nodeID int64, relType string, direction Direction) (int, error)
+	GetNodeRelationships(ctx context.Context, nodeID int64, relType string, direction Direction) ([]*Relationship, error)
+	GetNodeNeighbors(ctx context.Context, nodeID int64, relType string, direction Direction) ([]*Node, error)
+	GetNodeDegree(ctx context.Context, nodeID int64, relType string, direction Direction) (int, error)
 
 	// Path operations
-	FindShortestPath(startID, endID int64, relType string, maxHops int) (*Path, error)
-	FindAllPaths(startID, endID int64, relType string, maxHops int) ([]*Path, error)
+	FindShortestPath(ctx context.Context, startID, endID int64, relType string, maxHops int) (*Path, error)
+	FindAllPaths(ctx context.Context, startID, endID int64, relType string, maxHops int) ([]*Path, error)
 
 	// Traversal operations
-	BFS(startID int64, relType string, maxDepth int, visitor func(*Node) bool) error
-	DFS(startID int64, relType string, maxDepth int, visitor func(*Node) bool) error
+	BFS(ctx context.Context, startID int64, relType string, maxDepth int, visitor func(*Node) bool) error
+	DFS(ctx context.Context, startID int64, relType string, maxDepth int, visitor func(*Node) bool) error
 }
 
 // Direction represents relationship direction.
@@ -94,14 +117,20 @@ func NewInMemoryStorage() *InMemoryStorage {
 	}
 }
 
-func (s *InMemoryStorage) GetNode(id int64) (*Node, error) {
+func (s *InMemoryStorage) GetNode(ctx context.Context, id int64) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if node, ok := s.nodes[id]; ok {
 		return node, nil
 	}
 	return nil, ErrNodeNotFound
 }
 
-func (s *InMemoryStorage) CreateNode(labels []string, properties map[string]interface{}) (*Node, error) {
+func (s *InMemoryStorage) CreateNode(ctx context.Context, labels []string, properties map[string]interface{}) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	node := &Node{
 		ID:         s.nextNodeID,
 		Labels:     labels,
@@ -112,28 +141,35 @@ func (s *InMemoryStorage) CreateNode(labels []string, properties map[string]inte
 	return node, nil
 }
 
-func (s *InMemoryStorage) UpdateNode(id int64, properties map[string]interface{}) error {
-	node, err := s.GetNode(id)
+func (s *InMemoryStorage) UpdateNode(ctx context.Context, id int64, properties map[string]interface{}) error {
+	node, err := s.GetNode(ctx, id)
 	if err != nil {
 		return err
 	}
-	for k, v := range properties {
-		node.Properties[k] = v
-	}
+	maps.Copy(node.Properties, properties)
 	return nil
 }
 
-func (s *InMemoryStorage) DeleteNode(id int64) error {
+func (s *InMemoryStorage) DeleteNode(ctx context.Context, id int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, ok := s.nodes[id]; !ok {
 		return ErrNodeNotFound
+	}
+	// Match the native backend's cascade contract. This mutation has passed
+	// admission; incident removals share its completion, without readmitting
+	// each child against a caller that may have stopped in the meantime.
+	for _, rel := range s.nodeRels[id] {
+		s.removeRelationship(rel)
 	}
 	delete(s.nodes, id)
 	delete(s.nodeRels, id)
 	return nil
 }
 
-func (s *InMemoryStorage) AddLabels(id int64, labels []string) error {
-	node, err := s.GetNode(id)
+func (s *InMemoryStorage) AddLabels(ctx context.Context, id int64, labels []string) error {
+	node, err := s.GetNode(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -145,8 +181,8 @@ func (s *InMemoryStorage) AddLabels(id int64, labels []string) error {
 	return nil
 }
 
-func (s *InMemoryStorage) RemoveLabels(id int64, labels []string) error {
-	node, err := s.GetNode(id)
+func (s *InMemoryStorage) RemoveLabels(ctx context.Context, id int64, labels []string) error {
+	node, err := s.GetNode(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -164,18 +200,21 @@ func (s *InMemoryStorage) RemoveLabels(id int64, labels []string) error {
 	return nil
 }
 
-func (s *InMemoryStorage) GetRelationship(id int64) (*Relationship, error) {
+func (s *InMemoryStorage) GetRelationship(ctx context.Context, id int64) (*Relationship, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if rel, ok := s.relationships[id]; ok {
 		return rel, nil
 	}
 	return nil, ErrRelationshipNotFound
 }
 
-func (s *InMemoryStorage) CreateRelationship(startID, endID int64, relType string, properties map[string]interface{}) (*Relationship, error) {
-	if _, err := s.GetNode(startID); err != nil {
+func (s *InMemoryStorage) CreateRelationship(ctx context.Context, startID, endID int64, relType string, properties map[string]interface{}) (*Relationship, error) {
+	if _, err := s.GetNode(ctx, startID); err != nil {
 		return nil, err
 	}
-	if _, err := s.GetNode(endID); err != nil {
+	if _, err := s.GetNode(ctx, endID); err != nil {
 		return nil, err
 	}
 
@@ -193,41 +232,69 @@ func (s *InMemoryStorage) CreateRelationship(startID, endID int64, relType strin
 	return rel, nil
 }
 
-func (s *InMemoryStorage) UpdateRelationship(id int64, properties map[string]interface{}) error {
-	rel, err := s.GetRelationship(id)
+func (s *InMemoryStorage) UpdateRelationship(ctx context.Context, id int64, properties map[string]interface{}) error {
+	rel, err := s.GetRelationship(ctx, id)
 	if err != nil {
 		return err
 	}
-	for k, v := range properties {
-		rel.Properties[k] = v
-	}
+	maps.Copy(rel.Properties, properties)
 	return nil
 }
 
-func (s *InMemoryStorage) DeleteRelationship(id int64) error {
-	rel, err := s.GetRelationship(id)
+func (s *InMemoryStorage) DeleteRelationship(ctx context.Context, id int64) error {
+	rel, err := s.GetRelationship(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	// Remove from node relationships
-	s.nodeRels[rel.StartNode] = removeRel(s.nodeRels[rel.StartNode], id)
-	s.nodeRels[rel.EndNode] = removeRel(s.nodeRels[rel.EndNode], id)
-
-	delete(s.relationships, id)
+	s.removeRelationship(rel)
 	return nil
 }
 
-func (s *InMemoryStorage) AllNodes() ([]*Node, error) {
-	nodes := make([]*Node, 0, len(s.nodes))
-	for _, node := range s.nodes {
-		nodes = append(nodes, node)
-	}
-	return nodes, nil
+// removeRelationship applies the resolved relationship's accepted mutation.
+// Public deletion admits and resolves first; a node cascade already owns both.
+func (s *InMemoryStorage) removeRelationship(rel *Relationship) {
+	s.nodeRels[rel.StartNode] = removeRel(s.nodeRels[rel.StartNode], rel.ID)
+	s.nodeRels[rel.EndNode] = removeRel(s.nodeRels[rel.EndNode], rel.ID)
+	delete(s.relationships, rel.ID)
 }
 
-func (s *InMemoryStorage) UpdateNodeLabels(id int64, labels []string) error {
-	node, err := s.GetNode(id)
+// bulkReadInterval is how many entries an in-memory bulk read copies between
+// checks of its caller context. Checking at an interval rather than on every
+// entry keeps the copy tight while bounding how long a read that already lost
+// its caller keeps working.
+const bulkReadInterval = 256
+
+// collectBulk copies one storage map into the collection a whole-graph read
+// returns. The caller context decides the read lifetime: the collection is
+// checked before the result is allocated, every bulkReadInterval entries, and
+// once more before the result is published, so a stopped read returns its
+// context error and no partial collection.
+func collectBulk[T any](ctx context.Context, entries map[int64]*T) ([]*T, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	items := make([]*T, 0, len(entries))
+	for _, entry := range entries {
+		items = append(items, entry)
+		if len(items)%bulkReadInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *InMemoryStorage) AllNodes(ctx context.Context) ([]*Node, error) {
+	return collectBulk(ctx, s.nodes)
+}
+
+func (s *InMemoryStorage) UpdateNodeLabels(ctx context.Context, id int64, labels []string) error {
+	node, err := s.GetNode(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -235,16 +302,12 @@ func (s *InMemoryStorage) UpdateNodeLabels(id int64, labels []string) error {
 	return nil
 }
 
-func (s *InMemoryStorage) AllRelationships() ([]*Relationship, error) {
-	rels := make([]*Relationship, 0, len(s.relationships))
-	for _, rel := range s.relationships {
-		rels = append(rels, rel)
-	}
-	return rels, nil
+func (s *InMemoryStorage) AllRelationships(ctx context.Context) ([]*Relationship, error) {
+	return collectBulk(ctx, s.relationships)
 }
 
-func (s *InMemoryStorage) UpdateRelationshipType(id int64, newType string) error {
-	rel, err := s.GetRelationship(id)
+func (s *InMemoryStorage) UpdateRelationshipType(ctx context.Context, id int64, newType string) error {
+	rel, err := s.GetRelationship(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -252,15 +315,20 @@ func (s *InMemoryStorage) UpdateRelationshipType(id int64, newType string) error
 	return nil
 }
 
-func (s *InMemoryStorage) GetNodeRelationships(nodeID int64, relType string, direction Direction) ([]*Relationship, error) {
-	if _, err := s.GetNode(nodeID); err != nil {
+func (s *InMemoryStorage) GetNodeRelationships(ctx context.Context, nodeID int64, relType string, direction Direction) ([]*Relationship, error) {
+	if _, err := s.GetNode(ctx, nodeID); err != nil {
 		return nil, err
 	}
 
 	rels := s.nodeRels[nodeID]
 	result := make([]*Relationship, 0)
 
-	for _, rel := range rels {
+	for index, rel := range rels {
+		if index%bulkReadInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		// Filter by type
 		if relType != "" && rel.Type != relType {
 			continue
@@ -281,11 +349,15 @@ func (s *InMemoryStorage) GetNodeRelationships(nodeID int64, relType string, dir
 		}
 	}
 
+	// A caller that stopped while this read filtered keeps no collection.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
-func (s *InMemoryStorage) GetNodeNeighbors(nodeID int64, relType string, direction Direction) ([]*Node, error) {
-	rels, err := s.GetNodeRelationships(nodeID, relType, direction)
+func (s *InMemoryStorage) GetNodeNeighbors(ctx context.Context, nodeID int64, relType string, direction Direction) ([]*Node, error) {
+	rels, err := s.GetNodeRelationships(ctx, nodeID, relType, direction)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +365,12 @@ func (s *InMemoryStorage) GetNodeNeighbors(nodeID int64, relType string, directi
 	neighbors := make([]*Node, 0)
 	seen := make(map[int64]bool)
 
-	for _, rel := range rels {
+	for index, rel := range rels {
+		if index%bulkReadInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		var neighborID int64
 		if rel.StartNode == nodeID {
 			neighborID = rel.EndNode
@@ -302,27 +379,37 @@ func (s *InMemoryStorage) GetNodeNeighbors(nodeID int64, relType string, directi
 		}
 
 		if !seen[neighborID] {
-			if neighbor, err := s.GetNode(neighborID); err == nil {
+			neighbor, err := s.GetNode(ctx, neighborID)
+			if err == nil {
 				neighbors = append(neighbors, neighbor)
 				seen[neighborID] = true
+			} else if ctxErr := ctx.Err(); ctxErr != nil {
+				// The caller stopped while this read resolved neighbors.
+				return nil, ctxErr
 			}
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return neighbors, nil
 }
 
-func (s *InMemoryStorage) GetNodeDegree(nodeID int64, relType string, direction Direction) (int, error) {
-	rels, err := s.GetNodeRelationships(nodeID, relType, direction)
+func (s *InMemoryStorage) GetNodeDegree(ctx context.Context, nodeID int64, relType string, direction Direction) (int, error) {
+	rels, err := s.GetNodeRelationships(ctx, nodeID, relType, direction)
 	if err != nil {
 		return 0, err
 	}
 	return len(rels), nil
 }
 
-func (s *InMemoryStorage) FindShortestPath(startID, endID int64, relType string, maxHops int) (*Path, error) {
+func (s *InMemoryStorage) FindShortestPath(ctx context.Context, startID, endID int64, relType string, maxHops int) (*Path, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if startID == endID {
-		start, err := s.GetNode(startID)
+		start, err := s.GetNode(ctx, startID)
 		if err != nil {
 			return nil, err
 		}
@@ -339,11 +426,14 @@ func (s *InMemoryStorage) FindShortestPath(startID, endID int64, relType string,
 	visited[startID] = true
 
 	for len(queue) > 0 && len(parent) < maxHops*100 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		currentID := queue[0]
 		queue = queue[1:]
 
 		if currentID == endID {
-			return s.reconstructPath(startID, endID, parent)
+			return s.reconstructPath(ctx, startID, endID, parent)
 		}
 
 		depth := 0
@@ -355,14 +445,31 @@ func (s *InMemoryStorage) FindShortestPath(startID, endID int64, relType string,
 			continue
 		}
 
-		neighbors, _ := s.GetNodeNeighbors(currentID, relType, DirectionBoth)
+		neighbors, err := s.GetNodeNeighbors(ctx, currentID, relType, DirectionBoth)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			// An ordinary read failure stays a dead end for this search, as it
+			// was before the caller's lifetime decided the read.
+		}
 		for _, neighbor := range neighbors {
 			if !visited[neighbor.ID] {
 				visited[neighbor.ID] = true
 
 				// Find the relationship
-				rels, _ := s.GetNodeRelationships(currentID, relType, DirectionBoth)
-				for _, rel := range rels {
+				rels, err := s.GetNodeRelationships(ctx, currentID, relType, DirectionBoth)
+				if err != nil {
+					if ctxErr := ctx.Err(); ctxErr != nil {
+						return nil, ctxErr
+					}
+				}
+				for index, rel := range rels {
+					if index%bulkReadInterval == 0 {
+						if err := ctx.Err(); err != nil {
+							return nil, err
+						}
+					}
 					if (rel.StartNode == currentID && rel.EndNode == neighbor.ID) ||
 						(rel.EndNode == currentID && rel.StartNode == neighbor.ID) {
 						parent[neighbor.ID] = &pathParent{
@@ -379,15 +486,29 @@ func (s *InMemoryStorage) FindShortestPath(startID, endID int64, relType string,
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, ErrPathNotFound
 }
 
-func (s *InMemoryStorage) FindAllPaths(startID, endID int64, relType string, maxHops int) ([]*Path, error) {
+func (s *InMemoryStorage) FindAllPaths(ctx context.Context, startID, endID int64, relType string, maxHops int) ([]*Path, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	paths := make([]*Path, 0)
 	visited := make(map[int64]bool)
+	var stopped error
 
 	var dfs func(currentID int64, path *Path, depth int)
 	dfs = func(currentID int64, path *Path, depth int) {
+		if stopped != nil {
+			return
+		}
+		if err := ctx.Err(); err != nil {
+			stopped = err
+			return
+		}
 		if currentID == endID {
 			// Found a path
 			pathCopy := &Path{
@@ -405,12 +526,30 @@ func (s *InMemoryStorage) FindAllPaths(startID, endID int64, relType string, max
 
 		visited[currentID] = true
 
-		neighbors, _ := s.GetNodeNeighbors(currentID, relType, DirectionBoth)
+		neighbors, err := s.GetNodeNeighbors(ctx, currentID, relType, DirectionBoth)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				stopped = ctxErr
+				return
+			}
+		}
 		for _, neighbor := range neighbors {
 			if !visited[neighbor.ID] {
 				// Find relationship
-				rels, _ := s.GetNodeRelationships(currentID, relType, DirectionBoth)
-				for _, rel := range rels {
+				rels, err := s.GetNodeRelationships(ctx, currentID, relType, DirectionBoth)
+				if err != nil {
+					if ctxErr := ctx.Err(); ctxErr != nil {
+						stopped = ctxErr
+						return
+					}
+				}
+				for index, rel := range rels {
+					if index%bulkReadInterval == 0 {
+						if err := ctx.Err(); err != nil {
+							stopped = err
+							return
+						}
+					}
 					if (rel.StartNode == currentID && rel.EndNode == neighbor.ID) ||
 						(rel.EndNode == currentID && rel.StartNode == neighbor.ID) {
 
@@ -432,7 +571,7 @@ func (s *InMemoryStorage) FindAllPaths(startID, endID int64, relType string, max
 		visited[currentID] = false
 	}
 
-	start, err := s.GetNode(startID)
+	start, err := s.GetNode(ctx, startID)
 	if err != nil {
 		return nil, err
 	}
@@ -445,10 +584,17 @@ func (s *InMemoryStorage) FindAllPaths(startID, endID int64, relType string, max
 
 	dfs(startID, initialPath, 0)
 
+	if stopped != nil {
+		return nil, stopped
+	}
+	// A caller that stopped while this read collected keeps no partial path list.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return paths, nil
 }
 
-func (s *InMemoryStorage) BFS(startID int64, relType string, maxDepth int, visitor func(*Node) bool) error {
+func (s *InMemoryStorage) BFS(ctx context.Context, startID int64, relType string, maxDepth int, visitor func(*Node) bool) error {
 	visited := make(map[int64]bool)
 	queue := []nodeDepth{{nodeID: startID, depth: 0}}
 	visited[startID] = true
@@ -457,12 +603,19 @@ func (s *InMemoryStorage) BFS(startID int64, relType string, maxDepth int, visit
 		current := queue[0]
 		queue = queue[1:]
 
-		node, err := s.GetNode(current.nodeID)
+		node, err := s.GetNode(ctx, current.nodeID)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			continue
 		}
 
-		if !visitor(node) {
+		keepGoing := visitor(node)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !keepGoing {
 			return nil
 		}
 
@@ -470,7 +623,12 @@ func (s *InMemoryStorage) BFS(startID int64, relType string, maxDepth int, visit
 			continue
 		}
 
-		neighbors, _ := s.GetNodeNeighbors(current.nodeID, relType, DirectionBoth)
+		neighbors, err := s.GetNodeNeighbors(ctx, current.nodeID, relType, DirectionBoth)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+		}
 		for _, neighbor := range neighbors {
 			if !visited[neighbor.ID] {
 				visited[neighbor.ID] = true
@@ -479,22 +637,36 @@ func (s *InMemoryStorage) BFS(startID int64, relType string, maxDepth int, visit
 		}
 	}
 
-	return nil
+	return ctx.Err()
 }
 
-func (s *InMemoryStorage) DFS(startID int64, relType string, maxDepth int, visitor func(*Node) bool) error {
+func (s *InMemoryStorage) DFS(ctx context.Context, startID int64, relType string, maxDepth int, visitor func(*Node) bool) error {
 	visited := make(map[int64]bool)
+	var stopped error
 
 	var dfs func(nodeID int64, depth int) bool
 	dfs = func(nodeID int64, depth int) bool {
+		if err := ctx.Err(); err != nil {
+			stopped = err
+			return false
+		}
 		visited[nodeID] = true
 
-		node, err := s.GetNode(nodeID)
+		node, err := s.GetNode(ctx, nodeID)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				stopped = ctxErr
+				return false
+			}
 			return true
 		}
 
-		if !visitor(node) {
+		keepGoing := visitor(node)
+		if err := ctx.Err(); err != nil {
+			stopped = err
+			return false
+		}
+		if !keepGoing {
 			return false
 		}
 
@@ -502,7 +674,13 @@ func (s *InMemoryStorage) DFS(startID int64, relType string, maxDepth int, visit
 			return true
 		}
 
-		neighbors, _ := s.GetNodeNeighbors(nodeID, relType, DirectionBoth)
+		neighbors, err := s.GetNodeNeighbors(ctx, nodeID, relType, DirectionBoth)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				stopped = ctxErr
+				return false
+			}
+		}
 		for _, neighbor := range neighbors {
 			if !visited[neighbor.ID] {
 				if !dfs(neighbor.ID, depth+1) {
@@ -515,7 +693,10 @@ func (s *InMemoryStorage) DFS(startID int64, relType string, maxDepth int, visit
 	}
 
 	dfs(startID, 0)
-	return nil
+	if stopped != nil {
+		return stopped
+	}
+	return ctx.Err()
 }
 
 // Helper types and functions
@@ -531,13 +712,13 @@ type nodeDepth struct {
 	depth  int
 }
 
-func (s *InMemoryStorage) reconstructPath(startID, endID int64, parent map[int64]*pathParent) (*Path, error) {
+func (s *InMemoryStorage) reconstructPath(ctx context.Context, startID, endID int64, parent map[int64]*pathParent) (*Path, error) {
 	nodes := make([]*Node, 0)
 	rels := make([]*Relationship, 0)
 
 	currentID := endID
 	for currentID != startID {
-		node, err := s.GetNode(currentID)
+		node, err := s.GetNode(ctx, currentID)
 		if err != nil {
 			return nil, err
 		}
@@ -551,7 +732,7 @@ func (s *InMemoryStorage) reconstructPath(startID, endID int64, parent map[int64
 		}
 	}
 
-	start, err := s.GetNode(startID)
+	start, err := s.GetNode(ctx, startID)
 	if err != nil {
 		return nil, err
 	}

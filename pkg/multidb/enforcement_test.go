@@ -3,9 +3,12 @@ package multidb
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -42,15 +45,15 @@ func (c *manualClock) Advance(d time.Duration) {
 // setupTestManager creates a DatabaseManager with a test database.
 func setupTestManager(t *testing.T) (*DatabaseManager, string) {
 	t.Helper()
-	inner := storage.NewMemoryEngine()
-	manager, err := NewDatabaseManager(inner, nil)
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		manager.Close()
 	})
 
 	dbName := "testdb"
-	err = manager.CreateDatabase(dbName)
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: dbName})
 	require.NoError(t, err)
 
 	return manager, dbName
@@ -60,7 +63,7 @@ func setupTestManager(t *testing.T) (*DatabaseManager, string) {
 func setupTestManagerWithLimits(t *testing.T, limits *Limits) (*DatabaseManager, string) {
 	t.Helper()
 	manager, dbName := setupTestManager(t)
-	err := manager.SetDatabaseLimits(dbName, limits)
+	err := manager.SetDatabaseLimits(t.Context(), dbName, limits)
 	require.NoError(t, err)
 	return manager, dbName
 }
@@ -82,19 +85,21 @@ func TestDatabaseLimitChecker_CheckStorageLimits_NoLimits(t *testing.T) {
 			ID:     storage.NodeID("node-" + string(rune(i))),
 			Labels: []string{"Test"},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
 	// Get limit checker (should have no limits)
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	// Should not error with no limits
-	err = checker.CheckStorageLimits("create_node", nil, nil)
+	err = checker.CheckStorageLimits(t.Context(), "create_node", nil, nil)
 	assert.NoError(t, err)
 
-	err = checker.CheckStorageLimits("create_edge", nil, nil)
+	err = checker.CheckStorageLimits(t.Context(), "create_edge", nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -115,16 +120,18 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxNodes(t *testing.T) {
 			ID:     storage.NodeID("node-" + string(rune(i))),
 			Labels: []string{"Test"},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
 	// Get limit checker
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	// Should fail when at limit
-	err = checker.CheckStorageLimits("create_node", nil, nil)
+	err = checker.CheckStorageLimits(t.Context(), "create_node", nil, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 	assert.Contains(t, err.Error(), "max_nodes limit")
@@ -149,97 +156,104 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxNodes_UnderLimit(t *testing.
 			ID:     storage.NodeID("node-" + string(rune(i))),
 			Labels: []string{"Test"},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	// Should succeed when under limit
-	err = checker.CheckStorageLimits("create_node", nil, nil)
+	err = checker.CheckStorageLimits(t.Context(), "create_node", nil, nil)
 	assert.NoError(t, err)
 }
 
-func TestDatabaseLimitChecker_CheckStorageLimits_MaxEdges(t *testing.T) {
-	manager, dbName := setupTestManagerWithLimits(t, &Limits{
-		Storage: StorageLimits{
-			MaxNodes: 0, // Unlimited
-			MaxEdges: 3,
-		},
-	})
-
-	store, err := manager.GetStorage(dbName)
-	require.NoError(t, err)
-
-	// Create nodes first
-	node1 := &storage.Node{ID: storage.NodeID("node-1"), Labels: []string{"Test"}}
-	node2 := &storage.Node{ID: storage.NodeID("node-2"), Labels: []string{"Test"}}
-	_, err = store.CreateNode(node1)
-	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
-	require.NoError(t, err)
-
-	// Create edges up to limit
-	for i := 0; i < 3; i++ {
-		edge := &storage.Edge{
-			ID:        storage.EdgeID("edge-" + string(rune(i))),
-			StartNode: storage.NodeID("node-1"),
-			EndNode:   storage.NodeID("node-2"),
-			Type:      "RELATES_TO",
-		}
-		err := store.CreateEdge(edge)
+// TestDatabaseLimitChecker_CheckStorageLimits_MaxEdgesCapacity is the canonical
+// MaxEdges boundary table: under-limit and exactly-at-limit
+// cases share one seed fixture while keeping each case's original
+// assertions.
+func TestDatabaseLimitChecker_CheckStorageLimits_MaxEdgesCapacity(t *testing.T) {
+	seedEdgeEndpoints := func(t *testing.T, manager *DatabaseManager, dbName string) storage.Engine {
+		t.Helper()
+		store, err := manager.GetStorage(dbName)
 		require.NoError(t, err)
+		node1 := &storage.Node{ID: storage.NodeID("node-1"), Labels: []string{"Test"}}
+		node2 := &storage.Node{ID: storage.NodeID("node-2"), Labels: []string{"Test"}}
+		_, err = store.CreateNode(t.Context(), node1)
+		require.NoError(t, err)
+		_, err = store.CreateNode(t.Context(), node2)
+		require.NoError(t, err)
+		return store
 	}
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	// Should fail when at limit
-	err = checker.CheckStorageLimits("create_edge", nil, nil)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrStorageLimitExceeded)
-	assert.Contains(t, err.Error(), "max_edges limit")
-	assert.Contains(t, err.Error(), "3/3")
-}
-
-func TestDatabaseLimitChecker_CheckStorageLimits_MaxEdges_UnderLimit(t *testing.T) {
-	manager, dbName := setupTestManagerWithLimits(t, &Limits{
-		Storage: StorageLimits{
-			MaxNodes: 0,
-			MaxEdges: 10,
+	for _, tc := range []struct {
+		name      string
+		maxEdges  int64
+		seedEdges int
+		wantErr   bool
+		token     string
+		countPair string
+		message   localization.MessageID
+	}{
+		{
+			// Original MaxEdges_UnderLimit: headroom stays writable.
+			name:      "under-limit",
+			maxEdges:  10,
+			seedEdges: 3,
 		},
-	})
+		{
+			// Original MaxEdges: exactly at the configured cap.
+			name:      "at-limit",
+			maxEdges:  3,
+			seedEdges: 3,
+			wantErr:   true,
+			token:     "max_edges limit",
+			countPair: "3/3",
+			message:   localization.MessageMultidbMaxEdgesReached,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager, dbName := setupTestManagerWithLimits(t, &Limits{
+				Storage: StorageLimits{
+					MaxNodes: 0, // Unlimited
+					MaxEdges: tc.maxEdges,
+				},
+			})
+			store := seedEdgeEndpoints(t, manager, dbName)
 
-	store, err := manager.GetStorage(dbName)
-	require.NoError(t, err)
+			for i := 0; i < tc.seedEdges; i++ {
+				edge := &storage.Edge{
+					ID:        storage.EdgeID("edge-" + strconv.Itoa(i)),
+					StartNode: storage.NodeID("node-1"),
+					EndNode:   storage.NodeID("node-2"),
+					Type:      "RELATES_TO",
+				}
+				require.NoError(t, store.CreateEdge(t.Context(), edge))
+			}
+			if !tc.wantErr {
+				require.Less(t, int64(tc.seedEdges), tc.maxEdges, "under-limit case must keep headroom")
+			}
 
-	// Create nodes
-	node1 := &storage.Node{ID: storage.NodeID("node-1"), Labels: []string{"Test"}}
-	node2 := &storage.Node{ID: storage.NodeID("node-2"), Labels: []string{"Test"}}
-	_, err = store.CreateNode(node1)
-	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
-	require.NoError(t, err)
+			manager.mu.Lock()
+			_, checker, err := manager.databaseViewLocked(dbName, false)
+			manager.mu.Unlock()
+			require.NoError(t, err)
+			require.NotNil(t, checker)
 
-	// Create edges under limit
-	for i := 0; i < 3; i++ {
-		edge := &storage.Edge{
-			ID:        storage.EdgeID("edge-" + string(rune(i))),
-			StartNode: storage.NodeID("node-1"),
-			EndNode:   storage.NodeID("node-2"),
-			Type:      "RELATES_TO",
-		}
-		err := store.CreateEdge(edge)
-		require.NoError(t, err)
+			err = checker.CheckStorageLimits(t.Context(), "create_edge", nil, nil)
+			if !tc.wantErr {
+				assert.NoError(t, err)
+				return
+			}
+			assert.Error(t, err)
+			assert.ErrorIs(t, err, ErrStorageLimitExceeded)
+			assert.Contains(t, err.Error(), tc.token)
+			assert.Contains(t, err.Error(), tc.countPair)
+			requireLocalizedMessageID(t, err, tc.message)
+		})
 	}
-
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	// Should succeed when under limit
-	err = checker.CheckStorageLimits("create_edge", nil, nil)
-	assert.NoError(t, err)
 }
 
 func TestDatabaseLimitChecker_CheckStorageLimits_InvalidOperation(t *testing.T) {
@@ -250,11 +264,13 @@ func TestDatabaseLimitChecker_CheckStorageLimits_InvalidOperation(t *testing.T) 
 		},
 	})
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	// Invalid operation should not error (just not checked)
-	err = checker.CheckStorageLimits("invalid_op", nil, nil)
+	err = checker.CheckStorageLimits(t.Context(), "invalid_op", nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -280,14 +296,16 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Node(t *testing.T) {
 			"name": "Small Node",
 		},
 	}
-	_, err = store.CreateNode(smallNode)
+	_, err = store.CreateNode(t.Context(), smallNode)
 	require.NoError(t, err)
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	// Get current size
-	currentSize, _, _ := manager.GetStorageSize(dbName)
+	currentSize, _, _ := manager.GetStorageSize(context.Background(), dbName)
 
 	// Create a large node that would exceed the limit
 	largeNode := &storage.Node{
@@ -299,7 +317,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Node(t *testing.T) {
 	}
 
 	// Should fail with clear error message
-	err = checker.CheckStorageLimits("create_node", largeNode, nil)
+	err = checker.CheckStorageLimits(t.Context(), "create_node", largeNode, nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 	assert.Contains(t, err.Error(), "max_bytes limit")
@@ -328,9 +346,9 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Edge(t *testing.T) {
 	// Create nodes first
 	node1 := &storage.Node{ID: storage.NodeID("node-1"), Labels: []string{"Test"}}
 	node2 := &storage.Node{ID: storage.NodeID("node-2"), Labels: []string{"Test"}}
-	_, err = store.CreateNode(node1)
+	_, err = store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// Create a small edge
@@ -343,14 +361,16 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Edge(t *testing.T) {
 			"weight": 1.0,
 		},
 	}
-	err = store.CreateEdge(smallEdge)
+	err = store.CreateEdge(t.Context(), smallEdge)
 	require.NoError(t, err)
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	// Get current size
-	currentSize, _, _ := manager.GetStorageSize(dbName)
+	currentSize, _, _ := manager.GetStorageSize(context.Background(), dbName)
 
 	// Create a large edge that would exceed the limit
 	largeEdge := &storage.Edge{
@@ -364,7 +384,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Edge(t *testing.T) {
 	}
 
 	// Should fail with clear error message
-	err = checker.CheckStorageLimits("create_edge", nil, largeEdge)
+	err = checker.CheckStorageLimits(t.Context(), "create_edge", nil, largeEdge)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 	assert.Contains(t, err.Error(), "max_bytes limit")
@@ -399,10 +419,12 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_UnderLimit(t *testing.
 			"data": "Some data",
 		},
 	}
-	_, err = store.CreateNode(node)
+	_, err = store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	// Create another small node that should fit
@@ -415,7 +437,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_UnderLimit(t *testing.
 	}
 
 	// Should succeed when under limit
-	err = checker.CheckStorageLimits("create_node", smallNode, nil)
+	err = checker.CheckStorageLimits(t.Context(), "create_node", smallNode, nil)
 	assert.NoError(t, err)
 }
 
@@ -437,14 +459,16 @@ func TestDatabaseLimitChecker_CheckStorageLimits_ErrorMessages_AllLimits(t *test
 				ID:     storage.NodeID("node-" + string(rune(i))),
 				Labels: []string{"Test"},
 			}
-			_, err := store.CreateNode(node)
+			_, err := store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 
-		checker, err := newDatabaseLimitChecker(manager, dbName)
+		manager.mu.Lock()
+		_, checker, err := manager.databaseViewLocked(dbName, false)
+		manager.mu.Unlock()
 		require.NoError(t, err)
 
-		err = checker.CheckStorageLimits("create_node", nil, nil)
+		err = checker.CheckStorageLimits(t.Context(), "create_node", nil, nil)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 		assert.Contains(t, err.Error(), "max_nodes limit")
@@ -466,9 +490,9 @@ func TestDatabaseLimitChecker_CheckStorageLimits_ErrorMessages_AllLimits(t *test
 		// Create nodes first
 		node1 := &storage.Node{ID: storage.NodeID("node-1"), Labels: []string{"Test"}}
 		node2 := &storage.Node{ID: storage.NodeID("node-2"), Labels: []string{"Test"}}
-		_, err = store.CreateNode(node1)
+		_, err = store.CreateNode(t.Context(), node1)
 		require.NoError(t, err)
-		_, err = store.CreateNode(node2)
+		_, err = store.CreateNode(t.Context(), node2)
 		require.NoError(t, err)
 
 		// Create edges up to limit
@@ -479,14 +503,16 @@ func TestDatabaseLimitChecker_CheckStorageLimits_ErrorMessages_AllLimits(t *test
 				EndNode:   storage.NodeID("node-2"),
 				Type:      "RELATES_TO",
 			}
-			err := store.CreateEdge(edge)
+			err := store.CreateEdge(t.Context(), edge)
 			require.NoError(t, err)
 		}
 
-		checker, err := newDatabaseLimitChecker(manager, dbName)
+		manager.mu.Lock()
+		_, checker, err := manager.databaseViewLocked(dbName, false)
+		manager.mu.Unlock()
 		require.NoError(t, err)
 
-		err = checker.CheckStorageLimits("create_edge", nil, nil)
+		err = checker.CheckStorageLimits(t.Context(), "create_edge", nil, nil)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 		assert.Contains(t, err.Error(), "max_edges limit")
@@ -504,7 +530,9 @@ func TestDatabaseLimitChecker_CheckStorageLimits_ErrorMessages_AllLimits(t *test
 			},
 		})
 
-		checker, err := newDatabaseLimitChecker(manager, dbName)
+		manager.mu.Lock()
+		_, checker, err := manager.databaseViewLocked(dbName, false)
+		manager.mu.Unlock()
 		require.NoError(t, err)
 
 		// Create a node that would exceed the limit
@@ -516,7 +544,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_ErrorMessages_AllLimits(t *test
 			},
 		}
 
-		err = checker.CheckStorageLimits("create_node", largeNode, nil)
+		err = checker.CheckStorageLimits(t.Context(), "create_node", largeNode, nil)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 		assert.Contains(t, err.Error(), "max_bytes limit")
@@ -532,7 +560,9 @@ func TestDatabaseLimitChecker_CheckStorageLimits_ErrorMessages_AllLimits(t *test
 func TestDatabaseLimitChecker_CheckQueryLimits_NoLimits(t *testing.T) {
 	manager, dbName := setupTestManager(t)
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -543,73 +573,44 @@ func TestDatabaseLimitChecker_CheckQueryLimits_NoLimits(t *testing.T) {
 }
 
 func TestDatabaseLimitChecker_CheckQueryLimits_MaxConcurrentQueries(t *testing.T) {
-	manager, dbName := setupTestManagerWithLimits(t, &Limits{
-		Query: QueryLimits{
-			MaxConcurrentQueries: 2,
-			MaxQueryTime:         0, // No timeout
-		},
-	})
-
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// First query should succeed
-	_, cancel1, err := checker.CheckQueryLimits(ctx)
-	require.NoError(t, err)
-
-	// Second query should succeed
-	_, cancel2, err := checker.CheckQueryLimits(ctx)
-	require.NoError(t, err)
-
-	// Third query should fail (at limit)
-	_, _, err = checker.CheckQueryLimits(ctx)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrQueryLimitExceeded)
-	assert.Contains(t, err.Error(), "max_concurrent_queries limit")
-	assert.Contains(t, err.Error(), "2/2")
-	requireLocalizedMessageID(t, err, localization.MessageMultidbMaxConcurrentQueries)
-
-	// Cleanup
-	cancel1()
-	cancel2()
-}
-
-func TestDatabaseLimitChecker_CheckQueryLimits_MaxConcurrentQueries_Decrement(t *testing.T) {
-	manager, dbName := setupTestManagerWithLimits(t, &Limits{
-		Query: QueryLimits{
-			MaxConcurrentQueries: 2,
-			MaxQueryTime:         0,
-		},
-	})
-
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Fill up to limit
-	_, cancel1, err := checker.CheckQueryLimits(ctx)
-	require.NoError(t, err)
-	_, cancel2, err := checker.CheckQueryLimits(ctx)
-	require.NoError(t, err)
-
-	// Should be at limit
-	_, _, err = checker.CheckQueryLimits(ctx)
-	assert.Error(t, err)
-
-	// Release one query
-	cancel1()
-
-	// Should now be able to start another query
-	ctx3, cancel3, err := checker.CheckQueryLimits(ctx)
-	require.NoError(t, err)
-	assert.NotNil(t, ctx3)
-
-	// Cleanup
-	cancel2()
-	cancel3()
+	for _, releaseAndRetry := range []bool{false, true} {
+		name := "at-capacity"
+		if releaseAndRetry {
+			name = "decrement-restores-slot"
+		}
+		t.Run(name, func(t *testing.T) {
+			manager, dbName := setupTestManagerWithLimits(t, &Limits{Query: QueryLimits{MaxConcurrentQueries: 2, MaxQueryTime: 0}})
+			manager.mu.Lock()
+			_, checker, err := manager.databaseViewLocked(dbName, false)
+			manager.mu.Unlock()
+			require.NoError(t, err)
+			ctx := context.Background()
+			_, cancel1, err := checker.CheckQueryLimits(ctx)
+			require.NoError(t, err)
+			defer func() {
+				if cancel1 != nil {
+					cancel1()
+				}
+			}()
+			_, cancel2, err := checker.CheckQueryLimits(ctx)
+			require.NoError(t, err)
+			defer cancel2()
+			_, _, err = checker.CheckQueryLimits(ctx)
+			assert.Error(t, err)
+			assert.ErrorIs(t, err, ErrQueryLimitExceeded)
+			assert.Contains(t, err.Error(), "max_concurrent_queries limit")
+			assert.Contains(t, err.Error(), "2/2")
+			requireLocalizedMessageID(t, err, localization.MessageMultidbMaxConcurrentQueries)
+			if releaseAndRetry {
+				cancel1()
+				cancel1 = nil
+				ctx3, cancel3, err := checker.CheckQueryLimits(ctx)
+				require.NoError(t, err)
+				defer cancel3()
+				assert.NotNil(t, ctx3)
+			}
+		})
+	}
 }
 
 func TestDatabaseLimitChecker_CheckQueryLimits_MaxQueryTime(t *testing.T) {
@@ -620,7 +621,9 @@ func TestDatabaseLimitChecker_CheckQueryLimits_MaxQueryTime(t *testing.T) {
 		},
 	})
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -652,7 +655,9 @@ func TestDatabaseLimitChecker_CheckQueryLimits_ConcurrentAndTimeout(t *testing.T
 		},
 	})
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -678,7 +683,9 @@ func TestDatabaseLimitChecker_GetQueryLimits(t *testing.T) {
 
 	manager, dbName := setupTestManagerWithLimits(t, limits)
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	queryLimits := checker.GetQueryLimits()
@@ -694,7 +701,9 @@ func TestDatabaseLimitChecker_GetQueryLimits(t *testing.T) {
 func TestDatabaseLimitChecker_GetQueryLimits_NoLimits(t *testing.T) {
 	manager, dbName := setupTestManager(t)
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	queryLimits := checker.GetQueryLimits()
@@ -702,143 +711,117 @@ func TestDatabaseLimitChecker_GetQueryLimits_NoLimits(t *testing.T) {
 }
 
 func TestDatabaseLimitChecker_GetRateLimits(t *testing.T) {
-	limits := &Limits{
-		Rate: RateLimits{
-			MaxQueriesPerSecond: 100,
-			MaxWritesPerSecond:  50,
-		},
+	for _, configured := range []bool{false, true} {
+		name := "unlimited"
+		if configured {
+			name = "configured"
+		}
+		t.Run(name, func(t *testing.T) {
+			var limits *Limits
+			if configured {
+				limits = &Limits{Rate: RateLimits{MaxQueriesPerSecond: 100, MaxWritesPerSecond: 50}}
+			}
+			checker := rateCheckerFixture(t, limits)
+			rateLimits := checker.GetRateLimits()
+			if !configured {
+				assert.Nil(t, rateLimits)
+				return
+			}
+			require.NotNil(t, rateLimits)
+			assert.Equal(t, 100, rateLimits.MaxQueriesPerSecond)
+			assert.Equal(t, 50, rateLimits.MaxWritesPerSecond)
+		})
 	}
-
-	manager, dbName := setupTestManagerWithLimits(t, limits)
-
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	rateLimits := checker.GetRateLimits()
-	require.NotNil(t, rateLimits)
-	assert.Equal(t, 100, rateLimits.MaxQueriesPerSecond)
-	assert.Equal(t, 50, rateLimits.MaxWritesPerSecond)
 }
 
-func TestDatabaseLimitChecker_GetRateLimits_NoLimits(t *testing.T) {
+func rateCheckerFixture(t *testing.T, limits *Limits) *databaseLimitChecker {
+	t.Helper()
 	manager, dbName := setupTestManager(t)
-
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	rateLimits := checker.GetRateLimits()
-	assert.Nil(t, rateLimits)
-}
-
-func TestDatabaseLimitChecker_CheckQueryRate_NoLimit(t *testing.T) {
-	manager, dbName := setupTestManager(t)
-
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	// Should not error with no limit
-	err = checker.CheckQueryRate()
-	assert.NoError(t, err)
-}
-
-func TestDatabaseLimitChecker_CheckQueryRate_WithinLimit(t *testing.T) {
-	manager, dbName := setupTestManagerWithLimits(t, &Limits{
-		Rate: RateLimits{
-			MaxQueriesPerSecond: 10,
-		},
-	})
-
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	// Should allow queries within limit
-	for i := 0; i < 10; i++ {
-		err := checker.CheckQueryRate()
-		assert.NoError(t, err, "query %d should be allowed", i)
+	if limits != nil {
+		require.NoError(t, manager.SetDatabaseLimits(t.Context(), dbName, limits))
 	}
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
+	require.NoError(t, err)
+	require.NotNil(t, checker)
+	return checker
 }
 
-func TestDatabaseLimitChecker_CheckQueryRate_ExceedsLimit(t *testing.T) {
-	manager, dbName := setupTestManagerWithLimits(t, &Limits{
-		Rate: RateLimits{
-			MaxQueriesPerSecond: 5,
+// TestDatabaseLimitChecker_RateChecks is the canonical query/write rate table.
+// Both kinds share one fixture and one assertion set: no configured limit,
+// exactly `limit` allowed operations at the limit boundary, and one overflow
+// declaration per kind that keeps its original token, limit and localized ID.
+func TestDatabaseLimitChecker_RateChecks(t *testing.T) {
+
+	for _, kind := range []struct {
+		name          string
+		token         string
+		exceededLimit int
+		message       localization.MessageID
+		applyLimit    func(*RateLimits, int)
+		check         func(*databaseLimitChecker) func() error
+	}{
+		{
+			name:          "query",
+			token:         "max_queries_per_second",
+			exceededLimit: 5,
+			message:       localization.MessageMultidbQueryRateExceeded,
+			applyLimit:    func(r *RateLimits, limit int) { r.MaxQueriesPerSecond = limit },
+			check:         func(c *databaseLimitChecker) func() error { return c.CheckQueryRate },
 		},
-	})
-
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	// Use up all tokens
-	for i := 0; i < 5; i++ {
-		err := checker.CheckQueryRate()
-		require.NoError(t, err)
-	}
-
-	// Next query should be rate limited
-	err = checker.CheckQueryRate()
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrRateLimitExceeded)
-	assert.Contains(t, err.Error(), "max_queries_per_second")
-	assert.Contains(t, err.Error(), "5")
-	requireLocalizedMessageID(t, err, localization.MessageMultidbQueryRateExceeded)
-}
-
-func TestDatabaseLimitChecker_CheckWriteRate_NoLimit(t *testing.T) {
-	manager, dbName := setupTestManager(t)
-
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	// Should not error with no limit
-	err = checker.CheckWriteRate()
-	assert.NoError(t, err)
-}
-
-func TestDatabaseLimitChecker_CheckWriteRate_WithinLimit(t *testing.T) {
-	manager, dbName := setupTestManagerWithLimits(t, &Limits{
-		Rate: RateLimits{
-			MaxWritesPerSecond: 10,
+		{
+			name:          "write",
+			token:         "max_writes_per_second",
+			exceededLimit: 3,
+			message:       localization.MessageMultidbWriteRateExceeded,
+			applyLimit:    func(r *RateLimits, limit int) { r.MaxWritesPerSecond = limit },
+			check:         func(c *databaseLimitChecker) func() error { return c.CheckWriteRate },
 		},
-	})
+	} {
+		t.Run(kind.name+"/no-configured-limit", func(t *testing.T) {
+			// Without a configured rate neither kind ever consumes quota.
+			check := kind.check(rateCheckerFixture(t, nil))
+			for i := 0; i < 100; i++ {
+				assert.NoError(t, check(), "%s %d should be allowed without a limit", kind.name, i)
+			}
+		})
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
+		t.Run(kind.name+"/within-limit", func(t *testing.T) {
+			// A limit of 10 allows exactly ten operations, matching the
+			// original WithinLimit declarations for both kinds.
+			const limit = 10
+			limits := &Limits{}
+			kind.applyLimit(&limits.Rate, limit)
+			check := kind.check(rateCheckerFixture(t, limits))
+			for i := 0; i < limit; i++ {
+				assert.NoError(t, check(), "%s %d should be allowed", kind.name, i)
+			}
+		})
 
-	// Should allow writes within limit
-	for i := 0; i < 10; i++ {
-		err := checker.CheckWriteRate()
-		assert.NoError(t, err, "write %d should be allowed", i)
+		t.Run(kind.name+"/exceeds-limit", func(t *testing.T) {
+			// Original overflow limits: five queries and three writes.
+			limits := &Limits{}
+			kind.applyLimit(&limits.Rate, kind.exceededLimit)
+			check := kind.check(rateCheckerFixture(t, limits))
+			for i := 0; i < kind.exceededLimit; i++ {
+				require.NoError(t, check())
+			}
+			err := check()
+			assert.Error(t, err)
+			assert.ErrorIs(t, err, ErrRateLimitExceeded)
+			assert.Contains(t, err.Error(), kind.token)
+			assert.Contains(t, err.Error(), strconv.Itoa(kind.exceededLimit))
+			requireLocalizedMessageID(t, err, kind.message)
+		})
 	}
-}
-
-func TestDatabaseLimitChecker_CheckWriteRate_ExceedsLimit(t *testing.T) {
-	manager, dbName := setupTestManagerWithLimits(t, &Limits{
-		Rate: RateLimits{
-			MaxWritesPerSecond: 3,
-		},
-	})
-
-	checker, err := newDatabaseLimitChecker(manager, dbName)
-	require.NoError(t, err)
-
-	// Use up all tokens
-	for i := 0; i < 3; i++ {
-		err := checker.CheckWriteRate()
-		require.NoError(t, err)
-	}
-
-	// Next write should be rate limited
-	err = checker.CheckWriteRate()
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrRateLimitExceeded)
-	assert.Contains(t, err.Error(), "max_writes_per_second")
-	assert.Contains(t, err.Error(), "3")
-	requireLocalizedMessageID(t, err, localization.MessageMultidbWriteRateExceeded)
 }
 
 func TestDatabaseLimitChecker_RateChecksRaceWithLimitUpdates(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	var waitGroup sync.WaitGroup
@@ -846,7 +829,7 @@ func TestDatabaseLimitChecker_RateChecksRaceWithLimitUpdates(t *testing.T) {
 	go func() {
 		defer waitGroup.Done()
 		for index := 0; index < 1000; index++ {
-			checker.updateLimits(&Limits{Rate: RateLimits{MaxQueriesPerSecond: index%3 + 1, MaxWritesPerSecond: index%5 + 1}})
+			checker.policy().updateLimits(&Limits{Rate: RateLimits{MaxQueriesPerSecond: index%3 + 1, MaxWritesPerSecond: index%5 + 1}})
 		}
 	}()
 	go func() {
@@ -868,7 +851,9 @@ func TestDatabaseLimitChecker_NewDatabaseLimitChecker_DatabaseNotFound(t *testin
 	manager, _ := setupTestManager(t)
 
 	// Try to create checker for non-existent database
-	_, err := newDatabaseLimitChecker(manager, "nonexistent")
+	manager.mu.Lock()
+	_, _, err := manager.databaseViewLocked("nonexistent", false)
+	manager.mu.Unlock()
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrDatabaseNotFound)
 }
@@ -883,15 +868,17 @@ func TestDatabaseLimitChecker_CheckStorageLimits_StorageError(t *testing.T) {
 		},
 	})
 
-	checker, err := newDatabaseLimitChecker(manager, dbName)
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
 	require.NoError(t, err)
 
 	// Set database offline
-	err = manager.SetDatabaseStatus(dbName, "offline")
+	err = manager.SetDatabaseStatus(t.Context(), dbName, "offline")
 	require.NoError(t, err)
 
 	// CheckStorageLimits should fail because GetStorage will fail
-	err = checker.CheckStorageLimits("create_node", nil, nil)
+	err = checker.CheckStorageLimits(t.Context(), "create_node", nil, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "database is offline")
 }
@@ -1156,48 +1143,38 @@ func TestConnectionTracker_Concurrent(t *testing.T) {
 // sizeTrackingEngine – CRUD with incremental size tracking
 // ============================================================================
 
-func TestSizeTrackingEngine_CreateNode(t *testing.T) {
-	manager, dbName := setupTestManager(t)
-	store, err := manager.GetStorage(dbName)
-	require.NoError(t, err)
-
-	node := &storage.Node{
-		ID:         storage.NodeID("st-node-1"),
-		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"name": "Alice"},
+func TestSizeTrackingEngine_NodeWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name, id string
+		update   bool
+	}{
+		{name: "create", id: "st-node-1"}, {name: "update", id: "st-upd-1", update: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager, dbName := setupTestManager(t)
+			store, err := manager.GetStorage(dbName)
+			require.NoError(t, err)
+			node := &storage.Node{ID: storage.NodeID(tc.id), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
+			id, err := store.CreateNode(t.Context(), node)
+			require.NoError(t, err)
+			if tc.update {
+				node.ID = id
+				node.Properties["name"] = "Alice Updated"
+				node.Properties["age"] = 30
+				require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
+			} else {
+				assert.NotEmpty(t, id)
+			}
+			got, err := store.GetNode(t.Context(), id)
+			require.NoError(t, err)
+			if tc.update {
+				assert.Equal(t, "Alice Updated", got.Properties["name"])
+				assert.EqualValues(t, 30, got.Properties["age"])
+			} else {
+				assert.Equal(t, "Alice", got.Properties["name"])
+			}
+		})
 	}
-	id, err := store.CreateNode(node)
-	require.NoError(t, err)
-	assert.NotEmpty(t, id)
-
-	got, err := store.GetNode(id)
-	require.NoError(t, err)
-	assert.Equal(t, "Alice", got.Properties["name"])
-}
-
-func TestSizeTrackingEngine_UpdateNode(t *testing.T) {
-	manager, dbName := setupTestManager(t)
-	store, err := manager.GetStorage(dbName)
-	require.NoError(t, err)
-
-	node := &storage.Node{
-		ID:         storage.NodeID("st-upd-1"),
-		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"name": "Alice"},
-	}
-	id, err := store.CreateNode(node)
-	require.NoError(t, err)
-
-	node.ID = id
-	node.Properties["name"] = "Alice Updated"
-	node.Properties["age"] = 30
-	err = store.UpdateNode(node)
-	require.NoError(t, err)
-
-	got, err := store.GetNode(id)
-	require.NoError(t, err)
-	assert.Equal(t, "Alice Updated", got.Properties["name"])
-	assert.Equal(t, 30, got.Properties["age"])
 }
 
 func TestSizeTrackingEngine_DeleteNode(t *testing.T) {
@@ -1210,13 +1187,13 @@ func TestSizeTrackingEngine_DeleteNode(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
-	id, err := store.CreateNode(node)
+	id, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
-	err = store.DeleteNode(id)
+	err = store.DeleteNode(t.Context(), id)
 	require.NoError(t, err)
 
-	_, err = store.GetNode(id)
+	_, err = store.GetNode(t.Context(), id)
 	assert.Error(t, err)
 }
 
@@ -1225,9 +1202,9 @@ func TestSizeTrackingEngine_CreateEdge(t *testing.T) {
 	store, err := manager.GetStorage(dbName)
 	require.NoError(t, err)
 
-	idA, err := store.CreateNode(&storage.Node{ID: "st-ce-a", Labels: []string{"Person"}})
+	idA, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-ce-a", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	idB, err := store.CreateNode(&storage.Node{ID: "st-ce-b", Labels: []string{"Person"}})
+	idB, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-ce-b", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
 	edge := &storage.Edge{
@@ -1237,7 +1214,7 @@ func TestSizeTrackingEngine_CreateEdge(t *testing.T) {
 		Type:       "KNOWS",
 		Properties: map[string]interface{}{"since": 2020},
 	}
-	err = store.CreateEdge(edge)
+	err = store.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 }
 
@@ -1246,9 +1223,9 @@ func TestSizeTrackingEngine_UpdateEdge(t *testing.T) {
 	store, err := manager.GetStorage(dbName)
 	require.NoError(t, err)
 
-	idA, err := store.CreateNode(&storage.Node{ID: "st-ue-a", Labels: []string{"Person"}})
+	idA, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-ue-a", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	idB, err := store.CreateNode(&storage.Node{ID: "st-ue-b", Labels: []string{"Person"}})
+	idB, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-ue-b", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
 	edge := &storage.Edge{
@@ -1258,15 +1235,15 @@ func TestSizeTrackingEngine_UpdateEdge(t *testing.T) {
 		Type:       "KNOWS",
 		Properties: map[string]interface{}{"since": 2020},
 	}
-	err = store.CreateEdge(edge)
+	err = store.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
-	outgoing, err := store.GetOutgoingEdges(idA)
+	outgoing, err := store.GetOutgoingEdges(context.Background(), idA)
 	require.NoError(t, err)
 	require.NotEmpty(t, outgoing)
 
 	outgoing[0].Properties["since"] = 2021
-	err = store.UpdateEdge(outgoing[0])
+	err = store.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: outgoing[0]})
 	require.NoError(t, err)
 }
 
@@ -1275,23 +1252,23 @@ func TestSizeTrackingEngine_DeleteEdge(t *testing.T) {
 	store, err := manager.GetStorage(dbName)
 	require.NoError(t, err)
 
-	idA, err := store.CreateNode(&storage.Node{ID: "st-de-a", Labels: []string{"Person"}})
+	idA, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-de-a", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	idB, err := store.CreateNode(&storage.Node{ID: "st-de-b", Labels: []string{"Person"}})
+	idB, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-de-b", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "st-de-edge-1", StartNode: idA, EndNode: idB, Type: "KNOWS"}
-	err = store.CreateEdge(edge)
+	err = store.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
-	outgoing, err := store.GetOutgoingEdges(idA)
+	outgoing, err := store.GetOutgoingEdges(context.Background(), idA)
 	require.NoError(t, err)
 	require.NotEmpty(t, outgoing)
 
-	err = store.DeleteEdge(outgoing[0].ID)
+	err = store.DeleteEdge(t.Context(), outgoing[0].ID)
 	require.NoError(t, err)
 
-	outgoing, err = store.GetOutgoingEdges(idA)
+	outgoing, err = store.GetOutgoingEdges(context.Background(), idA)
 	require.NoError(t, err)
 	assert.Empty(t, outgoing)
 }
@@ -1306,10 +1283,10 @@ func TestSizeTrackingEngine_BulkCreateNodes(t *testing.T) {
 		{ID: "st-bulk-n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}},
 		{ID: "st-bulk-n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Carol"}},
 	}
-	err = store.BulkCreateNodes(nodes)
+	err = store.BulkCreateNodes(t.Context(), nodes)
 	require.NoError(t, err)
 
-	allNodes, err := store.AllNodes()
+	allNodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(allNodes), 3)
 }
@@ -1319,18 +1296,18 @@ func TestSizeTrackingEngine_BulkCreateEdges(t *testing.T) {
 	store, err := manager.GetStorage(dbName)
 	require.NoError(t, err)
 
-	idA, err := store.CreateNode(&storage.Node{ID: "st-bce-a", Labels: []string{"Person"}})
+	idA, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-bce-a", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	idB, err := store.CreateNode(&storage.Node{ID: "st-bce-b", Labels: []string{"Person"}})
+	idB, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-bce-b", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	idC, err := store.CreateNode(&storage.Node{ID: "st-bce-c", Labels: []string{"Person"}})
+	idC, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-bce-c", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
 	edges := []*storage.Edge{
 		{ID: "st-bce-e1", StartNode: idA, EndNode: idB, Type: "KNOWS"},
 		{ID: "st-bce-e2", StartNode: idB, EndNode: idC, Type: "KNOWS"},
 	}
-	err = store.BulkCreateEdges(edges)
+	err = store.BulkCreateEdges(t.Context(), edges)
 	require.NoError(t, err)
 }
 
@@ -1339,17 +1316,17 @@ func TestSizeTrackingEngine_BulkDeleteNodes(t *testing.T) {
 	store, err := manager.GetStorage(dbName)
 	require.NoError(t, err)
 
-	id1, err := store.CreateNode(&storage.Node{ID: "st-bdn-1", Labels: []string{"Temp"}})
+	id1, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-bdn-1", Labels: []string{"Temp"}})
 	require.NoError(t, err)
-	id2, err := store.CreateNode(&storage.Node{ID: "st-bdn-2", Labels: []string{"Temp"}})
-	require.NoError(t, err)
-
-	err = store.BulkDeleteNodes([]storage.NodeID{id1, id2})
+	id2, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-bdn-2", Labels: []string{"Temp"}})
 	require.NoError(t, err)
 
-	_, err = store.GetNode(id1)
+	err = store.BulkDeleteNodes(t.Context(), []storage.NodeID{id1, id2})
+	require.NoError(t, err)
+
+	_, err = store.GetNode(t.Context(), id1)
 	assert.Error(t, err)
-	_, err = store.GetNode(id2)
+	_, err = store.GetNode(t.Context(), id2)
 	assert.Error(t, err)
 }
 
@@ -1358,19 +1335,19 @@ func TestSizeTrackingEngine_BulkDeleteEdges(t *testing.T) {
 	store, err := manager.GetStorage(dbName)
 	require.NoError(t, err)
 
-	idA, err := store.CreateNode(&storage.Node{ID: "st-bde-a", Labels: []string{"Person"}})
+	idA, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-bde-a", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	idB, err := store.CreateNode(&storage.Node{ID: "st-bde-b", Labels: []string{"Person"}})
-	require.NoError(t, err)
-
-	err = store.CreateEdge(&storage.Edge{ID: "st-bde-e1", StartNode: idA, EndNode: idB, Type: "KNOWS"})
-	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "st-bde-e2", StartNode: idB, EndNode: idA, Type: "LIKES"})
+	idB, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-bde-b", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
-	outgoing, err := store.GetOutgoingEdges(idA)
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "st-bde-e1", StartNode: idA, EndNode: idB, Type: "KNOWS"})
 	require.NoError(t, err)
-	incoming, err := store.GetIncomingEdges(idA)
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "st-bde-e2", StartNode: idB, EndNode: idA, Type: "LIKES"})
+	require.NoError(t, err)
+
+	outgoing, err := store.GetOutgoingEdges(context.Background(), idA)
+	require.NoError(t, err)
+	incoming, err := store.GetIncomingEdges(context.Background(), idA)
 	require.NoError(t, err)
 
 	var edgeIDs []storage.EdgeID
@@ -1381,7 +1358,7 @@ func TestSizeTrackingEngine_BulkDeleteEdges(t *testing.T) {
 		edgeIDs = append(edgeIDs, e.ID)
 	}
 
-	err = store.BulkDeleteEdges(edgeIDs)
+	err = store.BulkDeleteEdges(t.Context(), edgeIDs)
 	require.NoError(t, err)
 }
 
@@ -1391,18 +1368,18 @@ func TestSizeTrackingEngine_DeleteNodeWithEdges(t *testing.T) {
 	store, err := manager.GetStorage(dbName)
 	require.NoError(t, err)
 
-	idA, err := store.CreateNode(&storage.Node{ID: "st-dne-a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
+	idA, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-dne-a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
 	require.NoError(t, err)
-	idB, err := store.CreateNode(&storage.Node{ID: "st-dne-b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
-	require.NoError(t, err)
-
-	err = store.CreateEdge(&storage.Edge{ID: "st-dne-e1", StartNode: idA, EndNode: idB, Type: "KNOWS", Properties: map[string]interface{}{"since": 2020}})
+	idB, err := store.CreateNode(t.Context(), &storage.Node{ID: "st-dne-b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
 	require.NoError(t, err)
 
-	err = store.DeleteNode(idA)
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "st-dne-e1", StartNode: idA, EndNode: idB, Type: "KNOWS", Properties: map[string]interface{}{"since": 2020}})
 	require.NoError(t, err)
 
-	_, err = store.GetNode(idA)
+	err = store.DeleteNode(t.Context(), idA)
+	require.NoError(t, err)
+
+	_, err = store.GetNode(t.Context(), idA)
 	assert.Error(t, err)
 }
 
@@ -1422,34 +1399,35 @@ func TestSizeTrackingEngine_GetInnerEngine(t *testing.T) {
 // ============================================================================
 
 func TestCalculateCurrentStorageSize(t *testing.T) {
-	manager, dbName := setupTestManager(t)
-	store, err := manager.GetStorage(dbName)
-	require.NoError(t, err)
+	for _, populated := range []bool{false, true} {
+		name := "empty"
+		if populated {
+			name = "populated"
+		}
+		t.Run(name, func(t *testing.T) {
+			manager, dbName := setupTestManager(t)
+			store, err := manager.GetStorage(dbName)
+			require.NoError(t, err)
+			if populated {
+				id1, err := store.CreateNode(t.Context(), &storage.Node{ID: "css-1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
+				require.NoError(t, err)
+				id2, err := store.CreateNode(t.Context(), &storage.Node{ID: "css-2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
+				require.NoError(t, err)
+				err = store.CreateEdge(t.Context(), &storage.Edge{ID: "css-e1", StartNode: id1, EndNode: id2, Type: "KNOWS"})
+				require.NoError(t, err)
 
-	id1, err := store.CreateNode(&storage.Node{ID: "css-1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
-	require.NoError(t, err)
-	id2, err := store.CreateNode(&storage.Node{ID: "css-2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
-	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "css-e1", StartNode: id1, EndNode: id2, Type: "KNOWS"})
-	require.NoError(t, err)
-
-	checker := &databaseLimitChecker{}
-	nodeSize, edgeSize, calcErr := checker.calculateCurrentStorageSize(store)
-	require.NoError(t, calcErr)
-	assert.Greater(t, nodeSize, int64(0), "node size must be > 0")
-	assert.Greater(t, edgeSize, int64(0), "edge size must be > 0")
-}
-
-func TestCalculateCurrentStorageSize_Empty(t *testing.T) {
-	manager, dbName := setupTestManager(t)
-	store, err := manager.GetStorage(dbName)
-	require.NoError(t, err)
-
-	checker := &databaseLimitChecker{}
-	nodeSize, edgeSize, calcErr := checker.calculateCurrentStorageSize(store)
-	require.NoError(t, calcErr)
-	assert.Equal(t, int64(0), nodeSize)
-	assert.Equal(t, int64(0), edgeSize)
+			}
+			nodeSize, edgeSize, calcErr := manager.calculateStorageSizeFromEngine(context.Background(), store)
+			require.NoError(t, calcErr)
+			if populated {
+				assert.Greater(t, nodeSize, int64(0), "node size must be > 0")
+				assert.Greater(t, edgeSize, int64(0), "edge size must be > 0")
+			} else {
+				assert.Equal(t, int64(0), nodeSize)
+				assert.Equal(t, int64(0), edgeSize)
+			}
+		})
+	}
 }
 
 func TestConnectionTracker_CheckConnectionLimit_AfterDecrement(t *testing.T) {

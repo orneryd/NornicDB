@@ -5,6 +5,7 @@ import (
 	"maps"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -15,27 +16,18 @@ import (
 // starts with its variable, so an IN in the WHERE doesn't make one (#1109).
 func splitPatternComprehension(expr string) (string, string, bool) {
 	expr = strings.TrimSpace(expr)
-	if len(expr) < 3 || expr[0] != '[' || expr[len(expr)-1] != ']' {
+	if len(expr) < 3 || !isListLiteral(expr) {
 		return "", "", false
 	}
 
 	parenDepth, bracketDepth, braceDepth := 0, 1, 0
-	var quote byte
 	for i := 1; i < len(expr)-1; i++ {
-		char := expr[i]
-		if quote != 0 {
-			if char == '\\' {
-				i++
-				continue
-			}
-			if char == quote {
-				quote = 0
-			}
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end - 1
 			continue
 		}
+		char := expr[i]
 		switch char {
-		case '\'', '"':
-			quote = char
 		case '(':
 			parenDepth++
 		case ')':
@@ -105,8 +97,8 @@ func (e *StorageExecutor) evaluateRowPatternComprehensionAtom(expr string, value
 // IN, which this rejects.
 func patternComprehensionHead(pattern string) bool {
 	head := strings.TrimSpace(StripComments(pattern))
-	if eq := strings.IndexByte(head, '='); eq > 0 && isValidIdentifier(strings.TrimSpace(head[:eq])) {
-		head = strings.TrimSpace(head[eq+1:])
+	if _, _, start, ok := namedPathDeclaration(head, 0); ok {
+		head = head[start:]
 	}
 	if !strings.HasPrefix(head, "(") {
 		return false
@@ -125,25 +117,8 @@ func patternComprehensionHead(pattern string) bool {
 // expression is allowed (RETURN, WITH, list elements, function arguments), not
 // only in WHERE; compound expressions reach it through their operands.
 func isStandaloneExistsSubquery(expr string) bool {
-	if len(expr) < len("EXISTS{}") || (expr[0] != 'E' && expr[0] != 'e') || !matchKeywordAt(expr, 0, "EXISTS") {
-		return false
-	}
-	open := skipSpaces(expr, len("EXISTS"))
-	if open >= len(expr) || expr[open] != '{' {
-		return false
-	}
-	return isSubqueryBrace(expr, open) && findMatchingDelimiter(expr, open, '{', '}') == len(expr)-1
-}
-
-// evaluateExistsSubqueryValue evaluates a standalone EXISTS { ... } expression
-// against the current row: the value scope of ctx (a quantifier's or
-// comprehension's variable, the row's scalars) and the entities bound in the
-// row, which shadow it. It shares the WHERE predicate's correlated evaluation
-// (evaluateRowExistsPredicate), so an EXISTS value and an EXISTS filter
-// always agree.
-func (e *StorageExecutor) evaluateExistsSubqueryValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
-	matched, _ := e.evaluateRowExistsPredicate(ctx, expr, entityRow(ctx, nodes, rels))
-	return matched
+	kind, _, whole := rowSubqueryAtom(expr)
+	return whole && kind == "EXISTS"
 }
 
 // evaluateBoundPatternRows matches pattern (with its WHERE) from the bound
@@ -160,10 +135,11 @@ func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern 
 // which isn't "no rows" (#1055).
 func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
 	pattern = strings.TrimSpace(pattern)
-	if strings.HasPrefix(upperASCII(pattern), "MATCH ") {
-		pattern = strings.TrimSpace(pattern[len("MATCH "):])
+	if end := keywordEndAt(pattern, 0, "MATCH"); end > 0 &&
+		keywordBoundaryOK(pattern, end, keywordBoundaryWord, keywordAfter) && !clauseKeywordUsedAsName(ctx, pattern, 0, end, "MATCH") {
+		pattern = strings.TrimSpace(pattern[queryGapEnd(pattern, end):])
 	}
-	clauses := splitOptionalMatchClauses(pattern)
+	clauses := splitOptionalMatchClauses(ctx, pattern)
 	if len(clauses) != 1 {
 		return nil, false
 	}
@@ -221,7 +197,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	// Static scopes cannot know a heterogeneous iterator's current element.
 	// Validate the actual correlated row before matching instead of treating a
 	// non-node binding as an absent match.
-	if err := validateBoundPatternNodes([]pipelineRow{outer}, pattern); err != nil {
+	if err := validateBoundPatternNodes(ctx, []pipelineRow{outer}, pattern); err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
 	}
@@ -269,7 +245,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 		for variable, value := range row.values {
 			scope[variable] = value
 		}
-		value, evaluated, err := e.evaluateRowValue(projection, scope)
+		value, evaluated, err := e.evaluateRowValue(ctx, projection, scope)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil
@@ -288,12 +264,12 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 // an execution context use this as the converged expression entry point.
 func (e *StorageExecutor) evaluateBoundRowValue(expr string, values pipelineRow) (interface{}, bool) {
 	if value, bound := values[expr]; bound && !isLiteralKeyword(expr) {
-		return value, true
+		return cypherfn.RuntimeValue(value), true
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			if value, resolved := evaluateRowPropertyChain(e.queryVisibleValue(base), chain); resolved {
-				return value, true
+			if value, resolved := evaluateRowPropertyChain(base, chain, e, false); resolved {
+				return cypherfn.RuntimeValue(value), true
 			}
 		}
 	}
@@ -315,39 +291,60 @@ type rowContextShape struct {
 	comprehension    bool
 	pattern2         string
 	projection       string
-	exists           bool
 	trimmed          string
 	brace            bool
 }
 
 var rowContextShapes = newBoundedCache[string, *rowContextShape](8192, boundedCacheStringShardIndex)
 
-func rowContextShapeOf(expr string) *rowContextShape {
+func rowContextShapeOf(ctx context.Context, expr string) *rowContextShape {
 	if shape, cached := rowContextShapes.get(expr); cached {
 		return shape
 	}
 	shape := &rowContextShape{
 		pattern:          containsRelationshipPattern(expr),
-		statementContext: needsRowStatementContext(expr),
+		statementContext: needsRowStatementContext(ctx, expr),
 		trimmed:          strings.TrimSpace(expr),
 		brace:            strings.Contains(expr, "{"),
 	}
 	shape.subquery, shape.isSubquery = standaloneSubqueryExpression(expr)
-	if function, argument, ok := parseFunctionCallWS(shape.trimmed); ok {
+	var callFacts1 functionCallFacts
+	if ok := inspectFunctionCall(shape.trimmed, qualifiedFunctionCall, "", &callFacts1); ok {
+		function, argument := callFacts1.name, callFacts1.inner
+
 		shape.identity = strings.EqualFold(function, "id") || strings.EqualFold(function, "elementId")
 		shape.function, shape.argument = function, argument
 	}
 	shape.pattern2, shape.projection, shape.comprehension = splitPatternComprehension(expr)
-	shape.exists = isStandaloneExistsSubquery(shape.trimmed)
-	rowContextShapes.put(expr, shape)
+	// A canceled scan reads only part of the expression, so its verdict is not
+	// published: the entry must come from a completed read.
+	if ctx.Err() == nil {
+		rowContextShapes.put(expr, shape)
+	}
 	return shape
 }
 
 func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
 	if value, bound := e.evaluateBoundRowValue(expr, values); bound {
-		return value, true
+		return cypherfn.RuntimeValue(value), true
 	}
-	shape := rowContextShapeOf(expr)
+	// A bare parameter already has a native value. Preserve the ordinary
+	// binding precedence without copying whole scopes for each prepared value.
+	if len(expr) > 1 && expr[0] == '$' {
+		if value, bound := valueBindingsFromContext(ctx)[expr]; bound {
+			return cypherfn.RuntimeValue(value), true
+		}
+		if value, bound := resolveValueReference(ctx, expr, parameterName); bound {
+			return cypherfn.RuntimeValue(value), true
+		}
+	}
+	shape := rowContextShapeOf(ctx, expr)
+	// A legacy fallback can reenter through an ordinary literal reader too.
+	// Its dispatch/depth context must survive independently of the expression's
+	// compile-time need for a clock, plugin or graph context.
+	if _, fallback := ctx.Value(rowFallbackExpressionKey{}).(rowFallbackState); fallback {
+		values = rowValuesInExpressionContext(ctx, values)
+	}
 	if shape.pattern {
 		if value, ok, handled := e.evaluatePatternPredicateValue(ctx, expr, values); handled {
 			return value, ok
@@ -372,36 +369,35 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	for name, value := range parameterRowValues(ctx) {
 		bind(name, value)
 	}
-	if shape.statementContext {
-		bind(rowStatementContextKey, ctx)
-	}
 	if extended != nil {
 		values = extended
 		// A row variable, or a plain property chain on one (e.uuid),
 		// resolves without the graph-expression checks below, which can't
 		// match it.
 		if value, bound := e.evaluateBoundRowValue(expr, values); bound {
-			return value, true
+			return cypherfn.RuntimeValue(value), true
+		}
+	}
+	if shape.statementContext {
+		var contextBound bool
+		values, contextBound = rowValuesBindingStatementContext(ctx, values)
+		if contextBound {
+			defer delete(values, rowStatementContextKey)
 		}
 	}
 	if shape.isSubquery {
 		return e.evaluateRowSubqueryValue(ctx, shape.subquery.kind, shape.subquery.body, values)
 	}
-	// id() / elementId() resolve the entity identity at this context-aware
-	// boundary: the allocation-conscious row evaluator below carries no
-	// context and would build the id with the executor's default database,
-	// losing a composite subquery's constituent identity (#745 §3).
+	// Whole id() / elementId() calls resolve directly at this boundary.
+	// Nested registry calls use the same statement identity through the
+	// context bound above, including a composite constituent selection.
 	if shape.identity {
 		if value, resolved := e.evaluateRowEntityIdentity(ctx, shape.function, shape.argument, values); resolved {
-			return value, true
+			return cypherfn.RuntimeValue(value), true
 		}
 	}
 	if shape.comprehension {
 		return e.evaluatePatternComprehensionFromRow(ctx, shape.pattern2, shape.projection, values), true
-	}
-	if shape.exists {
-		matched, _ := e.evaluateRowExistsPredicate(ctx, shape.trimmed, values)
-		return matched, true
 	}
 	// The row evaluator's error is the statement's: it is recorded, and the
 	// expression is unresolved.
@@ -415,7 +411,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 			values = scope
 		}
 	}
-	value, resolved, err := e.evaluateRowValue(expr, values)
+	value, resolved, err := e.evaluateRowValue(ctx, expr, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, false
@@ -430,13 +426,21 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		// evaluator leaves unresolved stay unresolved (a malformed literal
 		// such as [, ] is a syntax error, not a value). Subquery expressions
 		// were evaluated above.
+		// This handoff owns the expression exactly as the value fallback's
+		// does (handedOverRowExpression): the shared evaluator evaluates what
+		// it was handed instead of handing the same text back. Without the
+		// record, an APOC call with a COLLECT { } argument holding a
+		// relationship pattern passed forever between the two evaluators
+		// (NOR-409) without checking the statement's context.
 		trimmed := shape.trimmed
 		nodes, rels := entityScopesFromValues(values)
-		value, resolved = e.evaluateExpressionWithContextDefined(withValueBindings(ctx, values), trimmed, nodes, rels)
-		if getExpressionFailure(ctx) != nil {
+		handoff, exhausted := handedOverRowExpression(ctx, expr)
+		if exhausted {
+			recordExpressionFailure(ctx, unresolvedExpressionError(expr))
 			return nil, false
 		}
-		if text, ok := value.(string); ok && text == trimmed && !isWholeCypherQuotedString(trimmed) {
+		value, resolved = e.evaluateExpressionWithContextDefined(withValueBindings(handoff, values), trimmed, nodes, rels)
+		if getExpressionFailure(ctx) != nil {
 			return nil, false
 		}
 	}
@@ -455,40 +459,31 @@ func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, functio
 	if value, bound := values[inner]; bound {
 		node, _ = value.(*storage.Node)
 		edge, _ = value.(*storage.Edge)
-	} else if value, resolved, err := e.evaluateRowValue(inner, values); err == nil && resolved {
+	} else if value, resolved, err := e.evaluateRowValue(ctx, inner, values); err == nil && resolved {
 		node, _ = value.(*storage.Node)
 		edge, _ = value.(*storage.Edge)
 	} else {
 		return nil, false
+	}
+	metadataCtx := ctx
+	if inherited := rowStatementContext(values); inherited != nil {
+		metadataCtx = inherited
 	}
 	switch {
 	case node != nil:
 		if strings.EqualFold(function, "id") {
 			return string(node.ID), true
 		}
-		return storage.NodeElementID(e.entityIdentityDatabase(ctx, node.ID), node.ID), true
+		value, _ := cypherfn.EntityElementID(e.registryFunctionContext(metadataCtx, nil), node)
+		return value, true
 	case edge != nil:
 		if strings.EqualFold(function, "id") {
 			return string(edge.ID), true
 		}
-		return storage.RelationshipElementID(e.entityIdentityDatabase(ctx, storage.NodeID(edge.StartNode)), edge.ID), true
+		value, _ := cypherfn.EntityElementID(e.registryFunctionContext(metadataCtx, nil), edge)
+		return value, true
 	}
 	return nil, false
-}
-
-// entityIdentityDatabase is the database an entity identity should name: the
-// statement's execution database, or — on a composite coordinator — the
-// constituent that actually holds the entity (#745 §3).
-func (e *StorageExecutor) entityIdentityDatabase(ctx context.Context, anchor storage.NodeID) string {
-	db := e.executionDatabaseName(ctx)
-	if e.dbManager != nil && e.dbManager.IsCompositeDatabase(db) {
-		if composite, ok := e.storage.(*storage.CompositeEngine); ok {
-			if constituent := composite.ConstituentDatabaseForNode(anchor); constituent != "" {
-				return constituent
-			}
-		}
-	}
-	return db
 }
 
 // evaluatePatternPredicateValue is the value of a pattern predicate in a
@@ -504,8 +499,8 @@ func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, exp
 		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
 	}
 	if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
-		matched, _ := e.evaluateRowExistsPredicate(ctx, "EXISTS { "+trimmed+" }", values)
-		return matched, true, true
+		value, resolved := e.evaluateRowSubqueryValue(ctx, "EXISTS", trimmed, values)
+		return value, resolved, true
 	}
 	logicalValue, logical, logicalOK, err := evaluateLogicalExpression(trimmed, func(operand string) (interface{}, bool, error) {
 		var resolved bool

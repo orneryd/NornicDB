@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -63,19 +64,29 @@ type SchemaRangeIndexDef struct {
 	OwningConstraint string               `json:"owning_constraint,omitempty"`
 }
 
-const schemaDefinitionVersion = 1
+// Version 1 used encoding/json's untagged numbers and float64 decoding.
+// Version 2 preserves exact INTEGERs and FLOAT tokens through PropertyJSON.
+const schemaDefinitionVersion = 2
 
 // ExportDefinition returns a stable, persisted representation of the schema.
 // The returned object is safe to serialize and does not include runtime caches.
-func (sm *SchemaManager) ExportDefinition() *SchemaDefinition {
-	sm.mu.RLock()
+//
+// ctx owns admission, contract cloning and ordering. A canceled ctx returns its
+// own error and no partial definition; an exported definition is a detached
+// snapshot, so later live schema changes never reach it.
+func (sm *SchemaManager) ExportDefinition(ctx context.Context) (*SchemaDefinition, error) {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer sm.mu.RUnlock()
-	return sm.exportDefinitionLocked()
+	return sm.exportDefinitionLocked(ctx)
 }
 
 // exportDefinitionLocked builds a persisted schema definition from the current state.
 // REQUIRES: caller holds either sm.mu.RLock() or sm.mu.Lock().
-func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
+// ctx bounds cloning; only a native mutation with no caller context passes an
+// explicit own lifetime.
+func (sm *SchemaManager) exportDefinitionLocked(ctx context.Context) (*SchemaDefinition, error) {
 	def := &SchemaDefinition{Version: schemaDefinitionVersion}
 	def.LabelTokens = append([]string(nil), sm.tokenOrder.labels...)
 	def.RelationshipTypeTokens = append([]string(nil), sm.tokenOrder.relationships...)
@@ -85,28 +96,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.constraints) > 0 {
 		def.Constraints = make([]Constraint, 0, len(sm.constraints))
 		for _, c := range sm.constraints {
-			// Copy properties slice to avoid aliasing.
-			props := make([]string, len(c.Properties))
-			copy(props, c.Properties)
-			var allowedVals []interface{}
-			if len(c.AllowedValues) > 0 {
-				allowedVals = make([]interface{}, len(c.AllowedValues))
-				copy(allowedVals, c.AllowedValues)
-			}
-			def.Constraints = append(def.Constraints, Constraint{
-				Name:          c.Name,
-				Type:          c.Type,
-				EntityType:    c.EntityType,
-				Label:         c.Label,
-				Properties:    props,
-				OwnedIndex:    c.OwnedIndex,
-				AllowedValues: allowedVals,
-				MaxCount:      c.MaxCount,
-				Direction:     c.Direction,
-				SourceLabel:   c.SourceLabel,
-				TargetLabel:   c.TargetLabel,
-				PolicyMode:    c.PolicyMode,
-			})
+			def.Constraints = append(def.Constraints, cloneConstraint(c))
 		}
 		sort.Slice(def.Constraints, func(i, j int) bool {
 			if def.Constraints[i].Label != def.Constraints[j].Label {
@@ -119,7 +109,11 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.constraintContracts) > 0 {
 		def.ConstraintContracts = make([]ConstraintContract, 0, len(sm.constraintContracts))
 		for _, contract := range sm.constraintContracts {
-			def.ConstraintContracts = append(def.ConstraintContracts, cloneConstraintContract(contract))
+			cloned, err := cloneConstraintContract(ctx, contract)
+			if err != nil {
+				return nil, err
+			}
+			def.ConstraintContracts = append(def.ConstraintContracts, cloned)
 		}
 		sort.Slice(def.ConstraintContracts, func(i, j int) bool {
 			return def.ConstraintContracts[i].Name < def.ConstraintContracts[j].Name
@@ -233,7 +227,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 				Kind:             idx.Kind,
 				Label:            idx.Label,
 				Property:         idx.Property,
-				Properties:       idx.Properties,
+				Properties:       append([]string(nil), idx.Properties...),
 				EntityType:       idx.EntityType,
 				OwningConstraint: idx.OwningConstraint,
 			})
@@ -258,18 +252,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.decayProfileBindings) > 0 {
 		def.DecayProfileBindings = make([]knowledgepolicy.DecayProfileBinding, 0, len(sm.decayProfileBindings))
 		for _, b := range sm.decayProfileBindings {
-			bc := *b
-			if len(bc.TargetLabels) > 0 {
-				labels := make([]string, len(bc.TargetLabels))
-				copy(labels, bc.TargetLabels)
-				bc.TargetLabels = labels
-			}
-			if len(bc.PropertyRules) > 0 {
-				rules := make([]knowledgepolicy.DecayProfilePropertyRule, len(bc.PropertyRules))
-				copy(rules, bc.PropertyRules)
-				bc.PropertyRules = rules
-			}
-			def.DecayProfileBindings = append(def.DecayProfileBindings, bc)
+			def.DecayProfileBindings = append(def.DecayProfileBindings, cloneDecayProfileBinding(b))
 		}
 		sort.Slice(def.DecayProfileBindings, func(i, j int) bool {
 			return def.DecayProfileBindings[i].Name < def.DecayProfileBindings[j].Name
@@ -291,49 +274,80 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.promotionPolicies) > 0 {
 		def.PromotionPolicies = make([]knowledgepolicy.PromotionPolicyDef, 0, len(sm.promotionPolicies))
 		for _, p := range sm.promotionPolicies {
-			pc := *p
-			if len(pc.TargetLabels) > 0 {
-				labels := make([]string, len(pc.TargetLabels))
-				copy(labels, pc.TargetLabels)
-				pc.TargetLabels = labels
-			}
-			if len(pc.WhenClauses) > 0 {
-				clauses := make([]knowledgepolicy.PromotionPolicyWhenClause, len(pc.WhenClauses))
-				copy(clauses, pc.WhenClauses)
-				pc.WhenClauses = clauses
-			}
-			def.PromotionPolicies = append(def.PromotionPolicies, pc)
+			def.PromotionPolicies = append(def.PromotionPolicies, clonePromotionPolicy(p))
 		}
 		sort.Slice(def.PromotionPolicies, func(i, j int) bool {
 			return def.PromotionPolicies[i].Name < def.PromotionPolicies[j].Name
 		})
 	}
 
-	return def
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return def, nil
 }
 
 // ReplaceFromDefinition replaces the in-memory schema contents with the given definition.
 //
 // This does NOT persist anything, and it intentionally discards runtime caches
 // (unique value maps, index maps, etc.). Those must be rebuilt from data.
-func (sm *SchemaManager) ReplaceFromDefinition(def *SchemaDefinition) error {
-	defer sm.trackPendingPairs()
+// Loading and binding compilation complete before publication; rejected
+// definitions leave every existing family and compiled binding table intact.
+// ctx owns detached candidate construction: loading, validation and binding
+// compilation, including the constraint-owned index discovery it runs, and
+// admission to the live schema. A canceled ctx installs nothing: preparation
+// returns before the replacement waits, and a caller canceled while it waits
+// for the schema lock returns that cancellation without installing anything.
+// Installation starts where admission succeeds, so an admitted candidate is
+// published atomically and leaves the previously compiled table intact.
+//
+// Only an accepted installation re-tracks the pairs the attached pending-write
+// source indexes. That completion belongs to the accepted schema change, so it
+// runs after the schema lock is released and ctx decides nothing there: a
+// canceled or rejected definition tracks nothing.
+//
+// A nil def remains a no-op that tracks pending pairs, as before.
+func (sm *SchemaManager) ReplaceFromDefinition(ctx context.Context, def *SchemaDefinition) error {
 	if def == nil {
+		sm.trackPendingPairs()
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-	sm.mu.Lock()
+	// Build and validate off to the side. A binding compile failure must not
+	// replace some live families while leaving the previously compiled table.
+	candidate := NewSchemaManager()
+	if err := candidate.replaceFromDefinitionLocked(ctx, def); err != nil {
+		return err
+	}
+	// Admission waits on the caller's own context, so a replacement canceled
+	// while another mutation holds the schema lock returns that cancellation
+	// without installing. Everything after a successful admission is the
+	// accepted installation, so both defers below are registered only then.
+	if err := sm.mu.LockContext(ctx); err != nil {
+		return err
+	}
+	// Deferred before the unlock so the accepted completion runs after the
+	// schema lock is released: pair tracking takes the same lock again.
+	defer sm.trackPendingPairs()
 	defer sm.mu.Unlock()
-	return sm.replaceFromDefinitionLocked(def)
+	sm.installSchemaLocked(candidate, acceptedDefinitionInstallation)
+	return nil
 }
 
-func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) error {
+func (sm *SchemaManager) replaceFromDefinitionLocked(ctx context.Context, def *SchemaDefinition) error {
 	if def == nil {
 		return nil
 	}
+	// A replacement may remove names, so no old snapshot may be used once the
+	// replacement starts. Publish the final accepted order while still locked.
+	sm.tokenSnapshot.Store(nil)
+	defer sm.publishTokenSnapshotLocked(nil, nil)
 
 	// Reset all collections.
-	sm.uniqueConstraints = make(map[string]*UniqueConstraint)
+	sm.uniqueConstraints = make(map[nodePropertyKey]*UniqueConstraint)
 	sm.constraints = make(map[string]Constraint)
 	sm.constraintContracts = make(map[string]ConstraintContract)
 	sm.propertyTypeConstraints = make(map[string]PropertyTypeConstraint)
@@ -346,31 +360,11 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 
 	// Constraints.
 	for _, c := range def.Constraints {
-		props := make([]string, len(c.Properties))
-		copy(props, c.Properties)
-		var allowedVals []interface{}
-		if len(c.AllowedValues) > 0 {
-			allowedVals = make([]interface{}, len(c.AllowedValues))
-			copy(allowedVals, c.AllowedValues)
-		}
-		cc := Constraint{
-			Name:          c.Name,
-			Type:          c.Type,
-			EntityType:    c.EntityType,
-			Label:         c.Label,
-			Properties:    props,
-			OwnedIndex:    c.OwnedIndex,
-			AllowedValues: allowedVals,
-			MaxCount:      c.MaxCount,
-			Direction:     c.Direction,
-			SourceLabel:   c.SourceLabel,
-			TargetLabel:   c.TargetLabel,
-			PolicyMode:    c.PolicyMode,
-		}
+		cc := cloneConstraint(c)
 		sm.constraints[cc.Name] = cc
 
-		if cc.Type == ConstraintUnique && len(cc.Properties) == 1 {
-			key := cc.Label + ":" + cc.Properties[0]
+		if cc.Type == ConstraintUnique && cc.EffectiveEntityType() == ConstraintEntityNode && len(cc.Properties) == 1 {
+			key := nodePropertyKey{label: cc.Label, property: cc.Properties[0]}
 			sm.uniqueConstraints[key] = &UniqueConstraint{
 				Name:     cc.Name,
 				Label:    cc.Label,
@@ -381,7 +375,11 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	}
 
 	for _, contract := range def.ConstraintContracts {
-		sm.constraintContracts[contract.Name] = cloneConstraintContract(contract)
+		cloned, err := cloneConstraintContract(ctx, contract)
+		if err != nil {
+			return err
+		}
+		sm.constraintContracts[contract.Name] = cloned
 	}
 
 	// Property type constraints.
@@ -414,7 +412,9 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	// A constraint's own equality index (#875), unless an index of its own
 	// already covers the property.
 	for _, c := range sm.constraints {
-		sm.addConstraintPropertyIndexLocked(c)
+		if err := sm.addConstraintPropertyIndexLocked(ctx, c); err != nil {
+			return err
+		}
 	}
 
 	for _, idx := range def.CompositeIndexes {
@@ -471,7 +471,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 			Kind:             idx.Kind,
 			Label:            idx.Label,
 			Property:         idx.Property,
-			Properties:       idx.Properties,
+			Properties:       append([]string(nil), idx.Properties...),
 			EntityType:       idx.EntityType,
 			OwningConstraint: idx.OwningConstraint,
 			entries:          make([]rangeEntry, 0),
@@ -489,40 +489,24 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 		bc := b
 		sm.decayProfileBundles[bc.Name] = &bc
 	}
-	for _, b := range def.DecayProfileBindings {
-		bc := b
-		if len(bc.TargetLabels) > 0 {
-			labels := make([]string, len(bc.TargetLabels))
-			copy(labels, bc.TargetLabels)
-			bc.TargetLabels = labels
-		}
-		if len(bc.PropertyRules) > 0 {
-			rules := make([]knowledgepolicy.DecayProfilePropertyRule, len(bc.PropertyRules))
-			copy(rules, bc.PropertyRules)
-			bc.PropertyRules = rules
-		}
+	for i := range def.DecayProfileBindings {
+		bc := cloneDecayProfileBinding(&def.DecayProfileBindings[i])
 		sm.decayProfileBindings[bc.Name] = &bc
 	}
 	for _, p := range def.PromotionProfiles {
 		pc := p
 		sm.promotionProfiles[pc.Name] = &pc
 	}
-	for _, p := range def.PromotionPolicies {
-		pc := p
-		if len(pc.TargetLabels) > 0 {
-			labels := make([]string, len(pc.TargetLabels))
-			copy(labels, pc.TargetLabels)
-			pc.TargetLabels = labels
-		}
-		if len(pc.WhenClauses) > 0 {
-			clauses := make([]knowledgepolicy.PromotionPolicyWhenClause, len(pc.WhenClauses))
-			copy(clauses, pc.WhenClauses)
-			pc.WhenClauses = clauses
-		}
+	for i := range def.PromotionPolicies {
+		pc := clonePromotionPolicy(&def.PromotionPolicies[i])
 		sm.promotionPolicies[pc.Name] = &pc
 	}
 
-	sm.rebuildBindingTableLocked()
+	compiled, compileErr := sm.compileBindingTableLocked()
+	if compileErr != nil {
+		return compileErr
+	}
+	sm.bindingTable = compiled
 
 	return nil
 }

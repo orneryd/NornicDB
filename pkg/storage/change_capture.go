@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -139,7 +140,7 @@ type changeCapture struct {
 // changeLog orders a database's capturing commits: a commit holds it from
 // before its writes until it ends, so commitSeq follows commit order.
 type changeLog struct {
-	mu     sync.Mutex
+	mu     trackedRWMutex
 	loaded bool
 	last   uint64 // the last committed commitSeq
 }
@@ -156,7 +157,7 @@ func (b *BadgerEngine) SetChangeCapture(namespace string, mode ChangeCaptureMode
 	defer b.changes.jobMu.Unlock()
 	if b.changes.job == nil {
 		b.changes.job = newChangeRetentionJob(b, 0)
-		b.changes.job.Start(context.Background())
+		b.changes.job.Start(b.work.Context())
 	}
 }
 
@@ -214,6 +215,10 @@ func (b *BadgerEngine) changeLogFor(namespace string) *changeLog {
 // ChangeBounds returns the commitSeq of a database's earliest retained event
 // and of its last committed one; 0, 0 when it has none.
 func (b *BadgerEngine) ChangeBounds(namespace string) (earliest, last uint64, err error) {
+	if err := b.pendingNamespaceConflict(namespace); err != nil {
+		return 0, 0, err
+	}
+
 	prefix := changeEventPrefix(namespace)
 	err = b.withView(func(txn *badger.Txn) error {
 		opts := badgerIteratorOptions()
@@ -240,6 +245,10 @@ func (b *BadgerEngine) ChangeBounds(namespace string) (earliest, last uint64, er
 // ChangeEvents returns up to limit of a database's events after
 // (commitSeq, seq), in commit order; limit <= 0 is no limit.
 func (b *BadgerEngine) ChangeEvents(namespace string, commitSeq uint64, seq uint32, limit int) ([]ChangeEvent, error) {
+	if err := b.pendingNamespaceConflict(namespace); err != nil {
+		return nil, err
+	}
+
 	prefix := changeEventPrefix(namespace)
 	after := changeEventKey(namespace, commitSeq, seq)
 	var events []ChangeEvent
@@ -278,13 +287,15 @@ type txChangeCapture struct {
 // a capturing database, before any of the commit's writes and locks (so a
 // large commit's publication locks are always taken after it), and
 // allocates the commit's place in the change order.
-func (tx *BadgerTransaction) beginChangeCaptureLocked() error {
+func (tx *BadgerTransaction) beginChangeCaptureLocked(ctx context.Context) error {
 	mode := tx.engine.ChangeCapture(tx.namespace)
 	if mode == ChangeCaptureOff {
 		return nil
 	}
 	log := tx.engine.changeLogFor(tx.namespace)
-	log.mu.Lock()
+	if err := log.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	if !log.loaded {
 		_, last, err := tx.engine.ChangeBounds(tx.namespace)
 		if err != nil {
@@ -316,19 +327,25 @@ func (tx *BadgerTransaction) endChangeCaptureLocked(committed bool) {
 // order the transaction first touched them; the relationships a node delete
 // removes come before it. It runs before the commit's buffered writes, so a
 // cascaded relationship's stored record is still its state before.
-func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations []Operation, commitTime time.Time) error {
+func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *batchWriter, operations []Operation, commitTime time.Time) error {
 	capture := tx.changeCapture
 	if capture == nil {
 		return nil
 	}
 	b := tx.engine
-	states := newCommitStates(operations)
+	states, err := newCommitStates(ctx, operations)
+	if err != nil {
+		return err
+	}
 	base := ChangeEvent{
 		CommitSeq: capture.commitSeq, StartTime: tx.StartTime.UnixNano(), CommitTime: commitTime.UnixNano(),
 		Mode: capture.mode, TxMetadata: copyChangeMetadata(tx.Metadata),
 	}
 	seq := uint32(0)
 	write := func(event ChangeEvent) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		event.Seq = seq
 		seq++
 		value, err := encodeValue(&event)
@@ -337,7 +354,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 		}
 		key := changeEventKey(tx.namespace, event.CommitSeq, event.Seq)
 		capture.wrote = true
-		return w.write(func(txn *badger.Txn) error { return txn.Set(key, value) })
+		return w.write(ctx, func(txn *badger.Txn) error { return txn.Set(key, value) })
 	}
 	labels := newChangeEndpointLabels(b, states)
 	keys := changeKeys{schema: b.GetSchemaForNamespace(tx.namespace)}
@@ -348,7 +365,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 			return nil
 		}
 		seenEdges[id] = true
-		event, ok := edgeChangeEvent(base, before, after, labels)
+		event, ok := edgeChangeEvent(base, before, after)
 		if !ok {
 			return nil
 		}
@@ -356,12 +373,41 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 		if current == nil {
 			current = before
 		}
-		event.EdgeKeys = keys.ofEdge(current)
-		event.StartKeys = keys.ofNode(labels.node(current.StartNode))
-		event.EndKeys = keys.ofNode(labels.node(current.EndNode))
+		var err error
+		event.EdgeKeys, err = keys.ofEdge(ctx, current)
+		if err != nil {
+			return err
+		}
+		startNode, err := labels.node(ctx, current.StartNode)
+		if err != nil {
+			return err
+		}
+		endNode, err := labels.node(ctx, current.EndNode)
+		if err != nil {
+			return err
+		}
+		if startNode != nil {
+			event.StartLabels = copyStrings(startNode.Labels)
+		}
+		if endNode != nil {
+			event.EndLabels = copyStrings(endNode.Labels)
+		}
+		startKeys, startErr := keys.ofNode(ctx, startNode)
+		if startErr != nil {
+			return startErr
+		}
+		event.StartKeys = startKeys
+		endKeys, endErr := keys.ofNode(ctx, endNode)
+		if endErr != nil {
+			return endErr
+		}
+		event.EndKeys = endKeys
 		return write(event)
 	}
 	for _, op := range operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode, OpDeleteNode:
 			id := op.NodeID
@@ -374,7 +420,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 						continue
 					}
 					var edge *Edge
-					err := w.write(func(txn *badger.Txn) error {
+					err := w.write(ctx, func(txn *badger.Txn) error {
 						var loadErr error
 						edge, loadErr = b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
 						if loadErr == ErrNotFound {
@@ -396,12 +442,16 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 				continue
 			}
 			seenNodes[id] = true
-			if event, ok := nodeChangeEvent(base, states.committedNodes[id], states.finalNodes[id]); ok {
-				whole := states.finalNodes[id]
+			if event, ok := nodeChangeEvent(base, states.nodes[id].before, states.nodes[id].after); ok {
+				whole := states.nodes[id].after
 				if whole == nil {
-					whole = states.committedNodes[id]
+					whole = states.nodes[id].before
 				}
-				event.Keys = keys.ofNode(whole)
+				nodeKeys, keysErr := keys.ofNode(ctx, whole)
+				if keysErr != nil {
+					return keysErr
+				}
+				event.Keys = nodeKeys
 				if err := write(event); err != nil {
 					return err
 				}
@@ -411,7 +461,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 			if op.Edge != nil {
 				id = op.Edge.ID
 			}
-			if err := edgeEvent(id, states.committedEdges[id], states.finalEdges[id]); err != nil {
+			if err := edgeEvent(id, states.edges[id].before, states.edges[id].after); err != nil {
 				return err
 			}
 		}
@@ -453,7 +503,7 @@ func nodeChangeEvent(base ChangeEvent, before, after *Node) (ChangeEvent, bool) 
 
 // edgeChangeEvent is a relationship's change from before to after; false
 // when the transaction left it as it was, or created and deleted it.
-func edgeChangeEvent(base ChangeEvent, before, after *Edge, labels *changeEndpointLabels) (ChangeEvent, bool) {
+func edgeChangeEvent(base ChangeEvent, before, after *Edge) (ChangeEvent, bool) {
 	event := base
 	current := after
 	switch {
@@ -481,7 +531,6 @@ func edgeChangeEvent(base ChangeEvent, before, after *Edge, labels *changeEndpoi
 	}
 	event.ID, event.Type = localEntityID(string(current.ID)), current.Type
 	event.Start, event.End = localEntityID(string(current.StartNode)), localEntityID(string(current.EndNode))
-	event.StartLabels, event.EndLabels = labels.of(current.StartNode), labels.of(current.EndNode)
 	return event, true
 }
 
@@ -499,34 +548,31 @@ func newChangeEndpointLabels(engine *BadgerEngine, states commitStates) *changeE
 	return &changeEndpointLabels{engine: engine, states: states, read: make(map[NodeID]*Node)}
 }
 
-func (l *changeEndpointLabels) of(id NodeID) []string {
-	if node := l.node(id); node != nil {
-		return copyStrings(node.Labels)
-	}
-	return nil
-}
-
 // node is the endpoint's state: at the end of the transaction when the
 // transaction touched it (before its delete when it deleted it), else as
 // stored; nil when there is none.
-func (l *changeEndpointLabels) node(id NodeID) *Node {
-	if node, touched := l.states.finalNodes[id]; touched {
+func (l *changeEndpointLabels) node(ctx context.Context, id NodeID) (*Node, error) {
+	if pair, touched := l.states.nodes[id]; touched {
+		node := pair.after
 		if node == nil {
-			node = l.states.committedNodes[id]
+			node = l.states.nodes[id].before
 		}
 		if node != nil {
-			return node
+			return node, nil
 		}
 	}
 	if node, ok := l.read[id]; ok {
-		return node
+		return node, nil
 	}
-	node, err := l.engine.GetNodeWithoutEmbeddings(id)
+	node, err := l.engine.GetNodeWithoutEmbeddings(ctx, id)
 	if err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
 		node = nil
 	}
 	l.read[id] = node
-	return node
+	return node, nil
 }
 
 // changeKeys reads an entity's key-constraint property values from its
@@ -537,61 +583,79 @@ type changeKeys struct {
 
 // ofNode is a node's key values per label: for each NODE KEY constraint on
 // one of its labels, in constraint-name order, the constrained properties'
-// values. Nil when it has none.
-func (k changeKeys) ofNode(node *Node) map[string][]map[string]any {
+// values. Nil when it has none; a discovery failure is returned.
+func (k changeKeys) ofNode(ctx context.Context, node *Node) (map[string][]map[string]any, error) {
 	if node == nil || k.schema == nil {
-		return nil
+		return nil, nil
+	}
+	// Key discovery follows the publication phase owner, including plain request preparation.
+	constraints, err := k.schema.GetConstraintsForLabels(ctx, node.Labels)
+	if err != nil {
+		return nil, err
 	}
 	var keys map[string][]map[string]any
-	for _, constraint := range k.schema.GetConstraintsForLabels(node.Labels) {
+	for _, constraint := range constraints {
 		if constraint.Type != ConstraintNodeKey || constraint.EffectiveEntityType() != ConstraintEntityNode {
 			continue
 		}
-		if values := keyValues(constraint.Properties, node.Properties); values != nil {
+		values, err := keyValues(ctx, constraint.Properties, node.Properties)
+		if err != nil {
+			return nil, err
+		}
+		if values != nil {
 			if keys == nil {
 				keys = make(map[string][]map[string]any)
 			}
 			keys[constraint.Label] = append(keys[constraint.Label], values)
 		}
 	}
-	return keys
+	return keys, nil
 }
 
 // ofEdge is a relationship's key values: for each RELATIONSHIP KEY
 // constraint on its type, in constraint-name order, the constrained
 // properties' values. Nil when it has none.
-func (k changeKeys) ofEdge(edge *Edge) []map[string]any {
+func (k changeKeys) ofEdge(ctx context.Context, edge *Edge) ([]map[string]any, error) {
 	if edge == nil || k.schema == nil {
-		return nil
+		return nil, nil
 	}
-	constraints := k.schema.GetAllConstraints()
-	sort.Slice(constraints, func(i, j int) bool { return constraints[i].Name < constraints[j].Name })
+	constraints, err := k.schema.GetConstraintsForLabels(ctx, []string{edge.Type})
+	if err != nil {
+		return nil, err
+	}
 	var keys []map[string]any
 	for _, constraint := range constraints {
 		if constraint.Type != ConstraintRelationshipKey || constraint.Label != edge.Type {
 			continue
 		}
-		if values := keyValues(constraint.Properties, edge.Properties); values != nil {
+		values, err := keyValues(ctx, constraint.Properties, edge.Properties)
+		if err != nil {
+			return nil, err
+		}
+		if values != nil {
 			keys = append(keys, values)
 		}
 	}
-	return keys
+	return keys, nil
 }
 
 // keyValues is the named properties' values, or nil when one is missing.
-func keyValues(names []string, properties map[string]any) map[string]any {
+func keyValues(ctx context.Context, names []string, properties map[string]any) (map[string]any, error) {
 	if len(names) == 0 {
-		return nil
+		return nil, nil
 	}
 	values := make(map[string]any, len(names))
 	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		value, ok := properties[name]
 		if !ok || value == nil {
-			return nil
+			return nil, nil
 		}
 		values[name] = value
 	}
-	return values
+	return values, nil
 }
 
 // changedProperties returns the keys whose value differs between before and
@@ -677,7 +741,15 @@ func localEntityID(id string) string {
 // PruneChangeEvents deletes a database's events of transactions committed
 // before cutoff, returning how many it deleted. The last transaction's
 // events are always kept: they are where db.cdc.current() stands.
-func (b *BadgerEngine) PruneChangeEvents(namespace string, cutoff time.Time) (int, error) {
+//
+// ctx is the retention job's admitted lifetime, not an initiating request: it
+// bounds the scan and admission of every delete batch. A batch that was
+// admitted completes in the store; a canceled ctx stops before the next batch
+// and returns the count actually deleted.
+func (b *BadgerEngine) PruneChangeEvents(ctx context.Context, namespace string, cutoff time.Time) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	prefix := changeEventPrefix(namespace)
 	_, last, err := b.ChangeBounds(namespace)
 	if err != nil {
@@ -690,6 +762,9 @@ func (b *BadgerEngine) PruneChangeEvents(namespace string, cutoff time.Time) (in
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			var event ChangeEvent
 			if err := it.Item().Value(func(value []byte) error { return decodeValue(value, &event) }); err != nil {
 				return err
@@ -706,7 +781,7 @@ func (b *BadgerEngine) PruneChangeEvents(namespace string, cutoff time.Time) (in
 	}
 	for start := 0; start < len(expired); start += 1000 {
 		end := min(start+1000, len(expired))
-		if err := b.withUpdate(func(txn *badger.Txn) error {
+		if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for _, key := range expired[start:end] {
 				if err := txn.Delete(key); err != nil {
 					return err
@@ -726,8 +801,7 @@ type changeRetentionJob struct {
 	engine   *BadgerEngine
 	interval time.Duration
 	mu       sync.Mutex
-	cancel   context.CancelFunc
-	done     chan struct{}
+	run      *engineWorker // the running job, accepted engine work; mu
 }
 
 // defaultChangeRetention is Neo4j's default transaction log retention.
@@ -751,32 +825,27 @@ func (b *BadgerEngine) changeRetention() time.Duration {
 	return defaultChangeRetention
 }
 
-// Start runs the job until Stop or ctx ends.
+// Start runs the job, as accepted engine work, until Stop, the engine's stop
+// or ctx ends.
 func (j *changeRetentionJob) Start(ctx context.Context) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	if j.cancel != nil {
+	if j.run != nil {
 		return
 	}
-	ctx, j.cancel = context.WithCancel(ctx)
-	j.done = make(chan struct{})
-	go j.run(ctx)
+	j.run = j.engine.startEngineWorker(ctx, j.loop)
 }
 
-// Stop stops the job and waits for it.
+// Stop stops the job and waits for its actual return.
 func (j *changeRetentionJob) Stop() {
 	j.mu.Lock()
-	cancel, done := j.cancel, j.done
-	j.cancel = nil
+	run := j.run
+	j.run = nil
 	j.mu.Unlock()
-	if cancel != nil {
-		cancel()
-		<-done
-	}
+	run.stopAndJoin()
 }
 
-func (j *changeRetentionJob) run(ctx context.Context) {
-	defer close(j.done)
+func (j *changeRetentionJob) loop(ctx context.Context) {
 	ticker := time.NewTicker(j.interval)
 	defer ticker.Stop()
 	for {
@@ -784,17 +853,18 @@ func (j *changeRetentionJob) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			j.RunOnce(time.Now())
+			j.RunOnce(ctx, time.Now())
 		}
 	}
 }
 
 // RunOnce deletes the expired events of every capturing database.
-func (j *changeRetentionJob) RunOnce(now time.Time) {
+// ctx is the run's admitted lifetime.
+func (j *changeRetentionJob) RunOnce(ctx context.Context, now time.Time) {
 	cutoff := now.Add(-j.engine.changeRetention())
 	j.engine.changes.modes.Range(func(key, _ any) bool {
 		namespace := key.(string)
-		if n, err := j.engine.PruneChangeEvents(namespace, cutoff); err != nil {
+		if n, err := j.engine.PruneChangeEvents(ctx, namespace, cutoff); err != nil {
 			j.engine.log.Warn("change event retention failed", "component", "cdc", "database", namespace, "error", err)
 		} else if n > 0 {
 			j.engine.log.Debug("change events expired", "component", "cdc", "database", namespace, "events", n)

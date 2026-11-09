@@ -1,0 +1,510 @@
+{
+  "author": "storage-format-owners lane (Claude), #1693, 30 October 2026",
+  "note": "Read-based census outcomes outside Contract A, each ruled by Nornic2. outOfContract: a function whose fresh context reaches no storage function that reads it while a request is in scope (the census's call graph over-approximates that reach). excludedPackages: tooling and test packages outside the product contract; the rule is a package no product package imports (no non-test file outside the package imports it), checked at each listed head. trackedDefects: a real defect filed for Linear (sig/handoff/linear-pending-issues.md), listed and counted until fixed. deferredPublicAPI: NOT an exclusion. Contract A is unfulfilled wherever a request holder reaches a substitution only across the public API (a caller in another package, or dynamic dispatch into an exported method, Engine or any other interface); each such site is listed and counted as unfulfilled-contract-a against this tracked deferral, never as a pass. Each entry is logged and counted; an entry that matches nothing fails. publicPackages: packages whose exported API, like storage's, is the deferred public boundary (Nornic2, 31 October 2026: exported auth APIs). publicEntries: single exported functions that are the same deferred boundary (Nornic2, 31 October 2026: cypher.RedactLiterals).",
+  "outOfContract": {
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).publishDirectStatementCommit": {
+      "Reason": "the fresh context feeds only QueryPermissionRequirements, a static check of the query text (did the statement write?), which reaches no storage function; the request context is passed to publishStatementCommit",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/pkg/lifecycle.Run": {
+      "Reason": "the shutdown drain is deliberately fresh (OBS-09): it must outlive the cancelled run context.",
+      "Approver": "Nornic2 ruling (31 October 2026)",
+      "Occurrences": [
+        "call context.Background (+26 in github.com/orneryd/nornicdb/pkg/lifecycle.Run)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).updateMetadata": {
+      "Reason": "ID counter persistence after the commit point: a request cancellation must not cut it short, and no request context is replaced.",
+      "Approver": "Nornic2 ruling (31 October 2026)",
+      "Occurrences": [
+        "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).updateMetadata)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/bolt.AuthenticatorAdapter).Authenticate": {
+      "Reason": "Bolt HELLO authentication has no request context in the Authenticator interface; the lookup is a bounded independent lifetime.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+89 in (*github.com/orneryd/nornicdb/pkg/bolt.AuthenticatorAdapter).Authenticate)"
+      ]
+    },
+    "github.com/orneryd/nornicdb/pkg/cypher.redactGrammarAccepts": {
+      "Reason": "defensive log/error redaction must always complete; making it cancellable could leak unredacted literals.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+1 in github.com/orneryd/nornicdb/pkg/cypher.redactGrammarAccepts)"
+      ]
+    },
+    "github.com/orneryd/nornicdb/pkg/cypher.redactLiterals": {
+      "Reason": "defensive log/error redaction must always complete; making it cancellable could leak unredacted literals.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+1 in github.com/orneryd/nornicdb/pkg/cypher.redactLiterals)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).dropIndexByName": {
+      "Reason": "post-commit index retirement completes after the DDL commit is accepted.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+29 in (*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).dropIndexByName)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/heimdall.BifrostClient).acquire": {
+      "Reason": "owner admission root for the Bifrost lifetime, not request work.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/heimdall.BifrostClient).acquire)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/heimdall.SubsystemManager).StartAll": {
+      "Reason": "plugin subsystem lifetime root, start and shutdown drain; outlives any request.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+4 in (*github.com/orneryd/nornicdb/pkg/heimdall.SubsystemManager).StartAll)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/heimdall.SubsystemManager).ShutdownAll": {
+      "Reason": "plugin subsystem lifetime root, start and shutdown drain; outlives any request.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+16 in (*github.com/orneryd/nornicdb/pkg/heimdall.SubsystemManager).ShutdownAll)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/heimdall.SubsystemManager).lifetime": {
+      "Reason": "plugin subsystem lifetime root, start and shutdown drain; outlives any request.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+13 in (*github.com/orneryd/nornicdb/pkg/heimdall.SubsystemManager).lifetime)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/heimdall.SubsystemManager).registrationsLocked": {
+      "Reason": "plugin subsystem lifetime root, start and shutdown drain; outlives any request.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+2 in (*github.com/orneryd/nornicdb/pkg/heimdall.SubsystemManager).registrationsLocked)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/heimdall.SubsystemManager).setContext": {
+      "Reason": "plugin subsystem lifetime root, start and shutdown drain; outlives any request.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+21 in (*github.com/orneryd/nornicdb/pkg/heimdall.SubsystemManager).setContext)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/knowledgepolicy.AccessFlusher).Start": {
+      "Reason": "flusher run admission and final flush of already-accepted access deltas.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+8 in (*github.com/orneryd/nornicdb/pkg/knowledgepolicy.AccessFlusher).Start)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/knowledgepolicy.AccessFlusher).flush": {
+      "Reason": "flusher run admission and final flush of already-accepted access deltas.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+9 in (*github.com/orneryd/nornicdb/pkg/knowledgepolicy.AccessFlusher).flush)",
+        "call context.Background (+14 in (*github.com/orneryd/nornicdb/pkg/knowledgepolicy.AccessFlusher).flush)",
+        "call context.Background (+25 in (*github.com/orneryd/nornicdb/pkg/knowledgepolicy.AccessFlusher).flush)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).init": {
+      "Reason": "WorkLifetime root initialization; it is the owner other lifetimes derive from.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+0 in (*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).init)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/nornicdb.DB).maybeEnableReplication": {
+      "Reason": "replication runtime started during DB open; it is owned by the DB lifetime, not a request.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+19 in (*github.com/orneryd/nornicdb/pkg/nornicdb.DB).maybeEnableReplication)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/nornicdb.DB).indexNodeFromEvent": {
+      "Reason": "accepted storage-event callback; indexing completes for a write that already committed.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+9 in (*github.com/orneryd/nornicdb/pkg/nornicdb.DB).indexNodeFromEvent)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/qdrantgrpc.Server).Start": {
+      "Reason": "server Start lifetime root.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+6 in (*github.com/orneryd/nornicdb/pkg/qdrantgrpc.Server).Start)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/replication.WALApplier).ApplyBatch": {
+      "Reason": "standby apply of WAL entries already accepted by the primary.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+12 in (*github.com/orneryd/nornicdb/pkg/replication.WALApplier).ApplyBatch)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/replication.WALApplier).Flush": {
+      "Reason": "standby apply of WAL entries already accepted by the primary.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+6 in (*github.com/orneryd/nornicdb/pkg/replication.WALApplier).Flush)"
+      ]
+    },
+    "github.com/orneryd/nornicdb/pkg/server.New": {
+      "Reason": "server construction, start, background initialization or shutdown root; outlives any request.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+15 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+31 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+81 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+92 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+314 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+315 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+326 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+331 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+383 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+388 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+392 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+397 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+425 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+430 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+452 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+473 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+482 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+503 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+518 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+524 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+544 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+549 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+598 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+609 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+616 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+649 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+691 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+823 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+829 in github.com/orneryd/nornicdb/pkg/server.New)",
+        "call context.Background (+835 in github.com/orneryd/nornicdb/pkg/server.New)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/server.Server).Start": {
+      "Reason": "server construction, start, background initialization or shutdown root; outlives any request.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/server.Server).Start)",
+        "call context.Background (+97 in (*github.com/orneryd/nornicdb/pkg/server.Server).Start)",
+        "call context.Background (+104 in (*github.com/orneryd/nornicdb/pkg/server.Server).Start)",
+        "call context.Background (+135 in (*github.com/orneryd/nornicdb/pkg/server.Server).Start)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/server.Server).startEmbedderInit": {
+      "Reason": "server construction, start, background initialization or shutdown root; outlives any request.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+4 in (*github.com/orneryd/nornicdb/pkg/server.Server).startEmbedderInit)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/server.serverShutdown).stopBudget": {
+      "Reason": "stop budget root when Stop is called without a deadline.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+4 in (*github.com/orneryd/nornicdb/pkg/server.serverShutdown).stopBudget)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).deleteByPrefixHeld": {
+      "Reason": "remainder of an admitted prefix/namespace drop; cancelling mid-drop would leave partial key families.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+125 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).deleteByPrefixHeld)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).deleteNamespaceKeyFamilies": {
+      "Reason": "remainder of an admitted prefix/namespace drop; cancelling mid-drop would leave partial key families.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).deleteNamespaceKeyFamilies)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).ReconcileDecaySuppression": {
+      "Reason": "accepted reconciliation after a committed schema change; must not abandon half a namespace.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+4 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).ReconcileDecaySuppression)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).Update": {
+      "Reason": "publication wait/commit after the write is accepted; callers must observe their own committed write.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).Update)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commit": {
+      "Reason": "publication wait/commit after the write is accepted; callers must observe their own committed write.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+5 in (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commit)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishUniqueValues": {
+      "Reason": "index/unique publication mirrors a write that already committed. One completion context now feeds both canonical-claim comparison and publication after the same acceptance point.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+4 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishUniqueValues)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).retire": {
+      "Reason": "close-time count fold; engine retirement must complete.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+6 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).retire)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).publishKnowledgePolicySchemaLocked": {
+      "Reason": "schema publication after commit acceptance.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+7 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).publishKnowledgePolicySchemaLocked)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit": {
+      "Reason": "post-acceptance commit completion and derived-count repair after data is durable. Re-reviewed 2026-11-07 against the previously approved c40d10504f21392188c6e3a48f3ed30b5e6860d7 source and release 9dcf1bba10f0709bec9472628dd9f3f0fa3b32f6: PublishCommit still creates exactly these two fresh contexts. The private accepted preparation continuation remains at +247. The positional-count completion tail moved from +468 to +473 solely because five preceding lines now retire the native MVCC reservation with a deferred publishTxn call. The cw.finish success check, retained count lock, completionContext consumers applyEdgeTypeLabelCountDeltasLocked and rebuildAuthoritativeEdgeTypeCountsLocked, and their implementation files are unchanged. Caller cancellation must still reject before acceptance and cannot veto derived counts or repair after durable publication. This re-pins the existing approved phase; it introduces no new lifetime boundary, analyzer exemption, or human approval.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+247 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)",
+        "call context.Background (+473 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication": {
+      "Reason": "replay of acknowledged buffered commits owns detached completion.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+13 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).restoreBufferedOperationBodies": {
+      "Reason": "WAL recovery replay of already-acknowledged commits.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).restoreBufferedOperationBodies)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).AppendCommit": {
+      "Reason": "write-behind worker rotation and pending-index rebuild for accepted commits. The existing completion context also selects the accepted frame; WAL/decision admission remains before this method.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+7 in (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).AppendCommit)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).run": {
+      "Reason": "write-behind worker rotation and pending-index rebuild for accepted commits.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+16 in (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).run)",
+        "call context.Background (+20 in (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).run)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.commitWriter).commitOutcome": {
+      "Reason": "publication wait after the commit batch is accepted.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+11 in (*github.com/orneryd/nornicdb/pkg/storage.commitWriter).commitOutcome)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.pendingNodeIndex).sameEntries": {
+      "Reason": "pending index mirrors writes the engine already accepted.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+6 in (*github.com/orneryd/nornicdb/pkg/storage.pendingNodeIndex).sameEntries)",
+        "call context.Background (+10 in (*github.com/orneryd/nornicdb/pkg/storage.pendingNodeIndex).sameEntries)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.SchemaManager).trackPendingPairs": {
+      "Reason": "pending index mirrors writes the engine already accepted.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+26 in (*github.com/orneryd/nornicdb/pkg/storage.SchemaManager).trackPendingPairs)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.pendingNodeIndex).addValue": {
+      "Reason": "pending index mirrors writes the engine already accepted.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+3 in (*github.com/orneryd/nornicdb/pkg/storage.pendingNodeIndex).addValue)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.CompositeIndex).removeNodeLocked": {
+      "Reason": "removal follows a write that already removed the entry.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+3 in (*github.com/orneryd/nornicdb/pkg/storage.CompositeIndex).removeNodeLocked)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).Lock": {
+      "Reason": "uninterruptible Lock/RLock adapters (sync.Locker semantics) used by completion paths; LockContext is the cancellable path.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+0 in (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).Lock)",
+        "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).Lock)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.contextRWMutex).Lock": {
+      "Reason": "uninterruptible Lock/RLock adapters (sync.Locker semantics) used by completion paths; LockContext is the cancellable path.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+0 in (*github.com/orneryd/nornicdb/pkg/storage.contextRWMutex).Lock)",
+        "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/storage.contextRWMutex).Lock)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.contextRWMutex).RLock": {
+      "Reason": "uninterruptible Lock/RLock adapters (sync.Locker semantics) used by completion paths; LockContext is the cancellable path.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+0 in (*github.com/orneryd/nornicdb/pkg/storage.contextRWMutex).RLock)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/txsession.Manager).openWithExecutorForOwner": {
+      "Reason": "terminal ROLLBACK compensation must complete after the request ended or expired.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+33 in (*github.com/orneryd/nornicdb/pkg/txsession.Manager).openWithExecutorForOwner)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/txsession.Manager).Delete": {
+      "Reason": "terminal ROLLBACK compensation must complete after the request ended or expired.",
+      "Approver": "orneryd (2 November 2026)",
+      "Occurrences": [
+        "call context.Background (+19 in (*github.com/orneryd/nornicdb/pkg/txsession.Manager).Delete)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).replaceNodeIndexEntries": {
+      "Reason": "Successor of maintainCompositeIndexesOnNodeCreated/Updated: derived equality postings finish after the physical commit; request-driven index builds still pass their request lifetime. See index-publication.md for exact caller and phase proof.",
+      "Approver": "Existing accepted-publication approval: orneryd (2 November 2026); successor-source review: Codex (3 November 2026), docs/development/index-publication.md",
+      "Occurrences": [
+        "call context.Background (+15 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).replaceNodeIndexEntries$1)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishRelationshipIndexMembership": {
+      "Reason": "Successor of updateRelationshipUniqueIndexes: publication consumes only the accepted before/final frame; request-driven relationship cache builds retain ctx. Same accepted index-publication phase, no additional request bypass.",
+      "Approver": "Existing accepted-publication approval: orneryd (2 November 2026); successor-source review: Codex (3 November 2026), docs/development/index-publication.md",
+      "Occurrences": [
+        "call context.Background (+14 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishRelationshipIndexMembership)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishCommitOperations": {
+      "Reason": "The existing accepted unique-publication fold moved from publishUniqueValues into its caller so claims, indexes and caches reuse one frame. Invoked only by durable ordered publication; this context folds accepted images, not request preparation.",
+      "Approver": "Existing accepted-publication approval: orneryd (2 November 2026); successor-source review: Codex (3 November 2026), docs/development/index-publication.md",
+      "Occurrences": [
+        "call context.Background (+6 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishCommitOperations)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).EnqueueDeindexIfSuppressed": {
+      "Reason": "Only the memory-publication callback after withPublishingUpdate commits uses this lifetime to fold its already admitted rewrite; suppression checks, write staging and publication-key preparation retain the request context.",
+      "Approver": "Existing accepted-publication approval: orneryd (2 November 2026); successor-source review: Codex (3 November 2026), docs/development/index-publication.md",
+      "Occurrences": [
+        "call context.Background (+3 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).EnqueueDeindexIfSuppressed$2)"
+      ]
+    }
+  },
+  "excludedPackages": {
+    "github.com/orneryd/nornicdb/cmd/recall-bench": {
+      "Reason": "benchmark tool, outside the product contract",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/internal/streamretrytest": {
+      "Reason": "test helper package, outside the product contract",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/testing/search/contract": {
+      "Reason": "test contract package, outside the product contract",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/internal/transactionalcalltest": {
+      "Reason": "test helper package (the shared Execute checks of the fixture and Cypher tests); no product package imports it",
+      "Approver": "Nornic2 (31 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/internal/testutil/walterminal": {
+      "Reason": "test helper package, outside the product contract; its fresh context deliberately models an independent client operation",
+      "Approver": "orneryd (2 November 2026)"
+    }
+  },
+  "trackedDefects": {
+    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).graphFunctionStorage": {
+      "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md)",
+      "Approver": "Nornic2 (30 October 2026)"
+    },
+    "github.com/orneryd/nornicdb/pkg/cypher.rowStatementContextOrBackground": {
+      "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md): the row-evaluation fallback (temporal_values.go)",
+      "Approver": "Nornic2 (31 October 2026)"
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition": {
+      "Reason": "#1548's context.Background() on ReconcileDecaySuppression's path; kept as merged. It is the same never-cancelled value as namespaceMaintenanceContext, and its owner context arrives with U-1636.",
+      "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
+      "Occurrences": [
+        "call context.Background (+13 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition)"
+      ]
+    }
+  },
+  "deferredPublicAPI": {
+    "Reason": "the exported storage API (Engine and the optional interfaces) the exported auth API (publicPackages) and cypher.RedactLiterals (publicEntries) take no request context (no new or changed exported API in 1.4.4), so a caller holding one loses it there; 1.5.0 design, tracked as the pending Linear entry 'the exported storage API has no request context, so callers that hold one lose it (reads and writes)' (sig/handoff/linear-pending-issues.md). A 1.4.4 release scope decision, not proof that these paths carry no request.",
+    "Approver": "Nornic2 (30 October 2026), corrected by audit #33"
+  },
+  "publicPackages": [
+    "github.com/orneryd/nornicdb/pkg/auth"
+  ],
+  "publicEntries": [
+    "github.com/orneryd/nornicdb/pkg/cypher.RedactLiterals"
+  ],
+  "reviewedHeldValues": {
+    "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).rollbackSince": {
+      "EndsEdges": [
+        {
+          "Caller": "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort",
+          "Callee": "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).rollbackSince",
+          "Reason": "compensation restores previously written unpublished batches independently of rejected request",
+          "Kind": "body-boundary"
+        },
+        {
+          "Caller": "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).recoverInterruptedLargeCommit",
+          "Callee": "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).rollbackSince",
+          "Reason": "startup compensation before exposing any reader/writer",
+          "Kind": "body-boundary"
+        }
+      ],
+      "TrackedHolders": null,
+      "RouteSources": null,
+      "Held": null,
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.commitWriter).abort": "2477b994090b6360fcf9c692e0d937e60a5ce0320ebbefc1b63fd9d97fb6d0f4",
+        "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort": "7f720cadb1bb9bf92153ba0f5e133c97bd431cd1ce476190663a4aa3308460bb",
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext": "737da4dcee4391e85b1d00021b332831c09271d50322e1226d2c83f2162ef788",
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitDurableWrite": "eb02d632168e100735b46bd53cf1312e4cc69fd20250fdd0ad28dac100a49170",
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).recoverInterruptedLargeCommit": "033f47b8f1cbcf4da038d013aa772a6c5fa0bb8150504b64fc84a22181eb3c67",
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).rollbackSince": "d739e5791c8705a0edf93c33185159fe1431fa01c887711dd28452777b50662b",
+        "(*github.com/orneryd/nornicdb/pkg/storage.restoreBatches).commitBatch": "820d3e2dc73a841ccdf42fffe38ac6f963e7f053b2c31c1f01684375e91fa361",
+        "github.com/orneryd/nornicdb/pkg/storage.openManagedBadger": "129540497b14a56ab10fa76aeb9cbc68d6c74c289b4b82abb78bcded033de129",
+        "github.com/orneryd/nornicdb/pkg/localization.NewLocalizedError": "dbcf8d98df7baf557aeeb265e3617f8d7794c96128b6173ee3a0581c6955be5d",
+        "github.com/orneryd/nornicdb/pkg/localization.StorageTransactionLargeCommitUnrecoverable": "6221814dd2ac48094f47e73e94aecf8fc8ab8eb6439107a71f5292635ef1fc51",
+        "github.com/orneryd/nornicdb/pkg/localization.storageErrorText": "d987e031e4f69a070b6ed5a9fb2601a8b4881ca3815c9fff0fd5f51584125d97",
+        "github.com/orneryd/nornicdb/pkg/localization.storageValidationMessage": "990e006cdab070bd32672fc600fc66523cbc03ff3cffccfe48fdfc34109a9b98",
+        "github.com/orneryd/nornicdb/pkg/math/libm.Float64frombits": "24f405596402e464051c8ad40a4db07d999ea97c63c8fc036aa8dc90edeea498"
+      },
+      "Closure": "91766f74095fd310101f910f685a5dcdf05b63ec9185ff46b4aae5606feef59e",
+      "Modules": null,
+      "Callers": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.commitWriter).abort",
+          "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).recoverInterruptedLargeCommit": [
+          "github.com/orneryd/nornicdb/pkg/storage.openManagedBadger"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).rollbackSince": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort",
+          "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).recoverInterruptedLargeCommit"
+        ]
+      },
+      "FieldWriters": null,
+      "Methods": null,
+      "Reason": "Maintainer-approved compensation-only completion: rollback of previously written unpublished batches and startup crash repair finish independently of canceled request work. Intent and restore batches pass a nil journal to commitDurableWrite, so compensation neither repeats WAL admission nor inherits the failed request. The exact two caller edges, held value, thirteen source pins and caller sets remain the approved boundary; ordinary preparation and any new caller remain unapproved. Re-reviewed 2026-11-04 against parent 2d0362da48a87a0069b47c1ed185ad14cbc67e65 and candidate 34614a39e467b5be66c1245067b24220f572bf19: compiled static closure comparison preserves all 197 members, adds/removes none, and changes only physicalCacheProjection.add. That function now retains the same ordered key facts in a compact private representation; VisitAffectedFacts reconstructs the original public facts, including relationship endpoints, before durable cache invalidation. It creates no context, performs no I/O or write admission, and does not change compensation completion, WAL, publication or rollback callers. All thirteen pinned sources and both compensation edges remain unchanged. The exact current closure is d21df8a61ebaa59ee6082bf578cdb26772a83a7a5e9d2fe797360dde19c82777. TestInstalledRollbackPhaseRecord retains the positive two-route proof plus source/body/helper mutations and added-caller rejection. Any later encoding/source/caller change stales this record and requires renewed source review. Re-reviewed 2026-11-06 against release base 60ff9d644d0c75b0d1b67154c4662321f9d9dd7f and this head c40d10504f21392188c6e3a48f3ed30b5e6860d7: the compiled static closure of the thirteen pinned sources has 198 members, and all 198 exist at the base revision with byte-identical bodies except two, both changed by 88b8fe766 (fix(storage): restack accepted entity settlement for v1.4.4). (*pkg/storage.semanticTransactionScratch).clear now zeroes the version-selected generic wire (semanticTransactionWire[semanticTransactionTimestamp]) instead of the former non-generic struct, and (*pkg/storage.decodeEdgeCompactHeaderInto) also decodes the two V2 reserved flag bits that preserve unset CreatedAt/UpdatedAt. Neither adds or removes a function-valued operand, creates a context, performs I/O, admits a write, or changes a caller, so the reachable member set is unchanged; the earlier 197-member comparison described candidate 34614a39e467b5be66c1245067b24220f572bf19 and parent 2d0362da48a87a0069b47c1ed185ad14cbc67e65, neither an ancestor of this release base. All thirteen source pins, both compensation caller edges (largeCommit.abort, recoverInterruptedLargeCommit) and every caller set still match, and badger_managed.go and durable_cache_scope.go are unchanged from the base. rollbackSince still selects exactly one context.Background compensation lifetime. The exact current closure is 1ce7896cf62919fbe0bf2c55ab86cbda0d04148e279892da4d2c3212a1c9a1bd. Re-reviewed 2026-11-08 against original PR head 23ad2767072f46a4a36a9fde05bed957de7db0cb and runtime candidate 444cc0950: compiled closure adds only deleteNodeReadCacheLocked, resetNodeReadCachesLocked, estimateNodeReadCacheBytes, estimateNodeBodyCacheBytes, estimateEntityPropertyBytes and util.EstimateValueBytes; removes none; and changes only cacheDeleteNode and invalidateCachesAfterRestore. The changed functions delegate removal/reset to the cache accounting owner under their existing locks. Added functions only inspect immutable in-memory node/property/vector sizes or remove/reset cached images and their byte counter. They introduce no context, I/O, write admission, callback, WAL or publication operation. All thirteen source pins, caller sets and both compensation edges remain unchanged. The exact current closure is 91766f74095fd310101f910f685a5dcdf05b63ec9185ff46b4aae5606feef59e. The unchanged installed-record test still requires the two approved routes and rejects source/body/helper mutations and added callers.",
+      "Approver": "Tim Sweet (OrneryD), explicit approval 2026-11-01; principal-agent source review and public/mutation controls in rollback-phase-current-review"
+    }
+  }
+}

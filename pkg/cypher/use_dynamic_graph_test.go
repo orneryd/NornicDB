@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,16 +13,10 @@ import (
 // executor on pcomp.
 func newCompositeFixture(t *testing.T) *StorageExecutor {
 	t.Helper()
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
-	require.NoError(t, mgr.CreateDatabase("pother"))
-	require.NoError(t, mgr.CreateDatabase("pthird"))
-	require.NoError(t, mgr.CreateCompositeDatabase("pcomp", []multidb.ConstituentRef{
+	mgr, adapter := createCompositeTestManager(t, "pcomp", []multidb.ConstituentRef{
 		{Alias: "other", DatabaseName: "pother", Type: "local", AccessMode: "read_write"},
 		{Alias: "third", DatabaseName: "pthird", Type: "local", AccessMode: "read_write"},
-	}))
-	adapter := &testDatabaseManagerAdapter{manager: mgr}
+	})
 	for db, v := range map[string]string{"pother": "o", "pthird": "t"} {
 		store, err := mgr.GetStorage(db)
 		require.NoError(t, err)
@@ -43,7 +36,19 @@ func rowsOf(t *testing.T, exec *StorageExecutor, query string, params map[string
 	t.Helper()
 	result, err := exec.Execute(context.Background(), query, params)
 	require.NoError(t, err, query)
+	require.NotNil(t, result, query)
 	return result.Rows
+}
+
+// singleQueryValue asserts the shared one-row, one-column result contract.
+func singleQueryValue[T any](t *testing.T, exec *StorageExecutor, query string) T {
+	t.Helper()
+	rows := rowsOf(t, exec, query, nil)
+	require.Len(t, rows, 1, query)
+	require.Len(t, rows[0], 1, query)
+	value, ok := rows[0][0].(T)
+	require.True(t, ok, query)
+	return value
 }
 
 // TestCompositeDynamicGraphReferences: on a composite database a USE clause
@@ -103,4 +108,17 @@ func TestGraphFunctionsOutsideComposite(t *testing.T) {
 		require.EqualError(t, err, message, query)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
+}
+
+func createCompositeTestManager(t *testing.T, name string, refs []multidb.ConstituentRef) (*multidb.DatabaseManager, *testDatabaseManagerAdapter) {
+	t.Helper()
+	mgr := newCompositeNativeManager(t, nil)
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	for _, ref := range refs {
+		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: ref.DatabaseName}))
+	}
+
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), name, refs))
+	return mgr, &testDatabaseManagerAdapter{manager: mgr}
 }

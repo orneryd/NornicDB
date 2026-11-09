@@ -192,6 +192,12 @@
   other: "[!! Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. !!]"
 - id: cyphercore.list_index_type_mismatch
   other: "[!! Type mismatch: list index must be given as Integer, but was {{.Type}} !!]"
+- id: cyphercore.list_index_non_integer
+  other: "[!! Cannot access a list using an non-integer number index, got {{.Value}} !!]"
+- id: cyphercore.list_index_non_number
+  other: "[!! Cannot access a list '{{.List}}' using a non-number index, got {{.Value}} !!]"
+- id: cyphercore.list_index_boolean
+  other: "[!! Cannot access a list '{{.List}}' using a non-number index, got {{.Value}}: Expected {{.Value}} to be a org.neo4j.values.storable.NumberValue, but it was a org.neo4j.values.storable.{{.Class}} !!]"
 - id: cyphercore.regex_pattern_type_mismatch
   other: "[!! Type mismatch: a regular expression pattern must be a String, but was {{.Value}} !!]"
 - id: cyphercore.duration_arithmetic_overflow
@@ -272,6 +278,8 @@
   other: "[!! Invalid input for 'vector.similarity.{{.Function}}()': The supplied vectors do not have the same number of dimensions. !!]"
 - id: cyphercore.function_list_argument_empty
   other: "[!! The argument `{{.Argument}}` in the `{{.Function}}()` function must not be empty. !!]"
+- id: cyphercore.function_argument_null
+  other: "[!! Failed to invoke function `{{.Function}}`: Caused by: the `{{.Argument}}` argument is null. !!]"
 - id: cyphercore.temporal_call_signature
   other: "[!! Invalid call signature for {{.Type}}Function: Provided input was [{{.Provided}}] !!]"
 - id: cyphercore.temporal_procedure_call_signature
@@ -340,3 +348,12 @@
   other: "[!! Invalid vector distance metric, expected {{.Expected}} !!]"
 - id: cyphercore.uuid_invalid_text
   other: "[!! The argument `input` in the `uuid()` function must be a valid uuid string. !!]"
+- id: cyphercore.result_metadata_unresolved
+  description: Expanded pseudo-locale unresolved statement schema.
+  other: "[!! Cannot establish the statement scope and result columns !!]"
+- id: cyphercore.result_metadata_mismatch
+  description: Expanded pseudo-locale execution schema mismatch.
+  other: "[!! Execution result columns do not match the statement schema !!]"
+- id: cyphercore.call_import_variables_required
+  description: A CALL import item must name a variable.
+  other: "[!! CALL imports must contain only variable names !!]"

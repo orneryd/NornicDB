@@ -15,19 +15,22 @@ type recordingLabelScanEngine struct {
 	projections [][]string
 }
 
-func (e *recordingLabelScanEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+// Pin the optional capability: a signature drift must fail compilation.
+var _ storage.ScopedLabelNodeReader = (*recordingLabelScanEngine)(nil)
+
+func (e *recordingLabelScanEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
 	e.projections = append(e.projections, properties)
-	return e.MemoryEngine.StreamNodesByLabelProjected(label, properties, visit)
+	return e.MemoryEngine.StreamNodesByLabelProjected(ctx, label, properties, visit)
 }
 
-func (e *recordingLabelScanEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*storage.Node) error) error {
+func (e *recordingLabelScanEngine) StreamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*storage.Node) error) error {
 	e.projections = append(e.projections, properties)
-	return e.MemoryEngine.StreamNodesByLabelProjectedInScope(scope, label, properties, visit)
+	return e.MemoryEngine.StreamNodesByLabelProjectedInScope(ctx, scope, label, properties, visit)
 }
 
 func TestPipelineReadOnlyTail(t *testing.T) {
 	clauses := func(query string) []pipelineClause {
-		parsed, ok := pipelineClausesFor(query)
+		parsed, ok := pipelineClausesFor(t.Context(), query)
 		require.True(t, ok, query)
 		return parsed[1:]
 	}
@@ -89,8 +92,11 @@ func TestLabelScanReadsOnlyUsedProperties(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(10)}, {int64(20)}, {int64(30)}}, rows)
 	require.Equal(t, []string{"b"}, projection)
 
-	rows, projection = run("MATCH (p:P) RETURN p ORDER BY p.a LIMIT 1")
-	require.Nil(t, projection)
+	store.projections = nil
+	result, err := exec.Execute(ctx, "MATCH (p:P) RETURN p ORDER BY p.a LIMIT 1", nil)
+	require.NoError(t, err)
+	require.Empty(t, store.projections, "label IDs feed query reads without decoding discarded projected bodies")
+	rows = result.Rows
 	node := rows[0][0].(*storage.Node)
 	require.Equal(t, "x", node.Properties["big"])
 
@@ -101,6 +107,22 @@ func TestLabelScanReadsOnlyUsedProperties(t *testing.T) {
 
 // A keyword-named variable followed by a property access is a reference.
 func TestSemanticExpressionReferencesKeywordVariableProperty(t *testing.T) {
-	require.Equal(t, []string{"where.id", "x"}, semanticExpressionReferences("where.id + x"))
-	require.Equal(t, []string{"x"}, semanticExpressionReferences("x IS NOT NULL AND true"))
+	type reference struct {
+		variable, property string
+		hasProperty        bool
+	}
+	for _, tc := range []struct {
+		expression string
+		want       []reference
+	}{
+		{"where.id + x", []reference{{"where", "id", true}, {"x", "", false}}},
+		{"x IS NOT NULL AND true", []reference{{"x", "", false}}},
+	} {
+		var got []reference
+		require.True(t, forEachSemanticExpressionReference(tc.expression, func(variable, property string, hasProperty bool, _ int) bool {
+			got = append(got, reference{variable, property, hasProperty})
+			return true
+		}))
+		require.Equal(t, tc.want, got)
+	}
 }

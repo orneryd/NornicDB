@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -37,12 +38,15 @@ const mvccBenchRetainedVersions = 4096
 // nothing (#731).
 func newMVCCHistoryBenchEngine(b *testing.B) *MemoryEngine {
 	b.Helper()
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory: true,
 		EngineOptions: EngineOptions{
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: mvccBenchRetainedVersions},
 		},
-	})
+	}))
+	if engine != nil {
+		fixtureowner.Own(b, engine)
+	}
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -54,13 +58,13 @@ func seedConcurrentPruneBenchEngine(b *testing.B, nodeCount, initialVersions int
 	engine := newMVCCHistoryBenchEngine(b)
 	for i := 0; i < nodeCount; i++ {
 		id := NodeID(prefixTestID(fmt.Sprintf("bench-prune-concurrent-%03d", i)))
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": 1}})
+		_, err := engine.CreateNode(b.Context(), &Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": 1}})
 		if err != nil {
 			_ = engine.Close()
 			b.Fatal(err)
 		}
 		for version := 2; version <= initialVersions; version++ {
-			if err := engine.UpdateNode(&Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": version, "node": i}}); err != nil {
+			if err := engine.UpdateNode(b.Context(), NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": version, "node": i}}}); err != nil {
 				_ = engine.Close()
 				b.Fatal(err)
 			}
@@ -84,7 +88,7 @@ func startConcurrentPruneBenchWriter(engine *MemoryEngine, nodeCount int) func()
 					return
 				}
 				id := NodeID(prefixTestID(fmt.Sprintf("bench-prune-concurrent-%03d", i)))
-				err := engine.UpdateNode(&Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": counter + 1000, "writer": i}})
+				err := engine.UpdateNode(context.Background(), NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": counter + 1000, "writer": i}}})
 				if err != nil {
 					if err == ErrStorageClosed {
 						return
@@ -114,6 +118,17 @@ func startConcurrentPruneBenchWriter(engine *MemoryEngine, nodeCount int) func()
 	}
 }
 
+// mvccBenchHeadVersion owns the untimed head observation shared by live and
+// tombstone history builders; their mutation schedules remain unchanged.
+func mvccBenchHeadVersion(b *testing.B, engine *MemoryEngine, nodeID NodeID) MVCCVersion {
+	b.Helper()
+	head, err := engine.GetNodeCurrentHead(context.Background(), nodeID)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return head.Version
+}
+
 func buildMVCCBenchChain(b *testing.B, chainLength int) mvccBenchChain {
 	b.Helper()
 	engine := newMVCCHistoryBenchEngine(b)
@@ -121,25 +136,17 @@ func buildMVCCBenchChain(b *testing.B, chainLength int) mvccBenchChain {
 
 	nodeID := NodeID(prefixTestID(fmt.Sprintf("bench-chain-%d", chainLength)))
 	versions := make([]MVCCVersion, 0, chainLength)
-	_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": 1}})
+	_, err := engine.CreateNode(b.Context(), &Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": 1}})
 	if err != nil {
 		b.Fatal(err)
 	}
-	head, err := engine.GetNodeCurrentHead(nodeID)
-	if err != nil {
-		b.Fatal(err)
-	}
-	versions = append(versions, head.Version)
+	versions = append(versions, mvccBenchHeadVersion(b, engine, nodeID))
 
 	for version := 2; version <= chainLength; version++ {
-		if err := engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": version}}); err != nil {
+		if err := engine.UpdateNode(b.Context(), NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": version}}}); err != nil {
 			b.Fatal(err)
 		}
-		head, err := engine.GetNodeCurrentHead(nodeID)
-		if err != nil {
-			b.Fatal(err)
-		}
-		versions = append(versions, head.Version)
+		versions = append(versions, mvccBenchHeadVersion(b, engine, nodeID))
 	}
 
 	return mvccBenchChain{engine: engine, nodeID: nodeID, versions: versions}
@@ -151,7 +158,7 @@ func benchmarkMVCCChainPosition(b *testing.B, chainLength int, selector func([]M
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		node, err := chain.engine.GetNodeVisibleAt(chain.nodeID, target)
+		node, err := chain.engine.GetNodeVisibleAt(b.Context(), chain.nodeID, target)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -170,35 +177,23 @@ func buildMVCCTombstoneBenchChain(b *testing.B, cycles int) mvccTombstoneBenchCh
 	liveVersions := make([]MVCCVersion, 0, cycles)
 	tombstoneVersions := make([]MVCCVersion, 0, max(cycles-1, 0))
 
-	_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"cycle": 0, "state": "live"}})
+	_, err := engine.CreateNode(b.Context(), &Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"cycle": 0, "state": "live"}})
 	if err != nil {
 		b.Fatal(err)
 	}
-	head, err := engine.GetNodeCurrentHead(nodeID)
-	if err != nil {
-		b.Fatal(err)
-	}
-	liveVersions = append(liveVersions, head.Version)
+	liveVersions = append(liveVersions, mvccBenchHeadVersion(b, engine, nodeID))
 
 	for cycle := 1; cycle < cycles; cycle++ {
-		if err := engine.DeleteNode(nodeID); err != nil {
+		if err := engine.DeleteNode(b.Context(), nodeID); err != nil {
 			b.Fatal(err)
 		}
-		head, err = engine.GetNodeCurrentHead(nodeID)
-		if err != nil {
-			b.Fatal(err)
-		}
-		tombstoneVersions = append(tombstoneVersions, head.Version)
+		tombstoneVersions = append(tombstoneVersions, mvccBenchHeadVersion(b, engine, nodeID))
 
-		_, err = engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"cycle": cycle, "state": "live"}})
+		_, err = engine.CreateNode(b.Context(), &Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"cycle": cycle, "state": "live"}})
 		if err != nil {
 			b.Fatal(err)
 		}
-		head, err = engine.GetNodeCurrentHead(nodeID)
-		if err != nil {
-			b.Fatal(err)
-		}
-		liveVersions = append(liveVersions, head.Version)
+		liveVersions = append(liveVersions, mvccBenchHeadVersion(b, engine, nodeID))
 	}
 
 	return mvccTombstoneBenchChain{
@@ -215,7 +210,7 @@ func benchmarkMVCCTombstonePosition(b *testing.B, cycles int, selector func(mvcc
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		node, err := chain.engine.GetNodeVisibleAt(chain.nodeID, target)
+		node, err := chain.engine.GetNodeVisibleAt(b.Context(), chain.nodeID, target)
 		if expectFound {
 			if err != nil {
 				b.Fatal(err)
@@ -276,7 +271,7 @@ func benchmarkMVCCTombstonePositionAfterPrune(b *testing.B, cycles, maxVersionsP
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		node, err := chain.engine.GetNodeVisibleAt(chain.nodeID, target)
+		node, err := chain.engine.GetNodeVisibleAt(b.Context(), chain.nodeID, target)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -287,7 +282,7 @@ func benchmarkMVCCTombstonePositionAfterPrune(b *testing.B, cycles, maxVersionsP
 }
 
 func BenchmarkBadgerEngine_CreateNode_MVCC(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = engine.Close() })
 	b.ReportAllocs()
 
@@ -298,18 +293,18 @@ func BenchmarkBadgerEngine_CreateNode_MVCC(b *testing.B) {
 			Labels:     []string{"Benchmark"},
 			Properties: map[string]any{"index": i},
 		}
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(b.Context(), node); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
 func BenchmarkBadgerEngine_UpdateNode_MVCC(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = engine.Close() })
 
 	nodeID := NodeID(prefixTestID("bench-mvcc-update-target"))
-	_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Benchmark"}, Properties: map[string]any{"index": 0}})
+	_, err := engine.CreateNode(b.Context(), &Node{ID: nodeID, Labels: []string{"Benchmark"}, Properties: map[string]any{"index": 0}})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -317,7 +312,7 @@ func BenchmarkBadgerEngine_UpdateNode_MVCC(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Benchmark"}, Properties: map[string]any{"index": i}}); err != nil {
+		if err := engine.UpdateNode(b.Context(), NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Benchmark"}, Properties: map[string]any{"index": i}}}); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -344,7 +339,7 @@ func BenchmarkBadgerEngine_GetNodeVisibleAt(b *testing.B) {
 }
 
 func BenchmarkBadgerEngine_GetNodeVisibleAt_CurrentHeadGraphitiVector(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = engine.Close() })
 
 	nodeID := NodeID(prefixTestID("bench-mvcc-current-graphiti-vector"))
@@ -352,7 +347,7 @@ func BenchmarkBadgerEngine_GetNodeVisibleAt_CurrentHeadGraphitiVector(b *testing
 	for i := range embedding {
 		embedding[i] = float64(i%17) / 17
 	}
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(b.Context(), &Node{
 		ID:     nodeID,
 		Labels: []string{"Entity"},
 		Properties: map[string]any{
@@ -363,7 +358,7 @@ func BenchmarkBadgerEngine_GetNodeVisibleAt_CurrentHeadGraphitiVector(b *testing
 	if err != nil {
 		b.Fatal(err)
 	}
-	head, err := engine.GetNodeCurrentHead(nodeID)
+	head, err := engine.GetNodeCurrentHead(context.Background(), nodeID)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -371,7 +366,7 @@ func BenchmarkBadgerEngine_GetNodeVisibleAt_CurrentHeadGraphitiVector(b *testing
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		node, err := engine.GetNodeVisibleAt(nodeID, head.Version)
+		node, err := engine.GetNodeVisibleAt(b.Context(), nodeID, head.Version)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -382,29 +377,29 @@ func BenchmarkBadgerEngine_GetNodeVisibleAt_CurrentHeadGraphitiVector(b *testing
 }
 
 func BenchmarkBadgerEngine_GetNodesByLabelVisibleAt(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = engine.Close() })
 	b.ReportAllocs()
 
 	for i := 0; i < 200; i++ {
 		id := NodeID(prefixTestID(fmt.Sprintf("bench-mvcc-label-%03d", i)))
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"BenchLabel"}, Properties: map[string]any{"index": i}})
+		_, err := engine.CreateNode(b.Context(), &Node{ID: id, Labels: []string{"BenchLabel"}, Properties: map[string]any{"index": i}})
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := engine.UpdateNode(&Node{ID: id, Labels: []string{"BenchLabel"}, Properties: map[string]any{"index": i, "updated": true}}); err != nil {
+		if err := engine.UpdateNode(b.Context(), NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"BenchLabel"}, Properties: map[string]any{"index": i, "updated": true}}}); err != nil {
 			b.Fatal(err)
 		}
 	}
 	probeID := NodeID(prefixTestID("bench-mvcc-label-000"))
-	head, err := engine.GetNodeCurrentHead(probeID)
+	head, err := engine.GetNodeCurrentHead(context.Background(), probeID)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		nodes, err := engine.GetNodesByLabelVisibleAt("BenchLabel", head.Version)
+		nodes, err := engine.GetNodesByLabelVisibleAt(context.Background(), "BenchLabel", head.Version)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -447,13 +442,13 @@ func BenchmarkBadgerEngine_PruneMVCCVersions(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				engine := newMVCCHistoryBenchEngine(b)
 				nodeID := NodeID(prefixTestID(fmt.Sprintf("bench-prune-%d-%03d", versionsPerKey, i)))
-				_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": 1}})
+				_, err := engine.CreateNode(b.Context(), &Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": 1}})
 				if err != nil {
 					_ = engine.Close()
 					b.Fatal(err)
 				}
 				for version := 2; version <= versionsPerKey; version++ {
-					if err := engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": version}}); err != nil {
+					if err := engine.UpdateNode(b.Context(), NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": version}}}); err != nil {
 						_ = engine.Close()
 						b.Fatal(err)
 					}

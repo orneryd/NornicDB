@@ -14,13 +14,13 @@ import (
 // only reads. Nodes carry managed embeddings. The result cache is off.
 func BenchmarkEmbeddedNodeUpdates(b *testing.B) {
 	engine := newTestMemoryEngine(b)
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(engine, "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(engine, "test")
 	for i := 0; i < 1000; i++ {
 		vector := make([]float32, 256)
 		vector[i%256] = 1
-		if _, err := store.CreateNode(&storage.Node{
+		if _, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:              storage.NodeID(fmt.Sprintf("n%d", i)),
 			Labels:          []string{"E"},
 			Properties:      map[string]interface{}{"k": int64(i), "text": "embedded text", "tag": "t"},

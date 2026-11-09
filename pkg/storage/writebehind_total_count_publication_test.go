@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -11,7 +13,7 @@ import (
 
 func TestWriteBehindTotalCountsDuringPublicationCallbacks(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour)
-	_, err := engine.CreateNode(&Node{ID: "test:anchor", Labels: []string{"Anchor"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:anchor", Labels: []string{"Anchor"}})
 	require.NoError(t, err)
 	type observation struct {
 		kind                                   string
@@ -23,17 +25,17 @@ func TestWriteBehindTotalCountsDuringPublicationCallbacks(t *testing.T) {
 	read := func(kind string) {
 		got := observation{kind: kind}
 		var err error
-		got.nodes, err = engine.NodeCount()
+		got.nodes, err = engine.NodeCount(t.Context())
 		got.errors = append(got.errors, err)
-		got.prefixNodes, err = engine.NodeCountByPrefix("test:")
+		got.prefixNodes, err = engine.NodeCountByPrefix(context.Background(), "test:")
 		got.errors = append(got.errors, err)
-		got.edges, err = engine.EdgeCount()
+		got.edges, err = engine.EdgeCount(t.Context())
 		got.errors = append(got.errors, err)
-		got.prefixEdges, err = engine.EdgeCountByPrefix("test:")
+		got.prefixEdges, err = engine.EdgeCountByPrefix(context.Background(), "test:")
 		got.errors = append(got.errors, err)
-		node, nodeErr := engine.GetNode("test:child")
+		node, nodeErr := engine.GetNode(t.Context(), "test:child")
 		got.node = nodeErr == nil && node.Properties["body"] == "own write"
-		edge, edgeErr := engine.GetEdge("test:link")
+		edge, edgeErr := engine.GetEdge(t.Context(), "test:link")
 		got.edge = edgeErr == nil && edge.StartNode == "test:anchor" && edge.EndNode == "test:child"
 		observed <- got
 	}
@@ -47,15 +49,15 @@ func TestWriteBehindTotalCountsDuringPublicationCallbacks(t *testing.T) {
 			read("edge")
 		}
 	})
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:child", Labels: []string{"Child"}, Properties: map[string]interface{}{"body": "own write"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:child", Labels: []string{"Child"}, Properties: map[string]interface{}{"body": "own write"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:link", StartNode: "test:anchor", EndNode: "test:child", Type: "LINK"}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:link", StartNode: "test:anchor", EndNode: "test:child", Type: "LINK"}))
 	require.NoError(t, tx.Commit())
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	for range 2 {
 		select {
 		case got := <-observed:
@@ -77,27 +79,27 @@ func TestWriteBehindTotalCountsDuringPublicationCallbacks(t *testing.T) {
 func TestWriteBehindTotalCountsIgnoreUpdates(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-	tx, err := engine.BeginTransaction()
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:a", Properties: map[string]interface{}{"body": "updated"}}))
-	require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]interface{}{"body": "updated"}}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]interface{}{"body": "updated"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]interface{}{"body": "updated"}}}))
 	require.NoError(t, tx.Commit())
-	nodes, err := engine.NodeCount()
+	nodes, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), nodes, "updates do not create nodes")
-	nodes, err = engine.NodeCountByPrefix("test:")
+	nodes, err = engine.NodeCountByPrefix(context.Background(), "test:")
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), nodes, "prefix updates do not create nodes")
-	edges, err := engine.EdgeCount()
+	edges, err := engine.EdgeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), edges, "updates do not create relationships")
-	edges, err = engine.EdgeCountByPrefix("test:")
+	edges, err = engine.EdgeCountByPrefix(context.Background(), "test:")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), edges, "prefix updates do not create relationships")
 }
@@ -106,16 +108,19 @@ func TestWriteBehindTotalCountsIgnoreUpdates(t *testing.T) {
 // read must not add the already-published generation over that scan.
 func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"test:a", "test:b", "other:z"} {
-		_, err = engine.CreateNode(&Node{ID: id})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:old", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:obsolete", StartNode: "test:a", EndNode: "test:a", Type: "LINK"}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "other:old", StartNode: "other:z", EndNode: "other:z", Type: "LINK"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:old", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:obsolete", StartNode: "test:a", EndNode: "test:a", Type: "LINK"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "other:old", StartNode: "other:z", EndNode: "other:z", Type: "LINK"}))
 	type observation struct {
 		counts  []int64
 		errs    []error
@@ -123,18 +128,18 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 	}
 	read := func() observation {
 		got := observation{}
-		readers := []func() (int64, error){engine.NodeCount, engine.EdgeCount,
-			func() (int64, error) { return engine.NodeCountByPrefix("test:") }, func() (int64, error) { return engine.EdgeCountByPrefix("test:") },
-			func() (int64, error) { return engine.NodeCountByPrefix("other:") }, func() (int64, error) { return engine.EdgeCountByPrefix("other:") },
-			func() (int64, error) { return engine.NodeCountByPrefix("test:c") }, func() (int64, error) { return engine.EdgeCountByPrefix("test:new") }}
+		readers := []func() (int64, error){func() (int64, error) { return engine.NodeCount(t.Context()) }, func() (int64, error) { return engine.EdgeCount(t.Context()) },
+			func() (int64, error) { return engine.NodeCountByPrefix(context.Background(), "test:") }, func() (int64, error) { return engine.EdgeCountByPrefix(context.Background(), "test:") },
+			func() (int64, error) { return engine.NodeCountByPrefix(context.Background(), "other:") }, func() (int64, error) { return engine.EdgeCountByPrefix(context.Background(), "other:") },
+			func() (int64, error) { return engine.NodeCountByPrefix(context.Background(), "test:c") }, func() (int64, error) { return engine.EdgeCountByPrefix(context.Background(), "test:new") }}
 		for _, read := range readers {
 			value, err := read()
 			got.counts = append(got.counts, value)
 			got.errs = append(got.errs, err)
 		}
-		child, childErr := engine.GetNode("test:c")
-		_, goneErr := engine.GetNode("test:b")
-		edges, edgeErr := engine.GetOutgoingEdges("test:a")
+		child, childErr := engine.GetNode(t.Context(), "test:c")
+		_, goneErr := engine.GetNode(t.Context(), "test:b")
+		edges, edgeErr := engine.GetOutgoingEdges(context.Background(), "test:a")
 		got.visible = childErr == nil && child.Properties["body"] == "new" && goneErr != nil && edgeErr == nil && len(edges) == 1 && edges[0].ID == "test:new"
 		return got
 	}
@@ -163,34 +168,37 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 		}
 	})
 	engine.OnEdgeDeleted(func(EdgeID) { observed <- read() })
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:a", Properties: map[string]interface{}{"body": "updated"}}))
-	require.NoError(t, tx.DeleteEdge("test:obsolete"))
-	require.NoError(t, tx.DeleteNode("test:b"))
-	_, err = tx.CreateNode(&Node{ID: "test:c", Properties: map[string]interface{}{"body": "new"}})
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]interface{}{"body": "updated"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.DeleteEdge(t.Context(), "test:obsolete"))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:b", CascadeEdges))
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:c", Properties: map[string]interface{}{"body": "new"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:new", StartNode: "test:a", EndNode: "test:c", Type: "LINK"}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:new", StartNode: "test:a", EndNode: "test:c", Type: "LINK"}))
 	require.NoError(t, tx.Commit())
 	// Do not warm partial-prefix caches here: their first read occurs in callback.
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.GreaterOrEqual(t, len(observed), 4)
 	for len(observed) > 0 {
 		check(<-observed)
 	}
 	check(read())
-	noop, err := engine.BeginTransaction()
+	noop, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, noop.SetImplicit(true))
 	require.NoError(t, noop.SetNamespace("test"))
 	require.NoError(t, noop.Commit())
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	check(read())
 	require.Empty(t, observed, "empty commits do not republish callbacks")
 	require.NoError(t, engine.Close())
-	engine, err = NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	check(read())
 }
@@ -200,23 +208,24 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 	// requires durable ACK capture, independently of test execution order.
 	defer config.WithWALEnabled()()
 	dir := t.TempDir()
-	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
-	_, err := engine.CreateNode(&Node{ID: "test:a"})
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a"})
 	require.NoError(t, err)
 	// BeginTransaction flushes even an empty buffer, leaving a worker wakeup
 	// that can consume a later ACK. Stop just the flusher before staging this
 	// crash fixture; WAL capture and the engine's commit path remain unchanged.
 	engine.writeBehind.Close()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:b"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:b"})
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered(), "fixture must recover a genuinely buffered ACK")
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	found := false
 	for _, entry := range entries {
@@ -232,18 +241,19 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 		}
 	}
 	require.True(t, found, "buffered ACK must have an actual recoverable WAL payload before crash")
-	flushed, err := engine.bufferedFlushMarkerExists(tx.ID)
+	marker, err := engine.observeBufferedCommitReceipt(t.Context(), bufferedReceiptRead{txID: tx.ID})
 	require.NoError(t, err)
-	require.False(t, flushed, "crash fixture must not be durably replayed")
+	require.False(t, marker.present, "crash fixture must not be durably replayed")
 	crashClose(t, engine, wal)
-	recovered, wal2 := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal2 := recovered.bufferedCommitWAL
 	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 	observed := make(chan []int64, 2)
 	read := func() {
-		nodes, err1 := recovered.NodeCount()
-		edges, err2 := recovered.EdgeCount()
-		nsnodes, err3 := recovered.NodeCountByPrefix("test:")
-		nsedges, err4 := recovered.EdgeCountByPrefix("test:")
+		nodes, err1 := recovered.NodeCount(t.Context())
+		edges, err2 := recovered.EdgeCount(t.Context())
+		nsnodes, err3 := recovered.NodeCountByPrefix(context.Background(), "test:")
+		nsedges, err4 := recovered.EdgeCountByPrefix(context.Background(), "test:")
 		if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
 			observed <- nil
 			return
@@ -277,8 +287,8 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 func TestWriteBehindTotalCountsMixedStagingAPIs(t *testing.T) {
 	buffer := NewWriteBehindBuffer(time.Hour, 0, func(*CommitBuffer) error { return nil })
 	defer buffer.Close()
-	buffer.AppendNode(&Node{ID: "test:raw"})
-	buffer.AppendEdge(&Edge{ID: "test:rawedge", StartNode: "test:raw", EndNode: "test:raw", Type: "LINK"})
+	require.NoError(t, buffer.Append(BufferedMutation{Kind: BufferedOpNode, Node: &Node{ID: "test:raw"}}))
+	require.NoError(t, buffer.Append(BufferedMutation{Kind: BufferedOpEdge, Edge: &Edge{ID: "test:rawedge", StartNode: "test:raw", EndNode: "test:raw", Type: "LINK"}}))
 	require.Equal(t, int64(1), buffer.NodeCountDeltaForPrefix(""))
 	require.Equal(t, int64(1), buffer.EdgeCountDelta())
 	require.Equal(t, int64(1), buffer.NodeCountDeltaForPrefix("test:"))

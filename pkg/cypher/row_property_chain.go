@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 )
@@ -60,9 +61,9 @@ func rowPropertyChainShape(expr string) (variable, chain string, ok bool) {
 				dot = i
 			}
 			start = true
-		case isIdentStartByte(c):
+		case cyphertext.NameStartAt(expr, i):
 			start = false
-		case c >= '0' && c <= '9':
+		case cyphertext.IsDigit(c):
 			if start {
 				return "", "", false
 			}

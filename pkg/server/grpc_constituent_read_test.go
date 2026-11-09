@@ -1,0 +1,121 @@
+package server
+
+import (
+	"context"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/auth"
+	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/qdrantgrpc"
+	qpb "github.com/qdrant/go-client/qdrant"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+)
+
+func TestGRPCConstituentReadsUsePhysicalDatabasePrivileges(t *testing.T) {
+	server, users := setupTestServer(t)
+	server.config.EmbeddingEnabled = false
+	server.config.Features = &nornicConfig.FeatureFlagsConfig{
+		QdrantGRPCEnabled: true, QdrantGRPCListenAddr: "127.0.0.1:0",
+		QdrantGRPCMaxVectorDim: 4096, QdrantGRPCMaxBatchPoints: 1000, QdrantGRPCMaxTopK: 1000,
+	}
+	require.NoError(t, server.Start())
+	ctx := context.Background()
+	require.NoError(t, server.qdrantGRPCServer.CollectionStore().Create(ctx, "grpc_physical", 4, qpb.Distance_Cosine))
+	require.NoError(t, server.dbManager.CreateAlias(t.Context(), "grpc_selected_alias", "grpc_physical"))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "grpc_portfolio", []multidb.ConstituentRef{
+		{Alias: "part", DatabaseName: "grpc_physical", Type: "local", AccessMode: "read_write"},
+	}))
+	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, string(auth.RoleViewer), "grpc_portfolio", true, false))
+	connection, err := grpc.NewClient(server.qdrantGRPCServer.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = connection.Close() })
+	collections := qpb.NewCollectionsClient(connection)
+	points := qpb.NewPointsClient(connection)
+	reader := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+getAuthToken(t, users, "reader")))
+	admin := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+getAuthToken(t, users, "admin")))
+	for _, readable := range []bool{false, true} {
+		require.NoError(t, server.privilegesStore.SavePrivilege(ctx, string(auth.RoleViewer), "grpc_physical", readable, false))
+		phase := "denied"
+		if readable {
+			phase = "allowed"
+		}
+		for _, selection := range []string{"grpc_physical", "grpc_portfolio.part", "grpc_portfolio"} {
+			t.Run(phase+"/"+selection, func(t *testing.T) {
+				_, getErr := collections.Get(reader, &qpb.GetCollectionInfoRequest{CollectionName: selection})
+				_, countErr := points.Count(reader, &qpb.CountPoints{CollectionName: selection})
+				if readable {
+					require.NoError(t, getErr, selection)
+					require.NoError(t, countErr, selection)
+				} else {
+					require.Equal(t, codes.PermissionDenied, status.Code(getErr), "read bypass via %s: %v", selection, getErr)
+					require.Equal(t, codes.PermissionDenied, status.Code(countErr), "read bypass via %s: %v", selection, countErr)
+				}
+				_, err := collections.Get(admin, &qpb.GetCollectionInfoRequest{CollectionName: selection})
+				require.NoError(t, err, "admin lost supported selection %s", selection)
+			})
+		}
+	}
+
+	// Reuse the same authenticated connection while selection policy changes.
+	// These checks must read the live allowlist, not a principal snapshot/cache.
+	for _, allowed := range []bool{false, true, false, true} {
+		databases := []string{"grpc_portfolio"}
+		if allowed {
+			databases = append(databases, "grpc_physical")
+		}
+		require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, string(auth.RoleViewer), databases))
+		for _, selection := range []string{"grpc_physical", "grpc_portfolio.part", "grpc_portfolio"} {
+			_, err := points.Count(reader, &qpb.CountPoints{CollectionName: selection})
+			if allowed {
+				require.NoError(t, err, selection)
+			} else {
+				require.Equal(t, codes.PermissionDenied, status.Code(err), selection)
+			}
+		}
+	} // An ordinary alias needs its own current grant even when its physical
+	// database remains allowed. Reuse the authenticated connection throughout.
+	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, string(auth.RoleViewer), "grpc_physical", true, false))
+	for _, allowed := range []bool{false, true, false, true} {
+		names := []string{"grpc_portfolio", "grpc_physical"}
+		if allowed {
+			names = append(names, "grpc_selected_alias")
+		}
+		require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, string(auth.RoleViewer), names))
+		_, err := points.Count(reader, &qpb.CountPoints{CollectionName: "grpc_physical"})
+		require.NoError(t, err)
+		_, err = points.Count(reader, &qpb.CountPoints{CollectionName: "grpc_selected_alias"})
+		if allowed {
+			// Collection lookup does not resolve ordinary database aliases.
+			// Admission succeeds and reaches that existing lookup boundary.
+			require.Equal(t, codes.NotFound, status.Code(err))
+		} else {
+			require.Equal(t, codes.PermissionDenied, status.Code(err))
+		}
+	}
+}
+
+func TestGRPCCustomResolvedAccessResolverRemainsAuthoritative(t *testing.T) {
+	server, users := setupTestServer(t)
+	config := qdrantgrpc.DefaultConfig()
+	config.ListenAddr = "127.0.0.1:0"
+	config.DatabaseAccessModeResolver = server.GetDatabaseAccessModeForRoles
+	config.ResolvedAccessResolver = func([]string, string) auth.ResolvedAccess { return auth.ResolvedAccess{} }
+	service, err := qdrantgrpc.NewServerWithDatabaseManager(config, server.dbManager, server.db.GetBaseStorageForManager(), nil, users)
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, service.CollectionStore().Create(ctx, "grpc_custom", 4, qpb.Distance_Cosine))
+	require.NoError(t, service.Start())
+	t.Cleanup(service.Stop)
+	connection, err := grpc.NewClient(service.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = connection.Close() })
+	reader := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+getAuthToken(t, users, "reader")))
+	_, err = qpb.NewPointsClient(connection).Count(reader, &qpb.CountPoints{CollectionName: "grpc_custom"})
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "configured privilege resolver must remain authoritative")
+}

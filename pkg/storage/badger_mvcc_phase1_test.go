@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"testing"
 	"time"
@@ -30,16 +32,16 @@ func TestMVCCNodeVersionKeyOrdersByCommitVersion(t *testing.T) {
 
 func TestBadgerTransaction_AssignsMonotonicMVCCCommitVersions(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		require.NoError(t, engine.Close())
 	})
 
-	tx1, err := engine.BeginTransaction()
+	tx1, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx1.CreateNode(&Node{ID: NodeID("nornic:node-1"), Labels: []string{"Person"}})
+	_, err = tx1.CreateNode(t.Context(), &Node{ID: NodeID("nornic:node-1"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	require.NoError(t, tx1.Commit())
 	require.False(t, tx1.CommitVersion.IsZero())
@@ -48,15 +50,15 @@ func TestBadgerTransaction_AssignsMonotonicMVCCCommitVersions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tx1.CommitVersion.CommitSequence, persistedSeq)
 
-	tx2, err := engine.BeginTransaction()
+	tx2, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx2.CreateNode(&Node{ID: NodeID("nornic:node-2"), Labels: []string{"Person"}})
+	_, err = tx2.CreateNode(t.Context(), &Node{ID: NodeID("nornic:node-2"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	require.NoError(t, tx2.Commit())
 	require.Equal(t, uint64(1), tx2.CommitVersion.CommitSequence-tx1.CommitVersion.CommitSequence)
 	require.Equal(t, 1, tx2.CommitVersion.Compare(tx1.CommitVersion))
 
-	tx3, err := engine.BeginTransaction()
+	tx3, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx3.Commit())
 	require.True(t, tx3.CommitVersion.IsZero())
@@ -67,7 +69,7 @@ func TestBadgerTransaction_AssignsMonotonicMVCCCommitVersions(t *testing.T) {
 
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer reopened.Close()
 
@@ -75,9 +77,9 @@ func TestBadgerTransaction_AssignsMonotonicMVCCCommitVersions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tx2.CommitVersion.CommitSequence, reopenedSeq)
 
-	tx4, err := reopened.BeginTransaction()
+	tx4, err := reopened.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx4.CreateNode(&Node{ID: NodeID("nornic:node-3"), Labels: []string{"Person"}})
+	_, err = tx4.CreateNode(t.Context(), &Node{ID: NodeID("nornic:node-3"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	require.NoError(t, tx4.Commit())
 	require.Equal(t, tx2.CommitVersion.CommitSequence+1, tx4.CommitVersion.CommitSequence)

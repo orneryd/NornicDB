@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -10,18 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestKnowledgePolicySchemaLookupErrorBoundaries(t *testing.T) {
+type knowledgePolicyOpaqueEngine struct{ storage.Engine }
+
+func TestPolicySchemaLookupAndClosedTransaction(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	tx, err := base.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetNamespace("lookup"))
+	tx := fixtureowner.NamespaceTransaction(t, base.BeginTransaction, "lookup")
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "lookup"))
 	executor.txContext = &TransactionContext{tx: tx, active: true}
-	view, err := executor.knowledgePolicySchema()
+	_, view, err := executor.knowledgePolicyContext("")
 	require.NoError(t, err)
 	require.NotNil(t, view)
 	wrongNamespace := NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "other"})
-	_, err = wrongNamespace.knowledgePolicySchema()
+	_, _, err = wrongNamespace.knowledgePolicyContext("")
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
 	for _, procedure := range []func() (*ExecuteResult, error){
@@ -37,7 +38,7 @@ func TestKnowledgePolicySchemaLookupErrorBoundaries(t *testing.T) {
 func TestSchemaMutationHelperErrorBoundaries(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	require.NoError(t, NewStorageExecutor(base).prepareSchemaTransaction(context.Background()))
-	tx, err := base.BeginTransaction()
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("mutation"))
 	wrongNamespace := NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "other"})
@@ -55,9 +56,9 @@ func TestSchemaMutationHelperErrorBoundaries(t *testing.T) {
 	err = executor.mutateSchema(ctx, func(*storage.SchemaManager) error { return tx.Rollback() })
 	require.Error(t, err, "staging must refuse a transaction closed during its schema callback")
 	require.Error(t, executor.prepareSchemaTransaction(ctx))
-	tx, err = base.BeginTransaction()
+	tx, err = base.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&storage.Node{ID: "mutation:data"})
+	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "mutation:data"})
 	require.NoError(t, err)
 	executor = NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "mutation"})
 	require.ErrorContains(t, executor.prepareSchemaTransaction(ctx), "ForbiddenDueToTransactionType")
@@ -176,20 +177,21 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	res, err := exec.callNornicDbKnowledgePolicyDeindexStatus()
+	unsupported := NewStorageExecutor(&knowledgePolicyOpaqueEngine{Engine: exec.storage})
+	res, err := unsupported.callNornicDbKnowledgePolicyDeindexStatus()
 	require.NoError(t, err)
 	require.Equal(t, []string{"pending_count", "supported", "message", "workItemId", "targetId", "targetScope", "enqueuedAt", "status"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, false, res.Rows[0][1])
 	require.Equal(t, "deindex status requires BadgerDB storage backend", res.Rows[0][2])
 
-	_, err = exec.callNornicDbKnowledgePolicyResolve(nil)
+	_, err = exec.callNornicDbKnowledgePolicyResolve(t.Context(), nil)
 	require.EqualError(t, err, "kp.resolve requires entityId, labels, or edgeType")
 
-	_, err = exec.callNornicDbKnowledgePolicyResolve([]interface{}{123})
+	_, err = exec.callNornicDbKnowledgePolicyResolve(t.Context(), []interface{}{123})
 	require.EqualError(t, err, "argument 1 must be a string")
 
-	_, err = exec.callNornicDbKnowledgePolicyResolve([]interface{}{"missing-entity"})
+	_, err = exec.callNornicDbKnowledgePolicyResolve(t.Context(), []interface{}{"missing-entity"})
 	require.EqualError(t, err, "knowledge policy binding table unavailable")
 
 	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE DECAY PROFILE base OPTIONS {
@@ -216,13 +218,13 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 	require.Equal(t, []string{"kind", "Name", "Scope", "Multiplier", "ScoreFloor", "ScoreCap", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "Apply"}, policies.Columns)
 	require.Len(t, policies.Rows, 2)
 
-	_, err = exec.callNornicDbKnowledgePolicyResolve([]interface{}{"missing-entity"})
+	_, err = exec.callNornicDbKnowledgePolicyResolve(t.Context(), []interface{}{"missing-entity"})
 	require.EqualError(t, err, "entity not found: missing-entity")
-	resolveByLabels, err := exec.callNornicDbKnowledgePolicyResolve([]interface{}{"", "Fact"})
+	resolveByLabels, err := exec.callNornicDbKnowledgePolicyResolve(t.Context(), []interface{}{"", "Fact"})
 	require.NoError(t, err)
 	require.Len(t, resolveByLabels.Rows, 1)
 	require.Equal(t, "dry-run", resolveByLabels.Rows[0][0])
-	resolveByEdge, err := exec.callNornicDbKnowledgePolicyResolve([]interface{}{"", "", "LINKS"})
+	resolveByEdge, err := exec.callNornicDbKnowledgePolicyResolve(t.Context(), []interface{}{"", "", "LINKS"})
 	require.NoError(t, err)
 	require.Len(t, resolveByEdge.Rows, 1)
 	require.Equal(t, "dry-run", resolveByEdge.Rows[0][0])
@@ -240,27 +242,27 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 }
 
 func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(&knowledgePolicyOpaqueEngine{Engine: newTestMemoryEngine(t)}, "test"))
 	now := time.Now().UTC()
 	node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Fact"}, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-1 * time.Hour)}
 	edge := &storage.Edge{ID: storage.EdgeID("e1"), Type: "REL", CreatedAt: now.Add(-30 * time.Minute)}
 
-	ent, ok := exec.resolveEntityForDecay("n", map[string]*storage.Node{"n": node}, nil)
+	ent, ok := exec.resolveEntityForDecay(context.Background(), "n", map[string]*storage.Node{"n": node}, nil)
 	require.True(t, ok)
 	require.Equal(t, "test:n1", ent.entityID)
 	require.Equal(t, []string{"Fact"}, ent.labels)
 	require.False(t, ent.isEdge)
 
-	ent, ok = exec.resolveEntityForDecay("r", nil, map[string]*storage.Edge{"r": edge})
+	ent, ok = exec.resolveEntityForDecay(context.Background(), "r", nil, map[string]*storage.Edge{"r": edge})
 	require.True(t, ok)
 	require.Equal(t, "test:e1", ent.entityID)
 	require.True(t, ent.isEdge)
 	require.Equal(t, "REL", ent.edgeType)
 
-	_, ok = exec.resolveEntityForDecay("missing", nil, nil)
+	_, ok = exec.resolveEntityForDecay(context.Background(), "missing", nil, nil)
 	require.False(t, ok)
 
-	be, nowNanos, ok := exec.getDecayContext(context.Background())
+	be, nowNanos, ok := exec.getDecayContext(context.Background(), exec.storage)
 	require.False(t, ok)
 	require.Nil(t, be)
 	require.Zero(t, nowNanos)
@@ -309,15 +311,27 @@ func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
 	require.False(t, handled)
 	require.Nil(t, v)
 
-	// Memory engine has no decay context, so decay helpers return neutral fallback values.
-	decayScore := exec.evalDecayScore(context.Background(), "decayScore(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
+	// The opaque engine exposes no native decay capability.
+	decayScore, policyHandled := exec.evaluateKnowledgePolicyFunction(context.Background(), "decayScore(n, {unknown:'x'})", "", map[string]*storage.Node{"n": node}, nil)
+	if !policyHandled {
+		t.Fatal("knowledge-policy expression was not handled")
+	}
 	require.Equal(t, 1.0, decayScore)
-	decay := exec.evalDecay(context.Background(), "decay(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
+	decay, policyHandled := exec.evaluateKnowledgePolicyFunction(context.Background(), "decay(n, {unknown:'x'})", "", map[string]*storage.Node{"n": node}, nil)
+	if !policyHandled {
+		t.Fatal("knowledge-policy expression was not handled")
+	}
 	require.Equal(t, map[string]interface{}{"score": 1.0, "applies": false, "reason": "no BadgerEngine"}, decay)
 
 	// Policy fallbacks on missing entity and missing argument.
-	policy := exec.evalPolicy(context.Background(), "policy()", map[string]*storage.Node{"n": node}, nil)
+	policy, policyHandled := exec.evaluateKnowledgePolicyFunction(context.Background(), "policy()", "", map[string]*storage.Node{"n": node}, nil)
+	if !policyHandled {
+		t.Fatal("knowledge-policy expression was not handled")
+	}
 	require.Equal(t, map[string]interface{}{"targetId": "", "targetScope": "NODE"}, policy)
-	policy = exec.evalPolicy(context.Background(), "policy(missing)", map[string]*storage.Node{"n": node}, nil)
+	policy, policyHandled = exec.evaluateKnowledgePolicyFunction(context.Background(), "policy(missing)", "", map[string]*storage.Node{"n": node}, nil)
+	if !policyHandled {
+		t.Fatal("knowledge-policy expression was not handled")
+	}
 	require.Equal(t, map[string]interface{}{"targetId": "", "targetScope": "NODE"}, policy)
 }

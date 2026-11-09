@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -13,11 +15,11 @@ import (
 )
 
 func TestTemporalBindingBoltTemporalOffsetMutationRoutes(t *testing.T) {
-	badger, err := storage.NewBadgerEngine(t.TempDir())
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, badger.Close()) })
 	store := storage.NewNamespacedEngine(badger, "temporal_binding")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 	ctx := context.Background()
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
 	require.NoError(t, err)

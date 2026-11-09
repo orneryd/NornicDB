@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testutil"
+
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -11,7 +13,7 @@ import (
 
 func TestGraphQLPathBoundsAndEnumeration(t *testing.T) {
 	db := testDB(t)
-	resolver := NewResolver(db, testDBManager(t, db))
+	resolver := NewResolver(db, testutil.DatabaseManager(t, db))
 	qr := &queryResolver{resolver}
 	ctx := context.Background()
 	a := createNodeViaCypher(t, resolver, []string{"PathNode"}, map[string]interface{}{"name": "a"})
@@ -75,7 +77,7 @@ func TestGraphQLPathBoundsAndEnumeration(t *testing.T) {
 
 func TestGraphQLPathOwnerControls(t *testing.T) {
 	db := testDB(t)
-	manager := testDBManager(t, db)
+	manager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, manager)
 	qr := &queryResolver{resolver}
 	ctx := context.Background()
@@ -134,7 +136,7 @@ func TestGraphQLPathOwnerControls(t *testing.T) {
 		engine, err := manager.GetDefaultStorage()
 		require.NoError(t, err)
 		typ := "R`|other"
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "quoted-type-edge", StartNode: storage.NodeID(a.ID), EndNode: storage.NodeID(c.ID), Type: typ}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "quoted-type-edge", StartNode: storage.NodeID(a.ID), EndNode: storage.NodeID(c.ID), Type: typ}))
 		p, err := qr.queryShortestPath(ctx, a.ID, c.ID, &one, []string{typ})
 		require.NoError(t, err)
 		require.Len(t, p, 2)

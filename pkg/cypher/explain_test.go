@@ -344,7 +344,7 @@ func TestExplainNoExecution(t *testing.T) {
 
 	t.Run("EXPLAIN does not execute CREATE", func(t *testing.T) {
 		// Count nodes before
-		before, _ := store.AllNodes()
+		before, _ := store.AllNodes(ctx)
 		beforeCount := len(before)
 
 		// EXPLAIN CREATE
@@ -352,7 +352,7 @@ func TestExplainNoExecution(t *testing.T) {
 		require.NoError(t, err)
 
 		// Count nodes after - should be same
-		after, _ := store.AllNodes()
+		after, _ := store.AllNodes(ctx)
 		afterCount := len(after)
 
 		require.Equal(t, beforeCount, afterCount, "EXPLAIN should not create nodes")
@@ -361,7 +361,7 @@ func TestExplainNoExecution(t *testing.T) {
 	t.Run("EXPLAIN does not execute DELETE", func(t *testing.T) {
 		// Create a node
 		exec.Execute(ctx, `CREATE (n:ToDelete {name: 'test'})`, nil)
-		before, _ := store.AllNodes()
+		before, _ := store.AllNodes(ctx)
 		beforeCount := len(before)
 
 		// EXPLAIN DELETE
@@ -369,7 +369,7 @@ func TestExplainNoExecution(t *testing.T) {
 		require.NoError(t, err)
 
 		// Node should still exist
-		after, _ := store.AllNodes()
+		after, _ := store.AllNodes(ctx)
 		afterCount := len(after)
 
 		require.Equal(t, beforeCount, afterCount, "EXPLAIN should not delete nodes")
@@ -498,15 +498,15 @@ func TestExplainHelpers_InferColumnsAndDBHitsBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 
 	// YIELD * path.
-	cols := exec.inferExplainColumns("CALL db.labels() YIELD *")
+	cols := exec.StatementColumns("CALL db.labels() YIELD *")
 	require.NotNil(t, cols)
 
 	// YIELD + RETURN * path (projects yield aliases/names).
-	cols = exec.inferExplainColumns("CALL db.info() YIELD name AS dbName RETURN *")
+	cols = exec.StatementColumns("CALL db.info() YIELD name AS dbName RETURN *")
 	require.Equal(t, []string{"dbName"}, cols)
 
 	// RETURN parsing path.
-	cols = exec.inferExplainColumns("MATCH (n) RETURN n.name AS name, n.age")
+	cols = exec.StatementColumns("MATCH (n) RETURN n.name AS name, n.age")
 	require.Equal(t, []string{"name", "n.age"}, cols)
 
 	// estimateDBHits operator-type switch coverage.
@@ -528,11 +528,11 @@ func TestExplainHelpers_InferColumnsAndDBHits_MoreBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
 	// YIELD items without RETURN should infer yielded column names.
-	cols := exec.inferExplainColumns("CALL db.info() YIELD name, version")
+	cols := exec.StatementColumns("CALL db.info() YIELD name, version")
 	require.Equal(t, []string{"name", "version"}, cols)
 
 	// YIELD aliases without RETURN should use aliases.
-	cols = exec.inferExplainColumns("CALL db.info() YIELD name AS dbName, version AS ver")
+	cols = exec.StatementColumns("CALL db.info() YIELD name AS dbName, version AS ver")
 	require.Equal(t, []string{"dbName", "ver"}, cols)
 
 	// Nil plan branch.

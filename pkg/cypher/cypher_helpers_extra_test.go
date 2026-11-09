@@ -51,26 +51,6 @@ type failingEmbedder struct {
 	err error
 }
 
-type fastPathFailEngine struct {
-	storage.Engine
-	batchErr error
-	edgesErr error
-}
-
-func (f *fastPathFailEngine) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
-	if f.batchErr != nil {
-		return nil, f.batchErr
-	}
-	return f.Engine.BatchGetNodes(ids)
-}
-
-func (f *fastPathFailEngine) GetEdgesByType(edgeType string) ([]*storage.Edge, error) {
-	if f.edgesErr != nil {
-		return nil, f.edgesErr
-	}
-	return f.Engine.GetEdgesByType(edgeType)
-}
-
 func (f *failingEmbedder) Embed(context.Context, string) ([]float32, error) {
 	if f.err == nil {
 		f.err = fmt.Errorf("embed failed")
@@ -240,7 +220,7 @@ func TestCypherHelpers_ExecuteCall_DoesNotMiscountArgsWithTailFunctions(t *testi
 
 	err := globalProcedureRegistry.RegisterUser(
 		ProcedureSpec{Name: "custom.echo", MinArgs: 3, MaxArgs: 3},
-		func(_ context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
+		func(readerCtx context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 			if len(args) != 3 {
 				return nil, fmt.Errorf("unexpected arg count: %d", len(args))
 			}
@@ -266,8 +246,12 @@ func TestCypherHelpers_LooksNumericAndSkipString(t *testing.T) {
 	assert.True(t, looksNumeric("42"))
 	assert.True(t, looksNumeric("3.1415"))
 	assert.False(t, looksNumeric("x42"))
-	assert.Equal(t, "17", ExtractSkipString("MATCH (n) RETURN n SKIP 17 LIMIT 5"))
-	assert.Equal(t, "", ExtractSkipString("MATCH (n) RETURN n"))
+	skip, err := ExtractSkipString(t.Context(), "MATCH (n) RETURN n SKIP 17 LIMIT 5")
+	require.NoError(t, err)
+	assert.Equal(t, "17", skip)
+	skip, err = ExtractSkipString(t.Context(), "MATCH (n) RETURN n")
+	require.NoError(t, err)
+	assert.Equal(t, "", skip)
 }
 
 func TestCypherHelpers_ClauseAndMapLiterals(t *testing.T) {
@@ -361,7 +345,7 @@ func TestCypherHelpers_UnwindMergeChainPlanCacheHelpers(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	mutation := "MERGE (t:TranslatedText {translationId: row.translationId, language: row.language}) ON CREATE SET t.translatedText = row.translatedText ON MATCH SET t.translatedText = row.translatedText"
 
-	plan := exec.cachedUnwindMergeChainPlan(mutation)
+	plan := exec.cachedUnwindMergeChainPlan(t.Context(), mutation)
 	require.True(t, plan.supported)
 	require.NotNil(t, exec.unwindMergeChainPlanCache)
 	assert.Len(t, exec.unwindMergeChainPlanCache.plans, 1)
@@ -369,7 +353,7 @@ func TestCypherHelpers_UnwindMergeChainPlanCacheHelpers(t *testing.T) {
 	clone := exec.cloneWithStorage(exec.storage)
 	require.Same(t, exec.unwindMergeChainPlanCache, clone.unwindMergeChainPlanCache)
 
-	clonedPlan := clone.cachedUnwindMergeChainPlan(mutation)
+	clonedPlan := clone.cachedUnwindMergeChainPlan(t.Context(), mutation)
 	assert.Equal(t, plan, clonedPlan)
 	assert.Len(t, exec.unwindMergeChainPlanCache.plans, 1)
 	assert.Len(t, clone.unwindMergeChainPlanCache.plans, 1)
@@ -471,8 +455,10 @@ func TestCypherHelpers_EvaluateExpressionWithContextFullOperators_Branches(t *te
 
 	assert.Equal(t, false, eval("NOT true"))
 	assert.Equal(t, true, eval("5 BETWEEN 1 AND 10"))
-	// Invalid BETWEEN shape falls through to generic evaluation path.
-	assert.Equal(t, "5 BETWEEN 1", eval("5 BETWEEN 1"))
+	// Unsupported syntax is an evaluation error, never a string value.
+	invalidCtx := withExpressionFailureSlot(context.Background())
+	assert.Nil(t, exec.evaluateExpressionWithContextFullOperators(invalidCtx, "5 BETWEEN 1", "5 between 1", nodes, nil, nil, nil, nil, 0))
+	require.Error(t, getExpressionFailure(invalidCtx))
 	assert.Equal(t, true, eval("1 = 1 AND 2 = 2"))
 	assert.Equal(t, true, eval("1 = 2 OR 2 = 2"))
 	assert.Equal(t, true, eval("true XOR false"))
@@ -502,34 +488,35 @@ func TestCypherHelpers_CallTxSetMetadata_SyntaxBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// No active transaction.
-	_, err := exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({app:'x'})")
+	_, err := exec.callTxSetMetadata(ctx, []interface{}{map[string]interface{}{"app": "x"}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires an active transaction")
 
 	// Active tx with unsupported tx implementation.
 	exec.txContext = &TransactionContext{active: true, tx: struct{}{}}
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({app:'x'})")
+	_, err = exec.callTxSetMetadata(ctx, []interface{}{map[string]interface{}{"app": "x"}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transaction type not supported")
 
-	// Invalid syntax / missing payload branches.
-	exec.txContext = &TransactionContext{active: true, tx: struct{}{}}
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.meta({app:'x'})")
+	// Public admission owns procedure identity and missing payload diagnostics.
+	// Clear the deliberately unsupported fake transaction before public calls.
+	exec.txContext = nil
+	_, err = exec.Execute(ctx, "CALL tx.meta({app:'x'})", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid tx.setMetaData syntax")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Procedure.ProcedureNotFound")
 
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData")
+	_, err = exec.Execute(ctx, "CALL tx.setMetaData", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires at least 1 arguments")
+	assert.Contains(t, err.Error(), "missing implicit procedure parameter data")
 
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData()")
+	_, err = exec.Execute(ctx, "CALL tx.setMetaData()", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires at least 1 arguments")
 
 	exec.txContext = nil
 	_, err = exec.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)
-	result, err := exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({})")
+	result, err := exec.Execute(ctx, "CALL tx.setMetaData({})", nil)
 	require.NoError(t, err)
 	require.Empty(t, result.Columns)
 	require.Empty(t, result.Rows)
@@ -543,18 +530,18 @@ func TestCypherHelpers_FindNodeByProperties_AndRangeIndex(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(30)}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(30)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(40)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(40)}})
 	require.NoError(t, err)
 
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.age)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.age)")
 	require.NoError(t, err)
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX IF NOT EXISTS FOR (n:Person) ON (n.age)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX IF NOT EXISTS FOR (n:Person) ON (n.age)")
 	require.NoError(t, err)
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_pair FOR (n:Person) ON (n.a, n.b)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_pair FOR (n:Person) ON (n.a, n.b)")
 	require.NoError(t, err)
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX nonsense")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX nonsense")
 	require.Error(t, err)
 }
 
@@ -565,13 +552,13 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows(t *testing.T) {
 	ctx := context.Background()
 
 	// Seed OrderStatus and Pharmacy data expected by pipeline helper.
-	_, err := eng.CreateNode(&storage.Node{ID: "o1", Labels: []string{"OrderStatus"}, Properties: map[string]interface{}{"orderId": int64(1)}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "o1", Labels: []string{"OrderStatus"}, Properties: map[string]interface{}{"orderId": int64(1)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o2", Labels: []string{"OrderStatus"}, Properties: map[string]interface{}{"orderId": int64(2)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "o2", Labels: []string{"OrderStatus"}, Properties: map[string]interface{}{"orderId": int64(2)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "ph1", Labels: []string{"Pharmacy"}, Properties: map[string]interface{}{"id": int64(10)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "ph1", Labels: []string{"Pharmacy"}, Properties: map[string]interface{}{"id": int64(10)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "ph2", Labels: []string{"Pharmacy"}, Properties: map[string]interface{}{"id": int64(20)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "ph2", Labels: []string{"Pharmacy"}, Properties: map[string]interface{}{"id": int64(20)}})
 	require.NoError(t, err)
 
 	matchPart := "MATCH (o:OrderStatus) WITH collect(o) AS orders UNWIND range(0, size(orders)-1) AS i WITH orders[i] AS o, i MATCH (ph:Pharmacy) WITH o, i, ph ORDER BY ph.id WITH o, i, collect(ph) AS pharmacies WITH o, pharmacies[i % size(pharmacies)] AS pharmacy"
@@ -644,13 +631,13 @@ func TestCypherHelpers_CartesianMatchAndAggregation(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "a1"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "a1"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "a2", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "a2"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "a2", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "a2"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "b1", Labels: []string{"B"}, Properties: map[string]interface{}{"name": "b1"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "b1", Labels: []string{"B"}, Properties: map[string]interface{}{"name": "b1"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "b2", Labels: []string{"B"}, Properties: map[string]interface{}{"name": "b2"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "b2", Labels: []string{"B"}, Properties: map[string]interface{}{"name": "b2"}})
 	require.NoError(t, err)
 
 	result := &ExecuteResult{
@@ -687,20 +674,20 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
-	_, err := eng.CreateNode(&storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "alpha"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "alpha"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "a2", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "beta"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "a2", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "beta"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "b1", Labels: []string{"B"}, Properties: map[string]interface{}{"name": "bee"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "b1", Labels: []string{"B"}, Properties: map[string]interface{}{"name": "bee"}})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{
+	err = eng.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "e1",
 		StartNode: "a1",
 		EndNode:   "b1",
 		Type:      "KNOWS",
 	})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{
+	err = eng.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "e2",
 		StartNode: "a2",
 		EndNode:   "b1",
@@ -709,14 +696,14 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	require.NoError(t, err)
 
 	// Invalid pattern branch for executeMatchWithRelationshipsWithPathSeeded.
-	_, err = exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "this is not a pattern", "", []returnItem{{expr: "a", alias: "a"}}, nil, nil, "", nil, -1)
+	_, err = exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "this is not a pattern", "", []returnItem{{expr: "a", alias: "a"}}, nil, nil, nil, "", nil, -1)
 	require.Error(t, err)
 
 	// Valid traversal branch.
 	r, err := exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "(a:A)-[r:KNOWS]->(b:B)", "", []returnItem{
 		{expr: "a.name", alias: "aName"},
 		{expr: "b.name", alias: "bName"},
-	}, nil, nil, "", nil, -1)
+	}, nil, nil, nil, "", nil, -1)
 	require.NoError(t, err)
 	require.NotEmpty(t, r.Rows)
 
@@ -724,7 +711,7 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	ctx := context.Background()
 	match := exec.parseTraversalPattern(ctx, "(a:A)-[r:KNOWS]->(b:B)")
 	require.NotNil(t, match)
-	startNodes, err := eng.GetNodesByLabel("A")
+	startNodes, err := eng.GetNodesByLabel(ctx, "A")
 	require.NoError(t, err)
 	paths := exec.traverseGraphParallel(context.Background(), match, startNodes, ParallelConfig{
 		Enabled:      true,
@@ -743,11 +730,11 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 	apocFileRoot := t.TempDir()
 	exec.SetAPOCLocalFileAccessRoot(apocFileRoot)
 
-	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"L1"}, Properties: map[string]interface{}{"name": "x"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"L1"}, Properties: map[string]interface{}{"name": "x"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n2", Labels: []string{"L2"}, Properties: map[string]interface{}{"name": "y"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"L2"}, Properties: map[string]interface{}{"name": "y"}})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{
+	err = eng.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "rel1",
 		StartNode:  "n1",
 		EndNode:    "n2",
@@ -917,11 +904,11 @@ func TestCypherHelpers_CallCompatRelationshipQueries(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "a"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "a"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "b"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "b"}})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{
+	err = eng.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e1",
 		StartNode:  "n1",
 		EndNode:    "n2",
@@ -950,37 +937,33 @@ func TestCypherHelpers_CallCompatRelationshipQueries(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MAP")
 
-	// Vector relationship query: parse error.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 2)")
-	require.Error(t, err)
+	// Vector relationship query: the third argument is required.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2)", nil)
+	require.ErrorContains(t, err, "procedure db.index.vector.queryRelationships requires at least 3 arguments, got 2")
 
 	// Vector relationship query: string input without embedder.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 2, 'hello')")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, 'hello')", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no embedder configured")
 
-	// Vector relationship query: parameter without params context => empty rows.
-	res, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $q)")
-	require.NoError(t, err)
-	require.Empty(t, res.Rows)
+	// Vector relationship query: a parameter the statement never supplied is
+	// Neo4j's ParameterMissing; the call does not run.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $q)", nil)
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): q")
 
-	// Vector relationship query: missing parameter.
-	ctxMissing := context.WithValue(ctx, paramsKey, map[string]interface{}{"x": []float32{0.1, 0.2}})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxMissing, "CALL db.index.vector.queryRelationships('idx', 2, $q)")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "parameter $q not provided")
+	// Vector relationship query: missing parameter among other parameters.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $q)", map[string]interface{}{"x": []float32{0.1, 0.2}})
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): q")
 
 	// Vector relationship query: unsupported parameter element type.
-	ctxBadElem := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []interface{}{1, "bad"}})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxBadElem, "CALL db.index.vector.queryRelationships('idx', 2, $q)")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "non-numeric value")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $q)", map[string]interface{}{"q": []interface{}{1, "bad"}})
+	require.ErrorContains(t, err, "argument query must be numeric coordinates, not String")
+	require.NotContains(t, err.Error(), "parameter $")
 
-	// Vector relationship query: unsupported parameter type and missing query vector branch.
-	ctxBadType := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": true})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxBadType, "CALL db.index.vector.queryRelationships('idx', 2, $q)")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported type")
+	// Vector relationship query: unsupported parameter type.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $q)", map[string]interface{}{"q": true})
+	require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Boolean")
+	require.NotContains(t, err.Error(), "parameter $")
 }
 
 func TestCypherHelpers_ComparisonConversionAndTemporalHelpers(t *testing.T) {
@@ -1036,7 +1019,7 @@ func TestCypherHelpers_DatabaseNameAndRemoveNodeFromSearch(t *testing.T) {
 	execNoNS.removeNodeFromSearch("plain-id")
 
 	// With search service configured, prefixed IDs should be unprefixed before removal.
-	svc := search.NewService(base)
+	svc := search.NewService(base, search.DefaultVectorDimensions, nil)
 	execNoNS.SetSearchService(svc)
 	execNoNS.removeNodeFromSearch("tenant_cov:node-1")
 	execNoNS.removeNodeFromSearch("node-2")
@@ -1314,13 +1297,6 @@ func TestCypherHelpers_CallDbIndexVectorEmbed_Branches(t *testing.T) {
 	require.Len(t, res.Rows, 1)
 }
 
-func TestCypherHelpers_PrefixNodeIDIfNeeded(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	assert.Equal(t, storage.NodeID("n1"), exec.prefixNodeIDIfNeeded("n1", ""))
-	assert.Equal(t, storage.NodeID("tenant:n1"), exec.prefixNodeIDIfNeeded("n1", "tenant:"))
-	assert.Equal(t, storage.NodeID("tenant:n1"), exec.prefixNodeIDIfNeeded("tenant:n1", "tenant:"))
-}
-
 func TestCypherHelpers_EvaluateWhereOnComputedRow(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	values := map[string]interface{}{
@@ -1420,11 +1396,11 @@ func TestCypherHelpers_ApocLouvainBasic(t *testing.T) {
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
 
-	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "a"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "a"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "b"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "b"}})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{
+	err = eng.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e1",
 		StartNode:  "n1",
 		EndNode:    "n2",
@@ -1445,22 +1421,18 @@ func TestCypherHelpers_ApocLouvainBasic(t *testing.T) {
 }
 
 func TestCypherHelpers_ParseFulltextQueryAndShowDatabase(t *testing.T) {
-	terms, excludes, must := parseFulltextQuery(`alpha AND beta OR "exact phrase" +must -drop NOT skip`)
-	assert.Contains(t, terms, "alpha")
-	assert.Contains(t, terms, "beta")
-	assert.Contains(t, excludes, "drop")
-	assert.Contains(t, excludes, "skip")
-	assert.Contains(t, must, "exact phrase")
-	assert.Contains(t, must, "must")
+	parsed, parseErr := ParseFulltextQuery(`alpha AND beta OR "exact phrase" +must -drop NOT skip`)
+	require.NoError(t, parseErr)
+	assert.ElementsMatch(t, []string{"alpha", "beta", "drop", "skip", "exact phrase", "must"}, parsed.PrimaryTerms())
 
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "tenant_show")
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"X"}, Properties: map[string]interface{}{}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"X"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "LOOP"})
+	err = eng.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "LOOP"})
 	require.NoError(t, err)
 
 	// Without dbManager, default fallback branch.
@@ -1477,21 +1449,6 @@ func TestCypherHelpers_ParseFulltextQueryAndShowDatabase(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, "ctx_db", res.Rows[0][0])
-}
-
-func TestCypherHelpers_ArraySuffix(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-
-	collected := []interface{}{int64(1), int64(2), int64(3), int64(4)}
-	assert.Equal(t, collected, exec.applyArraySuffix(collected, ""))
-	assert.Equal(t, collected, exec.applyArraySuffix(collected, "bad"))
-	assert.Equal(t, []interface{}{int64(1), int64(2)}, exec.applyArraySuffix(collected, "[..2]"))
-	assert.Equal(t, []interface{}{int64(2), int64(3)}, exec.applyArraySuffix(collected, "[1..3]"))
-	assert.Equal(t, []interface{}{int64(3), int64(4)}, exec.applyArraySuffix(collected, "[-2..]"))
-	assert.Equal(t, []interface{}{}, exec.applyArraySuffix(collected, "[3..1]"))
-	assert.Equal(t, int64(2), exec.applyArraySuffix(collected, "[1]"))
-	assert.Equal(t, int64(4), exec.applyArraySuffix(collected, "[-1]"))
-	assert.Nil(t, exec.applyArraySuffix(collected, "[99]"))
 }
 
 func TestCypherHelpers_AssignValueAdditionalCases(t *testing.T) {
@@ -1542,13 +1499,17 @@ func TestCypherHelpers_ModuloAndMapLiteralFullBranches(t *testing.T) {
 
 	ctx := context.Background()
 	// map-literal parser should normalize quoted/backticked keys and evaluate known values.
-	out := exec.evaluateMapLiteralFull(ctx, "{`k1`: n.name, 'k2': 3, \"k3\": true, badPair}", nodes, rels, nil, nil, nil, 0)
+	out := exec.evaluateMapLiteralFull(ctx, "{`k1`: n.name, 'k2': 3, \"k3\": true}", nodes, rels, nil, nil, nil, 0)
 	assert.Equal(t, "alice", out["k1"])
 	assert.Equal(t, int64(3), out["k2"])
 	assert.Equal(t, true, out["k3"])
 
-	// Non-map shapes return deterministic empty map.
-	assert.Empty(t, exec.evaluateMapLiteralFull(ctx, "not-a-map", nodes, rels, nil, nil, nil, 0))
+	// No partial map escapes when an entry or the map syntax is invalid.
+	for _, expr := range []string{"{ok:1,badPair}", "not-a-map"} {
+		invalidCtx := withExpressionFailureSlot(ctx)
+		assert.Nil(t, exec.evaluateMapLiteralFull(invalidCtx, expr, nodes, rels, nil, nil, nil, 0))
+		require.Error(t, getExpressionFailure(invalidCtx))
+	}
 }
 
 func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
@@ -1558,62 +1519,22 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	assert.Equal(t, "", extractRelationshipType("(a)-->(b)"))
 
 	// isReturnEdgePropertyAggNameShape strictness.
-	assert.True(t, isReturnEdgePropertyAggNameShape(
+	assert.True(t, isReturnEdgePropertyAggNameShape(t.Context(),
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.rating) AS score, count(r) AS cnt",
 		"r",
 		"rating",
 	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(
+	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(),
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.id AS id, avg(r.rating) AS score",
 		"r",
 		"rating",
 	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(
+	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(),
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.other) AS score",
 		"r",
 		"rating",
 	))
-	assert.False(t, isReturnEdgePropertyAggNameShape("RETURN p.name", "r", "rating"))
-
-	base := newTestMemoryEngine(t)
-	ns := storage.NewNamespacedEngine(base, "tenant_fast_cov")
-	exec := NewStorageExecutor(ns)
-
-	_, err := ns.CreateNode(&storage.Node{ID: "n1", Labels: []string{"X"}, Properties: map[string]interface{}{}})
-	require.NoError(t, err)
-	_, err = ns.CreateNode(&storage.Node{ID: "n2", Labels: []string{"X"}, Properties: map[string]interface{}{}})
-	require.NoError(t, err)
-	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL"}))
-
-	// getEdgesByTypeFast: namespace filter branch.
-	edges, prefix, err := exec.getEdgesByTypeFast("REL")
-	require.NoError(t, err)
-	assert.Equal(t, "tenant_fast_cov:", prefix)
-	for _, e := range edges {
-		assert.True(t, strings.HasPrefix(string(e.ID), prefix))
-	}
-
-	// batchGetNodesFast happy path.
-	nodes, gotPrefix, err := exec.batchGetNodesFast([]storage.NodeID{"tenant_fast_cov:n1"})
-	require.NoError(t, err)
-	assert.Equal(t, "tenant_fast_cov:", gotPrefix)
-	require.NotNil(t, nodes["tenant_fast_cov:n1"])
-
-	// error branches from underlying engine.
-	failExec := &StorageExecutor{
-		storage: &fastPathFailEngine{
-			Engine:   base,
-			batchErr: fmt.Errorf("batch fail"),
-			edgesErr: fmt.Errorf("edges fail"),
-		},
-		analyzer: NewQueryAnalyzer(64),
-	}
-	_, _, err = failExec.batchGetNodesFast([]storage.NodeID{"n1"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "batch fail")
-	_, _, err = failExec.getEdgesByTypeFast("REL")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "edges fail")
+	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(), "RETURN p.name", "r", "rating"))
 }
 
 func TestExtractMatchOrderByClause_IgnoresOrderLabelsAndRelationshipTypes(t *testing.T) {
@@ -1623,14 +1544,14 @@ func TestExtractMatchOrderByClause_IgnoresOrderLabelsAndRelationshipTypes(t *tes
 		ORDER BY orders DESC
 		LIMIT 10
 	`
-	returnIdx := findKeywordNotInBrackets(strings.ToUpper(query), " RETURN ")
+	returnIdx := findKeywordNotInBrackets(t.Context(), strings.ToUpper(query), " RETURN ")
 	if returnIdx < 0 {
-		returnIdx = findKeywordIndex(query, "RETURN")
+		returnIdx = findKeywordIndex(t.Context(), query, "RETURN")
 	}
-	require.Equal(t, "orders DESC", extractMatchOrderByClause(query, returnIdx))
+	require.Equal(t, "orders DESC", extractMatchOrderByClause(t.Context(), query, returnIdx))
 	queryNoOrder := `MATCH (o:Order)-[:ORDERS]->(p:Product) RETURN p`
-	returnIdx = findKeywordIndex(queryNoOrder, "RETURN")
-	require.Equal(t, "", extractMatchOrderByClause(queryNoOrder, returnIdx))
+	returnIdx = findKeywordIndex(t.Context(), queryNoOrder, "RETURN")
+	require.Equal(t, "", extractMatchOrderByClause(t.Context(), queryNoOrder, returnIdx))
 }
 
 func TestCypherHelpers_ExecuteCreateConstraint_TypeAndErrorBranches(t *testing.T) {
@@ -1724,13 +1645,13 @@ func TestCypherHelpers_ExecuteCreateConstraint_ValidationFailureBranches(t *test
 	ctx := context.Background()
 
 	// Duplicate unique value should fail validation on CREATE CONSTRAINT ... IS UNIQUE.
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "u1",
 		Labels:     []string{"User"},
 		Properties: map[string]interface{}{"email": "dup@example.com"},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "u2",
 		Labels:     []string{"User"},
 		Properties: map[string]interface{}{"email": "dup@example.com"},
@@ -1740,7 +1661,7 @@ func TestCypherHelpers_ExecuteCreateConstraint_ValidationFailureBranches(t *test
 	require.Error(t, err)
 
 	// Existing invalid type should fail property-type validation.
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "p1",
 		Labels:     []string{"Profile"},
 		Properties: map[string]interface{}{"age": "not-an-int"},
@@ -1786,17 +1707,19 @@ func TestCypherHelpers_EvaluateMapLiteralFromValues_Branches(t *testing.T) {
 	}
 
 	// Normal map literal with value substitution and list-comprehension transform.
-	out := exec.evaluateMapLiteralFromValues("{person: name, age: age, relTypes: [r IN rels | type(r)]}", values)
+	out := parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{person: name, age: age, relTypes: [r IN rels | type(r)]}", values))
 	require.Equal(t, "alice", out["person"])
 	require.Equal(t, int64(30), out["age"])
 	require.Equal(t, []interface{}{"KNOWS", "WORKS_WITH"}, out["relTypes"])
 
 	// Invalid/non-map/empty shapes are deterministic empties.
-	assert.Empty(t, exec.evaluateMapLiteralFromValues("not-a-map", values))
-	assert.Empty(t, exec.evaluateMapLiteralFromValues("{}", values))
+	_, parseErr := exec.evaluateMapLiteralFromValues(context.Background(), "not-a-map", values)
+	assert.Error(t, parseErr)
+	assert.Empty(t, parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{}", values)))
 	// Pair without colon should be skipped, not panic.
-	out = exec.evaluateMapLiteralFromValues("{good: age, badpair}", values)
-	require.Equal(t, int64(30), out["good"])
+	out, parseErr = exec.evaluateMapLiteralFromValues(context.Background(), "{good: age, badpair}", values)
+	require.Error(t, parseErr)
+	require.Nil(t, out)
 }
 
 func TestCypherHelpers_KalmanPredict_Branches(t *testing.T) {
@@ -1838,7 +1761,7 @@ func TestCypherHelpers_NormalizeProps(t *testing.T) {
 	eng := storage.NewNamespacedEngine(base, "test")
 
 	node := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}}
-	_, err := eng.CreateNode(node)
+	_, err := eng.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// normalizePropsMap / normalizePropValue branches
@@ -1922,64 +1845,78 @@ func TestCypherHelpers_TypedResultDecodeAndAssignBranches(t *testing.T) {
 }
 
 func TestCypherHelpers_VectorParsingAndQueryBranches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	// The vector procedures take their third argument from the statement's own
+	// argument evaluation: an inline numeric list, search text or a named
+	// parameter. These are the public equivalents of the retired inline parser's
+	// branches, asserted through Execute.
+	exec := newVectorInputExecutor(t, 2)
 	ctx := context.Background()
+	embedder := &mockQueryEmbedder{embedding: []float32{1, 0}}
+	exec.SetEmbedder(embedder)
 
-	_, _, _, err := exec.parseVectorQueryParams("CALL db.labels()")
-	require.Error(t, err)
-	_, _, _, err = exec.parseVectorQueryParams("CALL db.index.vector.queryNodes")
-	require.Error(t, err)
-	_, _, _, err = exec.parseVectorQueryParams("CALL db.index.vector.queryNodes('idx', 2, [1,2]")
-	require.Error(t, err)
+	// A CALL with no argument list is an implicit-parameter call, and a
+	// malformed or unbalanced list is a syntax error: none of them reaches the
+	// procedure.
+	_, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes", nil)
+	require.EqualError(t, err, "Neo.ClientError.Statement.ParameterMissing: missing implicit procedure parameter indexName")
 
-	indexName, k, input, err := exec.parseVectorQueryParams("CALL db.index.vector.queryNodes('idx', 5, [1.0, 2.5])")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes 'idx', 2, [1,2]", nil)
+	require.Error(t, err)
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 2, [1,2]", nil)
+	require.ErrorContains(t, err, "unbalanced parentheses")
+
+	// An inline numeric list is searched as written, highest score first.
+	res, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 5, [1.0, 0.0])", nil)
 	require.NoError(t, err)
-	assert.Equal(t, "idx", indexName)
-	assert.Equal(t, 5, k)
-	assert.Equal(t, []float32{1.0, 2.5}, input.vector)
+	require.Equal(t, []string{"node", "score"}, res.Columns)
+	require.Len(t, res.Rows, 2)
+	top, ok := res.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+	assert.Equal(t, storage.NodeID("n1"), top.ID)
+	score, ok := res.Rows[0][1].(float64)
+	require.True(t, ok)
+	assert.InDelta(t, 1.0, score, 1e-9)
 
-	_, _, input, err = exec.parseVectorQueryParams("CALL db.index.vector.queryNodes('idx', 3, 'hello')")
+	// A quoted search text is embedded as written.
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 3, 'hello')", nil)
 	require.NoError(t, err)
-	assert.Equal(t, "hello", input.stringQuery)
+	require.NotEmpty(t, res.Rows)
+	assert.Equal(t, "hello", embedder.lastQuery)
 
-	_, _, input, err = exec.parseVectorQueryParams("CALL db.index.vector.queryRelationships('idx', 4, $q)")
+	// A named parameter binds its actual value.
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 4, $q)", map[string]interface{}{"q": []float64{1, 0}})
 	require.NoError(t, err)
-	assert.Equal(t, "q", input.paramName)
+	require.Len(t, res.Rows, 2)
 
-	parts := splitParamsCarefully(`'idx', 5, "a,b", [1,2,{x:3}]`)
-	require.Len(t, parts, 4)
-	assert.Equal(t, "\"a,b\"", strings.TrimSpace(parts[2]))
-	assert.Equal(t, []float32{1.5, 2}, parseInlineVector("[1.5, bad, 2]"))
-
-	// String query branch without embedder should error.
-	_, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx', 2, 'search text')")
-	require.Error(t, err)
-
-	// Parameter branch with no params should return empty result.
-	res, err := exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx', 2, $query)")
+	// A comma inside an argument does not split it into further arguments.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx,name', 2, [1,0])", nil)
+	require.ErrorContains(t, err, "There is no such vector schema index: idx,name")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, 'hello, world')", nil)
 	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Empty(t, res.Rows)
+	assert.Equal(t, "hello, world", embedder.lastQuery)
 
-	// Parameter missing in map should error.
-	ctxMissing := context.WithValue(ctx, paramsKey, map[string]interface{}{"other": []float64{1, 2}})
-	_, err = exec.callDbIndexVectorQueryNodes(ctxMissing, "CALL db.index.vector.queryNodes('idx', 2, $query)")
-	require.Error(t, err)
+	// A coordinate list with a non-numeric element names the element's type
+	// instead of dropping it (the retired inline parser skipped it silently).
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, [1.5, 'bad', 2])", nil)
+	require.ErrorContains(t, err, "argument query must be numeric coordinates, not String")
 
-	// Unsupported parameter type should error.
-	ctxBadType := context.WithValue(ctx, paramsKey, map[string]interface{}{"query": true})
-	_, err = exec.callDbIndexVectorQueryNodes(ctxBadType, "CALL db.index.vector.queryNodes('idx', 2, $query)")
-	require.Error(t, err)
+	// Search text without an embedder is refused before any index lookup.
+	freshExec := newVectorInputExecutor(t, 2)
+	_, err = freshExec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, 'search text')", nil)
+	require.ErrorContains(t, err, "string query provided but no embedder configured")
 
-	// []interface{} with non-numeric value should error.
-	ctxNonNumeric := context.WithValue(ctx, paramsKey, map[string]interface{}{"query": []interface{}{1, "x"}})
-	_, err = exec.callDbIndexVectorQueryNodes(ctxNonNumeric, "CALL db.index.vector.queryNodes('idx', 2, $query)")
-	require.Error(t, err)
+	// A parameter the statement never supplied is ParameterMissing.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, $query)", map[string]interface{}{"other": []float64{1, 2}})
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): query")
 
-	// No recognized input plus unsupported params path.
-	ctxUnsupported := context.WithValue(ctx, paramsKey, map[string]interface{}{"bad": true})
-	_, err = exec.callDbIndexVectorQueryNodes(ctxUnsupported, "CALL db.index.vector.queryNodes('idx', 2, 123)")
-	require.Error(t, err)
+	// A parameter of an unusable type or content names the actual value.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, $query)", map[string]interface{}{"query": []interface{}{1, "x"}})
+	require.ErrorContains(t, err, "argument query must be numeric coordinates, not String")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_idx', 2, 123)", map[string]interface{}{"bad": true})
+	require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Integer")
+	require.NotContains(t, err.Error(), "parameter $")
 }
 
 func TestCypherHelpers_VectorAndFulltextRelationshipQueryBranches(t *testing.T) {
@@ -1992,11 +1929,11 @@ func TestCypherHelpers_VectorAndFulltextRelationshipQueryBranches(t *testing.T) 
 	require.Equal(t, []string{"relationship", "score"}, res.Columns)
 
 	// Populate one relationship with searchable property.
-	_, err = exec.storage.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "a"}})
+	_, err = exec.storage.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "a"}})
 	require.NoError(t, err)
-	_, err = exec.storage.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "b"}})
+	_, err = exec.storage.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "b"}})
 	require.NoError(t, err)
-	err = exec.storage.CreateEdge(&storage.Edge{
+	err = exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "r1",
 		StartNode: "a",
 		EndNode:   "b",
@@ -2010,29 +1947,26 @@ func TestCypherHelpers_VectorAndFulltextRelationshipQueryBranches(t *testing.T) 
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
-	// Vector relationships: same error/param branches as node vector query.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 2, 'search text')")
-	require.Error(t, err)
+	// Vector relationships: search text needs an embedder.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, 'search text')", nil)
+	require.ErrorContains(t, err, "string query provided but no embedder configured")
 
-	res, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $query)")
-	require.NoError(t, err)
-	assert.Empty(t, res.Rows)
+	// A parameter the statement never supplied is ParameterMissing.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $query)", map[string]interface{}{"other": []float64{1, 2}})
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): query")
 
-	ctxMissing := context.WithValue(ctx, paramsKey, map[string]interface{}{"other": []float64{1, 2}})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxMissing, "CALL db.index.vector.queryRelationships('idx', 2, $query)")
-	require.Error(t, err)
+	// A parameter of another type is the query argument's own error.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $query)", map[string]interface{}{"query": true})
+	require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Boolean")
 
-	ctxBadType := context.WithValue(ctx, paramsKey, map[string]interface{}{"query": true})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxBadType, "CALL db.index.vector.queryRelationships('idx', 2, $query)")
-	require.Error(t, err)
+	// A non-numeric element is named by its type, not as an unnamed parameter.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, $query)", map[string]interface{}{"query": []interface{}{1, "x"}})
+	require.ErrorContains(t, err, "argument query must be numeric coordinates, not String")
 
-	ctxNonNumeric := context.WithValue(ctx, paramsKey, map[string]interface{}{"query": []interface{}{1, "x"}})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxNonNumeric, "CALL db.index.vector.queryRelationships('idx', 2, $query)")
-	require.Error(t, err)
-
-	ctxUnsupported := context.WithValue(ctx, paramsKey, map[string]interface{}{"bad": true})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxUnsupported, "CALL db.index.vector.queryRelationships('idx', 2, 123)")
-	require.Error(t, err)
+	// A literal third argument of an unsupported type names its type too.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx', 2, 123)", nil)
+	require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Integer")
+	require.NotContains(t, err.Error(), "parameter $")
 }
 
 func TestCypherHelpers_VectorRelationshipQuery_AdditionalBranches(t *testing.T) {
@@ -2040,13 +1974,13 @@ func TestCypherHelpers_VectorRelationshipQuery_AdditionalBranches(t *testing.T) 
 	ctx := context.Background()
 
 	// Setup small graph with relationship embeddings.
-	_, err := exec.storage.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "a"}})
+	_, err := exec.storage.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "a"}})
 	require.NoError(t, err)
-	_, err = exec.storage.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "b"}})
+	_, err = exec.storage.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "b"}})
 	require.NoError(t, err)
-	_, err = exec.storage.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "c"}})
+	_, err = exec.storage.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "c"}})
 	require.NoError(t, err)
-	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{
+	require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "r1",
 		StartNode: "a",
 		EndNode:   "b",
@@ -2055,7 +1989,7 @@ func TestCypherHelpers_VectorRelationshipQuery_AdditionalBranches(t *testing.T) 
 			"emb": []float32{1, 0},
 		},
 	}))
-	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{
+	require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "r2",
 		StartNode: "a",
 		EndNode:   "c",
@@ -2065,7 +1999,7 @@ func TestCypherHelpers_VectorRelationshipQuery_AdditionalBranches(t *testing.T) 
 		},
 	}))
 	// Different type should be filtered by index relType.
-	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{
+	require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "r3",
 		StartNode: "b",
 		EndNode:   "c",
@@ -2075,7 +2009,7 @@ func TestCypherHelpers_VectorRelationshipQuery_AdditionalBranches(t *testing.T) 
 		},
 	}))
 	// Dimension mismatch edge should be skipped.
-	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{
+	require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "r4",
 		StartNode: "c",
 		EndNode:   "a",
@@ -2086,75 +2020,72 @@ func TestCypherHelpers_VectorRelationshipQuery_AdditionalBranches(t *testing.T) 
 	}))
 
 	schema := exec.storage.GetSchema()
-	require.NoError(t, schema.AddVectorIndex("idx_euclid", "LINKS", "emb", 2, "euclidean"))
-	require.NoError(t, schema.AddVectorIndex("idx_dot", "LINKS", "emb", 2, "dot"))
+	require.NoError(t, schema.AddVectorIndex("idx_euclid", "LINKS", "emb", 2, "euclidean", storage.ConstraintEntityNode))
+	require.NoError(t, schema.AddVectorIndex("idx_dot", "LINKS", "emb", 2, "dot", storage.ConstraintEntityNode))
 
 	// Euclidean branch + k limiting branch.
-	res, err := exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_euclid', 1, [1,0])")
+	res, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_euclid', 1, [1,0])", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, []string{"relationship", "score"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 
 	// Dot branch.
-	res, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5, [1,0])")
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5, [1,0])", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 2)
 
 	// Parameter []float64 branch.
 	ctxF64 := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []float64{1, 0}})
-	res, err = exec.callDbIndexVectorQueryRelationships(ctxF64, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)")
+	res, err = exec.Execute(ctxF64, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)", getParamsFromContext(ctxF64))
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
 	// String parameter with embedder branch.
 	exec.SetEmbedder(&mockQueryEmbedder{embedding: []float32{1, 0}})
 	ctxString := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": "hello"})
-	res, err = exec.callDbIndexVectorQueryRelationships(ctxString, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)")
+	res, err = exec.Execute(ctxString, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)", getParamsFromContext(ctxString))
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
-	// No-input + params provided but all values have supported types => generic no-input error branch.
-	ctxSupported := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []float32{1, 0}})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxSupported, "CALL db.index.vector.queryRelationships('idx_dot', 5, 123)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no query vector or search text provided")
-
-	// Missing vector/text with no params branch.
-	_, err = exec.callDbIndexVectorQueryRelationships(context.Background(), "CALL db.index.vector.queryRelationships('idx_dot', 5, 123)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no query vector or search text provided")
+	// An integer third argument names the query argument's type, whether or not
+	// the statement also supplied parameters.
+	for _, params := range []map[string]interface{}{nil, {"q": []float32{1, 0}}} {
+		_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5, 123)", params)
+		require.ErrorContains(t, err, "argument query must be []float32, []float64, []interface{}, or string, not Integer")
+		require.NotContains(t, err.Error(), "parameter $")
+	}
 
 	// []float32 parameter branch.
 	ctxF32 := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []float32{1, 0}})
-	res, err = exec.callDbIndexVectorQueryRelationships(ctxF32, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)")
+	res, err = exec.Execute(ctxF32, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)", getParamsFromContext(ctxF32))
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
 	// []interface{} numeric branch.
 	ctxIface := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": []interface{}{1, float64(0)}})
-	res, err = exec.callDbIndexVectorQueryRelationships(ctxIface, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)")
+	res, err = exec.Execute(ctxIface, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)", getParamsFromContext(ctxIface))
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
 	// String parameter with failing embedder branch.
 	exec.SetEmbedder(&failingEmbedder{err: fmt.Errorf("forced embed error")})
 	ctxStringFail := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": "hello"})
-	_, err = exec.callDbIndexVectorQueryRelationships(ctxStringFail, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to embed parameter")
+	_, err = exec.Execute(ctxStringFail, "CALL db.index.vector.queryRelationships('idx_dot', 5, $q)", getParamsFromContext(ctxStringFail))
+	require.ErrorContains(t, err, "failed to embed query 'hello': forced embed error")
 
 	// Direct string query with failing embedder branch.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5, 'hello')")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5, 'hello')", getParamsFromContext(ctx))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to embed query")
 
-	// Parse error branch.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "vector query parse error")
+	// An unbalanced call is the statement's own syntax error, before any
+	// procedure argument is resolved.
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_dot', 5", nil)
+	require.ErrorContains(t, err, "unbalanced parentheses")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// No such index: Neo4j's ProcedureCallFailed, as for queryNodes.
-	_, err = exec.callDbIndexVectorQueryRelationships(ctx, "CALL db.index.vector.queryRelationships('idx_missing', 5, [1,0])")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('idx_missing', 5, [1,0])", getParamsFromContext(ctx))
 	require.ErrorContains(t, err, "There is no such vector schema index: idx_missing")
 }
 
@@ -2278,13 +2209,13 @@ func TestCypherHelpers_ExecuteCartesianProductMatch_Branches(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(30)}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(30)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(20)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(20)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "a1", Labels: []string{"Area"}, Properties: map[string]interface{}{"code": "X"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"Area"}, Properties: map[string]interface{}{"code": "X"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "a2", Labels: []string{"Area"}, Properties: map[string]interface{}{"code": "Y"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "a2", Labels: []string{"Area"}, Properties: map[string]interface{}{"code": "Y"}})
 	require.NoError(t, err)
 
 	// Non-aggregation path with WHERE, DISTINCT, ORDER BY, SKIP, LIMIT.
@@ -2309,9 +2240,9 @@ func TestCypherHelpers_ExecuteCartesianProductMatch_LabelAndAnonymousBranches(t 
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 
 	// Additional-label filtering path (:Person:Employee).
@@ -2333,71 +2264,69 @@ func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
 
-	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(40)}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(40)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(30)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(30)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(20)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(20)}})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
+	err = eng.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{ID: "e2", StartNode: "n2", EndNode: "n3", Type: "LIKES"})
-	require.NoError(t, err)
-
-	n1, err := eng.GetNode("n1")
-	require.NoError(t, err)
-	n2, err := eng.GetNode("n2")
-	require.NoError(t, err)
-	n3, err := eng.GetNode("n3")
+	err = eng.CreateEdge(t.Context(), &storage.Edge{ID: "e2", StartNode: "n2", EndNode: "n3", Type: "LIKES"})
 	require.NoError(t, err)
 
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(x)-[:KNOWS]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:LIKES]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)<-[:KNOWS]-()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)-[:ANY]-()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()-[:LIKES]->()"))
+	// Exercise the live row-predicate/subquery traversal through public WHERE,
+	// rather than keeping an otherwise unreachable relationship evaluator alive.
+	for _, parser := range apocAlgorithmParsers() {
+		t.Run(parser.name, func(t *testing.T) {
+			t.Cleanup(parser.setup())
+			for _, tc := range []struct {
+				pattern string
+				age     int64
+				want    int64
+			}{
+				{"(n)-[:KNOWS]->()", 40, 1},
+				{"(n)-[:LIKES]->()", 40, 0},
+				{"(n)<-[:KNOWS]-()", 30, 1},
+				{"(n)-[:ANY]-()", 30, 0},
+				{"(n)-[:KNOWS]->()-[:LIKES]->()", 40, 1},
+				{"(n:Person)-[:KNOWS]->()-[:LIKES]->()", 40, 1},
+				{"(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()", 40, 1},
+				{"(n)-[:KNOWS]->()-[:MISSING]->()", 40, 0},
+				{"(n)<-[:LIKES|FOLLOWS]-()<-[]-()", 20, 1},
+				{"(n)<-[:MISSING]-()", 20, 0},
+				{"(n)-[]->()", 40, 1},
+				{"(n)-[:KNOWS]-()", 30, 1},
+			} {
+				result, err := exec.Execute(t.Context(), "MATCH (n:Person) WHERE n.age = $age AND "+tc.pattern+" RETURN count(n) AS c", map[string]interface{}{"age": tc.age})
+				require.NoError(t, err, tc.pattern)
+				require.Equal(t, [][]interface{}{{tc.want}}, result.Rows, tc.pattern)
+			}
+			_, err := exec.Execute(t.Context(), "MATCH (n:Person) WHERE (x)-[:KNOWS]->() RETURN n", nil)
+			require.Error(t, err, "an unbound source is rejected by the live statement owner")
+		})
+	}
+	// Inspect the canonical live parse product too: successful traversal alone
+	// would not prove that the unused alternative type was retained.
+	outgoing := exec.parseTraversalPattern(t.Context(), "(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()")
+	require.NotNil(t, outgoing)
+	require.Len(t, outgoing.Segments, 2)
+	assert.Equal(t, "outgoing", outgoing.Segments[0].Relationship.Direction)
+	assert.ElementsMatch(t, []string{"KNOWS", "FRIEND"}, outgoing.Segments[0].Relationship.Types)
+	assert.Equal(t, "outgoing", outgoing.Segments[1].Relationship.Direction)
+	assert.Equal(t, []string{"LIKES"}, outgoing.Segments[1].Relationship.Types)
+	incoming := exec.parseTraversalPattern(t.Context(), "(n)<-[:LIKES|FOLLOWS]-()<-[]-()")
+	require.NotNil(t, incoming)
+	require.Len(t, incoming.Segments, 2)
+	assert.Equal(t, "incoming", incoming.Segments[0].Relationship.Direction)
+	assert.ElementsMatch(t, []string{"LIKES", "FOLLOWS"}, incoming.Segments[0].Relationship.Types)
+	assert.Equal(t, "incoming", incoming.Segments[1].Relationship.Direction)
+	assert.Empty(t, incoming.Segments[1].Relationship.Types)
+	// Live structural reader keeps malformed-input and directional/type cases.
+	for _, malformed := range []string{"(n)-[:BROKEN->()", "(n)<-[:BROKEN-()"} {
+		require.Nil(t, exec.parseTraversalPattern(t.Context(), malformed), malformed)
+	}
 
-	assert.False(t, exec.checkChainedPattern(n1, "x", "(n)-[:KNOWS]->()-[:LIKES]->()", ""))
-	assert.True(t, exec.checkChainedPattern(n1, "n", "(n:Person)-[:KNOWS]->()-[:LIKES]->()", ""))
-
-	hops := exec.parseRelationshipHops("(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()", "n")
-	require.Len(t, hops, 2)
-	assert.True(t, hops[0].outgoing)
-	assert.ElementsMatch(t, []string{"KNOWS", "FRIEND"}, hops[0].relTypes)
-	assert.True(t, hops[1].outgoing)
-	assert.ElementsMatch(t, []string{"LIKES"}, hops[1].relTypes)
-	assert.Empty(t, exec.parseRelationshipHops("(n)-[:BROKEN->()", "n"))
-	incomingHops := exec.parseRelationshipHops("(n)<-[:LIKES|FOLLOWS]-()<-[]-()", "n")
-	require.Len(t, incomingHops, 2)
-	assert.False(t, incomingHops[0].outgoing)
-	assert.ElementsMatch(t, []string{"LIKES", "FOLLOWS"}, incomingHops[0].relTypes)
-	assert.False(t, incomingHops[1].outgoing)
-	assert.Empty(t, incomingHops[1].relTypes)
-	assert.Empty(t, exec.parseRelationshipHops("(n)<-[:BROKEN-()", "n"))
-
-	assert.True(t, exec.traverseChain(n1, []relationshipHop{
-		{relTypes: []string{"KNOWS"}, outgoing: true},
-		{relTypes: []string{"LIKES"}, outgoing: true},
-	}, 0))
-	assert.False(t, exec.traverseChain(n1, []relationshipHop{
-		{relTypes: []string{"KNOWS"}, outgoing: true},
-		{relTypes: []string{"MISSING"}, outgoing: true},
-	}, 0))
-
-	// Incoming traversal branch.
-	assert.True(t, exec.traverseChain(n3, []relationshipHop{
-		{relTypes: []string{"LIKES"}, outgoing: false},
-		{relTypes: []string{"KNOWS"}, outgoing: false},
-	}, 0))
-	assert.False(t, exec.traverseChain(n3, []relationshipHop{
-		{relTypes: []string{"MISSING"}, outgoing: false},
-	}, 0))
-
-	// No type filter branch.
-	assert.True(t, exec.traverseChain(n1, []relationshipHop{
-		{relTypes: nil, outgoing: true},
-	}, 0))
 }
 
 func TestCypherHelpers_ExecuteMatchRelationshipsWithClause_Branches(t *testing.T) {
@@ -2406,19 +2335,19 @@ func TestCypherHelpers_ExecuteMatchRelationshipsWithClause_Branches(t *testing.T
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:         "pa",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "alice"},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:         "pb",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "bob"},
 	})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{
+	err = eng.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "kn-1",
 		StartNode: "pa",
 		EndNode:   "pb",
@@ -2444,7 +2373,7 @@ func TestCypherHelpers_ExecuteMatchRelationshipsWithClause_Branches(t *testing.T
 		"WITH a, b, r",
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	_, err = exec.sharedRelationshipPipelineForTest(
 		ctx,
@@ -2453,7 +2382,7 @@ func TestCypherHelpers_ExecuteMatchRelationshipsWithClause_Branches(t *testing.T
 		"WITH a RETURN a",
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 }
 
 func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
@@ -2461,16 +2390,16 @@ func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
 
-	_, err := eng.CreateNode(&storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "a"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "a"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "b"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "b"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "c", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "c"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "c"}})
 	require.NoError(t, err)
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "a", EndNode: "b"}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e2", Type: "LIKES", StartNode: "c", EndNode: "a"}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "a", EndNode: "b"}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{ID: "e2", Type: "LIKES", StartNode: "c", EndNode: "a"}))
 
-	a, err := eng.GetNode("a")
+	a, err := eng.GetNode(t.Context(), "a")
 	require.NoError(t, err)
 
 	// COUNT bodies go through the one subquery evaluator (#652): a body that
@@ -2508,9 +2437,13 @@ func TestCypherHelpers_ExtractionHelpers_Branches(t *testing.T) {
 	assert.Equal(t, "n", extractVariableNameFromReturnItem("id(n)"))
 	assert.Equal(t, "n", extractVariableNameFromReturnItem("id(n.name)"))
 
-	assert.Equal(t, "b", exec.extractTargetVariable("(a)-[:KNOWS]->(b:Person)", "a"))
-	assert.Equal(t, "a", exec.extractTargetVariable("(a:Person)<-[:KNOWS]-(b)", "b"))
-	assert.Equal(t, "", exec.extractTargetVariable("(a)-[:KNOWS]-", "a"))
+	forward := exec.parseTraversalPattern(t.Context(), "(a)-[:KNOWS]->(b:Person)")
+	require.NotNil(t, forward)
+	assert.Equal(t, "b", forward.EndNode.variable)
+	incoming := exec.parseTraversalPattern(t.Context(), "(a:Person)<-[:KNOWS]-(b)")
+	require.NotNil(t, incoming)
+	assert.Equal(t, "a", incoming.StartNode.variable)
+	require.Nil(t, exec.parseTraversalPattern(t.Context(), "(a)-[:KNOWS]-"))
 
 	got := dedupeNonEmpty([]string{"a", "", "a", " b ", "b"}, []string{"", "c", "a"})
 	assert.Equal(t, []string{"a", "b", "c"}, got)
@@ -2553,7 +2486,7 @@ func TestCypherHelpers_ExecuteUnwind_Branches(t *testing.T) {
 	require.Empty(t, matched.Rows)
 
 	_, err = exec.Execute(ctx, "UNWIND [1,2,3] RETURN x", nil)
-	requireSyntaxErrorStatus(t, err, "UNWIND [1,2,3] RETURN x")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "UNWIND [1,2,3] RETURN x")
 
 	keysRes, err := exec.Execute(ctx, "UNWIND keys({a:1}) AS k RETURN k", nil)
 	require.NoError(t, err)
@@ -2604,7 +2537,7 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows_Branches(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-2",
 		Labels: []string{"OrderStatus"},
 		Properties: map[string]interface{}{
@@ -2614,7 +2547,7 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows_Branches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-1",
 		Labels: []string{"OrderStatus"},
 		Properties: map[string]interface{}{
@@ -2624,7 +2557,7 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows_Branches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-3",
 		Labels: []string{"OrderStatus"},
 		Properties: map[string]interface{}{
@@ -2634,7 +2567,7 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows_Branches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "ph-2",
 		Labels: []string{"Pharmacy"},
 		Properties: map[string]interface{}{
@@ -2642,7 +2575,7 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows_Branches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "ph-1",
 		Labels: []string{"Pharmacy"},
 		Properties: map[string]interface{}{
@@ -2682,19 +2615,19 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows_Branches(t *testing.T) {
 	_, err = exec.sharedPipelineRowsForTest(ctx, "MATCH (:OrderStatus) WITH o", []string{"o"}, eng)
 	require.Error(t, err)
 	// o is not bound: Neo4j's "Variable `o` not defined" (#907).
-	assert.Contains(t, err.Error(), "o is not defined")
+	assert.Contains(t, err.Error(), "Variable `o` not defined")
 }
 
 func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
 	// Keyword detection should ignore quoted occurrences.
-	assert.Equal(t, -1, findKeywordIndexInContext("x = 'ORDER BY' and y = 'LIMIT'", "ORDER"))
-	assert.NotEqual(t, -1, findKeywordIndexInContext(" score > 0.1 ORDER BY score DESC", "ORDER"))
+	assert.Equal(t, -1, findKeywordIndexInContext(t.Context(), "x = 'ORDER BY' and y = 'LIMIT'", "ORDER"))
+	assert.NotEqual(t, -1, findKeywordIndexInContext(t.Context(), " score > 0.1 ORDER BY score DESC", "ORDER"))
 
 	// A RETURN after YIELD starts the tail; the YIELD keeps its own WHERE,
 	// ORDER BY, SKIP and LIMIT, which come before it.
-	parsed := parseYieldClause("CALL proc() YIELD node, score AS s WHERE s > 0 ORDER BY s DESC SKIP 1 LIMIT 2 RETURN node.id AS id")
+	parsed := parseYieldClause(t.Context(), "CALL proc() YIELD node, score AS s WHERE s > 0 ORDER BY s DESC SKIP 1 LIMIT 2 RETURN node.id AS id")
 	require.NotNil(t, parsed)
 	require.Len(t, parsed.items, 2)
 	assert.Equal(t, "node", parsed.items[0].name)
@@ -2704,9 +2637,13 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	assert.Equal(t, "1", parsed.skip)
 	assert.Equal(t, "2", parsed.limit)
 	assert.False(t, parsed.misplacedWhere)
-	assert.True(t, parseYieldClause("CALL proc() YIELD s ORDER BY s WHERE s > 0 RETURN s").misplacedWhere)
+	malformed := "CALL proc() YIELD s ORDER BY s WHERE s > 0 RETURN s"
+	require.Nil(t, parseYieldClause(t.Context(), malformed), "the canonical reader declines malformed clause order")
+	_, syntaxErr := exec.Execute(context.Background(), malformed, nil)
+	require.Error(t, syntaxErr)
+	requireStatusCode(t, syntaxErr, "Neo.ClientError.Statement.SyntaxError")
 	// STARTS WITH and a WHERE inside a subquery are part of the predicate.
-	parsedPredicate := parseYieldClause("CALL proc() YIELD s WHERE s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s } RETURN s")
+	parsedPredicate := parseYieldClause(t.Context(), "CALL proc() YIELD s WHERE s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s } RETURN s")
 	assert.Equal(t, "s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s }", parsedPredicate.where)
 
 	node1 := &storage.Node{ID: "n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "user-1"}}
@@ -2765,174 +2702,26 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown YIELD column")
 }
 
-func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	eng := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(eng)
-
-	// Rejection branches.
-	rejectCases := []struct {
-		name    string
-		matches *TraversalMatch
-		with    string
-		ret     string
-	}{
-		{name: "nil_matches", matches: nil, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "chained", matches: &TraversalMatch{IsChained: true}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "wrong_hops", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 2, MaxHops: 2}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "wrong_type", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"LIKES"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "wrong_direction", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "outgoing", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "missing_vars", matches: &TraversalMatch{StartNode: nodePatternInfo{labels: []string{"Product"}}, Relationship: RelationshipPattern{Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "bad_with_expr", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice + r.quantity) as revenue", ret: "p.productName, revenue"},
-	}
-	for _, tc := range rejectCases {
-		t.Run(tc.name, func(t *testing.T) {
-			res, ok, err := exec.tryFastRevenueByProduct(tc.matches, tc.with, tc.ret, "", 0, 0)
-			require.NoError(t, err)
-			assert.False(t, ok)
-			assert.Nil(t, res)
-		})
-	}
-
-	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "A", "unitPrice": float64(10)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "B", "unitPrice": "20"}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o1", Labels: []string{"Order"}, Properties: map[string]interface{}{"orderID": int64(1)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o2", Labels: []string{"Order"}, Properties: map[string]interface{}{"orderID": int64(2)}})
-	require.NoError(t, err)
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e1", StartNode: "o1", EndNode: "p1", Type: "ORDERS", Properties: map[string]interface{}{"quantity": int64(3)}}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e2", StartNode: "o2", EndNode: "p2", Type: "ORDERS", Properties: map[string]interface{}{"quantity": float64(2)}}))
-
-	matches := &TraversalMatch{
-		StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}},
-		Relationship: RelationshipPattern{
-			Variable:  "r",
-			Types:     []string{"ORDERS"},
-			Direction: "incoming",
-			MinHops:   1,
-			MaxHops:   1,
-		},
-	}
-	res, ok, err := exec.tryFastRevenueByProduct(
-		matches,
-		"p, sum(p.unitPrice * r.quantity) as revenue",
-		"p.productName, revenue",
-		"revenue DESC",
-		0,
-		10,
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, []string{"p.productName", "revenue"}, res.Columns)
-	require.Len(t, res.Rows, 2)
-	assert.Equal(t, "B", res.Rows[0][0])
-	assert.Equal(t, float64(40), res.Rows[0][1])
-	assert.Equal(t, "A", res.Rows[1][0])
-	assert.Equal(t, float64(30), res.Rows[1][1])
-}
-
-func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	eng := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(eng)
-
-	// Products with different unitPrice types.
-	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "A", "unitPrice": float32(10)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "B", "unitPrice": int(2)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p3", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "C", "unitPrice": int64(3)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p4", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "D", "unitPrice": "bad-number"}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p5", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "E", "unitPrice": true}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o1", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(1)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o2", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(2)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o3", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(3)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o4", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(4)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o5", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(5)}})
-	require.NoError(t, err)
-
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e1", StartNode: "o1", EndNode: "p1", Type: "ORDERS", Properties: map[string]interface{}{"quantity": int(3)}}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e2", StartNode: "o2", EndNode: "p2", Type: "ORDERS", Properties: map[string]interface{}{"quantity": float32(5)}}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e3", StartNode: "o3", EndNode: "p3", Type: "ORDERS", Properties: map[string]interface{}{"quantity": int64(7)}}))
-	// Unusable unitPrice type/string should be skipped.
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e4", StartNode: "o4", EndNode: "p4", Type: "ORDERS", Properties: map[string]interface{}{"quantity": int64(1)}}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e5", StartNode: "o5", EndNode: "p5", Type: "ORDERS", Properties: map[string]interface{}{"quantity": "bad-qty"}}))
-
-	matches := &TraversalMatch{
-		StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}},
-		Relationship: RelationshipPattern{
-			Variable:  "r",
-			Types:     []string{"ORDERS"},
-			Direction: "incoming",
-			MinHops:   1,
-			MaxHops:   1,
-		},
-	}
-
-	res, ok, err := exec.tryFastRevenueByProduct(
-		matches,
-		"p, sum(p.unitPrice * r.quantity) as revenue",
-		"p.productName, revenue",
-		"revenue DESC",
-		1,
-		2,
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, []string{"p.productName", "revenue"}, res.Columns)
-	// Pagination branch should retain at least one row and keep numeric revenue values.
-	require.NotEmpty(t, res.Rows)
-	for _, row := range res.Rows {
-		require.Len(t, row, 2)
-		_, okName := row[0].(string)
-		require.True(t, okName)
-		_, okRev := row[1].(float64)
-		require.True(t, okRev)
-	}
-
-	// Skip beyond row count yields empty rows.
-	res, ok, err = exec.tryFastRevenueByProduct(
-		matches,
-		"p, sum(p.unitPrice * r.quantity) as revenue",
-		"p.productName, revenue",
-		"revenue DESC",
-		100,
-		0,
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Empty(t, res.Rows)
-}
-
 func TestCypherHelpers_OptionalMatchCountSharedRoute(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
-	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "A"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "A"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "B"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "B"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p3", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "C"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p3", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "C"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o1", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(1)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "o1", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(1)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o2", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(2)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "o2", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(2)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o3", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(3)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "o3", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(3)}})
 	require.NoError(t, err)
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e1", StartNode: "o1", EndNode: "p1", Type: "ORDERS"}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e2", StartNode: "o2", EndNode: "p1", Type: "ORDERS"}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e3", StartNode: "o3", EndNode: "p2", Type: "ORDERS"}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "o1", EndNode: "p1", Type: "ORDERS"}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{ID: "e2", StartNode: "o2", EndNode: "p1", Type: "ORDERS"}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{ID: "e3", StartNode: "o3", EndNode: "p2", Type: "ORDERS"}))
 
 	for _, test := range []struct {
 		name    string
@@ -2962,9 +2751,9 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	ctx := context.Background()
 
 	// extractVariableNamesFromPattern basic behavior.
-	vars := exec.extractVariableNamesFromPattern("(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)")
+	vars := exec.extractVariableNamesFromPattern(t.Context(), "(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)")
 	assert.ElementsMatch(t, []string{"p", "poc", "a"}, vars)
-	assert.Empty(t, exec.extractVariableNamesFromPattern("()-[:REL]->()"))
+	assert.Empty(t, exec.extractVariableNamesFromPattern(t.Context(), "()-[:REL]->()"))
 
 	// No variable names branch.
 	matches, handled, err := exec.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH ()-[:REL]->()")
@@ -2972,11 +2761,11 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	assert.Empty(t, matches)
 	assert.True(t, handled)
 
-	_, err = eng.CreateNode(&storage.Node{ID: "pa", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "pa", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "pb", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "pb", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "k1", StartNode: "pa", EndNode: "pb", Type: "KNOWS"}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{ID: "k1", StartNode: "pa", EndNode: "pb", Type: "KNOWS"}))
 
 	// Successful extraction branch.
 	matches, handled, err = exec.pipelineApplyMatch(
@@ -3011,21 +2800,23 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 func TestCypherHelpers_ExplainInferenceAndCostHelpers(t *testing.T) {
 	exec := &StorageExecutor{}
 
-	cols := exec.inferExplainColumns("CALL db.labels() YIELD label AS lbl RETURN lbl")
+	cols := exec.StatementColumns("CALL db.labels() YIELD label AS lbl RETURN lbl")
 	require.Equal(t, []string{"lbl"}, cols)
-	cols = exec.inferExplainColumns("MATCH (n) RETURN n.name AS name, n.age")
+	cols = exec.StatementColumns("MATCH (n) RETURN n.name AS name, n.age")
 	require.Equal(t, []string{"name", "n.age"}, cols)
-	cols = exec.inferExplainColumns("MATCH (n)")
+	cols = exec.StatementColumns("MATCH (n)")
 	require.Empty(t, cols)
 
-	limit := exec.analyzeLimitSkip("MATCH (n) RETURN n SKIP 5 LIMIT 10")
+	limit, err := exec.analyzeLimitSkip(t.Context(), "MATCH (n) RETURN n SKIP 5 LIMIT 10")
+	require.NoError(t, err)
 	require.Equal(t, "10", limit.Arguments["limit"])
 	require.Equal(t, "5", limit.Arguments["skip"])
 	assert.Equal(t, int64(10), limit.EstimatedRows)
 	assert.Contains(t, limit.Description, "Limit to 10 rows")
 	assert.Contains(t, limit.Description, "skip 5")
 
-	skipOnly := exec.analyzeLimitSkip("MATCH (n) RETURN n SKIP 2")
+	skipOnly, err := exec.analyzeLimitSkip(t.Context(), "MATCH (n) RETURN n SKIP 2")
+	require.NoError(t, err)
 	assert.Equal(t, int64(100), skipOnly.EstimatedRows)
 	assert.Equal(t, "2", skipOnly.Arguments["skip"])
 
@@ -3058,18 +2849,22 @@ func TestCypherHelpers_ExplainInferenceAndCostHelpers(t *testing.T) {
 }
 
 func TestCypherHelpers_ExtractCreateVariableRefsBranches(t *testing.T) {
-	vars := extractCreateVariableRefs("CREATE (a)-[:KNOWS]->(b)")
+	vars, err := extractCreateVariableRefs(t.Context(), "CREATE (a)-[:KNOWS]->(b)")
+	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a", "b"}, vars)
 
-	vars = extractCreateVariableRefs("CREATE (a)<-[:KNOWS]-(b)")
+	vars, err = extractCreateVariableRefs(t.Context(), "CREATE (a)<-[:KNOWS]-(b)")
+	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a", "b"}, vars)
 
 	// Inline node definitions are not simple variable refs.
-	vars = extractCreateVariableRefs("CREATE (:Person {name:'x'})-[:KNOWS]->(:Person {name:'y'})")
+	vars, err = extractCreateVariableRefs(t.Context(), "CREATE (:Person {name:'x'})-[:KNOWS]->(:Person {name:'y'})")
+	require.NoError(t, err)
 	assert.Empty(t, vars)
 
 	// Mixed CREATE clauses deduplicate refs.
-	vars = extractCreateVariableRefs("CREATE (a)-[:R]->(b) CREATE (a)-[:R]->(c)")
+	vars, err = extractCreateVariableRefs(t.Context(), "CREATE (a)-[:R]->(b) CREATE (a)-[:R]->(c)")
+	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a", "b", "c"}, vars)
 }
 
@@ -3147,10 +2942,10 @@ func TestCypherHelpers_ExecuteSetTrailingPipelinesAndHelpers(t *testing.T) {
 	require.NoError(t, err)
 
 	// Helper branches.
-	assert.Equal(t, "n += $props, n.x = 1, n.y = 2", collapseChainedSetClauses("n += $props SET n.x = 1 SET n.y = 2"))
-	assert.Equal(t, -1, firstPostSetClauseIndex("n.x = 1, n.y = 2"))
-	assert.GreaterOrEqual(t, firstPostSetClauseIndex("n.x = 1 RETURN n"), 0)
-	assert.GreaterOrEqual(t, firstPostSetClauseIndex("n.x = 1 UNWIND [1] AS x RETURN x"), 0)
+	assert.Equal(t, "n += $props, n.x = 1, n.y = 2", collapseChainedSetClauses(ctx, "n += $props SET n.x = 1 SET n.y = 2"))
+	assert.Equal(t, -1, firstPostSetClauseIndex(ctx, "n.x = 1, n.y = 2"))
+	assert.GreaterOrEqual(t, firstPostSetClauseIndex(ctx, "n.x = 1 RETURN n"), 0)
+	assert.GreaterOrEqual(t, firstPostSetClauseIndex(ctx, "n.x = 1 UNWIND [1] AS x RETURN x"), 0)
 }
 
 func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T) {
@@ -3160,7 +2955,7 @@ func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T)
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o1",
 		Labels: []string{"OrderStatus", "Routable"},
 		Properties: map[string]interface{}{
@@ -3169,7 +2964,7 @@ func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T)
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o2",
 		Labels: []string{"OrderStatus", "Routable"},
 		Properties: map[string]interface{}{
@@ -3178,7 +2973,7 @@ func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T)
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "ph1",
 		Labels: []string{"Pharmacy"},
 		Properties: map[string]interface{}{
@@ -3198,7 +2993,7 @@ func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T)
 
 	// No pharmacies path should deterministically return empty output rows.
 	emptyStore := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	_, err = emptyStore.CreateNode(&storage.Node{
+	_, err = emptyStore.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-empty",
 		Labels: []string{"OrderStatus"},
 		Properties: map[string]interface{}{
@@ -3227,7 +3022,7 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"flag": true, "name": "norm"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// normalizeSetMatchRowsToNodes: map with _nodeId is converted; non-map and map without _nodeId stay untouched.
@@ -3243,7 +3038,7 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 			map[string]interface{}{"_nodeId": ""}, // empty node ID branch
 		}},
 	}
-	exec.normalizeSetMatchRowsToNodes(mr, store)
+	exec.normalizeSetMatchRowsToNodes(t.Context(), mr, store)
 	require.Len(t, mr.Rows, 2)
 	require.Len(t, mr.Rows[0], 3)
 	n, ok := mr.Rows[0][0].(*storage.Node)
@@ -3281,7 +3076,7 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 	// (#740), so there is no RETURN clause; the statement is a SyntaxError
 	// for the n after the alias, as in Neo4j.
 	_, handled, err = exec.sharedTrailingRowsHandledForTest(ctx, "WITH n AS RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, err = exec.Execute(ctx, "MATCH (n) SET n.x = 1 WITH n AS RETURN n", nil)
 	require.Error(t, err)
 

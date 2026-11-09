@@ -29,10 +29,9 @@ package storage
 
 import (
 	"context"
-	"sync"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -44,24 +43,29 @@ const DefaultBytesMetricsInterval = 30 * time.Second
 // IndexSizeBytes(); for Plan 04-04 it can be nil (returns 0).
 type SearchSizeFn func() int64
 
+// BytesMetricsSource is what the sweeper reads from storage.
+type BytesMetricsSource interface {
+	EstimateSize(prefix []byte) (keys, values uint64)
+	Size() (lsm, vlog int64)
+}
+
 // BytesMetricsSweeper is the lifecycle.Component that populates the
 // nornicdb_storage_bytes{kind} gauges every interval via
-// badger.DB.EstimateSize(prefix).
+// the engine's EstimateSize(prefix), which Close joins or refuses.
 type BytesMetricsSweeper struct {
 	metrics    *observability.StorageMetrics
-	db         *badger.DB
+	db         BytesMetricsSource
 	searchSize SearchSizeFn
 	interval   time.Duration
 
-	stopOnce sync.Once
-	stop     chan struct{}
-	done     chan struct{}
+	// work admits the running Start loop; Shutdown is its one stop.
+	work lifecycle.WorkLifetime
 }
 
 // NewBytesMetricsSweeper constructs the sweeper. interval ≤ 0 falls back to
 // DefaultBytesMetricsInterval. metrics or db nil disables the sweep
 // (Start returns nil immediately) — defensive for partial-init.
-func NewBytesMetricsSweeper(metrics *observability.StorageMetrics, db *badger.DB, searchSize SearchSizeFn, interval time.Duration) *BytesMetricsSweeper {
+func NewBytesMetricsSweeper(metrics *observability.StorageMetrics, db BytesMetricsSource, searchSize SearchSizeFn, interval time.Duration) *BytesMetricsSweeper {
 	if interval <= 0 {
 		interval = DefaultBytesMetricsInterval
 	}
@@ -70,8 +74,6 @@ func NewBytesMetricsSweeper(metrics *observability.StorageMetrics, db *badger.DB
 		db:         db,
 		searchSize: searchSize,
 		interval:   interval,
-		stop:       make(chan struct{}),
-		done:       make(chan struct{}),
 	}
 }
 
@@ -82,12 +84,16 @@ func (s *BytesMetricsSweeper) Name() string { return "storage_bytes_metrics" }
 // Shutdown is called. Performs an initial sweep immediately so the gauges
 // have non-zero values by the first scrape.
 func (s *BytesMetricsSweeper) Start(ctx context.Context) error {
-	defer close(s.done)
+	if !s.work.Enter() {
+		return nil // already stopped
+	}
+	defer s.work.Leave()
+	stop := s.work.Context().Done()
 	if s.metrics == nil || s.db == nil {
 		// Wait for cancellation but emit nothing.
 		select {
 		case <-ctx.Done():
-		case <-s.stop:
+		case <-stop:
 		}
 		return nil
 	}
@@ -99,7 +105,7 @@ func (s *BytesMetricsSweeper) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-s.stop:
+		case <-stop:
 			return nil
 		case <-t.C:
 			s.sweep()
@@ -107,17 +113,10 @@ func (s *BytesMetricsSweeper) Start(ctx context.Context) error {
 	}
 }
 
-// Shutdown implements lifecycle.Component. Idempotent; subsequent calls
-// are no-ops.
+// Shutdown implements lifecycle.Component. It is the owner's one stop: every
+// caller joins the running loop's actual return; ctx bounds only the wait.
 func (s *BytesMetricsSweeper) Shutdown(ctx context.Context) error {
-	s.stopOnce.Do(func() {
-		close(s.stop)
-	})
-	select {
-	case <-s.done:
-	case <-ctx.Done():
-	}
-	return nil
+	return s.work.Shutdown(ctx, nil)
 }
 
 // sweep updates the five kind-gauges. Wrapped in defer-recover per

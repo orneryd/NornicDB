@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strconv"
 	"strings"
 	"time"
@@ -23,157 +24,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Parenthesized Expressions - strip outer parens
 	// ========================================
-	if strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
-		// Check if these parentheses wrap the entire expression
-		depth := 0
-		allWrapped := true
-		for i, ch := range expr {
-			if ch == '(' {
-				depth++
-			} else if ch == ')' {
-				depth--
-			}
-			// If depth reaches 0 before the last character, parens don't wrap the whole thing
-			if depth == 0 && i < len(expr)-1 {
-				allWrapped = false
-				break
-			}
-		}
-		if allWrapped && depth == 0 {
-			// Strip outer parentheses and re-evaluate
-			return e.evaluateExpressionWithContextFull(ctx, expr[1:len(expr)-1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		}
+	if inner, wrapped := stripEnclosingRowDelimiter(expr, '(', ')'); wrapped {
+		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
-
-	// ========================================
-	// Array Indexing - handle expr[index] patterns
-	// ========================================
-	// This handles expressions like labels(n)[0], collect(...)[..10], etc.
-	if strings.HasSuffix(expr, "]") {
-		// Find the matching opening bracket
-		bracketEnd := len(expr) - 1
-		depth := 1
-		bracketStart := -1
-		for i := bracketEnd - 1; i >= 0; i-- {
-			if expr[i] == ']' {
-				depth++
-			} else if expr[i] == '[' {
-				depth--
-				if depth == 0 {
-					bracketStart = i
-					break
-				}
-			}
-		}
-		if bracketStart > 0 {
-			baseExpr := expr[:bracketStart]
-			indexExpr := expr[bracketStart+1 : bracketEnd]
-
-			// Avoid misclassifying list literals in larger expressions as indexing.
-			// Example: "file_tags + ['hello']" should parse as list concatenation,
-			// not "(file_tags +)['hello']".
-			lastNonSpace := byte(0)
-			for i := len(baseExpr) - 1; i >= 0; i-- {
-				if baseExpr[i] != ' ' && baseExpr[i] != '\t' && baseExpr[i] != '\n' && baseExpr[i] != '\r' {
-					lastNonSpace = baseExpr[i]
-					break
-				}
-			}
-			switch lastNonSpace {
-			case '+', '-', '*', '/', '%', '(', ',', '=', '<', '>', '|':
-				goto skipArrayIndexing
-			}
-
-			// Skip if this is an IN expression (e.g., "1 IN [1, 2, 3]")
-			// The base would be "1 IN " which ends with " IN "
-			baseUpper := upperASCII(strings.TrimSpace(baseExpr))
-			if strings.HasSuffix(baseUpper, " IN") || strings.HasSuffix(baseUpper, " NOT IN") {
-				// This is an IN expression, not array indexing - skip this section
-				goto skipArrayIndexing
-			}
-
-			// Check for slice notation [..N] or [N..M] or [N..]
-			if lowerExpr, upperExpr, slice := staticSliceBounds(indexExpr); slice {
-				// This is a slice, not an index
-				baseVal := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				lowerExpr, upperExpr = strings.TrimSpace(lowerExpr), strings.TrimSpace(upperExpr)
-				var lower, upper interface{}
-				if lowerExpr != "" {
-					lower = e.evaluateExpressionWithContextFull(ctx, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				}
-				if upperExpr != "" {
-					upper = e.evaluateExpressionWithContextFull(ctx, upperExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				}
-				if value, ok := cypherListSlice(baseVal, lower, upper, lowerExpr != "", upperExpr != ""); ok {
-					return value
-				}
-				return nil
-			}
-
-			// Single index access [N]
-			baseVal := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if baseVal == nil {
-				return nil
-			}
-
-			// Evaluate the index
-			index := e.evaluateExpressionWithContextFull(ctx, indexExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if key, ok := index.(string); ok {
-				switch value := baseVal.(type) {
-				case map[string]interface{}:
-					return value[key]
-				case *storage.Node:
-					if value != nil {
-						return e.queryEntityProperties(value)[key]
-					}
-					return nil
-				case *storage.Edge:
-					if value != nil {
-						return e.queryEntityProperties(value)[key]
-					}
-					return nil
-				}
-			}
-			var idx int64
-			switch v := index.(type) {
-			case int64:
-				idx = v
-			case int:
-				idx = int64(v)
-			case float64:
-				idx = int64(v)
-			case string:
-				// Try to parse as number
-				idx, _ = strconv.ParseInt(v, 10, 64)
-			}
-
-			// Apply the index to the base value
-			switch list := baseVal.(type) {
-			case []interface{}:
-				if idx < 0 {
-					idx = int64(len(list)) + idx
-				}
-				if idx >= 0 && idx < int64(len(list)) {
-					return list[idx]
-				}
-				return nil
-			case []string:
-				if idx < 0 {
-					idx = int64(len(list)) + idx
-				}
-				if idx >= 0 && idx < int64(len(list)) {
-					return list[idx]
-				}
-				return nil
-			case string:
-				if character, ok := cyphertext.At(list, int(idx)); ok {
-					return character
-				}
-				return nil
-			}
-		}
-	}
-skipArrayIndexing:
 
 	// ========================================
 	// Map Literals - handle { key: value, ... } patterns
@@ -198,7 +51,7 @@ skipArrayIndexing:
 	// ========================================
 	// A plugin function overrides a built-in of the same name, so plugins
 	// are asked first, as the row evaluator does (#1163).
-	if _, _, call := parseFunctionCallWS(expr); call && strings.Contains(expr, ".") {
+	if call := inspectFunctionCall(expr, qualifiedFunctionCall, "", nil); call && strings.Contains(expr, ".") {
 		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
 			return result
 		}
@@ -207,24 +60,16 @@ skipArrayIndexing:
 	// ========================================
 	// Registered Function Dispatch (Phase B: pkg/cypher/fn)
 	// ========================================
-	if name, inner, ok := parseFunctionCallWS(expr); ok {
+	var callFacts1 functionCallFacts
+	if ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); ok {
+		name, inner := callFacts1.name, callFacts1.inner
+
 		args := e.splitFunctionArgs(inner)
-		fnCtx := cypherfn.Context{
-			Nodes:    nodes,
-			Rels:     rels,
-			Storage:  e.storage,
-			Database: e.executionDatabaseName(ctx),
-			Eval: func(argExpr string) (interface{}, error) {
-				value := e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				if err := getExpressionFailure(ctx); err != nil {
-					return nil, err
-				}
-				return value, nil
-			},
-			Now:      time.Now,
-			Graphs:   e,
-			Cypher25: cypherVersionFromContext(ctx) == "25",
-		}
+		fnCtx := e.registryFunctionContext(ctx, func(argExpr string) (interface{}, error) {
+			return e.checkedPropertyExpression(ctx, argExpr, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		})
+		fnCtx.Nodes = nodes
+		fnCtx.Rels = rels
 
 		if (strings.EqualFold(name, "properties") || strings.EqualFold(name, "keys")) && e.queryPropertyDecayEnabled() {
 			originalEval := fnCtx.Eval
@@ -241,7 +86,7 @@ skipArrayIndexing:
 				fnCtx.Rels[key] = e.queryVisibleValue(rel).(*storage.Edge)
 			}
 		}
-		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
+		if v, found, err := cypherfn.EvaluateFunction(ctx, name, args, fnCtx); found {
 			if err != nil {
 				functionEvaluationFailure(ctx, err)
 				return nil
@@ -295,22 +140,18 @@ skipArrayIndexing:
 			recordExpressionFailure(ctx, err)
 			return value
 		}
+		if list, ok := valueconvert.ReadList(innerVal); ok {
+			return int64(list.Len())
+		}
 		switch v := innerVal.(type) {
 		case string:
 			return int64(cyphertext.Length(v))
-		case []interface{}:
-			return int64(len(v))
 		case map[string]interface{}:
 			// A path carried as a computed-row map (WITH p AS path): read the
 			// recorded length, then the node list as a fallback.
 			if length, ok := v["length"]; ok {
-				switch distance := length.(type) {
-				case int:
-					return int64(distance)
-				case int64:
+				if distance, valid := valueconvert.Int64(length, valueconvert.IntegerFloat); valid {
 					return distance
-				case float64:
-					return int64(distance)
 				}
 			}
 			if nodesList, _, hasNodes, _ := pathValueParts(v); hasNodes {
@@ -326,7 +167,8 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "exists")
 		if trimmed := strings.TrimSpace(inner); strings.HasPrefix(trimmed, "(") {
 			if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
-				return e.evaluateExistsSubqueryValue(ctx, "EXISTS { "+trimmed+" }", nodes, rels)
+				value, _ := e.evaluateRowSubqueryValue(ctx, "EXISTS", trimmed, entityRow(ctx, nodes, rels))
+				return value
 			}
 		}
 		// Check for property access
@@ -369,7 +211,7 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "tail") {
 		inner := extractFuncArgs(expr, "tail")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if list, ok := innerVal.([]interface{}); ok && len(list) > 1 {
+		if list, ok := cypherListValue(innerVal); ok && len(list) > 1 {
 			return list[1:]
 		}
 		return []interface{}{}
@@ -409,7 +251,7 @@ skipArrayIndexing:
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			startIdx, _ := strconv.ParseInt(strings.TrimSpace(args[1]), 10, 64)
-			if list, ok := listVal.([]interface{}); ok {
+			if list, ok := cypherListValue(listVal); ok {
 				endIdx := int64(len(list))
 				if len(args) >= 3 {
 					endIdx, _ = strconv.ParseInt(strings.TrimSpace(args[2]), 10, 64)
@@ -442,7 +284,7 @@ skipArrayIndexing:
 		if len(args) == 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			searchVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if list, ok := listVal.([]interface{}); ok {
+			if list, ok := cypherListValue(listVal); ok {
 				for i, item := range list {
 					if e.compareEqual(item, searchVal) {
 						return int64(i)
@@ -457,8 +299,16 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "degree") {
 		inner := extractFuncArgs(expr, "degree")
 		if node, ok := nodes[inner]; ok {
-			inDegree := e.storage.GetInDegree(node.ID)
-			outDegree := e.storage.GetOutDegree(node.ID)
+			inDegree, err := e.storage.GetInDegree(ctx, node.ID)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			outDegree, err := e.storage.GetOutDegree(ctx, node.ID)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
 			return int64(inDegree + outDegree)
 		}
 		return int64(0)
@@ -468,7 +318,12 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "indegree") {
 		inner := extractFuncArgs(expr, "indegree")
 		if node, ok := nodes[inner]; ok {
-			return int64(e.storage.GetInDegree(node.ID))
+			degree, err := e.storage.GetInDegree(ctx, node.ID)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			return int64(degree)
 		}
 		return int64(0)
 	}
@@ -477,7 +332,12 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "outdegree") {
 		inner := extractFuncArgs(expr, "outdegree")
 		if node, ok := nodes[inner]; ok {
-			return int64(e.storage.GetOutDegree(node.ID))
+			degree, err := e.storage.GetOutDegree(ctx, node.ID)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			return int64(degree)
 		}
 		return int64(0)
 	}
@@ -489,7 +349,7 @@ skipArrayIndexing:
 		if len(args) >= 2 {
 			if node, ok := nodes[strings.TrimSpace(args[0])]; ok {
 				labelsVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				if labels, ok := labelsVal.([]interface{}); ok {
+				if labels, ok := cypherListValue(labelsVal); ok {
 					for _, reqLabel := range labels {
 						labelStr, _ := reqLabel.(string)
 						found := false
@@ -514,146 +374,7 @@ skipArrayIndexing:
 	// APOC Map Functions
 	// ========================================
 
-	// apoc.map.fromPairs(list) - create map from [[key, value], ...] pairs
-	if matchFuncStartAndSuffix(expr, "apoc.map.frompairs") {
-		inner := extractFuncArgs(expr, "apoc.map.frompairs")
-		pairsVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if pairs, ok := pairsVal.([]interface{}); ok {
-			result := make(map[string]interface{})
-			for _, pair := range pairs {
-				if pairList, ok := pair.([]interface{}); ok && len(pairList) >= 2 {
-					if key, ok := pairList[0].(string); ok {
-						result[key] = pairList[1]
-					}
-				}
-			}
-			return result
-		}
-		return map[string]interface{}{}
-	}
-
-	// apoc.map.merge(map1, map2) - merge two maps
-	if matchFuncStartAndSuffix(expr, "apoc.map.merge") {
-		inner := extractFuncArgs(expr, "apoc.map.merge")
-		args := e.splitFunctionArgs(inner)
-		if len(args) == 2 {
-			map1 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			map2 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			m1, ok1 := map1.(map[string]interface{})
-			m2, ok2 := map2.(map[string]interface{})
-			if ok1 && ok2 {
-				result := make(map[string]interface{})
-				for k, v := range m1 {
-					result[k] = v
-				}
-				for k, v := range m2 {
-					result[k] = v
-				}
-				return result
-			}
-		}
-		return map[string]interface{}{}
-	}
-
-	// apoc.map.removeKey(map, key) - remove key from map
-	if matchFuncStartAndSuffix(expr, "apoc.map.removekey") {
-		inner := extractFuncArgs(expr, "apoc.map.removekey")
-		args := e.splitFunctionArgs(inner)
-		if len(args) == 2 {
-			mapVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			keyVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if m, ok := mapVal.(map[string]interface{}); ok {
-				if key, ok := keyVal.(string); ok {
-					result := make(map[string]interface{})
-					for k, v := range m {
-						if k != key {
-							result[k] = v
-						}
-					}
-					return result
-				}
-			}
-		}
-		return map[string]interface{}{}
-	}
-
-	// apoc.map.setKey(map, key, value) - set key in map
-	if matchFuncStartAndSuffix(expr, "apoc.map.setkey") {
-		inner := extractFuncArgs(expr, "apoc.map.setkey")
-		args := e.splitFunctionArgs(inner)
-		if len(args) == 3 {
-			mapVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			keyVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			value := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if m, ok := mapVal.(map[string]interface{}); ok {
-				if key, ok := keyVal.(string); ok {
-					result := make(map[string]interface{})
-					for k, v := range m {
-						result[k] = v
-					}
-					result[key] = value
-					return result
-				}
-			}
-		}
-		return map[string]interface{}{}
-	}
-
-	// apoc.map.clean(map, keys, values) - remove specified keys and entries with specified values
-	if matchFuncStartAndSuffix(expr, "apoc.map.clean") {
-		inner := extractFuncArgs(expr, "apoc.map.clean")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 1 {
-			mapVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			var keysToRemove []string
-			var valuesToRemove []interface{}
-
-			if len(args) >= 2 {
-				if keys, ok := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).([]interface{}); ok {
-					for _, k := range keys {
-						if ks, ok := k.(string); ok {
-							keysToRemove = append(keysToRemove, ks)
-						}
-					}
-				}
-			}
-			if len(args) >= 3 {
-				if vals, ok := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).([]interface{}); ok {
-					valuesToRemove = vals
-				}
-			}
-
-			if m, ok := mapVal.(map[string]interface{}); ok {
-				result := make(map[string]interface{})
-				for k, v := range m {
-					// Skip if key is in keysToRemove
-					skip := false
-					for _, kr := range keysToRemove {
-						if k == kr {
-							skip = true
-							break
-						}
-					}
-					// A null value goes, as in APOC (#1164).
-					if skip || v == nil {
-						continue
-					}
-					// Skip if value is in valuesToRemove
-					for _, vr := range valuesToRemove {
-						if apocSameValue(v, vr) {
-							skip = true
-							break
-						}
-					}
-					if !skip {
-						result[k] = v
-					}
-				}
-				return result
-			}
-		}
-		return map[string]interface{}{}
-	}
+	// APOC map functions use the registered value/null/error owner.
 
 	// ========================================
 	// String Functions
@@ -798,26 +519,14 @@ skipArrayIndexing:
 	// ========================================
 	// Date/Time Functions (Neo4j compatible)
 	// ========================================
-	if value, handled, callErr := e.evaluateTemporalConstructor(ctx, func(argument string) interface{} {
-		return e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-	}, expr); handled {
-		if callErr != nil {
-			recordExpressionFailure(ctx, callErr)
-			return nil
-		}
-		if value == nil {
-			if function, argument, ok := parseFunctionCallWS(expr); ok && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
-				input := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				// An argument the evaluator can't resolve comes back as its own
-				// text; that is not a value to parse.
-				if text, isText := input.(string); isText && text == strings.TrimSpace(argument) && !isWholeCypherQuotedString(text) {
-					input = nil
-				}
-				if err := temporalConstructorError(function, input); err != nil {
-					recordExpressionFailure(ctx, err)
-				}
-			}
-		}
+	// callFacts1 is the call read above for the registry dispatch: the
+	// temporal evaluator reads the same facts instead of parsing expr again.
+	if value, handled, callErr := e.evaluateTemporalConstructor(ctx, func(argument string) (interface{}, bool, error) {
+		value := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		err := getExpressionFailure(ctx)
+		return value, err == nil, err
+	}, callFacts1); handled {
+		recordExpressionFailure(ctx, callErr)
 		return value
 	}
 
@@ -829,7 +538,10 @@ skipArrayIndexing:
 	// date.<component>(value) and datetime.<component>(value): read as the
 	// row evaluator reads them (temporalComponent), so both evaluators give
 	// the same value for every accessor (#1105).
-	if name, inner, ok := parseFunctionCallWS(expr); ok {
+	var callFacts2 functionCallFacts
+	if ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts2); ok {
+		name, inner := callFacts2.name, callFacts2.inner
+
 		if kind, component, dotted := strings.Cut(lowerASCII(name), "."); dotted && (kind == "date" || kind == "datetime") && isTemporalComponent(component) {
 			value, _ := temporalComponent(component, e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			return value
@@ -1053,15 +765,10 @@ skipArrayIndexing:
 			if s, ok := sepVal.(string); ok {
 				sep = strings.Trim(s, "'\"")
 			}
-			// Convert list to string slice
-			var parts []string
-			switch v := listVal.(type) {
-			case []interface{}:
-				for _, item := range v {
-					parts = append(parts, fmt.Sprintf("%v", item))
-				}
-			case []string:
-				parts = v
+			items, _ := cypherListValue(listVal)
+			parts := make([]string, len(items))
+			for index, item := range items {
+				parts[index] = fmt.Sprint(item)
 			}
 			return strings.Join(parts, sep)
 		}
@@ -1083,7 +790,7 @@ skipArrayIndexing:
 	if isFunctionCall(expr, "apoc.coll.toset") {
 		inner := extractFuncArgs(expr, "apoc.coll.toset")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		return toSet(listVal)
+		return apocCollToSet(listVal)
 	}
 
 	// apoc.coll.sum(list) - Sum numeric values in list
@@ -1317,8 +1024,9 @@ skipArrayIndexing:
 		if isFunctionCall(expr, function) {
 			inner := strings.TrimSpace(extractFuncArgs(expr, function))
 			value := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			result, ok := apocConvertFromJSON(function == "apoc.convert.fromjsonmap", value)
-			if !ok {
+			result, err := apocConvertFromJSON(function == "apoc.convert.fromjsonmap", value)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
 				return nil
 			}
 			return result
@@ -1348,37 +1056,6 @@ skipArrayIndexing:
 			return strings.EqualFold(actualType, typeName)
 		}
 		return false
-	}
-
-	// apoc.map.merge(map1, map2) - Merge two maps (map2 values override map1)
-	if isFunctionCall(expr, "apoc.map.merge") {
-		inner := extractFuncArgs(expr, "apoc.map.merge")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			map1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			map2 := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			return mergeMaps(map1, map2)
-		}
-		return nil
-	}
-
-	// apoc.map.fromPairs(list) - Create map from list of [key, value] pairs
-	if isFunctionCall(expr, "apoc.map.frompairs") {
-		inner := extractFuncArgs(expr, "apoc.map.frompairs")
-		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		return fromPairs(listVal)
-	}
-
-	// apoc.map.fromLists(keys, values) - Create map from parallel lists
-	if isFunctionCall(expr, "apoc.map.fromlists") {
-		inner := extractFuncArgs(expr, "apoc.map.fromlists")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			keys := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			values := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			return fromLists(keys, values)
-		}
-		return nil
 	}
 
 	if v, ok := e.evaluateKnowledgePolicyFunction(ctx, expr, lowerExpr, nodes, rels); ok {

@@ -35,8 +35,8 @@ func NewProgressive(initial [][]any, exhausted bool, initialDepth int, expand Ex
 	}, nil
 }
 
-// Pull returns at most n rows and performs enough geometric expansion to know
-// whether another row exists.
+// Pull returns a full ready page immediately. Expansion runs only when the
+// requested page is not yet available; HasMore includes unfinished population.
 func (s *Progressive) Pull(ctx context.Context, position uint64, n int) (*Page, error) {
 	if n <= 0 {
 		return nil, ErrInvalidPageSize
@@ -58,7 +58,7 @@ func (s *Progressive) Pull(ctx context.Context, position uint64, n int) (*Page, 
 		if end > uint64(len(s.rows)) {
 			end = uint64(len(s.rows))
 		}
-		needLookahead := end == uint64(len(s.rows)) && !s.exhausted
+		needLookahead := end-position < uint64(n) && !s.exhausted
 		if !needLookahead {
 			page := s.pageLocked(position, end)
 			s.mu.RUnlock()
@@ -79,7 +79,7 @@ func (s *Progressive) Pull(ctx context.Context, position uint64, n int) (*Page, 
 		if end > uint64(len(s.rows)) {
 			end = uint64(len(s.rows))
 		}
-		needLookahead = end == uint64(len(s.rows)) && !s.exhausted
+		needLookahead = end-position < uint64(n) && !s.exhausted
 		if !needLookahead {
 			page := s.pageLocked(position, end)
 			s.mu.Unlock()
@@ -109,7 +109,9 @@ func (s *Progressive) Pull(ctx context.Context, position uint64, n int) (*Page, 
 		rows, exhausted, err := expand(ctx, target)
 
 		s.mu.Lock()
-		if err == nil {
+		if s.closed {
+			err = ErrClosed
+		} else if err == nil {
 			if len(rows) < len(s.rows) {
 				err = ErrInvalidPosition
 			} else if s.growthOK != nil && !s.growthOK() {
@@ -138,7 +140,7 @@ func (s *Progressive) SetRetainedBytesGrowthGuard(growthOK func() bool) {
 }
 
 func (s *Progressive) pageLocked(position, end uint64) *Page {
-	hasMore := end < uint64(len(s.rows))
+	hasMore := end < uint64(len(s.rows)) || !s.exhausted
 	page := &Page{
 		Rows:     s.rows[position:end],
 		Position: position,

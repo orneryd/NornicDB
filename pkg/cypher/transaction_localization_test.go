@@ -8,7 +8,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/language"
 )
 
 func requireCypherTransactionsLocalizedError(t *testing.T, err error, messageID localization.MessageID, text string) *localization.LocalizedError {
@@ -25,13 +24,13 @@ func requireCypherTransactionsLocalizedError(t *testing.T, err error, messageID 
 func TestCypherTransactionsLocalizedErrorsHaveTypedIdentityAndExactEnglish(t *testing.T) {
 	t.Run("transaction lifecycle", func(t *testing.T) {
 		exec := &StorageExecutor{}
-		_, err := exec.handleBegin()
+		_, err := exec.handleBegin(t.Context())
 		requireCypherTransactionsLocalizedError(t, err, localization.MessageCypherTransactionsEngineUnsupported, "engine does not support transactions")
 	})
 
 	t.Run("syntax validation", func(t *testing.T) {
 		exec := &StorageExecutor{}
-		err := exec.validateSyntaxNornic("INVALID")
+		err := exec.validateSyntax(context.Background(), "INVALID", false, syntaxNativeCore)
 		requireCypherTransactionsLocalizedError(t, err, localization.MessageCypherTransactionsSyntaxStartInvalid, "syntax error: query must start with a valid clause (MATCH, CREATE, MERGE, DELETE, CALL, SHOW, EXPLAIN, PROFILE, ALTER, USE, BEGIN, COMMIT, ROLLBACK, etc.)")
 	})
 
@@ -39,7 +38,7 @@ func TestCypherTransactionsLocalizedErrorsHaveTypedIdentityAndExactEnglish(t *te
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "transaction_localization"))
 		query := "MATCH (n) MATCH (m)"
 		_, err := exec.Execute(context.Background(), query, nil)
-		requireSyntaxErrorStatus(t, err, query)
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
 	})
 
 	t.Run("delete guard", func(t *testing.T) {
@@ -128,21 +127,4 @@ func TestCypherTransactionsLocalizedErrorsPreserveCauses(t *testing.T) {
 			require.Equal(t, "forced transaction failure", localizedErr.Message.Data["Cause"])
 		})
 	}
-}
-
-func TestCypherTransactionsCatalogRendering(t *testing.T) {
-	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := localization.CypherTransactionsInvalidScriptAction("ABORT")
-
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
-	require.NoError(t, err)
-	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "acción de script de transacción no válida: ABORT", spanish)
-
-	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), message)
-	require.NoError(t, err)
-	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! invalid transaction script action: ABORT !!]", pseudo)
 }

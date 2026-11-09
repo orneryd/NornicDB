@@ -2,6 +2,9 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -14,7 +17,7 @@ func TestService_MaybeAutoSetVectorDimensions_MoreBranches(t *testing.T) {
 	var nilSvc *Service
 	nilSvc.maybeAutoSetVectorDimensions(4)
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 	oldDims := svc.vectorIndex.GetDimensions()
 	svc.maybeAutoSetVectorDimensions(0)
 	require.Equal(t, oldDims, svc.vectorIndex.GetDimensions())
@@ -26,7 +29,7 @@ func TestService_MaybeAutoSetVectorDimensions_MoreBranches(t *testing.T) {
 	svc.gpuEmbeddingIndex = gpu.NewEmbeddingIndex(nil, embCfg)
 	clusterIdx := gpu.NewClusterIndex(nil, embCfg, gpu.DefaultKMeansConfig())
 	svc.clusterIndex = clusterIdx
-	svc.clusterHNSW = map[int]*HNSWIndex{0: NewHNSWIndex(3, DefaultHNSWConfig())}
+	svc.clusterGen = &clusterGeneration{graphs: map[int]*HNSWIndex{0: NewHNSWIndex(3, DefaultHNSWConfig())}}
 	svc.ivfpqIndex = &IVFPQIndex{profile: IVFPQProfile{Dimensions: 3}}
 	svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
 
@@ -35,7 +38,7 @@ func TestService_MaybeAutoSetVectorDimensions_MoreBranches(t *testing.T) {
 	require.Nil(t, svc.vectorPipeline)
 	require.Nil(t, svc.gpuEmbeddingIndex)
 	require.NotNil(t, svc.clusterIndex)
-	require.Nil(t, svc.clusterHNSW)
+	require.Nil(t, svc.clusterGen)
 	require.Nil(t, svc.ivfpqIndex)
 
 	// Once vectors exist, dimensions must not auto-change.
@@ -47,7 +50,7 @@ func TestService_MaybeAutoSetVectorDimensions_MoreBranches(t *testing.T) {
 }
 
 func TestService_GetVectorForCypher_MoreBranches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 
 	// vectorIndex path returns a copy, not alias to raw backing storage.
 	require.NoError(t, svc.vectorIndex.Add("idx", []float32{1, 0, 0}))
@@ -60,7 +63,7 @@ func TestService_GetVectorForCypher_MoreBranches(t *testing.T) {
 	require.InDelta(t, 1.0, v2[0], 1e-6)
 
 	// vector file store takes precedence when configured.
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 3)
+	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 3)
 	require.NoError(t, err)
 	defer func() { _ = vfs.Close() }()
 	require.NoError(t, vfs.Add("vfs", []float32{0, 1, 0}))
@@ -77,94 +80,107 @@ func TestService_GetVectorForCypher_MoreBranches(t *testing.T) {
 	require.False(t, ok)
 }
 
+// TestService_VectorQueryNodes_FileStorePropertyVectors covers file-store-only
+// property vectors and a stale HNSW pipeline that misses a high-frequency
+// entity the file store can still score exactly.
 func TestService_VectorQueryNodes_FileStorePropertyVectors(t *testing.T) {
-	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 4)
-	require.NoError(t, err)
-	defer func() { _ = vfs.Close() }()
-	svc.vectorFileStore = vfs
-
-	require.NoError(t, svc.IndexNode(&storage.Node{
-		ID:     "best",
-		Labels: []string{"Entity"},
-		Properties: map[string]any{
-			"name":           "FalkorDB",
-			"name_embedding": []float64{1, 0, 0, 0},
+	for _, tc := range []struct {
+		name          string
+		bruteMaxN     string
+		staleHNSW     bool
+		wantEmbedding int
+		wantHits      []string
+	}{
+		{
+			name:          "property vectors live only in the file store",
+			bruteMaxN:     "1000",
+			wantEmbedding: 2,
+			wantHits:      []string{"best"},
 		},
-	}))
-	require.NoError(t, svc.IndexNode(&storage.Node{
-		ID:     "other",
-		Labels: []string{"Entity"},
-		Properties: map[string]any{
-			"name":           "NornicDB",
-			"name_embedding": []float64{0, 1, 0, 0},
+		{
+			name:          "file store supplements a stale HNSW pipeline",
+			staleHNSW:     true,
+			wantEmbedding: 2,
+			wantHits:      []string{"joe-existing"},
 		},
-	}))
-	require.Equal(t, 2, svc.CountPropertyVectorEntries("name_embedding"))
-	require.Equal(t, 2, svc.EmbeddingCount())
-	require.Equal(t, 0, svc.vectorIndex.Count(), "regression requires vectors to live only in the file store")
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.bruteMaxN != "" {
+				t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", tc.bruteMaxN)
+			}
+			svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
+			vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 4)
+			require.NoError(t, err)
+			defer func() { _ = vfs.Close() }()
+			svc.vectorFileStore = vfs
 
-	hits, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0, 0}, VectorQuerySpec{
-		Label:    "Entity",
-		Property: "name_embedding",
-		Limit:    1,
-	})
-	require.NoError(t, err)
-	require.Len(t, hits, 1)
-	require.Equal(t, "best", hits[0].ID)
-	require.InDelta(t, 1.0, hits[0].Score, 1e-5)
-}
+			if tc.staleHNSW {
+				require.NoError(t, svc.IndexNode(&storage.Node{
+					ID:     "joe-existing",
+					Labels: []string{"Entity"},
+					Properties: map[string]any{
+						"name":           "Joe",
+						"name_embedding": []float64{1, 0, 0, 0},
+					},
+				}))
+				require.NoError(t, svc.IndexNode(&storage.Node{
+					ID:     "claude-existing",
+					Labels: []string{"Entity"},
+					Properties: map[string]any{
+						"name":           "Claude",
+						"name_embedding": []float64{0, 1, 0, 0},
+					},
+				}))
+				require.Equal(t, 2, svc.CountPropertyVectorEntries("name_embedding"))
+				require.Equal(t, tc.wantEmbedding, svc.EmbeddingCount())
 
-func TestService_VectorQueryNodes_FileStorePropertyVectorsSupplementsStaleHNSW(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 4)
-	require.NoError(t, err)
-	defer func() { _ = vfs.Close() }()
-	svc.vectorFileStore = vfs
+				// Simulate a candidate-generation visibility/recall miss: the file-backed
+				// vector store can score Joe exactly, but the active HNSW pipeline only
+				// returns Claude. This mirrors high-frequency entities being present in the
+				// file store while candidate generation misses them during ingest.
+				staleHNSW := NewHNSWIndex(4, DefaultHNSWConfig())
+				require.NoError(t, staleHNSW.Add(nodePropertyVectorKey("claude-existing", "name_embedding"), []float32{0, 1, 0, 0}))
+				svc.vectorPipeline = NewVectorSearchPipeline(NewHNSWCandidateGen(staleHNSW), NewCPUExactScorer(vfs))
+				svc.hnswIndex = staleHNSW
+			} else {
+				require.NoError(t, svc.IndexNode(&storage.Node{
+					ID:     "best",
+					Labels: []string{"Entity"},
+					Properties: map[string]any{
+						"name":           "FalkorDB",
+						"name_embedding": []float64{1, 0, 0, 0},
+					},
+				}))
+				require.NoError(t, svc.IndexNode(&storage.Node{
+					ID:     "other",
+					Labels: []string{"Entity"},
+					Properties: map[string]any{
+						"name":           "NornicDB",
+						"name_embedding": []float64{0, 1, 0, 0},
+					},
+				}))
+				require.Equal(t, 2, svc.CountPropertyVectorEntries("name_embedding"))
+				require.Equal(t, tc.wantEmbedding, svc.EmbeddingCount())
+				require.Equal(t, 0, svc.vectorIndex.Count(), "regression requires vectors to live only in the file store")
+			}
 
-	require.NoError(t, svc.IndexNode(&storage.Node{
-		ID:     "joe-existing",
-		Labels: []string{"Entity"},
-		Properties: map[string]any{
-			"name":           "Joe",
-			"name_embedding": []float64{1, 0, 0, 0},
-		},
-	}))
-	require.NoError(t, svc.IndexNode(&storage.Node{
-		ID:     "claude-existing",
-		Labels: []string{"Entity"},
-		Properties: map[string]any{
-			"name":           "Claude",
-			"name_embedding": []float64{0, 1, 0, 0},
-		},
-	}))
-	require.Equal(t, 2, svc.CountPropertyVectorEntries("name_embedding"))
-	require.Equal(t, 2, svc.EmbeddingCount())
-
-	// Simulate a candidate-generation visibility/recall miss: the file-backed
-	// vector store can score Joe exactly, but the active HNSW pipeline only
-	// returns Claude. This mirrors high-frequency entities being present in the
-	// file store while candidate generation misses them during ingest.
-	staleHNSW := NewHNSWIndex(4, DefaultHNSWConfig())
-	require.NoError(t, staleHNSW.Add("claude-existing-prop-name_embedding", []float32{0, 1, 0, 0}))
-	svc.vectorPipeline = NewVectorSearchPipeline(NewHNSWCandidateGen(staleHNSW), NewCPUExactScorer(vfs))
-	svc.hnswIndex = staleHNSW
-
-	hits, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0, 0}, VectorQuerySpec{
-		Label:    "Entity",
-		Property: "name_embedding",
-		Limit:    1,
-	})
-	require.NoError(t, err)
-	require.Len(t, hits, 1)
-	require.Equal(t, "joe-existing", hits[0].ID)
-	require.InDelta(t, 1.0, hits[0].Score, 1e-5)
+			hits, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0, 0}, VectorQuerySpec{
+				Label:    "Entity",
+				Property: "name_embedding",
+				Limit:    1,
+			})
+			require.NoError(t, err)
+			require.Len(t, hits, len(tc.wantHits))
+			for index, want := range tc.wantHits {
+				require.Equal(t, want, hits[index].ID)
+				require.InDelta(t, 1.0, hits[index].Score, 1e-5)
+			}
+		})
+	}
 }
 
 func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 
 	// resolveMinSimilarity precedence: explicit option > service default > fallback.
 	explicit := 0.77
@@ -177,7 +193,7 @@ func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {
 	require.Equal(t, 0.5, *svc.resolveMinSimilarity(nil))
 
 	// File-store-backed count/dimension branches.
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 4)
+	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 4)
 	require.NoError(t, err)
 	defer func() { _ = vfs.Close() }()
 	require.NoError(t, vfs.Add("nornic:v1", []float32{1, 0, 0, 0}))
@@ -186,26 +202,26 @@ func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {
 	require.Equal(t, 1, svc.EmbeddingCount())
 	require.Equal(t, 4, svc.VectorIndexDimensions())
 
-	// Empty file store should fall back to in-memory index for count/dimensions.
-	svcFallback := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
-	emptyVFS, err := NewVectorFileStore(t.TempDir()+"/vectors-empty", 7)
+	// An empty file store keeps its own dimension: vectors are written to it.
+	svcFallback := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
+	emptyVFS, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors-empty"), 7)
 	require.NoError(t, err)
 	defer func() { _ = emptyVFS.Close() }()
 	svcFallback.vectorFileStore = emptyVFS
 	require.Equal(t, 0, svcFallback.EmbeddingCount())
-	require.Equal(t, 3, svcFallback.VectorIndexDimensions())
+	require.Equal(t, 7, svcFallback.VectorIndexDimensions())
 
 	// No vector backends => zero count/dimensions fallback branches.
-	svcNoIndex := NewService(storage.NewMemoryEngine())
+	svcNoIndex := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), DefaultVectorDimensions, nil)
 	svcNoIndex.vectorIndex = nil
 	require.Equal(t, 0, svcNoIndex.EmbeddingCount())
 	require.Equal(t, 0, svcNoIndex.VectorIndexDimensions())
 }
 
 func TestService_ClearVectorIndex_ClearsAllBackendsAndMetadata(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors-clear", 3)
+	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors-clear"), 3)
 	require.NoError(t, err)
 	require.NoError(t, vfs.Add("nornic:n1", []float32{1, 0, 0}))
 	svc.vectorFileStore = vfs
@@ -215,21 +231,21 @@ func TestService_ClearVectorIndex_ClearsAllBackendsAndMetadata(t *testing.T) {
 	embCfg.AutoSync = false
 	svc.gpuEmbeddingIndex = gpu.NewEmbeddingIndex(nil, embCfg)
 	svc.clusterIndex = gpu.NewClusterIndex(nil, embCfg, gpu.DefaultKMeansConfig())
-	svc.clusterHNSW = map[int]*HNSWIndex{0: NewHNSWIndex(3, DefaultHNSWConfig())}
+	svc.clusterGen = &clusterGeneration{graphs: map[int]*HNSWIndex{0: NewHNSWIndex(3, DefaultHNSWConfig())}}
 	svc.ivfpqIndex = &IVFPQIndex{profile: IVFPQProfile{Dimensions: 3}}
 	svc.hnswIndex = NewHNSWIndex(3, DefaultHNSWConfig())
 	svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
 
 	svc.nodeLabels["nornic:n1"] = []string{"Doc"}
-	svc.nodeNamedVector["nornic:n1"] = map[string]string{"default": "nornic:n1-named-default"}
-	svc.nodePropVector["nornic:n1"] = map[string]string{"vec": "nornic:n1-prop-vec"}
-	svc.nodeChunkVectors["nornic:n1"] = []string{"nornic:n1-chunk-0"}
+	svc.nodeNamedVector["nornic:n1"] = map[string]string{"default": nodeNamedVectorKey("nornic:n1", "default")}
+	svc.nodePropVector["nornic:n1"] = map[string]string{"vec": nodePropertyVectorKey("nornic:n1", "vec")}
+	svc.nodeChunkVectors["nornic:n1"] = []string{nodeChunkVectorKey("nornic:n1", 0)}
 
 	svc.ClearVectorIndex()
 
 	require.Nil(t, svc.vectorPipeline)
 	require.Nil(t, svc.vectorFileStore)
-	require.Nil(t, svc.clusterHNSW)
+	require.Nil(t, svc.clusterGen)
 	require.Nil(t, svc.ivfpqIndex)
 	require.Nil(t, svc.hnswIndex)
 	require.Empty(t, svc.nodeLabels)

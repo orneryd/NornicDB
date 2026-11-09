@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -13,7 +14,7 @@ func TestHTTPSystemShowTailReturnsNoGraphDataOrClauseResults(t *testing.T) {
 	system, err := server.dbManager.GetStorage("system")
 	require.NoError(t, err)
 	const marker = "system-show-tail-private-value"
-	_, err = system.CreateNode(&storage.Node{
+	_, err = system.CreateNode(t.Context(), &storage.Node{
 		ID: "show-tail-user", Labels: []string{"_User"},
 		Properties: map[string]interface{}{"username": "show-tail-user", "password_hash": marker},
 	})
@@ -51,10 +52,10 @@ func TestHTTPSystemShowTailReturnsNoGraphDataOrClauseResults(t *testing.T) {
 			require.Len(t, body.Results[0].Data, 1)
 		}
 	}
-	written, err := system.GetNodesByLabel("ShowTailWrite")
+	written, err := system.GetNodesByLabel(context.Background(), "ShowTailWrite")
 	require.NoError(t, err)
 	require.Empty(t, written, "no continuation clause ran")
-	user, err := system.GetNode("show-tail-user")
+	user, err := system.GetNode(t.Context(), "show-tail-user")
 	require.NoError(t, err)
 	require.Equal(t, marker, user.Properties["password_hash"])
 }

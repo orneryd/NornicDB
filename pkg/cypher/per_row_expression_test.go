@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"runtime"
 	"runtime/debug"
@@ -22,10 +23,10 @@ func perRowTestExecutor(t *testing.T) (*StorageExecutor, storage.Engine) {
 		{ID: "b", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "b"}},
 		{ID: "c", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "c"}},
 	}
-	if err := store.BulkCreateNodes(nodes); err != nil {
+	if err := store.BulkCreateNodes(t.Context(), nodes); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.BulkCreateEdges([]*storage.Edge{{ID: "r1", Type: "R", StartNode: "a", EndNode: "b", Properties: map[string]interface{}{"kind": "k"}}}); err != nil {
+	if err := store.BulkCreateEdges(t.Context(), []*storage.Edge{{ID: "r1", Type: "R", StartNode: "a", EndNode: "b", Properties: map[string]interface{}{"kind": "k"}}}); err != nil {
 		t.Fatal(err)
 	}
 	return NewStorageExecutor(store), store
@@ -37,7 +38,7 @@ func perRowTestExecutor(t *testing.T) (*StorageExecutor, storage.Engine) {
 // relationship.
 func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 	exec, store := perRowTestExecutor(t)
-	edge, err := store.GetEdge("r1")
+	edge, err := store.GetEdge(t.Context(), "r1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,14 +51,13 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 		"startNode(d)", "endNode(d)", "startNode(z)", "startNode(unbound)",
 		"startNode(r).id", "endNode(r).id + '|' + startNode(r).id",
 	} {
-		got, gotOK, gotErr := exec.evaluateRowValue(expr, values)
-		want, wantErr := exec.evaluateRowFallback(expr, values)
-		wantOK := true
-		if text, isText := want.(string); isText && text == expr {
-			want, wantOK = nil, false
-		}
+		got, gotOK, gotErr := exec.evaluateRowValue(t.Context(), expr, values)
+		want, wantOK, wantErr := exec.evaluateRowFallback(t.Context(), expr, values, rowFallbackContext)
 		if gotErr != nil || wantErr != nil {
-			t.Fatalf("%s: errors %v / %v", expr, gotErr, wantErr)
+			if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() {
+				t.Fatalf("%s: errors %v / %v", expr, gotErr, wantErr)
+			}
+			continue
 		}
 		if gotOK != wantOK || !sameRowValue(got, want) {
 			t.Fatalf("%s: row evaluator %#v (%v), context evaluator %#v (%v)", expr, got, gotOK, want, wantOK)
@@ -66,17 +66,17 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 	// Wrong argument types must fail through the same shared contract in both
 	// evaluators; neither path may silently turn an ordinary value into null.
 	for _, expr := range []string{"startNode(n)", "endNode(n)", "startNode(m)", "endNode(m)"} {
-		_, _, gotErr := exec.evaluateRowValue(expr, values)
-		_, wantErr := exec.evaluateRowFallback(expr, values)
+		_, _, gotErr := exec.evaluateRowValue(t.Context(), expr, values)
+		_, _, wantErr := exec.evaluateRowFallback(t.Context(), expr, values, rowFallbackContext)
 		if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() ||
 			!strings.Contains(gotErr.Error(), "Neo.ClientError.Statement.TypeError") {
 			t.Fatalf("%s: expected matching TypeError, got %v / %v", expr, gotErr, wantErr)
 		}
 	}
-	if node, _, _ := exec.evaluateRowValue("startNode(r)", values); node.(*storage.Node).ID != "a" {
+	if node, _, _ := exec.evaluateRowValue(t.Context(), "startNode(r)", values); node.(*storage.Node).ID != "a" {
 		t.Fatalf("startNode(r) = %v", node)
 	}
-	if node, _, _ := exec.evaluateRowValue("endNode(d)", values); node != nil {
+	if node, _, _ := exec.evaluateRowValue(t.Context(), "endNode(d)", values); node != nil {
 		t.Fatalf("endNode(d) of a missing node = %#v", node)
 	}
 
@@ -155,11 +155,11 @@ var rowValueCorpus = []string{
 
 func rowValueCorpusRows(t *testing.T, store storage.Engine) []map[string]interface{} {
 	t.Helper()
-	node, err := store.GetNode("a")
+	node, err := store.GetNode(t.Context(), "a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	edge, err := store.GetEdge("r1")
+	edge, err := store.GetEdge(t.Context(), "r1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,11 +182,11 @@ func TestRowValueProgramAdapterConsistency(t *testing.T) {
 	for _, expr := range rowValueCorpus {
 		for index, row := range rows {
 			rowValueProgramsDisabled.Store(true)
-			want, wantOK, wantErr := exec.evaluateRowValue(expr, row)
+			want, wantOK, wantErr := exec.evaluateRowValue(t.Context(), expr, row)
 			rowValueProgramsDisabled.Store(false)
 			compiler := rowValueCompiler{}
-			root, _ := compiler.compile(expr)
-			got, gotOK, gotErr := root.eval(exec, row, nil)
+			root, _ := compiler.compile(t.Context(), expr)
+			got, gotOK, gotErr := root.eval(t.Context(), exec, row, nil)
 			if gotOK != wantOK || !sameRowValue(got, want) || (gotErr == nil) != (wantErr == nil) || gotErr != nil && gotErr.Error() != wantErr.Error() {
 				t.Errorf("%s (row %d): program %#v, %v, %v; text %#v, %v, %v", expr, index, got, gotOK, gotErr, want, wantOK, wantErr)
 			}
@@ -207,14 +207,14 @@ func TestRowValueProgramsCompileIssueForms(t *testing.T) {
 		"allReduce(acc = 0, k IN $keys | acc + size(k), acc < 10000)",
 	} {
 		compiler := rowValueCompiler{}
-		root, _ := compiler.compile(expr)
+		root, _ := compiler.compile(t.Context(), expr)
 		if text := firstRowTextNode(root); text != "" {
 			t.Fatalf("%s: %q is read from the text", expr, text)
 		}
 	}
 	compiler := rowValueCompiler{}
-	root, _ := compiler.compile("any(k IN $keys WHERE k = startNode(r).id + '|' + r.kind)")
-	quantifier := root.(*rowBoundNode).inner.(*rowQuantifierNode)
+	root, _ := compiler.compile(t.Context(), "any(k IN $keys WHERE k = startNode(r).id + '|' + r.kind)")
+	quantifier := rowValueShape(rowValueShape(root).(*rowBoundNode).inner).(*rowQuantifierNode)
 	if quantifier.loop.slots != 1 {
 		t.Fatalf("memo slots %d, want the key once", quantifier.loop.slots)
 	}
@@ -231,11 +231,11 @@ func firstRowTextNode(nodes ...rowValueNode) string {
 }
 
 func firstRowTextNodeOf(node rowValueNode) string {
-	switch n := node.(type) {
+	switch n := rowValueShape(node).(type) {
 	case *rowTextNode:
 		return n.text
 	case *rowFallbackNode:
-		if !isValidIdentifier(n.text) && !strings.HasPrefix(n.text, "$") {
+		if !cyphertext.IsIdentifier(n.text) && !strings.HasPrefix(n.text, "$") {
 			return n.text
 		}
 	case *rowBoundNode:
@@ -302,7 +302,7 @@ func TestRowPredicateProgramAdapterConsistency(t *testing.T) {
 	evaluate := func(expr string, row map[string]interface{}, program bool) (bool, error) {
 		ctx := withExpressionFailureSlot(context.Background())
 		if program {
-			return compileRowPredicateProgram(expr).holds(exec, ctx, row), getExpressionFailure(ctx)
+			return compileRowPredicateProgram(ctx, expr).holds(exec, ctx, row), getExpressionFailure(ctx)
 		}
 		rowValueProgramsDisabled.Store(true)
 		defer rowValueProgramsDisabled.Store(false)
@@ -360,18 +360,77 @@ func TestRowPredicateUnreachedCaseIsNotEvaluated(t *testing.T) {
 // allocates per list, not per element: its parts that don't read the
 // element are evaluated once per list, and its element parts allocate
 // nothing (#1214).
-func TestRowValueProgramListAllocationsDoNotGrowWithList(t *testing.T) {
-	exec, store := perRowTestExecutor(t)
-	edge, err := store.GetEdge("r1")
-	if err != nil {
-		t.Fatal(err)
+//
+// Endpoint projection (#1553) and hoisting (#1618) make storage decoding a
+// constant part of this measurement. A Badger-backed fixture can still vary
+// by one allocation even when BOTH samples have twenty elements. Keep that
+// storage work outside this compiler guard; the real-store endpoint tests
+// above cover its values and visibility. Exact read counts below also catch
+// an endpoint expression accidentally moving back inside the element loop.
+type rowAllocationEndpointEngine struct {
+	storage.Engine
+	nodes     map[storage.NodeID]*storage.Node
+	edge      *storage.Edge
+	reads     int
+	edgeReads int
+}
+
+func (s *rowAllocationEndpointEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	s.reads++
+	if node := s.nodes[id]; node != nil {
+		return node, nil
 	}
+	return nil, storage.ErrNotFound
+}
+
+func (s *rowAllocationEndpointEngine) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
+	s.edgeReads++
+	if s.edge != nil && id == s.edge.ID {
+		return s.edge, nil
+	}
+	return nil, storage.ErrNotFound
+}
+
+func TestRowValueProgramListAllocationsDoNotGrowWithList(t *testing.T) {
+	store := &rowAllocationEndpointEngine{nodes: map[storage.NodeID]*storage.Node{
+		"a": {ID: "a", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "a"}},
+		"b": {ID: "b", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "b"}},
+	}}
+	// This guard evaluates compiled values directly, without a query, caches,
+	// background storage workers, or persisted procedure discovery.
+	exec := &StorageExecutor{storage: store, propertyDecayEngineKnown: true}
+	edge := &storage.Edge{ID: "r1", Type: "R", StartNode: "a", EndNode: "b", Properties: map[string]interface{}{"kind": "k"}}
+	store.edge = edge
 	// AllocsPerRun counts process-wide allocations. Finish any collection
 	// left by earlier tests, then keep GC work and pool eviction outside this
 	// bounded measurement. Restore the caller's GC setting even on failure.
 	previousGC := debug.SetGCPercent(-1)
 	defer debug.SetGCPercent(previousGC)
 	runtime.GC()
+	for _, tc := range []struct {
+		expression string
+		reads      int
+	}{
+		{"any(k IN $keys WHERE k = startNode(r).id + '|' + endNode(r).id + '|' + r.kind)", 2},
+		{"none(k IN $keys WHERE k = startNode(r).id)", 1},
+		{"all(k IN $keys WHERE k <> r.kind)", 0},
+		{"single(k IN $keys WHERE k = r.kind)", 0},
+		{"size([k IN $keys WHERE k = r.kind])", 0},
+		{"size([k IN $keys WHERE k = r.kind | k + '|'])", 0},
+		{"reduce(found = false, k IN $keys | found OR k = startNode(r).id + '|' + r.kind)", 1},
+		{"allReduce(found = false, k IN $keys | k = endNode(r).id, NOT found)", 1},
+		{"startNode(r).id + '|' + r.kind IN $keys", 1},
+		{"all(k IN $keys WHERE k IS NOT NULL OR EXISTS { MATCH (n) })", 0},
+		{"all(k IN $keys WHERE k IS NOT NULL OR COUNT { MATCH (n) } > 0)", 0},
+	} {
+		t.Run(tc.expression, func(t *testing.T) {
+			testRowValueProgramListAllocations(t, exec, store, edge, tc.expression, tc.reads)
+		})
+	}
+}
+
+func testRowValueProgramListAllocations(t *testing.T, exec *StorageExecutor, store *rowAllocationEndpointEngine, edge *storage.Edge, expr string, reads int) {
+	t.Helper()
 	keys := func(n int) []interface{} {
 		list := make([]interface{}, n)
 		for i := range list {
@@ -379,44 +438,38 @@ func TestRowValueProgramListAllocationsDoNotGrowWithList(t *testing.T) {
 		}
 		return list
 	}
-	for expr, perElement := range map[string]float64{
-		"any(k IN $keys WHERE k = startNode(r).id + '|' + endNode(r).id + '|' + r.kind)":  0,
-		"none(k IN $keys WHERE k = startNode(r).id)":                                      0,
-		"all(k IN $keys WHERE k <> r.kind)":                                               0,
-		"single(k IN $keys WHERE k = r.kind)":                                             0,
-		"size([k IN $keys WHERE k = r.kind])":                                             0,
-		"size([k IN $keys WHERE k = r.kind | k + '|'])":                                   0,
-		"reduce(found = false, k IN $keys | found OR k = startNode(r).id + '|' + r.kind)": 0,
-		"allReduce(found = false, k IN $keys | k = endNode(r).id, NOT found)":             0,
-		"startNode(r).id + '|' + r.kind IN $keys":                                         0,
-		"all(k IN $keys WHERE k IS NOT NULL OR EXISTS { MATCH (n) })":                     0,
-		"all(k IN $keys WHERE k IS NOT NULL OR COUNT { MATCH (n) } > 0)":                  0,
-	} {
-		root, _ := (&rowValueCompiler{}).compile(expr)
-		shortRow := map[string]interface{}{"r": edge, "$keys": keys(20)}
-		longRow := map[string]interface{}{"r": edge, "$keys": keys(200)}
-		evaluate := func(row map[string]interface{}) {
-			if _, ok, err := root.eval(exec, row, nil); !ok || err != nil {
-				t.Fatalf("%s: unresolved or %v", expr, err)
-			}
+	root, _ := (&rowValueCompiler{}).compile(t.Context(), expr)
+	shortRow := map[string]interface{}{"r": edge, "$keys": keys(20)}
+	longRow := map[string]interface{}{"r": edge, "$keys": keys(200)}
+	evaluate := func(row map[string]interface{}) {
+		store.reads = 0
+		store.edgeReads = 0
+		if _, ok, err := root.eval(t.Context(), exec, row, nil); !ok || err != nil {
+			t.Fatalf("%s: unresolved or %v", expr, err)
 		}
-		// Warm both inputs before either sample, including storage caches and
-		// the parts a program delegates to the text evaluator.
-		for range 10 {
-			evaluate(shortRow)
-			evaluate(longRow)
+		if store.reads != reads {
+			t.Fatalf("%s: %d endpoint reads for %d elements, want %d", expr, store.reads, len(row["$keys"].([]interface{})), reads)
 		}
-		short := testing.AllocsPerRun(100, func() { evaluate(shortRow) })
-		long := testing.AllocsPerRun(100, func() { evaluate(longRow) })
-		t.Logf("%s: 20 elements = %g allocations, 200 = %g", expr, short, long)
-		if strings.Contains(expr, " OR EXISTS {") || strings.Contains(expr, " OR COUNT {") {
-			if short > 3 || long > 3 {
-				t.Errorf("%s: skipped subquery allocated %g/%g times, want at most 3 at each list length", expr, short, long)
-			}
+		if store.edgeReads != reads {
+			t.Fatalf("%s: %d relationship reads for %d elements, want %d", expr, store.edgeReads, len(row["$keys"].([]interface{})), reads)
 		}
-		if growth := (long - short) / 180; growth > perElement {
-			t.Errorf("%s: %.0f allocations for 20 elements, %.0f for 200: %.2f per element, want at most %.0f", expr, short, long, growth, perElement)
+	}
+	// Warm both inputs before either sample, including storage caches and
+	// the parts a program delegates to the text evaluator.
+	for range 10 {
+		evaluate(shortRow)
+		evaluate(longRow)
+	}
+	short := testing.AllocsPerRun(100, func() { evaluate(shortRow) })
+	long := testing.AllocsPerRun(100, func() { evaluate(longRow) })
+	t.Logf("%s: 20 elements = %g allocations, 200 = %g", expr, short, long)
+	if strings.Contains(expr, " OR EXISTS {") || strings.Contains(expr, " OR COUNT {") {
+		if short > 3 || long > 3 {
+			t.Errorf("%s: skipped subquery allocated %g/%g times, want at most 3 at each list length", expr, short, long)
 		}
+	}
+	if growth := (long - short) / 180; growth > 0 {
+		t.Errorf("%s: %.0f allocations for 20 elements, %.0f for 200: %.2f per element, want at most 0", expr, short, long, growth)
 	}
 }
 
@@ -426,7 +479,7 @@ func TestRowValueProgramListAllocationsDoNotGrowWithList(t *testing.T) {
 // substring position, a pattern comprehension.
 func TestRowContextShapeForms(t *testing.T) {
 	exec, store := perRowTestExecutor(t)
-	node, err := store.GetNode("a")
+	node, err := store.GetNode(t.Context(), "a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,6 +495,40 @@ func TestRowContextShapeForms(t *testing.T) {
 		value, ok := exec.evaluateRowExpressionWithContext(ctx, "[(n)-[:R]->(m) | m.id]", pipelineRow{"n": node})
 		if !ok || !reflect.DeepEqual(value, []interface{}{"b"}) {
 			t.Fatalf("run %d: pattern comprehension = %v, %v", run, value, ok)
+		}
+	}
+}
+
+// Row materialization distinguishes absent values from bound NULL before entering
+// the context evaluator. Context policy remains the independent endpoint oracle
+// above, and both policies share depth/error propagation rather than reentry.
+func TestRowFallbackResolutionPolicy(t *testing.T) {
+	exec, _ := perRowTestExecutor(t)
+	ctx := withQueryParams(withValueBindings(context.Background(), pipelineRow{"bound": nil}), map[string]interface{}{"p": int64(7), "object": map[string]interface{}{"k": int64(9)}})
+	values := pipelineRow{rowStatementContextKey: ctx}
+	for _, test := range []struct {
+		expr     string
+		value    interface{}
+		resolved bool
+	}{
+		{"bound", nil, true}, {"absent", nil, false}, {"$p", int64(7), true}, {"$object.k", int64(9), true}, {"$missing", nil, false},
+	} {
+		t.Run(test.expr, func(t *testing.T) {
+			value, resolved, err := exec.evaluateRowFallback(ctx, test.expr, values, rowFallbackValue)
+			if err != nil || resolved != test.resolved || !reflect.DeepEqual(value, test.value) {
+				t.Fatalf("got %#v, %v, %v; want %#v, %v", value, resolved, err, test.value, test.resolved)
+			}
+		})
+	}
+	for _, policy := range []rowFallbackPolicy{rowFallbackContext, rowFallbackValue} {
+		depth := context.WithValue(ctx, rowFallbackExpressionKey{}, rowFallbackState{depth: maxRowFallbackDepth})
+		_, resolved, err := exec.evaluateRowFallback(depth, "toUpper('a')", pipelineRow{rowStatementContextKey: depth}, policy)
+		if resolved || err == nil {
+			t.Fatalf("policy %d failed to retain depth boundary: resolved=%v err=%v", policy, resolved, err)
+		}
+		_, resolved, err = exec.evaluateRowFallback(ctx, "substring('a', -1)", values, policy)
+		if resolved || err == nil {
+			t.Fatalf("policy %d swallowed context evaluator argument error: resolved=%v err=%v", policy, resolved, err)
 		}
 	}
 }

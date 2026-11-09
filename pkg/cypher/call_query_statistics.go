@@ -1,8 +1,11 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/collection"
 	"runtime"
 	"strings"
 	"sync"
@@ -10,8 +13,13 @@ import (
 	"time"
 )
 
+// queryStatisticsCollector is one database's QUERIES collector. Neo4j 5.26
+// owns a collector for a user database only: the system database has none,
+// so its sections return their existing columns and no rows. system reports
+// that ownership.
 type queryStatisticsCollector struct {
 	registry   *queryStatisticsRegistry
+	system     bool
 	active     atomic.Bool
 	mu         sync.Mutex
 	generation uint64
@@ -37,7 +45,7 @@ func (registry *queryStatisticsRegistry) forDatabase(name string) *queryStatisti
 	// Query collection is on from the start, as in Neo4j 5.26: a fresh
 	// database reports "collecting" and records every query until
 	// db.stats.stop('QUERIES').
-	collector := &queryStatisticsCollector{registry: registry, generation: 1}
+	collector := &queryStatisticsCollector{registry: registry, system: strings.EqualFold(name, "system"), generation: 1}
 	collector.active.Store(true)
 	registry.collectors[name] = collector
 	return collector
@@ -67,12 +75,19 @@ func (e *StorageExecutor) ShareQueryStatisticsFrom(source *StorageExecutor) {
 	}
 	e.queryStatistics = source.queryStatistics
 	if source.queryStatistics != nil && source.queryStatistics.registry != nil {
-		e.queryStatistics = source.queryStatistics.registry.forDatabase(e.currentDatabaseName())
+		e.queryStatistics = source.queryStatistics.registry.forDatabase(e.databaseName())
 	}
 }
 
-func (collector *queryStatisticsCollector) start(query string, now time.Time) uint64 {
-	if collector == nil || !collector.active.Load() || len(query) > 65536 || containsFold(query, "db.stats.") {
+// start admits the statement to the collector and returns the generation its
+// record belongs to, 0 when the statement is not collected. administrative
+// is the statement's fabric.IsAdministrationCommand classification, which
+// the executor already computes for the statement; an administration
+// command is never collected (Neo4j 5.26 records none, so no credential it
+// carries reaches the collected statistics). db.stats.* statements exclude
+// themselves.
+func (collector *queryStatisticsCollector) start(query string, now time.Time, administrative bool) uint64 {
+	if collector == nil || collector.system || administrative || !collector.active.Load() || len(query) > 65536 || containsFold(query, "db.stats.") {
 		return 0
 	}
 	collector.mu.Lock()
@@ -101,6 +116,7 @@ func (collector *queryStatisticsCollector) record(generation uint64, query strin
 	if _, exists := collector.queries[query]; !exists {
 		if len(collector.order) == 1000 {
 			delete(collector.queries, collector.order[0])
+			collector.order[0] = ""
 			collector.order = collector.order[1:]
 		}
 		collector.order = append(collector.order, query)
@@ -127,6 +143,9 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 	collector := e.queryStatistics
 	if collector == nil {
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "StatisticsUnavailable", "query statistics collector is unavailable")
+	}
+	if collector.system {
+		return &ExecuteResult{Columns: columnNames(queryStatisticsColumns(action)), Rows: [][]interface{}{}}, nil
 	}
 	section := "QUERIES"
 	if len(arguments) > 0 {
@@ -166,7 +185,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 	if !collector.deadline.IsZero() && !time.Now().Before(collector.deadline) {
 		collector.active.Store(false)
 	}
-	result := &ExecuteResult{Columns: []string{"section", "success", "message"}, Rows: [][]interface{}{}}
+	result := &ExecuteResult{Columns: columnNames(queryStatisticsColumns(action)), Rows: [][]interface{}{}}
 	switch action {
 	case "collect":
 		durationSeconds := int64(-1)
@@ -204,7 +223,6 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 		if collector.active.Load() {
 			status = "collecting"
 		}
-		result.Columns = []string{"section", "status", "data"}
 		result.Rows = [][]interface{}{{section, status, map[string]interface{}{}}}
 	case "retrieve":
 		maximum := int64(100)
@@ -214,7 +232,6 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 			}
 			maximum = toInt64(value)
 		}
-		result.Columns = []string{"section", "data"}
 		for _, query := range collector.order {
 			record := collector.queries[query]
 			invocations := record.invocations
@@ -229,6 +246,9 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 				}
 			}
 			result.Rows = append(result.Rows, []interface{}{section, map[string]interface{}{
+				// The collected key is the statement as the client sent it,
+				// and retrieval publishes it unchanged: Neo4j 5.26 records
+				// ordinary numeric, string and property literals raw.
 				"query":              query,
 				"queryExecutionPlan": nil,
 				"estimatedRows":      nil,
@@ -246,11 +266,11 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 
 func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section string) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -272,10 +292,10 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 			properties[key] = true
 		}
 	}
-	orderedLabels := store.GetSchema().OrderTokens(sortedStringSet(labels), false)
-	orderedRelationships := store.GetSchema().OrderTokens(sortedStringSet(relationships), true)
-	tokens := map[string]interface{}{"labels": orderedLabels, "relationshipTypes": orderedRelationships, "propertyKeys": sortedStringSet(properties)}
-	result := &ExecuteResult{Columns: []string{"section", "data"}, Rows: [][]interface{}{}}
+	orderedLabels := store.GetSchema().OrderTokens(collection.SortedKeys(labels), false)
+	orderedRelationships := store.GetSchema().OrderTokens(collection.SortedKeys(relationships), true)
+	tokens := map[string]interface{}{"labels": orderedLabels, "relationshipTypes": orderedRelationships, "propertyKeys": collection.SortedKeys(properties)}
+	result := &ExecuteResult{Columns: legacyProcedureColumns("db.stats.retrieveAllAnTheStats"), Rows: [][]interface{}{}}
 	if section == "GRAPH COUNTS" || section == "ALL" {
 		nodeRows := []interface{}{map[string]interface{}{"count": int64(len(nodes))}}
 		for _, label := range orderedLabels {

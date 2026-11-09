@@ -37,7 +37,7 @@ func TestGraphReadingExpression(t *testing.T) {
 		"WITH 1 AS x WHERE ()-->() RETURN [(n) | 1] AS xs":   graphReadingPatternComprehension,
 		"RETURN {count: 1, exists: true, collect: [1]} AS m": "",
 	} {
-		require.Equal(t, want, graphReadingExpression(expression), expression)
-		require.Equal(t, want != "", expressionReadsGraphText(expression), expression)
+		require.Equal(t, want, graphReadingExpression(t.Context(), expression), expression)
+		require.Equal(t, want != "", expressionReadsGraphText(t.Context(), expression), expression)
 	}
 }

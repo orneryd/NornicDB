@@ -1,349 +1,53 @@
 // Package cypher implements APOC data import/export procedures.
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	"encoding/csv"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"net/url"
-	"os"
-	pathpkg "path"
-	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
-	"time"
 
-	securitypkg "github.com/orneryd/nornicdb/pkg/security"
+	apocload "github.com/orneryd/nornicdb/apoc/load"
+	"github.com/orneryd/nornicdb/pkg/apocio"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
-
-var (
-	errAPOCLocalImportFileAccessDisabled = errors.New("local APOC import file access is disabled")
-	errAPOCLocalExportFileAccessDisabled = errors.New("local APOC export file access is disabled")
-	errAPOCRemoteURLAccessDisabled       = errors.New("remote APOC URL access is disabled")
-	errAPOCRemoteURLHostNotAllowed       = errors.New("APOC remote URL host is not allowlisted")
-	errAPOCFileAuthorityNotAllowed       = errors.New("file URL may not contain an authority section (i.e. it should be 'file:///')")
-	errAPOCFileQueryNotAllowed           = errors.New("file URL may not contain a query component")
-	errAPOCFileFragmentNotAllowed        = errors.New("file URL may not contain a fragment component")
-)
-
-var defaultAPOCRemoteHTTPClient = &http.Client{
-	Timeout: 10 * time.Second,
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
-	Transport: &http.Transport{
-		Proxy: nil,
-	},
-}
-
-type apocHostResolver func(context.Context, string) ([]net.IPAddr, error)
-
-func (e *StorageExecutor) apocHTTPClient() *http.Client {
-	if e != nil && e.apocRemoteHTTPClient != nil {
-		return e.apocRemoteHTTPClient
-	}
-	return defaultAPOCRemoteHTTPClient
-}
-
-func (e *StorageExecutor) resolveAPOCHost(ctx context.Context, hostname string) ([]net.IPAddr, error) {
-	if e != nil && e.apocRemoteHostResolver != nil {
-		return e.apocRemoteHostResolver(ctx, hostname)
-	}
-	return net.DefaultResolver.LookupIPAddr(ctx, hostname)
-}
-
-func isHTTPSource(path string) bool {
-	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
-}
-
-func (e *StorageExecutor) ensureLocalAPOCImportFileAccessAllowed() error {
-	if e != nil && e.allowLocalAPOCImportFileAccess {
-		return nil
-	}
-	return errAPOCLocalImportFileAccessDisabled
-
-}
-
-func (e *StorageExecutor) ensureLocalAPOCExportFileAccessAllowed() error {
-	if e != nil && e.allowLocalAPOCExportFileAccess {
-		return nil
-	}
-	return errAPOCLocalExportFileAccessDisabled
-
-}
-
-func (e *StorageExecutor) ensureRemoteAPOCURLAccessAllowed() error {
-	if e != nil && e.allowRemoteAPOCURLAccess {
-		return nil
-	}
-	return errAPOCRemoteURLAccessDisabled
-}
-
-func normalizeAPOCRemoteURLAllowlist(hosts []string) []string {
-	out := make([]string, 0, len(hosts))
-	seen := make(map[string]struct{}, len(hosts))
-	for _, host := range hosts {
-		normalized := lowerASCII(strings.TrimSpace(host))
-		if normalized == "" {
-			continue
-		}
-		if _, ok := seen[normalized]; ok {
-			continue
-		}
-		seen[normalized] = struct{}{}
-		out = append(out, normalized)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func apocRemoteHostAllowed(hostname string, allowlist []string) bool {
-	hostname = lowerASCII(strings.TrimSpace(hostname))
-	if hostname == "" || len(allowlist) == 0 {
-		return false
-	}
-	for _, entry := range allowlist {
-		if entry == hostname {
-			return true
-		}
-		if strings.HasPrefix(entry, "*.") {
-			suffix := strings.TrimPrefix(entry, "*")
-			if strings.HasSuffix(hostname, suffix) && hostname != strings.TrimPrefix(suffix, ".") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (e *StorageExecutor) resolveAPOCLocalImportFilePath(source string) (string, error) {
-	return e.resolveAPOCLocalFilePath(source, e.ensureLocalAPOCImportFileAccessAllowed)
-}
-
-func (e *StorageExecutor) resolveAPOCLocalExportFilePath(source string) (string, error) {
-	return e.resolveAPOCLocalFilePath(source, e.ensureLocalAPOCExportFileAccessAllowed)
-}
-
-func (e *StorageExecutor) resolveAPOCLocalFilePath(source string, ensureAllowed func() error) (string, error) {
-	if err := ensureAllowed(); err != nil {
-		return "", err
-	}
-
-	parsed, err := url.Parse(source)
-	if err == nil && parsed.Scheme != "" {
-		switch lowerASCII(parsed.Scheme) {
-		case "file":
-			if err := validateAPOCFileURL(parsed); err != nil {
-				return "", err
-			}
-			localPath := parsed.Path
-			if localPath == "" {
-				localPath = parsed.Opaque
-			}
-			return e.rebaseAPOCImportPath(localPath)
-		case "http", "https":
-			return "", fmt.Errorf("expected local APOC file source, got remote URL")
-		default:
-			return "", fmt.Errorf("unsupported APOC file URL scheme %q", parsed.Scheme)
-		}
-	}
-
-	return e.rebaseAPOCImportPath(source)
-}
-
-func validateAPOCFileURL(uri *url.URL) error {
-	if uri.Host != "" {
-		return errAPOCFileAuthorityNotAllowed
-	}
-	if uri.RawQuery != "" {
-		return errAPOCFileQueryNotAllowed
-	}
-	if uri.Fragment != "" {
-		return errAPOCFileFragmentNotAllowed
-	}
-	return nil
-}
-
-func (e *StorageExecutor) rebaseAPOCImportPath(localPath string) (string, error) {
-	root := strings.TrimSpace(e.apocLocalFileAccessRoot)
-	if root == "" {
-		return filepath.Clean(localPath), nil
-	}
-
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve APOC import root: %w", err)
-	}
-
-	relativePath := normalizeAPOCImportRelativePath(localPath)
-	target := absRoot
-	if relativePath != "" {
-		target = filepath.Join(absRoot, filepath.FromSlash(relativePath))
-	}
-	target, err = filepath.Abs(target)
-	if err != nil {
-		return "", fmt.Errorf("resolve APOC local file path: %w", err)
-	}
-	if target != absRoot && !strings.HasPrefix(target, absRoot+string(os.PathSeparator)) {
-		return "", fmt.Errorf("file URL points outside configured import directory")
-	}
-	return target, nil
-}
-
-func normalizeAPOCImportRelativePath(localPath string) string {
-	slashPath := strings.ReplaceAll(localPath, "\\", "/")
-	cleaned := pathpkg.Clean("/" + strings.TrimLeft(slashPath, "/"))
-	return strings.TrimPrefix(cleaned, "/")
-}
-
-func (e *StorageExecutor) validateAPOCRemoteURL(rawURL string, allowlist []string) (*url.URL, error) {
-	if err := securitypkg.ValidateURL(rawURL, false, false); err != nil {
-		return nil, fmt.Errorf("invalid APOC remote URL: %w", err)
-	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid APOC remote URL: %w", err)
-	}
-	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
-		return nil, fmt.Errorf("unsupported APOC remote URL scheme %q", parsed.Scheme)
-	}
-	if parsed.Host == "" {
-		return nil, fmt.Errorf("APOC remote URL host is required")
-	}
-	if parsed.User != nil {
-		return nil, fmt.Errorf("APOC remote URLs may not contain userinfo")
-	}
-	if parsed.Fragment != "" {
-		return nil, fmt.Errorf("APOC remote URLs may not contain fragments")
-	}
-	hostname := parsed.Hostname()
-	if hostname == "" {
-		return nil, fmt.Errorf("APOC remote URL host is required")
-	}
-	if !apocRemoteHostAllowed(hostname, allowlist) {
-		return nil, errAPOCRemoteURLHostNotAllowed
-	}
-	ipList, err := e.resolveAPOCHost(context.Background(), hostname)
-	if err != nil {
-		return nil, fmt.Errorf("resolve APOC remote host: %w", err)
-	}
-	for _, ipAddr := range ipList {
-		if ip := ipAddr.IP; ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-				return nil, fmt.Errorf("APOC remote URL host resolves to a disallowed address")
-			}
-		}
-	}
-	return parsed, nil
-}
-
-func (e *StorageExecutor) newAPOCRemoteRequest(ctx context.Context, rawURL string) (*http.Request, error) {
-	if err := e.ensureRemoteAPOCURLAccessAllowed(); err != nil {
-		return nil, err
-	}
-	parsed, err := e.validateAPOCRemoteURL(rawURL, e.apocRemoteURLAllowlist)
-	if err != nil {
-		return nil, err
-	}
-	return http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
-}
 
 // =============================================================================
 // apoc.load.json - Load JSON data
 // =============================================================================
 
-// callApocLoadJson loads JSON data from a URL or file path.
-// Syntax: CALL apoc.load.json(urlOrFile) YIELD value
-func (e *StorageExecutor) callApocLoadJson(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	// The URL or file path is the call's evaluated first argument.
-	urlOrFile, err := requiredProcedureString("apoc.load.json", args, 0, "urlOrKeyOrBinary")
-	if err != nil {
-		return nil, err
-	}
-
-	var data interface{}
-
-	// Check if it's a URL or file path
-	if isHTTPSource(urlOrFile) {
-		data, err = e.loadJsonFromURL(urlOrFile)
-	} else {
-		data, err = e.loadJsonFromFile(urlOrFile)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to load JSON: %w", err)
-	}
-
-	// Return the data
-	rows := [][]interface{}{}
-
-	switch v := data.(type) {
-	case []interface{}:
-		// Array of items - return each as a row
-		for _, item := range v {
-			rows = append(rows, []interface{}{item})
+// jsonLoadProcedure binds the public procedure name to the canonical
+// DocumentItems row loader. Both registered names expose the decoded array as
+// rows, or one row for any other JSON value; their argument errors retain the
+// invoked name. This row shape is separate from the scalar Json document shape
+// apoc.import.json and Go callers use.
+func jsonLoadProcedure(procedure string) ProcedureHandler {
+	loadItems := apocload.JSONItems(apocload.DocumentItems)
+	return func(ctx context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
+		source, err := requiredProcedureString(procedure, args, 0, "urlOrKeyOrBinary")
+		if err != nil {
+			return nil, err
 		}
-	case map[string]interface{}:
-		// Single object
-		rows = append(rows, []interface{}{v})
-	default:
-		rows = append(rows, []interface{}{data})
+		items, err := loadItems(ctx, source)
+		if err != nil {
+			return nil, err
+		}
+		rows := make([][]interface{}, len(items))
+		for i, item := range items {
+			if i%pipelineMaterializedCancelCheck == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
+			rows[i] = []interface{}{item}
+		}
+		return &ExecuteResult{Columns: columnNames(valueMapColumns), Rows: rows}, nil
 	}
-
-	return &ExecuteResult{
-		Columns: []string{"value"},
-		Rows:    rows,
-	}, nil
-}
-
-func (e *StorageExecutor) loadJsonFromURL(url string) (interface{}, error) {
-	req, err := e.newAPOCRemoteRequest(context.Background(), url)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := e.apocHTTPClient().Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP error: %s", resp.Status)
-	}
-
-	var data interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, err
-	}
-
-	return data, nil
-}
-
-func (e *StorageExecutor) loadJsonFromFile(path string) (interface{}, error) {
-	resolvedPath, err := e.resolveAPOCLocalImportFilePath(path)
-	if err != nil {
-		return nil, err
-	}
-	file, err := securitypkg.OpenRootedFile(resolvedPath, os.O_RDONLY, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var data interface{}
-	if err := json.NewDecoder(file).Decode(&data); err != nil {
-		return nil, err
-	}
-
-	return data, nil
 }
 
 // =============================================================================
@@ -373,34 +77,20 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, args []interface{
 		separator = []rune(sep)[0]
 	}
 
-	var reader *csv.Reader
-	var closer io.Closer
-
-	// Load from URL or file
-	if isHTTPSource(urlOrFile) {
-		req, err := e.newAPOCRemoteRequest(ctx, urlOrFile)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.apocHTTPClient().Do(req)
-		if err != nil {
+	capability, err := apocio.CapabilityFrom(ctx)
+	if err != nil {
+		return nil, err
+	}
+	source, err := capability.Open(ctx, urlOrFile, apocio.Request{})
+	if err != nil {
+		if apocio.IsHTTPSource(urlOrFile) {
 			return nil, fmt.Errorf("failed to fetch CSV: %w", err)
 		}
-		closer = resp.Body
-		reader = csv.NewReader(resp.Body)
-	} else {
-		resolvedPath, err := e.resolveAPOCLocalImportFilePath(urlOrFile)
-		if err != nil {
-			return nil, err
-		}
-		file, err := securitypkg.OpenRootedFile(resolvedPath, os.O_RDONLY, 0)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open CSV: %w", err)
-		}
-		closer = file
-		reader = csv.NewReader(file)
+		return nil, fmt.Errorf("failed to open CSV: %w", err)
 	}
-	defer closer.Close()
+	defer source.Close()
+
+	reader := csv.NewReader(source)
 
 	reader.Comma = separator
 	reader.LazyQuotes = true
@@ -413,7 +103,7 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, args []interface{
 
 	if len(records) == 0 {
 		return &ExecuteResult{
-			Columns: []string{"lineNo", "list", "map"},
+			Columns: columnNames(apocLoadCsvColumns),
 			Rows:    [][]interface{}{},
 		}, nil
 	}
@@ -452,119 +142,235 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, args []interface{
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"lineNo", "list", "map"},
+		Columns: columnNames(apocLoadCsvColumns),
 		Rows:    rows,
 	}, nil
+}
+
+// =============================================================================
+// apoc.export.* - one export lifecycle
+// =============================================================================
+//
+// Author: PR1615 export-convergence lane, 2026-10-31: the four apoc.export.*
+// procedures own one argument/source/destination lifecycle and keep only their
+// format encoder and their public result row.
+
+// exportScope is where one export reads its content: the whole graph, or the
+// rows of the caller's query.
+type exportScope int
+
+const (
+	exportGraphScope exportScope = iota
+	exportQueryScope
+)
+
+// exportSource is one export's content: the graph read once, or the result of
+// the caller's query.
+type exportSource struct {
+	nodes  []*storage.Node
+	edges  []*storage.Edge
+	result *ExecuteResult
+}
+
+// exportPayload is one encoded export: the content that goes to the export's
+// destination, and the single result row the procedure returns for it. Each
+// procedure owns its row because the public apoc.export.* columns differ.
+type exportPayload struct {
+	content []byte
+	text    string // CSV retains its builder string; convert only when a file is written.
+	row     []interface{}
+}
+
+// exportEncoder encodes one export's source in one format.
+type exportEncoder func(e *StorageExecutor, ctx context.Context, filePath string, source exportSource) (exportPayload, error)
+
+// exportDeclaration declares one public apoc.export.* procedure: the name its
+// argument errors and result header use, where it reads its content, and how it
+// encodes that content. The lifecycle every export shares -- its arguments, the
+// caller's export destination, its source, its destination write and its result
+// -- lives in exportProcedure; a declaration adds its encoder only.
+type exportDeclaration struct {
+	name   string
+	scope  exportScope
+	encode exportEncoder
+}
+
+// apoc.export.json.all and apoc.export.csv.all export the whole graph;
+// apoc.export.json.query and apoc.export.csv.query export one query result.
+var (
+	exportJSONGraphDeclaration = exportDeclaration{name: "apoc.export.json.all", scope: exportGraphScope, encode: (*StorageExecutor).encodeJSONGraph}
+	exportJSONQueryDeclaration = exportDeclaration{name: "apoc.export.json.query", scope: exportQueryScope, encode: (*StorageExecutor).encodeJSONQuery}
+	exportCSVGraphDeclaration  = exportDeclaration{name: "apoc.export.csv.all", scope: exportGraphScope, encode: (*StorageExecutor).encodeCSVGraph}
+	exportCSVQueryDeclaration  = exportDeclaration{name: "apoc.export.csv.query", scope: exportQueryScope, encode: (*StorageExecutor).encodeCSVQuery}
+)
+
+// exportProcedure binds one declaration directly to the canonical procedure
+// lifecycle: validation, content, configured destination and result publication.
+// There is no per-procedure forwarding method or second dispatch boundary.
+func exportProcedure(declaration exportDeclaration) ProcedureHandler {
+	return func(ctx context.Context, e *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
+		query := ""
+		fileIndex := 0
+		if declaration.scope == exportQueryScope {
+			var err error
+			query, err = requiredProcedureString(declaration.name, args, 0, "query")
+			if err != nil {
+				return nil, err
+			}
+			fileIndex = 1
+		}
+		// No file (or '') returns the export instead of writing it.
+		filePath, err := optionalProcedureString(declaration.name, args, fileIndex, "file", "")
+		if err != nil {
+			return nil, err
+		}
+
+		// The destination resolves through the caller's APOC I/O capability, and
+		// only when the caller named a file: a streamed export performs no file I/O
+		// and needs no export path.
+		destination, err := apocio.AdmitExport(ctx, filePath)
+		if err != nil {
+			return nil, err
+		}
+
+		source, err := e.readExportSource(ctx, declaration.scope, query)
+		if err != nil {
+			return nil, err
+		}
+
+		payload, err := declaration.encode(e, ctx, filePath, source)
+		if err != nil {
+			return nil, err
+		}
+
+		directories := apocio.ExistingDirectory
+		if declaration.scope == exportGraphScope {
+			directories = apocio.CreateDirectories
+		}
+		var writeErr error
+		if payload.content != nil {
+			writeErr = apocio.WriteExport(ctx, destination, payload.content, directories)
+		} else {
+			writeErr = apocio.WriteExport(ctx, destination, payload.text, directories)
+		}
+		if writeErr != nil {
+			return nil, writeErr
+		}
+
+		return &ExecuteResult{
+			Columns: legacyProcedureColumns(declaration.name),
+			Rows:    [][]interface{}{payload.row},
+		}, nil
+	}
+}
+
+// readExportSource reads one export's content once, on the caller's context:
+// the result of the caller's query, or the whole graph. A relationship read that
+// fails fails the export instead of exporting the nodes alone.
+func (e *StorageExecutor) readExportSource(ctx context.Context, scope exportScope, query string) (exportSource, error) {
+	if scope == exportQueryScope {
+		result, err := e.executeUserStatement(ctx, query, nil)
+		if err != nil {
+			return exportSource{}, fmt.Errorf("failed to execute query: %w", err)
+		}
+		return exportSource{result: result}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return exportSource{}, err
+	}
+	nodes, err := e.storage.AllNodes(ctx)
+	if err != nil {
+		return exportSource{}, fmt.Errorf("failed to read nodes: %w", err)
+	}
+	edges, err := e.storage.AllEdges(ctx)
+	if err != nil {
+		return exportSource{}, fmt.Errorf("failed to read relationships: %w", err)
+	}
+	return exportSource{nodes: nodes, edges: edges}, nil
+}
+
+// exportChunks observes the caller between pages of
+// pipelineMaterializedCancelCheck items and hands each page to visit, so the work
+// between two observations of an export is bounded by that stride however large
+// its population is. The observation after the last page reports a caller that
+// stopped during it.
+func exportChunks(ctx context.Context, length int, visit func(start, end int) error) error {
+	for start := 0; start < length; start += pipelineMaterializedCancelCheck {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		end := start + pipelineMaterializedCancelCheck
+		if end > length {
+			end = length
+		}
+		if err := visit(start, end); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
 }
 
 // =============================================================================
 // apoc.export.json - Export to JSON
 // =============================================================================
 
-// callApocExportJson exports graph data to JSON.
+// encodeJSONGraph encodes the whole graph as the apoc.export.json.all document:
+// its nodes, its relationships, their property count and the document body.
 // Syntax: CALL apoc.export.json.all(file, config) YIELD file, nodes, relationships
-func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	// No file (or '') returns the export instead of writing it.
-	filePath, err := optionalProcedureString("apoc.export.json.all", args, 0, "file", "")
+func (e *StorageExecutor) encodeJSONGraph(ctx context.Context, filePath string, source exportSource) (exportPayload, error) {
+	properties := 0
+	nodes := make([]map[string]interface{}, 0, len(source.nodes))
+	if err := exportChunks(ctx, len(source.nodes), func(start, end int) error {
+		page := source.nodes[start:end]
+		nodes = e.appendNodesToExportFormat(nodes, page)
+		properties += e.countProperties(page, nil)
+		return nil
+	}); err != nil {
+		return exportPayload{}, err
+	}
+	relationships := make([]map[string]interface{}, 0, len(source.edges))
+	if err := exportChunks(ctx, len(source.edges), func(start, end int) error {
+		page := source.edges[start:end]
+		relationships = e.appendEdgesToExportFormat(relationships, page)
+		properties += e.countProperties(nil, page)
+		return nil
+	}); err != nil {
+		return exportPayload{}, err
+	}
+
+	content, err := valueconvert.PropertyJSON.MarshalIndent(map[string]interface{}{
+		"nodes":         nodes,
+		"relationships": relationships,
+	}, "", "  ")
 	if err != nil {
-		return nil, err
+		return exportPayload{}, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
-	resolvedPath := ""
-	if filePath != "" {
-		var err error
-		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	nodes := e.storage.GetAllNodes()
-	edges, _ := e.storage.AllEdges()
-
-	export := map[string]interface{}{
-		"nodes":         e.nodesToExportFormat(nodes),
-		"relationships": e.edgesToExportFormat(edges),
-	}
-
-	jsonData, err := json.MarshalIndent(export, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
-	}
-
-	// Write to file if path provided
-	if resolvedPath != "" {
-		if err := securitypkg.EnsureRootedParent(resolvedPath, 0o755); err != nil {
-			return nil, fmt.Errorf("failed to create directory: %w", err)
-		}
-		if err := securitypkg.WriteRootedFile(resolvedPath, jsonData, 0o644); err != nil {
-			return nil, fmt.Errorf("failed to write file: %w", err)
-		}
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"file", "nodes", "relationships", "properties", "data"},
-		Rows: [][]interface{}{{
-			filePath,
-			len(nodes),
-			len(edges),
-			e.countProperties(nodes, edges),
-			string(jsonData),
-		}},
+	return exportPayload{
+		content: content,
+		row:     []interface{}{filePath, len(source.nodes), len(source.edges), properties, string(content)},
 	}, nil
 }
 
-// callApocExportJsonQuery exports query results to JSON.
+// encodeJSONQuery encodes one query result as the apoc.export.json.query
+// document: its columns and its data.
 // Syntax: CALL apoc.export.json.query(query, file, config)
-func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	const procedure = "apoc.export.json.query"
-	query, err := requiredProcedureString(procedure, args, 0, "query")
+func (e *StorageExecutor) encodeJSONQuery(ctx context.Context, filePath string, source exportSource) (exportPayload, error) {
+	if err := ctx.Err(); err != nil {
+		return exportPayload{}, err
+	}
+	content, err := valueconvert.PropertyJSON.MarshalIndent(map[string]interface{}{
+		"columns": source.result.Columns,
+		"data":    source.result.Rows,
+	}, "", "  ")
 	if err != nil {
-		return nil, err
+		return exportPayload{}, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
-	filePath, err := optionalProcedureString(procedure, args, 1, "file", "")
-	if err != nil {
-		return nil, err
+	if err := ctx.Err(); err != nil {
+		return exportPayload{}, err
 	}
-	resolvedPath := ""
-	if filePath != "" {
-		var err error
-		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Execute the query
-	result, err := e.executeUserStatement(ctx, query, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute query: %w", err)
-	}
-
-	// Convert to JSON
-	export := map[string]interface{}{
-		"columns": result.Columns,
-		"data":    result.Rows,
-	}
-
-	jsonData, err := json.MarshalIndent(export, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
-	}
-
-	// Write to file if path provided
-	if resolvedPath != "" {
-		if err := securitypkg.WriteRootedFile(resolvedPath, jsonData, 0o644); err != nil {
-			return nil, fmt.Errorf("failed to write file: %w", err)
-		}
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"file", "rows", "data"},
-		Rows: [][]interface{}{{
-			filePath,
-			len(result.Rows),
-			string(jsonData),
-		}},
+	return exportPayload{
+		content: content,
+		row:     []interface{}{filePath, len(source.result.Rows), string(content)},
 	}, nil
 }
 
@@ -572,154 +378,156 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []in
 // apoc.export.csv - Export to CSV
 // =============================================================================
 
-// callApocExportCsvAll exports all data to CSV.
+// encodeCSVGraph encodes the whole graph as the apoc.export.csv.all sections:
+// one node section and one relationship section.
 // Syntax: CALL apoc.export.csv.all(file, config) YIELD file, nodes, relationships
-func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	// No file (or '') returns the export instead of writing it.
-	filePath, err := optionalProcedureString("apoc.export.csv.all", args, 0, "file", "")
-	if err != nil {
-		return nil, err
-	}
-	resolvedPath := ""
-	if filePath != "" {
-		var err error
-		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	nodes := e.storage.GetAllNodes()
-	edges, _ := e.storage.AllEdges()
-
-	// Build CSV content
+func (e *StorageExecutor) encodeCSVGraph(ctx context.Context, filePath string, source exportSource) (exportPayload, error) {
 	var csvContent strings.Builder
 
-	// Nodes section
 	csvContent.WriteString("# Nodes\n")
 	csvContent.WriteString("_id,_labels,properties\n")
-	for _, node := range nodes {
-		props, _ := json.Marshal(node.Properties)
-		csvContent.WriteString(fmt.Sprintf("%s,\"%s\",\"%s\"\n",
-			node.ID,
-			strings.Join(node.Labels, ";"),
-			strings.ReplaceAll(string(props), "\"", "\"\"")))
+	if err := exportChunks(ctx, len(source.nodes), func(start, end int) error {
+		for _, node := range source.nodes[start:end] {
+			properties, err := valueconvert.PropertyJSON.Marshal(node.Properties)
+			if err != nil {
+				return fmt.Errorf("failed to marshal properties of node %s: %w", node.ID, err)
+			}
+			writeCSVField(&csvContent, string(node.ID), false)
+			csvContent.WriteByte(',')
+			writeCSVField(&csvContent, strings.Join(node.Labels, ";"), true)
+			csvContent.WriteByte(',')
+			writeCSVField(&csvContent, string(properties), true)
+			csvContent.WriteByte('\n')
+		}
+		return nil
+	}); err != nil {
+		return exportPayload{}, err
 	}
 
 	csvContent.WriteString("\n# Relationships\n")
 	csvContent.WriteString("_id,_type,_start,_end,properties\n")
-	for _, edge := range edges {
-		props, _ := json.Marshal(edge.Properties)
-		csvContent.WriteString(fmt.Sprintf("%s,%s,%s,%s,\"%s\"\n",
-			edge.ID,
-			edge.Type,
-			edge.StartNode,
-			edge.EndNode,
-			strings.ReplaceAll(string(props), "\"", "\"\"")))
+	if err := exportChunks(ctx, len(source.edges), func(start, end int) error {
+		for _, edge := range source.edges[start:end] {
+			properties, err := valueconvert.PropertyJSON.Marshal(edge.Properties)
+			if err != nil {
+				return fmt.Errorf("failed to marshal properties of relationship %s: %w", edge.ID, err)
+			}
+			writeCSVField(&csvContent, string(edge.ID), false)
+			csvContent.WriteByte(',')
+			writeCSVField(&csvContent, edge.Type, false)
+			csvContent.WriteByte(',')
+			writeCSVField(&csvContent, string(edge.StartNode), false)
+			csvContent.WriteByte(',')
+			writeCSVField(&csvContent, string(edge.EndNode), false)
+			csvContent.WriteByte(',')
+			writeCSVField(&csvContent, string(properties), true)
+			csvContent.WriteByte('\n')
+		}
+		return nil
+	}); err != nil {
+		return exportPayload{}, err
 	}
 
-	content := csvContent.String()
-
-	// Write to file if path provided
-	if resolvedPath != "" {
-		if err := securitypkg.EnsureRootedParent(resolvedPath, 0o755); err != nil {
-			return nil, fmt.Errorf("failed to create directory: %w", err)
-		}
-		if err := securitypkg.WriteRootedFile(resolvedPath, []byte(content), 0o644); err != nil {
-			return nil, fmt.Errorf("failed to write file: %w", err)
-		}
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"file", "nodes", "relationships", "rows"},
-		Rows: [][]interface{}{{
-			filePath,
-			len(nodes),
-			len(edges),
-			len(nodes) + len(edges),
-		}},
+	return exportPayload{
+		text: csvContent.String(),
+		row:  []interface{}{filePath, len(source.nodes), len(source.edges), len(source.nodes) + len(source.edges)},
 	}, nil
 }
 
-// callApocExportCsvQuery exports query results to CSV.
+// encodeCSVQuery encodes one query result as the apoc.export.csv.query rows: one
+// header line from its columns, then one line per row.
 // Syntax: CALL apoc.export.csv.query(query, file, config)
-func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	const procedure = "apoc.export.csv.query"
-	query, err := requiredProcedureString(procedure, args, 0, "query")
-	if err != nil {
-		return nil, err
-	}
-	filePath, err := optionalProcedureString(procedure, args, 1, "file", "")
-	if err != nil {
-		return nil, err
-	}
-	resolvedPath := ""
-	if filePath != "" {
-		var err error
-		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Execute the query
-	result, err := e.executeUserStatement(ctx, query, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute query: %w", err)
-	}
-
-	// Build CSV
+func (e *StorageExecutor) encodeCSVQuery(ctx context.Context, filePath string, source exportSource) (exportPayload, error) {
 	var csvContent strings.Builder
 
-	// Header
-	csvContent.WriteString(strings.Join(result.Columns, ","))
+	for i, column := range source.result.Columns {
+		if i > 0 {
+			csvContent.WriteByte(',')
+		}
+		writeCSVField(&csvContent, column, false)
+	}
 	csvContent.WriteByte('\n')
 
-	// Data rows
-	for _, row := range result.Rows {
-		values := make([]string, len(row))
-		for i, val := range row {
-			switch v := val.(type) {
-			case string:
-				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(v, "\"", "\"\""))
-			case nil:
-				values[i] = ""
-			default:
-				jsonVal, _ := json.Marshal(v)
-				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(string(jsonVal), "\"", "\"\""))
+	if err := exportChunks(ctx, len(source.result.Rows), func(start, end int) error {
+		for _, row := range source.result.Rows[start:end] {
+			for i, val := range row {
+				if i > 0 {
+					csvContent.WriteByte(',')
+				}
+				switch v := val.(type) {
+				case string:
+					writeCSVField(&csvContent, v, true)
+				case nil:
+					// A null value keeps its empty cell.
+				default:
+					jsonVal, err := valueconvert.PropertyJSON.Marshal(v)
+					if err != nil {
+						return fmt.Errorf("failed to marshal column %s: %w", exportColumnName(source.result.Columns, i), err)
+					}
+					writeCSVField(&csvContent, string(jsonVal), true)
+				}
 			}
+			csvContent.WriteByte('\n')
 		}
-		csvContent.WriteString(strings.Join(values, ","))
-		csvContent.WriteByte('\n')
+		return nil
+	}); err != nil {
+		return exportPayload{}, err
 	}
 
 	content := csvContent.String()
-
-	// Write to file if path provided
-	if resolvedPath != "" {
-		if err := securitypkg.WriteRootedFile(resolvedPath, []byte(content), 0o644); err != nil {
-			return nil, fmt.Errorf("failed to write file: %w", err)
-		}
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"file", "rows", "data"},
-		Rows: [][]interface{}{{
-			filePath,
-			len(result.Rows),
-			content,
-		}},
+	return exportPayload{
+		text: content,
+		row:  []interface{}{filePath, len(source.result.Rows), content},
 	}, nil
+}
+
+// writeCSVField writes one CSV field into builder. The field is quoted when it
+// is always quoted by the export (its labels, properties and query values keep
+// the quoting the export has always published) or when its own bytes would
+// otherwise move the field boundary: a comma, a quote, or a line break. A
+// quoted field doubles its quotes. Nothing here copies the field first.
+func writeCSVField(builder *strings.Builder, field string, alwaysQuoted bool) {
+	if !alwaysQuoted && !strings.ContainsAny(field, csvFieldSpecials) {
+		builder.WriteString(field)
+		return
+	}
+	builder.WriteByte('"')
+	for {
+		quote := strings.IndexByte(field, '"')
+		if quote < 0 {
+			builder.WriteString(field)
+			break
+		}
+		builder.WriteString(field[:quote])
+		builder.WriteString(`""`)
+		field = field[quote+1:]
+	}
+	builder.WriteByte('"')
+}
+
+// csvFieldSpecials are the bytes a CSV field cannot hold unquoted without a
+// reader taking them as a field boundary or a quote.
+const csvFieldSpecials = ",\"\r\n"
+
+// exportColumnName names one column of a query result for an encoding error; a
+// row may be wider than the columns the result declared.
+func exportColumnName(columns []string, index int) string {
+	if index < len(columns) {
+		return fmt.Sprintf("%q", columns[index])
+	}
+	return fmt.Sprintf("#%d", index)
 }
 
 // =============================================================================
 // Helper functions
 // =============================================================================
 
-func (e *StorageExecutor) nodesToExportFormat(nodes []*storage.Node) []map[string]interface{} {
-	result := make([]map[string]interface{}, len(nodes))
+func (e *StorageExecutor) appendNodesToExportFormat(result []map[string]interface{}, nodes []*storage.Node) []map[string]interface{} {
+	start := len(result)
+	result = slices.Grow(result, len(nodes))
+	result = result[:start+len(nodes)]
 	for i, node := range nodes {
-		result[i] = map[string]interface{}{
+		result[start+i] = map[string]interface{}{
 			"id":         string(node.ID),
 			"labels":     node.Labels,
 			"properties": node.Properties,
@@ -728,10 +536,12 @@ func (e *StorageExecutor) nodesToExportFormat(nodes []*storage.Node) []map[strin
 	return result
 }
 
-func (e *StorageExecutor) edgesToExportFormat(edges []*storage.Edge) []map[string]interface{} {
-	result := make([]map[string]interface{}, len(edges))
+func (e *StorageExecutor) appendEdgesToExportFormat(result []map[string]interface{}, edges []*storage.Edge) []map[string]interface{} {
+	start := len(result)
+	result = slices.Grow(result, len(edges))
+	result = result[:start+len(edges)]
 	for i, edge := range edges {
-		result[i] = map[string]interface{}{
+		result[start+i] = map[string]interface{}{
 			"id":         string(edge.ID),
 			"type":       edge.Type,
 			"startNode":  string(edge.StartNode),
@@ -757,43 +567,6 @@ func (e *StorageExecutor) countProperties(nodes []*storage.Node, edges []*storag
 // apoc.load.jsonArray - Load JSON array with path
 // =============================================================================
 
-// callApocLoadJsonArray loads a JSON array from a specific path.
-// Syntax: CALL apoc.load.jsonArray(urlOrFile, path) YIELD value
-func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	urlOrFile, err := requiredProcedureString("apoc.load.jsonArray", args, 0, "urlOrKeyOrBinary")
-	if err != nil {
-		return nil, err
-	}
-
-	var data interface{}
-
-	if isHTTPSource(urlOrFile) {
-		data, err = e.loadJsonFromURL(urlOrFile)
-	} else {
-		data, err = e.loadJsonFromFile(urlOrFile)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to load JSON: %w", err)
-	}
-
-	// Extract array
-	rows := [][]interface{}{}
-	switch v := data.(type) {
-	case []interface{}:
-		for _, item := range v {
-			rows = append(rows, []interface{}{item})
-		}
-	default:
-		rows = append(rows, []interface{}{data})
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"value"},
-		Rows:    rows,
-	}, nil
-}
-
 // =============================================================================
 // apoc.import.json - Import JSON directly into graph
 // =============================================================================
@@ -802,15 +575,13 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []inte
 // Syntax: CALL apoc.import.json(urlOrFile) YIELD nodes, relationships
 func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
-	prefixIDs := true
+	// The storage owner qualifies local IDs through transaction/admission
+	// wrappers too. Keep the import's supplied IDs local when it does so;
+	// pre-prefixing here would make that namespace part of the imported ID.
+	prefixIDs := storage.QualifiedEntityID(store, "") == ""
 	dbName := GetUseDatabaseFromContext(ctx)
 	if dbName == "" {
-		if ns, ok := store.(*storage.NamespacedEngine); ok {
-			dbName = ns.Namespace()
-			prefixIDs = false
-		} else {
-			dbName = "nornic"
-		}
+		dbName = "nornic"
 	}
 	ensureNodeID := func(id string) storage.NodeID {
 		if id == "" {
@@ -839,16 +610,9 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 		return nil, fmt.Errorf("apoc.import.json requires a URL or file path")
 	}
 
-	var data interface{}
-
-	if isHTTPSource(urlOrFile) {
-		data, err = e.loadJsonFromURL(urlOrFile)
-	} else {
-		data, err = e.loadJsonFromFile(urlOrFile)
-	}
-
+	data, err := apocload.PropertyDocument(ctx, urlOrFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load JSON: %w", err)
+		return nil, err
 	}
 
 	// Import the data
@@ -879,7 +643,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 					}
 
 					if node.ID != "" {
-						if _, err := store.CreateNode(node); err == nil {
+						if _, err := store.CreateNode(ctx, node); err == nil {
 							nodesImported++
 						}
 					}
@@ -912,7 +676,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 					}
 
 					if edge.ID != "" && edge.StartNode != "" && edge.EndNode != "" {
-						if err := store.CreateEdge(edge); err == nil {
+						if err := store.CreateEdge(ctx, edge); err == nil {
 							relsImported++
 						}
 					}
@@ -922,7 +686,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"source", "nodes", "relationships"},
+		Columns: legacyProcedureColumns("apoc.import.json"),
 		Rows: [][]interface{}{{
 			urlOrFile,
 			nodesImported,

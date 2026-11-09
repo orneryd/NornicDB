@@ -4,6 +4,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -13,16 +14,16 @@ import (
 
 // isAggregateFunc checks if expression is an aggregate function (whitespace-tolerant)
 func isAggregateFunc(expr string) bool {
-	return isFunctionCallWS(expr, "count") ||
-		isFunctionCallWS(expr, "sum") ||
-		isFunctionCallWS(expr, "avg") ||
-		isFunctionCallWS(expr, "min") ||
-		isFunctionCallWS(expr, "max") ||
-		isFunctionCallWS(expr, "collect") ||
-		isFunctionCallWS(expr, "stdev") ||
-		isFunctionCallWS(expr, "stdevp") ||
-		isFunctionCallWS(expr, "percentilecont") ||
-		isFunctionCallWS(expr, "percentiledisc")
+	return inspectFunctionCall(expr, namedFunctionCall, "count", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "sum", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "avg", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "min", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "max", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "collect", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "stdev", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "stdevp", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "percentilecont", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "percentiledisc", nil)
 }
 
 // containsAggregateFunc checks if expression contains any aggregate function
@@ -33,7 +34,7 @@ func containsAggregateFunc(expr string) bool {
 
 // isAggregateFuncName checks if expr starts with a specific aggregate function (whitespace-tolerant)
 func isAggregateFuncName(expr, funcName string) bool {
-	return isFunctionCallWS(expr, funcName)
+	return inspectFunctionCall(expr, namedFunctionCall, funcName, nil)
 }
 
 // extractFuncInner extracts the inner expression from a function call (whitespace-tolerant)
@@ -53,40 +54,23 @@ func extractFuncInner(expr string) string {
 
 // compareForSort compares two values for sorting, returns true if a < b
 func compareForSort(a, b interface{}) bool {
-	if a == nil && b == nil {
-		return false
-	}
 	if a == nil {
-		return true
+		return b != nil
 	}
 	if b == nil {
 		return false
 	}
-	switch av := a.(type) {
-	case int64:
-		if bv, ok := b.(int64); ok {
-			return av < bv
+	if comparison, exact := compareCypherNumbersExactly(a, b); exact {
+		return comparison < 0
+	}
+	if left, numeric := strictNumericValue(a); numeric {
+		if right, numeric := strictNumericValue(b); numeric {
+			return left < right
 		}
-		if bv, ok := b.(float64); ok {
-			return float64(av) < bv
-		}
-	case int:
-		if bv, ok := b.(int); ok {
-			return av < bv
-		}
-		if bv, ok := b.(int64); ok {
-			return int64(av) < bv
-		}
-	case float64:
-		if bv, ok := b.(float64); ok {
-			return av < bv
-		}
-		if bv, ok := b.(int64); ok {
-			return av < float64(bv)
-		}
-	case string:
-		if bv, ok := b.(string); ok {
-			return av < bv
+	}
+	if left, text := a.(string); text {
+		if right, text := b.(string); text {
+			return left < right
 		}
 	}
 	return fmt.Sprintf("%v", a) < fmt.Sprintf("%v", b)
@@ -112,7 +96,7 @@ func storageHasDecayFiltering(engine storage.Engine) bool {
 	return false
 }
 
-func extractMatchWhereClause(cypher string, whereIdx, returnIdx int) string {
+func extractMatchWhereClause(ctx context.Context, cypher string, whereIdx, returnIdx int) string {
 	if whereIdx <= 0 || returnIdx <= whereIdx+5 || returnIdx > len(cypher) {
 		return ""
 	}
@@ -134,17 +118,17 @@ func extractMatchWhereClause(cypher string, whereIdx, returnIdx int) string {
 		"SKIP",
 		"LIMIT",
 	} {
-		if idx := topLevelKeywordIndex(segment, kw); idx >= 0 && idx < end {
+		if idx := topLevelKeywordIndex(ctx, segment, kw); idx >= 0 && idx < end {
 			end = idx
 		}
 	}
 	return strings.TrimSpace(segment[:end])
 }
 
-func hasStandaloneWithClause(cypher string) bool {
+func hasStandaloneWithClause(ctx context.Context, cypher string) bool {
 	searchStart := 0
 	for {
-		idx := topLevelKeywordIndex(cypher[searchStart:], "WITH")
+		idx := topLevelKeywordIndex(ctx, cypher[searchStart:], "WITH")
 		if idx < 0 {
 			return false
 		}
@@ -159,12 +143,12 @@ func hasStandaloneWithClause(cypher string) bool {
 	}
 }
 
-func extractMatchOrderByClause(cypher string, returnIdx int) string {
+func extractMatchOrderByClause(ctx context.Context, cypher string, returnIdx int) string {
 	if returnIdx < 0 || returnIdx+6 > len(cypher) {
 		return ""
 	}
 	returnScope := strings.TrimSpace(cypher[returnIdx+6:])
-	orderIdx := findKeywordIndexInContext(returnScope, "ORDER")
+	orderIdx := findKeywordIndexInContext(ctx, returnScope, "ORDER")
 	if orderIdx == -1 {
 		return ""
 	}
@@ -178,7 +162,7 @@ func extractMatchOrderByClause(cypher string, returnIdx int) string {
 	}
 	end := len(orderExpr)
 	for _, kw := range []string{"SKIP", "LIMIT"} {
-		if idx := findKeywordIndexInContext(orderExpr, kw); idx != -1 && idx < end {
+		if idx := findKeywordIndexInContext(ctx, orderExpr, kw); idx != -1 && idx < end {
 			end = idx
 		}
 	}
@@ -203,11 +187,11 @@ func (e *StorageExecutor) compareNodeOrderSpecs(a, b *storage.Node, specs []node
 
 // selectTopKNodesByOrder returns the first k nodes for simple ORDER BY expressions
 // without sorting the full node set. It supports any number of ORDER BY terms.
-func (e *StorageExecutor) selectTopKNodesByOrder(nodes []*storage.Node, variable, orderExpr string, k int) ([]*storage.Node, bool) {
+func (e *StorageExecutor) selectTopKNodesByOrder(ctx context.Context, nodes []*storage.Node, variable, orderExpr string, k int) ([]*storage.Node, bool) {
 	if k <= 0 || len(nodes) <= k {
 		return nodes, false
 	}
-	specs := e.parseNodeOrderSpecs(orderExpr, variable)
+	specs, _ := e.parseNodeOrderSpecs(ctx, orderExpr, variable)
 	if len(specs) == 0 {
 		return nil, false
 	}

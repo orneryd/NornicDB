@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -10,8 +11,8 @@ import (
 )
 
 func TestSearchService_IndexNodeSkipsUnchangedVectorReindex(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	svc := NewServiceWithDimensions(engine, 4)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	svc := NewService(engine, 4, nil)
 	svc.hnswMu.Lock()
 	svc.hnswIndex = NewHNSWIndex(4, DefaultHNSWConfig())
 	svc.hnswMu.Unlock()
@@ -69,8 +70,8 @@ func BenchmarkSearchServiceIndexNodeUnchangedVector_CopyScaleHNSW(b *testing.B) 
 		nodeCount = 1500
 		dim       = 1024
 	)
-	engine := storage.NewMemoryEngine()
-	svc := NewServiceWithDimensions(engine, dim)
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	svc := NewService(engine, dim, nil)
 	for i := 0; i < nodeCount; i++ {
 		node := &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("entity-%04d", i)),
@@ -84,7 +85,7 @@ func BenchmarkSearchServiceIndexNodeUnchangedVector_CopyScaleHNSW(b *testing.B) 
 	}
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(b, err)
-	require.Equal(b, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(b, svc)
 
 	target := &storage.Node{
 		ID:     "entity-0000",

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ import (
 
 func newTestBadgerNamespacedStore(t *testing.T) storage.Engine {
 	t.Helper()
-	baseStore, err := storage.NewBadgerEngineInMemory()
+	baseStore, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, baseStore.Close())
@@ -22,7 +23,10 @@ func newTestBadgerNamespacedStore(t *testing.T) storage.Engine {
 
 func newTestServerLikeNamespacedStore(t *testing.T) storage.Engine {
 	t.Helper()
-	baseStore, err := storage.NewBadgerEngineInMemory()
+	baseStore, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if baseStore != nil {
+		fixtureowner.Own(t, baseStore)
+	}
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)

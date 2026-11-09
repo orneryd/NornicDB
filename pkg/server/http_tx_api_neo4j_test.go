@@ -23,6 +23,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txsession"
 	"github.com/stretchr/testify/require"
 )
 
@@ -410,7 +411,7 @@ func TestGh776_ReadTransactionRequestBoundaries(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(testCase.body))
 			request.ContentLength = -1
 			var decoded TransactionRequest
-			err := server.readTransactionRequest(request, &decoded)
+			err := decodeTransactionRequest((request).Body, &decoded, transactionRequestLimit{bounded: true, bytes: server.config.MaxRequestSize})
 			if testCase.wantErr {
 				require.Error(t, err)
 				return
@@ -422,7 +423,7 @@ func TestGh776_ReadTransactionRequestBoundaries(t *testing.T) {
 	server := &Server{config: DefaultConfig()}
 	for _, empty := range []string{"", " \n\t"} {
 		var decoded TransactionRequest
-		require.ErrorIs(t, server.readTransactionRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(empty)), &decoded), io.EOF)
+		require.ErrorIs(t, decodeTransactionRequest((httptest.NewRequest(http.MethodPost, "/", strings.NewReader(empty))).Body, &decoded, transactionRequestLimit{bounded: true, bytes: server.config.MaxRequestSize}), io.EOF)
 	}
 }
 
@@ -431,12 +432,12 @@ func TestGh776_DefaultBodyLimit(t *testing.T) {
 	server := &Server{config: DefaultConfig()}
 	require.Equal(t, int64(10<<20), server.config.MaxRequestSize)
 	var decoded TransactionRequest
-	err := server.readTransactionRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), &decoded)
+	err := decodeTransactionRequest((httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))).Body, &decoded, transactionRequestLimit{bounded: true, bytes: server.config.MaxRequestSize})
 	var limitError *http.MaxBytesError
 	require.ErrorAs(t, err, &limitError)
 	require.Equal(t, int64(10<<20), limitError.Limit)
 	server.config.MaxRequestSize = int64(len(body))
-	require.NoError(t, server.readTransactionRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), &decoded))
+	require.NoError(t, decodeTransactionRequest((httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))).Body, &decoded, transactionRequestLimit{bounded: true, bytes: server.config.MaxRequestSize}))
 	require.Len(t, decoded.Statements[0].Parameters["unused"], 11<<20)
 }
 
@@ -849,7 +850,8 @@ func TestTransactionHTTPValueBoundaries(t *testing.T) {
 		{"path marker", map[string]interface{}{"_pathResult": &path}, []interface{}{map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{}}, 1},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			row, metadata := server.transactionHTTPValue(testCase.value, "nornic")
+			row, metadata, projectionErr1 := server.transactionHTTPValue(t.Context(), testCase.value, "nornic")
+			require.NoError(t, projectionErr1)
 			require.Equal(t, testCase.row, row)
 			require.Len(t, metadata, testCase.metaCount)
 		})
@@ -897,7 +899,7 @@ func TestGh668_HTTPNonfiniteRecursiveProperties(t *testing.T) {
 	path := cypher.PathResult{Nodes: []*storage.Node{node, node}, Relationships: []*storage.Edge{edge}}
 	for _, value := range []interface{}{values, properties, node, edge, path} {
 		response := TransactionResponse{}
-		server.appendStatementResult(&response, &cypher.ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{value}}}, "nornic", false, []string{"row", "graph"})
+		require.NoError(t, server.appendStatementResult(t.Context(), &response, &cypher.ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{value}}}, "nornic", false, []string{"row", "graph"}))
 		encoded, err := json.Marshal(response)
 		require.NoError(t, err)
 		require.True(t, json.Valid(encoded))
@@ -1021,7 +1023,7 @@ func TestGh738_HTTPStatementAdmission(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, response.Code)
 	store, err := server.dbManager.GetStorage("system")
 	require.NoError(t, err)
-	nodes, err := store.GetNodesByLabel("U717")
+	nodes, err := store.GetNodesByLabel(context.Background(), "U717")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }
@@ -1144,7 +1146,7 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 	temporal := ", d:date('2020-12-31'), du:duration('P1Y2M'), lt:localtime('10:00:05'), t:time('10:00:00+01:00'), ldt:localdatetime('2020-01-01T10:00:00'), dt:datetime('2020-01-01T10:00:00Z')"
 	wantTemporal := map[string]interface{}{"d": "2020-12-31", "du": "P1Y2M", "lt": "10:00:05", "t": "10:00+01:00", "ldt": "2020-01-01T10:00", "dt": "2020-01-01T10:00Z"}
 	response := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{
-		"statements": []map[string]any{{"statement": "CREATE (:RP {name:'x', v:1" + temporal + "})-[:LINK {weight:2" + temporal + "}]->(:Target {" + strings.TrimPrefix(temporal, ", ") + "})"}},
+		"statements": []map[string]any{{"statement": "CREATE (:RP {name:'x', v:1, fraction:1.5, exact:9007199254740993" + temporal + "})-[:LINK {weight:2" + temporal + "}]->(:Target {" + strings.TrimPrefix(temporal, ", ") + "})"}},
 	}, token)
 	var result TransactionResponse
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
@@ -1154,28 +1156,30 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: host.URL, Database: "nornic", AuthToken: token})
 	require.NoError(t, err)
 	defer remote.Close()
-	nodes, err := remote.GetNodesByLabel("RP")
+	nodes, err := remote.GetNodesByLabel(context.Background(), "RP")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.NotEmpty(t, nodes[0].ID)
 	require.Equal(t, []string{"RP"}, nodes[0].Labels)
 	require.Equal(t, "x", nodes[0].Properties["name"])
-	require.Equal(t, float64(1), nodes[0].Properties["v"])
+	require.Equal(t, int64(1), nodes[0].Properties["v"])
+	require.Equal(t, float64(1.5), nodes[0].Properties["fraction"])
+	require.Equal(t, int64(9007199254740993), nodes[0].Properties["exact"])
 	for key, expected := range wantTemporal {
 		require.Equal(t, expected, nodes[0].Properties[key])
 	}
-	edges, err := remote.AllEdges()
+	edges, err := remote.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.NotEmpty(t, edges[0].ID)
 	require.Equal(t, "LINK", edges[0].Type)
 	require.Equal(t, nodes[0].ID, edges[0].StartNode)
 	require.NotEmpty(t, edges[0].EndNode)
-	require.Equal(t, float64(2), edges[0].Properties["weight"])
+	require.Equal(t, int64(2), edges[0].Properties["weight"])
 	for key, expected := range wantTemporal {
 		require.Equal(t, expected, edges[0].Properties[key])
 	}
-	transaction, err := remote.BeginCypherTx(context.Background())
+	transaction, err := remote.BeginCypherTx(context.Background(), storage.RemoteAccessWrite)
 	require.NoError(t, err)
 	defer transaction.Rollback(context.Background())
 	_, rows, err := transaction.QueryCypher(context.Background(), "MATCH (n:RP) RETURN n", nil)
@@ -1200,7 +1204,9 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 		name  string
 		query func(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error)
 	}{
-		{"autocommit", remote.QueryCypher},
+		{"autocommit", func(ctx context.Context, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+			return remote.QueryCypher(ctx, query, params, storage.RemoteAccessRead)
+		}},
 		{"explicit", transaction.QueryCypher},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
@@ -1247,19 +1253,19 @@ func TestRemoteHTTPPinnedNeo4j(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: endpoint, Database: "neo4j"})
 	require.NoError(t, err)
 	defer remote.Close()
-	nodes, err := remote.GetNodesByLabel("RemoteHTTPParitySource")
+	nodes, err := remote.GetNodesByLabel(context.Background(), "RemoteHTTPParitySource")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.NotEmpty(t, nodes[0].ID)
 	require.Contains(t, nodes[0].Labels, "RemoteHTTPParitySource")
 	require.Equal(t, "x", nodes[0].Properties["name"])
-	edges, err := remote.GetEdgesByType("REMOTE_HTTP_PARITY")
+	edges, err := remote.GetEdgesByType(context.Background(), "REMOTE_HTTP_PARITY")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.NotEmpty(t, edges[0].ID)
 	require.Equal(t, nodes[0].ID, edges[0].StartNode)
 	require.NotEmpty(t, edges[0].EndNode)
-	transaction, err := remote.BeginCypherTx(context.Background())
+	transaction, err := remote.BeginCypherTx(context.Background(), storage.RemoteAccessWrite)
 	require.NoError(t, err)
 	defer transaction.Rollback(context.Background())
 	_, rows, err := transaction.QueryCypher(context.Background(), "MATCH (n:RemoteHTTPParitySource) RETURN {node:n,k:1} AS m, n, [n,1] AS mixed", nil)
@@ -1527,6 +1533,10 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 				request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
 				require.NoError(t, err)
 				request.Header.Set("Content-Type", "application/json")
+				// The connection-population corpus inspects established test-driver
+				// connections, excluding accepted peers that have not sent a request.
+				// Match the local Bolt fixture's declared agent on the HTTP reference.
+				request.Header.Set("User-Agent", neo4jdriver.UserAgent)
 				if strings.HasPrefix(endpoint, local.URL+"/") {
 					request.Header.Set("Authorization", token)
 				}
@@ -1682,16 +1692,18 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 func TestDecodeTransactionRequestKeepsIntegerParameters(t *testing.T) {
 	body := `{"statements":[{"statement":"RETURN 1","parameters":{"big":9007199254740993,"f":1.5,"e":1e2,"neg":-3,"huge":1e400,"l":[1,2.5,[3]],"m":{"k":7,"f":0.5}}}]}`
 	var req TransactionRequest
-	require.NoError(t, decodeTransactionRequest(strings.NewReader(body), &req))
+	require.NoError(t, decodeTransactionRequest(strings.NewReader(body), &req, transactionRequestLimit{}))
 	params := req.Statements[0].Parameters
 	require.Equal(t, int64(9007199254740993), params["big"])
 	require.Equal(t, 1.5, params["f"])
 	require.Equal(t, float64(100), params["e"])
 	require.Equal(t, int64(-3), params["neg"])
-	require.Equal(t, "1e400", params["huge"], "a number outside float64 range is kept as its text")
+	// Neo4j 5.26 reads an out-of-range FLOAT parameter as Infinity (reference
+	// probe 1c, one HTTP request per value).
+	require.Equal(t, math.Inf(1), params["huge"], "a FLOAT outside float64 range is Infinity, as in Neo4j")
 	require.Equal(t, []interface{}{int64(1), 2.5, []interface{}{int64(3)}}, params["l"])
 	require.Equal(t, map[string]interface{}{"k": int64(7), "f": 0.5}, params["m"])
-	require.Error(t, decodeTransactionRequest(strings.NewReader(`{"statements":[`), &req))
+	require.Error(t, decodeTransactionRequest(strings.NewReader(`{"statements":[`), &req, transactionRequestLimit{}))
 }
 
 func TestHTTPCompoundMergeAndSubqueryRows(t *testing.T) {
@@ -1877,6 +1889,51 @@ func TestHTTPExplicitTransactionEndsOnStatementError(t *testing.T) {
 	}
 }
 
+// Idle HTTP transactions expire and roll back, as they do in Neo4j's HTTP API.
+func TestHTTPExplicitTransactionExpiresWhenIdle(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	server.txSessions = txsession.NewManager(3*time.Second, server.newExecutorForDatabase, t.Context())
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	post := func(path string, statements ...string) (int, TransactionResponse) {
+		t.Helper()
+		body := make([]map[string]any, 0, len(statements))
+		for _, statement := range statements {
+			body = append(body, map[string]any{"statement": statement})
+		}
+		rec := makeRequest(t, server, http.MethodPost, path, map[string]any{"statements": body}, token)
+		var resp TransactionResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), rec.Body.String())
+		return rec.Code, resp
+	}
+
+	status, opened := post("/db/nornic/tx", "CREATE (:TxIdleExpiry)")
+	require.Equal(t, http.StatusCreated, status)
+	txPath := strings.TrimSuffix(opened.Commit, "/commit")
+
+	time.Sleep(time.Second)
+	status, active := post(txPath, "CREATE (:TxIdleExpiry {v: 2})")
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, active.Errors)
+
+	time.Sleep(time.Second)
+	status, active = post(txPath, "RETURN 1 AS one")
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, active.Errors)
+
+	time.Sleep(3500 * time.Millisecond)
+	status, expired := post(txPath, "RETURN 2 AS two")
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "Neo.ClientError.Transaction.TransactionNotFound", expired.Errors[0].Code)
+	status, expired = post(txPath + "/commit")
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "Neo.ClientError.Transaction.TransactionNotFound", expired.Errors[0].Code)
+
+	status, remaining := post("/db/nornic/tx/commit", "MATCH (n:TxIdleExpiry) RETURN count(n) AS count")
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, remaining.Errors)
+	require.EqualValues(t, 0, remaining.Results[0].Data[0].Row[0])
+}
+
 // A statement that compiled and failed while running reports its columns with
 // no rows next to the error; a statement failing at compile time, or one
 // without columns, has no result (#668, as Neo4j 5.26).
@@ -1955,7 +2012,7 @@ func TestGh668_HTTPFailurePreservesRowsAndRollsBack(t *testing.T) {
 				require.Equal(t, []interface{}{float64(42)}, response.Results[1].Data[0].Row)
 				store, err := server.dbManager.GetStorage("nornic")
 				require.NoError(t, err)
-				nodes, err := store.GetNodesByLabel("FailureRollback")
+				nodes, err := store.GetNodesByLabel(context.Background(), "FailureRollback")
 				require.NoError(t, err)
 				require.Empty(t, nodes)
 				if testCase.results == 3 {
@@ -1972,13 +2029,14 @@ func TestGh668_HTTPReturnedPartialResult(t *testing.T) {
 	claims, err := authenticator.ValidateToken(getAuthToken(t, authenticator, "admin"))
 	require.NoError(t, err)
 	response := &TransactionResponse{}
-	queryError := server.runRequestStatement(context.Background(), claims, "nornic", StatementRequest{
+	failed := server.runRequestStatements(context.Background(), "", claims, "nornic", []StatementRequest{{
 		Statement: "UNWIND [1,0] AS d RETURN 1/d AS x",
-	}, func(context.Context, string, string, map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
+	}}, func(context.Context, string, string, map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
 		return &cypher.ExecuteResult{Columns: []string{"x"}, Rows: [][]interface{}{{int64(1)}}}, nil, errors.New("Neo.ClientError.Statement.ArithmeticError: / by zero")
 	}, func(localization.Message) string { return "unused" }, response)
-	require.NotNil(t, queryError)
-	require.Equal(t, "Neo.ClientError.Statement.ArithmeticError", queryError.Code)
+	require.True(t, failed)
+	require.Len(t, response.Errors, 1)
+	require.Equal(t, "Neo.ClientError.Statement.ArithmeticError", response.Errors[0].Code)
 	require.Len(t, response.Results, 1)
 	require.Equal(t, []string{"x"}, response.Results[0].Columns)
 	require.Equal(t, []interface{}{int64(1)}, response.Results[0].Data[0].Row)
@@ -2001,12 +2059,12 @@ func TestGh668_HTTPTransactionalCallBoundaries(t *testing.T) {
 			require.Len(t, response.Errors, 1)
 			store, err := server.dbManager.GetStorage("nornic")
 			require.NoError(t, err)
-			nodes, err := store.GetNodesByLabel("HTTPBatch")
+			nodes, err := store.GetNodesByLabel(context.Background(), "HTTPBatch")
 			require.NoError(t, err)
 			if precedingWrite {
 				require.Contains(t, response.Errors[0].Message, "Expected transaction state to be empty")
 				require.Len(t, nodes, 2)
-				before, err := store.GetNodesByLabel("BeforeHTTPBatch")
+				before, err := store.GetNodesByLabel(context.Background(), "BeforeHTTPBatch")
 				require.NoError(t, err)
 				require.Empty(t, before)
 			} else {

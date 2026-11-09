@@ -33,7 +33,7 @@ func (e *StorageExecutor) logEvent(level slog.Level, event localization.LogEvent
 	e.logger().LogAttrs(ctx, level, event.Message.Fallback, attrs...)
 }
 
-func (e *StorageExecutor) emitRejectionReport(query string, err error) {
+func (e *StorageExecutor) emitRejectionReport(ctx context.Context, query string, err error) {
 	if e == nil || err == nil {
 		return
 	}
@@ -45,7 +45,7 @@ func (e *StorageExecutor) emitRejectionReport(query string, err error) {
 	if code != "Neo.ClientError.Statement.SyntaxError" {
 		return
 	}
-	redacted := RedactLiterals(StripComments(query))
+	redacted := e.redactForLog(ctx, query)
 	hash := StatementShapeHash(redacted)
 	statementClass := "OTHER"
 	for _, start := range validSyntaxStarts {

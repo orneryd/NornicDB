@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -16,7 +17,7 @@ func TestBadgerMVCC_HelperWriteFunctions_InvalidIDErrors(t *testing.T) {
 	engine := newTestEngine(t)
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 77}
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// Empty IDs are currently accepted by dictionary-backed key helpers;
 		// this test ensures all helper paths execute without panic.
 		require.NoError(t, engine.writeNodeMVCCVersionInTxn(txn, &Node{ID: "", Labels: []string{"L"}}, v))
@@ -32,11 +33,11 @@ func TestBadgerMVCC_HelperWriteFunctions_InvalidIDErrors(t *testing.T) {
 func TestBadgerMVCC_AppendTombstoneAndIterateEarlyExitBranches(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Doc"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
 
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(time.Second), CommitSequence: 91}
 	require.NoError(t, engine.AppendNodeTombstone("", v))
@@ -45,7 +46,7 @@ func TestBadgerMVCC_AppendTombstoneAndIterateEarlyExitBranches(t *testing.T) {
 	require.NoError(t, engine.AppendEdgeTombstone("test:e1", v))
 
 	yieldErr := errors.New("stop")
-	err = engine.IterateLatestVisibleNodes(func(*Node) error { return yieldErr })
+	err = engine.IterateLatestVisibleNodes(context.Background(), func(*Node) error { return yieldErr })
 	require.ErrorIs(t, err, yieldErr)
 
 	err = engine.IterateLatestVisibleEdges(func(*Edge) error { return yieldErr })
@@ -76,10 +77,14 @@ func TestReadWALEntriesForTruncation_WrapperBranches(t *testing.T) {
 		legacy := []WALEntry{{Sequence: 1, Timestamp: time.Now().UTC(), Operation: OpCreateNode}}
 		raw, err := json.Marshal(legacy[0])
 		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(legacyPath, append(raw, '\n'), 0644))
+		legacyBytes := append(raw, '\n')
+		require.NoError(t, os.WriteFile(legacyPath, legacyBytes, 0644))
 		entries, err := readWALEntriesForTruncation(legacyPath, 0)
+		require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+		require.Empty(t, entries)
+		after, err := os.ReadFile(legacyPath)
 		require.NoError(t, err)
-		require.Len(t, entries, 1)
+		require.Equal(t, legacyBytes, after)
 
 		atomicPath := filepath.Join(dir, "atomic.log")
 		rec := buildAtomicWALRecord(t, WALEntry{Sequence: 2, Timestamp: time.Now().UTC(), Operation: OpCreateNode, Data: []byte(`{"node":{"id":"n"}}`), Checksum: crc32Checksum([]byte(`{"node":{"id":"n"}}`))})

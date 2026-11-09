@@ -49,10 +49,10 @@ Implementation:
 
 Index entry IDs:
 
-- Each named embedding is indexed under `nodeID-named-{vectorName}`
-- Chunk embeddings are indexed under:
-  - `nodeID` (main, from `ChunkEmbeddings[0]`)
-  - `nodeID-chunk-{i}` (per-chunk)
+- Chunk embeddings: `ChunkEmbeddings[0]` is indexed under the node ID itself (the main entry); each later chunk gets its own entry.
+- Each named embedding and each vector-shaped property gets its own entry.
+- Entry keys are built and decoded only by `pkg/search/vector_entry_key.go`. The encoding is injective: an entry key always names exactly one node, whatever characters the node ID, vector name or property key contain, so a node's entries can never collide with another node's. Search decodes each result's owner once, when it collapses entries to nodes; nothing parses IDs.
+- Persisted vector stores and ANN graphs record the key format. A store saved with an older format is rebuilt from storage on startup.
 
 This means **NamedEmbeddings are indexed** (they are not “storage-scan only”).
 
@@ -107,7 +107,7 @@ Qdrant vectors do not overwrite NornicDB-managed embeddings because managed embe
 
 Because collections are databases, deleting a collection is a database drop:
 
-- `DROP DATABASE <name>` / `DatabaseManager.DropDatabase(name)` deletes the namespace prefix `<name>:` via `storage.Engine.DeleteByPrefix`.
+- `DROP DATABASE <name>` / `DatabaseManager.DropDatabase(ctx, name)` deletes the namespace prefix `<name>:` via `storage.Engine.DeleteByPrefix`.
 - For Badger-backed engines, `DeleteByPrefix` is optimized to use Badger's prefix drop for db-scoped keyspaces and targeted cleanup for secondary indexes.
 
 ## Why this split matters

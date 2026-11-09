@@ -6,64 +6,82 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 var errStartupMaterialization = errors.New("startup must not materialize the full corpus")
 
-type startupStreamingEngine struct {
-	*storage.MemoryEngine
-	allNodesCalls      int
-	allEdgesCalls      int
-	nodeStreamCalls    int
-	edgeStreamCalls    int
-	prefixes           []string
-	prefixCallbackRuns int
+// streamStoredEntities is the streaming kernel the startup engine's node and
+// edge streams share: read the entities for ctx, then visit each accepted
+// entity, stopping on context cancellation or a visitor error. accept reports
+// whether an entity is visited and carries the per-stream bookkeeping; nil
+// accepts every entity.
+func streamStoredEntities[T any](ctx context.Context, read func(context.Context) ([]T, error), accept func(T) bool, visit func(T) error) error {
+	entities, err := read(ctx)
+	if err != nil {
+		return err
+	}
+	for _, entity := range entities {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if accept != nil && !accept(entity) {
+			continue
+		}
+		if err := visit(entity); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (e *startupStreamingEngine) AllNodes() ([]*storage.Node, error) {
+type startupStreamingEngine struct {
+	storage.Engine
+	storage.StoredEntityReader
+	storage.ScopedStoredEntityReader
+	MemoryEngine                         *storage.MemoryEngine
+	allNodesCalls                        int
+	allEdgesCalls                        int
+	nodeStreamCalls                      int
+	edgeStreamCalls                      int
+	prefixes                             []string
+	prefixCallbackRuns                   int
+	snapshotNodeScans, snapshotEdgeScans int
+}
+
+func (e *startupStreamingEngine) GetInnerEngine() storage.Engine { return e.MemoryEngine }
+
+func (e *startupStreamingEngine) WithStoredEntityRead(kind storage.StoredEntityReadKind, _ string, read func() error) error {
+	switch kind {
+	case storage.StoredEntityNodeSnapshotScan:
+		e.snapshotNodeScans++
+	case storage.StoredEntityEdgeSnapshotScan:
+		e.snapshotEdgeScans++
+	}
+	return read()
+}
+
+func (e *startupStreamingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	e.allNodesCalls++
 	return nil, errStartupMaterialization
 }
 
-func (e *startupStreamingEngine) AllEdges() ([]*storage.Edge, error) {
+func (e *startupStreamingEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	e.allEdgesCalls++
 	return nil, errStartupMaterialization
 }
 
 func (e *startupStreamingEngine) StreamNodes(ctx context.Context, visit func(*storage.Node) error) error {
 	e.nodeStreamCalls++
-	nodes, err := e.MemoryEngine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := visit(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamStoredEntities(ctx, e.MemoryEngine.AllNodes, nil, visit)
 }
 
 func (e *startupStreamingEngine) StreamEdges(ctx context.Context, visit func(*storage.Edge) error) error {
 	e.edgeStreamCalls++
-	edges, err := e.MemoryEngine.AllEdges()
-	if err != nil {
-		return err
-	}
-	for _, edge := range edges {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := visit(edge); err != nil {
-			return err
-		}
-	}
-	return nil
+	return streamStoredEntities(ctx, e.MemoryEngine.AllEdges, nil, visit)
 }
 
 func (e *startupStreamingEngine) StreamNodeChunks(ctx context.Context, chunkSize int, visit func([]*storage.Node) error) error {
@@ -90,51 +108,41 @@ func (e *startupStreamingEngine) StreamNodeChunks(ctx context.Context, chunkSize
 
 func (e *startupStreamingEngine) StreamNodesByPrefix(ctx context.Context, prefix string, visit func(*storage.Node) error) error {
 	e.prefixes = append(e.prefixes, prefix)
-	nodes, err := e.MemoryEngine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	return streamStoredEntities(ctx, e.MemoryEngine.AllNodes, func(node *storage.Node) bool {
 		if !strings.HasPrefix(string(node.ID), prefix) {
-			continue
+			return false
 		}
 		e.prefixCallbackRuns++
-		if err := visit(node); err != nil {
-			return err
-		}
-	}
-	return nil
+		return true
+	}, visit)
 }
 
 // StreamNodesWithOptions models the unified kernel explicitly so the embedded
 // MemoryEngine's promoted implementation does not shadow the prefix recording.
 func (e *startupStreamingEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
-	e.prefixes = append(e.prefixes, opts.Prefix)
-	nodes, err := e.MemoryEngine.AllNodes()
-	if err != nil {
-		return err
+	// An unprefixed stream is a whole-store node stream, as StreamNodes is
+	// (storage sizing streams stored nodes this way).
+	prefix := opts.Prefix
+	if prefix == "" {
+		e.nodeStreamCalls++
+	} else {
+		e.prefixes = append(e.prefixes, prefix)
 	}
-	for _, node := range nodes {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if opts.Prefix != "" && !strings.HasPrefix(string(node.ID), opts.Prefix) {
-			continue
+	return streamStoredEntities(ctx, e.MemoryEngine.AllNodes, func(node *storage.Node) bool {
+		if prefix != "" && !strings.HasPrefix(string(node.ID), prefix) {
+			return false
 		}
 		e.prefixCallbackRuns++
-		if err := visit(node); err != nil {
-			return err
-		}
-	}
-	return nil
+		return true
+	}, visit)
 }
 
 // Regression: initially reported in #373.
 func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
-	engine := &startupStreamingEngine{MemoryEngine: storage.NewMemoryEngine()}
+	engine := &startupStreamingEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
+	engine.Engine = engine.MemoryEngine
+	engine.StoredEntityReader = engine.MemoryEngine
+	engine.ScopedStoredEntityReader = engine.MemoryEngine
 	t.Cleanup(func() { _ = engine.Close() })
 
 	nodes := []*storage.Node{
@@ -146,7 +154,7 @@ func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
 		{ID: "nornic:system:other", Labels: []string{"_System"}},
 	}
 	for _, node := range nodes {
-		_, err := engine.MemoryEngine.CreateNode(node)
+		_, err := engine.MemoryEngine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -173,7 +181,7 @@ func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
 		"nornic:system:migration:legacy",
 		"nornic:system:user:admin",
 	} {
-		_, err := engine.MemoryEngine.GetNode(id)
+		_, err := engine.MemoryEngine.GetNode(t.Context(), id)
 		require.Error(t, err)
 	}
 	for _, id := range []storage.NodeID{
@@ -181,27 +189,30 @@ func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
 		"nornic:system:user:application",
 		"nornic:system:other",
 	} {
-		_, err := engine.MemoryEngine.GetNode(id)
+		_, err := engine.MemoryEngine.GetNode(t.Context(), id)
 		require.NoError(t, err)
 	}
 }
 
 func TestStorageSizeReconciliationStreamsEntities(t *testing.T) {
-	engine := &startupStreamingEngine{MemoryEngine: storage.NewMemoryEngine()}
+	engine := &startupStreamingEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
+	engine.Engine = engine.MemoryEngine
+	engine.StoredEntityReader = engine.MemoryEngine
+	engine.ScopedStoredEntityReader = engine.MemoryEngine
 	t.Cleanup(func() { _ = engine.Close() })
 	node := &storage.Node{ID: "nornic:node", Labels: []string{"Application"}, Properties: map[string]interface{}{"payload": strings.Repeat("x", 4096)}}
 	edge := &storage.Edge{ID: "nornic:edge", StartNode: node.ID, EndNode: node.ID, Type: "SELF", Properties: map[string]interface{}{"weight": int64(1)}}
-	_, err := engine.MemoryEngine.CreateNode(node)
+	_, err := engine.MemoryEngine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	require.NoError(t, engine.MemoryEngine.CreateEdge(edge))
+	require.NoError(t, engine.MemoryEngine.CreateEdge(t.Context(), edge))
 
 	wantNodeSize, err := calculateNodeSize(node)
 	require.NoError(t, err)
 	wantEdgeSize, err := calculateEdgeSize(edge)
 	require.NoError(t, err)
 
-	checker := &databaseLimitChecker{}
-	nodeSize, edgeSize, err := checker.calculateCurrentStorageSize(engine)
+	manager := &DatabaseManager{}
+	nodeSize, edgeSize, err := manager.calculateStorageSizeFromEngine(context.Background(), engine)
 	require.NoError(t, err)
 	require.Equal(t, wantNodeSize, nodeSize)
 	require.Equal(t, wantEdgeSize, edgeSize)
@@ -212,13 +223,13 @@ func TestStorageSizeReconciliationStreamsEntities(t *testing.T) {
 }
 
 func TestDatabaseManagerRestartDefersStorageSizeScan(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
-	first, err := NewDatabaseManager(base, nil)
+	first, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	require.NotNil(t, first)
-	_, err = base.CreateNode(&storage.Node{
+	_, err = base.CreateNode(t.Context(), &storage.Node{
 		ID:         "nornic:large-node",
 		Labels:     []string{"Document"},
 		Properties: map[string]any{"payload": strings.Repeat("x", 4096)},
@@ -226,7 +237,10 @@ func TestDatabaseManagerRestartDefersStorageSizeScan(t *testing.T) {
 	require.NoError(t, err)
 
 	engine := &startupStreamingEngine{MemoryEngine: base}
-	restarted, err := NewDatabaseManager(engine, nil)
+	engine.Engine = engine.MemoryEngine
+	engine.StoredEntityReader = engine.MemoryEngine
+	engine.ScopedStoredEntityReader = engine.MemoryEngine
+	restarted, err := NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
 	require.NotNil(t, restarted)
 	require.Zero(t, engine.nodeStreamCalls)
@@ -234,27 +248,46 @@ func TestDatabaseManagerRestartDefersStorageSizeScan(t *testing.T) {
 }
 
 func TestWriteDoesNotForceDeferredStorageSizeScanWithoutByteLimit(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	_, err := NewDatabaseManager(base, nil)
+	_, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	_, err = base.CreateNode(&storage.Node{ID: "nornic:existing", Labels: []string{"Document"}})
+	_, err = base.CreateNode(t.Context(), &storage.Node{ID: "nornic:existing", Labels: []string{"Document"}})
 	require.NoError(t, err)
 
 	engine := &startupStreamingEngine{MemoryEngine: base}
-	restarted, err := NewDatabaseManager(engine, nil)
+	engine.Engine = engine.MemoryEngine
+	engine.StoredEntityReader = engine.MemoryEngine
+	engine.ScopedStoredEntityReader = engine.MemoryEngine
+	restarted, err := NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
 	engine.prefixes = nil // Ignore the narrowly scoped leaked-metadata cleanup.
 	database, err := restarted.GetDefaultStorage()
 	require.NoError(t, err)
-	_, err = database.CreateNode(&storage.Node{ID: "new", Labels: []string{"Document"}})
+	_, err = database.CreateNode(t.Context(), &storage.Node{ID: "new", Labels: []string{"Document"}})
 	require.NoError(t, err)
 	require.Zero(t, engine.nodeStreamCalls)
 	require.Zero(t, engine.edgeStreamCalls)
 	require.Empty(t, engine.prefixes)
+	require.Zero(t, engine.snapshotNodeScans)
+	require.Zero(t, engine.snapshotEdgeScans)
 
-	total, _, _ := restarted.GetStorageSize(restarted.DefaultDatabaseName())
+	total, _, _ := restarted.GetStorageSize(context.Background(), restarted.DefaultDatabaseName())
 	require.Positive(t, total)
-	require.NotEmpty(t, engine.prefixes)
-	require.Equal(t, 1, engine.edgeStreamCalls)
+	require.Equal(t, 1, engine.snapshotNodeScans)
+	require.Equal(t, 1, engine.snapshotEdgeScans)
+	require.Zero(t, engine.allNodesCalls)
+	require.Zero(t, engine.allEdgesCalls)
+}
+
+// Storage sizing streams stored relationships (storage.StreamStoredEdgesByType
+// and its scoped form): the spy counts them as it counts StreamEdges.
+func (e *startupStreamingEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string, visit func(*storage.Edge) error) error {
+	e.edgeStreamCalls++
+	return e.MemoryEngine.StreamStoredEdgesByType(ctx, edgeType, visit)
+}
+
+func (e *startupStreamingEngine) StreamStoredEdgesByTypeInScope(ctx context.Context, scope, edgeType string, visit func(*storage.Edge) error) error {
+	e.edgeStreamCalls++
+	return e.MemoryEngine.StreamStoredEdgesByTypeInScope(ctx, scope, edgeType, visit)
 }

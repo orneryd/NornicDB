@@ -1,9 +1,9 @@
 package bolt
 
 import (
-	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
-	"fmt"
 	"testing"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -12,7 +12,7 @@ import (
 )
 
 func TestDatabaseManagerBoltExecuteWriteDeletesUnwindMatchedRelationship(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})
@@ -22,29 +22,8 @@ func TestDatabaseManagerBoltExecuteWriteDeletesUnwindMatchedRelationship(t *test
 		},
 		defaultDB: "nornic",
 	}
-	server := NewWithDatabaseManager(&Config{
-		Port:            0,
-		MaxConnections:  8,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}, &mockExecutor{}, mgr)
-	port := startBoltTestServer(t, server)
-
-	ctx := context.Background()
-	driver, err := neo4jdriver.NewDriverWithContext(
-		fmt.Sprintf("bolt://127.0.0.1:%d", port),
-		neo4jdriver.NoAuth(),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, driver.Close(context.Background()))
-	})
-	require.NoError(t, driver.VerifyConnectivity(ctx))
-
-	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode:   neo4jdriver.AccessModeWrite,
-		DatabaseName: "nornic",
-	})
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr, 8)
+	var err error
 	defer func() {
 		require.NoError(t, session.Close(ctx))
 	}()
@@ -201,28 +180,13 @@ ORDER BY s.uid, rel.evidence_source, t.uid`, nil)
 }
 
 func TestDatabaseManagerBoltExplicitTransactionPreservesBindingsAcrossUnwindMutationPipeline(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	mgr := &mockDBManager{
 		stores:    map[string]storage.Engine{"nornic": storage.NewNamespacedEngine(base, "nornic")},
 		defaultDB: "nornic",
 	}
-	server := NewWithDatabaseManager(&Config{
-		Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192,
-	}, &mockExecutor{}, mgr)
-	port := startBoltTestServer(t, server)
-
-	ctx := context.Background()
-	driver, err := neo4jdriver.NewDriverWithContext(
-		fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth(),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, driver.Close(context.Background())) })
-	require.NoError(t, driver.VerifyConnectivity(ctx))
-
-	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode: neo4jdriver.AccessModeWrite, DatabaseName: "nornic",
-	})
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr, 8)
 	defer func() { require.NoError(t, session.Close(ctx)) }()
 
 	seed, err := session.Run(ctx, "CREATE (:BugT {k: 0})", nil)

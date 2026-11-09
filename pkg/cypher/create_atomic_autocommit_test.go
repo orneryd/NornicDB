@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -122,33 +121,54 @@ func TestCreatePatternWritesWholePattern(t *testing.T) {
 	}
 }
 
-// edgeRejectingEngine rejects every relationship write, as a relationship
-// quota would, and is not transactional: the executor writes to it directly.
-type edgeRejectingEngine struct {
-	storage.Engine
-}
-
-var errEdgeRejected = errors.New("relationship rejected")
-
-func (e *edgeRejectingEngine) CreateEdge(*storage.Edge) error        { return errEdgeRejected }
-func (e *edgeRejectingEngine) BulkCreateEdges([]*storage.Edge) error { return errEdgeRejected }
-
-// When the relationships of a CREATE are rejected after its nodes were
-// written, the nodes are removed again: the statement writes nothing even on
-// storage without a transaction.
-func TestCreateRejectedRelationshipRemovesItsNodes(t *testing.T) {
-	base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	exec := NewStorageExecutor(&edgeRejectingEngine{Engine: base})
+// A relationship the storage owner rejects takes its statement's nodes with
+// it: the atomic owner rolls back everything the statement staged, so the
+// business outcome is the same as Neo4j's - the failing statement stores
+// nothing, its nodes included.
+//
+// The rejection is a real one: a unique relationship constraint the statement
+// violates (CREATE CONSTRAINT ... FOR ()-[r:REL]-() REQUIRE r.k IS UNIQUE).
+// The memory engine validates it when the statement commits, so the nodes and
+// the relationship of the rejected statement are already staged in the
+// transaction when the owner refuses the write. Replacing the former
+// non-transactional fake engine is deliberate: a local write statement now
+// runs inside one atomic owner, and only that owner's own rejection can be
+// observed truthfully.
+func TestCreateRejectedRelationshipWritesNothing(t *testing.T) {
 	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	_, err := exec.Execute(ctx, "CREATE CONSTRAINT rejected_rel_k FOR ()-[r:REL]-() REQUIRE r.k IS UNIQUE", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Seed {id: 's1'})-[:REL {k: 'dup'}]->(:Seed {id: 's2'})", nil)
+	require.NoError(t, err)
+
 	for _, stmt := range []string{
-		"CREATE (:T {id: 1})-[:R]->(:T {id: 2})",
-		"CREATE (a:T)-[:R]->(b:T), (b)-[:S]->(c:T)",
-		"CREATE (a:T) CREATE (a)-[:R]->(:T)",
+		"CREATE (:T {id: 1})-[:REL {k: 'dup'}]->(:T {id: 2})",
+		"CREATE (a:T)-[:REL {k: 'dup'}]->(b:T), (b)-[:REL {k: 'dup'}]->(c:T)",
+		"CREATE (a:T) CREATE (a)-[:REL {k: 'dup'}]->(:T)",
 	} {
 		_, err := exec.Execute(ctx, stmt, nil)
-		require.ErrorIs(t, err, errEdgeRejected, stmt)
-		count, err := base.NodeCount()
+		require.Error(t, err, stmt)
+		require.Contains(t, err.Error(), "UNIQUE on REL.[k]", stmt)
+		count, err := store.NodeCount(t.Context())
 		require.NoError(t, err)
-		assert.Zero(t, count, stmt)
+		require.Equal(t, int64(2), count, "the rejected statement kept none of its nodes: %s", stmt)
+		edges, err := store.AllEdges(ctx)
+		require.NoError(t, err)
+		require.Len(t, edges, 1, "the rejected statement wrote no relationship: %s", stmt)
+		require.Equal(t, "dup", edges[0].Properties["k"])
 	}
+
+	// Sensitivity control: the same statement shapes write when their
+	// relationship does not break the constraint, so the assertions above are
+	// not satisfied by a statement that never writes at all.
+	_, err = exec.Execute(ctx, "CREATE (:T {id: 3})-[:REL {k: 'fresh'}]->(:T {id: 4})", nil)
+	require.NoError(t, err)
+	count, err := store.NodeCount(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(4), count)
+	edges, err := store.AllEdges(ctx)
+	require.NoError(t, err)
+	require.Len(t, edges, 2)
 }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 
 func TestBadgerTransaction_PendingCreateNodeOperationIndexLocked(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -29,93 +30,80 @@ func TestBadgerTransaction_ConflictHelpers(t *testing.T) {
 	engine := newTestEngine(t)
 
 	// Seed a visible node/edge with current heads.
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"User"}, Properties: map[string]any{"email": "b@example.com"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"User"}, Properties: map[string]any{"email": "b@example.com"}})
 	require.NoError(t, err)
-	err = engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"})
+	err = engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
-	require.NoError(t, tx.SetDeferredConstraintValidation(true))
-	require.NoError(t, tx.SetSkipCreateExistenceCheck(true))
+	require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
+	require.NoError(t, tx.SetValidationSetting(SkipCreateCommitHeadReload, true))
 
 	// Old readTS to force SI conflicts against current heads.
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
 
-	err = tx.checkNodeCreateConflict("test:a")
+	err = tx.checkNodeCreateConflict(context.Background(), "test:a")
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
-	err = tx.checkEdgeCreateConflict("test:e1")
+	err = tx.checkEdgeWriteConflict(context.Background(), "test:e1", true)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
-	err = tx.checkEdgeWriteConflict("test:e1")
+	err = tx.checkEdgeWriteConflict(context.Background(), "test:e1", true)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
 	// Endpoint deleted-after-start branch -> conflict.
-	_, err = tx.CreateNode(&Node{ID: "test:c", Labels: []string{"User"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:c", Labels: []string{"User"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	tx2, err := engine.BeginTransaction()
+	tx2, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx2.SetNamespace("test"))
 	tx2.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
 	defer tx2.Rollback()
 
 	// Tombstone endpoint after tx2 readTS.
-	require.NoError(t, engine.DeleteNode("test:c"))
-	err = tx2.checkEdgeEndpointConflicts(&Edge{ID: "test:ec", StartNode: "test:c", EndNode: "test:b", Type: "REL"})
+	require.NoError(t, engine.DeleteNode(t.Context(), "test:c"))
+	err = tx2.checkEdgeEndpointConflicts(context.Background(), &Edge{ID: "test:ec", StartNode: "test:c", EndNode: "test:b", Type: "REL"})
 	require.Error(t, err)
 }
 
 func TestBadgerTransaction_GetNodesByLabelLocked_Branches(t *testing.T) {
-	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:u1", Labels: []string{"User"}})
-	require.NoError(t, err)
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetNamespace("test"))
-	defer tx.Rollback()
-
-	// readTS == zero branch.
-	nodes, err := tx.getNodesByLabelLocked("User")
-	require.NoError(t, err)
-	require.NotEmpty(t, nodes)
-
-	// readTS != zero branch.
-	tx.readTS = MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-	nodes, err = tx.getNodesByLabelLocked("User")
-	require.NoError(t, err)
-	require.NotEmpty(t, nodes)
+	runGetNodesByLabelLockedReadTSCases(t, []getNodesByLabelLockedReadTSCase{
+		{name: "pinned begin snapshot", nodeID: "test:u1", label: "User", namespace: "test"},
+		{name: "pinned explicit nonzero readTS", nodeID: "test:u1", label: "User", namespace: "test", readTS: func() MVCCVersion {
+			return MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
+		}},
+	})
 }
 
 func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"User"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"User"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"User"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"User"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
 
 	// Missing entities on create-conflict checks are non-conflicting.
-	require.NoError(t, tx.checkNodeCreateConflict("test:missing"))
-	require.NoError(t, tx.checkEdgeCreateConflict("test:missing"))
+	require.NoError(t, tx.checkNodeCreateConflict(context.Background(), "test:missing"))
+	require.NoError(t, tx.checkEdgeWriteConflict(context.Background(), "test:missing", true))
 	// Existing heads already visible to this transaction are also non-conflicting.
-	require.NoError(t, tx.checkNodeCreateConflict("test:n1"))
-	require.NoError(t, tx.checkEdgeCreateConflict("test:e"))
+	require.NoError(t, tx.checkNodeCreateConflict(context.Background(), "test:n1"))
+	require.NoError(t, tx.checkEdgeWriteConflict(context.Background(), "test:e", true))
 
 	// snapshotIsolationConflict orders by timestamp first: same sequence
 	// with a newer timestamp is a conflict.
@@ -136,44 +124,56 @@ func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
 	}))
 
 	// nil edge shortcut branch.
-	require.NoError(t, tx.checkEdgeEndpointConflicts(nil))
+	require.NoError(t, tx.checkEdgeEndpointConflicts(context.Background(), nil))
 
 	// Endpoint not found in either head/body => invalid edge.
-	err = tx.checkEdgeEndpointConflicts(&Edge{ID: "test:e-missing", StartNode: "test:missing", EndNode: "test:n2", Type: "REL"})
+	err = tx.checkEdgeEndpointConflicts(context.Background(), &Edge{ID: "test:e-missing", StartNode: "test:missing", EndNode: "test:n2", Type: "REL"})
 	require.ErrorIs(t, err, ErrInvalidEdge)
 }
 
-func TestBadgerTransaction_CheckNodeAdjacencyConflict_Branches(t *testing.T) {
-	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+func beginAdjacencyConflict(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
+	t.Helper()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
-	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(1)}}))
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	defer tx.Rollback()
+	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
+	return tx
+}
+
+func adjacencyConflictFixture(t *testing.T, edgeID EdgeID, properties map[string]any) *BadgerEngine {
+	t.Helper()
+	engine := newTestEngine(t)
+	for _, id := range []NodeID{"test:a", "test:b"} {
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"N"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: properties}))
+	return engine
+}
+
+func TestBadgerTransaction_CheckNodeAdjacencyConflict_Branches(t *testing.T) {
+	engine := adjacencyConflictFixture(t, "test:e1", map[string]any{"v": int64(1)})
+
+	tx := beginAdjacencyConflict(t, engine)
 
 	// Old read timestamp to force conflict after concurrent edge write.
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
-	require.NoError(t, engine.UpdateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(2)}}}))
 
-	err = tx.checkNodeAdjacencyConflict("test:a")
+	err := tx.checkNodeAdjacencyConflict(context.Background(), "test:a", nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrConflict)
 
 	// Node without dictionary/index entries uses empty-prefix path and should not fail.
-	require.NoError(t, tx.checkNodeAdjacencyConflict("test:missing"))
+	require.NoError(t, tx.checkNodeAdjacencyConflict(context.Background(), "test:missing", nil))
 }
 
 func TestBadgerTransaction_CheckNodeAdjacencyConflict_IgnoresStaleIndexEntries(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(func(view *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(view *badger.Txn) error {
 		prefix := engine.outgoingIndexPrefixString("test:a")
 		require.NotNil(t, prefix)
 		if err := view.Set(append(append([]byte{}, prefix...), []byte("bad")...), nil); err != nil {
@@ -191,23 +191,15 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_IgnoresStaleIndexEntries(t
 		return view.Set(missingHeadKey, nil)
 	}))
 
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	defer tx.Rollback()
-	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.checkNodeAdjacencyConflict("test:a"))
+	tx := beginAdjacencyConflict(t, engine)
+	require.NoError(t, tx.checkNodeAdjacencyConflict(context.Background(), "test:a", nil))
 }
 
 func TestBadgerTransaction_CheckNodeAdjacencyConflict_HeadDecodeErrorBranch(t *testing.T) {
-	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
-	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e-bad-head", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+	engine := adjacencyConflictFixture(t, "test:e-bad-head", nil)
 
 	// Corrupt the edge MVCC head so loadEdgeMVCCHeadInTxn returns a decode error.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		headKey, err := engine.mvccEdgeHeadKeyString(txn, "test:e-bad-head")
 		if err != nil {
 			return err
@@ -215,23 +207,20 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_HeadDecodeErrorBranch(t *t
 		return txn.Set(headKey, []byte{0x01})
 	}))
 
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	defer tx.Rollback()
-	require.NoError(t, tx.SetNamespace("test"))
+	tx := beginAdjacencyConflict(t, engine)
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
 
-	err = tx.checkNodeAdjacencyConflict("test:a")
+	err := tx.checkNodeAdjacencyConflict(context.Background(), "test:a", nil)
 	require.Error(t, err)
 }
 
 func TestBadgerTransaction_CheckEdgeUniqueness_CompositeMissingPropertyBranches(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID:         "test:e1",
 		StartNode:  "test:a",
 		EndNode:    "test:b",
@@ -239,7 +228,7 @@ func TestBadgerTransaction_CheckEdgeUniqueness_CompositeMissingPropertyBranches(
 		Properties: map[string]any{"k1": "v1", "k2": "v2"},
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -263,16 +252,16 @@ func TestBadgerTransaction_CheckEdgeUniqueness_CompositeMissingPropertyBranches(
 		Type:       "REL",
 		Properties: map[string]any{"k1": "v1", "k2": "x"},
 	}
-	require.NoError(t, tx.checkEdgeUniqueness(candidate, c, "test"))
+	require.NoError(t, tx.checkEdgeUniqueness(context.Background(), candidate, c, "test"))
 
 	// Committed-edge branch (allPresent=false => nil).
 	tx.pendingEdges = map[EdgeID]*Edge{}
-	require.NoError(t, tx.checkEdgeUniqueness(candidate, c, "test"))
+	require.NoError(t, tx.checkEdgeUniqueness(context.Background(), candidate, c, "test"))
 }
 
 func TestBadgerTransaction_NodeConstraintExtraBranches(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -293,7 +282,7 @@ func TestBadgerTransaction_NodeConstraintExtraBranches(t *testing.T) {
 	}))
 
 	// Domain constraint branch: disallowed value.
-	err = tx.validateNodeConstraints(&Node{
+	err = tx.validateNodeConstraints(context.Background(), &Node{
 		ID:         "test:u1",
 		Labels:     []string{"User"},
 		Properties: map[string]any{"status": "bad"},
@@ -306,7 +295,7 @@ func TestBadgerTransaction_NodeConstraintExtraBranches(t *testing.T) {
 		Labels:     []string{"User"},
 		Properties: map[string]any{"tenant": "t1", "email": "other@example.com"},
 	}
-	err = tx.checkNodeKeyConstraint(&Node{
+	err = tx.checkNodeKeyConstraint(context.Background(), &Node{
 		ID:         "test:u3",
 		Labels:     []string{"User"},
 		Properties: map[string]any{"tenant": "t1", "email": "u3@example.com"},
@@ -316,14 +305,14 @@ func TestBadgerTransaction_NodeConstraintExtraBranches(t *testing.T) {
 
 func TestBadgerTransaction_BulkCreateEdges_NodeVisibleDeletedBranch(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 
 	require.NoError(t, tx.SetNamespace("test"))
 	tx.deletedNodes["test:deleted"] = struct{}{}
 
-	err = tx.BulkCreateEdges([]*Edge{{
+	err = tx.BulkCreateEdges(t.Context(), []*Edge{{
 		ID:        "test:e-del",
 		StartNode: "test:deleted",
 		EndNode:   "test:other",
@@ -334,12 +323,11 @@ func TestBadgerTransaction_BulkCreateEdges_NodeVisibleDeletedBranch(t *testing.T
 }
 
 func TestBadgerTransaction_PinNamespaceFromIDLocked_RefreshFailureBranch(t *testing.T) {
-	engine := NewMemoryEngine()
-	t.Cleanup(func() { _ = engine.Close() })
+	engine := newTestMemoryEngine(t)
 	controller := &txLifecycleControllerStub{enabled: true, err: ErrMVCCResourcePressure}
 	engine.SetLifecycleController(controller)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	defer tx.Rollback()
@@ -353,20 +341,20 @@ func TestBadgerTransaction_PinNamespaceFromIDLocked_RefreshFailureBranch(t *test
 
 func TestBadgerTransaction_Commit_OperationCallbacksMatrix(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:s", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:s", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:e", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:e", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:cm-node-delete", Labels: []string{"User"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:cm-node-delete", Labels: []string{"User"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID:        "test:cm-edge-deleted-with-node",
 		StartNode: "test:cm-node-delete",
 		EndNode:   "test:e",
 		Type:      "REL",
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -428,7 +416,7 @@ func TestBadgerTransaction_Commit_OperationCallbacksMatrix(t *testing.T) {
 
 func TestBadgerTransaction_Commit_WritesWithoutNamespaceBranch(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -439,4 +427,23 @@ func TestBadgerTransaction_Commit_WritesWithoutNamespaceBranch(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no pinned namespace")
 	require.Equal(t, TxStatusRolledBack, tx.Status)
+}
+
+func TestAdjacencyConflictIgnoresPreviouslyDeletedUnstagedRelationship(t *testing.T) {
+	engine := adjacencyConflictFixture(t, "test:stale", nil)
+	key := append([]byte(nil), engine.outgoingIndexKeyStringLookup("test:a", "test:stale")...)
+	require.NotEmpty(t, key)
+	require.NoError(t, engine.DeleteEdge(t.Context(), "test:stale"))
+	// Retain an obsolete index entry, not a relationship body. Integrity
+	// enumeration must not turn this into a predecessor the frame removes.
+	require.NoError(t, engine.withUpdate(t.Context(), updateRequest{}, func(view *badger.Txn) error {
+		return view.Set(key, nil)
+	}))
+	tx := beginAdjacencyConflict(t, engine)
+	require.NoError(t, tx.checkNodeAdjacencyConflict(t.Context(), "test:a", nil))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
+	require.NoError(t, tx.Commit())
+	count, err := engine.EdgeCountByType(t.Context(), "REL")
+	require.NoError(t, err)
+	require.Zero(t, count)
 }

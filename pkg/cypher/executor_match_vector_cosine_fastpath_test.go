@@ -24,7 +24,7 @@ type blockingNodeIteratorEngine struct {
 func (e *blockingNodeIteratorEngine) IterateNodes(fn func(*storage.Node) bool) error {
 	e.enteredOnce.Do(func() { close(e.entered) })
 	<-e.release
-	nodes, err := e.Engine.AllNodes()
+	nodes, err := e.Engine.AllNodes(context.Background())
 	if err != nil {
 		return err
 	}
@@ -36,6 +36,11 @@ func (e *blockingNodeIteratorEngine) IterateNodes(fn func(*storage.Node) bool) e
 	return nil
 }
 
+// projectedCountingEngine counts the executor's direct node reads and records
+// the property projections they ask for. It adds no behavior of its own, so it
+// is a transparent decorator and exposes the canonical
+// storage.EngineUnwrapper accessor: a write statement opens its transaction on
+// the engine underneath, and read statements keep counting through this probe.
 type projectedCountingEngine struct {
 	storage.Engine
 	projectedCalls int
@@ -43,19 +48,22 @@ type projectedCountingEngine struct {
 	projectedProps [][]string
 }
 
-func (e *projectedCountingEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+// GetInnerEngine is the canonical EngineUnwrapper accessor.
+func (e *projectedCountingEngine) GetInnerEngine() storage.Engine { return e.Engine }
+
+func (e *projectedCountingEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	e.getNodeCalls++
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
-func (e *projectedCountingEngine) GetNodeProjected(id storage.NodeID, properties []string) (*storage.Node, error) {
+func (e *projectedCountingEngine) GetNodeProjected(ctx context.Context, id storage.NodeID, properties []string) (*storage.Node, error) {
 	e.projectedCalls++
 	props := append([]string(nil), properties...)
 	e.projectedProps = append(e.projectedProps, props)
 	if reader, ok := e.Engine.(storage.ProjectedNodeReader); ok {
-		return reader.GetNodeProjected(id, properties)
+		return reader.GetNodeProjected(ctx, id, properties)
 	}
-	node, err := e.Engine.GetNode(id)
+	node, err := e.Engine.GetNode(ctx, id)
 	if err != nil || node == nil {
 		return node, err
 	}
@@ -98,22 +106,33 @@ func TestMatchVectorCosineFastPath_UsesVectorIndex(t *testing.T) {
 	require.True(t, trace.CosineVectorIndexFastPath)
 }
 
-func TestMatchVectorCosineFastPath_DoesNotCreateSearchServiceWhenUnwired(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	ns := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(ns)
-	ctx := context.Background()
-
-	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(t, err)
+func TestMatchVectorCosineFastPath_ServiceAndOrdering(t *testing.T) {
+	var unwiredSeeds []string
 	for i := 0; i < 12; i++ {
 		vec := []float64{0, 0, 0, 0}
 		vec[i%4] = 1
-		_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:Entity {uuid:'e-%02d', group_id:'g', name_embedding:%s})", i, formatInlineFloat64Vector(vec)), nil)
-		require.NoError(t, err)
+		unwiredSeeds = append(unwiredSeeds, fmt.Sprintf("CREATE (:Entity {uuid:'e-%02d', group_id:'g', name_embedding:%s})", i, formatInlineFloat64Vector(vec)))
 	}
-
-	query := `
+	type expectedRow struct {
+		id       string
+		hasScore bool
+		score    float64
+		message  string
+	}
+	tests := []struct {
+		name, index, query string
+		seeds              []string
+		params             map[string]interface{}
+		queries, rows      int
+		attachedDimensions int
+		requireNilService  bool
+		expected           []expectedRow
+	}{
+		{
+			name:  "unwired service",
+			index: "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}",
+			seeds: unwiredSeeds,
+			query: `
 MATCH (n:Entity)
 WHERE n.group_id = $group_id
 WITH n, vector.similarity.cosine(n.name_embedding, $search_vector) AS score
@@ -121,44 +140,73 @@ WHERE score > $min_score
 RETURN n.uuid AS uuid, score
 ORDER BY score DESC
 LIMIT $limit
-`
-	params := map[string]interface{}{
-		"group_id":      "g",
-		"search_vector": []float64{1, 0, 0, 0},
-		"min_score":     -1.0,
-		"limit":         5,
+`,
+			params:  map[string]interface{}{"group_id": "g", "search_vector": []float64{1, 0, 0, 0}, "min_score": -1.0, "limit": 5},
+			queries: 5, rows: 5, requireNilService: true,
+		},
+		{
+			name:    "mismatched service",
+			index:   "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}",
+			seeds:   []string{"CREATE (:Entity {uuid:'e-1', name_embedding:[1.0,0.0,0.0,0.0]})"},
+			query:   "MATCH (n:Entity) WITH n, vector.similarity.cosine(n.name_embedding, $q) AS score RETURN n.uuid AS uuid, score ORDER BY score DESC LIMIT 1",
+			params:  map[string]interface{}{"q": []float64{1, 0, 0, 0}},
+			queries: 1, rows: 1, attachedDimensions: 3, expected: []expectedRow{{id: "e-1"}},
+		},
+		{
+			name:  "ascending order",
+			index: "CREATE VECTOR INDEX item_emb_idx FOR (n:Item) ON (n.emb) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}",
+			seeds: []string{
+				"CREATE (:Item {uuid:'a', emb:[1.0,0.0,0.0]})",
+				"CREATE (:Item {uuid:'b', emb:[0.0,1.0,0.0]})",
+				"CREATE (:Item {uuid:'c', emb:[-1.0,0.0,0.0]})",
+			},
+			query:   "MATCH (n:Item) RETURN n.uuid AS uuid, vector.similarity.cosine(n.emb, $q) AS score ORDER BY score ASC LIMIT 2",
+			params:  map[string]interface{}{"q": []float64{1.0, 0.0, 0.0}},
+			queries: 1, rows: 2,
+			expected: []expectedRow{{id: "c", hasScore: true, score: 0.0, message: "opposite: Neo4j's cosine score 0"}, {id: "b", hasScore: true, score: 0.5, message: "orthogonal: Neo4j's cosine score 0.5"}},
+		},
 	}
-
-	for i := 0; i < 5; i++ {
-		res, err := exec.Execute(ctx, fmt.Sprintf("%s /* query_%d */", query, i), params)
-		require.NoError(t, err)
-		require.Len(t, res.Rows, 5)
-		require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
-		require.Nil(t, exec.searchService, "query-time vector cosine fast path must not allocate a throwaway search service")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			base := newTestMemoryEngine(t)
+			ns := storage.NewNamespacedEngine(base, "test")
+			exec := NewStorageExecutor(ns)
+			ctx := context.Background()
+			var attached *search.Service
+			if tc.attachedDimensions != 0 {
+				attached = search.NewService(ns, tc.attachedDimensions, nil)
+				exec.SetSearchService(attached)
+			}
+			_, err := exec.Execute(ctx, tc.index, nil)
+			require.NoError(t, err)
+			for _, seed := range tc.seeds {
+				_, err = exec.Execute(ctx, seed, nil)
+				require.NoError(t, err)
+			}
+			for i := 0; i < tc.queries; i++ {
+				query := tc.query
+				if tc.queries > 1 {
+					query = fmt.Sprintf("%s /* query_%d */", query, i)
+				}
+				res, err := exec.Execute(ctx, query, tc.params)
+				require.NoError(t, err)
+				require.Len(t, res.Rows, tc.rows)
+				for index, row := range tc.expected {
+					require.Equal(t, row.id, res.Rows[index][0])
+					if row.hasScore {
+						require.EqualValues(t, row.score, res.Rows[index][1], row.message)
+					}
+				}
+				require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
+				if tc.requireNilService {
+					require.Nil(t, exec.search(), "query-time vector cosine fast path must not allocate a throwaway search service")
+				}
+				if attached != nil {
+					require.Same(t, attached, exec.search(), "dimension mismatch should fall back to exact scoring, not replace the DB-owned search service")
+				}
+			}
+		})
 	}
-}
-
-func TestMatchVectorCosineFastPath_DoesNotReplaceMismatchedSearchService(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	ns := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(ns)
-	ctx := context.Background()
-
-	attached := search.NewServiceWithDimensions(ns, 3)
-	exec.SetSearchService(attached)
-
-	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'e-1', name_embedding:[1.0,0.0,0.0,0.0]})", nil)
-	require.NoError(t, err)
-
-	query := "MATCH (n:Entity) WITH n, vector.similarity.cosine(n.name_embedding, $q) AS score RETURN n.uuid AS uuid, score ORDER BY score DESC LIMIT 1"
-	res, err := exec.Execute(ctx, query, map[string]interface{}{"q": []float64{1, 0, 0, 0}})
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 1)
-	require.Equal(t, "e-1", res.Rows[0][0])
-	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
-	require.Same(t, attached, exec.searchService, "dimension mismatch should fall back to exact scoring, not replace the DB-owned search service")
 }
 
 func TestMatchVectorCosineFastPath_RequiresMatchingIndex(t *testing.T) {
@@ -200,7 +248,7 @@ func TestMatchWithVectorCosineProjection_PreWhereFilterUsesExactCandidateSet(t *
 		require.NoError(t, err)
 	}
 
-	searchService := search.NewServiceWithDimensions(ns, 3)
+	searchService := search.NewService(ns, 3, nil)
 	exec.SetSearchService(searchService)
 	require.NoError(t, searchService.BuildIndexes(ctx))
 
@@ -243,7 +291,7 @@ func TestMatchVectorCosineFastPath_FilteredDirectAndInlinePatternsApplyTopK(t *t
 		_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:LimitProbe {id:'p%d', group:'selected', embedding:[%.1f,%.1f]})", index, float64(index)/10, 1-float64(index)/10), nil)
 		require.NoError(t, err)
 	}
-	searchService := search.NewServiceWithDimensions(ns, 2)
+	searchService := search.NewService(ns, 2, nil)
 	exec.SetSearchService(searchService)
 	require.NoError(t, searchService.BuildIndexes(ctx))
 
@@ -281,7 +329,7 @@ func BenchmarkMatchWithVectorCosineProjection_PreWhereFilterExactCandidates(b *t
 		_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:Evidence {id:'wanted-%03d', asset_id:'wanted', embedding:[%.2f,1.0,0.0]})", index, score), nil)
 		require.NoError(b, err)
 	}
-	searchService := search.NewServiceWithDimensions(ns, 3)
+	searchService := search.NewService(ns, 3, nil)
 	exec.SetSearchService(searchService)
 	require.NoError(b, searchService.BuildIndexes(ctx))
 
@@ -351,7 +399,7 @@ func TestMatchVectorCosineFastPath_WriteThenSearchLoop_NoScanRegression(t *testi
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX item_emb_idx FOR (n:Item) ON (n.emb) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, 3)
+	searchSvc := search.NewService(ns, 3, nil)
 	exec.SetSearchService(searchSvc)
 
 	_, err = exec.Execute(ctx, "CREATE (:Item {uuid:'seed', emb:[1.0,0.0,0.0]})", nil)
@@ -397,7 +445,7 @@ func TestMatchVectorCosineFastPath_LazyWiredServiceUsesLiveIndexWithoutWarmup(t 
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, 4)
+	searchSvc := search.NewService(ns, 4, nil)
 	var warmCalls int32
 	searchSvc.SetLazyWarming(true, search.WarmFunc(func() {
 		atomic.AddInt32(&warmCalls, 1)
@@ -456,10 +504,10 @@ func TestMatchVectorCosineFastPath_FileBackedPropertyVectors(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'other', group_id:'g', name:'NornicDB', name_embedding:[0.0,1.0,0.0,0.0]})", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, 4)
+	searchSvc := search.NewService(ns, 4, nil)
 	searchSvc.SetPersistenceEnabled(true)
-	t.Cleanup(func() { searchSvc.SetPersistenceEnabled(false) })
 	searchSvc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
+	t.Cleanup(func() { require.NoError(t, searchSvc.Close()) })
 	require.NoError(t, searchSvc.BuildIndexes(ctx))
 	require.True(t, searchSvc.IsReady())
 	require.Equal(t, 2, searchSvc.CountPropertyVectorEntries("name_embedding"))
@@ -502,7 +550,7 @@ func TestMatchVectorCosineFastPath_ProjectedNodeReadSkipsVectorProperty(t *testi
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(projected, 4)
+	searchSvc := search.NewService(projected, 4, nil)
 	exec.SetSearchService(searchSvc)
 
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'best', group_id:'g', name_embedding:[1.0,0.0,0.0,0.0]})", nil)
@@ -580,7 +628,7 @@ func TestMatchVectorCosineFastPath_UsesLiveIndexDuringBackgroundWarmup(t *testin
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(blocking, 4)
+	searchSvc := search.NewService(blocking, 4, nil)
 	exec.SetSearchService(searchSvc)
 
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'best', group_id:'g', name_embedding:[1.0,0.0,0.0,0.0]})", nil)
@@ -652,7 +700,7 @@ func TestMatchVectorCosineFastPath_ExternalEmbeddingsUseLiveIndexBeforeReady(t *
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, 4)
+	searchSvc := search.NewService(ns, 4, nil)
 	exec.SetSearchService(searchSvc)
 
 	for i := 0; i < 16; i++ {
@@ -761,32 +809,6 @@ func TestTryFastPathMatchVectorCosine_HandlesAscendingOrder(t *testing.T) {
 	require.EqualValues(t, 1.0, result.Rows[1][0])
 }
 
-func TestMatchVectorCosineFastPath_AscendingOrderWithParamVector(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	ns := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(ns)
-	ctx := context.Background()
-
-	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX item_emb_idx FOR (n:Item) ON (n.emb) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE (:Item {uuid:'a', emb:[1.0,0.0,0.0]})", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE (:Item {uuid:'b', emb:[0.0,1.0,0.0]})", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE (:Item {uuid:'c', emb:[-1.0,0.0,0.0]})", nil)
-	require.NoError(t, err)
-
-	query := "MATCH (n:Item) RETURN n.uuid AS uuid, vector.similarity.cosine(n.emb, $q) AS score ORDER BY score ASC LIMIT 2"
-	res, err := exec.Execute(ctx, query, map[string]interface{}{"q": []float64{1.0, 0.0, 0.0}})
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 2)
-	require.Equal(t, "c", res.Rows[0][0])
-	require.EqualValues(t, 0.0, res.Rows[0][1], "opposite: Neo4j's cosine score 0")
-	require.Equal(t, "b", res.Rows[1][0])
-	require.EqualValues(t, 0.5, res.Rows[1][1], "orthogonal: Neo4j's cosine score 0.5")
-	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
-}
-
 func TestMatchVectorCosineFastPath_WithProjectionShape_UsesVectorIndex(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
@@ -842,7 +864,7 @@ func TestMatchVectorCosineFastPath_WithProjection_WriteThenSearchLoop_NoScanRegr
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX chunk_emb_idx FOR (c:Chunk) ON (c.emb) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, 3)
+	searchSvc := search.NewService(ns, 3, nil)
 	exec.SetSearchService(searchSvc)
 
 	_, err = exec.Execute(ctx, "CREATE (:Chunk {uuid:'seed', emb:[1.0,0.0,0.0], group_id:'g'})", nil)
@@ -884,8 +906,8 @@ LIMIT $k`
 
 func TestFindCosineVectorIndexName_DisambiguatesByEntityType(t *testing.T) {
 	schema := storage.NewSchemaManager()
-	require.NoError(t, schema.AddVectorIndexForEntity("a_rel_idx", "Thing", "emb", 3, "cosine", storage.ConstraintEntityRelationship))
-	require.NoError(t, schema.AddVectorIndexForEntity("z_node_idx", "Thing", "emb", 3, "cosine", storage.ConstraintEntityNode))
+	require.NoError(t, schema.AddVectorIndex("a_rel_idx", "Thing", "emb", 3, "cosine", storage.ConstraintEntityRelationship))
+	require.NoError(t, schema.AddVectorIndex("z_node_idx", "Thing", "emb", 3, "cosine", storage.ConstraintEntityNode))
 
 	nodeIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityNode)
 	require.True(t, ok)

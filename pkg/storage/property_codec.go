@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -19,7 +20,8 @@ const (
 	storageVersionV1              = 1
 	storageVersionPropKeyDictV2   = 2
 	storageVersionEdgeAdjacencyV3 = 3
-	storageVersionCurrent         = storageVersionEdgeAdjacencyV3
+	storageVersionCatalogV4       = 4
+	storageVersionCurrent         = storageVersionCatalogV4
 )
 
 // Format-byte tokens for tokenized bodies. Both are reserved so they
@@ -59,6 +61,12 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 	scratch := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(scratch, uint64(len(props)))
 	buf.Write(scratch[:n])
+	if len(props) == 0 {
+		return buf.Bytes(), nil
+	}
+	encoder := msgpack.GetEncoder()
+	defer msgpack.PutEncoder(encoder)
+	var valueBuf bytes.Buffer
 	for name, val := range props {
 		id, err := b.propKeyDict.resolveOrAllocateInTxn(txn, namespace, name)
 		if err != nil {
@@ -66,26 +74,44 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 		}
 		n := binary.PutUvarint(scratch, id)
 		buf.Write(scratch[:n])
-		valBytes, err := msgpack.Marshal(encodeStoredTemporalValue(val))
-		if err != nil {
-			return nil, fmt.Errorf("marshaling property %q value: %w", name, err)
+		// Each value gets its own empty writer, as with Marshal: a custom
+		// typed-property encoder can use or reset that writer without
+		// changing the surrounding tokenized body. Reuse its capacity.
+		valueBuf.Reset()
+		encoder.Reset(&valueBuf)
+		converted := encodeStoredTemporalValue(val)
+		var encodeErr error
+		if isSimplePropertyEncoding(val) {
+			encodeErr = encoder.Encode(converted)
+		} else {
+			switch val.(type) {
+			case []any, map[string]any:
+				// A custom value nested in a collection must not share the
+				// collection's writer or encoder state with its siblings.
+				needsIsolation, err := inspectPropertyEncoding(val, 0, -1)
+				if err != nil {
+					return nil, fmt.Errorf("marshaling property %q value: %w", name, err)
+				}
+				if needsIsolation {
+					encodeErr = encodeIsolatedPropertyValue(encoder, converted, 0, -1)
+				} else {
+					encodeErr = encoder.Encode(converted)
+				}
+			default:
+				encodeErr = encoder.Encode(converted)
+				if encodeErr == nil {
+					if err := validateMessagePackValue(valueBuf.Bytes()); err != nil {
+						encodeErr = fmt.Errorf("invalid MessagePack value: %w: %w", ErrInvalidData, err)
+					}
+				}
+			}
 		}
-		buf.Write(valBytes)
+		if encodeErr != nil {
+			return nil, fmt.Errorf("marshaling property %q value: %w", name, encodeErr)
+		}
+		buf.Write(valueBuf.Bytes())
 	}
 	return buf.Bytes(), nil
-}
-
-// decodeTokenizedProperties reverses encodeTokenizedProperties using
-// the dictionary's in-memory reverse map. Returns an empty map (not
-// nil) when the payload is absent so callers can range over the result
-// without nil-checking.
-//
-// The decoder pairs a homegrown varint reader for the IDs with a
-// streaming msgpack decoder for the values. We keep the byte-level
-// position tracking explicit because we need to alternate between the
-// two encodings without re-creating the decoder per pair.
-func (b *BadgerEngine) decodeTokenizedProperties(namespace string, data []byte) (map[string]any, error) {
-	return b.decodeTokenizedPropertiesProjected(namespace, data, nil)
 }
 
 func propertyProjectionSet(properties []string) map[string]struct{} {
@@ -99,7 +125,23 @@ func propertyProjectionSet(properties []string) map[string]struct{} {
 	return out
 }
 
-func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data []byte, include map[string]struct{}) (map[string]any, error) {
+// decodeTokenizedPropertiesProjected reverses encodeTokenizedProperties using
+// the name authority of the caller's view. txn is the Badger transaction whose
+// snapshot the body was read from: each stored token resolves to the reverse
+// entry that snapshot holds, so a namespace a DROP emptied and re-created
+// cannot rename the properties of a body stored before it. A nil txn is the
+// context-free standalone boundary - a body that belongs to no stored
+// snapshot, such as the one a write has just encoded - and resolves through the
+// in-memory dictionary.
+//
+// Returns an empty map (not nil) when the payload is absent so callers can
+// range over the result without nil-checking.
+//
+// The decoder pairs a homegrown varint reader for the IDs with a
+// streaming msgpack decoder for the values. We keep the byte-level
+// position tracking explicit because we need to alternate between the
+// two encodings without re-creating the decoder per pair.
+func (b *BadgerEngine) decodeTokenizedPropertiesProjected(txn *badger.Txn, namespace string, data []byte, include map[string]struct{}) (map[string]any, error) {
 	if len(data) == 0 {
 		return map[string]any{}, nil
 	}
@@ -108,6 +150,13 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 		return nil, fmt.Errorf("decoding tokenized properties: count varint: %w", err)
 	}
 	rest := data[consumed:]
+	// Each entry requires at least a one-byte key token and one value byte.
+	// Cap preallocation by the remaining payload, then parse normally so a
+	// malformed key or truncated value retains its precise diagnostic.
+	outSize := len(rest) / 2
+	if count < uint64(outSize) {
+		outSize = int(count)
+	}
 
 	reader := bytes.NewReader(rest)
 	// Pooled: a scan decodes this once per node, and a new decoder per node
@@ -115,7 +164,6 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 	dec := msgpack.GetDecoder()
 	dec.Reset(reader)
 	defer msgpack.PutDecoder(dec)
-	outSize := int(count)
 	if include != nil && len(include) < outSize {
 		outSize = len(include)
 	}
@@ -138,8 +186,11 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 		if _, err := reader.Seek(int64(n), io.SeekCurrent); err != nil {
 			return nil, fmt.Errorf("decoding tokenized properties: advance past key %d: %w", i, err)
 		}
-		name, ok := b.propKeyDict.lookup(namespace, id)
-		if !ok {
+		name, found, err := b.readStoredBinding(txn, storedBinding{kind: propertyNameBinding, namespace: namespace, number: id})
+		if err != nil {
+			return nil, fmt.Errorf("reading property key id %d for namespace %q: %w", id, namespace, err)
+		}
+		if !found {
 			return nil, fmt.Errorf("property key id %d not in dictionary for namespace %q", id, namespace)
 		}
 		if include != nil {
@@ -162,24 +213,65 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 	return out, nil
 }
 
+// encodeStoredTemporalValue wraps every time.Time reachable through
+// []interface{} and map[string]interface{} values as storedTime.
 func encodeStoredTemporalValue(value any) any {
-	switch value := value.(type) {
+	converted, _ := storedTemporalValue(value)
+	return converted
+}
+
+// storedTemporalValue is encodeStoredTemporalValue that also reports whether
+// anything was wrapped. A list or map is copied only when something inside it
+// changes, so a value without temporal content is returned as it is and the
+// input is never mutated. A nil list or map counts as changed and becomes an
+// empty one: the encoded form has always been an empty collection, not nil.
+func storedTemporalValue(original any) (any, bool) {
+	switch value := original.(type) {
 	case time.Time:
-		return storedTime{value: value}
+		return storedTime{value: value}, true
 	case []interface{}:
-		result := make([]interface{}, len(value))
+		if value == nil {
+			return []interface{}{}, true
+		}
+		var result []interface{}
 		for index, item := range value {
-			result[index] = encodeStoredTemporalValue(item)
+			converted, changed := storedTemporalValue(item)
+			if changed && result == nil {
+				result = make([]interface{}, len(value))
+				copy(result, value[:index])
+			}
+			if result != nil {
+				result[index] = converted
+			}
 		}
-		return result
+		if result == nil {
+			return original, false
+		}
+		return result, true
 	case map[string]interface{}:
-		result := make(map[string]interface{}, len(value))
-		for key, item := range value {
-			result[key] = encodeStoredTemporalValue(item)
+		if value == nil {
+			return map[string]interface{}{}, true
 		}
-		return result
+		var result map[string]interface{}
+		for key, item := range value {
+			converted, changed := storedTemporalValue(item)
+			if !changed {
+				continue
+			}
+			if result == nil {
+				result = make(map[string]interface{}, len(value))
+				for k, v := range value {
+					result[k] = v
+				}
+			}
+			result[key] = converted
+		}
+		if result == nil {
+			return original, false
+		}
+		return result, true
 	default:
-		return value
+		return original, false
 	}
 }
 
@@ -228,6 +320,20 @@ func decodeStrictTypedValue(dec *msgpack.Decoder) (any, error) {
 	if msgpcode.IsFixedMap(code) || code == msgpcode.Map16 || code == msgpcode.Map32 {
 		return decodeStrictTypedMap(dec)
 	}
+	// Every integer reads as int64, as Cypher integers are, whatever code
+	// msgpack stored it in (a Go int takes the narrowest that holds it, and
+	// Uint64 above 2^32-1); only a value above MaxInt64 stays uint64.
+	if isIntegerCode(code) {
+		var signed int64
+		overflow, err := decodePropertyInteger(dec, code, &signed)
+		if err != nil {
+			return nil, err
+		}
+		if overflow != nil {
+			return overflow, nil
+		}
+		return signed, nil
+	}
 	// DecodeInterface is the msgpack package's hand-written scalar path.
 	// Decode(&any) routes through reflection and dominates large property
 	// arrays such as Graphiti embedding vectors.
@@ -242,6 +348,9 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateMessagePackCollection(dec, n, 1); err != nil {
+		return nil, err
+	}
 	if n <= 0 {
 		return []interface{}{}, nil
 	}
@@ -252,232 +361,172 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 	switch {
 	case firstCode == msgpcode.Double:
 		return decodeFloat64Array(dec, n)
-	case isSignedIntegerCode(firstCode):
-		return decodeInt64Array(dec, n)
-	case isUnsignedIntegerCode(firstCode):
-		return decodeUint64Array(dec, n)
+	case firstCode == msgpcode.Float:
+		out := make([]float32, n)
+		i, err := walkTypedArray(dec, out, func(dec *msgpack.Decoder, slot *float32) error {
+			code, err := dec.PeekCode()
+			if err != nil {
+				return err
+			}
+			if code != msgpcode.Float {
+				return errTypedArrayMismatch
+			}
+			value, err := dec.DecodeFloat32()
+			*slot = value
+			return err
+		})
+		if i == len(out) {
+			return out, nil
+		}
+		return finishMixedArray(dec, out[:i], nil, len(out), err)
+	case isIntegerCode(firstCode):
+		out := make([]int64, n)
+		var alternate any
+		i, err := walkTypedArray(dec, out, func(dec *msgpack.Decoder, slot *int64) error {
+			code, err := dec.PeekCode()
+			if err != nil {
+				return err
+			}
+			if !isIntegerCode(code) {
+				return errTypedArrayMismatch
+			}
+			overflow, err := decodePropertyInteger(dec, code, slot)
+			alternate = overflow
+			if err != nil {
+				return err
+			}
+			if overflow != nil {
+				return errTypedArrayMismatch
+			}
+			return nil
+		})
+		if i == len(out) {
+			return out, nil
+		}
+		return finishMixedArray(dec, out[:i], alternate, len(out), err)
 	case msgpcode.IsString(firstCode):
-		return decodeStringArray(dec, n)
+		out := make([]string, n)
+		i, err := walkTypedArray(dec, out, func(dec *msgpack.Decoder, slot *string) error {
+			code, err := dec.PeekCode()
+			if err != nil {
+				return err
+			}
+			if !msgpcode.IsString(code) {
+				return errTypedArrayMismatch
+			}
+			value, err := dec.DecodeString()
+			*slot = value
+			return err
+		})
+		if i == len(out) {
+			return out, nil
+		}
+		return finishMixedArray(dec, out[:i], nil, len(out), err)
 	case firstCode == msgpcode.False || firstCode == msgpcode.True:
-		return decodeBoolArray(dec, n)
+		out := make([]bool, n)
+		i, err := walkTypedArray(dec, out, func(dec *msgpack.Decoder, slot *bool) error {
+			code, err := dec.PeekCode()
+			if err != nil {
+				return err
+			}
+			if code-msgpcode.False > msgpcode.True-msgpcode.False {
+				return errTypedArrayMismatch
+			}
+			value, err := dec.DecodeBool()
+			*slot = value
+			return err
+		})
+		if i == len(out) {
+			return out, nil
+		}
+		return finishMixedArray(dec, out[:i], nil, len(out), err)
 	}
 
-	// Decode the first element to learn the homogeneous kind candidate.
-	first, err := decodeStrictTypedValue(dec)
-	if err != nil {
-		return nil, err
-	}
-	switch first.(type) {
-	case float64:
-		out := make([]float64, n)
-		out[0] = first.(float64)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			f, ok := next.(float64)
-			if !ok {
-				// Mixed array. Rebuild as []interface{}, keeping previously
-				// decoded values, and decode the remainder loosely.
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-			}
-			out[i] = f
-		}
-		return out, nil
-	case int64:
-		out := make([]int64, n)
-		out[0] = first.(int64)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			v, ok := next.(int64)
-			if !ok {
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-			}
-			out[i] = v
-		}
-		return out, nil
-	case uint64:
-		out := make([]uint64, n)
-		out[0] = first.(uint64)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			v, ok := next.(uint64)
-			if !ok {
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-			}
-			out[i] = v
-		}
-		return out, nil
-	case string:
-		out := make([]string, n)
-		out[0] = first.(string)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			s, ok := next.(string)
-			if !ok {
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-			}
-			out[i] = s
-		}
-		return out, nil
-	case bool:
-		out := make([]bool, n)
-		out[0] = first.(bool)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			b, ok := next.(bool)
-			if !ok {
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-			}
-			out[i] = b
-		}
-		return out, nil
-	}
-	// First element was a complex type (map, nested array). Fall back to
-	// loose decoding for the rest — there's no useful homogeneous slice
-	// type for these.
-	out := make([]interface{}, n)
-	out[0] = first
-	for i := 1; i < n; i++ {
-		next, err := decodeStrictTypedValue(dec)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = next
-	}
-	return out, nil
+	// Wire tags above select efficient primitive readers. The representation
+	// of complex and mixed lists is shared with owned ingress values.
+	return canonicalPropertyList(n, func(int) (any, error) {
+		return decodeStrictTypedValue(dec)
+	})
 }
 
 func decodeFloat64Array(dec *msgpack.Decoder, n int) (any, error) {
 	out := make([]float64, n)
-	for i := 0; i < n; i++ {
+	i, err := walkTypedArray(dec, out, func(dec *msgpack.Decoder, slot *float64) error {
 		code, err := dec.PeekCode()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if code != msgpcode.Double {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
+			return errTypedArrayMismatch
 		}
-		v, err := dec.DecodeFloat64()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
+		value, err := dec.DecodeFloat64()
+		*slot = value
+		return err
+	})
+	if i == len(out) {
+		return out, nil
 	}
-	return out, nil
+	return finishMixedArray(dec, out[:i], nil, len(out), err)
 }
 
-func decodeInt64Array(dec *msgpack.Decoder, n int) (any, error) {
-	out := make([]int64, n)
-	for i := 0; i < n; i++ {
-		code, err := dec.PeekCode()
-		if err != nil {
-			return nil, err
-		}
-		if !isSignedIntegerCode(code) {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-		}
-		v, err := dec.DecodeInt64()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
-	}
-	return out, nil
-}
+// errTypedArrayMismatch stops the typed walk at a different element kind or
+// an already-decoded wide integer. The stop owner widens either form without
+// exposing this internal marker to callers.
+var errTypedArrayMismatch = fmt.Errorf("typed array element kind changed")
 
-func decodeUint64Array(dec *msgpack.Decoder, n int) (any, error) {
-	out := make([]uint64, n)
-	for i := 0; i < n; i++ {
-		code, err := dec.PeekCode()
-		if err != nil {
-			return nil, err
+// walkTypedArray is small enough to inline each literal wire operation, so
+// all primitive families share one walk without per-element dynamic dispatch.
+func walkTypedArray[T float64 | float32 | int64 | string | bool](dec *msgpack.Decoder, out []T, decode func(*msgpack.Decoder, *T) error) (int, error) {
+	for i := range out {
+		if err := decode(dec, &out[i]); err != nil {
+			return i, err
 		}
-		if !isUnsignedIntegerCode(code) {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-		}
-		v, err := dec.DecodeUint64()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
 	}
-	return out, nil
-}
-
-func decodeStringArray(dec *msgpack.Decoder, n int) (any, error) {
-	out := make([]string, n)
-	for i := 0; i < n; i++ {
-		code, err := dec.PeekCode()
-		if err != nil {
-			return nil, err
-		}
-		if !msgpcode.IsString(code) {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-		}
-		v, err := dec.DecodeString()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
-	}
-	return out, nil
-}
-
-func decodeBoolArray(dec *msgpack.Decoder, n int) (any, error) {
-	out := make([]bool, n)
-	for i := 0; i < n; i++ {
-		code, err := dec.PeekCode()
-		if err != nil {
-			return nil, err
-		}
-		if code != msgpcode.False && code != msgpcode.True {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-		}
-		v, err := dec.DecodeBool()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
-	}
-	return out, nil
+	return len(out), nil
 }
 
 func isSignedIntegerCode(code byte) bool {
 	return code == msgpcode.Int8 || code == msgpcode.Int16 || code == msgpcode.Int32 || code == msgpcode.Int64
+}
+
+// isIntegerCode reports whether code holds an integer: a fixnum or any
+// signed or unsigned integer code.
+func isIntegerCode(code byte) bool {
+	return isSignedIntegerCode(code) || isUnsignedIntegerCode(code) || msgpcode.IsFixedNum(code)
+}
+
+// An uninspected code uses MessagePack's reserved, never-encoded byte.
+// Stored-value callers already inspected the code and avoid a second peek.
+const uninspectedIntegerCode byte = 0xc1
+
+// decodePropertyInteger is the shared integer reader for stored properties and
+// transport values. Fitting values are written to signed without boxing; only
+// a Uint64 above MaxInt64 returns an alternate value.
+func decodePropertyInteger(dec *msgpack.Decoder, code byte, signed *int64) (any, error) {
+	if code == uninspectedIntegerCode {
+		var err error
+		code, err = dec.PeekCode()
+		if err != nil {
+			return nil, err
+		}
+		if !isIntegerCode(code) {
+			return nil, fmt.Errorf("transport integer has invalid MessagePack code %x", code)
+		}
+	}
+	if code != msgpcode.Uint64 {
+		value, err := dec.DecodeInt64()
+		*signed = value
+		return nil, err
+	}
+	n, err := dec.DecodeUint64()
+	if err != nil {
+		return nil, err
+	}
+	if n > math.MaxInt64 {
+		return n, nil
+	}
+	*signed = int64(n)
+	return nil, nil
 }
 
 func isUnsignedIntegerCode(code byte) bool {
@@ -490,6 +539,9 @@ func isUnsignedIntegerCode(code byte) bool {
 func decodeStrictTypedMap(dec *msgpack.Decoder) (any, error) {
 	n, err := dec.DecodeMapLen()
 	if err != nil {
+		return nil, err
+	}
+	if err := validateMessagePackCollection(dec, n, 2); err != nil {
 		return nil, err
 	}
 	out := make(map[string]any, n)
@@ -507,16 +559,29 @@ func decodeStrictTypedMap(dec *msgpack.Decoder) (any, error) {
 	return out, nil
 }
 
-// finishMixedArray builds out an []interface{} when a homogeneous-kind
-// candidate failed mid-stream. `prefix` is the typed slice we already
-// committed (converted to []interface{}), `current` is the element that
-// broke homogeneity, and the decoder still has totalLen-len(prefix)-1
-// elements to read.
-func finishMixedArray(dec *msgpack.Decoder, prefix []interface{}, current any, totalLen int) (any, error) {
-	out := make([]interface{}, 0, totalLen)
-	out = append(out, prefix...)
+// finishMixedArray owns widening a typed prefix and decoding its remaining values.
+// A supplied stop reports an interrupted homogeneous walk. Only its private
+// mismatch marker enters widening; real decode errors return without consuming
+// another value. A non-nil current value already consumed a wide integer.
+func finishMixedArray[T any](dec *msgpack.Decoder, prefix []T, current any, totalLen int, stop ...error) (any, error) {
+	if len(stop) > 0 {
+		if stop[0] != errTypedArrayMismatch {
+			return nil, stop[0]
+		}
+		if current == nil {
+			var err error
+			current, err = decodeStrictTypedValue(dec)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	out := make([]any, 0, totalLen)
+	for _, value := range prefix {
+		out = append(out, value)
+	}
 	out = append(out, current)
-	for i := len(out); i < totalLen; i++ {
+	for len(out) < totalLen {
 		next, err := decodeStrictTypedValue(dec)
 		if err != nil {
 			return nil, err
@@ -524,17 +589,6 @@ func finishMixedArray(dec *msgpack.Decoder, prefix []interface{}, current any, t
 		out = append(out, next)
 	}
 	return out, nil
-}
-
-// sliceToAny boxes a typed slice into []interface{}. Used by
-// finishMixedArray when a homogeneity violation forces us to widen
-// already-decoded elements.
-func sliceToAny[T any](xs []T) []interface{} {
-	out := make([]interface{}, len(xs))
-	for i, v := range xs {
-		out[i] = v
-	}
-	return out
 }
 
 // readUvarint wraps binary.Uvarint with diagnostic error messages.

@@ -8,6 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"reflect"
 	"sort"
 	"strconv"
@@ -26,7 +29,7 @@ func prevWordEqualsIgnoreCase(s string, pos int, word string) bool {
 		return false
 	}
 	end := i + 1
-	for i >= 0 && isIdentByte(s[i]) {
+	for i >= 0 && cyphertext.NamePartAt(s, i) {
 		i--
 	}
 	start := i + 1
@@ -45,7 +48,7 @@ func prevWordEqualsIgnoreCase(s string, pos int, word string) bool {
 // This is used to avoid matching keywords inside list comprehensions like [x IN list WHERE x > 2]
 // The keyword should be in the format " KEYWORD " with leading/trailing spaces.
 // This function normalizes whitespace (tabs, newlines) to match.
-func findKeywordNotInBrackets(s string, keyword string) int {
+func findKeywordNotInBrackets(ctx context.Context, s string, keyword string) int {
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = false
 	opts.Boundary = keywordBoundaryWhitespace
@@ -54,12 +57,7 @@ func findKeywordNotInBrackets(s string, keyword string) int {
 	if keywordCore == "" {
 		return -1
 	}
-	return keywordIndexFrom(s, keywordCore, 0, opts)
-}
-
-// isWhitespace returns true if the rune is a whitespace character
-func isWhitespace(ch byte) bool {
-	return isASCIISpace(ch)
+	return keywordIndexFrom(ctx, s, keywordCore, 0, opts)
 }
 
 // ========================================
@@ -156,43 +154,7 @@ func rowHasAggregate(items []returnItem) bool {
 
 // splitWithItems splits WITH expressions respecting nested brackets and quotes
 func (e *StorageExecutor) splitWithItems(expr string) []string {
-	var items []string
-	var current strings.Builder
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for _, c := range expr {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-			current.WriteRune(c)
-		case c == '(' || c == '[' || c == '{':
-			if !inQuote {
-				depth++
-			}
-			current.WriteRune(c)
-		case c == ')' || c == ']' || c == '}':
-			if !inQuote {
-				depth--
-			}
-			current.WriteRune(c)
-		case c == ',' && depth == 0 && !inQuote:
-			items = append(items, current.String())
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-	if current.Len() > 0 {
-		items = append(items, current.String())
-	}
-	return items
+	return splitTopLevelComma(expr)
 }
 
 type unwindSimpleSetAssignment struct {
@@ -447,15 +409,19 @@ func parseUnwindLookupClause(clause string) (unwindMergeChainLookupPlan, bool) {
 	}, true
 }
 
-func unwindLookupSetHasUniqueAnchor(schema *storage.SchemaManager, lookupPlan unwindMergeChainLookupPlan) bool {
+func unwindLookupSetHasUniqueAnchor(ctx context.Context, schema *storage.SchemaManager, lookupPlan unwindMergeChainLookupPlan) (bool, error) {
 	if schema == nil || lookupPlan.anyLabel || len(lookupPlan.labels) != 1 || len(lookupPlan.matchAssignments) == 0 {
-		return false
+		return false, nil
 	}
 	matchedProps := make(map[string]struct{}, len(lookupPlan.matchAssignments))
 	for _, assignment := range lookupPlan.matchAssignments {
 		matchedProps[assignment.prop] = struct{}{}
 	}
-	for _, constraint := range schema.GetConstraintsForLabels([]string{lookupPlan.labels[0]}) {
+	constraints, err := schema.GetConstraintsForLabels(ctx, []string{lookupPlan.labels[0]})
+	if err != nil {
+		return false, err
+	}
+	for _, constraint := range constraints {
 		if constraint.EffectiveEntityType() != storage.ConstraintEntityNode {
 			continue
 		}
@@ -473,23 +439,27 @@ func unwindLookupSetHasUniqueAnchor(schema *storage.SchemaManager, lookupPlan un
 			}
 		}
 		if allConstraintPropsMatched {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
-func unwindMergeChainMatchSetLookupsAreUnique(store storage.Engine, plan unwindMergeChainPlan) bool {
+func unwindMergeChainMatchSetLookupsAreUnique(ctx context.Context, store storage.Engine, plan unwindMergeChainPlan) (bool, error) {
 	schema := store.GetSchema()
 	for _, step := range plan.steps {
 		if step.lookup == nil || len(step.lookup.setAssignments) == 0 {
 			continue
 		}
-		if !unwindLookupSetHasUniqueAnchor(schema, *step.lookup) {
-			return false
+		anchored, err := unwindLookupSetHasUniqueAnchor(ctx, schema, *step.lookup)
+		if err != nil {
+			return false, err
+		}
+		if !anchored {
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 func unwindMergeLabelsKey(labels []string) string {
@@ -501,7 +471,7 @@ func unwindMergeLabelsKey(labels []string) string {
 	return strings.Join(sorted, ":")
 }
 
-func parseUnwindWithClause(clause string) (unwindMergeChainWithPlan, bool) {
+func parseUnwindWithClause(ctx context.Context, clause string) (unwindMergeChainWithPlan, bool) {
 	trimmed := strings.TrimSpace(clause)
 	if !startsWithKeywordFold(trimmed, "WITH") {
 		return unwindMergeChainWithPlan{}, false
@@ -510,7 +480,7 @@ func parseUnwindWithClause(clause string) (unwindMergeChainWithPlan, bool) {
 	if body == "" {
 		return unwindMergeChainWithPlan{}, false
 	}
-	projectionPlan := returnProjectionPlanFor("RETURN " + body)
+	projectionPlan := returnProjectionPlanFor(ctx, "RETURN "+body)
 	if !projectionPlan.valid || projectionPlan.star || projectionPlan.distinct || projectionPlan.hasAggregate || projectionPlan.modifiers != "" {
 		return unwindMergeChainWithPlan{}, false
 	}
@@ -540,7 +510,10 @@ func parseUnwindWhereClause(clause string) (unwindMergeChainWherePlan, bool) {
 	return unwindMergeChainWherePlan{clause: body}, true
 }
 
-func (e *StorageExecutor) cachedUnwindMergeChainPlan(mutationPart string) unwindMergeChainPlan {
+func (e *StorageExecutor) cachedUnwindMergeChainPlan(ctx context.Context, mutationPart string) unwindMergeChainPlan {
+	if ctx.Err() != nil {
+		return unwindMergeChainPlan{}
+	}
 	key := strings.TrimSpace(mutationPart)
 	cache := e.unwindMergeChainPlanCache
 	if cache == nil {
@@ -554,8 +527,15 @@ func (e *StorageExecutor) cachedUnwindMergeChainPlan(mutationPart string) unwind
 	}
 	cache.mu.RUnlock()
 
-	plan := parseUnwindMergeChainPattern(key)
+	plan := parseUnwindMergeChainPattern(ctx, key)
+	if ctx.Err() != nil {
+		return unwindMergeChainPlan{}
+	}
 	cache.mu.Lock()
+	if ctx.Err() != nil {
+		cache.mu.Unlock()
+		return unwindMergeChainPlan{}
+	}
 	cache.plans[key] = plan
 	cache.mu.Unlock()
 	return plan
@@ -569,7 +549,7 @@ func isComparableInterfaceValue(v interface{}) bool {
 	return t.Comparable()
 }
 
-func parseSimpleCountReturn(returnPart, mergeVar string) (alias string, ok bool) {
+func parseSimpleCountReturn(ctx context.Context, returnPart, mergeVar string) (alias string, ok bool) {
 	r := strings.TrimSpace(returnPart)
 	if r == "" {
 		return "", true
@@ -577,7 +557,7 @@ func parseSimpleCountReturn(returnPart, mergeVar string) (alias string, ok bool)
 	if !startsWithKeywordFold(r, "RETURN") {
 		return "", false
 	}
-	plan := returnProjectionPlanFor(r)
+	plan := returnProjectionPlanFor(ctx, r)
 	if !plan.valid || plan.star || plan.distinct || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}
@@ -588,7 +568,7 @@ func parseSimpleCountReturn(returnPart, mergeVar string) (alias string, ok bool)
 	return plan.columns[0], true
 }
 
-func parseUnwindBatchCountReturn(returnPart string) (alias string, ok bool) {
+func parseUnwindBatchCountReturn(ctx context.Context, returnPart string) (alias string, ok bool) {
 	r := strings.TrimSpace(returnPart)
 	if r == "" {
 		return "", true
@@ -596,7 +576,7 @@ func parseUnwindBatchCountReturn(returnPart string) (alias string, ok bool) {
 	if !startsWithKeywordFold(r, "RETURN") {
 		return "", false
 	}
-	plan := returnProjectionPlanFor(r)
+	plan := returnProjectionPlanFor(ctx, r)
 	if !plan.valid || plan.star || plan.distinct || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}
@@ -614,21 +594,14 @@ func countResultRows(result *ExecuteResult) int64 {
 	if result == nil || len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
 		return 0
 	}
-	switch value := result.Rows[0][0].(type) {
-	case int:
-		return int64(value)
-	case int32:
-		return int64(value)
-	case int64:
-		return value
-	case float64:
-		return int64(value)
-	default:
+	integer, ok := valueconvert.Int64(result.Rows[0][0], valueconvert.IntegerFloat)
+	if !ok {
 		return 0
 	}
+	return integer
 }
 
-func splitUnwindMergeChainClauses(input string) ([]string, bool) {
+func splitUnwindMergeChainClauses(ctx context.Context, input string) ([]string, bool) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
 		return nil, false
@@ -648,7 +621,7 @@ func splitUnwindMergeChainClauses(input string) ([]string, bool) {
 		}
 		next := len(trimmed)
 		for _, candidate := range keywords {
-			if idx := findKeywordIndexInContext(trimmed[len(keyword):], candidate); idx >= 0 {
+			if idx := findKeywordIndexInContext(ctx, trimmed[len(keyword):], candidate); idx >= 0 {
 				pos := len(keyword) + idx
 				if pos < next {
 					next = pos
@@ -666,7 +639,7 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 	if !startsWithKeywordFold(trimmed, "MERGE") {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
-	rest := strings.TrimSpace(trimmed[len("MERGE"):])
+	rest := pipelineClauseBody(trimmed, "MERGE")
 	if !strings.HasPrefix(rest, "(") {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
@@ -745,13 +718,13 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 	}, true
 }
 
-func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar string) ([]string, bool) {
+func splitUnwindCompoundMutationStages(ctx context.Context, restQuery, unwindParamName, unwindVar string) ([]string, bool) {
 	trimmed := strings.TrimSpace(restQuery)
 	if trimmed == "" || unwindParamName == "" || unwindVar == "" {
 		return nil, false
 	}
 	skipSpace := func(pos int) int {
-		for pos < len(trimmed) && isASCIISpace(trimmed[pos]) {
+		for pos < len(trimmed) && cyphertext.IsWhitespaceAt(trimmed, pos) {
 			pos++
 		}
 		return pos
@@ -761,7 +734,7 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 	start := 0
 	searchFrom := 0
 	for {
-		withIdx := keywordIndexFrom(trimmed, "WITH", searchFrom, defaultKeywordScanOpts())
+		withIdx := keywordIndexFrom(ctx, trimmed, "WITH", searchFrom, defaultKeywordScanOpts())
 		if withIdx < 0 {
 			break
 		}
@@ -838,7 +811,7 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 }
 
 func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context, unwindVar, unwindParamName string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
-	stages, ok := splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar)
+	stages, ok := splitUnwindCompoundMutationStages(ctx, restQuery, unwindParamName, unwindVar)
 	if !ok {
 		return nil, false, nil
 	}
@@ -864,22 +837,22 @@ func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context
 	return result, true, nil
 }
 
-func parseUnwindMergeChainPattern(mutationPart string) unwindMergeChainPlan {
+func parseUnwindMergeChainPattern(ctx context.Context, mutationPart string) unwindMergeChainPlan {
 	plan := unwindMergeChainPlan{supported: false}
 	mutation := strings.TrimSpace(mutationPart)
 	if !startsWithKeywordFold(mutation, "MERGE") && !startsWithKeywordFold(mutation, "MATCH") && !startsWithKeywordFold(mutation, "OPTIONAL MATCH") {
 		return plan
 	}
-	if findKeywordIndexInContext(mutation, "CALL") >= 0 ||
-		findKeywordIndexInContext(mutation, "DELETE") >= 0 ||
-		findKeywordIndexInContext(mutation, "DETACH") >= 0 ||
-		findKeywordIndexInContext(mutation, "REMOVE") >= 0 ||
-		findKeywordIndexInContext(mutation, "FOREACH") >= 0 ||
-		findKeywordIndexInContext(mutation, "UNWIND") >= 0 ||
-		findKeywordIndexInContext(mutation, "RETURN") >= 0 {
+	if findKeywordIndexInContext(ctx, mutation, "CALL") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "DELETE") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "DETACH") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "REMOVE") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "FOREACH") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "UNWIND") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "RETURN") >= 0 {
 		return plan
 	}
-	clauses, ok := splitUnwindMergeChainClauses(mutation)
+	clauses, ok := splitUnwindMergeChainClauses(ctx, mutation)
 	if !ok || len(clauses) == 0 {
 		return plan
 	}
@@ -909,7 +882,7 @@ func parseUnwindMergeChainPattern(mutationPart string) unwindMergeChainPlan {
 				boundVars[lookupPlan.varName] = struct{}{}
 				continue
 			}
-			if withPlan, ok := parseUnwindWithClause(clause); ok {
+			if withPlan, ok := parseUnwindWithClause(ctx, clause); ok {
 				for _, assignment := range withPlan.assignments {
 					boundVars[assignment.alias] = struct{}{}
 				}
@@ -1140,11 +1113,11 @@ func setRelationshipPropertyIfChanged(edge *storage.Edge, prop string, value int
 }
 
 func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwindVar string, items []interface{}, mutationPart, returnPart string) (*ExecuteResult, bool, error) {
-	plan := e.cachedUnwindMergeChainPlan(mutationPart)
+	plan := e.cachedUnwindMergeChainPlan(ctx, mutationPart)
 	if !plan.supported {
 		return nil, false, nil
 	}
-	if _, supported := parseUnwindBatchCountReturn(returnPart); !supported {
+	if _, supported := parseUnwindBatchCountReturn(ctx, returnPart); !supported {
 		return nil, false, nil
 	}
 	if err := requireUnwindMergeChainParameters(ctx, plan); err != nil {
@@ -1158,13 +1131,13 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 }
 
 func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, unwindVar string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
-	returnIdx := topLevelKeywordIndex(restQuery, "RETURN")
+	returnIdx := topLevelKeywordIndex(ctx, restQuery, "RETURN")
 	if returnIdx <= 0 {
 		return nil, false, nil
 	}
 	mutationPart := strings.TrimSpace(restQuery[:returnIdx])
 	returnPart := strings.TrimSpace(restQuery[returnIdx:])
-	_, ok := parseSimpleCountReturn(returnPart, "o")
+	_, ok := parseSimpleCountReturn(ctx, returnPart, "o")
 	if !ok {
 		return nil, false, nil
 	}
@@ -1254,7 +1227,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		if len(suffix) < 4 {
 			return "", "", 0, false
 		}
-		if (suffix[0] != '\'' || suffix[len(suffix)-1] != '\'') && (suffix[0] != '"' || suffix[len(suffix)-1] != '"') {
+		if (!isCypherSingleQuoteByte(suffix[0]) || !isCypherSingleQuoteByte(suffix[len(suffix)-1])) && (!isCypherDoubleQuoteByte(suffix[0]) || !isCypherDoubleQuoteByte(suffix[len(suffix)-1])) {
 			return "", "", 0, false
 		}
 		literal := suffix[1 : len(suffix)-1]
@@ -1332,7 +1305,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			}
 			next := len(trimmed)
 			for _, candidate := range []string{"MATCH", "MERGE"} {
-				if idx := findKeywordIndexInContext(trimmed[len(keyword):], candidate); idx >= 0 {
+				if idx := findKeywordIndexInContext(ctx, trimmed[len(keyword):], candidate); idx >= 0 {
 					pos := len(keyword) + idx
 					if pos < next {
 						next = pos
@@ -1518,93 +1491,261 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	return result, handled, err
 }
 
-func rewriteUnwindCorrelationToIn(query string, variable string, paramName string) (string, bool) {
-	if strings.TrimSpace(query) == "" || strings.TrimSpace(variable) == "" || strings.TrimSpace(paramName) == "" {
+// unwindCorrelation is one conjunctive WHERE equality whose right side is
+// exactly one read of the UNWIND binding: `lhs = binding`. start and end span
+// the equality the rewrite replaces, from the left expression through the
+// binding read; readStart and readEnd span only that binding read. Every span
+// is a statement-source offset, the same coordinate the admitted statement
+// program records binding declarations and reads in.
+type unwindCorrelation struct {
+	lhs                string
+	start, end         int
+	readStart, readEnd int
+}
+
+// unwindCorrelationProduct is every conjunctive WHERE equality in one body that
+// reads the UNWIND binding. body is the text the rewrite splices, and
+// bodyOffset is where that text begins in the statement source, so a
+// correlation's statement span maps into the body by subtracting bodyOffset.
+type unwindCorrelationProduct struct {
+	body         string
+	bodyOffset   int
+	correlations []unwindCorrelation
+}
+
+// readUnwindCorrelations is the set-based UNWIND rewrite's one equality reader.
+// It reads the admitted statement's retained syntax rather than the body text.
+// The grammar's comparisonExpression/comparisonSigns/addSubExpression roles say
+// exactly where a comparison begins and ends, so the right side is the declared
+// binding itself and not a longer expression that merely starts with its name
+// (`binding + 1`, `binding.prop`, `binding[0]`); the same roles say whether an
+// AND conjunct holds the comparison or an OR, XOR or NOT operand does. The
+// declaration supplies the binding's exact name and identity, so a read the
+// program bound to another declaration - however it is spelled - is never
+// selected.
+func readUnwindCorrelations(syntax cypherantlr.StatementSyntax, declaration statementBinding, body string, bodyOffset int) unwindCorrelationProduct {
+	product := unwindCorrelationProduct{body: body, bodyOffset: bodyOffset}
+	if !syntax.Valid() || declaration.id == 0 || declaration.name == "" || body == "" || bodyOffset < 0 {
+		return product
+	}
+	bodyEnd := bodyOffset + len(body)
+	if bodyEnd > len(syntax.Source()) {
+		return product
+	}
+	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+		if node.Rule() != cypherantlr.CypherParserRULE_comparisonExpression || !unwindConjunctiveComparison(node) {
+			return nil
+		}
+		correlation, ok := unwindBindingEquality(node, declaration.name)
+		if !ok || correlation.start < bodyOffset || correlation.end > bodyEnd {
+			return nil
+		}
+		product.correlations = append(product.correlations, correlation)
+		return nil
+	})
+	return product
+}
+
+// unwindConjunctiveComparison reports whether a comparison is one conjunct of a
+// WHERE expression. An OR or XOR alternative, or a NOT, between the comparison
+// and the WHERE decides the truth value the equality contributes; substituting
+// inside one of those operands changes the statement's rows, so no such operator
+// may sit between the comparison and the WHERE.
+func unwindConjunctiveComparison(comparison cypherantlr.SyntaxNode) bool {
+	negation, ok := comparison.Parent()
+	if !ok || negation.Rule() != cypherantlr.CypherParserRULE_notExpression || negation.ChildCount() != 1 {
+		return false
+	}
+	conjunction, ok := negation.Parent()
+	if !ok || conjunction.Rule() != cypherantlr.CypherParserRULE_andExpression {
+		return false
+	}
+	exclusive, ok := conjunction.Parent()
+	if !ok || exclusive.Rule() != cypherantlr.CypherParserRULE_xorExpression || exclusive.ChildCount() != 1 {
+		return false
+	}
+	expression, ok := exclusive.Parent()
+	if !ok || expression.Rule() != cypherantlr.CypherParserRULE_expression || expression.ChildCount() != 1 {
+		return false
+	}
+	filter, ok := expression.Parent()
+	if !ok || filter.Rule() != cypherantlr.CypherParserRULE_where {
+		return false
+	}
+	// A child query's predicate does not establish the outer row's join key.
+	// Eliminating that outer iteration would collapse multiplicity, even when
+	// the only read of the key lives in the child predicate.
+	for parent, valid := filter.Parent(); valid; parent, valid = parent.Parent() {
+		switch parent.Rule() {
+		case cypherantlr.CypherParserRULE_callSubquery, cypherantlr.CypherParserRULE_collectSubquery, cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_existsSubquery, cypherantlr.CypherParserRULE_subqueryExist:
+			return false
+		}
+	}
+	return true
+}
+
+// unwindBindingEquality reads one comparisonExpression as `property = binding`.
+// The comparison must be one equality sign between two addSubExpressions, and
+// the right side must be the single symbol that spans it and spells the
+// declared binding: an arithmetic, property or subscript right side carries its
+// own operands, so no single symbol spans it.
+func unwindBindingEquality(comparison cypherantlr.SyntaxNode, binding string) (unwindCorrelation, bool) {
+	if comparison.ChildCount() != 3 {
+		return unwindCorrelation{}, false
+	}
+	left, signs, right := comparison.Child(0), comparison.Child(1), comparison.Child(2)
+	if left.Rule() != cypherantlr.CypherParserRULE_addSubExpression ||
+		signs.Rule() != cypherantlr.CypherParserRULE_comparisonSigns ||
+		right.Rule() != cypherantlr.CypherParserRULE_addSubExpression {
+		return unwindCorrelation{}, false
+	}
+	if _, equal := signs.DirectToken(cypherantlr.CypherLexerASSIGN); !equal || signs.ChildCount() != 1 {
+		return unwindCorrelation{}, false
+	}
+	start, _ := left.Span()
+	lhs := left.Text()
+	if !isSimplePropertyReference(lhs) {
+		return unwindCorrelation{}, false
+	}
+	readStart, readEnd := right.Span()
+	symbols, exact := 0, false
+	right.Walk(func(node cypherantlr.SyntaxNode) func() {
+		name, symbol := node.Name()
+		if !symbol {
+			return nil
+		}
+		symbols++
+		symbolStart, symbolEnd := node.Span()
+		if name == binding && symbolStart == readStart && symbolEnd == readEnd {
+			exact = true
+		}
+		return nil
+	})
+	if !exact || symbols != 1 {
+		return unwindCorrelation{}, false
+	}
+	return unwindCorrelation{lhs: lhs, start: start, end: readEnd, readStart: readStart, readEnd: readEnd}, true
+}
+
+// rewrite replaces the correlations with one IN-list membership plus
+// equalities on the first expression, preserving join correlation semantics:
+//
+//	a.prop = binding AND b.prop = binding
+//	=> a.prop IN $items AND b.prop = a.prop
+//
+// so the fused plan does not produce cross-key cartesian joins.
+func (product unwindCorrelationProduct) rewrite(paramName string) (string, bool) {
+	if len(product.correlations) == 0 || strings.TrimSpace(paramName) == "" || product.bodyOffset < 0 {
 		return "", false
 	}
-	// Preserve join correlation semantics:
-	//   a.prop = unwindVar AND b.prop = unwindVar
-	// => a.prop IN $items AND b.prop = a.prop
-	// so we do not produce cross-key cartesian joins.
-	type equalityMatch struct {
-		start int
-		end   int
-		lhs   string
-	}
-	matches := make([]equalityMatch, 0, 2)
-	inSingle := false
-	inDouble := false
-	for i := 0; i < len(query); i++ {
-		ch := query[i]
-		if ch == '\'' && !inDouble && !isBackslashEscaped(query, i) {
-			inSingle = !inSingle
-			continue
-		}
-		if ch == '"' && !inSingle && !isBackslashEscaped(query, i) {
-			inDouble = !inDouble
-			continue
-		}
-		if inSingle || inDouble || ch != '=' {
-			continue
-		}
-
-		lhsEnd := i
-		for lhsEnd > 0 && isASCIISpace(query[lhsEnd-1]) {
-			lhsEnd--
-		}
-		lhsStart := lhsEnd
-		for lhsStart > 0 {
-			prev := query[lhsStart-1]
-			if isIdentByte(prev) || prev == '.' {
-				lhsStart--
-				continue
-			}
-			break
-		}
-		lhs := strings.TrimSpace(query[lhsStart:lhsEnd])
-		if lhs == "" || !isSimplePropertyReference(lhs) {
-			continue
-		}
-
-		rhsStart := i + 1
-		for rhsStart < len(query) && isASCIISpace(query[rhsStart]) {
-			rhsStart++
-		}
-		if rhsStart+len(variable) > len(query) || !strings.EqualFold(query[rhsStart:rhsStart+len(variable)], variable) {
-			continue
-		}
-		rhsEnd := rhsStart + len(variable)
-		if rhsEnd < len(query) && isIdentByte(query[rhsEnd]) {
-			continue
-		}
-		matches = append(matches, equalityMatch{start: lhsStart, end: rhsEnd, lhs: lhs})
-		i = rhsEnd - 1
-	}
-	if len(matches) == 0 {
-		return "", false
-	}
-	firstExpr := matches[0].lhs
+	firstExpr := product.correlations[0].lhs
 	if firstExpr == "" {
 		return "", false
 	}
-
 	var b strings.Builder
 	cursor := 0
-	for i, m := range matches {
-		b.WriteString(query[cursor:m.start])
+	for i, correlation := range product.correlations {
+		start, end := correlation.start-product.bodyOffset, correlation.end-product.bodyOffset
+		if start < cursor || end < start || end > len(product.body) {
+			return "", false
+		}
+		b.WriteString(product.body[cursor:start])
+		b.WriteString(correlation.lhs)
 		if i == 0 {
-			b.WriteString(m.lhs)
 			b.WriteString(" IN $")
 			b.WriteString(paramName)
 		} else {
-			b.WriteString(m.lhs)
 			b.WriteString(" = ")
 			b.WriteString(firstExpr)
 		}
-		cursor = m.end
+		cursor = end
 	}
-	b.WriteString(query[cursor:])
+	b.WriteString(product.body[cursor:])
 	return b.String(), true
+}
+
+// unwindBindingProof is the statement evidence that one body's set-based
+// rewrite removes every read of the UNWIND binding: the admitted statement
+// program, whose declaration and reads address the same source as the
+// correlations, and the binding the UNWIND alias declares in it.
+type unwindBindingProof struct {
+	program     *boundStatementProgram
+	declaration statementBinding
+}
+
+// unwindDeclaration is the binding the UNWIND alias declares: the program
+// binding whose span is exactly the alias token. A program without that span
+// does not address the statement the plan was prepared from.
+func unwindDeclaration(program *boundStatementProgram, start, end int) (statementBinding, bool) {
+	if program == nil || start < 0 || end <= start {
+		return statementBinding{}, false
+	}
+	var found statementBinding
+	for _, binding := range program.bindings {
+		if binding.start != start || binding.end != end {
+			continue
+		}
+		if found.id != 0 {
+			return statementBinding{}, false
+		}
+		found = binding
+	}
+	return found, found.id != 0
+}
+
+// eliminates reports whether every read of the UNWIND binding is one of these
+// correlations, so replacing them leaves no live read of the binding. Program
+// reads include the ones a wildcard projection expands to, which no scan of the
+// body text can see. Each correlation must read the declaration itself: an
+// equality the compiler bound to another declaration is not this binding's
+// read, so replacing it would change a comparison the rewrite does not own.
+func (product unwindCorrelationProduct) eliminates(proof unwindBindingProof) bool {
+	if len(product.correlations) == 0 || proof.program == nil || proof.declaration.id == 0 {
+		return false
+	}
+	for _, correlation := range product.correlations {
+		if !product.readsDeclaration(proof, correlation) {
+			return false
+		}
+	}
+	for _, use := range proof.program.uses {
+		if use.binding == proof.declaration.id {
+			if !product.covers(use) {
+				return false
+			}
+			continue
+		}
+		// A read spelled like the binding carries another identity once a later
+		// clause rebinds the name; that read belongs to the other binding. An
+		// unresolved identity could be this binding's read, so it refuses the
+		// rewrite.
+		if use.binding == 0 && use.name == proof.declaration.name {
+			return false
+		}
+	}
+	return true
+}
+
+// covers reports whether one program read is exactly a selected correlation's
+// binding read.
+func (product unwindCorrelationProduct) covers(use statementBindingUse) bool {
+	for _, correlation := range product.correlations {
+		if use.start == correlation.readStart && use.end == correlation.readEnd {
+			return true
+		}
+	}
+	return false
+}
+
+// readsDeclaration reports whether a selected correlation's read is exactly a
+// read the program resolved to the UNWIND declaration.
+func (product unwindCorrelationProduct) readsDeclaration(proof unwindBindingProof, correlation unwindCorrelation) bool {
+	for _, use := range proof.program.uses {
+		if use.start == correlation.readStart && use.end == correlation.readEnd {
+			return use.binding == proof.declaration.id
+		}
+	}
+	return false
 }
 
 func isSimplePropertyReference(expr string) bool {
@@ -1620,18 +1761,18 @@ func isSimplePropertyReference(expr string) bool {
 	return true
 }
 
-func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
+func rewriteTopLevelMultiMatchToCartesianMatch(ctx context.Context, query string) string {
 	trimmed := strings.TrimSpace(query)
 	if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
 		return query
 	}
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(ctx, trimmed, "RETURN")
 	if returnIdx <= 0 {
 		return query
 	}
 	body := strings.TrimSpace(trimmed[:returnIdx])
 	tail := strings.TrimSpace(trimmed[returnIdx:])
-	whereIdx := findKeywordIndex(body, "WHERE")
+	whereIdx := findKeywordIndex(ctx, body, "WHERE")
 	if whereIdx <= 0 {
 		return query
 	}
@@ -1639,7 +1780,7 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 	whereAndMutations := strings.TrimSpace(body[whereIdx+len("WHERE"):])
 	whereClause := whereAndMutations
 	for _, keyword := range []string{"CREATE", "MERGE", "SET", "DELETE", "REMOVE"} {
-		if index := findKeywordIndexInContext(whereAndMutations, keyword); index >= 0 {
+		if index := findKeywordIndexInContext(ctx, whereAndMutations, keyword); index >= 0 {
 			whereClause = strings.TrimSpace(whereAndMutations[:index])
 			tail = strings.TrimSpace(whereAndMutations[index:]) + " " + tail
 			break
@@ -1654,7 +1795,7 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 		return query
 	}
 	first := strings.TrimSpace(patterns[len("MATCH "):])
-	secondIdx := findKeywordIndex(first, "MATCH")
+	secondIdx := findKeywordIndex(ctx, first, "MATCH")
 	if secondIdx <= 0 {
 		return query
 	}
@@ -1666,27 +1807,24 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 	return "MATCH " + left + ", " + right + " WHERE " + whereClause + " " + tail
 }
 
-func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
+func (e *StorageExecutor) canApplySetBasedUnwindRewrite(ctx context.Context, query string, items []interface{}) (bool, error) {
 	if strings.TrimSpace(query) == "" || len(items) == 0 {
-		return false
+		return false, nil
+	}
+	info, err := e.analyzer.Analyze(ctx, query)
+	if err != nil {
+		return false, err
+	}
+	// Per-row writes, including registered procedures, cannot become a
+	// set-based read. The analyzer supplies the shared statement effect.
+	if info.Writes() {
+		return false, nil
 	}
 	upper := upperASCII(query)
-	// Keep rewrite on read-only MATCH ... RETURN count(...) pipelines.
-	// Mutation clauses with correlated values (SET += row.props, MERGE/CREATE/DELETE/REMOVE)
-	// must execute per-row to preserve semantics.
-	if findKeywordIndex(query, "CREATE") >= 0 ||
-		findKeywordIndex(query, "MERGE") >= 0 ||
-		findKeywordIndex(query, "SET") >= 0 ||
-		findKeywordIndex(query, "DELETE") >= 0 ||
-		findKeywordIndex(query, "REMOVE") >= 0 {
-		return false
-	}
 	if !strings.Contains(upper, "RETURN") || !strings.Contains(upper, "COUNT(") {
-		return false
+		return false, nil
 	}
-	// Rewrites should preserve semantics. We only apply when unwind items are
-	// distinct comparable values so IN-list matching does not collapse duplicates.
-	return unwindItemsAreDistinctComparable(items)
+	return unwindItemsAreDistinctComparable(items), nil
 }
 
 func unwindItemsAreDistinctComparable(items []interface{}) bool {
@@ -1723,27 +1861,27 @@ func unwindItemsAreDistinctComparable(items []interface{}) bool {
 // predicate with a top-level OR or XOR is parenthesized so AND doesn't bind
 // into it. Anything but MATCH clauses before RETURN (OPTIONAL MATCH, WITH,
 // UNWIND, writes) leaves the query unchanged.
-func normalizeMultiMatchWhereClauses(query string) string {
+func normalizeMultiMatchWhereClauses(ctx context.Context, query string) string {
 	trimmed := strings.TrimSpace(query)
 	if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
 		return query
 	}
 	// OPTIONAL MATCH has left-join semantics: its WHERE can't move.
-	if findKeywordIndex(trimmed, "OPTIONAL MATCH") >= 0 {
+	if findKeywordIndex(ctx, trimmed, "OPTIONAL MATCH") >= 0 {
 		return query
 	}
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(ctx, trimmed, "RETURN")
 	if returnIdx <= 0 {
 		return query
 	}
 	mainPart := strings.TrimSpace(trimmed[:returnIdx])
 	tailPart := strings.TrimSpace(trimmed[returnIdx:])
 	for _, keyword := range []string{"WITH", "UNWIND", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "CALL", "FOREACH"} {
-		if len(findAllTopLevelPipelineKeywordPositions(mainPart, keyword)) > 0 {
+		if len(findAllTopLevelPipelineKeywordPositions(ctx, mainPart, keyword)) > 0 {
 			return query
 		}
 	}
-	starts := findAllTopLevelPipelineKeywordPositions(mainPart, "MATCH")
+	starts := findAllTopLevelPipelineKeywordPositions(ctx, mainPart, "MATCH")
 	if len(starts) < 2 || starts[0] != 0 {
 		return query
 	}
@@ -1757,13 +1895,13 @@ func normalizeMultiMatchWhereClauses(query string) string {
 		}
 		clause := strings.TrimSpace(mainPart[start+len("MATCH") : end])
 		pattern := clause
-		if whereIdx := topLevelKeywordIndex(clause, "WHERE"); whereIdx >= 0 {
+		if whereIdx := topLevelKeywordIndex(ctx, clause, "WHERE"); whereIdx >= 0 {
 			pattern = strings.TrimSpace(clause[:whereIdx])
 			predicate := strings.TrimSpace(clause[whereIdx+len("WHERE"):])
 			if predicate == "" {
 				return query
 			}
-			if topLevelKeywordIndex(predicate, "OR") >= 0 || topLevelKeywordIndex(predicate, "XOR") >= 0 {
+			if topLevelKeywordIndex(ctx, predicate, "OR") >= 0 || topLevelKeywordIndex(ctx, predicate, "XOR") >= 0 {
 				predicate = "(" + predicate + ")"
 			}
 			predicates = append(predicates, predicate)
@@ -1798,23 +1936,31 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // executeUnion handles UNION / UNION ALL
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
-func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
-	return e.executeUnionBranches(cypher, unionAll, func(query string) (*ExecuteResult, error) {
-		return e.executeInternal(ctx, query, nil)
-	})
-}
-
-func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
+func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(ctx, cypher)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !ok || len(queries) < 2 {
+		// A failed product is diagnostic framing only: no branch executes.
+		if syntax, parseErr := cypherantlr.ParseSyntax(ctx, cypher, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource); parseErr != nil && syntax.Valid() {
+			body := queryBodyFromSyntax(statementSyntaxQuery(syntax))
+			if len(body.branches) > 1 {
+				for index, branch := range body.branches {
+					text := cypher[branch.start:branch.end]
+					if _, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource); err != nil {
+						return nil, localizedError(localization.CypherResidualUnionBranchFailed(index+1, truncateQuery(text, 50), err), err)
+					}
+				}
+			}
+		}
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 	if mixed {
-		return nil, newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"InvalidClauseComposition",
-			"UNION and UNION ALL cannot be combined in the same query",
-		)
+		return nil, unionMixedError()
+	}
+	if len(queries) < 2 {
+		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 	if unionAll != splitAll {
 		if unionAll {
@@ -1825,24 +1971,22 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 
 	// Execute all queries and combine results
 	var combinedResult *ExecuteResult
-	seen := make(map[string]bool) // For UNION (distinct) deduplication
+	var seen cypherValueIndex // Shared equivalence for UNION and DISTINCT.
 
 	for i, query := range queries {
-		result, err := runBranch(query)
+		var result *ExecuteResult
+		var err error
+		if runBranch == nil {
+			result, err = e.executeInternal(ctx, query, nil)
+		} else {
+			result, err = runBranch(query)
+		}
 		if err != nil {
 			return nil, localizedError(localization.CypherResidualUnionBranchFailed(i+1, truncateQuery(query, 50), err), err)
 		}
-		// Some execution branches can return empty column metadata when no rows are produced,
-		// even though the query has an explicit RETURN/YIELD projection. For UNION semantics we
-		// must validate/provide branch column shapes deterministically.
-		if len(result.Columns) == 0 {
-			result.Columns = e.inferExplainColumns(query)
-			if len(result.Columns) == 0 {
-				// UNION branch execution can legitimately return zero rows; still preserve
-				// projected column shape from the branch RETURN clause.
-				result.Columns = e.inferTopLevelReturnColumns(query)
-			}
-		}
+		// A branch runner owns its admitted header, including a legitimate
+		// zero-column unit branch. Recompiling that branch as a root would lose
+		// its CALL/scalar frame and cannot repair an execution contract failure.
 
 		if combinedResult == nil {
 			// First query - initialize result
@@ -1858,19 +2002,7 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 				result.Rows = reorderUnionRows(result.Rows, order)
 			}
 		} else {
-			message := fmt.Sprintf(
-				"UNION queries must return the same columns (got %v and %v)",
-				combinedResult.Columns,
-				result.Columns,
-			)
-			if len(combinedResult.Columns) != len(result.Columns) {
-				message = localization.CypherResidualUnionColumnCountMismatch(len(combinedResult.Columns), len(result.Columns)).Fallback
-			}
-			return nil, newSemanticError(
-				"Neo.ClientError.Statement.SyntaxError",
-				"DifferentColumnsInUnion",
-				message,
-			)
+			return nil, unionColumnsError(combinedResult.Columns, result.Columns)
 		}
 
 		addQueryStats(combinedResult.Stats, result.Stats)
@@ -1881,10 +2013,8 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 		} else {
 			// UNION (distinct) - deduplicate rows
 			for _, row := range result.Rows {
-				key := cypherEquivalenceKey(row)
-				if !seen[key] {
+				if _, exists := seen.addTupleByContract(row, cypherEquivalenceContract); !exists {
 					combinedResult.Rows = append(combinedResult.Rows, row)
-					seen[key] = true
 				}
 			}
 		}
@@ -1895,6 +2025,25 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 	}
 
 	return combinedResult, nil
+}
+
+// unionMixedError is the error for a query that combines UNION and UNION ALL.
+func unionMixedError() error {
+	return newSemanticError(
+		"Neo.ClientError.Statement.SyntaxError",
+		"InvalidClauseComposition",
+		"UNION and UNION ALL cannot be combined in the same query",
+	)
+}
+
+// unionColumnsError is the error for a UNION branch whose column names differ
+// from the first branch's.
+func unionColumnsError(columns, branch []string) error {
+	message := fmt.Sprintf("UNION queries must return the same columns (got %v and %v)", columns, branch)
+	if len(columns) != len(branch) {
+		message = localization.CypherResidualUnionColumnCountMismatch(len(columns), len(branch)).Fallback
+	}
+	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "DifferentColumnsInUnion", message)
 }
 
 // unionColumnOrder reports whether a UNION branch returns the same column
@@ -2050,7 +2199,11 @@ func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern s
 			endIdx := strings.Index(remaining[idx:], ")")
 			if endIdx > 0 {
 				targetStr := remaining[idx+1 : idx+endIdx]
-				targetInfo := e.parseNodePattern(ctx, "("+targetStr+")")
+				targetInfo, parseErr := e.parseNodePattern(ctx, "("+targetStr+")")
+				if parseErr != nil {
+					recordExpressionFailure(ctx, parseErr)
+					return optionalRelPattern{}
+				}
 				if targetInfo.variable != "" {
 					result.targetVar = targetInfo.variable
 				}
@@ -2080,23 +2233,6 @@ func optionalRelationshipTypeMatches(filter, actual string) bool {
 		}
 	}
 	return false
-}
-
-func joinedValueKey(val interface{}) string {
-	switch v := val.(type) {
-	case *storage.Node:
-		if v == nil {
-			return "node:nil"
-		}
-		return "node:" + string(v.ID)
-	case *storage.Edge:
-		if v == nil {
-			return "edge:nil"
-		}
-		return "edge:" + string(v.ID)
-	default:
-		return fmt.Sprintf("%#v", val)
-	}
 }
 
 // ========================================
@@ -2133,63 +2269,21 @@ func replaceIdentifierOutsideQuotesUnless(input string, ident string, replacemen
 	var b strings.Builder
 	b.Grow(len(input) + 16)
 
-	inSingle := false
-	inDouble := false
-	inBacktick := false
 	for i := 0; i < len(input); {
+		if end, quoted := skipCypherLexicalToken(input, i); quoted {
+			b.WriteString(input[i:end])
+			i = end
+			continue
+		}
 		ch := input[i]
-		switch {
-		case inSingle:
-			b.WriteByte(ch)
-			i++
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			b.WriteByte(ch)
-			i++
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			b.WriteByte(ch)
-			i++
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
 
-		if ch == '\'' {
-			inSingle = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
-		if ch == '"' {
-			inDouble = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
-		if ch == '`' {
-			inBacktick = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
-
-		if !isIdentByte(ch) {
+		if !cyphertext.NamePartAt(input, i) {
 			b.WriteByte(ch)
 			i++
 			continue
 		}
 		start := i
-		for i < len(input) && isIdentByte(input[i]) {
-			i++
-		}
+		i = cyphertext.NamePartEnd(input, i)
 		token := input[start:i]
 		if token == ident && shouldReplaceIdentifierToken(input, start, i) && (locals == nil || !locals.keeps(input, ident, start)) {
 			b.WriteString(replacement)
@@ -2202,33 +2296,15 @@ func replaceIdentifierOutsideQuotesUnless(input string, ident string, replacemen
 
 func shouldReplaceIdentifierToken(input string, tokenStart int, tokenEnd int) bool {
 	// Do not replace property tokens (n.name) or map keys ({name: ...}).
-	prev := prevNonSpaceByte(input, tokenStart)
+	prev := cyphertext.NeighborByte(input, tokenStart, cyphertext.Before)
 	if prev == '.' {
 		return false
 	}
-	next := nextNonSpaceByte(input, tokenEnd)
+	next := cyphertext.NeighborByte(input, tokenEnd, cyphertext.AtOrAfter)
 	if next == ':' {
 		return false
 	}
 	return true
-}
-
-func prevNonSpaceByte(s string, pos int) byte {
-	for i := pos - 1; i >= 0; i-- {
-		if !isASCIISpace(s[i]) {
-			return s[i]
-		}
-	}
-	return 0
-}
-
-func nextNonSpaceByte(s string, pos int) byte {
-	for i := pos; i < len(s); i++ {
-		if !isASCIISpace(s[i]) {
-			return s[i]
-		}
-	}
-	return 0
 }
 
 func toStringAnyMap(value interface{}) (map[string]interface{}, bool) {

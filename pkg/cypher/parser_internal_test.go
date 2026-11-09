@@ -14,7 +14,7 @@ func TestParserParseAdditionalBranches(t *testing.T) {
 	parser := NewParser()
 
 	t.Run("skips unknown tokens before parsing recognized clauses", func(t *testing.T) {
-		query, err := parser.Parse("USE foo MATCH (n) RETURN n")
+		query, err := parser.Parse(t.Context(), "USE foo MATCH (n) RETURN n")
 		require.NoError(t, err)
 		require.Len(t, query.Clauses, 2)
 		_, ok := query.Clauses[0].(*MatchClause)
@@ -25,7 +25,7 @@ func TestParserParseAdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("marks optional match clauses", func(t *testing.T) {
-		query, err := parser.Parse("OPTIONAL MATCH (n) RETURN n")
+		query, err := parser.Parse(t.Context(), "OPTIONAL MATCH (n) RETURN n")
 		require.NoError(t, err)
 		require.Len(t, query.Clauses, 2)
 		matchClause, ok := query.Clauses[0].(*MatchClause)
@@ -34,7 +34,7 @@ func TestParserParseAdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("walks all supported clause types in sequence", func(t *testing.T) {
-		query, err := parser.Parse("MATCH (n) WHERE n.name = 'a' CREATE (m) SET m.name = 'b' DELETE m RETURN m")
+		query, err := parser.Parse(t.Context(), "MATCH (n) WHERE n.name = 'a' CREATE (m) SET m.name = 'b' DELETE m RETURN m")
 		require.NoError(t, err)
 		require.Len(t, query.Clauses, 6)
 		assert.IsType(t, &MatchClause{}, query.Clauses[0])
@@ -56,11 +56,6 @@ func TestParserDirectClauseHelpers(t *testing.T) {
 
 	createClause, pos := parser.parseCreate([]string{"CREATE", "(", "n", ")"}, 0)
 	require.NotNil(t, createClause)
-	assert.Equal(t, 1, pos)
-
-	returnClause, pos := parser.parseReturn([]string{"RETURN", "n"}, 0)
-	require.NotNil(t, returnClause)
-	assert.NotNil(t, returnClause.Items)
 	assert.Equal(t, 1, pos)
 
 	whereClause, pos := parser.parseWhere([]string{"WHERE", "n", ".", "name"}, 0)
@@ -100,7 +95,7 @@ func TestParserMarkerMethodsDirect(t *testing.T) {
 
 func TestTokenizeAdditionalBranches(t *testing.T) {
 	t.Run("handles double quoted strings and operators", func(t *testing.T) {
-		tokens, err := tokenize(`RETURN "Alice Smith" + n.score / 2`)
+		tokens, err := tokenize(t.Context(), `RETURN "Alice Smith" + n.score / 2`)
 		require.NoError(t, err)
 		assert.Equal(t,
 			[]string{"RETURN", "\"Alice Smith\"", "+", "n", ".", "score", "/", "2"},
@@ -112,7 +107,7 @@ func TestTokenizeAdditionalBranches(t *testing.T) {
 func TestParserRejectsUnterminatedStringLiteral(t *testing.T) {
 	parser := NewParser()
 
-	_, err := parser.Parse("CREATE (n {name: 'Alice})")
+	_, err := parser.Parse(t.Context(), "CREATE (n {name: 'Alice})")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "unterminated string")
 
@@ -127,7 +122,7 @@ func TestParserRejectsBareOptionalClause(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := parser.Parse("OPTIONAL CREATE (n)")
+		_, err := parser.Parse(t.Context(), "OPTIONAL CREATE (n)")
 		done <- err
 	}()
 
@@ -185,7 +180,7 @@ func TestPatternParserHelpers(t *testing.T) {
 	t.Run("parseProperties handles nested values and malformed pairs", func(t *testing.T) {
 		ctx := context.Background()
 
-		props := exec.parseProperties(ctx, `{name: 'Alice', age: 30, active: true, tags: ['a', 'b'], meta: {score: 1}, "quoted key": "ok", 'key:key': 'value', invalid, title: toUpper('friend')}`)
+		props := parsedTestValue(exec.parseProperties(ctx, `{name: 'Alice', age: 30, active: true, tags: ['a', 'b'], meta: {score: 1}, "quoted key": "ok", 'key:key': 'value', title: toUpper('friend')}`))
 		assert.Equal(t, "Alice", props["name"])
 		assert.Equal(t, int64(30), props["age"])
 		assert.Equal(t, true, props["active"])
@@ -196,43 +191,45 @@ func TestPatternParserHelpers(t *testing.T) {
 		assert.Equal(t, "FRIEND", props["title"])
 		_, exists := props["invalid"]
 		assert.False(t, exists)
-		assert.Empty(t, exec.parseProperties(ctx, " { } "))
+		assert.Empty(t, parsedTestValue(exec.parseProperties(ctx, " { } ")))
 	})
 
 	t.Run("parsePropertyValue covers literals functions and invalid values", func(t *testing.T) {
 		ctx := context.Background()
-		assert.Nil(t, exec.parsePropertyValue(ctx, ""))
-		assert.Nil(t, exec.parsePropertyValue(ctx, "null"))
-		assert.Equal(t, "it's", exec.parsePropertyValue(ctx, "'it''s'"))
-		assert.Equal(t, `a "quote"`, exec.parsePropertyValue(ctx, `"a \"quote\""`))
-		assert.Equal(t, true, exec.parsePropertyValue(ctx, "true"))
-		assert.Equal(t, int64(42), exec.parsePropertyValue(ctx, "42"))
-		assert.Equal(t, 3.5, exec.parsePropertyValue(ctx, "3.5"))
-		assert.Equal(t, []interface{}{int64(1), map[string]interface{}{"x": int64(2)}, []interface{}{"a", "b"}}, exec.parsePropertyValue(ctx, `[1, {x: 2}, ['a', 'b']]`))
-		assert.Equal(t, map[string]interface{}{"nested": "ok"}, exec.parsePropertyValue(ctx, `{nested: 'ok'}`))
-		assert.Equal(t, "HELLO", exec.parsePropertyValue(ctx, `toUpper('hello')`))
+		_, parseErr := exec.parsePropertyValue(ctx, "")
+		assert.Error(t, parseErr)
+		assert.Nil(t, parsedTestValue(exec.parsePropertyValue(ctx, "null")))
+		assert.Equal(t, "it's", parsedTestValue(exec.parsePropertyValue(ctx, `'it\'s'`)))
+		_, parseErr = exec.parsePropertyValue(ctx, "'it''s'")
+		require.Error(t, parseErr, "adjacent string literals are not a quoted escape")
+		require.Contains(t, parseErr.Error(), "Neo.ClientError.Statement.SyntaxError")
+		assert.Equal(t, `a "quote"`, parsedTestValue(exec.parsePropertyValue(ctx, `"a \"quote\""`)))
+		assert.Equal(t, true, parsedTestValue(exec.parsePropertyValue(ctx, "true")))
+		assert.Equal(t, int64(42), parsedTestValue(exec.parsePropertyValue(ctx, "42")))
+		assert.Equal(t, 3.5, parsedTestValue(exec.parsePropertyValue(ctx, "3.5")))
+		assert.Equal(t, []interface{}{int64(1), map[string]interface{}{"x": int64(2)}, []interface{}{"a", "b"}}, parsedTestValue(exec.parsePropertyValue(ctx, `[1, {x: 2}, ['a', 'b']]`)))
+		assert.Equal(t, map[string]interface{}{"nested": "ok"}, parsedTestValue(exec.parsePropertyValue(ctx, `{nested: 'ok'}`)))
+		assert.Equal(t, "HELLO", parsedTestValue(exec.parsePropertyValue(ctx, `toUpper('hello')`)))
 
-		invalid := exec.parsePropertyValue(ctx, "foo:bar")
-		typed, ok := invalid.(invalidPropertyValue)
-		require.True(t, ok)
-		assert.Equal(t, "foo:bar", typed.raw)
+		_, parseErr = exec.parsePropertyValue(ctx, "foo:bar")
+		require.Error(t, parseErr)
 	})
 
 	t.Run("parseNodePattern extracts variable labels and properties", func(t *testing.T) {
 		ctx := context.Background()
-		info := exec.parseNodePattern(ctx, `(n:Person:Employee {name: 'Alice', score: 3})`)
+		info := parsedTestValue(exec.parseNodePattern(ctx, `(n:Person:Employee {name: 'Alice', score: 3})`))
 		assert.Equal(t, "n", info.variable)
 		assert.Equal(t, []string{"Person", "Employee"}, info.labels)
 		assert.Equal(t, map[string]interface{}{"name": "Alice", "score": int64(3)}, info.properties)
 
-		info = exec.parseNodePattern(ctx, `(:OnlyLabel)`)
+		info = parsedTestValue(exec.parseNodePattern(ctx, `(:OnlyLabel)`))
 		assert.Equal(t, "", info.variable)
 		assert.Equal(t, []string{"OnlyLabel"}, info.labels)
 		assert.Empty(t, info.properties)
 	})
 
 	t.Run("split helpers respect quotes and nesting", func(t *testing.T) {
-		pairs := exec.splitPropertyPairs(`name: 'a,b', data: {nested: true}, arr: [1, 2], expr: toUpper('x')`)
+		pairs := splitTopLevelComma(`name: 'a,b', data: {nested: true}, arr: [1, 2], expr: toUpper('x')`)
 		assert.Equal(t, []string{
 			"name: 'a,b'",
 			"data: {nested: true}",

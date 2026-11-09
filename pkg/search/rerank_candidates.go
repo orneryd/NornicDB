@@ -1,7 +1,7 @@
 package search
 
 import (
-	"strconv"
+	"context"
 	"strings"
 	"unicode/utf8"
 
@@ -53,15 +53,15 @@ func charLen(text string) int {
 // reranker judges the document around the match instead of one small chunk;
 // for a lexical-only hit it is the query-centred window as before. The header
 // is taken out of the same character budget.
-func (s *Service) rerankCandidateContent(node *storage.Node, result rrfResult, query string, maxChars int) string {
+func (s *Service) rerankCandidateContent(ctx context.Context, node *storage.Node, result rrfResult, query string, maxChars int) string {
 	header := rerankContextHeader(node, rerankContextProperties())
 	remaining := maxChars
 	if header != "" {
 		remaining -= charLen(header) + 1
 	}
 	var body string
-	if chunkIndex, ok := matchingChunkIndex(string(node.ID), result.MatchID); ok {
-		if chunks := managedChunkTexts(s.hitEmbedMeta(node)); chunkIndex < len(chunks) && chunks[chunkIndex] != "" {
+	if chunkIndex, ok := vectorEntryChunkIndex(string(node.ID), result.MatchID); ok {
+		if chunks := managedChunkTexts(s.hitEmbedMeta(ctx, node)); chunkIndex < len(chunks) && chunks[chunkIndex] != "" {
 			body = expandedChunkWindow(chunks, chunkIndex, query, remaining)
 		}
 	}
@@ -196,21 +196,6 @@ func trimChunkOverlapSuffix(prev, window string) string {
 		}
 	}
 	return strings.TrimSpace(prev)
-}
-
-func matchingChunkIndex(nodeID, matchID string) (int, bool) {
-	if matchID == "" {
-		return 0, false
-	}
-	prefix := nodeID + "-chunk-"
-	if strings.HasPrefix(matchID, prefix) {
-		index, err := strconv.Atoi(strings.TrimPrefix(matchID, prefix))
-		return index, err == nil && index >= 0
-	}
-	if matchID == nodeID {
-		return 0, true
-	}
-	return 0, false
 }
 
 // managedChunkTexts returns the chunk texts the embedding worker kept in a

@@ -34,6 +34,11 @@ func (v *graphMutationVersions) read(namespace string) uint64 {
 	if namespace == "" {
 		return v.all.Load()
 	}
+	// Writers count under the entity ID's database, the part before its first
+	// ':', so a database named with ':' reads the counter its writes move.
+	if database, _, ok := ParseDatabasePrefix(namespace); ok {
+		namespace = database
+	}
 	return v.namespaceCounter(namespace).Load()
 }
 
@@ -73,11 +78,19 @@ func graphMutationVersion(engine Engine, namespace string) (uint64, bool) {
 
 // GraphMutationVersion reports all graph mutations published by this engine.
 func (b *BadgerEngine) GraphMutationVersion() (uint64, bool) {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return 0, false
+	}
+
 	return b.graphMutationVersions.read(""), true
 }
 
 // GraphMutationVersionInNamespace reports graph mutations for one database.
 func (b *BadgerEngine) GraphMutationVersionInNamespace(namespace string) (uint64, bool) {
+	if err := b.pendingNamespaceConflict(namespace); err != nil {
+		return 0, false
+	}
+
 	return b.graphMutationVersions.read(namespace), true
 }
 

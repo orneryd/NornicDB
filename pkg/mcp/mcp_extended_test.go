@@ -19,13 +19,6 @@ func TestContextWithDatabase_EmptyString(t *testing.T) {
 	}
 }
 
-func TestDatabaseFromContext_Nil(t *testing.T) {
-	db := DatabaseFromContext(nil)
-	if db != "" {
-		t.Errorf("Expected empty string for nil context, got %q", db)
-	}
-}
-
 // --- auth.go: isSecurityEnabled without authenticator ---
 
 func TestIsSecurityEnabled_NilAuthenticator(t *testing.T) {

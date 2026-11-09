@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -179,7 +180,7 @@ func latestSnapshotPath(snapshotDir string) (string, error) {
 
 // recoverBadgerFromSnapshotAndWAL rebuilds a new Badger store in-place from the latest
 // snapshot + WAL replay, preserving the original store before rebuilding it.
-func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOptions) (*storage.BadgerEngine, string, error) {
+func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badgerOpts storage.BadgerOptions) (*storage.BadgerEngine, string, error) {
 	status := RecoveryStatus{
 		Phase:         RecoveryPhaseInspect,
 		StartedAt:     time.Now().UTC(),
@@ -194,6 +195,9 @@ func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOp
 	}
 	if !hasPostRestoreSnapshot(dataDir) {
 		return nil, "", recoveryUnavailable(status, fmt.Errorf("native restore has no post-restore snapshot; refusing stale WAL recovery"))
+	}
+	if err := storage.ValidateWALFormat(filepath.Join(dataDir, "wal"), storage.WALValidateCurrent); err != nil {
+		return nil, "", recoveryUnavailable(status, err)
 	}
 	_, priorStoreErr := os.Stat(filepath.Join(dataDir, "MANIFEST"))
 	priorStore := priorStoreErr == nil
@@ -249,7 +253,7 @@ func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOp
 	}
 
 	status.Phase = RecoveryPhaseReplay
-	replay, streamStatus, err := storage.RecoverIntoEngine(newStore, walDir, snapPath)
+	replay, streamStatus, err := storage.RecoverIntoEngine(ctx, newStore, walDir, snapPath)
 	status.SnapshotStreaming = streamStatus.SnapshotStreaming
 	status.SnapshotNodes = streamStatus.SnapshotNodes
 	status.SnapshotEdges = streamStatus.SnapshotEdges
@@ -339,12 +343,7 @@ func writeRecoveryManifest(backupDir string, status RecoveryStatus) error {
 		return err
 	}
 	removeTemp = false
-	dir, err := os.Open(backupDir)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return storage.SyncDir(backupDir)
 }
 
 type renamePathFunc func(oldPath, newPath string) error

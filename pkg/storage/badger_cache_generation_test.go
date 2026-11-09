@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -13,76 +16,82 @@ import (
 // A read that captured a cache's generation before a write can't put back
 // what it read once the write has written to that cache (#1024).
 func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
 
 	gen := engine.nodeCacheGen.current()
-	engine.cacheStoreNode(&Node{ID: "gen:n", Properties: map[string]any{"v": int64(2)}})
-	engine.cacheFillNode(gen, &Node{ID: "gen:n", Properties: map[string]any{"v": int64(1)}})
+	engine.cacheStoreNode(&Node{ID: "gen:n", Properties: map[string]any{"v": int64(2)}}, engine.db.oracle.published.Load())
+	engine.cacheFillNode(gen, &Node{ID: "gen:n", Properties: map[string]any{"v": int64(1)}}, nodeReadCacheFull, engine.db.oracle.published.Load())
 	require.EqualValues(t, 2, engine.nodeCache["gen:n"].Properties["v"])
 	gen = engine.nodeCacheGen.current()
-	engine.cacheDeleteNode("gen:n")
-	engine.cacheFillNode(gen, &Node{ID: "gen:n"})
+	engine.cacheDeleteNode("gen:n", nodeCacheAllForms)
+	engine.cacheFillNode(gen, &Node{ID: "gen:n"}, nodeReadCacheFull, engine.db.oracle.published.Load())
 	require.NotContains(t, engine.nodeCache, NodeID("gen:n"), "a deleted node isn't put back")
-	engine.cacheFillNode(engine.nodeCacheGen.current(), &Node{ID: "gen:n"})
+	engine.cacheFillNode(engine.nodeCacheGen.current(), &Node{ID: "gen:n"}, nodeReadCacheFull, engine.db.oracle.published.Load())
 	require.Contains(t, engine.nodeCache, NodeID("gen:n"), "a read that raced nothing fills")
-	engine.cacheFillNode(0, nil)
+	engine.cacheFillNode(0, nil, nodeReadCacheFull, engine.db.oracle.published.Load())
 
 	gen = engine.edgeCacheGen.current()
 	engine.cacheDeleteEdge("gen:e")
-	engine.cacheFillEdge(gen, &Edge{ID: "gen:e"})
+	engine.cacheFillEdge(gen, &Edge{ID: "gen:e"}, engine.db.oracle.published.Load())
 	require.NotContains(t, engine.edgeCache, EdgeID("gen:e"))
-	engine.cacheFillEdge(engine.edgeCacheGen.current(), &Edge{ID: "gen:e"})
+	engine.cacheFillEdge(engine.edgeCacheGen.current(), &Edge{ID: "gen:e"}, engine.db.oracle.published.Load())
 	require.Contains(t, engine.edgeCache, EdgeID("gen:e"))
-	engine.cacheFillEdge(0, nil)
+	engine.cacheFillEdge(0, nil, engine.db.oracle.published.Load())
 
 	// A read through the adjacency cache fills the edge bodies it misses.
-	_, err = engine.CreateNode(&Node{ID: "gen:s"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "gen:s"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "gen:t"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "gen:t"})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "gen:st", StartNode: "gen:s", EndNode: "gen:t", Type: "T"}))
-	_, err = engine.GetOutgoingEdges("gen:s")
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "gen:st", StartNode: "gen:s", EndNode: "gen:t", Type: "T"}))
+	_, err = engine.GetOutgoingEdges(context.Background(), "gen:s")
 	require.NoError(t, err)
 	require.Contains(t, engine.outgoingAdjCache, NodeID("gen:s"))
 	engine.cacheInvalidateEdges()
-	edges, err := engine.GetOutgoingEdges("gen:s")
+	edges, err := engine.GetOutgoingEdges(context.Background(), "gen:s")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Contains(t, engine.edgeCache, EdgeID("gen:st"))
 
 	gen = engine.adjCacheGen.current()
 	engine.adjCacheInvalidateForEdge(&Edge{StartNode: "gen:a", EndNode: "gen:b"})
-	engine.adjCacheStoreOutgoing(gen, "gen:a", []EdgeID{"gen:e"})
-	engine.adjCacheStoreIncoming(gen, "gen:b", []EdgeID{"gen:e"})
+	engine.adjCacheStore(gen, "gen:a", []EdgeID{"gen:e"}, engine.db.oracle.published.Load(), true)
+	engine.adjCacheStore(gen, "gen:b", []EdgeID{"gen:e"}, engine.db.oracle.published.Load(), false)
 	require.NotContains(t, engine.outgoingAdjCache, NodeID("gen:a"))
 	require.NotContains(t, engine.incomingAdjCache, NodeID("gen:b"))
 
 	gen = engine.labelFirstCacheGen.current()
 	engine.labelCacheInvalidateForNodeLabels([]string{"L"}, "gen:n")
-	engine.labelCacheSetFirst(gen, "L", "gen:n")
+	engine.labelCacheSetFirst(gen, "L", "gen:n", engine.db.oracle.published.Load())
 	require.NotContains(t, engine.labelFirstNodeCache, "L")
 	// A read that drops the stale first node it found keeps its generation
 	// only when nothing else wrote the cache meanwhile.
 	gen = engine.labelFirstCacheGen.current()
-	engine.labelCacheSetFirst(gen, "L", "gen:stale")
+	engine.labelCacheSetFirst(gen, "L", "gen:stale", engine.db.oracle.published.Load())
 	kept := engine.labelCacheDropStaleFirst(gen, "L", "gen:stale")
 	require.NotContains(t, engine.labelFirstNodeCache, "L")
-	engine.labelCacheSetFirst(kept, "L", "gen:n")
+	engine.labelCacheSetFirst(kept, "L", "gen:n", engine.db.oracle.published.Load())
 	require.Equal(t, NodeID("gen:n"), engine.labelFirstNodeCache["L"])
 	stale := engine.labelFirstCacheGen.current() - 1
 	require.Equal(t, stale, engine.labelCacheDropStaleFirst(stale, "L", "gen:other"), "another write since: stays stale")
 	require.Equal(t, NodeID("gen:n"), engine.labelFirstNodeCache["L"], "only the stale id is dropped")
 
-	_, err = engine.GetEdgesByType("T")
+	_, err = engine.GetEdgesByType(context.Background(), "T")
 	require.NoError(t, err)
 	require.Contains(t, engine.edgeTypeCache, "T")
-	engine.InvalidateEdgeTypeCacheForType("T")
+	engine.edgeTypeCacheFill(engine.edgeTypeCacheGen.current(), "retained", nil, engine.db.oracle.published.Load())
+	gen = engine.edgeTypeCacheGen.current()
+	engine.InvalidateEdgeTypeCache("")
+	require.Equal(t, gen, engine.edgeTypeCacheGen.current(), "explicit empty type is not full invalidation")
+	require.Contains(t, engine.edgeTypeCache, "T")
+	engine.InvalidateEdgeTypeCache("T")
 	require.NotContains(t, engine.edgeTypeCache, "T")
+	require.Contains(t, engine.edgeTypeCache, "retained", "scoped invalidation keeps other types")
 	gen = engine.edgeTypeCacheGen.current()
 	engine.InvalidateEdgeTypeCache()
-	engine.edgeTypeCacheFill(gen, "T", nil)
+	engine.edgeTypeCacheFill(gen, "T", nil, engine.db.oracle.published.Load())
 	require.NotContains(t, engine.edgeTypeCache, "T")
 }
 
@@ -90,12 +99,12 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 // older version cached once the writes are done (#1024). Before the fix,
 // 31 of 200 rounds left a stale version.
 func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
 	engine.nodeCacheMaxEntries = 4 // so reads keep missing
 	for i := 0; i < 16; i++ {
-		_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("race:n%d", i)), Labels: []string{"L"}, Properties: map[string]interface{}{"v": int64(0)}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("race:n%d", i)), Labels: []string{"L"}, Properties: map[string]interface{}{"v": int64(0)}})
 		require.NoError(t, err)
 	}
 	for round := 0; round < 200; round++ {
@@ -107,13 +116,13 @@ func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for i := 0; !stop.Load(); i++ {
-					_, _ = engine.GetNode(NodeID(fmt.Sprintf("race:n%d", (i+r)%16)))
+					_, _ = engine.GetNode(t.Context(), NodeID(fmt.Sprintf("race:n%d", (i+r)%16)))
 				}
 			}()
 		}
 		want := int64(round*100 + 50)
 		for v := int64(1); v <= 50; v++ {
-			require.NoError(t, engine.UpdateNode(&Node{ID: "race:n0", Labels: []string{"L"}, Properties: map[string]interface{}{"v": int64(round*100) + v}}))
+			require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "race:n0", Labels: []string{"L"}, Properties: map[string]interface{}{"v": int64(round*100) + v}}}))
 		}
 		stop.Store(true)
 		wg.Wait()
@@ -129,7 +138,7 @@ func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
 			})
 		}))
 		require.EqualValues(t, want, stored.Properties["v"])
-		got, err := engine.GetNode("race:n0")
+		got, err := engine.GetNode(t.Context(), "race:n0")
 		require.NoError(t, err)
 		require.EqualValues(t, want, got.Properties["v"], "round %d", round)
 	}
@@ -138,17 +147,17 @@ func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
 // A label scan that finds its cached first node no longer has the label
 // drops it and caches the node it finds instead.
 func TestLabelScanReplacesFirstNodeThatLostTheLabel(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
-	_, err = engine.CreateNode(&Node{ID: "gen:other", Labels: []string{"Other"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "gen:other", Labels: []string{"Other"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "gen:person", Labels: []string{"Person"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "gen:person", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	engine.labelCacheSetFirst(engine.labelFirstCacheGen.current(), "Person", "gen:other")
+	engine.labelCacheSetFirst(engine.labelFirstCacheGen.current(), "Person", "gen:other", engine.db.oracle.published.Load())
 
 	var visited []NodeID
-	require.NoError(t, engine.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+	require.NoError(t, engine.ForEachNodeIDByLabel(context.Background(), "Person", func(id NodeID) bool {
 		visited = append(visited, id)
 		return true
 	}))

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,6 +26,9 @@ type WALSegment struct {
 type WALManifest struct {
 	Version  int          `json:"version"`
 	Segments []WALSegment `json:"segments"`
+	// RetiredThrough prevents snapshot-covered segment files left behind by
+	// a crash from being rediscovered and preserves sequence monotonicity.
+	RetiredThrough uint64 `json:"retired_through,omitempty"`
 }
 
 func walSegmentsDir(walDir string) string {
@@ -39,70 +43,113 @@ func walActivePath(walDir string) string {
 	return filepath.Join(walDir, "wal.log")
 }
 
-func loadWALManifest(walDir string) (*WALManifest, error) {
-	manifestPath := walManifestPath(walDir)
-	file, err := os.Open(manifestPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &WALManifest{Version: walManifestVersion}, nil
+type walManifestAccess uint8
+
+const (
+	walReadManifest walManifestAccess = iota
+	walPublishManifest
+)
+
+// accessWALManifest owns the manifest document, version and filesystem lifecycle.
+// Reads recover only an unlisted tail. Publications preserve the same indented
+// JSON bytes and atomically replace a synced temporary file. No format changes.
+func accessWALManifest(walDir string, access walManifestAccess, manifest *WALManifest) (*WALManifest, error) {
+	path := walManifestPath(walDir)
+	switch access {
+	case walReadManifest:
+		manifest = &WALManifest{}
+		file, err := os.Open(path)
+		if err == nil {
+			defer file.Close()
+			if err := json.NewDecoder(file).Decode(manifest); err != nil {
+				return nil, err
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
 		}
-		return nil, err
-	}
-	defer file.Close()
-
-	var manifest WALManifest
-	if err := json.NewDecoder(file).Decode(&manifest); err != nil {
-		return nil, err
-	}
-	if manifest.Version == 0 {
-		manifest.Version = walManifestVersion
-	}
-	sort.Slice(manifest.Segments, func(i, j int) bool {
-		return manifest.Segments[i].FirstSeq < manifest.Segments[j].FirstSeq
-	})
-	return &manifest, nil
-}
-
-func writeWALManifest(walDir string, manifest *WALManifest) error {
-	if manifest == nil {
-		return fmt.Errorf("wal: manifest is nil")
+	case walPublishManifest:
+		if manifest == nil {
+			return nil, fmt.Errorf("wal: manifest is nil")
+		}
+	default:
+		return nil, fmt.Errorf("wal: invalid manifest access: %d", access)
 	}
 	if manifest.Version == 0 {
 		manifest.Version = walManifestVersion
 	}
-
+	if access == walReadManifest {
+		// A rotation renames the active file before publishing its manifest. A
+		// crash in that interval leaves an unlisted newest segment on disk. Merge
+		// only an unlisted tail: older unlisted files can be leftovers from
+		// compaction and must not resurrect an intentionally retired segment.
+		listed := make(map[string]bool, len(manifest.Segments))
+		last := manifest.RetiredThrough
+		for _, segment := range manifest.Segments {
+			listed[segment.Path] = true
+			_, end, ok := parseSegmentFilename(segment.Path)
+			if !ok {
+				end = segment.LastSeq
+			}
+			if end > last {
+				last = end
+			}
+		}
+		scanned, err := scanSegmentsFromDir(walDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, segment := range scanned {
+			if listed[segment.Path] {
+				continue
+			}
+			if segment.LastSeq <= manifest.RetiredThrough {
+				continue
+			}
+			if segment.FirstSeq > last {
+				manifest.Segments = append(manifest.Segments, segment)
+				last = segment.LastSeq
+			} else if segment.LastSeq > last {
+				return nil, fmt.Errorf("wal: unlisted segment %q overlaps the manifest", segment.Path)
+			}
+		}
+		sort.Slice(manifest.Segments, func(i, j int) bool {
+			return manifest.Segments[i].FirstSeq < manifest.Segments[j].FirstSeq
+		})
+		return manifest, nil
+	}
 	segmentDir := walSegmentsDir(walDir)
 	if err := os.MkdirAll(segmentDir, 0755); err != nil {
-		return err
+		return nil, err
 	}
-
-	tmpPath := walManifestPath(walDir) + ".tmp"
+	tmpPath := path + ".tmp"
 	file, err := os.Create(tmpPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(manifest); err != nil {
 		file.Close()
 		os.Remove(tmpPath)
-		return err
+		return nil, err
 	}
-
 	if err := file.Sync(); err != nil {
 		file.Close()
 		os.Remove(tmpPath)
-		return err
+		return nil, err
 	}
-	file.Close()
-
-	if err := os.Rename(tmpPath, walManifestPath(walDir)); err != nil {
+	if err := file.Close(); err != nil {
 		os.Remove(tmpPath)
-		return err
+		return nil, err
 	}
-
-	return syncDir(segmentDir)
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return nil, err
+	}
+	if err := syncDir(segmentDir); err != nil {
+		return nil, err
+	}
+	return manifest, nil
 }
 
 func scanSegmentsFromDir(walDir string) ([]WALSegment, error) {
@@ -126,7 +173,7 @@ func scanSegmentsFromDir(walDir string) ([]WALSegment, error) {
 		}
 		info, err := entry.Info()
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("wal: inspect segment %q: %w", entry.Name(), err)
 		}
 		segments = append(segments, WALSegment{
 			FirstSeq:  firstSeq,
@@ -184,16 +231,17 @@ func resolveWALSegmentPath(walDir, segmentName string) (string, error) {
 }
 
 // ReadWALEntriesFromDir reads WAL entries across all segments and the active WAL file.
-func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
-	manifest, err := loadWALManifest(walDir)
-	if err != nil {
+func ReadWALEntriesFromDir(ctx context.Context, walDir string) ([]WALEntry, error) {
+	info, err := os.Stat(walDir)
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-
-	if len(manifest.Segments) == 0 {
-		if scanned, scanErr := scanSegmentsFromDir(walDir); scanErr == nil && len(scanned) > 0 {
-			manifest.Segments = scanned
-		}
+	if err == nil && !info.IsDir() {
+		return nil, fmt.Errorf("WAL path %q is not a directory", walDir)
+	}
+	manifest, err := accessWALManifest(walDir, walReadManifest, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	var entries []WALEntry
@@ -202,7 +250,7 @@ func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
 		if err != nil {
 			return nil, err
 		}
-		segmentEntries, err := ReadWALEntries(segmentPath)
+		segmentEntries, err := ReadWALEntries(ctx, segmentPath, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -211,7 +259,7 @@ func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
 
 	activePath := walActivePath(walDir)
 	if _, err := os.Stat(activePath); err == nil {
-		activeEntries, err := ReadWALEntries(activePath)
+		activeEntries, err := ReadWALEntries(ctx, activePath, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -221,37 +269,16 @@ func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
 	return entries, nil
 }
 
-// ReadWALEntriesAfterFromDir reads WAL entries after a given sequence across all segments.
-func ReadWALEntriesAfterFromDir(walDir string, afterSeq uint64) ([]WALEntry, error) {
-	all, err := ReadWALEntriesFromDir(walDir)
-	if err != nil {
-		return nil, err
-	}
-
-	filtered := make([]WALEntry, 0, len(all))
-	for _, entry := range all {
-		if entry.Sequence > afterSeq {
-			filtered = append(filtered, entry)
-		}
-	}
-	return filtered, nil
-}
-
 // VisitWALEntriesAfterFromDir visits WAL entries after the given sequence in
 // segment order without retaining the complete WAL in memory.
-func VisitWALEntriesAfterFromDir(walDir string, afterSeq uint64, visit func(WALEntry) error) error {
-	manifest, err := loadWALManifest(walDir)
+func VisitWALEntriesAfterFromDir(ctx context.Context, walDir string, afterSeq uint64, visit func(WALEntry) error) error {
+	manifest, err := accessWALManifest(walDir, walReadManifest, nil)
 	if err != nil {
 		return err
 	}
-	if len(manifest.Segments) == 0 {
-		if scanned, scanErr := scanSegmentsFromDir(walDir); scanErr == nil && len(scanned) > 0 {
-			manifest.Segments = scanned
-		}
-	}
 
 	visitFile := func(path string) error {
-		return visitWALEntriesWithLogger(path, discardWALSlog(), func(entry WALEntry) error {
+		return visitWALEntriesWithLogger(ctx, path, discardWALSlog(), func(entry WALEntry) error {
 			if entry.Sequence <= afterSeq {
 				return nil
 			}
@@ -278,8 +305,8 @@ func VisitWALEntriesAfterFromDir(walDir string, afterSeq uint64, visit func(WALE
 }
 
 // ReadWALEntriesRangeFromDir reads entries in [fromSeq, toSeq] (inclusive).
-func ReadWALEntriesRangeFromDir(walDir string, fromSeq, toSeq uint64) ([]WALEntry, error) {
-	all, err := ReadWALEntriesFromDir(walDir)
+func ReadWALEntriesRangeFromDir(ctx context.Context, walDir string, fromSeq, toSeq uint64) ([]WALEntry, error) {
+	all, err := ReadWALEntriesFromDir(ctx, walDir)
 	if err != nil {
 		return nil, err
 	}
@@ -299,12 +326,12 @@ func ReadWALEntriesRangeFromDir(walDir string, fromSeq, toSeq uint64) ([]WALEntr
 
 // FindWALEntriesByTxID scans entries and returns those with a matching tx_id.
 // Use maxEntries <= 0 to return all matches.
-func FindWALEntriesByTxID(walDir, txID string, maxEntries int) ([]WALEntry, error) {
+func FindWALEntriesByTxID(ctx context.Context, walDir, txID string, maxEntries int) ([]WALEntry, error) {
 	if txID == "" {
 		return nil, fmt.Errorf("tx_id is required")
 	}
 
-	all, err := ReadWALEntriesFromDir(walDir)
+	all, err := ReadWALEntriesFromDir(ctx, walDir)
 	if err != nil {
 		return nil, err
 	}

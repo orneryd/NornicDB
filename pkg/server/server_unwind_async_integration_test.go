@@ -1,6 +1,8 @@
 package server
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,14 +32,14 @@ func setupAsyncUnwindServer(t *testing.T) *Server {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authn, err := auth.NewAuthenticator(auth.AuthConfig{
 		SecurityEnabled: true,
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}, authStorage)
 	require.NoError(t, err)
-	_, _ = authn.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, _ = authn.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 
 	cfg := DefaultConfig()
 	cfg.Port = 0
@@ -57,14 +59,14 @@ func setupAsyncUnwindServerWithDir(t *testing.T, dir string) (*Server, *nornicdb
 	db, err := nornicdb.Open(dir, dbCfg)
 	require.NoError(t, err)
 
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authn, err := auth.NewAuthenticator(auth.AuthConfig{
 		SecurityEnabled: true,
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}, authStorage)
 	require.NoError(t, err)
-	_, _ = authn.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, _ = authn.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 
 	cfg := DefaultConfig()
 	cfg.Port = 0

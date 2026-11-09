@@ -44,7 +44,7 @@ func testCallableDecodedIdentity(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{tc.want}}, r.Rows)
 			require.Equal(t, tc.want, e.evaluateExpressionWithContext(context.Background(), tc.expr, nil, nil))
-			v, ok, err := e.evaluateRowValue(tc.expr, nil)
+			v, ok, err := e.evaluateRowValue(t.Context(), tc.expr, nil)
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Equal(t, tc.want, v)
@@ -68,7 +68,13 @@ func TestQuotedQualifiedUnknownFunction(t *testing.T) {
 }
 
 func TestQuotedNamespaceStaticArguments(t *testing.T) {
-	err := forEachStaticFunctionArgument("`custom` . range('ok')", func(staticArgumentType, string, int) error { return nil })
+	err := forEachStaticFunctionArgument(t.Context(), "`custom` . range('ok')", func(staticArgumentType, string, int) error { return nil })
 	require.NoError(t, err)
-	require.Empty(t, semanticExpressionReferences("custom . /*c*/ range('ok')"))
+	called := false
+	complete := forEachSemanticExpressionReference("custom . /*c*/ range('ok')", func(_, _ string, _ bool, _ int) bool {
+		called = true
+		return false
+	})
+	require.True(t, complete)
+	require.False(t, called, "a qualified function name is not a variable reference")
 }

@@ -2,8 +2,10 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -18,11 +20,11 @@ import (
 // property-key dictionary, and returns its path.
 func restoreFixture(t *testing.T, nodes int) string {
 	t.Helper()
-	source, err := NewBadgerEngine(t.TempDir())
+	source, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer source.Close()
 	for i := 0; i < nodes; i++ {
-		_, err := source.CreateNode(&Node{
+		_, err := source.CreateNode(t.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("restore:n%d", i)),
 			Labels:     []string{"Doc"},
 			Properties: map[string]interface{}{"name": fmt.Sprintf("doc %d", i), "rank": i, fmt.Sprintf("key%d", i%7): true},
@@ -40,7 +42,7 @@ func restoreFixture(t *testing.T, nodes int) string {
 func TestBadgerEngine_RestoreWithConcurrentReaders(t *testing.T) {
 	const nodes = 200
 	backup := restoreFixture(t, nodes)
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
 	require.NoError(t, engine.Restore(backup))
@@ -72,7 +74,7 @@ func TestBadgerEngine_RestoreWithConcurrentReaders(t *testing.T) {
 		worker := worker
 		wg.Add(3)
 		go reader(func() error {
-			node, err := engine.GetNode(NodeID(fmt.Sprintf("restore:n%d", worker*37%nodes)))
+			node, err := engine.GetNode(t.Context(), NodeID(fmt.Sprintf("restore:n%d", worker*37%nodes)))
 			if err != nil {
 				return err
 			}
@@ -82,7 +84,7 @@ func TestBadgerEngine_RestoreWithConcurrentReaders(t *testing.T) {
 			return nil
 		})
 		go reader(func() error {
-			all, err := engine.AllNodes()
+			all, err := engine.AllNodes(context.Background())
 			if err != nil {
 				return err
 			}
@@ -107,7 +109,7 @@ func TestBadgerEngine_RestoreWithConcurrentReaders(t *testing.T) {
 		return true
 	})
 	require.Positive(t, reads.Load())
-	node, err := engine.GetNode("restore:n5")
+	node, err := engine.GetNode(t.Context(), "restore:n5")
 	require.NoError(t, err)
 	require.Equal(t, "doc 5", node.Properties["name"])
 }
@@ -117,21 +119,21 @@ func TestBadgerEngine_RestoreWithConcurrentReaders(t *testing.T) {
 // transaction ends.
 func TestBadgerEngine_RestoreWaitsForOpenTransaction(t *testing.T) {
 	backup := restoreFixture(t, 3)
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
-	_, err = engine.CreateNode(&Node{ID: "restore:before", Labels: []string{"Doc"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "restore:before", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	restored := make(chan error, 1)
 	go func() { restored <- engine.Restore(backup) }()
 	require.Eventually(t, func() bool {
-		_, err := engine.GetNode("restore:uncached")
+		_, err := engine.GetNode(t.Context(), "restore:uncached")
 		return errors.Is(err, ErrStorageRestoring)
 	}, 5*time.Second, time.Millisecond, "store reads are turned away while the restore waits")
-	_, err = engine.BeginTransaction()
+	_, err = engine.BeginTransaction(t.Context())
 	require.ErrorIs(t, err, ErrStorageRestoring)
 	require.ErrorContains(t, err, "the database is being restored")
 	select {
@@ -142,9 +144,9 @@ func TestBadgerEngine_RestoreWaitsForOpenTransaction(t *testing.T) {
 
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, <-restored)
-	_, err = engine.GetNode("restore:before")
+	_, err = engine.GetNode(t.Context(), "restore:before")
 	require.ErrorIs(t, err, ErrNotFound)
-	node, err := engine.GetNode("restore:n1")
+	node, err := engine.GetNode(t.Context(), "restore:n1")
 	require.NoError(t, err)
 	require.Equal(t, "doc 1", node.Properties["name"])
 }
@@ -152,31 +154,34 @@ func TestBadgerEngine_RestoreWaitsForOpenTransaction(t *testing.T) {
 // A transaction still open after the wait leaves the store as it was.
 func TestBadgerEngine_RestoreBusyChangesNothing(t *testing.T) {
 	backup := restoreFixture(t, 3)
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
-	_, err = engine.CreateNode(&Node{ID: "restore:kept", Labels: []string{"Doc"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "restore:kept", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	previous := restoreReadDrainTimeout
 	restoreReadDrainTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { restoreReadDrainTimeout = previous })
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	err = engine.Restore(backup)
 	require.ErrorContains(t, err, "restore not started: reads or transactions were still open after 50ms")
 	require.NoError(t, tx.Rollback())
 
-	_, err = engine.GetNode("restore:kept")
+	_, err = engine.GetNode(t.Context(), "restore:kept")
 	require.NoError(t, err, "reads resume and the store is unchanged")
-	_, err = engine.GetNode("restore:n1")
+	_, err = engine.GetNode(t.Context(), "restore:n1")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
 // Restore on a closed engine reports it and touches nothing.
 func TestBadgerEngine_RestoreClosedEngine(t *testing.T) {
 	backup := restoreFixture(t, 1)
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 	require.ErrorIs(t, engine.Restore(backup), ErrStorageClosed)
@@ -185,12 +190,12 @@ func TestBadgerEngine_RestoreClosedEngine(t *testing.T) {
 // While reads are held, every entry point that opens a Badger read is turned
 // away, and a transaction's snapshot refresh keeps its current snapshot.
 func TestManagedBadgerReadsHeld(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
-	_, err = engine.CreateNode(&Node{ID: "held:n", Labels: []string{"Doc"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "held:n", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	snapshot := tx.snapshotTx
@@ -206,9 +211,9 @@ func TestManagedBadgerReadsHeld(t *testing.T) {
 	require.ErrorIs(t, err, ErrStorageRestoring)
 	_, _, err = db.beginTxn(false)
 	require.ErrorIs(t, err, ErrStorageRestoring)
-	require.ErrorIs(t, engine.withUpdate(noop), ErrStorageRestoring)
+	require.ErrorIs(t, engine.withUpdate(context.Background(), updateRequest{}, noop), ErrStorageRestoring)
 	tx.mu.Lock()
-	err = tx.refreshSnapshotLocked()
+	err = tx.advanceSnapshotLocked(context.Background(), false)
 	tx.mu.Unlock()
 	require.ErrorIs(t, err, ErrStorageRestoring)
 	require.Same(t, snapshot, tx.snapshotTx, "the transaction keeps its snapshot")
@@ -216,13 +221,16 @@ func TestManagedBadgerReadsHeld(t *testing.T) {
 	db.oracle.releaseReads()
 
 	require.NoError(t, db.View(noop))
-	_, err = tx.GetNode("held:n")
+	_, err = tx.GetNode(t.Context(), "held:n")
 	require.NoError(t, err)
 }
 
 // viewHeld on a closed Badger handle reports it.
 func TestManagedBadgerViewHeldClosed(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	db := engine.db
 	require.NoError(t, engine.Close())

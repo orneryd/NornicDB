@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
@@ -35,20 +37,25 @@ type CollectionStore interface {
 	GetMeta(ctx context.Context, name string) (*CollectionMeta, error)
 	List(ctx context.Context) ([]string, error)
 	Drop(ctx context.Context, name string) error
-	Exists(name string) bool
+	Exists(ctx context.Context, name string) (bool, error)
 	PointCount(ctx context.Context, name string) (int64, error)
 }
 
 type databaseCollectionStore struct {
 	dbManager *multidb.DatabaseManager
-	vecIndex  *vectorIndexCache
+	// dropDatabase drops a collection's database and the state derived from
+	// it (Config.DropDatabase); it defaults to dbManager.DropDatabase.
+	dropDatabase func(ctx context.Context, name string) error
+	defaultDrop  bool
 
 	// reserved database names that must not be used for Qdrant collections.
 	reserved map[string]struct{}
 }
 
-// NewDatabaseCollectionStore creates a CollectionStore backed by DatabaseManager namespaces.
-func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, vecIndex *vectorIndexCache) (CollectionStore, error) {
+// NewDatabaseCollectionStore creates a CollectionStore backed by DatabaseManager
+// namespaces. dropDatabase drops a collection's database together with its
+// derived state (Config.DropDatabase); nil uses dbManager.DropDatabase.
+func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, dropDatabase func(ctx context.Context, name string) error) (CollectionStore, error) {
 	if dbManager == nil {
 		return nil, fmt.Errorf("db manager required")
 	}
@@ -59,14 +66,36 @@ func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, vecIndex *ve
 	// Reserve the default database name as well; Qdrant collections are dedicated namespaces.
 	reserved[strings.ToLower(dbManager.DefaultDatabaseName())] = struct{}{}
 
+	defaultDrop := dropDatabase == nil
+	if defaultDrop {
+		dropDatabase = dbManager.DropDatabase
+	}
+
 	return &databaseCollectionStore{
-		dbManager: dbManager,
-		vecIndex:  vecIndex,
-		reserved:  reserved,
+		dbManager:    dbManager,
+		dropDatabase: dropDatabase,
+		defaultDrop:  defaultDrop,
+		reserved:     reserved,
 	}, nil
 }
 
 func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims int, distance qpb.Distance) error {
+	return s.CreateWithQuantization(ctx, name, dims, distance, nil)
+}
+
+func (s *databaseCollectionStore) CreateWithQuantization(ctx context.Context, name string, dims int, distance qpb.Distance, quantization *qpb.QuantizationConfig) error {
+	var encoded []byte
+	if quantization != nil {
+		if _, err := searchQuantizationConfig(quantization); err != nil {
+			return err
+		}
+		var err error
+		encoded, err = protojson.Marshal(quantization)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := validateCollectionName(name, s.reserved); err != nil {
 		return err
 	}
@@ -74,43 +103,36 @@ func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims 
 		return fmt.Errorf("invalid dimensions: %d", dims)
 	}
 
-	if err := s.dbManager.CreateDatabase(name); err != nil {
+	if err := s.dbManager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: name}); err != nil {
 		return err
 	}
 
 	engine, err := s.dbManager.GetStorage(name)
 	if err != nil {
-		_ = s.dbManager.DropDatabase(name)
+		_ = s.dropDatabase(ctx, name)
 		return err
 	}
 
 	now := time.Now()
-	_, err = engine.CreateNode(&storage.Node{
-		ID:     collectionMetaNodeID,
-		Labels: []string{collectionMetaNodeLabel},
-		Properties: map[string]any{
-			"dimensions":     dims,
-			"distance":       int32(distance),
-			"schema_version": 1,
-			"created_at":     now.Unix(),
-		},
-		CreatedAt: now,
+	properties := map[string]any{"dimensions": dims, "distance": int32(distance), "schema_version": 1, "created_at": now.Unix()}
+	if len(encoded) > 0 {
+		properties["quantization_config"] = string(encoded)
+	}
+	_, err = engine.CreateNode(ctx, &storage.Node{
+		ID:         collectionMetaNodeID,
+		Labels:     []string{collectionMetaNodeLabel},
+		Properties: properties,
+		CreatedAt:  now,
 	})
 	if err != nil {
-		_ = s.dbManager.DropDatabase(name)
+		_ = s.dropDatabase(ctx, name)
 		return err
-	}
-
-	if s.vecIndex != nil {
-		// Ensure an empty per-collection index exists with the correct dimension/distance.
-		_ = s.vecIndex.getOrCreate(name, "", dims, distance)
 	}
 
 	return nil
 }
 
 func (s *databaseCollectionStore) Open(ctx context.Context, name string) (storage.Engine, *CollectionMeta, error) {
-	_ = ctx
 	if name == "" {
 		return nil, nil, ErrCollectionNotFound
 	}
@@ -118,7 +140,7 @@ func (s *databaseCollectionStore) Open(ctx context.Context, name string) (storag
 	if err != nil {
 		return nil, nil, ErrCollectionNotFound
 	}
-	meta, err := readCollectionMeta(engine)
+	meta, err := readCollectionMeta(ctx, engine)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, ErrInvalidCollection) {
 			return nil, nil, ErrCollectionNotFound
@@ -135,7 +157,6 @@ func (s *databaseCollectionStore) GetMeta(ctx context.Context, name string) (*Co
 }
 
 func (s *databaseCollectionStore) List(ctx context.Context) ([]string, error) {
-	_ = ctx
 	infos := s.dbManager.ListDatabases()
 	out := make([]string, 0, len(infos))
 	for _, info := range infos {
@@ -146,46 +167,53 @@ func (s *databaseCollectionStore) List(ctx context.Context) ([]string, error) {
 		if err != nil {
 			continue
 		}
-		if _, err := readCollectionMeta(engine); err == nil {
+		if _, err := readCollectionMeta(ctx, engine); err == nil {
 			out = append(out, info.Name)
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
 		}
 	}
 	return out, nil
 }
 
 func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
-	_ = ctx
 	if name == "" {
 		return ErrCollectionNotFound
 	}
 	// Only allow dropping Qdrant collections (must have meta node).
 	engine, err := s.dbManager.GetStorage(name)
 	if err != nil {
+		// Author: NOR-288 lane (Claude), 2026-10-30. An unavailable name may
+		// be a drop the DROP owner already accepted; the owner decides and
+		// finishes only that, never a live database of another kind.
+		if err := s.dbManager.FinishPendingDrop(ctx, name); !errors.Is(err, multidb.ErrDatabaseNotFound) {
+			return err
+		}
 		return ErrCollectionNotFound
 	}
-	if _, err := readCollectionMeta(engine); err != nil {
+	if _, err := readCollectionMeta(ctx, engine); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		return ErrCollectionNotFound
 	}
 
-	if err := s.dbManager.DropDatabase(name); err != nil {
-		return err
-	}
-	if s.vecIndex != nil {
-		s.vecIndex.deleteCollection(name)
-	}
-	return nil
+	return s.dropDatabase(ctx, name)
 }
 
-func (s *databaseCollectionStore) Exists(name string) bool {
+func (s *databaseCollectionStore) Exists(ctx context.Context, name string) (bool, error) {
 	if name == "" {
-		return false
+		return false, nil
 	}
 	engine, err := s.dbManager.GetStorage(name)
 	if err != nil {
-		return false
+		return false, nil
 	}
-	_, err = readCollectionMeta(engine)
-	return err == nil
+	_, err = readCollectionMeta(ctx, engine)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false, err
+	}
+	return err == nil, nil
 }
 
 func (s *databaseCollectionStore) PointCount(ctx context.Context, name string) (int64, error) {
@@ -193,7 +221,7 @@ func (s *databaseCollectionStore) PointCount(ctx context.Context, name string) (
 	if err != nil {
 		return 0, err
 	}
-	nodes, err := engine.GetNodesByLabel(QdrantPointLabel)
+	nodes, err := engine.GetNodesByLabel(ctx, QdrantPointLabel)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return 0, nil
@@ -225,8 +253,8 @@ func validateCollectionName(name string, reserved map[string]struct{}) error {
 	return nil
 }
 
-func readCollectionMeta(engine storage.Engine) (*CollectionMeta, error) {
-	node, err := engine.GetNode(collectionMetaNodeID)
+func readCollectionMeta(ctx context.Context, engine storage.Engine) (*CollectionMeta, error) {
+	node, err := engine.GetNode(ctx, collectionMetaNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -244,37 +272,38 @@ func readCollectionMeta(engine storage.Engine) (*CollectionMeta, error) {
 		return nil, ErrInvalidCollection
 	}
 
-	dims := 0
-	switch v := node.Properties["dimensions"].(type) {
-	case float64:
-		dims = int(v)
-	case int:
-		dims = v
-	case int64:
-		dims = int(v)
-	}
-	if dims <= 0 {
+	// Stored numbers come back as whichever integer type fits them (int8 for 4
+	// dimensions) once the node is decoded from disk, so read them as integers
+	// of any type.
+	dims, ok := convert.ToInt64(node.Properties["dimensions"])
+	if !ok || dims <= 0 {
 		return nil, ErrInvalidCollection
 	}
 
-	var distance qpb.Distance
-	switch v := node.Properties["distance"].(type) {
-	case float64:
+	distance := qpb.Distance_Cosine
+	if v, ok := convert.ToInt64(node.Properties["distance"]); ok {
 		distance = qpb.Distance(int32(v))
-	case int:
-		distance = qpb.Distance(int32(v))
-	case int64:
-		distance = qpb.Distance(int32(v))
-	case int32:
-		distance = qpb.Distance(v)
-	default:
-		distance = qpb.Distance_Cosine
 	}
 
+	var quantization *qpb.QuantizationConfig
+	if raw, exists := node.Properties["quantization_config"]; exists {
+		encoded, ok := raw.(string)
+		if !ok {
+			return nil, ErrInvalidCollection
+		}
+		quantization = new(qpb.QuantizationConfig)
+		if err := protojson.Unmarshal([]byte(encoded), quantization); err != nil {
+			return nil, ErrInvalidCollection
+		}
+		if _, err := searchQuantizationConfig(quantization); err != nil {
+			return nil, ErrInvalidCollection
+		}
+	}
 	return &CollectionMeta{
-		Name:       "", // Name is the database name (known by caller); keep empty here.
-		Dimensions: dims,
-		Distance:   distance,
-		Status:     qpb.CollectionStatus_Green,
+		Quantization: quantization,
+		Name:         "", // Name is the database name (known by caller); keep empty here.
+		Dimensions:   int(dims),
+		Distance:     distance,
+		Status:       qpb.CollectionStatus_Green,
 	}, nil
 }

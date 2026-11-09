@@ -1,6 +1,9 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -121,7 +124,7 @@ func TestE2E_KnowledgePolicyProcedureTransactionVisibility(t *testing.T) {
 }
 
 func TestE2E_NornicDbKnowledgePolicyInfoReflectsSchemaCounts(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -157,7 +160,7 @@ func TestE2E_NornicDbKnowledgePolicyInfoReflectsSchemaCounts(t *testing.T) {
 }
 
 func TestE2E_ShowDecayProfiles_RowShapes(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -204,7 +207,7 @@ func TestE2E_ShowDecayProfiles_RowShapes(t *testing.T) {
 }
 
 func TestE2E_ShowPromotionPolicies_RowShapes(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -236,7 +239,7 @@ func TestE2E_ShowPromotionPolicies_RowShapes(t *testing.T) {
 }
 
 func TestE2E_ShowPromotionProfiles_RowShapes(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -277,7 +280,7 @@ func TestE2E_ShowPromotionProfiles_RowShapes(t *testing.T) {
 }
 
 func TestE2E_CallNornicDbKnowledgePolicyProfilesAndPolicies(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -368,7 +371,7 @@ func TestKnowledgePolicyApplyFormattingRoundTrips(t *testing.T) {
 		},
 	}
 	var parsedPolicy knowledgepolicy.PromotionPolicyDef
-	require.NoError(t, parsePolicyApplyBlock(formatPromotionPolicyApply(policy), &parsedPolicy))
+	require.NoError(t, parsePolicyApplyBlock(t.Context(), policyDDLSource{Source: cyphertext.NewSource(t.Context(), formatPromotionPolicyApply(policy), cyphertext.RawSource), original: true}, &parsedPolicy))
 	assert.Equal(t, policy.OnAccess, parsedPolicy.OnAccess)
 	assert.Equal(t, policy.WhenClauses, parsedPolicy.WhenClauses)
 }
@@ -577,7 +580,7 @@ func TestE2E_AlterPromotionPolicyOptionAdmission(t *testing.T) {
 }
 
 func TestE2E_AlterKnowledgePolicyDefinitions(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -627,7 +630,7 @@ func TestE2E_AlterKnowledgePolicyDefinitions(t *testing.T) {
 }
 
 func TestE2E_CallNornicDbKnowledgePolicyResolve(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -644,19 +647,20 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE PROMOTION POLICY policy_alpha FOR (n:MemoryEpisode) APPLY { WHEN n.accessCount >= 3 APPLY PROFILE promo_alpha }", nil)
 	require.NoError(t, err)
 
-	nodeID, err := be.CreateNode(&storage.Node{
+	nodeID, err := be.CreateNode(t.Context(), &storage.Node{
 		ID:        storage.NodeID("nornic:episode-1"),
 		Labels:    []string{"MemoryEpisode"},
 		CreatedAt: time.Unix(0, storage.DecayScoringTime()-6*3600*1e9),
 	})
 	require.NoError(t, err)
-	require.NoError(t, be.PutAccessMeta(string(nodeID), &knowledgepolicy.AccessMetaEntry{
+	_, accessWriteErr1 := be.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: string(nodeID), Entry: &knowledgepolicy.AccessMetaEntry{
 		TargetID:    string(nodeID),
 		TargetScope: knowledgepolicy.ScopeNode,
 		Fixed: knowledgepolicy.AccessMetaFixedFields{
 			AccessCount: 3,
 		},
-	}))
+	}})
+	require.NoError(t, accessWriteErr1)
 
 	result, err := exec.Execute(ctx, fmt.Sprintf("CALL kp.resolve('%s', '', '')", nodeID), nil)
 	require.NoError(t, err)
@@ -673,7 +677,7 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve(t *testing.T) {
 }
 
 func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -685,13 +689,17 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testin
 
 	createdAt := time.Unix(1700000000, 0)
 	for _, nodeID := range []storage.NodeID{"node-1", "node-2"} {
-		_, err = store.CreateNode(&storage.Node{ID: nodeID, Labels: []string{"MemoryEpisode"}, CreatedAt: createdAt})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: nodeID, Labels: []string{"MemoryEpisode"}, CreatedAt: createdAt})
 		require.NoError(t, err)
 	}
 	edgeID := storage.EdgeID("edge-1")
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID: edgeID, StartNode: "node-1", EndNode: "node-2", Type: "REFERENCES", CreatedAt: createdAt,
 	}))
+
+	// Element IDs this store returns carry its own database namespace.
+	nodeElementID := storage.NodeElementID("nornic", "node-1")
+	edgeElementID := storage.RelationshipElementID("nornic", "edge-1")
 
 	tests := []struct {
 		name      string
@@ -700,9 +708,9 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testin
 		wantScope string
 	}{
 		{name: "raw node ID", entityID: "node-1", wantID: "node-1", wantScope: "NODE"},
-		{name: "node element ID", entityID: "4:nornicdb:node-1", wantID: "4:nornicdb:node-1", wantScope: "NODE"},
+		{name: "node element ID", entityID: nodeElementID, wantID: nodeElementID, wantScope: "NODE"},
 		{name: "raw relationship ID", entityID: "edge-1", wantID: "edge-1", wantScope: "EDGE"},
-		{name: "relationship element ID", entityID: "5:nornicdb:edge-1", wantID: "5:nornicdb:edge-1", wantScope: "EDGE"},
+		{name: "relationship element ID", entityID: edgeElementID, wantID: edgeElementID, wantScope: "EDGE"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -714,14 +722,17 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testin
 		})
 	}
 
-	_, err = exec.Execute(ctx, "CALL kp.resolve('4:nornicdb:edge-1', '', '')", nil)
-	require.EqualError(t, err, "Failed to invoke procedure `kp.resolve`: Caused by: entity not found: 4:nornicdb:edge-1")
-	_, err = exec.Execute(ctx, "CALL kp.resolve('5:nornicdb:node-1', '', '')", nil)
-	require.EqualError(t, err, "Failed to invoke procedure `kp.resolve`: Caused by: entity not found: 5:nornicdb:node-1")
+	// A qualified element ID of the other entity kind names no entity either.
+	nodeKindEdgeID := storage.NodeElementID("nornic", storage.NodeID(edgeID))
+	edgeKindNodeID := storage.RelationshipElementID("nornic", storage.EdgeID("node-1"))
+	_, err = exec.Execute(ctx, fmt.Sprintf("CALL kp.resolve('%s', '', '')", nodeKindEdgeID), nil)
+	require.EqualError(t, err, "Failed to invoke procedure `kp.resolve`: Caused by: entity not found: "+nodeKindEdgeID)
+	_, err = exec.Execute(ctx, fmt.Sprintf("CALL kp.resolve('%s', '', '')", edgeKindNodeID), nil)
+	require.EqualError(t, err, "Failed to invoke procedure `kp.resolve`: Caused by: entity not found: "+edgeKindNodeID)
 }
 
 func TestE2E_CallNornicDbKnowledgePolicyDeindexStatus(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -732,7 +743,7 @@ func TestE2E_CallNornicDbKnowledgePolicyDeindexStatus(t *testing.T) {
 		EnqueuedAt:  1715000000000,
 		Status:      "pending",
 	}
-	require.NoError(t, be.PutDeindexWorkItem(item))
+	require.NoError(t, be.PutDeindexWorkItem(t.Context(), item))
 
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(be, "test"))
 	ctx := context.Background()

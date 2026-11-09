@@ -122,7 +122,7 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 		{"p2", "Bob", "X2"},
 		{"p3", "Carol", "X3"},
 	} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(n.id), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": n.name, "code": n.code}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(n.id), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": n.name, "code": n.code}})
 		require.NoError(t, err)
 	}
 

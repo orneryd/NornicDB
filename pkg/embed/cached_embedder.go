@@ -293,7 +293,7 @@ func (c *CachedEmbedder) EmbedDocumentPropertyBatchChunks(ctx context.Context, f
 	if provider, ok := c.base.(DocumentPropertyBatchChunkEmbedder); ok && provider.UsesDocumentProperties() {
 		return provider.EmbedDocumentPropertyBatchChunks(ctx, fallbackTexts, properties, maxTokens, overlap)
 	}
-	return embedDocumentPropertyBatchFallback(ctx, fallbackTexts, properties, maxTokens, overlap, c.EmbedDocumentPropertyChunks)
+	return embedDocumentPropertyBatchFallback(ctx, fallbackTexts, properties, maxTokens, overlap, c, c.EmbedDocumentBatchChunks)
 }
 
 // EmbedDocumentBatchChunks preserves provider-managed batching when available
@@ -302,8 +302,9 @@ func (c *CachedEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []s
 	if batcher, ok := c.base.(DocumentBatchChunkEmbedder); ok {
 		return batcher.EmbedDocumentBatchChunks(ctx, texts, maxTokens, overlap)
 	}
-	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, c.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, error) {
-		return c.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, c.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, []providerBatchUsage, error) {
+		vectors, err := c.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+		return vectors, nil, err
 	}, c.Model())
 }
 
@@ -370,6 +371,19 @@ type CacheStats struct {
 	Misses  uint64  `json:"misses"`   // Number of cache misses
 	HitRate float64 `json:"hit_rate"` // Hit rate percentage (0-100)
 }
+
+// Close closes the wrapped embedder, releasing a local model it holds, so a
+// cached embedder is closed as the bare one would be.
+func (c *CachedEmbedder) Close() error {
+	if closer, ok := c.base.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+// Unwrap returns the underlying provider so a shared resource owner can release
+// it once even when several caches or registry entries refer to the same model.
+func (c *CachedEmbedder) Unwrap() Embedder { return c.base }
 
 // Clear removes all cached embeddings.
 func (c *CachedEmbedder) Clear() {

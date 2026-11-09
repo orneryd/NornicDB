@@ -5,9 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,7 +64,7 @@ func TestSubstituteParamsAllTypes(t *testing.T) {
 		Labels:     []string{"Test"},
 		Properties: map[string]interface{}{"val": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -90,7 +90,7 @@ func TestSubstituteParamsAllTypes(t *testing.T) {
 		Labels:     []string{"Test2"},
 		Properties: map[string]interface{}{"active": true},
 	}
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	params = map[string]interface{}{
@@ -132,7 +132,7 @@ func TestParseValueVariants(t *testing.T) {
 			"count":  float64(42),
 		},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -169,7 +169,7 @@ func TestCompareEqualNilCases(t *testing.T) {
 		Labels:     []string{"NilTest"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -201,7 +201,7 @@ func TestCompareGreaterLessStrings(t *testing.T) {
 			Labels:     []string{"Fruit"},
 			Properties: map[string]interface{}{"name": n.name},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -229,7 +229,7 @@ func TestCompareRegexInvalidPattern(t *testing.T) {
 		Labels:     []string{"RegexTest"},
 		Properties: map[string]interface{}{"pattern": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -252,14 +252,14 @@ func TestCompareRegexNonStringExpected(t *testing.T) {
 		Labels:     []string{"RegexNum"},
 		Properties: map[string]interface{}{"val": float64(123)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
 	// =~ takes strings: a number is a type error, as in Neo4j.
 	_, err = exec.Execute(ctx, "MATCH (n:RegexNum) WHERE n.val =~ 123 RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 	assert.Contains(t, err.Error(), "Type mismatch: expected String")
 }
 
@@ -275,7 +275,7 @@ func TestEvaluateStringOpMissingProperty(t *testing.T) {
 		Labels:     []string{"StrMiss"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -307,7 +307,7 @@ func TestEvaluateInOpMissingProperty(t *testing.T) {
 		Labels:     []string{"InMiss"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -329,7 +329,7 @@ func TestEvaluateInOpNotAList(t *testing.T) {
 		Labels:     []string{"InNotList"},
 		Properties: map[string]interface{}{"status": "active"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -351,7 +351,7 @@ func TestEvaluateWhereNonBooleanPredicateReturnsTypeError(t *testing.T) {
 		Labels:     []string{"NoOp"},
 		Properties: map[string]interface{}{"val": float64(5)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -372,7 +372,7 @@ func TestEvaluateWhereNonPropertyComparison(t *testing.T) {
 		Labels:     []string{"NonProp"},
 		Properties: map[string]interface{}{"val": float64(5)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -394,7 +394,7 @@ func TestEvaluateWherePropertyNotExists(t *testing.T) {
 		Labels:     []string{"PropNE"},
 		Properties: map[string]interface{}{"existing": "yes"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -419,7 +419,7 @@ func TestOrderNodesStringSorting(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": name},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -450,7 +450,7 @@ func TestOrderNodesWithoutVariablePrefix(t *testing.T) {
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{"priority": float64(3 - i)}, // 3, 2, 1
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -459,7 +459,7 @@ func TestOrderNodesWithoutVariablePrefix(t *testing.T) {
 	// `priority` not defined"), and n.priority orders the rows.
 	_, err := exec.Execute(ctx, "MATCH (n:Item) RETURN n ORDER BY priority", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "variable priority is not defined")
+	require.Contains(t, err.Error(), "Variable `priority` not defined")
 	result, err := exec.Execute(ctx, "MATCH (n:Item) RETURN n.priority AS p ORDER BY n.priority", nil)
 	require.NoError(t, err)
 	assert.Equal(t, [][]interface{}{{float64(1)}, {float64(2)}, {float64(3)}}, result.Rows)
@@ -478,52 +478,97 @@ func TestSplitNodePatternsWithRemainder(t *testing.T) {
 	assert.Equal(t, 2, result.Stats.NodesCreated)
 }
 
-func TestParseNodePatternNoLabels(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
+// TestExecuteCreateNodePropertyAndPatternVariants covers the single-node CREATE
+// parsing variants: node patterns, property maps and literal fidelity. Every case
+// shares this fixture and the NodesCreated assertion, and keeps its own statement
+// plus verification.
+func TestExecuteCreateNodePropertyAndPatternVariants(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		statement string
+		wantNodes int
+		verify    func(t *testing.T, ctx context.Context, store *storage.NamespacedEngine)
+	}{
+		{
+			name:      "TestExecuteCreateNode",
+			statement: "CREATE (n:Person {name: 'Alice', age: 30})",
+			wantNodes: 1,
+			verify: func(t *testing.T, ctx context.Context, store *storage.NamespacedEngine) {
+				// Verify node exists
+				nodes, err := store.GetNodesByLabel(ctx, "Person")
+				require.NoError(t, err)
+				assert.Len(t, nodes, 1)
+				assert.Equal(t, "Alice", nodes[0].Properties["name"])
+			},
+		},
+		{
+			name:      "TestParsePropertiesVariants",
+			statement: "CREATE (n:Test {count: 42, rate: 3.14, flag: true})",
+			wantNodes: 1,
+			verify: func(t *testing.T, ctx context.Context, store *storage.NamespacedEngine) {
+				// Verify properties were parsed correctly
+				nodes, _ := store.GetNodesByLabel(ctx, "Test")
+				assert.Len(t, nodes, 1)
+			},
+		},
+		{
+			name:      "TestParseNodePatternNoLabels",
+			statement: "CREATE (n {name: 'Unlabeled'})",
+			wantNodes: 1,
+		},
+		{
+			name:      "TestParseNodePatternMultipleLabels",
+			statement: "CREATE (n:Person:Employee:Manager {name: 'Boss'})",
+			wantNodes: 1,
+			verify: func(t *testing.T, ctx context.Context, store *storage.NamespacedEngine) {
+				// Verify labels
+				nodes, _ := store.GetNodesByLabel(ctx, "Person")
+				assert.Len(t, nodes, 1)
+				assert.Contains(t, nodes[0].Labels, "Employee")
+				assert.Contains(t, nodes[0].Labels, "Manager")
+			},
+		},
+		{
+			name:      "TestParsePropertiesFalseBoolean",
+			statement: "CREATE (n:BoolTest {active: false})",
+			wantNodes: 1,
+			verify: func(t *testing.T, ctx context.Context, store *storage.NamespacedEngine) {
+				nodes, _ := store.GetNodesByLabel(ctx, "BoolTest")
+				assert.Equal(t, false, nodes[0].Properties["active"])
+			},
+		},
+		{
+			name:      "TestExecuteCreateNodeWithEmptyPattern",
+			statement: "CREATE (n)",
+			wantNodes: 1,
+		},
+		{
+			name:      "TestParsePropertiesWithSpace",
+			statement: "CREATE (n:Test { name : 'Alice' , age : 30 })",
+			wantNodes: 1,
+		},
+		{
+			name:      "TestExecuteCreateWithInlineProps",
+			statement: "CREATE (n:Inline {val: 42}) RETURN n.val",
+			wantNodes: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseStore := newTestMemoryEngine(t)
 
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
 
-	// Create node without labels
-	result, err := exec.Execute(ctx, "CREATE (n {name: 'Unlabeled'})", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Stats.NodesCreated)
-}
+			result, err := exec.Execute(ctx, tc.statement, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantNodes, result.Stats.NodesCreated)
 
-func TestParseNodePatternMultipleLabels(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create node with multiple labels
-	result, err := exec.Execute(ctx, "CREATE (n:Person:Employee:Manager {name: 'Boss'})", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Stats.NodesCreated)
-
-	// Verify labels
-	nodes, _ := store.GetNodesByLabel("Person")
-	assert.Len(t, nodes, 1)
-	assert.Contains(t, nodes[0].Labels, "Employee")
-	assert.Contains(t, nodes[0].Labels, "Manager")
-}
-
-func TestParsePropertiesFalseBoolean(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create node with false boolean
-	result, err := exec.Execute(ctx, "CREATE (n:BoolTest {active: false})", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Stats.NodesCreated)
-
-	nodes, _ := store.GetNodesByLabel("BoolTest")
-	assert.Equal(t, false, nodes[0].Properties["active"])
+			if tc.verify != nil {
+				tc.verify(t, ctx, store)
+			}
+		})
+	}
 }
 
 func TestParseReturnItemsWithAlias(t *testing.T) {
@@ -538,7 +583,7 @@ func TestParseReturnItemsWithAlias(t *testing.T) {
 		Labels:     []string{"Item"},
 		Properties: map[string]interface{}{"value": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -614,7 +659,7 @@ func TestParseReturnItemsOrderByLimit(t *testing.T) {
 			Labels:     []string{"OLTest"},
 			Properties: map[string]interface{}{"idx": float64(i)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -649,7 +694,9 @@ func TestExecuteDeleteRequiresMATCH(t *testing.T) {
 	// DELETE without MATCH
 	_, err := exec.Execute(ctx, "DETACH DELETE n", nil)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "refers to an undefined variable")
+	assert.Contains(t, err.Error(), "Variable `n` not defined")
+	code, _ := nornicerrors.Neo4jStatus(err)
+	assert.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
 }
 
 func TestExecuteSetRequiresMATCH(t *testing.T) {
@@ -679,7 +726,7 @@ func TestExecuteSetInvalidPropertyAccess(t *testing.T) {
 		Labels:     []string{"SetInv"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -701,12 +748,12 @@ func TestExecuteSetMergeRejectsMalformedInlineMap(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}", nil)
-	requireSyntaxErrorStatus(t, err, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
 	result, err := exec.Execute(ctx, "MATCH (n:SetMergeMalformed) RETURN n.a", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{nil}}, result.Rows)
 	_, err = exec.Execute(ctx, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}", getParamsFromContext(ctx))
-	requireSyntaxErrorStatus(t, err, "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH (n:SetMergeMalformed) SET n += {a: 1,}")
 }
 
 func TestExecuteAggregationCountStar(t *testing.T) {
@@ -722,7 +769,7 @@ func TestExecuteAggregationCountStar(t *testing.T) {
 			Labels:     []string{"CountStar"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -745,7 +792,7 @@ func TestExecuteAggregationCollectNodes(t *testing.T) {
 			Labels:     []string{"CollectNode"},
 			Properties: map[string]interface{}{"idx": float64(i)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -774,7 +821,7 @@ func TestExecuteAggregationNonAggregateInQuery(t *testing.T) {
 			Labels:     []string{"NonAgg"},
 			Properties: map[string]interface{}{"name": fmt.Sprintf("Item%d", i), "val": float64(i * 10)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -825,7 +872,7 @@ func TestExecuteAggregationSumNoMatch(t *testing.T) {
 		Labels:     []string{"SumNo"},
 		Properties: map[string]interface{}{"value": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -846,7 +893,7 @@ func TestExecuteAggregationAvgNoMatch(t *testing.T) {
 		Labels:     []string{"AvgNo"},
 		Properties: map[string]interface{}{"value": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -867,7 +914,7 @@ func TestExecuteAggregationMinNoMatch(t *testing.T) {
 		Labels:     []string{"MinNo"},
 		Properties: map[string]interface{}{"value": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -888,7 +935,7 @@ func TestExecuteAggregationMaxNoMatch(t *testing.T) {
 		Labels:     []string{"MaxNo"},
 		Properties: map[string]interface{}{"value": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -909,7 +956,7 @@ func TestResolveReturnItemCountFunction(t *testing.T) {
 		Labels:     []string{"CountResolve"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -932,7 +979,7 @@ func TestResolveReturnItemNonExistentProperty(t *testing.T) {
 		Labels:     []string{"NEP"},
 		Properties: map[string]interface{}{"exists": "yes"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -953,7 +1000,7 @@ func TestResolveReturnItemDifferentVariable(t *testing.T) {
 		Labels:     []string{"DiffVar"},
 		Properties: map[string]interface{}{"val": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -961,8 +1008,9 @@ func TestResolveReturnItemDifferentVariable(t *testing.T) {
 	// "Variable `m` not defined" SyntaxError, not null.
 	_, err = exec.Execute(ctx, "MATCH (n:DiffVar) RETURN m.val", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
-	require.Contains(t, err.Error(), "variable m is not defined")
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
+	require.EqualError(t, err, "Variable `m` not defined")
 }
 
 func TestDbSchemaVisualizationWithRelationships(t *testing.T) {
@@ -975,14 +1023,14 @@ func TestDbSchemaVisualizationWithRelationships(t *testing.T) {
 	// Create nodes and edges
 	node1 := &storage.Node{ID: "sv1", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "sv2", Labels: []string{"Company"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "sev1", StartNode: "sv1", EndNode: "sv2", Type: "WORKS_AT", Properties: map[string]interface{}{}}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	result, err := exec.Execute(ctx, "CALL db.schema.visualization()", nil)
 	require.NoError(t, err)
@@ -1011,10 +1059,10 @@ func TestDbSchemaNodePropertiesMultipleLabels(t *testing.T) {
 		Labels:     []string{"Company"},
 		Properties: map[string]interface{}{"name": "Acme", "revenue": 1000000},
 	}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	result, err := exec.Execute(ctx, "CALL db.schema.nodeProperties()", nil)
@@ -1032,10 +1080,10 @@ func TestDbSchemaRelPropertiesWithProperties(t *testing.T) {
 
 	node1 := &storage.Node{ID: "srp1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "srp2", Labels: []string{"B"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{
@@ -1045,7 +1093,7 @@ func TestDbSchemaRelPropertiesWithProperties(t *testing.T) {
 		Type:       "CONNECTS",
 		Properties: map[string]interface{}{"weight": 5, "since": "2020"},
 	}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	result, err := exec.Execute(ctx, "CALL db.schema.relProperties()", nil)
 	require.NoError(t, err)
@@ -1061,10 +1109,10 @@ func TestDbPropertyKeysWithEdgeProperties(t *testing.T) {
 
 	node1 := &storage.Node{ID: "dpk1", Labels: []string{"X"}, Properties: map[string]interface{}{"nodeProp": "value"}}
 	node2 := &storage.Node{ID: "dpk2", Labels: []string{"Y"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{
@@ -1074,7 +1122,7 @@ func TestDbPropertyKeysWithEdgeProperties(t *testing.T) {
 		Type:       "REL",
 		Properties: map[string]interface{}{"edgeProp": "edgeValue"},
 	}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	result, err := exec.Execute(ctx, "CALL db.propertyKeys()", nil)
 	require.NoError(t, err)
@@ -1098,18 +1146,18 @@ func TestCountLabelsAndRelTypes(t *testing.T) {
 	node1 := &storage.Node{ID: "cl1", Labels: []string{"Label1"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "cl2", Labels: []string{"Label2"}, Properties: map[string]interface{}{}}
 	node3 := &storage.Node{ID: "cl3", Labels: []string{"Label3"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node3)
+	_, err = store.CreateNode(t.Context(), node3)
 	require.NoError(t, err)
 
 	edge1 := &storage.Edge{ID: "ce1", StartNode: "cl1", EndNode: "cl2", Type: "TYPE1", Properties: map[string]interface{}{}}
 	edge2 := &storage.Edge{ID: "ce2", StartNode: "cl2", EndNode: "cl3", Type: "TYPE2", Properties: map[string]interface{}{}}
-	require.NoError(t, store.CreateEdge(edge1))
-	require.NoError(t, store.CreateEdge(edge2))
+	require.NoError(t, store.CreateEdge(t.Context(), edge1))
+	require.NoError(t, store.CreateEdge(t.Context(), edge2))
 
 	result, err := exec.Execute(ctx, "CALL nornicdb.stats()", nil)
 	require.NoError(t, err)
@@ -1130,20 +1178,20 @@ func TestDetachDeleteWithIncomingEdges(t *testing.T) {
 	node1 := &storage.Node{ID: "dd1", Labels: []string{"Node"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "dd2", Labels: []string{"Target"}, Properties: map[string]interface{}{}}
 	node3 := &storage.Node{ID: "dd3", Labels: []string{"Node"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node3)
+	_, err = store.CreateNode(t.Context(), node3)
 	require.NoError(t, err)
 
 	// node1 -> node2 (incoming to node2)
 	edge1 := &storage.Edge{ID: "dde1", StartNode: "dd1", EndNode: "dd2", Type: "POINTS_TO", Properties: map[string]interface{}{}}
 	// node2 -> node3 (outgoing from node2)
 	edge2 := &storage.Edge{ID: "dde2", StartNode: "dd2", EndNode: "dd3", Type: "POINTS_TO", Properties: map[string]interface{}{}}
-	require.NoError(t, store.CreateEdge(edge1))
-	require.NoError(t, store.CreateEdge(edge2))
+	require.NoError(t, store.CreateEdge(t.Context(), edge1))
+	require.NoError(t, store.CreateEdge(t.Context(), edge2))
 
 	// Detach delete node2 - should delete both edges
 	result, err := exec.Execute(ctx, "MATCH (n:Target) DETACH DELETE n", nil)
@@ -1191,7 +1239,7 @@ func TestExecuteReturnStarWithMultipleNodes(t *testing.T) {
 		Labels:     []string{"Star"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1214,7 +1262,7 @@ func TestToFloat64WithInt(t *testing.T) {
 		Labels:     []string{"IntTest"},
 		Properties: map[string]interface{}{"value": 42}, // plain int
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1236,7 +1284,7 @@ func TestToFloat64WithInvalidString(t *testing.T) {
 		Labels:     []string{"InvStr"},
 		Properties: map[string]interface{}{"value": "not-a-number"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1264,7 +1312,7 @@ func TestExecuteDistinctWithDuplicates(t *testing.T) {
 			Labels:     []string{"Dist"},
 			Properties: map[string]interface{}{"cat": category},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1329,8 +1377,8 @@ func TestExecuteCreateRelationshipWithRelReturn(t *testing.T) {
 	// `x` not defined" SyntaxError, and nothing is written.
 	_, err := exec.Execute(ctx, "CREATE (a:A)-[:REL]->(b:B) RETURN x.prop", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "variable x is not defined")
-	nodes, err := store.AllNodes()
+	require.Contains(t, err.Error(), "Variable `x` not defined")
+	nodes, err := store.AllNodes(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, nodes)
 
@@ -1351,7 +1399,7 @@ func TestParseValueFloatParsing(t *testing.T) {
 		Labels:     []string{"FloatParse"},
 		Properties: map[string]interface{}{"value": float64(3.14159)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1373,14 +1421,14 @@ func TestParseValuePlainString(t *testing.T) {
 		Labels:     []string{"PlainStr"},
 		Properties: map[string]interface{}{"status": "active"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
 	// An unquoted word is an identifier, not a string literal.
 	_, err = exec.Execute(ctx, "MATCH (n:PlainStr) WHERE n.status = active RETURN n", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "variable active is not defined")
+	require.Contains(t, err.Error(), "Variable `active` not defined")
 }
 
 func TestStringPredicateRejectsUndefinedVariable(t *testing.T) {
@@ -1395,7 +1443,7 @@ func TestStringPredicateRejectsUndefinedVariable(t *testing.T) {
 		Labels:     []string{"StrNV"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1415,7 +1463,7 @@ func TestMembershipPredicateRejectsUndefinedVariable(t *testing.T) {
 		Labels:     []string{"InNV"},
 		Properties: map[string]interface{}{"val": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1435,7 +1483,7 @@ func TestEvaluateIsNullNonVariablePrefix(t *testing.T) {
 		Labels:     []string{"NullNV"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1471,7 +1519,7 @@ func TestExecuteMatchCountVariable(t *testing.T) {
 			Labels:     []string{"CountVar"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1492,10 +1540,10 @@ func TestExecuteDeleteWithWhere(t *testing.T) {
 	// Create nodes
 	node1 := &storage.Node{ID: "del-w1", Labels: []string{"DelKeep"}, Properties: map[string]interface{}{"type": "keeper"}}
 	node2 := &storage.Node{ID: "del-w2", Labels: []string{"DelRemove"}, Properties: map[string]interface{}{"type": "remove"}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// DELETE with label filter - DELETE all DelRemove nodes
@@ -1504,7 +1552,7 @@ func TestExecuteDeleteWithWhere(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.NodesDeleted)
 
 	// Verify the right one was kept
-	nodes, _ := store.GetNodesByLabel("DelKeep")
+	nodes, _ := store.GetNodesByLabel(ctx, "DelKeep")
 	assert.Len(t, nodes, 1)
 }
 
@@ -1520,7 +1568,7 @@ func TestExecuteSetUpdateNodeError(t *testing.T) {
 		Labels:     []string{"SetErr"},
 		Properties: nil, // nil properties map
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1528,19 +1576,6 @@ func TestExecuteSetUpdateNodeError(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (n:SetErr) SET n.newprop = 'value'", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Stats.PropertiesSet)
-}
-
-func TestExecuteCreateNodeWithEmptyPattern(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create with just variable, no labels
-	result, err := exec.Execute(ctx, "CREATE (n)", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Stats.NodesCreated)
 }
 
 func TestParseReturnItemsEmptyAfterSplit(t *testing.T) {
@@ -1555,7 +1590,7 @@ func TestParseReturnItemsEmptyAfterSplit(t *testing.T) {
 		Labels:     []string{"EmptyRet"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1591,7 +1626,7 @@ func TestCallDbLabelsWithEmptyLabels(t *testing.T) {
 		Labels:     []string{},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1611,7 +1646,7 @@ func TestExecuteCreateRelationshipNoType(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (a:A)-[r]->(b:B)", nil)
 	requireSemanticDetail(t, err, "NoSingleRelationshipType")
 
-	edges, edgeErr := store.AllEdges()
+	edges, edgeErr := store.AllEdges(ctx)
 	require.NoError(t, edgeErr)
 	assert.Empty(t, edges)
 }
@@ -1635,7 +1670,7 @@ func TestExecuteCreateWithDeleteBasic(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.NodesDeleted)
 
 	// Verify node is gone
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(0), nodeCount)
 }
 
@@ -1658,7 +1693,7 @@ func TestExecuteCreateWithDeleteAndReturn(t *testing.T) {
 	assert.NotEmpty(t, result.Rows)
 
 	// Verify node is gone
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(0), nodeCount)
 }
 
@@ -1677,7 +1712,7 @@ func TestExecuteCreateWithDeleteTimestamp(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.NodesDeleted)
 
 	// Verify node is gone
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(0), nodeCount)
 }
 
@@ -1698,9 +1733,9 @@ func TestExecuteCreateWithDeleteRelationship(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.RelationshipsDeleted)
 
 	// Verify relationship is gone but nodes remain
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(2), nodeCount)
-	edgeCount, _ := store.EdgeCount()
+	edgeCount, _ := store.EdgeCount(t.Context())
 	assert.Equal(t, int64(0), edgeCount)
 }
 
@@ -1718,7 +1753,7 @@ func TestExecuteCreateWithDeleteMultipleNodes(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.NodesCreated)
 	assert.Equal(t, 1, result.Stats.NodesDeleted)
 
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(0), nodeCount)
 }
 
@@ -1731,14 +1766,14 @@ func TestExecuteDeleteDetachKeywordPosition(t *testing.T) {
 
 	node1 := &storage.Node{ID: "dk1", Labels: []string{"DK"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "dk2", Labels: []string{"DK"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "dke1", StartNode: "dk1", EndNode: "dk2", Type: "REL", Properties: map[string]interface{}{}}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	// DETACH DELETE at end of line (different position handling)
 	result, err := exec.Execute(ctx, "MATCH (n:DK) DETACH DELETE n", nil)
@@ -1758,7 +1793,7 @@ func TestCollectRegexWithProperty(t *testing.T) {
 		Labels:     []string{"CollectProp"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1768,19 +1803,6 @@ func TestCollectRegexWithProperty(t *testing.T) {
 	collected := result.Rows[0][0].([]interface{})
 	assert.Len(t, collected, 1)
 	assert.Equal(t, "test", collected[0])
-}
-
-func TestParsePropertiesWithSpace(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Properties with spaces around colon and values
-	result, err := exec.Execute(ctx, "CREATE (n:Test { name : 'Alice' , age : 30 })", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Stats.NodesCreated)
 }
 
 func TestParsePropertiesNoValue(t *testing.T) {
@@ -1821,7 +1843,7 @@ func TestExecuteMatchOrderByWithSkipLimit(t *testing.T) {
 			Labels:     []string{"OSL"},
 			Properties: map[string]interface{}{"val": float64(i)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1844,7 +1866,7 @@ func TestParseValueIntegerParsing(t *testing.T) {
 		Labels:     []string{"IntParse"},
 		Properties: map[string]interface{}{"count": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1869,7 +1891,7 @@ func TestCompareEqualBothNil(t *testing.T) {
 		Labels:     []string{"NilBoth"},
 		Properties: map[string]interface{}{"val": nil},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1880,35 +1902,60 @@ func TestCompareEqualBothNil(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-func TestToFloat64AllTypes(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
+type numericConversionCase struct {
+	name           string
+	node           storage.Node
+	update         bool
+	query, errCode string
+	want           any
+}
 
-	store := storage.NewNamespacedEngine(baseStore, "test")
+// runNumericConversions preserves each case's create/update sequence and
+// actual Execute query; only storage setup, execution and the oracle are shared.
+func runNumericConversions(t *testing.T, cases []numericConversionCase) {
+	t.Helper()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Test with float32 (we need to create nodes that have various types)
-	node := &storage.Node{
-		ID:     "types-all",
-		Labels: []string{"TypesAll"},
-		Properties: map[string]interface{}{
-			"f64":  float64(100.0),
-			"f32":  float32(50.0),
-			"i":    int(30),
-			"i64":  int64(40),
-			"i32":  int32(20),
-			"str":  "60.5",
-			"bool": true,
-		},
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if test.update {
+				require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &test.node}))
+			} else {
+				_, err := store.CreateNode(t.Context(), &test.node)
+				require.NoError(t, err)
+			}
+			result, err := exec.Execute(context.Background(), test.query, nil)
+			if test.errCode != "" {
+				requireStatusCode(t, err, test.errCode)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			if test.want != nil {
+				assert.Equal(t, test.want, result.Rows[0][0])
+			}
+		})
 	}
-	_, err := store.CreateNode(node)
-	require.NoError(t, err)
-	require.NoError(t, err)
+}
 
-	// Query using float comparison
-	result, err := exec.Execute(ctx, "MATCH (n:TypesAll) WHERE n.f64 > 50 RETURN n", nil)
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 1)
+func TestToFloat64AllTypes(t *testing.T) {
+	runNumericConversions(t, []numericConversionCase{{
+		name: "float64 comparison with mixed properties",
+		node: storage.Node{ID: "types-all", Labels: []string{"TypesAll"}, Properties: map[string]any{
+			"f64": float64(100), "f32": float32(50), "i": int(30), "i64": int64(40), "i32": int32(20), "str": "60.5", "bool": true,
+		}},
+		query: "MATCH (n:TypesAll) WHERE n.f64 > 50 RETURN n",
+	}})
+}
+
+func TestToFloat64TypeCoverage(t *testing.T) {
+	runNumericConversions(t, []numericConversionCase{
+		{name: "float32 comparison", node: storage.Node{ID: "f32-test", Labels: []string{"Float32Test"}, Properties: map[string]any{"val": float32(3.14)}}, query: "MATCH (n:Float32Test) WHERE n.val > 3.0 RETURN n"},
+		{name: "int sum", node: storage.Node{ID: "int-test", Labels: []string{"IntTest"}, Properties: map[string]any{"val": int(100)}}, query: "MATCH (n:IntTest) RETURN sum(n.val)", want: int64(100)},
+		{name: "int32 avg", node: storage.Node{ID: "i32-test", Labels: []string{"Int32Test"}, Properties: map[string]any{"val": int32(50)}}, query: "MATCH (n:Int32Test) RETURN avg(n.val)", want: float64(50)},
+		{name: "numeric string sum", node: storage.Node{ID: "str-num", Labels: []string{"StrNumTest"}, Properties: map[string]any{"val": "42.5"}}, query: "MATCH (n:StrNumTest) RETURN sum(n.val)", errCode: "Neo.ClientError.Statement.TypeError"},
+		{name: "updated non-numeric string sum", update: true, node: storage.Node{ID: "str-num", Labels: []string{"StrNumTest"}, Properties: map[string]any{"val": "not a number"}}, query: "MATCH (n:StrNumTest) RETURN sum(n.val)", errCode: "Neo.ClientError.Statement.TypeError"},
+	})
 }
 
 func TestEvaluateStringOpDefaultCase(t *testing.T) {
@@ -1923,7 +1970,7 @@ func TestEvaluateStringOpDefaultCase(t *testing.T) {
 		Labels:     []string{"StrDef"},
 		Properties: map[string]interface{}{"name": "test value"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1951,33 +1998,20 @@ func TestExecuteMatchWithRelationshipQuery(t *testing.T) {
 	// Create relationship
 	node1 := &storage.Node{ID: "rel-m1", Labels: []string{"Start"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "rel-m2", Labels: []string{"End"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "rel-me", StartNode: "rel-m1", EndNode: "rel-m2", Type: "CONNECTS"}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	// Match with relationship type
 	result, err := exec.Execute(ctx, "CALL db.relationshipTypes()", nil)
 	require.NoError(t, err)
 	assert.Len(t, result.Rows, 1)
 	assert.Equal(t, "CONNECTS", result.Rows[0][0])
-}
-
-func TestExecuteCreateWithInlineProps(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create with inline properties and return the property
-	result, err := exec.Execute(ctx, "CREATE (n:Inline {val: 42}) RETURN n.val", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Stats.NodesCreated)
 }
 
 func TestExecuteReturnAliasedCount(t *testing.T) {
@@ -1993,7 +2027,7 @@ func TestExecuteReturnAliasedCount(t *testing.T) {
 			Labels:     []string{"AC"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -2016,7 +2050,7 @@ func TestExecuteSetNewProperty(t *testing.T) {
 		Labels:     []string{"SetNew"},
 		Properties: map[string]interface{}{"existing": "yes"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2039,7 +2073,7 @@ func TestExecuteMatchWithNilParams(t *testing.T) {
 		Labels:     []string{"NilParams"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2061,7 +2095,7 @@ func TestParseReturnItemsEmptyString(t *testing.T) {
 		Labels:     []string{"EmptyItems"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2082,7 +2116,7 @@ func TestExecuteMatchWhereEqualsNumber(t *testing.T) {
 		Labels:     []string{"NumEq"},
 		Properties: map[string]interface{}{"val": float64(42)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2104,7 +2138,7 @@ func TestExecuteReturnCountN(t *testing.T) {
 			Labels:     []string{"CountN"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -2128,7 +2162,7 @@ func TestExecuteAggregationWithNonNumeric(t *testing.T) {
 		Labels:     []string{"NonNum"},
 		Properties: map[string]interface{}{"value": "not a number"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2144,7 +2178,7 @@ func TestExecuteMatchCreateBlock_SetAndDeleteErrorBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "a1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
 
 	// Invalid label name branch in SET label assignment.
@@ -2299,20 +2333,20 @@ func TestLowLevelHelpers_AdditionalCoverage(t *testing.T) {
 	// createPatternsInScope: the shared CREATE core
 	nodes := map[string]*storage.Node{}
 	created := &ExecuteResult{Stats: &QueryStats{}}
-	_, err := exec.createPatternsInScope(ctx, "(:Person {name:'x'})", nodes, map[string]*storage.Edge{}, created)
+	_, err := exec.planCreatePatterns(ctx, "(:Person {name:'x'})", nodes, map[string]*storage.Edge{}, nil, created)
 	require.NoError(t, err)
 	assert.Equal(t, 1, created.Stats.NodesCreated)
 	assert.Empty(t, nodes, "an anonymous node binds no variable")
 
-	_, err = exec.createPatternsInScope(ctx, "(n:123Bad)", nodes, map[string]*storage.Edge{}, created)
+	_, err = exec.planCreatePatterns(ctx, "(n:123Bad)", nodes, map[string]*storage.Edge{}, nil, created)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid label name")
 
-	_, err = exec.createPatternsInScope(ctx, "(n:Person {1bad: 1})", nodes, map[string]*storage.Edge{}, created)
+	_, err = exec.planCreatePatterns(ctx, "(n:Person {1bad: 1})", nodes, map[string]*storage.Edge{}, nil, created)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "map literal keys must be valid symbolic names")
 
-	_, err = exec.createPatternsInScope(ctx, "(n:Person)", nodes, map[string]*storage.Edge{}, created)
+	_, err = exec.planCreatePatterns(ctx, "(n:Person)", nodes, map[string]*storage.Edge{}, nil, created)
 	require.NoError(t, err)
 	require.NotNil(t, nodes["n"])
 	require.NotNil(t, nodes["n"].Properties) // initialized for empty-property create
@@ -2325,9 +2359,9 @@ func TestExecuteMatchCreateBlock_SetMergeAndDeleteBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "aa", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "aa", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "bb", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "bb", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 
 	// Direct DELETE (without WITH) branch on created relationship + count() return.
@@ -2362,224 +2396,6 @@ func TestExecuteMatchCreateBlock_SetMergeAndDeleteBranches(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	nodeVars := map[string]*storage.Node{}
-	edgeVars := map[string]*storage.Edge{}
-	result := &ExecuteResult{Stats: &QueryStats{}}
-
-	_, err := exec.createPatternsInScope(ctx, "(a:Person {name:'alice'})", nodeVars, edgeVars, result)
-	require.NoError(t, err)
-	require.Contains(t, nodeVars, "a")
-	assert.Equal(t, 1, result.Stats.NodesCreated)
-
-	_, err = exec.createPatternsInScope(ctx, "(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", nodeVars, edgeVars, result)
-	require.NoError(t, err)
-	require.Contains(t, nodeVars, "b")
-	require.Contains(t, edgeVars, "r")
-	assert.Equal(t, "KNOWS", edgeVars["r"].Type)
-	assert.Equal(t, int64(2020), edgeVars["r"].Properties["since"])
-
-	// Reverse arrow branch: created edge should start at inline node c and end at a.
-	_, err = exec.createPatternsInScope(ctx, "(a)<-[rb:BACK]-(c:Person {name:'carol'})", nodeVars, edgeVars, result)
-	require.NoError(t, err)
-	require.Contains(t, nodeVars, "c")
-	require.Contains(t, edgeVars, "rb")
-	assert.Equal(t, nodeVars["c"].ID, edgeVars["rb"].StartNode)
-	assert.Equal(t, nodeVars["a"].ID, edgeVars["rb"].EndNode)
-
-	// Invalid relationship shape.
-	_, err = exec.createPatternsInScope(ctx, "(a)-[:BROKEN](b)", nodeVars, edgeVars, result)
-	require.Error(t, err)
-
-	// An endpoint variable not in scope is a new node (Neo4j CREATE semantics).
-	_, err = exec.createPatternsInScope(ctx, "(missing)-[:REL]->(a)", nodeVars, edgeVars, result)
-	require.NoError(t, err)
-	require.Contains(t, nodeVars, "missing")
-
-	// SET += on created entities goes through the shared SET applicator.
-	row := pipelineRow{}
-	for name, node := range nodeVars {
-		row[name] = node
-	}
-	for name, edge := range edgeVars {
-		row[name] = edge
-	}
-	stats, handled, err := exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a += {score: 5, active: true}")
-	require.NoError(t, err)
-	require.True(t, handled)
-	assert.Equal(t, int64(5), nodeVars["a"].Properties["score"])
-	assert.Equal(t, true, nodeVars["a"].Properties["active"])
-	assert.Equal(t, 2, stats.PropertiesSet)
-
-	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{
-		"edgeProps": map[string]interface{}{"rank": int64(9)},
-	})
-	stats, _, err = exec.pipelineApplySet(ctxWithParams, []pipelineRow{row}, "SET r += $edgeProps")
-	require.NoError(t, err)
-	assert.Equal(t, int64(9), edgeVars["r"].Properties["rank"])
-	assert.Equal(t, 1, stats.PropertiesSet)
-
-	// Strict error branches.
-	_, _, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a + {x:1}")
-	require.Error(t, err)
-
-	_, _, err = exec.pipelineApplySet(context.WithValue(ctx, paramsKey, map[string]interface{}{"missing": int64(1)}), []pipelineRow{row}, "SET a += $missing")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires a map")
-
-	_, _, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a += {broken")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse properties")
-
-	_, handled, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET unknown += {x:1}")
-	require.NoError(t, err)
-	assert.False(t, handled, "an unbound target is left to the caller")
-}
-
-func TestCreateHelpers_ParsersAndValidators(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	ctx := context.Background()
-
-	require.NoError(t, exec.validateCreatePatternPropertyMap(ctx, "(n:Person {name:'ok'})"))
-	require.NoError(t, exec.validateCreatePatternPropertyMap(ctx, "(n:Person)"))
-
-	err := exec.validateCreatePatternPropertyMap(ctx, "(n:Person {name:'x'")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid property map syntax")
-
-	err = exec.validateCreatePatternPropertyMap(ctx, "(n:Person {name})")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid property map syntax")
-
-	pathVar, stripped := parseCreatePathAssignment("p = (a)-[:R]->(b)")
-	assert.Equal(t, "p", pathVar)
-	assert.Equal(t, "(a)-[:R]->(b)", stripped)
-
-	pathVar, stripped = parseCreatePathAssignment("1bad = (a)-[:R]->(b)")
-	assert.Equal(t, "", pathVar)
-	assert.Equal(t, "1bad = (a)-[:R]->(b)", stripped)
-
-	parts := exec.splitCreatePatterns("p=(a:A {txt:'x -> y'})-[r:REL]->(b:B), (c:C)")
-	require.Len(t, parts, 2)
-	assert.Equal(t, "p=(a:A {txt:'x -> y'})-[r:REL]->(b:B)", strings.TrimSpace(parts[0]))
-	assert.Equal(t, "(c:C)", strings.TrimSpace(parts[1]))
-
-	nodes := exec.splitNodePatterns("(a:A {txt:'(x)' }), (b:B {v:1})")
-	require.Len(t, nodes, 2)
-	assert.Contains(t, nodes[0], "(a:A")
-	assert.Contains(t, nodes[1], "(b:B")
-
-	relType, relProps, _ := exec.parseRelationshipTypeAndProps(ctx, "r:KNOWS {since: 2021, note: 'x'}")
-	assert.Equal(t, "KNOWS", relType)
-	assert.Equal(t, int64(2021), relProps["since"])
-	assert.Equal(t, "x", relProps["note"])
-
-	relType, relProps, _ = exec.parseRelationshipTypeAndProps(ctx, "r")
-	assert.Equal(t, "", relType)
-	assert.Empty(t, relProps)
-
-	relType, relProps, _ = exec.parseRelationshipTypeAndProps(ctx, ":")
-	assert.Equal(t, "", relType)
-	assert.Empty(t, relProps)
-
-	source, rel, target, reverse, remainder, err := exec.parseCreateRelPatternWithVars("(a)-[r:KNOWS]->(b)-[:NEXT]->(c)")
-	require.NoError(t, err)
-	assert.Equal(t, "a", source)
-	assert.Equal(t, "r:KNOWS", rel)
-	assert.Equal(t, "b", target)
-	assert.False(t, reverse)
-	assert.Equal(t, "-[:NEXT]->(c)", remainder)
-
-	source, rel, target, reverse, remainder, err = exec.parseCreateRelPatternWithVars("(a)<-[r:BACK]-(b)")
-	require.NoError(t, err)
-	assert.Equal(t, "a", source)
-	assert.Equal(t, "r:BACK", rel)
-	assert.Equal(t, "b", target)
-	assert.True(t, reverse)
-	assert.Equal(t, "", remainder)
-
-	_, _, _, _, _, err = exec.parseCreateRelPatternWithVars("a)-[r:REL]->(b)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must start with (")
-
-	_, _, _, _, _, err = exec.parseCreateRelPatternWithVars("(a)-[r:REL->(b)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unmatched bracket")
-
-	_, _, _, _, _, err = exec.parseCreateRelPatternWithVars("(a)-[r:REL]-(b)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected ->(")
-}
-
-func TestCreateHelpers_ResolveOrCreateAndMultipleCreates(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
-	nodeVars := map[string]*storage.Node{}
-	var plan createPlan
-	ctx := context.Background()
-
-	edgeVars := map[string]*storage.Edge{}
-
-	// An endpoint variable not in scope is a new node (Neo4j CREATE semantics).
-	missing, err := exec.planCreateEndpoint(ctx, "missingVar", nodeVars, edgeVars, &plan)
-	require.NoError(t, err)
-	require.NotNil(t, missing)
-	require.Contains(t, nodeVars, "missingVar")
-	assert.Len(t, plan.nodes, 1)
-
-	n, err := exec.planCreateEndpoint(ctx, "x:Node {id:'x1'}", nodeVars, edgeVars, &plan)
-	require.NoError(t, err)
-	require.NotNil(t, n)
-	require.Contains(t, nodeVars, "x")
-	assert.Len(t, plan.nodes, 2)
-
-	// Existing variable returns same node without creating a new one.
-	same, err := exec.planCreateEndpoint(ctx, "x:Node {id:'different'}", nodeVars, edgeVars, &plan)
-	require.NoError(t, err)
-	assert.Equal(t, n.ID, same.ID)
-	assert.Len(t, plan.nodes, 2)
-
-	// Inline node without variable is created but not added to nodeVars.
-	inline, err := exec.planCreateEndpoint(ctx, ":Leaf {k:1}", nodeVars, edgeVars, &plan)
-	require.NoError(t, err)
-	require.NotNil(t, inline)
-	assert.Len(t, plan.nodes, 3)
-	_, hasLeaf := nodeVars["Leaf"]
-	assert.False(t, hasLeaf)
-
-	// Nothing is written until the plan is applied.
-	count, err := store.NodeCount()
-	require.NoError(t, err)
-	assert.Zero(t, count)
-	result := &ExecuteResult{Stats: &QueryStats{}}
-	require.NoError(t, exec.applyCreatePlan(ctx, &plan, result))
-	assert.Equal(t, 3, result.Stats.NodesCreated)
-	count, err = store.NodeCount()
-	require.NoError(t, err)
-	assert.EqualValues(t, 3, count)
-
-	assert.True(t, isSimpleVariable("abc_123"))
-	assert.False(t, isSimpleVariable("a-b"))
-	keys := getKeys(nodeVars)
-	assert.Contains(t, keys, "x")
-
-	res, err := exec.Execute(ctx, "CREATE (a:Person {name:'a'}) WITH a CREATE (b:Person {name:'b'}) CREATE (a)-[r:KNOWS]->(b) RETURN a.name AS aname, b.name AS bname, type(r) AS rt", nil)
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 1)
-	assert.Equal(t, "a", res.Rows[0][0])
-	assert.Equal(t, "b", res.Rows[0][1])
-	assert.Equal(t, "KNOWS", res.Rows[0][2])
-	assert.Equal(t, 2, res.Stats.NodesCreated)
-	assert.Equal(t, 1, res.Stats.RelationshipsCreated)
-}
-
 func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
@@ -2592,7 +2408,7 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 	res, err := exec.Execute(ctx, "MATCH (a:Person {name:'alice'})", nil)
 	require.Error(t, err)
 	require.Nil(t, res)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// MATCH producing zero rows should short-circuit CREATE and still shape RETURN columns.
 	res, err = exec.Execute(ctx, "MATCH (m:Missing) CREATE (x:Tmp {id:'x'}) RETURN x", nil)
@@ -2629,7 +2445,7 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 		"MATCH (a:Person {name:'alice'}) CREATE (b:Tmp {id:'u1'}) SET z.flag = true RETURN b", nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 	assert.Contains(t, err.Error(), "z")
 
 	// Missing parameter for SET assignment must error.
@@ -2646,30 +2462,23 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 }
 
 func TestCreateDeletePipeline_AdditionalBranches(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	exec, store := newCypherTestExecutor(t, "test")
 	ctx := context.Background()
 
-	_, err := exec.Execute(ctx, "CREATE (n:Tmp {id:'x'}) WITH DELETE n", nil)
-	require.Error(t, err)
-	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-
-	res, err := exec.Execute(
-		ctx,
-		"CREATE (a:Tmp {id:'a'})-[r:REL]->(b:Tmp {id:'b'}) WITH r DELETE r RETURN r",
-		nil,
-	)
-	require.NoError(t, err)
-	assert.Equal(t, 1, res.Stats.RelationshipsCreated)
-	assert.Equal(t, 1, res.Stats.RelationshipsDeleted)
-	require.Len(t, res.Rows, 1)
-	require.Len(t, res.Rows[0], 1)
-	require.IsType(t, &storage.Edge{}, res.Rows[0][0])
-	nodes, err := store.GetNodesByLabel("Tmp")
+	runCreateDeleteSteps(t, exec, ctx, []createDeleteStep{
+		{query: "CREATE (n:Tmp {id:'x'}) WITH DELETE n", wantErrCode: "Neo.ClientError.Statement.SyntaxError"},
+		{query: "CREATE (a:Tmp {id:'a'})-[r:REL]->(b:Tmp {id:'b'}) WITH r DELETE r RETURN r", check: func(t *testing.T, res *ExecuteResult) {
+			assert.Equal(t, 1, res.Stats.RelationshipsCreated)
+			assert.Equal(t, 1, res.Stats.RelationshipsDeleted)
+			require.Len(t, res.Rows, 1)
+			require.Len(t, res.Rows[0], 1)
+			require.IsType(t, &storage.Edge{}, res.Rows[0][0])
+		}},
+	})
+	nodes, err := store.GetNodesByLabel(ctx, "Tmp")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Empty(t, edges)
 }

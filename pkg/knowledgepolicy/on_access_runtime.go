@@ -2,6 +2,7 @@ package knowledgepolicy
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 )
@@ -129,6 +130,7 @@ type onAccessTokenType int
 
 const (
 	tokenEOF onAccessTokenType = iota
+	tokenInvalid
 	tokenIdent
 	tokenNumber
 	tokenString
@@ -168,9 +170,12 @@ type onAccessLexer struct {
 
 func (l *onAccessLexer) next() onAccessToken {
 	for l.pos < len(l.input) {
-		ch := l.input[l.pos]
-		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
-			l.pos++
+		if end := cyphertext.CommentEnd(l.input, l.pos); end >= 0 {
+			l.pos = end
+			continue
+		}
+		if width := cyphertext.WhitespaceAt(l.input, l.pos); width > 0 {
+			l.pos += width
 			continue
 		}
 		break
@@ -180,6 +185,30 @@ func (l *onAccessLexer) next() onAccessToken {
 	}
 
 	ch := l.input[l.pos]
+	if cyphertext.IsStringQuote(ch) {
+		start := l.pos
+		end, _, closed := cyphertext.ScanStringToken(l.input, start)
+		l.pos = end
+		if !closed {
+			return onAccessToken{typ: tokenInvalid, text: l.input[start:end]}
+		}
+		value, ok := cyphertext.DecodeString(l.input[start:end], cyphertext.AcceptedSource)
+		if !ok {
+			return onAccessToken{typ: tokenInvalid, text: l.input[start:end]}
+		}
+		return onAccessToken{typ: tokenString, text: value}
+	}
+	if number, ok := cyphertext.ScanNumber(l.input, l.pos); ok && cyphertext.IsDigit(ch) {
+		start := l.pos
+		l.pos = number.TailEnd
+		kind := tokenNumber
+		// Policy values are decimal, ungrouped, unsuffixed numbers. Conversion
+		// remains with the evaluator; source extent comes from cyphertext.
+		if number.Invalid || number.Base != 10 || number.Grouped || number.Suffix != 0 {
+			kind = tokenInvalid
+		}
+		return onAccessToken{typ: kind, text: l.input[start:l.pos]}
+	}
 	switch ch {
 	case '(':
 		l.pos++
@@ -231,40 +260,17 @@ func (l *onAccessLexer) next() onAccessToken {
 	case '$':
 		start := l.pos
 		l.pos++
-		for l.pos < len(l.input) && isOnAccessIdentChar(l.input[l.pos]) {
-			l.pos++
-		}
+		l.pos = cyphertext.NamePartEnd(l.input, l.pos)
 		return onAccessToken{typ: tokenParam, text: l.input[start:l.pos]}
-	case '\'', '"':
-		quote := ch
-		start := l.pos + 1
-		l.pos++
-		for l.pos < len(l.input) && l.input[l.pos] != quote {
-			l.pos++
-		}
-		text := l.input[start:l.pos]
-		if l.pos < len(l.input) {
-			l.pos++
-		}
-		return onAccessToken{typ: tokenString, text: text}
+
 	}
 
-	if isDigit(ch) {
-		start := l.pos
-		l.pos++
-		for l.pos < len(l.input) && (isDigit(l.input[l.pos]) || l.input[l.pos] == '.') {
-			l.pos++
+	if name, ok := cyphertext.ScanIdentifier(l.input, l.pos); ok {
+		l.pos = name.End
+		text := name.Value
+		if name.Quoted {
+			return onAccessToken{typ: tokenIdent, text: text}
 		}
-		return onAccessToken{typ: tokenNumber, text: l.input[start:l.pos]}
-	}
-
-	if isOnAccessIdentStart(ch) {
-		start := l.pos
-		l.pos++
-		for l.pos < len(l.input) && isOnAccessIdentChar(l.input[l.pos]) {
-			l.pos++
-		}
-		text := l.input[start:l.pos]
 		switch strings.ToUpper(text) {
 		case "CASE":
 			return onAccessToken{typ: tokenCase, text: text}
@@ -289,18 +295,6 @@ func (l *onAccessLexer) next() onAccessToken {
 	return onAccessToken{typ: tokenEOF}
 }
 
-func isDigit(ch byte) bool {
-	return ch >= '0' && ch <= '9'
-}
-
-func isOnAccessIdentStart(ch byte) bool {
-	return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_'
-}
-
-func isOnAccessIdentChar(ch byte) bool {
-	return isOnAccessIdentStart(ch) || isDigit(ch)
-}
-
 type onAccessParser struct {
 	lexer onAccessLexer
 	cur   onAccessToken
@@ -308,7 +302,7 @@ type onAccessParser struct {
 }
 
 func evalOnAccessExpression(expression string, ctx onAccessEvalContext) (interface{}, error) {
-	p := &onAccessParser{lexer: onAccessLexer{input: expression}, ctx: ctx}
+	p := &onAccessParser{lexer: onAccessLexer{input: cyphertext.NormalizeSource(expression).Text}, ctx: ctx}
 	p.next()
 	value, err := p.parseOr()
 	if err != nil {

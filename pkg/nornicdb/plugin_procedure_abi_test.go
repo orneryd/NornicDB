@@ -1,24 +1,37 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
+	"testing"
+
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestPluginCanonicalProcedureABI(t *testing.T) {
 	cypher.ClearUserProcedures()
 	t.Cleanup(cypher.ClearUserProcedures)
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	e := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "plugin_abi"))
+	store := storage.NewNamespacedEngine(base, "plugin_abi")
+	e := cypher.NewStorageExecutor(store)
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "committed", Labels: []string{"PluginABI"}})
+	require.NoError(t, err)
+	wantCount := int64(1)
 	type key struct{}
 	ctx := context.WithValue(context.Background(), key{}, "actual context")
 	handler := cypher.ProcedureHandler(func(actual context.Context, exec *cypher.StorageExecutor, query string, args []interface{}) (*cypher.ExecuteResult, error) {
-		require.Same(t, e, exec)
+		// The canonical ABI supplies the statement's typed executor view. A
+		// controller pointer is not a transaction capability: fresh-context
+		// reentry must retain the issued storage and see its pending writes.
+		require.IsType(t, e, exec)
+		observed, err := exec.Execute(context.Background(), "MATCH (n:PluginABI) RETURN count(n)", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{wantCount}}, observed.Rows)
 		require.Equal(t, "actual context", actual.Value(key{}))
 		require.Contains(t, query, "custom.actualContext")
 		return &cypher.ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{args[0]}}}, nil
@@ -31,6 +44,20 @@ func TestPluginCanonicalProcedureABI(t *testing.T) {
 	require.Error(t, err)
 	_, err = e.Execute(ctx, "CALL custom.actualcontext(7)", nil)
 	require.Error(t, err)
+	_, err = e.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = e.Execute(ctx, "CREATE (:PluginABI)", nil)
+	require.NoError(t, err)
+	wantCount = 2
+	r, err = e.Execute(ctx, "CALL custom.actualContext(7) YIELD value RETURN value", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(7)}}, r.Rows)
+	require.True(t, e.HasActiveTransaction())
+	_, err = e.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+	observed, err := e.Execute(ctx, "MATCH (n:PluginABI) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, observed.Rows)
 }
 
 type invalidProcedureFixture struct{}
@@ -54,60 +81,61 @@ func TestPluginInvalidProcedureFailsWholeLoad(t *testing.T) {
 	t.Cleanup(cypher.ClearUserProcedures)
 	_, err := loadFunctionPlugin(invalidProcedureFixture{}, "fixture.so")
 	require.Error(t, err)
-	_, found := cypher.RegisteredProcedureForCall("CALL invalid_proc_fixture.good()")
-	require.False(t, found)
+	require.Empty(t, cypher.RegisteredProceduresForCalls(t.Context(), "CALL invalid_proc_fixture.good()", cypher.RawSource))
 }
 
 func TestPluginProcedureDeclarationChecks(t *testing.T) {
-	cypher.ClearUserProcedures()
-	t.Cleanup(cypher.ClearUserProcedures)
-	raw := func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
-		return &cypher.ExecuteResult{}, nil
-	}
-	for _, mode := range []string{"", "READ", "WRITE", "SCHEMA", "ADMIN", "DBMS"} {
-		d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.mode", Mode: mode, Handler: raw})
-		require.NoError(t, err)
-		require.NotNil(t, d.handler)
-	}
-	for _, proc := range []PluginProcedure{
-		{Name: "bad", Handler: raw, Mode: "TYPO"}, {Name: "bad", Handler: cypher.ProcedureHandler(nil)},
-		{Name: "bad", Handler: (func(context.Context, string, []interface{}) (*cypher.ExecuteResult, error))(nil)},
-		{Name: "bad", Handler: 3}, {Name: "", Handler: raw}, {Name: "bad", Handler: raw, MinArgs: 2, MaxArgs: 1},
-	} {
-		require.Error(t, registerProcedureWithCypher(proc))
-	}
-	require.Error(t, registerPluginProcedures([]PluginProcedure{{Name: "atomic.good", Handler: raw}, {Name: "atomic.bad", Handler: 3}}))
-	_, found := cypher.RegisteredProcedureForCall("CALL atomic.good()")
-	require.False(t, found)
-}
+	t.Run("declaration validation and atomic load", func(t *testing.T) {
+		cypher.ClearUserProcedures()
+		t.Cleanup(cypher.ClearUserProcedures)
+		raw := func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+			return &cypher.ExecuteResult{}, nil
+		}
+		for _, mode := range []string{"", "READ", "WRITE", "SCHEMA", "ADMIN", "DBMS"} {
+			d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.mode", Mode: mode, Handler: raw})
+			require.NoError(t, err)
+			require.NotNil(t, d.handler)
+		}
+		for _, proc := range []PluginProcedure{
+			{Name: "bad", Handler: raw, Mode: "TYPO"}, {Name: "bad", Handler: cypher.ProcedureHandler(nil)},
+			{Name: "bad", Handler: (func(context.Context, string, []interface{}) (*cypher.ExecuteResult, error))(nil)},
+			{Name: "bad", Handler: 3}, {Name: "", Handler: raw}, {Name: "bad", Handler: raw, MinArgs: 2, MaxArgs: 1},
+		} {
+			require.Error(t, registerProcedureWithCypher(proc))
+		}
+		require.Error(t, registerPluginProcedures([]PluginProcedure{{Name: "atomic.good", Handler: raw}, {Name: "atomic.bad", Handler: 3}}))
+		require.Empty(t, cypher.RegisteredProceduresForCalls(t.Context(), "CALL atomic.good()", cypher.RawSource))
 
-func TestPluginProcedureInvocationChecks(t *testing.T) {
-	sentinel := errors.New("fixture error")
-	for _, tc := range []struct {
-		handler cypher.ProcedureHandler
-		want    string
-	}{
-		{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
-			panic("fixture")
-		}, "panicked"},
-		{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
-			return nil, nil
-		}, "nil result"},
-		{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
-			return nil, sentinel
-		}, "fixture error"},
-	} {
-		d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.invoke", Handler: tc.handler})
+	})
+	t.Run("invocation failures and cancellation", func(t *testing.T) {
+		sentinel := errors.New("fixture error")
+		for _, tc := range []struct {
+			handler cypher.ProcedureHandler
+			want    string
+		}{
+			{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+				panic("fixture")
+			}, "panicked"},
+			{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+				return nil, nil
+			}, "nil result"},
+			{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+				return nil, sentinel
+			}, "fixture error"},
+		} {
+			d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.invoke", Handler: tc.handler})
+			require.NoError(t, err)
+			_, err = d.handler(context.Background(), nil, "", nil)
+			require.ErrorContains(t, err, tc.want)
+		}
+		d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.cancel", Handler: cypher.ProcedureHandler(func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+			panic("not invoked")
+		})})
 		require.NoError(t, err)
-		_, err = d.handler(context.Background(), nil, "", nil)
-		require.ErrorContains(t, err, tc.want)
-	}
-	d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.cancel", Handler: cypher.ProcedureHandler(func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
-		panic("not invoked")
-	})})
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = d.handler(ctx, nil, "", nil)
-	require.ErrorIs(t, err, context.Canceled)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = d.handler(ctx, nil, "", nil)
+		require.ErrorIs(t, err, context.Canceled)
+
+	})
 }

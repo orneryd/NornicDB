@@ -26,13 +26,13 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		"WHERE", "ORDER", "SKIP", "WITH", "UNWIND", "OPTIONAL MATCH", "CALL",
 		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
 	} {
-		if findKeywordIndex(trimmed, kw) > 0 {
+		if findKeywordIndex(ctx, trimmed, kw) > 0 {
 			return nil, false
 		}
 	}
 
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
-	limitIdx := findKeywordIndex(trimmed, "LIMIT")
+	returnIdx := findKeywordIndex(ctx, trimmed, "RETURN")
+	limitIdx := findKeywordIndex(ctx, trimmed, "LIMIT")
 	if returnIdx <= 0 || limitIdx <= returnIdx {
 		return nil, false
 	}
@@ -44,12 +44,12 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 	}
 
 	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : limitIdx])
-	columnName, ok := parseSimpleReturnVariable(returnPart, varName)
+	columnName, ok := parseSimpleReturnVariable(ctx, returnPart, varName)
 	if !ok {
 		return nil, false
 	}
 
-	limitExpression := StripComments(pipelinePaginationExpression(trimmed[returnIdx:], "LIMIT"))
+	limitExpression := StripComments(pipelinePaginationExpression(ctx, trimmed[returnIdx:], "LIMIT"))
 	limit, ok := e.evaluatePipelinePagination(ctx, limitExpression, nil)
 	if !ok {
 		return nil, false
@@ -61,7 +61,7 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return &ExecuteResult{Columns: []string{columnName}, Rows: rows, Stats: &QueryStats{}}, true
 	}
 
-	nodes, err := e.collectNodesWithStreaming(ctx, labels, nil, varName, "", limit)
+	nodes, err := e.collectNodesWithStreamingProjection(ctx, labels, nil, varName, "", limit, nil)
 	if err != nil {
 		return nil, false
 	}
@@ -102,8 +102,8 @@ func parseSimpleMatchSingleNodePattern(pattern string) (string, []string, bool) 
 	return varName, labels, true
 }
 
-func parseSimpleReturnVariable(returnPart string, varName string) (string, bool) {
-	plan := returnProjectionPlanFor("RETURN " + strings.TrimSpace(returnPart))
+func parseSimpleReturnVariable(ctx context.Context, returnPart string, varName string) (string, bool) {
+	plan := returnProjectionPlanFor(ctx, "RETURN "+strings.TrimSpace(returnPart))
 	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}

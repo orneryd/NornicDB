@@ -7,9 +7,14 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/internal/relatedwalk"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -26,6 +31,8 @@ type heimdallDBRouter struct {
 	db        *nornicdb.DB
 	dbManager *multidb.DatabaseManager
 	features  *nornicConfig.FeatureFlagsConfig
+
+	statementCacheIndex multidb.StatementCacheIndex
 
 	executorsMu sync.RWMutex
 	executors   map[string]*cypher.StorageExecutor
@@ -65,19 +72,13 @@ func (r *heimdallDBRouter) ListDatabases() []string {
 	if r.dbManager == nil {
 		return []string{r.DefaultDatabaseName()}
 	}
-	infos := r.dbManager.ListDatabases()
-	names := make([]string, 0, len(infos))
-	for _, info := range infos {
-		if info == nil || info.Name == "" {
-			continue
-		}
-		names = append(names, info.Name)
-	}
+	names := r.dbManager.ListDatabaseNames()
 	sort.Strings(names)
 	return names
 }
 
 func (r *heimdallDBRouter) storageForDatabase(database string) (dbName string, engine storage.Engine, err error) {
+	r.bindStatementCacheIndex()
 	dbName, err = r.ResolveDatabase(database)
 	if err != nil {
 		return "", nil, err
@@ -101,22 +102,48 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 	if err != nil {
 		return "", nil, nil, err
 	}
-
-	// Fast path: cached executor
-	r.executorsMu.RLock()
-	if r.executors != nil {
-		if cached := r.executors[dbName]; cached != nil {
-			r.executorsMu.RUnlock()
-			return dbName, cached, engine, nil
-		}
+	selection := database
+	if selection == "" {
+		selection = dbName
 	}
-	r.executorsMu.RUnlock()
+	if cached := r.cachedExecutor(selection); cached != nil {
+		return dbName, cached, engine, nil
+	}
+	exec, err = r.newExecutor(engine, selection)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	r.finishExecutor(dbName, engine, exec)
+	return dbName, r.publishExecutor(selection, exec), engine, nil
+}
 
-	// Create executor scoped to this database.
-	exec = cypher.NewStorageExecutor(engine)
+// cachedExecutor is the executor the router shares for dbName, or nil.
+func (r *heimdallDBRouter) cachedExecutor(dbName string) *cypher.StorageExecutor {
+	r.executorsMu.RLock()
+	defer r.executorsMu.RUnlock()
+	cached := r.executors[dbName]
+	if cached != nil && cached.StatementCacheSelectionValid() {
+		return cached
+	}
+	return nil
+}
+
+// newExecutor is an executor scoped to engine with the base executor's
+// embedder, localization and logging, and multi-database commands, but not
+// yet the database's search service or embed queue (finishExecutor).
+func (r *heimdallDBRouter) newExecutor(engine storage.Engine, database string) (*cypher.StorageExecutor, error) {
+	exec := cypher.NewStorageExecutor(engine)
+	if r.dbManager != nil {
+		if err := exec.UseDatabaseStatementCaches(r.dbManager, database); err != nil {
+			return nil, err
+		}
+	} else if r.db != nil {
+		exec.ShareStatementCachesFrom(r.db.GetCypherExecutor())
+	}
 	if r.db != nil {
 		if baseExecutor := r.db.GetCypherExecutor(); baseExecutor != nil {
 			exec.ShareEmbedderFrom(baseExecutor)
+			exec.ShareInferenceManagerFrom(baseExecutor)
 			exec.SetLocalizationRenderer(baseExecutor.GetLocalizationRenderer())
 			// NornicDB issue #563 defect 1: without this, Heimdall-routed
 			// queries against a non-default database log to io.Discard and
@@ -129,13 +156,17 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 	// Enable multi-db commands (SHOW/CREATE/DROP DATABASE...) when supported.
 	// The adapter lives in server_db.go (same package), so we can reuse it here.
 	if r.dbManager != nil {
-		exec.SetDatabaseManager(&databaseManagerAdapter{manager: r.dbManager, db: r.db, server: nil})
+		exec.SetDatabaseManager(&databaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(r.dbManager), db: r.db, server: nil})
 	}
+	return exec, nil
+}
 
+// finishExecutor gives exec dbName's search service and the embed queue.
+func (r *heimdallDBRouter) finishExecutor(dbName string, engine storage.Engine, exec *cypher.StorageExecutor) {
 	// Reuse DB's cached search service instead of creating a new one.
 	if r.db != nil {
 		if searchSvc, err := r.db.GetOrCreateSearchService(dbName, engine); err == nil && searchSvc != nil {
-			exec.SetSearchService(searchSvc)
+			exec.SetSearchServiceResolver(dbName, r.db.SearchServiceResolver())
 		}
 	}
 
@@ -147,24 +178,124 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 			})
 		}
 	}
+}
 
-	// Cache executor
+// publishExecutor shares exec as dbName's executor, or returns the one
+// another call shared first.
+func (r *heimdallDBRouter) publishExecutor(dbName string, exec *cypher.StorageExecutor) *cypher.StorageExecutor {
 	r.executorsMu.Lock()
+	defer r.executorsMu.Unlock()
 	if r.executors == nil {
 		r.executors = make(map[string]*cypher.StorageExecutor)
 	}
-	if existing := r.executors[dbName]; existing != nil {
-		r.executorsMu.Unlock()
-		return dbName, existing, engine, nil
+	if existing := r.executors[dbName]; existing != nil && existing.StatementCacheSelectionValid() {
+		return existing
+	}
+	if !exec.StatementCacheSelectionValid() {
+		return exec
 	}
 	r.executors[dbName] = exec
-	r.executorsMu.Unlock()
+	return exec
+}
 
-	return dbName, exec, engine, nil
+// statementExecutor is the executor a statement runs on in dbName. The
+// shared one when there is one; otherwise a new executor, which gets the
+// database's search service and embed queue and is shared only once it has
+// admitted the statement (cypher.WithStatementAdmitted), so a statement the
+// principal may not run there opens no search service and leaves nothing
+// cached. It returns ctx with that hook.
+func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database string) (context.Context, *cypher.StorageExecutor, error) {
+	dbName, engine, err := r.storageForDatabase(database)
+	if err != nil {
+		return nil, nil, err
+	}
+	if cached := r.cachedExecutor(dbName); cached != nil {
+		return ctx, cached, nil
+	}
+	exec, err := r.newExecutor(engine, dbName)
+	if err != nil {
+		return nil, nil, err
+	}
+	var admit lifecycle.OnceCompletion
+	ctx = cypher.WithStatementAdmitted(ctx, exec, func() {
+		admit.Run(func() {
+			r.finishExecutor(dbName, engine, exec)
+			r.publishExecutor(dbName, exec)
+		})
+	})
+	return ctx, exec, nil
+}
+
+// authorizeDatabase is the request principal's decision on the database a
+// call selects, taken before the router resolves or opens anything. The
+// server attaches the principal to the request (withBifrostRBAC): its one
+// permission resolver, which HTTP, Bolt and GraphQL use, and the databases
+// and aliases it may select. A selection outside that scope, or one where
+// the principal lacks permission, gets the same Forbidden error naming the
+// selection as given. Otherwise it returns the canonical name and ctx
+// carrying the resolver for the executor, which then authorizes each
+// statement as on the other transports. A context the server marked as
+// served with authentication disabled resolves the name as given; a context
+// with no principal and no such mark, a principal without its database scope
+// (auth.WithRequestPrincipal attaches both), or no context at all is refused.
+func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database string, permission auth.Permission) (context.Context, string, error) {
+	allows := auth.RequestEntitlementResolverFromContext(ctx)
+	if allows == nil {
+		if !auth.RequestAuthenticationDisabledFromContext(ctx) {
+			return nil, "", r.databaseForbidden(database)
+		}
+		dbName, err := r.ResolveDatabase(database)
+		if err != nil {
+			return nil, "", err
+		}
+		return ctx, dbName, nil
+	}
+	scope := auth.RequestDatabaseScopeFromContext(ctx)
+	if scope == nil {
+		return nil, "", r.databaseForbidden(database)
+	}
+	dbName, selectable := scope.Resolve(database)
+	if !selectable {
+		return nil, "", r.databaseForbidden(database)
+	}
+	if !allows(dbName, permission) {
+		if permission == auth.Permission("access") {
+			return nil, "", r.databaseForbidden(database)
+		}
+		return nil, "", &cypher.PermissionDeniedError{Permission: string(permission)}
+	}
+	return cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
+		return allows(database, auth.Permission(permission))
+	}), dbName, nil
+}
+
+// databaseForbidden is Neo4j's Forbidden error for the selection as the
+// caller gave it (the default database's name when it gave none).
+func (r *heimdallDBRouter) databaseForbidden(database string) error {
+	if database == "" {
+		database = r.DefaultDatabaseName()
+	}
+	denied := localization.DatabaseAccessDenied(database)
+	return localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+}
+
+// requireNonComposite refuses a composite database for the calls that read
+// one database's storage directly (Stats, Discover), as the REST search and
+// similarity routes do: they would read every constituent under the one
+// decision on the composite. Cypher (Query) authorizes each constituent.
+func (r *heimdallDBRouter) requireNonComposite(dbName string) error {
+	if r.dbManager != nil && r.dbManager.IsCompositeDatabase(dbName) {
+		return fmt.Errorf("composite database '%s' is not supported here; target a constituent database explicitly", dbName)
+	}
+	return nil
 }
 
 func (r *heimdallDBRouter) Query(ctx context.Context, database string, cypherQuery string, params map[string]interface{}) ([]map[string]interface{}, error) {
-	_, exec, _, err := r.executorForDatabase(database)
+	ctx, dbName, err := r.authorizeDatabase(ctx, database, auth.Permission("access"))
+	if err != nil {
+		return nil, err
+	}
+	ctx, exec, err := r.statementExecutor(ctx, dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -188,14 +319,21 @@ func (r *heimdallDBRouter) Query(ctx context.Context, database string, cypherQue
 	return rows, nil
 }
 
-func (r *heimdallDBRouter) Stats(database string) (heimdall.DatabaseStats, error) {
-	dbName, engine, err := r.storageForDatabase(database)
+func (r *heimdallDBRouter) Stats(ctx context.Context, database string) (heimdall.DatabaseStats, error) {
+	_, dbName, err := r.authorizeDatabase(ctx, database, auth.PermRead)
+	if err != nil {
+		return heimdall.DatabaseStats{}, err
+	}
+	if err := r.requireNonComposite(dbName); err != nil {
+		return heimdall.DatabaseStats{}, err
+	}
+	dbName, engine, err := r.storageForDatabase(dbName)
 	if err != nil {
 		return heimdall.DatabaseStats{}, err
 	}
 
-	nodeCount, _ := engine.NodeCount()
-	edgeCount, _ := engine.EdgeCount()
+	nodeCount, _ := engine.NodeCount(ctx)
+	edgeCount, _ := engine.EdgeCount(ctx)
 
 	result := heimdall.DatabaseStats{
 		NodeCount:         nodeCount,
@@ -256,7 +394,14 @@ func (r *heimdallDBRouter) Stats(database string) (heimdall.DatabaseStats, error
 
 // Discover implements semantic search with graph traversal for Graph-RAG.
 func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query string, nodeTypes []string, limit int, depth int) (*heimdall.DiscoverResult, error) {
-	dbName, engine, err := r.storageForDatabase(database)
+	ctx, dbName, err := r.authorizeDatabase(ctx, database, auth.PermRead)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.requireNonComposite(dbName); err != nil {
+		return nil, err
+	}
+	dbName, engine, err := r.storageForDatabase(dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +416,7 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 	}
 
 	// Ensure indexes are built (best-effort: if build fails, we still attempt search).
-	svc, buildErr := r.db.EnsureSearchIndexesBuilt(ctx, dbName, engine)
+	svc, buildErr := r.db.EnsureSearchIndexes(ctx, dbName, engine, nornicdb.SearchIndexBuildWait)
 	if svc == nil {
 		if buildErr != nil {
 			return nil, buildErr
@@ -311,7 +456,7 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 
 		// Get related nodes when depth >= 1 (1 = direct neighbors, 2+ = multi-hop)
 		if depth >= 1 {
-			sr.Related = r.getRelatedNodesContext(ctx, engine, r0.ID, depth)
+			sr.Related = r.getRelatedNodes(ctx, engine, r0.ID, depth)
 		}
 
 		results = append(results, sr)
@@ -328,12 +473,34 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 	}, nil
 }
 
-// getRelatedNodes fetches connected nodes up to the specified depth (BFS).
-func (r *heimdallDBRouter) getRelatedNodes(engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
-	return r.getRelatedNodesContext(context.Background(), engine, nodeID, depth)
+// heimdallRelatedAcceptor is the server router's consumer boundary of the
+// canonical walk: it skips missing nodes without expanding them and publishes
+// the first label plus the visible title only.
+type heimdallRelatedAcceptor struct {
+	engine  storage.Engine
+	visible storage.QueryResultProjection
 }
 
-func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
+func (a heimdallRelatedAcceptor) Discover(ctx context.Context, n *relatedwalk.Neighbor) (heimdall.RelatedNode, bool, bool) {
+	node, err := a.engine.GetNode(ctx, storage.NodeID(n.ID))
+	if err != nil || node == nil {
+		return heimdall.RelatedNode{}, false, false
+	}
+	return heimdall.RelatedNode{
+		ID:           n.ID,
+		Type:         getFirstLabel(node.Labels),
+		Title:        getStringProperty(a.visible.NodeProperties(node), "title"),
+		Distance:     n.Distance,
+		Relationship: n.Relationship,
+		Direction:    n.Direction.String(),
+	}, true, true
+}
+
+// getRelatedNodes fetches connected nodes up to the specified depth through the
+// canonical bounded traversal. The server contract keeps depth as the number of
+// hops, caps the collection at 50 records, reports the first label and the
+// visible title only, and skips missing nodes without expanding them.
+func (r *heimdallDBRouter) getRelatedNodes(ctx context.Context, engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
 	if depth < 1 || engine == nil {
 		return nil
 	}
@@ -341,77 +508,17 @@ func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine st
 	_, visible, release := storage.BeginQueryResultProjectionContext(ctx, engine)
 	defer release()
 
-	var related []heimdall.RelatedNode
-	visited := map[string]bool{nodeID: true}
+	const maxRelated = 50
 
-	type queueItem struct {
-		id       string
-		distance int
+	related, err := relatedwalk.Walk[heimdall.RelatedNode](ctx,
+		relatedwalk.StorageSource{Engine: engine},
+		heimdallRelatedAcceptor{engine: engine, visible: visible},
+		nodeID,
+		relatedwalk.Options{MaxHops: depth, Limit: maxRelated},
+	)
+	if err != nil {
+		return nil
 	}
-	queue := []queueItem{{id: nodeID, distance: 0}}
-
-	for len(queue) > 0 && len(related) < 50 {
-		current := queue[0]
-		queue = queue[1:]
-
-		if current.distance >= depth {
-			continue
-		}
-
-		out, _ := engine.GetOutgoingEdges(storage.NodeID(current.id))
-		in, _ := engine.GetIncomingEdges(storage.NodeID(current.id))
-
-		type edgeRef struct {
-			edge      *storage.Edge
-			direction string
-		}
-		edgeRefs := make([]edgeRef, 0, len(out)+len(in))
-		for _, e := range out {
-			edgeRefs = append(edgeRefs, edgeRef{edge: e, direction: "outgoing"})
-		}
-		for _, e := range in {
-			edgeRefs = append(edgeRefs, edgeRef{edge: e, direction: "incoming"})
-		}
-
-		for _, er := range edgeRefs {
-			e := er.edge
-			if e == nil {
-				continue
-			}
-
-			var neighborID string
-			if string(e.StartNode) == current.id {
-				neighborID = string(e.EndNode)
-			} else {
-				neighborID = string(e.StartNode)
-			}
-
-			if neighborID == "" || visited[neighborID] {
-				continue
-			}
-			visited[neighborID] = true
-
-			node, err := engine.GetNode(storage.NodeID(neighborID))
-			if err != nil || node == nil {
-				continue
-			}
-
-			rel := heimdall.RelatedNode{
-				ID:           neighborID,
-				Type:         getFirstLabel(node.Labels),
-				Title:        getStringProperty(visible.NodeProperties(node), "title"),
-				Distance:     current.distance + 1,
-				Relationship: e.Type,
-				Direction:    er.direction,
-			}
-			related = append(related, rel)
-
-			if current.distance+1 < depth {
-				queue = append(queue, queueItem{id: neighborID, distance: current.distance + 1})
-			}
-		}
-	}
-
 	return related
 }
 
@@ -447,4 +554,23 @@ func (r *heimdallMetricsReader) Runtime() heimdall.RuntimeMetrics {
 		MemoryAllocMB:  m.Alloc / 1024 / 1024,
 		NumGC:          m.NumGC,
 	}
+}
+
+func (r *heimdallDBRouter) bindStatementCacheIndex() {
+	r.statementCacheIndex.Bind(r.dbManager, func() {
+		r.executorsMu.Lock()
+		defer r.executorsMu.Unlock()
+		for name, executor := range r.executors {
+			if !executor.StatementCacheSelectionValid() {
+				delete(r.executors, name)
+			}
+		}
+	})
+}
+
+func (r *heimdallDBRouter) Close() {
+	r.statementCacheIndex.Close()
+	r.executorsMu.Lock()
+	r.executors = nil
+	r.executorsMu.Unlock()
 }

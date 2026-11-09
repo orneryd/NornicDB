@@ -3,20 +3,23 @@ package search
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func buildSearchProfileFixture(tb testing.TB, nodeCount int, dims int) (*Service, []float32) {
 	tb.Helper()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(tb, fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "nornic")
-	svc := NewServiceWithDimensions(engine, dims)
+	svc := NewService(engine, dims, nil)
 
 	// Build deterministic synthetic data with mixed lexical content and vectors.
 	for i := 0; i < nodeCount; i++ {
@@ -33,7 +36,7 @@ func buildSearchProfileFixture(tb testing.TB, nodeCount int, dims int) (*Service
 			},
 			ChunkEmbeddings: [][]float32{emb},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(tb.Context(), node)
 		require.NoError(tb, err)
 		require.NoError(tb, svc.IndexNode(node))
 	}
@@ -81,6 +84,30 @@ func BenchmarkSearchProfile_RRFHybrid(b *testing.B) {
 	}
 }
 
+func BenchmarkSearchProfile_RRFHybrid_Rerank(b *testing.B) {
+	svc, queryEmb := buildSearchProfileFixture(b, 9000, 64)
+	svc.resultCache = nil
+	svc.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.SetReranker(&testReranker{enabled: true})
+	opts := DefaultSearchOptions()
+	opts.Limit = 20
+	opts.RerankEnabled = true
+	opts.RerankTopK = 100
+	query := "where are my prescriptions?"
+
+	if _, err := svc.Search(context.Background(), query, queryEmb, opts); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := svc.Search(context.Background(), query, queryEmb, opts); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func profileDiskFixtureConfig(tb testing.TB) (string, string, int) {
 	tb.Helper()
 	dataDir := os.Getenv("NORNICDB_PROFILE_DATA_DIR")
@@ -116,7 +143,10 @@ func loadSearchProfileDiskFixture(tb testing.TB) (*Service, []float32) {
 		tb.Skipf("disk fixture vector file unavailable: %s.vec (%v)", vectorPath, err)
 	}
 
-	baseEngine, err := storage.NewBadgerEngine(dataDir)
+	baseEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](tb, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+	if baseEngine != nil {
+		fixtureowner.Own(tb, baseEngine)
+	}
 	if err != nil {
 		tb.Skipf("disk fixture storage unavailable (possibly already open/locked): %v", err)
 	}
@@ -125,7 +155,7 @@ func loadSearchProfileDiskFixture(tb testing.TB) (*Service, []float32) {
 	})
 
 	engine := storage.NewNamespacedEngine(baseEngine, dbName)
-	svc := NewServiceWithDimensions(engine, dims)
+	svc := NewService(engine, dims, nil)
 	svc.SetFulltextIndexPath(fulltextPath)
 	svc.SetVectorIndexPath(vectorPath)
 	svc.SetHNSWIndexPath(hnswPath)

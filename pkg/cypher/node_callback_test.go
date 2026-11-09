@@ -167,7 +167,7 @@ func TestNodeMutatedCallbackOnMergeMatch(t *testing.T) {
 		require.Len(t, actual, index+2)
 		require.Equal(t, initial[0], actual[len(actual)-1])
 	}
-	stored, err := store.GetNode(storage.NodeID(initial[0]))
+	stored, err := store.GetNode(t.Context(), storage.NodeID(initial[0]))
 	require.NoError(t, err)
 	require.Equal(t, true, stored.Properties["seen"])
 	require.EqualValues(t, 42, stored.Properties["age"])
@@ -216,7 +216,7 @@ func TestNodeMutatedCallbackNodeIDsAreValid(t *testing.T) {
 
 	// Verify each ID corresponds to a real node
 	for _, nodeID := range createdNodeIDs {
-		node, err := store.GetNode(storage.NodeID(nodeID))
+		node, err := store.GetNode(t.Context(), storage.NodeID(nodeID))
 		require.NoError(t, err, "Node ID from callback should exist in storage")
 		require.NotNil(t, node, "Node should not be nil")
 	}

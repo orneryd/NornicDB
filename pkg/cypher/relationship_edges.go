@@ -8,12 +8,14 @@ import (
 // undirectedIncidentEdges returns each incident relationship once. Storage
 // correctly exposes a self-relationship as both incoming and outgoing, but an
 // undirected Cypher expansion has only one orientation for that relationship.
-func undirectedIncidentEdges(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	outgoing, incoming, err := incidentEdgeLists(store, nodeID)
+// The caller's context reaches the storage read, so a cancelled traversal
+// stops instead of waiting for an unaffected read.
+func undirectedIncidentEdges(ctx context.Context, store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	outgoing, incoming, err := incidentEdgeListsContext(ctx, store, nodeID, "both")
 	if err != nil {
 		return nil, err
 	}
-	return combineIncidentEdges(context.Background(), nodeID, outgoing, incoming)
+	return combineIncidentEdges(ctx, nodeID, outgoing, incoming)
 }
 
 func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, incoming []*storage.Edge) ([]*storage.Edge, error) {
@@ -31,19 +33,12 @@ func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, 
 		if index&bfsCancelCheckMask == 0 && ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if edge != nil && edge.StartNode == nodeID && edge.EndNode == nodeID {
+		if edge != nil && edge.StartIdentity() == edge.EndIdentity() {
 			continue
 		}
 		edges = append(edges, edge)
 	}
 	return edges, nil
-}
-
-// incidentEdgeLists returns a node's outgoing and incoming relationships
-// (a self-relationship is in both). A store that reads both directions at
-// once (storage.AdjacentEdgesEngine) is read with one call.
-func incidentEdgeLists(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
-	return incidentEdgeListsContext(context.Background(), store, nodeID, "both")
 }
 
 // incidentEdgeListsContext is the single storage reader for selected paths.
@@ -54,34 +49,34 @@ func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID 
 		return nil, nil, err
 	}
 	if direction == "outgoing" {
-		edges, err := store.GetOutgoingEdges(nodeID)
+		edges, err := store.GetOutgoingEdges(ctx, nodeID)
 		if err == nil {
 			err = ctx.Err()
 		}
 		return edges, nil, err
 	}
 	if direction == "incoming" {
-		edges, err := store.GetIncomingEdges(nodeID)
+		edges, err := store.GetIncomingEdges(ctx, nodeID)
 		if err == nil {
 			err = ctx.Err()
 		}
 		return nil, edges, err
 	}
 	if adjacent, ok := store.(storage.AdjacentEdgesEngine); ok {
-		out, in, err := adjacent.GetAdjacentEdges(nodeID)
+		out, in, err := adjacent.GetAdjacentEdges(ctx, nodeID)
 		if err == nil {
 			err = ctx.Err()
 		}
 		return out, in, err
 	}
-	outgoing, err := store.GetOutgoingEdges(nodeID)
+	outgoing, err := store.GetOutgoingEdges(ctx, nodeID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	incoming, err := store.GetIncomingEdges(nodeID)
+	incoming, err := store.GetIncomingEdges(ctx, nodeID)
 	if err != nil {
 		return nil, nil, err
 	}

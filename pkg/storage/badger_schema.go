@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -13,7 +13,7 @@ import (
 //   - schema load errors fail fast (instead of silently disabling constraints)
 //   - NamespacedEngine.GetSchema() can be error-free while still returning the correct schema
 func (b *BadgerEngine) loadPersistedSchemas() error {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 
@@ -51,23 +51,17 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 			}
 
 			var def SchemaDefinition
-			if err := json.Unmarshal(data, &def); err != nil {
+			if err := DecodeSchemaDefinition(data, &def); err != nil {
 				return fmt.Errorf("schema: decode %q: %w", namespace, err)
-			}
-			if def.Version == 0 {
-				def.Version = schemaDefinitionVersion
 			}
 
 			sm := NewSchemaManager()
-			if err := sm.ReplaceFromDefinition(&def); err != nil {
+			// Opening a namespace schema is startup work that owns its own
+			// lifetime; it has no caller context to cancel.
+			if err := sm.ReplaceFromDefinition(b.work.Context(), &def); err != nil {
 				return fmt.Errorf("schema: apply %q: %w", namespace, err)
 			}
-			sm.SetPersister(func(def *SchemaDefinition) error {
-				return b.persistSchemaDefinition(namespace, def)
-			})
-			sm.SetKnowledgePolicyChangedHook(func() {
-				_ = b.ReconcileDecaySuppression(namespace)
-			})
+			b.bindNamespaceSchema(namespace, sm)
 
 			loadedSchemas = append(loadedSchemas, loaded{namespace: namespace, schema: sm})
 		}
@@ -88,9 +82,7 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 	for _, ls := range loadedSchemas {
 		loadedMap[ls.namespace] = ls.schema
 	}
-	b.schemasMu.Lock()
-	b.schemas = loadedMap
-	b.schemasMu.Unlock()
+	b.transitionNamespaceSchema("", schemaNamespaceReplace, loadedMap)
 
 	return nil
 }
@@ -111,6 +103,18 @@ func parseSchemaNamespaceFromKey(key []byte) (string, bool) {
 	return "", false
 }
 
+// bindNamespaceSchema is the single owner of a schema manager's engine
+// binding: persistence and the knowledge-policy changed callback. It runs
+// before the manager is published through the schema registry.
+func (b *BadgerEngine) bindNamespaceSchema(namespace string, sm *SchemaManager) {
+	sm.SetPersister(func(def *SchemaDefinition) error {
+		return b.persistSchemaDefinition(namespace, def)
+	})
+	sm.SetKnowledgePolicyChangedHook(func() {
+		_ = b.ReconcileDecaySuppression(namespace)
+	})
+}
+
 func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefinition) error {
 	if namespace == "" {
 		return fmt.Errorf("schema: namespace is required")
@@ -119,44 +123,15 @@ func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefi
 		return fmt.Errorf("schema: definition is required")
 	}
 
-	// Normalize version.
-	if def.Version == 0 {
-		def.Version = schemaDefinitionVersion
-	}
-
-	blob, err := json.Marshal(def)
+	blob, err := EncodeSchemaDefinition(def)
 	if err != nil {
 		return fmt.Errorf("schema: marshal %q: %w", namespace, err)
 	}
 
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(schemaKey(namespace), blob)
+	return b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
+		cw.publishKeys = []any{namespaceWriteKey(namespace)}
+		return cw.txn.Set(schemaKey(namespace), blob)
 	})
-}
-
-// dropNamespaceSchema removes a namespace's schema from memory and disk, so a
-// database recreated under the same name starts with an empty schema. The
-// detached SchemaManager keeps working for holders of a stale reference but no
-// longer persists, so it cannot write the dropped schema back.
-func (b *BadgerEngine) dropNamespaceSchema(namespace string) error {
-	if namespace == "" {
-		return fmt.Errorf("schema: namespace is required")
-	}
-	b.resetRelationshipUniqueIndexes()
-
-	b.schemasMu.Lock()
-	if sm := b.schemas[namespace]; sm != nil {
-		sm.SetPersister(nil)
-		delete(b.schemas, namespace)
-	}
-	b.schemasMu.Unlock()
-
-	if err := b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Delete(schemaKey(namespace))
-	}); err != nil {
-		return fmt.Errorf("schema: drop %q: %w", namespace, err)
-	}
-	return nil
 }
 
 func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *SchemaManager) error {
@@ -221,7 +196,7 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 				return err
 			}
 
-			node, err := b.decodeNode(namespace, raw)
+			node, err := b.decodeNodeProjected(txn, namespace, raw, nil)
 			if err != nil {
 				return fmt.Errorf("schema: rebuild unique values: decode node: %w", err)
 			}
@@ -229,10 +204,12 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 			if hasUnique {
 				for _, label := range node.Labels {
 					for propName, propValue := range node.Properties {
-						if err := sm.CheckUniqueConstraint(label, propName, propValue, node.ID); err != nil {
+						if err := sm.CheckUniqueConstraint(b.work.Context(), label, propName, propValue, node.ID); err != nil {
 							return fmt.Errorf("schema: rebuild unique values: namespace=%q: %w", namespace, err)
 						}
-						sm.RegisterUniqueValue(label, propName, propValue, node.ID)
+						if err := sm.ApplyUniqueValue(b.work.Context(), label, propName, propValue, node.ID, ValidatedUniqueClaim); err != nil {
+							return err
+						}
 					}
 				}
 			}
@@ -244,8 +221,10 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 							continue
 						}
 						// IndexNode files arity-1 under values and arity-N
-						// under full/prefix, so one pass fills every index.
-						if err := idx.IndexNode(node.ID, node.Properties); err != nil {
+						// under full/prefix, so one pass fills every index. A
+						// rebuild carries no request: its keys have the rebuild's
+						// own lifetime.
+						if err := idx.IndexNode(b.work.Context(), node.ID, node.Properties); err != nil {
 							return fmt.Errorf("schema: rebuild composite indexes: namespace=%q index=%q: %w", namespace, idx.Name, err)
 						}
 					}
@@ -283,19 +262,52 @@ func (b *BadgerEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
 	}
 	b.schemasMu.RUnlock()
 
-	// Lazily create empty schema for new namespaces; a concurrent caller may
-	// have created it since the read check.
+	return b.transitionNamespaceSchema(namespace, schemaNamespaceEnsure, nil)
+}
+
+type namespaceSchemaTransition uint8
+
+const (
+	schemaNamespaceEnsure namespaceSchemaTransition = iota
+	schemaNamespaceRetire
+	schemaNamespaceReplace
+	schemaNamespaceAttachPending
+)
+
+// transitionNamespaceSchema is the schema registry's mutation owner. Lookup
+// keeps its public read-fast path; creation, namespace retirement, and Restore
+// all install or detach managers here under the same registry lock.
+func (b *BadgerEngine) transitionNamespaceSchema(namespace string, action namespaceSchemaTransition, replacement map[string]*SchemaManager) *SchemaManager {
+	if action == schemaNamespaceRetire {
+		b.resetRelationshipUniqueIndexes()
+	}
 	b.schemasMu.Lock()
 	defer b.schemasMu.Unlock()
+	switch action {
+	case schemaNamespaceRetire:
+		if sm := b.schemas[namespace]; sm != nil {
+			sm.SetPersister(nil)
+			delete(b.schemas, namespace)
+		}
+		return nil
+	case schemaNamespaceReplace:
+		b.schemas = replacement
+		fallthrough
+	case schemaNamespaceAttachPending:
+		// Reload/Restore replaces manager instances; startup creates the
+		// buffer after loading persisted managers. Both events bind their
+		// existing indexes to the same pending source before serving reads.
+		if b.writeBehind != nil {
+			for name, schema := range b.schemas {
+				schema.attachPendingWrites(b.writeBehind, name)
+			}
+		}
+		return nil
+	}
 	sm := b.schemas[namespace]
 	if sm == nil {
 		sm = NewSchemaManager()
-		sm.SetPersister(func(def *SchemaDefinition) error {
-			return b.persistSchemaDefinition(namespace, def)
-		})
-		sm.SetKnowledgePolicyChangedHook(func() {
-			_ = b.ReconcileDecaySuppression(namespace)
-		})
+		b.bindNamespaceSchema(namespace, sm)
 		b.schemas[namespace] = sm
 	}
 	// Write-behind: attach the commit buffer as this schema's pending-write

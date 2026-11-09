@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# nornic-code-intelligence-managed
+set -euo pipefail
+if [ "$(git config --bool --get codeIntelligence.enabled || true)" != "true" ]; then
+    exit 0
+fi
+runner="$(git rev-parse --show-toplevel)/scripts/code-intelligence-hook.sh"
+    if [ ! -x "$runner" ]; then runner="$(git config --get codeIntelligence.hookRunner || true)"; fi
+    if [ ! -x "$runner" ]; then
+        echo "code-intelligence: runner missing; rerun scripts/install-git-hooks.sh from the tooling checkout." >&2
+        exit 1
+    fi
+    exec "$runner" post-update

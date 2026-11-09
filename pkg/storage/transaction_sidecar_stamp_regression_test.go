@@ -1,17 +1,46 @@
 package storage
 
 import (
+	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 )
+
+func TestTerminalFailureClearedByIdempotentBodyUpdate(t *testing.T) {
+	for _, route := range []string{"direct", "transaction"} {
+		t.Run(route, func(t *testing.T) {
+			b := newSidecarTestBadger(t)
+			defer b.Close()
+			n := sidecarTestNode(t, b, "terminal-reset", map[string]any{"text": "same"}, time.Now())
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, n.ID, nil, map[string]any{"embedding_failed": true}, time.Time{})))
+			body, err := b.GetNode(t.Context(), n.ID)
+			require.NoError(t, err)
+			if route == "direct" {
+				require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: body}))
+			} else {
+				tx, err := b.BeginTransaction(t.Context())
+				require.NoError(t, err)
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: body, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.Commit())
+			}
+			got, err := b.GetNode(t.Context(), n.ID)
+			require.NoError(t, err)
+			require.Empty(t, got.EmbedMeta, "a body update clears terminal state even when properties and timestamp are unchanged")
+		})
+	}
+}
 
 func TestTransactionRetainedSidecarSurvivesVersionChange(t *testing.T) {
 	for _, layout := range []string{"chunks", "empty", "failed"} {
 		for _, writes := range []int{1, 3} {
 			t.Run(layout+time.Duration(writes).String(), func(t *testing.T) {
 				dir := t.TempDir()
-				b, err := NewBadgerEngine(dir)
+				b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+				if b != nil {
+					fixtureowner.Own(t, b)
+				}
 				require.NoError(t, err)
 				b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 				at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -26,25 +55,30 @@ func TestTransactionRetainedSidecarSurvivesVersionChange(t *testing.T) {
 					meta["embedding_failed"] = true
 					meta["embedding_error"] = "permanent"
 				}
-				require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, n.ID, chunks, meta, time.Time{})))
-				tx, err := b.BeginTransaction()
+				require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, n.ID, chunks, meta, time.Time{})))
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				for i := 1; i <= writes; i++ {
-					v, e := tx.GetNode(n.ID)
+					v, e := tx.GetNode(t.Context(), n.ID)
 					require.NoError(t, e)
 					v.UpdatedAt = at.Add(time.Duration(i) * time.Second)
 					v.Properties["other"] = int64(i)
-					require.NoError(t, tx.UpdateNode(v))
+					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: v, Policy: ClientNodeEdits}))
 				}
 				require.NoError(t, tx.Commit())
 				require.NoError(t, b.Close())
-				b, err = NewBadgerEngine(dir)
+				b, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 				require.NoError(t, err)
 				defer b.Close()
-				got, err := b.GetNode(n.ID)
+				got, err := b.GetNode(t.Context(), n.ID)
 				require.NoError(t, err)
-				require.Equal(t, chunks, got.ChunkEmbeddings)
-				require.Equal(t, meta, got.EmbedMeta)
+				if layout == "failed" {
+					require.Empty(t, got.ChunkEmbeddings)
+					require.Empty(t, got.EmbedMeta, "body updates clear terminal failure metadata")
+				} else {
+					require.Equal(t, chunks, got.ChunkEmbeddings)
+					require.Equal(t, meta, got.EmbedMeta)
+				}
 				require.True(t, at.Add(time.Duration(writes)*time.Second).Equal(got.UpdatedAt))
 			})
 		}
@@ -57,17 +91,17 @@ func TestTransactionRetainedSidecarConflictsWithWorker(t *testing.T) {
 	b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	n := sidecarTestNode(t, b, "conflict", map[string]any{"text": "source"}, at)
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, n.ID, [][]float32{{1, 2}}, map[string]any{"chunk_count": 1}, time.Time{})))
-	tx, err := b.BeginTransaction()
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, n.ID, [][]float32{{1, 2}}, map[string]any{"chunk_count": 1}, time.Time{})))
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	v, err := tx.GetNode(n.ID)
+	v, err := tx.GetNode(t.Context(), n.ID)
 	require.NoError(t, err)
 	v.UpdatedAt = at.Add(time.Second)
 	v.Properties["other"] = true
-	require.NoError(t, tx.UpdateNode(v))
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, n.ID, [][]float32{{3, 4}}, map[string]any{"chunk_count": 1}, time.Time{})))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: v, Policy: ClientNodeEdits}))
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, n.ID, [][]float32{{3, 4}}, map[string]any{"chunk_count": 1}, time.Time{})))
 	require.ErrorIs(t, tx.Commit(), ErrConflict)
-	got, err := b.GetNode(n.ID)
+	got, err := b.GetNode(t.Context(), n.ID)
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{3, 4}}, got.ChunkEmbeddings)
 	require.True(t, at.Equal(got.UpdatedAt))
@@ -82,11 +116,11 @@ func TestTransactionRetainedSidecarRejectsUnavailableMetadata(t *testing.T) {
 			b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 			at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 			n := sidecarTestNode(t, b, "errors", map[string]any{"text": "source"}, at)
-			require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, n.ID, [][]float32{{1, 2}}, map[string]any{"chunk_count": 1}, time.Time{})))
-			tx, err := b.BeginTransaction()
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, n.ID, [][]float32{{1, 2}}, map[string]any{"chunk_count": 1}, time.Time{})))
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback()
-			v, err := tx.GetNode(n.ID)
+			v, err := tx.GetNode(t.Context(), n.ID)
 			require.NoError(t, err)
 			switch failure {
 			case "writer":
@@ -98,9 +132,9 @@ func TestTransactionRetainedSidecarRejectsUnavailableMetadata(t *testing.T) {
 			}
 			v.UpdatedAt = at.Add(time.Second)
 			v.Properties["other"] = true
-			require.Error(t, tx.UpdateNode(v))
+			require.Error(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: v, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Rollback())
-			got, err := b.GetNode(n.ID)
+			got, err := b.GetNode(t.Context(), n.ID)
 			require.NoError(t, err)
 			require.Equal(t, [][]float32{{1, 2}}, got.ChunkEmbeddings)
 			require.True(t, at.Equal(got.UpdatedAt))
@@ -116,7 +150,7 @@ func TestTransactionRetainedSidecarMetadataStates(t *testing.T) {
 			defer b.Close()
 			at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 			n := sidecarTestNode(t, b, "states", map[string]any{"text": "source"}, at)
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback()
 			switch state {

@@ -11,7 +11,7 @@ import (
 // creating a new key, matching an existing one, a 100-row UNWIND batch, and
 // a MERGE on a label without a constraint. The result cache is off.
 func BenchmarkMergeUniqueKey(b *testing.B) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	if _, err := exec.Execute(ctx, "CREATE CONSTRAINT u_k FOR (u:U) REQUIRE u.k IS UNIQUE", nil); err != nil {
 		b.Fatal(err)

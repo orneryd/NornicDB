@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -15,17 +17,17 @@ type cancelOnFindEngine struct {
 	cancel context.CancelFunc
 }
 
-func (e *cancelOnFindEngine) FindNodeNeedingEmbedding() *storage.Node {
-	n := e.queueBranchEngine.FindNodeNeedingEmbedding()
+func (e *cancelOnFindEngine) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
+	n, err := e.queueBranchEngine.FindNodeNeedingEmbedding(ctx)
 	if n != nil && e.cancel != nil {
 		e.cancel()
 	}
-	return n
+	return n, err
 }
 
 func TestEmbedWorker_StartWorkers_NumWorkersBranches(t *testing.T) {
 	newWorker := func(numWorkers int) *EmbedWorker {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "start-workers")
 		return NewEmbedWorker(newMockEmbedder(), engine, &EmbedWorkerConfig{
 			NumWorkers:       numWorkers,
@@ -67,7 +69,7 @@ func TestEmbedWorker_StartWorkers_NumWorkersBranches(t *testing.T) {
 
 func TestEmbedWorker_TriggerDebounce_ClosedAndStaleSequence(t *testing.T) {
 	newWorker := func() *EmbedWorker {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "trigger-debounce")
 		return NewEmbedWorker(newMockEmbedder(), engine, &EmbedWorkerConfig{
 			NumWorkers:           1,
@@ -86,7 +88,7 @@ func TestEmbedWorker_TriggerDebounce_ClosedAndStaleSequence(t *testing.T) {
 		t.Cleanup(func() { w.Close() })
 
 		w.Trigger()
-		w.closed.Store(true)
+		w.work.CloseAdmission()
 		time.Sleep(35 * time.Millisecond)
 		require.Zero(t, w.QueueLen())
 	})
@@ -103,7 +105,7 @@ func TestEmbedWorker_TriggerDebounce_ClosedAndStaleSequence(t *testing.T) {
 }
 
 func TestEmbedWorker_ProcessNextBatch_ShouldYieldBranch(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "yield")
 	w := NewEmbedWorker(newMockEmbedder(), engine, &EmbedWorkerConfig{
 		NumWorkers:       1,
@@ -119,12 +121,12 @@ func TestEmbedWorker_ProcessNextBatch_ShouldYieldBranch(t *testing.T) {
 	w.SetShouldYield(func() bool { return true })
 	didWork := w.processNextBatch()
 	require.False(t, didWork)
-	require.Equal(t, 1, w.QueueLen())
+	require.Equal(t, 1, len(w.trigger))
 }
 
 func TestEmbedWorker_EmbedBatchHelpers_EdgeBranches(t *testing.T) {
 	t.Run("embedChunksInBatches empty input returns nil", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "batch-empty")
 		w := NewEmbedWorker(newMockEmbedder(), engine, &EmbedWorkerConfig{
 			NumWorkers:       1,
@@ -143,7 +145,7 @@ func TestEmbedWorker_EmbedBatchHelpers_EdgeBranches(t *testing.T) {
 	})
 
 	t.Run("embedBatchWithRetry exits on context cancellation during backoff", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "batch-cancel")
 		w := NewEmbedWorker(&flakyBatchEmbedder{dims: 3, failUntil: 10}, engine, &EmbedWorkerConfig{
 			NumWorkers:       1,
@@ -156,10 +158,7 @@ func TestEmbedWorker_EmbedBatchHelpers_EdgeBranches(t *testing.T) {
 		})
 		t.Cleanup(func() { w.Close() })
 
-		go func() {
-			time.Sleep(20 * time.Millisecond)
-			w.cancel()
-		}()
+		w.generation().Cancel()
 
 		embs, err := w.embedBatchWithRetry([]string{"a", "b"})
 		require.Error(t, err)
@@ -182,10 +181,10 @@ func TestEmbedWorker_ProcessNextBatch_AdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("canceled context after claim releases and exits", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "cancel-after-claim")
 		node := &storage.Node{ID: storage.NodeID("n-cancel"), Labels: []string{"Doc"}, Properties: map[string]any{"content": "x"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -202,10 +201,15 @@ func TestEmbedWorker_ProcessNextBatch_AdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("recently processed node is temporarily skipped", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "recently-processed")
 		node := &storage.Node{ID: storage.NodeID("n-recent"), Labels: []string{"Doc"}, Properties: map[string]any{"content": "x"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
+		require.NoError(t, err)
+
+		snapshot, err := engine.GetNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		snapshot, err = storage.SnapshotNodeForEmbedding(t.Context(), snapshot)
 		require.NoError(t, err)
 
 		qe := &queueBranchEngine{Engine: engine, findNode: &storage.Node{ID: node.ID}}
@@ -215,8 +219,8 @@ func TestEmbedWorker_ProcessNextBatch_AdditionalBranches(t *testing.T) {
 			config:   &EmbedWorkerConfig{BatchDelay: time.Millisecond, MaxRetries: 1, ChunkSize: 64, ChunkOverlap: 8},
 			ctx:      context.Background(),
 			trigger:  make(chan struct{}, 1),
-			recentlyProcessed: map[string]time.Time{
-				string(node.ID): time.Now(),
+			recentlyProcessed: map[string]recentNodeEmbedding{
+				string(node.ID): {at: time.Now(), revision: snapshot.EmbeddingRevision()},
 			},
 		}
 
@@ -225,10 +229,10 @@ func TestEmbedWorker_ProcessNextBatch_AdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("update embedding error requeues node and records failure", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "update-error")
 		node := &storage.Node{ID: storage.NodeID("n-update-err"), Labels: []string{"Doc"}, Properties: map[string]any{"content": "x"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		qe := &queueBranchEngine{
@@ -246,12 +250,13 @@ func TestEmbedWorker_ProcessNextBatch_AdditionalBranches(t *testing.T) {
 
 		require.True(t, ew.processNextBatch())
 		require.Equal(t, int64(1), ew.failed.Load())
-		require.Equal(t, []storage.NodeID{node.ID}, qe.added)
+		require.Empty(t, qe.added, "failed writes leave MAIN")
+		require.Contains(t, ew.nodeRetries, node.ID)
 	})
 }
 
 func TestEmbedWorker_ProcessUntilEmpty_RefreshCleanupBranch(t *testing.T) {
-	qe := &queueBranchEngine{Engine: storage.NewNamespacedEngine(storage.NewMemoryEngine(), "refresh-cleanup"), refreshCount: 1}
+	qe := &queueBranchEngine{Engine: storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "refresh-cleanup"), refreshCount: 1}
 	ew := &EmbedWorker{
 		storage: qe,
 		ctx:     context.Background(),
@@ -264,7 +269,7 @@ func TestEmbedWorker_ProcessUntilEmpty_RefreshCleanupBranch(t *testing.T) {
 }
 
 func TestEmbedWorker_NewEmbedWorker_MultiWorkerStartupBranch(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "startup-multi")
 	w := NewEmbedWorker(newMockEmbedder(), engine, &EmbedWorkerConfig{
 		NumWorkers:       2,

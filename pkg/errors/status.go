@@ -1,9 +1,11 @@
+// Author: Codex, NOR-180 status-diagnostic propagation, 2026-10-27.
 package errors
 
 import (
 	stderrors "errors"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -14,9 +16,28 @@ const (
 	// ConstraintValidationFailed is the status of a write that violates a
 	// schema constraint (uniqueness, existence, key, type), as in Neo4j.
 	ConstraintValidationFailed = "Neo.ClientError.Schema.ConstraintValidationFailed"
-	// TransactionCommitFailed is the status of a COMMIT that failed for a
+	// DatabaseTransactionCommitFailed is the status of a COMMIT that failed for a
+	// reason with no more specific classification, including an infrastructure
+	// failure while reading or decoding the committed state needed by a commit.
+	DatabaseTransactionCommitFailed = "Neo.DatabaseError.Transaction.TransactionCommitFailed"
+	// TransactionRollbackFailed is the status of a ROLLBACK that failed for a
 	// reason with no more specific classification.
-	TransactionCommitFailed = "Neo.ClientError.Transaction.TransactionCommitFailed"
+	TransactionRollbackFailed = "Neo.DatabaseError.Transaction.TransactionRollbackFailed"
+	// TransactionStartFailed is the status of a BEGIN that failed for a reason
+	// with no more specific classification.
+	TransactionStartFailed = "Neo.DatabaseError.Transaction.TransactionStartFailed"
+	// TransactionTimedOut is the status of a statement stopped by a timeout
+	// the server configures (Neo4j's db.transaction.timeout; NornicDB's query
+	// time limit and Bolt statement timeout).
+	TransactionTimedOut = "Neo.ClientError.Transaction.TransactionTimedOut"
+	// TransactionTimedOutClientConfiguration is the status of a statement or
+	// transaction stopped by the timeout its client set when it started.
+	TransactionTimedOutClientConfiguration = "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration"
+
+	// TransactionTimedOutMessage and TransactionTimedOutClientConfigurationMessage
+	// are Neo4j 5.26's messages for those statuses, trailing space included.
+	TransactionTimedOutMessage                    = "The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. The transaction has not completed within the specified timeout (db.transaction.timeout). You may want to retry with a longer timeout. "
+	TransactionTimedOutClientConfigurationMessage = "The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. The transaction has not completed within the timeout specified at its start by the client. You may want to retry with a longer timeout. "
 )
 
 // compileTimeStatuses are the statuses Neo4j raises while compiling a
@@ -92,10 +113,13 @@ type statusMessenger interface {
 // a failure has the same code and message on every protocol:
 //   - an error that carries its code (BoltErrorCode) keeps it;
 //   - transaction conflicts and MVCC pressure are transient
-//     (MapTransientTransactionError);
+//     (transientTransactionStatus);
 //   - a transaction over the storage size limit is
 //     General.TransactionOutOfMemoryError, a ClientError drivers don't retry,
 //     with a message saying to split it;
+//   - a statement an owned deadline stopped (MarkStatementTimeout, from its
+//     context's cause) is Transaction.TransactionTimedOut, or
+//     TransactionTimedOutClientConfiguration for a Bolt client's tx_timeout;
 //   - a constraint violation is Schema.ConstraintValidationFailed;
 //   - a message that starts with (or contains) a "Neo.…: " code keeps that code;
 //   - anything else is Statement.SyntaxError.
@@ -104,6 +128,22 @@ type statusMessenger interface {
 // never repeats the code: a leading "<code>: " is removed.
 func Neo4jStatus(err error) (code, message string) {
 	code, message, _ = neo4jStatus(err)
+	return code, message
+}
+
+// RenderStatus renders the immutable outcome at every protocol's existing
+// response boundary. Localization changes display only,not classification.
+func RenderStatus(err error, render func(localization.Message) string) (code, message string) {
+	code, message, _ = renderStatus(err, statusRendering{render: render})
+	return code, message
+}
+
+// RenderStatusWithFallback preserves a protocol's ordinary-error policies while
+// keeping them outside the already-owned terminal outcome's classification:
+// classify returns ok with the protocol's own status and message for an error
+// it classifies; any other error gets Neo4jStatus's classification.
+func RenderStatusWithFallback(err error, render func(localization.Message) string, classify func(error) (code, message string, ok bool)) (code, message string) {
+	code, message, _ = renderStatus(err, statusRendering{render: render, classify: classify})
 	return code, message
 }
 
@@ -117,10 +157,23 @@ func HasNeo4jStatus(err error) bool {
 
 // neo4jStatus is Neo4jStatus, and whether err's status came from err itself.
 func neo4jStatus(err error) (code, message string, classified bool) {
+	return renderStatus(err, statusRendering{})
+}
+
+// neo4jStatusPlain is the existing classification owner for an original primary.
+// Terminal producers snapshot it once;protocols never apply it to a child again.
+func neo4jStatusPlain(err error) (code, message string, classified bool) {
 	if err == nil {
 		return StatementSyntaxError, "", false
 	}
 	message = err.Error()
+	// An accepted command's outcome contains committed (or possibly
+	// committed) work: it takes the COMMIT operation's own status from the
+	// terminal-outcome owner, which drivers never retry.
+	var accepted *storage.AcceptedCommitError
+	if stderrors.As(err, &accepted) {
+		return TerminalCommit.fallbackStatus(), accepted.Error(), true
+	}
 	var coded statusCoder
 	if stderrors.As(err, &coded) {
 		if code = coded.BoltErrorCode(); code != "" {
@@ -131,7 +184,17 @@ func neo4jStatus(err error) (code, message string, classified bool) {
 			return code, trimStatusPrefix(message, code), true
 		}
 	}
-	if transientCode, ok := MapTransientTransactionError(err); ok {
+	// The causal wrapper identifies the public failure; an inner ErrConflict
+	// does not turn an established UNIQUE violation into a retryable error.
+	var violation *storage.ConstraintViolationError
+	if stderrors.As(err, &violation) && violation != nil {
+		return ConstraintValidationFailed, message, true
+	}
+	var commitFailure *storage.CommitFailureError
+	if stderrors.As(err, &commitFailure) {
+		return DatabaseTransactionCommitFailed, message, true
+	}
+	if transientCode, ok := transientTransactionStatus(err); ok {
 		return transientCode, message, true
 	}
 	if stderrors.Is(err, storage.ErrStorageRestoring) {
@@ -139,10 +202,6 @@ func neo4jStatus(err error) (code, message string, classified bool) {
 	}
 	if storage.IsTransactionTooBig(err) {
 		return ClientTransactionOutOfMemory, transactionTooBigMessage(message), true
-	}
-	var violation *storage.ConstraintViolationError
-	if stderrors.As(err, &violation) && violation != nil {
-		return ConstraintValidationFailed, message, true
 	}
 	if start := strings.Index(message, "Neo."); start >= 0 {
 		rest := message[start:]
@@ -156,14 +215,73 @@ func neo4jStatus(err error) (code, message string, classified bool) {
 	return StatementSyntaxError, message, false
 }
 
-// Neo4jCommitStatus is Neo4jStatus for a failed COMMIT: a failure with no more
-// specific classification is Transaction.TransactionCommitFailed.
-func Neo4jCommitStatus(err error) (code, message string) {
-	code, message = Neo4jStatus(err)
-	if code == StatementSyntaxError {
-		code = TransactionCommitFailed
+type statusDiagnostic interface{ StatusDiagnostic() localization.Message }
+
+// HasStatusDiagnostic distinguishes a retained diagnostic from ordinary cleanup
+// uncertainty. Protocols keep their existing fatal policy for both outcomes.
+func HasStatusDiagnostic(err error) bool {
+	var diagnostic statusDiagnostic
+	return stderrors.As(err, &diagnostic)
+}
+
+// AppendStatusDiagnostics preserves supplementary failures when a boundary
+// replaces the primary error's message. Ordinary wrapped causes retain their
+// existing formatting. A marked error owns its descriptor and is visited once.
+func AppendStatusDiagnostics(err error, message string, render func(localization.Message) string) string {
+	_, message, _ = renderStatus(err, statusRendering{render: render, diagnosticsOnto: &message})
+	return message
+}
+
+// transactionControlStatus is the single transaction-control status rule,
+// applied where an operation's failure is produced (TransactionControlFailure,
+// NewTerminalFailure): a status of the failure's own is kept; only an
+// unclassified failure takes the operation's status (none: unchanged).
+// Protocols then render every outcome with the one status renderer.
+func transactionControlStatus(code string, classified bool, fallback string) (string, bool) {
+	if classified || fallback == "" {
+		return code, classified
 	}
-	return code, message
+	return fallback, true
+}
+
+// renderTerminalView is the single representation of an owned finish outcome.
+// Child identity controls composition;equal messages from different children
+// remain separate classified outcomes rather than being deduplicated as text.
+func renderTerminalView(view *terminalView, render func(localization.Message) string) string {
+	var result strings.Builder
+	appendText := func(text string) {
+		if text == "" {
+			return
+		}
+		if result.Len() != 0 {
+			result.WriteByte('\n')
+		}
+		result.WriteString(text)
+	}
+	messageText := func(message outcomeMessage) string {
+		if render != nil && message.descriptor != nil {
+			return render(cloneOutcomeMessage(*message.descriptor))
+		}
+		return message.text
+	}
+	for _, preface := range view.prefaces {
+		text := messageText(preface.message)
+		if preface.code != "" {
+			text = preface.code + ": " + text
+		}
+		appendText(text)
+	}
+	for _, record := range view.records {
+		primary, diagnostic := messageText(record.primary), messageText(record.diagnostic)
+		if primary != "" {
+			appendText(record.code + ": " + primary)
+			appendText(messageText(record.detail))
+			appendText(diagnostic)
+		} else if diagnostic != "" {
+			appendText(record.code + ": " + diagnostic)
+		}
+	}
+	return result.String()
 }
 
 // trimStatusPrefix removes a leading "<code>: " from message.
@@ -196,8 +314,17 @@ func MarkCommitRolledBack(err error) error {
 	return &commitRolledBackError{err: err}
 }
 
-// IsCommitRolledBack reports whether a COMMIT failure was tagged by
-// MarkCommitRolledBack.
+// IsCommitRolledBack reports whether a COMMIT failure is known to have kept
+// nothing. Authoritative committed truth in the response overrides a historical
+// child's rollback marker. That child remains reachable through errors.Is for
+// diagnostics, but cannot make an actually committed response retryable.
 func IsCommitRolledBack(err error) bool {
+	if view := responseTerminalView(err); view != nil {
+		for _, record := range view.records {
+			if record.committed {
+				return false
+			}
+		}
+	}
 	return stderrors.Is(err, ErrCommitRolledBack)
 }

@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 	"time"
@@ -37,7 +39,7 @@ func TestBoltExplicitTransactionCommitTimeoutArbitration(t *testing.T) {
 // before the deadline and holds it across that deadline. COMMIT must remain the
 // sole terminal owner and its durable write must not be rolled back or relabeled.
 func testBoltCommitWinsBeforeTransactionTimeout(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})
@@ -77,8 +79,8 @@ func testBoltCommitWinsBeforeTransactionTimeout(t *testing.T) {
 	}, transactionLifecycleRaceCleanup, 10*time.Millisecond)
 
 	fresh := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (r:Repository {repo_id: 'commit-wins'}) RETURN count(r)")
+	records := runBoltQueryWithParams(t, fresh,
+		"MATCH (r:Repository {repo_id: 'commit-wins'}) RETURN count(r)", nil)
 	require.Equal(t, [][]any{{int64(1)}}, records)
 }
 
@@ -86,7 +88,7 @@ func testBoltCommitWinsBeforeTransactionTimeout(t *testing.T) {
 // released the reader before sending COMMIT, making the opposite ordering
 // deterministic and requiring the Neo4j-compatible timeout failure.
 func testBoltTransactionTimeoutWinsBeforeCommit(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})
@@ -114,7 +116,7 @@ func testBoltTransactionTimeoutWinsBeforeCommit(t *testing.T) {
 	require.Equal(t, "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration", code)
 
 	fresh := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (r:Repository {repo_id: 'timeout-wins'}) RETURN count(r)")
+	records := runBoltQueryWithParams(t, fresh,
+		"MATCH (r:Repository {repo_id: 'timeout-wins'}) RETURN count(r)", nil)
 	require.Equal(t, [][]any{{int64(0)}}, records)
 }

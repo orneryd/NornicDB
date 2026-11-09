@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -358,7 +360,7 @@ func TestChaosExtremeValues(t *testing.T) {
 // TestComplexMultiLayerGraph tests with nodes that have multiple edge types.
 func TestComplexMultiLayerGraph(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 
 	// Create a multi-layer social network:
 	// - Friendship layer
@@ -367,7 +369,7 @@ func TestComplexMultiLayerGraph(t *testing.T) {
 	users := []string{"alice", "bob", "charlie", "diana", "eve", "frank", "grace", "henry"}
 
 	for _, u := range users {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(u), Labels: []string{"Person"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(u), Labels: []string{"Person"}})
 		require.NoError(t, err)
 	}
 
@@ -377,7 +379,7 @@ func TestComplexMultiLayerGraph(t *testing.T) {
 		{"charlie", "diana"}, {"eve", "frank"}, {"frank", "grace"},
 	}
 	for i, f := range friendships {
-		require.NoError(t, engine.CreateEdge(&storage.Edge{
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("friend-%d", i)),
 			StartNode: storage.NodeID(f[0]),
 			EndNode:   storage.NodeID(f[1]),
@@ -391,7 +393,7 @@ func TestComplexMultiLayerGraph(t *testing.T) {
 		{"diana", "henry"}, {"eve", "grace"},
 	}
 	for i, c := range colleagues {
-		require.NoError(t, engine.CreateEdge(&storage.Edge{
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("colleague-%d", i)),
 			StartNode: storage.NodeID(c[0]),
 			EndNode:   storage.NodeID(c[1]),
@@ -584,15 +586,15 @@ func TestComplexEnsembleDisagreement(t *testing.T) {
 
 // TestComplexContextCancellation tests proper context handling.
 func TestComplexContextCancellation(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	// Create large graph
 	for i := 0; i < 100; i++ {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
+		engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
 	}
 	for i := 0; i < 100; i++ {
 		for j := i + 1; j < i+10 && j < 100; j++ {
-			engine.CreateEdge(&storage.Edge{
+			engine.CreateEdge(t.Context(), &storage.Edge{
 				ID:        storage.EdgeID(fmt.Sprintf("e%d-%d", i, j)),
 				StartNode: storage.NodeID(fmt.Sprintf("n%d", i)),
 				EndNode:   storage.NodeID(fmt.Sprintf("n%d", j)),

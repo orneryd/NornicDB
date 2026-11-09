@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -61,7 +62,7 @@ func embeddingMetaFromKey(key []byte) (NodeID, bool) {
 // node does not exist and ErrEmbeddingSourceChanged when it changed since it
 // was read (#889); either way nothing is written.
 type EmbeddingSidecarUpdater interface {
-	UpdateNodeEmbeddingSidecar(node *Node) error
+	UpdateNodeEmbeddingSidecar(ctx context.Context, node *Node) error
 }
 
 // EmbeddingFailureStreamer streams parked embedding failures from the
@@ -87,25 +88,65 @@ type EmbeddingFailureStreamer interface {
 // the business write set stays (#889). A business write committing between
 // that read and this commit fails the commit with a conflict, reported as
 // ErrEmbeddingSourceChanged too.
-func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
-	start := time.Now()
-	defer b.observeStorageOp(start, b.opDurPut)
+func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *Node) error {
 	if node == nil {
 		return ErrInvalidData
 	}
-	if node.ID == "" {
-		return ErrInvalidID
+	var write *entityWriteContext
+	var releaseWrite func()
+	release := func() {
+		if releaseWrite != nil {
+			releaseWrite()
+		}
 	}
-	if !strings.Contains(string(node.ID), ":") {
-		return localizedError(localization.StorageClientNodeIDNamespaceUnprefixed(string(node.ID)), nil)
+	defer release()
+	notification := b.queueCommitOperations(nil, &Operation{embeddingOutcome: true}, notificationAtCommit)
+	err := commitEmbeddingOutcome(ctx, node, func() error {
+		if node.ID == "" {
+			return ErrInvalidID
+		}
+		if !strings.Contains(string(node.ID), ":") {
+			return localizedError(localization.StorageClientNodeIDNamespaceUnprefixed(string(node.ID)), nil)
+		}
+		if err := b.ensureOpen(false); err != nil {
+			return err
+		}
+		source, err := b.readNodeMetadata(ctx, node.ID, storedRead, nodeItemQueryMetadata)
+		if err != nil {
+			return err
+		}
+		if err := b.checkEmbeddingSourceInTxn(ctx, nil, node, source); err != nil {
+			return err
+		}
+		if hook := embeddingSourceCheckedHook.Load(); hook != nil {
+			(*hook)()
+		}
+		write, releaseWrite, err = b.beginEntityWrite(ctx, string(node.ID), false, nil)
+		if err != nil {
+			return err
+		}
+		return b.persistNodeEmbeddingSidecar(node, notification, write)
+	}, func(accepted *Node) {
+		capturePublicationOperations(notification, []Operation{{Type: OpUpdateNode, Node: accepted, embeddingOutcome: true}})
+		release()
+		b.completeCommitNotification(notification)
+	})
+	if err != nil {
+		release()
+		completeEmbeddingDelivery(ctx, func() { b.completeCommitNotification(notification) })
 	}
-	if err := b.ensureOpen(); err != nil {
-		return err
-	}
+	return err
+}
 
-	meta := make(map[string]any, util.SafePreallocSum(len(node.EmbedMeta), 1))
+func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node, notification *commitNotification, write *entityWriteContext) error {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurPut)
+
+	meta := make(map[string]any, util.SafePreallocSum(len(node.EmbedMeta), 2))
 	for key, value := range node.EmbedMeta {
-		meta[key] = value
+		if key != embeddingRangeManifestKey {
+			meta[key] = value
+		}
 	}
 	// No embedding state means the record is DELETED: the content stamp alone
 	// is not metadata, and a record holding only the stamp would surface as an
@@ -116,63 +157,55 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 			meta[embeddingContentUpdatedAtKey] = node.UpdatedAt.UTC().Format(time.RFC3339Nano)
 		}
 	}
-	metaBytes, err := encodeValue(meta)
-	if err != nil {
-		return fmt.Errorf("failed to encode embedding metadata for node %s: %w", node.ID, err)
-	}
 
+	if b.writeBehind != nil {
+		// Ordered after the acknowledged commits of the node
+		// (orderAfterBufferedCommits): it checks the embedding against the
+		// newest body, and no replay of an older one lands over it. The
+		// commits its drain replays are delivered once the order is released.
+		var order orderHold
+		if _, err := b.orderAfterBufferedCommits(write.ctx, &order, writtenEntities{nodes: []NodeID{node.ID}}); err != nil {
+			return err
+		}
+		defer order.release()
+	}
 	// One atomic engine write (#703): check the stored node, then delete the
 	// previous chunk vectors and metadata record, write the new chunk
 	// vectors, write or delete the metadata record at its reserved chunk
 	// index, and remove the pending-embeddings marker. Readers see the old
 	// embedding state or the new one — never a mix.
-	var units []func(txn *badger.Txn) error
-	for index, emb := range node.ChunkEmbeddings {
-		kvs, err := buildEmbeddingChunkWriteKVs(node.ID, index, emb)
-		if err != nil {
+	err := b.commitEngineWrite(write.ctx, func(cw *commitWriter) error {
+		cw.embeddingOutcome = node
+		cw.notification = notification
+		cw.publishKeys = []any{node.ID, AffectedFact{NodeID: node.ID}}
+		cw.publish = func(images *commitCacheImages) {
+			b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
+		}
+		if err := write.stagePublication(cw); err != nil {
 			return err
 		}
-		chunkIndex := index
-		for _, kv := range kvs {
-			kv := kv
-			units = append(units, func(txn *badger.Txn) error {
-				if err := txn.Set(kv.key, kv.val); err != nil {
-					return localizedError(localization.StorageClientNodeEmbeddingChunkStoreFailed(chunkIndex, err), err)
-				}
-				return nil
-			})
-		}
-	}
-	metaKey := embeddingMetaKey(node.ID)
-	if writeMeta {
-		units = append(units, func(txn *badger.Txn) error { return txn.Set(metaKey, metaBytes) })
-	} else {
-		units = append(units, func(txn *badger.Txn) error { return txn.Delete(metaKey) })
-	}
-	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
-	err = b.commitEngineWrite(func(cw *commitWriter) error {
-		var writes []func(txn *badger.Txn) error
-		if err := cw.writeOnce(func(txn *badger.Txn) error {
-			if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {
+		if err := (func(txn *badger.Txn) error {
+			before := node.UpdatedAt
+			if err := b.checkEmbeddingSourceInTxn(write.ctx, txn, node); err != nil {
 				return err
 			}
-			it := txn.NewIterator(badgerPrefixIteratorOptions(embeddingPrefix(node.ID)))
-			defer it.Close()
-			for it.Rewind(); it.ValidForPrefix(embeddingPrefix(node.ID)); it.Next() {
-				key := it.Item().KeyCopy(nil)
-				writes = append(writes, func(txn *badger.Txn) error { return txn.Delete(key) })
-			}
-			if hook := embeddingSourceCheckedHook.Load(); hook != nil {
-				(*hook)()
+			if writeMeta && !before.Equal(node.UpdatedAt) {
+				meta[embeddingContentUpdatedAtKey] = node.UpdatedAt.UTC().Format(time.RFC3339Nano)
 			}
 			return nil
-		}); err != nil {
+		})(cw.txn); err != nil {
 			return err
 		}
-		for _, unit := range append(writes, units...) {
-			if err := cw.write(unit); err != nil {
-				return err
-			}
+		var metadata map[string]any
+		if writeMeta {
+			metadata = meta
+		}
+		if err := cw.replaceEmbeddingSidecarKeys(node.ID, node.ChunkEmbeddings, metadata); err != nil {
+			return err
+		}
+
+		if err := cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) }); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -183,13 +216,6 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		return err
 	}
 
-	// The full-node cache may hold a copy without the new embedding state;
-	// drop it so the next read re-hydrates from the sidecar. Body cache and
-	// counts are untouched: the node record did not change.
-	b.cacheDeleteNode(node.ID)
-	// Search indexes and listeners still need the updated node (mutation
-	// notification to the embedding queue keeps its own loop guard).
-	b.notifyNodeUpdated(node)
 	return nil
 }
 
@@ -203,34 +229,87 @@ var embeddingSourceCheckedHook atomic.Pointer[func()]
 // embedding source (the properties and labels the embedding text policy
 // feeds) differs from embedded's, the copy the embedding was computed from
 // (#889, #963). The read is conflict-tracked by txn.
-func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node) error {
-	item, err := txn.Get(nodeKey(embedded.ID))
-	if errors.Is(err, badger.ErrKeyNotFound) {
-		return ErrNotFound
-	}
+func (b *BadgerEngine) checkEmbeddingSourceInTxn(ctx context.Context, txn *badger.Txn, embedded *Node, logicalSource ...*Node) error {
 	var stored *Node
-	if err == nil {
-		err = item.Value(func(value []byte) error {
-			var decodeErr error
-			stored, decodeErr = b.decodeNode(namespaceForNodeID(embedded.ID), value)
-			return decodeErr
-		})
+	var physical uint64
+	if len(logicalSource) > 0 {
+		stored = logicalSource[0]
+		if stored == nil {
+			return ErrNotFound
+		}
+	} else {
+		item, err := txn.Get(nodeKey(embedded.ID))
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		physical = item.Version()
+		if err := item.Value(func(value []byte) error {
+			var err error
+			stored, err = b.decodeNodeProjected(txn, namespaceForNodeID(embedded.ID), value, nil)
+			return err
+		}); err != nil {
+			return err
+		}
 	}
-	if err != nil {
-		return err
-	}
-	if !b.sameEmbeddingSource(stored, embedded) {
+
+	if !b.sameEmbeddingSource(embedded, stored) {
 		return ErrEmbeddingSourceChanged
 	}
+	attempt := embedded.EmbeddingAttempt()
+	failed, _ := embedded.EmbedMeta["embedding_failed"].(bool)
+	if attempt != nil && (failed || len(embedded.EmbedMeta) == 0) {
+		var matches bool
+		var err error
+		if len(logicalSource) > 0 {
+			matches, err = b.embeddingRevisionIsCurrent(ctx, embedded.ID, attempt.BodyRevision)
+		} else {
+			matches, err = attempt.BodyRevision.matches(b, txn, embedded.ID, physical)
+		}
+		if err != nil {
+			return err
+		}
+		if !matches {
+			return ErrEmbeddingSourceChanged
+		}
+	}
+	vectors, meta := embedded.ChunkEmbeddings, embedded.EmbedMeta
+	*embedded = *stored
+	embedded.ChunkEmbeddings, embedded.EmbedMeta = vectors, meta
+	state := embedded.runtimeState()
+	state.metadata.EmbeddingsStoredSeparately = false // Published vectors are already hydrated.
+	if len(logicalSource) > 0 {
+		state.embeddingRevision = stored.EmbeddingRevision()
+	} else {
+		state.embeddingRevision = EmbeddingBodyRevision{physical: physical}
+	}
+	state.embeddingAttempt = attempt
+	embedded.setRuntimeState(state)
 	return nil
 }
 
 // sameStoredValue compares two property values as stored values: numbers by
 // value, lists and maps element by element, times as instants.
 func sameStoredValue(a, b any) bool {
-	if x, ok := numericConstraintValue(a); ok {
-		y, ok := numericConstraintValue(b)
-		return ok && x == y
+	// A stored NaN remains the same image when its bits have not changed.
+	// Ordinary numeric comparison is deliberately unordered for NaNs, which
+	// must not make an unchanged property look like a concurrent mutation.
+	switch x := a.(type) {
+	case float64:
+		if y, ok := b.(float64); ok && math.IsNaN(x) && math.IsNaN(y) {
+			return math.Float64bits(x) == math.Float64bits(y)
+		}
+	case float32:
+		if y, ok := b.(float32); ok && math.IsNaN(float64(x)) && math.IsNaN(float64(y)) {
+			return math.Float32bits(x) == math.Float32bits(y)
+		}
+	}
+	if _, ok := numericConstraintValue(a); ok {
+		// Exactly, so an edit between integers beyond 2^53 is a change.
+		order, numeric, ordered := compareConstraintNumbers(reflect.ValueOf(a), reflect.ValueOf(b))
+		return numeric && ordered && order == 0
 	}
 	if x, ok := a.(time.Time); ok {
 		y, ok := b.(time.Time)
@@ -270,12 +349,13 @@ func sameStoredValue(a, b any) bool {
 // freshEmbeddingSidecarMeta is the embedding metadata node reads as: the
 // sidecar record when it is fresh for node's body, without the internal
 // content stamp; nil when the record holds nothing else.
-func (b *BadgerEngine) freshEmbeddingSidecarMeta(txn *badger.Txn, node *Node, nodeID NodeID) (map[string]any, bool, error) {
-	meta, fresh, err := b.loadEmbeddingSidecar(txn, node, nodeID)
+func (b *BadgerEngine) freshEmbeddingSidecarMeta(read embeddingRecordReader, node *Node, nodeID NodeID) (map[string]any, bool, error) {
+	meta, fresh, err := b.loadEmbeddingSidecar(read, node, nodeID)
 	if err != nil || !fresh {
 		return nil, false, err
 	}
 	delete(meta, embeddingContentUpdatedAtKey) // internal only
+	delete(meta, embeddingRangeManifestKey)
 	if len(meta) == 0 {
 		meta = nil // empty metadata reads as no embedding state
 	}
@@ -288,30 +368,34 @@ func (b *BadgerEngine) freshEmbeddingSidecarMeta(txn *badger.Txn, node *Node, no
 // out; a search hit's chunk places and kept chunk texts are read here. A
 // node buffered by write-behind answers with its buffered state, as GetNode
 // does; a buffered delete is gone.
-func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
+func (b *BadgerEngine) GetNodeEmbeddingMeta(ctx context.Context, id NodeID) (map[string]any, error) {
+	// ctx is the caller's read context: it owns admission and the buffered
+	// overlay capture, so a canceled read never answers with metadata.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
+		return nil, err
+	}
+
 	if id == "" {
 		return nil, ErrInvalidID
 	}
-	if b.writeBehind != nil {
-		if node, found, deleted := b.writeBehind.GetNode(id); found {
-			if deleted {
-				return nil, ErrNotFound
-			}
-			if len(node.EmbedMeta) == 0 {
-				return nil, nil
-			}
-			meta := make(map[string]any, len(node.EmbedMeta))
-			for key, value := range node.EmbedMeta {
-				meta[key] = value
-			}
-			return meta, nil
-		}
-	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return nil, err
 	}
+	var state bufferedEntityState
 	var meta map[string]any
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) {
+		state = w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
+	}, func(txn *badger.Txn) error {
+		if state.found {
+			if state.deleted {
+				return ErrNotFound
+			}
+			meta = copyNode(state.node).EmbedMeta
+			return nil
+		}
 		item, err := txn.Get(nodeKey(id))
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -321,11 +405,11 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 		}
 		return item.Value(func(val []byte) error {
 			namespace, _, _ := ParseDatabasePrefix(string(id))
-			node, err := b.decodeNode(namespace, val)
+			node, err := b.decodeNodeProjected(txn, namespace, val, nil)
 			if err != nil {
 				return err
 			}
-			sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(txn, node, id)
+			sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(embeddingRecordReader{txn: txn}, node, id)
 			if err != nil {
 				return err
 			}
@@ -347,8 +431,8 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 // (nil, false, nil) when no sidecar exists or the sidecar is stale (the body
 // changed after the embedding was generated). Sidecar state takes precedence
 // over body-inline embedding state when present and fresh.
-func (b *BadgerEngine) loadEmbeddingSidecar(txn *badger.Txn, node *Node, nodeID NodeID) (map[string]any, bool, error) {
-	item, err := txn.Get(embeddingMetaKey(nodeID))
+func (b *BadgerEngine) loadEmbeddingSidecar(read embeddingRecordReader, node *Node, nodeID NodeID) (map[string]any, bool, error) {
+	record, err := read.record(embeddingMetaKey(nodeID))
 	if err == badger.ErrKeyNotFound {
 		return nil, false, nil
 	}
@@ -356,9 +440,7 @@ func (b *BadgerEngine) loadEmbeddingSidecar(txn *badger.Txn, node *Node, nodeID 
 		return nil, false, fmt.Errorf("failed to get embedding metadata for node %s: %w", nodeID, err)
 	}
 	var meta map[string]any
-	if err := item.Value(func(val []byte) error {
-		return decodeValue(val, &meta)
-	}); err != nil {
+	if err := record.value(func(data []byte) error { return decodeValue(data, &meta) }); err != nil {
 		return nil, false, fmt.Errorf("failed to decode embedding metadata for node %s: %w", nodeID, err)
 	}
 	return validateEmbeddingSidecarMeta(meta, node)
@@ -388,7 +470,11 @@ func validateEmbeddingSidecarMeta(meta map[string]any, node *Node) (map[string]a
 // each node whose reserved-chunk-index metadata record marks a permanent
 // embedding failure, without decoding any node body.
 func (b *BadgerEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return 0, err
+	}
+
+	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
 	count := 0
@@ -415,6 +501,7 @@ func (b *BadgerEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit 
 			if failed, _ := meta["embedding_failed"].(bool); !failed {
 				continue
 			}
+			delete(meta, embeddingRangeManifestKey)
 			count++
 			if err := visit(nodeID, meta); err != nil {
 				if errors.Is(err, ErrIterationStopped) {

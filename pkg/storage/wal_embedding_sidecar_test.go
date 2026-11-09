@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 // sidecar write is logged as OpUpdateEmbedding, never changes node counts,
 // never rewrites the node record, and the persisted embedding reads back.
 func TestWALEngine_UpdateNodeEmbeddingSidecar(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	dir := t.TempDir()
 	wal, err := NewWAL(dir, nil)
 	require.NoError(t, err)
@@ -31,13 +32,13 @@ func TestWALEngine_UpdateNodeEmbeddingSidecar(t *testing.T) {
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	_, err = engine.CreateNode(node)
+	_, err = engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
-	err = engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2, 0.3}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now))
+	err = engine.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2, 0.3}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now))
 	require.NoError(t, err)
 
-	got, err := engine.GetNode(node.ID)
+	got, err := engine.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{0.1, 0.2, 0.3}}, got.ChunkEmbeddings)
 	require.Equal(t, true, got.EmbedMeta["has_embedding"])
@@ -45,7 +46,7 @@ func TestWALEngine_UpdateNodeEmbeddingSidecar(t *testing.T) {
 
 	// Audit: the WAL records the sidecar write as OpUpdateEmbedding.
 	require.NoError(t, wal.Close())
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"))
+	entries, err := ReadWALEntries(t.Context(), filepath.Join(dir, "wal.log"), nil)
 	require.NoError(t, err)
 	var sawEmbeddingUpdate bool
 	for _, entry := range entries {

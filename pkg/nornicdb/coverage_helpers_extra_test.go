@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/kms"
@@ -49,7 +51,7 @@ func (e *coverageQueryEmbedder) Backend() string { return "cpu" }
 var _ embed.Embedder = (*coverageQueryEmbedder)(nil)
 
 func TestDBCachingAccessorAndNoopBranches(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	queue := NewEmbedQueue(nil, engine, &EmbedQueueConfig{DeferWorkerStart: true})
 	t.Cleanup(func() { queue.Close() })
@@ -101,11 +103,11 @@ func TestDBRetentionPoliciesPathBranches(t *testing.T) {
 }
 
 func TestDBCollectSubjectRetentionRecords(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"owner_id": "alice", "category": "note"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"owner_id": "alice", "category": "note"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:n2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"owner_id": "bob"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:n2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"owner_id": "bob"}})
 	require.NoError(t, err)
 
 	db := &DB{storage: engine, config: &nornicConfig.Config{}}
@@ -122,34 +124,29 @@ func TestDBCollectSubjectRetentionRecords(t *testing.T) {
 }
 
 func TestDBSearchServicePendingAndIgnoreBranches(t *testing.T) {
-	entry := &dbSearchService{}
+	entry := &dbSearchService{svc: search.NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test"), 3, nil)}
 	require.False(t, entry.hasPending())
-	require.Nil(t, (*dbSearchService)(nil).drainPending())
+	nodes, edges := (*dbSearchService)(nil).drainPending()
+	require.Nil(t, nodes)
+	require.Nil(t, edges)
 	require.False(t, (*dbSearchService)(nil).hasPending())
 	require.Equal(t, searchMutationDebounceDelay, (*dbSearchService)(nil).flushDelay())
 
 	entry.pendingFlushDelay = time.Millisecond
 	require.Equal(t, time.Millisecond, entry.flushDelay())
-	entry.queueIndex(nil)
-	entry.queueRemove("")
-	require.False(t, entry.hasPending())
 
-	node := &storage.Node{ID: "n1", Labels: []string{"Doc"}, Properties: map[string]any{"title": "old"}}
-	entry.queueIndex(node)
-	node.Properties["title"] = "mutated"
-	entry.queueRemove("n2")
+	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("n1")})
+	newest := entry.svc.ReserveNodeMutation("n1")
+	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: newest})
+	seedReservedSearchRefresh(entry, "e1", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("e1")})
 	require.True(t, entry.hasPending())
-	ops := entry.drainPending()
-	require.Len(t, ops, 2)
-	require.Equal(t, "old", ops["n1"].node.Properties["title"])
-	require.True(t, ops["n2"].remove)
+	nodes, edges = entry.drainPending()
+	require.Equal(t, map[string]search.NodeMutation{"n1": newest}, nodes, "a node keeps only its newest refresh")
+	require.Len(t, edges, 1)
 	require.False(t, entry.hasPending())
-	require.Nil(t, entry.drainPending())
-
-	entry.buildDone = make(chan struct{})
-	entry.closeBuildDone()
-	entry.closeBuildDone()
-	(*dbSearchService)(nil).closeBuildDone()
+	nodes, edges = entry.drainPending()
+	require.Nil(t, nodes)
+	require.Nil(t, edges)
 
 	db := &DB{}
 	require.False(t, db.shouldIgnoreSearchIndexingError(nil))
@@ -157,7 +154,7 @@ func TestDBSearchServicePendingAndIgnoreBranches(t *testing.T) {
 	require.True(t, db.shouldIgnoreSearchIndexingError(storage.ErrStorageClosed))
 	require.True(t, db.shouldIgnoreSearchIndexingError(ErrClosed))
 	require.False(t, db.shouldIgnoreSearchIndexingError(errors.New("boom")))
-	db.closed = true
+	db.work.CloseAdmission()
 	require.True(t, db.shouldIgnoreSearchIndexingError(errors.New("boom")))
 
 	dbName, local, ok := splitQualifiedID("tenant:n1")
@@ -328,7 +325,7 @@ func TestDBPublicQueryEmbeddingAndChunkingBranches(t *testing.T) {
 	require.Equal(t, []float32{0, 1, 0}, vec)
 
 	db = &DB{cypherExecutor: queryEmbeddingTestExecutor(t, defaultEmbedder)}
-	db.SetDbConfigResolver(func(dbName string) (int, float64, string) { return 99, 0, "" })
+	db.SetDbConfigResolver(func(dbName string) (int, float64) { return 99, 0 })
 	vec, err = db.EmbedQueryForDB(context.Background(), "tenant", "query")
 	require.ErrorIs(t, err, ErrQueryEmbeddingDimensionMismatch)
 	require.Nil(t, vec)
@@ -345,7 +342,7 @@ func TestDBPublicQueryEmbeddingAndChunkingBranches(t *testing.T) {
 }
 
 func TestDBSearchStatusAndDropStateBranches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	cfg := DefaultConfig()
 	db := &DB{
@@ -374,7 +371,7 @@ func TestDBSearchStatusAndDropStateBranches(t *testing.T) {
 	require.False(t, status.VectorEnabled)
 	require.False(t, status.LazyTriggerNeeded)
 
-	svc := search.NewServiceWithDimensions(base, 3)
+	svc := search.NewService(base, 3, nil)
 	svc.MarkReadyDisabled()
 	db.searchServices["tenant"] = &dbSearchService{dbName: "tenant", svc: svc}
 	status = db.GetDatabaseSearchStatus("tenant")

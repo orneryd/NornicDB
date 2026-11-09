@@ -45,6 +45,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -60,23 +61,6 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 	}
 	if err := requireSetParameter(ctx, rightExpr); err != nil {
 		return err
-	}
-	// Direct $param / row-path references skip the expression evaluator, so
-	// typed maps keep their Go value types and UNWIND rows stay cheap.
-	value, direct := resolveDirectParamRef(ctx, rightExpr)
-	if !direct {
-		value, direct = resolveContextPathRef(ctx, rightExpr)
-	}
-	if direct {
-		props, err := setPropertyMapValue(value, "+=")
-		if err != nil {
-			return err
-		}
-		writes.mapEntries(node.Properties, props, false)
-		for k, v := range props {
-			setNodeProperty(node, k, v)
-		}
-		return nil
 	}
 	props, err := e.setSourceMap(ctx, rightExpr, "+=", nodes, rels)
 	if err != nil {
@@ -214,45 +198,7 @@ func parseSetAssignmentTarget(target string) (variable string, property string, 
 //	splitSetAssignments("n.embedding = [0.1, 0.2], n.dim = 4")
 //	// Returns: ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
 func splitSetAssignments(setClause string) []string {
-	if strings.TrimSpace(setClause) == "" {
-		return nil
-	}
-	var assignments []string
-	var current strings.Builder
-	parenDepth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, c := range setClause {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				// Check for escaped quote
-				if i > 0 && !isBackslashEscaped(setClause, i) {
-					inQuote = false
-				}
-			}
-			current.WriteRune(c)
-		case (c == '(' || c == '{' || c == '[') && !inQuote:
-			parenDepth++
-			current.WriteRune(c)
-		case (c == ')' || c == '}' || c == ']') && !inQuote:
-			parenDepth--
-			current.WriteRune(c)
-		case c == ',' && !inQuote && parenDepth == 0:
-			assignments = append(assignments, strings.TrimSpace(current.String()))
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-
-	assignments = append(assignments, strings.TrimSpace(current.String()))
-
-	return assignments
+	return splitTopLevelCommaKeepEmpty(setClause)
 }
 
 // hasConcatOperator checks if the expression has a + operator outside of quotes.
@@ -266,28 +212,23 @@ func splitSetAssignments(setClause string) []string {
 //
 //   - true if + operator exists at top level
 func (e *StorageExecutor) hasConcatOperator(expr string) bool {
-	inQuote := false
-	quoteChar := rune(0)
 	parenDepth := 0
 
 	for i := 0; i < len(expr); i++ {
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end - 1
+			continue
+		}
 		c := rune(expr[i])
 		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-		case c == '(' && !inQuote:
+		case c == '(':
 			parenDepth++
-		case c == ')' && !inQuote:
+		case c == ')':
 			parenDepth--
-		case c == '+' && !inQuote && parenDepth == 0:
+		case c == '+' && parenDepth == 0:
 			// Check for space before and after (to avoid matching ++ or += etc)
-			hasBefore := i > 0 && expr[i-1] == ' '
-			hasAfter := i < len(expr)-1 && expr[i+1] == ' '
+			hasBefore := i > 0 && cyphertext.IsWhitespaceAt(expr, i-1)
+			hasAfter := i < len(expr)-1 && cyphertext.IsWhitespaceAt(expr, i+1)
 			if hasBefore && hasAfter {
 				return true
 			}
@@ -326,7 +267,12 @@ func (e *StorageExecutor) generateUUID() string {
 // node whose labels changed is checked against the label policies first.
 // On an error the entity is restored and the error is wrapped by its caller
 // (wrap).
-func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
+//
+// Every entity is stored as an update observed from its state before the
+// clause (setEntityState.before and beforeEdge): the label policy check reads
+// that state's labels, and storage receives that observation instead of
+// reconstructing it from the entity the clause already changed.
+func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
 	for index := range states {
 		state := &states[index]
 		if stats != nil {
@@ -337,12 +283,15 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 			if labelsAdded == 0 && changedPropertyCount(state.properties, node.Properties) == 0 {
 				continue
 			}
+			state.before = observeNode(node)
+			state.before.Properties = state.properties
+			state.before.Labels = state.labels
 			restore := func() {
 				node.Properties = state.properties
 				node.Labels = state.labels
 			}
 			if labelsAdded > 0 {
-				if err := validatePolicyOnLabelChange(store, node, state.labels); err != nil {
+				if err := validatePolicyOnLabelChange(ctx, store, node, state.before.Labels); err != nil {
 					restore()
 					return err
 				}
@@ -350,7 +299,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 			if stats != nil {
 				stats.LabelsAdded += labelsAdded
 			}
-			if err := updateMutatedNode(store, node); err != nil {
+			if err := mutateNodeWithObservation(ctx, store, state.before, node); err != nil {
 				restore()
 				return wrap(*state, err)
 			}
@@ -361,7 +310,9 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 		if changedPropertyCount(state.properties, relationship.Properties) == 0 {
 			continue
 		}
-		if err := updateMutatedEdge(store, relationship); err != nil {
+		state.beforeEdge = observeEdge(relationship)
+		state.beforeEdge.Properties = state.properties
+		if err := mutateEdgeWithObservation(ctx, store, state.beforeEdge, relationship); err != nil {
 			relationship.Properties = state.properties
 			return wrap(*state, err)
 		}
@@ -385,8 +336,8 @@ type setRun struct {
 // reads the old one (#907). A chained SET clause (SET a SET b) starts new
 // stretches. A stretch's text is a slice of the body. assignments, when not nil, are body's assignments already split
 // (splitSetAssignments): they are used when body is one SET clause.
-func appendSetClauseRuns(runs []setRun, body string, assignments []string) []setRun {
-	for segment, next, ok := nextChainedSetClause(body, 0); ok; segment, next, ok = nextChainedSetClause(body, next) {
+func appendSetClauseRuns(ctx context.Context, runs []setRun, body string, assignments []string) []setRun {
+	for segment, next, ok := nextChainedSetClause(ctx, body, 0); ok; segment, next, ok = nextChainedSetClause(ctx, body, next) {
 		open := false
 		start, searchFrom := 0, 0
 		items := assignments
@@ -415,14 +366,16 @@ func appendSetClauseRuns(runs []setRun, body string, assignments []string) []set
 	return runs
 }
 
-// setEntityState is an entity a SET clause wrote: its properties and
-// labels before the clause, and the properties the clause wrote (setWrites).
+// setEntityState retains the fields a SET clause may change. Its immutable
+// observation reuses the existing rollback copies rather than copying embeddings.
 type setEntityState struct {
 	variable     string
 	node         *storage.Node
 	relationship *storage.Edge
 	properties   map[string]interface{}
 	labels       []string
+	before       *storage.Node
+	beforeEdge   *storage.Edge
 	written      int
 }
 

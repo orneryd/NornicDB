@@ -30,6 +30,8 @@ func TestLocalizedInvalidRequestBody(t *testing.T) {
 		{name: "source fallback", message: "invalid request body", tag: "en-US"},
 		{name: "Spanish", language: "es-ES, en;q=0.5", message: "cuerpo de solicitud no válido", tag: "es-ES"},
 		{name: "pseudo locale", language: "en-XA", message: "[!! invalid request body !!]", tag: "en-XA"},
+		{name: "British English uses source catalog", language: "en-GB", message: "invalid request body", tag: "en-US"},
+		{name: "unsupported pseudo locale uses source catalog", language: "en-XB", message: "invalid request body", tag: "en-US"},
 		{name: "malformed header", language: "not_a_locale_@", message: "invalid request body", tag: "en-US"},
 	}
 	for _, test := range tests {

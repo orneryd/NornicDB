@@ -1,0 +1,133 @@
+package storage
+
+import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+// A suppressed entity whose newest body is still buffered is left out by every
+// visible read and returned by every stored read, as when its body is stored:
+// each reader merges the overlay through the one visibility composition
+// (overlay_visibility.go). The relationship MERGE identity reads
+// (GetEdgesBetween, GetEdgeBetween, MatchEdgesBetween) are among them.
+func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
+	engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
+		DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour,
+	}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+	for _, node := range []*Node{
+		{ID: "test:a", Labels: []string{"A"}},
+		{ID: "test:b", Labels: []string{"B"}},
+		{ID: "test:h", Labels: []string{"H"}, Properties: map[string]any{"v": int64(1)}},
+	} {
+		_, err := engine.CreateNode(t.Context(), node)
+		require.NoError(t, err)
+	}
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(1)}}))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:h", true))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", true))
+	tx, err := engine.BeginTransaction(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, tx.SetImplicit(true))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:h", Labels: []string{"H"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(2)}}}))
+	require.NoError(t, tx.Commit())
+	ctx := context.Background()
+
+	nodeIDs := func(nodes []*Node, err error) []NodeID {
+		t.Helper()
+		require.NoError(t, err)
+		var ids []NodeID
+		for _, node := range nodes {
+			if node.ID == "test:h" {
+				require.EqualValues(t, 2, node.Properties["v"], "the buffered body")
+			}
+			ids = append(ids, node.ID)
+		}
+		return ids
+	}
+	edgeIDs := func(edges []*Edge, err error) []EdgeID {
+		t.Helper()
+		require.NoError(t, err)
+		var ids []EdgeID
+		for _, edge := range edges {
+			if edge.ID == "test:r" {
+				require.EqualValues(t, 2, edge.Properties["v"], "the buffered body")
+			}
+			ids = append(ids, edge.ID)
+		}
+		return ids
+	}
+	streamNodes := func(stream func(func(*Node) error) error) ([]*Node, error) {
+		var out []*Node
+		err := stream(func(node *Node) error { out = append(out, node); return nil })
+		return out, err
+	}
+	streamEdges := func(stream func(func(*Edge) error) error) ([]*Edge, error) {
+		var out []*Edge
+		err := stream(func(edge *Edge) error { out = append(out, edge); return nil })
+		return out, err
+	}
+	all := func(*Edge) bool { return true }
+
+	// Visible reads leave the buffered suppressed bodies out.
+	_, err = engine.GetNode(t.Context(), "test:h")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = engine.GetEdge(t.Context(), "test:r")
+	require.ErrorIs(t, err, ErrNotFound)
+	require.NotContains(t, nodeIDs(engine.GetNodesByLabel(ctx, "H")), NodeID("test:h"))
+	require.NotContains(t, nodeIDs(streamNodes(func(f func(*Node) error) error { return engine.StreamNodesByLabelProjected(ctx, "H", nil, f) })), NodeID("test:h"))
+	require.NotContains(t, nodeIDs(engine.AllNodes(ctx)), NodeID("test:h"))
+	require.NotContains(t, nodeIDs(streamNodes(func(f func(*Node) error) error { return engine.StreamNodes(ctx, f) })), NodeID("test:h"))
+	batch, err := engine.BatchGetNodes(ctx, []NodeID{"test:h", "test:a"})
+	require.NoError(t, err)
+	require.NotContains(t, batch, NodeID("test:h"))
+	require.Contains(t, batch, NodeID("test:a"))
+	require.NotContains(t, edgeIDs(engine.AllEdges(ctx)), EdgeID("test:r"))
+	require.NotContains(t, edgeIDs(streamEdges(func(f func(*Edge) error) error { return engine.StreamEdges(ctx, f) })), EdgeID("test:r"))
+	require.NotContains(t, edgeIDs(engine.GetEdgesByType(ctx, "LINK")), EdgeID("test:r"))
+	require.NotContains(t, edgeIDs(streamEdges(func(f func(*Edge) error) error { return engine.StreamEdgesByType(ctx, "LINK", f) })), EdgeID("test:r"))
+	require.NotContains(t, edgeIDs(engine.GetOutgoingEdges(ctx, "test:a")), EdgeID("test:r"))
+	require.NotContains(t, edgeIDs(engine.GetIncomingEdges(ctx, "test:b")), EdgeID("test:r"))
+	require.NotContains(t, edgeIDs(engine.GetEdgesBetween(ctx, "test:a", "test:b")), EdgeID("test:r"))
+	edge, err := engine.GetEdgeBetween(t.Context(), "test:a", "test:b", "LINK")
+	require.NoError(t, err)
+	require.Nil(t, edge)
+	require.NotContains(t, edgeIDs(engine.MatchEdgesBetween(context.Background(), "test:a", "test:b", "LINK", nil, all)), EdgeID("test:r"))
+
+	// Stored reads return them, as the buffer holds them.
+	stored, err := engine.GetStoredNode(t.Context(), "test:h")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, stored.Properties["v"])
+	storedEdge, err := engine.GetStoredEdge(t.Context(), "test:r")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, storedEdge.Properties["v"])
+	require.Contains(t, nodeIDs(engine.GetStoredNodesByLabel(ctx, "H")), NodeID("test:h"))
+	require.Contains(t, nodeIDs(streamNodes(func(f func(*Node) error) error { return engine.StreamStoredNodesByLabelProjected(ctx, "H", nil, f) })), NodeID("test:h"))
+	require.Contains(t, nodeIDs(streamNodes(func(f func(*Node) error) error { return StreamStoredNodes(ctx, engine, StreamNodesOptions{}, f) })), NodeID("test:h"))
+	require.Contains(t, edgeIDs(engine.GetStoredEdgesByType(ctx, "LINK")), EdgeID("test:r"))
+	require.Contains(t, edgeIDs(streamEdges(func(f func(*Edge) error) error { return engine.StreamStoredEdgesByType(ctx, "LINK", f) })), EdgeID("test:r"))
+	require.Contains(t, edgeIDs(engine.GetStoredOutgoingEdges(ctx, "test:a")), EdgeID("test:r"))
+	require.Contains(t, edgeIDs(engine.GetStoredIncomingEdges(ctx, "test:b")), EdgeID("test:r"))
+	require.Contains(t, edgeIDs(CollectStoredEdges(ctx, engine)), EdgeID("test:r"))
+
+	// Revealed again, the visible reads return the bodies. The reveal runs
+	// after the flush: on-demand suppression racing the write-behind flusher
+	// on the same key is a separate, queued bug
+	// (sig/handoff/bugqueue-q-suppress-flusher-race-20261021.md).
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:h", false))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", false))
+	require.Contains(t, edgeIDs(engine.GetEdgesBetween(ctx, "test:a", "test:b")), EdgeID("test:r"))
+	edge, err = engine.GetEdgeBetween(t.Context(), "test:a", "test:b", "LINK")
+	require.NoError(t, err)
+	require.NotNil(t, edge)
+	require.Contains(t, nodeIDs(engine.GetNodesByLabel(ctx, "H")), NodeID("test:h"))
+}

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -9,13 +11,13 @@ import (
 )
 
 func TestBufferedFlushPreservesQueryViewAndCacheRevision(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour})
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	engine.SetDecayEnabled(false)
 	ns := storage.NewNamespacedEngine(engine, "nornic")
 	cached := NewStorageExecutor(ns)
-	uncached := NewStorageExecutorWithQueryCachePolicy(ns, 0, time.Minute)
+	uncached := NewStorageExecutor(ns, QueryCachePolicy{MaxEntries: 0, TTL: time.Minute})
 	ctx := context.Background()
 	const query = "MATCH (c:Category)<-[:PART_OF]-(p:Product) RETURN c.categoryName AS categoryName, count(p) AS productCount ORDER BY productCount DESC"
 	_, err = cached.Execute(ctx, "CREATE (c:Category {categoryName:'c'})<-[:PART_OF]-(p:Product {id:1})", nil)
@@ -38,7 +40,7 @@ func TestBufferedFlushPreservesQueryViewAndCacheRevision(t *testing.T) {
 		hit, cacheErr := cached.Execute(ctx, query, nil)
 		observations <- observation{raw, hit, rawErr, cacheErr}
 	})
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	var got observation
 	select {
 	case got = <-observations:

@@ -58,7 +58,7 @@ NornicDB uses a **stream parse-execute** architecture where queries are parsed a
 
 ```go
 // Traditional: Parse everything, then execute
-ast := parser.Parse(query)      // Allocate full AST
+ast, err := parser.Parse(ctx, query)      // Allocate full AST
 optimized := optimizer.Optimize(ast)  // Another pass
 result := executor.Execute(optimized) // Finally execute
 
@@ -139,9 +139,15 @@ func (e *Executor) Execute(ctx, query, params) {
 
 ```go
 // ✅ SAFE: LLM only reads AST, doesn't generate queries
-func AnalyzeQueryComplexity(query string) (*Analysis, error) {
-    info := analyzer.Analyze(query)
-    ast := info.GetAST()
+func AnalyzeQueryComplexity(ctx context.Context, query string) (*Analysis, error) {
+    info, err := analyzer.Analyze(ctx, query)
+    if err != nil {
+        return nil, err
+    }
+    ast, err := info.GetAST(ctx)
+    if err != nil {
+        return nil, err
+    }
     
     // LLM analyzes structure
     complexity := llm.AnalyzeComplexity(ast)
@@ -160,15 +166,21 @@ func AnalyzeQueryComplexity(query string) (*Analysis, error) {
 
 ```go
 // ⚠️ REQUIRES VALIDATION: LLM generates corrected query
-func CorrectQuery(originalQuery string, error error) (string, error) {
-    info := analyzer.Analyze(originalQuery)
-    ast := info.GetAST()
+func CorrectQuery(ctx context.Context, originalQuery string, cause error) (string, error) {
+    info, err := analyzer.Analyze(ctx, originalQuery)
+    if err != nil {
+        return "", err
+    }
+    ast, err := info.GetAST(ctx)
+    if err != nil {
+        return "", err
+    }
     
     // LLM suggests correction
     correctedQuery := llm.SuggestCorrection(ast, error)
     
     // ⚠️ CRITICAL: Validate the corrected query
-    if err := validateQuerySafety(correctedQuery); err != nil {
+    if err := validateQuerySafety(ctx, correctedQuery); err != nil {
         return "", fmt.Errorf("LLM generated unsafe query: %w", err)
     }
     
@@ -176,9 +188,12 @@ func CorrectQuery(originalQuery string, error error) (string, error) {
     return correctedQuery, nil  // Return for user approval, don't auto-execute
 }
 
-func validateQuerySafety(query string) error {
+func validateQuerySafety(ctx context.Context, query string) error {
     // 1. Parse with our parser (not LLM's interpretation)
-    info := analyzer.Analyze(query)
+    info, err := analyzer.Analyze(ctx, query)
+    if err != nil {
+        return err
+    }
     
     // 2. Check for dangerous patterns
     if info.HasDelete && !userHasDeletePermission {
@@ -206,14 +221,17 @@ func DangerousNLToQuery(naturalLanguage string) (*Result, error) {
 }
 
 // ✅ SAFE: Validated execution with constraints
-func SafeNLToQuery(naturalLanguage string, constraints QueryConstraints) (*Result, error) {
+func SafeNLToQuery(ctx context.Context, naturalLanguage string, constraints QueryConstraints) (*Result, error) {
     query := llm.GenerateCypher(naturalLanguage)
     
     // 1. Parse and analyze
-    info := analyzer.Analyze(query)
+    info, err := analyzer.Analyze(ctx, query)
+    if err != nil {
+        return nil, err
+    }
     
     // 2. Enforce constraints
-    if !constraints.AllowWrites && info.IsWriteQuery {
+    if !constraints.AllowWrites && info.Writes() {
         return nil, errors.New("write operations not allowed")
     }
     
@@ -229,7 +247,7 @@ func SafeNLToQuery(naturalLanguage string, constraints QueryConstraints) (*Resul
     }
     
     // 4. Use read-only transaction for safety
-    if !info.IsWriteQuery {
+    if !info.Writes() {
         return executor.ExecuteReadOnly(ctx, query, nil)
     }
     
@@ -251,11 +269,14 @@ type PluginQueryConstraints struct {
     MaxDepth       int  // For path queries
 }
 
-func ExecutePluginQuery(plugin Plugin, query string, constraints PluginQueryConstraints) (*Result, error) {
+func ExecutePluginQuery(ctx context.Context, plugin Plugin, query string, constraints PluginQueryConstraints) (*Result, error) {
     // 1. Validate plugin has permission for this query type
-    info := analyzer.Analyze(query)
+    info, err := analyzer.Analyze(ctx, query)
+    if err != nil {
+        return nil, err
+    }
     
-    if constraints.ReadOnly && info.IsWriteQuery {
+    if constraints.ReadOnly && info.Writes() {
         return nil, errors.New("plugin attempted write in read-only mode")
     }
     
@@ -352,7 +373,11 @@ plugin:
 ### Plugin AST Access
 
 ```go
-// Plugins get read-only AST view
+// Plugins get read-only AST view.
+//
+// IsReadOnly is the statement-effect owner's answer for the analysis, published
+// on the AST: a registered WRITE procedure, a schema or catalog change and an
+// unresolved procedure are writes even though no clause kind exposes them.
 type PluginASTView struct {
     Clauses   []ASTClauseView  // Sanitized view
     IsReadOnly bool

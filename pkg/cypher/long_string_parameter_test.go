@@ -49,7 +49,7 @@ func TestLongStringParameterInEveryPosition(t *testing.T) {
 // with the parameter kept as a reference both take 166–174 ms and 0.21 MB,
 // the time text.locate itself spends on the text.
 func BenchmarkLongStringParameterPerRow(b *testing.B) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(b), "longparam"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "longparam"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	rows := make([]interface{}, 20)
 	for index := range rows {

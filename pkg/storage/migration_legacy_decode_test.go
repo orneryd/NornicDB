@@ -69,11 +69,11 @@ func TestLegacyDecode_EncodeDecodeRoundTrip(t *testing.T) {
 		Labels:     []string{"Test"},
 		Properties: map[string]interface{}{"val": "check"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := eng.GetNode("nornic:rt")
+	got, err := eng.GetNode(t.Context(), "nornic:rt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestLegacyDecode_NewFieldsDefaultToZero(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if node.VisibilitySuppressed {
+	if node.RuntimeMetadata().VisibilitySuppressed {
 		t.Error("expected VisibilitySuppressed=false on old data")
 	}
 }

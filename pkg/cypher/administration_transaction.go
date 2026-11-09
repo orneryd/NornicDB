@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal outcome context propagation,29October2026.
 package cypher
 
 import (
@@ -36,23 +37,37 @@ func StatementDatabase(database, query string) string {
 	return database
 }
 
-func (e *StorageExecutor) admitTransactionStatement(query string) error {
+// admitTransactionStatement is the transaction entrance for controls, scripts
+// and data/administration work. Its control result lets callers route ordinary
+// statements without reclassifying lifecycle text before script cloning.
+func (e *StorageExecutor) admitTransactionStatement(ctx context.Context, query string) (control bool, err error) {
+	word := bareTransactionCommand(query)
+	if ctx.Value(transactionStatementOriginKey{}) == true && word != "" {
+		message := localization.CypherTransactionsCommandNotStatement(word)
+		return true, localizedError(message, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message.Fallback))
+	}
+	if word != "" || startsWithKeywordFold(query, "BEGIN") && transactionScriptShape(query) {
+		if word == "" {
+			word = "BEGIN"
+		}
+		return true, e.checkTransactionControl(ctx, word)
+	}
 	tx := e.txContext
 	if tx == nil || !tx.active {
-		return nil
+		return false, nil
 	}
 	if tx.failed != nil {
-		return queryOnFailedTransactionError(tx.failed)
+		return false, queryOnFailedTransactionError(tx.failed)
 	}
 	kind := "Data"
 	if StatementDatabase("", query) == "system" {
 		kind = "Administration"
 	}
 	if tx.statementKind != "" && tx.statementKind != kind {
-		return statementTypeError(query, kind, tx.statementKind, tx.tx)
+		return false, statementTypeError(ctx, query, kind, tx.statementKind, tx.tx)
 	}
 	tx.statementKind = kind
-	return nil
+	return false, nil
 }
 
 // statementTypeError is Neo4j's ForbiddenDueToTransactionType for query, a
@@ -61,9 +76,9 @@ func (e *StorageExecutor) admitTransactionStatement(query string) error {
 // it holds writes, makes a data transaction's type "Write query". The
 // message uses Neo4j's statement type names: "Read query", "Write query",
 // "Schema modification", "Administration command".
-func statementTypeError(query, kind, previousKind string, transaction any) error {
+func statementTypeError(ctx context.Context, query, kind, previousKind string, transaction any) error {
 	requested := "Read query"
-	permissions := QueryPermissionRequirements(query)
+	permissions := QueryPermissionRequirements(ctx, query, AcceptedSource)
 	if permissions.Write {
 		requested = "Write query"
 	}
@@ -85,7 +100,7 @@ func statementTypeError(query, kind, previousKind string, transaction any) error
 }
 
 func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, query string) (*StorageExecutor, error) {
-	if StatementDatabase("", query) != "system" || strings.EqualFold(e.currentDatabaseName(), "system") {
+	if StatementDatabase("", query) != "system" || strings.EqualFold(e.databaseName(), "system") {
 		return e, nil
 	}
 	system, err := e.systemStorage()
@@ -99,7 +114,7 @@ func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, quer
 	if e.txContext == nil || !e.txContext.active {
 		// Implicit administration routing keeps the request's entitlement
 		// context; it chooses the store without selecting another user graph.
-		return e.cloneForStorage(system), nil
+		return e.cloneWithStorage(system, selectedDatabaseStorage), nil
 	}
 	if e.txContext.storageWrapper != nil && strings.EqualFold(e.txContext.storageWrapper.Namespace(), "system") {
 		return e, nil
@@ -112,27 +127,25 @@ func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, quer
 	if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
 		metadata = tx.GetMetadata()
 	}
-	if _, err := e.handleRollback(); err != nil {
+	if _, err := e.handleRollback(ctx, nil); err != nil {
 		return nil, err
 	}
-	owner := e.cloneForStorage(system)
-	if _, err := owner.handleBegin(); err != nil {
+	owner := e.cloneWithStorage(system, selectedDatabaseStorage)
+	if _, err := owner.handleBegin(ctx); err != nil {
 		return nil, err
 	}
+	outside := e.storage
 	e.txContext = owner.txContext
+	e.txContext.controller = e
+	e.txContext.outsideStorage = outside
 	e.txContext.statementKind = "Administration"
+	// Transfer the already-issued native view with its controller; a replacement
+	// wrapper would lose the membership that distinguishes the owner from members.
+	e.storage = owner.storage
 	tx := e.txContext.tx.(*storage.BadgerTransaction)
 	if err := tx.SetMetadata(metadata); err != nil {
 		return nil, err
 	}
-	namespace := ""
-	if scoped, ok := system.(interface{ Namespace() string }); ok {
-		namespace = scoped.Namespace()
-	}
-	separator := ""
-	if namespace != "" {
-		separator = ":"
-	}
-	e.txContext.storageWrapper = &transactionStorageWrapper{tx: tx, underlying: system, namespace: namespace, separator: separator}
+
 	return e, nil
 }

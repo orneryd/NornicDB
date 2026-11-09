@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -14,7 +16,7 @@ import (
 // session's nor the system database.
 func nestedUseRouterExecutor(t *testing.T, database string) (*StorageExecutor, map[string]storage.Engine) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	stores := map[string]storage.Engine{}
 	for _, name := range []string{"system", "nornic", "other"} {
@@ -29,9 +31,9 @@ func nestedUseRouterExecutor(t *testing.T, database string) (*StorageExecutor, m
 // A statement a procedure runs (apoc.cypher.run and its relatives) that
 // starts with USE runs through the one database router, executeOnDatabase:
 // the system database's statement policy and the one-database-per-
-// transaction rule apply to it as they do to a top-level USE, and it runs
+// explicit-transaction rule apply as they do to a top-level USE, and it runs
 // on the database it names, never on the caller's. A read of another user
-// database outside a transaction stays a NornicDB extension
+// database outside an explicit transaction stays a NornicDB extension
 // (TestUseTargetAuthorizationOnEveryRoute).
 func TestNestedUseRunsThroughDatabaseRouter(t *testing.T) {
 	cases := []struct {
@@ -42,10 +44,9 @@ func TestNestedUseRunsThroughDatabaseRouter(t *testing.T) {
 		{"user tx into system", "nornic", "system", true, "Neo.ClientError.Statement.SemanticError"},
 		{"user auto-commit into system", "nornic", "system", false, "Neo.ClientError.Statement.SemanticError"},
 		{"user tx into other user database", "nornic", "other", true, "Neo.ClientError.Statement.AccessMode"},
-		// The statement a procedure or subquery runs belongs to the caller's
-		// transaction, an implicit one here, so it can't write a second
-		// database either.
-		{"user auto-commit into other user database", "nornic", "other", false, "Neo.ClientError.Statement.AccessMode"},
+		// Native autocommit coordinates child selection under one statement
+		// owner; only the target writes. Explicit transactions remain single-DB.
+		{"user auto-commit into other user database", "nornic", "other", false, ""},
 		{"user tx into own database", "nornic", "nornic", true, ""},
 		{"user auto-commit into own database", "nornic", "nornic", false, ""},
 		{"system tx into user database", "system", "nornic", true, "error"},
@@ -62,7 +63,7 @@ func TestNestedUseRunsThroughDatabaseRouter(t *testing.T) {
 				ctx := context.Background()
 				exec, stores := nestedUseRouterExecutor(t, c.session)
 				if c.tx {
-					_, err := exec.handleBegin()
+					_, err := exec.handleBegin(t.Context())
 					require.NoError(t, err)
 				}
 				_, err := exec.Execute(ctx, fmt.Sprintf(statement, c.target), nil)
@@ -74,7 +75,7 @@ func TestNestedUseRunsThroughDatabaseRouter(t *testing.T) {
 					require.NoError(t, err)
 				}
 				if c.tx {
-					_, commitErr := exec.handleCommit()
+					_, commitErr := exec.handleCommit(context.Background())
 					if c.code != "" {
 						require.Error(t, commitErr, "a rejected statement fails its transaction")
 					} else {
@@ -82,7 +83,7 @@ func TestNestedUseRunsThroughDatabaseRouter(t *testing.T) {
 					}
 				}
 				for name, store := range stores {
-					nodes, err := store.GetNodesByLabel("NestedUse")
+					nodes, err := store.GetNodesByLabel(ctx, "NestedUse")
 					require.NoError(t, err)
 					want := 0
 					if c.code == "" && name == c.target {

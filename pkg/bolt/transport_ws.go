@@ -15,6 +15,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // wsAcceptResult bundles everything handleConnection needs after a
@@ -48,11 +50,32 @@ func (s *Server) acceptWebSocket(
 	br *bufio.Reader,
 	remoteAddr string,
 ) (*wsAcceptResult, error) {
+	// This port owns its HTTP parser, unlike the main net/http server. Charge
+	// its streaming metadata before ReadRequest can accumulate/unescape it,
+	// and retain that credit through cookie/origin parsing and upgrade setup.
+	wire := memory.NewWireRequest(s.memoryPolicy)
+	defer wire.Close()
+	var admission *wsHeaderReader
+	if wire != nil {
+		if err := wire.Grow(0); err != nil {
+			return s.rejectHTTPMetadata(conn, err)
+		}
+		admission = &wsHeaderReader{Reader: br, wire: wire}
+		br = bufio.NewReader(admission)
+	}
 	// Read the HTTP request from the bufio.Reader (which already holds
 	// the peeked "GET " bytes plus whatever else is buffered). This is
 	// the standard pattern: net/http.ReadRequest pulls a complete
 	// request from a bufio.Reader.
 	req, err := http.ReadRequest(br)
+	if admission != nil {
+		// A reused gorilla reader must not charge subsequent WS frames to the
+		// finished HTTP upgrade. Bolt's message owner admits those separately.
+		admission.finished = true
+		if admission.err != nil {
+			return s.rejectHTTPMetadata(conn, admission.err)
+		}
+	}
 	if err != nil {
 		s.logEvent(context.Background(), slog.LevelWarn, localization.BoltWebSocketUpgradeReadRequestFailedEvent(remoteAddr, err))
 		return nil, err
@@ -165,13 +188,58 @@ func (s *Server) acceptWebSocket(
 	return &wsAcceptResult{conn: wc, br: wsBr, implicitBearer: implicitBearer}, nil
 }
 
+func (s *Server) rejectHTTPMetadata(conn net.Conn, err error) (*wsAcceptResult, error) {
+	writeHTTPStatus(conn, http.StatusServiceUnavailable, "Neo.TransientError.General.MemoryPoolOutOfMemoryError\n")
+	if ms := s.metricsState; ms != nil && ms.bag != nil {
+		incBoltConnectionsRejected(ms.bag, "ws_handshake")
+	}
+	return nil, err
+}
+
+// The HTTP parser receives only bytes already charged to the shared owner.
+// Its bufio buffer is fixed; capacity is checked before parser buffer growth.
+type wsHeaderReader struct {
+	io.Reader
+	wire     *memory.WireRequest
+	read     int64
+	err      error
+	finished bool
+}
+
+func (r *wsHeaderReader) Read(buffer []byte) (int, error) {
+	if r.finished {
+		return r.Reader.Read(buffer)
+	}
+	limit, err := r.wire.WireLimit()
+	if err != nil {
+		r.err = err
+		return 0, err
+	}
+	if limit > 0 {
+		if r.read > limit {
+			r.err = memory.ErrLimitExceeded
+			return 0, r.err
+		}
+		if remaining := limit - r.read + 1; remaining < int64(len(buffer)) {
+			buffer = buffer[:int(remaining)]
+		}
+	}
+	n, err := r.Reader.Read(buffer)
+	r.read = memory.WireSize(r.read, int64(n))
+	if admission := r.wire.Grow(r.read); admission != nil {
+		r.err = admission
+		return 0, admission
+	}
+	return n, err
+}
+
 // startWebSocketKeepalive installs the pong handler and spawns the ping
 // loop on a wsConn. Called from handleConnection AFTER the Bolt HELLO
 // succeeds so the pre-HELLO BoltAuthTimeout is not overridden by a
 // pong-driven deadline extension. clamps a zero pongTimeout to a sane
 // default so a partial config (ping > 0, pong = 0) doesn't expire every
 // WriteControl deadline immediately.
-func (s *Server) startWebSocketKeepalive(wc *wsConn) {
+func (s *Server) startWebSocketKeepalive(parent context.Context, wc *wsConn) {
 	if wc == nil {
 		return
 	}
@@ -189,18 +257,32 @@ func (s *Server) startWebSocketKeepalive(wc *wsConn) {
 		_ = ws.SetReadDeadline(time.Now().Add(pongTimeout))
 		return nil
 	})
-	go pingLoop(ws, pingInterval, pongTimeout, s.closed.Load)
+	w := s.lifetime()
+	ctx, release, accepted := w.Acquire(parent)
+	if !accepted {
+		return
+	}
+	go func() {
+		defer release()
+		if err := pingLoop(ctx, ws, pingInterval, pongTimeout, w.Closing); !util.ErrorIsOnly(err, net.ErrClosed) {
+			w.RecordError("Bolt WebSocket keepalive", err)
+		}
+	}()
 }
 
 // pingLoop periodically sends WS ping control frames. Stops when the
 // shouldStop closure returns true or the underlying conn errors.
-func pingLoop(ws *websocket.Conn, interval, pongTimeout time.Duration, shouldStop func() bool) {
+func pingLoop(ctx context.Context, ws *websocket.Conn, interval, pongTimeout time.Duration, shouldStop func() bool) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		<-ticker.C
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
 		if shouldStop != nil && shouldStop() {
-			return
+			return nil
 		}
 		// WriteControl is internally synchronized inside gorilla; safe to
 		// call concurrently with an outstanding WriteMessage.
@@ -210,7 +292,7 @@ func pingLoop(ws *websocket.Conn, interval, pongTimeout time.Duration, shouldSto
 			time.Now().Add(pongTimeout),
 		)
 		if err != nil {
-			return
+			return err
 		}
 	}
 }

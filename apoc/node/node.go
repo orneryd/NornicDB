@@ -4,7 +4,10 @@
 // nodes in Cypher queries.
 package node
 
+import "errors"
+
 import (
+	"context"
 	"fmt"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
@@ -16,20 +19,48 @@ type Node = storage.Node
 // Relationship represents a graph relationship.
 type Relationship = storage.Relationship
 
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
+// Functions binds this package's storage-dependent helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for.
+type Functions struct {
+	backend storage.Storage
+}
+
+// New returns this package's helpers bound to backend. One instance serves one
+// backend; a reconfiguration builds a new instance instead of rebinding this
+// one.
+func New(backend storage.Storage) *Functions {
+	return &Functions{backend: backend}
+}
 
 // Degree returns the degree (number of relationships) of a node.
 //
 // Example:
 //
 //	apoc.node.degree(node) => 5
-func Degree(node *Node, relType string) int {
-	degree, err := Storage.GetNodeDegree(node.ID, relType, storage.DirectionBoth)
-	if err != nil {
-		return 0
+func (f *Functions) Degree(ctx context.Context, node *Node, relType string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
 	}
-	return degree
+
+	degree, err := f.backend.GetNodeDegree(ctx, node.ID, relType, storage.DirectionBoth)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return 0, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return degree, nil
 }
 
 // DegreeIn returns the in-degree of a node.
@@ -37,12 +68,29 @@ func Degree(node *Node, relType string) int {
 // Example:
 //
 //	apoc.node.degree.in(node, 'KNOWS') => 3
-func DegreeIn(node *Node, relType string) int {
-	degree, err := Storage.GetNodeDegree(node.ID, relType, storage.DirectionIncoming)
-	if err != nil {
-		return 0
+func (f *Functions) DegreeIn(ctx context.Context, node *Node, relType string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
 	}
-	return degree
+
+	degree, err := f.backend.GetNodeDegree(ctx, node.ID, relType, storage.DirectionIncoming)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return 0, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return degree, nil
 }
 
 // DegreeOut returns the out-degree of a node.
@@ -50,12 +98,29 @@ func DegreeIn(node *Node, relType string) int {
 // Example:
 //
 //	apoc.node.degree.out(node, 'KNOWS') => 2
-func DegreeOut(node *Node, relType string) int {
-	degree, err := Storage.GetNodeDegree(node.ID, relType, storage.DirectionOutgoing)
-	if err != nil {
-		return 0
+func (f *Functions) DegreeOut(ctx context.Context, node *Node, relType string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
 	}
-	return degree
+
+	degree, err := f.backend.GetNodeDegree(ctx, node.ID, relType, storage.DirectionOutgoing)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return 0, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return degree, nil
 }
 
 // ID returns the ID of a node.
@@ -127,22 +192,47 @@ func HasLabels(node *Node, labels []string) bool {
 // Example:
 //
 //	apoc.node.relationshipTypes(node) => ['KNOWS', 'WORKS_AT']
-func RelationshipTypes(node *Node) []string {
-	rels, err := Storage.GetNodeRelationships(node.ID, "", storage.DirectionBoth)
+func (f *Functions) RelationshipTypes(ctx context.Context, node *Node) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	rels, err := f.backend.GetNodeRelationships(ctx, node.ID, "", storage.DirectionBoth)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err != nil {
-		return []string{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	types := make(map[string]bool)
 	for _, rel := range rels {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		types[rel.Type] = true
 	}
 
 	result := make([]string, 0, len(types))
 	for t := range types {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		result = append(result, t)
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // RelationshipTypesIn returns incoming relationship types.
@@ -150,22 +240,47 @@ func RelationshipTypes(node *Node) []string {
 // Example:
 //
 //	apoc.node.relationshipTypes.in(node) => ['KNOWS', 'FOLLOWS']
-func RelationshipTypesIn(node *Node) []string {
-	rels, err := Storage.GetNodeRelationships(node.ID, "", storage.DirectionIncoming)
+func (f *Functions) RelationshipTypesIn(ctx context.Context, node *Node) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	rels, err := f.backend.GetNodeRelationships(ctx, node.ID, "", storage.DirectionIncoming)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err != nil {
-		return []string{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	types := make(map[string]bool)
 	for _, rel := range rels {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		types[rel.Type] = true
 	}
 
 	result := make([]string, 0, len(types))
 	for t := range types {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		result = append(result, t)
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // RelationshipTypesOut returns outgoing relationship types.
@@ -173,22 +288,47 @@ func RelationshipTypesIn(node *Node) []string {
 // Example:
 //
 //	apoc.node.relationshipTypes.out(node) => ['KNOWS', 'WORKS_AT']
-func RelationshipTypesOut(node *Node) []string {
-	rels, err := Storage.GetNodeRelationships(node.ID, "", storage.DirectionOutgoing)
+func (f *Functions) RelationshipTypesOut(ctx context.Context, node *Node) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	rels, err := f.backend.GetNodeRelationships(ctx, node.ID, "", storage.DirectionOutgoing)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err != nil {
-		return []string{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	types := make(map[string]bool)
 	for _, rel := range rels {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		types[rel.Type] = true
 	}
 
 	result := make([]string, 0, len(types))
 	for t := range types {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		result = append(result, t)
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // Relationships returns all relationships of a node.
@@ -196,12 +336,29 @@ func RelationshipTypesOut(node *Node) []string {
 // Example:
 //
 //	apoc.node.relationships(node) => [rel1, rel2, ...]
-func Relationships(node *Node, relType string) []*Relationship {
-	rels, err := Storage.GetNodeRelationships(node.ID, relType, storage.DirectionBoth)
-	if err != nil {
-		return []*Relationship{}
+func (f *Functions) Relationships(ctx context.Context, node *Node, relType string) ([]*Relationship, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
-	return rels
+
+	rels, err := f.backend.GetNodeRelationships(ctx, node.ID, relType, storage.DirectionBoth)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Relationship{}, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return rels, nil
 }
 
 // RelationshipsIn returns incoming relationships.
@@ -209,12 +366,29 @@ func Relationships(node *Node, relType string) []*Relationship {
 // Example:
 //
 //	apoc.node.relationships.in(node, 'KNOWS') => [rel1, rel2]
-func RelationshipsIn(node *Node, relType string) []*Relationship {
-	rels, err := Storage.GetNodeRelationships(node.ID, relType, storage.DirectionIncoming)
-	if err != nil {
-		return []*Relationship{}
+func (f *Functions) RelationshipsIn(ctx context.Context, node *Node, relType string) ([]*Relationship, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
-	return rels
+
+	rels, err := f.backend.GetNodeRelationships(ctx, node.ID, relType, storage.DirectionIncoming)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Relationship{}, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return rels, nil
 }
 
 // RelationshipsOut returns outgoing relationships.
@@ -222,12 +396,29 @@ func RelationshipsIn(node *Node, relType string) []*Relationship {
 // Example:
 //
 //	apoc.node.relationships.out(node, 'KNOWS') => [rel1, rel2]
-func RelationshipsOut(node *Node, relType string) []*Relationship {
-	rels, err := Storage.GetNodeRelationships(node.ID, relType, storage.DirectionOutgoing)
-	if err != nil {
-		return []*Relationship{}
+func (f *Functions) RelationshipsOut(ctx context.Context, node *Node, relType string) ([]*Relationship, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
-	return rels
+
+	rels, err := f.backend.GetNodeRelationships(ctx, node.ID, relType, storage.DirectionOutgoing)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Relationship{}, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return rels, nil
 }
 
 // RelationshipExists checks if a relationship exists.
@@ -235,7 +426,11 @@ func RelationshipsOut(node *Node, relType string) []*Relationship {
 // Example:
 //
 //	apoc.node.relationshipExists(node, 'KNOWS>') => true
-func RelationshipExists(node *Node, relPattern string) bool {
+func (f *Functions) RelationshipExists(ctx context.Context, node *Node, relPattern string) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+
 	// Parse pattern to extract type and direction
 	relType := relPattern
 	direction := storage.DirectionBoth
@@ -250,8 +445,15 @@ func RelationshipExists(node *Node, relPattern string) bool {
 		}
 	}
 
-	rels, err := Storage.GetNodeRelationships(node.ID, relType, direction)
-	return err == nil && len(rels) > 0
+	rels, err := f.backend.GetNodeRelationships(ctx, node.ID, relType, direction)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return false, err
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+	return err == nil && len(rels) > 0, nil
 }
 
 // Connected checks if two nodes are connected.
@@ -259,9 +461,20 @@ func RelationshipExists(node *Node, relPattern string) bool {
 // Example:
 //
 //	apoc.node.connected(node1, node2, 'KNOWS') => true
-func Connected(node1, node2 *Node, relType string) bool {
-	path, err := Storage.FindShortestPath(node1.ID, node2.ID, relType, 1)
-	return err == nil && path != nil
+func (f *Functions) Connected(ctx context.Context, node1, node2 *Node, relType string) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+
+	path, err := f.backend.FindShortestPath(ctx, node1.ID, node2.ID, relType, 1)
+	if err != nil && !errors.Is(err, storage.ErrPathNotFound) {
+		return false, err
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+	return err == nil && path != nil, nil
 }
 
 // Neighbors returns neighboring nodes.
@@ -269,12 +482,29 @@ func Connected(node1, node2 *Node, relType string) bool {
 // Example:
 //
 //	apoc.node.neighbors(node, 'KNOWS') => [node1, node2, ...]
-func Neighbors(node *Node, relType string) []*Node {
-	neighbors, err := Storage.GetNodeNeighbors(node.ID, relType, storage.DirectionBoth)
-	if err != nil {
-		return []*Node{}
+func (f *Functions) Neighbors(ctx context.Context, node *Node, relType string) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
-	return neighbors
+
+	neighbors, err := f.backend.GetNodeNeighbors(ctx, node.ID, relType, storage.DirectionBoth)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Node{}, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return neighbors, nil
 }
 
 // NeighborsIn returns incoming neighbors.
@@ -282,12 +512,29 @@ func Neighbors(node *Node, relType string) []*Node {
 // Example:
 //
 //	apoc.node.neighbors.in(node, 'KNOWS') => [node1, node2]
-func NeighborsIn(node *Node, relType string) []*Node {
-	neighbors, err := Storage.GetNodeNeighbors(node.ID, relType, storage.DirectionIncoming)
-	if err != nil {
-		return []*Node{}
+func (f *Functions) NeighborsIn(ctx context.Context, node *Node, relType string) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
-	return neighbors
+
+	neighbors, err := f.backend.GetNodeNeighbors(ctx, node.ID, relType, storage.DirectionIncoming)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Node{}, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return neighbors, nil
 }
 
 // NeighborsOut returns outgoing neighbors.
@@ -295,12 +542,29 @@ func NeighborsIn(node *Node, relType string) []*Node {
 // Example:
 //
 //	apoc.node.neighbors.out(node, 'KNOWS') => [node1, node2]
-func NeighborsOut(node *Node, relType string) []*Node {
-	neighbors, err := Storage.GetNodeNeighbors(node.ID, relType, storage.DirectionOutgoing)
-	if err != nil {
-		return []*Node{}
+func (f *Functions) NeighborsOut(ctx context.Context, node *Node, relType string) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
-	return neighbors
+
+	neighbors, err := f.backend.GetNodeNeighbors(ctx, node.ID, relType, storage.DirectionOutgoing)
+	if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Node{}, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return neighbors, nil
 }
 
 // IsDense checks if a node is dense (many relationships).
@@ -308,8 +572,16 @@ func NeighborsOut(node *Node, relType string) []*Node {
 // Example:
 //
 //	apoc.node.isDense(node) => true
-func IsDense(node *Node, threshold int) bool {
-	return Degree(node, "") > threshold
+func (f *Functions) IsDense(ctx context.Context, node *Node, threshold int) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+
+	helperValue1, helperError1 := f.Degree(ctx, node, "")
+	if helperError1 != nil {
+		return false, helperError1
+	}
+	return helperValue1 > threshold, nil
 }
 
 // ToMap converts a node to a map.

@@ -60,12 +60,13 @@ func TestBug_BulkImportCount(t *testing.T) {
 	// Step 4: Check counts via different methods
 
 	// Method 1: storage.NodeCount()
-	storageCount, err := db.storage.NodeCount()
+	storageCount, err := db.storage.NodeCount(t.Context())
 	require.NoError(t, err)
 	t.Logf("storage.NodeCount(): %d", storageCount)
 
 	// Method 2: db.Stats().NodeCount
-	stats := db.Stats()
+	stats, err := db.Stats(t.Context())
+	require.NoError(t, err)
 	t.Logf("db.Stats().NodeCount: %d", stats.NodeCount)
 
 	// Method 3: MATCH (n:POC) RETURN count(n) - uses GetNodesByLabel
@@ -144,7 +145,7 @@ func TestBug_ClearAndImport(t *testing.T) {
 	assert.Equal(t, int64(75), result.Rows[0][0])
 
 	// Verify storage count matches
-	storageCount, _ := db.storage.NodeCount()
+	storageCount, _ := db.storage.NodeCount(t.Context())
 	t.Logf("storage.NodeCount(): %d", storageCount)
 	assert.Equal(t, int64(75), storageCount)
 }

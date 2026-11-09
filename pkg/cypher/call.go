@@ -18,9 +18,14 @@
 
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/collection"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"runtime"
 	"sort"
 	"strconv"
@@ -29,6 +34,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -63,8 +69,9 @@ func (y *yieldClause) hasModifiers() bool {
 
 // yieldItem represents a single item in a YIELD clause
 type yieldItem struct {
-	name  string // Original column name from procedure
-	alias string // Alias (empty if no AS clause)
+	name    string // Original column name from procedure
+	alias   string // Decoded alias, which may be empty
+	aliased bool   // An AS clause is present, independently of its value
 }
 
 type callSplit struct {
@@ -72,188 +79,29 @@ type callSplit struct {
 	tail     string
 }
 
-// parseYieldClause extracts YIELD information from a CALL statement.
-// Handles: YIELD *, YIELD a, b, YIELD a AS x, b AS y, YIELD a WHERE a.score > 0.5,
-// YIELD a ORDER BY a SKIP 1 LIMIT 2. Keywords are found at the top level, so
-// a WHERE / ORDER inside a subquery, a list or a string, and the WITH of
-// STARTS WITH, belong to the expression they are in.
-func parseYieldClause(cypher string) *yieldClause {
-	// Normalize whitespace: replace newlines/tabs with spaces for keyword detection
-	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
-	yieldIdx := findKeywordIndexInContext(normalized, "YIELD")
-	if yieldIdx == -1 {
-		return nil
+func splitCallAndTail(ctx context.Context, source string) callSplit {
+	clause, ok := canonicalQueryClause(ctx, source)
+	if !ok {
+		return callSplit{callOnly: source}
 	}
-	result := &yieldClause{items: []yieldItem{}}
-
-	afterYield := strings.TrimSpace(normalized[yieldIdx+len("YIELD"):])
-	if len(afterYield) > 0 && afterYield[0] == '*' {
-		result.yieldAll = true
-		afterYield = strings.TrimSpace(afterYield[1:])
+	if clause.Rule() != cypherantlr.CypherParserRULE_queryCallSt && clause.Rule() != cypherantlr.CypherParserRULE_standaloneCall && clause.Rule() != cypherantlr.CypherParserRULE_callSubquery {
+		return callSplit{callOnly: source}
 	}
-
-	// Limit YIELD parsing to the CALL-clause scope only. Anything after the first
-	// outer clause boundary (and a RETURN) belongs to the subsequent query.
-	yieldScope := scopeYieldToCallClause(afterYield)
-	if returnIdx := topLevelKeywordIndex(yieldScope, "RETURN"); returnIdx >= 0 {
-		yieldScope = strings.TrimSpace(yieldScope[:returnIdx])
-	}
-	whereIdx := topLevelKeywordIndex(yieldScope, "WHERE")
-	orderIdx := topLevelKeywordIndex(yieldScope, "ORDER")
-	skipIdx := topLevelKeywordIndex(yieldScope, "SKIP")
-	limitIdx := topLevelKeywordIndex(yieldScope, "LIMIT")
-	positions := []int{whereIdx, orderIdx, skipIdx, limitIdx}
-
-	// part returns the text of the keyword at start, up to the next keyword.
-	part := func(start, keywordLen int) string {
-		end := len(yieldScope)
-		for _, idx := range positions {
-			if idx > start && idx < end {
-				end = idx
-			}
-		}
-		return strings.TrimSpace(yieldScope[start+keywordLen : end])
-	}
-	if whereIdx >= 0 {
-		result.where = part(whereIdx, len("WHERE"))
-		for _, idx := range []int{orderIdx, skipIdx, limitIdx} {
-			if idx >= 0 && idx < whereIdx {
-				result.misplacedWhere = true
-			}
-		}
-	}
-	if orderIdx >= 0 {
-		orderBy := part(orderIdx, len("ORDER"))
-		if len(orderBy) >= len("BY") && strings.EqualFold(orderBy[:len("BY")], "BY") {
-			orderBy = strings.TrimSpace(orderBy[len("BY"):])
-		}
-		result.orderBy = orderBy
-	}
-	if skipIdx >= 0 {
-		result.skip = part(skipIdx, len("SKIP"))
-	}
-	if limitIdx >= 0 {
-		result.limit = part(limitIdx, len("LIMIT"))
-	}
-
-	// Parse yield items (if not YIELD *)
-	if !result.yieldAll {
-		itemsEnd := len(yieldScope)
-		for _, idx := range positions {
-			if idx != -1 && idx < itemsEnd {
-				itemsEnd = idx
-			}
-		}
-		itemsStr := strings.TrimSpace(yieldScope[:itemsEnd])
-		if itemsStr != "" {
-			// Split by comma, respecting AS keyword
-			for _, item := range strings.Split(itemsStr, ",") {
-				item = strings.TrimSpace(item)
-				if item == "" {
-					continue
-				}
-				yi := yieldItem{}
-				upperItem := upperASCII(item)
-				if asIdx := strings.Index(upperItem, " AS "); asIdx != -1 {
-					yi.name = strings.TrimSpace(item[:asIdx])
-					yi.alias = strings.TrimSpace(item[asIdx+4:])
-				} else {
-					yi.name = item
-				}
-				result.items = append(result.items, yi)
-			}
-		}
-	}
-
-	return result
+	start, end := clause.Span()
+	return callSplit{callOnly: source[start:end], tail: strings.TrimSpace(source[end:])}
 }
-
-// scopeYieldToCallClause trims text after YIELD to the first outer query-clause
-// boundary so YIELD item parsing does not accidentally consume later clauses.
-func scopeYieldToCallClause(afterYield string) string {
-	scopeEnd := findYieldOuterBoundary(afterYield)
-	if scopeEnd == -1 {
-		scopeEnd = len(afterYield)
-	}
-	return strings.TrimSpace(afterYield[:scopeEnd])
-}
-
-func findYieldOuterBoundary(afterYield string) int {
-	scopeEnd := len(afterYield)
-	// The clause keywords; ORDER/RETURN/WHERE/LIMIT/SKIP are excluded because
-	// they are valid within the YIELD scope.
-	for _, kw := range callTailPlanClauseKeywords {
-		if idx := topLevelKeywordIndex(afterYield, kw); idx != -1 && idx < scopeEnd {
-			scopeEnd = idx
-		}
-	}
-	if scopeEnd >= len(afterYield) {
-		return -1
-	}
-	return scopeEnd
-}
-
-func splitCallAndTail(cypher string) callSplit {
-	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
-	yieldIdx := findKeywordIndexInContext(normalized, "YIELD")
-	if yieldIdx == -1 {
-		if !strings.HasPrefix(upperASCII(strings.TrimSpace(normalized)), "CALL ") {
-			return callSplit{callOnly: strings.TrimSpace(cypher)}
-		}
-		open := strings.Index(normalized, "(")
-		if open < 0 {
-			return callSplit{callOnly: strings.TrimSpace(cypher)}
-		}
-		close := findMatchingCallParen(normalized, open)
-		if close < 0 {
-			return callSplit{callOnly: strings.TrimSpace(cypher)}
-		}
-		searchStart := close + 1
-		boundary := len(normalized)
-		for _, keyword := range []string{"WITH", "MATCH", "OPTIONAL MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "DETACH DELETE", "REMOVE", "FOREACH", "LOAD CSV", "RETURN"} {
-			if index := findKeywordIndexInContext(normalized[searchStart:], keyword); index >= 0 {
-				index += searchStart
-				if index < boundary {
-					boundary = index
-				}
-			}
-		}
-		if boundary < len(normalized) {
-			return callSplit{
-				callOnly: strings.TrimSpace(normalized[:boundary]),
-				tail:     strings.TrimSpace(normalized[boundary:]),
-			}
-		}
-		return callSplit{callOnly: strings.TrimSpace(cypher)}
-	}
-
-	afterYieldStart := yieldIdx + len("YIELD")
-	if afterYieldStart >= len(normalized) {
-		return callSplit{callOnly: strings.TrimSpace(cypher)}
-	}
-	afterYield := normalized[afterYieldStart:]
-	boundary := findYieldOuterBoundary(afterYield)
-	if boundary == -1 {
-		return callSplit{callOnly: strings.TrimSpace(normalized)}
-	}
-
-	callOnly := strings.TrimSpace(normalized[:afterYieldStart+boundary])
-	tail := strings.TrimSpace(afterYield[boundary:])
-	return callSplit{callOnly: callOnly, tail: tail}
-}
-
-func buildCallTailPredicateInjection(tail string, predicates []string) string {
+func buildCallTailPredicateInjection(ctx context.Context, tail string, predicates []string) string {
 	if len(predicates) == 0 {
 		return strings.TrimSpace(tail)
 	}
 	injected := strings.Join(predicates, " AND ")
 	trimmed := strings.TrimSpace(tail)
 
-	whereIdx := findKeywordIndexInContext(trimmed, "WHERE")
+	whereIdx := findKeywordIndexInContext(ctx, trimmed, "WHERE")
 	if whereIdx != -1 {
 		endIdx := len(trimmed)
 		for _, kw := range []string{"WITH", "RETURN", "ORDER", "SKIP", "LIMIT", "UNWIND", "SET", "REMOVE", "DELETE", "DETACH", "MERGE", "CREATE"} {
-			if idx := findKeywordIndexInContext(trimmed, kw); idx != -1 && idx > whereIdx && idx < endIdx {
+			if idx := findKeywordIndexInContext(ctx, trimmed, kw); idx != -1 && idx > whereIdx && idx < endIdx {
 				endIdx = idx
 			}
 		}
@@ -267,7 +115,7 @@ func buildCallTailPredicateInjection(tail string, predicates []string) string {
 
 	insertIdx := len(trimmed)
 	for _, kw := range []string{"WITH", "RETURN", "ORDER", "SKIP", "LIMIT", "UNWIND", "SET", "REMOVE", "DELETE", "DETACH", "MERGE", "CREATE"} {
-		if idx := findKeywordIndexInContext(trimmed, kw); idx != -1 && idx < insertIdx {
+		if idx := findKeywordIndexInContext(ctx, trimmed, kw); idx != -1 && idx < insertIdx {
 			insertIdx = idx
 		}
 	}
@@ -284,43 +132,54 @@ func tailStartsWithMatchClause(tail string) bool {
 	return strings.HasPrefix(trimmed, "MATCH ") || strings.HasPrefix(trimmed, "OPTIONAL MATCH ")
 }
 
-// expectedReturnColumnsFromTail is the column names of the tail's RETURN:
-// the one outside any CALL { } subquery, whose own RETURN is inside braces.
-func expectedReturnColumnsFromTail(tail string) []string {
-	trimmed := strings.TrimSpace(tail)
-	retIdx := topLevelKeywordIndex(trimmed, "RETURN")
-	if retIdx == -1 {
-		return nil
-	}
-	plan := returnProjectionPlanFor(trimmed[retIdx:])
-	if !plan.valid {
-		return nil
-	}
-	if plan.star {
-		return []string{"*"}
-	}
-	return append([]string(nil), plan.columns...)
-}
-
-func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tail string) (result *ExecuteResult, err error) {
+	// Every tail route consumes the same seed once, including projections,
+	// empty row sets and write tails. Pass-through results already own its stats.
+	defer func() {
+		if err == nil && result != nil && seed != nil && result != seed {
+			mergeOptimisticMetadata(result, seed)
+			if result.Stats != seed.Stats {
+				if result.Stats == nil || *result.Stats == (QueryStats{}) {
+					result.Stats = seed.Stats
+				} else {
+					result.Stats = mergeQueryStats(result.Stats, seed.Stats)
+				}
+			}
+		}
+	}()
 	if seed == nil {
 		return nil, localizedError(localization.CypherCommandRoutingCallTailSeedRequired(), nil)
 	}
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
 	}
-	if projected, ok, err := e.projectCallTailReturnAll(seed, tail); ok || err != nil {
+	if _, all, _, union := parseTopLevelUnionBranches(ctx, tail); union {
+		first := true
+		return e.executeUnion(ctx, tail, all, func(branch string) (*ExecuteResult, error) {
+			if first {
+				first = false
+				return e.executeCallTail(ctx, seed, branch)
+			}
+			return e.executeInternal(ctx, branch, nil)
+		})
+	}
+	if projected, ok, err := e.projectCallTailReturnAll(ctx, seed, tail); ok || err != nil {
 		return projected, err
 	}
+	info, err := e.analyzer.Analyze(ctx, tail)
+	if err != nil {
+		return nil, err
+	}
+	writeTail := info.Writes()
 	// A tail that doesn't start with MATCH (WITH, UNWIND, RETURN, a chained
 	// CALL, …) runs as one pipeline over every yielded row, so aggregation,
 	// ORDER BY and SKIP / LIMIT see all of them. MATCH tails keep their fused
 	// operators below and reach the pipeline before the per-row fallback.
-	if !tailStartsWithMatchClause(tail) && !isPotentialWriteTail(tail) {
+	if !tailStartsWithMatchClause(tail) && !writeTail {
 		// WITH … [WHERE] RETURN … projections keep their compiled row
 		// projection, which declines aggregation, DISTINCT and SKIP / LIMIT
 		// expressions.
-		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(ctx, seed, tail, expectedReturnColumnsFromTail(tail)); ok || err != nil {
+		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(ctx, seed, tail, nil); ok || err != nil {
 			return projected, err
 		}
 		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
@@ -331,14 +190,19 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 		return pipelined, err
 	}
 	if len(seed.Rows) == 0 {
-		cols := expectedReturnColumnsFromTail(tail)
-		if len(cols) == 0 {
-			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+		// Empty input still runs projection operators: their declared fields
+		// and aggregate rows are available without a metadata analysis pass.
+		if projected, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
+			return projected, err
 		}
-		return &ExecuteResult{Columns: cols, Rows: [][]interface{}{}}, nil
+		columns, err := e.ResultColumns(ctx, tail, resultmetadata.KnownScope(seed.Columns), cypherVersionFromContext(ctx) == "25", AcceptedSource)
+		if err != nil {
+			return nil, err
+		}
+		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}}, nil
 	}
 
-	expectedCols := expectedReturnColumnsFromTail(tail)
+	expectedCols := knownResultColumns(e.CachedResultColumns(ctx, tail, seed.Columns))
 	usedCols := make([]int, 0, len(seed.Columns))
 	for i, col := range seed.Columns {
 		if isIdentifierReferenced(tail, col) {
@@ -350,7 +214,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	// or batched IN. This avoids per-row tail re-execution and preserves global
 	// ORDER/LIMIT scope. Write tails (SET/CREATE/DELETE/MERGE/REMOVE) must use
 	// the per-row path to preserve transactional write-per-row semantics.
-	if !isPotentialWriteTail(tail) {
+	if !writeTail {
 		if projected, ok, err := e.tryExecuteCallTailRelationshipMatchProjection(ctx, seed, tail, expectedCols); ok || err != nil {
 			return projected, err
 		}
@@ -358,7 +222,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 			return projected, err
 		}
 	}
-	if !isPotentialWriteTail(tail) {
+	if !writeTail {
 		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
 			return pipelined, err
 		}
@@ -366,7 +230,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	// Fallback fast path for read-only tails the pipeline declines: execute
 	// per-row tails concurrently. It runs the tail once per yielded row, so it
 	// can't aggregate across rows.
-	if len(seed.Rows) > 1 && !isPotentialWriteTail(tail) {
+	if len(seed.Rows) > 1 && !writeTail {
 		if parallel, ok, err := e.executeCallTailParallel(ctx, seed, tail, usedCols, expectedCols); ok || err != nil {
 			return parallel, err
 		}
@@ -387,7 +251,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 // (runPipelineClauses) whose input rows are the procedure's yielded rows. It
 // declines (ok false) when a tail clause isn't a pipeline clause.
 func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
-	clauses, ok := pipelineClausesFor(tail)
+	clauses, ok := pipelineClausesFor(ctx, tail)
 	if !ok || len(clauses) == 0 {
 		return nil, false, nil
 	}
@@ -399,7 +263,7 @@ func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *Exe
 	for _, column := range seed.Columns {
 		scope[column] = struct{}{}
 	}
-	result, ok, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	result, ok, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, clauses, nil)
 	if ok {
 		e.markCallTailPipelineUsed()
 	}
@@ -411,7 +275,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	seed *ExecuteResult,
 	tail string,
 ) (*ExecuteResult, bool, error) {
-	callIndex := findKeywordIndexInContext(tail, "CALL")
+	callIndex := findKeywordIndexInContext(ctx, tail, "CALL")
 	if callIndex <= 0 {
 		return nil, false, nil
 	}
@@ -424,16 +288,16 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	for _, row := range seed.Rows {
 		rows = append(rows, callTailRow(ctx, seed, row))
 	}
-	projected, ok := e.pipelineApplyWith(ctx, rows, prefix)
+	projected, ok := e.pipelineApplyWith(ctx, rows, composedPipelineClause(ctx, pipelineClauseWith, prefix), nil, false)
 	if !ok {
 		return nil, false, nil
 	}
-	prefixColumns, ok := callTailWithProjectionColumns(prefix)
+	prefixColumns, ok := callTailWithProjectionColumns(ctx, prefix)
 	if !ok {
 		return nil, false, nil
 	}
 
-	callParts := splitChainedProcedureCall(strings.TrimSpace(tail[callIndex:]))
+	callParts := splitChainedProcedureCall(ctx, strings.TrimSpace(tail[callIndex:]))
 	if strings.TrimSpace(callParts.tail) == "" {
 		return nil, false, nil
 	}
@@ -443,6 +307,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 		if err != nil {
 			return nil, true, err
 		}
+		combined.Stats = mergeQueryStats(combined.Stats, procedureResult.Stats)
 		if len(combined.Columns) == len(prefixColumns) {
 			combined.Columns = append(combined.Columns, procedureResult.Columns...)
 		}
@@ -460,73 +325,44 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	return result, true, err
 }
 
-func splitChainedProcedureCall(cypher string) callSplit {
-	parts := splitCallAndTail(cypher)
-	if strings.TrimSpace(parts.tail) != "" {
-		return parts
-	}
-	yieldIndex := findKeywordIndexInContext(cypher, "YIELD")
-	if yieldIndex < 0 {
-		return parts
-	}
-	searchStart := yieldIndex + len("YIELD")
-	returnIndex := findKeywordIndexInContext(cypher[searchStart:], "RETURN")
-	if returnIndex < 0 {
-		return parts
-	}
-	returnIndex += searchStart
-	return callSplit{
-		callOnly: strings.TrimSpace(cypher[:returnIndex]),
-		tail:     strings.TrimSpace(cypher[returnIndex:]),
-	}
+func splitChainedProcedureCall(ctx context.Context, source string) callSplit {
+	return splitCallAndTail(ctx, source)
 }
+func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
 
-func callTailWithProjectionColumns(withClause string) ([]string, bool) {
-	body := strings.TrimSpace(withClause[len("WITH "):])
-	if whereIndex := findKeywordIndexInContext(body, "WHERE"); whereIndex >= 0 {
-		body = strings.TrimSpace(body[:whereIndex])
-	}
-	items := splitTopLevelComma(body)
-	columns := make([]string, 0, len(items))
-	for _, item := range items {
-		expr, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		if expr == "" {
-			return nil, false
-		}
-		columns = append(columns, normalizeProjectionColumnName(alias))
-	}
-	return columns, len(columns) > 0
-}
-
-func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
-	trimmed := strings.TrimSpace(tail)
-	if !hasPrefixFoldASCII(trimmed, "RETURN ") {
+	node, valid := canonicalQueryClause(ctx, tail)
+	if !valid || node.Rule() != cypherantlr.CypherParserRULE_returnSt {
 		return nil, false, nil
 	}
-	body := strings.TrimSpace(trimmed[len("RETURN "):])
-	modifierStart := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := findKeywordIndexInContext(body, keyword); index >= 0 && index < modifierStart {
-			modifierStart = index
-		}
-	}
-	if strings.TrimSpace(body[:modifierStart]) != "*" {
+	_, end := node.Span()
+	if strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(tail[end:]), ";")) != "" {
 		return nil, false, nil
 	}
-
-	result := &ExecuteResult{
-		Columns: append([]string(nil), seed.Columns...),
-		Rows:    make([][]interface{}, len(seed.Rows)),
-		Stats:   seed.Stats,
+	plan := projectionPlanFromSyntax(node)
+	if !plan.valid || !plan.star || plan.distinct || len(plan.starProjections) != 0 {
+		return nil, false, nil
 	}
+	columns := append([]string{}, seed.Columns...)
+	sort.Strings(columns)
+	expanded := plan.withStarExpanded(columns)
+	positions := make(map[string]int, len(seed.Columns))
+	for index, name := range seed.Columns {
+		positions[name] = index
+	}
+	result := &ExecuteResult{Columns: expanded.columns, Rows: make([][]interface{}, len(seed.Rows)), Stats: seed.Stats}
 	for index, row := range seed.Rows {
-		result.Rows[index] = append([]interface{}(nil), row...)
+		projected := make([]interface{}, len(columns))
+		for target, name := range columns {
+			if position := positions[name]; position < len(row) {
+				projected[target] = row[position]
+			}
+		}
+		result.Rows[index] = projected
 	}
-	modifiers := strings.TrimSpace(body[modifierStart:])
-	if modifiers == "" {
+	if plan.modifiers == "" {
 		return result, true, nil
 	}
-	result, err := e.applyResultModifiers(context.Background(), result, modifiers)
+	result, err := e.applyResultModifiers(ctx, result, plan.modifiers)
 	return result, true, err
 }
 
@@ -607,6 +443,7 @@ func combineCallTailRowResults(results []callTailRowResult, expectedCols []strin
 				Rows:    make([][]interface{}, 0, len(result.res.Rows)),
 			}
 		}
+		combined.Stats = mergeQueryStats(combined.Stats, result.res.Stats)
 		combined.Rows = append(combined.Rows, result.res.Rows...)
 	}
 	if combined == nil {
@@ -655,7 +492,7 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 		withBindings = append(withBindings, fmt.Sprintf("$%s AS %s", pname, col))
 	}
 
-	query := buildCallTailPredicateInjection(tail, predicates)
+	query := buildCallTailPredicateInjection(ctx, tail, predicates)
 	if len(withBindings) > 0 {
 		prefix = append(prefix, "WITH "+strings.Join(withBindings, ", "))
 	}
@@ -673,19 +510,12 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 	return inner, nil
 }
 
-func isPotentialWriteTail(tail string) bool {
-	t := upperASCII(strings.TrimSpace(tail))
-	return findKeywordIndexInContext(t, "CREATE") >= 0 ||
-		findKeywordIndexInContext(t, "MERGE") >= 0 ||
-		findKeywordIndexInContext(t, "DELETE") >= 0 ||
-		findKeywordIndexInContext(t, "SET") >= 0 ||
-		findKeywordIndexInContext(t, "REMOVE") >= 0
-}
-
 // callTailProjectionPlan is a CALL tail that is exactly WITH … [WHERE …]
 // RETURN …, run over the yielded rows by the pipeline's WITH and RETURN
 // appliers without the general pipeline's routing.
 type callTailProjectionPlan struct {
+	// relationship is the optional MATCH admission that precedes WITH.
+	relationship *callTailRelationshipMatchPlan
 	withClause   string
 	returnClause string
 	// limitToken / skipToken are the RETURN's LIMIT / SKIP, a literal or a
@@ -705,7 +535,7 @@ type callTailProjectionPlan struct {
 // doesn't cover) is cached too.
 var (
 	callTailProjectionPlans        = newBoundedCache[string, *callTailProjectionPlan](1024, boundedCacheStringShardIndex)
-	callTailRelationshipMatchPlans = newBoundedCache[string, *callTailRelationshipMatchPlan](1024, boundedCacheStringShardIndex)
+	callTailRelationshipMatchPlans = newBoundedCache[string, *callTailProjectionPlan](1024, boundedCacheStringShardIndex)
 )
 
 // callTailRelationshipMatchPlan is a CALL tail MATCH (a)-[r:T {key: y.p}]->(b)
@@ -722,7 +552,6 @@ type callTailRelationshipMatchPlan struct {
 	endVar         string
 	endLabel       string
 	whereClause    string
-	projection     *callTailProjectionPlan
 }
 
 type callTailRelationshipPatternParts struct {
@@ -743,8 +572,11 @@ func (e *StorageExecutor) tryExecuteCallTailProjectionFilter(
 	tail string,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
-	plan, ok := e.parseCallTailProjectionPlan(ctx, tail)
-	if !ok {
+	plan, ok, err := e.parseCallTailProjectionPlan(ctx, tail)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok || plan.relationship != nil {
 		return nil, false, nil
 	}
 	rows := make([]pipelineRow, 0, len(seed.Rows))
@@ -773,7 +605,7 @@ func (e *StorageExecutor) executeCallTailProjectionPlan(
 		projected = e.filterPipelineRows(ctx, rows, plan.withWhere)
 	} else {
 		var ok bool
-		projected, ok = e.pipelineApplyWith(ctx, rows, plan.withClause)
+		projected, ok = e.pipelineApplyWith(ctx, rows, composedPipelineClause(ctx, pipelineClauseWith, plan.withClause), nil, false)
 		if !ok {
 			return nil, false
 		}
@@ -794,17 +626,21 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 	tail string,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
-	plan, ok := e.parseCallTailRelationshipMatchPlan(ctx, tail)
-	if !ok {
+	projection, ok, err := e.parseCallTailProjectionPlan(ctx, tail)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok || projection.relationship == nil {
 		return nil, false, nil
 	}
+	plan := projection.relationship
 	rows := make([]pipelineRow, 0, len(seed.Rows))
 	nodes := make(map[storage.NodeID]*storage.Node)
 	getNode := func(id storage.NodeID) (*storage.Node, error) {
 		if node := nodes[id]; node != nil {
 			return node, nil
 		}
-		node, err := e.storage.GetNode(id)
+		node, err := e.getQueryNode(ctx, e.storage, id)
 		if err == nil && node != nil {
 			nodes[id] = node
 		}
@@ -849,76 +685,12 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		}
 		rows = append(rows, matched)
 	}
-	result, ok := e.executeCallTailProjectionPlan(ctx, plan.projection, rows, expectedCols)
+	result, ok := e.executeCallTailProjectionPlan(ctx, projection, rows, expectedCols)
 	if !ok {
 		return nil, false, nil
 	}
 	e.markCallTailProjectionFastPathUsed()
 	return result, true, nil
-}
-
-// parseCallTailRelationshipMatchPlan returns the tail's relationship MATCH
-// plan, parsed once per tail text, when its projection's LIMIT / SKIP resolve
-// for this execution.
-func (e *StorageExecutor) parseCallTailRelationshipMatchPlan(ctx context.Context, tail string) (*callTailRelationshipMatchPlan, bool) {
-	plan, cached := callTailRelationshipMatchPlans.get(tail)
-	if !cached {
-		plan = e.planCallTailRelationshipMatch(tail)
-		callTailRelationshipMatchPlans.put(tail, plan)
-	}
-	if plan == nil || !callTailPlanTokensResolve(ctx, plan.projection) {
-		return nil, false
-	}
-	return plan, true
-}
-
-// planCallTailRelationshipMatch parses a relationship MATCH tail, or returns nil.
-func (e *StorageExecutor) planCallTailRelationshipMatch(tail string) *callTailRelationshipMatchPlan {
-	trimmed := strings.TrimSpace(tail)
-	if !hasPrefixFoldASCII(trimmed, "MATCH ") || isPotentialWriteTail(trimmed) {
-		return nil
-	}
-	parts, ok := parseCallTailRelationshipPattern(trimmed)
-	if !ok {
-		return nil
-	}
-	rest := strings.TrimSpace(parts.rest)
-	withIdx := topLevelKeywordIndex(rest, "WITH")
-	if withIdx < 0 {
-		return nil
-	}
-	whereClause := strings.TrimSpace(rest[:withIdx])
-	if whereClause != "" {
-		if !hasPrefixFoldASCII(whereClause, "WHERE ") {
-			return nil
-		}
-		whereClause = strings.TrimSpace(whereClause[len("WHERE "):])
-	}
-	projection := e.planCallTailProjection(strings.TrimSpace(rest[withIdx:]))
-	if projection == nil {
-		return nil
-	}
-	propertyExpr := strings.TrimSpace(parts.propertyExpr)
-	propertySource := ""
-	if dotIdx := strings.Index(propertyExpr, "."); dotIdx > 0 {
-		propertySource = strings.TrimSpace(propertyExpr[:dotIdx])
-	}
-	if parts.propertyKey == "" || propertySource == "" {
-		return nil
-	}
-	return &callTailRelationshipMatchPlan{
-		startVar:       parts.startVar,
-		startLabel:     parts.startLabel,
-		relVar:         parts.relVar,
-		relType:        parts.relType,
-		propertyKey:    parts.propertyKey,
-		propertyExpr:   propertyExpr,
-		propertySource: propertySource,
-		endVar:         parts.endVar,
-		endLabel:       parts.endLabel,
-		whereClause:    whereClause,
-		projection:     projection,
-	}
 }
 
 func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternParts, bool) {
@@ -932,7 +704,7 @@ func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternP
 	if !ok {
 		return parts, false
 	}
-	rest = strings.TrimLeftFunc(rest, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' })
+	rest = strings.TrimLeftFunc(rest, cyphertext.IsWhitespace)
 	if !strings.HasPrefix(rest, "-") {
 		return parts, false
 	}
@@ -1040,60 +812,21 @@ func parseCallTailSinglePropertyMap(input string) (key, expr, rest string, ok bo
 	if !ok {
 		return "", "", "", false
 	}
-	commaIdx := findTopLevelByte(inside, ',')
-	if commaIdx >= 0 {
+	parts := splitTopLevelComma(inside)
+	if len(parts) != 1 {
 		return "", "", "", false
 	}
-	colonIdx := findTopLevelByte(inside, ':')
+	inside = parts[0]
+	colonIdx := findTopLevelMapKeyValueSeparator(inside)
 	if colonIdx <= 0 {
 		return "", "", "", false
 	}
 	key = strings.TrimSpace(inside[:colonIdx])
 	expr = strings.TrimSpace(inside[colonIdx+1:])
-	if !isValidIdentifier(key) || expr == "" {
+	if !cyphertext.IsIdentifier(key) || expr == "" {
 		return "", "", "", false
 	}
 	return key, expr, rest, true
-}
-
-func findTopLevelByte(input string, target byte) int {
-	inSingle := false
-	inDouble := false
-	parenDepth := 0
-	bracketDepth := 0
-	braceDepth := 0
-	for i := 0; i < len(input); i++ {
-		ch := input[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-		case ch == '\'':
-			inSingle = true
-		case ch == '"':
-			inDouble = true
-		case ch == '(':
-			parenDepth++
-		case ch == ')':
-			parenDepth--
-		case ch == '[':
-			bracketDepth++
-		case ch == ']':
-			bracketDepth--
-		case ch == '{':
-			braceDepth++
-		case ch == '}':
-			braceDepth--
-		case ch == target && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0:
-			return i
-		}
-	}
-	return -1
 }
 
 func resolveOptionalIntLiteralOrParam(ctx context.Context, raw string) (int, bool) {
@@ -1105,33 +838,15 @@ func resolveOptionalIntLiteralOrParam(ctx context.Context, raw string) (int, boo
 
 func resolveIntLiteralOrParam(ctx context.Context, raw string) (int, bool) {
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, false
-	}
 	if strings.HasPrefix(raw, "$") {
-		params := getParamsFromContext(ctx)
-		if params == nil {
-			return 0, false
-		}
-		value, ok := params[strings.TrimPrefix(raw, "$")]
+		value, ok := getParamsFromContext(ctx)[strings.TrimPrefix(raw, "$")]
 		if !ok {
 			return 0, false
 		}
-		switch typed := value.(type) {
-		case int:
-			return typed, true
-		case int64:
-			return int(typed), true
-		case float64:
-			return int(typed), true
-		}
-		return 0, false
+		return convert.ToInt(value, convert.IntegerFloat)
 	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
+	integer, err := strconv.Atoi(raw)
+	return integer, err == nil
 }
 
 // callTailPlanClauseKeywords start the clauses that can follow a CALL's (or
@@ -1146,16 +861,30 @@ var callTailPlanClauseKeywords = []string{
 
 // parseCallTailProjectionPlan returns the tail's projection plan, parsed once
 // per tail text, when its LIMIT / SKIP resolve to integers for this execution.
-func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail string) (*callTailProjectionPlan, bool) {
-	plan, cached := callTailProjectionPlans.get(tail)
+func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail string) (*callTailProjectionPlan, bool, error) {
+	info, err := e.analyzer.Analyze(ctx, tail)
+	if err != nil {
+		return nil, false, err
+	}
+	if info.Writes() {
+		return nil, false, nil
+	}
+	cache := callTailProjectionPlans
+	if hasPrefixFoldASCII(strings.TrimSpace(tail), "MATCH ") {
+		cache = callTailRelationshipMatchPlans
+	}
+	plan, cached := cache.get(tail)
 	if !cached {
-		plan = e.planCallTailProjection(tail)
-		callTailProjectionPlans.put(tail, plan)
+		plan = e.planCallTailProjection(ctx, tail)
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		cache.put(tail, plan)
 	}
 	if plan == nil || !callTailPlanTokensResolve(ctx, plan) {
-		return nil, false
+		return nil, false, nil
 	}
-	return plan, true
+	return plan, true, nil
 }
 
 // callTailPlanTokensResolve reports whether the plan's LIMIT and SKIP are a
@@ -1168,15 +897,58 @@ func callTailPlanTokensResolve(ctx context.Context, plan *callTailProjectionPlan
 	return ok
 }
 
-// planCallTailProjection parses a tail that is exactly WITH … [WHERE …]
-// RETURN …, or returns nil.
-func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectionPlan {
+// planCallTailProjection parses WITH … [WHERE …] RETURN …, optionally
+// preceded by a relationship MATCH over a yielded relationship, or returns nil.
+func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail string) *callTailProjectionPlan {
 	trimmed := strings.TrimSpace(tail)
-	if !hasPrefixFoldASCII(trimmed, "WITH ") || isPotentialWriteTail(trimmed) {
+	if hasPrefixFoldASCII(trimmed, "MATCH ") {
+		parts, ok := parseCallTailRelationshipPattern(trimmed)
+		if !ok {
+			return nil
+		}
+		rest := strings.TrimSpace(parts.rest)
+		withIdx := topLevelKeywordIndex(ctx, rest, "WITH")
+		if withIdx < 0 {
+			return nil
+		}
+		whereClause := strings.TrimSpace(rest[:withIdx])
+		if whereClause != "" {
+			if !hasPrefixFoldASCII(whereClause, "WHERE ") {
+				return nil
+			}
+			whereClause = strings.TrimSpace(whereClause[len("WHERE "):])
+		}
+		projection := e.planCallTailProjection(ctx, strings.TrimSpace(rest[withIdx:]))
+		if projection == nil {
+			return nil
+		}
+		propertyExpr := strings.TrimSpace(parts.propertyExpr)
+		propertySource := ""
+		if dotIdx := strings.Index(propertyExpr, "."); dotIdx > 0 {
+			propertySource = strings.TrimSpace(propertyExpr[:dotIdx])
+		}
+		if parts.propertyKey == "" || propertySource == "" {
+			return nil
+		}
+		projection.relationship = &callTailRelationshipMatchPlan{
+			startVar:       parts.startVar,
+			startLabel:     parts.startLabel,
+			relVar:         parts.relVar,
+			relType:        parts.relType,
+			propertyKey:    parts.propertyKey,
+			propertyExpr:   propertyExpr,
+			propertySource: propertySource,
+			endVar:         parts.endVar,
+			endLabel:       parts.endLabel,
+			whereClause:    whereClause,
+		}
+		return projection
+	}
+	if !hasPrefixFoldASCII(trimmed, "WITH ") {
 		return nil
 	}
 	withIdx := len("WITH ")
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(ctx, trimmed, "RETURN")
 	if returnIdx < 0 {
 		return nil
 	}
@@ -1188,19 +960,19 @@ func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectio
 	// The plan covers exactly WITH … [WHERE …] RETURN …; a tail with another
 	// clause between them (WITH label MATCH (n) RETURN …) is the pipeline's.
 	for _, keyword := range callTailPlanClauseKeywords {
-		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
+		if topLevelKeywordIndex(ctx, beforeReturn, keyword) >= 0 {
 			return nil
 		}
 	}
 
 	withProjection := beforeReturn
-	if whereIdx := topLevelKeywordIndex(beforeReturn, "WHERE"); whereIdx >= 0 {
+	if whereIdx := topLevelKeywordIndex(ctx, beforeReturn, "WHERE"); whereIdx >= 0 {
 		withProjection = strings.TrimSpace(beforeReturn[:whereIdx])
 	}
 	if withProjection == "" {
 		return nil
 	}
-	returnProjection, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(returnAndModifiers)
+	returnProjection, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(ctx, returnAndModifiers)
 	if returnProjection == "" {
 		return nil
 	}
@@ -1210,8 +982,8 @@ func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectio
 		containsAggregateFunc(withProjection) || containsAggregateFunc(returnProjection) || containsAggregateFunc(orderBy) {
 		return nil
 	}
-	withItems := e.parseReturnItems(withProjection)
-	returnItems := e.parseReturnItems(returnProjection)
+	withItems := e.parseReturnItems(ctx, withProjection)
+	returnItems := e.parseReturnItems(ctx, returnProjection)
 	if len(withItems) == 0 || len(returnItems) == 0 || hasStarReturnItem(withItems) || hasStarReturnItem(returnItems) {
 		return nil
 	}
@@ -1223,16 +995,16 @@ func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectio
 	}
 	plan.passThroughWith = true
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
+		if topLevelKeywordIndex(ctx, beforeReturn, keyword) >= 0 {
 			plan.passThroughWith = false
 		}
 	}
 	for _, item := range withItems {
-		if !isValidIdentifier(item.expr) || item.alias != item.expr {
+		if !cyphertext.IsIdentifier(item.expr) || item.alias != item.expr {
 			plan.passThroughWith = false
 		}
 	}
-	if whereIdx := topLevelKeywordIndex(beforeReturn, "WHERE"); whereIdx >= 0 {
+	if whereIdx := topLevelKeywordIndex(ctx, beforeReturn, "WHERE"); whereIdx >= 0 {
 		plan.withWhere = strings.TrimSpace(beforeReturn[whereIdx+len("WHERE"):])
 	}
 	return plan
@@ -1255,11 +1027,11 @@ func hasStarReturnItem(items []returnItem) bool {
 	return false
 }
 
-func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, orderBy, limitToken, skipToken string) {
+func splitCallTailProjectionModifiers(ctx context.Context, returnAndModifiers string) (projection, orderBy, limitToken, skipToken string) {
 	projection = strings.TrimSpace(returnAndModifiers)
 	modifierStart := len(projection)
 	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := topLevelKeywordIndex(projection, kw); idx >= 0 && idx < modifierStart {
+		if idx := topLevelKeywordIndex(ctx, projection, kw); idx >= 0 && idx < modifierStart {
 			modifierStart = idx
 		}
 	}
@@ -1271,10 +1043,10 @@ func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, or
 	if modifiers == "" {
 		return projection, "", "", ""
 	}
-	if orderIdx := topLevelKeywordIndex(modifiers, "ORDER BY"); orderIdx >= 0 {
+	if orderIdx := topLevelKeywordIndex(ctx, modifiers, "ORDER BY"); orderIdx >= 0 {
 		end := len(modifiers)
 		for _, kw := range []string{"SKIP", "LIMIT"} {
-			if idx := topLevelKeywordIndex(modifiers[orderIdx:], kw); idx >= 0 {
+			if idx := topLevelKeywordIndex(ctx, modifiers[orderIdx:], kw); idx >= 0 {
 				abs := orderIdx + idx
 				if abs > orderIdx && abs < end {
 					end = abs
@@ -1283,8 +1055,8 @@ func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, or
 		}
 		orderBy = strings.TrimSpace(modifiers[orderIdx:end])
 	}
-	limitToken = extractCallTailModifierToken(modifiers, "LIMIT")
-	skipToken = extractCallTailModifierToken(modifiers, "SKIP")
+	limitToken = extractCallTailModifierToken(ctx, modifiers, "LIMIT")
+	skipToken = extractCallTailModifierToken(ctx, modifiers, "SKIP")
 	return projection, orderBy, limitToken, skipToken
 }
 
@@ -1292,15 +1064,15 @@ func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, or
 // LIMIT) in modifiers, up to the next modifier: an expression such as
 // LIMIT 0 + 1 stays whole, so the projection plan declines it instead of
 // reading LIMIT 0 (#572).
-func extractCallTailModifierToken(modifiers, keyword string) string {
-	idx := topLevelKeywordIndex(modifiers, keyword)
+func extractCallTailModifierToken(ctx context.Context, modifiers, keyword string) string {
+	idx := topLevelKeywordIndex(ctx, modifiers, keyword)
 	if idx < 0 {
 		return ""
 	}
 	rest := modifiers[idx+len(keyword):]
 	end := len(rest)
 	for _, next := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if nextIdx := topLevelKeywordIndex(rest, next); nextIdx >= 0 && nextIdx < end {
+		if nextIdx := topLevelKeywordIndex(ctx, rest, next); nextIdx >= 0 && nextIdx < end {
 			end = nextIdx
 		}
 	}
@@ -1308,42 +1080,15 @@ func extractCallTailModifierToken(modifiers, keyword string) string {
 }
 
 func callTailHasRelationshipTypeConstraint(tail string) bool {
-	inSingle := false
-	inDouble := false
-	for i := 0; i < len(tail); i++ {
-		ch := tail[i]
-		if inSingle {
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		}
-		if inDouble {
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		}
-		if ch == '\'' {
-			inSingle = true
-			continue
-		}
-		if ch == '"' {
-			inDouble = true
-			continue
-		}
-		if ch != '[' {
-			continue
-		}
-		end := strings.IndexByte(tail[i+1:], ']')
-		if end < 0 {
+	for from := 0; from < len(tail); {
+		open, close := readRelationshipBracket(tail, from, requireClosedRelationship)
+		if open < 0 {
 			return false
 		}
-		segment := tail[i+1 : i+1+end]
-		if strings.Contains(segment, ":") {
+		if findTopLevelOperator(tail[open+1:close], ":", false, true) >= 0 {
 			return true
 		}
-		i += end
+		from = close + 1
 	}
 	return false
 }
@@ -1358,6 +1103,8 @@ func callTailRow(ctx context.Context, seed *ExecuteResult, row []interface{}) pi
 	for i, col := range seed.Columns {
 		if i < len(row) {
 			values[col] = row[i]
+		} else {
+			values[col] = nil
 		}
 	}
 	bindParameterRow(ctx, values)
@@ -1377,28 +1124,32 @@ func splitPathAssignment(patternPart string) (string, string, bool) {
 	return left, right, true
 }
 
+// isIdentifierReferenced compares identifier tokens with a binding's decoded
+// name. cyphertext.ScanIdentifier owns identifier decoding, including doubled
+// backticks; matching raw query bytes loses those imported bindings.
+// This is a conservative name check, not a scope or variable-role analysis.
 func isIdentifierReferenced(query, identifier string) bool {
 	if strings.TrimSpace(identifier) == "" {
 		return false
 	}
-	q := query
-	id := identifier
-	idLen := len(id)
-	if idLen == 0 || len(q) < idLen {
-		return false
-	}
-	for i := 0; i <= len(q)-idLen; i++ {
-		if q[i:i+idLen] != id {
+	for index := 0; index < len(query); {
+		if isCypherStringQuoteByte(query[index]) {
+			index = skipCypherQuotedText(query, index, query[index])
 			continue
 		}
-		if i > 0 && isIdentByte(q[i-1]) {
+		if end := queryCommentEnd(query, index); end > index {
+			index = end
 			continue
 		}
-		end := i + idLen
-		if end < len(q) && isIdentByte(q[end]) {
+		name, ok := cyphertext.ScanIdentifier(query, index)
+		if !ok || (!isCypherBacktickByte(query[index]) && index > 0 && cyphertext.NamePartAt(query, index-1)) {
+			index++
 			continue
 		}
-		return true
+		if name.Value == identifier {
+			return true
+		}
+		index = name.End
 	}
 	return false
 }
@@ -1409,8 +1160,8 @@ func isIdentifierReferenced(query, identifier string) bool {
 // comprehension's WHERE, a subquery body) isn't the clause's; nor is one in a
 // string, a quoted name or a comment, the WITH of STARTS WITH / ENDS WITH, or
 // a clause keyword used as a name.
-func findKeywordIndexInContext(s, keyword string) int {
-	return topLevelKeywordIndex(s, keyword)
+func findKeywordIndexInContext(ctx context.Context, s, keyword string) int {
+	return topLevelKeywordIndex(ctx, s, keyword)
 }
 
 // applyYieldFilter applies a procedure call's YIELD to the procedure's rows.
@@ -1434,11 +1185,7 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		}
 		newColumns := make([]string, 0, len(yield.items))
 		for _, item := range yield.items {
-			if item.alias != "" {
-				newColumns = append(newColumns, item.alias)
-			} else {
-				newColumns = append(newColumns, item.name)
-			}
+			newColumns = append(newColumns, item.column())
 		}
 		newRows := make([][]interface{}, 0, len(result.Rows))
 		for _, row := range result.Rows {
@@ -1474,7 +1221,7 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		if yield.limit != "" {
 			with.WriteString(" LIMIT " + yield.limit)
 		}
-		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String())
+		ordered, ok := e.pipelineApplyWith(ctx, rows, composedPipelineClause(ctx, pipelineClauseWith, with.String()), nil, false)
 		if !ok {
 			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
 			// so only a parameter can make them invalid here.
@@ -1506,22 +1253,28 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	// A RETURN right after YIELD is the start of the tail, like any other
 	// clause, so it runs over all yielded rows (executeCallTail): an aggregate
 	// in it groups the rows, and ORDER BY / SKIP / LIMIT apply to all of them.
-	parts := splitChainedProcedureCall(cypher)
+	parts := splitChainedProcedureCall(ctx, cypher)
 	callCypher := parts.callOnly
 	tailCypher := parts.tail
 
 	// Parse YIELD clause for post-processing
-	yield := parseYieldClause(callCypher)
-	if err := e.validateYieldModifiers(yield, inQuery || strings.TrimSpace(tailCypher) != "" || endsInFinish(ctx, cypher)); err != nil {
+	yield := parseYieldClause(ctx, callCypher)
+	if err := e.validateYieldModifiers(ctx, yield, inQuery || strings.TrimSpace(tailCypher) != "" || endsInFinish(ctx, cypher)); err != nil {
 		return nil, err
 	}
 
 	// Registry-first path: canonical procedure contract for built-ins and UDFs.
 	ensureBuiltInProceduresRegistered()
-	procName := extractProcedureName(callCypher)
+	// The statement's procedure name, or the error the CALL fragment's own
+	// parse produced: a context that ended after admission must keep its
+	// cancellation instead of looking up the empty name a failed parse leaves.
+	procName, err := extractProcedureName(ctx, callCypher)
+	if err != nil {
+		return nil, err
+	}
 	if proc, found := globalProcedureRegistry.Get(procName); found {
 		hasTail := strings.TrimSpace(tailCypher) != ""
-		if err := validateProcedureArgumentPassingMode(proc.Spec, callCypher, hasTail); err != nil {
+		if err := validateProcedureArgumentPassingMode(ctx, proc.Spec, callCypher, hasTail); err != nil {
 			return nil, err
 		}
 		if err := validateProcedureYieldBindings(yield, hasTail); err != nil {
@@ -1543,9 +1296,17 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 			}
 		}
 		procedureCtx, procedureExec := e.systemProcedureScope(ctx)
-		result, err := proc.Handler(procedureCtx, procedureExec, callCypher, args)
+		if proc.Spec.OwnsTransactions {
+			if err := procedureExec.checkPeriodicTransactionScope(procedureCtx, procName); err != nil {
+				return nil, err
+			}
+		}
+		result, err := procedureExec.executeProcedureHandler(procedureCtx, proc, callCypher, args)
 		if err != nil {
 			return nil, procedureRuntimeError(procName, err)
+		}
+		if proc.User {
+			result = runtimeProcedureResult(result)
 		}
 		if yield != nil {
 			result, err = e.applyYieldFilter(ctx, result, yield)
@@ -1558,7 +1319,12 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 				// A void procedure leaves the row it was called for as it
 				// is: the clauses after it run once, as after any other
 				// leading clause.
-				result = &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
+				seed := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
+				if result != nil {
+					seed.Stats = result.Stats
+					mergeOptimisticMetadata(seed, result)
+				}
+				result = seed
 			}
 			return e.executeCallTail(ctx, result, tailCypher)
 		}
@@ -1567,15 +1333,11 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 
 	// Terminal chokepoint of the converged procedure router: every built-in
 	// procedure is registered, so an unrecognized name is rejected here.
-	return nil, newSemanticError(
-		"Neo.ClientError.Procedure.ProcedureNotFound",
-		"ProcedureNotFound",
-		fmt.Sprintf("There is no procedure with the name `%s` registered for this database instance. Please ensure you've spelled the procedure name correctly and that the procedure is properly deployed.", procName),
-	)
+	return nil, unknownProcedureError(procName)
 }
 
-func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {
-	nodes, err := e.storage.AllNodes()
+func (e *StorageExecutor) callDbLabels(ctx context.Context) (*ExecuteResult, error) {
+	nodes, err := e.storage.AllNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1588,29 +1350,17 @@ func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"label"},
+		Columns: columnNames(dbLabelsColumns),
 		Rows:    make([][]interface{}, 0, len(labelSet)),
 	}
-	for _, label := range e.storage.GetSchema().OrderTokens(sortedStringSet(labelSet), false) {
+	for _, label := range e.storage.GetSchema().OrderTokens(collection.SortedKeys(labelSet), false) {
 		result.Rows = append(result.Rows, []interface{}{label})
 	}
 	return result, nil
 }
 
-// sortedStringSet returns a set's members in sorted order, so procedures
-// listing schema tokens (db.labels, db.relationshipTypes, …) return the same
-// order on every call.
-func sortedStringSet(set map[string]bool) []string {
-	members := make([]string, 0, len(set))
-	for member := range set {
-		members = append(members, member)
-	}
-	sort.Strings(members)
-	return members
-}
-
-func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
-	edges, err := e.storage.AllEdges()
+func (e *StorageExecutor) callDbRelationshipTypes(ctx context.Context) (*ExecuteResult, error) {
+	edges, err := e.storage.AllEdges(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1621,10 +1371,10 @@ func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"relationshipType"},
+		Columns: columnNames(dbRelationshipTypesColumns),
 		Rows:    make([][]interface{}, 0, len(typeSet)),
 	}
-	for _, relType := range e.storage.GetSchema().OrderTokens(sortedStringSet(typeSet), true) {
+	for _, relType := range e.storage.GetSchema().OrderTokens(collection.SortedKeys(typeSet), true) {
 		result.Rows = append(result.Rows, []interface{}{relType})
 	}
 	return result, nil
@@ -1661,7 +1411,7 @@ func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "type", "labelsOrTypes", "properties", "state"},
+		Columns: columnNames(dbIndexesColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -1686,7 +1436,7 @@ func (e *StorageExecutor) callDbIndexStats() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "type", "label", "property", "totalEntries", "uniqueValues", "selectivity"},
+		Columns: columnNames(dbIndexStatsColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -1698,7 +1448,7 @@ func (e *StorageExecutor) callDbConstraints() (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
 		return &ExecuteResult{
-			Columns: []string{"name", "type", "labelsOrTypes", "properties", "propertyType"},
+			Columns: columnNames(dbConstraintsColumns),
 			Rows:    [][]interface{}{},
 		}, nil
 	}
@@ -1737,7 +1487,7 @@ func (e *StorageExecutor) callDbConstraints() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "type", "labelsOrTypes", "properties", "propertyType"},
+		Columns: columnNames(dbConstraintsColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -1749,7 +1499,7 @@ func (e *StorageExecutor) callDbmsComponents() (*ExecuteResult, error) {
 	// past 1.0.0 (bug reported May 2026 alongside the mcp-neo4j-memory
 	// regressions).
 	return &ExecuteResult{
-		Columns: []string{"name", "versions", "edition"},
+		Columns: columnNames(dbmsComponentsColumns),
 		Rows: [][]interface{}{
 			{"NornicDB", []string{buildinfo.Version()}, "community"},
 		},
@@ -1764,27 +1514,33 @@ func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
 		build = "dev"
 	}
 	return &ExecuteResult{
-		Columns: []string{"version", "build", "edition"},
+		Columns: columnNames(nornicdbVersionColumns),
 		Rows: [][]interface{}{
 			{buildinfo.Version(), build, "community"},
 		},
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
-	nodeCount, _ := e.storage.NodeCount()
-	edgeCount, _ := e.storage.EdgeCount()
+func (e *StorageExecutor) callNornicDbStats(ctx context.Context) (*ExecuteResult, error) {
+	nodeCount, err := e.storage.NodeCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	edgeCount, err := e.storage.EdgeCount(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ExecuteResult{
-		Columns: []string{"nodes", "relationships", "labels", "relationshipTypes"},
+		Columns: columnNames(nornicdbStatsColumns),
 		Rows: [][]interface{}{
-			{nodeCount, edgeCount, e.countLabels(), e.countRelTypes()},
+			{nodeCount, edgeCount, e.countLabels(ctx), e.countRelTypes(ctx)},
 		},
 	}, nil
 }
 
-func (e *StorageExecutor) countLabels() int {
-	nodes, err := e.storage.AllNodes()
+func (e *StorageExecutor) countLabels(ctx context.Context) int {
+	nodes, err := e.storage.AllNodes(ctx)
 	if err != nil {
 		return 0
 	}
@@ -1797,8 +1553,8 @@ func (e *StorageExecutor) countLabels() int {
 	return len(labelSet)
 }
 
-func (e *StorageExecutor) countRelTypes() int {
-	edges, err := e.storage.AllEdges()
+func (e *StorageExecutor) countRelTypes(ctx context.Context) int {
+	edges, err := e.storage.AllEdges(ctx)
 	if err != nil {
 		return 0
 	}
@@ -1816,7 +1572,7 @@ func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"enabled", "system", "configuredVia"},
+		Columns: columnNames(kpDecayInfoColumns),
 		Rows: [][]interface{}{
 			{enabled, "knowledge-layer scoring (decay profile bundles + bindings)", "CREATE DECAY PROFILE ... OPTIONS / CREATE DECAY PROFILE ... FOR ... APPLY DDL"},
 		},
@@ -1831,7 +1587,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo() (*ExecuteResult, err
 
 	var decayProfiles, decayBindings int
 	var promotionProfiles, promotionPolicies int
-	schema, err := e.knowledgePolicySchema()
+	_, schema, err := e.knowledgePolicyContext("")
 	if err != nil {
 		return nil, err
 	}
@@ -1844,7 +1600,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo() (*ExecuteResult, err
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"enabled", "system", "decayProfiles", "decayBindings", "promotionProfiles", "promotionPolicies", "configuredVia"},
+		Columns: columnNames(kpInfoColumns),
 		Rows: [][]interface{}{
 			{
 				enabled,
@@ -1865,8 +1621,8 @@ func (e *StorageExecutor) callDbSchemaVisualization() (*ExecuteResult, error) {
 	return e.callDbSchemaVisualizationWithContext(context.Background())
 }
 
-func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
-	nodes, _ := e.storage.AllNodes()
+func (e *StorageExecutor) callDbSchemaNodeProperties(ctx context.Context) (*ExecuteResult, error) {
+	nodes, _ := e.storage.AllNodes(ctx)
 
 	// Collect properties per label
 	labelProps := make(map[string]map[string]bool)
@@ -1882,7 +1638,7 @@ func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"nodeLabel", "propertyName", "propertyType"},
+		Columns: columnNames(dbSchemaNodePropertiesColumns),
 		Rows:    [][]interface{}{},
 	}
 
@@ -1895,8 +1651,8 @@ func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
-	edges, _ := e.storage.AllEdges()
+func (e *StorageExecutor) callDbSchemaRelProperties(ctx context.Context) (*ExecuteResult, error) {
+	edges, _ := e.storage.AllEdges(ctx)
 
 	// Collect properties per relationship type
 	typeProps := make(map[string]map[string]bool)
@@ -1910,7 +1666,7 @@ func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"relType", "propertyName", "propertyType"},
+		Columns: columnNames(dbSchemaRelPropertiesColumns),
 		Rows:    [][]interface{}{},
 	}
 
@@ -1923,9 +1679,9 @@ func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
-	nodes, _ := e.storage.AllNodes()
-	edges, _ := e.storage.AllEdges()
+func (e *StorageExecutor) callDbPropertyKeys(ctx context.Context) (*ExecuteResult, error) {
+	nodes, _ := e.storage.AllNodes(ctx)
+	edges, _ := e.storage.AllEdges(ctx)
 
 	propSet := make(map[string]bool)
 	for _, node := range nodes {
@@ -1940,10 +1696,10 @@ func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"propertyKey"},
+		Columns: columnNames(dbPropertyKeysColumns),
 		Rows:    make([][]interface{}, 0, len(propSet)),
 	}
-	for _, prop := range sortedStringSet(propSet) {
+	for _, prop := range collection.SortedKeys(propSet) {
 		result.Rows = append(result.Rows, []interface{}{prop})
 	}
 
@@ -1959,7 +1715,7 @@ func (e *StorageExecutor) callDbmsProcedures() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "description", "mode", "signature"},
+		Columns: columnNames(dbmsProceduresColumns),
 		Rows:    procedures,
 	}, nil
 }
@@ -1991,7 +1747,7 @@ func (e *StorageExecutor) callDbmsFunctions() (*ExecuteResult, error) {
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "description", "category"},
+		Columns: columnNames(dbmsFunctionsColumns),
 		Rows:    functions,
 	}, nil
 }

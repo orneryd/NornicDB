@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -32,7 +33,8 @@ func TestCreateUniqueConstraint(t *testing.T) {
 	}
 
 	// Verify constraint exists
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Fatalf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -158,7 +160,8 @@ func TestSchemaInitialization(t *testing.T) {
 	}
 
 	// Verify all schemas created
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Errorf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -208,7 +211,8 @@ func TestConstraintWithoutName(t *testing.T) {
 	}
 
 	// Verify constraint exists with generated name
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Fatalf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -255,7 +259,8 @@ func TestIdempotentSchemaCreation(t *testing.T) {
 	}
 
 	// Should still have only one constraint
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Errorf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -319,14 +324,14 @@ func TestSchemaErrorCases(t *testing.T) {
 		_, err = exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft IF NOT EXISTS FOR (n:Node) ON EACH [n.content]")
 		require.NoError(t, err)
 
-		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
+		_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
 		if err != nil {
 			t.Fatalf("failed to create baseline vector index: %v", err)
 		}
-		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
+		_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
 		require.Error(t, err)
 		require.Contains(t, statusText(err), "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists")
-		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec IF NOT EXISTS FOR (n:Node) ON (n.embedding)")
+		_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX dup_vec IF NOT EXISTS FOR (n:Node) ON (n.embedding)")
 		require.NoError(t, err)
 	})
 
@@ -578,8 +583,8 @@ func TestVectorIndexWithDifferentOptions(t *testing.T) {
 			wantSimFn: "cosine", // default
 		},
 		{
-			name:      "QuotedOptionKeys",
-			query:     `CREATE VECTOR INDEX vec3 FOR (n:Node) ON (n.embedding_quoted) OPTIONS {indexConfig: {"vector.dimensions": 384, "vector.similarity_function": "dot"}}`,
+			name:       "QuotedOptionKeys",
+			query:      `CREATE VECTOR INDEX vec3 FOR (n:Node) ON (n.embedding_quoted) OPTIONS {indexConfig: {"vector.dimensions": 384, "vector.similarity_function": "dot"}}`,
 			wantDims:   384,
 			wantSimFn:  "dot",
 			nornicOnly: true,
@@ -1064,7 +1069,10 @@ func TestCreateIndex_RebuildsUsableEntriesAfterRestart(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 
-	base1, err := storage.NewBadgerEngine(dir)
+	base1, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if base1 != nil {
+		fixtureowner.Own(t, base1)
+	}
 	require.NoError(t, err)
 	store1 := storage.NewNamespacedEngine(base1, "test")
 	exec1 := NewStorageExecutor(store1)
@@ -1077,12 +1085,13 @@ func TestCreateIndex_RebuildsUsableEntriesAfterRestart(t *testing.T) {
 	_, err = exec1.Execute(ctx, "CREATE INDEX idx_source_id IF NOT EXISTS FOR (n:MongoDocument) ON (n.sourceId)", nil)
 	require.NoError(t, err)
 
-	pre := store1.GetSchema().PropertyIndexLookup("MongoDocument", "sourceId", "src-002")
+	pre, lookupErr := store1.GetSchema().PropertyIndexLookup(ctx, "MongoDocument", "sourceId", "src-002")
+	require.NoError(t, lookupErr)
 	require.Len(t, pre, 1)
 
 	require.NoError(t, base1.Close())
 
-	base2, err := storage.NewBadgerEngine(dir)
+	base2, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer base2.Close()
 	store2 := storage.NewNamespacedEngine(base2, "test")
@@ -1092,7 +1101,8 @@ func TestCreateIndex_RebuildsUsableEntriesAfterRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, showRes.Rows)
 
-	post := store2.GetSchema().PropertyIndexLookup("MongoDocument", "sourceId", "src-002")
+	post, lookupErr := store2.GetSchema().PropertyIndexLookup(ctx, "MongoDocument", "sourceId", "src-002")
+	require.NoError(t, lookupErr)
 	require.Len(t, post, 1, "property index entries should remain usable after restart")
 }
 
@@ -1100,7 +1110,10 @@ func TestCreateRelationshipIndex_PersistsAcrossRestart_E2E(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 
-	base1, err := storage.NewBadgerEngine(dir)
+	base1, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if base1 != nil {
+		fixtureowner.Own(t, base1)
+	}
 	require.NoError(t, err)
 	store1 := storage.NewNamespacedEngine(base1, "test")
 	exec1 := NewStorageExecutor(store1)
@@ -1160,7 +1173,7 @@ func TestCreateRelationshipIndex_PersistsAcrossRestart_E2E(t *testing.T) {
 
 	require.NoError(t, base1.Close())
 
-	base2, err := storage.NewBadgerEngine(dir)
+	base2, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer base2.Close()
 	store2 := storage.NewNamespacedEngine(base2, "test")
@@ -1251,41 +1264,39 @@ func TestCreateConstraint_DuplicateNamedDefinitionErrors(t *testing.T) {
 }
 
 func TestCreateRangeIndex_ErrorBranches(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	exec, _ := newTestExecutor(t)
 	ctx := context.Background()
 
-	_, err := exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.age)")
+	_, err := exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.age)")
 	if err != nil {
 		t.Fatalf("failed to create baseline range index: %v", err)
 	}
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.score)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.score)")
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.score)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.score)")
 	require.NoError(t, err)
 
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.price)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.price)")
 	if err != nil {
 		t.Fatalf("failed to create unnamed range index: %v", err)
 	}
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.cost)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.cost)")
 	if err != nil {
 		t.Fatalf("expected second unnamed range index with different generated name to succeed, got: %v", err)
 	}
 
 	// A RANGE index is CREATE INDEX: composite and relationship forms too.
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_multi FOR (n:Person) ON (n.city, n.zip)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_multi FOR (n:Person) ON (n.city, n.zip)")
 	if err != nil {
 		t.Fatalf("composite range index: %v", err)
 	}
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_rel FOR ()-[r:KNOWS]-() ON (r.since)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX idx_rel FOR ()-[r:KNOWS]-() ON (r.since)")
 	if err != nil {
 		t.Fatalf("relationship range index: %v", err)
 	}
 
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX")
+	_, err = exec.executeCreateIndex(ctx, "CREATE RANGE INDEX")
 	if err == nil || !strings.Contains(err.Error(), "invalid CREATE") {
 		t.Fatalf("expected invalid syntax error, got: %v", err)
 	}
@@ -1294,9 +1305,7 @@ func TestCreateRangeIndex_ErrorBranches(t *testing.T) {
 func TestCreateFulltextIndex_SchemaAndDuplicateErrors(t *testing.T) {
 	ctx := context.Background()
 
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	exec, store := newTestExecutor(t)
 
 	_, err := exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Doc) ON EACH [n.title]")
 	if err != nil {
@@ -1323,14 +1332,14 @@ func TestCreateVectorIndex_DuplicateErrorBranch(t *testing.T) {
 	ctx := context.Background()
 
 	query := "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.embedding)"
-	_, err := exec.executeCreateVectorIndex(ctx, query)
+	_, err := exec.executeCreateIndex(ctx, query)
 	if err != nil {
 		t.Fatalf("failed to create baseline vector index: %v", err)
 	}
-	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.altEmbedding)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.altEmbedding)")
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
-	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_dup IF NOT EXISTS FOR (n:Doc) ON (n.altEmbedding)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX vec_dup IF NOT EXISTS FOR (n:Doc) ON (n.altEmbedding)")
 	require.NoError(t, err)
 }
 

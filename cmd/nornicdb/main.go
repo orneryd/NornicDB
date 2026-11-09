@@ -1,4 +1,5 @@
 // Package main provides the NornicDB CLI entry point.
+// Author: Codex, NOR-180 shell terminal-outcome diagnostics, 2026-10-27.
 package main
 
 import (
@@ -17,14 +18,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
+	"github.com/orneryd/nornicdb/pkg/cli"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
@@ -33,10 +35,12 @@ import (
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/pool"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/server"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 	"github.com/orneryd/nornicdb/ui"
+	"github.com/spf13/cobra"
 )
 
 func main() {
@@ -53,7 +57,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := newRootCommand(localizer).Execute(); err != nil {
+	root := cli.NewRoot("nornicdb", localizer, localization.NornicDBCLIRootShort(), localization.NornicDBCLIRootLong())
+	root.SetContext(context.WithValue(context.Background(), commandLocalizerContextKey{}, &commandLocalization{manager: localizer}))
+	registerServerCommands(root, localizer)
+	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
@@ -77,20 +84,9 @@ func (e *commandError) Error() string {
 	if e.cmd != nil {
 		manager = commandLocalizer(e.cmd)
 	}
-	return commandText(manager, e.message)
+	return cli.Render(manager, e.message)
 }
 func (e *commandError) Unwrap() error { return e.cause }
-
-func commandText(manager *localization.Manager, message localization.Message) string {
-	if manager == nil {
-		return message.Fallback
-	}
-	text, _, err := manager.Render(context.Background(), message)
-	if err != nil {
-		return message.Fallback
-	}
-	return text
-}
 
 func newCommandError(cmd *cobra.Command, message localization.Message, cause error) error {
 	return &commandError{cmd: cmd, message: message, cause: cause}
@@ -128,18 +124,13 @@ func setCommandLocalizer(cmd *cobra.Command, manager *localization.Manager) {
 }
 
 func commandPrintln(cmd *cobra.Command, message localization.Message) {
-	cmd.Println(commandText(commandLocalizer(cmd), message))
+	cmd.Println(cli.Render(commandLocalizer(cmd), message))
 }
 
-func newRootCommand(localizer *localization.Manager) *cobra.Command {
-	text := func(message localization.Message) string { return commandText(localizer, message) }
-
-	rootCmd := &cobra.Command{
-		Use:   "nornicdb",
-		Short: text(localization.NornicDBCLIRootShort()),
-		Long:  text(localization.NornicDBCLIRootLong()),
-	}
-	rootCmd.SetContext(context.WithValue(context.Background(), commandLocalizerContextKey{}, &commandLocalization{manager: localizer}))
+// registerServerCommands owns the server binary's commands. Root identity and
+// localized rendering are shared with the admin binary through pkg/cli.
+func registerServerCommands(rootCmd *cobra.Command, localizer *localization.Manager) {
+	text := func(message localization.Message) string { return cli.Render(localizer, message) }
 
 	// Global config flag (applies to all subcommands that load config).
 	// This is the primary configuration mechanism for Docker/K8s where the config
@@ -193,6 +184,7 @@ func newRootCommand(localizer *localization.Manager) *cobra.Command {
 	serveCmd.Flags().Int("parallel-batch-size", 1000, text(localization.NornicDBCLIFlagParallelBatchSize()))
 	// Memory management flags
 	serveCmd.Flags().String("memory-limit", "", text(localization.NornicDBCLIFlagMemoryLimit()))
+	serveCmd.Flags().String("go-memory-limit-bytes", "", text(localization.NornicDBCLIFlagGoMemoryLimit()))
 	serveCmd.Flags().Int("gc-percent", 100, text(localization.NornicDBCLIFlagGCPercent()))
 	serveCmd.Flags().Bool("pool-enabled", true, text(localization.NornicDBCLIFlagPoolEnabled()))
 	serveCmd.Flags().Bool("low-memory", getEnvBool("NORNICDB_LOW_MEMORY", false), text(localization.NornicDBCLIFlagLowMemory()))
@@ -264,7 +256,8 @@ func newRootCommand(localizer *localization.Manager) *cobra.Command {
 	decayStatsCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), text(localization.NornicDBCLIFlagDataDir()))
 	decayCmd.AddCommand(decayStatsCmd)
 	rootCmd.AddCommand(decayCmd)
-	return rootCmd
+	rootCmd.AddCommand(newStemmerCommand(text))
+	protectFlagDefaults(rootCmd)
 }
 
 // setCLIOverride stamps a single canonical NORNICDB_* key into
@@ -350,7 +343,13 @@ func applyServeEmbeddingOverrides(cmd *cobra.Command, cfg *config.Config) {
 	}
 }
 
-func runServe(cmd *cobra.Command, args []string) error {
+// The command constructor dependency remains the native DB owner. Tests may
+// decorate its configuration and still execute the real Open/Close paths.
+var openCommandDB = nornicdb.Open
+
+func runServe(cmd *cobra.Command, args []string) (runErr error) {
+	owned := &serveLifetime{}
+	defer func() { runErr = compose.Outcomes(runErr, owned.close()) }()
 	boltPort, _ := cmd.Flags().GetInt("bolt-port")
 	httpPort, _ := cmd.Flags().GetInt("http-port")
 	address, _ := cmd.Flags().GetString("address")
@@ -367,6 +366,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	parallelBatchSize, _ := cmd.Flags().GetInt("parallel-batch-size")
 	// Memory management flags
 	memoryLimit, _ := cmd.Flags().GetString("memory-limit")
+	goMemoryLimit, _ := cmd.Flags().GetString("go-memory-limit-bytes")
 	gcPercent, _ := cmd.Flags().GetInt("gc-percent")
 	poolEnabled, _ := cmd.Flags().GetBool("pool-enabled")
 	queryCacheSize, _ := cmd.Flags().GetInt("query-cache-size")
@@ -389,6 +389,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			_ = os.Setenv(envName, fmt.Sprintf("%t", value))
 		}
 	}
+
+	setEnvIfChanged("gpu-backend", "NORNICDB_GPU_BACKEND", gpuBackend)
 
 	clusterMode, _ := cmd.Flags().GetString("cluster-mode")
 	clusterNodeID, _ := cmd.Flags().GetString("cluster-node-id")
@@ -414,8 +416,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		cause := fmt.Errorf("stdio-log-compact-seconds must be >= 0")
 		return newCommandError(cmd, localization.NornicDBCLIInvalidStdioInterval(stdioLogCompactSeconds), cause)
 	}
-	stopStdioCompactor := startStdioLogCompactor(stdioLogMaxKB, time.Duration(stdioLogCompactSeconds)*time.Second)
-	defer stopStdioCompactor()
+	owned.stopCompactor = startStdioLogCompactor(stdioLogMaxKB, time.Duration(stdioLogCompactSeconds)*time.Second)
 
 	// Apply memory configuration FIRST (before heavy allocations)
 	// First, try to load from config file, then fall back to environment variables
@@ -463,6 +464,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	applyServeSecurityOverrides(cfg, noAuth, adminPasswordFlag, adminPasswordFlagChanged)
 	if err := config.ValidateSecurityConfiguration(cfg); err != nil {
 		return err
+	}
+	if oauth := auth.GetOAuthConfig(); oauth != nil && oauth.Issuer != "" {
+		if err := security.ValidateURL(oauth.Issuer, security.URLPolicy{SchemePolicy: security.URLAbsoluteScheme, MaxLength: -1, HostPolicy: security.URLAnyHost, RejectCredentials: true}); err != nil {
+			return fmt.Errorf("invalid OAuth issuer: %w", err)
+		}
 	}
 
 	// Explicit CLI flags override the loaded env/YAML/default configuration.
@@ -513,13 +519,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Override with CLI flags if provided
+	// TODO: Migrate users of the legacy MiB --memory-limit flag to byte integers.
+	choice, runtimeErr := config.ResolveRuntimeLimitAliases(memoryLimit, goMemoryLimit)
+	if errors.Is(runtimeErr, config.ErrRuntimeLimitAliasConflict) {
+		return newCommandError(cmd, localization.NornicDBCLIGoMemoryLimitConflict(), runtimeErr)
+	}
 	if memoryLimit != "" {
-		runtimeLimit, err := config.ParseMemoryLimitMB(memoryLimit)
-		if err != nil {
-			return newCommandError(cmd, localization.NornicDBCLIInvalidMemoryLimit(memoryLimit, err), err)
+		cmd.PrintErrln(cli.Render(commandLocalizer(cmd), localization.NornicDBCLIGoMemoryLimitDeprecated()))
+	}
+	if choice.Raw != "" || runtimeErr != nil {
+		if runtimeErr != nil {
+			if goMemoryLimit != "" {
+				return newCommandError(cmd, localization.NornicDBCLIInvalidGoMemoryLimit(goMemoryLimit, runtimeErr), runtimeErr)
+			}
+			return newCommandError(cmd, localization.NornicDBCLIInvalidMemoryLimit(memoryLimit, runtimeErr), runtimeErr)
 		}
-		cfg.Memory.RuntimeLimitStr = memoryLimit
-		cfg.Memory.RuntimeLimit = runtimeLimit
+		cfg.Memory.RuntimeLimitStr = choice.Raw
+		cfg.Memory.RuntimeLimit = choice.Bytes
 	}
 	if gcPercent != 100 {
 		cfg.Memory.GCPercent = gcPercent
@@ -530,6 +546,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if queryCacheTTL > 0 {
 		cfg.Memory.QueryCacheTTL = time.Duration(queryCacheTTL) * time.Millisecond
 	}
+	// A soft limit above the container's hard limit protects nothing:
+	// derive it from the cgroup limit, or clamp it to that.
+	memoryResolution := cfg.Memory.ResolveRuntimeLimit()
 	cfg.Memory.ApplyRuntimeMemory()
 
 	// Configure object pooling
@@ -562,7 +581,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		commandPrintln(cmd, localization.NornicDBCLIEmbeddingLocal(modelsDir, embeddingModel, embeddingDim, gpuMode))
 	} else {
-		commandPrintln(cmd, localization.NornicDBCLIEmbeddingURL(embeddingURL))
+		commandPrintln(cmd, localization.NornicDBCLIEmbeddingURL(observability.RedactURL(embeddingURL)))
 		commandPrintln(cmd, localization.NornicDBCLIEmbeddingModel(embeddingModel, embeddingDim))
 	}
 	if parallelEnabled {
@@ -576,7 +595,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	// Memory management info
 	if cfg.Memory.RuntimeLimit > 0 {
-		commandPrintln(cmd, localization.NornicDBCLIMemoryLimit(config.FormatMemorySize(cfg.Memory.RuntimeLimit)))
+		switch {
+		case memoryResolution.Clamped:
+			commandPrintln(cmd, localization.NornicDBCLIMemoryLimitClamped(config.FormatMemorySize(memoryResolution.Configured), config.FormatMemorySize(memoryResolution.CgroupLimit), config.FormatMemorySize(cfg.Memory.RuntimeLimit)))
+		case memoryResolution.Derived:
+			commandPrintln(cmd, localization.NornicDBCLIMemoryLimitFromCgroup(config.FormatMemorySize(cfg.Memory.RuntimeLimit), config.FormatMemorySize(memoryResolution.CgroupLimit), config.RuntimeLimitCgroupPercent))
+		default:
+			commandPrintln(cmd, localization.NornicDBCLIMemoryLimit(config.FormatMemorySize(cfg.Memory.RuntimeLimit)))
+		}
 	} else {
 		commandPrintln(cmd, localization.NornicDBCLIMemoryUnlimited())
 	}
@@ -604,7 +630,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// 80719f25 hit exactly this with the Search* flags). Pass cfg
 	// directly: any field that lives on Config now flows through.
 	dbConfig := cfg
-	dbConfig.Database.DataDir = dataDir
 	dbConfig.Server.BoltPort = boltPort
 	dbConfig.Server.HTTPPort = httpPort
 	dbConfig.Database.AllowStorageUpgrade = upgradeStorage
@@ -639,6 +664,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Format: cfg.Logging.Format,
 		Output: cfg.Logging.Output,
 	}, earlyLoggerInfo)
+	if file, opened := earlyWriterRef.(*os.File); opened && file != os.Stdout && file != os.Stderr {
+		owned.writer = file
+	}
 	if earlyLogErr != nil {
 		fmt.Fprintln(os.Stderr, "WARN logger init: ", earlyLogErr)
 	}
@@ -659,34 +687,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Open database
 	commandPrintln(cmd, localization.NornicDBCLIOpeningDatabase())
-	db, err := nornicdb.Open(dataDir, dbConfig)
+	db, err := openCommandDB(dataDir, dbConfig)
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
-	defer db.Close()
+	owned.db = db
 
 	// Initialize GPU acceleration (Metal on macOS, auto-detect otherwise)
 	commandPrintln(cmd, localization.NornicDBCLIInitializingGPU())
-	gpuConfig := gpu.DefaultConfig()
-	gpuConfig.Enabled = true
-	gpuConfig.FallbackOnError = true
-
-	// Set preferred backend from flag/env or platform default
-	switch strings.ToLower(gpuBackend) {
-	case "vulkan":
-		gpuConfig.PreferredBackend = gpu.BackendVulkan
-	case "cuda":
-		gpuConfig.PreferredBackend = gpu.BackendCUDA
-	case "metal":
-		gpuConfig.PreferredBackend = gpu.BackendMetal
-	case "opencl":
-		gpuConfig.PreferredBackend = gpu.BackendOpenCL
-	default:
-		// Auto-detect: prefer Metal on macOS/Apple Silicon
-		if runtime.GOOS == "darwin" {
-			gpuConfig.PreferredBackend = gpu.BackendMetal
-		}
-	}
+	gpuConfig := gpuConfigForBackend(gpuBackend)
 
 	gpuManager, gpuErr := gpu.NewManager(gpuConfig)
 	if gpuErr != nil {
@@ -751,15 +760,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if adminPasswordFlagChanged && adminPasswordFlag != "" {
 			adminPassword = adminPasswordFlag
 		}
-		_, err := authenticator.CreateUser(adminUsername, adminPassword, []auth.Role{auth.RoleAdmin})
-		if err != nil {
-			// User might already exist
-			commandPrintln(cmd, localization.NornicDBCLIAdminSetupFailed())
-		} else {
+		// Bootstrap runs under the command's own lifecycle, not a later HTTP request.
+		_, err := authenticator.CreateUser(cmd.Context(), adminUsername, adminPassword, []auth.Role{auth.RoleAdmin})
+		switch {
+		case err == nil:
 			commandPrintln(cmd, localization.NornicDBCLIAdminCreated(adminUsername))
 			if usesDefaultAdminPassword(cfg) {
 				commandPrintln(cmd, localization.NornicDBCLIDefaultPasswordWarning())
 			}
+		case errors.Is(err, auth.ErrUserExists):
+			// An existing admin account is the expected steady state on restart:
+			// keep the established nonfatal wording and continue startup.
+			commandPrintln(cmd, localization.NornicDBCLIAdminSetupFailed())
+		default:
+			// Any other bootstrap failure (cancellation, rejected credential, failed
+			// persistence) is reported with its own cause instead of starting a
+			// server that has no intended admin account.
+			return newCommandError(cmd, localization.NornicDBCLICreateAuthenticatorFailed(err), err)
 		}
 	}
 	// Note: Auth status logged at server startup
@@ -849,6 +866,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLICreateServerFailed(err), err)
 	}
+	owned.http = httpServer
+	// The command return-frame owns construction until the supervisor starts.
+	var boltServer *bolt.Server
+	var boltLifetime *lifecycle.WorkLifetime
 
 	// HTTP server START is deferred until AFTER observability.New runs
 	// below — Plan 04-02 D-02c init-order chokepoint. The Plan 04-02
@@ -863,6 +884,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// share the assembled handler stack (recovering -> mandatory -> redact
 	// -> json) and Bolt HELLO "credentials" are auto-redacted (D-03a).
 	boltConfig := bolt.DefaultConfig()
+	boltLifetime = &lifecycle.WorkLifetime{}
+	owned.boltLifetime = boltLifetime
+	boltConfig.Lifetime = boltLifetime
 	boltConfig.Host = resolvedAddress
 	boltConfig.Port = boltPort
 	boltConfig.LogQueries = logQueries
@@ -891,14 +915,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		var tlsCfg *tls.Config
 		if cfg.Server.BoltTLSClientCAFile != "" {
-			tlsCfg, err = bolt.LoadTLSConfigWithClientCA(
+			tlsCfg, err = bolt.LoadTLSConfigForLifetime(
+				boltConfig.Lifetime,
 				cfg.Server.BoltTLSCert,
 				cfg.Server.BoltTLSKey,
 				cfg.Server.BoltTLSClientCAFile,
 				mode,
 			)
 		} else {
-			tlsCfg, err = bolt.LoadTLSConfig(cfg.Server.BoltTLSCert, cfg.Server.BoltTLSKey)
+			tlsCfg, err = bolt.LoadTLSConfigForLifetime(boltConfig.Lifetime, cfg.Server.BoltTLSCert, cfg.Server.BoltTLSKey, "", bolt.ClientAuthNone)
 		}
 		if err != nil {
 			return newCommandError(cmd, localization.NornicDBCLIBoltTLSLoadFailed(err), err)
@@ -915,7 +940,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// semantics are identical across protocols.
 	queryExecutor := NewDBQueryExecutor(db)
 	queryExecutor.localizer = localizer
-	boltServer := bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
+	// Bolt's database-scoped executors come from the HTTP server's canonical
+	// per-database factory, so both protocols share one configuration
+	// (query-result cache policy, statement-cache owner, settings, logger,
+	// search and mutation wiring). Wired before the server is created: the
+	// callback runs once per executor construction, never per query.
+	boltConfig.DatabaseExecutorOptions = httpServer.DatabaseScopedExecutorOptions
+	boltServer = bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
+	owned.bolt = boltServer
+	boltServer.SetMemoryPolicy(db.MemoryPolicy())
 	httpServer.SetConnectionLister(boltServer.ConnectionListings)
 	connectionTracker := multidb.NewConnectionTracker()
 	boltServer.SetDatabaseConnectionAdmission(httpServer.GetDatabaseManager().ResolveConnectionLimitOwner, func(databaseName string) error {
@@ -950,6 +983,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if obsErr != nil {
 		return newCommandError(cmd, localization.NornicDBCLIObservabilityInitFailed(obsErr), obsErr)
 	}
+	owned.components = []lifecycle.Component{&providerConstructionComponent{Provider: obs}}
 	log.Printf("INFO observability: instance_id=%s (source=%s)", obs.InstanceID(), obs.InstanceIDSource())
 
 	// Phase 5 D-02d: resolve the tenant-labels-enabled bool BEFORE any Phase
@@ -1074,7 +1108,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		bytesSweeper = storage.NewBytesMetricsSweeper(
 			storageMetrics,
-			badgerEngine.DB(),
+			badgerEngine,
 			nil, /* search size callback — Plan 04-05 wires */
 			interval,
 		)
@@ -1110,7 +1144,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// real target for IndexSizeBytes during the first scrape.
 	defaultDBNameForMetrics := defaultBoltDatabaseName(db)
 	if defaultSearchSvc, sErr := db.GetOrCreateSearchService(defaultDBNameForMetrics, db.GetStorage()); sErr == nil && defaultSearchSvc != nil {
-		defaultSearchSvc.AttachMetrics(searchMetrics)
+		// The DB attaches them to every later default service too (a reset
+		// or restore replaces the service).
+		db.AttachDefaultSearchMetrics(searchMetrics)
 		// Re-construct the SearchMetrics bag with a real probe pointing
 		// at the default search service. We cannot do this earlier
 		// because the bag was registered against obs.Registry already;
@@ -1179,12 +1215,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if telemetryErr != nil {
 		return newCommandError(cmd, localization.NornicDBCLITelemetryListenerFailed(telemetryErr), telemetryErr)
 	}
+	owned.components[0] = telemetry
 
 	// 4. Build the optional pprof listener (Component, may be nil when
 	//    cfg.Observability.Pprof.Enabled is false — OBS-06 / Phase-success-2).
 	pprof, pprofErr := observability.NewPprofListener(cfg.Observability.Pprof)
 	if pprofErr != nil {
 		return newCommandError(cmd, localization.NornicDBCLIPprofListenerFailed(pprofErr), pprofErr)
+	}
+	if pprof != nil {
+		owned.components = append(owned.components, pprof)
 	}
 
 	// 5. Register health checks AFTER storage/search are open (D-03c).
@@ -1223,10 +1263,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	//    → workers
 	//    → bolt
 	//    → http LAST (drains FIRST — stop accepting new requests immediately).
-	components := []lifecycle.Component{telemetry}
-	if pprof != nil {
-		components = append(components, pprof)
-	}
+	components := owned.components
 	// Plan 04-04: bytes_metrics_sweeper drains AFTER workers and BEFORE
 	// the telemetry listener (RESEARCH §Q4 ordering). It sits between
 	// pprof and workers in registration order — that places it earlier
@@ -1286,6 +1323,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	//    NotifyContext, runs every Component.Start in an errgroup, and
 	//    on cancellation drains in REVERSE order on a fresh
 	//    context.WithTimeout(context.Background(), 30s) (OBS-09).
+	owned.components = components
+	owned.supervised = true
 	if runErr := lifecycle.Run(cmd.Context(), components...); runErr != nil {
 		return newCommandError(cmd, localization.NornicDBCLISupervisedRunFailed(runErr), runErr)
 	}
@@ -1414,64 +1453,68 @@ func hasExplicitProtocolBindEnv() bool {
 	return false
 }
 
-func startStdioLogCompactor(maxKB int, interval time.Duration) func() {
+func startStdioLogCompactor(maxKB int, interval time.Duration) func() error {
 	if maxKB <= 0 {
-		return func() {}
+		return func() error { return nil }
 	}
 	if interval <= 0 {
 		interval = time.Hour
 	}
 	maxBytes := int64(maxKB) * 1024
-
-	compact := func() {
-		compactStreamIfOversized("stdout", os.Stdout, maxBytes)
-		compactStreamIfOversized("stderr", os.Stderr, maxBytes)
+	// The command's native producer uses the same lifetime protocol as its
+	// listeners. Its ticket exists before startup I/O or dispatch, and Close
+	// signals the ticker worker and joins its actual return.
+	work := &lifecycle.WorkLifetime{}
+	ctx, release, accepted := work.Acquire(work.Context())
+	if !accepted {
+		panic("new stdio lifetime rejected its initial worker")
 	}
-
-	// Automatic startup pass handles existing oversized log files.
+	compact := func() {
+		work.RecordError("stdio stdout compaction", compactStreamIfOversized("stdout", os.Stdout, maxBytes))
+		work.RecordError("stdio stderr compaction", compactStreamIfOversized("stderr", os.Stderr, maxBytes))
+	}
 	compact()
-
-	stopCh := make(chan struct{})
 	go func() {
+		defer release()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				compact()
-			case <-stopCh:
+			case <-ctx.Done():
 				return
 			}
 		}
 	}()
-
-	return func() { close(stopCh) }
+	return work.Close
 }
 
-func compactStreamIfOversized(name string, stream *os.File, maxBytes int64) {
+func compactStreamIfOversized(name string, stream *os.File, maxBytes int64) error {
 	if stream == nil {
-		return
+		return nil
 	}
 	info, err := stream.Stat()
 	if err != nil {
-		return
+		return fmt.Errorf("%s stat: %w", name, err)
 	}
 	// Only manage file-backed streams (for example launchd StandardOutPath/StandardErrorPath).
 	if !info.Mode().IsRegular() || info.Size() <= maxBytes {
-		return
+		return nil
 	}
 
 	prevSize := info.Size()
 	if err := stream.Truncate(0); err != nil {
 		log.Printf("⚠️ stdio log compaction failed for %s: truncate: %v", name, err)
-		return
+		return fmt.Errorf("%s truncate: %w", name, err)
 	}
 	// Keep writes in the truncated file instead of previous offset.
 	if _, err := stream.Seek(0, io.SeekStart); err != nil {
 		log.Printf("⚠️ stdio log compaction for %s truncated but seek failed: %v", name, err)
-		return
+		return fmt.Errorf("%s seek after truncate: %w", name, err)
 	}
 	log.Printf("🧹 compacted %s stream log from %d bytes to 0 bytes (limit=%d bytes)", name, prevSize, maxBytes)
+	return nil
 }
 
 // DBQueryExecutor adapts nornicdb.DB to bolt.QueryExecutor interface.
@@ -1493,7 +1536,7 @@ func NewDBQueryExecutor(db *nornicdb.DB) *DBQueryExecutor {
 	}
 	exec.txMgr = txsession.NewManager(30*time.Second, func(dbName string) (*cypher.StorageExecutor, error) {
 		return newTxScopedExecutor(db, dbName)
-	})
+	}, db.LifetimeContext())
 	return exec
 }
 
@@ -1521,18 +1564,17 @@ func newTxScopedExecutor(db *nornicdb.DB, dbName string) (*cypher.StorageExecuto
 	// Keep query embedding and search behavior consistent with the base DB executor.
 	if baseExec := db.GetCypherExecutor(); baseExec != nil {
 		executor.ShareQueryStatisticsFrom(baseExec)
+		executor.ShareStatementCachesFrom(baseExec)
 		executor.ShareEmbedderFrom(baseExec)
-		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
-			executor.SetInferenceManager(inferMgr)
-		}
+		executor.ShareInferenceManagerFrom(baseExec)
 		// Phase 2 D-01 + D-04c: inherit logger and slow-query threshold from
 		// the base executor so per-transaction scoped executors emit the
 		// LOG-07 slow-query record on the same logger pipeline.
 		executor.SetLogger(baseExec.Logger())
 		executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
 	}
-	if searchSvc, err := db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
-		executor.SetSearchService(searchSvc)
+	if _, err := db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
+		executor.SetSearchServiceResolver(dbName, db.SearchServiceResolver())
 	}
 
 	if q := db.GetEmbedQueue(); q != nil {
@@ -1550,47 +1592,20 @@ func (e *DBQueryExecutor) NewSessionExecutor() bolt.QueryExecutor {
 	return executor
 }
 
-// BaseCypherExecutor exposes the base executor used by DBQueryExecutor so
-// protocol adapters (for example Bolt database-scoped executors) can inherit
-// shared runtime services such as embedder/search configuration.
+// BaseCypherExecutor exposes the base executor behind DBQueryExecutor. Bolt
+// consumes it through its baseCypherExecutorProvider interface: a successful
+// COMMIT with writes invalidates the committed write caches of both the
+// database-scoped executor and this base executor
+// (pkg/bolt/committed_write_cache.go), and a standalone Bolt server that
+// supplies no Config.DatabaseExecutorOptions factory also inherits the base
+// embedder and inference manager here. Database-scoped executor configuration
+// itself comes from the host factory (bolt.Config.DatabaseExecutorOptions,
+// wired to the HTTP server by runServe).
 func (e *DBQueryExecutor) BaseCypherExecutor() *cypher.StorageExecutor {
 	if e == nil || e.db == nil {
 		return nil
 	}
 	return e.db.GetCypherExecutor()
-}
-
-// ConfigureDatabaseExecutor applies production runtime wiring to a DB-scoped
-// executor created by protocol adapters (for example Bolt multi-database
-// sessions), keeping behavior aligned with HTTP/GraphQL execution paths.
-func (e *DBQueryExecutor) ConfigureDatabaseExecutor(exec *cypher.StorageExecutor, dbName string, storageEngine storage.Engine) {
-	if e == nil || e.db == nil || exec == nil {
-		return
-	}
-	if baseExec := e.db.GetCypherExecutor(); baseExec != nil {
-		exec.ShareQueryStatisticsFrom(baseExec)
-		exec.ShareEmbedderFrom(baseExec)
-		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
-			exec.SetInferenceManager(inferMgr)
-		}
-		// NornicDB issue #563 defect 1: this is the sole wiring point for
-		// every Bolt database-scoped executor (pkg/bolt/server.go's
-		// newDatabaseScopedCypherExecutor calls it via the
-		// databaseExecutorConfigurator interface). Without it, every Bolt
-		// query — with or without an explicit database — logs to
-		// io.Discard and never emits a slow_query record, matching the gap
-		// newTxScopedExecutor below already closes for tx-scoped executors.
-		exec.SetLogger(baseExec.Logger())
-		exec.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
-	}
-	if searchSvc, err := e.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
-		exec.SetSearchService(searchSvc)
-	}
-	if q := e.db.GetEmbedQueue(); q != nil {
-		exec.SetNodeMutatedCallback(func(nodeID string) {
-			q.Enqueue(nodeID)
-		})
-	}
 }
 
 // Execute runs a Cypher query against the database.
@@ -1736,7 +1751,7 @@ http_port: 7474
 	return nil
 }
 
-func runShell(cmd *cobra.Command, args []string) error {
+func runShell(cmd *cobra.Command, args []string) (runErr error) {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 
 	// Open database
@@ -1744,11 +1759,11 @@ func runShell(cmd *cobra.Command, args []string) error {
 	config := nornicdb.DefaultConfig()
 	config.Database.DataDir = dataDir
 
-	db, err := nornicdb.Open(dataDir, config)
+	db, err := openCommandDB(dataDir, config)
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
-	defer db.Close()
+	defer func() { runErr = compose.Outcomes(runErr, db.Close()) }()
 
 	executor := db.GetCypherExecutor()
 	if executor == nil {
@@ -1780,31 +1795,29 @@ func runShell(cmd *cobra.Command, args []string) error {
 		result, err := executor.Execute(ctx, query, nil)
 		if err != nil {
 			commandPrintln(cmd, localization.NornicDBCLIShellQueryFailed())
+			if nornicerrors.HasStatusDiagnostic(err) {
+				diagnostic := nornicerrors.AppendStatusDiagnostics(err, "", func(message localization.Message) string {
+					return cli.Render(commandLocalizer(cmd), message)
+				})
+				cmd.Println(strings.TrimPrefix(diagnostic, "\n"))
+			}
 			continue
 		}
 
 		// Display results
 		if len(result.Columns) > 0 {
-			displayColumns := make([]string, len(result.Columns))
-			for i, col := range result.Columns {
-				displayColumns[i] = shellDisplayColumn(col)
-			}
 			// Print header
-			cmd.Println(strings.Join(displayColumns, " | "))
-			cmd.Println(strings.Repeat("-", len(strings.Join(displayColumns, " | "))))
+			header := strings.Join(result.Columns, " | ")
+			cmd.Println(header)
+			cmd.Println(strings.Repeat("-", len(header)))
 
 			// Print rows
 			for _, row := range result.Rows {
 				values := make([]string, len(row))
 				for i, v := range row {
-					column := ""
-					if i < len(result.Columns) {
-						column = result.Columns[i]
-					}
-					values[i] = shellDisplayValue(column, v)
+					values[i] = fmt.Sprintf("%v", v)
 				}
-				// lgtm[go/clear-text-logging] -- interactive local output is intentional;
-				// shellDisplayValue redacts values for sensitive column names.
+				// lgtm[go/clear-text-logging] -- render caller-owned query results faithfully.
 				cmd.Println(strings.Join(values, " | "))
 			}
 			cmd.Println()
@@ -1823,21 +1836,7 @@ func runShell(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func shellDisplayColumn(name string) string {
-	if observability.IsSensitiveFieldName(name) {
-		return observability.RedactedPlaceholder()
-	}
-	return name
-}
-
-func shellDisplayValue(column string, value interface{}) string {
-	if observability.IsSensitiveFieldName(column) {
-		return observability.RedactedPlaceholder()
-	}
-	return fmt.Sprintf("%v", value)
-}
-
-func runDecaySuppress(cmd *cobra.Command, args []string) error {
+func runDecaySuppress(cmd *cobra.Command, args []string) (runErr error) {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	threshold, _ := cmd.Flags().GetFloat64("threshold")
 
@@ -1846,18 +1845,18 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 	cfg.Database.DataDir = dataDir
 	cfg.Memory.DecayEnabled = true
 
-	db, err := nornicdb.Open(dataDir, cfg)
+	db, err := openCommandDB(dataDir, cfg)
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
-	defer db.Close()
+	defer func() { runErr = compose.Outcomes(runErr, db.Close()) }()
 
 	be := unwrapBadgerEngine(db.GetBaseStorageForManager())
 	if be == nil {
 		return newCommandError(cmd, localization.NornicDBCLIDecaySuppressStorage(), nil)
 	}
 
-	nodes, err := db.GetStorage().AllNodes()
+	nodes, err := db.GetStorage().AllNodes(cmd.Context())
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLILoadNodesFailed(err), err)
 	}
@@ -1867,7 +1866,7 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 
 	var newlySuppressed, alreadySuppressed, aboveThreshold int
 	for _, node := range nodes {
-		if node.VisibilitySuppressed {
+		if node.RuntimeMetadata().VisibilitySuppressed {
 			alreadySuppressed++
 			continue
 		}
@@ -1881,8 +1880,8 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 		}
 
 		var accessMeta *knowledgepolicy.AccessMetaEntry
-		if meta, metaErr := be.GetAccessMeta(entityID); metaErr == nil {
-			accessMeta = meta
+		if result, metaErr := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: entityID}); metaErr == nil {
+			accessMeta = result.Entry
 		}
 
 		res := scorer.ScoreNode(
@@ -1891,7 +1890,7 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 		)
 
 		if res.FinalScore < threshold {
-			becameSuppressed, err := be.EnqueueDeindexIfSuppressed(entityID, false)
+			becameSuppressed, err := be.EnqueueDeindexIfSuppressed(cmd.Context(), entityID, false)
 			if err != nil {
 				commandPrintln(cmd, localization.NornicDBCLIDecaySuppressWarning(string(node.ID), err))
 				continue
@@ -1915,7 +1914,7 @@ func applySuppressionCounters(becameSuppressed bool, newlySuppressed, alreadySup
 	*alreadySuppressed++
 }
 
-func runDecayStats(cmd *cobra.Command, args []string) error {
+func runDecayStats(cmd *cobra.Command, args []string) (runErr error) {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 
 	commandPrintln(cmd, localization.NornicDBCLIDecayOpening(dataDir))
@@ -1923,18 +1922,18 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 	cfg.Database.DataDir = dataDir
 	cfg.Memory.DecayEnabled = true
 
-	db, err := nornicdb.Open(dataDir, cfg)
+	db, err := openCommandDB(dataDir, cfg)
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
-	defer db.Close()
+	defer func() { runErr = compose.Outcomes(runErr, db.Close()) }()
 
 	be := unwrapBadgerEngine(db.GetBaseStorageForManager())
 	if be == nil {
 		return newCommandError(cmd, localization.NornicDBCLIDecayStatsStorage(), nil)
 	}
 
-	nodes, err := db.GetStorage().AllNodes()
+	nodes, err := db.GetStorage().AllNodes(cmd.Context())
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLILoadNodesFailed(err), err)
 	}
@@ -1954,7 +1953,7 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 	labelStats := make(map[string]struct{ count, suppressed int })
 
 	for _, node := range nodes {
-		if node.VisibilitySuppressed {
+		if node.RuntimeMetadata().VisibilitySuppressed {
 			suppressed++
 		}
 
@@ -1968,8 +1967,8 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 		}
 
 		var accessMeta *knowledgepolicy.AccessMetaEntry
-		if meta, metaErr := be.GetAccessMeta(entityID); metaErr == nil {
-			accessMeta = meta
+		if result, metaErr := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: entityID}); metaErr == nil {
+			accessMeta = result.Entry
 		}
 
 		res := scorer.ScoreNode(

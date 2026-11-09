@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -62,14 +63,13 @@ func buildMVCCSearchFixture(tb testing.TB, nodeCount, historyDepth, dimensions i
 	// into per-version MVCC records. The head-only default (NewMemoryEngine)
 	// overwrites in place and the pruner has nothing to reclaim — which is
 	// exactly what a test asserting `deleted > 0` needs to exercise.
-	engine := storage.NewMemoryEngineWithMVCCHistory()
-	tb.Cleanup(func() { _ = engine.Close() })
+	engine := fixtureowner.Own(tb, fixtureowner.Track(tb, storage.NewMemoryEngineWithMVCCHistory(), storage.ErrStorageClosed))
 
 	ctx := context.Background()
 	for nodeIndex := 0; nodeIndex < nodeCount; nodeIndex++ {
 		nodeID := storage.NodeID(fmt.Sprintf("bench:search-mvcc-%05d", nodeIndex))
 		vector := benchSearchEmbedding(dimensions, nodeIndex)
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(ctx, &storage.Node{
 			ID:              nodeID,
 			Labels:          []string{"Document"},
 			Properties:      map[string]any{"title": fmt.Sprintf("document-%05d-v0", nodeIndex), "rank": nodeIndex},
@@ -79,18 +79,18 @@ func buildMVCCSearchFixture(tb testing.TB, nodeCount, historyDepth, dimensions i
 			tb.Fatal(err)
 		}
 		for version := 1; version < historyDepth; version++ {
-			if err := engine.UpdateNode(&storage.Node{
+			if err := engine.UpdateNode(ctx, storage.NodeUpdateRequest{After: &storage.Node{
 				ID:              nodeID,
 				Labels:          []string{"Document"},
 				Properties:      map[string]any{"title": fmt.Sprintf("document-%05d-v%d", nodeIndex, version), "rank": nodeIndex, "version": version},
 				ChunkEmbeddings: [][]float32{vector},
-			}); err != nil {
+			}}); err != nil {
 				tb.Fatal(err)
 			}
 		}
 	}
 
-	svc := NewServiceWithDimensions(engine, dimensions)
+	svc := NewService(engine, dimensions, nil)
 	if err := svc.BuildIndexes(ctx); err != nil {
 		tb.Fatal(err)
 	}
@@ -104,9 +104,11 @@ func buildMVCCSearchFixture(tb testing.TB, nodeCount, historyDepth, dimensions i
 		if err != nil {
 			tb.Fatal(err)
 		}
+		svc.pipelineMu.Lock()
 		svc.indexMu.Lock()
 		svc.applyTransitionSwapLocked(strategyModeHNSW, hnswIndex, vi, vfs)
 		svc.indexMu.Unlock()
+		svc.pipelineMu.Unlock()
 		if svc.currentPipelineStrategy() != strategyModeHNSW {
 			tb.Fatalf("expected HNSW strategy, got %s", svc.currentPipelineStrategy())
 		}

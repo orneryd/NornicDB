@@ -2,6 +2,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"log/slog"
 	"sync"
@@ -22,7 +24,6 @@ type writeConflictBarrier struct {
 	once    sync.Once
 }
 
-func (h *writeConflictBarrier) Enabled(context.Context, slog.Level) bool { return true }
 func (h *writeConflictBarrier) Handle(ctx context.Context, record slog.Record) error {
 	if record.Message != "transaction committing with metadata" {
 		return nil
@@ -44,8 +45,6 @@ func (h *writeConflictBarrier) Handle(ctx context.Context, record slog.Record) e
 	}
 	return nil
 }
-func (h *writeConflictBarrier) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *writeConflictBarrier) WithGroup(string) slog.Handler      { return h }
 
 func TestTransactionEdgeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 	for _, highPerformance := range []bool{false, true} {
@@ -61,17 +60,17 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 	for _, scenario := range []string{"peer_updates_edge", "peer_deletes_edge"} {
 		t.Run(scenario, func(t *testing.T) {
 			barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-			engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(barrier)})
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(runtimeFixtureOwner.RawLogHandler(barrier.Handle))}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-			writer, err := engine.BeginTransaction()
+			writer, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = writer.Rollback() })
-			edge, err := writer.GetEdge(edgeID)
+			edge, err := writer.GetEdge(t.Context(), edgeID)
 			require.NoError(t, err)
 			edge.Properties = map[string]interface{}{"writer": "stale"}
-			require.NoError(t, writer.UpdateEdge(edge))
+			require.NoError(t, writer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 			require.NoError(t, writer.SetMetadata(map[string]interface{}{"validation_publication_control": true}))
 			barrier.target = writer.ID
 			var release sync.Once
@@ -86,16 +85,16 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("writer did not reach post-validation metadata barrier")
 			}
-			peer, err := engine.BeginTransaction()
+			peer, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = peer.Rollback() })
 			if scenario == "peer_updates_edge" {
-				edge, err := peer.GetEdge(edgeID)
+				edge, err := peer.GetEdge(t.Context(), edgeID)
 				require.NoError(t, err)
 				edge.Properties = map[string]interface{}{"writer": "peer"}
-				require.NoError(t, peer.UpdateEdge(edge))
+				require.NoError(t, peer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 			} else {
-				require.NoError(t, peer.DeleteEdge(edgeID))
+				require.NoError(t, peer.DeleteEdge(t.Context(), edgeID))
 			}
 			require.NoError(t, peer.Commit())
 			unblock()
@@ -105,12 +104,12 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("writer did not finish after peer publication")
 			}
-			reader, err := engine.BeginTransaction()
+			reader, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = reader.Rollback() })
-			_, err = reader.GetNode(source)
+			_, err = reader.GetNode(t.Context(), source)
 			require.NoError(t, err, "failed writer must not remove the source node")
-			edge, err = reader.GetEdge(edgeID)
+			edge, err = reader.GetEdge(t.Context(), edgeID)
 			if scenario == "peer_updates_edge" {
 				require.NoError(t, err)
 				require.Equal(t, "peer", edge.Properties["writer"])
@@ -123,14 +122,14 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 
 func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *testing.T) {
 	barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: true, Logger: slog.New(barrier)})
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: true, Logger: slog.New(runtimeFixtureOwner.RawLogHandler(barrier.Handle))}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-	writer, err := engine.BeginTransaction()
+	writer, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = writer.Rollback() })
-	require.NoError(t, writer.DeleteNode(source))
+	require.NoError(t, writer.DeleteGraphNode(t.Context(), source, CascadeEdges))
 	require.NoError(t, writer.SetMetadata(map[string]interface{}{"validation_publication_control": true}))
 	barrier.target = writer.ID
 	var release sync.Once
@@ -145,13 +144,13 @@ func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *te
 	case <-time.After(5 * time.Second):
 		t.Fatal("writer did not reach post-validation metadata barrier")
 	}
-	peer, err := engine.BeginTransaction()
+	peer, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
-	edge, err := peer.GetEdge(edgeID)
+	edge, err := peer.GetEdge(t.Context(), edgeID)
 	require.NoError(t, err)
 	edge.Properties = map[string]interface{}{"writer": "peer"}
-	require.NoError(t, peer.UpdateEdge(edge))
+	require.NoError(t, peer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 	require.NoError(t, peer.Commit())
 	unblock()
 	select {
@@ -160,12 +159,12 @@ func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *te
 	case <-time.After(5 * time.Second):
 		t.Fatal("writer did not finish after peer publication")
 	}
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
-	_, err = reader.GetNode(source)
+	_, err = reader.GetNode(t.Context(), source)
 	assert.NoError(t, err, "failed writer must not remove the source node")
-	edge, err = reader.GetEdge(edgeID)
+	edge, err = reader.GetEdge(t.Context(), edgeID)
 	require.NoError(t, err)
 	require.Equal(t, "peer", edge.Properties["writer"])
 }

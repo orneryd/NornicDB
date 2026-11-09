@@ -2,64 +2,70 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-type revealScopeKey struct{}
-
-type revealScopeState struct {
+// executionReadScope binds the live storage read lease to its issued executor
+// and transaction storage, just as composite membership and mode observation do.
+// A procedure's fresh context must not recursively acquire its owner's mutex.
+// scopes is the opaque lease handle captured from the owner's actual context, so
+// the bound executor keeps no request context of its own.
+type executionReadScope struct {
+	scopes storage.RevealScopes
 	engine *storage.BadgerEngine
+	reveal bool
+}
+
+func (e *StorageExecutor) executionReadScopeOf() *executionReadScope {
+	scope := e.readScope
+	if scope == nil {
+		if wrapper := membershipOfStorage(e.storage).storage; wrapper != nil {
+			scope = wrapper.readScope.Load()
+		}
+	}
+	if scope != nil && scope.engine == e.propertyDecayEngine {
+		return scope
+	}
+	return nil
+}
+
+func (e *StorageExecutor) bindExecutionReadScope(ctx context.Context) (*StorageExecutor, func()) {
+	scopes := storage.QueryRevealScopes(ctx)
+	reveal, owned := scopes.Mode(e.storage)
+	if !owned {
+		return e, func() {}
+	}
+	bound := e.cloneWithStorage(e.storage)
+	bound.readScope = &executionReadScope{scopes: scopes, engine: unwrapBadgerEngine(e.storage), reveal: reveal}
+	if wrapper, ok := bound.storage.(*transactionStorageWrapper); ok {
+		previous := wrapper.readScope.Swap(bound.readScope)
+		return bound, func() { wrapper.readScope.Store(previous) }
+	}
+	return bound, func() {}
 }
 
 // hasRevealCall detects the presence of reveal(...) in the query text.
 func hasRevealCall(query string) bool {
 	for index := 0; index < len(query); {
-		switch query[index] {
-		case '\'', '"':
-			quote := query[index]
-			index++
-			for index < len(query) {
-				if query[index] == quote && !isBackslashEscaped(query, index) {
-					index++
-					break
-				}
-				index++
-			}
+		if end, skipped := skipCypherLexicalToken(query, index); skipped {
+			index = end
 			continue
-		case '`':
-			index++
-			for index < len(query) {
-				if query[index] == '`' {
-					if index+1 < len(query) && query[index+1] == '`' {
-						index += 2
-						continue
-					}
-					index++
-					break
-				}
-				index++
-			}
-			continue
-		case '/':
-			if end := queryCommentEnd(query, index); end >= 0 {
-				index = end
-				continue
-			}
 		}
 
-		name, next, ok := scanIdentifierToken(query, index)
+		name, ok := cyphertext.ScanIdentifier(query, index)
 		if !ok {
 			index++
 			continue
 		}
-		if isRevealFunctionName(name) && (index == 0 || query[index-1] != '.') {
-			cursor := queryGapEnd(query, next)
+		if isRevealFunctionName(name.Value) && (index == 0 || query[index-1] != '.') {
+			cursor := queryGapEnd(query, name.End)
 			if cursor < len(query) && query[cursor] == '(' {
 				return true
 			}
 		}
-		index = next
+		index = name.End
 	}
 	return false
 }
@@ -81,17 +87,17 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 	if be == nil {
 		return ctx, func() {}, nil
 	}
-	if scope, ok := ctx.Value(revealScopeKey{}).(*revealScopeState); ok && scope.engine == be {
+	if _, owned := storage.QueryRevealScopes(ctx).Mode(eng); owned {
 		return ctx, func() {}, nil
 	}
 	failure, hasFailure := ctx.Value(expressionFailureKey{}).(*expressionFailure)
 	if hasFailure {
 		failure.mu.Lock()
 		activeEngine := failure.readScopeEngine
-		activeContext := failure.readScopeContext
+		activeScopes := failure.readScopes
 		failure.mu.Unlock()
 		if activeEngine == be {
-			return storage.InheritQueryRevealScopes(ctx, activeContext), func() {}, nil
+			return storage.InheritQueryRevealScopes(ctx, activeScopes), func() {}, nil
 		}
 	}
 	ctx, cleanup := storage.BeginQueryRevealScopeContext(ctx, eng, reveal)
@@ -100,7 +106,7 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 		activeEngine := failure.readScopeEngine
 		if activeEngine == nil {
 			failure.readScopeEngine = be
-			failure.readScopeContext = ctx
+			failure.readScopes = storage.QueryRevealScopes(ctx)
 			failure.mu.Unlock()
 			return ctx, cleanup, be
 		}
@@ -110,7 +116,6 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 			return ctx, func() {}, nil
 		}
 	}
-	ctx = context.WithValue(ctx, revealScopeKey{}, &revealScopeState{engine: be})
 	return ctx, cleanup, nil
 }
 
@@ -125,7 +130,7 @@ func clearRevealScope(ctx context.Context, engine *storage.BadgerEngine) {
 	failure.mu.Lock()
 	if failure.readScopeEngine == engine {
 		failure.readScopeEngine = nil
-		failure.readScopeContext = nil
+		failure.readScopes = storage.RevealScopes{}
 	}
 	failure.mu.Unlock()
 }

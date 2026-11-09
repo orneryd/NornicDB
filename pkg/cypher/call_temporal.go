@@ -1,10 +1,12 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -59,7 +61,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 		return nil, err
 	}
 
-	nodes, err := temporalNodesByLabel(e.storage, label, snapshotVersion, hasSnapshot)
+	nodes, err := temporalNodesByLabel(ctx, e.storage, label, snapshotVersion, hasSnapshot)
 	if err != nil {
 		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
@@ -84,7 +86,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"ok"},
+		Columns: columnNames(dbTemporalAssertNoOverlapColumns),
 		Rows:    [][]interface{}{{true}},
 	}, nil
 }
@@ -130,19 +132,19 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 	}
 
 	if temporalLookup, ok := e.storage.(storage.TemporalLookupEngine); ok && !hasSnapshot {
-		node, err := temporalLookup.GetTemporalNodeAsOf(label, keyProp, keyValue, validFromProp, validToProp, asOf)
+		node, err := temporalLookup.GetTemporalNodeAsOf(ctx, label, keyProp, keyValue, validFromProp, validToProp, asOf)
 		if err != nil {
 			return nil, localizedError(localization.CypherSpecializedCallsTemporalLookupFailed(label, err), err)
 		}
 		if node != nil {
 			return &ExecuteResult{
-				Columns: []string{"node"},
+				Columns: columnNames(nodeColumns),
 				Rows:    [][]interface{}{{node}},
 			}, nil
 		}
 	}
 
-	nodes, err := temporalNodesByLabel(e.storage, label, snapshotVersion, hasSnapshot)
+	nodes, err := temporalNodesByLabel(ctx, e.storage, label, snapshotVersion, hasSnapshot)
 	if err != nil {
 		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
@@ -150,6 +152,11 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 	var bestNode interface{}
 	var bestStart time.Time
 	for _, node := range nodes {
+		// The label read honors this caller context too; checking here keeps a
+		// canceled caller from walking the nodes it already materialized.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if node == nil {
 			continue
 		}
@@ -178,13 +185,13 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 
 	if bestNode == nil {
 		return &ExecuteResult{
-			Columns: []string{"node"},
+			Columns: columnNames(nodeColumns),
 			Rows:    [][]interface{}{},
 		}, nil
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"node"},
+		Columns: columnNames(nodeColumns),
 		Rows:    [][]interface{}{{bestNode}},
 	}, nil
 }
@@ -231,39 +238,26 @@ func coerceOptionalMVCCVersion(args []interface{}) (storage.MVCCVersion, bool, e
 }
 
 func coerceUint64Arg(val interface{}, name string) (uint64, error) {
-	switch v := val.(type) {
-	case int:
-		if v < 0 {
-			return 0, localizedError(localization.CypherSpecializedCallsUnsignedNonNegative(name), nil)
-		}
-		return uint64(v), nil
-	case int64:
-		if v < 0 {
-			return 0, localizedError(localization.CypherSpecializedCallsUnsignedNonNegative(name), nil)
-		}
-		return uint64(v), nil
-	case float64:
-		if v < 0 || v != float64(uint64(v)) {
+	if unsigned, ok := valueconvert.ToUint64(val, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat|valueconvert.IntegerStrings|valueconvert.IntegerTrimStrings); ok {
+		return unsigned, nil
+	}
+	if number, numeric := valueconvert.ReadNumber(val); numeric {
+		if number.Kind() == valueconvert.FloatNumber {
 			return 0, localizedError(localization.CypherSpecializedCallsUnsignedWholeNonNegative(name), nil)
 		}
-		return uint64(v), nil
-	case string:
-		parsed, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
-		if err != nil {
-			return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
+		if signed, ok := number.Signed(); ok && signed < 0 {
+			return 0, localizedError(localization.CypherSpecializedCallsUnsignedNonNegative(name), nil)
 		}
-		return parsed, nil
-	default:
-		return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
 	}
+	return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
 }
 
-func temporalNodesByLabel(engine storage.Engine, label string, version storage.MVCCVersion, hasSnapshot bool) ([]*storage.Node, error) {
+func temporalNodesByLabel(ctx context.Context, engine storage.Engine, label string, version storage.MVCCVersion, hasSnapshot bool) ([]*storage.Node, error) {
 	if !hasSnapshot {
-		return engine.GetNodesByLabel(label)
+		return engine.GetNodesByLabel(ctx, label)
 	}
 	if provider, ok := engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(label, version)
+		return provider.GetNodesByLabelVisibleAt(ctx, label, version)
 	}
 	return nil, storage.ErrNotImplemented
 }

@@ -6,8 +6,8 @@ import (
 )
 
 func TestTransaction_SetMetadata(t *testing.T) {
-	engine := NewMemoryEngine()
-	tx, _ := engine.BeginTransaction()
+	engine := newTestMemoryEngine(t)
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// Set metadata
 	metadata := map[string]interface{}{
@@ -36,8 +36,8 @@ func TestTransaction_SetMetadata(t *testing.T) {
 }
 
 func TestTransaction_SetMetadata_Merge(t *testing.T) {
-	engine := NewMemoryEngine()
-	tx, _ := engine.BeginTransaction()
+	engine := newTestMemoryEngine(t)
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// Set initial metadata
 	tx.SetMetadata(map[string]interface{}{
@@ -64,8 +64,8 @@ func TestTransaction_SetMetadata_Merge(t *testing.T) {
 }
 
 func TestTransaction_SetMetadata_TooLarge(t *testing.T) {
-	engine := NewMemoryEngine()
-	tx, _ := engine.BeginTransaction()
+	engine := newTestMemoryEngine(t)
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// Create metadata > 2048 chars
 	largeString := strings.Repeat("x", 2100)
@@ -84,8 +84,8 @@ func TestTransaction_SetMetadata_TooLarge(t *testing.T) {
 }
 
 func TestTransaction_SetMetadata_ClosedTransaction(t *testing.T) {
-	engine := NewMemoryEngine()
-	tx, _ := engine.BeginTransaction()
+	engine := newTestMemoryEngine(t)
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// Commit transaction
 	tx.Commit()
@@ -98,8 +98,8 @@ func TestTransaction_SetMetadata_ClosedTransaction(t *testing.T) {
 }
 
 func TestTransaction_GetMetadata_Copy(t *testing.T) {
-	engine := NewMemoryEngine()
-	tx, _ := engine.BeginTransaction()
+	engine := newTestMemoryEngine(t)
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	tx.SetMetadata(map[string]interface{}{
 		"app": "test",
@@ -117,8 +117,8 @@ func TestTransaction_GetMetadata_Copy(t *testing.T) {
 }
 
 func TestTransaction_Commit_LogsMetadata(t *testing.T) {
-	engine := NewMemoryEngine()
-	tx, _ := engine.BeginTransaction()
+	engine := newTestMemoryEngine(t)
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// Set metadata
 	tx.SetMetadata(map[string]interface{}{
@@ -131,7 +131,7 @@ func TestTransaction_Commit_LogsMetadata(t *testing.T) {
 		ID:     NodeID(prefixTestID("test-node")),
 		Labels: []string{"Test"},
 	}
-	tx.CreateNode(node)
+	tx.CreateNode(t.Context(), node)
 
 	// Commit should log metadata (check console output)
 	err := tx.Commit()
@@ -140,7 +140,7 @@ func TestTransaction_Commit_LogsMetadata(t *testing.T) {
 	}
 
 	// Verify node was created
-	retrieved, err := engine.GetNode(NodeID(prefixTestID("test-node")))
+	retrieved, err := engine.GetNode(t.Context(), NodeID(prefixTestID("test-node")))
 	if err != nil {
 		t.Errorf("Node should exist after commit: %v", err)
 	}
@@ -150,8 +150,8 @@ func TestTransaction_Commit_LogsMetadata(t *testing.T) {
 }
 
 func TestTransaction_Metadata_EmptyByDefault(t *testing.T) {
-	engine := NewMemoryEngine()
-	tx, _ := engine.BeginTransaction()
+	engine := newTestMemoryEngine(t)
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	metadata := tx.GetMetadata()
 	if len(metadata) != 0 {
@@ -160,8 +160,8 @@ func TestTransaction_Metadata_EmptyByDefault(t *testing.T) {
 }
 
 func TestTransaction_Metadata_WithOperations(t *testing.T) {
-	engine := NewMemoryEngine()
-	tx, _ := engine.BeginTransaction()
+	engine := newTestMemoryEngine(t)
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// Set metadata before operations
 	tx.SetMetadata(map[string]interface{}{
@@ -178,7 +178,7 @@ func TestTransaction_Metadata_WithOperations(t *testing.T) {
 				"index": i,
 			},
 		}
-		tx.CreateNode(node)
+		tx.CreateNode(t.Context(), node)
 	}
 
 	// Commit with metadata
@@ -191,7 +191,7 @@ func TestTransaction_Metadata_WithOperations(t *testing.T) {
 	count := 0
 	for i := 0; i < 5; i++ {
 		nodeID := NodeID(prefixTestID("node-" + string(rune('0'+i))))
-		if _, err := engine.GetNode(nodeID); err == nil {
+		if _, err := engine.GetNode(t.Context(), nodeID); err == nil {
 			count++
 		}
 	}

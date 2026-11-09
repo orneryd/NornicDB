@@ -94,7 +94,7 @@ func TestBoltDisconnectCancelsAndCleansInFlightBegin(t *testing.T) {
 			server := New(&Config{
 				Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192,
 			}, fixedSessionExecutorFactory{QueryExecutor: executor})
-			port := startBoltTestServer(t, server)
+			port := serveBoltIntegrationServer(t, server)
 			conn := openBoltTestConn(t, port)
 			require.NoError(t, SendBegin(t, conn, nil))
 			select {
@@ -120,7 +120,7 @@ func TestBoltDisconnectAfterSuccessfulBeginRollsBackExactlyOnce(t *testing.T) {
 	server := New(&Config{
 		Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192,
 	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, nil)
 	require.NoError(t, conn.Close())
@@ -136,7 +136,7 @@ func TestBoltDisconnectAfterSuccessfulBeginRollsBackExactlyOnce(t *testing.T) {
 func TestBoltResetCancellationKeepsConnectionContextReusable(t *testing.T) {
 	executor := &resetReusableExecutor{started: make(chan struct{}), canceled: make(chan struct{})}
 	server := New(&Config{Port: 0, MaxConnections: 8}, executor)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 
 	require.NoError(t, SendRun(t, conn, "RETURN 1", nil, nil))

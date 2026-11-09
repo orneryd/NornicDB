@@ -2,7 +2,7 @@
 //
 // These executors implement specialized algorithms that are significantly faster
 // than generic traversal for certain query patterns. Each executor is designed
-// for a specific pattern detected by DetectQueryPattern(ctx, ).
+// for a specific pattern detected by DetectQueryPattern(ctx).
 //
 // Performance characteristics:
 //   - MutualRelationship: O(E) instead of O(N * D²)
@@ -14,6 +14,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strings"
 
@@ -25,20 +26,71 @@ import (
 func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, patternInfo PatternInfo) (*ExecuteResult, bool) {
 	switch patternInfo.Pattern {
 	case PatternMutualRelationship:
-		result, err := e.executeMutualRelationshipOptimized(ctx, query, patternInfo)
-		if err == nil {
-			return result, true
-		}
-		// Fall through to generic on error
+		// Parse RETURN clause to get actual column names/aliases
+		returnItems := e.extractReturnItemsFromQuery(ctx, query)
+		columns := e.buildColumnsFromReturnItems(returnItems)
 
-	case PatternIncomingCountAgg:
-		result, err := e.executeIncomingCountOptimized(ctx, query, patternInfo)
-		if err == nil {
-			return result, true
+		result := &ExecuteResult{
+			Columns: columns,
+			Rows:    [][]interface{}{},
+			Stats:   &QueryStats{},
 		}
 
-	case PatternOutgoingCountAgg:
-		result, err := e.executeOutgoingCountOptimized(ctx, query, patternInfo)
+		// Get edges by type directly (MUCH faster than AllEdges + filter)
+		// This uses the edge type index for O(edges_of_type) instead of O(all_edges)
+		edgeList, err := e.storage.GetEdgesByType(ctx, patternInfo.RelType)
+		if err != nil {
+			return nil, false
+		}
+
+		// Build edge set for O(1) reverse lookup
+		edgeSet := make(map[string]bool, len(edgeList))
+		for _, edge := range edgeList {
+			key := string(edge.StartNode) + ":" + string(edge.EndNode)
+			edgeSet[key] = true
+		}
+
+		// Find mutual pairs: for each edge A→B, check if B→A exists
+		seenPairs := make(map[string]bool) // Avoid duplicates
+		nodeCache := make(map[storage.NodeID]*storage.Node)
+
+		for _, edge := range edgeList {
+			reverseKey := string(edge.EndNode) + ":" + string(edge.StartNode)
+			if edgeSet[reverseKey] {
+				// Found mutual relationship!
+				// Use ordered pair to avoid duplicates (smaller ID first)
+				var pairKey string
+				if edge.StartNode < edge.EndNode {
+					pairKey = string(edge.StartNode) + ":" + string(edge.EndNode)
+				} else {
+					pairKey = string(edge.EndNode) + ":" + string(edge.StartNode)
+				}
+
+				if !seenPairs[pairKey] {
+					seenPairs[pairKey] = true
+
+					// Get node properties
+					startNode := e.getNodeCached(ctx, edge.StartNode, nodeCache)
+					endNode := e.getNodeCached(ctx, edge.EndNode, nodeCache)
+
+					if startNode != nil && endNode != nil {
+						startName := e.getPropertyString(startNode, "name")
+						endName := e.getPropertyString(endNode, "name")
+						result.Rows = append(result.Rows, []interface{}{startName, endName})
+					}
+				}
+			}
+		}
+
+		// Apply LIMIT from pattern info
+		if patternInfo.Limit > 0 && len(result.Rows) > patternInfo.Limit {
+			result.Rows = result.Rows[:patternInfo.Limit]
+		}
+
+		return result, true
+
+	case PatternIncomingCountAgg, PatternOutgoingCountAgg:
+		result, err := e.executeRelationshipCountOptimized(ctx, query, patternInfo)
 		if err == nil {
 			return result, true
 		}
@@ -59,85 +111,14 @@ func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, pa
 }
 
 // =============================================================================
-// Mutual Relationship Optimization
-// Pattern: (a)-[:TYPE]->(b)-[:TYPE]->(a)
-// Algorithm: Single pass - build edge set, then find reverse pairs
-// =============================================================================
-
-func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
-	// Parse RETURN clause to get actual column names/aliases
-	returnItems := e.extractReturnItemsFromQuery(query)
-	columns := e.buildColumnsFromReturnItems(returnItems)
-
-	result := &ExecuteResult{
-		Columns: columns,
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-
-	// Get edges by type directly (MUCH faster than AllEdges + filter)
-	// This uses the edge type index for O(edges_of_type) instead of O(all_edges)
-	edgeList, err := e.storage.GetEdgesByType(info.RelType)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build edge set for O(1) reverse lookup
-	edgeSet := make(map[string]bool, len(edgeList))
-	for _, edge := range edgeList {
-		key := string(edge.StartNode) + ":" + string(edge.EndNode)
-		edgeSet[key] = true
-	}
-
-	// Find mutual pairs: for each edge A→B, check if B→A exists
-	seenPairs := make(map[string]bool) // Avoid duplicates
-	nodeCache := make(map[storage.NodeID]*storage.Node)
-
-	for _, edge := range edgeList {
-		reverseKey := string(edge.EndNode) + ":" + string(edge.StartNode)
-		if edgeSet[reverseKey] {
-			// Found mutual relationship!
-			// Use ordered pair to avoid duplicates (smaller ID first)
-			var pairKey string
-			if edge.StartNode < edge.EndNode {
-				pairKey = string(edge.StartNode) + ":" + string(edge.EndNode)
-			} else {
-				pairKey = string(edge.EndNode) + ":" + string(edge.StartNode)
-			}
-
-			if !seenPairs[pairKey] {
-				seenPairs[pairKey] = true
-
-				// Get node properties
-				startNode := e.getNodeCached(edge.StartNode, nodeCache)
-				endNode := e.getNodeCached(edge.EndNode, nodeCache)
-
-				if startNode != nil && endNode != nil {
-					startName := e.getPropertyString(startNode, "name")
-					endName := e.getPropertyString(endNode, "name")
-					result.Rows = append(result.Rows, []interface{}{startName, endName})
-				}
-			}
-		}
-	}
-
-	// Apply LIMIT from pattern info
-	if info.Limit > 0 && len(result.Rows) > info.Limit {
-		result.Rows = result.Rows[:info.Limit]
-	}
-
-	return result, nil
-}
-
-// =============================================================================
-// Incoming Count Aggregation Optimization
-// Pattern: MATCH (x)<-[:TYPE]-(y) RETURN x.prop, count(y)
+// Relationship Count Aggregation Optimization
+// Pattern: MATCH (x)<-[:TYPE]-(y) or (x)-[:TYPE]->(y), grouping by x
 // Algorithm: Single pass through all edges, build count map
 // =============================================================================
 
-func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeRelationshipCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
 	// Parse RETURN clause to get actual column names/aliases
-	returnItems := e.extractReturnItemsFromQuery(query)
+	returnItems := e.extractReturnItemsFromQuery(ctx, query)
 	columns := e.buildColumnsFromReturnItems(returnItems)
 
 	result := &ExecuteResult{
@@ -147,18 +128,23 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 	}
 
 	// Get all edges
-	allEdges, err := e.storage.AllEdges()
+	allEdges, err := e.storage.AllEdges(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build count map: EndNode → count of incoming edges of this type
-	incomingCount := make(map[storage.NodeID]int64)
+	// Both directed count patterns share aggregation, ordering and projection;
+	// only the grouped endpoint differs.
+	counts := make(map[storage.NodeID]int64)
 	relType := info.RelType
 
 	for _, edge := range allEdges {
 		if relType == "" || edge.Type == relType {
-			incomingCount[edge.EndNode]++
+			nodeID := edge.EndNode
+			if info.Pattern == PatternOutgoingCountAgg {
+				nodeID = edge.StartNode
+			}
+			counts[nodeID]++
 		}
 	}
 
@@ -167,8 +153,8 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 		nodeID storage.NodeID
 		count  int64
 	}
-	rows := make([]countRow, 0, len(incomingCount))
-	for nodeID, count := range incomingCount {
+	rows := make([]countRow, 0, len(counts))
+	for nodeID, count := range counts {
 		rows = append(rows, countRow{nodeID: nodeID, count: count})
 	}
 
@@ -187,75 +173,7 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 	nodeCache := make(map[storage.NodeID]*storage.Node)
 	for i := 0; i < limit; i++ {
 		row := rows[i]
-		node := e.getNodeCached(row.nodeID, nodeCache)
-		if node != nil {
-			name := e.getPropertyString(node, "name")
-			result.Rows = append(result.Rows, []interface{}{name, row.count})
-		}
-	}
-
-	return result, nil
-}
-
-// =============================================================================
-// Outgoing Count Aggregation Optimization
-// Pattern: MATCH (x)-[:TYPE]->(y) RETURN x.prop, count(y)
-// Algorithm: Single pass through all edges, build count map
-// =============================================================================
-
-func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
-	// Parse RETURN clause to get actual column names/aliases
-	returnItems := e.extractReturnItemsFromQuery(query)
-	columns := e.buildColumnsFromReturnItems(returnItems)
-
-	result := &ExecuteResult{
-		Columns: columns,
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-
-	// Get all edges
-	allEdges, err := e.storage.AllEdges()
-	if err != nil {
-		return nil, err
-	}
-
-	// Build count map: StartNode → count of outgoing edges of this type
-	outgoingCount := make(map[storage.NodeID]int64)
-	relType := info.RelType
-
-	for _, edge := range allEdges {
-		if relType == "" || edge.Type == relType {
-			outgoingCount[edge.StartNode]++
-		}
-	}
-
-	// Convert to result rows
-	type countRow struct {
-		nodeID storage.NodeID
-		count  int64
-	}
-	rows := make([]countRow, 0, len(outgoingCount))
-	for nodeID, count := range outgoingCount {
-		rows = append(rows, countRow{nodeID: nodeID, count: count})
-	}
-
-	// Sort by count descending
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].count > rows[j].count
-	})
-
-	// Apply LIMIT
-	limit := len(rows)
-	if info.Limit > 0 && info.Limit < limit {
-		limit = info.Limit
-	}
-
-	// Build result with node properties
-	nodeCache := make(map[storage.NodeID]*storage.Node)
-	for i := 0; i < limit; i++ {
-		row := rows[i]
-		node := e.getNodeCached(row.nodeID, nodeCache)
+		node := e.getNodeCached(ctx, row.nodeID, nodeCache)
 		if node != nil {
 			name := e.getPropertyString(node, "name")
 			result.Rows = append(result.Rows, []interface{}{name, row.count})
@@ -291,7 +209,7 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	}
 
 	// Get all edges
-	allEdges, err := e.storage.AllEdges()
+	allEdges, err := e.storage.AllEdges(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -307,15 +225,8 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 		}
 
 		// Convert to float64
-		var numVal float64
-		switch v := propVal.(type) {
-		case float64:
-			numVal = v
-		case int64:
-			numVal = float64(v)
-		case int:
-			numVal = float64(v)
-		default:
+		numVal, numeric := valueconvert.NumericFloat64(propVal)
+		if !numeric {
 			continue
 		}
 
@@ -339,7 +250,7 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	}
 
 	// Build columns from RETURN clause (respects aliases)
-	returnItems := e.extractReturnItemsFromQuery(query)
+	returnItems := e.extractReturnItemsFromQuery(ctx, query)
 	result.Columns = e.buildColumnsFromReturnItems(returnItems)
 
 	// Convert to result rows
@@ -371,7 +282,7 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	nodeCache := make(map[storage.NodeID]*storage.Node)
 	for i := 0; i < limit; i++ {
 		row := rows[i]
-		node := e.getNodeCached(row.nodeID, nodeCache)
+		node := e.getNodeCached(ctx, row.nodeID, nodeCache)
 		if node == nil {
 			continue
 		}
@@ -402,31 +313,22 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 // =============================================================================
 
 // extractReturnItemsFromQuery extracts RETURN items from a Cypher query
-func (e *StorageExecutor) extractReturnItemsFromQuery(query string) []returnItem {
-	returnIdx := findKeywordIndex(query, "RETURN")
+func (e *StorageExecutor) extractReturnItemsFromQuery(ctx context.Context, query string) []returnItem {
+	returnIdx := findKeywordIndex(ctx, query, "RETURN")
 	if returnIdx == -1 {
 		return nil
 	}
 
 	returnPart := strings.TrimSpace(query[returnIdx+6:])
-	return e.parseReturnItems(returnPart)
-}
-
-// buildColumnsFromReturnItems builds column names from parsed return items
-func (e *StorageExecutor) buildColumnsFromReturnItems(items []returnItem) []string {
-	columns := make([]string, len(items))
-	for i, item := range items {
-		columns[i] = item.column()
-	}
-	return columns
+	return e.parseReturnItems(ctx, returnPart)
 }
 
 // getNodeCached retrieves a node, using cache to avoid repeated lookups
-func (e *StorageExecutor) getNodeCached(id storage.NodeID, cache map[storage.NodeID]*storage.Node) *storage.Node {
+func (e *StorageExecutor) getNodeCached(ctx context.Context, id storage.NodeID, cache map[storage.NodeID]*storage.Node) *storage.Node {
 	if node, exists := cache[id]; exists {
 		return node
 	}
-	node, err := e.storage.GetNode(id)
+	node, err := e.getQueryNode(ctx, e.storage, id)
 	if err != nil {
 		return nil
 	}
@@ -447,12 +349,28 @@ func (e *StorageExecutor) getPropertyString(node *storage.Node, prop string) str
 
 // BatchGetNodes retrieves multiple nodes in a single operation
 // Used for large result set optimization
-func (e *StorageExecutor) BatchGetNodes(ids []storage.NodeID) map[storage.NodeID]*storage.Node {
+func (e *StorageExecutor) BatchGetNodes(ctx context.Context, ids []storage.NodeID) map[storage.NodeID]*storage.Node {
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
+	}
 	result := make(map[storage.NodeID]*storage.Node, len(ids))
 	for _, id := range ids {
-		if node, err := e.storage.GetNode(id); err == nil && node != nil {
+		node, err := e.storage.GetNode(ctx, id)
+		if err != nil {
+			if canceled := ctx.Err(); canceled != nil {
+				recordExpressionFailure(ctx, canceled)
+				return nil
+			}
+			continue
+		}
+		if node != nil {
 			result[id] = node
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
 	}
 	return result
 }

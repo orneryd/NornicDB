@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -14,7 +16,7 @@ import (
 // pipeline (see validateNoResidualRelationships), which must complete
 // before any validation or mutation so a multi-row, multi-variable DELETE
 // (e.g. "DELETE a, r") can be judged as a whole statement.
-func collectDeleteMutationTargets(matchResult *ExecuteResult) (nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) {
+func collectDeleteMutationTargets(store storage.Engine, matchResult *ExecuteResult) (nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) {
 	seenNodes := make(map[string]struct{}, len(matchResult.Rows))
 	seenEdges := make(map[string]struct{}, len(matchResult.Rows))
 	nodeIDs = make([]storage.NodeID, 0, len(matchResult.Rows))
@@ -22,15 +24,33 @@ func collectDeleteMutationTargets(matchResult *ExecuteResult) (nodeIDs []storage
 
 	for _, row := range matchResult.Rows {
 		for _, val := range row {
-			collectDeleteTargetValue(val, seenNodes, seenEdges, &nodeIDs, &edgeIDs)
+			collectDeleteTargetValue(store, val, seenNodes, seenEdges, &nodeIDs, &edgeIDs)
 		}
 	}
 
 	return nodeIDs, edgeIDs
 }
 
-func collectDeleteTargetValue(value interface{}, seenNodes, seenEdges map[string]struct{}, nodeIDs *[]storage.NodeID, edgeIDs *[]storage.EdgeID) {
+func collectDeleteTargetValue(store storage.Engine, value interface{}, seenNodes, seenEdges map[string]struct{}, nodeIDs *[]storage.NodeID, edgeIDs *[]storage.EdgeID) {
 	target := classifyDeleteTargetValue(value)
+	switch entity := value.(type) {
+	case *storage.Node:
+		if entity != nil {
+			id, ok := entity.Identity().NodeLookupID(store)
+			if !ok {
+				return
+			}
+			target.nodeID = id
+		}
+	case *storage.Edge:
+		if entity != nil {
+			id, ok := entity.Identity().LookupID(store, "5")
+			if !ok {
+				return
+			}
+			target.edgeID = storage.EdgeID(id)
+		}
+	}
 	switch target.kind {
 	case deleteProjectionRelationship:
 		key := string(target.edgeID)
@@ -51,26 +71,26 @@ func collectDeleteTargetValue(value interface{}, seenNodes, seenEdges map[string
 	switch typed := value.(type) {
 	case PathResult:
 		for _, node := range typed.Nodes {
-			collectDeleteTargetValue(node, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(store, node, seenNodes, seenEdges, nodeIDs, edgeIDs)
 		}
 		for _, edge := range typed.Relationships {
-			collectDeleteTargetValue(edge, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(store, edge, seenNodes, seenEdges, nodeIDs, edgeIDs)
 		}
 	case *PathResult:
 		if typed != nil {
-			collectDeleteTargetValue(*typed, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(store, *typed, seenNodes, seenEdges, nodeIDs, edgeIDs)
 		}
 	case []interface{}:
 		for _, item := range typed {
-			collectDeleteTargetValue(item, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(store, item, seenNodes, seenEdges, nodeIDs, edgeIDs)
 		}
 	case map[string]interface{}:
 		if path, ok := typed["_pathResult"]; ok {
-			collectDeleteTargetValue(path, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(store, path, seenNodes, seenEdges, nodeIDs, edgeIDs)
 			return
 		}
 		for _, item := range typed {
-			collectDeleteTargetValue(item, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(store, item, seenNodes, seenEdges, nodeIDs, edgeIDs)
 		}
 	}
 }
@@ -104,27 +124,15 @@ func isDeleteTargetValue(value interface{}) bool {
 }
 
 func hasTopLevelDeleteLabelQualifier(expression string) bool {
+	expression = strings.TrimSpace(expression)
 	depth := 0
-	quote := rune(0)
-	escaped := false
-	for _, character := range strings.TrimSpace(expression) {
-		if quote != 0 {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if character == '\\' && quote != '`' {
-				escaped = true
-				continue
-			}
-			if character == quote {
-				quote = 0
-			}
+	for index := 0; index < len(expression); index++ {
+		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
+			index = end - 1
 			continue
 		}
+		character := expression[index]
 		switch character {
-		case '\'', '"', '`':
-			quote = character
 		case '(', '[', '{':
 			depth++
 		case ')', ']', '}':
@@ -149,30 +157,27 @@ func deleteExpressionRootIdentifier(expression string) string {
 	if expression == "" {
 		return ""
 	}
-	// The name is read by the one identifier rule (scanIdentifierToken):
+	// The name is read by the one identifier rule (cyphertext.ScanIdentifier):
 	// n$ and `a``b` are variables too.
-	name, end, ok := scanIdentifierToken(expression, 0)
-	if !ok || (end < len(expression) && expression[end] == '(') {
+	name, ok := cyphertext.ScanIdentifier(expression, 0)
+	if !ok || (name.End < len(expression) && expression[name.End] == '(') {
 		return ""
 	}
-	if expression[0] != '`' {
-		switch lowerASCII(name) {
+	if !strings.HasPrefix(expression, "`") {
+		switch lowerASCII(name.Value) {
 		case "null", "true", "false":
 			return ""
 		}
 	}
-	return name
+	return name.Value
 }
 
-func addPipelinePatternBindings(executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
-	pattern := strings.TrimSpace(clause)
-	if len(pattern) >= len(keyword) && strings.EqualFold(pattern[:len(keyword)], keyword) {
-		pattern = strings.TrimSpace(pattern[len(keyword):])
-	}
-	if where := findKeywordIndexInContext(pattern, "WHERE"); where >= 0 {
+func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
+	pattern := pipelineClauseBody(clause, keyword)
+	if where := findKeywordIndexInContext(ctx, pattern, "WHERE"); where >= 0 {
 		pattern = strings.TrimSpace(pattern[:where])
 	}
-	for _, variable := range executor.extractVariableNamesFromPattern(pattern) {
+	for _, variable := range executor.extractVariableNamesFromPattern(ctx, pattern) {
 		if variable != "" {
 			scope[variable] = struct{}{}
 		}
@@ -194,7 +199,7 @@ func extractPathAssignmentVariable(pattern string) string {
 		if isPatternVariableName(candidate) && (strings.HasPrefix(right, "(") ||
 			matchFuncStartAndSuffix(right, "shortestpath") ||
 			matchFuncStartAndSuffix(right, "allshortestpaths")) {
-			return candidate
+			return normalizeProjectionColumnName(candidate)
 		}
 	}
 	return ""
@@ -207,46 +212,6 @@ func appendUniquePipelineBinding(bindings []string, binding string) []string {
 		}
 	}
 	return append(bindings, binding)
-}
-
-func pipelineProjectionScope(previous map[string]struct{}, clause string) map[string]struct{} {
-	body := strings.TrimSpace(clause)
-	if len(body) >= len("WITH") && strings.EqualFold(body[:len("WITH")], "WITH") {
-		body = strings.TrimSpace(body[len("WITH"):])
-	}
-	if where := findKeywordIndexInContext(body, "WHERE"); where >= 0 {
-		body = strings.TrimSpace(body[:where])
-	}
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := findKeywordIndexInContext(body, keyword); index >= 0 {
-			body = strings.TrimSpace(body[:index])
-		}
-	}
-	body, _ = cutDistinct(body)
-	next := make(map[string]struct{})
-	for _, item := range splitTopLevelComma(body) {
-		if strings.TrimSpace(item) == "*" {
-			for name := range previous {
-				next[name] = struct{}{}
-			}
-			continue
-		}
-		_, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		if alias != "" {
-			next[alias] = struct{}{}
-		}
-	}
-	return next
-}
-
-func pipelineUnwindAlias(clause string) string {
-	if _, alias, ok := parsePipelineIteration(clause); ok {
-		return normalizeProjectionColumnName(alias)
-	}
-	if index := findKeywordIndexInContext(clause, "AS"); index >= 0 {
-		return strings.TrimSpace(clause[index+len("AS"):])
-	}
-	return ""
 }
 
 // validateNoResidualRelationships enforces openCypher/Neo4j DELETE
@@ -264,10 +229,14 @@ func pipelineUnwindAlias(clause string) string {
 // same statement is also deleting that edge (e.g.
 // "MATCH (a)-[r]->(b) DELETE a, r"); edgeIDs holds every edge this
 // statement is about to remove, so those are subtracted before the check.
-func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
+//
+// The check is a bulk read that runs before the statement is accepted, so it
+// carries the request's own context: a canceled or expired request stops the
+// read and fails the statement instead of running it to completion.
+func validateNoResidualRelationships(ctx context.Context, store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
 	beingDeleted := deletingEdgeSet(edgeIDs)
 	for _, nodeID := range nodeIDs {
-		connected, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
+		connected, err := nodeHasResidualRelationships(ctx, store, nodeID, beingDeleted)
 		if err != nil {
 			return err
 		}
@@ -283,11 +252,11 @@ func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.Nod
 // deletes them for now, and the transaction's commit fails unless a later
 // clause deletes those relationships, as in Neo4j
 // (storage.ConnectedNodeDeleter).
-func connectedDeleteTargets(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
+func connectedDeleteTargets(ctx context.Context, store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
 	beingDeleted := deletingEdgeSet(edgeIDs)
 	var connected map[storage.NodeID]struct{}
 	for _, nodeID := range nodeIDs {
-		residual, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
+		residual, err := nodeHasResidualRelationships(ctx, store, nodeID, beingDeleted)
 		if err != nil {
 			return nil, err
 		}
@@ -310,27 +279,36 @@ func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
 }
 
 // nodeHasResidualRelationships reports whether a relationship other than
-// those beingDeleted connects nodeID.
-func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
-	outgoing, err := store.GetOutgoingEdges(nodeID)
+// those beingDeleted connects nodeID (connectingRelationships).
+func nodeHasResidualRelationships(ctx context.Context, store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+	connecting, err := connectingRelationships(ctx, store, nodeID)
 	if err != nil {
 		return false, err
 	}
-	for _, edge := range outgoing {
-		if _, deleting := beingDeleted[edge.ID]; !deleting {
-			return true, nil
-		}
-	}
-	incoming, err := store.GetIncomingEdges(nodeID)
-	if err != nil {
-		return false, err
-	}
-	for _, edge := range incoming {
-		if _, deleting := beingDeleted[edge.ID]; !deleting {
+	for _, edge := range connecting {
+		if _, deleting := beingDeleted[deleteEdgeLookupID(store, edge)]; !deleting {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// connectingRelationships returns the relationships that connect nodeID for
+// a DELETE: those DETACH DELETE removes with the node, and those that keep a
+// non-DETACH DELETE from removing it. A store that lists the relationships the
+// visibility layer hides (storage.IncidentEdgeLister: a transaction) lists
+// them too, since the node's delete removes them all the same; without them a
+// non-DETACH DELETE removed a node whose only relationships were hidden, as
+// in Neo4j it fails with DeleteConnectedNode for any relationship. Stores run
+// without a transaction (composite and remote databases) list what their
+// reads return. Both routes are bulk reads the statement runs before it is
+// accepted, so ctx is the request's: the caller's cancellation stops the list
+// (native or fallback) rather than being replaced by a background lifetime.
+func connectingRelationships(ctx context.Context, store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	if lister, ok := store.(storage.IncidentEdgeLister); ok {
+		return lister.IncidentEdges(ctx, nodeID)
+	}
+	return undirectedIncidentEdges(ctx, store, nodeID)
 }
 
 // residualRelationshipDeleteError builds the error returned when a
@@ -350,18 +328,20 @@ func residualRelationshipDeleteError(nodeID storage.NodeID) error {
 // staticDeleteTargetTypeError keeps known non-entity values as compile-time
 // errors, while widened UNWIND map elements remain runtime checks. Strings
 // and lists retain the existing NornicDB DELETE extensions.
-func staticDeleteTargetTypeError(clause string, scope staticTypeScope) error {
+func staticDeleteTargetTypeError(ctx context.Context, clause string, scope staticTypeScope) error {
 	targets, _, _ := deleteClauseTargets(clause)
 	// Undefined targets retain the existing DELETE scope error owner.
 	scope.complete = false
 	checker := staticOperatorChecker{scope: scope}
 	for _, target := range targets {
-		operand, err := checker.check(strings.TrimSpace(target))
+		operand, err := checker.check(ctx, strings.TrimSpace(target))
 		if err != nil {
 			return err
 		}
-		if operand.known() && operand.bindingKind() == matchBindingValue && operand.kind != "String" && !operand.list() {
-			return typeNameMismatchError("Node, Path or Relationship", operand.kind)
+		// A string target is NornicDB's DELETE-by-id extension, and a list
+		// deletes its elements: reject a target none of whose types is one.
+		if operand.excludes(isDeleteTargetTypeName) {
+			return typeNameMismatchError("Node, Path or Relationship", operand.typeName())
 		}
 	}
 	return nil

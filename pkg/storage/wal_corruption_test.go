@@ -7,6 +7,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/json"
 	"hash/crc32"
 	"os"
@@ -162,7 +164,7 @@ func TestWALDetectsCorruptedChecksum(t *testing.T) {
 	file.Close()
 
 	// Read should fail on corrupted entry
-	_, err = ReadWALEntries(walPath)
+	_, err = ReadWALEntries(t.Context(), walPath, nil)
 	if err == nil {
 		t.Error("Expected error reading WAL with corrupted entry, got nil")
 	}
@@ -202,16 +204,17 @@ func TestWALSkipsCorruptedEmbeddingEntries(t *testing.T) {
 		},
 	}
 
-	// Write entries
-	file, _ := os.Create(walPath)
-	encoder := json.NewEncoder(file)
+	// Write current-format frames while retaining the entry checksums above.
+	var frames []byte
 	for _, entry := range entries {
-		encoder.Encode(&entry)
+		frames = append(frames, buildAtomicWALRecord(t, entry)...)
 	}
-	file.Close()
+	if err := os.WriteFile(walPath, frames, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Read should skip corrupted embedding entry and return valid entries
-	result, err := ReadWALEntries(walPath)
+	result, err := ReadWALEntries(t.Context(), walPath, nil)
 	if err != nil {
 		t.Fatalf("Should skip corrupted embedding, got error: %v", err)
 	}
@@ -228,7 +231,7 @@ func TestWALSkipsCorruptedEmbeddingEntries(t *testing.T) {
 
 // TestReplayResultTracking verifies ReplayResult correctly tracks outcomes.
 func TestReplayResultTracking(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 
 	// Create test entries
 	node1 := &Node{ID: "n1", Labels: []string{"Test"}}
@@ -239,11 +242,15 @@ func TestReplayResultTracking(t *testing.T) {
 	entries := []WALEntry{
 		{Sequence: 1, Operation: OpCreateNode, Data: node1Data},
 		{Sequence: 2, Operation: OpCreateNode, Data: node2Data},
-		{Sequence: 3, Operation: OpCheckpoint, Data: []byte("{}")}, // Should skip
-		{Sequence: 4, Operation: OpCreateNode, Data: node1Data},    // Duplicate - should skip
+		{Sequence: 3, Operation: OpCheckpoint, Data: []byte("{}")},       // Should skip
+		{Sequence: 4, Operation: OpCreateNode, Data: node1Data},          // Duplicate - should skip
+		{Sequence: 5, Operation: OpCreateNode, Data: []byte("{corrupt")}, // Must retain the unexpected failure
 	}
 
-	result := ReplayWALEntries(engine, entries)
+	result := ReplayResult{Errors: make([]ReplayError, 0)}
+	for _, entry := range entries {
+		result.Record(entry, ReplayWALEntry(t.Context(), engine, entry))
+	}
 
 	if result.Applied != 2 {
 		t.Errorf("Expected 2 applied, got %d", result.Applied)
@@ -251,8 +258,17 @@ func TestReplayResultTracking(t *testing.T) {
 	if result.Skipped != 2 {
 		t.Errorf("Expected 2 skipped (checkpoint + duplicate), got %d", result.Skipped)
 	}
-	if result.Failed != 0 {
-		t.Errorf("Expected 0 failed, got %d", result.Failed)
+	if result.Failed != 1 {
+		t.Errorf("Expected 1 unexpected failure, got %d", result.Failed)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("Expected exact corrupt-entry error, got %+v", result.Errors)
+	}
+	if result.Errors[0].Sequence != 5 || result.Errors[0].Operation != OpCreateNode || result.Errors[0].Error == nil {
+		t.Fatalf("Unexpected failure lost its provenance: %+v", result.Errors[0])
+	}
+	if !result.HasCriticalErrors() {
+		t.Fatal("corrupt entry must remain a critical replay failure")
 	}
 }
 
@@ -319,16 +335,17 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 		{Sequence: 2, Operation: OpCreateEdge, Data: edgeData, Checksum: crc32Checksum(edgeData), Database: "test"},
 	}
 
-	// Write entries
-	file, _ := os.Create(walPath)
-	encoder := json.NewEncoder(file)
+	// Write current-format frames while retaining the entry checksums above.
+	var frames []byte
 	for _, entry := range entries {
-		encoder.Encode(&entry)
+		frames = append(frames, buildAtomicWALRecord(t, entry)...)
 	}
-	file.Close()
+	if err := os.WriteFile(walPath, frames, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Recovery should track results
-	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -340,7 +357,7 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 	}
 
 	// Check that we got a valid node
-	n, err := engine.GetNode("valid-node")
+	n, err := engine.GetNode(t.Context(), "valid-node")
 	if err != nil || n == nil {
 		t.Error("Valid node should have been recovered")
 	}
@@ -389,7 +406,7 @@ func TestWALEntryIntegrity(t *testing.T) {
 	wal.Close()
 
 	// Read back and verify
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"))
+	entries, err := ReadWALEntries(t.Context(), filepath.Join(dir, "wal.log"), nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}
@@ -407,7 +424,7 @@ func TestWALEntryIntegrity(t *testing.T) {
 
 		// Verify data can be deserialized
 		var data WALNodeData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			t.Errorf("Entry %d: failed to unmarshal: %v", i, err)
 		}
 		if data.Node.ID != nodes[i].ID {
@@ -442,7 +459,7 @@ func TestWALRecoveryFromCorruptTail(t *testing.T) {
 	file.Close()
 
 	// Reading should fail on the corrupt JSON
-	_, err := ReadWALEntries(walPath)
+	_, err := ReadWALEntries(t.Context(), walPath, nil)
 	if err == nil {
 		t.Error("Expected error on corrupt tail, got nil")
 	}

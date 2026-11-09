@@ -1,65 +1,67 @@
 package storage
 
 import (
+	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestBadgerEngine_PrefixStatsAreO1AndCorrect(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	_, err = engine.CreateNode(&Node{ID: "db1:n1"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "db1:n1"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "db1:n2"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "db1:n2"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "db2:n1"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "db2:n1"})
 	require.NoError(t, err)
 
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(3), count)
 
-	count, err = engine.NodeCountByPrefix("db1:")
+	count, err = engine.NodeCountByPrefix(context.Background(), "db1:")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), count)
 
-	count, err = engine.NodeCountByPrefix("db2:")
+	count, err = engine.NodeCountByPrefix(context.Background(), "db2:")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 
-	err = engine.DeleteNode("db1:n1")
+	err = engine.DeleteNode(t.Context(), "db1:n1")
 	require.NoError(t, err)
 
-	count, err = engine.NodeCountByPrefix("db1:")
+	count, err = engine.NodeCountByPrefix(context.Background(), "db1:")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "db1:n3"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "db1:n3"})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	count, err = engine.NodeCountByPrefix("db1:")
+	count, err = engine.NodeCountByPrefix(context.Background(), "db1:")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), count)
 }
 
 func TestBadgerEngine_EdgePrefixStatsAreCorrect_TransactionalAndNonTransactional(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	_, err = engine.CreateNode(&Node{ID: "db1:a"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "db1:a"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "db1:b"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "db1:b"})
 	require.NoError(t, err)
 
-	err = engine.CreateEdge(&Edge{
+	err = engine.CreateEdge(t.Context(), &Edge{
 		ID:        "db1:e1",
 		StartNode: "db1:a",
 		EndNode:   "db1:b",
@@ -67,13 +69,13 @@ func TestBadgerEngine_EdgePrefixStatsAreCorrect_TransactionalAndNonTransactional
 	})
 	require.NoError(t, err)
 
-	count, err := engine.EdgeCountByPrefix("db1:")
+	count, err := engine.EdgeCountByPrefix(context.Background(), "db1:")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID:        "db1:e2",
 		StartNode: "db1:a",
 		EndNode:   "db1:b",
@@ -81,32 +83,38 @@ func TestBadgerEngine_EdgePrefixStatsAreCorrect_TransactionalAndNonTransactional
 	}))
 	require.NoError(t, tx.Commit())
 
-	count, err = engine.EdgeCountByPrefix("db1:")
+	count, err = engine.EdgeCountByPrefix(context.Background(), "db1:")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), count)
 
-	require.NoError(t, engine.BulkDeleteEdges([]EdgeID{"db1:e1", "db1:e2"}))
+	require.NoError(t, engine.BulkDeleteEdges(t.Context(), []EdgeID{"db1:e1", "db1:e2"}))
 
-	count, err = engine.EdgeCountByPrefix("db1:")
+	count, err = engine.EdgeCountByPrefix(context.Background(), "db1:")
 	require.NoError(t, err)
 	require.Equal(t, int64(0), count)
 }
 
 func TestBadgerEngine_EdgeCountByPrefix_ClosedEngine(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
-	_, err = engine.EdgeCountByPrefix("db1:")
+	_, err = engine.EdgeCountByPrefix(context.Background(), "db1:")
 	require.ErrorIs(t, err, ErrStorageClosed)
 }
 
 func TestBadgerEngine_NodeCountByPrefix_ClosedEngine(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
-	_, err = engine.NodeCountByPrefix("db1:")
+	_, err = engine.NodeCountByPrefix(context.Background(), "db1:")
 	require.ErrorIs(t, err, ErrStorageClosed)
 }
 
@@ -114,7 +122,7 @@ func TestBadgerEngine_IterateNodes_EarlyStop(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
 	for i := 0; i < 5; i++ {
-		_, err := engine.CreateNode(&Node{
+		_, err := engine.CreateNode(t.Context(), &Node{
 			ID:         NodeID(prefixTestID(fmt.Sprintf("iter-n%d", i))),
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{},
@@ -132,7 +140,10 @@ func TestBadgerEngine_IterateNodes_EarlyStop(t *testing.T) {
 }
 
 func TestBadgerEngine_IterateNodes_ClosedEngine(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
@@ -147,22 +158,22 @@ func TestBadgerEngine_EdgeCountByPrefix_UncachedScan(t *testing.T) {
 	n1 := &Node{ID: "ns1:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
 	n2 := &Node{ID: "ns1:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}}
 	n3 := &Node{ID: "ns2:n3", Labels: []string{"A"}, Properties: map[string]interface{}{}}
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n3)
+	_, err = engine.CreateNode(t.Context(), n3)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "ns1:e1", StartNode: "ns1:n1", EndNode: "ns1:n2", Type: "R", Properties: map[string]interface{}{}}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "ns2:e2", StartNode: "ns1:n1", EndNode: "ns2:n3", Type: "R", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "ns1:e1", StartNode: "ns1:n1", EndNode: "ns1:n2", Type: "R", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "ns2:e2", StartNode: "ns1:n1", EndNode: "ns2:n3", Type: "R", Properties: map[string]interface{}{}}))
 
 	// Clear namespace cache to force a scan
 	engine.namespaceCountsMu.Lock()
 	delete(engine.namespaceEdgeCounts, "ns1:")
 	engine.namespaceCountsMu.Unlock()
 
-	count, err := engine.EdgeCountByPrefix("ns1:")
+	count, err := engine.EdgeCountByPrefix(context.Background(), "ns1:")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"testing"
@@ -14,7 +16,7 @@ import (
 // unlabelled 6; seven :Friend (one a self-loop on 1) and two :Likes.
 func countStoreGraph(t *testing.T) (*StorageExecutor, storage.Engine) {
 	t.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
@@ -132,10 +134,10 @@ func TestCountFromStoreSeesTransactionWrites(t *testing.T) {
 	require.NoError(t, err)
 	committed := exec.txContext.storageWrapper
 	require.NotNil(t, committed)
-	nodesBefore, err := committed.NodeCount()
+	nodesBefore, err := committed.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(6), nodesBefore)
-	edgesBefore, err := committed.EdgeCount()
+	edgesBefore, err := committed.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(9), edgesBefore)
 	_, err = exec.Execute(ctx, "MATCH (a:User {id: 1}), (x:Other {id: 4}) CREATE (a)-[:Friend]->(x), (x)-[:Friend]->(a), (:User {id: 7})-[:Friend]->(:Other {id: 8})", nil)
@@ -153,10 +155,10 @@ func TestCountFromStoreSeesTransactionWrites(t *testing.T) {
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
 	}
 	wrapper := exec.txContext.storageWrapper
-	nodes, err := wrapper.NodeCount()
+	nodes, err := wrapper.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(8), nodes)
-	edges, err := wrapper.EdgeCount()
+	edges, err := wrapper.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(12), edges)
 }
@@ -168,23 +170,32 @@ type failingCountEngine struct {
 
 var errCountStore = errors.New("counter unavailable")
 
-func (f failingCountEngine) EdgeCountByStartLabel(string, string) (int64, error) {
+func (f failingCountEngine) EdgeCountByStartLabel(ctx context.Context, _ string, _ string) (int64, error) {
 	return 0, errCountStore
 }
 
-func (f failingCountEngine) EdgeCountByEndLabel(string, string) (int64, error) {
+func (f failingCountEngine) EdgeCountByEndLabel(ctx context.Context, _ string, _ string) (int64, error) {
 	return 0, errCountStore
 }
 
-func (f failingCountEngine) NodeCountByLabel(string) (int64, error) { return 0, errCountStore }
+func (f failingCountEngine) NodeCountByLabel(context.Context, string) (int64, error) {
+	return 0, errCountStore
+}
 
-func (f failingCountEngine) AllEdges() ([]*storage.Edge, error) {
+// ReadCountStore forwards the label-presence probe: this engine fails
+// the counters it overrides, not the label counts that decide whether a counter
+// describes the read.
+func (f failingCountEngine) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	return storage.CountStoreRead{}, errCountStore
+}
+
+func (f failingCountEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	if f.nilEdges {
 		return []*storage.Edge{nil}, nil
 	}
 	return nil, errCountStore
 }
-func (f failingCountEngine) GetEdgesByType(string) ([]*storage.Edge, error) {
+func (f failingCountEngine) GetEdgesByType(ctx context.Context, _ string) ([]*storage.Edge, error) {
 	if f.nilEdges {
 		return []*storage.Edge{nil}, nil
 	}

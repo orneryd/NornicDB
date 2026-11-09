@@ -98,7 +98,7 @@ func (s *Service) composeBM25BuildSettings() string {
 	analyzer := analyzerFingerprint(s.bm25Analyzer).BuildSettings()
 	settings := fmt.Sprintf("schema=%s;format=%s;%s;props=%s",
 		bm25SettingsSchemaVersion,
-		s.currentBM25FormatVersion(),
+		bm25V2FormatVersion,
 		analyzer,
 		properties)
 	// The label allowlist joins the fingerprint only when set, so existing
@@ -111,21 +111,32 @@ func (s *Service) composeBM25BuildSettings() string {
 
 func (s *Service) composeVectorBuildSettings() string {
 	dimensions := s.VectorIndexDimensions()
-	return fmt.Sprintf("schema=%s;format=%s;dimensions=%d",
+	return fmt.Sprintf("schema=%s;format=%s;dimensions=%d;keys=%s",
 		vectorSettingsSchemaVersion,
 		vectorIndexFormatVersion,
-		dimensions)
+		dimensions, vectorEntryKeyFormat)
 }
 
-func (s *Service) composeHNSWBuildSettings() string {
+func (s *Service) composeHNSWBuildSettings() string { return hnswBuildSettings() }
+
+func (s *Service) composeRoutingBuildSettings() string { return routingBuildSettings() }
+
+// ivfHNSWGenerationSettings are the build settings a persisted IVF-HNSW
+// generation was built with (graph and routing/k-means settings); a
+// generation saved under other settings is not restored.
+func ivfHNSWGenerationSettings() string {
+	return hnswBuildSettings() + "|" + routingBuildSettings()
+}
+
+func hnswBuildSettings() string {
 	hcfg := HNSWConfigFromEnv()
-	return fmt.Sprintf("schema=%s;format=%s;m=%d;efc=%d;efs=%d;gpu_build=%t",
+	return fmt.Sprintf("schema=%s;format=%s;m=%d;efc=%d;efs=%d;gpu_build=%t;keys=%s",
 		hnswSettingsSchemaVersion,
 		hnswIndexFormatVersionGraphOnly,
-		hcfg.M, hcfg.EfConstruction, hcfg.EfSearch, hcfg.UseGPUBuild)
+		hcfg.M, hcfg.EfConstruction, hcfg.EfSearch, hcfg.UseGPUBuild, vectorEntryKeyFormat)
 }
 
-func (s *Service) composeRoutingBuildSettings() string {
+func routingBuildSettings() string {
 	maxIter := envutil.GetInt("NORNICDB_KMEANS_MAX_ITERATIONS", 5)
 	if maxIter < 5 {
 		maxIter = 5
@@ -139,9 +150,9 @@ func (s *Service) composeRoutingBuildSettings() string {
 	}
 	wSem := envFloat("NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM", 0.7)
 	wLex := envFloat("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX", 0.3)
-	return fmt.Sprintf("schema=%s;mode=%s;w_sem=%.4f;w_lex=%.4f;lex_profile=%s;kmeans_max_iter=%d",
+	return fmt.Sprintf("schema=%s;mode=%s;w_sem=%.4f;w_lex=%.4f;lex_profile=%s;kmeans_max_iter=%d;keys=%s",
 		routingSettingsSchemaVersion,
-		routingMode, wSem, wLex, routingSettingsSchemaVersion, maxIter)
+		routingMode, wSem, wLex, routingSettingsSchemaVersion, maxIter, vectorEntryKeyFormat)
 }
 
 func (s *Service) composeStrategyBuildSettings() string {
@@ -149,7 +160,7 @@ func (s *Service) composeStrategyBuildSettings() string {
 		return ""
 	}
 	s.mu.RLock()
-	dimensions := s.VectorIndexDimensions()
+	dimensions := s.activeVectorDimensions()
 	vectorCount := s.embeddingCountLocked()
 	vfsReady := s.vectorFileStore != nil && s.vectorFileStore.Count() > 0
 	s.mu.RUnlock()
@@ -172,19 +183,16 @@ func (s *Service) composeStrategyBuildSettings() string {
 		profile.RoutingMode)
 }
 
-func (s *Service) currentBM25FormatVersion() string {
-	if normalizeBM25Engine(s.bm25Engine) == BM25EngineV2 {
-		return bm25V2FormatVersion
-	}
-	return fulltextIndexFormatVersion
-}
-
 func (s *Service) persistSearchBuildSettings(fulltextPath, vectorPath, hnswPath string) {
+	if !s.populationCanPersist() {
+		return
+	}
 	path := searchBuildSettingsPath(fulltextPath, vectorPath, hnswPath)
 	if path == "" {
 		return
 	}
 	if err := saveSearchBuildSettings(path, s.currentSearchBuildSettings()); err != nil {
+		s.recordLifetimeOutcome("search build settings save", err)
 		logSearchPrintf("⚠️ Background persist: failed to save build settings metadata to %s: %v", path, err)
 	}
 }

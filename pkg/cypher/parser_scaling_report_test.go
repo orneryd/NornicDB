@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -130,11 +131,11 @@ func parserOp(parser, mode string) func(q string) error {
 				clear(c.shards[i].cache)
 				c.shards[i].mu.Unlock()
 			}
-			return e.validateSyntaxNornic(q)
+			return e.validateSyntax(context.Background(), q, false, syntaxNativeCore)
 		}
 	case "nornic/parse":
 		b := NewASTBuilder()
-		return func(q string) error { _, err := b.Build(q); return err }
+		return func(q string) error { _, err := b.Build(context.Background(), q); return err }
 	case "antlr/validate":
 		return antlrparser.Validate
 	case "antlr/parse":
@@ -197,7 +198,7 @@ func TestParserScaling(t *testing.T) {
 						continue
 					}
 					if parser == "nornic" && mode == "parse" {
-						if ast, err := NewASTBuilder().Build(q); err == nil {
+						if ast, err := NewASTBuilder().Build(t.Context(), q); err == nil {
 							row.Clauses = len(ast.Clauses)
 						}
 					}

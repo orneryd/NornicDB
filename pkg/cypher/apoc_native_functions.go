@@ -1,11 +1,13 @@
 package cypher
 
+// Author: Codex NOR-184 lane: immutable callable metadata preserves identity checks.
+
 import (
 	"context"
 	"reflect"
-	"runtime"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/apocmeta"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -14,39 +16,24 @@ import (
 // independent in-memory graph. Compatible explicitly registered handlers
 // retain precedence; this owner supplies the native-value fallback.
 func nativeAPOCFunctionCatalog() []cypherFunctionSpec {
-	var out []cypherFunctionSpec
-	add := func(name, result string, arguments ...ProcedureParam) {
-		out = append(out, cypherFunctionSpec{name: name, category: "APOC", signature: nativeAPOCSignature(name, result, arguments), arguments: arguments, listed: true, userDefined: true, description: "Operates on native query values in the current graph."})
+	var catalog []cypherFunctionSpec
+	for _, function := range apocmeta.NativeFunctions() {
+		var arguments []ProcedureParam
+		for _, argument := range function.Arguments {
+			arguments = append(arguments, ProcedureParam{Name: argument.Name, Type: argument.Type, Description: argument.Description, Default: argument.Default, Optional: argument.Optional, IsDeprecated: argument.IsDeprecated})
+		}
+		volatility := functionStable
+		if function.Volatile {
+			volatility = functionVolatile
+		}
+		catalog = append(catalog, cypherFunctionSpec{cacheVolatility: volatility, name: function.Name, category: function.Category, signature: function.Signature, description: function.Description, argumentDescriptions: function.ArgumentDescriptions, arguments: arguments, listed: true, userDefined: true})
 	}
-	node := ProcedureParam{Name: "node", Type: "NODE"}
-	rel := ProcedureParam{Name: "relationship", Type: "RELATIONSHIP"}
-	path := ProcedureParam{Name: "path", Type: "PATH"}
-	filter := ProcedureParam{Name: "relationshipFilter", Type: "STRING", Optional: true, Default: ""}
-	add("apoc.node.id", "STRING", node)
-	add("apoc.node.labels", "LIST<STRING>", node)
-	add("apoc.node.degree", "INTEGER", node, filter)
-	add("apoc.rel.id", "STRING", rel)
-	add("apoc.rel.type", "STRING", rel)
-	add("apoc.rel.startNode", "NODE", rel)
-	add("apoc.rel.endNode", "NODE", rel)
-	add("apoc.nodes.connected", "BOOLEAN", node, ProcedureParam{Name: "other", Type: "NODE"}, filter)
-	add("apoc.path.elements", "LIST<ANY>", path)
-	add("apoc.path.slice", "PATH", path, ProcedureParam{Name: "offset", Type: "INTEGER", Optional: true, Default: "0"}, ProcedureParam{Name: "length", Type: "INTEGER", Optional: true, Default: "-1"})
-	add("apoc.path.combine", "PATH", path, ProcedureParam{Name: "other", Type: "PATH"})
-	add("apoc.temporal.format", "STRING", ProcedureParam{Name: "input", Type: "ANY"}, ProcedureParam{Name: "format", Type: "STRING", Optional: true, Default: "yyyy-MM-dd"})
-	return out
+	return catalog
 }
 
-func isNativeAPOCFunction(name string) bool {
-	switch name {
-	case "apoc.node.id", "apoc.node.labels", "apoc.node.degree", "apoc.rel.id", "apoc.rel.type", "apoc.rel.startNode", "apoc.rel.endNode", "apoc.nodes.connected", "apoc.path.elements", "apoc.path.slice", "apoc.path.combine", "apoc.temporal.format":
-		return true
-	}
-	return false
-}
+func isNativeAPOCFunction(name string) bool { return apocmeta.IsNativeValue(name) }
 func nativeAPOCCaseMismatch(name string) bool {
-	lower := lowerASCII(name)
-	return (name != lower && isNativeAPOCFunction(lower)) || (lower == "apoc.rel.startnode" && name != "apoc.rel.startNode") || (lower == "apoc.rel.endnode" && name != "apoc.rel.endNode")
+	return apocmeta.IsNativeValueCaseMismatch(name)
 }
 func nativeAPOCCallFailure(name string, value interface{}) error {
 	return newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "ProcedureCallFailed", invalidFunctionArgument(name, value).Error())
@@ -91,13 +78,14 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		if name == "apoc.rel.type" {
 			builtin = "type"
 		}
-		v, _, err := cypherfn.EvaluateFunction(builtin, []string{"value"}, cypherfn.Context{Eval: func(string) (interface{}, error) { return value, nil }, Storage: e.storage, Database: e.executionDatabaseName(ctx)})
+		fnCtx := e.registryFunctionContext(ctx, func(string) (interface{}, error) { return value, nil })
+		v, _, err := cypherfn.EvaluateFunction(ctx, builtin, []string{"value"}, fnCtx)
 		if err != nil {
 			err = functionEvaluationError(err)
 		}
 		return v, true, err
 	case "apoc.rel.startNode", "apoc.rel.endNode":
-		v, err := e.relationshipEndpointValue(value, name == "apoc.rel.endNode")
+		v, err := e.relationshipEndpointValue(ctx, value, name == "apoc.rel.endNode")
 		return v, true, err
 	case "apoc.node.degree", "apoc.nodes.connected":
 		v, err := e.nativeAPOCAdjacency(ctx, name, args)
@@ -112,7 +100,7 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		}
 		return v, true, nil
 	case "apoc.path.slice", "apoc.path.combine":
-		v, err := e.nativeAPOCPath(name, args)
+		v, err := e.nativeAPOCPath(ctx, name, args)
 		return v, true, err
 	case "apoc.temporal.format":
 		v, err := nativeAPOCTemporalFormat(args)
@@ -167,7 +155,12 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 		}
 		return false
 	}
-	outgoing, incoming, err := incidentEdgeListsContext(ctx, e.storage, node.ID, "both")
+	store, err := e.graphFunctionStorage(e.databaseName(), e.getStorage(ctx))
+	if err != nil {
+		return nil, err
+	}
+	view := graphIdentityView(store)
+	outgoing, incoming, err := incidentEdgeListsContext(ctx, view, storage.NodeID(node.IdentityKey()), "both")
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +181,7 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 				if pair.direction == "in" {
 					other = edge.StartNode
 				}
-				if other == target.ID {
+				if other == storage.NodeID(target.IdentityKey()) {
 					return true, nil
 				}
 			} else {
@@ -203,7 +196,7 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 }
 
 // nativeAPOCPath preserves genuine typed local and remote path carriers.
-func (e *StorageExecutor) nativeAPOCPath(name string, args []interface{}) (interface{}, error) {
+func (e *StorageExecutor) nativeAPOCPath(ctx context.Context, name string, args []interface{}) (interface{}, error) {
 	if name == "apoc.path.combine" {
 		if args[0] == nil {
 			return args[1], nil
@@ -280,18 +273,7 @@ func (e *StorageExecutor) nativeAPOCPath(name string, args []interface{}) (inter
 			path.Relationships = append(path.Relationships, edge)
 		}
 	}
-	return e.pathToMap(path), nil
-}
-
-func nativeAPOCSignature(name, result string, arguments []ProcedureParam) string {
-	parts := make([]string, len(arguments))
-	for i, arg := range arguments {
-		parts[i] = arg.Name + " :: " + arg.Type
-		if arg.Optional {
-			parts[i] += " = " + arg.Default
-		}
-	}
-	return name + "(" + strings.Join(parts, ", ") + ") :: " + result
+	return e.pathToMapContext(ctx, path), nil
 }
 
 // APOC's standalone Go graph uses integer IDs and its own global store. It
@@ -299,19 +281,14 @@ func nativeAPOCSignature(name, result string, arguments []ProcedureParam) string
 // through reflection would invoke the foreign helper and panic instead of
 // applying the function's null contract. Native/custom compatible handlers
 // remain eligible for ordinary plugin precedence.
-func nativeAPOCForeignGraphHandler(name string, handler interface{}) bool {
+func nativeAPOCForeignGraphHandler(name string, handler *PluginFunctionHandler) bool {
 	if !isNativeAPOCFunction(name) {
 		return false
 	}
-	if name == "apoc.temporal.format" && handler != nil {
-		v := reflect.ValueOf(handler)
-		if v.Kind() == reflect.Func && !v.IsNil() {
-			if fn := runtime.FuncForPC(v.Pointer()); fn != nil && fn.Name() == "github.com/orneryd/nornicdb/apoc/temporal.Format" {
-				return true
-			}
-		}
+	if name == "apoc.temporal.format" && handler.Symbol() == "github.com/orneryd/nornicdb/apoc/temporal.Format" {
+		return true
 	}
-	typ := reflect.TypeOf(handler)
+	typ := handler.Signature()
 	if typ == nil || typ.Kind() != reflect.Func {
 		return false
 	}

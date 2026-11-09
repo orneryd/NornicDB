@@ -63,6 +63,18 @@ func namesFromRows(rows [][]interface{}) []string {
 	return names
 }
 
+// relExistenceNodeByName resolves one fixture node through the same statement
+// every direct-helper test reads it with, and fails loudly on a missing row.
+func relExistenceNodeByName(t *testing.T, ctx context.Context, exec *StorageExecutor, name string) *storage.Node {
+	t.Helper()
+	result, err := exec.Execute(ctx, `MATCH (n:Item {name: $name}) RETURN n`, map[string]interface{}{"name": name})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	node, ok := result.Rows[0][0].(*storage.Node)
+	require.True(t, ok, "expected *storage.Node, got %T", result.Rows[0][0])
+	return node
+}
+
 func TestBug_WhereBareRelExistencePattern(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -254,51 +266,38 @@ func TestBareRelDirection(t *testing.T) {
 	}
 }
 
-func TestEvaluateRelationshipPatternInWhere_BareDirected(t *testing.T) {
-	exec, base := setupRelExistenceFixture(t)
-	_ = base
-	ctx := context.Background()
-
-	getNodeByName := func(name string) *storage.Node {
-		result, err := exec.Execute(ctx, `MATCH (n:Item {name: $name}) RETURN n`, map[string]interface{}{"name": name})
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		node, ok := result.Rows[0][0].(*storage.Node)
-		require.True(t, ok, "expected *storage.Node, got %T", result.Rows[0][0])
-		return node
+func TestRelationshipPatternWherePublicBareDirected(t *testing.T) {
+	for _, parser := range apocAlgorithmParsers() {
+		t.Run(parser.name, func(t *testing.T) {
+			t.Cleanup(parser.setup())
+			exec, _ := setupRelExistenceFixture(t)
+			for _, tc := range []struct {
+				pattern, name string
+				want          int64
+			}{
+				{"(n)-->()", "connected", 1},
+				{"(n)-->()", "orphan", 0},
+				{"(n)-->()", "peer", 0},
+				{"(n)<--()", "peer", 1},
+				{"(n)<--()", "connected", 0},
+				{"(n)--()", "connected", 1},
+				{"(n)--()", "peer", 1},
+				{"(n)--()", "orphan", 0},
+			} {
+				result, err := exec.Execute(t.Context(), "MATCH (n:Item) WHERE n.name = $name AND "+tc.pattern+" RETURN count(n) AS c", map[string]interface{}{"name": tc.name})
+				require.NoError(t, err, tc.pattern)
+				require.Equal(t, [][]interface{}{{tc.want}}, result.Rows, "%s on %s", tc.pattern, tc.name)
+			}
+		})
 	}
-
-	connected := getNodeByName("connected")
-	orphan := getNodeByName("orphan")
-	peer := getNodeByName("peer")
-
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)-->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(orphan, "n", "(n)-->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)-->()"))
-
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)<--()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)<--()"))
-
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)--()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)--()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(orphan, "n", "(n)--()"))
 }
 
 func TestCheckSubqueryMatch_BareBody(t *testing.T) {
 	exec, _ := setupRelExistenceFixture(t)
 	ctx := context.Background()
 
-	getNodeByName := func(name string) *storage.Node {
-		result, err := exec.Execute(ctx, `MATCH (n:Item {name: $name}) RETURN n`, map[string]interface{}{"name": name})
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		node, ok := result.Rows[0][0].(*storage.Node)
-		require.True(t, ok)
-		return node
-	}
-
-	connected := getNodeByName("connected")
-	orphan := getNodeByName("orphan")
+	connected := relExistenceNodeByName(t, ctx, exec, "connected")
+	orphan := relExistenceNodeByName(t, ctx, exec, "orphan")
 	subqueryExists := func(node *storage.Node, body string) bool {
 		value, ok := exec.evaluateRowSubqueryValue(ctx, "EXISTS", body, map[string]interface{}{"n": node})
 		return ok && value == true
@@ -314,17 +313,8 @@ func TestCountSubqueryMatches_BareBody(t *testing.T) {
 	exec, _ := setupRelExistenceFixture(t)
 	ctx := context.Background()
 
-	getNodeByName := func(name string) *storage.Node {
-		result, err := exec.Execute(ctx, `MATCH (n:Item {name: $name}) RETURN n`, map[string]interface{}{"name": name})
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		node, ok := result.Rows[0][0].(*storage.Node)
-		require.True(t, ok)
-		return node
-	}
-
-	connected := getNodeByName("connected")
-	orphan := getNodeByName("orphan")
+	connected := relExistenceNodeByName(t, ctx, exec, "connected")
+	orphan := relExistenceNodeByName(t, ctx, exec, "orphan")
 
 	assert.Equal(t, int64(1), subqueryCount(t, exec, connected, "n", "(n)-->()"))
 	assert.Equal(t, int64(0), subqueryCount(t, exec, orphan, "n", "(n)-->()"))

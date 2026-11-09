@@ -18,7 +18,8 @@ func TestBug_CountAfterDeleteRecreate_FullStack(t *testing.T) {
 	defer db.Close()
 
 	// Get initial stats
-	initialStats := db.Stats()
+	initialStats, err := db.Stats(t.Context())
+	require.NoError(t, err)
 	t.Logf("Initial: nodes=%d, edges=%d", initialStats.NodeCount, initialStats.EdgeCount)
 
 	// Create nodes via Cypher
@@ -28,7 +29,9 @@ func TestBug_CountAfterDeleteRecreate_FullStack(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	stats1 := db.Stats()
+	stats1, err := db.Stats(t.Context())
+
+	require.NoError(t, err)
 	t.Logf("After CREATE: nodes=%d, edges=%d", stats1.NodeCount, stats1.EdgeCount)
 	assert.Equal(t, initialStats.NodeCount+5, stats1.NodeCount, "Should have 5 more nodes")
 
@@ -49,7 +52,9 @@ func TestBug_CountAfterDeleteRecreate_FullStack(t *testing.T) {
 	_, err = db.ExecuteCypher(ctx, "MATCH (n:BugTest) DELETE n", nil)
 	require.NoError(t, err)
 
-	stats2 := db.Stats()
+	stats2, err := db.Stats(t.Context())
+
+	require.NoError(t, err)
 	t.Logf("After DELETE: nodes=%d, edges=%d", stats2.NodeCount, stats2.EdgeCount)
 	assert.Equal(t, initialStats.NodeCount, stats2.NodeCount, "Should be back to initial count")
 
@@ -60,7 +65,9 @@ func TestBug_CountAfterDeleteRecreate_FullStack(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	stats3 := db.Stats()
+	stats3, err := db.Stats(t.Context())
+
+	require.NoError(t, err)
 	t.Logf("After RECREATE: nodes=%d, edges=%d", stats3.NodeCount, stats3.EdgeCount)
 	assert.Equal(t, initialStats.NodeCount+3, stats3.NodeCount, "Should have 3 more nodes after recreate")
 

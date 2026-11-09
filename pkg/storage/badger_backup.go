@@ -4,6 +4,7 @@ package storage
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"os"
@@ -19,10 +20,15 @@ import (
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
+	// Every write acknowledged before the backup is in it. A backup owns no
+	// request context, so it hands the explicit detached completion lifetime.
+	if err := b.FlushWriteBehind(context.Background()); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if b.closed {
+	if b.ensureOpenLocked(false) != nil {
 		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
 
@@ -73,35 +79,25 @@ var restoreReadDrainTimeout = 30 * time.Second
 // floors and sequence, schemas, caches, counts) is rebuilt from the restored
 // store before reads resume. The backfills then start again if the restored
 // store needs them.
-func (b *BadgerEngine) Restore(path string) error {
-	b.stopEdgeBetweenIndexBackfill()
-	b.stopLabelIndexBackfill()
-	restoreErr := b.restoreOffline(path)
-	return errors.Join(restoreErr, b.restartIndexBackfills())
-}
+func (b *BadgerEngine) Restore(path string) (restoreErr error) {
+	b.stopIndexBackfill(startupEdgeBetweenIndex)
+	b.stopIndexBackfill(startupLabelIndex)
+	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills()) }()
 
-// restartIndexBackfills starts the index backfills the store needs, as open
-// does. It holds the write barrier so Close, which stops the backfills before
-// taking it, can't run in between; a closed engine has nothing to backfill.
-func (b *BadgerEngine) restartIndexBackfills() error {
-	b.writeBarrier.RLock()
-	defer b.writeBarrier.RUnlock()
-	if b.ensureOpen() != nil {
-		return nil
+	ctx := context.Background()
+	lifecycle, err := b.beginLifecycleWrite(ctx, "")
+	if err != nil {
+		if errors.Is(err, ErrStorageClosed) {
+			return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
+		}
+		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
-	return errors.Join(b.ensureEdgeBetweenIndex(), b.ensureLabelIndex())
-}
-
-// restoreOffline is Restore's work with writes and reads held off.
-func (b *BadgerEngine) restoreOffline(path string) error {
-	b.writeBarrier.Lock()
-	defer b.writeBarrier.Unlock()
+	defer lifecycle.finish()
 
 	b.mu.RLock()
-	closed := b.closed
 	db := b.db
 	b.mu.RUnlock()
-	if closed || db == nil {
+	if db == nil {
 		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
 
@@ -115,17 +111,26 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 		return localizedError(localization.StorageClientRestoreBusy(restoreReadDrainTimeout.String()), nil)
 	}
 	defer db.oracle.releaseReads()
+	// A restore replaces every named-index document, even when the backup has the
+	// same entity count or loading later fails. Readers rebuild from the
+	// replacement store; queued pre-restore notifications cannot certify it.
+	defer b.graphMutationVersions.changedPrefix("")
 
-	if err := db.DropAll(); err != nil {
+	b.rememberIndexReadiness(startupLabelIndex, false)
+	if err := db.DropAll(context.Background()); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
-	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
+	b.InvalidatePendingEmbeddingsIndex()
+	if err := db.Load(context.Background(), bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	// The restored derived-count deltas are folded, as open folds them:
+	// the engine that took the backup numbered them, and a new delta
+	// reusing one's suffix would overwrite it.
+	if err := b.foldRestoredCountDeltas(ctx, db); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	loader := heldViewer{db: db}
-	if err := b.loadMVCCFloorKeys(loader); err != nil {
-		return localizedError(localization.StorageClientBackupFailed(err), err)
-	}
 	ids, keys := newIDDictionary(), newPropertyKeyDictionary()
 	if err := ids.loadFromBadger(loader); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
@@ -135,6 +140,9 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	}
 	b.idDict.replaceWith(ids)
 	b.propKeyDict.replaceWith(keys)
+	if err := b.initializeWALPropertyIdentity(ctx, db, true, true); err != nil {
+		return err
+	}
 	if err := b.loadManualSuppressions(loader); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
@@ -142,6 +150,12 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	b.mvccByNamespace = make(map[string]*namespaceMVCCState)
 	b.mvccByNamespaceMu.Unlock()
 	if err := b.initializeMVCCSequence(); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	if err := b.recoverNamespaceDrops(ctx, &lifecycle); err != nil {
+		return err
+	}
+	if err := b.loadMVCCFloorKeys(loader); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	if err := b.loadPersistedSchemas(); err != nil {
@@ -152,7 +166,21 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	if err := b.initializeCounts(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
+	b.invalidateManagedEntityUsage()
 	return nil
+
+}
+
+// restartIndexBackfills starts the index backfills the store needs, as open
+// does. It holds the write barrier so Close, which stops the backfills before
+// taking it, can't run in between; a closed engine has nothing to backfill.
+func (b *BadgerEngine) restartIndexBackfills() error {
+	b.writeBarrier.RLock()
+	defer b.writeBarrier.RUnlock()
+	if b.ensureOpen(false) != nil {
+		return nil
+	}
+	return errors.Join(b.startIndexBackfill(startupEdgeBetweenIndex, initializeIndexBackfill), b.startIndexBackfill(startupLabelIndex, initializeIndexBackfill))
 }
 
 func backupEngine(engine Engine, path string) error {
@@ -170,9 +198,8 @@ func restoreEngine(engine Engine, path string) error {
 }
 
 func (b *BadgerEngine) invalidateCachesAfterRestore() {
-	b.nodeCacheMu.Lock()
-	b.nodeCacheGen.advance()
-	b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
+	b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
+	b.resetNodeReadCachesLocked()
 	b.nodeCacheMu.Unlock()
 
 	b.nodeBodyCacheMu.Lock()
@@ -181,18 +208,17 @@ func (b *BadgerEngine) invalidateCachesAfterRestore() {
 	b.nodeBodyCacheBytes = 0
 	b.nodeBodyCacheMu.Unlock()
 
-	b.edgeTypeCacheMu.Lock()
-	b.edgeTypeCacheGen.advance()
+	b.edgeTypeCacheGen.lockInvalidation(&b.edgeTypeCacheMu)
 	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
 	b.edgeTypeCacheMu.Unlock()
 
-	b.edgeCacheMu.Lock()
-	b.edgeCacheGen.advance()
+	b.edgeCacheGen.lockInvalidation(&b.edgeCacheMu)
 	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
+	b.edgeCacheVersions = nil
+	b.edgeCacheSources = nil
 	b.edgeCacheMu.Unlock()
 
-	b.adjCacheMu.Lock()
-	b.adjCacheGen.advance()
+	b.adjCacheGen.lockInvalidation(&b.adjCacheMu)
 	b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	b.adjCacheMu.Unlock()
@@ -215,19 +241,38 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		return 0, 0, localizedError(localization.StorageClientDeletePrefixRequired(), nil)
 	}
 
-	if err := b.ensureOpen(); err != nil {
+	// Runs after the locks below are released: the reset's consumers may write.
+	var reset *commitNotification
+	defer func() { b.awaitCommitNotification(reset) }()
+	// Every write acknowledged before the delete is applied first, no write
+	// runs during it, and a transaction open across it that writes under the
+	// prefix fails its commit (beginLifecycleWrite).
+	ctx := context.Background()
+	lifecycle, err := b.beginLifecycleWrite(ctx, prefix)
+	if err != nil {
 		return 0, 0, err
+	}
+	defer lifecycle.finish()
+	if conflict := b.pendingPrefixConflict(prefix); conflict != nil {
+		namespace, whole := wholeNamespaceFromPrefix(prefix)
+		if !whole || b.pendingNamespaceDrop(namespace) == nil {
+			return 0, 0, conflict
+		}
 	}
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 
+	nodesDeleted, edgesDeleted, reset, err = b.deleteByPrefixHeld(ctx, prefix, &lifecycle, false)
+	return nodesDeleted, edgesDeleted, err
+}
+
+func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, lifecycle *lifecycleWrite, recovery bool) (nodesDeleted int64, edgesDeleted int64, reset *commitNotification, err error) {
 	prefixBytes := []byte(prefix)
-	namespace, wholeNamespace := strings.CutSuffix(prefix, ":")
-	wholeNamespace = wholeNamespace && namespace != "" && !strings.Contains(namespace, ":")
+	namespace, wholeNamespace := wholeNamespaceFromPrefix(prefix)
 
 	countKeys := func(keyPrefix []byte) (int64, error) {
 		var count int64
-		if err := b.db.View(func(txn *badger.Txn) error {
+		if err := b.db.viewHeld(func(txn *badger.Txn) error {
 			it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 			defer it.Close()
 
@@ -248,48 +293,71 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	var deletedEdgeTypeCounts map[namespaceEdgeType]int64
 	var deletedStartLabelCounts map[namespaceEdgeTypeLabel]int64
 	var deletedEndLabelCounts map[namespaceEdgeTypeLabel]int64
+	var intent *namespaceDropIntent
+	nodeNums, edgeNums := make(map[uint64]struct{}), make(map[uint64]struct{})
 	if wholeNamespace {
-		nodesDeleted, err = countKeys(nodeKeyPrefix)
+		intent = b.pendingNamespaceDrop(namespace)
+	}
+	if intent != nil {
+		nodesDeleted, edgesDeleted = intent.nodesDeleted, intent.edgesDeleted
+		nodeNums, edgeNums = intent.nodes, intent.edges
 	} else {
-		nodesDeleted, deletedLabelCounts, err = b.collectNodeLabelCountsByPrefix(nodeKeyPrefix)
-	}
-	if err != nil {
-		return 0, 0, err
-	}
-	if !wholeNamespace {
-		deletedEdgeTypeCounts, deletedStartLabelCounts, deletedEndLabelCounts, err = b.collectEdgeTypeCountsByPrefixSnapshot(edgeKeyPrefix)
+		if wholeNamespace {
+			nodesDeleted, err = countKeys(nodeKeyPrefix)
+		} else {
+			nodesDeleted, deletedLabelCounts, err = b.collectNodeLabelCountsByPrefix(nodeKeyPrefix)
+		}
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, nil, err
+		}
+		if !wholeNamespace {
+			deletedEdgeTypeCounts, deletedStartLabelCounts, deletedEndLabelCounts, err = b.collectEdgeTypeCountsByPrefixSnapshot(edgeKeyPrefix)
+			if err != nil {
+				return 0, 0, nil, err
+			}
+		}
+		edgesDeleted, err = countKeys(edgeKeyPrefix)
+		if err != nil {
+			return 0, 0, nil, err
+		}
+		for _, entry := range []struct {
+			kind byte
+			ids  map[uint64]struct{}
+		}{
+			{prefixIDDictNodeForward, nodeNums}, {prefixIDDictEdgeForward, edgeNums},
+		} {
+			if err := b.db.viewHeld(func(txn *badger.Txn) error {
+				it := txn.NewIterator(badgerPrefixIteratorOptions(append([]byte{entry.kind}, prefixBytes...)))
+				defer it.Close()
+				for it.Rewind(); it.ValidForPrefix(append([]byte{entry.kind}, prefixBytes...)); it.Next() {
+					if err := it.Item().Value(func(value []byte) error {
+						if len(value) == 8 {
+							entry.ids[binary.BigEndian.Uint64(value)] = struct{}{}
+						}
+						return nil
+					}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
+				return 0, 0, nil, err
+			}
+		}
+
+		if wholeNamespace {
+			intent = &namespaceDropIntent{namespace: namespace, nodesDeleted: nodesDeleted, edgesDeleted: edgesDeleted, nodes: nodeNums, edges: edgeNums}
+			if err := b.writeNamespaceDropIntent(ctx, intent, lifecycle); err != nil {
+				return 0, 0, nil, err
+			}
 		}
 	}
-	edgesDeleted, err = countKeys(edgeKeyPrefix)
-	if err != nil {
-		return 0, 0, err
-	}
-	nodeNums := make(map[uint64]struct{})
-	edgeNums := make(map[uint64]struct{})
-	for _, entry := range []struct {
-		kind byte
-		ids  map[uint64]struct{}
-	}{
-		{prefixIDDictNodeForward, nodeNums}, {prefixIDDictEdgeForward, edgeNums},
-	} {
-		if err := b.db.View(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerPrefixIteratorOptions(append([]byte{entry.kind}, prefixBytes...)))
-			defer it.Close()
-			for it.Rewind(); it.ValidForPrefix(append([]byte{entry.kind}, prefixBytes...)); it.Next() {
-				if err := it.Item().Value(func(value []byte) error {
-					if len(value) == 8 {
-						entry.ids[binary.BigEndian.Uint64(value)] = struct{}{}
-					}
-					return nil
-				}); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); err != nil {
-			return 0, 0, err
+
+	var publishUsage func()
+	if !wholeNamespace {
+		publishUsage, err = b.prepareDeletedEntityPublication(ctx, nodeNums, edgeNums)
+		if err != nil {
+			return 0, 0, nil, err
 		}
 	}
 
@@ -303,6 +371,8 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		append([]byte{prefixEdgeBetweenHead}, prefixBytes...),
 		append([]byte{prefixPendingEmbed}, prefixBytes...),
 		append([]byte{prefixEmbedding}, prefixBytes...),
+		manualSuppressionKey(manualSuppressionNode, prefix),
+		manualSuppressionKey(manualSuppressionEdge, prefix),
 	}
 	if wholeNamespace {
 		dropPrefixes = append(dropPrefixes, labelCountNamespacePrefix(namespace))
@@ -312,67 +382,64 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindLabel, namespace))
 		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindEdgeType, namespace))
 	}
-	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
-		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
+	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
+	// partial drop failure so future claims rebuild from the durable index.
+	defer b.InvalidatePendingEmbeddingsIndex()
+	mode := retainPrefixSnapshots
+	if recovery {
+		// Recovery runs before exposure or while Restore excludes/drains reads.
+		// Its held-read capability must not open an ordinary commit read.
+		mode = purgePrefixVersions
 	}
-	if err := b.deleteNamespaceKeyFamilies(prefixBytes, namespace, wholeNamespace, nodeNums, edgeNums); err != nil {
-		return 0, 0, err
+	if err := b.db.DropPrefix(context.Background(), prefixDropOptions{mode: mode}, dropPrefixes...); err != nil {
+		return 0, 0, nil, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
-	// Node and edge dict entries are sharded: collect the victim IDs shard
-	// by shard, then remove each pair with the sharded helpers (the drop is
-	// exclusive, so the passes race with nothing).
-	var nodeVictims []NodeID
-	for i := range b.idDict.nodes {
-		sh := &b.idDict.nodes[i]
-		sh.mu.RLock()
-		for id := range sh.forward {
-			if strings.HasPrefix(string(id), prefix) {
-				nodeVictims = append(nodeVictims, id)
-			}
-		}
-		sh.mu.RUnlock()
-	}
-	for _, id := range nodeVictims {
-		b.idDict.nodePairRemoveByID(id)
-	}
-	var edgeVictims []EdgeID
-	for i := range b.idDict.edges {
-		sh := &b.idDict.edges[i]
-		sh.mu.RLock()
-		for id := range sh.forward {
-			if strings.HasPrefix(string(id), prefix) {
-				edgeVictims = append(edgeVictims, id)
-			}
-		}
-		sh.mu.RUnlock()
-	}
-	for _, id := range edgeVictims {
-		b.idDict.edgePairRemoveByID(id)
-	}
-	if wholeNamespace {
-		if err := b.dropNamespaceSchema(namespace); err != nil {
-			return 0, 0, err
-		}
-		b.propKeyDict.mu.Lock()
-		delete(b.propKeyDict.forward, namespace)
-		delete(b.propKeyDict.reverse, namespace)
-		delete(b.propKeyDict.persisted, namespace)
-		delete(b.propKeyDict.nextID, namespace)
-		b.propKeyDict.mu.Unlock()
-	}
+	// Rows are gone from here on, whichever cleanup step below may fail. A retry
+	// counts nothing to delete, so only this attempt can move the revision.
 	if nodesDeleted > 0 || edgesDeleted > 0 {
 		defer b.graphMutationVersions.changedPrefix(prefix)
+	}
+	// A whole-namespace drop keeps admission fenced until its schema owner
+	// is retired after successful cleanup. Do not take that owner's mutex
+	// here: a pre-fence metadata writer may still hold it in its committed
+	// tail. Partial-prefix deletion retains the schema, so retire just its
+	// deleted holders under the existing lifecycle authority.
+	if !wholeNamespace {
+		// Primary bodies are gone. Retire their UNIQUE claims before any later
+		// cleanup can fail and before lifecycle authority admits another writer.
+		// Snapshot manager references so schema registry admission is not held
+		// while the individual constraint owners publish their removals.
+		var affectedSchemas []*SchemaManager
+		b.schemasMu.RLock()
+		for name, schema := range b.schemas {
+			scoped := name + ":"
+			if strings.HasPrefix(scoped, prefix) || strings.HasPrefix(prefix, scoped) {
+				affectedSchemas = append(affectedSchemas, schema)
+			}
+		}
+		b.schemasMu.RUnlock()
+		for _, schema := range affectedSchemas {
+			schema.retireUniqueValuesByNodePrefix(prefix)
+		}
+	}
+	if b.dropPrefixTailHook != nil {
+		if err := b.dropPrefixTailHook(prefix); err != nil {
+			return 0, 0, nil, err
+		}
+	}
+	if err := b.deleteNamespaceKeyFamilies(prefixBytes, namespace, wholeNamespace, nodeNums, edgeNums); err != nil {
+		return 0, 0, nil, err
 	}
 
 	deleteIndexEntriesBySuffixPrefix := func(indexPrefix byte) error {
 		indexKeyPrefix := []byte{indexPrefix}
-		wb := b.db.NewWriteBatch()
+		wb := b.db.NewWriteBatch(context.WithoutCancel(ctx))
 		defer wb.Cancel()
 
 		const flushEvery = 50_000
 		pending := 0
 
-		if err := b.db.View(func(txn *badger.Txn) error {
+		if err := b.db.viewHeld(func(txn *badger.Txn) error {
 			it := txn.NewIterator(badgerPrefixIteratorOptions(indexKeyPrefix))
 			defer it.Close()
 
@@ -417,51 +484,108 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 
 	// Clean up secondary indexes where the db prefix appears in the suffix.
 	if err := deleteIndexEntriesBySuffixPrefix(prefixLabelIndex); err != nil {
-		return 0, 0, localizedError(localization.StorageClientCleanLabelIndexFailed(err), err)
+		return 0, 0, nil, localizedError(localization.StorageClientCleanLabelIndexFailed(err), err)
 	}
 	if err := deleteIndexEntriesBySuffixPrefix(prefixEdgeTypeIndex); err != nil {
-		return 0, 0, localizedError(localization.StorageClientCleanEdgeTypeIndexFailed(err), err)
+		return 0, 0, nil, localizedError(localization.StorageClientCleanEdgeTypeIndexFailed(err), err)
 	}
 	if len(deletedLabelCounts) > 0 {
-		if err := b.decrementLabelCounts(deletedLabelCounts); err != nil {
-			return 0, 0, err
+		if err := b.decrementLabelCounts(ctx, deletedLabelCounts); err != nil {
+			return 0, 0, nil, err
 		}
 	}
 	if len(deletedEdgeTypeCounts) > 0 {
-		if err := b.decrementEdgeTypeCounts(deletedEdgeTypeCounts); err != nil {
-			return 0, 0, err
+		if err := b.decrementEdgeTypeCounts(ctx, deletedEdgeTypeCounts); err != nil {
+			return 0, 0, nil, err
 		}
 	}
 	if len(deletedStartLabelCounts) > 0 {
-		if err := b.decrementEdgeTypeLabelCounts(prefixMVCCMetaEdgeTypeStartLabelCount, deletedStartLabelCounts); err != nil {
-			return 0, 0, err
+		if err := b.decrementEdgeTypeLabelCounts(ctx, prefixMVCCMetaEdgeTypeStartLabelCount, deletedStartLabelCounts); err != nil {
+			return 0, 0, nil, err
 		}
 	}
 	if len(deletedEndLabelCounts) > 0 {
-		if err := b.decrementEdgeTypeLabelCounts(prefixMVCCMetaEdgeTypeEndLabelCount, deletedEndLabelCounts); err != nil {
-			return 0, 0, err
+		if err := b.decrementEdgeTypeLabelCounts(ctx, prefixMVCCMetaEdgeTypeEndLabelCount, deletedEndLabelCounts); err != nil {
+			return 0, 0, nil, err
 		}
 	}
 
+	if wholeNamespace {
+		if err := b.completeNamespaceDrop(ctx, intent, lifecycle); err != nil {
+			return 0, 0, nil, err
+		}
+	}
+	b.dropManualSuppressions(prefix)
+	// Node and edge dict entries are sharded: collect the victim IDs shard
+	// by shard, then remove each pair with the sharded helpers (the drop is
+	// exclusive, so the passes race with nothing).
+	var nodeVictims []NodeID
+	for i := range b.idDict.nodes {
+		sh := &b.idDict.nodes[i]
+		sh.mu.RLock()
+		for id := range sh.forward {
+			if strings.HasPrefix(string(id), prefix) {
+				nodeVictims = append(nodeVictims, id)
+			}
+		}
+		sh.mu.RUnlock()
+	}
+	for _, id := range nodeVictims {
+		removeIDPair(&b.idDict.nodes, nodeForwardShard, nodeReverseShard, id, 0, idPairByString)
+	}
+	var edgeVictims []EdgeID
+	for i := range b.idDict.edges {
+		sh := &b.idDict.edges[i]
+		sh.mu.RLock()
+		for id := range sh.forward {
+			if strings.HasPrefix(string(id), prefix) {
+				edgeVictims = append(edgeVictims, id)
+			}
+		}
+		sh.mu.RUnlock()
+	}
+	for _, id := range edgeVictims {
+		removeIDPair(&b.idDict.edges, edgeForwardShard, edgeReverseShard, id, 0, idPairByString)
+	}
+	if wholeNamespace {
+		b.transitionNamespaceSchema(namespace, schemaNamespaceRetire, nil)
+		b.propKeyDict.mu.Lock()
+		b.propKeyDict.walBindingDomain++
+		b.propKeyDict.walBindingRevision++
+		b.propKeyDict.walEpochRevision.Add(1)
+		delete(b.propKeyDict.forward, namespace)
+		delete(b.propKeyDict.reverse, namespace)
+		delete(b.propKeyDict.persisted, namespace)
+		delete(b.propKeyDict.nextID, namespace)
+		b.propKeyDict.mu.Unlock()
+	}
 	// Clear/adjust caches and cached counters.
-	b.nodeCacheMu.Lock()
-	b.nodeCacheGen.advance()
-	for id := range b.nodeCache {
-		if strings.HasPrefix(string(id), prefix) {
-			delete(b.nodeCache, id)
+	if wholeNamespace {
+		b.invalidateCachesAfterRestore()
+	} else {
+		b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
+		for id := range b.nodeCache {
+			if strings.HasPrefix(string(id), prefix) {
+				b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
+			}
 		}
+		for id := range b.queryNodeCache {
+			if strings.HasPrefix(string(id), prefix) {
+				b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
+			}
+		}
+		b.nodeCacheMu.Unlock()
+
+		b.edgeTypeCacheGen.lockInvalidation(&b.edgeTypeCacheMu)
+		b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
+		b.edgeTypeCacheMu.Unlock()
+
 	}
-	b.nodeCacheMu.Unlock()
 
-	b.edgeTypeCacheMu.Lock()
-	b.edgeTypeCacheGen.advance()
-	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
-	b.edgeTypeCacheMu.Unlock()
-
-	if nodesDeleted != 0 {
+	if !recovery && nodesDeleted != 0 {
 		b.nodeCount.Add(-nodesDeleted)
 	}
-	if edgesDeleted != 0 {
+	if !recovery && edgesDeleted != 0 {
 		b.edgeCount.Add(-edgesDeleted)
 	}
 
@@ -470,15 +594,23 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	delete(b.namespaceEdgeCounts, prefix)
 	b.namespaceCountsMu.Unlock()
 
-	return nodesDeleted, edgesDeleted, nil
+	// No per-entity event was published for what this removed.
+	if publishUsage != nil {
+		publishUsage()
+	}
+	reset = b.publishNamespaceReset(prefix)
+	if wholeNamespace {
+		b.transitionPending(namespaceDropRetire, namespace, nil)
+	}
+	return nodesDeleted, edgesDeleted, reset, nil
 }
 
 func (b *BadgerEngine) deleteNamespaceKeyFamilies(prefix []byte, namespace string, wholeNamespace bool, nodes, edges map[uint64]struct{}) error {
-	batch := b.db.NewWriteBatch()
+	batch := b.db.NewWriteBatch(context.Background())
 	defer batch.Cancel()
 	pending := 0
 	for _, family := range badgerKeyFamilies {
-		err := b.db.View(func(txn *badger.Txn) error {
+		err := b.db.viewHeld(func(txn *badger.Txn) error {
 			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{family.prefix}))
 			defer it.Close()
 			for it.Rewind(); it.ValidForPrefix([]byte{family.prefix}); it.Next() {

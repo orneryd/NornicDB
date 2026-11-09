@@ -19,10 +19,10 @@ func TestTemporalFunctionCallErrors(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:TruncFields {m: 'x'})", nil)
 	require.NoError(t, err)
 	for query, code := range map[string]string{
-		"RETURN date.truncate('day', 'x') AS v":                                           "Neo.ClientError.Procedure.ProcedureCallFailed",
-		"RETURN date.truncate('day', duration('P1D')) AS v":                               "Neo.ClientError.Procedure.ProcedureCallFailed",
-		"RETURN localtime.truncate('day', null) AS v":                                     "Neo.ClientError.Procedure.ProcedureCallFailed",
-		"RETURN date.truncate(null, date('2020-01-02')) AS v":                             "Neo.ClientError.Procedure.ProcedureCallFailed",
+		"RETURN date.truncate('day', 'x') AS v":               "Neo.ClientError.Procedure.ProcedureCallFailed",
+		"RETURN date.truncate('day', duration('P1D')) AS v":   "Neo.ClientError.Procedure.ProcedureCallFailed",
+		"RETURN localtime.truncate('day', null) AS v":         "Neo.ClientError.Procedure.ProcedureCallFailed",
+		"RETURN date.truncate(null, date('2020-01-02')) AS v": "Neo.ClientError.Procedure.ProcedureCallFailed",
 		// A property is never a map: Neo4j 5.26 rejects it as it compiles.
 		"MATCH (f:TruncFields) RETURN date.truncate('day', date('2020-01-02'), f.m) AS v": "Neo.ClientError.Statement.SyntaxError",
 		"RETURN date.truncate('zz', date('2020-01-02')) AS v":                             "Neo.DatabaseError.Statement.ExecutionFailed",
@@ -107,9 +107,9 @@ func TestSplitWithDelimiterList(t *testing.T) {
 // are null, not errors.
 func TestTemporalCallDefensiveReturns(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	eval := func(expression string) interface{} {
-		value, _ := parseLiteralValueFromComputedRow(expression)
-		return value
+	eval := func(expression string) (interface{}, bool, error) {
+		value, resolved := parseLiteralValueFromComputedRow(expression)
+		return value, resolved, nil
 	}
 	for _, expression := range []string{
 		"duration.between(1)",
@@ -118,7 +118,9 @@ func TestTemporalCallDefensiveReturns(t *testing.T) {
 		"date.realtime(1)",
 		"date.realtime('Not/AZone')",
 	} {
-		value, handled, err := exec.evaluateTemporalConstructor(context.Background(), eval, expression)
+		var facts functionCallFacts
+		require.True(t, inspectFunctionCall(expression, qualifiedFunctionCall, "", &facts), expression)
+		value, handled, err := exec.evaluateTemporalConstructor(context.Background(), eval, facts)
 		require.True(t, handled, expression)
 		require.NoError(t, err, expression)
 		require.Nil(t, value, expression)

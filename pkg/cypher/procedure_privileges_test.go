@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -12,22 +14,22 @@ import (
 // GRANT / REVOKE EXECUTE [BOOSTED] PROCEDURE … ON DBMS parse as Neo4j writes
 // them; other privilege statements are not procedure privileges.
 func TestParseProcedurePrivilegeCommand(t *testing.T) {
-	command, ok, err := parseProcedurePrivilegeCommand("GRANT EXECUTE BOOSTED PROCEDURE db.cdc.*, db.txlog.entries ON DBMS TO cdc_reader, `other role`")
+	command, ok, err := parseProcedurePrivilegeCommand(t.Context(), "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.*, db.txlog.entries ON DBMS TO cdc_reader, `other role`")
 	require.True(t, ok)
 	require.NoError(t, err)
 	require.Equal(t, procedurePrivilegeCommand{grant: true, boosted: true, procedures: []string{"db.cdc.*", "db.txlog.entries"}, roles: []string{"cdc_reader", "other role"}}, command)
 
-	command, ok, err = parseProcedurePrivilegeCommand("REVOKE GRANT IMMUTABLE EXECUTE PROCEDURES db.cdc.query ON DBMS FROM cdc_reader")
+	command, ok, err = parseProcedurePrivilegeCommand(t.Context(), "REVOKE GRANT IMMUTABLE EXECUTE PROCEDURES db.cdc.query ON DBMS FROM cdc_reader")
 	require.True(t, ok)
 	require.NoError(t, err)
 	require.Equal(t, procedurePrivilegeCommand{immutable: true, procedures: []string{"db.cdc.query"}, roles: []string{"cdc_reader"}}, command)
 
 	for _, statement := range []string{"GRANT ROLE admin TO bob", "GRANT TRAVERSE ON GRAPH * TO r", "DENY EXECUTE PROCEDURE x ON DBMS TO r", "MATCH (n) RETURN n"} {
-		_, ok, _ = parseProcedurePrivilegeCommand(statement)
+		_, ok, _ = parseProcedurePrivilegeCommand(t.Context(), statement)
 		require.False(t, ok, statement)
 	}
 	for _, statement := range []string{"GRANT EXECUTE PROCEDURE db.x ON GRAPH * TO r", "GRANT EXECUTE PROCEDURE db.x ON DBMS FROM r", "GRANT EXECUTE PROCEDURE ON DBMS TO r"} {
-		_, ok, err = parseProcedurePrivilegeCommand(statement)
+		_, ok, err = parseProcedurePrivilegeCommand(t.Context(), statement)
 		require.True(t, ok, statement)
 		require.Error(t, err, statement)
 	}
@@ -70,10 +72,10 @@ func TestProcedurePrivilegeStatements(t *testing.T) {
 // authorized by a boosted grant for that procedure; an administration command
 // or another admin procedure still needs administrator rights.
 func TestAuthorizeQueryWithBoostedProcedureGrant(t *testing.T) {
-	require.Equal(t, []string{"db.cdc.query"}, QueryPermissionRequirements("CALL db.cdc.query()").BoostedProcedures)
-	require.Empty(t, QueryPermissionRequirements("SHOW USERS").BoostedProcedures)
-	require.True(t, QueryPermissionRequirements("GRANT EXECUTE BOOSTED PROCEDURE x ON DBMS TO r").Admin)
-	require.True(t, QueryPermissionRequirements("SHOW PRIVILEGES").Admin)
+	require.Equal(t, []string{"db.cdc.query"}, QueryPermissionRequirements(t.Context(), "CALL db.cdc.query()", RawSource).BoostedProcedures)
+	require.Empty(t, QueryPermissionRequirements(t.Context(), "SHOW USERS", RawSource).BoostedProcedures)
+	require.True(t, QueryPermissionRequirements(t.Context(), "GRANT EXECUTE BOOSTED PROCEDURE x ON DBMS TO r", RawSource).Admin)
+	require.True(t, QueryPermissionRequirements(t.Context(), "SHOW PRIVILEGES", RawSource).Admin)
 
 	nonAdmin := WithPermissionChecker(context.Background(), func(permission string) bool { return permission == "read" })
 	granted := WithProcedureGrantChecker(nonAdmin, func(procedure string) bool { return auth.ProcedureGlobMatches("db.cdc.*", procedure) })
@@ -235,7 +237,7 @@ func TestProcedurePrivilegeMissingRole(t *testing.T) {
 // store in the system namespace, or the executor's own storage.
 func TestProcedurePrivilegeInExplicitTransaction(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	for name, setup := range map[string]func() (*StorageExecutor, storage.Engine){
 		"database manager's system storage": func() (*StorageExecutor, storage.Engine) {
@@ -294,7 +296,7 @@ func TestProcedurePrivilegeInExplicitTransaction(t *testing.T) {
 // statement, even when the client opened it on a user database.
 func TestProcedurePrivilegeInOtherDatabaseTransaction(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	system := storage.NewNamespacedEngine(inner, "system")
 	require.NoError(t, auth.NewProcedurePrivilegeStore(system).Grant(ctx, "viewer", "db.ping", false, false))
@@ -321,7 +323,7 @@ func TestProcedurePrivilegeInOtherDatabaseTransaction(t *testing.T) {
 // unaffected.
 func TestSystemDatabaseRefusesGraphWrites(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	system := storage.NewNamespacedEngine(inner, "system")
 	exec := NewStorageExecutor(system)
@@ -342,7 +344,7 @@ func TestSystemDatabaseRefusesGraphWrites(t *testing.T) {
 	_, err = exec.Execute(ctx, "ROLLBACK", nil)
 	require.NoError(t, err)
 
-	nodes, err := system.GetNodesByLabel("_ProcedurePrivilege")
+	nodes, err := system.GetNodesByLabel(ctx, "_ProcedurePrivilege")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)

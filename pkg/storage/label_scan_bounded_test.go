@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"fmt"
 	"testing"
@@ -9,18 +12,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// labelScanTailCount is the record count that forces the point-lookup path and
+// the buffered batch plus two more records.
+const labelScanTailCount = labelScanPointLookups + labelScanMaxBuffered + 2
+
+// labelTailScan scans every Common node in the test namespace, from a pinned
+// snapshot transaction when snapshot is set. The snapshot is rolled back when the
+// test finishes.
+func labelTailScan(t *testing.T, eng *BadgerEngine, properties []string, snapshot bool) func(func(*Node) error) error {
+	t.Helper()
+	if !snapshot {
+		return func(visit func(*Node) error) error {
+			return eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, visit)
+		}
+	}
+	tx, err := eng.BeginTransaction(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, tx.SetNamespace("test"))
+	t.Cleanup(func() { _ = tx.Rollback() })
+	return func(visit func(*Node) error) error {
+		return tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, visit)
+	}
+}
+
 func TestLabelScanLargeTailStaysStreaming(t *testing.T) {
-	const count = labelScanPointLookups + labelScanMaxBuffered + 2
+	const count = labelScanTailCount
 	for _, properties := range [][]string{nil, {"i"}} {
 		t.Run(fmt.Sprintf("engine/projected=%t", properties != nil), func(t *testing.T) {
 			eng, ids := labelScanFixture(t, count)
 			visited := 0
-			require.NoError(t, eng.StreamNodesByLabelProjectedInScope("test:", "Common", properties, func(node *Node) error {
+			scan := labelTailScan(t, eng, properties, false)
+			require.NoError(t, scan(func(node *Node) error {
 				require.Equal(t, ids[visited], node.ID)
 				visited++
 				if visited == labelScanPointLookups+1 {
 					// A streaming scan must not have decoded the final node yet.
-					eng.cacheStoreNode(&Node{ID: ids[count-1], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}})
+					eng.cacheStoreNode(&Node{ID: ids[count-1], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}}, eng.db.oracle.published.Load())
 				}
 				if visited == count {
 					require.Equal(t, int64(-1), node.Properties["i"])
@@ -32,15 +59,12 @@ func TestLabelScanLargeTailStaysStreaming(t *testing.T) {
 	}
 	t.Run("snapshot", func(t *testing.T) {
 		eng, ids := labelScanFixture(t, count)
-		tx, err := eng.BeginTransaction()
-		require.NoError(t, err)
-		require.NoError(t, tx.SetNamespace("test"))
-		defer func() { _ = tx.Rollback() }()
+		scan := labelTailScan(t, eng, nil, true)
 		stop := errors.New("stop")
 		visited := 0
 		var readAhead bool
 		inOrder := true
-		require.ErrorIs(t, tx.StreamNodesByLabelProjected("Common", nil, func(node *Node) error {
+		require.ErrorIs(t, scan(func(node *Node) error {
 			inOrder = inOrder && visited < len(ids) && ids[visited] == node.ID
 			visited++
 			if visited == labelScanPointLookups+1 {
@@ -58,9 +82,9 @@ func TestLabelScanLargeTailStaysStreaming(t *testing.T) {
 }
 
 func TestLabelScanLargeTailPreservesReadErrors(t *testing.T) {
-	const count = labelScanPointLookups + labelScanMaxBuffered + 2
+	const count = labelScanTailCount
 	eng, ids := labelScanFixture(t, count)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(nodeKey(ids[labelScanPointLookups])); err != nil {
 			return err
 		}
@@ -69,18 +93,7 @@ func TestLabelScanLargeTailPreservesReadErrors(t *testing.T) {
 	for _, snapshot := range []bool{false, true} {
 		for _, properties := range [][]string{nil, {"i"}} {
 			t.Run(fmt.Sprintf("snapshot=%t/projected=%t", snapshot, properties != nil), func(t *testing.T) {
-				scan := func(visit func(*Node) error) error {
-					return eng.StreamNodesByLabelProjectedInScope("test:", "Common", properties, visit)
-				}
-				if snapshot {
-					tx, err := eng.BeginTransaction()
-					require.NoError(t, err)
-					require.NoError(t, tx.SetNamespace("test"))
-					defer func() { _ = tx.Rollback() }()
-					scan = func(visit func(*Node) error) error {
-						return tx.StreamNodesByLabelProjected("Common", properties, visit)
-					}
-				}
+				scan := labelTailScan(t, eng, properties, snapshot)
 				stop := errors.New("stop before corruption")
 				visited := 0
 				require.ErrorIs(t, scan(func(*Node) error {
@@ -103,7 +116,7 @@ func TestLabelScanLargeTailPreservesReadErrors(t *testing.T) {
 }
 
 func BenchmarkLabelScanStreaming(b *testing.B) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = eng.Close() })
 	const count = 40000
@@ -115,7 +128,7 @@ func BenchmarkLabelScanStreaming(b *testing.B) {
 				Properties: map[string]any{"i": int64(index), "big": "x"},
 			})
 		}
-		require.NoError(b, eng.BulkCreateNodes(nodes))
+		require.NoError(b, eng.BulkCreateNodes(b.Context(), nodes))
 	}
 	stop := errors.New("limit")
 	for _, snapshot := range []bool{false, true} {
@@ -127,7 +140,7 @@ func BenchmarkLabelScanStreaming(b *testing.B) {
 						properties = []string{"i"}
 					}
 					scan := func(visit func(*Node) error) error {
-						return eng.StreamNodesByLabelProjectedInScope("test:", "Common", properties, visit)
+						return eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, visit)
 					}
 					b.ReportAllocs()
 					b.ResetTimer()
@@ -143,11 +156,11 @@ func BenchmarkLabelScanStreaming(b *testing.B) {
 						eng.nodeBodyCacheMu.Unlock()
 						var tx *BadgerTransaction
 						if snapshot {
-							tx, err = eng.BeginTransaction()
+							tx, err = eng.BeginTransaction(b.Context())
 							require.NoError(b, err)
 							require.NoError(b, tx.SetNamespace("test"))
 							scan = func(visit func(*Node) error) error {
-								return tx.StreamNodesByLabelProjected("Common", properties, visit)
+								return tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, visit)
 							}
 						}
 						b.StartTimer()

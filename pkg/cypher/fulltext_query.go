@@ -1,3 +1,4 @@
+// Author of retained field representation: #1683 implementation lane (Codex), 2026-11-01.
 // Lucene-classic fulltext query parser used by
 // db.index.fulltext.queryNodes / db.index.fulltext.queryRelationships.
 //
@@ -412,13 +413,14 @@ func (n *ftLeafNode) eval(ctx *ftEvalCtx, doc *ftDoc) (bool, float64) {
 	if n.field != "" {
 		return n.pattern.matchField(ctx, doc, n.field)
 	}
-	// Default-field atom. When ctx.DefaultFields is non-empty (a
-	// declared fulltext index) we probe each declared field. When it's
-	// empty (legacy/no-index path) we probe the pseudo-field "*" which
-	// matches against the doc's concatenated contentLower.
+	// A default-field clause matches within one indexed property. Concatenated
+	// content is a scoring body, never a field: a phrase cannot cross property
+	// boundaries. Built-in relationship indexes select all available fields.
 	if len(ctx.DefaultFields) == 0 {
-		if hit, _ := n.pattern.matchField(ctx, doc, "*"); hit {
-			return true, n.pattern.score(ctx, doc)
+		for field := range doc.properties {
+			if hit, _ := n.pattern.matchField(ctx, doc, field); hit {
+				return true, n.pattern.score(ctx, doc)
+			}
 		}
 		return false, 0
 	}
@@ -442,35 +444,21 @@ type ftPattern interface {
 
 // ---- concrete patterns ----
 
-type patTerm struct{ term string } // exact substring, case-insensitive
+// patText owns literal substring matching for both bare terms and quoted
+// phrases. The parser supplies the existing phrase-only score boost.
+type patText struct {
+	text  string
+	boost float64
+}
 
-func (p patTerm) matchField(ctx *ftEvalCtx, doc *ftDoc, field string) (bool, float64) {
-	v := doc.fieldLower(field)
-	if v == "" || p.term == "" {
-		return false, 0
-	}
-	return strings.Contains(v, p.term), 0
+func (p patText) matchField(ctx *ftEvalCtx, doc *ftDoc, field string) (bool, float64) {
+	value, _ := doc.fieldValue(field)
+	return value != "" && p.text != "" && strings.Contains(value, p.text), 0
 }
-func (p patTerm) score(ctx *ftEvalCtx, doc *ftDoc) float64 {
-	return ctx.bm25Term(doc, p.term)
+func (p patText) score(ctx *ftEvalCtx, doc *ftDoc) float64 {
+	return ctx.bm25Term(doc, p.text) + p.boost
 }
-func (p patTerm) primaryTerm() string { return p.term }
-
-type patPhrase struct{ phrase string }
-
-func (p patPhrase) matchField(ctx *ftEvalCtx, doc *ftDoc, field string) (bool, float64) {
-	v := doc.fieldLower(field)
-	if v == "" || p.phrase == "" {
-		return false, 0
-	}
-	return strings.Contains(v, p.phrase), 0
-}
-func (p patPhrase) score(ctx *ftEvalCtx, doc *ftDoc) float64 {
-	// A phrase counts as a single term for scoring; we boost its
-	// contribution slightly so exact phrase matches outrank single terms.
-	return ctx.bm25Term(doc, p.phrase) + 1.0
-}
-func (p patPhrase) primaryTerm() string { return p.phrase }
+func (p patText) primaryTerm() string { return p.text }
 
 // patPresence implements `field:*`.
 type patPresence struct{}
@@ -492,7 +480,7 @@ type patWildcard struct {
 }
 
 func (p patWildcard) matchField(ctx *ftEvalCtx, doc *ftDoc, field string) (bool, float64) {
-	v := doc.fieldLower(field)
+	v, _ := doc.fieldValue(field)
 	if v == "" || p.re == nil {
 		return false, 0
 	}
@@ -514,7 +502,7 @@ type patRange struct {
 }
 
 func (p patRange) matchField(ctx *ftEvalCtx, doc *ftDoc, field string) (bool, float64) {
-	v, ok := doc.fieldRaw(field)
+	v, ok := doc.fieldValue(field)
 	if !ok {
 		return false, 0
 	}
@@ -549,7 +537,7 @@ func (p patRegex) matchField(ctx *ftEvalCtx, doc *ftDoc, field string) (bool, fl
 	if p.re == nil {
 		return false, 0
 	}
-	v := doc.fieldLower(field)
+	v, _ := doc.fieldValue(field)
 	if v == "" {
 		return false, 0
 	}
@@ -569,7 +557,7 @@ func (p patFuzzy) matchField(ctx *ftEvalCtx, doc *ftDoc, field string) (bool, fl
 	if p.term == "" {
 		return false, 0
 	}
-	v := doc.fieldLower(field)
+	v, _ := doc.fieldValue(field)
 	if v == "" {
 		return false, 0
 	}
@@ -926,7 +914,7 @@ func (p *ftParser) parseAtom(field string) (ftNode, error) {
 				}
 			}
 		}
-		return &ftLeafNode{field: field, pattern: patPhrase{phrase: lowerASCII(tk.text)}}, nil
+		return &ftLeafNode{field: field, pattern: patText{text: lowerASCII(tk.text), boost: 1}}, nil
 	case tkRegex:
 		p.advance()
 		re, err := regexp.Compile("(?i)" + tk.text)
@@ -956,7 +944,7 @@ func (p *ftParser) parseAtom(field string) (ftNode, error) {
 			}
 			return &ftLeafNode{field: field, pattern: patFuzzy{term: lowerASCII(text), maxEdit: maxEdit}}, nil
 		}
-		return &ftLeafNode{field: field, pattern: patTerm{term: lowerASCII(text)}}, nil
+		return &ftLeafNode{field: field, pattern: patText{text: lowerASCII(text)}}, nil
 	}
 	return nil, localizedError(localization.CypherCoreFulltextUnexpectedToken(tk.text), nil)
 }
@@ -1040,31 +1028,25 @@ func rebindField(n ftNode, field string) ftNode {
 // ---------------------------------------------------------------------------
 
 // ftDoc adapts a single node/edge to the evaluator. `properties` maps
-// case-insensitive field names to their stringified values (already
+// exact, case-sensitive field names to their stringified values (already
 // non-nil-checked). `contentLower` is the concatenation of every default
 // field's value used for BM25 scoring.
 type ftDoc struct {
-	properties     map[string]string // canonicalized: lower-case keys, lower-case values
-	rawProperties  map[string]string // lower-case keys, original-case values (for range)
+	properties     map[string]string // exact property names, lower-case values
 	contentLower   string
 	contentTokenN  int
+	retainedSize   int64
 	presenceLookup func(field string) bool
 }
 
-func (d *ftDoc) fieldLower(field string) string {
-	if d == nil {
-		return ""
-	}
-	if field == "*" {
-		return d.contentLower
-	}
-	return d.properties[lowerASCII(field)]
-}
-func (d *ftDoc) fieldRaw(field string) (string, bool) {
+// fieldValue is the direct normalized-property lookup, including a literal
+// "*" key. The scoring body is independent of field identity. Range comparison
+// has always ASCII-lowered its input; it needs no original-case copy.
+func (d *ftDoc) fieldValue(field string) (string, bool) {
 	if d == nil {
 		return "", false
 	}
-	v, ok := d.rawProperties[lowerASCII(field)]
+	v, ok := d.properties[field]
 	return v, ok
 }
 func (d *ftDoc) fieldPresent(field string) bool {
@@ -1074,7 +1056,7 @@ func (d *ftDoc) fieldPresent(field string) bool {
 	if d.presenceLookup != nil {
 		return d.presenceLookup(field)
 	}
-	v, ok := d.rawProperties[lowerASCII(field)]
+	v, ok := d.fieldValue(field)
 	return ok && v != ""
 }
 

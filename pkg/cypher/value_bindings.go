@@ -27,9 +27,6 @@ func withValueBindings(ctx context.Context, bindings map[string]interface{}) con
 
 // valueBindingsFromContext returns the value scope of ctx, or nil.
 func valueBindingsFromContext(ctx context.Context) map[string]interface{} {
-	if ctx == nil {
-		return nil
-	}
 	bindings, _ := ctx.Value(valueBindingsKey{}).(map[string]interface{})
 	return bindings
 }

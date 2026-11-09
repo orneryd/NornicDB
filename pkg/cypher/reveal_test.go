@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -37,86 +38,134 @@ func TestHasRevealCall(t *testing.T) {
 }
 
 func TestRevealExpressionBypassesDecayDuringQuery(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = engine.Close() })
+	for _, mode := range []struct {
+		name   string
+		policy []QueryCachePolicy
+	}{
+		{"default cache", nil},
+		{"disabled cache explicit transaction scans", []QueryCachePolicy{{MaxEntries: 0, TTL: time.Minute}}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			policy := mode.policy
+			engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+			if engine != nil {
+				fixtureowner.Own(t, engine)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = engine.Close() })
 
-	schema := engine.GetSchemaForNamespace("testns")
-	if err := schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
-		Name:                "episode_decay",
-		Scope:               knowledgepolicy.ScopeNode,
-		Function:            knowledgepolicy.DecayFunctionExponential,
-		HalfLifeSeconds:     3600,
-		VisibilityThreshold: 0.10,
-		ScoreFrom:           knowledgepolicy.ScoreFromCreated,
-		Enabled:             true,
-		DecayEnabled:        true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
-		Name:         "bind_episode",
-		ProfileRef:   "episode_decay",
-		TargetLabels: []string{"MemoryEpisode"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	engine.SetDecayEnabled(true)
-	createdAt := time.Now().Add(-720 * time.Hour)
-	if _, err := engine.CreateNode(&storage.Node{
-		ID: "testns:old_episode", Labels: []string{"MemoryEpisode"},
-		Properties: map[string]interface{}{"name": "old"},
-		CreatedAt:  createdAt, UpdatedAt: createdAt,
-	}); err != nil {
-		t.Fatal(err)
-	}
+			schema := engine.GetSchemaForNamespace("testns")
+			if err := schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
+				Name:                "episode_decay",
+				Scope:               knowledgepolicy.ScopeNode,
+				Function:            knowledgepolicy.DecayFunctionExponential,
+				HalfLifeSeconds:     3600,
+				VisibilityThreshold: 0.10,
+				ScoreFrom:           knowledgepolicy.ScoreFromCreated,
+				Enabled:             true,
+				DecayEnabled:        true,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
+				Name:         "bind_episode",
+				ProfileRef:   "episode_decay",
+				TargetLabels: []string{"MemoryEpisode"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			engine.SetDecayEnabled(true)
+			createdAt := time.Now().Add(-720 * time.Hour)
+			if _, err := engine.CreateNode(t.Context(), &storage.Node{
+				ID: "testns:old_episode", Labels: []string{"MemoryEpisode"},
+				Properties: map[string]interface{}{"name": "old"},
+				CreatedAt:  createdAt, UpdatedAt: createdAt,
+			}); err != nil {
+				t.Fatal(err)
+			}
 
-	executor := NewStorageExecutor(engine)
-	filtered, err := executor.Execute(context.Background(), "MATCH (n:MemoryEpisode) RETURN n", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(filtered.Rows) != 0 {
-		t.Fatalf("ordinary MATCH returned %d decayed nodes", len(filtered.Rows))
-	}
-	revealed, err := executor.Execute(context.Background(), "MATCH (n:MemoryEpisode) RETURN reveal(n)", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(revealed.Rows) != 1 {
-		t.Fatalf("reveal(n) returned %d rows, want one", len(revealed.Rows))
-	}
-	node, ok := revealed.Rows[0][0].(*storage.Node)
-	if !ok || node.ID != "testns:old_episode" {
-		t.Fatalf("revealed value = %#v, want node testns:old_episode", revealed.Rows[0][0])
-	}
+			executor := NewStorageExecutor(engine, policy...)
+			filtered, err := executor.Execute(context.Background(), "MATCH (n:MemoryEpisode) RETURN n", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(filtered.Rows) != 0 {
+				t.Fatalf("ordinary MATCH returned %d decayed nodes", len(filtered.Rows))
+			}
+			revealed, err := executor.Execute(context.Background(), "MATCH (n:MemoryEpisode) RETURN reveal(n)", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(revealed.Rows) != 1 {
+				t.Fatalf("reveal(n) returned %d rows, want one", len(revealed.Rows))
+			}
+			node, ok := revealed.Rows[0][0].(*storage.Node)
+			if !ok || node.ID != "testns:old_episode" {
+				t.Fatalf("revealed value = %#v, want node testns:old_episode", revealed.Rows[0][0])
+			}
 
-	if _, err := executor.Execute(context.Background(), "BEGIN", nil); err != nil {
-		t.Fatal(err)
-	}
-	txFiltered, err := executor.Execute(context.Background(), "MATCH (n:MemoryEpisode) RETURN n", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(txFiltered.Rows) != 0 {
-		t.Fatalf("ordinary MATCH in explicit transaction returned %d decayed nodes", len(txFiltered.Rows))
-	}
-	txRevealed, err := executor.Execute(context.Background(), "MATCH (n:MemoryEpisode) RETURN reveal(n)", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(txRevealed.Rows) != 1 {
-		t.Fatalf("reveal(n) in explicit transaction returned %d rows, want one", len(txRevealed.Rows))
-	}
-	if _, err := executor.Execute(context.Background(), "COMMIT", nil); err != nil {
-		t.Fatal(err)
+			if _, err := executor.Execute(context.Background(), "BEGIN", nil); err != nil {
+				t.Fatal(err)
+			}
+			txFiltered, err := executor.Execute(context.Background(), "MATCH (n:MemoryEpisode) RETURN n", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(txFiltered.Rows) != 0 {
+				t.Fatalf("ordinary MATCH in explicit transaction returned %d decayed nodes", len(txFiltered.Rows))
+			}
+			txRevealed, err := executor.Execute(context.Background(), "MATCH (n:MemoryEpisode) RETURN reveal(n)", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(txRevealed.Rows) != 1 {
+				t.Fatalf("reveal(n) in explicit transaction returned %d rows, want one", len(txRevealed.Rows))
+			}
+			if len(policy) != 0 {
+				for _, query := range []string{"MATCH (n:MemoryEpisode) RETURN n", "MATCH (n:MemoryEpisode) RETURN reveal(n)", "MATCH (n:MemoryEpisode) RETURN n", "MATCH (n:MemoryEpisode) RETURN reveal(n)", "MATCH (n:MemoryEpisode) RETURN n.name", "MATCH (n:MemoryEpisode) RETURN reveal(n).name", "MATCH (n:MemoryEpisode) RETURN n.name", "MATCH (n:MemoryEpisode) RETURN reveal(n) LIMIT 1", "MATCH (n:MemoryEpisode) RETURN n LIMIT 1"} {
+					result, err := executor.Execute(context.Background(), query, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					want := 0
+					if hasRevealCall(query) {
+						want = 1
+					}
+					if len(result.Rows) != want {
+						t.Fatalf("alternating query %q returned %d rows, want %d", query, len(result.Rows), want)
+					}
+				}
+				if _, err := executor.txContext.storageWrapper.CreateNode(t.Context(), &storage.Node{ID: "testns:pending", Labels: []string{"MemoryEpisode"}, Properties: map[string]interface{}{"name": "pending"}, CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+					t.Fatal(err)
+				}
+				for _, tc := range []struct {
+					query string
+					want  int64
+				}{{"MATCH (n:MemoryEpisode) RETURN count(n)", 1}, {"MATCH (n:MemoryEpisode) RETURN count(reveal(n))", 2}, {"MATCH (n:MemoryEpisode) RETURN count(n)", 1}} {
+					result, err := executor.Execute(context.Background(), tc.query, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(result.Rows) != 1 || result.Rows[0][0] != tc.want {
+						t.Fatalf("pending-write query %q result %#v, want %d", tc.query, result, tc.want)
+					}
+				}
+			}
+			if _, err := executor.Execute(context.Background(), "COMMIT", nil); err != nil {
+				t.Fatal(err)
+			}
+
+		})
 	}
 }
 
 func TestUnwrapBadgerEngine_Direct(t *testing.T) {
-	eng, err := storage.NewBadgerEngineInMemory()
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +185,10 @@ func TestUnwrapBadgerEngine_NilInput(t *testing.T) {
 }
 
 func TestSetRevealOnEngine_BadgerEngine(t *testing.T) {
-	eng, err := storage.NewBadgerEngineInMemory()
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +206,10 @@ func TestSetRevealOnEngine_NilEngine(t *testing.T) {
 }
 
 func TestSetRevealOnEngine_BlocksConcurrentNonRevealScope(t *testing.T) {
-	eng, err := storage.NewBadgerEngineInMemory()
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +243,10 @@ func TestSetRevealOnEngine_BlocksConcurrentNonRevealScope(t *testing.T) {
 }
 
 func TestSetRevealOnEngine_ExecutionStateBlocksConcurrentRead(t *testing.T) {
-	eng, err := storage.NewBadgerEngineInMemory()
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,4 +288,80 @@ func TestSetRevealOnEngine_ExecutionStateBlocksConcurrentRead(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("ordinary read scope did not resume after reveal scope ended")
 	}
+}
+
+// TestSetRevealOnEngine_InheritsRecordedLeaseHandle proves the migrated consumer
+// records the owning statement's opaque lease handle on the expression-failure
+// slot, and that a nested statement on the same physical engine inherits that
+// lease instead of acquiring the reveal scope again. clearRevealScope drops the
+// recorded handle with the engine.
+func TestSetRevealOnEngine_InheritsRecordedLeaseHandle(t *testing.T) {
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	outer := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
+	outer, releaseOuter, ownerEngine := setRevealOnEngine(outer, eng, true)
+	if ownerEngine != eng {
+		t.Fatal("expected the outer statement to own the reveal scope")
+	}
+	released := false
+	defer func() {
+		if !released {
+			clearRevealScope(outer, ownerEngine)
+			releaseOuter()
+		}
+	}()
+
+	failure := outer.Value(expressionFailureKey{}).(*expressionFailure)
+	failure.mu.Lock()
+	recordedEngine := failure.readScopeEngine
+	recordedScopes := failure.readScopes
+	failure.mu.Unlock()
+	if recordedEngine != eng {
+		t.Fatal("the expression-failure slot did not record the owning engine")
+	}
+	if recordedScopes == (storage.RevealScopes{}) {
+		t.Fatal("the expression-failure slot did not record the owning statement's lease handle")
+	}
+
+	type nestedResult struct {
+		ctx     context.Context
+		engine  *storage.BadgerEngine
+		release func()
+	}
+	results := make(chan nestedResult, 1)
+	go func() {
+		ctx, release, inherited := setRevealOnEngine(
+			context.WithValue(context.Background(), expressionFailureKey{}, failure), eng, false)
+		results <- nestedResult{ctx: ctx, engine: inherited, release: release}
+	}()
+	var nested nestedResult
+	select {
+	case nested = <-results:
+	case <-time.After(2 * time.Second):
+		t.Fatal("nested statement reacquired the reveal scope instead of inheriting the recorded lease")
+	}
+	nested.release()
+	if nested.engine != nil {
+		t.Fatal("nested statement must inherit the recorded lease instead of owning a new scope")
+	}
+	if storage.QueryRevealScopes(nested.ctx) == (storage.RevealScopes{}) {
+		t.Fatal("the nested statement context did not inherit a live lease handle")
+	}
+
+	clearRevealScope(outer, ownerEngine)
+	failure.mu.Lock()
+	clearedScopes := failure.readScopes
+	failure.mu.Unlock()
+	if clearedScopes != (storage.RevealScopes{}) {
+		t.Fatal("clearing the reveal scope must drop the recorded lease handle")
+	}
+	releaseOuter()
+	released = true
 }

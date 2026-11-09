@@ -38,11 +38,72 @@
 package cypher
 
 import (
-	"strconv"
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+// getQueryNode reads a node as query rows carry it: labels, properties and
+// embedding metadata, without the separately stored embedding vectors a row
+// never reads (n.has_embedding reads the metadata; storage.QueryNodeReader).
+// The transaction wrapper always reads it that way: a transaction's
+// UpdateNode reconciles embeddings against the stored node, so a row node
+// written back keeps them. Outside a transaction an engine's UpdateNode takes
+// the body as written and would clear them, so a store outside a transaction
+// reads it that way only for a statement that cannot write
+// (readOnlyQueryNodes); otherwise it reads the full node. Code that reads
+// vectors (link prediction, vector scoring, search indexing) reads with
+// GetNode.
+func (e *StorageExecutor) getQueryNode(ctx context.Context, store storage.Engine, id storage.NodeID) (*storage.Node, error) {
+	if reader := e.queryNodeReader(store); reader != nil {
+		return reader.GetQueryNode(ctx, id)
+	}
+	return store.GetNode(ctx, id)
+}
+
+// queryNodeReader is the shared read decision for point reads and MATCH scans.
+func (e *StorageExecutor) queryNodeReader(store storage.Engine) storage.QueryNodeReader {
+	if wrapper, ok := store.(*transactionStorageWrapper); ok {
+		return wrapper
+	}
+	if e != nil && e.readOnlyQueryNodes {
+		reader, _ := store.(storage.QueryNodeReader)
+		return reader
+	}
+	return nil
+}
+
+// streamQueryNodes carries the query-node read contract to storage. Each
+// consumer keeps its own row admission and stopping state: a bounded
+// traversal already checks labels, visibility and its remaining limit.
+func streamQueryNodes(ctx context.Context, store storage.Engine, labels []string, visit func(*storage.Node) error) error {
+	opts := storage.StreamNodesOptions{QueryNodes: true, ApplyDecayFilter: true}
+	if len(labels) > 0 {
+		opts.Label = labels[0]
+	}
+	return store.StreamNodesWithOptions(ctx, opts, visit)
+}
+
+// readsQueryNodesWithoutVectors reports whether an auto-commit statement
+// running without a transaction reads its row nodes without vectors: one
+// that matches nodes and cannot write. Whether it can write is the
+// statement-effect owner's answer (QueryInfo.ReadOnly). A statement with CALL
+// keeps full reads unless every CALL is a read-only CALL subquery run in line
+// (QueryInfo.callSubqueriesOnly), which reads like the same statement without
+// it. A procedure call keeps full reads whatever it does: it may write
+// outside a transaction, hand the nodes to native code, or add nodes it reads
+// in full (vector search) to the same rows, where a vector-free copy of the
+// same node would compare unequal. A store without the query-node read keeps
+// full reads.
+func (e *StorageExecutor) readsQueryNodesWithoutVectors(info *QueryInfo) bool {
+	if info == nil || !info.ReadOnly() || !info.HasMatch || info.HasCall && !info.callSubqueriesOnly() {
+		return false
+	}
+	_, ok := e.storage.(storage.QueryNodeReader)
+	return ok
+}
 
 type materializedAccessRecorder interface {
 	RecordMaterializedAccess(entityID string)
@@ -137,7 +198,14 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		if id == "" {
 			return false
 		}
+	case PathResult:
+		return materializedPathResult(recorder, &v)
+	case *PathResult:
+		return materializedPathResult(recorder, v)
 	case map[string]interface{}:
+		if path, ok := cypherPathResultOf(v, v, true); ok {
+			return materializedPathResult(recorder, &path)
+		}
 		found := false
 		for _, nested := range v {
 			if materializedValue(recorder, nested) {
@@ -168,6 +236,33 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		recorder.RecordMaterializedAccess(id)
 	}
 	return true
+}
+
+// materializedPathResult visits the native entities carried by a local path.
+// The typed carrier is authoritative, so its public map fields are not walked
+// a second time.
+func materializedPathResult(recorder materializedAccessRecorder, path *PathResult) bool {
+	if path == nil {
+		return false
+	}
+	found := false
+	for _, node := range path.Nodes {
+		if materializedValue(recorder, node) {
+			if recorder == nil {
+				return true
+			}
+			found = true
+		}
+	}
+	for _, relationship := range path.Relationships {
+		if materializedValue(recorder, relationship) {
+			if recorder == nil {
+				return true
+			}
+			found = true
+		}
+	}
+	return found
 }
 
 // nodeToMap converts a storage.Node to a map for result output.
@@ -302,7 +397,7 @@ func (e *StorageExecutor) extractVarName(pattern string) string {
 	pattern = strings.TrimPrefix(pattern, "(")
 	// Find first : or { or )
 	for i, c := range pattern {
-		if c == ':' || c == '{' || c == ')' || c == ' ' {
+		if c == ':' || c == '{' || c == ')' || cyphertext.IsWhitespace(c) {
 			name := strings.TrimSpace(pattern[:i])
 			if name != "" {
 				return name
@@ -334,51 +429,4 @@ func (e *StorageExecutor) extractLabels(pattern string) []string {
 	head, _ := splitNodePatternProperties(pattern)
 	_, labels, _ := parseNodeHead(head)
 	return labels
-}
-
-// applyArraySuffix applies an array suffix operation (like [..10] or [5]) to a collected list.
-// This handles slicing and indexing operations on aggregation results.
-//
-// # Parameters
-//   - collected: the list to apply the suffix to
-//   - suffix: the suffix string (e.g., "[..10]", "[5]", "[2..5]")
-//
-// # Returns
-//   - The sliced or indexed result
-func (e *StorageExecutor) applyArraySuffix(collected []interface{}, suffix string) interface{} {
-	suffix = strings.TrimSpace(suffix)
-	if suffix == "" || !strings.HasPrefix(suffix, "[") || !strings.HasSuffix(suffix, "]") {
-		return collected
-	}
-
-	// Extract the index/slice expression inside [ ]
-	indexExpr := suffix[1 : len(suffix)-1]
-
-	// Slice notation [..N], [N..M] or [N..] (cypherListSlice); the bounds
-	// are integer literals here.
-	if lowerExpr, upperExpr, isSlice := staticSliceBounds(indexExpr); isSlice {
-		lowerExpr, upperExpr = strings.TrimSpace(lowerExpr), strings.TrimSpace(upperExpr)
-		var lower, upper interface{}
-		if n, err := strconv.ParseInt(lowerExpr, 10, 64); err == nil {
-			lower = n
-		}
-		if n, err := strconv.ParseInt(upperExpr, 10, 64); err == nil {
-			upper = n
-		}
-		value, _ := cypherListSlice(collected, lower, upper, lower != nil, upper != nil)
-		return value
-	}
-
-	// Single index access [N]
-	if idx, err := strconv.ParseInt(strings.TrimSpace(indexExpr), 10, 64); err == nil {
-		if idx < 0 {
-			idx = int64(len(collected)) + idx
-		}
-		if idx >= 0 && idx < int64(len(collected)) {
-			return collected[idx]
-		}
-		return nil
-	}
-
-	return collected
 }

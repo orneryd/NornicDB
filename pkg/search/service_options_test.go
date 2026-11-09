@@ -3,6 +3,10 @@ package search
 import (
 	"context"
 	"errors"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,44 +16,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestServiceOptionsSearchResultCachePolicy(t *testing.T) {
-	defaults := DefaultServiceOptions("nornic")
-	require.Equal(t, "nornic", defaults.DatabaseID)
-	require.Equal(t, 1000, defaults.SearchResultCacheEntries)
-	require.Equal(t, 5*time.Minute, defaults.SearchResultCacheTTL)
-
-	defaultService := NewServiceWithDimensionsAndBM25Engine(storage.NewMemoryEngine(), 3, "v2")
-	require.NotNil(t, defaultService.resultCache)
-	require.Equal(t, 1000, defaultService.resultCache.maxSize)
-	require.Equal(t, 5*time.Minute, defaultService.resultCache.ttl)
-
-	disabled := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{
-		DatabaseID:               "alpha",
-		SearchResultCacheEntries: 0,
-		SearchResultCacheTTL:     time.Minute,
-	})
-	require.NotNil(t, disabled.resultCache)
-	require.Equal(t, 0, disabled.resultCache.maxSize)
-
-	configured := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{
-		DatabaseID:               "beta",
-		SearchResultCacheEntries: 12,
-		SearchResultCacheTTL:     2 * time.Minute,
-	})
-	require.Equal(t, 12, configured.resultCache.maxSize)
-	require.Equal(t, 2*time.Minute, configured.resultCache.ttl)
-}
-
 func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
+	t.Run("service options seed the result cache", func(t *testing.T) {
+		defaults := DefaultServiceOptions("nornic")
+		require.Equal(t, "nornic", defaults.DatabaseID)
+		require.Equal(t, 1000, defaults.SearchResultCacheEntries)
+		require.Equal(t, 5*time.Minute, defaults.SearchResultCacheTTL)
+
+		defaultService := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
+		require.NotNil(t, defaultService.resultCache)
+		require.Equal(t, 1000, defaultService.resultCache.maxSize)
+		require.Equal(t, 5*time.Minute, defaultService.resultCache.ttl)
+
+		disabled := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{
+			DatabaseID:               "alpha",
+			SearchResultCacheEntries: 0,
+			SearchResultCacheTTL:     time.Minute,
+		})
+		require.NotNil(t, disabled.resultCache)
+		require.Equal(t, 0, disabled.resultCache.maxSize)
+
+		configured := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{
+			DatabaseID:               "beta",
+			SearchResultCacheEntries: 12,
+			SearchResultCacheTTL:     2 * time.Minute,
+		})
+		require.Equal(t, 12, configured.resultCache.maxSize)
+		require.Equal(t, 2*time.Minute, configured.resultCache.ttl)
+	})
+
 	var nilService *Service
 	nilService.SetSearchResultCachePolicy(10, time.Minute)
 	maxEntries, ttl := nilService.SearchResultCachePolicy()
 	require.Zero(t, maxEntries)
 	require.Zero(t, ttl)
 
-	service := NewServiceWithDimensionsAndBM25Engine(storage.NewMemoryEngine(), 3, "v2")
-	service.resultCache.Put("first", &SearchResponse{Query: "first"})
-	service.resultCache.Put("second", &SearchResponse{Query: "second"})
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
+	service.resultCache.Put(context.Background(), "first", &SearchResponse{Query: "first"})
+	service.resultCache.Put(context.Background(), "second", &SearchResponse{Query: "second"})
 
 	service.SetSearchResultCachePolicy(1, 30*time.Second)
 	maxEntries, ttl = service.SearchResultCachePolicy()
@@ -69,7 +73,7 @@ func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
 }
 
 func TestServiceOptionsIndexCapacityPolicy(t *testing.T) {
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{
 		DatabaseID:             "capacity",
 		BM25MemoryMaxBytes:     1 << 20,
 		VectorMemoryMaxBytes:   2 << 20,
@@ -87,7 +91,7 @@ func TestServiceOptionsIndexCapacityPolicy(t *testing.T) {
 }
 
 func TestServiceOptionsBM25StemmerSelection(t *testing.T) {
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{
 		BM25Stemmer: &stemmer.Registration{
 			APIVersion: stemmer.APIVersion,
 			ID:         "test.fold",
@@ -103,7 +107,7 @@ func TestServiceOptionsBM25StemmerSelection(t *testing.T) {
 			},
 		},
 	})
-	service.fulltext().Index("doc", "children")
+	service.fulltext().Index("doc", "children", nil, nil, false)
 	require.Len(t, service.fulltext().Search("child", 10), 1)
 	require.Contains(t, service.composeBM25BuildSettings(), "stemmer=test.fold")
 	require.Contains(t, service.composeBM25BuildSettings(), "stemmer_api=1")
@@ -118,9 +122,9 @@ func TestVectorStorageModeControlsFileStore(t *testing.T) {
 		{mode: "disk", wantFileStore: true},
 	} {
 		t.Run(test.mode, func(t *testing.T) {
-			service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{VectorStorageMode: test.mode})
+			service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{VectorStorageMode: test.mode})
 			service.SetPersistenceEnabled(true)
-			service.SetVectorIndexPath(t.TempDir() + "/vectors")
+			service.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 
 			service.indexMu.Lock()
 			service.ensureVectorFileStore()
@@ -157,7 +161,7 @@ func TestIndexCapacityBudgetsRejectBeforeMutation(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &test.options)
+			service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &test.options)
 			err := service.IndexNode(test.node)
 			require.Error(t, err)
 			require.True(t, errors.Is(err, ErrIndexMemoryBudgetExceeded))
@@ -168,28 +172,28 @@ func TestIndexCapacityBudgetsRejectBeforeMutation(t *testing.T) {
 }
 
 func TestBuildIndexesEnforcesCapacityBudgets(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:document", Properties: map[string]any{"text": "larger than four bytes"}})
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:document", Properties: map[string]any{"text": "larger than four bytes"}})
 	require.NoError(t, err)
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", &ServiceOptions{BM25MemoryMaxBytes: 4})
+	service := NewService(engine, 3, &ServiceOptions{BM25MemoryMaxBytes: 4})
 
 	err = service.BuildIndexes(context.Background())
 	require.ErrorIs(t, err, ErrIndexMemoryBudgetExceeded)
 }
 
 func TestDiskVectorStorageRequiresPersistencePath(t *testing.T) {
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{VectorStorageMode: "disk"})
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{VectorStorageMode: "disk"})
 
 	err := service.BuildIndexes(context.Background())
 	require.ErrorContains(t, err, "vector disk storage requires")
 
-	disabled := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{VectorStorageMode: "disk"})
+	disabled := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{VectorStorageMode: "disk"})
 	disabled.SetIndexFlags(true, false)
 	require.NoError(t, disabled.BuildIndexes(context.Background()))
 }
 
 func TestIndexCapacityBudgetsCoverRelationshipVectors(t *testing.T) {
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{VectorMemoryMaxBytes: 8})
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{VectorMemoryMaxBytes: 8})
 
 	err := service.IndexEdge(&storage.Edge{
 		ID:         "relationship",
@@ -201,7 +205,7 @@ func TestIndexCapacityBudgetsCoverRelationshipVectors(t *testing.T) {
 }
 
 func TestIndexCapacityAccountingIsReleasedOnRemoval(t *testing.T) {
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, &ServiceOptions{
 		BM25StorageMode:        "memory",
 		VectorStorageMode:      "memory",
 		VectorMemoryMaxBytes:   1 << 20,
@@ -215,7 +219,7 @@ func TestIndexCapacityAccountingIsReleasedOnRemoval(t *testing.T) {
 	}
 	require.NoError(t, service.IndexNode(node))
 	require.Equal(t, int64(24), service.vectorResidentBytes)
-	require.Equal(t, int64(54), service.vectorMetadataBytes)
+	require.Equal(t, int64(len("node")+16+len(nodeNamedVectorKey("node", "default"))+16), service.vectorMetadataBytes)
 	require.Contains(t, service.indexCapacityByNode, "node")
 
 	require.NoError(t, service.RemoveNode(node.ID))
@@ -246,9 +250,9 @@ func TestIndexCapacityAccountingIsReleasedOnRemoval(t *testing.T) {
 
 func TestSearchResultCacheResizeAndTTL(t *testing.T) {
 	cache := newSearchResultCache(3, time.Hour)
-	cache.Put("a", &SearchResponse{Query: "a"})
-	cache.Put("b", &SearchResponse{Query: "b"})
-	cache.Put("c", &SearchResponse{Query: "c"})
+	cache.Put(context.Background(), "a", &SearchResponse{Query: "a"})
+	cache.Put(context.Background(), "b", &SearchResponse{Query: "b"})
+	cache.Put(context.Background(), "c", &SearchResponse{Query: "c"})
 	require.NotNil(t, cache.Get("a"))
 
 	cache.Resize(2)
@@ -260,11 +264,11 @@ func TestSearchResultCacheResizeAndTTL(t *testing.T) {
 	require.NotNil(t, cache.Get("a"))
 	cache.Resize(0)
 	require.Nil(t, cache.Get("a"))
-	cache.Put("disabled", &SearchResponse{Query: "disabled"})
+	cache.Put(context.Background(), "disabled", &SearchResponse{Query: "disabled"})
 	require.Nil(t, cache.Get("disabled"))
 
 	cache.Resize(2)
-	cache.Put("old", &SearchResponse{Query: "old"})
+	cache.Put(context.Background(), "old", &SearchResponse{Query: "old"})
 	time.Sleep(5 * time.Millisecond)
 	cache.SetTTL(time.Millisecond)
 	require.Nil(t, cache.Get("old"))
@@ -274,11 +278,11 @@ func TestCollapseCandidatesByNodeIDKeepsHighestScore(t *testing.T) {
 	require.Nil(t, collapseCandidatesByNodeID(nil))
 
 	collapsed := collapseCandidatesByNodeID([]SearchCandidate{
-		{ID: "node-a-chunk-0", Score: 0.4},
-		{ID: "node-b-prop-embedding", Score: 0.8},
-		{ID: "node-a-named-summary", Score: 0.9},
+		{ID: nodeChunkVectorKey("node-a", 0), Score: 0.4},
+		{ID: nodePropertyVectorKey("node-b", "embedding"), Score: 0.8},
+		{ID: nodeNamedVectorKey("node-a", "summary"), Score: 0.9},
 		{ID: "node-c", Score: 0.6},
-		{ID: "node-b-chunk-2", Score: 0.7},
+		{ID: nodeChunkVectorKey("node-b", 2), Score: 0.7},
 	})
 
 	require.Equal(t, []SearchCandidate{
@@ -286,24 +290,4 @@ func TestCollapseCandidatesByNodeIDKeepsHighestScore(t *testing.T) {
 		{ID: "node-b", Score: 0.8},
 		{ID: "node-c", Score: 0.6},
 	}, collapsed)
-}
-
-func TestSearchServiceDoesNotIndexManagedVectorsFromAnotherModelSpace(t *testing.T) {
-	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
-	service.SetEmbeddingSpace("provider:text:model:2")
-
-	require.NoError(t, service.IndexNode(&storage.Node{
-		ID:              "text",
-		ChunkEmbeddings: [][]float32{{1, 0}},
-		EmbedMeta:       map[string]any{"embedding_space": "provider:text:model:2"},
-	}))
-	require.NoError(t, service.IndexNode(&storage.Node{
-		ID:              "visual",
-		ChunkEmbeddings: [][]float32{{0, 1}},
-		EmbedMeta:       map[string]any{"embedding_space": "provider:multimodal:model:2"},
-	}))
-
-	require.Equal(t, 1, service.EmbeddingCount())
-	_, found := service.vectorIndex.GetVector("visual")
-	require.False(t, found)
 }

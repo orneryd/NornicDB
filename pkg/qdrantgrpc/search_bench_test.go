@@ -1,6 +1,8 @@
 package qdrantgrpc
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"net"
@@ -29,10 +31,10 @@ func startBenchServer(b testing.TB) *benchServer {
 	cfg.EnableReflection = false
 	cfg.AllowVectorMutations = true
 
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(b.Context(), base, nil)
 	require.NoError(b, err)
 
 	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, nil, nil)

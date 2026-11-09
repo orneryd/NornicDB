@@ -1,12 +1,15 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
+	"testing"
+	"time"
+
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 func setupSimilarityPropertyPolicy(t *testing.T, be *storage.BadgerEngine, namespace, label string) {
@@ -18,14 +21,14 @@ func setupSimilarityPropertyPolicy(t *testing.T, be *storage.BadgerEngine, names
 }
 
 func TestFindSimilarProjectsSuppressedProperties(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 	setupSimilarityPropertyPolicy(t, be, "tenant", "Doc")
 	engine := storage.NewNamespacedEngine(be, "tenant")
 	old := time.Now().Add(-time.Hour)
 	for _, id := range []storage.NodeID{"root", "other"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, ChunkEmbeddings: [][]float32{{1, 0}}, CreatedAt: old, UpdatedAt: old})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, ChunkEmbeddings: [][]float32{{1, 0}}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 	}
 	db := &DB{storage: engine}
@@ -58,7 +61,7 @@ func TestFindSimilarProjectsSuppressedProperties(t *testing.T) {
 		<-done
 		t.Fatal("nested similarity query recursively acquired a scope behind a waiting REVEAL")
 	}
-	raw, err := engine.GetNode("other")
+	raw, err := engine.GetNode(t.Context(), "other")
 	require.NoError(t, err)
 	require.Equal(t, "hidden", raw.Properties["secret"])
 }

@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 // (#939): the first PULL of 1,000 rows followed by a DISCARD of the rest
 // (first-batch), and every row pulled in batches of 1,000 (pull-all).
 func BenchmarkBoltLargeRead(b *testing.B) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	port, _ := startBenchTransportServer(b, benchTransportTCP, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)})
 	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {

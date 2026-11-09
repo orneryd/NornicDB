@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -27,7 +29,7 @@ func groupByVariable(kind string, index int) string {
 }
 
 // groupByEdits rewrites each RETURN / WITH … GROUP BY ….
-func groupByEdits(query string) ([]labelRewriteEdit, error) {
+func groupByEdits(ctx context.Context, query string) ([]labelRewriteEdit, error) {
 	if indexASCIIFold(query, "group") < 0 {
 		return nil, nil
 	}
@@ -48,12 +50,16 @@ func groupByEdits(query string) ([]labelRewriteEdit, error) {
 			continue
 		}
 		keysStart, keysEnd := words[index+1].end, len(query)
-		for _, next := range words[index+2:] {
+		for offset, next := range words[index+2:] {
 			if next.depth < word.depth {
 				keysEnd = skipBackSpaces(query, next.start)
 				break
 			}
 			if next.depth == word.depth && groupByKeysEnd(next.upper, words[projection].upper) {
+				before := words[max(0, index+offset)].start
+				if projectionOperandBefore(query, before, next.start) {
+					continue
+				}
 				keysEnd = next.start
 				break
 			}
@@ -61,7 +67,7 @@ func groupByEdits(query string) ([]labelRewriteEdit, error) {
 		if closing := enclosingClose(query, word.start); closing >= 0 && closing < keysEnd {
 			keysEnd = closing
 		}
-		edit, err := groupByEdit(query, words[projection], word.start, keysStart, keysEnd)
+		edit, err := groupByEdit(ctx, query, words[projection], word.start, keysStart, keysEnd)
 		if err != nil {
 			return nil, err
 		}
@@ -99,20 +105,18 @@ func projectionWords(query string) []projectionWord {
 	for i := 0; i < len(query); i++ {
 		c := query[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
 		case c == '(' || c == '[' || c == '{':
 			depth++
 		case c == ')' || c == ']' || c == '}':
 			depth--
-		case isIdentByte(c) && !isDigitByte(c):
-			if i > 0 && (isIdentByte(query[i-1]) || query[i-1] == '$' || query[i-1] == '.') {
+		case cyphertext.NamePartAt(query, i) && !isDigitByte(c):
+			if i > 0 && (cyphertext.NamePartAt(query, i-1) || query[i-1] == '$' || query[i-1] == '.') {
 				continue
 			}
 			j := i
-			for j < len(query) && isIdentByte(query[j]) {
-				j++
-			}
+			j = cyphertext.NamePartEnd(query, j)
 			words = append(words, projectionWord{start: i, end: j, depth: depth, upper: strings.ToUpper(query[i:j])})
 			i = j - 1
 		}
@@ -125,8 +129,8 @@ func projectionWords(query string) []projectionWord {
 func enclosingClose(query string, at int) int {
 	depth := 0
 	for i := at; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '(', '[', '{':
 			depth++
@@ -149,7 +153,10 @@ type groupByItem struct {
 
 // groupByEdit rewrites the projection whose keyword is clause, with GROUP
 // at groupStart and its keys at query[keysStart:keysEnd].
-func groupByEdit(query string, clause projectionWord, groupStart, keysStart, keysEnd int) (labelRewriteEdit, error) {
+func groupByEdit(ctx context.Context, query string, clause projectionWord, groupStart, keysStart, keysEnd int) (labelRewriteEdit, error) {
+	if err := ctx.Err(); err != nil {
+		return labelRewriteEdit{}, err
+	}
 	itemsStart := skipASCIISpaces(query, clause.end, groupStart)
 	distinct := matchKeywordAt(query[:groupStart], itemsStart, "DISTINCT")
 	if distinct {
@@ -157,7 +164,11 @@ func groupByEdit(query string, clause projectionWord, groupStart, keysStart, key
 	}
 	var items []groupByItem
 	for _, text := range splitTopLevelComma(query[itemsStart:groupStart]) {
-		expression, alias := projectionItemAlias(text)
+		itemSource := readProjectionItemSource(ctx, text, projectionBeforeRewrite)
+		if err := ctx.Err(); err != nil {
+			return labelRewriteEdit{}, err
+		}
+		expression, alias := itemSource.expression, itemSource.alias
 		items = append(items, groupByItem{expression: expression, alias: alias, aggregates: containsAggregateFunc(expression)})
 	}
 	var keys []string
@@ -200,8 +211,8 @@ func groupByEdit(query string, clause projectionWord, groupStart, keysStart, key
 		if !aggregating && !distinct {
 			text = "DISTINCT "
 		}
-		text += strings.TrimRight(query[itemsStart:groupStart], " \t\r\n")
-		if keysEnd < len(query) && !isASCIISpace(query[keysEnd]) {
+		text += strings.TrimRightFunc(query[itemsStart:groupStart], cyphertext.IsWhitespace)
+		if keysEnd < len(query) && !cyphertext.IsWhitespaceAt(query, keysEnd) {
 			text += " "
 		}
 		return labelRewriteEdit{start: itemsStart, end: keysEnd, text: text}, nil
@@ -231,30 +242,10 @@ func groupByEdit(query string, clause projectionWord, groupStart, keysStart, key
 	// n.name, count(*) GROUP BY n.name, n.age keeps both Ann rows in Neo4j).
 	keyword := query[clause.start:clause.end]
 	text := "WITH " + strings.Join(grouping, ", ") + " " + keyword + " " + strings.Join(projected, ", ")
-	if keysEnd < len(query) && !isASCIISpace(query[keysEnd]) {
+	if keysEnd < len(query) && !cyphertext.IsWhitespaceAt(query, keysEnd) {
 		text += " "
 	}
 	return labelRewriteEdit{start: clause.start, end: keysEnd, text: text}, nil
-}
-
-// projectionItemAlias splits a projected item into its expression and
-// column name: the alias after its last top-level AS, or the expression.
-func projectionItemAlias(item string) (string, string) {
-	item = strings.TrimSpace(item)
-	as := -1
-	for _, word := range projectionWords(item) {
-		if word.depth == 0 && word.upper == "AS" {
-			as = word.start
-		}
-	}
-	if as < 0 {
-		return item, item
-	}
-	alias := strings.TrimSpace(item[as+len("AS"):])
-	if name, end, ok := scanIdentifierToken(alias, 0); ok && end == len(alias) {
-		alias = name
-	}
-	return strings.TrimSpace(item[:as]), alias
 }
 
 // replaceGroupingKeys writes each grouping key in expression as its
@@ -272,14 +263,14 @@ func replaceGroupingKeys(expression string, keys []string) (string, bool) {
 func replaceWholeExpression(text, old, replacement string) string {
 	var out strings.Builder
 	for i := 0; i < len(text); {
-		if c := text[i]; c == '\'' || c == '"' || c == '`' {
+		if c := text[i]; isCypherQuoteByte(c) {
 			end := skipCypherQuotedText(text, i, c)
 			out.WriteString(text[i:end])
 			i = end
 			continue
 		}
-		if strings.HasPrefix(text[i:], old) && (i == 0 || !isIdentByte(text[i-1]) && text[i-1] != '.') &&
-			(i+len(old) == len(text) || !isIdentByte(text[i+len(old)]) && text[i+len(old)] != '.') {
+		if strings.HasPrefix(text[i:], old) && (i == 0 || !cyphertext.NamePartAt(text, i-1) && text[i-1] != '.') &&
+			(i+len(old) == len(text) || !cyphertext.NamePartAt(text, i+len(old)) && text[i+len(old)] != '.') {
 			out.WriteString(replacement)
 			i += len(old)
 			continue

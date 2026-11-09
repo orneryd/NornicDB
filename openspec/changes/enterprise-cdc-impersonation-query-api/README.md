@@ -26,3 +26,13 @@ acceptance dependencies. The [task graph](tasks.md) distinguishes these gates.
 The plan also requires tested lock ordering, position-only OFF benchmarks and
 end-to-end streaming procedures with measured scan/buffering/cleanup bounds.
 Conflicting existing behavior is replaced, not retained behind legacy fallbacks.
+
+## Shared FGAC enforcement foundation
+
+The [FGAC/F-PRIV convergence spec](../fgac-privilege-convergence/README.md)
+records the 17 October decision to perform the permissions refactor with #935.
+Its complete operation classification and canonical evaluator are shared backend
+dependencies, not a second permissions implementation in this plan. F-PRIV
+resumes after 1.4.4 ships for the planned 1.5.0 release and requires passing
+whole-family review under Rule 73;
+#1352 does not merge alone.

@@ -1,154 +1,164 @@
 // Package load provides APOC data loading functions.
 //
-// This package implements all apoc.load.* functions for loading
-// data from external sources (JSON, CSV, XML, JDBC, etc.).
+// This package implements the apoc.load.* scalar loaders the bundled APOC
+// plugin exports (jsonStream, csvStream, xmlSimple, graphQL, rest, binary,
+// stream) and the Go entry points the same names share. Data loading from
+// external sources (JSON, CSV, XML, JDBC, ...) lives here.
+//
+// Every loader that performs real network or file I/O is context-first and
+// takes the caller's statement context as its first argument. That context
+// must carry the typed APOC I/O capability (pkg/apocio) the query executor
+// derives from its configured policy; a Go caller binds one explicitly with
+// apocio.WithCapability. A context without a capability performs no I/O and
+// receives apocio.ErrCapabilityMissing: there is no unrestricted fallback.
+// The loaders below that return fixed data are placeholders; they perform no
+// I/O and take no context.
 package load
 
 import (
+	"context"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/apocio"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
-// Json loads JSON data from a URL or file.
+// openSource opens an APOC source through the caller's bound I/O capability.
+// It is the single place this package turns a context into I/O admission.
+func openSource(ctx context.Context, source string, request apocio.Request) (io.ReadCloser, error) {
+	capability, err := apocio.CapabilityFrom(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return capability.Open(ctx, source, request)
+}
+
+// Json loads JSON data from a URL or import file.
 //
 // Example:
 //
-//	apoc.load.json('http://example.com/data.json') => parsed data
+//	apoc.load.json('https://example.com/data.json') => parsed data
 //	apoc.load.json('/path/to/file.json') => parsed data
-func Json(urlOrFile string) (interface{}, error) {
-	var data interface{}
-	var err error
-
-	// Check if it's a URL or file path
-	if strings.HasPrefix(urlOrFile, "http://") || strings.HasPrefix(urlOrFile, "https://") {
-		data, err = loadJsonFromURL(urlOrFile)
-	} else {
-		data, err = loadJsonFromFile(urlOrFile)
-	}
-
+func Json(ctx context.Context, urlOrFile string) (interface{}, error) {
+	data, err := decodeJSON(ctx, urlOrFile, apocio.Request{}, decodeInputDocument)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load JSON: %w", err)
 	}
-
 	return data, nil
 }
 
-// loadJsonFromURL loads JSON from an HTTP(S) URL.
-func loadJsonFromURL(url string) (interface{}, error) {
-	resp, err := http.Get(url)
+// JSONItemShape selects how a decoded JSON document becomes loader items.
+type JSONItemShape int
+
+const (
+	// DocumentItems publishes a JSON array's items, and any other document
+	// (object, scalar or null) as one item.
+	DocumentItems JSONItemShape = iota
+	// RequireArray publishes a JSON array's items and refuses any other
+	// document.
+	RequireArray
+)
+
+// documentDecoder decodes a document under one number domain. The domains are
+// distinct types, so each route names its own here.
+type documentDecoder func(io.Reader, *interface{}) error
+
+func decodeInputDocument(reader io.Reader, data *interface{}) error {
+	return valueconvert.CypherInputJSON.NewDecoder(reader).Decode(data)
+}
+
+func decodePropertyDocument(reader io.Reader, data *interface{}) error {
+	return valueconvert.PropertyJSON.NewDecoder(reader).Decode(data)
+}
+
+// PropertyDocument loads a JSON document as stored properties, keeping their
+// exact numbers. Graph imports read a document this way.
+func PropertyDocument(ctx context.Context, urlOrFile string) (interface{}, error) {
+	return decodeJSON(ctx, urlOrFile, apocio.Request{}, decodePropertyDocument)
+}
+
+// JSONItems binds one item shape once and returns the context-first loader the
+// bundled plugin and the native procedures share.
+//
+// The plugin registers the returned handler under the Cypher names whose row
+// shape it declares, and the native JSON procedures consume the DocumentItems
+// handler before assembling their YIELD rows. Acquisition, decoding, the
+// original error and the caller's cancellation all come from Json. A shape
+// other than DocumentItems or RequireArray is rejected before any source is
+// opened.
+//
+// Example:
+//
+//	func loadDocument(ctx context.Context, policy apocio.Policy, source string) ([]interface{}, error) {
+//		ctx = apocio.WithCapability(ctx, policy.Capability())
+//		document := JSONItems(DocumentItems)
+//		return document(ctx, source)
+//	}
+//
+//	func loadRequiredArray(ctx context.Context, policy apocio.Policy, source string) ([]interface{}, error) {
+//		ctx = apocio.WithCapability(ctx, policy.Capability())
+//		array := JSONItems(RequireArray)
+//		return array(ctx, source)
+//	}
+func JSONItems(shape JSONItemShape) func(context.Context, string) ([]interface{}, error) {
+	return func(ctx context.Context, source string) ([]interface{}, error) {
+		if shape != DocumentItems && shape != RequireArray {
+			return nil, fmt.Errorf("invalid JSON item shape %d", shape)
+		}
+
+		data, err := Json(ctx, source)
+		if err != nil {
+			return nil, err
+		}
+
+		if arr, ok := data.([]interface{}); ok {
+			return arr, nil
+		}
+		if shape == RequireArray {
+			return nil, fmt.Errorf("data is not an array")
+		}
+
+		return []interface{}{data}, nil
+	}
+}
+
+// JsonParams loads JSON with a request method and headers.
+//
+// Example:
+//
+//	apoc.load.jsonParams('https://api.com/data', {headers: {...}}, 'POST') => data
+func JsonParams(ctx context.Context, url string, headers map[string]string, method string) (interface{}, error) {
+	return decodeJSON(ctx, url, apocio.Request{Method: method, Headers: headers}, decodeInputDocument)
+}
+
+// decodeJSON decodes the JSON document at source through the shared I/O owner.
+func decodeJSON(ctx context.Context, source string, request apocio.Request, decode documentDecoder) (interface{}, error) {
+	body, err := openSource(ctx, source, request)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP error: %s", resp.Status)
-	}
+	defer body.Close()
 
 	var data interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := decode(body, &data); err != nil {
 		return nil, err
 	}
-
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return data, nil
 }
 
-// loadJsonFromFile loads JSON from a file path.
-func loadJsonFromFile(path string) (interface{}, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var data interface{}
-	if err := json.NewDecoder(file).Decode(&data); err != nil {
-		return nil, err
-	}
-
-	return data, nil
-}
-
-// JsonStream loads JSON data as a stream.
+// Csv loads CSV data from a URL or import file.
 //
 // Example:
 //
-//	apoc.load.jsonStream('http://example.com/data.json') => stream of objects
-func JsonStream(url string) ([]interface{}, error) {
-	// Placeholder - would stream JSON objects
-	data, err := Json(url)
-	if err != nil {
-		return nil, err
-	}
-
-	if arr, ok := data.([]interface{}); ok {
-		return arr, nil
-	}
-
-	return []interface{}{data}, nil
-}
-
-// JsonArray loads a JSON array from a URL.
-//
-// Example:
-//
-//	apoc.load.jsonArray('http://example.com/data.json') => array
-func JsonArray(url string) ([]interface{}, error) {
-	data, err := Json(url)
-	if err != nil {
-		return nil, err
-	}
-
-	if arr, ok := data.([]interface{}); ok {
-		return arr, nil
-	}
-
-	return nil, fmt.Errorf("data is not an array")
-}
-
-// JsonParams loads JSON with parameters.
-//
-// Example:
-//
-//	apoc.load.jsonParams('http://api.com/data', {headers: {...}}, 'POST') => data
-func JsonParams(url string, headers map[string]string, method string) (interface{}, error) {
-	client := &http.Client{}
-
-	req, err := http.NewRequest(method, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var data interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, err
-	}
-
-	return data, nil
-}
-
-// Csv loads CSV data from a URL or file.
-//
-// Example:
-//
-//	apoc.load.csv('http://example.com/data.csv', {delimiter: ',', header: true}) => rows
+//	apoc.load.csv('https://example.com/data.csv', {delimiter: ',', header: true}) => rows
 //	apoc.load.csv('/path/to/file.csv', {delimiter: ',', header: true}) => rows
-func Csv(urlOrFile string, config map[string]interface{}) ([]map[string]interface{}, error) {
+func Csv(ctx context.Context, urlOrFile string, config map[string]interface{}) ([]map[string]interface{}, error) {
 	// Parse configuration
 	delimiter := ','
 	if d, ok := config["delimiter"].(string); ok && len(d) > 0 {
@@ -163,31 +173,16 @@ func Csv(urlOrFile string, config map[string]interface{}) ([]map[string]interfac
 		hasHeader = h
 	}
 
-	var reader *csv.Reader
-	var closer io.Closer
-
-	// Load from URL or file
-	if strings.HasPrefix(urlOrFile, "http://") || strings.HasPrefix(urlOrFile, "https://") {
-		resp, err := http.Get(urlOrFile)
-		if err != nil {
+	source, err := openSource(ctx, urlOrFile, apocio.Request{})
+	if err != nil {
+		if apocio.IsHTTPSource(urlOrFile) {
 			return nil, fmt.Errorf("failed to fetch CSV: %w", err)
 		}
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			return nil, fmt.Errorf("HTTP error: %s", resp.Status)
-		}
-		closer = resp.Body
-		reader = csv.NewReader(resp.Body)
-	} else {
-		file, err := os.Open(urlOrFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open CSV: %w", err)
-		}
-		closer = file
-		reader = csv.NewReader(file)
+		return nil, fmt.Errorf("failed to open CSV: %w", err)
 	}
-	defer closer.Close()
+	defer source.Close()
 
+	reader := csv.NewReader(source)
 	reader.Comma = delimiter
 	reader.LazyQuotes = true
 
@@ -235,27 +230,18 @@ func Csv(urlOrFile string, config map[string]interface{}) ([]map[string]interfac
 	return rows, nil
 }
 
-// CsvStream loads CSV data as a stream.
+// Xml loads XML data from a URL or import file.
 //
 // Example:
 //
-//	apoc.load.csvStream('http://example.com/data.csv', {}) => stream of rows
-func CsvStream(url string, config map[string]interface{}) ([]map[string]interface{}, error) {
-	return Csv(url, config)
-}
-
-// Xml loads XML data from a URL or file.
-//
-// Example:
-//
-//	apoc.load.xml('http://example.com/data.xml') => parsed XML
-func Xml(url string) (map[string]interface{}, error) {
-	// Placeholder - would fetch and parse XML
-	resp, err := http.Get(url)
+//	apoc.load.xml('https://example.com/data.xml') => parsed XML
+func Xml(ctx context.Context, url string) (map[string]interface{}, error) {
+	// Placeholder - would parse XML
+	body, err := openSource(ctx, url, apocio.Request{})
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer body.Close()
 
 	// Simple XML parsing placeholder
 	return map[string]interface{}{
@@ -263,26 +249,17 @@ func Xml(url string) (map[string]interface{}, error) {
 	}, nil
 }
 
-// XmlSimple loads XML data in simplified format.
-//
-// Example:
-//
-//	apoc.load.xmlSimple('http://example.com/data.xml') => simplified XML
-func XmlSimple(url string) (map[string]interface{}, error) {
-	return Xml(url)
-}
-
 // Html loads HTML data from a URL.
 //
 // Example:
 //
-//	apoc.load.html('http://example.com', {}) => parsed HTML
-func Html(url string, config map[string]interface{}) (map[string]interface{}, error) {
-	resp, err := http.Get(url)
+//	apoc.load.html('https://example.com', {}) => parsed HTML
+func Html(ctx context.Context, url string, config map[string]interface{}) (map[string]interface{}, error) {
+	body, err := openSource(ctx, url, apocio.Request{})
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer body.Close()
 
 	// Placeholder - would parse HTML
 	return map[string]interface{}{
@@ -371,7 +348,7 @@ func JsonSchema(data interface{}, schema map[string]interface{}) (map[string]int
 //
 // Example:
 //
-//	apoc.load.arrow('http://example.com/data.arrow') => data
+//	apoc.load.arrow('https://example.com/data.arrow') => data
 func Arrow(url string) ([]map[string]interface{}, error) {
 	// Placeholder - would load Arrow format
 	return []map[string]interface{}{}, nil
@@ -381,7 +358,7 @@ func Arrow(url string) ([]map[string]interface{}, error) {
 //
 // Example:
 //
-//	apoc.load.parquet('http://example.com/data.parquet') => data
+//	apoc.load.parquet('https://example.com/data.parquet') => data
 func Parquet(url string) ([]map[string]interface{}, error) {
 	// Placeholder - would load Parquet format
 	return []map[string]interface{}{}, nil
@@ -391,7 +368,7 @@ func Parquet(url string) ([]map[string]interface{}, error) {
 //
 // Example:
 //
-//	apoc.load.avro('http://example.com/data.avro') => data
+//	apoc.load.avro('https://example.com/data.avro') => data
 func Avro(url string) ([]map[string]interface{}, error) {
 	// Placeholder - would load Avro format
 	return []map[string]interface{}{}, nil
@@ -461,30 +438,35 @@ func Elasticsearch(url string, index string, query string) ([]map[string]interfa
 //
 // Example:
 //
-//	apoc.load.graphql('http://api.com/graphql', 'query { users { id name } }', {}) => data
-func GraphQL(url string, query string, variables map[string]interface{}) (interface{}, error) {
-	// Placeholder - would execute GraphQL query
+//	apoc.load.graphql('https://api.com/graphql', 'query { users { id name } }', {}) => data
+func GraphQL(ctx context.Context, url string, query string, variables map[string]interface{}) (interface{}, error) {
 	payload := map[string]interface{}{
 		"query":     query,
 		"variables": variables,
 	}
 
-	jsonData, err := json.Marshal(payload)
+	jsonData, err := valueconvert.CypherInputJSON.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := http.Post(url, "application/json", strings.NewReader(string(jsonData)))
+	body, err := openSource(ctx, url, apocio.Request{
+		Method:  http.MethodPost,
+		Headers: map[string]string{"Content-Type": "application/json"},
+		Body:    jsonData,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer body.Close()
 
 	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := valueconvert.PropertyJSON.NewDecoder(body).Decode(&result); err != nil {
 		return nil, err
 	}
-
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return result["data"], nil
 }
 
@@ -492,64 +474,55 @@ func GraphQL(url string, query string, variables map[string]interface{}) (interf
 //
 // Example:
 //
-//	apoc.load.rest('http://api.com/users', {method: 'GET'}) => data
-func Rest(url string, config map[string]interface{}) (interface{}, error) {
+//	apoc.load.rest('https://api.com/users', {method: 'GET'}) => data
+func Rest(ctx context.Context, url string, config map[string]interface{}) (interface{}, error) {
 	method := "GET"
 	if m, ok := config["method"].(string); ok {
 		method = m
 	}
 
-	client := &http.Client{}
-	req, err := http.NewRequest(method, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
+	request := apocio.Request{Method: method}
 	if headers, ok := config["headers"].(map[string]string); ok {
-		for key, value := range headers {
-			req.Header.Set(key, value)
-		}
+		request.Headers = headers
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var data interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, err
-	}
-
-	return data, nil
+	return decodeJSON(ctx, url, request, decodePropertyDocument)
 }
 
-// Binary loads binary data from a URL.
+// Binary loads a URL or import file to completion and returns its bytes. It is
+// the canonical byte loader: both apoc.load.binary and apoc.load.stream
+// register it, and it owns admission, the read and the close inside the
+// caller's statement lifetime. Cypher cannot transport a reader, so the stream
+// name returns bytes rather than a handle; Stream stays the Go reader API.
+//
+// config keeps apoc.load.stream's existing optional argument and has no other
+// effect. At most one map is accepted; more are rejected before any I/O.
 //
 // Example:
 //
-//	apoc.load.binary('http://example.com/file.bin') => bytes
-func Binary(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+//	apoc.load.binary('https://example.com/file.bin') => bytes
+//	apoc.load.stream('https://example.com/data', {format: 'json'}) => bytes
+func Binary(ctx context.Context, url string, config ...map[string]interface{}) ([]byte, error) {
+	if len(config) > 1 {
+		return nil, fmt.Errorf("Binary accepts at most one config map, got %d", len(config))
+	}
+	body, err := openSource(ctx, url, apocio.Request{})
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer body.Close()
 
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(body)
 }
 
-// Stream loads data as a stream.
+// Stream loads data as a stream and returns a reader the caller closes. The
+// reader reads on ctx: it is usable while the caller's context is live and
+// fails with that context's error afterwards. Cypher cannot transport this
+// handle, so the plugin's apoc.load.stream registration uses Binary.
 //
 // Example:
 //
-//	apoc.load.stream('http://example.com/data', {format: 'json'}) => stream
-func Stream(url string, config map[string]interface{}) (io.ReadCloser, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp.Body, nil
+//	apoc.load.stream('https://example.com/data', {format: 'json'}) => stream
+func Stream(ctx context.Context, url string, config map[string]interface{}) (io.ReadCloser, error) {
+	return openSource(ctx, url, apocio.Request{})
 }

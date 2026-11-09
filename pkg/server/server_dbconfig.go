@@ -4,6 +4,8 @@ package server
 
 import (
 	"encoding/json"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -11,32 +13,38 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// GET /admin/databases/config/keys
-func (s *Server) handleDbConfigKeys(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
-		return
-	}
-	keys := dbconfig.AllowedKeys()
-	s.writeJSON(w, http.StatusOK, keys)
-}
-
-// handleDbConfigPrefix handles GET/PUT /admin/databases/{dbName}/config.
-// Route is registered as /admin/databases/ so we receive e.g. /admin/databases/nornic/config.
+// handleDbConfigPrefix handles the keys endpoint and per-database config routes.
 func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/admin/databases/")
-	if path == "" || path == "config/keys" {
-		// config/keys is handled by handleDbConfigKeys
+	if path == "config/keys" {
+		if r.Method != http.MethodGet {
+			s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
+			return
+		}
+		httpresponse.WritePropertyJSON(w, http.StatusOK, dbconfig.AllowedKeys())
+		return
+	}
+	if path == "" {
 		s.writeNeo4jNotFound(w, r, "Neo.ClientError.General.BadRequest")
 		return
 	}
 	parts := strings.SplitN(path, "/", 2)
 	dbName := parts[0]
+	permissions := []auth.Permission{auth.PermRead, auth.PermAdmin}
+	if r.Method != http.MethodGet {
+		permissions = append(permissions, auth.PermWrite)
+	}
+	if !s.authorizeDatabaseOperation(w, r, dbName, permissions...) {
+		return
+	}
 	if dbName == "system" {
 		s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.SystemDatabaseOverridesUnsupported())
 		return
@@ -52,10 +60,8 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.Method {
-		case http.MethodGet:
-			s.handleGetDbConfig(w, r, dbName)
-		case http.MethodPut:
-			s.handlePutDbConfig(w, r, dbName)
+		case http.MethodGet, http.MethodPut:
+			s.handleDbConfig(w, r, dbName)
 		default:
 			s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
 		}
@@ -82,7 +88,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 	}
 	lce, ok := storageEngine.(storage.MVCCLifecycleEngine)
 	if !ok {
-		s.writeJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "database": dbName})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "database": dbName})
 		return
 	}
 	switch suffix {
@@ -93,7 +99,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		}
 		status := lce.LifecycleStatus()
 		status["database"] = dbName
-		s.writeJSON(w, http.StatusOK, status)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, status)
 	case "mvcc/prune":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
@@ -103,21 +109,21 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCPruneTriggered()), "database": dbName})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCPruneTriggered()), "database": dbName})
 	case "mvcc/pause":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		lce.PauseLifecycle()
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecyclePaused()), "database": dbName})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecyclePaused()), "database": dbName})
 	case "mvcc/resume":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		lce.ResumeLifecycle()
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecycleResumed()), "database": dbName})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecycleResumed()), "database": dbName})
 	case "mvcc/schedule":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
@@ -146,7 +152,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		}
 		status := lce.LifecycleStatus()
 		status["database"] = dbName
-		s.writeJSON(w, http.StatusOK, status)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, status)
 	case "mvcc/debt":
 		if r.Method != http.MethodGet {
 			s.writeNeo4jGetRequired(w, r, "Neo.ClientError.General.BadRequest")
@@ -174,7 +180,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		if keys == nil {
 			keys = []storage.MVCCLifecycleDebtKey{}
 		}
-		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]interface{}{
 			"database": dbName,
 			"limit":    limit,
 			"keys":     keys,
@@ -184,22 +190,21 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-func (s *Server) handleGetDbConfig(w http.ResponseWriter, r *http.Request, dbName string) {
-	overrides := s.dbConfigStore.GetOverrides(dbName)
-	if overrides == nil {
-		overrides = make(map[string]string)
+func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName string) {
+	if r.Method == http.MethodGet {
+		overrides := s.dbConfigStore.GetOverrides(dbName)
+		if overrides == nil {
+			overrides = make(map[string]string)
+		}
+		resolved := dbconfig.Resolve(s.processConfig, overrides)
+		effective, pendingRestart := s.databaseConfigRuntimeState(dbName, resolved)
+		writeDatabaseConfigResponse(w, overrides, effective, pendingRestart, nil)
+		return
 	}
-	resolved := dbconfig.Resolve(s.processConfig, overrides)
-	effective, pendingRestart := s.databaseConfigRuntimeState(dbName, resolved)
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"overrides":      redactDatabaseSettings(overrides),
-		"configured":     redactDatabaseSettings(overrides),
-		"effective":      redactDatabaseSettings(effective),
-		"pendingRestart": pendingRestart,
-	})
-}
-
-func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbName string) {
+	if r.Method != http.MethodPut {
+		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
+		return
+	}
 	var body struct {
 		Overrides map[string]string `json:"overrides"`
 	}
@@ -215,6 +220,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	previousResolved := dbconfig.Resolve(s.processConfig, previousOverrides)
 	hasSearchRebuildChange := false
 	hasSearchCacheChange := false
+	hasTransactionMemoryChange := false
 	for key, value := range body.Overrides {
 		if !dbconfig.IsAllowedKey(key) {
 			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.DisallowedOrUnknownConfigKey(key))
@@ -222,7 +228,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		}
 		normalized, err := dbconfig.NormalizeSettingValue(key, value)
 		if err != nil {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", err.Error())
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", observability.RedactText(err.Error()))
 			return
 		}
 		body.Overrides[key] = normalized
@@ -231,12 +237,18 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	selectedStemmer := stemmer.NormalizeSelection(nextResolved.Effective["db.nornic.search.bm25.stemmer"])
 	if nextResolved.BM25Enabled && selectedStemmer != stemmer.NoneID {
 		if _, ok := stemmer.Lookup(selectedStemmer); !ok {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", "configured BM25 stemmer \""+selectedStemmer+"\" is not registered")
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", observability.RedactText("configured BM25 stemmer \""+selectedStemmer+"\" is not registered"))
 			return
 		}
 	}
 	changedDefinitions := make([]dbconfig.SettingDefinition, 0)
 	for _, definition := range dbconfig.Settings() {
+		if definition.HotReload == dbconfig.HotReloadTransactionMemory {
+			previous, previouslySet := previousOverrides[definition.Name]
+			next, nextSet := body.Overrides[definition.Name]
+			// Equal effective values can still add or remove inheritance.
+			hasTransactionMemoryChange = hasTransactionMemoryChange || previouslySet != nextSet || previous != next
+		}
 		if previousResolved.Effective[definition.Name] == nextResolved.Effective[definition.Name] {
 			continue
 		}
@@ -246,6 +258,8 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 			hasSearchCacheChange = true
 		case dbconfig.HotReloadSearchRebuild:
 			hasSearchRebuildChange = true
+		case dbconfig.HotReloadTransactionMemory:
+			hasTransactionMemoryChange = true
 		}
 	}
 	if err := s.dbConfigStore.SetOverrides(r.Context(), dbName, body.Overrides); err != nil {
@@ -259,6 +273,9 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	rebuildTriggered := false
 	// Per-db overrides must apply via fresh search service initialization,
 	// not runtime in-place strategy transitions.
+	if hasTransactionMemoryChange {
+		s.applyTransactionMemoryLimits(dbName, body.Overrides, nextResolved)
+	}
 	if hasSearchCacheChange {
 		s.db.SetSearchResultCachePolicy(dbName, nextResolved.SearchResultCacheMaxEntries, nextResolved.SearchResultCacheTTL)
 	}
@@ -266,7 +283,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		s.db.ResetSearchService(dbName)
 		if storageEngine, err := s.dbManager.GetStorage(dbName); err != nil {
 			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerDBConfigRebuildStorageResolveFailedEvent(dbName, err))
-		} else if _, err := s.db.EnsureSearchIndexesBuildStarted(dbName, storageEngine); err != nil {
+		} else if _, err := s.db.EnsureSearchIndexes(s.shutdown.work.Context(), dbName, storageEngine, nornicdb.SearchIndexBuildStart); err != nil {
 			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerDBConfigRebuildStartFailedEvent(dbName, err))
 		} else {
 			rebuildTriggered = true
@@ -277,13 +294,21 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		overrides = make(map[string]string)
 	}
 	effective, pendingRestart := s.updateDatabaseConfigRuntimeState(dbName, previousResolved, nextResolved, changedDefinitions)
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"overrides":        redactDatabaseSettings(overrides),
-		"configured":       redactDatabaseSettings(overrides),
-		"effective":        redactDatabaseSettings(effective),
-		"pendingRestart":   pendingRestart,
-		"rebuildTriggered": rebuildTriggered,
-	})
+	writeDatabaseConfigResponse(w, overrides, effective, pendingRestart, &rebuildTriggered)
+}
+
+// Both operations return the same redacted configuration; a PUT also reports
+// whether its change started a rebuild.
+func writeDatabaseConfigResponse(w http.ResponseWriter, overrides, effective map[string]string, pendingRestart bool, rebuildTriggered *bool) {
+	redacted := redactDatabaseSettings(overrides)
+	response := map[string]interface{}{
+		"overrides": redacted, "configured": redacted,
+		"effective": redactDatabaseSettings(effective), "pendingRestart": pendingRestart,
+	}
+	if rebuildTriggered != nil {
+		response["rebuildTriggered"] = *rebuildTriggered
+	}
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func cloneStringMap(values map[string]string) map[string]string {
@@ -309,10 +334,23 @@ func redactDatabaseSettings(values map[string]string) map[string]string {
 	for key := range redacted {
 		definition, ok := dbconfig.LookupSetting(key)
 		if ok && definition.Redacted {
-			redacted[key] = "<REDACTED>"
+			redacted[key] = observability.RedactedPlaceholder()
+		} else {
+			redacted[key] = observability.DisplayValue(key, redacted[key])
 		}
 	}
 	return redacted
+}
+
+// databaseSettingsResolver is SHOW SETTINGS' view of dbName: its stored
+// overrides and the values active now.
+func (s *Server) databaseSettingsResolver(dbName string) cypher.SettingsResolver {
+	return func() cypher.SettingsSnapshot {
+		overrides := s.dbConfigStore.GetOverrides(dbName)
+		current := dbconfig.Resolve(s.processConfig, overrides)
+		active, _ := s.databaseConfigRuntimeState(dbName, current)
+		return cypher.SettingsSnapshot{Configured: overrides, Active: active}
+	}
 }
 
 func (s *Server) databaseConfigRuntimeState(dbName string, resolved *dbconfig.ResolvedDbConfig) (map[string]string, bool) {
@@ -355,4 +393,19 @@ func (s *Server) updateDatabaseConfigRuntimeState(dbName string, previous, next 
 		delete(s.dbConfigPending, dbName)
 	}
 	return cloneStringMap(active), len(pending) > 0
+}
+
+// applyTransactionMemoryLimits publishes only the database's explicit setting
+// selections. Absent keys restore independent inheritance from the current
+// process defaults, including after an operator removes an override. The
+// caller supplies the same override snapshot used to resolve numeric values.
+func (s *Server) applyTransactionMemoryLimits(dbName string, overrides map[string]string, resolved *dbconfig.ResolvedDbConfig) {
+	var limits cypher.DatabaseTransactionMemoryLimits
+	if _, configured := overrides["db.memory.transaction.max"]; configured {
+		limits.TransactionMax = &resolved.TransactionMemoryMaxBytes
+	}
+	if _, configured := overrides["db.memory.transaction.total.max"]; configured {
+		limits.DatabaseTotalMax = &resolved.TransactionMemoryTotalMaxBytes
+	}
+	cypher.SetDatabaseTransactionMemoryLimits(dbName, limits)
 }

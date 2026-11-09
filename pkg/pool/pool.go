@@ -584,6 +584,15 @@ func (b *PooledStringBuilder) WriteString(s string) {
 	b.buf = append(b.buf, s...)
 }
 
+// Write appends bytes to the existing pooled buffer and implements io.Writer.
+// The bytes are copied; the caller can reuse p after Write returns.
+// For example, fmt.Fprint(builder, "value") writes through the same buffer.
+// Author: L6 / #1665 lane (Codex gpt-6.1-sol), numeric output cost correction.
+func (b *PooledStringBuilder) Write(p []byte) (int, error) {
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
 // WriteByte appends a single byte to the builder.
 //
 // Use this for single characters or delimiters. More efficient than
@@ -592,6 +601,9 @@ func (b *PooledStringBuilder) WriteString(s string) {
 // Parameters:
 //   - c: Byte to append
 //
+// Returns:
+//   - Always nil; the signature is io.ByteWriter's, as for strings.Builder
+//
 // Example:
 //
 //	builder := pool.GetStringBuilder()
@@ -599,8 +611,9 @@ func (b *PooledStringBuilder) WriteString(s string) {
 //	builder.WriteString("items")
 //	builder.WriteByte(']')
 //	fmt.Println(builder.String()) // "[items]"
-func (b *PooledStringBuilder) WriteByte(c byte) {
+func (b *PooledStringBuilder) WriteByte(c byte) error {
 	b.buf = append(b.buf, c)
+	return nil
 }
 
 // String returns the built string.

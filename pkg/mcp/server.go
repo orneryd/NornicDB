@@ -50,7 +50,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"io"
 	"net/http"
 	"sort"
@@ -58,6 +57,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/localizationboundary"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
+
+	"github.com/orneryd/nornicdb/internal/httpresponse"
+	"github.com/orneryd/nornicdb/internal/relatedwalk"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -65,6 +69,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 	"golang.org/x/text/language"
 )
 
@@ -135,7 +140,8 @@ type Server struct {
 	closed     bool
 
 	// Tool handlers
-	handlers map[string]ToolHandler
+	handlers    map[string]ToolHandler
+	pluginTools []Tool
 }
 
 func runCypherMutationWithRetry(ctx context.Context, exec *cypher.StorageExecutor, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
@@ -450,15 +456,16 @@ func (s *Server) Start(addr string) error {
 // Stop gracefully shuts down the server.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.closed {
+		s.mu.Unlock()
 		return nil
 	}
 	s.closed = true
-
-	if s.httpServer != nil {
-		return s.httpServer.Shutdown(ctx)
+	server := s.httpServer
+	s.mu.Unlock()
+	// Shutdown waits for handlers which also acquire s.mu. Never hold it while draining.
+	if server != nil {
+		return util.ShutdownHTTPServer(ctx, server)
 	}
 	return nil
 }
@@ -552,7 +559,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSONRPCResult(w, req.ID, result)
+	s.writeJSONRPCResponse(w, req.ID, "result", result)
 }
 
 // handleInitialize handles the initialize request.
@@ -579,7 +586,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request) {
 		"clientInfo":      req.ClientInfo,
 	})
 
-	s.writeJSON(w, http.StatusOK, result)
+	httpresponse.WriteJSON(w, http.StatusOK, result)
 }
 
 // handleListTools returns the list of available tools.
@@ -591,7 +598,7 @@ func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	result := s.doListTools(ctx)
-	s.writeJSON(w, http.StatusOK, result)
+	httpresponse.WriteJSON(w, http.StatusOK, result)
 }
 func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -620,7 +627,7 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		s.writeJSON(w, http.StatusOK, CallToolResponse{
+		httpresponse.WriteJSON(w, http.StatusOK, CallToolResponse{
 			Content: []Content{{Type: "text", Text: s.renderError(r.Context(), err)}},
 			IsError: true,
 		})
@@ -629,14 +636,14 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 
 	// Convert result to JSON string
 	resultJSON, _ := json.Marshal(result)
-	s.writeJSON(w, http.StatusOK, CallToolResponse{
+	httpresponse.WriteJSON(w, http.StatusOK, CallToolResponse{
 		Content: []Content{{Type: "text", Text: string(resultJSON)}},
 	})
 }
 
 // handleHealth returns server health status.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "healthy",
 		"uptime":  time.Since(s.started).String(),
 		"version": "1.0.0",
@@ -674,7 +681,7 @@ func (s *Server) doListTools(ctx context.Context) ListToolsResponse {
 		database = s.DefaultDatabaseName()
 	}
 	return ListToolsResponse{
-		Tools: GetToolDefinitionsWithDefaultDatabase(database),
+		Tools: s.toolDefinitions(database),
 	}
 }
 
@@ -685,13 +692,16 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		args = make(map[string]interface{})
 	}
 
+	s.mu.RLock()
 	handler, ok := s.handlers[name]
+	s.mu.RUnlock()
 	if !ok {
 		return nil, localizedError(localization.MCPUnknownTool(name), nil)
 	}
-	accessRequirement, ok := toolDatabaseAccessByName[name]
-	if !ok {
-		return nil, localizedError(localization.MCPUnknownTool(name), nil)
+	accessRequirement, builtin := toolDatabaseAccessByName[name]
+	if !builtin {
+		// Plugin actions receive the principal and enforce operation-specific access.
+		accessRequirement = toolDatabaseRead
 	}
 	// The tasks tool lists by default (read) and mutates when task-management
 	// arguments are present; mutations require write access to the database.
@@ -715,7 +725,7 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		requirements := cypher.PermissionRequirements{Read: true, Write: accessRequirement == toolDatabaseWrite}
 		switch cypher.MissingPermission(requirements, func(permission string) bool { return allows(database, auth.Permission(permission)) }, nil) {
 		case string(auth.PermRead):
-			return nil, localizedError(localization.DatabaseAccessDenied("requested database"), nil)
+			return nil, &cypher.PermissionDeniedError{Permission: string(auth.PermRead)}
 		case string(auth.PermWrite):
 			return nil, localizedError(localization.DatabaseWriteDenied(database), nil)
 		}
@@ -724,6 +734,16 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
 	} else if databaseSelection != "" {
 		ctx = ContextWithDatabase(ctx, databaseSelection)
+	}
+
+	if !builtin {
+		// Native tools consume the routing argument; plugin actions need the
+		// resolved selection in their ActionContext parameters as well.
+		database := DatabaseFromContext(ctx)
+		if database == "" {
+			database = s.DefaultDatabaseName()
+		}
+		args["database"] = database
 	}
 
 	return handler(ctx, args)
@@ -759,7 +779,7 @@ func (s *Server) DefaultDatabaseName() string {
 // ToolDefinitions returns the MCP tool definitions for this server instance.
 // The `database` parameter schema will reflect the configured default database name.
 func (s *Server) ToolDefinitions() []Tool {
-	return GetToolDefinitionsWithDefaultDatabase(s.DefaultDatabaseName())
+	return s.toolDefinitions(s.DefaultDatabaseName())
 }
 
 // getExecutorAndGetNode returns the Cypher executor and node getter for this request.
@@ -1085,6 +1105,11 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 
 	if s.db != nil {
 		dbName := DatabaseFromContext(ctx) // empty = default database
+		ctx, finishProviderUse, err := s.queryEmbedder.BeginUse(ctx)
+		if err != nil {
+			return nil, localizedError(localization.MCPDiscoverFailed(err), err)
+		}
+		defer finishProviderUse()
 		engine, err := s.storageForContext(ctx)
 		if err != nil {
 			return nil, err
@@ -1953,14 +1978,8 @@ func (s *Server) validateAndConvertEmbedding(input interface{}) ([]float32, erro
 // Response Helpers
 // =============================================================================
 
-func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
-}
-
 func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
-	s.writeJSON(w, status, map[string]string{"error": message})
+	httpresponse.WriteJSON(w, status, map[string]string{"error": message})
 }
 
 func (s *Server) localizedHandler(next http.HandlerFunc) http.HandlerFunc {
@@ -1981,23 +2000,12 @@ func (s *Server) withLocalization(r *http.Request) *http.Request {
 	return r.WithContext(localization.WithPreferences(r.Context(), match.Tag))
 }
 
-func (s *Server) renderMessage(ctx context.Context, message localization.Message) (string, language.Tag) {
-	if s.localizer == nil {
-		return message.Fallback, language.AmericanEnglish
-	}
-	text, tag, err := s.localizer.Render(ctx, message)
-	if err != nil {
-		return s.localizer.MustRenderEnglish(message), language.AmericanEnglish
-	}
-	return text, tag
-}
-
 func (s *Server) renderError(ctx context.Context, err error) string {
 	var localized *nornicerrors.Localized
 	if !errors.As(err, &localized) {
 		return err.Error()
 	}
-	text, _, renderErr := localized.Render(ctx, s.localizer)
+	text, _, renderErr := s.localizer.Render(ctx, localization.ErrorRequest(localized))
 	if renderErr != nil {
 		return localized.Error()
 	}
@@ -2009,36 +2017,29 @@ func localizedError(message localization.Message, cause error) error {
 }
 
 func (s *Server) writeLocalizedError(w http.ResponseWriter, r *http.Request, status int, message localization.Message) {
-	text, tag := s.renderMessage(r.Context(), message)
+	text, tag := localizationboundary.Render(r.Context(), s.localizer, message, localizationboundary.FallbackOnly, localizationboundary.SourceEnglish)
 	w.Header().Set("Content-Language", tag.String())
 	w.Header().Add("Vary", "Accept-Language")
 	s.writeError(w, status, text)
 }
 
 func (s *Server) writeLocalizedJSONRPCError(w http.ResponseWriter, r *http.Request, id interface{}, code int, message localization.Message, data string) {
-	text, tag := s.renderMessage(r.Context(), message)
+	text, tag := localizationboundary.Render(r.Context(), s.localizer, message, localizationboundary.FallbackOnly, localizationboundary.SourceEnglish)
 	w.Header().Set("Content-Language", tag.String())
 	w.Header().Add("Vary", "Accept-Language")
-	s.writeJSONRPCError(w, id, code, text, data)
-}
-
-func (s *Server) writeJSONRPCResult(w http.ResponseWriter, id interface{}, result interface{}) {
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result":  result,
+	s.writeJSONRPCResponse(w, id, "error", map[string]interface{}{
+		"code":    code,
+		"message": text,
+		"data":    data,
 	})
 }
 
-func (s *Server) writeJSONRPCError(w http.ResponseWriter, id interface{}, code int, message, data string) {
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+// writeJSONRPCResponse owns the common version, ID and selected payload envelope.
+func (s *Server) writeJSONRPCResponse(w http.ResponseWriter, id interface{}, member string, payload interface{}) {
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      id,
-		"error": map[string]interface{}{
-			"code":    code,
-			"message": message,
-			"data":    data,
-		},
+		member:    payload,
 	})
 }
 
@@ -2125,8 +2126,42 @@ func getMap(m map[string]interface{}, key string) map[string]interface{} {
 	return nil
 }
 
-// getRelatedNodes fetches related nodes up to the specified depth using graph traversal.
-// Returns a slice of RelatedNode with relationship information.
+// mcpRelatedAcceptor is the MCP consumer boundary of the canonical walk: it
+// loads each discovered node, projects its visible properties and always
+// publishes a record. MCP keeps its own policy for missing nodes (a placeholder
+// record that is still expanded) and its own title -> name fallback.
+type mcpRelatedAcceptor struct {
+	server  *Server
+	engine  storage.Engine
+	visible storage.QueryResultProjection
+}
+
+func (a mcpRelatedAcceptor) Discover(ctx context.Context, n *relatedwalk.Neighbor) (RelatedNode, bool, bool) {
+	nodeType, title := "Node", ""
+	if node, err := a.engine.GetNode(ctx, storage.NodeID(n.ID)); err == nil && node != nil {
+		props := a.visible.NodeProperties(node)
+		nodeType = getLabelType(node.Labels)
+		title = getStringProp(props, "title")
+		if title == "" {
+			title = getStringProp(props, "name")
+		}
+	}
+	return RelatedNode{
+		ID:           a.server.nodeElementID(ctx, n.ID),
+		Type:         nodeType,
+		Title:        title,
+		Distance:     n.Distance,
+		Relationship: n.Relationship,
+		Direction:    n.Direction.String(),
+		Path:         n.Path,
+	}, true, true
+}
+
+// getRelatedNodes fetches related nodes up to the specified depth through the
+// canonical bounded traversal. MCP keeps its own contract: depth 1 means "no
+// related nodes", so the walk runs depth-1 hops, publishes at most 50 records,
+// keeps the title -> name fallback, publishes missing nodes as placeholder
+// records and is the only consumer that carries the discovery path.
 func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) []RelatedNode {
 	if depth <= 1 {
 		return nil
@@ -2145,106 +2180,22 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 	_, visible, release := storage.BeginQueryResultProjectionContext(ctx, engine)
 	defer release()
 
-	maxDepth := depth - 1
 	const maxRelated = 50
 
-	type state struct {
-		idLocal string
-		dist    int
-		path    []string // elementIds
+	related, err := relatedwalk.Walk[RelatedNode](ctx,
+		relatedwalk.StorageSource{Engine: engine},
+		mcpRelatedAcceptor{server: s, engine: engine, visible: visible},
+		startLocal,
+		relatedwalk.Options{
+			MaxHops: depth - 1,
+			Limit:   maxRelated,
+			Paths:   true,
+			PathID:  func(id string) string { return s.nodeElementID(ctx, id) },
+		},
+	)
+	if err != nil {
+		return nil
 	}
-
-	visited := map[string]bool{startLocal: true}
-	queue := []state{{
-		idLocal: startLocal,
-		dist:    0,
-		path:    []string{s.nodeElementID(ctx, startLocal)},
-	}}
-
-	related := make([]RelatedNode, 0)
-	for len(queue) > 0 && len(related) < maxRelated {
-		cur := queue[0]
-		queue = queue[1:]
-
-		if cur.dist >= maxDepth {
-			continue
-		}
-
-		// Outgoing edges
-		out, _ := engine.GetOutgoingEdges(storage.NodeID(cur.idLocal))
-		for _, e := range out {
-			neighbor := string(e.EndNode)
-			if neighbor == "" || visited[neighbor] {
-				continue
-			}
-			visited[neighbor] = true
-			nextPath := append(append([]string{}, cur.path...), s.nodeElementID(ctx, neighbor))
-
-			ntype, ntitle := "Node", ""
-			if n, err := engine.GetNode(storage.NodeID(neighbor)); err == nil && n != nil {
-				props := visible.NodeProperties(n)
-				ntype = getLabelType(n.Labels)
-				ntitle = getStringProp(props, "title")
-				if ntitle == "" {
-					ntitle = getStringProp(props, "name")
-				}
-			}
-
-			related = append(related, RelatedNode{
-				ID:           s.nodeElementID(ctx, neighbor),
-				Type:         ntype,
-				Title:        ntitle,
-				Distance:     cur.dist + 1,
-				Relationship: e.Type,
-				Direction:    "outgoing",
-				Path:         nextPath,
-			})
-			queue = append(queue, state{idLocal: neighbor, dist: cur.dist + 1, path: nextPath})
-			if len(related) >= maxRelated {
-				break
-			}
-		}
-
-		if len(related) >= maxRelated {
-			break
-		}
-
-		// Incoming edges
-		in, _ := engine.GetIncomingEdges(storage.NodeID(cur.idLocal))
-		for _, e := range in {
-			neighbor := string(e.StartNode)
-			if neighbor == "" || visited[neighbor] {
-				continue
-			}
-			visited[neighbor] = true
-			nextPath := append(append([]string{}, cur.path...), s.nodeElementID(ctx, neighbor))
-
-			ntype, ntitle := "Node", ""
-			if n, err := engine.GetNode(storage.NodeID(neighbor)); err == nil && n != nil {
-				props := visible.NodeProperties(n)
-				ntype = getLabelType(n.Labels)
-				ntitle = getStringProp(props, "title")
-				if ntitle == "" {
-					ntitle = getStringProp(props, "name")
-				}
-			}
-
-			related = append(related, RelatedNode{
-				ID:           s.nodeElementID(ctx, neighbor),
-				Type:         ntype,
-				Title:        ntitle,
-				Distance:     cur.dist + 1,
-				Relationship: e.Type,
-				Direction:    "incoming",
-				Path:         nextPath,
-			})
-			queue = append(queue, state{idLocal: neighbor, dist: cur.dist + 1, path: nextPath})
-			if len(related) >= maxRelated {
-				break
-			}
-		}
-	}
-
 	return related
 }
 

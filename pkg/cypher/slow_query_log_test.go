@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -62,7 +61,7 @@ func TestExecutor_SlowQueryLog_Schema(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	exec.SetLogger(te.Logger)
 	// Force every query into the slow-query path.
-	exec.SetSlowQueryThreshold(1 * time.Nanosecond)
+	forceSlowQueryLogging(t, exec)
 
 	ctx := context.Background()
 	// Query MUST contain a string literal so the redacted attr provably contains "<REDACTED>".
@@ -139,7 +138,7 @@ func TestExecutor_SlowQueryLog_PlanHashDistinguishesShape(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "slow_query_shape_test")
 	exec := NewStorageExecutor(store)
 	exec.SetLogger(te.Logger)
-	exec.SetSlowQueryThreshold(1 * time.Nanosecond)
+	forceSlowQueryLogging(t, exec)
 
 	ctx := context.Background()
 	_, _ = exec.Execute(ctx, `MATCH (n {name: "alice"}) RETURN n`, nil)
@@ -178,7 +177,7 @@ func TestExecutor_SlowQueryLog_TruncatesAt500(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "slow_query_test_trunc")
 	exec := NewStorageExecutor(store)
 	exec.SetLogger(te.Logger)
-	exec.SetSlowQueryThreshold(1 * time.Nanosecond)
+	forceSlowQueryLogging(t, exec)
 
 	// Build a query whose redacted form will be > 500 chars. WHERE n.k0 = 0 OR n.k1 = 1 ...
 	// Each clause adds ~20 chars (after redaction); 30 clauses ~ 600+ chars.

@@ -1,35 +1,22 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 
 	"github.com/dgraph-io/badger/v4"
 )
 
-func (b *BadgerEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
-	return b.getNodeVisibleAtWithView(id, version, b.withView)
+// Keep the optional bulk enumeration contract bound to its native implementation.
+var _ MVCCEnumerationEngine = (*BadgerEngine)(nil)
+
+func (b *BadgerEngine) GetNodeVisibleAt(ctx context.Context, id NodeID, version MVCCVersion) (*Node, error) {
+	return readEntityAtWithView(ctx, b, id, version, mvccEntityRead{vectors: true, visibility: visibleRead}, b.withView, (*BadgerEngine).getNodeAtInTxn)
 }
 
-func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error) (*Node, error) {
-	deregister, err := b.beginMVCCSnapshotRead(version)
-	if err != nil {
-		return nil, err
-	}
-	defer deregister()
-	var node *Node
-	err = view(func(txn *badger.Txn) error {
-		var loadErr error
-		node, loadErr = b.getNodeVisibleAtInTxn(txn, id, version)
-		return loadErr
-	})
-	return node, err
-}
-
-// getNodeVisibleAtInTxn resolves one logical MVCC version using the supplied
-// physical Badger snapshot. Callers that scan an index in the same snapshot
-// use this helper to avoid opening nested views or scanning unrelated nodes.
-func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) (*Node, error) {
+// getNodeAtInTxn resolves logical visibility and hydration against the supplied
+// physical snapshot. Index callers retain that same pinned transaction.
+func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, policy mvccEntityRead) (*Node, error) {
+	vectors, v := policy.vectors, policy.visibility
 	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -41,34 +28,15 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
 		item, getErr := txn.Get(nodeKey(id))
 		if getErr == nil {
-			itemVersion := item.Version()
-			if cached, ok := b.cacheLoadNodeBody(id, itemVersion); ok {
-				cached, loadErr := b.loadNodeEmbeddings(txn, cached, id)
-				if loadErr != nil {
-					return nil, loadErr
-				}
-				if b.filterNodeByDecay(cached, DecayScoringTime()) {
-					return nil, ErrNotFound
-				}
-				return cached, nil
+			hydration := nodeItemQueryMetadata
+			if vectors {
+				hydration = nodeItemFullEmbeddings
 			}
-			var node *Node
-			if err := item.Value(func(val []byte) error {
-				namespace := namespaceForNodeID(id)
-				decoded, decodeErr := b.decodeNode(namespace, val)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				if decoded == nil {
-					return ErrNotFound
-				}
-				b.cacheStoreNodeBody(id, itemVersion, decoded)
-				node, decodeErr = b.loadNodeEmbeddings(txn, decoded, id)
-				return decodeErr
-			}); err != nil {
+			node, err := b.readNodeItemInTxn(txn, item, id, hydration)
+			if err != nil {
 				return nil, err
 			}
-			if b.filterNodeByDecay(node, DecayScoringTime()) {
+			if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 				return nil, ErrNotFound
 			}
 			return node, nil
@@ -102,33 +70,13 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 		return nil, ErrNotFound
 	}
 	node := copyNode(record.Node)
-	if b.filterNodeByDecay(node, DecayScoringTime()) {
+	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return node, nil
 }
 
-// getNodeProjectedVisibleAtWithView is getNodeVisibleAtWithView for a
-// projected read: it decodes only the requested user properties (none when
-// properties is an empty non-nil slice) and never hydrates embedding vectors
-// or touches the body cache, so a traversal that needs only a node's labels
-// pays no property-decode or copy cost (#1110).
-func (b *BadgerEngine) getNodeProjectedVisibleAtWithView(id NodeID, version MVCCVersion, properties []string, view func(func(*badger.Txn) error) error) (*Node, error) {
-	deregister, err := b.beginMVCCSnapshotRead(version)
-	if err != nil {
-		return nil, err
-	}
-	defer deregister()
-	var node *Node
-	err = view(func(txn *badger.Txn) error {
-		var loadErr error
-		node, loadErr = b.getNodeProjectedVisibleAtInTxn(txn, id, version, properties)
-		return loadErr
-	})
-	return node, err
-}
-
-// getNodeProjectedVisibleAtInTxn is getNodeVisibleAtInTxn for a projected
+// getNodeProjectedVisibleAtInTxn is the MVCC node kernel for a projected
 // read. The visibility resolution (MVCC head) is identical; only the body
 // decode and embedding hydration are skipped.
 func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, properties []string) (*Node, error) {
@@ -147,7 +95,7 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 			var node *Node
 			if err := item.Value(func(val []byte) error {
 				namespace := namespaceForNodeID(id)
-				decoded, decodeErr := b.decodeNodeProjected(namespace, val, include)
+				decoded, decodeErr := b.decodeNodeProjected(txn, namespace, val, include)
 				if decodeErr != nil {
 					return decodeErr
 				}
@@ -159,7 +107,7 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 			}); err != nil {
 				return nil, err
 			}
-			if b.filterNodeByDecay(node, DecayScoringTime()) {
+			if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 				return nil, ErrNotFound
 			}
 			return node, nil
@@ -192,24 +140,31 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	node := copyNodeProjectedWithoutEmbeddings(record.Node, properties)
-	if b.filterNodeByDecay(node, DecayScoringTime()) {
+	node := projectCachedNodeForRead(record.Node, properties, true)
+	if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return node, nil
 }
 
-func (b *BadgerEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
-	return b.getNodesByLabelVisibleAtWithView("", label, version, b.withView)
+func (b *BadgerEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
+	return b.getNodesByLabelVisibleAtWithView(ctx, "", label, version, b.withView)
 }
 
 // GetNodesByLabelVisibleAtInScope is GetNodesByLabelVisibleAt within one
 // database (ScopedLabelNodeReader).
-func (b *BadgerEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
-	return b.getNodesByLabelVisibleAtWithView(scope, label, version, b.withView)
+func (b *BadgerEngine) GetNodesByLabelVisibleAtInScope(ctx context.Context, scope, label string, version MVCCVersion) ([]*Node, error) {
+	return b.getNodesByLabelVisibleAtWithView(ctx, scope, label, version, b.withView)
 }
 
-func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
+func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(ctx context.Context, scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := b.pendingPrefixConflict(scope); err != nil {
+		return nil, err
+	}
+
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
@@ -217,7 +172,7 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(scope, label string, ver
 	defer deregister()
 	var nodes []*Node
 	err = view(func(txn *badger.Txn) error {
-		return b.iterateNodesVisibleAtInScopeInTxn(txn, scope, version, func(node *Node) error {
+		return b.iterateNodesVisibleAtInScopeInTxn(ctx, txn, scope, version, func(node *Node) error {
 			if node == nil {
 				return nil
 			}
@@ -247,9 +202,9 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(scope, label string, ver
 // same physical Badger snapshot used by an explicit transaction. The label
 // index in that snapshot already represents membership at BEGIN, so work is
 // proportional to the matching label rather than every stored node.
-func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
+func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(ctx context.Context, scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
 	nodes := make([]*Node, 0)
-	err := b.streamNodesByLabelVisibleAtSnapshotWithView(scope, label, version, view, nil, func(node *Node) error {
+	err := b.streamNodesByLabelAtSnapshotWithView(ctx, scope, label, version, view, nil, visibleRead, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	})
@@ -259,18 +214,21 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(scope, label str
 	return nodes, nil
 }
 
-// streamNodesByLabelVisibleAtSnapshotWithView visits snapshot-visible label
-// matches directly from the label index. Unlike the slice-returning adapter,
-// it preserves early termination and never materialises nodes the caller does
-// not consume.
-func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
-	scope string,
-	label string,
+func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
+	ctx context.Context,
+	scope, label string,
 	version MVCCVersion,
 	view func(func(*badger.Txn) error) error,
 	properties []string,
+	v readVisibility,
 	visit func(*Node) error,
+	queryRead ...bool,
 ) error {
+	if err := b.pendingPrefixConflict(scope); err != nil {
+		return err
+	}
+
+	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -281,20 +239,18 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 	defer deregister()
 
 	return view(func(txn *badger.Txn) error {
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", v, true)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().Key()
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(key, len(label))
-			if !ok {
-				continue
+		var cancel bulkReadCancellation
+		for it.Next() {
+			if err := cancel.check(ctx); err != nil {
+				return err
 			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) {
-				continue
-			}
-			node, getErr := b.getNodeVisibleAtInTxn(txn, nodeID, version)
+			nodeID := it.NodeID()
+			node, getErr := b.getNodeAtInTxn(txn, nodeID, version, mvccEntityRead{vectors: !queryNodes, visibility: v})
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
 			}
@@ -309,29 +265,36 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 				}
 			}
 			if matched {
-				if err := visit(projectCachedNodeForRead(node, properties)); err != nil {
+				if err := visit(projectCachedNodeForRead(node, properties, false)); err != nil {
 					return err
 				}
 			}
 		}
-		return nil
+		return it.Err()
 	})
 }
 
-// streamNodesByLabelFromPhysicalSnapshotAfter visits the node bodies of a
+// streamNodesByLabelFromPhysicalSnapshotAfterRead visits the node bodies of a
 // label represented by a pinned Badger read transaction, in label-index
 // order after afterNodeID ("" from the start), within scope ("" every
 // database). Because both the label index and node key are read from the same
 // immutable physical snapshot, no per-candidate logical MVCC-head lookup is
 // required.
-func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
-	scope string,
-	label string,
+func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
+	ctx context.Context,
+	scope, label string,
 	view func(func(*badger.Txn) error) error,
 	properties []string,
 	afterNodeID NodeID,
+	v readVisibility,
 	visit func(*Node) error,
+	queryRead ...bool,
 ) error {
+	if err := b.pendingPrefixConflict(scope); err != nil {
+		return err
+	}
+
+	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -349,32 +312,13 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 		// readItem reads one node from its stored record; item.Version keys
 		// the decoded-body cache.
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
-			itemVersion := item.Version()
-			if cached, ok := b.cacheLoadNodeBody(nodeID, itemVersion); ok {
-				if properties == nil {
-					return b.loadNodeEmbeddings(txn, cached, nodeID)
-				}
-				return projectCachedNodeForRead(cached, properties), nil
+			if queryNodes {
+				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
 			}
-			var node *Node
-			err := item.Value(func(value []byte) error {
-				if properties == nil {
-					decoded, decodeErr := b.decodeNode(namespaceForNodeID(nodeID), value)
-					if decodeErr != nil {
-						return decodeErr
-					}
-					b.cacheStoreNodeBody(nodeID, itemVersion, decoded)
-					node, decodeErr = b.loadNodeEmbeddings(txn, decoded, nodeID)
-					return decodeErr
-				}
-				var decodeErr error
-				node, decodeErr = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
-				return decodeErr
-			})
-			return node, err
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
 		}
 		emit := func(node *Node) error {
-			if node == nil || b.filterNodeByDecay(node, nowNanos) || !hasLabel(node.Labels, label) {
+			if node == nil || b.filterEntityByDecay(v, node, nowNanos) || !hasLabel(node.Labels, label) {
 				return nil
 			}
 			return visit(node)
@@ -394,36 +338,33 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			return emit(node)
 		}
 
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		if afterNodeID == "" {
-			it.Rewind()
-		} else {
-			nodeNum, ok := b.idDict.lookupNodeNumID(afterNodeID)
-			if !ok {
-				return ErrNotFound
-			}
-			cursor := labelIndexKey(label, nodeNum)
-			it.Seek(cursor)
-			if it.ValidForPrefix(prefix) && bytes.Equal(it.Item().Key(), cursor) {
-				it.Next()
-			}
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, afterNodeID, v, false)
+		if err != nil {
+			return err
 		}
+		defer it.Close()
 		var pending []NodeID
 		lookups := 0
-		for ; it.ValidForPrefix(prefix); it.Next() {
-			indexKey := it.Item().Key()
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
-			if !ok {
-				continue
+		// The pinned snapshot walk visits its candidates under the caller's own
+		// context: a canceled read retires with that error instead of finishing
+		// the population nobody asked for any more.
+		var cancel bulkReadCancellation
+		for it.Next() {
+			if err := cancel.check(ctx); err != nil {
+				return err
 			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
+			indexKey := it.IndexKey()
+			nodeID := it.NodeID()
+			if b.checksIndexTombstones(v) && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 			if !coversDecided && lookups >= labelScanPointLookups {
-				covers = b.labelCoversScope(scope, label)
+				// Author: storage-format-owners lane (Codex), 1 November 2026.
+				var err error
+				covers, err = b.labelCoversScope(ctx, scope, label)
+				if err != nil {
+					return err
+				}
 				coversDecided = true
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
@@ -444,6 +385,9 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 				return err
 			}
 		}
+		if err := it.Err(); err != nil {
+			return err
+		}
 		if len(pending) == 0 {
 			return nil
 		}
@@ -452,7 +396,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 		// in label-index order.
 		nodes := make(map[NodeID]*Node, len(pending))
 		readErrors := make(map[NodeID]error)
-		if err := readNodeRecordsInOnePass(txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
+		if err := readNodeRecordsInOnePass(ctx, txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
 			node, err := readItem(nodeID, item)
 			nodes[nodeID] = node
 			if err != nil {
@@ -463,6 +407,9 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			return err
 		}
 		for _, nodeID := range pending {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			// Record order differs from visitation order; a later corrupt
 			// record must not override an earlier callback's stop error.
 			if err := readErrors[nodeID]; err != nil {
@@ -476,7 +423,14 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 	})
 }
 
-func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
+func (b *BadgerEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return nil, err
+	}
+
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
@@ -484,7 +438,7 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVers
 	defer deregister()
 	var edges []*Edge
 	err = b.withView(func(txn *badger.Txn) error {
-		return b.iterateEdgesVisibleAtInTxn(txn, version, func(edge *Edge) error {
+		return b.iterateEdgesAtInTxn(ctx, txn, version, visibleRead, func(edge *Edge) error {
 			if edge == nil {
 				return nil
 			}
@@ -501,71 +455,63 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVers
 	return edges, nil
 }
 
-// getEdgesByTypeVisibleAtSnapshotWithView resolves type candidates from the
-// same physical Badger snapshot used by an explicit transaction. The type
-// index in that snapshot represents membership at BEGIN, so unrelated edge
-// bodies are never decoded.
-func (b *BadgerEngine) getEdgesByTypeVisibleAtSnapshotWithView(edgeType string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
-	edges := make([]*Edge, 0)
-	err := b.streamEdgesByTypeVisibleAtSnapshotWithView(context.Background(), "", edgeType, version, view, func(edge *Edge) error {
-		edges = append(edges, edge)
-		return nil
-	})
-	if err != nil {
+func (b *BadgerEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+	if err := b.pendingReadConflict(readNodePairScope, "", []NodeID{endID, startID}, ctx); err != nil {
 		return nil, err
 	}
-	return edges, nil
-}
 
-func (b *BadgerEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
 	if startID == "" || endID == "" {
 		return nil, ErrInvalidID
 	}
-	deregister, err := b.beginMVCCSnapshotRead(version)
-	if err != nil {
-		return nil, err
-	}
-	defer deregister()
-	var edges []*Edge
-	err = b.withView(func(txn *badger.Txn) error {
-		return b.iterateEdgesVisibleAtInTxn(txn, version, func(edge *Edge) error {
-			if edge == nil {
-				return nil
-			}
-			if edge.StartNode == startID && edge.EndNode == endID {
-				edges = append(edges, edge)
-			}
-			return nil
-		})
-	})
-	if err != nil {
-		return nil, err
-	}
-	return edges, nil
+	// The shared MVCC adjacency owner selects this pair before retaining
+	// output, rather than scanning and materializing unrelated graph edges.
+	// Latest reads keep their current between index and acknowledged overlay.
+	return b.readAdjacentEdgesAtWithView(ctx, startID, version, Outgoing, endID, b.withView)
 }
 
-func (b *BadgerEngine) IterateLatestVisibleNodes(yield func(*Node) error) error {
-	nodes, err := b.AllNodes()
+// yieldLatestVisible is the one owner of the latest-visible enumeration
+// algorithm the MVCCEnumerationEngine node and edge callers present: load the
+// population under the caller's own lifetime, then hand every record to yield.
+// The caller's cancellation is checked on the first record, once every
+// bulkReadCancellationInterval records (the same stride the scans inside the
+// load use) and once more after the last yield, so a request already canceled
+// on admission or canceled by the visitor itself retires with the context's
+// own error instead of reporting a successful enumeration. A load or visitor
+// error surfaces unchanged and outranks that final context check.
+func yieldLatestVisible[T any](ctx context.Context, load func(context.Context) ([]T, error), yield func(T) error) error {
+	records, err := load(ctx)
 	if err != nil {
 		return err
 	}
-	for _, node := range nodes {
-		if err := yield(node); err != nil {
+	var cancel bulkReadCancellation
+	for _, record := range records {
+		if err := cancel.check(ctx); err != nil {
+			return err
+		}
+		if err := yield(record); err != nil {
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
+}
+
+func (b *BadgerEngine) IterateLatestVisibleNodes(ctx context.Context, yield func(*Node) error) error {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return err
+	}
+
+	// The caller's own context is the read's lifetime: a canceled statement
+	// must not keep walking every visible node, and a visitor that cancels it
+	// must not be answered with a successful enumeration.
+	return yieldLatestVisible(ctx, b.AllNodes, yield)
 }
 
 func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error {
-	edges, err := b.AllEdges()
-	if err != nil {
+	if err := b.pendingNamespaceConflict(""); err != nil {
 		return err
 	}
-	for _, edge := range edges {
-		if err := yield(edge); err != nil {
-			return err
-		}
-	}
-	return nil
+
+	// Edge iteration has no caller context of its own: context.Background is
+	// the true lifetime at this context-free boundary.
+	return yieldLatestVisible(context.Background(), b.AllEdges, yield)
 }

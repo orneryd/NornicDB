@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: calls follow the procedure-named header owners.
+
 import (
 	"context"
 	"errors"
@@ -110,7 +112,7 @@ func TestGDSCatalogAsGDS(t *testing.T) {
 	// drop: GDS's columns; failIfMissing; a list; another database's catalog.
 	result, err = run("CALL gds.graph.drop('g2', true, '')")
 	require.NoError(t, err)
-	require.Equal(t, gdsDropColumns, result.Columns)
+	require.Equal(t, columnNames(gdsGraphDropColumns), result.Columns)
 	require.Equal(t, "g2", result.Rows[0][0])
 	require.Empty(t, rows("CALL gds.graph.drop('nope', false)"))
 	_, err = run("CALL gds.graph.drop('nope')")
@@ -202,9 +204,9 @@ func TestGDSCatalogArgumentBranches(t *testing.T) {
 	require.ErrorContains(t, err, "username")
 	// A failing argument fails the function.
 	failing := cypherfn.Context{Eval: func(string) (interface{}, error) { return nil, errors.New("boom") }}
-	_, err = fnGDSGraphExists(failing, []string{"x"})
+	_, err = fnGDSGraphExists(context.Background(), failing, []string{"x"})
 	require.ErrorContains(t, err, "boom")
-	_, err = fnGDSNodeProperty(failing, []string{"g", "n", "age"})
+	_, err = fnGDSNodeProperty(context.Background(), failing, []string{"g", "n", "age"})
 	require.ErrorContains(t, err, "boom")
 	_, err = run("CREATE (:P {name: 'f', score: 1.5}), (:P {name: 'i', score: 2})")
 	require.NoError(t, err)

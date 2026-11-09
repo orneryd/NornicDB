@@ -18,7 +18,19 @@
   other: "[!! resolved tenant labels enabled !!]"
 - id: runtime.log.observability_instance_id_resolved
   description: Pseudo-locale service instance identity resolution log.
-  other: 'INFO observability: service.instance.id={{printf "%q" .InstanceID}} ([!! resolved from {{.Source}} !!])'
+  other: '[!! observability: service.instance.id={{printf "%q" .InstanceID}} (resolved from {{.Source}}) !!]'
+- id: runtime.log.observability_otlp_plaintext_rejected
+  description: Pseudo-locale OTLP plaintext rejection warning.
+  other: '[!! observability: OTLP endpoint {{printf "%q" .Endpoint}} is plaintext but NORNICDB_OTLP_INSECURE is not set; installing noop tracer provider (TRC-09) !!]'
+- id: runtime.log.observability_span_exporter_init_failed
+  description: Pseudo-locale span exporter initialization failure warning.
+  other: '[!! observability: span exporter init failed: {{.Error}}; installing noop tracer provider — process continues !!]'
+- id: runtime.log.observability_sampler_mode_invalid
+  description: Pseudo-locale invalid sampler mode warning.
+  other: '[!! observability: {{.Error}}; falling back to default sampler mode (TRC-05) !!]'
+- id: runtime.log.observability_parent_strict_unbounded
+  description: Pseudo-locale unbounded parent_strict sampler warning.
+  other: '[!! observability: parent_strict sampler honors upstream decisions unconditionally; trace volume is unbounded (TRC-07) !!]'
 - id: runtime.log.observability_operator
   description: Pseudo-locale canonical dynamic observability bootstrap log.
   other: "{{.Message}}"

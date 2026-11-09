@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,21 +12,30 @@ import (
 // Neo.ClientError.Schema.ConstraintValidationFailed when the statement runs,
 // stores nothing of the statement, and keeps serving every client.
 
-// requireConstraintFailure checks the code a client gets for err (the Bolt
-// and HTTP mapping).
-func requireConstraintFailure(t *testing.T, err error, statement string) {
-	t.Helper()
-	require.Error(t, err, statement)
-	code, _ := nornicerrors.Neo4jStatus(err)
-	require.Equal(t, "Neo.ClientError.Schema.ConstraintValidationFailed", code, "%s: %v", statement, err)
-}
-
 func countOf(t *testing.T, exec *StorageExecutor, ctx context.Context, statement string) int64 {
 	t.Helper()
 	result, err := exec.Execute(ctx, statement, nil)
 	require.NoError(t, err, statement)
 	require.Len(t, result.Rows, 1, statement)
 	return result.Rows[0][0].(int64)
+}
+
+// constraintRejectedInExplicitTransaction drives the explicit-transaction
+// lifecycle both constraint transaction tests share: a fresh transaction on
+// exec's own storage, BEGIN, the statement rejected while it runs with
+// ConstraintValidationFailed (the statement fails, not the transaction's end),
+// and that end, whose own result these cases do not assert. Callers pass the
+// end they qualify - COMMIT or ROLLBACK - and assert from outside the
+// transaction what it published, so each keeps its own setup, mutation and
+// no-publication checks.
+func constraintRejectedInExplicitTransaction(t *testing.T, exec *StorageExecutor, ctx context.Context, statement, end string) {
+	t.Helper()
+	tx := NewStorageExecutor(exec.storage)
+	_, err := tx.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err, statement)
+	_, err = tx.Execute(ctx, statement, nil)
+	requireErrorStatus(t, err, "Neo.ClientError.Schema.ConstraintValidationFailed", statement)
+	_, _ = tx.Execute(ctx, end, nil)
 }
 
 // TestConstraintViolationFailsTheStatementAndNeverWedgesTheEngine: an
@@ -63,7 +71,7 @@ func TestConstraintViolationFailsTheStatementAndNeverWedgesTheEngine(t *testing.
 		"CREATE (:P {id: 3})-[:RK {k: 1}]->(:P {id: 4})",
 	} {
 		_, err := exec.Execute(ctx, statement, nil)
-		requireConstraintFailure(t, err, statement)
+		requireErrorStatus(t, err, "Neo.ClientError.Schema.ConstraintValidationFailed", statement)
 	}
 
 	// Nothing of a failed statement is stored.
@@ -105,7 +113,7 @@ func TestExplicitTransactionConstraintViolationFailsTheStatement(t *testing.T) {
 		_, err = tx.Execute(ctx, "CREATE (:B)", nil)
 		require.NoError(t, err)
 		_, err = tx.Execute(ctx, "CREATE (:UK {k: 1})", nil)
-		requireConstraintFailure(t, err, "duplicate CREATE in explicit transaction")
+		requireErrorStatus(t, err, "Neo.ClientError.Schema.ConstraintValidationFailed", "duplicate CREATE in explicit transaction")
 		_, err = tx.Execute(ctx, "CREATE (:C)", nil)
 		require.Error(t, err, "statement after the failure")
 		_, _ = tx.Execute(ctx, end, nil)
@@ -120,12 +128,7 @@ func TestExplicitTransactionConstraintViolationFailsTheStatement(t *testing.T) {
 		"MERGE (n:UK {k: 2}) SET n += {k: 1}",
 		"CREATE (a:B) WITH a MERGE (n:UK {k: 2}) SET n.k = 1",
 	} {
-		tx := NewStorageExecutor(exec.storage)
-		_, err = tx.Execute(ctx, "BEGIN", nil)
-		require.NoError(t, err)
-		_, err = tx.Execute(ctx, statement, nil)
-		requireConstraintFailure(t, err, statement)
-		_, _ = tx.Execute(ctx, "COMMIT", nil)
+		constraintRejectedInExplicitTransaction(t, exec, ctx, statement, "COMMIT")
 		require.EqualValues(t, 1, countOf(t, exec, ctx, "MATCH (n:UK) RETURN count(n) AS c"), statement)
 		require.EqualValues(t, 0, countOf(t, exec, ctx, "MATCH (n:B) RETURN count(n) AS c"), statement)
 	}
@@ -139,7 +142,7 @@ func TestExplicitTransactionConstraintViolationFailsTheStatement(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE (:UK {k: 9})", nil)
 	require.NoError(t, err)
 	_, err = tx.Execute(ctx, "CREATE (:UK {k: 9})", nil)
-	requireConstraintFailure(t, err, "CREATE of a value committed after BEGIN")
+	requireErrorStatus(t, err, "Neo.ClientError.Schema.ConstraintValidationFailed", "CREATE of a value committed after BEGIN")
 	_, _ = tx.Execute(ctx, "ROLLBACK", nil)
 	require.EqualValues(t, 1, countOf(t, exec, ctx, "MATCH (n:UK {k: 9}) RETURN count(n) AS c"))
 }
@@ -178,12 +181,7 @@ func TestExplicitTransactionMergeUpdateViolationsFailTheStatement(t *testing.T) 
 		"MATCH (a:B) MERGE (n:UK {k: 2}) ON CREATE SET n.k = 1",
 		"MATCH (a:B) MERGE (a)-[:R]->(n:UK {k: 2}) SET n.k = 1",
 	} {
-		tx := NewStorageExecutor(exec.storage)
-		_, err := tx.Execute(ctx, "BEGIN", nil)
-		require.NoError(t, err)
-		_, err = tx.Execute(ctx, statement, nil)
-		requireConstraintFailure(t, err, statement)
-		_, _ = tx.Execute(ctx, "ROLLBACK", nil)
+		constraintRejectedInExplicitTransaction(t, exec, ctx, statement, "ROLLBACK")
 		result, err := exec.Execute(ctx, "MATCH (n:UK) RETURN n.k AS k ORDER BY k", nil)
 		require.NoError(t, err, statement)
 		require.Equal(t, [][]interface{}{{int64(1)}, {int64(3)}}, result.Rows, statement)

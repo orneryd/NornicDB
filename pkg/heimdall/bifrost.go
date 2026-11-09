@@ -2,11 +2,15 @@
 package heimdall
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // Bifrost implements BifrostBridge for real-time communication with clients.
@@ -25,6 +29,11 @@ type BifrostClient struct {
 	Writer      http.ResponseWriter
 	ConnectedAt time.Time
 	LastPing    time.Time
+
+	mu sync.Mutex
+	// users admits writers until the client is retired, then joins them.
+	users   lifecycle.WorkLifetime
+	canRead func() bool
 }
 
 // BifrostMessage is a message sent through Bifrost.
@@ -51,22 +60,67 @@ func NewBifrost(cfg Config) *Bifrost {
 
 // RegisterClient adds a new connected client.
 func (b *Bifrost) RegisterClient(id string, w http.ResponseWriter, f http.Flusher) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.clients[id] = &BifrostClient{
+	GetSubsystemManager().recordOutcome("register Bifrost client", b.registerClient(id, w, f, nil, nil))
+}
+
+// registerClient publishes the connection only after its initial message has
+// been flushed. All later writers share the client's serialization lock.
+func (b *Bifrost) registerClient(id string, w http.ResponseWriter, f http.Flusher, canRead func() bool, initial *BifrostMessage) error {
+	client := &BifrostClient{
 		ID:          id,
 		Writer:      w,
 		Flusher:     f,
 		ConnectedAt: time.Now(),
 		LastPing:    time.Now(),
+		canRead:     canRead,
 	}
+	if initial != nil {
+		data, err := encodeBifrostMessage(*initial)
+		if err != nil {
+			return err
+		}
+		if err := client.write(data); err != nil {
+			return err
+		}
+	}
+	b.mu.Lock()
+	previous := b.clients[id]
+	b.clients[id] = client
+	b.mu.Unlock()
+	if previous != nil {
+		previous.retire()
+	}
+	return nil
+}
+
+func (c *BifrostClient) acquire() (func(), bool) {
+	_, release, accepted := c.users.Acquire(context.Background())
+	return release, accepted
+}
+func (c *BifrostClient) retire() {
+	c.users.CloseAdmission()
+	<-c.users.Quiescent()
+}
+
+func (c *BifrostClient) write(data []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := c.Writer.Write(data); err != nil {
+		return err
+	}
+	c.Flusher.Flush()
+	return nil
 }
 
 // UnregisterClient removes a disconnected client.
 func (b *Bifrost) UnregisterClient(id string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	client := b.clients[id]
 	delete(b.clients, id)
+	b.mu.Unlock()
+	if client != nil {
+		client.retire()
+	}
 }
 
 // === BifrostBridge Interface Implementation ===
@@ -146,31 +200,47 @@ func (b *Bifrost) ConnectionCount() int {
 // broadcast sends a message to all connected clients via SSE.
 func (b *Bifrost) broadcast(msg BifrostMessage) error {
 	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if len(b.clients) == 0 {
+	clients := make([]*BifrostClient, 0, len(b.clients))
+	for _, client := range b.clients {
+		clients = append(clients, client)
+	}
+	b.mu.RUnlock()
+	if len(clients) == 0 {
 		// No clients connected - not an error, just no-op
 		return nil
 	}
 
-	data, err := json.Marshal(msg)
+	sseData, err := encodeBifrostMessage(msg)
 	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
+		return err
 	}
 
-	// SSE format: "data: <json>\n\n"
-	sseData := fmt.Sprintf("data: %s\n\n", string(data))
-
-	var lastErr error
-	for _, client := range b.clients {
-		if _, err := client.Writer.Write([]byte(sseData)); err != nil {
-			lastErr = err
+	var outcomes error
+	for _, client := range clients {
+		release, accepted := client.acquire()
+		if !accepted {
 			continue
 		}
-		client.Flusher.Flush()
+		func() {
+			defer release()
+			if client.canRead != nil && !client.canRead() {
+				return
+			}
+			if err := client.write(sseData); err != nil {
+				outcomes = compose.Outcomes(outcomes, fmt.Errorf("Bifrost client %s: %w", client.ID, err))
+			}
+		}()
 	}
 
-	return lastErr
+	return outcomes
+}
+
+func encodeBifrostMessage(msg BifrostMessage) ([]byte, error) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message: %w", err)
+	}
+	return []byte(fmt.Sprintf("data: %s\n\n", string(data))), nil
 }
 
 // Stats returns current Bifrost statistics.

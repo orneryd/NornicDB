@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -30,26 +32,40 @@ import (
 const whenBranchVariable = generatedVariablePrefix + "when"
 
 type structureRewriter struct {
+	ctx     context.Context
 	query   string
 	edits   []labelRewriteEdit
 	columns statementColumner
+	// selected is the source offset of the arm a compile-only candidate view
+	// keeps; every other conditional in that view keeps its first arm. It is
+	// -1 in execution lowering, which keeps every arm behind a CASE guard.
+	selected int
 }
 
 // statementColumner names a statement's result columns
-// (StorageExecutor.StatementColumns). An interface, not a method value, so
+// (StorageExecutor.StatementResultColumnsContext). An interface, not a method value, so
 // Execute passes the executor to desugarQueryStructure without allocating.
 type statementColumner interface {
-	StatementColumns(query string) []string
+	StatementResultColumnsContext(ctx context.Context, query string, stage SourceStage) ([]string, error)
+}
+
+// regionalColumner is the columns owner's compile-only regional read
+// (StorageExecutor.regionalStatementColumns): the columns the clause ending a
+// region declares in the admitted statement program of the accepted text it is
+// given. A viewing caller never supplies row values, and an incomplete program
+// is an error rather than an empty header.
+type regionalColumner interface {
+	regionalStatementColumns(ctx context.Context, query string, region cyphertext.Span) ([]string, error)
 }
 
 // desugarQueryStructure returns query with NEXT, WHEN and braced query parts
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when it has none. columns names a query's result columns.
-func desugarQueryStructure(query string, columns statementColumner) (string, *queryRewrite, error) {
-	if !mayUseQueryStructure(query) {
+func desugarQueryStructure(ctx context.Context, query string, columns statementColumner) (string, *queryRewrite, error) {
+	if !mayUseQueryStructure(ctx, query) {
 		return query, nil, nil
 	}
-	r := &structureRewriter{query: query, columns: columns}
+	r := &structureRewriter{ctx: ctx, query: query, columns: columns, selected: -1}
 	if err := r.region(0, len(query), false); err != nil {
 		return query, nil, err
 	}
@@ -62,11 +78,11 @@ func desugarQueryStructure(query string, columns statementColumner) (string, *qu
 
 // mayUseQueryStructure is desugarQueryStructure's quick check: NEXT or WHEN
 // appear, or a brace starts the statement or follows UNION.
-func mayUseQueryStructure(query string) bool {
+func mayUseQueryStructure(ctx context.Context, query string) bool {
 	if strings.Contains(query, "{") {
-		opener := &labelExpressionRewriter{query: query}
+		opener := &labelExpressionRewriter{ctx: ctx, query: query}
 		for index := 0; index < len(query); index++ {
-			if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
+			if isCypherQuoteByte(query[index]) {
 				index = skipCypherQuotedText(query, index, query[index]) - 1
 				continue
 			}
@@ -83,6 +99,20 @@ func mayUseQueryStructure(query string) bool {
 
 func (r *structureRewriter) edit(start, end int, text string) {
 	r.edits = append(r.edits, labelRewriteEdit{start: start, end: end, text: text})
+}
+
+// rewrittenRegionText materializes the exact execution edits for a region
+// before asking the schema owner about it. Query composition is lowered by this
+// rewriter once; the schema owner never receives half-lowered conditional text.
+func (r *structureRewriter) rewrittenRegionText(start, end, firstEdit int) string {
+	edits := make([]labelRewriteEdit, len(r.edits)-firstEdit)
+	for index, edit := range r.edits[firstEdit:] {
+		edit.start -= start
+		edit.end -= start
+		edits[index] = edit
+	}
+	text, _ := applyLabelRewriteEdits(r.query[start:end], edits, true)
+	return text
 }
 
 // queryStructureClauseStarts are the words that start a query part after
@@ -105,7 +135,7 @@ func topLevelWords(q string, start, end int) []topLevelWord {
 	for i := start; i < end; i++ {
 		c := q[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(q[:end], i, c) - 1
 		case c == '/':
 			if commentEnd := queryCommentEnd(q[:end], i); commentEnd >= 0 {
@@ -113,15 +143,15 @@ func topLevelWords(q string, start, end int) []topLevelWord {
 			}
 		case c == '(' || c == '[' || c == '{':
 			closer := map[byte]rune{'(': ')', '[': ']', '{': '}'}[c]
-			if close := findMatchingDelimiter(q[:end], i, rune(c), closer); close >= 0 {
+			if close := cyphertext.FindMatchingDelimiter(q[:end], i, rune(c), closer, cyphertext.OpeningDelimiter); close >= 0 {
 				i = close
 			}
-		case isIdentByte(c) && !isDigitByte(c):
-			if i > start && (isIdentByte(q[i-1]) || q[i-1] == '$' || q[i-1] == '.') {
+		case cyphertext.NamePartAt(q, i) && !isDigitByte(c):
+			if i > start && (cyphertext.NamePartAt(q, i-1) || q[i-1] == '$' || q[i-1] == '.') {
 				continue
 			}
 			j := i
-			for j < end && isIdentByte(q[j]) {
+			for j < end && cyphertext.NamePartAt(q, j) {
 				j++
 			}
 			words = append(words, topLevelWord{start: i, end: j, upper: strings.ToUpper(q[i:j])})
@@ -135,17 +165,27 @@ func topLevelWords(q string, start, end int) []topLevelWord {
 // true when q[start:end] is a braced part whose braces are dropped inside a
 // UNION: its UNION ALLs may become UNIONs.
 func (r *structureRewriter) region(start, end int, distinct bool) error {
+	// Modes belong to the statement, outside the CALLs introduced by NEXT.
+	// Read the existing framing owner and retain its byte prefix unchanged.
+	if start == 0 && end == len(r.query) {
+		if mode, statement := parseExecutionMode(r.query); mode != ModeNormal {
+			start = len(strings.TrimRightFunc(r.query, cyphertext.IsWhitespace)) - len(statement)
+		}
+	}
 	words := topLevelWords(r.query, start, end)
 	var nexts []topLevelWord
 	for index, word := range words {
-		if word.upper != "NEXT" || index > 0 && words[index-1].upper == "AS" && words[index-1].end == skipBackSpaces(r.query, word.start) {
-			continue
-		}
-		if before := skipBackSpaces(r.query, word.start); before > start && strings.IndexByte(".:$", r.query[before-1]) >= 0 {
+		if word.upper != "NEXT" {
 			continue
 		}
 		if r.startsQueryPart(word.end, end) {
-			nexts = append(nexts, word)
+			before := start
+			if index > 0 {
+				before = words[max(0, index-2)].start
+			}
+			if !projectionOperandBefore(r.query, before, word.start) {
+				nexts = append(nexts, word)
+			}
 		}
 	}
 	if len(nexts) > 0 {
@@ -183,7 +223,7 @@ func (r *structureRewriter) startsQueryPart(from, end int) bool {
 }
 
 func skipBackSpaces(q string, end int) int {
-	for end > 0 && isASCIISpace(q[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(q, end-1) {
 		end--
 	}
 	return end
@@ -231,16 +271,21 @@ func (r *structureRewriter) unionParts(start, end int, distinct bool) error {
 	for _, p := range parts {
 		open := skipASCIISpaces(r.query, p.start, p.end)
 		close := skipBackSpaces(r.query, p.end) - 1
-		if open < p.end && r.query[open] == '{' && findMatchingDelimiter(r.query[:p.end], open, '{', '}') == close {
+		if open < p.end && r.query[open] == '{' && cyphertext.FindMatchingDelimiter(r.query[:p.end], open, '{', '}', cyphertext.OpeningDelimiter) == close {
 			wrap := outerAll && r.hasDistinctUnion(open+1, close)
 			// Dropped braces put the part's UNIONs in this union; braces
 			// around a single query hold no UNION to change.
+			firstEdit := len(r.edits)
 			if err := r.region(open+1, close, !wrap && !outerAll && len(parts) > 1); err != nil {
 				return err
 			}
 			if wrap {
+				columns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(open+1, close, firstEdit), AcceptedSource)
+				if err != nil {
+					return err
+				}
 				r.edit(open, open+1, "CALL (*) {")
-				r.edit(close+1, close+1, returnColumnsText(r.columns.StatementColumns(r.query[open+1:close])))
+				r.edit(close+1, close+1, returnColumnsText(columns))
 			} else {
 				r.edit(open, open+1, "")
 				r.edit(close, close+1, "")
@@ -268,16 +313,16 @@ func (r *structureRewriter) hasDistinctUnion(start, end int) bool {
 
 // subqueries rewrites the subquery bodies in q[start:end].
 func (r *structureRewriter) subqueries(start, end int) error {
-	opener := &labelExpressionRewriter{query: r.query}
+	opener := &labelExpressionRewriter{ctx: r.ctx, query: r.query}
 	for i := start; i < end; i++ {
-		switch c := r.query[i]; c {
-		case '\'', '"', '`':
+		switch c := r.query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(r.query[:end], i, c) - 1
 		case '{':
 			if !opener.opensSubquery(i) {
 				continue
 			}
-			close := findMatchingDelimiter(r.query[:end], i, '{', '}')
+			close := cyphertext.FindMatchingDelimiter(r.query[:end], i, '{', '}', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil
 			}
@@ -298,17 +343,27 @@ type whenBranch struct {
 	keywordStart                 int
 }
 
-// conditional rewrites WHEN … THEN … [ELSE …] at q[start:end] (see above).
+// conditional rewrites WHEN … THEN … [ELSE …] at q[start:end] (see above). A
+// compile-only candidate view keeps one arm instead (selectArm).
 func (r *structureRewriter) conditional(start, end int) error {
 	branches, ok := r.whenBranches(start, end)
 	if !ok {
 		return nil
 	}
+	if r.selected >= 0 {
+		return r.selectArm(branches)
+	}
 	var columns []string
 	var cases strings.Builder
 	cases.WriteString("UNWIND [CASE")
 	for index, branch := range branches {
-		bodyColumns := r.columns.StatementColumns(r.unbraced(branch.bodyStart, branch.bodyEnd))
+		if err := r.region(branch.bodyStart, branch.bodyEnd, false); err != nil {
+			return err
+		}
+		bodyColumns, err := r.armColumns(branch)
+		if err != nil {
+			return err
+		}
 		if index == 0 {
 			columns = bodyColumns
 		} else if len(bodyColumns) != len(columns) {
@@ -331,17 +386,114 @@ func (r *structureRewriter) conditional(start, end int) error {
 	for index, branch := range branches {
 		guard := "FILTER " + whenBranchVariable + " = " + strconv.Itoa(index+1) + " "
 		if index == 0 {
-			r.edit(branch.keywordStart, branch.bodyStart, cases.String()+guard)
+			r.edit(branch.keywordStart, branch.bodyStart, cases.String()+guard+"CALL (*) { ")
 		} else {
-			r.edit(branches[index-1].bodyEnd, branch.bodyStart, " UNION ALL "+guard)
-		}
-		if err := r.unionParts(branch.bodyStart, branch.bodyEnd, false); err != nil {
-			return err
+			r.edit(branches[index-1].bodyEnd, branch.bodyStart, " }"+returnColumnsText(columns)+" UNION ALL "+guard+"CALL (*) { ")
 		}
 	}
 	last := branches[len(branches)-1].bodyEnd
-	r.edit(last, last, " }"+returnColumnsText(columns))
+	r.edit(last, last, " }"+returnColumnsText(columns)+" }"+returnColumnsText(columns))
 	return nil
+}
+
+// selectArm keeps one arm of a conditional in a compile-only candidate view:
+// the arm whose body holds r.selected, and the first arm of every other
+// conditional. Removing the WHEN, THEN and ELSE keywords together with the
+// arms that are not kept leaves the kept arm's clauses exactly where they
+// stand, so the view is the whole statement in the frame that reaches the arm.
+func (r *structureRewriter) selectArm(branches []whenBranch) error {
+	kept := 0
+	for index, branch := range branches {
+		if r.selected >= branch.bodyStart && r.selected < branch.bodyEnd {
+			kept = index
+			break
+		}
+	}
+	for index, branch := range branches {
+		if index == kept {
+			r.edit(branch.keywordStart, branch.bodyStart, "")
+			continue
+		}
+		r.edit(branch.keywordStart, branch.bodyEnd, "")
+	}
+	return r.region(branches[kept].bodyStart, branches[kept].bodyEnd, false)
+}
+
+// armColumns is a conditional arm's declared result columns, read from the
+// admitted statement program of a compile-only candidate view in which that
+// arm is selected (armCandidate). The arm is compiled in its own frame: the
+// clauses before the conditional, the enclosing subquery's imports and its
+// sibling arms' absence all come from the source itself, not from a
+// reconstructed fragment, which would lose the scope the arm reads.
+func (r *structureRewriter) armColumns(branch whenBranch) ([]string, error) {
+	regional, ok := r.columns.(regionalColumner)
+	if !ok {
+		return nil, unresolvedStatementError()
+	}
+	candidate, rewrite, err := r.armCandidate(branch.bodyStart)
+	if err != nil {
+		return nil, err
+	}
+	region, ok := candidateSpan(rewrite, cyphertext.Span{Start: branch.bodyStart, End: branch.bodyEnd})
+	if !ok {
+		return nil, unresolvedStatementError()
+	}
+	columns, err := regional.regionalStatementColumns(r.ctx, candidate, region)
+	if err == nil {
+		return columns, nil
+	}
+	// The candidate's byte offsets are not the source's: its edits are the
+	// deleted arms and keywords. Map a diagnostic back before it leaves here.
+	if mapped, changed := rewrite.restoreSourceError(err); changed {
+		return nil, mapped
+	}
+	return nil, err
+}
+
+// armCandidate returns this rewriter's whole source as a compile-only view in
+// which the arm holding selected is kept, and the rewrite that maps the view's
+// byte spans and diagnostics back to the source.
+func (r *structureRewriter) armCandidate(selected int) (string, *queryRewrite, error) {
+	selection := &structureRewriter{ctx: r.ctx, query: r.query, columns: r.columns, selected: selected}
+	if err := selection.region(0, len(r.query), false); err != nil {
+		return "", nil, err
+	}
+	candidate, rewrite := applyLabelRewriteEdits(r.query, selection.edits, true)
+	return candidate, rewrite, nil
+}
+
+// candidateSpan maps a source span into the candidate a rewrite produced.
+// Bytes before the span shift by the edits applied before it; a boundary
+// inside an edit's replaced extent takes that edge, because the selected arm
+// is kept and only the conditional text around it is removed.
+func candidateSpan(rewrite *queryRewrite, span cyphertext.Span) (cyphertext.Span, bool) {
+	if rewrite == nil || span.Start < 0 || span.End < span.Start || span.End > len(rewrite.Original) {
+		return cyphertext.Span{}, false
+	}
+	start := candidateOffset(rewrite.Edits, span.Start, true)
+	end := candidateOffset(rewrite.Edits, span.End, false)
+	if start < 0 || end < start || end > len(rewrite.Text) {
+		return cyphertext.Span{}, false
+	}
+	return cyphertext.Span{Start: start, End: end}, true
+}
+
+// candidateOffset maps one source byte boundary through rewrite's edits.
+func candidateOffset(edits []cyphertext.SourceEdit, offset int, start bool) int {
+	shift := 0
+	for _, edit := range edits {
+		if offset <= edit.Original.Start {
+			break
+		}
+		if offset < edit.Original.End {
+			if start {
+				return edit.Accepted.Start
+			}
+			return edit.Accepted.End
+		}
+		shift += (edit.Accepted.End - edit.Accepted.Start) - (edit.Original.End - edit.Original.Start)
+	}
+	return offset + shift
 }
 
 // whenBranches splits WHEN c THEN q … [ELSE q] at q[start:end]; ok is false
@@ -398,15 +550,6 @@ func (r *structureRewriter) whenBranches(start, end int) ([]whenBranch, bool) {
 		}
 	}
 	return branches, true
-}
-
-// unbraced is q[start:end] without enclosing braces.
-func (r *structureRewriter) unbraced(start, end int) string {
-	text := strings.TrimSpace(r.query[start:end])
-	for strings.HasPrefix(text, "{") && findMatchingDelimiter(text, 0, '{', '}') == len(text)-1 {
-		text = strings.TrimSpace(text[1 : len(text)-1])
-	}
-	return text
 }
 
 // returnColumnsText is " RETURN c1, c2" for columns (each quoted when it

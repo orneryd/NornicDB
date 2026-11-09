@@ -12,12 +12,25 @@ import (
 // operators to pipeline rows. It returns graph entities as bindings so every
 // later WITH, mutation, and RETURN clause continues through the same executor.
 func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+	if source, supported, err := e.pipelineTraversalSource(ctx, pipelineRowsSource(rows), clause, hint); supported || err != nil {
+		if err != nil {
+			return nil, true, err
+		}
+		out, _ := materializePipelineSource(ctx, source)
+		return out, true, getExpressionFailure(ctx)
+	}
+	return e.pipelineApplySeededTraversalMatch(ctx, rows, clause, hint)
+}
+
+// pipelineApplySeededTraversalMatch retains the existing selective access
+// owners when a streaming input reveals a bound endpoint at execution time.
+func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
 	pattern := strings.TrimSpace(clause[len("MATCH"):])
 	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
+	if whereIndex := topLevelKeywordIndex(ctx, pattern, "WHERE"); whereIndex >= 0 {
 		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:whereIndex])
 	}
@@ -33,10 +46,10 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	}
 
 	variables := make([]string, 0)
-	for _, variable := range extractNodeVariables(matchPatternStructure(pattern)) {
+	for _, variable := range extractNodeVariables(matchPatternStructure(ctx, pattern)) {
 		variables = appendUniquePipelineBinding(variables, variable)
 	}
-	for _, variable := range extractRelationshipVariables(matchPatternStructure(pattern)) {
+	for _, variable := range extractRelationshipVariables(matchPatternStructure(ctx, pattern)) {
 		variables = appendUniquePipelineBinding(variables, variable)
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
@@ -55,10 +68,12 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		rowCtx := withValueBindings(ctx, row)
-		materializedPattern := pattern
+		rowCtx, materializedPattern, prepareErr := e.bindPatternProperties(withValueBindings(ctx, row), pattern, row)
+		if prepareErr != nil {
+			return nil, true, prepareErr
+		}
 		materializedWhere := whereClause
-		physicalWhere := pipelineTraversalPushdownPredicate(materializedWhere, row, variables)
+		physicalWhere, residualWhere := pipelineTraversalPredicates(ctx, materializedWhere, row, variables)
 		rowHint := hint
 		if physicalWhere != materializedWhere || pipelinePatternJoinsOuterBinding(row, variables) {
 			rowHint = pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}
@@ -67,9 +82,9 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 		var handled bool
 		var err error
 		if rowHint.limit > 0 && rowHint.orderExpr != "" {
-			result, handled, err = e.tryExecuteTraversalStartSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
+			result, handled, err = e.tryExecuteTraversalSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit, traversalStartSeed)
 			if err == nil && !handled {
-				result, handled, err = e.tryExecuteTraversalEndSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
+				result, handled, err = e.tryExecuteTraversalSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit, traversalEndSeed)
 			}
 		}
 		if err != nil {
@@ -86,26 +101,34 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 				rowHint.earlyLimit = hint.earlyLimit
 				rowHint.readTail = hint.readTail
 			}
-			if startSeedNodes == nil && endSeedNodes == nil {
-				// A relationship pinned by id / elementId starts from its
-				// endpoints, not from every node.
-				if seeds, none, pinned := e.relationshipIDSeedNodes(rowCtx, materializedPattern, physicalWhere); pinned {
+			var pinnedRelationship *storage.Edge
+			{
+				// A relationship pinned by id / elementId is the one this row
+				// may walk, from its own endpoints. The predicate the traversal
+				// keeps supplies the value; when the whole WHERE stays with the
+				// outer row, the row bindings resolve it here instead, and the
+				// row filter still evaluates it.
+				pin := materializedWhere
+				if pin == "" {
+					pin = physicalWhere
+				}
+				if edge, none, pinned := e.relationshipIDSeedEdge(rowCtx, materializedPattern, pin); pinned {
 					if none {
 						continue
 					}
-					startSeedNodes = seeds
+					pinnedRelationship = edge
 				}
 			}
-			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
+			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pinnedRelationship, pathVariable, rowHint.readTail, rowHint.earlyLimit)
 			if err != nil {
 				return nil, true, err
 			}
 		}
-		e.normalizeSetMatchRowsToNodes(result, store)
-		e.normalizeSetMatchRowsToEdges(result, store)
+		e.normalizeSetMatchRowsToNodes(ctx, result, store)
+		e.normalizeSetMatchRowsToEdges(ctx, result, store)
 		var rowWhere *preparedRowPredicate
-		if materializedWhere != "" {
-			rowWhere = prepareRowPredicate(materializedWhere)
+		if residualWhere != "" {
+			rowWhere = prepareRowPredicate(residualWhere)
 		}
 		for _, resultRow := range result.Rows {
 			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
@@ -132,16 +155,23 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	return out, true, nil
 }
 
-func pipelineTraversalPushdownPredicate(whereClause string, row pipelineRow, localVariables []string) string {
+func pipelineTraversalPushdownPredicate(ctx context.Context, whereClause string, row pipelineRow, localVariables []string) string {
+	pushdown, _ := pipelineTraversalPredicates(ctx, whereClause, row, localVariables)
+	return pushdown
+}
+
+// Each WHERE conjunct runs once: at traversal or after the outer-row join.
+func pipelineTraversalPredicates(ctx context.Context, whereClause string, row pipelineRow, localVariables []string) (string, string) {
 	if strings.TrimSpace(whereClause) == "" {
-		return ""
+		return "", ""
 	}
 	local := make(map[string]struct{}, len(localVariables))
 	for _, variable := range localVariables {
 		local[variable] = struct{}{}
 	}
-	terms := splitTopLevelAndConjuncts(whereClause)
+	terms := splitTopLevelAndConjuncts(ctx, whereClause)
 	pushable := make([]string, 0, len(terms))
+	residual := make([]string, 0, len(terms))
 	for _, term := range terms {
 		term = strings.TrimSpace(term)
 		if term == "" {
@@ -159,9 +189,11 @@ func pipelineTraversalPushdownPredicate(whereClause string, row pipelineRow, loc
 		}
 		if !dependsOnOuterBinding {
 			pushable = append(pushable, term)
+		} else {
+			residual = append(residual, term)
 		}
 	}
-	return strings.Join(pushable, " AND ")
+	return strings.Join(pushable, " AND "), strings.Join(residual, " AND ")
 }
 
 func pipelinePatternJoinsOuterBinding(row pipelineRow, variables []string) bool {
@@ -226,7 +258,7 @@ func pipelineBoundNode(row pipelineRow, variable string) (*storage.Node, bool) {
 // boundTraversalLimitSafe admits a cap only when both endpoint identities are
 // already checked by the traversal and no other outer binding can reject a path.
 func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern string, row pipelineRow, variables []string) bool {
-	match := e.parseTraversalPattern(ctx, pattern)
+	match := e.parseTraversalPatternStructure(ctx, pattern)
 	if match == nil || match.IsChained {
 		return false
 	}
@@ -241,21 +273,18 @@ func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern s
 func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pipelineClause) pipelineMatchPhysicalHint {
 	hint := pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: pipelineReadOnlyTail(remaining)}
 	if len(remaining) > 0 && remaining[0].kind == pipelineClauseWith {
-		clause := remaining[0].text
-		if topLevelKeywordIndex(clause, "WHERE") >= 0 {
+		clause := remaining[0]
+		if topLevelKeywordIndex(ctx, clause.text, "WHERE") >= 0 {
 			return hint
 		}
-		end := len(clause)
-		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
-				end = index
-			}
-		}
-		if _, local := parsePipelineRowWith(clause[:end]); !local {
+		// The hint asks whether the clause's own items are locally planable.
+		// Its SKIP / LIMIT window is the projection's, read below, so the row
+		// plan is read without declining on it.
+		if _, local := compilePipelineRowWith(ctx, clause, true); !local {
 			return hint
 		}
-		limit, hasLimit := e.parseIntModifier(ctx, clause, "LIMIT")
-		skip, _ := e.parseIntModifier(ctx, clause, "SKIP")
+		limit, hasLimit := e.parseIntModifier(ctx, clause.text, "LIMIT")
+		skip, _ := e.parseIntModifier(ctx, clause.text, "SKIP")
 		if !hasLimit || limit <= 0 || skip < 0 || skip > int(^uint(0)>>1)-limit {
 			return hint
 		}
@@ -276,7 +305,7 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 	if _, distinct := cutDistinct(body); distinct {
 		return hint
 	}
-	for _, item := range e.parseReturnItems(body) {
+	for _, item := range e.parseReturnItems(ctx, body) {
 		if pipelineExpressionContainsAggregate(item.expr) {
 			return hint
 		}
@@ -290,11 +319,11 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 		return hint
 	}
 	hint.limit = limit
-	if orderIndex := topLevelKeywordIndex(body, "ORDER BY"); orderIndex >= 0 {
+	if orderIndex := topLevelKeywordIndex(ctx, body, "ORDER BY"); orderIndex >= 0 {
 		orderExpr := strings.TrimSpace(body[orderIndex+len("ORDER BY"):])
 		end := len(orderExpr)
 		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if index := topLevelKeywordIndex(orderExpr, keyword); index >= 0 && index < end {
+			if index := topLevelKeywordIndex(ctx, orderExpr, keyword); index >= 0 && index < end {
 				end = index
 			}
 		}

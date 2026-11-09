@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"os"
@@ -42,7 +44,7 @@ func TestNeo4jCompatExactQueries(t *testing.T) {
 	}
 
 	// Verify setup
-	nodes, err := store.GetNodesByLabel("File")
+	nodes, err := store.GetNodesByLabel(ctx, "File")
 	require.NoError(t, err)
 	t.Logf("Created %d File nodes", len(nodes))
 	for _, n := range nodes {
@@ -174,7 +176,7 @@ func TestNeo4jCompatExactQueriesWithEmbeddings(t *testing.T) {
 	}
 
 	// Set embeddings on 2 of 3 files (simulating NornicDB embed worker)
-	nodes, err := store.GetNodesByLabel("File")
+	nodes, err := store.GetNodesByLabel(ctx, "File")
 	require.NoError(t, err)
 	require.Len(t, nodes, 3)
 
@@ -183,7 +185,7 @@ func TestNeo4jCompatExactQueriesWithEmbeddings(t *testing.T) {
 		nodes[i].ChunkEmbeddings = [][]float32{{0.1, 0.2, 0.3}}
 		nodes[i].Properties["embedding"] = true // Marker for f.embedding IS NOT NULL compatibility
 		nodes[i].EmbedMeta = map[string]any{"has_embedding": true}
-		err = store.UpdateNode(nodes[i])
+		err = store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: nodes[i]})
 		require.NoError(t, err)
 	}
 
@@ -250,7 +252,7 @@ func TestNeo4jCompatE2EWithServerStorageAndEmbeddings(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create BadgerEngine -> NamespacedEngine stack (matches production order)
-	badger, err := storage.NewBadgerEngine(filepath.Join(tmpDir, "data"))
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(tmpDir, "data")))
 	require.NoError(t, err)
 	defer badger.Close()
 
@@ -361,7 +363,7 @@ func TestNeo4jCompatE2EWithServerStorageAndEmbeddings(t *testing.T) {
 	// ==========================================================================
 	// Step 3: Verify chunks were created with relationships
 	// ==========================================================================
-	allNodes, err := store.AllNodes()
+	allNodes, err := store.AllNodes(ctx)
 	require.NoError(t, err)
 
 	// Build maps for lookup
@@ -409,7 +411,7 @@ func TestNeo4jCompatE2EWithServerStorageAndEmbeddings(t *testing.T) {
 			"embedding_model":      "test-model",
 			"has_embedding":        true,
 		}
-		err := store.UpdateNode(node)
+		err := store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 	}
 
@@ -428,7 +430,7 @@ func TestNeo4jCompatE2EWithServerStorageAndEmbeddings(t *testing.T) {
 			"embedding_model":      "test-model",
 			"has_embedding":        true,
 		}
-		err := store.UpdateNode(node)
+		err := store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 	}
 

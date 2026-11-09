@@ -1,6 +1,8 @@
 package lifecycle
 
-import "context"
+import (
+	"context"
+)
 
 // Component is anything the supervisor can start concurrently and shut
 // down on demand.

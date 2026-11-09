@@ -141,8 +141,13 @@ database:
   # Env: NORNICDB_READ_ONLY
   read_only: false
 
-  # Transaction timeout (Go duration: "30s", "1m", "5m")
-  # Env: NORNICDB_TRANSACTION_TIMEOUT
+  # Transaction timeout (Go duration: "30s", "1m", "5m", or whole seconds). A
+  # MERGE waits at most this long for a uniquely constrained node key that
+  # another transaction holds, then fails with
+  # Neo.ClientError.Transaction.TransactionTimedOut. "0s" disables the limit.
+  # A negative or invalid value stops startup.
+  # Env: NORNICDB_TRANSACTION_TIMEOUT (overrides this key; "0s" disables), or
+  # the legacy NEO4J_dbms_transaction_timeout when that is unset
   transaction_timeout: "30s"
 
   # Maximum concurrent transactions
@@ -415,10 +420,17 @@ memory:
   # Env: NORNICDB_AUTO_LINKS_THRESHOLD
   auto_links_similarity_threshold: 0.82
 
-  # Runtime memory limit (e.g., "2GB", "512MB", "0" for unlimited)
-  # Env: NORNICDB_MEMORY_LIMIT
+  # Go runtime GC target in integer bytes (e.g., "2147483648", or "0").
+  # Env: NORNICDB_GO_MEMORY_LIMIT_BYTES
+  # Deprecated aliases: memory.runtime_limit, NORNICDB_MEMORY_LIMIT
   # Docs: https://github.com/orneryd/nornicdb/docs/operations/memory.md
-  runtime_limit: "0"
+  go_runtime_limit_bytes: "0"
+
+  # Optional application soft maximum. 0 disables admission and pressure
+  # cancellation; this is distinct from the Go runtime GC target above.
+  # Env: NORNICDB_MEMORY_APPLICATION_SOFT_MAX
+  # Values are bytes, optionally with binary k/m/g/t suffixes (e.g. "7g").
+  application_soft_max: "0"
 
   # GC aggressiveness (GOGC value)
   # Env: NORNICDB_GC_PERCENT
@@ -823,6 +835,10 @@ logging:
   # Env: NORNICDB_QUERY_LOG_ENABLED
   query_log_enabled: false
 
-  # Slow query threshold (queries slower than this are logged)
-  # Env: NORNICDB_SLOW_QUERY_THRESHOLD
+  # Slow query threshold (queries slower than this are logged). A MERGE still
+  # waiting this long for a node key another transaction holds logs one
+  # storage.transaction.lock_wait_prolonged warning naming the holder.
+  # A duration or whole seconds; "0s" disables slow-query reporting, that
+  # warning included. A negative or invalid value stops startup.
+  # Env: NORNICDB_SLOW_QUERY_THRESHOLD (overrides this key; "0s" disables)
   slow_query_threshold: "5s"

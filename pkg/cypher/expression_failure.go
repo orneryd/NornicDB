@@ -14,6 +14,46 @@ type expressionFailureKey struct{}
 // statement's map ordering and REVEAL metadata in expressionFailureKey.
 type expressionOperandFailureKey struct{}
 
+// rowFallbackExpressionKey records dispatch ownership independently of the
+// result/error contract, so context-only functions evaluate their children
+// without handing the same whole expression back to the row evaluator.
+type rowFallbackExpressionKey struct{}
+
+// A fallback may call back into the row evaluator through a legacy reader.
+// Carry its depth with its existing dispatch state, so a non-progressing read
+// fails through the checked contract instead of exhausting the goroutine stack.
+type rowFallbackState struct {
+	text  string
+	depth int
+}
+
+const maxRowFallbackDepth = 64
+
+// handedOverRowExpression is the one writer of the row evaluator's dispatch
+// state: the row evaluator hands expr to the shared evaluator, which owns it
+// from here on. Every handoff route records it — the value fallback and the
+// relationship-pattern fallback alike — so the shared evaluator never hands the
+// same text back (handedBackByRowEvaluator) and the two evaluators cannot pass
+// one text to each other without end.
+//
+// exhausted reports that the dispatch already carries the deepest bounded
+// fallback: the caller fails the read through the checked contract instead of
+// growing the goroutine stack.
+func handedOverRowExpression(ctx context.Context, expr string) (handoff context.Context, exhausted bool) {
+	state, _ := ctx.Value(rowFallbackExpressionKey{}).(rowFallbackState)
+	if state.depth >= maxRowFallbackDepth {
+		return ctx, true
+	}
+	return context.WithValue(ctx, rowFallbackExpressionKey{}, rowFallbackState{text: expr, depth: state.depth + 1}), false
+}
+
+// handedBackByRowEvaluator reports whether the row evaluator handed this exact
+// expression to the shared evaluator for the dispatch in progress.
+func handedBackByRowEvaluator(ctx context.Context, expr string) bool {
+	state, _ := ctx.Value(rowFallbackExpressionKey{}).(rowFallbackState)
+	return state.text != "" && logicalOperandKey(state.text) == logicalOperandKey(expr)
+}
+
 // deferredExpressionValue adapts a context evaluator to the logical fold's
 // explicit error contract. A later deciding operand can discard this error.
 func deferredExpressionValue(ctx context.Context, evaluate func(context.Context) interface{}) (interface{}, bool, error) {
@@ -46,12 +86,16 @@ func withExpressionFailureSlot(ctx context.Context) context.Context {
 	return context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
 }
 
+// expressionFailure carries the statement's first expression error, its map key
+// ordering, and the reveal lease owner it recorded. readScopes is the opaque
+// handle captured from the statement's actual context, not that context itself,
+// so reveal metadata does not retain the owning request context.
 type expressionFailure struct {
-	mu               sync.Mutex
-	err              error
-	readScopeEngine  *storage.BadgerEngine
-	readScopeContext context.Context
-	mapKeyOrders     map[uintptr][]string
+	mu              sync.Mutex
+	err             error
+	readScopeEngine *storage.BadgerEngine
+	readScopes      storage.RevealScopes
+	mapKeyOrders    map[uintptr][]string
 }
 
 func (failure *expressionFailure) recordMapKeyOrder(value map[string]interface{}, keys []string) {
@@ -120,9 +164,9 @@ func rowValuesInExpressionContext(ctx context.Context, values map[string]interfa
 
 // deferredRowOperand keeps a subquery operand's statement errors local until
 // the surrounding OR decides whether they count.
-func deferredRowOperand(values map[string]interface{}, evaluate func(map[string]interface{}) (interface{}, bool, error)) (interface{}, bool, error) {
-	return deferredExpressionResult(rowStatementContextOrBackground(values), func(ctx context.Context) (interface{}, bool, error) {
-		return evaluate(rowValuesInExpressionContext(ctx, values))
+func deferredRowOperand(ctx context.Context, values map[string]interface{}, evaluate func(context.Context, map[string]interface{}) (interface{}, bool, error)) (interface{}, bool, error) {
+	return deferredExpressionResult(ctx, func(ctx context.Context) (interface{}, bool, error) {
+		return evaluate(ctx, rowValuesInExpressionContext(ctx, values))
 	})
 }
 

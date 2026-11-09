@@ -57,6 +57,18 @@ func TestCallSubqueryColumnsCannotRedeclareOuterVariables(t *testing.T) {
 	}
 }
 
+// testRetainedBranches reads each source as a CALL body branch of its own.
+func testRetainedBranches(t *testing.T, sources ...string) []queryBodyBranch {
+	t.Helper()
+	branches := make([]queryBodyBranch, 0, len(sources))
+	for _, source := range sources {
+		body := readQueryBody(t.Context(), source, 0, len(source))
+		require.Len(t, body.branches, 1, source)
+		branches = append(branches, body.branches[0])
+	}
+	return branches
+}
+
 func TestCallSubqueryReturnsOuterUnchangedBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_outer_branches"))
 	// RETURN * returns the body's variables (Neo4j 5.26.30: 1, 2).
@@ -68,13 +80,13 @@ func TestCallSubqueryReturnsOuterUnchangedBranches(t *testing.T) {
 		require.NoError(t, err, query)
 		require.Equal(t, [][]interface{}{{int64(1), int64(2)}}, result.Rows, query)
 	}
-	require.True(t, callSubqueryReturnsOuterUnchanged([]string{"WITH a RETURN a"}, "a"))
+	require.True(t, callSubqueryReturnsOuterUnchanged(t.Context(), testRetainedBranches(t, "WITH a RETURN a"), "a"))
 	for _, branch := range []string{
 		"MATCH (n)", // no RETURN: the branch returns nothing unchanged
 		"CALL db.labels() YIELD * RETURN a",
 		"CALL db.labels() YIELD label AS a RETURN a",
 	} {
-		require.False(t, callSubqueryReturnsOuterUnchanged([]string{branch}, "a"), branch)
+		require.False(t, callSubqueryReturnsOuterUnchanged(t.Context(), testRetainedBranches(t, branch), "a"), branch)
 	}
 }
 

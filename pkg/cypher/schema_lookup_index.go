@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
 	"strings"
 
@@ -92,37 +93,15 @@ func parseCreateLookupIndex(cypher string) (name string, ifNotExists bool, entit
 
 // cutSchemaName reads a leading plain or backtick-quoted schema object name.
 func cutSchemaName(text string) (string, string, bool) {
-	if strings.HasPrefix(text, "`") {
-		var name strings.Builder
-		for i := 1; i < len(text); i++ {
-			if text[i] != '`' {
-				name.WriteByte(text[i])
-				continue
-			}
-			if i+1 < len(text) && text[i+1] == '`' {
-				name.WriteByte('`')
-				i++
-				continue
-			}
-			return name.String(), strings.TrimSpace(text[i+1:]), name.Len() > 0
-		}
+	name, ok := cyphertext.ScanIdentifier(text, 0)
+	if !ok {
 		return "", "", false
 	}
-	end := 0
-	for end < len(text) && isIdentByte(text[end]) {
-		end++
-	}
-	if end == 0 {
+	// Schema object names follow Neo4j's creation-time normalization. Graph
+	// labels, relationship types and property names retain their exact spaces.
+	value := strings.TrimSpace(name.Value)
+	if value == "" {
 		return "", "", false
 	}
-	return text[:end], strings.TrimSpace(text[end:]), true
-}
-
-// showLookupIndexCreateStatement is the statement that recreates a lookup
-// index.
-func showLookupIndexCreateStatement(name, entityType string) string {
-	if entityType == string(storage.ConstraintEntityRelationship) {
-		return "CREATE LOOKUP INDEX " + quoteSchemaName(name) + " FOR ()-[r]-() ON EACH type(r)"
-	}
-	return "CREATE LOOKUP INDEX " + quoteSchemaName(name) + " FOR (n) ON EACH labels(n)"
+	return value, strings.TrimSpace(text[name.End:]), true
 }

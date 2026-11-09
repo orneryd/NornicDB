@@ -6,7 +6,6 @@ package storage
 
 import (
 	"container/list"
-	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -17,6 +16,8 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -133,6 +134,7 @@ const maxNodeSize = 50 * 1024 // 50KB
 const (
 	defaultBadgerNodeCacheMaxEntries   = 10000
 	defaultBadgerNodeBodyCacheMaxBytes = int64(256 << 20)
+	defaultBadgerNodeCacheMaxBytes     = int64(256 << 20)
 	defaultBadgerEdgeTypeCacheMaxTypes = 50
 	defaultBadgerLabelFirstCacheMax    = 1000
 )
@@ -170,37 +172,68 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
-	db     *managedBadgerDB
-	mu     sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
-	closed bool
+	durableCaches durableCacheState
+	// Author: NOR-288 lane (Codex), 2026-10-26. One native application owner
+	// per live accepted logical command; terminal publication retires the entry.
+	acceptedApplications map[acceptedApplicationKey]*acceptedEntityApplication // guarded by mu
+	// nativeSyncHook is nil in production; tests fence the real Sync boundary.
+	nativeSyncHook func()
+	// dropPrefixTailHook is nil in production and held under the lifecycle barrier.
+	dropPrefixTailHook    func(string) error
+	storedEntityObservers atomic.Pointer[storedEntityObserverRegistry]
+
+	db      *managedBadgerDB
+	mu      sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
+	closing bool         // write admission is closed before the final buffered drain
+	// prefixDrops records prefix deletes for the transactions open across
+	// them (prefixDroppedSince).
+	prefixDrops prefixDrops
+	// Positive proof for views at/after a durably completed label index.
+	labelIndexReadyAt atomic.Uint64
+	// pendingCandidates accelerates the durable pending-embedding index. Adds
+	// are published by the common commit writer only after a successful commit.
+	pendingCandidates           pendingEmbeddingCandidates
+	pendingEmbeddingAdds        sync.Map // *badger.Txn -> map[NodeID]struct{}
+	pendingCandidatesGeneration atomic.Uint64
 	// changes is the change data capture state (change_capture.go, #937).
-	changes changeCapture
-	// notifyWG tracks the asynchronous node-deleted notification goroutines
-	// BulkDeleteNodes dispatches. Close sets closed under mu and then waits
-	// on it before releasing engine state, so notifications never run
-	// against torn-down state (#726).
-	notifyWG sync.WaitGroup
-	txnWG    sync.WaitGroup
+	changes                            changeCapture
+	notificationMu                     sync.Mutex
+	notificationHead, notificationTail *commitNotification
+	notificationDraining               bool
+	// notificationUnready is owned by reserve/readyCommitNotification under
+	// notificationMu. Logical publication ends before listener delivery, so
+	// a blocked callback does not make an already committed read view unstable.
+	notificationUnready uint64
+	closeMu             sync.Mutex
+	// work is the engine's one admission, completion and outcome owner.
+	// Helper transactions and reserved commit notifications are its accepted
+	// work; Close seals it after the last durable write published, and its
+	// Shutdown releases engine state only after every ticket returned.
+	work lifecycle.WorkLifetime
 	// writeBarrier orders Close against durable writes. Every public
 	// non-transactional mutator holds it for read for its whole duration,
 	// and an explicit transaction holds it for read from just before its
 	// Badger commit through the post-commit tail (derived counts, MVCC
-	// sequence, ID counters, caches, callbacks). Close takes it for write
+	// sequence, ID counters, caches). Listeners hold their notification's work ticket. Close takes it for write
 	// before releasing engine state, so a write whose Badger commit has
 	// already returned always finishes publishing and reports success, and a
 	// write that arrives after Close fails cleanly with ErrStorageClosed.
 	// Lock order: writeBarrier before mu; Close stops its background
 	// backfills before taking the barrier so they cannot wait on it.
-	writeBarrier sync.RWMutex
+	writeBarrier trackedRWMutex
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
-	deleteCleanup *deleteCleanup
-	inMemory      bool   // True if running in memory-only mode (testing)
-	dataDir       string // Captured from BadgerOptions.DataDir; used by migration logging.
+	deleteCleanup    *deleteCleanup
+	inMemory         bool   // True if running in memory-only mode (testing)
+	dataDir          string // Captured from BadgerOptions.DataDir; used by migration logging.
+	catalogUpgradeV4 *CatalogUpgradeV4
 
 	// writeBehind buffers implicit autocommit commits for background replay
 	// (see badger_write_behind.go). Nil when disabled.
 	writeBehind *WriteBehindBuffer
+	// memoryPolicy is the database-owned soft admission budget for retained
+	// write-behind generations. Nil preserves the legacy unbounded path.
+	memoryPolicy *memory.Policy
 
 	// bufferedCommitWAL, when set, receives the full payload of every
 	// acknowledged write-behind commit before the ACK (see
@@ -231,6 +264,13 @@ type BadgerEngine struct {
 	// Dramatically speeds up repeated MATCH lookups
 	nodeCache   map[NodeID]*Node
 	nodeCacheMu sync.RWMutex
+	// queryNodeCache holds nodes as GetQueryNode reads them (no separately
+	// stored chunks), including when a full image is also cached. It is
+	// guarded by nodeCacheMu and invalidated on the same writes.
+	queryNodeCache map[NodeID]*Node
+	// Both current-value node caches share a byte budget, under nodeCacheMu.
+	nodeCacheBytes    int64
+	nodeCacheMaxBytes int64
 	// The generations order each read cache's fills against its writes
 	// (see cacheGeneration).
 	nodeCacheGen       cacheGeneration
@@ -262,6 +302,8 @@ type BadgerEngine struct {
 	// dominant per-request cost on warm runs. Populated lazily inside
 	// collectEdgesByIndexPrefix and invalidated on every edge mutation.
 	edgeCache         map[EdgeID]*Edge
+	edgeCacheVersions map[EdgeID]uint64 // physical record versions, guarded by edgeCacheMu
+	edgeCacheSources  map[EdgeID]uint64 // captured/committed read cuts, distinct from the body's item version
 	edgeCacheMu       sync.RWMutex
 	edgeCacheMaxItems int
 
@@ -291,7 +333,9 @@ type BadgerEngine struct {
 	// Eliminates expensive full table scans for node/edge counts
 	// totalCountWriteMu publishes cached totals and retires their buffered delta
 	// together. It is released before any storage callbacks.
-	totalCountWriteMu sync.RWMutex
+	// Request-owned count reads use the existing cancellable admission owner.
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	totalCountWriteMu trackedRWMutex
 	nodeCount         atomic.Int64
 	edgeCount         atomic.Int64
 
@@ -322,10 +366,13 @@ type BadgerEngine struct {
 	mvccByNamespaceMu    sync.RWMutex
 	mvccByNamespace      map[string]*namespaceMVCCState
 	mvccLegacyGlobalSeed uint64
+	// mvccReservations lists the versions reserved by writes that have not
+	// published yet; a transaction's cut copies it (mvccReservations).
+	mvccReservations mvccReservations
 
 	retentionPolicy           RetentionPolicy
 	activeMVCCSnapshotReaders atomic.Int64
-	mvccPruneMu               sync.Mutex
+	mvccPruneMu               trackedRWMutex
 	mvccFloorKeysMu           sync.RWMutex
 	mvccFloorKeys             map[[9]byte]struct{}
 	lifecycleController       MVCCLifecycleController
@@ -336,16 +383,14 @@ type BadgerEngine struct {
 	namespaceNodeCounts map[string]int64
 	namespaceEdgeCounts map[string]int64
 
-	edgeBetweenIndexBackfillMu     sync.Mutex
-	edgeBetweenIndexBackfillCancel context.CancelFunc
-	edgeBetweenIndexBackfillDone   chan struct{}
+	edgeBetweenIndexBackfillMu sync.Mutex
+	edgeBetweenIndexBackfill   *engineWorker // the running backfill, engine work
 
 	// labelIndexBackfill* mirrors the edge-between backfill state for
 	// the (label, nodeNumID) index rebuild. See
 	// badger_label_index_backfill.go for the rebuild contract.
-	labelIndexBackfillMu     sync.Mutex
-	labelIndexBackfillCancel context.CancelFunc
-	labelIndexBackfillDone   chan struct{}
+	labelIndexBackfillMu sync.Mutex
+	labelIndexBackfill   *engineWorker // the running backfill, engine work
 
 	// idDict assigns compact 8-byte numeric IDs to string node/edge IDs
 	// so secondary indexes (edge-between, outgoing/incoming, edge-type,
@@ -358,6 +403,8 @@ type BadgerEngine struct {
 	// instead of repeating the string in every record. See
 	// property_key_dictionary.go for the full layout.
 	propKeyDict *propertyKeyDictionary
+
+	walPropertySource walPropertySource
 
 	// storageVersion is the on-disk schema version after migrations have
 	// run during engine open. Written once during NewBadgerEngineWithOptions
@@ -375,6 +422,7 @@ type BadgerEngine struct {
 	onEdgeCreated         []EdgeEventCallback
 	onEdgeUpdated         []EdgeEventCallback
 	onEdgeDeleted         []EdgeDeleteCallback
+	onNamespaceReset      []NamespaceResetCallback
 	callbackMu            sync.RWMutex
 	graphMutationVersions graphMutationVersions
 
@@ -390,16 +438,24 @@ type BadgerEngine struct {
 	manualSuppressed       map[string]struct{}
 	manualSuppressionCount atomic.Int64
 
+	// suppressionEnds are the stored suppressions of deleted entities still
+	// to delete (endSuppressions, suppressionEnding while it runs), under
+	// manualSuppressionMu. suppressionWriteMu orders every write of a stored
+	// suppression.
+	suppressionEnds    map[string]struct{}
+	suppressionEnding  bool
+	suppressionWriteMu trackedRWMutex
+
 	// labelCountWriteMu orders folds/rebuilds of the derived label counts
 	// against each other and keeps backup's count snapshot exclusive. Commit
 	// paths do not take it: every commit appends a unique delta key instead
 	// of a read-modify-write on the shared base key (PR #1043 item #2).
-	labelCountWriteMu sync.RWMutex
+	labelCountWriteMu trackedRWMutex
 
 	// edgeTypeCountWriteMu is the edge-type analogue of labelCountWriteMu:
 	// it orders folds/rebuilds of the derived per-type counts (issue #638).
 	// Commit paths append unique delta keys instead of taking it.
-	edgeTypeCountWriteMu sync.RWMutex
+	edgeTypeCountWriteMu trackedRWMutex
 
 	// countDeltaSeq numbers derived-count delta keys uniquely within this
 	// engine lifetime. Folding at open removes every persisted delta before
@@ -425,6 +481,9 @@ type BadgerEngine struct {
 	// D-01 logger DI; D-07 storage internals use e.log directly. Discard
 	// fallback installed in NewBadgerEngineWithOptions when opts.Logger == nil.
 	log *slog.Logger
+
+	// lockWait bounds and reports MERGE key waits (EngineOptions.LockWait).
+	lockWait LockWaitOptions
 
 	// Plan 04-04-06: pre-bound storage observers cached at AttachMetrics
 	// time (MET-25). Hot-path observation funnels through these — zero
@@ -453,6 +512,8 @@ func (b *BadgerEngine) IsInMemory() bool {
 // (see managedBadgerDB): transactions and writes must go through the
 // engine, never through this handle.
 func (b *BadgerEngine) DB() *badger.DB {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	if b.db == nil {
 		return nil
 	}
@@ -525,10 +586,36 @@ func (b *BadgerEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
 	b.onEdgeDeleted = append(b.onEdgeDeleted, callback)
 }
 
-// notifyNodeCreated calls the registered callbacks.
-func (b *BadgerEngine) notifyNodeCreated(node *Node) {
-	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
-	b.dispatchNodeCreated(node)
+// NamespaceResetCallback reports that every node and relationship whose ID
+// starts with prefix was removed at once (DeleteByPrefix), without a per-entity
+// event.
+type NamespaceResetCallback func(prefix string)
+
+// NamespaceResetNotifier is implemented by engines that report DeleteByPrefix.
+// Consumers that derive state from the stored entities (search indexes) drop
+// that state for the namespace.
+type NamespaceResetNotifier interface {
+	OnNamespaceReset(callback NamespaceResetCallback)
+}
+
+// OnNamespaceReset registers a callback for DeleteByPrefix. It is called in
+// commit order with the other storage event callbacks.
+func (b *BadgerEngine) OnNamespaceReset(callback NamespaceResetCallback) {
+	if callback == nil {
+		return
+	}
+	b.callbackMu.Lock()
+	defer b.callbackMu.Unlock()
+	b.onNamespaceReset = append(b.onNamespaceReset, callback)
+}
+
+func (b *BadgerEngine) dispatchNamespaceReset(prefix string) {
+	b.callbackMu.RLock()
+	callbacks := b.onNamespaceReset
+	b.callbackMu.RUnlock()
+	for _, callback := range callbacks {
+		callback(prefix)
+	}
 }
 
 // dispatchNodeCreated publishes callbacks for an already visible graph mutation.
@@ -542,34 +629,20 @@ func (b *BadgerEngine) dispatchNodeCreated(node *Node) {
 	}
 }
 
-// notifyNodeUpdated calls the registered callbacks.
-func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
-	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
-	b.dispatchNodeUpdated(node)
-}
-
 // dispatchNodeUpdated publishes callbacks for an already visible graph mutation.
 func (b *BadgerEngine) dispatchNodeUpdated(node *Node) {
-	b.callbackMu.RLock()
-	callbacks := b.onNodeUpdated
-	b.callbackMu.RUnlock()
-
-	for _, callback := range callbacks {
-		callback(node)
-	}
+	b.dispatchNodeUpdatedOutcome(node, false)
 }
 
-// notifyNodeDeleted calls the registered callbacks.
-func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
-	b.graphMutationVersions.changed(namespaceForNodeID(nodeID))
-	b.publishNodeDeleted(nodeID)
-}
-
-// publishNodeDeleted publishes callbacks for an already visible graph mutation.
-func (b *BadgerEngine) publishNodeDeleted(nodeID NodeID) {
-	b.forgetManualSuppression(manualSuppressionNode, string(nodeID))
-	b.deleteCleanup.recordDelete()
-	b.dispatchNodeDeleted(nodeID)
+func (b *BadgerEngine) dispatchNodeUpdatedOutcome(node *Node, outcome bool) {
+	b.publishNodeOutcome(node, outcome, func() {
+		b.callbackMu.RLock()
+		callbacks := b.onNodeUpdated
+		b.callbackMu.RUnlock()
+		for _, callback := range callbacks {
+			callback(node)
+		}
+	})
 }
 
 func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
@@ -580,12 +653,6 @@ func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
 	for _, callback := range callbacks {
 		callback(nodeID)
 	}
-}
-
-// notifyEdgeCreated calls the registered callbacks.
-func (b *BadgerEngine) notifyEdgeCreated(edge *Edge) {
-	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
-	b.dispatchEdgeCreated(edge)
 }
 
 // dispatchEdgeCreated publishes callbacks for an already visible graph mutation.
@@ -599,12 +666,6 @@ func (b *BadgerEngine) dispatchEdgeCreated(edge *Edge) {
 	}
 }
 
-// notifyEdgeUpdated calls the registered callbacks.
-func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
-	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
-	b.dispatchEdgeUpdated(edge)
-}
-
 // dispatchEdgeUpdated publishes callbacks for an already visible graph mutation.
 func (b *BadgerEngine) dispatchEdgeUpdated(edge *Edge) {
 	b.callbackMu.RLock()
@@ -616,16 +677,8 @@ func (b *BadgerEngine) dispatchEdgeUpdated(edge *Edge) {
 	}
 }
 
-// notifyEdgeDeleted calls the registered callbacks.
-func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
-	b.graphMutationVersions.changed(namespaceForEdgeID(edgeID))
-	b.dispatchEdgeDeleted(edgeID)
-}
-
 // dispatchEdgeDeleted publishes callbacks for an already visible graph mutation.
 func (b *BadgerEngine) dispatchEdgeDeleted(edgeID EdgeID) {
-	b.forgetManualSuppression(manualSuppressionEdge, string(edgeID))
-	b.deleteCleanup.recordDelete()
 	b.callbackMu.RLock()
 	callbacks := b.onEdgeDeleted
 	b.callbackMu.RUnlock()
@@ -637,6 +690,10 @@ func (b *BadgerEngine) dispatchEdgeDeleted(edgeID EdgeID) {
 
 // BadgerOptions configures the BadgerDB engine.
 type BadgerOptions struct {
+	// CatalogUpgradeV4 is the optional exact catalog migration plan. It is
+	// captured at open; startup integration decides when V4 is authorized.
+	CatalogUpgradeV4 *CatalogUpgradeV4
+
 	// DataDir is the directory for storing data files.
 	// Required.
 	DataDir string
@@ -667,6 +724,9 @@ type BadgerOptions struct {
 	// default cap (defaultWriteBehindMaxOps); a positive value is a manual
 	// cap for operators with unusual hardware.
 	WriteBehindMaxOps int
+	// MemoryPolicy is the optional shared application budget. Buffered commit
+	// payloads reserve before their replayable WAL record is written.
+	MemoryPolicy *memory.Policy
 
 	// BadgerInternalLogger is the logger handed to BadgerDB itself for its
 	// own internal logging (compaction, value-log GC, etc.). If nil, BadgerDB's
@@ -708,6 +768,9 @@ type BadgerOptions struct {
 	// hot node cache (used by GetNode). When exceeded, the cache is cleared.
 	// Set to 0 to use the default.
 	NodeCacheMaxEntries int
+	// NodeCacheMaxBytes bounds the estimated retained bytes across full and
+	// query node images, including vectors. Zero selects the 256 MiB default.
+	NodeCacheMaxBytes int64
 
 	// NodeBodyCacheMaxBytes bounds decoded MVCC node bodies by retained bytes.
 	// Entries larger than the budget are not cached. Set to 0 for the default.
@@ -983,10 +1046,12 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		db:              db,
 		inMemory:        opts.InMemory,
 		dataDir:         opts.DataDir,
+		memoryPolicy:    opts.MemoryPolicy,
 		schemas:         make(map[string]*SchemaManager),
 		retentionPolicy: retentionPolicy,
 
 		nodeCacheMaxEntries:   opts.NodeCacheMaxEntries,
+		nodeCacheMaxBytes:     opts.NodeCacheMaxBytes,
 		nodeBodyCacheMaxBytes: opts.NodeBodyCacheMaxBytes,
 		edgeTypeCacheMaxTypes: opts.EdgeTypeCacheMaxTypes,
 		labelFirstCacheMax:    opts.LabelFirstNodeCacheMaxEntries,
@@ -994,8 +1059,16 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		log: storageLog,
 	}
 
+	if opts.CatalogUpgradeV4 != nil {
+		plan := *opts.CatalogUpgradeV4
+		engine.catalogUpgradeV4 = &plan
+	}
+
 	if engine.nodeCacheMaxEntries <= 0 {
 		engine.nodeCacheMaxEntries = defaultBadgerNodeCacheMaxEntries
+	}
+	if engine.nodeCacheMaxBytes <= 0 {
+		engine.nodeCacheMaxBytes = defaultBadgerNodeCacheMaxBytes
 	}
 	if engine.nodeBodyCacheMaxBytes <= 0 {
 		engine.nodeBodyCacheMaxBytes = defaultBadgerNodeBodyCacheMaxBytes
@@ -1019,9 +1092,11 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	engine.incomingAdjCache = make(map[NodeID][]EdgeID, engine.adjCacheMaxNodes)
 	engine.namespaceNodeCounts = make(map[string]int64)
 	engine.namespaceEdgeCounts = make(map[string]int64)
+	db.cacheOwner = engine
 
 	engine.idDict = newIDDictionary()
 	engine.idDict.setFreelistTTL(opts.EngineOptions.IDFreelistTTL)
+	engine.lockWait = opts.EngineOptions.LockWait
 	if err := engine.idDict.loadFromBadger(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to load id dictionary: %w", err)
@@ -1032,21 +1107,32 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to load property key dictionary: %w", err)
 	}
+	// Opening belongs to the engine lifetime, not to the request that may
+	// have initiated recovery. Use that owner throughout startup before
+	// publishing the initialized engine.
+	if err := engine.initializeWALPropertyIdentity(engine.work.Context(), engine.db, false, false); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("initialize property dictionary identity: %w", err)
+	}
 	if err := engine.loadManualSuppressions(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to load manual suppressions: %w", err)
 	}
 
+	if err := engine.initializeMVCCSequence(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize mvcc sequence: %w", err)
+	}
+
+	if err := engine.recoverNamespaceDrops(engine.work.Context(), nil); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("recover namespace DROP: %w", err)
+	}
 	// Initialize cached counts by scanning existing data (one-time cost)
 	// This enables O(1) stats lookups instead of O(N) scans on every request
 	if err := engine.initializeCounts(); err != nil {
 		db.Close() // Clean up on error
 		return nil, fmt.Errorf("failed to initialize counts: %w", err)
-	}
-
-	if err := engine.initializeMVCCSequence(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to initialize mvcc sequence: %w", err)
 	}
 
 	// Run migrations BEFORE loadPersistedSchemas. The schema loader's
@@ -1056,7 +1142,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	// would fail immediately on the first v0/v1 body with "unexpected
 	// format byte 0xff; expected V2 (0x10)" and the engine would
 	// refuse to open even with --upgrade-storage.
-	if err := engine.RunOnStartMigrations(opts.AllowStorageUpgrade); err != nil {
+	if err := engine.runOnStartMigrations(opts.AllowStorageUpgrade, migrationStartupOpening); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -1091,14 +1177,14 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to load persisted schema: %w", err)
 	}
 
-	if err := engine.ensureLabelCounts(); err != nil {
+	if err := engine.ensureLabelCounts(engine.work.Context()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize label counts: %w", err)
 	}
 
 	// Per-type edge counts (issue #638): marker-gated verify/rebuild pass
 	// over the edge-type index, same shape as the label counts above.
-	if err := engine.ensureEdgeTypeCounts(); err != nil {
+	if err := engine.ensureEdgeTypeCounts(engine.work.Context()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize edge-type counts: %w", err)
 	}
@@ -1106,7 +1192,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	// Edge-between index backfill runs only after migrations have
 	// settled the body format. Failure here is non-fatal at open
 	// time — the index self-heals from the outgoing index on read.
-	if err := engine.ensureEdgeBetweenIndex(); err != nil {
+	if err := engine.startIndexBackfill(startupEdgeBetweenIndex, initializeIndexBackfill); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize edge-between index: %w", err)
 	}
@@ -1117,9 +1203,9 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	// so the walk runs at most once per store. Same non-fatal stance as
 	// the edge-between backfill — MATCH (n:Label) on an unrebuilt store
 	// reads the partial on-disk index until the goroutine finishes.
-	if err := engine.ensureLabelIndex(); err != nil {
-		engine.stopEdgeBetweenIndexBackfill()
-		engine.stopLabelIndexBackfill()
+	if err := engine.startIndexBackfill(startupLabelIndex, initializeIndexBackfill); err != nil {
+		engine.stopIndexBackfill(startupEdgeBetweenIndex)
+		engine.stopIndexBackfill(startupLabelIndex)
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize label index: %w", err)
 	}
@@ -1135,9 +1221,11 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 			interval = 50 * time.Millisecond
 		}
 		engine.writeBehind = NewWriteBehindBuffer(interval, opts.WriteBehindMaxOps, engine.replayWriteBehind)
+		engine.writeBehind.setDispatch(engine.drainCommitNotifications)
 		engine.writeBehind.SetWarn(func(msg string) {
 			engine.log.Warn(msg, "subsystem", "storage")
 		})
+		engine.transitionNamespaceSchema("", schemaNamespaceAttachPending, nil)
 	}
 	return engine, nil
 }
@@ -1175,6 +1263,11 @@ func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Option
 	// initializeMVCCSequence + initializeCounts read off b.db, so swap
 	// it before calling them.
 	b.db = newDB
+	newDB.cacheOwner = b
+	if err := b.initializeWALPropertyIdentity(b.work.Context(), newDB, false, false); err != nil {
+		newDB.Close()
+		return nil, err
+	}
 	if err := b.initializeMVCCSequence(); err != nil {
 		newDB.Close()
 		return nil, fmt.Errorf("reinitialize mvcc sequence: %w", err)
@@ -1271,20 +1364,26 @@ func (b *BadgerEngine) loadPersistedMVCCSequence() (uint64, error) {
 // allocated-but-unpersisted sequences, which is reconciled by the
 // startup max-of-persisted-and-legacy floor.
 func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
-	_ = txn // intentionally unused — see doc above
 	state, err := b.namespaceMVCC(namespace)
 	if err != nil {
 		return MVCCVersion{}, err
 	}
-	seq, saturated := state.nextSequence()
-	commitStamp, err := state.reserveCommitTimestamp(commitTime.UTC(), saturated)
+	// The version is reserved, not published: the sequence advances, the
+	// timestamp is fixed and the ledger enters the version in one step, and
+	// the ledger holds it under the writer's transaction until the write
+	// publishes or is abandoned.
+	return b.mvccReservations.reserve(txn, namespace, state, commitTime, false)
+}
+
+// allocateHistoricalMVCCVersion is allocateMVCCVersion for a bootstrap head:
+// the version keeps the entity's own time instead of being floored at the
+// latest transaction cut, because it describes state that existed before.
+func (b *BadgerEngine) allocateHistoricalMVCCVersion(txn *badger.Txn, namespace string, entityTime time.Time) (MVCCVersion, error) {
+	state, err := b.namespaceMVCC(namespace)
 	if err != nil {
 		return MVCCVersion{}, err
 	}
-	return MVCCVersion{
-		CommitTimestamp: commitStamp,
-		CommitSequence:  seq,
-	}, nil
+	return b.mvccReservations.reserve(txn, namespace, state, entityTime, true)
 }
 
 // persistMVCCSequence writes the namespace's current sequence to disk in
@@ -1308,7 +1407,12 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 	encodedSeq := make([]byte, 8)
 	binary.BigEndian.PutUint64(encodedSeq, seq)
 	persistKey := state.persistKey
-	_ = b.db.Update(func(txn *badger.Txn) error {
+	db, err := b.beginHelperTxn()
+	if err != nil {
+		return
+	}
+	defer b.work.Leave()
+	_ = db.updateMetadataContext(b.work.Context(), func(txn *badger.Txn) error {
 		return txn.Set(persistKey, encodedSeq)
 	})
 }
@@ -1316,40 +1420,61 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 func (b *BadgerEngine) readSchemaVersion() (int, error) {
 	var version int
 	err := b.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(mvccSchemaVersionKey())
-		if err == badger.ErrKeyNotFound {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		return item.Value(func(val []byte) error {
-			if len(val) == 1 && val[0] == 1 {
-				// Compatibility: a broken startup build wrote the edge-between
-				// ready marker to the schema-version key. Treat that one-byte
-				// value as "version unset" so migrations can restore the proper
-				// 8-byte schema version on open.
-				version = 0
-				return nil
-			}
-			if len(val) != 8 {
-				return fmt.Errorf("invalid schema version length: %d", len(val))
-			}
-			version = int(binary.BigEndian.Uint64(val))
-			return nil
-		})
+		var err error
+		version, err = accessSchemaVersionInTxn(txn, loadSchemaVersion, 0)
+		return err
 	})
+	return version, err
+}
+
+type schemaVersionAccess uint8
+
+const (
+	loadSchemaVersion schemaVersionAccess = iota
+	storeSchemaVersion
+	schemaVersionRecordBytes = 8
+)
+
+// accessSchemaVersionInTxn owns the existing schema-version record. The caller
+// retains transaction ownership. Loads accept the historical one-byte ready
+// marker as version zero; stores always emit the same eight-byte big-endian
+// value at the unchanged key. Store's first return value is unused.
+func accessSchemaVersionInTxn(txn *badger.Txn, operation schemaVersionAccess, value int) (int, error) {
+	switch operation {
+	case storeSchemaVersion:
+		buf := make([]byte, schemaVersionRecordBytes)
+		binary.BigEndian.PutUint64(buf, uint64(value))
+		return 0, txn.Set(mvccSchemaVersionKey(), buf)
+	case loadSchemaVersion:
+	default:
+		panic("invalid schema-version access")
+	}
+	item, err := txn.Get(mvccSchemaVersionKey())
+	if err == badger.ErrKeyNotFound {
+		return 0, nil
+	}
 	if err != nil {
 		return 0, err
 	}
-	return version, nil
+	var version int
+	err = item.Value(func(val []byte) error {
+		// The historical edge-between ready marker predates this record.
+		if len(val) == 1 && val[0] == 1 {
+			return nil
+		}
+		if len(val) != schemaVersionRecordBytes {
+			return fmt.Errorf("invalid schema version length: %d", len(val))
+		}
+		version = int(binary.BigEndian.Uint64(val))
+		return nil
+	})
+	return version, err
 }
 
 func (b *BadgerEngine) writeSchemaVersion(version int) error {
-	return b.db.Update(func(txn *badger.Txn) error {
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(version))
-		return txn.Set(mvccSchemaVersionKey(), buf)
+	return b.db.updateMetadataContext(b.work.Context(), func(txn *badger.Txn) error {
+		_, err := accessSchemaVersionInTxn(txn, storeSchemaVersion, version)
+		return err
 	})
 }
 

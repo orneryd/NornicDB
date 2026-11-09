@@ -3,6 +3,7 @@ package cypher
 import (
 	"reflect"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -28,9 +29,12 @@ func validConversionArgument(function string, value interface{}, cypher25 bool) 
 		case bool, string:
 			return true
 		}
-		_, integer := cypherIntegerValue(value)
-		return integer
+		number, numeric := valueconvert.ReadNumber(value)
+		return numeric && number.IsInteger()
 	case "tostring":
+		if _, numeric := valueconvert.ReadNumber(value); numeric {
+			return true
+		}
 		// A Cypher 25 statement writes lists, maps and graph entities too
 		// (cypher25ValueText).
 		if cypher25 {
@@ -38,10 +42,7 @@ func validConversionArgument(function string, value interface{}, cypher25 bool) 
 			return ok
 		}
 		switch value.(type) {
-		case string, bool,
-			int, int8, int16, int32, int64,
-			uint, uint8, uint16, uint32, uint64,
-			float32, float64:
+		case string, bool:
 			return true
 		case *storage.Node, *storage.Edge:
 			return false
@@ -53,13 +54,11 @@ func validConversionArgument(function string, value interface{}, cypher25 bool) 
 			return function != "tofloat"
 		}
 		switch value.(type) {
-		case string,
-			int, int8, int16, int32, int64,
-			uint, uint8, uint16, uint32, uint64,
-			float32, float64:
+		case string:
 			return true
 		}
-		return false
+		_, numeric := valueconvert.ReadNumber(value)
+		return numeric
 	default:
 		return true
 	}

@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // casePrefixEndRequired asks whether treating the candidate END as a prefix
 // operand leaves no complete CASE parse. A state records the CASE stack at one
@@ -13,8 +16,8 @@ func casePrefixEndRequired(text string, candidate int) bool {
 	var parents [][]string
 	candidateDepth := -1
 	for i := 0; i < len(text); {
-		switch text[i] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(text[i]) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(text, i, text[i])
 			continue
 		case '/':
@@ -45,7 +48,7 @@ func casePrefixEndRequired(text string, candidate int) bool {
 			continue
 		}
 		word := caseWordAt(text, i)
-		if word == "end" && i == candidate {
+		if equalFoldASCII(word, "end") && i == candidate {
 			// At a complete top-level branch, an operator after END can
 			// continue NOT's operand (NOT end + ...). Do not reinterpret it
 			// solely to repair a missing closing END in a sibling expression.
@@ -66,33 +69,44 @@ func casePrefixEndRequired(text string, candidate int) bool {
 }
 
 func advanceCaseClosureStates(text string, at int, word string, states []string) []string {
-	ambiguousEnd := word == "end" && caseEndFollowsBarePrefix(text, at)
-	switch word {
-	case "case", "when", "then", "else", "end":
-		if !ambiguousEnd && !caseKeywordAtMode(text, at, upperASCII(word), false) {
-			return states
-		}
+	var keyword string
+	switch {
+	case equalFoldASCII(word, "case"):
+		keyword = "CASE"
+	case equalFoldASCII(word, "when"):
+		keyword = "WHEN"
+	case equalFoldASCII(word, "then"):
+		keyword = "THEN"
+	case equalFoldASCII(word, "else"):
+		keyword = "ELSE"
+	case equalFoldASCII(word, "end"):
+		keyword = "END"
 	default:
 		return states
 	}
+	ambiguousEnd := keyword == "END" && caseEndFollowsBarePrefix(text, at)
+	if !ambiguousEnd && !caseKeywordAtMode(text, at, keyword, false) {
+		return states
+	}
+
 	next := make([]string, 0, len(states)+1)
 	for _, state := range states {
-		switch word {
-		case "case":
+		switch keyword {
+		case "CASE":
 			next = appendCaseClosureState(next, state+"c")
-		case "when":
+		case "WHEN":
 			if len(state) > 0 {
 				next = appendCaseClosureState(next, state[:len(state)-1]+"c")
 			}
-		case "then":
+		case "THEN":
 			if len(state) > 0 && state[len(state)-1] == 'c' {
 				next = appendCaseClosureState(next, state[:len(state)-1]+"v")
 			}
-		case "else":
+		case "ELSE":
 			if len(state) > 0 && state[len(state)-1] == 'v' {
 				next = appendCaseClosureState(next, state)
 			}
-		case "end":
+		case "END":
 			if ambiguousEnd {
 				next = appendCaseClosureState(next, state) // END is the operand.
 			}
@@ -122,11 +136,11 @@ func caseClosureStateContains(states []string, wanted string) bool {
 
 func caseEndFollowsBarePrefix(text string, end int) bool {
 	i := end - 1
-	for i >= 0 && isASCIISpace(text[i]) {
+	for i >= 0 && cyphertext.IsWhitespaceAt(text, i) {
 		i--
 	}
 	finish := i + 1
-	for i >= 0 && isIdentByte(text[i]) {
+	for i >= 0 && cyphertext.NamePartAt(text, i) {
 		i--
 	}
 	if i >= 0 && (text[i] == '.' || text[i] == ':' || text[i] == '$') {

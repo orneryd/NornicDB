@@ -1,6 +1,8 @@
 package storage_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -9,11 +11,11 @@ import (
 )
 
 func TestBadgerTransaction_DeleteNode_FiresEventsAndClearsVectorIndex(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	svc := search.NewServiceWithDimensions(engine, 3)
+	svc := search.NewService(engine, 3, nil)
 
 	notifier, ok := interface{}(engine).(storage.StorageEventNotifier)
 	require.True(t, ok)
@@ -25,13 +27,13 @@ func TestBadgerTransaction_DeleteNode_FiresEventsAndClearsVectorIndex(t *testing
 		Labels:          []string{"Doc"},
 		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 	}
-	_, err = engine.CreateNode(node)
+	_, err = engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.Equal(t, 1, svc.EmbeddingCount())
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteNode(node.ID))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), node.ID, storage.CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	require.Equal(t, 0, svc.EmbeddingCount())

@@ -13,6 +13,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/adminimport"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
+	"github.com/orneryd/nornicdb/pkg/cli"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -23,10 +24,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, localization.AdminCLIErrorPrefix().Fallback, err)
 		os.Exit(1)
 	}
-	rootCmd := newRootCmdWithManager(localizer)
+	rootCmd := cli.NewRoot("nornicdb-admin", localizer, localization.AdminCLIRootShort(), localization.Message{})
+	registerAdminCommands(rootCmd, localizer)
+	localizeCobraHelp(rootCmd, localizer)
 	rootCmd.SilenceErrors = true
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(rootCmd.ErrOrStderr(), renderCommandMessage(localizer, localization.AdminCLIErrorPrefix()), renderCommandError(localizer, err))
+		fmt.Fprintln(rootCmd.ErrOrStderr(), cli.Render(localizer, localization.AdminCLIErrorPrefix()), renderCommandError(localizer, err))
 		os.Exit(exitCodeForError(err))
 	}
 }
@@ -42,26 +45,17 @@ func newCommandLocalizer() (*localization.Manager, error) {
 func renderCommandError(manager *localization.Manager, err error) string {
 	var commandErr *localizedCommandError
 	if errors.As(err, &commandErr) {
-		return renderCommandMessage(manager, commandErr.message)
+		return cli.Render(manager, commandErr.message)
 	}
 	var importErr *adminimport.Error
 	if !errors.As(err, &importErr) || importErr.LocalizedMessage.ID == "" {
 		return err.Error()
 	}
-	text := renderCommandMessage(manager, importErr.LocalizedMessage)
+	text := cli.Render(manager, importErr.LocalizedMessage)
 	if importErr.Err != nil {
 		text += ": " + importErr.Err.Error()
 	}
 	return text
-}
-
-func renderCommandMessage(manager *localization.Manager, message localization.Message) string {
-	if manager != nil {
-		if rendered, _, err := manager.Render(context.Background(), message); err == nil {
-			return rendered
-		}
-	}
-	return message.Fallback
 }
 
 type localizedCommandError struct {
@@ -76,17 +70,11 @@ func newLocalizedCommandError(message localization.Message) error {
 	return &localizedCommandError{message: message}
 }
 
-func newRootCmd() *cobra.Command {
-	return newRootCmdWithManager(nil)
-}
-
-func newRootCmdWithManager(manager *localization.Manager) *cobra.Command {
+// registerAdminCommands owns the admin binary's commands; pkg/cli owns the
+// shared localized root construction used by both binaries.
+func registerAdminCommands(rootCmd *cobra.Command, manager *localization.Manager) {
 	text := func(message localization.Message) string {
-		return renderCommandMessage(manager, message)
-	}
-	rootCmd := &cobra.Command{
-		Use:   "nornicdb-admin",
-		Short: text(localization.AdminCLIRootShort()),
+		return cli.Render(manager, message)
 	}
 
 	dataDir := rootCmd.PersistentFlags().String("data-dir", "./data", text(localization.AdminCLIDataDirectoryFlag()))
@@ -172,9 +160,6 @@ func newRootCmdWithManager(manager *localization.Manager) *cobra.Command {
 	rootCmd.AddCommand(&cobra.Command{Use: "version", Short: text(localization.AdminCLIVersionShort()), Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println(buildinfo.DisplayVersion())
 	}})
-	localizeCobraHelp(rootCmd, manager)
-
-	return rootCmd
 }
 
 func localizedExactArgs(expected int) cobra.PositionalArgs {
@@ -195,7 +180,7 @@ func localizedNoArgs(cmd *cobra.Command, args []string) error {
 
 func localizeCobraHelp(root *cobra.Command, manager *localization.Manager) {
 	text := func(message localization.Message) string {
-		return renderCommandMessage(manager, message)
+		return cli.Render(manager, message)
 	}
 	root.SetUsageTemplate(localizedUsageTemplate(manager))
 	root.InitDefaultHelpCmd()
@@ -217,7 +202,7 @@ func localizeCobraHelp(root *cobra.Command, manager *localization.Manager) {
 func localizeHelpFlags(command *cobra.Command, manager *localization.Manager) {
 	command.InitDefaultHelpFlag()
 	if helpFlag := command.Flags().Lookup("help"); helpFlag != nil {
-		helpFlag.Usage = renderCommandMessage(manager, localization.AdminCLIHelpFlag(command.DisplayName()))
+		helpFlag.Usage = cli.Render(manager, localization.AdminCLIHelpFlag(command.DisplayName()))
 	}
 	for _, child := range command.Commands() {
 		localizeHelpFlags(child, manager)
@@ -226,7 +211,7 @@ func localizeHelpFlags(command *cobra.Command, manager *localization.Manager) {
 
 func localizedUsageTemplate(manager *localization.Manager) string {
 	text := func(message localization.Message) string {
-		return renderCommandMessage(manager, message)
+		return cli.Render(manager, message)
 	}
 	return text(localization.AdminCLIUsageHeading()) + `{{if .Runnable}}
   {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"sync"
 	"sync/atomic"
 )
 
@@ -24,27 +23,27 @@ type relationshipUniqueIndex struct {
 }
 type relationshipUniqueIndexSet struct {
 	active  atomic.Bool
-	mu      sync.Mutex
+	mu      contextRWMutex
 	entries map[relationshipUniqueIndexKey]*relationshipUniqueIndex
 }
 
-func relationshipConstraintValues(properties []string, values map[string]interface{}) ([]interface{}, bool) {
-	return relationshipConstraintValueKeys(properties, values, false)
-}
-
 // Composite/list keys serialize equal-value commits, but remain scan validated.
-func relationshipConstraintValueKeys(properties []string, values map[string]interface{}, includeComposite bool) ([]interface{}, bool) {
+// ctx is the lifetime the keys are prepared for: preparing a list or map value
+// observes that lifetime's cancellation and yields no keys at all rather than a
+// partially prepared set.
+func relationshipConstraintValueKeys(ctx context.Context, properties []string, values map[string]interface{}, includeComposite bool) ([]interface{}, bool, error) {
 	out := make([]interface{}, len(properties))
 	for i, p := range properties {
-		key, ok := indexValueKey(values[p])
+		key, ok, err := indexValueKey(ctx, values[p])
+		if err != nil {
+			return nil, false, err
+		}
 		switch v := key.(type) {
 		case float64:
 			if v != v {
 				ok = false
 			} // NaN is not an equality/map key.
-			if v == 0 {
-				key = float64(0)
-			}
+		case int64, uint64: // an exact integer beyond float64 precision (numericIndexKey)
 		case string, bool:
 		case compositeIndexKey:
 			ok = includeComposite
@@ -52,70 +51,135 @@ func relationshipConstraintValueKeys(properties []string, values map[string]inte
 			ok = false
 		}
 		if !ok {
-			return nil, false
+			return nil, false, nil
 		}
 		out[i] = key
 	}
-	return out, true
+	return out, true, nil
 }
+func (idx *relationshipUniqueIndex) keyProperties(values []interface{}) map[string]interface{} {
+	props := make(map[string]interface{}, len(values))
+	for i, p := range idx.properties {
+		props[p] = values[i]
+	}
+	return props
+}
+
 func (idx *relationshipUniqueIndex) remove(id EdgeID) {
 	previous, ok := idx.keys[id]
 	if !ok {
 		return
 	}
-	props := make(map[string]interface{}, len(previous))
-	for i, p := range idx.properties {
-		props[p] = previous[i]
-	}
-	idx.index.RemoveNode(NodeID(id), props)
+	idx.index.RemoveNode(NodeID(id), idx.keyProperties(previous))
 	delete(idx.keys, id)
 }
-func (idx *relationshipUniqueIndex) put(edge *Edge) {
-	idx.remove(edge.ID)
-	if edge.Type != idx.key.relType || !strings.HasPrefix(string(edge.ID), idx.key.namespace+":") {
-		return
+
+// put replaces one cache entry only after every new posting key is prepared.
+// Request-built caches retain the request lifetime; accepted write maintenance
+// supplies its own non-cancelable lifetime. No rejected attempt removes an old
+// posting or changes the retained key map.
+func (idx *relationshipUniqueIndex) put(ctx context.Context, edge *Edge) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	values, ok := relationshipConstraintValues(idx.properties, edge.Properties)
-	if !ok {
-		return
+	var values []interface{}
+	var props map[string]interface{}
+	if edge.Type == idx.key.relType && strings.HasPrefix(string(edge.ID), idx.key.namespace+":") {
+		var ok bool
+		var err error
+		values, ok, err = relationshipConstraintValueKeys(ctx, idx.properties, edge.Properties, false)
+		if err != nil {
+			return err
+		}
+		if ok {
+			props = idx.keyProperties(values)
+		}
 	}
-	props := make(map[string]interface{}, len(values))
-	for i, prop := range idx.properties {
-		props[prop] = values[i]
+	if err := idx.index.mu.LockContext(ctx); err != nil {
+		return err
 	}
-	_ = idx.index.IndexNode(NodeID(edge.ID), props)
-	idx.keys[edge.ID] = values
+	defer idx.index.mu.Unlock()
+	var keys preparedCompositeNodeKeys
+	if props != nil {
+		var err error
+		err = idx.index.prepareNodeKeys(ctx, props, &keys)
+		if err != nil {
+			return err
+		}
+	} else if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Both removal and insertion now form one accepted, locked mutation.
+	if previous, exists := idx.keys[edge.ID]; exists {
+		idx.index.removeNodeLocked(NodeID(edge.ID), idx.keyProperties(previous))
+		delete(idx.keys, edge.ID)
+	}
+	if props != nil {
+		idx.index.applyNodeKeysLocked(NodeID(edge.ID), &keys)
+		idx.keys[edge.ID] = values
+	}
+	return nil
 }
 
 // relationshipUniqueCandidates returns the exact-value equality candidates.
 // Unsupported keys, decay-filtered query views and write-behind use the old
-// complete scan, rather than trusting an incomplete index miss.
-func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, namespace string) ([]NodeID, bool, error) {
+// complete scan, rather than trusting an incomplete index miss. The index is
+// built from every stored relationship of the type: one hidden from reads
+// still holds its value.
+func (b *BadgerEngine) relationshipUniqueCandidates(ctx context.Context, edge *Edge, c Constraint, namespace string) ([]NodeID, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	if b.writeBehind != nil || b.decayEnabled || namespace == "" || len(c.Properties) == 0 {
 		return nil, false, nil
 	}
-	if _, ok := relationshipConstraintValues(c.Properties, edge.Properties); !ok {
-		return nil, false, nil
+	values, supported, err := relationshipConstraintValueKeys(ctx, c.Properties, edge.Properties, false)
+	if err != nil {
+		return nil, false, err
+	}
+	if !supported {
+		return nil, false, ctx.Err()
 	}
 	key := relationshipUniqueIndexKey{namespace, edge.Type, relationshipPropertyKey(c.Properties)}
 	set := &b.relationshipUniqueIndexes
-	set.mu.Lock()
+	if err := set.mu.LockContext(ctx); err != nil {
+		return nil, false, err
+	}
 	defer set.mu.Unlock()
 	idx := set.entries[key]
-	if idx == nil {
+	building := idx == nil
+	if building {
 		set.active.Store(true) // Mutations must join publication before the build reads storage.
+		defer func() { set.active.Store(len(set.entries) > 0) }()
 		if hook := getUniqueConstraintScanHook(); hook != nil {
 			hook()
 		}
-		edges, err := b.GetEdgesByType(edge.Type)
+		// This scan prepares a constraint decision before the write is accepted.
+		// Its caller supplies the preparation lifetime, not a detached write lifetime.
+		edges, err := b.GetStoredEdgesByType(ctx, edge.Type)
 		if err != nil {
-			set.active.Store(len(set.entries) > 0)
 			return nil, false, err
 		}
 		idx = &relationshipUniqueIndex{key: key, properties: append([]string(nil), c.Properties...), keys: make(map[EdgeID][]interface{}), index: &CompositeIndex{Properties: append([]string(nil), c.Properties...), values: make(map[interface{}][]NodeID), fullIndex: make(map[string][]NodeID), prefixIndex: make(map[string][]NodeID)}}
 		for _, existing := range edges {
-			idx.put(existing)
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
+			// The insertion prepares this local cache under the caller's
+			// preparation lifetime, so cancellation stops it before the cache is
+			// queried or published.
+			if err := idx.put(ctx, existing); err != nil {
+				return nil, false, err
+			}
 		}
+	}
+	ids, err := idx.index.LookupFull(ctx, values...)
+	if err != nil {
+		return nil, false, err
+	}
+	if building {
+		// Publish only the completely built, successfully queried cache. Cancellation
+		// above discards the local index without replacing any reusable entry.
 		if set.entries == nil {
 			set.entries = make(map[relationshipUniqueIndexKey]*relationshipUniqueIndex)
 		}
@@ -127,30 +191,27 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 		}
 		set.entries[key] = idx
 	}
-	values, _ := relationshipConstraintValues(c.Properties, edge.Properties)
-	return idx.index.LookupFull(values...), true, nil
+	return ids, true, nil
 }
-func (b *BadgerEngine) updateRelationshipUniqueIndexes(edge *Edge) {
+
+// publishRelationshipIndexMembership shares one committed frame with the
+// node indexes. Candidate readers cannot meet staged relationship images.
+func (b *BadgerEngine) publishRelationshipIndexMembership(states commitStates) {
 	set := &b.relationshipUniqueIndexes
-	if edge == nil || !set.active.Load() {
+	if len(states.edges) == 0 || !set.active.Load() {
 		return
 	}
 	set.mu.Lock()
 	defer set.mu.Unlock()
 	for _, idx := range set.entries {
-		idx.put(edge)
-	}
-}
-func (b *BadgerEngine) deleteRelationshipUniqueIndexes(ids ...EdgeID) {
-	set := &b.relationshipUniqueIndexes
-	if len(ids) == 0 || !set.active.Load() {
-		return
-	}
-	set.mu.Lock()
-	defer set.mu.Unlock()
-	for _, idx := range set.entries {
-		for _, id := range ids {
-			idx.remove(id)
+		for id, pair := range states.edges {
+			edge := pair.after
+			if edge == nil {
+				idx.remove(id)
+			} else {
+				// An accepted write carries that write's lifetime, not a request's.
+				_ = idx.put(context.Background(), edge)
+			}
 		}
 	}
 }
@@ -160,46 +221,6 @@ func (b *BadgerEngine) resetRelationshipUniqueIndexes() {
 	set.entries = nil
 	set.active.Store(false)
 	set.mu.Unlock()
-}
-
-// lockRelationshipConstraintKeysOf shares the existing value-lock registry.
-// Its relationship prefix separates entity domains; locks cover validation,
-// primary-key commit and publication to the derived equality indexes.
-func (sm *SchemaManager) lockRelationshipConstraintKeysOf(owner string, edges ...*Edge) (func(), error) {
-	if sm == nil {
-		return func() {}, nil
-	}
-	var keys []uniqueConstraintLockKey
-	for _, edge := range edges {
-		if edge == nil || len(edge.Properties) == 0 {
-			continue
-		}
-		for _, c := range sm.GetConstraintsForLabels([]string{edge.Type}) {
-			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
-				continue
-			}
-			values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
-			if !ok || len(values) == 0 {
-				continue
-			}
-			var key interface{} = values[0]
-			if len(values) > 1 {
-				key = NewCompositeKey(values...).Hash
-			}
-			keys = append(keys, uniqueConstraintLockKey{label: "\x00relationship:" + edge.Type, property: relationshipPropertyKey(c.Properties), value: key})
-		}
-	}
-	if len(keys) == 0 {
-		return func() {}, nil
-	}
-	if owner == "" {
-		owner = newEngineWriteLockOwner()
-	}
-	return sm.acquireUniqueConstraintCommitLocks(context.Background(), owner, keys)
-}
-func (b *BadgerEngine) lockRelationshipConstraintEdge(edge *Edge) (func(), error) {
-	namespace, _, _ := ParseDatabasePrefix(string(edge.ID))
-	return b.GetSchemaForNamespace(namespace).lockRelationshipConstraintKeysOf("", edge)
 }
 
 func relationshipPropertyKey(properties []string) string {

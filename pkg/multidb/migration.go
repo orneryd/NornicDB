@@ -21,6 +21,7 @@
 package multidb
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -51,8 +52,9 @@ const (
 // Returns an error if migration fails. On success, migration status is
 // persisted in the system database to prevent re-running.
 func (m *DatabaseManager) migrateLegacyData() error {
+	ctx := m.lifetime().Context()
 	// Check if migration already completed
-	if m.isMigrationComplete() {
+	if m.isMigrationComplete(ctx) {
 		return nil
 	}
 
@@ -61,21 +63,20 @@ func (m *DatabaseManager) migrateLegacyData() error {
 	engine := m.inner
 
 	// Detect unprefixed data
-	hasUnprefixedData, err := m.detectUnprefixedData(engine)
+	hasUnprefixedData, err := m.detectUnprefixedData(ctx, engine)
 	if err != nil {
 		return fmt.Errorf("failed to detect unprefixed data: %w", err)
 	}
 
 	if !hasUnprefixedData {
 		// No unprefixed data - mark migration as complete
-		_ = m.markMigrationComplete()
-		return nil
+		return m.markMigrationComplete(ctx)
 	}
 
 	log.Printf("⚠️  Legacy (unprefixed) data detected; attempting one-time migration into default database %q", m.config.DefaultDatabase)
 
 	// Perform migration
-	if err := m.performMigration(engine); err != nil {
+	if err := m.performMigration(ctx, engine); err != nil {
 		// IMPORTANT: Migration is written to avoid deleting legacy records unless the
 		// full copy step succeeds. If we fail here, the user's existing data should
 		// still be intact (though some prefixed copies may have been created).
@@ -85,9 +86,7 @@ func (m *DatabaseManager) migrateLegacyData() error {
 	}
 
 	// Mark migration as complete
-	_ = m.markMigrationComplete()
-
-	return nil
+	return m.markMigrationComplete(ctx)
 }
 
 // isMigrationComplete checks if legacy data migration has been completed.
@@ -95,10 +94,10 @@ func (m *DatabaseManager) migrateLegacyData() error {
 // Returns true if migration has already been run and marked as complete
 // in the system database metadata. This prevents the migration from
 // running multiple times.
-func (m *DatabaseManager) isMigrationComplete() bool {
+func (m *DatabaseManager) isMigrationComplete(ctx context.Context) bool {
 	// Check metadata for migration status
 	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
-	node, err := systemEngine.GetNode(storage.NodeID(migrationStatusKey))
+	node, err := systemEngine.GetNode(ctx, storage.NodeID(migrationStatusKey))
 	if err == storage.ErrNotFound {
 		return false
 	}
@@ -119,7 +118,7 @@ func (m *DatabaseManager) isMigrationComplete() bool {
 // Stores migration status in the system database to prevent the migration
 // from running again on subsequent startups. The status includes the
 // target database name for reference.
-func (m *DatabaseManager) markMigrationComplete() error {
+func (m *DatabaseManager) markMigrationComplete(ctx context.Context) error {
 	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
 
 	node := &storage.Node{
@@ -132,9 +131,9 @@ func (m *DatabaseManager) markMigrationComplete() error {
 	}
 
 	// Try update first, then create
-	err := systemEngine.UpdateNode(node)
+	err := systemEngine.UpdateNode(ctx, storage.NodeUpdateRequest{After: node})
 	if err == storage.ErrNotFound {
-		_, err := systemEngine.CreateNode(node)
+		_, err := systemEngine.CreateNode(ctx, node)
 		return err
 	}
 	return err
@@ -149,9 +148,10 @@ func (m *DatabaseManager) markMigrationComplete() error {
 //
 // Returns true if any unprefixed data is found, false otherwise.
 // Returns an error if scanning fails.
-func (m *DatabaseManager) detectUnprefixedData(engine storage.Engine) (bool, error) {
-	// Get all nodes
-	allNodes, err := engine.AllNodes()
+func (m *DatabaseManager) detectUnprefixedData(ctx context.Context, engine storage.Engine) (bool, error) {
+	// Namespace migration is a one-time operation, not a statement read: it
+	// runs on its own lifetime.
+	allNodes, err := engine.AllNodes(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -169,7 +169,7 @@ func (m *DatabaseManager) detectUnprefixedData(engine storage.Engine) (bool, err
 	}
 
 	// Also check edges
-	allEdges, err := engine.AllEdges()
+	allEdges, err := engine.AllEdges(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -197,16 +197,16 @@ func (m *DatabaseManager) detectUnprefixedData(engine storage.Engine) (bool, err
 //
 // Returns an error if migration fails. On success, all unprefixed data
 // will be accessible through the default database namespace.
-func (m *DatabaseManager) performMigration(engine storage.Engine) error {
+func (m *DatabaseManager) performMigration(ctx context.Context, engine storage.Engine) error {
 	defaultDB := m.config.DefaultDatabase
 
-	// Get all nodes and edges
-	allNodes, err := engine.AllNodes()
+	// The migration operation runs on its own lifetime.
+	allNodes, err := engine.AllNodes(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get all nodes: %w", err)
 	}
 
-	allEdges, err := engine.AllEdges()
+	allEdges, err := engine.AllEdges(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get all edges: %w", err)
 	}
@@ -254,7 +254,7 @@ func (m *DatabaseManager) performMigration(engine storage.Engine) error {
 		newNode.Properties = properties
 
 		// Create new node (this will create all indexes)
-		if _, err := engine.CreateNode(&newNode); err != nil {
+		if _, err := engine.CreateNode(ctx, &newNode); err != nil {
 			// If node already exists (shouldn't happen), skip
 			if err == storage.ErrAlreadyExists {
 				continue
@@ -272,7 +272,7 @@ func (m *DatabaseManager) performMigration(engine storage.Engine) error {
 		newEdge.EndNode = storage.NodeID(defaultDB + ":" + string(edge.EndNode))
 
 		// Create new edge (this will create all indexes)
-		if err := engine.CreateEdge(&newEdge); err != nil {
+		if err := engine.CreateEdge(ctx, &newEdge); err != nil {
 			// If edge already exists (shouldn't happen), skip
 			if err == storage.ErrAlreadyExists {
 				continue
@@ -287,10 +287,10 @@ func (m *DatabaseManager) performMigration(engine storage.Engine) error {
 	// Failures here are not fatal: users will still have working namespaced data,
 	// and the legacy records remain as a fallback/backup.
 	for _, node := range unprefixedNodes {
-		_ = engine.DeleteNode(node.ID)
+		_ = engine.DeleteNode(ctx, node.ID)
 	}
 	for _, edge := range unprefixedEdges {
-		_ = engine.DeleteEdge(edge.ID)
+		_ = engine.DeleteEdge(ctx, edge.ID)
 	}
 
 	log.Printf("✅ Legacy migration complete: created %d nodes and %d edges in %q", len(createdNodes), len(createdEdges), defaultDB)

@@ -63,12 +63,12 @@ func TestIssue908SetScalarTargetRejectsBeforeWrites(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 			exec := NewStorageExecutor(store)
 			node := &storage.Node{ID: "node", Labels: []string{"N"}, Properties: map[string]interface{}{"v": int64(0)}}
-			id, err := store.CreateNode(node)
+			id, err := store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			_, handled, err := exec.pipelineApplySet(context.Background(), []pipelineRow{{"n": node, "age": nil}, {"n": node, "age": value}}, "SET n.v = 1, age = {v: 2}")
 			require.True(t, handled)
 			require.ErrorContains(t, err, "Neo.ClientError.Statement.TypeError")
-			stored, err := store.GetNode(id)
+			stored, err := store.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Equal(t, int64(0), stored.Properties["v"])
 			require.Equal(t, int64(0), node.Properties["v"])
@@ -170,7 +170,7 @@ func TestIssue908Convergence(t *testing.T) {
 				} else {
 					require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 				}
-				nodes, readErr := exec.storage.GetNodesByLabel("P")
+				nodes, readErr := exec.storage.GetNodesByLabel(ctx, "P")
 				require.NoError(t, readErr)
 				require.Empty(t, nodes)
 				return
@@ -228,7 +228,7 @@ func TestIssue908NodeJoinBindings(t *testing.T) {
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:A {v: 1}), (:B {v: 1.0})", nil)
 	require.NoError(t, err)
-	nodes, err := exec.storage.GetNodesByLabel("A")
+	nodes, err := exec.storage.GetNodesByLabel(ctx, "A")
 	require.NoError(t, err)
 	parts := []string{"(a:A)", "(b:B)"}
 	rows, handled, err := exec.pipelineApplyNodeJoinProduct(ctx, []pipelineRow{{"a": nodes[0], "marker": int64(7)}}, parts, "a.v = b.v")

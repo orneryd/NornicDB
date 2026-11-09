@@ -1,30 +1,47 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-// newWriteBehindWALTestEngine builds a write-behind BadgerEngine with a WAL
-// wired in (as NewWALEngine does) so buffered commits log OpBufferedCommit
-// payloads before their ACK.
-func newWriteBehindWALTestEngine(t *testing.T, dir string, interval time.Duration) (*BadgerEngine, *WAL) {
-	t.Helper()
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
-		DataDir:             dir,
-		WriteBehind:         true,
-		WriteBehindInterval: interval,
+func TestBufferedRecoveryRetiresBatchBeforeReadingLaterInvalidRecord(t *testing.T) {
+	dir := t.TempDir()
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
+	bufferedCreate(t, engine, &Node{ID: "test:bounded", Labels: []string{"L"}, Properties: map[string]any{"payload": strings.Repeat("x", 5<<20)}})
+	require.NoError(t, wal.Append(OpBufferedCommit, "invalid buffered commit"))
+	crashClose(t, engine, wal)
+
+	// The invalid tail deliberately prevents a clean-downgrade proof. The
+	// fixture owner checks this same expected terminal result on every Close.
+	engine = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{
+		dataDir: dir, wal: true,
+		finalOutcome: func(t testing.TB, err error) { require.ErrorContains(t, err, "cannot unmarshal string") },
 	})
+
+	wal = engine.bufferedCommitWAL
+	replayed, err := RecoverBufferedCommits(engine, wal)
+	require.ErrorContains(t, err, "unmarshal buffered commit")
+	require.Equal(t, 1, replayed, "a completed bounded batch must not remain retained until WAL EOF")
+	node, err := engine.GetNode(t.Context(), "test:bounded")
 	require.NoError(t, err)
-	walCfg := DefaultWALConfig()
-	walCfg.Dir = dir + "/wal"
-	walCfg.BatchSyncInterval = time.Hour // do not fsync in the background during tests
-	wal, err := NewWAL(walCfg.Dir, walCfg)
+	require.Len(t, node.Properties["payload"].(string), 5<<20)
+	count, err := engine.NodeCountByLabelInNamespace(t.Context(), "test", "L")
 	require.NoError(t, err)
-	engine.SetBufferedCommitWAL(wal)
-	return engine, wal
+	require.EqualValues(t, 1, count)
+	replayed, err = RecoverBufferedCommits(engine, wal)
+	require.ErrorContains(t, err, "unmarshal buffered commit")
+	require.Zero(t, replayed, "retry must skip the durable batch")
+	finalOutcome := engine.Close()
+	require.ErrorContains(t, finalOutcome, "cannot unmarshal string")
+	require.ErrorIs(t, engine.Close(), finalOutcome, "repeated Close must preserve the corrupt-tail refusal")
 }
 
 // crashClose tears the engine down the way kill -9 does: stop the flusher
@@ -32,10 +49,10 @@ func newWriteBehindWALTestEngine(t *testing.T, dir string, interval time.Duratio
 // mirrors BadgerEngine.Close's teardown minus the write-behind drain. WAL is
 // closed normally because its records already reached the kernel page cache
 // from the forced append flush.
-func crashClose(t *testing.T, engine *BadgerEngine, wal *WAL) {
+func crashClose(t testing.TB, engine *BadgerEngine, wal *WAL) {
 	t.Helper()
-	engine.stopEdgeBetweenIndexBackfill()
-	engine.stopLabelIndexBackfill()
+	engine.stopIndexBackfill(startupEdgeBetweenIndex)
+	engine.stopIndexBackfill(startupLabelIndex)
 	engine.stopDeleteCleanup()
 	engine.stopCountDeltaFoldWorker()
 	if engine.writeBehind != nil {
@@ -49,32 +66,37 @@ func crashClose(t *testing.T, engine *BadgerEngine, wal *WAL) {
 	}
 	engine.writeBarrier.Lock()
 	engine.mu.Lock()
-	engine.closed = true
+	engine.work.CloseAdmission()
+	// A crash discards the buffer; later fixture cleanup must not drain it.
+	engine.writeBehind = nil
 	db := engine.db
 	engine.mu.Unlock()
-	require.NoError(t, db.Close())
 	engine.writeBarrier.Unlock()
+	// The crash is the owner's stop with only the store's own close as its
+	// dispose; fixture cleanup's Close joins this completion.
+	require.NoError(t, engine.work.Shutdown(context.Background(), db.Close))
 	require.NoError(t, wal.Close())
 }
 
 func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	dir := t.TempDir()
-	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
 	// No cleanup for engine/wal: crashClose below tears them down.
 
 	// Buffered, acknowledged create: nothing reaches Badger, the payload
 	// reaches the WAL.
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(42)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(42)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 
 	// The WAL must carry the buffered commit payload before the ACK.
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	found := false
 	for _, e := range entries {
@@ -88,11 +110,11 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	crashClose(t, engine, wal)
 
 	// Reopen a fresh engine + WAL on the same directories.
-	recovered, wal2 := newWriteBehindWALTestEngine(t, dir, time.Hour)
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
+	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal2 := recovered.bufferedCommitWAL
 
 	// Before recovery the node is gone from Badger.
-	_, err = recovered.GetNode("test:n1")
+	_, err = recovered.GetNode(t.Context(), "test:n1")
 	require.Error(t, err)
 
 	// Replay the acknowledged-but-lost commit.
@@ -100,39 +122,40 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 
-	got, err := recovered.GetNode("test:n1")
+	got, err := recovered.GetNode(t.Context(), "test:n1")
 	require.NoError(t, err)
 	require.Equal(t, int64(42), got.Properties["v"])
 
 	// Derived counts were rebuilt from the committed entity.
-	count, err := recovered.NodeCountByLabelInNamespace("test", "L")
+	count, err := recovered.NodeCountByLabelInNamespace(t.Context(), "test", "L")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }
 
 func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	dir := t.TempDir()
-	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
-	t.Cleanup(func() { _ = wal.Close(); _ = engine.Close() })
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(7)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(7)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
 	// Flush lands the data AND the flush marker in Badger.
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, engine.writeBehind.PendingOps())
 
 	// Graceful close (flushes again — a no-op — and closes).
 	require.NoError(t, wal.Close())
 	require.NoError(t, engine.Close())
 
-	recovered, wal2 := newWriteBehindWALTestEngine(t, dir, time.Hour)
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
+	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+
+	wal2 := recovered.bufferedCommitWAL
 
 	// The marker says the commit is already applied: nothing to replay, and
 	// no double-apply.
@@ -140,11 +163,11 @@ func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
 
-	got, err := recovered.GetNode("test:n1")
+	got, err := recovered.GetNode(t.Context(), "test:n1")
 	require.NoError(t, err)
 	require.Equal(t, int64(7), got.Properties["v"])
 
-	count, err := recovered.NodeCount()
+	count, err := recovered.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }
@@ -154,16 +177,17 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 
 	// Produce a buffered commit payload on a throwaway engine, then grab its
 	// serialized form from the WAL.
-	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
-	tx, err := engine.BeginTransaction()
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(99)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(99)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	var bufferedEntry WALEntry
 	for _, e := range entries {
@@ -177,13 +201,13 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 
 	// A fresh Badger engine, no WAL wiring needed: ReplayWALEntry must apply
 	// the payload through the buffered-commit application path.
-	fresh, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	fresh, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = fresh.Close() })
 
-	require.NoError(t, ReplayWALEntry(fresh, bufferedEntry))
+	require.NoError(t, ReplayWALEntry(t.Context(), fresh, bufferedEntry))
 
-	got, err := fresh.GetNode("test:n1")
+	got, err := fresh.GetNode(t.Context(), "test:n1")
 	require.NoError(t, err)
 	// Legacy integer lexemes retain exact signed-integer values through the
 	// same recovery reader used by ordinary WAL entries and startup replay.

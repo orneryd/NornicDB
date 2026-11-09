@@ -7,6 +7,10 @@
 
 package auth
 
+import (
+	"context"
+)
+
 // PrivilegeDatabaseRef identifies the database for privilege checks.
 // Equivalent to Neo4j PrivilegeDatabaseReference (name, owningDatabaseName).
 // For normal (non-composite) databases, Name and OwningDatabaseName are the same.
@@ -51,4 +55,86 @@ var DenyAllDatabaseAccessMode DatabaseAccessMode = denyAllDBAccessMode{}
 type ResolvedAccess struct {
 	Read  bool // Allow MATCH, read properties, etc.
 	Write bool // Allow CREATE, DELETE, SET, MERGE, etc.
+}
+
+// ResolveDatabaseReadAccess is the shared direct-read decision for protocol
+// routes that read a database without going through Cypher. mode owns whether
+// the principal may select the database; resolve owns its per-database read
+// privilege. A nil mode or resolver preserves configurations where that layer
+// of authorization is disabled.
+func ResolveDatabaseReadAccess(mode DatabaseAccessMode, resolve func(string) ResolvedAccess, database string) (accessible, readable bool) {
+	if mode != nil && !mode.CanAccessDatabase(database) {
+		return false, false
+	}
+	if resolve == nil {
+		return true, true
+	}
+	return true, resolve(database).Read
+}
+
+// RequestDatabasePermissionAllowed applies the existing request permission
+// resolver and database selection rules to a direct (non-Cypher) operation.
+// It does not introduce privileges or grant authority to acquire a database.
+func RequestDatabasePermissionAllowed(ctx context.Context, database string, permission Permission) bool {
+	if permission == PermRead {
+		_, allows := BindRequestDatabaseRead(ctx, database)
+		return allows()
+	}
+	mode := RequestDatabaseAccessModeFromContext(ctx)
+	if mode != nil && !mode.CanAccessDatabase(database) {
+		return false
+	}
+	if scope := RequestDatabaseScopeFromContext(ctx); scope != nil {
+		if _, allowed := scope.Resolve(database); !allowed {
+			return false
+		}
+	}
+	if allows := RequestEntitlementResolverFromContext(ctx); allows != nil {
+		return allows(database, permission)
+	}
+	if permission == PermWrite {
+		if resolve := RequestResolvedAccessResolverFromContext(ctx); resolve != nil {
+			return resolve(database).Write
+		}
+	}
+	return true
+}
+
+// BindRequestDatabaseRead resolves a request selection once and binds its live
+// read checks. It caches no permission result: mode and resolver callbacks run
+// on each invocation, including legacy callbacks without a change generation.
+// Consumers can retain the canonical database and predicate for their lifetime.
+func BindRequestDatabaseRead(ctx context.Context, database string) (string, func() bool) {
+	refused := func() bool { return false }
+	selection := database
+	scope := RequestDatabaseScopeFromContext(ctx)
+	if scope != nil {
+		canonical, allowed := scope.resolve(database)
+		if !allowed {
+			return database, refused
+		}
+		database = canonical
+	}
+	mode := RequestDatabaseAccessModeFromContext(ctx)
+	legacy, _ := ctx.Value(requestRBACKeyResolvedAccessResolver).(func(string) ResolvedAccess)
+	allows := RequestEntitlementResolverFromContext(ctx)
+	selected := normalizeDatabaseSelection(selection)
+	if selected == "" {
+		selected = database
+		if scope != nil && scope.defaultDatabase != "" {
+			selected = scope.defaultDatabase
+		}
+	}
+	return database, func() bool {
+		if mode != nil && (!mode.CanAccessDatabase(selected) || selected != database && !mode.CanAccessDatabase(database)) {
+			return false
+		}
+		if scope != nil && !scope.allowsSelection(selected, database) {
+			return false
+		}
+		if legacy != nil {
+			return legacy(database).Read
+		}
+		return allows == nil || allows(database, PermRead)
+	}
 }

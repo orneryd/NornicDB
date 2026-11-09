@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sort"
 	"testing"
@@ -18,7 +20,7 @@ type nonStreamingEngine struct {
 
 func newNonStreamingEngine(t *testing.T) *nonStreamingEngine {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	return &nonStreamingEngine{Engine: base.BadgerEngine}
 }
@@ -31,7 +33,7 @@ var _ storage.Engine = (*nonStreamingEngine)(nil)
 func TestSizeTrackingEngine_StreamNodes_FallbackPath(t *testing.T) {
 	inner := newNonStreamingEngine(t)
 	for i := 0; i < 3; i++ {
-		_, err := inner.Engine.CreateNode(&storage.Node{
+		_, err := inner.Engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("tenant:" + string(rune('a'+i))),
 			Labels: []string{"L"},
 		})
@@ -53,10 +55,10 @@ func TestSizeTrackingEngine_StreamNodes_FallbackPath(t *testing.T) {
 func TestSizeTrackingEngine_StreamEdges_FallbackPath(t *testing.T) {
 	inner := newNonStreamingEngine(t)
 	for _, id := range []storage.NodeID{"tenant:a", "tenant:b"} {
-		_, err := inner.Engine.CreateNode(&storage.Node{ID: id, Labels: []string{"L"}})
+		_, err := inner.Engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, inner.Engine.CreateEdge(&storage.Edge{
+	require.NoError(t, inner.Engine.CreateEdge(t.Context(), &storage.Edge{
 		ID: "tenant:e1", StartNode: "tenant:a", EndNode: "tenant:b", Type: "REL",
 	}))
 
@@ -74,11 +76,11 @@ func TestSizeTrackingEngine_StreamEdges_FallbackPath(t *testing.T) {
 func TestSizeTrackingEngine_StreamEdges_FallbackContextCancel(t *testing.T) {
 	inner := newNonStreamingEngine(t)
 	for _, id := range []storage.NodeID{"tenant:a", "tenant:b"} {
-		_, err := inner.Engine.CreateNode(&storage.Node{ID: id, Labels: []string{"L"}})
+		_, err := inner.Engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
 	for _, id := range []storage.EdgeID{"tenant:e1", "tenant:e2"} {
-		require.NoError(t, inner.Engine.CreateEdge(&storage.Edge{
+		require.NoError(t, inner.Engine.CreateEdge(t.Context(), &storage.Edge{
 			ID: id, StartNode: "tenant:a", EndNode: "tenant:b", Type: "REL",
 		}))
 	}
@@ -98,11 +100,11 @@ func TestSizeTrackingEngine_StreamEdges_FallbackContextCancel(t *testing.T) {
 func TestSizeTrackingEngine_StreamEdges_FallbackStopOnIterationStopped(t *testing.T) {
 	inner := newNonStreamingEngine(t)
 	for _, id := range []storage.NodeID{"tenant:a", "tenant:b"} {
-		_, err := inner.Engine.CreateNode(&storage.Node{ID: id, Labels: []string{"L"}})
+		_, err := inner.Engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
 	for _, id := range []storage.EdgeID{"tenant:e1", "tenant:e2", "tenant:e3"} {
-		require.NoError(t, inner.Engine.CreateEdge(&storage.Edge{
+		require.NoError(t, inner.Engine.CreateEdge(t.Context(), &storage.Edge{
 			ID: id, StartNode: "tenant:a", EndNode: "tenant:b", Type: "REL",
 		}))
 	}
@@ -122,7 +124,7 @@ func TestSizeTrackingEngine_StreamEdges_FallbackStopOnIterationStopped(t *testin
 func TestSizeTrackingEngine_StreamNodeChunks_Fallback(t *testing.T) {
 	inner := newNonStreamingEngine(t)
 	for i := 0; i < 5; i++ {
-		_, err := inner.Engine.CreateNode(&storage.Node{
+		_, err := inner.Engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("tenant:" + string(rune('a'+i))),
 			Labels: []string{"L"},
 		})
@@ -158,7 +160,7 @@ func TestSizeTrackingEngine_StreamNodeChunks_Fallback(t *testing.T) {
 func TestSizeTrackingEngine_StreamNodesByPrefix_Fallback(t *testing.T) {
 	inner := newNonStreamingEngine(t)
 	for _, id := range []storage.NodeID{"a:1", "b:1", "a:2"} {
-		_, err := inner.Engine.CreateNode(&storage.Node{ID: id, Labels: []string{"L"}})
+		_, err := inner.Engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
 
@@ -182,7 +184,7 @@ func TestSizeTrackingEngine_ForEachNodeIDByLabel_FallbackOnNonLookupEngine(t *te
 	// assertion based — we shadow the interface by name-based type).
 	inner := newNonStreamingEngine(t)
 	for i := 0; i < 3; i++ {
-		_, err := inner.Engine.CreateNode(&storage.Node{
+		_, err := inner.Engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("tenant:" + string(rune('a'+i))),
 			Labels: []string{"Person"},
 		})
@@ -193,7 +195,7 @@ func TestSizeTrackingEngine_ForEachNodeIDByLabel_FallbackOnNonLookupEngine(t *te
 	lookup := wrapped.(storage.LabelNodeIDLookupEngine)
 
 	count := 0
-	require.NoError(t, lookup.ForEachNodeIDByLabel("Person", func(id storage.NodeID) bool {
+	require.NoError(t, lookup.ForEachNodeIDByLabel(context.Background(), "Person", func(id storage.NodeID) bool {
 		count++
 		return true
 	}))
@@ -201,7 +203,7 @@ func TestSizeTrackingEngine_ForEachNodeIDByLabel_FallbackOnNonLookupEngine(t *te
 
 	// Visit returning false stops early.
 	count = 0
-	require.NoError(t, lookup.ForEachNodeIDByLabel("Person", func(id storage.NodeID) bool {
+	require.NoError(t, lookup.ForEachNodeIDByLabel(context.Background(), "Person", func(id storage.NodeID) bool {
 		count++
 		return false
 	}))

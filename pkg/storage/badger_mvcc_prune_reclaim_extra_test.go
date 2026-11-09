@@ -8,21 +8,20 @@ import (
 )
 
 func TestBadgerEngine_PruneMVCCVersions_ReclaimsTombstonedHeadsAndDictEntries(t *testing.T) {
-	engine := NewMemoryEngine()
-	t.Cleanup(func() { _ = engine.Close() })
+	engine := newTestMemoryEngine(t)
 
 	nodeA := NodeID("test:prune-a")
 	nodeB := NodeID("test:prune-b")
 	edgeID := EdgeID("test:prune-edge")
 
-	_, err := engine.CreateNode(&Node{ID: nodeA, Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: nodeA, Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: nodeB, Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: nodeB, Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: nodeA, EndNode: nodeB, Type: "R"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: nodeA, EndNode: nodeB, Type: "R"}))
 
 	// Delete the node to produce tombstones for the node and adjacent edge.
-	require.NoError(t, engine.DeleteNode(nodeA))
+	require.NoError(t, engine.DeleteNode(t.Context(), nodeA))
 
 	// No retention requested: prune should reclaim tombstoned logical keys fully
 	// (head + dict entries + historical versions).
@@ -30,9 +29,9 @@ func TestBadgerEngine_PruneMVCCVersions_ReclaimsTombstonedHeadsAndDictEntries(t 
 	require.NoError(t, err)
 	require.Greater(t, pruned, int64(0))
 
-	_, err = engine.GetNodeCurrentHead(nodeA)
+	_, err = engine.GetNodeCurrentHead(context.Background(), nodeA)
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.GetEdgeCurrentHead(edgeID)
+	_, err = engine.GetEdgeCurrentHead(context.Background(), edgeID)
 	require.ErrorIs(t, err, ErrNotFound)
 
 	_, ok := engine.idDict.lookupNodeNumID(nodeA)

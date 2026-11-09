@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -75,11 +77,11 @@ func TestIngestDocuments(t *testing.T) {
 }
 
 func TestNornicDocumentSinkPreservesBEIRID(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "bench")
-	index := search.NewServiceWithDimensions(engine, 2)
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "bench")
+	index := search.NewService(engine, 2, nil)
 	sink := &NornicDocumentSink{Engine: engine, Indexer: index}
 	require.NoError(t, sink.StoreDocument(context.Background(), Document{ID: "doc-1", Title: "Title", Text: "retrieval text"}))
-	node, err := engine.GetNode("doc-1")
+	node, err := engine.GetNode(t.Context(), "doc-1")
 	require.NoError(t, err)
 	assert.Equal(t, "doc-1", node.Properties["beir_id"])
 	assert.Equal(t, "retrieval text", node.Properties["text"])

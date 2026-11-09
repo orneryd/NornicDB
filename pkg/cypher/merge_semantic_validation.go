@@ -1,7 +1,10 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 	"sync"
 
@@ -57,8 +60,8 @@ func (cache *semanticValidationCache) add(query string) {
 // contract before routing. Keeping this validation ahead of every physical
 // executor prevents optimized and general MERGE paths from accepting different
 // syntax or producing effects before a semantic failure.
-func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bool) error {
-	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
+func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cypher string, cypher25 bool) error {
+	if findKeywordIndexInContext(ctx, cypher, "MERGE") < 0 {
 		return nil
 	}
 	// Literal-bearing MERGE statements share one compile verdict through the
@@ -80,7 +83,7 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bo
 	if cached {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(cypher)
+	clauses, ok := splitPipelineClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
@@ -93,17 +96,17 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bo
 		case pipelineClauseCreate:
 			addMergePatternBindings(scope, clause.text)
 		case pipelineClauseWith:
-			scope = projectedBindingScope(scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause.text)
 		case pipelineClauseLet:
 			if err := bindPipelineLet(scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
-				scope.bind(alias)
+			if iteration, found := iterationClauseFor(clause); found {
+				scope.bind(iteration.variable)
 			}
 		case pipelineClauseMerge:
-			if err := e.validateMergeClause(scope, clause.text, cypher25); err != nil {
+			if err := e.validateMergeClause(ctx, scope, clause.text, cypher25); err != nil {
 				return err
 			}
 		}
@@ -137,7 +140,7 @@ func addMergePatternBindings(scope *semanticBindingScope, clause string) {
 // cypher25 adds Neo4j 2026.09's rule for a Cypher 25 statement: a property
 // value may not read a node or relationship the same MERGE creates
 // (MERGE (a {x: 1})-[:T]->(b {x: a.x})).
-func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string, cypher25 bool) error {
+func (e *StorageExecutor) validateMergeClause(ctx context.Context, scope *semanticBindingScope, clause string, cypher25 bool) error {
 	// Neo4j rejects EXISTS / COUNT / COLLECT { … } anywhere in a MERGE clause:
 	// its pattern, property maps and ON CREATE / ON MATCH SET actions.
 	if mayContainSubqueryExpression(clause) && len(findSubqueryExpressions(clause)) > 0 {
@@ -147,7 +150,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 			"Subquery expressions are not allowed in a MERGE clause.",
 		)
 	}
-	pattern := mergeClausePattern(clause)
+	pattern := mergeClausePattern(ctx, clause)
 	if pattern == "" {
 		return nil
 	}
@@ -174,7 +177,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		}
 	}
 	if cypher25 {
-		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, make(map[string]string), "MERGE"); err != nil {
+		if err := e.validateCreateSamePatternReferences(ctx, scope, pattern, relationshipVariables, make(map[string]string), "MERGE"); err != nil {
 			return err
 		}
 	}
@@ -185,7 +188,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 			segments = []string{pattern}
 		}
 		for _, segment := range segments {
-			if err := validateMergeRelationshipShape(segment); err != nil {
+			if err := validateRelationshipMutation(segment, mergeRelationshipMutation); err != nil {
 				return err
 			}
 		}
@@ -212,7 +215,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		}
 		scope.bind(pathVariable)
 	}
-	if err := e.validateMergeActionScopes(scope, clause); err != nil {
+	if err := e.validateMergeActionScopes(ctx, scope, clause); err != nil {
 		return err
 	}
 	for _, nodePattern := range e.splitNodePatterns(pattern) {
@@ -226,11 +229,11 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	return nil
 }
 
-func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string) error {
-	parts := splitMergeClauseActions(mergeClauseBody(clause))
+func (e *StorageExecutor) validateMergeActionScopes(ctx context.Context, scope *semanticBindingScope, clause string) error {
+	parts := splitMergeClauseActions(ctx, pipelineClauseBody(clause, "MERGE"), nil)
 	for _, clauses := range [...]mergeActionClauses{parts.onCreate, parts.onMatch} {
 		for index := 0; index < clauses.len(); index++ {
-			if err := e.validateSetClauseScope(scope, clauses.set(index)); err != nil {
+			if err := e.validateSetClauseScope(ctx, scope, inlineOverflowAt(clauses.inline[:], clauses.overflow, index)); err != nil {
 				return err
 			}
 		}
@@ -238,67 +241,35 @@ func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope,
 	return nil
 }
 
-func validateMergeRelationshipShape(pattern string) error {
-	open, close := firstRelationshipBracket(pattern)
-	if open < 0 || close < 0 {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"NoSingleRelationshipType",
-			"MERGE relationships require exactly one relationship type",
-		)
-	}
-
-	return validateSingleRelationshipDeclaration("MERGE", "merged", pattern[open+1:close])
-}
-
-func mergeClausePattern(clause string) string {
-	return splitMergeClauseActions(mergeClauseBody(clause)).pattern
-}
-
-// mergeClauseBody is a MERGE clause's text after the MERGE keyword.
-func mergeClauseBody(clause string) string {
-	body := strings.TrimSpace(clause)
-	if startsWithKeywordFold(body, "MERGE") {
-		body = strings.TrimSpace(body[len("MERGE"):])
-	}
-	return body
+func mergeClausePattern(ctx context.Context, clause string) string {
+	return splitMergeClauseActions(ctx, pipelineClauseBody(clause, "MERGE"), nil).pattern
 }
 
 func mergePatternUsesParameterPredicate(pattern string) bool {
-	depth := 0
-	quote := byte(0)
 	for index := 0; index < len(pattern); index++ {
 		character := pattern[index]
-		if quote != 0 {
-			if character == '\\' && quote != '`' {
-				index++
-				continue
+		switch cypherLexicalByte(character) {
+		case cypherQuoteClass:
+			index = skipCypherQuotedText(pattern, index, character) - 1
+		case '/':
+			if end := queryCommentEnd(pattern, index); end >= 0 {
+				index = end - 1
 			}
-			if character == quote {
-				quote = 0
-			}
-			continue
-		}
-		switch character {
-		case '\'', '"', '`':
-			quote = character
 		case '{':
-			depth++
-		case '}':
-			if depth > 0 {
-				depth--
+			if end := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter); end > index {
+				index = end
 			}
 		case '$':
 			if dynamicLabelStartsAt(pattern, index) {
 				// A dynamic label or type ($(e), $all(e), $any(e)), not a
 				// parameter map.
-				if closing := findMatchingDelimiter(pattern, strings.IndexByte(pattern[index:], '(')+index, '(', ')'); closing > 0 {
+				if closing := cyphertext.FindMatchingDelimiter(pattern, strings.IndexByte(pattern[index:], '(')+index, '(', ')', cyphertext.OpeningDelimiter); closing > 0 {
 					index = closing
 				}
 				continue
 			}
 			// A $ inside a name (n:L$M) is no parameter.
-			if depth == 0 && isParameterStart(pattern, index) {
+			if isParameterStart(pattern, index) {
 				return true
 			}
 		}
@@ -316,7 +287,7 @@ func (e *StorageExecutor) mergePatternContainsNullProperty(pattern string) bool 
 			return false
 		}
 		for _, entry := range splitTopLevelComma(pattern[cursor+1 : end]) {
-			colon := topLevelColonIndex(entry)
+			colon := findTopLevelMapKeyValueSeparator(entry)
 			if colon >= 0 && strings.EqualFold(strings.TrimSpace(entry[colon+1:]), "null") {
 				return true
 			}
@@ -356,11 +327,6 @@ func mergeVariableAlreadyBoundError(variable string) error {
 
 // isNaNValue reports whether value is a floating-point NaN.
 func isNaNValue(value interface{}) bool {
-	switch typed := value.(type) {
-	case float64:
-		return math.IsNaN(typed)
-	case float32:
-		return math.IsNaN(float64(typed))
-	}
-	return false
+	floating, ok := valueconvert.FloatValue(value)
+	return ok && math.IsNaN(floating)
 }

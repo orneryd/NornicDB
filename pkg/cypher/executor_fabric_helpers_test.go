@@ -4,12 +4,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/stretchr/testify/require"
 )
 
 func TestFabricHelpers_AccumulatorsAndMaps(t *testing.T) {
-	acc := &fabricStatsAccumulator{}
+	acc := &queryStatsAccumulator{}
 	acc.add(&QueryStats{NodesCreated: 1, RelationshipsCreated: 2})
 	acc.add(&QueryStats{NodesDeleted: 3, PropertiesSet: 4})
 	s := acc.snapshot()
@@ -18,9 +19,9 @@ func TestFabricHelpers_AccumulatorsAndMaps(t *testing.T) {
 	require.EqualValues(t, 2, s.RelationshipsCreated)
 	require.EqualValues(t, 4, s.PropertiesSet)
 
-	require.Nil(t, fabricStatsAccumulatorFromContext(context.Background()))
-	ctx := context.WithValue(context.Background(), fabricStatsAccumulatorKey{}, acc)
-	require.NotNil(t, fabricStatsAccumulatorFromContext(ctx))
+	require.Nil(t, queryStatsAccumulatorFromContext(context.Background()))
+	ctx := context.WithValue(context.Background(), queryStatsAccumulatorKey{}, acc)
+	require.NotNil(t, queryStatsAccumulatorFromContext(ctx))
 
 	m, ok := normalizeFabricRowMap(map[interface{}]interface{}{"k": "v"})
 	require.True(t, ok)
@@ -41,21 +42,20 @@ func TestFabricHelpers_AccumulatorsAndMaps(t *testing.T) {
 func TestFabricHelpers_InferColumnsAndRecordRewrite(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
-	require.Equal(t, []string{"n", "c"}, exec.inferTopLevelReturnColumns("MATCH (n) RETURN n, count(*) AS c ORDER BY c DESC LIMIT 2"))
-	require.Nil(t, exec.inferTopLevelReturnColumns("MATCH (n)"))
+	require.Equal(t, []string{"n", "c"}, exec.StatementColumns("MATCH (n) RETURN n, count(*) AS c ORDER BY c DESC LIMIT 2"))
+	require.Equal(t, []string{}, exec.StatementColumns("MATCH (n)"))
 
-	r := stripLeadingWithImportsForFabricRecord("WITH x, y MATCH (n) WHERE n.id = x RETURN n", map[string]interface{}{"x": int64(1), "y": int64(2)})
-	require.Equal(t, "MATCH (n) WHERE n.id = $x RETURN n", r)
+	r := stripLeadingWithImportsForFabricRecord(t.Context(), "WITH x, y MATCH (n) WHERE n.id = x RETURN n", map[string]interface{}{"x": int64(1), "y": int64(2)})
+	require.Equal(t, "MATCH (n) WHERE n.id = x RETURN n", r)
 
 	// Non-simple WITH projection should not rewrite.
-	r = stripLeadingWithImportsForFabricRecord("WITH x AS y MATCH (n) RETURN n", map[string]interface{}{"x": int64(1)})
+	r = stripLeadingWithImportsForFabricRecord(t.Context(), "WITH x AS y MATCH (n) RETURN n", map[string]interface{}{"x": int64(1)})
 	require.Equal(t, "WITH x AS y MATCH (n) RETURN n", r)
 
-	require.Greater(t, findLeadingWithEndLocal("WITH x MATCH (n) RETURN n"), 0)
 }
 
 func TestFabricHelpers_ConstituentAndFragmentRouting(t *testing.T) {
-	ref, ok := toConstituentRef(map[string]interface{}{
+	ref, ok := catalogadapter.ConstituentRef(map[string]interface{}{
 		"alias":         "east",
 		"database_name": "db_east",
 		"type":          "remote",
@@ -63,13 +63,12 @@ func TestFabricHelpers_ConstituentAndFragmentRouting(t *testing.T) {
 		"auth_mode":     "basic",
 		"user":          "u",
 		"password":      "p",
-	})
+	}, catalogadapter.StoredConstituentRecord)
 	require.True(t, ok)
 	require.Equal(t, "east", ref.Alias)
 	require.Equal(t, "db_east", ref.DatabaseName)
 	require.Equal(t, "remote", ref.Type)
-	require.Equal(t, "v", mapString(map[string]interface{}{"k": "v"}, "k"))
-	_, ok = toConstituentRef(42)
+	_, ok = catalogadapter.ConstituentRef(42, catalogadapter.StoredConstituentRecord)
 	require.False(t, ok)
 
 	cat := fabric.NewCatalog()

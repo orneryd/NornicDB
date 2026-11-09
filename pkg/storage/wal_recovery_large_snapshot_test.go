@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,17 +46,17 @@ func TestRecoverFromWALWithResult_RestoresLargeEdgeSnapshot(t *testing.T) {
 		Version:   "1.0",
 	}, snapshotPath))
 
-	recovered, result, err := RecoverFromWALWithResult(filepath.Join(dataDir, "wal"), snapshotPath)
+	recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), filepath.Join(dataDir, "wal"), snapshotPath))
 	require.NoError(t, err)
 	require.NotNil(t, recovered)
 	require.Zero(t, result.Failed)
 	t.Cleanup(func() { _ = recovered.Close() })
 
-	recoveredEdges, err := recovered.AllEdges()
+	recoveredEdges, err := recovered.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, recoveredEdges, edgeCount)
 
-	edge, err := recovered.GetEdge(EdgeID("test:edge-00047"))
+	edge, err := recovered.GetEdge(t.Context(), EdgeID("test:edge-00047"))
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:start"), edge.StartNode)
 	require.Equal(t, NodeID("test:end"), edge.EndNode)

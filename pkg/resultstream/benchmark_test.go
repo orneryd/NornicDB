@@ -15,7 +15,7 @@ func BenchmarkTokenRoundTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		qid := encodeToken(secret, instance, streamID, uint64(index), 1_900_000_000)
+		qid := encodeToken(secret, instance, streamID, uint64(index), 1_900_000_000, [32]byte{}, "nornic")
 		if _, err := decodeToken(secret, instance, qid); err != nil {
 			b.Fatal(err)
 		}

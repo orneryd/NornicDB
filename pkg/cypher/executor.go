@@ -107,30 +107,35 @@
 //
 // The Cypher executor is like a smart assistant that understands these
 // questions and knows how to find the answers in your data!
+// Author: Codex, NOR-180 terminal WAL outcome changes, 2026-10-26.
 package cypher
 
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"io"
 	"log/slog"
-	"net/http"
+	"maps"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	apoccfg "github.com/orneryd/nornicdb/apoc"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/apocio"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 	"github.com/orneryd/nornicdb/pkg/vectorspace"
 )
 
@@ -144,7 +149,7 @@ const (
 )
 
 // hasSubqueryPattern checks if the query contains a subquery pattern (keyword + optional whitespace + brace)
-func hasSubqueryPattern(query string, pattern string) bool {
+func hasSubqueryPattern(ctx context.Context, query string, pattern string) bool {
 	switch pattern {
 	case existsSubqueryRe:
 		return hasKeywordFollowedByBrace(query, "EXISTS")
@@ -153,27 +158,31 @@ func hasSubqueryPattern(query string, pattern string) bool {
 	case countSubqueryRe:
 		return hasKeywordFollowedByBrace(query, "COUNT")
 	case callSubqueryRe:
-		return hasCallSubqueryPattern(query)
+		return hasCallSubqueryPattern(ctx, query)
 	case collectSubqueryRe:
 		return hasKeywordFollowedByBrace(query, "COLLECT")
 	}
 	return false
 }
 
-func hasCallSubqueryPattern(query string) bool {
-	return firstTopLevelCallSubquery(query) >= 0
+func hasCallSubqueryPattern(ctx context.Context, query string) bool {
+	return firstTopLevelCallSubquery(ctx, query) >= 0
 }
 
 // firstTopLevelCallSubquery returns the offset of the first CALL { } or
 // CALL (vars) { } clause of query itself: outside strings, quoted names and
 // brackets, so a CALL inside an EXISTS / COUNT / COLLECT subquery or another
 // CALL body is not the statement's (#652). -1 when there is none.
-func firstTopLevelCallSubquery(query string) int {
+func firstTopLevelCallSubquery(ctx context.Context, query string) int {
 	depth := 0
 	for i := 0; i < len(query); i++ {
-		switch query[i] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(query[i]) {
+		case cypherQuoteClass:
 			i = skipQuotedSemanticText(query, i) - 1
+		case '/':
+			if end := queryCommentEnd(query, i); end >= 0 {
+				i = end - 1
+			}
 		case '(', '[', '{':
 			depth++
 		case ')', ']', '}':
@@ -181,7 +190,7 @@ func firstTopLevelCallSubquery(query string) int {
 				depth--
 			}
 		case 'C', 'c':
-			if depth == 0 && callSubqueryAt(query, i) {
+			if depth == 0 && callSubqueryAt(ctx, query, i) {
 				return i
 			}
 		}
@@ -191,27 +200,14 @@ func firstTopLevelCallSubquery(query string) int {
 
 // callSubqueryAt reports whether a CALL { } or scoped CALL (vars) { }
 // subquery clause starts at offset i of query.
-func callSubqueryAt(query string, i int) bool {
-	if !matchKeywordAt(query, i, "CALL") {
+func callSubqueryAt(ctx context.Context, query string, i int) bool {
+	if !matchKeywordAt(query, i, "CALL") || clauseKeywordUsedAsName(ctx, query, i, i+len("CALL"), "CALL") {
 		return false
 	}
-	j := skipSpaces(query, i+len("CALL"))
-	if j < len(query) && query[j] == '{' {
-		return true
-	}
-	if j >= len(query) || query[j] != '(' {
-		return false
-	}
-	close := findMatchingCallParen(query, j)
-	if close < 0 {
-		return false
-	}
-	k := skipSpaces(query, close+1)
-	return k < len(query) && query[k] == '{'
-}
-
-func hasCallInTransactions(query string) bool {
-	return hasCallSubqueryPattern(query) && findKeywordIndex(query, "IN TRANSACTIONS") >= 0
+	// Classification consumes the same CALL frame as scope and execution.
+	// In particular, comments before or after imports are query trivia.
+	body := readCallSubqueryScope(ctx, query, i).bodyOffset
+	return body > i && body < len(query) && query[body] == '{'
 }
 
 func hasNotExistsFollowedByBrace(query string) bool {
@@ -246,13 +242,8 @@ func hasKeywordFollowedByBrace(query, keyword string) bool {
 }
 
 func skipSpaces(s string, i int) int {
-	for i < len(s) {
-		switch s[i] {
-		case ' ', '\t', '\n', '\r':
-			i++
-		default:
-			return i
-		}
+	for i < len(s) && cyphertext.IsWhitespaceAt(s, i) {
+		i++
 	}
 	return i
 }
@@ -261,10 +252,10 @@ func matchKeywordAt(s string, i int, keyword string) bool {
 	if i < 0 || i+len(keyword) > len(s) {
 		return false
 	}
-	if i > 0 && isIdentByte(s[i-1]) {
+	if i > 0 && cyphertext.NamePartAt(s, i-1) {
 		return false
 	}
-	if i+len(keyword) < len(s) && isIdentByte(s[i+len(keyword)]) {
+	if i+len(keyword) < len(s) && cyphertext.NamePartAt(s, i+len(keyword)) {
 		return false
 	}
 	return strings.EqualFold(s[i:i+len(keyword)], keyword)
@@ -327,6 +318,8 @@ type StorageExecutor struct {
 	// policy engine once; its enabled setting is still read dynamically.
 	propertyDecayEngine      *storage.BadgerEngine
 	propertyDecayEngineKnown bool
+	resolvedMode             *resolvedStatementMode
+	readScope                *executionReadScope
 	// storedPropertyIdentity is set only on a private whole-path MERGE matcher.
 	// Its identity predicates see stored values; the statement still projects results.
 	storedPropertyIdentity bool
@@ -368,6 +361,12 @@ type StorageExecutor struct {
 	nodeLookupCache   map[string]*storage.Node
 	nodeLookupCacheMu *sync.RWMutex
 
+	// readOnlyQueryNodes is set on the clone that runs an auto-commit
+	// statement which cannot write (readsQueryNodesWithoutVectors): its row
+	// nodes are read without vectors (getQueryNode). Never set on an
+	// executor that writes outside a transaction; clones don't inherit it.
+	readOnlyQueryNodes bool
+
 	// deferFlush when true, writes are not auto-flushed (Bolt layer handles it)
 	deferFlush bool
 
@@ -375,12 +374,21 @@ type StorageExecutor struct {
 	// If set, vector search can accept string queries which are embedded automatically
 	queryEmbedder *QueryEmbedderBinding
 
-	// searchService optionally provides unified search semantics for Cypher procedures.
+	// searchService is the database runtime's optional service binding. Request
+	// and transaction views share it; selected database runtimes own a fresh
+	// binding, so lazy continuation registries survive temporary views.
+	// It provides unified search semantics for Cypher procedures.
 	// When set, db.index.vector.queryNodes delegates to search.Service.
-	searchService *search.Service
+	// searchResolver, when set, takes its place: it resolves searchDatabase's
+	// current service on each use, so a reset or restore that replaces the
+	// service never leaves this executor with the replaced one. Read both
+	// through search().
+	searchService  *atomic.Pointer[search.Service]
+	searchResolver SearchServiceResolver
+	searchDatabase string
 
 	// inferenceManager optionally provides LLM inference for db.infer.
-	inferenceManager InferenceManager
+	inferenceManager *inferenceManagerBinding
 
 	// localizationRenderer renders descriptor-backed metadata using request context.
 	localizationRenderer ProcedureMetadataRenderer
@@ -417,6 +425,7 @@ type StorageExecutor struct {
 	// fabricRecordBindings carries correlated APPLY input bindings for Fabric execution.
 	// It is set only on per-query cloned executors.
 	fabricRecordBindings map[string]interface{}
+	inputBindingRole     boundBodyRole
 
 	decayMismatchLogged bool
 	hotPathTraceState   *hotPathTraceState
@@ -442,6 +451,11 @@ type StorageExecutor struct {
 	syntaxValidationCache *syntaxValidationCache
 	syntaxValidationOnce  sync.Once
 
+	graphIdentityScope  *graphIdentityScope
+	statementCacheScope *multidb.StatementCacheScope
+	statementCaches     *StatementCaches
+	statementCachesOnce sync.Once
+
 	// log is the structured logger used for slow-query and operational log
 	// emission. Threaded via SetLogger after construction (D-01 non-breaking
 	// pattern — NewStorageExecutor signature unchanged). Nil-safe via the
@@ -453,27 +467,17 @@ type StorageExecutor struct {
 	// SetSlowQueryThreshold so the configured cfg.Logging.SlowQueryThreshold
 	// flows in from the bootstrap site without breaking the ctor.
 	slowQueryThreshold time.Duration
+	// executionElapsed defaults to time.Since. Tests that exercise deferred
+	// logging outcomes supply deterministic elapsed time rather than relying
+	// on a query exceeding the platform clock's resolution.
+	executionElapsed func(time.Time) time.Duration
 
-	// allowLocalAPOCImportFileAccess gates non-HTTP APOC load/import file reads.
-	// Default deny; enable explicitly via env-backed APOC config or setter.
-	allowLocalAPOCImportFileAccess bool
-	// allowLocalAPOCExportFileAccess gates non-HTTP APOC export file writes.
-	// Default deny; enable explicitly via env-backed APOC config or setter.
-	allowLocalAPOCExportFileAccess bool
-	// allowRemoteAPOCURLAccess gates APOC HTTP(S) fetches. Default deny.
-	allowRemoteAPOCURLAccess bool
-	// apocRemoteURLAllowlist restricts APOC HTTP(S) fetches to explicitly
-	// approved hosts or wildcard suffixes.
-	apocRemoteURLAllowlist []string
-	// apocRemoteHTTPClient is executor-scoped so tests and database-scoped
-	// executors cannot race by replacing process-global HTTP transport state.
-	apocRemoteHTTPClient *http.Client
-	// apocRemoteHostResolver is executor-scoped for the same reason and keeps
-	// URL-security tests independent from ambient DNS.
-	apocRemoteHostResolver apocHostResolver
-	// apocLocalFileAccessRoot mirrors Neo4j's import-directory behavior: when
-	// set, local APOC file URLs are normalized and rebased under this root.
-	apocLocalFileAccessRoot string
+	// apocIO is this executor's immutable APOC I/O policy: the denied-by-default
+	// import file, export file and remote URL access flags, the remote URL
+	// allowlist, the local import root and the remote HTTP client and host
+	// resolver seams. pkg/apocio owns every read of it. The setters below replace
+	// the policy with a modified copy; a published policy is never mutated.
+	apocIO apocio.Policy
 
 	// metrics is the Plan 04-03 CypherMetrics typed bag (MET-08). Injected
 	// post-construction via SetCypherMetrics (D-01 non-breaking pattern,
@@ -495,101 +499,139 @@ type unwindMergeChainPlanCache struct {
 }
 
 type upperQueryCache struct {
-	mu    sync.RWMutex
-	cache map[string]string
-	max   int
+	disposed     atomic.Bool
+	mu           sync.RWMutex
+	cache        map[string]string
+	dependencies map[string][]*multidb.StatementCacheScope
+	max          int
 }
 
 type syntaxValidationCache struct {
-	shards [boundedCacheShardCount]syntaxValidationCacheShard
-	max    int
+	disposed atomic.Bool
+	shards   [boundedCacheShardCount]syntaxValidationCacheShard
+	max      int
 }
 
 type syntaxValidationCacheShard struct {
 	mu sync.RWMutex
 	// cache holds, per statement text, which validators accepted it
 	// (syntaxValidNornic, syntaxValidANTLR).
-	cache map[string]uint8
+	cache        map[string]uint8
+	dependencies map[string][]*multidb.StatementCacheScope
 }
 
-func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {
-	e.ensureNodeLookupCache()
-	// Transactional clones use the lookup cache pinned to the
-	// transactionStorageWrapper. Concurrent transactions hold distinct
-	// wrappers and therefore distinct caches — that isolation prevents
-	// a peer's uncommitted node-ID mapping from leaking into this
-	// transaction's tx.badgerTx read set (and corrupting Badger SSI
-	// conflict shapes). Re-entrant Execute calls within the same
-	// transaction reuse the wrapper, so the in-tx cache survives
-	// across clauses. On successful commit, callers promote the
-	// wrapper-scoped entries back into the parent executor via
-	// promoteNodeLookupCacheTo so subsequent Execute calls still
-	// benefit from the cross-query speedup.
-	lookupCache := e.nodeLookupCache
-	lookupCacheMu := e.nodeLookupCacheLock()
-	if txWrapper, isTxScoped := override.(*transactionStorageWrapper); isTxScoped {
-		// Seed the wrapper-scoped cache from the parent's committed
-		// entries on first clone so subsequent Execute calls retain
-		// the cross-query speedup. Concurrent transactions still hold
-		// distinct wrappers — the seeding is a one-shot copy, not a
-		// live alias, so peer-tx writes after this point cannot leak.
-		txWrapper.ensureNodeLookupCacheLocked(e)
-		lookupCache = txWrapper.txNodeLookupCache
-		lookupCacheMu = txWrapper.txNodeLookupCacheMu
+// storageCloneScope distinguishes a selected database's local runtime state
+// from another view of the same statement/transaction storage.
+type storageCloneScope uint8
+
+const selectedDatabaseStorage storageCloneScope = 1
+
+func (e *StorageExecutor) cloneWithStorage(override storage.Engine, scope ...storageCloneScope) *StorageExecutor {
+	selected := len(scope) > 0 && scope[0] == selectedDatabaseStorage
+	var cloned *StorageExecutor
+	if selected {
+		cloned = NewStorageExecutor(override)
+		// A database selection owns fresh result/plan/node caches, statistics and
+		// its procedure catalog; shared compilation verdicts retain their owner.
+		if !isCompositeRoot(override) {
+			e.shareSearchFor(cloned, storageDatabaseName(override))
+		}
+		e.shellParamsMu.RLock()
+		if len(e.shellParams) > 0 {
+			cloned.shellParams = make(map[string]interface{}, len(e.shellParams))
+			for key, value := range e.shellParams {
+				cloned.shellParams[key] = value
+			}
+		}
+		e.shellParamsMu.RUnlock()
+		cloned.shellParamsByToken = cloneShellParamsByToken(e)
+	} else {
+		e.ensureNodeLookupCache()
+		// Transactional clones use the lookup cache pinned to the
+		// transactionStorageWrapper. Concurrent transactions hold distinct
+		// wrappers and therefore distinct caches — that isolation prevents
+		// a peer's uncommitted node-ID mapping from leaking into this
+		// transaction's tx.badgerTx read set (and corrupting Badger SSI
+		// conflict shapes). Re-entrant Execute calls within the same
+		// transaction reuse the wrapper, so the in-tx cache survives
+		// across clauses. On successful commit, callers promote the
+		// wrapper-scoped entries back into the parent executor via
+		// promoteNodeLookupCacheTo so subsequent Execute calls still
+		// benefit from the cross-query speedup.
+		lookupCache := e.nodeLookupCache
+		lookupCacheMu := e.nodeLookupCacheLock()
+		if txWrapper, isTxScoped := override.(*transactionStorageWrapper); isTxScoped {
+			// Seed the wrapper-scoped cache from the parent's committed
+			// entries on first clone so subsequent Execute calls retain
+			// the cross-query speedup. Concurrent transactions still hold
+			// distinct wrappers — the seeding is a one-shot copy, not a
+			// live alias, so peer-tx writes after this point cannot leak.
+			txWrapper.ensureNodeLookupCacheLocked(e)
+			lookupCache = txWrapper.txNodeLookupCache
+			lookupCacheMu = txWrapper.txNodeLookupCacheMu
+		}
+		cloned = &StorageExecutor{
+			parser:                       e.parser,
+			storage:                      override,
+			propertyDecayEngine:          unwrapBadgerEngine(override),
+			propertyDecayEngineKnown:     true,
+			cache:                        e.cache,
+			queryCacheMaxEntries:         e.queryCacheMaxEntries,
+			queryCacheTTL:                e.queryCacheTTL,
+			planCache:                    e.planCache,
+			semanticValidationCache:      e.semanticValidationCache,
+			matchSemanticValidationCache: e.matchSemanticValidationCache,
+			mergeSemanticValidationCache: e.mergeSemanticValidationCache,
+			analyzer:                     e.analyzer,
+			nodeLookupCache:              lookupCache,
+			nodeLookupCacheMu:            lookupCacheMu,
+			searchService:                e.searchService,
+			searchResolver:               e.searchResolver,
+			searchDatabase:               e.searchDatabase,
+			localizationRenderer:         e.localizationRenderer,
+			settingsResolver:             e.settingsResolver,
+			queryStatistics:              e.queryStatistics,
+			shellParams:                  e.shellParams,
+			shellParamsByToken:           cloneShellParamsByToken(e),
+			fabricRecordBindings:         e.fabricRecordBindings,
+			inputBindingRole:             e.inputBindingRole,
+			unwindMergeChainPlanCache:    e.unwindMergeChainPlanCache,
+			// Plan 04-03: propagate the metrics bag + database label through
+			// per-query / per-storage clones so observation chokepoints in
+			// Execute() see the same bag regardless of clone depth.
+			metrics:  e.metrics,
+			database: e.database,
+		}
 	}
-	return &StorageExecutor{
-		parser:                         e.parser,
-		storage:                        override,
-		propertyDecayEngine:            unwrapBadgerEngine(override),
-		propertyDecayEngineKnown:       true,
-		txContext:                      e.txContext,
-		sharedExecutor:                 e.sharedExecutor,
-		cache:                          e.cache,
-		queryCacheMaxEntries:           e.queryCacheMaxEntries,
-		queryCacheTTL:                  e.queryCacheTTL,
-		planCache:                      e.planCache,
-		semanticValidationCache:        e.semanticValidationCache,
-		matchSemanticValidationCache:   e.matchSemanticValidationCache,
-		mergeSemanticValidationCache:   e.mergeSemanticValidationCache,
-		fabricPlanCache:                e.fabricPlanCache,
-		analyzer:                       e.analyzer,
-		nodeLookupCache:                lookupCache,
-		nodeLookupCacheMu:              lookupCacheMu,
-		deferFlush:                     e.deferFlush,
-		queryEmbedder:                  e.queryEmbedder,
-		searchService:                  e.searchService,
-		inferenceManager:               e.inferenceManager,
-		localizationRenderer:           e.localizationRenderer,
-		settingsResolver:               e.settingsResolver,
-		queryStatistics:                e.queryStatistics,
-		onNodeMutated:                  e.onNodeMutated,
-		inlineEmbeddingTextOptions:     e.inlineEmbeddingTextOptions,
-		inlineEmbeddingChunkSize:       e.inlineEmbeddingChunkSize,
-		inlineEmbeddingChunkOverlap:    e.inlineEmbeddingChunkOverlap,
-		defaultEmbeddingDimensions:     e.defaultEmbeddingDimensions,
-		dbManager:                      e.dbManager,
-		shellParams:                    e.shellParams,
-		shellParamsByToken:             cloneShellParamsByToken(e),
-		vectorRegistry:                 e.vectorRegistry,
-		vectorIndexSpaces:              e.vectorIndexSpaces,
-		fabricRecordBindings:           e.fabricRecordBindings,
-		hotPathTraceState:              e.hotPathTraceState,
-		unwindMergeChainPlanCache:      e.unwindMergeChainPlanCache,
-		upperQueryCache:                e.upperQueryCache,
-		syntaxValidationCache:          e.syntaxValidationCache,
-		allowLocalAPOCImportFileAccess: e.allowLocalAPOCImportFileAccess,
-		allowLocalAPOCExportFileAccess: e.allowLocalAPOCExportFileAccess,
-		allowRemoteAPOCURLAccess:       e.allowRemoteAPOCURLAccess,
-		apocRemoteURLAllowlist:         append([]string(nil), e.apocRemoteURLAllowlist...),
-		apocRemoteHTTPClient:           e.apocRemoteHTTPClient,
-		apocRemoteHostResolver:         e.apocRemoteHostResolver,
-		apocLocalFileAccessRoot:        e.apocLocalFileAccessRoot,
-		// Plan 04-03: propagate the metrics bag + database label through
-		// per-query / per-storage clones so observation chokepoints in
-		// Execute() see the same bag regardless of clone depth.
-		metrics:  e.metrics,
-		database: e.database,
+	cloned.graphIdentityScope = e.graphIdentityScope
+	cloned.resolvedMode = e.resolvedMode
+	cloned.readScope = e.readScope
+	cloned.txContext = e.txContext
+	cloned.sharedExecutor = e.sharedExecutor
+	cloned.deferFlush = e.deferFlush
+	cloned.inferenceManager = e.inferenceManager
+	cloned.onNodeMutated = e.onNodeMutated
+	cloned.inlineEmbeddingTextOptions = e.inlineEmbeddingTextOptions
+	cloned.inlineEmbeddingChunkSize = e.inlineEmbeddingChunkSize
+	cloned.inlineEmbeddingChunkOverlap = e.inlineEmbeddingChunkOverlap
+	cloned.defaultEmbeddingDimensions = e.defaultEmbeddingDimensions
+	cloned.dbManager = e.dbManager
+	cloned.vectorRegistry = e.vectorRegistry
+	cloned.vectorIndexSpaces = e.vectorIndexSpaces
+	cloned.fabricPlanCache = e.fabricPlanCache
+	cloned.hotPathTraceState = e.hotPathTraceState
+	if !selected {
+		cloned.log.Store(e.log.Load())
+		cloned.slowQueryThreshold = e.slowQueryThreshold
+		cloned.executionElapsed = e.executionElapsed
 	}
+	cloned.apocIO = e.apocIO
+	if !selected || e.queryEmbedder != nil {
+		cloned.queryEmbedder = e.queryEmbedder
+	}
+	cloned.UseStatementCaches(e.StatementCaches())
+	cloned.statementCacheScope = e.statementCacheScope
+	return cloned
 }
 
 func (e *StorageExecutor) nodeLookupCacheLock() *sync.RWMutex {
@@ -619,25 +661,28 @@ type hotPathTraceState struct {
 	trace HotPathTrace
 }
 
-// DatabaseManagerInterface is a minimal interface to avoid import cycles with multidb package.
-// This allows the executor to call database management operations without directly
-// depending on the multidb package.
+// DatabaseManagerInterface is the query layer's database-management contract.
+// Atomic standard creation carries the shared typed catalog request.
+// Catalog mutations receive the operation context through every adapter.
+// Read-only resolution/storage APIs retain their existing signatures.
 type DatabaseManagerInterface interface {
-	CreateDatabase(name string) error
-	DropDatabase(name string) error
+	CreateDatabase(ctx context.Context, request multidb.DatabaseCreateRequest) error
+	// DropDatabase is the single DROP-state owner: it reports a truly absent
+	// name as multidb.ErrDatabaseNotFound and finishes a pending drop.
+	DropDatabase(ctx context.Context, name string) error
 	ListDatabases() []DatabaseInfoInterface
 	Exists(name string) bool
-	CreateAlias(alias, databaseName string) error
-	DropAlias(alias string) error
+	CreateAlias(ctx context.Context, alias, databaseName string) error
+	DropAlias(ctx context.Context, alias string) error
 	ListAliases(databaseName string) map[string]string
 	ResolveDatabase(nameOrAlias string) (string, error)
-	SetDatabaseLimits(databaseName string, limits interface{}) error
+	SetDatabaseLimits(ctx context.Context, databaseName string, limits interface{}) error
 	GetDatabaseLimits(databaseName string) (interface{}, error)
 	// Composite database methods
-	CreateCompositeDatabase(name string, constituents []interface{}) error
-	DropCompositeDatabase(name string) error
-	AddConstituent(compositeName string, constituent interface{}) error
-	RemoveConstituent(compositeName string, alias string) error
+	CreateCompositeDatabase(ctx context.Context, name string, constituents []interface{}) error
+	DropCompositeDatabase(ctx context.Context, name string) error
+	AddConstituent(ctx context.Context, compositeName string, constituent interface{}) error
+	RemoveConstituent(ctx context.Context, compositeName string, alias string) error
 	GetCompositeConstituents(compositeName string) ([]interface{}, error)
 	ListCompositeDatabases() []DatabaseInfoInterface
 	IsCompositeDatabase(name string) bool
@@ -658,13 +703,7 @@ type DatabaseIdentityProvider interface {
 }
 
 // DatabaseInfoInterface provides database metadata without importing multidb.
-type DatabaseInfoInterface interface {
-	Name() string
-	Type() string
-	Status() string
-	IsDefault() bool
-	CreatedAt() time.Time
-}
+type DatabaseInfoInterface = catalogadapter.DatabaseInfoInterface
 
 // QueryEmbedder generates embeddings for search queries.
 // This is a minimal interface to avoid import cycles with embed package.
@@ -684,9 +723,19 @@ type InferenceManager interface {
 	Chat(ctx context.Context, req heimdall.ChatRequest) (*heimdall.ChatResponse, error)
 }
 
+// QueryCachePolicy configures an executor's database-scoped result cache.
+// Zero MaxEntries disables caching; non-positive TTL uses the process default.
+// For example, NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 100, TTL: time.Minute}).
+type QueryCachePolicy struct {
+	MaxEntries int
+	TTL        time.Duration
+}
+
 // NewStorageExecutor creates a new Cypher executor with the given storage backend.
 //
 // The executor is initialized with a parser and connected to the storage engine.
+// An optional QueryCachePolicy overrides its environment-derived cache capacity
+// and lifetime; when several policies are supplied, the last one takes precedence.
 // It's ready to execute Cypher queries immediately after creation.
 //
 // Parameters:
@@ -703,29 +752,16 @@ type InferenceManager interface {
 //
 //	// Executor is ready for queries
 //	result, err := executor.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
-func NewStorageExecutor(store storage.Engine) *StorageExecutor {
+func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *StorageExecutor {
 	runtimeCfg := config.LoadFromEnv()
 	maxEntries := runtimeCfg.Memory.QueryCacheSize
 	if !runtimeCfg.Memory.QueryCacheEnabled {
 		maxEntries = 0
 	}
-	return newStorageExecutor(store, runtimeCfg, maxEntries, runtimeCfg.Memory.QueryCacheTTL)
-}
-
-// NewStorageExecutorWithQueryCachePolicy creates an executor whose query-result
-// cache capacity and lifetime are scoped to the executor's database. Zero max
-// entries disables caching. A non-positive TTL uses the process default.
-func NewStorageExecutorWithQueryCachePolicy(store storage.Engine, maxEntries int, queryCacheTTL time.Duration) *StorageExecutor {
-	runtimeCfg := config.LoadFromEnv()
-	return newStorageExecutor(store, runtimeCfg, maxEntries, queryCacheTTL)
-}
-
-// QueryCachePolicy returns the database-scoped query-result cache capacity and lifetime.
-func (e *StorageExecutor) QueryCachePolicy() (maxEntries int, ttl time.Duration) {
-	return e.queryCacheMaxEntries, e.queryCacheTTL
-}
-
-func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntries int, queryCacheTTL time.Duration) *StorageExecutor {
+	queryCacheTTL := runtimeCfg.Memory.QueryCacheTTL
+	for _, policy := range cachePolicy {
+		maxEntries, queryCacheTTL = policy.MaxEntries, policy.TTL
+	}
 	if queryCacheTTL <= 0 {
 		queryCacheTTL = runtimeCfg.Memory.QueryCacheTTL
 	}
@@ -738,41 +774,51 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 		queryCache = NewSmartQueryCache(maxEntries)
 	}
 	exec := &StorageExecutor{
-		parser:                         NewParser(),
-		storage:                        store,
-		propertyDecayEngine:            unwrapBadgerEngine(store),
-		propertyDecayEngineKnown:       true,
-		cache:                          queryCache,
-		queryCacheMaxEntries:           maxEntries,
-		queryCacheTTL:                  queryCacheTTL,
-		planCache:                      NewQueryPlanCache(500), // Cache 500 parsed query plans
-		semanticValidationCache:        newSemanticValidationCache(500),
-		matchSemanticValidationCache:   newSemanticValidationCache(500),
-		mergeSemanticValidationCache:   newSemanticValidationCache(500),
-		fabricPlanCache:                fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
-		analyzer:                       NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
-		nodeLookupCache:                make(map[string]*storage.Node, 1000),
-		nodeLookupCacheMu:              &sync.RWMutex{},
-		shellParams:                    make(map[string]interface{}),
-		searchService:                  nil, // Lazy initialization - will be set via SetSearchService() to reuse DB's cached service
-		vectorRegistry:                 vectorspace.NewIndexRegistry(),
-		vectorIndexSpaces:              make(map[string]vectorspace.VectorSpaceKey),
-		hotPathTraceState:              &hotPathTraceState{},
-		queryEmbedder:                  &QueryEmbedderBinding{},
-		unwindMergeChainPlanCache:      &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
-		inlineEmbeddingTextOptions:     embeddingutil.EmbedTextOptionsFromConfig(runtimeCfg),
-		inlineEmbeddingChunkSize:       maxInt(runtimeCfg.EmbeddingWorker.ChunkSize, 1),
-		inlineEmbeddingChunkOverlap:    maxInt(runtimeCfg.EmbeddingWorker.ChunkOverlap, 0),
-		allowLocalAPOCImportFileAccess: apocCfg.Security.AllowImportFileAccess || apocCfg.Security.AllowFileAccess,
-		allowLocalAPOCExportFileAccess: apocCfg.Security.AllowExportFileAccess || apocCfg.Security.AllowFileAccess,
-		allowRemoteAPOCURLAccess:       apocCfg.Security.AllowRemoteURLAccess,
-		apocRemoteURLAllowlist:         normalizeAPOCRemoteURLAllowlist(apocCfg.Security.RemoteURLAllowlist),
-		apocLocalFileAccessRoot:        strings.TrimSpace(apocCfg.Security.FileAccessRoot),
+		parser:                       NewParser(),
+		storage:                      store,
+		propertyDecayEngine:          unwrapBadgerEngine(store),
+		propertyDecayEngineKnown:     true,
+		cache:                        queryCache,
+		queryCacheMaxEntries:         maxEntries,
+		queryCacheTTL:                queryCacheTTL,
+		planCache:                    NewQueryPlanCache(500), // Cache 500 parsed query plans
+		semanticValidationCache:      newSemanticValidationCache(500),
+		matchSemanticValidationCache: newSemanticValidationCache(500),
+		mergeSemanticValidationCache: newSemanticValidationCache(500),
+		fabricPlanCache:              fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
+		analyzer:                     NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
+		nodeLookupCache:              make(map[string]*storage.Node, 1000),
+		nodeLookupCacheMu:            &sync.RWMutex{},
+		shellParams:                  make(map[string]interface{}),
+		searchService:                &atomic.Pointer[search.Service]{}, // Shared by views of this database runtime.
+		vectorRegistry:               vectorspace.NewIndexRegistry(),
+		vectorIndexSpaces:            make(map[string]vectorspace.VectorSpaceKey),
+		hotPathTraceState:            &hotPathTraceState{},
+		queryEmbedder:                &QueryEmbedderBinding{},
+		inferenceManager:             &inferenceManagerBinding{},
+		unwindMergeChainPlanCache:    &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
+		inlineEmbeddingTextOptions:   embeddingutil.EmbedTextOptionsFromConfig(runtimeCfg),
+		inlineEmbeddingChunkSize:     maxInt(runtimeCfg.EmbeddingWorker.ChunkSize, 1),
+		inlineEmbeddingChunkOverlap:  maxInt(runtimeCfg.EmbeddingWorker.ChunkOverlap, 0),
+		apocIO: apocio.NewPolicy(apocio.Config{
+			// AllowFileAccess is the legacy shorthand enabling both local file
+			// directions.
+			AllowImportFileAccess: apocCfg.Security.AllowImportFileAccess || apocCfg.Security.AllowFileAccess,
+			AllowExportFileAccess: apocCfg.Security.AllowExportFileAccess || apocCfg.Security.AllowFileAccess,
+			AllowRemoteURLAccess:  apocCfg.Security.AllowRemoteURLAccess,
+			RemoteURLAllowlist:    apocCfg.Security.RemoteURLAllowlist,
+			FileAccessRoot:        apocCfg.Security.FileAccessRoot,
+		}),
 	}
-	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.currentDatabaseName())
+	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.databaseName())
 	ensureBuiltInProceduresRegistered()
-	_ = exec.loadPersistedProcedures()
+	_ = exec.loadPersistedProcedures(context.Background())
 	return exec
+}
+
+// QueryCachePolicy returns the database-scoped query-result cache capacity and lifetime.
+func (e *StorageExecutor) QueryCachePolicy() (maxEntries int, ttl time.Duration) {
+	return e.queryCacheMaxEntries, e.queryCacheTTL
 }
 
 // SetLocalizationRenderer sets the immutable renderer used for procedure metadata.
@@ -792,33 +838,32 @@ func (e *StorageExecutor) GetLocalizationRenderer() ProcedureMetadataRenderer {
 
 // SetAllowLocalAPOCFileAccess enables or disables local APOC file reads/writes.
 func (e *StorageExecutor) SetAllowLocalAPOCFileAccess(enabled bool) {
-	e.allowLocalAPOCImportFileAccess = enabled
-	e.allowLocalAPOCExportFileAccess = enabled
+	e.apocIO = e.apocIO.WithImportFileAccess(enabled).WithExportFileAccess(enabled)
 }
 
 // SetAllowLocalAPOCImportFileAccess enables or disables local-file APOC loads/imports.
 func (e *StorageExecutor) SetAllowLocalAPOCImportFileAccess(enabled bool) {
-	e.allowLocalAPOCImportFileAccess = enabled
+	e.apocIO = e.apocIO.WithImportFileAccess(enabled)
 }
 
 // SetAllowLocalAPOCExportFileAccess enables or disables local-file APOC exports.
 func (e *StorageExecutor) SetAllowLocalAPOCExportFileAccess(enabled bool) {
-	e.allowLocalAPOCExportFileAccess = enabled
+	e.apocIO = e.apocIO.WithExportFileAccess(enabled)
 }
 
 // SetAllowRemoteAPOCURLAccess enables or disables APOC HTTP(S) fetches.
 func (e *StorageExecutor) SetAllowRemoteAPOCURLAccess(enabled bool) {
-	e.allowRemoteAPOCURLAccess = enabled
+	e.apocIO = e.apocIO.WithRemoteURLAccess(enabled)
 }
 
 // SetAPOCRemoteURLAllowlist restricts APOC HTTP(S) fetches to approved hosts.
 func (e *StorageExecutor) SetAPOCRemoteURLAllowlist(hosts []string) {
-	e.apocRemoteURLAllowlist = normalizeAPOCRemoteURLAllowlist(hosts)
+	e.apocIO = e.apocIO.WithRemoteURLAllowlist(hosts)
 }
 
 // SetAPOCLocalFileAccessRoot sets the local import root used for APOC file URLs.
 func (e *StorageExecutor) SetAPOCLocalFileAccessRoot(root string) {
-	e.apocLocalFileAccessRoot = strings.TrimSpace(root)
+	e.apocIO = e.apocIO.WithLocalFileAccessRoot(root)
 }
 
 // ClearQueryCaches clears executor-local caches that can retain stale read results.
@@ -1031,7 +1076,7 @@ func (e *StorageExecutor) observeSlowQueryIfThresholded(duration time.Duration) 
 	if e.metrics == nil {
 		return
 	}
-	if e.slowQueryThreshold <= 0 || duration < e.slowQueryThreshold {
+	if !config.SlowQueryThresholdReached(e.slowQueryThreshold, duration) {
 		return
 	}
 	e.metrics.BindSlowQueries(e.database).Inc()
@@ -1070,11 +1115,11 @@ func (e *StorageExecutor) logger() *slog.Logger {
 // this method is called, i.e., only when the executor's measured duration
 // exceeded the configured threshold. The hot path (Execute fast return)
 // never enters this method.
-func (e *StorageExecutor) emitSlowQueryLog(query string, plan *ExecutionPlan, duration time.Duration) {
-	if e.slowQueryThreshold <= 0 || duration < e.slowQueryThreshold {
+func (e *StorageExecutor) emitSlowQueryLog(ctx context.Context, query string, plan *ExecutionPlan, duration time.Duration) {
+	if !config.SlowQueryThresholdReached(e.slowQueryThreshold, duration) {
 		return
 	}
-	redacted := RedactLiterals(StripComments(query))
+	redacted := e.redactForLog(ctx, query)
 	hash := PlanHash(plan)
 	if plan == nil || plan.Root == nil {
 		// The normal (non-EXPLAIN/PROFILE) Execute() path never builds an
@@ -1127,17 +1172,92 @@ func (e *StorageExecutor) SetEmbedder(embedder QueryEmbedder) {
 // SetSearchService sets the unified search service used by Cypher procedures.
 // When set, db.index.vector.queryNodes will delegate to search.Service.
 func (e *StorageExecutor) SetSearchService(svc *search.Service) {
-	e.searchService = svc
+	if e.searchService == nil {
+		e.searchService = &atomic.Pointer[search.Service]{}
+	}
+	e.searchService.Store(svc)
+}
+
+// SearchServiceResolver returns a database's current search service, or nil
+// when it has none.
+type SearchServiceResolver func(database string) *search.Service
+
+// SetSearchServiceResolver has the executor resolve database's search service
+// on each use instead of keeping one (SetSearchService). Executors it is
+// cloned into for another database (USE, composite constituents) resolve that
+// database's service.
+func (e *StorageExecutor) SetSearchServiceResolver(database string, resolve SearchServiceResolver) {
+	e.searchResolver = resolve
+	e.searchDatabase = database
+}
+
+// search returns the search service for this statement's database.
+func (e *StorageExecutor) search() *search.Service {
+	if e.searchResolver != nil {
+		return e.searchResolver(e.searchDatabase)
+	}
+	if e.searchService == nil {
+		return nil
+	}
+	return e.searchService.Load()
+}
+
+// keepUnmanagedSearchService keeps a service a procedure created because the
+// executor had none. An executor no database wired (no resolver) keeps it for
+// its later statements, as there is no owner to reset it. One whose database
+// has no search does not: it never shares a service the database's owner
+// cannot reach, and the service (which starts no worker until it is built)
+// lives for this statement only.
+func (e *StorageExecutor) keepUnmanagedSearchService(svc *search.Service) *search.Service {
+	if e.searchResolver != nil {
+		return svc
+	}
+	if e.searchService == nil {
+		e.searchService = &atomic.Pointer[search.Service]{}
+	}
+	if e.searchService.CompareAndSwap(nil, svc) {
+		return svc
+	}
+	bound := e.searchService.Load()
+	if bound != svc {
+		_ = svc.Close()
+	}
+	return bound
+}
+
+// newUnmanagedSearchService creates a procedure service through the existing
+// executor/database ownership policy.
+func (e *StorageExecutor) newUnmanagedSearchService(dimensions int) *search.Service {
+	return e.keepUnmanagedSearchService(search.NewService(e.storage, dimensions, nil))
+}
+
+// shareSearchFor gives target the search of database: the resolver, for the
+// named database, when this executor resolves; otherwise this executor's
+// service, as before resolvers.
+func (e *StorageExecutor) shareSearchFor(target *StorageExecutor, database string) {
+	if e.searchResolver != nil && database != "" {
+		target.searchResolver = e.searchResolver
+		target.searchDatabase = database
+		return
+	}
+	target.SetSearchService(e.search())
+	target.searchResolver = e.searchResolver
+	target.searchDatabase = e.searchDatabase
 }
 
 // SetInferenceManager sets the inference manager used by db.infer.
 func (e *StorageExecutor) SetInferenceManager(mgr InferenceManager) {
-	e.inferenceManager = mgr
+	e.inferenceManager.current.Store(&inferenceManagerState{manager: mgr})
 }
 
 // GetInferenceManager returns the configured inference manager.
 func (e *StorageExecutor) GetInferenceManager() InferenceManager {
-	return e.inferenceManager
+	if e.inferenceManager != nil {
+		if state := e.inferenceManager.current.Load(); state != nil {
+			return state.manager
+		}
+	}
+	return nil
 }
 
 // SetVectorRegistry allows wiring a shared index registry (e.g., per database).
@@ -1193,12 +1313,11 @@ func (e *StorageExecutor) GetDefaultEmbeddingDimensions() int {
 // callback if set. Call after any node creation or mutation (CREATE, MERGE,
 // SET, REMOVE) so search sees client-supplied vectors immediately and the
 // embed queue can re-process.
+//
+// Search reads the node itself after reserving the refresh, so a later write or
+// delete that commits first is not overwritten by this notification.
 func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
-	if e.searchService != nil && nodeID != "" {
-		if node, err := e.storage.GetNode(storage.NodeID(nodeID)); err == nil && node != nil {
-			_ = e.searchService.IndexNode(node)
-		}
-	}
+	e.refreshSearch(search.RefreshRequest{Node: storage.NodeID(nodeID)})
 	if e.onNodeMutated != nil {
 		e.onNodeMutated(nodeID)
 	}
@@ -1206,34 +1325,36 @@ func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
 
 // notifyEdgeMutated updates live search metadata after a relationship create or
 // mutation so relationship vector queries can use client-supplied vectors before
-// a full search warmup/build has run.
+// a full search warmup/build has run. Call it after deleting one too, so its
+// vectors leave search.
 func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
-	if e.searchService == nil || edgeID == "" {
-		return
+	e.refreshSearch(search.RefreshRequest{Edge: storage.EdgeID(edgeID)})
+}
+
+// refreshSearchAfterCommit refreshes what the committed transaction changed.
+// The service is captured once, before the publish, so resets mid-publish do
+// not defer or skip the remaining changes.
+func (e *StorageExecutor) refreshSearchAfterCommit(tx *transactionStorageWrapper) {
+	nodes, edges := tx.takeSearchRefreshes()
+	service := e.search()
+	for id := range nodes {
+		e.refreshSearch(search.RefreshRequest{Node: id, PostCommit: true, PostCommitService: service})
 	}
-	if edge, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err == nil && edge != nil {
-		e.indexMutatedEdge(edge)
+	for id := range edges {
+		e.refreshSearch(search.RefreshRequest{Edge: id, PostCommit: true, PostCommitService: service})
 	}
 }
 
-func (e *StorageExecutor) indexMutatedEdge(edge *storage.Edge) {
-	if e.searchService != nil && edge != nil {
-		_ = e.searchService.IndexEdge(edge)
-	}
-}
-
-// removeNodeFromSearch removes a node from the search service (vector/fulltext indexes).
-// Call after successfully deleting a node via Cypher so embeddings are not left orphaned.
+// removeNodeFromSearch refreshes a deleted node in the search service (vector/fulltext
+// indexes), which removes it. Call after successfully deleting a node via Cypher so
+// embeddings are not left orphaned.
 // nodeID may be prefixed (e.g. "nornic:xyz") or local ("xyz"); the search service expects local ID.
 func (e *StorageExecutor) removeNodeFromSearch(nodeID string) {
-	if e.searchService == nil || nodeID == "" {
-		return
-	}
 	localID := nodeID
 	if _, unprefixed, ok := storage.ParseDatabasePrefix(nodeID); ok {
 		localID = unprefixed
 	}
-	_ = e.searchService.RemoveNode(storage.NodeID(localID))
+	e.refreshSearch(search.RefreshRequest{Node: storage.NodeID(localID)})
 }
 
 // Flush persists all pending writes to storage.
@@ -1276,164 +1397,10 @@ func trimTrailingStatementDelimiters(query string) string {
 }
 
 func normalizeCypherSyntaxConfusables(query string) string {
-	if query == "" {
-		return query
-	}
-	// Fast path: common ASCII-only Cypher text has no confusables to normalize.
-	if isLikelyPlainASCIICypher(query) {
-		return query
-	}
-
-	const (
-		normalizeDefault = iota
-		normalizeSingleQuoted
-		normalizeDoubleQuoted
-		normalizeBacktickQuoted
-		normalizeLineComment
-		normalizeBlockComment
-	)
-
-	runes := []rune(query)
-	var builder strings.Builder
-	builder.Grow(len(query) + 8)
-	changed := false
-	state := normalizeDefault
-
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		next := rune(0)
-		if i+1 < len(runes) {
-			next = runes[i+1]
-		}
-
-		switch state {
-		case normalizeDefault:
-			switch {
-			case r == '/' && next == '/':
-				builder.WriteRune(r)
-				builder.WriteRune(next)
-				i++
-				state = normalizeLineComment
-				continue
-			case r == '/' && next == '*':
-				builder.WriteRune(r)
-				builder.WriteRune(next)
-				i++
-				state = normalizeBlockComment
-				continue
-			case r == '\'':
-				builder.WriteRune(r)
-				state = normalizeSingleQuoted
-				continue
-			case r == '"':
-				builder.WriteRune(r)
-				state = normalizeDoubleQuoted
-				continue
-			case r == '`':
-				builder.WriteRune(r)
-				state = normalizeBacktickQuoted
-				continue
-			}
-
-			if replacement, ok := cypherArrowReplacement(runes, i); ok {
-				builder.WriteByte(replacement)
-				changed = true
-				continue
-			}
-
-			if replacement, ok := cypherSyntaxConfusableReplacement(r); ok {
-				builder.WriteString(replacement)
-				changed = changed || replacement != string(r)
-				continue
-			}
-
-			if replacement, ok := cypherWhitespaceReplacement(r); ok {
-				builder.WriteRune(replacement)
-				changed = changed || replacement != r
-				continue
-			}
-
-			if isIgnorableCypherFormatRune(r) {
-				changed = true
-				continue
-			}
-
-			builder.WriteRune(r)
-
-		case normalizeSingleQuoted:
-			builder.WriteRune(r)
-			if r == '\\' && i+1 < len(runes) {
-				builder.WriteRune(runes[i+1])
-				i++
-				continue
-			}
-			if r == '\'' {
-				if i+1 < len(runes) && runes[i+1] == '\'' {
-					builder.WriteRune(runes[i+1])
-					i++
-					continue
-				}
-				state = normalizeDefault
-			}
-
-		case normalizeDoubleQuoted:
-			builder.WriteRune(r)
-			if r == '\\' && i+1 < len(runes) {
-				builder.WriteRune(runes[i+1])
-				i++
-				continue
-			}
-			if r == '"' {
-				if i+1 < len(runes) && runes[i+1] == '"' {
-					builder.WriteRune(runes[i+1])
-					i++
-					continue
-				}
-				state = normalizeDefault
-			}
-
-		case normalizeBacktickQuoted:
-			builder.WriteRune(r)
-			if r == '`' {
-				if i+1 < len(runes) && runes[i+1] == '`' {
-					builder.WriteRune(runes[i+1])
-					i++
-					continue
-				}
-				state = normalizeDefault
-			}
-
-		case normalizeLineComment:
-			builder.WriteRune(r)
-			if r == '\n' || r == '\r' {
-				state = normalizeDefault
-			}
-
-		case normalizeBlockComment:
-			builder.WriteRune(r)
-			if r == '*' && next == '/' {
-				builder.WriteRune(next)
-				i++
-				state = normalizeDefault
-			}
-		}
-	}
-
-	if !changed {
-		return query
-	}
-
-	return builder.String()
+	return cyphertext.NormalizeSource(query).Text
 }
 
-func isLikelyPlainASCIICypher(query string) bool {
-	for i := 0; i < len(query); i++ {
-		if query[i] >= 0x80 {
-			return false
-		}
-	}
-	return true
-}
+func isLikelyPlainASCIICypher(query string) bool { return cyphertext.PlainASCII(query) }
 
 // ensureUpperQueryCache lazily installs the upper-query cache pointer with
 // sync.Once so concurrent CALL { ... } subqueries cannot race on the
@@ -1441,156 +1408,22 @@ func isLikelyPlainASCIICypher(query string) bool {
 func (e *StorageExecutor) ensureUpperQueryCache() *upperQueryCache {
 	e.upperQueryCacheOnce.Do(func() {
 		if e.upperQueryCache == nil {
-			e.upperQueryCache = &upperQueryCache{
-				cache: make(map[string]string, 1024),
-				max:   4096,
-			}
+			e.upperQueryCache = newUpperQueryCache()
 		}
 	})
 	return e.upperQueryCache
 }
 
-func (e *StorageExecutor) cachedUpperQuery(query string) string {
-	trimmed := strings.TrimSpace(query)
-	if trimmed == "" {
-		return ""
-	}
-	c := e.ensureUpperQueryCache()
-	c.mu.RLock()
-	if upper, ok := c.cache[trimmed]; ok {
-		c.mu.RUnlock()
-		return upper
-	}
-	c.mu.RUnlock()
-
-	upper := upperASCII(trimmed)
-	c.mu.Lock()
-	if len(c.cache) >= c.max {
-		for k := range c.cache {
-			delete(c.cache, k)
-			break
-		}
-	}
-	c.cache[trimmed] = upper
-	c.mu.Unlock()
-	return upper
-}
-
-func cypherSyntaxConfusableReplacement(r rune) (string, bool) {
-	switch r {
-	case '→':
-		return "->", true
-	case '←':
-		return "<-", true
-	case '（':
-		return "(", true
-	case '）':
-		return ")", true
-	case '［':
-		return "[", true
-	case '］':
-		return "]", true
-	case '｛':
-		return "{", true
-	case '｝':
-		return "}", true
-	case '，':
-		return ",", true
-	case '：':
-		return ":", true
-	case '；':
-		return ";", true
-	case '．':
-		return ".", true
-	case '＝':
-		return "=", true
-	case '＜':
-		return "<", true
-	case '＞':
-		return ">", true
-	case '＄':
-		return "$", true
-	default:
-		return "", false
-	}
-}
-
-// cypherArrowReplacement is the ASCII form of runes[i] when it is a Unicode
-// dash or arrowhead in a relationship arrow, as Neo4j's lexer reads them:
-// ‐ ‑ ‒ – — ― ﹘ ﹣ － and the soft hyphen as -, ⟨ 〈 ﹤ before a dash as <,
-// ⟩ 〉 ﹥ after one as >. A dash is in an arrow when it follows a node, a
-// relationship, a head or another dash and precedes one of those:
-// (a)—[r]—>(b), (a)<—(b). Elsewhere they aren't operators (RETURN 2—1 is
-// rejected by validateUnicodeOperators) and the soft hyphen is part of a
-// name.
-func cypherArrowReplacement(runes []rune, i int) (byte, bool) {
-	neighbour := func(step int) rune {
-		for j := i + step; j >= 0 && j < len(runes); j += step {
-			if !unicode.IsSpace(runes[j]) {
-				return runes[j]
-			}
-		}
-		return 0
-	}
-	switch r := runes[i]; {
-	case isArrowDashRune(r):
-		previous, next := neighbour(-1), neighbour(1)
-		before := previous == ')' || previous == ']' || previous == '<' || previous == '-' || isArrowDashRune(previous) || isArrowLeftHeadRune(previous)
-		after := next == '(' || next == '[' || next == '>' || next == '-' || isArrowDashRune(next) || isArrowRightHeadRune(next)
-		return '-', before && after
-	case isArrowLeftHeadRune(r):
-		next := neighbour(1)
-		return '<', next == '-' || isArrowDashRune(next)
-	case isArrowRightHeadRune(r):
-		previous := neighbour(-1)
-		return '>', previous == '-' || isArrowDashRune(previous)
-	}
-	return 0, false
-}
-
-func isArrowDashRune(r rune) bool {
-	switch r {
-	case '\u00AD', '‐', '‑', '‒', '–', '—', '―', '﹘', '﹣', '－':
-		return true
-	}
-	return false
-}
-
-func isArrowLeftHeadRune(r rune) bool {
-	return r == '⟨' || r == '〈' || r == '﹤' || r == '＜'
-}
-
-func isArrowRightHeadRune(r rune) bool {
-	return r == '⟩' || r == '〉' || r == '﹥' || r == '＞'
-}
-
-func cypherWhitespaceReplacement(r rune) (rune, bool) {
-	switch r {
-	case '\u0085', '\u2028', '\u2029':
-		return '\n', true
-	case ' ', '\t', '\n', '\r':
-		return 0, false
-	default:
-		if unicode.IsSpace(r) {
-			return ' ', true
-		}
-		return 0, false
-	}
-}
-
-func isIgnorableCypherFormatRune(r rune) bool {
-	switch r {
-	case '\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF':
-		return true
-	default:
-		return false
-	}
+func cypherSyntaxConfusableReplacement(character rune) (string, bool) {
+	return cyphertext.SyntaxConfusableReplacement(character)
 }
 
 // TransactionCapableEngine is an engine that supports ACID transactions.
 // Used for type assertion to wrap implicit writes in rollback-capable transactions.
+// BeginTransaction uses ctx for admission and snapshot capture. The returned
+// handle has its own lifetime; subsequent operations supply their own contexts.
 type TransactionCapableEngine interface {
-	BeginTransaction() (*storage.BadgerTransaction, error)
+	BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 }
 
 type implicitTxEngines struct {
@@ -1633,20 +1466,49 @@ func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
 // rolled back on error, preventing partial data corruption from failed queries.
 // For strict ACID guarantees with durability, use explicit BEGIN/COMMIT transactions.
 func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	// A public procedure callback may re-enter Execute with the statement's
+	// transaction in its executor, context, or both. Reuse that owner rather
+	// than committing a nested implicit transaction independently.
+	if statementStorage, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+		statementExec := e
+		if e.storage != statementStorage {
+			statementExec = e.cloneWithStorage(statementStorage)
+		}
+		return statementExec.executeWithoutTransaction(ctx, cypher, upperQuery)
+	}
 	// Check if this is a write operation using cached analysis
-	info := e.analyzer.Analyze(cypher)
-	needsTransaction := info.IsWriteQuery || (matchKeywordAt(cypher, 0, "CALL") && strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData"))
+	info, err := e.analyzer.Analyze(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
+	contract, err := readStatementExecutionContract(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
+	// Fabric owns this statement's lifetime. Actual writes have already passed
+	// the resolved execution gate; conditional reads must not open a second tx.
+	if e.membership(ctx).statement != nil {
+		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+	}
 
 	// For write operations, use implicit transaction for atomicity
 	// This ensures partial writes are rolled back on error
-	if needsTransaction {
-		if hasCallInTransactions(cypher) {
-			return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+	if contract.transaction {
+		_, managed := fabric.FabricTransactionFromContext(ctx)
+		if (contract.dynamic || contract.selectsDatabase) && !managed && !storage.CoordinatorOwnsTransaction(ctx) {
+			return e.executeNativeCoordinatedStatement(ctx, cypher, upperQuery)
 		}
 		return e.executeWithImplicitTransaction(ctx, cypher, upperQuery)
 	}
 
-	// Read-only operations don't need transaction wrapping
+	// Read-only operations don't need transaction wrapping. One that cannot
+	// write reads its row nodes without vectors, on a clone so concurrent
+	// statements of this executor keep their own reads.
+	if e.readsQueryNodesWithoutVectors(info) {
+		readExec := e.cloneWithStorage(e.storage)
+		readExec.readOnlyQueryNodes = true
+		return readExec.executeWithoutTransaction(ctx, cypher, upperQuery)
+	}
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 }
 
@@ -1656,7 +1518,7 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 // conflict is recoverable for the application.
 func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	executionCypher, executionUpperQuery := cypher, upperQuery
-	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher); inlineEmbeddingEnabled {
+	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(ctx, cypher); inlineEmbeddingEnabled {
 		executionCypher = parsedCypher
 		executionUpperQuery = upperASCII(parsedCypher)
 	}
@@ -1665,11 +1527,36 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	})
 }
 
-func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
+func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
+	defer func() { completeStatementTerminalOutcome(ctx, true, &result, &retErr, nil) }()
+	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(ctx, cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
 		upperQuery = upperASCII(cypher)
+	}
+
+	if member := e.membership(ctx); member.owned() {
+		target := e
+		if member.storage != nil {
+			target = e.cloneWithStorage(member.storage)
+			ctx = context.WithValue(ctx, ctxKeyTxStorage, member.storage)
+		}
+		result, err := execute(ctx, target)
+		if err == nil && inlineEmbeddingEnabled && member.storage != nil {
+			err = target.completeInlineEmbedding(ctx, member.storage)
+		}
+		return result, err
+	}
+
+	// Schema target semantics precede local transaction capability. Reject a
+	// composite root through the schema owner's validator without executing a
+	// callback on an engine that has no atomic write owner.
+	_, body := parseExecutionMode(cypher)
+	schemaDDL := isOrdinarySchemaDDL(ctx, body)
+	if schemaDDL {
+		if err := schemaDDLTargetError(e.storage); err != nil {
+			return nil, err
+		}
 	}
 
 	// Try to get a transaction-capable engine and async wrapper (if present)
@@ -1683,71 +1570,36 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	}
 	txEngine := engines.txEngine
 
-	// If no transaction support, fall back to direct execution (legacy mode)
-	// This is less safe but maintains backward compatibility
+	// Local writes require a rollback owner before any execution or callback.
+	// Delegated Fabric and inherited statement owners were selected above.
 	if txEngine == nil {
 		if inlineEmbeddingEnabled {
 			return nil, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
 		}
-		return execute(ctx, e)
+		return nil, localizedError(localization.CypherTransactionsEngineUnsupported(), nil)
 	}
 
-	// Start implicit transaction
-	if engines.namespace != "" {
-		if primer, ok := txEngine.(interface{ EnsureNamespaceMVCC(string) error }); ok {
-			if err := primer.EnsureNamespaceMVCC(engines.namespace); err != nil {
-				return nil, localizedError(localization.CypherCoreImplicitTransactionPrimeFailed(err), err)
-			}
+	// Start implicit transaction. Constraint validation is deferred to
+	// commit, which avoids duplicate per-operation checks and improves write
+	// throughput.
+	start := transactionStart{implicit: true, namespace: engines.namespace}
+	if schemaDDL {
+		start.schema = e.storage.GetSchema()
+		if provider, ok := e.storage.(interface {
+			GetSchemaForNamespace(string) *storage.SchemaManager
+		}); ok && engines.namespace != "" {
+			start.schema = provider.GetSchemaForNamespace(engines.namespace)
 		}
 	}
-	tx, err := beginTransactionSnapshot(txEngine)
+	tx, bookkeeping, err := e.openTransaction(ctx, txEngine, start, nil)
 	if err != nil {
-		return nil, localizedError(localization.CypherCoreImplicitTransactionStartFailed(err), err)
-	}
-	if engines.namespace != "" {
-		if err := tx.SetNamespace(engines.namespace); err != nil {
-			_ = tx.Rollback()
-			return nil, localizedError(localization.CypherCoreImplicitTransactionPinFailed(err), err)
-		}
-	}
-	if err := applyTransactionMetadata(ctx, tx); err != nil {
-		_ = tx.Rollback()
 		return nil, err
 	}
-
-	// Defer constraint validation to commit for implicit transactions.
-	// This avoids duplicate per-operation checks and improves write throughput.
-	if err := tx.SetDeferredConstraintValidation(true); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
-	}
-	if err := tx.SetSkipCreateExistenceCheck(true); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
-	}
-	// Skip the per-commit engine.Sync(). The Bolt session's end-of-session
-	// Flush and the async engine's ticker-driven flush coalesce durability
-	// for implicit writes; forcing an Msync per UNWIND batch turned every
-	// batch into a 300µs syscall for no user-visible benefit.
-	if err := tx.SetImplicit(true); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
-	}
-
-	// Optional WAL transaction markers for receipts.
-	var wal *storage.WAL
-	var walSeqStart uint64
-	txID := tx.ID
-	var dbName string
-	if txID != "" {
-		wal, dbName = e.resolveWALAndDatabase()
-		if wal != nil {
-			walSeqStart, err = wal.AppendTxBegin(dbName, txID, nil)
-			if err != nil {
-				_ = tx.Rollback()
-				return nil, localizedError(localization.CypherCoreImplicitTransactionWALBeginFailed(err), err)
-			}
-		}
+	if start.schema != nil {
+		// Rejections before the native commit (including managed-owner rejection)
+		// still close the schema statement's snapshot and admission. Already
+		// closed transactions retain their terminal outcome and own no lease.
+		defer func() { _ = tx.Rollback() }()
 	}
 
 	// Create a transactional wrapper that routes writes through the transaction
@@ -1764,10 +1616,29 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		separator:      separator,
 		mutatedNodeIDs: make(map[string]struct{}),
 	}
+	txWrapper.initNamespacePrefix()
+
+	ctx, statsScope := beginProcedureStatementStatsScope(ctx)
+	defer func() {
+		if retErr == nil {
+			var batchStats *QueryStats
+			if result != nil {
+				batchStats = result.Stats
+			}
+			statsScope.commit(batchStats)
+		} else {
+			statsScope.discard()
+		}
+	}()
 
 	// Execute with transaction wrapper via context
 	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
 	txExec := e.cloneWithStorage(txWrapper)
+	if state := e.resolvedStatementModeOf(ctx); state != nil {
+		var release func()
+		txExec, release = txExec.bindResolvedStatementMode(state)
+		defer release()
+	}
 
 	// Execute the query
 	result, execErr := execute(txCtx, txExec)
@@ -1776,37 +1647,32 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if execErr == nil {
 		execErr = getExpressionFailure(txCtx)
 	}
+	// So is a memory limit it went over, whichever route ignored the
+	// cancellation that caused (#1343).
+	if execErr == nil {
+		execErr = memoryFailureFromContext(txCtx)
+	}
 
 	// Handle result
 	if execErr != nil {
 		// Rollback on any error - prevents partial data corruption
 		tx.Rollback()
 		txExec.invalidateNodeLookupCache()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, execErr.Error())
-		}
-		return result, execErr
+		return result, bookkeeping.abort(ctx, execErr, execErr.Error())
 	}
 
 	// A write-shaped query can legitimately match no mutation targets. Committing
 	// an empty Badger transaction still performs store-wide validation work, so
 	// roll it back after the match has completed instead.
-	if tx.OperationCount() == 0 && !tx.HasKnowledgePolicyChanges() {
-		_ = tx.Rollback()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, "no mutations")
-		}
-		return result, nil
+	if !txWrapper.hasPendingCommitEffects() {
+		return result, txExec.endEmptyNativeTransaction(ctx, tx, bookkeeping)
 	}
 
 	if inlineEmbeddingEnabled {
-		if err := txExec.applyInlineEmbeddingMutations(txCtx, txWrapper.snapshotMutatedNodeIDs()); err != nil {
+		if err := txExec.completeInlineEmbedding(txCtx, txWrapper); err != nil {
 			tx.Rollback()
 			txExec.invalidateNodeLookupCache()
-			if wal != nil && walSeqStart > 0 {
-				_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
-			}
-			return nil, err
+			return nil, bookkeeping.abort(ctx, err, err.Error())
 		}
 	}
 
@@ -1814,62 +1680,42 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok && running.terminated.Load() {
 		tx.Rollback()
 		txExec.invalidateNodeLookupCache()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, "terminated")
-		}
-		return nil, transactionTerminatedError()
+		return nil, bookkeeping.abort(ctx, transactionTerminatedError(), "terminated")
 	}
 
 	// Commit successful transaction. The statement's context makes commit-time
 	// validation stop when the statement is terminated or its client goes away
 	// (#1115); the deferred handler in Execute reports Transaction.Terminated.
-	if err := tx.CommitContext(ctx); err != nil {
+	commitCtx, admissionErr := txphase.CommitContext(ctx)
+	if admissionErr != nil {
+		_ = tx.Rollback()
 		txExec.invalidateNodeLookupCache()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
-		}
-		if info := e.analyzer.Analyze(cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
-			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
-		}
+		// Author: Codex, NOR-180. Rejected admission retains the existing
+		// terminal owner's outcome after the same native rollback.
+		return nil, bookkeeping.rejectCommit(ctx, admissionErr, admissionErr.Error())
+	}
+	if err := e.commitStorageTransaction(commitCtx, tx); err != nil {
+		txExec.invalidateNodeLookupCache()
+		err = bookkeeping.rejectCommit(ctx, err, err.Error())
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
 		// The implicit-autocommit path was historically wrapped with "failed to commit
 		// implicit transaction: ..." which broke the consumer-pinned classifier; aligned
 		// with pkg/cypher/transaction.go:181 so the explicit and implicit paths produce the
 		// same wire shape.
-		return nil, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err)
+		return nil, nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err))
 	}
-	// Committed: a TERMINATE from now on doesn't fail this statement (#751).
-	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok {
-		running.committed.Store(true)
-	}
+	// The admitted commit lifetime above owns both halves of acceptance: the
+	// native commit and the completion actions it queued. The cancelable
+	// statement context admitted the commit; it cannot cancel what admission
+	// accepted. The implicit and explicit paths share that one lifetime.
+	receipt, completionErr, bookkeepingErr := bookkeeping.finishCommitted(commitCtx, tx.OperationCount(), func(admittedCtx context.Context) error {
+		completionErr := txWrapper.completeCommitActions(admittedCtx)
+		txExec.refreshSearchAfterCommit(txWrapper)
+		return completionErr
+	})
 
-	// Attach receipt metadata if WAL markers were recorded. Receipts are
-	// attached exactly as on the durable path: the write-behind ACK carries
-	// the same information (its commit markers are appended before the ACK
-	// per the buffer design). The eventual marker below is how the HTTP
-	// layer tells an acknowledged buffered commit from a durable one.
-	if wal != nil && walSeqStart > 0 {
-		opCount := tx.OperationCount()
-		if commitSeq, walErr := wal.AppendTxCommit(dbName, txID, opCount); walErr == nil {
-			if receipt, recErr := storage.NewReceipt(txID, walSeqStart, commitSeq, dbName, time.Now().UTC()); recErr == nil {
-				if result.Metadata == nil {
-					result.Metadata = make(map[string]interface{})
-				}
-				result.Metadata["receipt"] = receipt
-			}
-		}
-	}
-
-	// Mark commits that were acknowledged through the write-behind buffer.
-	// Every eligible write buffers when the engine has it enabled; this
-	// marker is what makes the server answer 202 Accepted instead of 200.
-	if tx.AcknowledgedBuffered() {
-		if result.Metadata == nil {
-			result.Metadata = make(map[string]interface{})
-		}
-		result.Metadata["eventual"] = true
-	}
+	attachNativeCommitMetadata(result, receipt, tx.AcknowledgedBuffered())
 
 	// Promote the tx-scoped MERGE lookup cache into the parent so
 	// subsequent Execute calls still benefit from the cross-query
@@ -1877,7 +1723,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// its own clone; only post-commit entries graduate to the parent.
 	txExec.promoteNodeLookupCacheTo(e)
 
-	return result, nil
+	if bookkeepingErr != nil {
+		return nil, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(bookkeepingErr), bookkeepingErr)
+	}
+
+	return result, completionErr
 }
 
 // ctxKeyTxStorage is the context key for transaction storage wrapper.
@@ -1889,6 +1739,11 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 	if len(ids) == 0 {
 		return nil
 	}
+	ctx, finish, err := e.queryEmbedder.BeginUse(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	embedder := e.queryEmbedderForStatement(ctx)
 	if embedder == nil {
 		return localizedError(localization.CypherCoreEmbeddingConfiguredRequired(), nil)
@@ -1896,7 +1751,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 	store := e.getStorage(ctx)
 	typedEmbedder, hasTypedEmbedder := embedder.(typedQueryEmbedder)
 	for id := range ids {
-		node, err := store.GetNode(storage.NodeID(id))
+		node, err := store.GetNode(ctx, storage.NodeID(id))
 		if err != nil {
 			if err == storage.ErrNotFound {
 				continue
@@ -1944,27 +1799,47 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 				dimensions = v
 			}
 		}
+		before := *node
+		before.EmbedMeta = maps.Clone(node.EmbedMeta)
 		embeddingutil.ApplyManagedEmbedding(node, embeddings, model, dimensions, time.Now())
 		embeddingutil.RecordChunkSpans(node, source, chunks)
-		if err := store.UpdateNode(node); err != nil {
+		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func stripWithEmbeddingSuffix(cypher string) (string, bool) {
-	idx := findKeywordIndex(cypher, "WITH EMBEDDING")
+// stripWithEmbeddingSuffix removes the WITH EMBEDDING execution option where
+// it ends the statement (or its UNION branch). A nonterminal WITH EMBEDDING is
+// a projection candidate that the scope compiler and pipeline frame resolve.
+func stripWithEmbeddingSuffix(ctx context.Context, cypher string) (string, bool) {
+	idx, embeddingStart := -1, -1
+	for from := 0; from < len(cypher); {
+		at := keywordIndexFrom(ctx, cypher, "WITH", from, defaultKeywordScanOpts())
+		if at < 0 {
+			break
+		}
+		next := queryGapEnd(cypher, at+len("WITH"))
+		if startsWithKeywordFold(cypher[next:], "EMBEDDING") {
+			idx, embeddingStart = at, next
+			break
+		}
+		from = at + len("WITH")
+	}
 	if idx < 0 {
 		return cypher, false
 	}
 	before := strings.TrimSpace(cypher[:idx])
-	after := strings.TrimSpace(cypher[idx+len("WITH EMBEDDING"):])
+	after := strings.TrimSpace(cypher[embeddingStart+len("EMBEDDING"):])
 	if before == "" {
 		return cypher, false
 	}
 	if after == "" {
 		return before, true
+	}
+	if !startsWithKeywordFold(after, "UNION") {
+		return cypher, false
 	}
 	return strings.TrimSpace(before + " " + after), true
 }
@@ -2037,8 +1912,8 @@ func GetAuthenticatedPrincipalFromContext(ctx context.Context) string {
 // getStorage returns the storage to use for the current execution.
 // If a transaction wrapper is present in context, it uses that; otherwise uses e.storage.
 func (e *StorageExecutor) getStorage(ctx context.Context) storage.Engine {
-	if txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
-		return txWrapper
+	if member := e.membership(ctx); member.storage != nil {
+		return member.storage
 	}
 	return e.storage
 }
@@ -2089,7 +1964,7 @@ func statementAccessesGraph(info *QueryInfo) bool {
 // direction is safe by construction: a false positive only forces the caller
 // to target a constituent (and pass its authorization), while a false
 // negative would read denied data.
-func statementAccessesGraphText(cypher string) bool {
+func statementAccessesGraphText(ctx context.Context, cypher string) bool {
 	opts := defaultKeywordScanOpts()
 	for _, keyword := range []string{
 		"MATCH", "OPTIONAL MATCH", "CREATE", "MERGE", "DELETE", "DETACH DELETE",
@@ -2097,19 +1972,19 @@ func statementAccessesGraphText(cypher string) bool {
 		"CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX",
 		"CREATE CONSTRAINT", "DROP INDEX", "DROP CONSTRAINT",
 	} {
-		if keywordIndexFrom(cypher, keyword, 0, opts) >= 0 {
+		if keywordIndexFrom(ctx, cypher, keyword, 0, opts) >= 0 {
 			return true
 		}
 	}
-	return expressionReadsGraphText(cypher)
+	return expressionReadsGraphText(ctx, cypher)
 }
 
 // expressionReadsGraphText reports whether cypher holds an expression that
 // reads the graph (graphReadingExpression). statementAccessesGraphText,
 // statementReadsGraphText and the system database's statement policy read
 // expressions through it.
-func expressionReadsGraphText(cypher string) bool {
-	return graphReadingExpression(cypher) != ""
+func expressionReadsGraphText(ctx context.Context, cypher string) bool {
+	return graphReadingExpression(ctx, cypher) != ""
 }
 
 // Kinds of graph-reading expression graphReadingExpression reports.
@@ -2128,14 +2003,14 @@ const (
 // allShortestPaths graphReadingPattern; and a bare relationship pattern
 // ((a)-->() in an expression) graphReadingPatternPredicate, reported only
 // when there is nothing else. Clause patterns, literals and comments don't count.
-func graphReadingExpression(cypher string) string {
+func graphReadingExpression(ctx context.Context, cypher string) string {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	opts.SkipBraces = false
 	for _, keyword := range []string{"COUNT", "EXISTS", "COLLECT"} {
 		for from := 0; ; {
-			index := keywordIndexFrom(cypher, keyword, from, opts)
+			index := keywordIndexFrom(ctx, cypher, keyword, from, opts)
 			if index < 0 {
 				break
 			}
@@ -2146,7 +2021,7 @@ func graphReadingExpression(cypher string) string {
 			}
 			// EXISTS((n)-->(m)): a pattern between the parentheses.
 			if keyword == "EXISTS" && open < len(cypher) && cypher[open] == '(' {
-				if close := findMatchingDelimiter(cypher, open, '(', ')'); close > open {
+				if close := cyphertext.FindMatchingDelimiter(cypher, open, '(', ')', cyphertext.OpeningDelimiter); close > open {
 					inner := strings.TrimSpace(cypher[open+1 : close])
 					if strings.ContainsAny(inner, "-><") || strings.HasPrefix(inner, "(") {
 						return graphReadingPattern
@@ -2158,7 +2033,7 @@ func graphReadingExpression(cypher string) string {
 	}
 	for _, keyword := range []string{"shortestPath", "allShortestPaths"} {
 		for from := 0; from < len(cypher); {
-			at := keywordIndexFrom(cypher, keyword, from, opts)
+			at := keywordIndexFrom(ctx, cypher, keyword, from, opts)
 			if at < 0 {
 				break
 			}
@@ -2174,8 +2049,8 @@ func graphReadingExpression(cypher string) string {
 	}
 	pattern := ""
 	for i := 0; i < len(cypher); i++ {
-		switch cypher[i] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(cypher[i]) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(cypher, i, cypher[i]) - 1
 			continue
 		case '/':
@@ -2204,18 +2079,18 @@ func graphReadingExpression(cypher string) string {
 // creates, and sets, removes or deletes what it created, reads nothing:
 // QueryPermissionRequirements then needs write but not read, as Neo4j lets
 // a principal with WRITE but no READ privilege run CREATE.
-func statementReadsGraphText(cypher string) bool {
+func statementReadsGraphText(ctx context.Context, cypher string) bool {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	opts.SkipBraces = false
 	for _, keyword := range []string{"MATCH", "MERGE", "SHOW"} {
-		if keywordIndexFrom(cypher, keyword, 0, opts) >= 0 {
+		if keywordIndexFrom(ctx, cypher, keyword, 0, opts) >= 0 {
 			return true
 		}
 	}
 	for from := 0; from < len(cypher); {
-		at := keywordIndexFrom(cypher, "CALL", from, opts)
+		at := keywordIndexFrom(ctx, cypher, "CALL", from, opts)
 		if at < 0 {
 			break
 		}
@@ -2224,15 +2099,15 @@ func statementReadsGraphText(cypher string) bool {
 			return true
 		}
 	}
-	return expressionReadsGraphText(cypher)
+	return expressionReadsGraphText(ctx, cypher)
 }
 
 // statementParametersError is Neo4j's ParameterMissing for a statement that
 // references a parameter it wasn't given ("Expected parameter(s): p"), or nil.
 // Neo4j reports it after the statement compiles, so a statement that is also
 // a syntax or semantic error reports that error (Execute calls this after
-// validateSyntax and validateSemanticScopes; the Fabric route, which has no
-// such validation, calls it first). EXPLAIN runs nothing and needs no
+// validateSyntax and validateStatementTypes; the Fabric route after it plans
+// the statement). EXPLAIN runs nothing and needs no
 // values; in a procedure definition, $name is the procedure's argument.
 // Parameter names are reported as the statement wrote them (#734).
 func (e *StorageExecutor) statementParametersError(ctx context.Context, cypher string, params map[string]interface{}) error {

@@ -22,9 +22,9 @@ func TestTransactionCreationTimesRegression(t *testing.T) {
 				name += "/unset"
 			}
 			t.Run(name, func(t *testing.T) {
-				eng := NewMemoryEngine()
+				eng := newTestMemoryEngine(t)
 				t.Cleanup(func() { require.NoError(t, eng.Close()) })
-				tx, err := eng.BeginTransaction()
+				tx, err := eng.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
 				before := time.Now()
@@ -38,20 +38,20 @@ func TestTransactionCreationTimesRegression(t *testing.T) {
 					b.CreatedAt, b.UpdatedAt = created, updated
 					edge.CreatedAt, edge.UpdatedAt = created, updated
 				}
-				_, err = tx.CreateNode(a)
+				_, err = tx.CreateNode(t.Context(), a)
 				require.NoError(t, err)
-				_, err = tx.CreateNode(b)
+				_, err = tx.CreateNode(t.Context(), b)
 				require.NoError(t, err)
 				if bulk {
-					err = tx.BulkCreateEdges([]*Edge{edge})
+					err = tx.BulkCreateEdges(t.Context(), []*Edge{edge})
 				} else {
-					err = tx.CreateEdge(edge)
+					err = tx.CreateEdge(t.Context(), edge)
 				}
 				require.NoError(t, err)
 				require.NoError(t, tx.Commit())
-				n, err := eng.GetNode(a.ID)
+				n, err := eng.GetNode(t.Context(), a.ID)
 				require.NoError(t, err)
-				r, err := eng.GetEdge(edge.ID)
+				r, err := eng.GetEdge(t.Context(), edge.ID)
 				require.NoError(t, err)
 				for _, times := range [][2]time.Time{{n.CreatedAt, n.UpdatedAt}, {r.CreatedAt, r.UpdatedAt}} {
 					if supplied {

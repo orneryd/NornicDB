@@ -67,7 +67,7 @@
 - id: nornicdbcli.flag.search_vector_warming
   other: "Inicio vectorial: startup o lazy. Predeterminado: startup."
 - id: nornicdbcli.flag.gpu_backend
-  other: "Backend de GPU: vulkan, cuda, metal, opencl (vacío=detección automática)"
+  other: "Backend de GPU: cpu, vulkan, cuda, metal, opencl (vacío=detección automática)"
 - id: nornicdbcli.flag.no_auth
   other: Desactiva la autenticación
 - id: nornicdbcli.flag.admin_password
@@ -81,7 +81,9 @@
 - id: nornicdbcli.flag.parallel_batch_size
   other: Tamaño mínimo de lote antes de paralelizar
 - id: nornicdbcli.flag.memory_limit
-  other: "Límite de memoria en MB como entero (p. ej., 500; 0 sin límite)"
+  other: "Límite de memoria en MB como entero (p. ej., 500), 0 sin límite, o auto (predeterminado: 85 % del límite de memoria del contenedor)"
+- id: nornicdbcli.flag.go_memory_limit
+  other: "Objetivo de memoria del recolector de Go en bytes (entero no negativo)"
 - id: nornicdbcli.flag.gc_percent
   other: Intensidad de GC (100=predeterminada, un valor menor es más intenso)
 - id: nornicdbcli.flag.pool_enabled
@@ -126,6 +128,16 @@
   other: "Umbral de supresión de visibilidad (predeterminado: 0.05)"
 - id: nornicdbcli.validation.invalid_memory_limit
   other: 'valor no válido de --memory-limit {{printf "%q" .Value}}: {{.Cause}}'
+- id: nornicdbcli.validation.go_memory_limit_deprecated
+  other: "--memory-limit está obsoleto; use --go-memory-limit-bytes (bytes enteros)"
+- id: nornicdbcli.validation.env_memory_limit_deprecated
+  other: "NORNICDB_MEMORY_LIMIT está obsoleto; use NORNICDB_GO_MEMORY_LIMIT_BYTES (bytes enteros)"
+- id: nornicdbcli.validation.yaml_memory_limit_deprecated
+  other: "memory.runtime_limit está obsoleto; use memory.go_runtime_limit_bytes (bytes enteros)"
+- id: nornicdbcli.validation.go_memory_limit_conflict
+  other: "--memory-limit entra en conflicto con --go-memory-limit-bytes"
+- id: nornicdbcli.validation.invalid_go_memory_limit
+  other: 'valor no válido de --go-memory-limit-bytes {{printf "%q" .Value}}: {{.Cause}}'
 - id: nornicdbcli.validation.invalid_stdio_interval
   other: "stdio-log-compact-seconds no válido ({{.Value}}): debe ser >= 0"
 - id: nornicdbcli.config.not_found
@@ -160,6 +172,10 @@
   other: "   Ejecución paralela:  ❌ desactivada"
 - id: nornicdbcli.serve.memory_limit
   other: "   Límite de memoria:   {{.Value}}"
+- id: nornicdbcli.serve.memory_limit_cgroup
+  other: "   Límite de memoria:   {{.Value}} ({{.Percent}} % del límite del contenedor, {{.Cgroup}})"
+- id: nornicdbcli.serve.memory_limit_clamped
+  other: "⚠️  Advertencia: el límite de memoria {{.Configured}} supera el límite de memoria del contenedor ({{.Cgroup}}) y no evitaría que el sistema terminase el proceso por falta de memoria; se usa {{.Value}}"
 - id: nornicdbcli.serve.memory_unlimited
   other: "   Límite de memoria:   ilimitado"
 - id: nornicdbcli.serve.gc_percent
@@ -315,3 +331,15 @@
   other: "no se pudo leer la entrada: {{.Cause}}"
 - id: nornicdbcli.decay.load_nodes_failed
   other: "no se pudieron cargar los nodos: {{.Cause}}"
+- id: nornicdbcli.stemmer.short
+  other: Operaciones con plugins de lematización
+- id: nornicdbcli.stemmer.check.short
+  other: Comprueba que un plugin de lematización se carga en este binario, igual que al arrancar
+- id: nornicdbcli.flag.stemmer_check_timeout
+  other: Tiempo máximo para cargar el plugin
+- id: nornicdbcli.stemmer.check.ok
+  other: "El plugin de lematización {{.ID}} {{.Version}} se carga: {{.Path}}"
+- id: nornicdbcli.stemmer.check_failed
+  other: "el plugin de lematización {{.Manifest}} no se carga: {{.Cause}}"
+- id: nornicdbcli.stemmer.check_timed_out
+  other: "el plugin de lematización {{.Manifest}} no terminó de cargarse en {{.Timeout}}"

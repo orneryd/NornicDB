@@ -28,25 +28,25 @@ func TestTransactionStorageWrapper_PrefixHelpers(t *testing.T) {
 func TestTransactionStorageWrapper_CreateGetDelete_WithNamespace(t *testing.T) {
 	eng := newTestMemoryEngine(t)
 	defer eng.Close()
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 
 	w := &transactionStorageWrapper{tx: tx, underlying: eng, namespace: "tenant", separator: ":"}
 
 	n := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}}
-	createdID, err := w.CreateNode(n)
+	createdID, err := w.CreateNode(t.Context(), n)
 	require.NoError(t, err)
 	assert.Equal(t, storage.NodeID("n1"), createdID)
 
-	got, err := w.GetNode("n1")
+	got, err := w.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, storage.NodeID("n1"), got.ID)
 
-	err = w.UpdateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	err = w.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}}})
 	require.NoError(t, err)
 
-	err = w.DeleteNode("n1")
+	err = w.DeleteNode(t.Context(), "n1")
 	require.NoError(t, err)
 }
 
@@ -56,7 +56,7 @@ func TestTransactionStorageWrapper_NamespaceIsolation(t *testing.T) {
 		{"tenant:own", "Shared"}, {"tenant:removed", "Shared"},
 		{"tenantb:other", "Shared"}, {"system:admin", "_User"},
 	} {
-		_, err := eng.CreateNode(&storage.Node{ID: storage.NodeID(item.id), Labels: []string{item.label}, Properties: map[string]interface{}{"secret": item.id}})
+		_, err := eng.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(item.id), Labels: []string{item.label}, Properties: map[string]interface{}{"secret": item.id}})
 		require.NoError(t, err)
 	}
 	for _, id := range []storage.EdgeID{"tenant:edge", "tenantb:edge"} {
@@ -64,18 +64,18 @@ func TestTransactionStorageWrapper_NamespaceIsolation(t *testing.T) {
 		if id == "tenantb:edge" {
 			prefix = "tenantb"
 		}
-		require.NoError(t, eng.CreateEdge(&storage.Edge{ID: id, StartNode: storage.NodeID(prefix + ":" + map[string]string{"tenant": "own", "tenantb": "other"}[prefix]), EndNode: storage.NodeID(prefix + ":" + map[string]string{"tenant": "own", "tenantb": "other"}[prefix]), Type: "REL"}))
+		require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{ID: id, StartNode: storage.NodeID(prefix + ":" + map[string]string{"tenant": "own", "tenantb": "other"}[prefix]), EndNode: storage.NodeID(prefix + ":" + map[string]string{"tenant": "own", "tenantb": "other"}[prefix]), Type: "REL"}))
 	}
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	w := &transactionStorageWrapper{tx: tx, underlying: storage.NewNamespacedEngine(eng, "tenant"), namespace: "tenant", separator: ":"}
-	require.NoError(t, w.DeleteNode("removed"))
-	_, err = w.CreateNode(&storage.Node{ID: "pending", Labels: []string{"Shared"}})
+	require.NoError(t, w.DeleteNode(t.Context(), "removed"))
+	_, err = w.CreateNode(t.Context(), &storage.Node{ID: "pending", Labels: []string{"Shared"}})
 	require.NoError(t, err)
-	require.NoError(t, w.CreateEdge(&storage.Edge{ID: "pending-edge", StartNode: "own", EndNode: "pending", Type: "REL"}))
+	require.NoError(t, w.CreateEdge(t.Context(), &storage.Edge{ID: "pending-edge", StartNode: "own", EndNode: "pending", Type: "REL"}))
 
-	for _, read := range []func() ([]*storage.Node, error){w.AllNodes, func() ([]*storage.Node, error) { return w.GetAllNodes(), nil }, func() ([]*storage.Node, error) { return w.GetNodesByLabel("Shared") }} {
+	for _, read := range []func() ([]*storage.Node, error){func() ([]*storage.Node, error) { return w.AllNodes(context.Background()) }, func() ([]*storage.Node, error) { return w.GetNodesByLabel(context.Background(), "Shared") }} {
 		nodes, err := read()
 		require.NoError(t, err)
 		ids := make([]storage.NodeID, 0, len(nodes))
@@ -84,13 +84,13 @@ func TestTransactionStorageWrapper_NamespaceIsolation(t *testing.T) {
 		}
 		require.ElementsMatch(t, []storage.NodeID{"own", "pending"}, ids)
 	}
-	users, err := w.GetNodesByLabel("_User")
+	users, err := w.GetNodesByLabel(context.Background(), "_User")
 	require.NoError(t, err)
 	require.Empty(t, users)
-	count, err := w.NodeCountByLabel("Shared")
+	count, err := w.NodeCountByLabel(t.Context(), "Shared")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), count)
-	edges, err := w.AllEdges()
+	edges, err := w.AllEdges(context.Background())
 	require.NoError(t, err)
 	ids := make([]storage.EdgeID, 0, len(edges))
 	for _, edge := range edges {
@@ -104,14 +104,14 @@ func TestTransactionStorageWrapper_BulkOps_AndCounts(t *testing.T) {
 	defer eng.Close()
 
 	// Seed underlying storage first so the transaction snapshot can read/delete them.
-	_, err := eng.CreateNode(&storage.Node{ID: "test:r1", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "test:r1", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "test:r2", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "test:r2", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{ID: "test:re1", StartNode: "test:r1", EndNode: "test:r2", Type: "REL", Properties: map[string]interface{}{}})
+	err = eng.CreateEdge(t.Context(), &storage.Edge{ID: "test:re1", StartNode: "test:r1", EndNode: "test:r2", Type: "REL", Properties: map[string]interface{}{}})
 	require.NoError(t, err)
 
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -123,48 +123,54 @@ func TestTransactionStorageWrapper_BulkOps_AndCounts(t *testing.T) {
 		{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}},
 		{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{}},
 	}
-	require.NoError(t, w.BulkCreateNodes(nodes))
+	require.NoError(t, w.BulkCreateNodes(t.Context(), nodes))
 
 	edges := []*storage.Edge{{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL", Properties: map[string]interface{}{}}}
-	require.NoError(t, w.BulkCreateEdges(edges))
+	require.NoError(t, w.BulkCreateEdges(t.Context(), edges))
 
 	// BatchGetNodes and delegate methods
-	gotMap, err := w.BatchGetNodes([]storage.NodeID{"test:r1", "test:r2"})
+	gotMap, err := w.BatchGetNodes(context.Background(), []storage.NodeID{"test:r1", "test:r2"})
 	require.NoError(t, err)
 	assert.Len(t, gotMap, 2)
 
-	allNodes, err := w.AllNodes()
+	allNodes, err := w.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(allNodes), 2)
 
-	allEdges, err := w.AllEdges()
+	allEdges, err := w.AllEdges(context.Background())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(allEdges), 1)
 
-	firstByLabel, err := w.GetFirstNodeByLabel("Person")
+	firstByLabel, err := w.GetFirstNodeByLabel(t.Context(), "Person")
 	require.NoError(t, err)
 	assert.NotNil(t, firstByLabel)
 
-	edgesBetween, err := w.GetEdgesBetween("test:r1", "test:r2")
+	edgesBetween, err := w.GetEdgesBetween(context.Background(), "test:r1", "test:r2")
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(edgesBetween), 1)
 
-	edgesByType, err := w.GetEdgesByType("REL")
+	edgesByType, err := w.GetEdgesByType(context.Background(), "REL")
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(edgesByType), 1)
 
-	assert.GreaterOrEqual(t, len(w.GetAllNodes()), 2)
-	assert.GreaterOrEqual(t, w.GetOutDegree("test:r1"), 0)
-	assert.GreaterOrEqual(t, w.GetInDegree("test:r2"), 0)
+	allNodes, err = w.AllNodes(context.Background())
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(allNodes), 2)
+	outDegree, err := w.GetOutDegree(t.Context(), "test:r1")
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, outDegree, 0)
+	inDegree, err := w.GetInDegree(t.Context(), "test:r2")
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, inDegree, 0)
 	assert.NotNil(t, w.GetSchema())
 
-	_, err = w.NodeCount()
+	_, err = w.NodeCount(t.Context())
 	require.NoError(t, err)
-	_, err = w.EdgeCount()
+	_, err = w.EdgeCount(t.Context())
 	require.NoError(t, err)
 
-	require.NoError(t, w.BulkDeleteEdges([]storage.EdgeID{"test:re1"}))
-	require.NoError(t, w.BulkDeleteNodes([]storage.NodeID{"test:r1", "test:r2"}))
+	require.NoError(t, w.BulkDeleteEdges(t.Context(), []storage.EdgeID{"test:re1"}))
+	require.NoError(t, w.BulkDeleteNodes(t.Context(), []storage.NodeID{"test:r1", "test:r2"}))
 
 	err = w.Close()
 	require.NoError(t, err)
@@ -177,7 +183,7 @@ func TestTransactionStorageWrapper_BulkOps_WithNamespace(t *testing.T) {
 	eng := newTestMemoryEngine(t)
 	defer eng.Close()
 
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -187,22 +193,22 @@ func TestTransactionStorageWrapper_BulkOps_WithNamespace(t *testing.T) {
 		{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "a"}},
 		{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "b"}},
 	}
-	require.NoError(t, w.BulkCreateNodes(nodes))
+	require.NoError(t, w.BulkCreateNodes(t.Context(), nodes))
 
 	edges := []*storage.Edge{
 		{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS", Properties: map[string]interface{}{}},
 	}
-	require.NoError(t, w.BulkCreateEdges(edges))
+	require.NoError(t, w.BulkCreateEdges(t.Context(), edges))
 
 	require.NoError(t, tx.Commit())
 
 	// Ensure transactional create path wrote namespaced IDs.
-	createdNode, err := eng.GetNode("tenant:n1")
+	createdNode, err := eng.GetNode(t.Context(), "tenant:n1")
 	require.NoError(t, err)
 	require.NotNil(t, createdNode)
 	assert.Equal(t, storage.NodeID("tenant:n1"), createdNode.ID)
 
-	createdEdge, err := eng.GetEdge("tenant:e1")
+	createdEdge, err := eng.GetEdge(t.Context(), "tenant:e1")
 	require.NoError(t, err)
 	require.NotNil(t, createdEdge)
 	assert.Equal(t, storage.EdgeID("tenant:e1"), createdEdge.ID)
@@ -215,38 +221,38 @@ func TestTransactionStorageWrapper_BulkDeleteEdges_WithNamespaceInvalidatesPrelo
 	defer eng.Close()
 
 	ns := storage.NewNamespacedEngine(eng, "tenant")
-	_, err := ns.CreateNode(&storage.Node{ID: "a", Labels: []string{"Entity"}})
+	_, err := ns.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Entity"}})
 	require.NoError(t, err)
-	_, err = ns.CreateNode(&storage.Node{ID: "b", Labels: []string{"Entity"}})
+	_, err = ns.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Entity"}})
 	require.NoError(t, err)
-	_, err = ns.CreateNode(&storage.Node{ID: "ep", Labels: []string{"Episodic"}})
+	_, err = ns.CreateNode(t.Context(), &storage.Node{ID: "ep", Labels: []string{"Episodic"}})
 	require.NoError(t, err)
-	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "r1", StartNode: "a", EndNode: "b", Type: "RELATES_TO", Properties: map[string]interface{}{"uuid": "r1"}}))
-	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "m1", StartNode: "ep", EndNode: "a", Type: "MENTIONS", Properties: map[string]interface{}{"uuid": "m1"}}))
+	require.NoError(t, ns.CreateEdge(t.Context(), &storage.Edge{ID: "r1", StartNode: "a", EndNode: "b", Type: "RELATES_TO", Properties: map[string]interface{}{"uuid": "r1"}}))
+	require.NoError(t, ns.CreateEdge(t.Context(), &storage.Edge{ID: "m1", StartNode: "ep", EndNode: "a", Type: "MENTIONS", Properties: map[string]interface{}{"uuid": "m1"}}))
 
-	byType, err := ns.GetEdgesByType("RELATES_TO")
+	byType, err := ns.GetEdgesByType(context.Background(), "RELATES_TO")
 	require.NoError(t, err)
 	require.Len(t, byType, 1)
-	outgoingA, err := ns.GetOutgoingEdges("a")
+	outgoingA, err := ns.GetOutgoingEdges(context.Background(), "a")
 	require.NoError(t, err)
 	require.Len(t, outgoingA, 1)
-	outgoingEP, err := ns.GetOutgoingEdges("ep")
+	outgoingEP, err := ns.GetOutgoingEdges(context.Background(), "ep")
 	require.NoError(t, err)
 	require.Len(t, outgoingEP, 1)
 
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	w := &transactionStorageWrapper{tx: tx, underlying: eng, namespace: "tenant", separator: ":"}
-	require.NoError(t, w.BulkDeleteEdges([]storage.EdgeID{"r1", "m1"}))
+	require.NoError(t, w.BulkDeleteEdges(t.Context(), []storage.EdgeID{"r1", "m1"}))
 	require.NoError(t, tx.Commit())
 
-	byType, err = ns.GetEdgesByType("RELATES_TO")
+	byType, err = ns.GetEdgesByType(context.Background(), "RELATES_TO")
 	require.NoError(t, err)
 	require.Empty(t, byType)
-	outgoingA, err = ns.GetOutgoingEdges("a")
+	outgoingA, err = ns.GetOutgoingEdges(context.Background(), "a")
 	require.NoError(t, err)
 	require.Empty(t, outgoingA)
-	outgoingEP, err = ns.GetOutgoingEdges("ep")
+	outgoingEP, err = ns.GetOutgoingEdges(context.Background(), "ep")
 	require.NoError(t, err)
 	require.Empty(t, outgoingEP)
 }
@@ -266,16 +272,16 @@ func TestTransactionStorageWrapper_BulkDelete_ErrorPaths(t *testing.T) {
 	eng := newTestMemoryEngine(t)
 	defer eng.Close()
 
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 
 	w := &transactionStorageWrapper{tx: tx, underlying: eng, namespace: "", separator: ":"}
 
-	err = w.BulkDeleteNodes([]storage.NodeID{"missing-node"})
+	err = w.BulkDeleteNodes(t.Context(), []storage.NodeID{"missing-node"})
 	require.Error(t, err)
 
-	err = w.BulkDeleteEdges([]storage.EdgeID{"missing-edge"})
+	err = w.BulkDeleteEdges(t.Context(), []storage.EdgeID{"missing-edge"})
 	require.Error(t, err)
 }
 
@@ -283,29 +289,29 @@ func TestTransactionStorageWrapper_BulkCreate_ErrorPaths(t *testing.T) {
 	eng := newTestMemoryEngine(t)
 	defer eng.Close()
 
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 
 	// Non-namespaced bulk create: duplicate ID should fail on second create.
 	w := &transactionStorageWrapper{tx: tx, underlying: eng, namespace: "", separator: ":"}
-	err = w.BulkCreateNodes([]*storage.Node{
+	err = w.BulkCreateNodes(t.Context(), []*storage.Node{
 		{ID: "dup", Labels: []string{"X"}, Properties: map[string]interface{}{}},
 		{ID: "dup", Labels: []string{"X"}, Properties: map[string]interface{}{}},
 	})
 	require.Error(t, err)
 
 	// Namespaced bulk edge create: duplicate edge ID should fail.
-	tx2, err := eng.BeginTransaction()
+	tx2, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx2.Rollback()
 	wNS := &transactionStorageWrapper{tx: tx2, underlying: eng, namespace: "tenant", separator: ":"}
-	err = wNS.BulkCreateNodes([]*storage.Node{
+	err = wNS.BulkCreateNodes(t.Context(), []*storage.Node{
 		{ID: "n1", Labels: []string{"X"}, Properties: map[string]interface{}{}},
 		{ID: "n2", Labels: []string{"X"}, Properties: map[string]interface{}{}},
 	})
 	require.NoError(t, err)
-	err = wNS.BulkCreateEdges([]*storage.Edge{
+	err = wNS.BulkCreateEdges(t.Context(), []*storage.Edge{
 		{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL", Properties: map[string]interface{}{}},
 		{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL", Properties: map[string]interface{}{}},
 	})
@@ -332,7 +338,7 @@ func TestExecuteSetTrailingUnwind_ErrorAndProjectionBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = exec.Execute(context.Background(), "UNWIND [1,2,3] RETURN 1", nil)
-	requireSyntaxErrorStatus(t, err, "UNWIND [1,2,3] RETURN 1")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "UNWIND [1,2,3] RETURN 1")
 
 	_, err = exec.sharedTrailingRowsForTest(context.Background(), "UNWIND [1,2,3] AS item", matchResult, &ExecuteResult{})
 	require.NoError(t, err)
@@ -380,7 +386,7 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 
 	makeNode := func(id string) *storage.Node {
 		n := &storage.Node{ID: storage.NodeID(id), Labels: []string{"N"}, Properties: map[string]interface{}{}}
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 		return n
 	}
@@ -389,14 +395,14 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 	b := makeNode("b")
 
 	t.Run("parse error", func(t *testing.T) {
-		_, err := exec.createPatternsInScope(ctx, "(a)-[:KNOWS]->", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
+		_, err := exec.planCreatePatterns(ctx, "(a)-[:KNOWS]->", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, nil, &ExecuteResult{Stats: &QueryStats{}})
 		require.Error(t, err)
 	})
 
 	t.Run("unbound endpoint creates and binds node", func(t *testing.T) {
 		nodeCtx := map[string]*storage.Node{"a": a}
 		result := &ExecuteResult{Stats: &QueryStats{}}
-		_, err := exec.createPatternsInScope(ctx, "(a)-[:KNOWS]->(missing)", nodeCtx, map[string]*storage.Edge{}, result)
+		_, err := exec.planCreatePatterns(ctx, "(a)-[:KNOWS]->(missing)", nodeCtx, map[string]*storage.Edge{}, nil, result)
 		require.NoError(t, err)
 		require.Contains(t, nodeCtx, "missing")
 		require.Equal(t, 1, result.Stats.NodesCreated)
@@ -404,7 +410,7 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 	})
 
 	t.Run("relationship type required", func(t *testing.T) {
-		_, err := exec.createPatternsInScope(ctx, "(a)-[r]->(b)", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
+		_, err := exec.planCreatePatterns(ctx, "(a)-[r]->(b)", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, nil, &ExecuteResult{Stats: &QueryStats{}})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "relationship type is required")
 	})
@@ -413,7 +419,7 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 		edgeCtx := map[string]*storage.Edge{}
 		result := &ExecuteResult{Stats: &QueryStats{}}
 
-		_, err := exec.createPatternsInScope(ctx, "(a)-[r:KNOWS {since: 2020}]->(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result)
+		_, err := exec.planCreatePatterns(ctx, "(a)-[r:KNOWS {since: 2020}]->(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, nil, result)
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Stats.RelationshipsCreated)
 		require.Contains(t, edgeCtx, "r")
@@ -422,7 +428,7 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 		assert.EqualValues(t, 2020, edgeCtx["r"].Properties["since"])
 
 		result2 := &ExecuteResult{Stats: &QueryStats{}}
-		_, err = exec.createPatternsInScope(ctx, "(a)<-[r2:KNOWS]-(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result2)
+		_, err = exec.planCreatePatterns(ctx, "(a)<-[r2:KNOWS]-(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, nil, result2)
 		require.NoError(t, err)
 		require.Contains(t, edgeCtx, "r2")
 		assert.Equal(t, storage.NodeID("b"), edgeCtx["r2"].StartNode)

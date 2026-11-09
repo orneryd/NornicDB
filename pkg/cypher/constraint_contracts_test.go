@@ -49,7 +49,7 @@ func TestConstraintContract_ShowAndCompiledPrimitives(t *testing.T) {
 		require.NotEqual(t, "person_contract", name)
 	}
 
-	allContracts := store.GetSchema().GetAllConstraintContracts()
+	allContracts := constraintContractsForTest(t, store.GetSchema())
 	require.Len(t, allContracts, 1)
 	require.Equal(t, "person_contract", allContracts[0].Name)
 	require.Len(t, allContracts[0].Entries, 8)

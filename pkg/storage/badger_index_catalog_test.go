@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -18,7 +20,7 @@ func TestIndexCatalog_PutAndGet(t *testing.T) {
 		},
 	}
 
-	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
+	if err := eng.PutIndexEntryCatalog(context.Background(), "nornic:node1", cat); err != nil {
 		t.Fatal(err)
 	}
 
@@ -57,7 +59,7 @@ func TestIndexCatalog_Delete(t *testing.T) {
 		TargetScope: "NODE",
 		IndexKeys:   [][]byte{labelIndexKey("person", 1)},
 	}
-	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
+	if err := eng.PutIndexEntryCatalog(context.Background(), "nornic:node1", cat); err != nil {
 		t.Fatal(err)
 	}
 	if err := eng.DeleteIndexEntryCatalog("nornic:node1"); err != nil {
@@ -81,7 +83,7 @@ func TestIndexCatalog_DeindexedFlag(t *testing.T) {
 		IndexKeys:   [][]byte{labelIndexKey("person", 1)},
 		Deindexed:   true,
 	}
-	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
+	if err := eng.PutIndexEntryCatalog(context.Background(), "nornic:node1", cat); err != nil {
 		t.Fatal(err)
 	}
 
@@ -94,72 +96,74 @@ func TestIndexCatalog_DeindexedFlag(t *testing.T) {
 	}
 }
 
-func TestIndexCatalog_CollectNodeIndexKeys(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = engine.Close() })
-	// Seed a numID so the compact collector returns the expected keys.
-	if err := engine.withUpdate(func(txn *badger.Txn) error {
-		_, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "nornic:n1")
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	keys := engine.collectNodeIndexKeys("nornic:n1", []string{"Person", "User"})
-	if len(keys) != 2 {
-		t.Fatalf("expected 2 keys, got %d", len(keys))
-	}
-	for _, k := range keys {
-		if k[0] != prefixLabelIndex {
-			t.Errorf("expected prefix 0x%02x, got 0x%02x", prefixLabelIndex, k[0])
-		}
-	}
-}
-
-func TestIndexCatalog_CollectEdgeIndexKeys(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = engine.Close() })
-	// Pre-seed the dict so the edge-between key makes it into the catalog.
-	err = engine.withUpdate(func(txn *badger.Txn) error {
-		if _, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "nornic:a"); err != nil {
-			return err
-		}
-		if _, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "nornic:b"); err != nil {
-			return err
-		}
-		_, err := engine.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, "nornic:e1")
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	keys := engine.collectEdgeIndexKeys("nornic:e1", "nornic:a", "nornic:b", "KNOWS")
-	if len(keys) != 4 {
-		t.Fatalf("expected 4 keys, got %d", len(keys))
-	}
-	prefixes := map[byte]bool{
-		prefixOutgoingIndex:    false,
-		prefixIncomingIndex:    false,
-		prefixEdgeTypeIndex:    false,
-		prefixEdgeBetweenIndex: false,
-	}
-	for _, k := range keys {
-		prefixes[k[0]] = true
-	}
-	for p, found := range prefixes {
-		if !found {
-			t.Errorf("missing prefix 0x%02x in edge index keys", p)
-		}
-	}
-	for _, k := range keys {
-		if k[0] == prefixEdgeBetweenHead {
-			t.Fatal("edge head key must not be cataloged per-edge because it is shared across same-type siblings")
-		}
+func TestIndexCatalog_CollectIndexKeys(t *testing.T) {
+	for _, kind := range []string{"node", "edge"} {
+		t.Run(kind, func(t *testing.T) {
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+			if engine != nil {
+				fixtureowner.Own(t, engine)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = engine.Close() })
+			if kind == "node" {
+				// Seed a numID so the compact collector returns the expected keys.
+				if err := engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+					_, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, NodeID("nornic:n1"))
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+				keys := engine.collectNodeIndexKeys("nornic:n1", []string{"Person", "User"})
+				if len(keys) != 2 {
+					t.Fatalf("expected 2 keys, got %d", len(keys))
+				}
+				for _, k := range keys {
+					if k[0] != prefixLabelIndex {
+						t.Errorf("expected prefix 0x%02x, got 0x%02x", prefixLabelIndex, k[0])
+					}
+				}
+				return
+			}
+			// Pre-seed the dict so the edge-between key makes it into the catalog.
+			err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+				if _, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, NodeID("nornic:a")); err != nil {
+					return err
+				}
+				if _, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, NodeID("nornic:b")); err != nil {
+					return err
+				}
+				_, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, EdgeID("nornic:e1"))
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			keys := engine.collectEdgeIndexKeys("nornic:e1", "nornic:a", "nornic:b", "KNOWS")
+			if len(keys) != 4 {
+				t.Fatalf("expected 4 keys, got %d", len(keys))
+			}
+			prefixes := map[byte]bool{
+				prefixOutgoingIndex:    false,
+				prefixIncomingIndex:    false,
+				prefixEdgeTypeIndex:    false,
+				prefixEdgeBetweenIndex: false,
+			}
+			for _, k := range keys {
+				prefixes[k[0]] = true
+			}
+			for p, found := range prefixes {
+				if !found {
+					t.Errorf("missing prefix 0x%02x in edge index keys", p)
+				}
+			}
+			for _, k := range keys {
+				if k[0] == prefixEdgeBetweenHead {
+					t.Fatal("edge head key must not be cataloged per-edge because it is shared across same-type siblings")
+				}
+			}
+		})
 	}
 }
 
@@ -171,7 +175,7 @@ func TestIndexCatalog_WrittenOnCreateNode(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
@@ -198,11 +202,11 @@ func TestIndexCatalog_DeletedOnDeleteNode(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := eng.DeleteNode("nornic:del_cat"); err != nil {
+	if err := eng.DeleteNode(t.Context(), "nornic:del_cat"); err != nil {
 		t.Fatal(err)
 	}
 

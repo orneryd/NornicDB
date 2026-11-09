@@ -1,6 +1,8 @@
 package cypher_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -11,20 +13,20 @@ import (
 )
 
 func TestDatabaseManagerStorageExposesQueryLimitsToExecutor(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
-	manager, err := multidb.NewDatabaseManager(inner, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
 
-	require.NoError(t, manager.SetDatabaseLimits("nornic", &multidb.Limits{
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "nornic", &multidb.Limits{
 		Query: multidb.QueryLimits{MaxResults: 1},
 		Rate:  multidb.RateLimits{MaxQueriesPerSecond: 1},
 	}))
 	engine, err := manager.GetStorage("nornic")
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"one", "two"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Item"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Item"}})
 		require.NoError(t, err)
 	}
 	executor := cypher.NewStorageExecutor(engine)

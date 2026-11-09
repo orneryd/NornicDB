@@ -39,7 +39,7 @@ func TestCancelledVariableLengthStatementReturnsError(t *testing.T) {
 		defer cancel()
 		root := &storage.Node{ID: "root", Labels: []string{"CancelRoot"}}
 		engine := &cancellationTraversalEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "cancel"), nodes: map[storage.NodeID]*storage.Node{"root": root}, cancel: cancel, cancelAt: 3}
-		_, err := engine.Engine.CreateNode(root)
+		_, err := engine.Engine.CreateNode(t.Context(), root)
 		require.NoError(t, err)
 		for i := 0; i < 64; i++ {
 			id := storage.NodeID(fmt.Sprintf("n%d", i))
@@ -78,7 +78,7 @@ func TestTraversalParentRelayHasBoundedWork(t *testing.T) {
 			defer statement.cancel(context.Canceled)
 			e := NewStorageExecutor(engine)
 			state := e.newTraversalContext(statement, root, &RelationshipPattern{Direction: "outgoing", MinHops: 1, MaxHops: 3})
-			paths := e.findPaths(state, root, []*storage.Node{root}, nil, 0, nil)
+			paths := e.findPaths(state, root, []*storage.Node{root}, nil, 0, nil, nil)
 			require.ErrorIs(t, parent.Err(), want)
 			require.LessOrEqual(t, engine.reads, 3, "canceled parent must bound work before its relay callback")
 			require.LessOrEqual(t, len(paths), 1)

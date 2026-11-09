@@ -59,26 +59,26 @@ func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 	ctx := context.Background()
 	rows := []pipelineRow{{"x": int64(1)}}
 
-	out, _, ok, err := exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x)")
-	requireSyntaxErrorStatus(t, err, "non-void procedure without explicit YIELD")
+	out, _, ok, err := exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x)", nil)
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "non-void procedure without explicit YIELD")
 	require.True(t, ok)
 	require.Nil(t, out)
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(count(x)) YIELD echoed")
+	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(count(x)) YIELD echoed", nil)
 	require.True(t, ok)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "aggregate")
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x % 0) YIELD echoed")
+	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x % 0) YIELD echoed", nil)
 	require.True(t, ok)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "/ by zero")
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.fail(x) YIELD echoed")
+	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.fail(x) YIELD echoed", nil)
 	require.True(t, ok)
 	require.Error(t, err)
 
-	out, yielded, ok, err := exec.pipelineApplyProcedureCall(ctx, []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}, "CALL cov.echo(x) YIELD echoed WHERE echoed > 1")
+	out, yielded, ok, err := exec.pipelineApplyProcedureCall(ctx, []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}, "CALL cov.echo(x) YIELD echoed WHERE echoed > 1", nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []string{"echoed"}, yielded)
@@ -86,16 +86,16 @@ func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 }
 
 func TestExplicitProcedureArgumentTexts_EmptyAndNested(t *testing.T) {
-	arguments := explicitProcedureArgumentTexts("CALL db.labels")
+	arguments := explicitProcedureArgumentTexts(t.Context(), "CALL db.labels")
 	require.Nil(t, arguments)
 
-	arguments = explicitProcedureArgumentTexts("CALL cov.echo(1")
+	arguments = explicitProcedureArgumentTexts(t.Context(), "CALL cov.echo(1")
 	require.Nil(t, arguments)
 
-	arguments = explicitProcedureArgumentTexts("CALL cov.echo()")
+	arguments = explicitProcedureArgumentTexts(t.Context(), "CALL cov.echo()")
 	require.NotNil(t, arguments)
 	require.Empty(t, arguments)
-	arguments = explicitProcedureArgumentTexts("CALL cov.echo(1, [2, 3])")
+	arguments = explicitProcedureArgumentTexts(t.Context(), "CALL cov.echo(1, [2, 3])")
 	require.Equal(t, []string{"1", "[2, 3]"}, arguments)
 }
 
@@ -113,9 +113,15 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
-	yield := parseYieldClause("CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1")
-	require.NotNil(t, yield)
-	err = exec.validateYieldModifiers(yield, true)
+	malformed := "CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1"
+	require.Nil(t, parseYieldClause(t.Context(), malformed))
+	_, err = exec.Execute(ctx, malformed, nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	// The modifier validator also rejects an explicitly constructed invalid
+	// modifier order; the canonical parser never admits that sequence.
+	yield := &yieldClause{items: []yieldItem{{name: "echoed"}}, orderBy: "echoed", where: "echoed = 1", misplacedWhere: true}
+	err = exec.validateYieldModifiers(context.Background(), yield, true)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
@@ -123,8 +129,8 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 		"CALL cov.echo(1) YIELD echoed SKIP -1",
 		"CALL cov.echo(1) YIELD echoed LIMIT -1",
 	} {
-		yield := parseYieldClause(call)
+		yield := parseYieldClause(t.Context(), call)
 		require.NotNil(t, yield, call)
-		require.Error(t, exec.validateYieldModifiers(yield, true), call)
+		require.Error(t, exec.validateYieldModifiers(context.Background(), yield, true), call)
 	}
 }

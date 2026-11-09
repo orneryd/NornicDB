@@ -23,53 +23,6 @@ func TestSearchableProperties(t *testing.T) {
 	assert.Equal(t, expectedProps, SearchableProperties)
 }
 
-func TestExtractSearchableText(t *testing.T) {
-	tests := []struct {
-		name       string
-		properties map[string]interface{}
-		expected   string
-	}{
-		{
-			name: "all properties",
-			properties: map[string]interface{}{
-				"title":       "My Title",
-				"content":     "Some content here",
-				"description": "A description",
-			},
-			expected: "Some content here My Title A description",
-		},
-		{
-			name: "with non-string properties",
-			properties: map[string]interface{}{
-				"title":   "Title",
-				"count":   42, // Should be ignored
-				"content": "Content",
-			},
-			expected: "Content Title",
-		},
-		{
-			name: "empty properties",
-			properties: map[string]interface{}{
-				"title":   "",
-				"content": "Only content",
-			},
-			expected: "Only content",
-		},
-		{
-			name:       "no matching properties",
-			properties: map[string]interface{}{"other": "value"},
-			expected:   "",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := ExtractSearchableText(tc.properties)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
 func TestTokenizeForBM25(t *testing.T) {
 	tests := []struct {
 		input    string

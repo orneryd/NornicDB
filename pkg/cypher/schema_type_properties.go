@@ -1,7 +1,12 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
+	"github.com/orneryd/nornicdb/internal/collection"
 	"sort"
 	"strings"
 
@@ -29,23 +34,12 @@ func schemaTypePropertiesProcedureSpec(name string, nodes bool) ProcedureSpec {
 		WorksOnSystem:      true,
 	}
 	if nodes {
-		spec.Signature = name + "() :: (nodeType :: STRING, nodeLabels :: LIST<STRING>, propertyName :: STRING, propertyTypes :: LIST<STRING>, mandatory :: BOOLEAN)"
-		spec.Returns = []ProcedureColumn{
-			{Name: "nodeType", Type: "STRING", Description: "A name generated from the labels on the node."},
-			{Name: "nodeLabels", Type: "LIST<STRING>", Description: "A list containing the labels on a category of node."},
-			{Name: "propertyName", Type: "STRING", Description: "A property key on a category of node."},
-			{Name: "propertyTypes", Type: "LIST<STRING>", Description: "All types of a property belonging to a node category."},
-			{Name: "mandatory", Type: "BOOLEAN", Description: "Whether or not the property is present on all nodes belonging to a node category."},
-		}
+		spec.Signature = name + "()"
+		spec.Returns = schemaTypePropertiesColumns(nodes)
 		return spec
 	}
-	spec.Signature = name + "() :: (relType :: STRING, propertyName :: STRING, propertyTypes :: LIST<STRING>, mandatory :: BOOLEAN)"
-	spec.Returns = []ProcedureColumn{
-		{Name: "relType", Type: "STRING", Description: "A name generated from the type on the relationship."},
-		{Name: "propertyName", Type: "STRING", Description: "A property key on a category of relationship."},
-		{Name: "propertyTypes", Type: "LIST<STRING>", Description: "All types of a property belonging to a relationship category."},
-		{Name: "mandatory", Type: "BOOLEAN", Description: "Whether or not the property is present on all relationships belonging to a relationship category."},
-	}
+	spec.Signature = name + "()"
+	spec.Returns = schemaTypePropertiesColumns(nodes)
 	return spec
 }
 
@@ -89,7 +83,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		return found
 	}
 	if nodes {
-		all, err := e.storage.AllNodes()
+		all, err := e.storage.AllNodes(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -99,7 +93,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 			category(schemaTypeKey(labels), labels).add(node.Properties, cypher25)
 		}
 	} else {
-		all, err := e.storage.AllEdges()
+		all, err := e.storage.AllEdges(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -113,10 +107,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	result := &ExecuteResult{Columns: []string{"relType", "propertyName", "propertyTypes", "mandatory"}, Rows: [][]interface{}{}}
-	if nodes {
-		result.Columns = []string{"nodeType", "nodeLabels", "propertyName", "propertyTypes", "mandatory"}
-	}
+	result := &ExecuteResult{Columns: columnNames(schemaTypePropertiesColumns(nodes)), Rows: [][]interface{}{}}
 	for _, key := range keys {
 		found := categories[key]
 		head := []interface{}{key}
@@ -134,7 +125,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		sort.Strings(names)
 		for _, name := range names {
 			property := found.properties[name]
-			row := append(append([]interface{}(nil), head...), name, sortedStringSet(property.types), property.members == found.members)
+			row := append(append([]interface{}(nil), head...), name, collection.SortedKeys(property.types), property.members == found.members)
 			result.Rows = append(result.Rows, row)
 		}
 	}
@@ -146,7 +137,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 func schemaTypeKey(names []string) string {
 	var key strings.Builder
 	for _, name := range names {
-		key.WriteString(":" + quoteSchemaName(name))
+		key.WriteString(":" + cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource))
 	}
 	return key.String()
 }

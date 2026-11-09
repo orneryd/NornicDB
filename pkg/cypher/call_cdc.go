@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"encoding/base64"
 	"encoding/binary"
@@ -9,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -21,13 +24,13 @@ import (
 // capturesChanges reports whether the executor's database captures changes.
 func (e *StorageExecutor) capturesChanges() bool {
 	capture, ok := storage.ChangeCaptureOf(e.storage)
-	return ok && capture.ChangeCapture(e.currentDatabaseName()) != storage.ChangeCaptureOff
+	return ok && capture.ChangeCapture(e.databaseName()) != storage.ChangeCaptureOff
 }
 
 // changeCapture returns the executor's database and its change-capturing
 // engine; Neo4j's Disabled error when the database doesn't capture changes.
 func (e *StorageExecutor) changeCapture() (storage.ChangeCaptureEngine, string, error) {
-	database := e.currentDatabaseName()
+	database := e.databaseName()
 	capture, ok := storage.ChangeCaptureOf(e.storage)
 	if !ok || capture.ChangeCapture(database) == storage.ChangeCaptureOff {
 		return nil, database, localizedStatusError("Neo.DatabaseError.ChangeDataCapture.Disabled", "Disabled",
@@ -115,7 +118,7 @@ func (e *StorageExecutor) callDbCdcCurrent() (*ExecuteResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"id"}, Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), current)}}}, nil
+	return &ExecuteResult{Columns: columnNames(cdcPositionColumns), Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), current)}}}, nil
 }
 
 // callDbCdcEarliest is db.cdc.earliest(): the identifier just before the
@@ -129,7 +132,7 @@ func (e *StorageExecutor) callDbCdcEarliest() (*ExecuteResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"id"}, Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), earliest)}}}, nil
+	return &ExecuteResult{Columns: columnNames(cdcPositionColumns), Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), earliest)}}}, nil
 }
 
 // callDbCdcQuery is db.cdc.query(from = "", selectors = [], limit = null):
@@ -185,7 +188,7 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
 		databaseID, _ = provider.DatabaseIdentity(database)
 	}
-	result := &ExecuteResult{Columns: []string{"id", "txId", "seq", "metadata", "event"}, Rows: [][]interface{}{}}
+	result := &ExecuteResult{Columns: columnNames(dbCdcQueryColumns), Rows: [][]interface{}{}}
 	// Events are read a page at a time, so a large backlog isn't decoded at
 	// once, until the limit is reached or the events end.
 	const page = 1000
@@ -315,30 +318,19 @@ func nonNilStrings(values []string) []interface{} {
 // decodes integers into their smallest Go type and floats into float32 when
 // they fit; Cypher has INTEGER and FLOAT.
 func cdcValue(value interface{}) interface{} {
-	switch number := value.(type) {
-	case int8:
-		return int64(number)
-	case int16:
-		return int64(number)
-	case int32:
-		return int64(number)
-	case int:
-		return int64(number)
-	case uint8:
-		return int64(number)
-	case uint16:
-		return int64(number)
-	case uint32:
-		return int64(number)
-	case uint64:
-		if number <= math.MaxInt64 {
-			return int64(number)
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if signed, ok := number.Signed(); ok {
+			return signed
 		}
-		return float64(number)
-	case uint:
-		return int64(number)
-	case float32:
-		return float64(number)
+		if unsigned, ok := number.Unsigned(); ok {
+			if unsigned <= math.MaxInt64 {
+				return int64(unsigned)
+			}
+			return unsigned
+		}
+		return number.Float64()
+	}
+	switch number := value.(type) {
 	case []interface{}:
 		out := make([]interface{}, len(number))
 		for index, item := range number {
@@ -544,10 +536,8 @@ func (s *changeSelector) matches(database string, event *storage.ChangeEvent) bo
 	if len(s.key) > 0 && !keyMatches(event, s.key) {
 		return false
 	}
-	for key, want := range s.txMetadata {
-		if got, ok := event.TxMetadata[key]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
-			return false
-		}
+	if !holdsValues(event.TxMetadata, s.txMetadata) {
+		return false
 	}
 	if s.start != nil && !s.start.matchesEndpoint(database, event.Start, event.StartLabels) {
 		return false
@@ -620,7 +610,19 @@ func keyMatches(event *storage.ChangeEvent, key map[string]interface{}) bool {
 // holdsValues reports whether properties hold every one of values.
 func holdsValues(properties map[string]any, values map[string]interface{}) bool {
 	for name, want := range values {
-		if got, ok := properties[name]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
+		got, ok := properties[name]
+		if !ok {
+			return false
+		}
+		// Selector equality follows Cypher's exact numeric owner. Change
+		// detection deliberately retains its separate type-sensitive equality.
+		if equal, numeric := cypherNumericEquality(got, want); numeric {
+			if !equal {
+				return false
+			}
+			continue
+		}
+		if !reflect.DeepEqual(cdcValue(got), want) {
 			return false
 		}
 	}

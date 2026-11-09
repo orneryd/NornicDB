@@ -19,13 +19,13 @@ func TestHTTPEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	ctx := context.Background()
 	for _, name := range []string{"da", "db"} {
-		require.NoError(t, server.dbManager.CreateDatabase(name))
+		require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 	}
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "da", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "db", Type: "local", AccessMode: "read_write"},
 	}))
-	_, err := authenticator.CreateUser("limited", "password123", []auth.Role{auth.RoleEditor})
+	_, err := authenticator.CreateUser(context.Background(), "limited", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "editor", []string{"da", "cmp"}))
 	for _, db := range []string{"da", "cmp"} {

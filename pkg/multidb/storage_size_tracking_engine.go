@@ -2,11 +2,11 @@ package multidb
 
 import (
 	"context"
+
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/localization"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -14,10 +14,13 @@ import (
 // bytes in DatabaseManager metadata for O(1) reads.
 type sizeTrackingEngine struct {
 	storage.Engine
-	manager *DatabaseManager
-	dbName  string
-	checker *databaseLimitChecker
-	writeMu sync.Mutex
+	manager    *DatabaseManager
+	dbName     string
+	checker    *databaseLimitChecker
+	writeMu    *writeAdmission
+	runtime    *managedDatabaseRuntime
+	runtimeErr error
+	info       *DatabaseInfo
 }
 
 var _ storage.Engine = (*sizeTrackingEngine)(nil)
@@ -33,12 +36,6 @@ var _ storage.MVCCLifecycleEngine = (*sizeTrackingEngine)(nil)
 var _ storage.ProjectedLabelNodeReader = (*sizeTrackingEngine)(nil)
 var _ storage.PropertyKeyLookup = (*sizeTrackingEngine)(nil)
 
-func (t *sizeTrackingEngine) ensureStorageSizeInitialized() error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	return t.manager.ensureStorageSizeInitialized(t.dbName, t.Engine)
-}
-
 func newSizeTrackingEngine(engine storage.Engine, manager *DatabaseManager, dbName string, checkers ...*databaseLimitChecker) storage.Engine {
 	wrapped := &sizeTrackingEngine{
 		Engine:  engine,
@@ -48,6 +45,31 @@ func newSizeTrackingEngine(engine storage.Engine, manager *DatabaseManager, dbNa
 	if len(checkers) > 0 {
 		wrapped.checker = checkers[0]
 	}
+	if manager == nil {
+		return wrapped
+	}
+	// Constructor callers hold manager metadata ownership (or have not yet
+	// published their test fixture). Binding and registration never scan or wait.
+	wrapped.info = manager.databases[dbName]
+	if wrapped.info != nil {
+		owner := managedEntityOwnerFor(engine)
+		wrapped.runtime, wrapped.runtimeErr = bindManagedRuntime(wrapped.info, wrapped.info.limitsSnapshot(), dbName, owner)
+		if wrapped.runtime != nil {
+			wrapped.writeMu = &wrapped.runtime.writeMu
+		}
+		if wrapped.checker != nil {
+			wrapped.checker.info.Store(wrapped.info)
+		}
+		// Catalog writes retain their existing internal native journal owner.
+		if dbName != manager.configSystemDatabase() {
+			if registrar, ok := owner.observer.(interface {
+				RegisterManagedEntityPreparer(string, storage.ManagedEntityPrepare, storage.ManagedEntityInitialize)
+			}); ok {
+				registrar.RegisterManagedEntityPreparer(dbName, wrapped.prepareManagedDirect, wrapped.initializeManagedUsage)
+			}
+		}
+	}
+
 	return wrapped
 }
 
@@ -61,6 +83,23 @@ func (t *sizeTrackingEngine) GetQueryLimitChecker() interface {
 
 func (t *sizeTrackingEngine) GetInnerEngine() storage.Engine {
 	return t.Engine
+}
+
+// GetQueryNode forwards the query-row node read (storage.QueryNodeReader),
+// else reads the full node.
+func (t *sizeTrackingEngine) GetQueryNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	if reader, ok := t.Engine.(storage.QueryNodeReader); ok {
+		return reader.GetQueryNode(ctx, id)
+	}
+	return t.Engine.GetNode(ctx, id)
+}
+
+// RecordMaterializedAccess preserves result-access accounting across the
+// database size-tracking wrapper.
+func (t *sizeTrackingEngine) RecordMaterializedAccess(entityID string) {
+	if recorder, ok := t.Engine.(interface{ RecordMaterializedAccess(string) }); ok {
+		recorder.RecordMaterializedAccess(entityID)
+	}
 }
 
 // RegisterSnapshotReader preserves MVCC lifecycle admission and tracking across
@@ -120,7 +159,7 @@ func (t *sizeTrackingEngine) TopLifecycleDebtKeys(limit int) []storage.MVCCLifec
 
 // StreamNodes delegates streaming iteration to the wrapped engine when available.
 func (t *sizeTrackingEngine) StreamNodes(ctx context.Context, fn func(node *storage.Node) error) error {
-	if streamer, ok := t.Engine.(storage.StreamingEngine); ok {
+	if streamer, ok := storage.ResolveStreamingEngine(t.Engine); ok {
 		return streamer.StreamNodes(ctx, fn)
 	}
 	// Fallback to engine-agnostic helper.
@@ -129,10 +168,10 @@ func (t *sizeTrackingEngine) StreamNodes(ctx context.Context, fn func(node *stor
 
 // StreamEdges delegates streaming iteration to the wrapped engine when available.
 func (t *sizeTrackingEngine) StreamEdges(ctx context.Context, fn func(edge *storage.Edge) error) error {
-	if streamer, ok := t.Engine.(storage.StreamingEngine); ok {
+	if streamer, ok := storage.ResolveStreamingEngine(t.Engine); ok {
 		return streamer.StreamEdges(ctx, fn)
 	}
-	edges, err := t.Engine.AllEdges()
+	edges, err := t.Engine.AllEdges(ctx)
 	if err != nil {
 		return err
 	}
@@ -154,7 +193,7 @@ func (t *sizeTrackingEngine) StreamEdges(ctx context.Context, fn func(edge *stor
 
 // StreamNodeChunks delegates chunked streaming to wrapped engine when available.
 func (t *sizeTrackingEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*storage.Node) error) error {
-	if streamer, ok := t.Engine.(storage.StreamingEngine); ok {
+	if streamer, ok := storage.ResolveStreamingEngine(t.Engine); ok {
 		return streamer.StreamNodeChunks(ctx, chunkSize, fn)
 	}
 	if chunkSize <= 0 {
@@ -207,20 +246,20 @@ func (t *sizeTrackingEngine) StreamNodesWithOptions(ctx context.Context, opts st
 // dynamic type happens to implement, so a label-scoped MATCH would otherwise
 // fail this type assertion and fall back to a whole-namespace StreamNodes
 // scan (O(store) instead of O(label); see #561).
-func (t *sizeTrackingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+func (t *sizeTrackingEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
 	if reader, ok := t.Engine.(storage.ProjectedLabelNodeReader); ok {
-		return reader.StreamNodesByLabelProjected(label, properties, visit)
+		return reader.StreamNodesByLabelProjected(ctx, label, properties, visit)
 	}
 	return storage.ErrNotImplemented
 }
 
 // ForEachNodeIDByLabel preserves label->ID lookup capabilities across wrapper
 // boundaries so LIMIT + label paths can avoid full node decode.
-func (t *sizeTrackingEngine) ForEachNodeIDByLabel(label string, visit func(storage.NodeID) bool) error {
+func (t *sizeTrackingEngine) ForEachNodeIDByLabel(ctx context.Context, label string, visit func(storage.NodeID) bool) error {
 	if lookup, ok := t.Engine.(storage.LabelNodeIDLookupEngine); ok {
-		return lookup.ForEachNodeIDByLabel(label, visit)
+		return lookup.ForEachNodeIDByLabel(ctx, label, visit)
 	}
-	ids, err := storage.NodeIDsByLabel(t.Engine, label, 0)
+	ids, err := storage.NodeIDsByLabel(ctx, t.Engine, label, 0)
 	if err != nil {
 		return err
 	}
@@ -232,411 +271,336 @@ func (t *sizeTrackingEngine) ForEachNodeIDByLabel(label string, visit func(stora
 	return nil
 }
 
-func (t *sizeTrackingEngine) GetNodeLatestVisible(id storage.NodeID) (*storage.Node, error) {
+func (t *sizeTrackingEngine) GetNodeLatestVisible(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if provider, ok := t.Engine.(storage.MVCCVisibilityEngine); ok {
-		return provider.GetNodeLatestVisible(id)
+		return provider.GetNodeLatestVisible(ctx, id)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetNodeVisibleAt(id storage.NodeID, version storage.MVCCVersion) (*storage.Node, error) {
+func (t *sizeTrackingEngine) GetNodeVisibleAt(ctx context.Context, id storage.NodeID, version storage.MVCCVersion) (*storage.Node, error) {
 	if provider, ok := t.Engine.(storage.MVCCVisibilityEngine); ok {
-		return provider.GetNodeVisibleAt(id, version)
+		return provider.GetNodeVisibleAt(ctx, id, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetEdgeLatestVisible(id storage.EdgeID) (*storage.Edge, error) {
+func (t *sizeTrackingEngine) GetEdgeLatestVisible(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCVisibilityEngine); ok {
-		return provider.GetEdgeLatestVisible(id)
+		return provider.GetEdgeLatestVisible(ctx, id)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetEdgeVisibleAt(id storage.EdgeID, version storage.MVCCVersion) (*storage.Edge, error) {
+func (t *sizeTrackingEngine) GetEdgeVisibleAt(ctx context.Context, id storage.EdgeID, version storage.MVCCVersion) (*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCVisibilityEngine); ok {
-		return provider.GetEdgeVisibleAt(id, version)
+		return provider.GetEdgeVisibleAt(ctx, id, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetNodesByLabelVisibleAt(label string, version storage.MVCCVersion) ([]*storage.Node, error) {
+func (t *sizeTrackingEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version storage.MVCCVersion) ([]*storage.Node, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(label, version)
+		return provider.GetNodesByLabelVisibleAt(ctx, label, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (t *sizeTrackingEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetOutgoingEdgesVisibleAt(nodeID, version)
+		return provider.GetOutgoingEdgesVisibleAt(ctx, nodeID, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (t *sizeTrackingEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetIncomingEdgesVisibleAt(nodeID, version)
+		return provider.GetIncomingEdgesVisibleAt(ctx, nodeID, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (t *sizeTrackingEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetEdgesByTypeVisibleAt(edgeType, version)
+		return provider.GetEdgesByTypeVisibleAt(ctx, edgeType, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
 // MatchEdgesBetween keeps projected edge-between matching on the wrapped
 // engine (storage.EdgesBetweenMatcher).
-func (t *sizeTrackingEngine) MatchEdgesBetween(startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
-	return storage.MatchEdgesBetween(t.Engine, startID, endID, edgeType, properties, match)
+func (t *sizeTrackingEngine) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
+	return storage.MatchEdgesBetween(ctx, t.Engine, startID, endID, edgeType, properties, match)
 }
 
-func (t *sizeTrackingEngine) GetEdgesBetweenVisibleAt(startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (t *sizeTrackingEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetEdgesBetweenVisibleAt(startID, endID, version)
+		return provider.GetEdgesBetweenVisibleAt(ctx, startID, endID, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetNodeCurrentHead(id storage.NodeID) (storage.MVCCHead, error) {
+func (t *sizeTrackingEngine) GetNodeCurrentHead(ctx context.Context, id storage.NodeID) (storage.MVCCHead, error) {
 	if provider, ok := t.Engine.(storage.MVCCHeadEngine); ok {
-		return provider.GetNodeCurrentHead(id)
+		return provider.GetNodeCurrentHead(ctx, id)
 	}
 	return storage.MVCCHead{}, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetEdgeCurrentHead(id storage.EdgeID) (storage.MVCCHead, error) {
+func (t *sizeTrackingEngine) GetEdgeCurrentHead(ctx context.Context, id storage.EdgeID) (storage.MVCCHead, error) {
 	if provider, ok := t.Engine.(storage.MVCCHeadEngine); ok {
-		return provider.GetEdgeCurrentHead(id)
+		return provider.GetEdgeCurrentHead(ctx, id)
 	}
 	return storage.MVCCHead{}, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("create_node", node, nil); err != nil {
-		return "", err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return "", err
-	}
-	if !initialized {
-		return t.Engine.CreateNode(node)
-	}
-	id, err := t.Engine.CreateNode(node)
-	if err != nil {
-		return id, err
-	}
-	created, getErr := t.Engine.GetNode(id)
-	if getErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return id, nil
-	}
-	size, sizeErr := calculateNodeSize(created)
-	if sizeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return id, nil
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, size, 0)
-	return id, nil
+func (t *sizeTrackingEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	var id storage.NodeID
+	err := t.applyEntityOperations(ctx, []storage.Operation{{Type: storage.OpCreateNode, Node: node}}, &id, storage.CommitModeDirect)
+	return id, err
+}
+func (t *sizeTrackingEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
+	return t.applyEntityOperations(ctx, []storage.Operation{updateRequest.Operation()}, nil, storage.CommitModeDirect)
+}
+func (t *sizeTrackingEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
+	return t.applyEntityOperations(ctx, []storage.Operation{{Type: storage.OpDeleteNode, NodeID: id}}, nil, storage.CommitModeDirect)
+}
+func (t *sizeTrackingEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
+	return t.applyEntityOperations(ctx, []storage.Operation{{Type: storage.OpCreateEdge, Edge: edge}}, nil, storage.CommitModeDirect)
+}
+func (t *sizeTrackingEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
+	return t.applyEntityOperations(ctx, []storage.Operation{updateRequest.Operation()}, nil, storage.CommitModeDirect)
+}
+func (t *sizeTrackingEngine) DeleteEdge(ctx context.Context, id storage.EdgeID) error {
+	return t.applyEntityOperations(ctx, []storage.Operation{{Type: storage.OpDeleteEdge, EdgeID: id}}, nil, storage.CommitModeDirect)
 }
 
-func (t *sizeTrackingEngine) UpdateNode(node *storage.Node) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("update_node", node, nil); err != nil {
+// Bulk entity operations stage one native transaction and share the ordinary
+// managed coordinator. Rejection leaves no partially committed prefix.
+func (t *sizeTrackingEngine) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
+	ops := make([]storage.Operation, len(nodes))
+	for i, node := range nodes {
+		ops[i] = storage.Operation{Type: storage.OpCreateNode, Node: node}
+	}
+	return t.applyEntityOperations(ctx, ops, nil, storage.CommitModeImplicit)
+}
+func (t *sizeTrackingEngine) BulkCreateEdges(ctx context.Context, edges []*storage.Edge) error {
+	ops := make([]storage.Operation, len(edges))
+	for i, edge := range edges {
+		ops[i] = storage.Operation{Type: storage.OpCreateEdge, Edge: edge}
+	}
+	return t.applyEntityOperations(ctx, ops, nil, storage.CommitModeImplicit)
+}
+func (t *sizeTrackingEngine) BulkDeleteNodes(ctx context.Context, ids []storage.NodeID) error {
+	ops := make([]storage.Operation, len(ids))
+	for i, id := range ids {
+		ops[i] = storage.Operation{Type: storage.OpDeleteNode, NodeID: id}
+	}
+	return t.applyEntityOperations(ctx, ops, nil, storage.CommitModeImplicit)
+}
+func (t *sizeTrackingEngine) BulkDeleteEdges(ctx context.Context, ids []storage.EdgeID) error {
+	ops := make([]storage.Operation, len(ids))
+	for i, id := range ids {
+		ops[i] = storage.Operation{Type: storage.OpDeleteEdge, EdgeID: id}
+	}
+	return t.applyEntityOperations(ctx, ops, nil, storage.CommitModeImplicit)
+}
+
+func (t *sizeTrackingEngine) applyEntityOperations(ctx context.Context, ops []storage.Operation, createResult *storage.NodeID, mode storage.EntityCommitMode) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
+	if len(ops) == 0 {
+		return nil
+	}
+	_, limits, err := t.managedUsageState()
 	if err != nil {
 		return err
 	}
-	if !initialized {
-		return t.Engine.UpdateNode(node)
+	owner := managedEntityOwnerFor(t.Engine)
+	if owner.route.CheckAdmission != nil {
+		if admissionErr := owner.route.CheckAdmission(); admissionErr != nil {
+			if owner.route.ForwardDirect == nil {
+				return admissionErr
+			}
+			qualified, err := t.qualifyEntityOperations(ctx, ops, owner)
+			if err != nil {
+				return err
+			}
+			if err := owner.route.ForwardDirect(ctx, qualified, mode); err != nil {
+				return err
+			}
+			if createResult != nil {
+				*createResult = qualified[0].Node.ID
+				if owner.namespace != nil {
+					*createResult = storage.NodeID(storage.StripDatabasePrefix(t.dbName, string(*createResult)))
+				}
+			}
+			return nil
+		}
 	}
-	existing, getErr := t.Engine.GetNode(node.ID)
-	if getErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.UpdateNode(node)
+	if !t.runtime.requiresManaged(limits) && (!owner.found || !owner.route.RequiresSubmission) && (len(owner.writeBoundaries) == 0 || mode == storage.CommitModeDirect) && (mode == storage.CommitModeDirect || (ops[0].Type != storage.OpDeleteNode && ops[0].Type != storage.OpDeleteEdge)) {
+		if mode == storage.CommitModeDirect {
+			if createResult != nil {
+				id, err := t.Engine.CreateNode(ctx, ops[0].Node)
+				*createResult = id
+				return err
+			}
+			return storage.ApplyEntityChange(ctx, t.Engine, ops[0], t.Engine.UpdateNode, t.Engine.DeleteNode)
+		}
+		switch ops[0].Type {
+		case storage.OpCreateNode:
+			nodes := make([]*storage.Node, len(ops))
+			for i, op := range ops {
+				nodes[i] = op.Node
+			}
+			return t.Engine.BulkCreateNodes(ctx, nodes)
+		case storage.OpCreateEdge:
+			edges := make([]*storage.Edge, len(ops))
+			for i, op := range ops {
+				edges[i] = op.Edge
+			}
+			return t.Engine.BulkCreateEdges(ctx, edges)
+		case storage.OpDeleteNode:
+			ids := make([]storage.NodeID, len(ops))
+			for i, op := range ops {
+				ids[i] = op.NodeID
+			}
+			return t.Engine.BulkDeleteNodes(ctx, ids)
+		case storage.OpDeleteEdge:
+			ids := make([]storage.EdgeID, len(ops))
+			for i, op := range ops {
+				ids[i] = op.EdgeID
+			}
+			return t.Engine.BulkDeleteEdges(ctx, ids)
+		}
 	}
-	oldSize, oldErr := calculateNodeSize(existing)
-	if oldErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.UpdateNode(node)
-	}
-	if err := t.Engine.UpdateNode(node); err != nil {
-		return err
-	}
-	updated, updatedErr := t.Engine.GetNode(node.ID)
-	if updatedErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	newSize, newErr := calculateNodeSize(updated)
-	if newErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, newSize-oldSize, 0)
-	return nil
-}
 
-func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("delete_node", nil, nil); err != nil {
-		return err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
+	prepared, settle, err := t.prepareManagedDirect(ctx, ops, mode)
 	if err != nil {
 		return err
 	}
-	if !initialized {
-		return t.Engine.DeleteNode(id)
-	}
-	existing, getErr := t.Engine.GetNode(id)
-	if getErr != nil {
-		// Nothing to track if the node doesn't exist.
-		return t.Engine.DeleteNode(id)
-	}
-	nodeSize, sizeErr := calculateNodeSize(existing)
-	if sizeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.DeleteNode(id)
-	}
-	edgeDelta, edgeErr := t.connectedEdgeBytes(id)
-	if edgeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-	}
-	if err := t.Engine.DeleteNode(id); err != nil {
-		return err
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, -nodeSize, -edgeDelta)
-	return nil
-}
-
-func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("create_edge", nil, edge); err != nil {
-		return err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return err
-	}
-	if !initialized {
-		return t.Engine.CreateEdge(edge)
-	}
-	if err := t.Engine.CreateEdge(edge); err != nil {
-		return err
-	}
-	created, getErr := t.Engine.GetEdge(edge.ID)
-	if getErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	size, sizeErr := calculateEdgeSize(created)
-	if sizeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, 0, size)
-	return nil
-}
-
-func (t *sizeTrackingEngine) UpdateEdge(edge *storage.Edge) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("update_edge", nil, edge); err != nil {
-		return err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return err
-	}
-	if !initialized {
-		return t.Engine.UpdateEdge(edge)
-	}
-	existing, getErr := t.Engine.GetEdge(edge.ID)
-	if getErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.UpdateEdge(edge)
-	}
-	oldSize, oldErr := calculateEdgeSize(existing)
-	if oldErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.UpdateEdge(edge)
-	}
-	if err := t.Engine.UpdateEdge(edge); err != nil {
-		return err
-	}
-	updated, updatedErr := t.Engine.GetEdge(edge.ID)
-	if updatedErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	newSize, newErr := calculateEdgeSize(updated)
-	if newErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, 0, newSize-oldSize)
-	return nil
-}
-
-func (t *sizeTrackingEngine) DeleteEdge(id storage.EdgeID) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("delete_edge", nil, nil); err != nil {
-		return err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return err
-	}
-	if !initialized {
-		return t.Engine.DeleteEdge(id)
-	}
-	existing, getErr := t.Engine.GetEdge(id)
-	if getErr != nil {
-		return t.Engine.DeleteEdge(id)
-	}
-	size, sizeErr := calculateEdgeSize(existing)
-	if sizeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.DeleteEdge(id)
-	}
-	if err := t.Engine.DeleteEdge(id); err != nil {
-		return err
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, 0, -size)
-	return nil
-}
-
-// BulkCreateNodes creates the nodes one by one through CreateNode, so every
-// node passes the same write-rate and storage-limit checks, in order, as a
-// single create. The batch is all-or-nothing: when a node is rejected (a
-// limit, a constraint), the nodes this batch already created are removed and
-// the cached storage size is marked for recount, so a bulk create never
-// leaves part of its batch behind (a failing CREATE statement writes nothing,
-// #628).
-func (t *sizeTrackingEngine) BulkCreateNodes(nodes []*storage.Node) error {
-	created := make([]storage.NodeID, 0, len(nodes))
-	for _, n := range nodes {
-		id, err := t.CreateNode(n)
+	if prepared != nil {
+		receipt, err := owner.route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
 		if err != nil {
-			if len(created) > 0 {
-				_ = t.Engine.BulkDeleteNodes(created)
-				t.manager.markStorageSizeDirty(t.dbName)
-			}
-			return err
+			prepared.Abort()
+			settle(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
+			return nornicerrors.MarkCommitRolledBack(err)
 		}
-		created = append(created, id)
-	}
-	return nil
-}
-
-// BulkCreateEdges is all-or-nothing like BulkCreateNodes: each relationship
-// goes through CreateEdge, and a rejected one removes the relationships this
-// batch already created.
-func (t *sizeTrackingEngine) BulkCreateEdges(edges []*storage.Edge) error {
-	created := make([]storage.EdgeID, 0, len(edges))
-	for _, e := range edges {
-		if err := t.CreateEdge(e); err != nil {
-			if len(created) > 0 {
-				_ = t.Engine.BulkDeleteEdges(created)
-				t.manager.markStorageSizeDirty(t.dbName)
-			}
-			return err
+		outcome := receipt.WaitOutcome(context.WithoutCancel(ctx))
+		if outcome.State == storage.CommitDiscarded {
+			return nornicerrors.MarkCommitRolledBack(outcome.Err)
 		}
-		created = append(created, e.ID)
+		if outcome.Err != nil {
+			return outcome.Err
+		}
 	}
-	return nil
-}
-
-func (t *sizeTrackingEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	for _, id := range ids {
-		if err := t.DeleteNode(id); err != nil {
-			return err
+	if createResult != nil {
+		*createResult = ops[0].Node.ID
+		if owner.namespace != nil {
+			*createResult = storage.NodeID(storage.StripDatabasePrefix(t.dbName, string(*createResult)))
 		}
 	}
 	return nil
 }
 
-func (t *sizeTrackingEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	for _, id := range ids {
-		if err := t.DeleteEdge(id); err != nil {
-			return err
+// qualifyEntityOperations uses the same namespace/token input owner as direct
+// Engine methods (NamespacedEngine.QualifyOperation), including a
+// relationship update's observation. It never materializes a final stored
+// image prematurely.
+func (t *sizeTrackingEngine) qualifyEntityOperations(ctx context.Context, ops []storage.Operation, owner managedEntityOwner) ([]storage.Operation, error) {
+	if owner.namespace == nil {
+		return ops, nil
+	}
+	qualified := append([]storage.Operation(nil), ops...)
+	for i := range qualified {
+		if err := owner.namespace.QualifyOperation(ctx, &qualified[i]); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return qualified, nil
 }
 
-func (t *sizeTrackingEngine) connectedEdgeBytes(id storage.NodeID) (int64, error) {
-	outgoing, err := t.Engine.GetOutgoingEdges(id)
+// prepareManagedDirect is also registered for leader raw-command admission.
+// It stages and admits once; its caller owns submission and terminal settlement.
+// The caller's required context owns admission. Accepted work transfers to
+// its existing receipt/lifetime owner after submission.
+func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []storage.Operation, mode storage.EntityCommitMode) (prepared *storage.PreparedEntityCommit, settle func(storage.CommitOutcome), prepareErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, nornicerrors.MarkCommitRolledBack(err)
+	}
+	owner := managedEntityOwnerFor(t.Engine)
+	if owner.route.CheckAdmission != nil {
+		if err := owner.route.CheckAdmission(); err != nil {
+			return nil, nil, nornicerrors.MarkCommitRolledBack(err)
+		}
+	}
+	if !owner.found || owner.begin == nil || owner.observer == nil || owner.registry == nil {
+		return nil, nil, nornicerrors.MarkCommitRolledBack(t.managedCapabilityError())
+	}
+	qualified, err := t.qualifyEntityOperations(ctx, ops, owner)
 	if err != nil {
-		return 0, localizedError(localization.MultidbStorageGetOutgoingEdgesFailed(err), err)
+		return nil, nil, nornicerrors.MarkCommitRolledBack(err)
 	}
-	incoming, err := t.Engine.GetIncomingEdges(id)
+	tx, err := storage.BeginEntityTransaction(ctx, t.Engine, mode)
 	if err != nil {
-		return 0, localizedError(localization.MultidbStorageGetIncomingEdgesFailed(err), err)
+		return nil, nil, nornicerrors.MarkCommitRolledBack(err)
 	}
-	seen := make(map[storage.EdgeID]struct{}, len(outgoing)+len(incoming))
-	var total int64
-	for _, e := range outgoing {
-		if _, ok := seen[e.ID]; ok {
-			continue
+	defer func() {
+		if prepared == nil {
+			_ = tx.Rollback()
 		}
-		seen[e.ID] = struct{}{}
-		size, sizeErr := calculateEdgeSize(e)
-		if sizeErr != nil {
-			return 0, sizeErr
+		if prepareErr != nil {
+			prepareErr = nornicerrors.MarkCommitRolledBack(prepareErr)
 		}
-		total += size
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
-	for _, e := range incoming {
-		if _, ok := seen[e.ID]; ok {
-			continue
+	if err := tx.SetNamespace(t.dbName); err != nil {
+		return nil, nil, err
+	}
+	for _, op := range qualified {
+		apply := func() error {
+			return storage.ApplyEntityChange(ctx, tx, op, func(updateCtx context.Context, updateRequest storage.NodeUpdateRequest) error {
+				return storage.ApplyNodeUpdate(updateCtx, tx, updateRequest)
+			}, func(deleteCtx context.Context, id storage.NodeID) error {
+				return tx.DeleteGraphNode(deleteCtx, id, storage.CascadeEdges)
+			})
 		}
-		seen[e.ID] = struct{}{}
-		size, sizeErr := calculateEdgeSize(e)
-		if sizeErr != nil {
-			return 0, sizeErr
+		for i := len(owner.writeBoundaries) - 1; i >= 0; i-- {
+			policy, next := owner.writeBoundaries[i], apply
+			apply = func() error { return policy.WithEntityChange(op, next) }
 		}
-		total += size
+		if err := apply(); err != nil {
+			return nil, nil, err
+		}
 	}
-	return total, nil
-}
-
-func (t *sizeTrackingEngine) checkWrite(operation string, node *storage.Node, edge *storage.Edge) error {
-	if t.checker == nil {
-		return nil
-	}
-	if err := t.checker.CheckWriteRate(); err != nil {
-		return err
-	}
-	return t.checker.CheckStorageLimits(operation, node, edge)
+	return t.admitPrepared(ctx, tx, owner)
 }
 
 // NodeCountByLabel preserves the label counter across this wrapper, so the
 // count-only MATCH fast path (and its transaction-visible form, #683) reads
 // it instead of scanning the label. An engine without one counts its label's
 // nodes.
-func (t *sizeTrackingEngine) NodeCountByLabel(label string) (int64, error) {
-	if counter, ok := t.Engine.(interface{ NodeCountByLabel(string) (int64, error) }); ok {
-		return counter.NodeCountByLabel(label)
+func (t *sizeTrackingEngine) NodeCountByLabel(ctx context.Context, label string) (int64, error) {
+	if counter, ok := t.Engine.(storage.LabelStatsEngine); ok {
+		return counter.NodeCountByLabel(ctx, label)
 	}
-	nodes, err := t.Engine.GetNodesByLabel(label)
+	nodes, err := t.Engine.GetNodesByLabel(ctx, label)
 	if err != nil {
 		return 0, err
 	}
 	return int64(len(nodes)), nil
+}
+
+// ReadCountStore preserves the count-store read across this wrapper, so the
+// count owners keep answering from the counters instead of the rows here.
+func (t *sizeTrackingEngine) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	if reader, ok := t.Engine.(storage.CountStoreReadEngine); ok {
+		return reader.ReadCountStore(ctx, request)
+	}
+	return storage.CountStoreRead{}, nil
 }
 
 // Namespace preserves the wrapped engine's namespace (its database name), so
@@ -664,4 +628,42 @@ func (t *sizeTrackingEngine) GraphMutationVersion() (uint64, bool) {
 func (t *sizeTrackingEngine) PropertyKeyKnown(name string) bool {
 	lookup, ok := t.Engine.(storage.PropertyKeyLookup)
 	return ok && lookup.PropertyKeyKnown(name)
+}
+
+// OpenReadSnapshot forwards to the tracked engine; reads are not charged.
+func (t *sizeTrackingEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
+	return storage.OpenReadSnapshot(ctx, t.Engine)
+}
+
+var _ storage.ReadSnapshotter = (*sizeTrackingEngine)(nil)
+var _ storage.EventSubscriber = (*sizeTrackingEngine)(nil)
+
+// SubscribeEvents forwards to the tracked engine.
+func (t *sizeTrackingEngine) SubscribeEvents(handlers storage.EventHandlers) error {
+	return storage.SubscribeEvents(t.Engine, handlers)
+}
+
+// EventNotificationsSettled forwards the tracked engine's report.
+func (t *sizeTrackingEngine) EventNotificationsSettled() bool {
+	return storage.EventNotificationsSettled(t.Engine)
+}
+
+// PreservesEventView declares that accounting changes no event, ID or committed read.
+func (t *sizeTrackingEngine) PreservesEventView() {}
+
+var _ storage.EventViewForwarder = (*sizeTrackingEngine)(nil)
+
+func (t *sizeTrackingEngine) initializeManagedUsage(ctx context.Context) error {
+	if t.runtimeErr != nil {
+		return t.runtimeErr
+	}
+	if t.runtime == nil {
+		return ErrDatabaseNotFound
+	}
+	return t.runtime.initializeManagedUsage(ctx, managedEntityOwnerFor(t.Engine).boundary)
+}
+
+// IndexSourceStamp forwards through the declared read-preserving wrapper.
+func (e *sizeTrackingEngine) IndexSourceStamp(ctx context.Context) (string, error) {
+	return storage.ReadIndexSourceStamp(ctx, e.Engine)
 }

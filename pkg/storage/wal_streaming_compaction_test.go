@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,19 +16,19 @@ func TestAutoCompactionWritesRecoverableStreamingSnapshot(t *testing.T) {
 	root := t.TempDir()
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate"})
 	require.NoError(t, err)
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	walEngine := NewWALEngine(engine, wal)
 	t.Cleanup(func() { require.NoError(t, walEngine.Close()) })
 	walmart := NodeID("nornic:walmart")
 	target := NodeID("nornic:target")
-	_, err = walEngine.CreateNode(&Node{ID: walmart, Labels: []string{"Store"}})
+	_, err = walEngine.CreateNode(t.Context(), &Node{ID: walmart, Labels: []string{"Store"}})
 	require.NoError(t, err)
-	_, err = walEngine.CreateNode(&Node{ID: target, Labels: []string{"Store"}})
+	_, err = walEngine.CreateNode(t.Context(), &Node{ID: target, Labels: []string{"Store"}})
 	require.NoError(t, err)
-	require.NoError(t, walEngine.CreateEdge(&Edge{ID: "nornic:near", StartNode: walmart, EndNode: target, Type: "NEAR"}))
+	require.NoError(t, walEngine.CreateEdge(t.Context(), &Edge{ID: "nornic:near", StartNode: walmart, EndNode: target, Type: "NEAR"}))
 
 	walEngine.snapshotDir = filepath.Join(root, "snapshots")
-	require.NoError(t, walEngine.createSnapshotAndCompact())
+	require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 	paths, err := filepath.Glob(filepath.Join(walEngine.snapshotDir, "snapshot-*.json"))
 	require.NoError(t, err)
 	require.Len(t, paths, 1)
@@ -35,11 +37,11 @@ func TestAutoCompactionWritesRecoverableStreamingSnapshot(t *testing.T) {
 	require.GreaterOrEqual(t, len(header), len(streamSnapshotMagic))
 	require.Equal(t, streamSnapshotMagic, string(header[:len(streamSnapshotMagic)]))
 
-	recovered, err := RecoverFromWAL(wal.config.Dir, paths[0])
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), wal.config.Dir, paths[0]))
 	require.NoError(t, err)
-	nodes, err := recovered.AllNodes()
+	nodes, err := recovered.AllNodes(context.Background())
 	require.NoError(t, err)
-	edges, err := recovered.AllEdges()
+	edges, err := recovered.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	require.Len(t, edges, 1)
@@ -50,21 +52,21 @@ func TestAutoCompactionSkipsSnapshotWhenWALHasNotAdvanced(t *testing.T) {
 	root := t.TempDir()
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate"})
 	require.NoError(t, err)
-	walEngine := NewWALEngine(NewMemoryEngine(), wal)
+	walEngine := NewWALEngine(newTestMemoryEngine(t), wal)
 	t.Cleanup(func() { require.NoError(t, walEngine.Close()) })
 	walEngine.snapshotDir = filepath.Join(root, "snapshots")
-	require.NoError(t, walEngine.createSnapshotAndCompact())
+	require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 	initialPaths, err := filepath.Glob(filepath.Join(walEngine.snapshotDir, "snapshot-*.json"))
 	require.NoError(t, err)
 	require.Empty(t, initialPaths, "an engine opened without new WAL mutations must remain idle")
 
-	_, err = walEngine.CreateNode(&Node{ID: "nornic:first", Labels: []string{"Document"}})
+	_, err = walEngine.CreateNode(t.Context(), &Node{ID: "nornic:first", Labels: []string{"Document"}})
 	require.NoError(t, err)
-	require.NoError(t, walEngine.createSnapshotAndCompact())
+	require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 	firstSequence := wal.sequence.Load()
 	firstSnapshots, _ := walEngine.GetSnapshotStats()
 
-	require.NoError(t, walEngine.createSnapshotAndCompact())
+	require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 	paths, err := filepath.Glob(filepath.Join(walEngine.snapshotDir, "snapshot-*.json"))
 	require.NoError(t, err)
 	idleSnapshots, _ := walEngine.GetSnapshotStats()
@@ -72,9 +74,9 @@ func TestAutoCompactionSkipsSnapshotWhenWALHasNotAdvanced(t *testing.T) {
 	require.Equal(t, firstSnapshots, idleSnapshots, "idle compaction must not record a snapshot")
 	require.Len(t, paths, 1, "idle compaction must not rewrite the database")
 
-	_, err = walEngine.CreateNode(&Node{ID: "nornic:second", Labels: []string{"Document"}})
+	_, err = walEngine.CreateNode(t.Context(), &Node{ID: "nornic:second", Labels: []string{"Document"}})
 	require.NoError(t, err)
-	require.NoError(t, walEngine.createSnapshotAndCompact())
+	require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 	paths, err = filepath.Glob(filepath.Join(walEngine.snapshotDir, "snapshot-*.json"))
 	require.NoError(t, err)
 	changedSnapshots, _ := walEngine.GetSnapshotStats()
@@ -87,17 +89,17 @@ func BenchmarkIdleAutoCompaction(b *testing.B) {
 	root := b.TempDir()
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate"})
 	require.NoError(b, err)
-	walEngine := NewWALEngine(NewMemoryEngine(), wal)
+	walEngine := NewWALEngine(fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)), wal)
 	b.Cleanup(func() { require.NoError(b, walEngine.Close()) })
 	walEngine.snapshotDir = filepath.Join(root, "snapshots")
-	_, err = walEngine.CreateNode(&Node{ID: "nornic:document"})
+	_, err = walEngine.CreateNode(b.Context(), &Node{ID: "nornic:document"})
 	require.NoError(b, err)
-	require.NoError(b, walEngine.createSnapshotAndCompact())
+	require.NoError(b, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if err := walEngine.createSnapshotAndCompact(); err != nil {
+		if err := walEngine.createSnapshotAndCompact(walEngine.work.Context()); err != nil {
 			b.Fatal(err)
 		}
 	}

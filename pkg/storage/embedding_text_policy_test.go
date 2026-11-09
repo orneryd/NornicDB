@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+	"github.com/orneryd/nornicdb/pkg/embeddingsource"
 	"testing"
 	"time"
 
@@ -46,6 +48,16 @@ func TestEmbeddingTextPolicy(t *testing.T) {
 		require.Equal(t, tc.same, tc.policy.SameSource(tc.other, base), tc.name)
 	}
 
+	for _, key := range []string{"id", "tags"} {
+		consumed := CopyNode(base)
+		consumed.EmbedMeta = map[string]any{embeddingsource.MetaKey: (embeddingsource.Source{Properties: []string{key}}).Metadata()}
+		changed := CopyNode(base)
+		changed.Properties[key] = "different"
+		require.False(t, EmbeddingSourceMatches(consumed, changed, all), "declared provider input must invalidate")
+		changed = CopyNode(base)
+		changed.Properties["unconsumed"] = "different"
+		require.True(t, EmbeddingSourceMatches(consumed, changed, all), "unconsumed input must preserve")
+	}
 	var engine *BadgerEngine
 	require.Equal(t, defaultEmbeddingTextPolicy, engine.embeddingTextPolicyOrDefault())
 	engine = &BadgerEngine{}
@@ -58,121 +70,114 @@ func TestEmbeddingTextPolicy(t *testing.T) {
 	require.False(t, sameChunkEmbeddings([][]float32{{1, 2}}, nil))
 }
 
-// TestTransactionUpdateKeepsOrInvalidatesManagedEmbeddings: an update in a
-// transaction that leaves the embedding source unchanged keeps the node's
-// sidecar embeddings for readers; one that changes it deletes the sidecar,
-// so the node is unembedded and pending (#963).
-func TestTransactionUpdateKeepsOrInvalidatesManagedEmbeddings(t *testing.T) {
-	b := newSidecarTestBadger(t)
-	b.SetEmbeddingsEnabled(true)
-	b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
-	now := time.Now().UTC().Truncate(time.Millisecond)
-	node := sidecarTestNode(t, b, "keep", map[string]any{"text": "boiler invoice", "tags": []any{"a"}}, now)
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
+// Transaction updates preserve or invalidate embeddings by source, with
+// distinct inline and managed-sidecar storage policies and fresh fixtures.
+func TestTransactionUpdateEmbeddingStoragePolicy(t *testing.T) {
+	for _, sidecar := range []bool{true, false} {
+		name := "inline"
+		if sidecar {
+			name = "managed sidecar"
+		}
+		t.Run(name, func(t *testing.T) {
+			if sidecar {
+				t.Run("recorded provider source", TestManagedEmbeddingSourceTransaction)
+			}
+			b := newSidecarTestBadger(t)
+			if sidecar {
+				b.SetEmbeddingsEnabled(true)
+			}
+			b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
+			var node *Node
+			if sidecar {
+				now := time.Now().UTC().Truncate(time.Millisecond)
+				node = sidecarTestNode(t, b, "keep", map[string]any{"text": "boiler invoice", "tags": []any{"a"}}, now)
+				require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
+			} else {
+				node = &Node{ID: "test:inline", Labels: []string{"Doc"}, Properties: map[string]any{"text": "x", "tags": "a"}, ChunkEmbeddings: [][]float32{{1, 2}}}
+				_, err := b.CreateNode(t.Context(), node)
+				require.NoError(t, err)
+			}
+			update := func(change func(*Node)) {
+				tx, err := b.BeginTransaction(t.Context())
+				require.NoError(t, err)
+				defer tx.Rollback()
+				require.NoError(t, tx.SetNamespace("test"))
+				current, err := tx.GetNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				change(current)
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.Commit())
+			}
+			if sidecar {
+				sidecarPresent := func() bool {
+					present := false
+					require.NoError(t, b.withView(func(txn *badger.Txn) error {
+						_, err := txn.Get(embeddingMetaKey(node.ID))
+						present = err == nil
+						return nil
+					}))
+					return present
+				}
 
-	update := func(change func(*Node)) {
-		tx, err := b.BeginTransaction()
-		require.NoError(t, err)
-		require.NoError(t, tx.SetNamespace("test"))
-		current, err := tx.GetNode(node.ID)
-		require.NoError(t, err)
-		change(current)
-		require.NoError(t, tx.UpdateNode(current))
-		require.NoError(t, tx.Commit())
+				// An unfed property: the vectors stay, read from the sidecar.
+				update(func(n *Node) { n.Properties["tags"] = []any{"a", "b"} })
+				got, err := b.GetNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				require.Equal(t, [][]float32{{0.1, 0.2}}, got.ChunkEmbeddings)
+				require.True(t, sidecarPresent())
+				b.invalidateCachesAfterRestore()
+				got, err = b.GetNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				require.Equal(t, [][]float32{{0.1, 0.2}}, got.ChunkEmbeddings)
+
+				// A caller clearing the vectors for an unfed change gets them back too.
+				update(func(n *Node) {
+					n.Properties["tags"] = []any{"c"}
+					n.ChunkEmbeddings = nil
+					n.EmbedMeta = nil
+				})
+				got, err = b.GetNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				require.Len(t, got.ChunkEmbeddings, 1)
+
+				// A fed property: the vectors and the sidecar go, and the node is
+				// pending for the embed worker.
+				update(func(n *Node) { n.Properties["text"] = "boiler receipt" })
+				got, err = b.GetNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				require.Empty(t, got.ChunkEmbeddings)
+				require.False(t, sidecarPresent())
+				b.invalidateCachesAfterRestore()
+				got, err = b.GetNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				require.Empty(t, got.ChunkEmbeddings)
+				pending := requireEmbeddingCandidate(t, b.FindNodeNeedingEmbedding)
+				require.NotNil(t, pending)
+				require.Equal(t, node.ID, pending.ID)
+
+				// Vectors the caller sets are written as given.
+				update(func(n *Node) {
+					n.Properties["text"] = "boiler statement"
+					n.ChunkEmbeddings = [][]float32{{0.5, 0.6}}
+				})
+				got, err = b.GetNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				require.Equal(t, [][]float32{{0.5, 0.6}}, got.ChunkEmbeddings)
+			} else {
+				update(func(current *Node) { current.Properties["tags"] = "b"; current.ChunkEmbeddings = nil })
+				b.invalidateCachesAfterRestore()
+				got, err := b.GetNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				require.Equal(t, [][]float32{{1, 2}}, got.ChunkEmbeddings)
+				// Caller-provided vectors on changed text remain authoritative.
+				update(func(current *Node) { current.Properties["text"] = "y"; current.ChunkEmbeddings = [][]float32{{3, 4}} })
+				got, err = b.GetNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				require.Equal(t, [][]float32{{3, 4}}, got.ChunkEmbeddings)
+				require.Nil(t, copyNode(nil))
+			}
+		})
 	}
-	sidecarPresent := func() bool {
-		present := false
-		require.NoError(t, b.withView(func(txn *badger.Txn) error {
-			_, err := txn.Get(embeddingMetaKey(node.ID))
-			present = err == nil
-			return nil
-		}))
-		return present
-	}
-
-	// An unfed property: the vectors stay, read from the sidecar.
-	update(func(n *Node) { n.Properties["tags"] = []any{"a", "b"} })
-	got, err := b.GetNode(node.ID)
-	require.NoError(t, err)
-	require.Equal(t, [][]float32{{0.1, 0.2}}, got.ChunkEmbeddings)
-	require.True(t, sidecarPresent())
-	b.invalidateCachesAfterRestore()
-	got, err = b.GetNode(node.ID)
-	require.NoError(t, err)
-	require.Equal(t, [][]float32{{0.1, 0.2}}, got.ChunkEmbeddings)
-
-	// A caller clearing the vectors for an unfed change gets them back too.
-	update(func(n *Node) {
-		n.Properties["tags"] = []any{"c"}
-		n.ChunkEmbeddings = nil
-		n.EmbedMeta = nil
-	})
-	got, err = b.GetNode(node.ID)
-	require.NoError(t, err)
-	require.Len(t, got.ChunkEmbeddings, 1)
-
-	// A fed property: the vectors and the sidecar go, and the node is
-	// pending for the embed worker.
-	update(func(n *Node) { n.Properties["text"] = "boiler receipt" })
-	got, err = b.GetNode(node.ID)
-	require.NoError(t, err)
-	require.Empty(t, got.ChunkEmbeddings)
-	require.False(t, sidecarPresent())
-	b.invalidateCachesAfterRestore()
-	got, err = b.GetNode(node.ID)
-	require.NoError(t, err)
-	require.Empty(t, got.ChunkEmbeddings)
-	pending := b.FindNodeNeedingEmbedding()
-	require.NotNil(t, pending)
-	require.Equal(t, node.ID, pending.ID)
-
-	// Vectors the caller sets are written as given.
-	update(func(n *Node) {
-		n.Properties["text"] = "boiler statement"
-		n.ChunkEmbeddings = [][]float32{{0.5, 0.6}}
-	})
-	got, err = b.GetNode(node.ID)
-	require.NoError(t, err)
-	require.Equal(t, [][]float32{{0.5, 0.6}}, got.ChunkEmbeddings)
-}
-
-// TestTransactionUpdateKeepsInlineEmbeddings: embeddings stored in the node
-// body (no sidecar) stay in the body across an update that leaves the
-// embedding source unchanged.
-func TestTransactionUpdateKeepsInlineEmbeddings(t *testing.T) {
-	b := newSidecarTestBadger(t)
-	b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
-	id := NodeID("test:inline")
-	_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "x", "tags": "a"}, ChunkEmbeddings: [][]float32{{1, 2}}})
-	require.NoError(t, err)
-	tx, err := b.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetNamespace("test"))
-	current, err := tx.GetNode(id)
-	require.NoError(t, err)
-	current.Properties["tags"] = "b"
-	current.ChunkEmbeddings = nil
-	require.NoError(t, tx.UpdateNode(current))
-	require.NoError(t, tx.Commit())
-	b.invalidateCachesAfterRestore()
-	got, err := b.GetNode(id)
-	require.NoError(t, err)
-	require.Equal(t, [][]float32{{1, 2}}, got.ChunkEmbeddings)
-
-	// New vectors a caller writes with a changed text are written as given.
-	tx, err = b.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetNamespace("test"))
-	current, err = tx.GetNode(id)
-	require.NoError(t, err)
-	current.Properties["text"] = "y"
-	current.ChunkEmbeddings = [][]float32{{3, 4}}
-	require.NoError(t, tx.UpdateNode(current))
-	require.NoError(t, tx.Commit())
-	got, err = b.GetNode(id)
-	require.NoError(t, err)
-	require.Equal(t, [][]float32{{3, 4}}, got.ChunkEmbeddings)
-	require.Nil(t, copyNodeForCaller(nil))
 }
 
 // TestTransactionStaleCopyDoesNotRestoreInvalidatedEmbeddings: a statement
@@ -182,6 +187,7 @@ func TestTransactionUpdateKeepsInlineEmbeddings(t *testing.T) {
 // must not store them again. Vectors the caller sets after the invalidation
 // are still written as given.
 func TestTransactionStaleCopyDoesNotRestoreInvalidatedEmbeddings(t *testing.T) {
+	t.Run("recorded provider source", TestManagedEmbeddingSourceTransaction)
 	b := newSidecarTestBadger(t)
 	b.SetEmbeddingsEnabled(true)
 	b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
@@ -189,41 +195,41 @@ func TestTransactionStaleCopyDoesNotRestoreInvalidatedEmbeddings(t *testing.T) {
 
 	embedded := func(id string) *Node {
 		node := sidecarTestNode(t, b, id, map[string]any{"text": "boiler invoice " + id, "revision": int64(1)}, now)
-		require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
-		got, err := b.GetNode(node.ID)
+		require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
+		got, err := b.GetNode(t.Context(), node.ID)
 		require.NoError(t, err)
 		require.Len(t, got.ChunkEmbeddings, 1)
 		return node
 	}
 	twoWrites := func(id NodeID, second func(*Node)) {
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
-		row, err := tx.GetNode(id)
+		row, err := tx.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		require.Len(t, row.ChunkEmbeddings, 1, "the row copy carries the embeddings it was read with")
 		delete(row.Properties, "text")
-		require.NoError(t, tx.UpdateNode(CopyNode(row)))
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: CopyNode(row), Policy: ClientNodeEdits}))
 		second(row)
-		require.NoError(t, tx.UpdateNode(row))
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: row, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 	}
 
 	stale := embedded("stale")
 	twoWrites(stale.ID, func(row *Node) { row.Properties["revision"] = int64(2) })
-	got, err := b.GetNode(stale.ID)
+	got, err := b.GetNode(t.Context(), stale.ID)
 	require.NoError(t, err)
 	require.Empty(t, got.ChunkEmbeddings)
 	require.Nil(t, got.EmbedMeta)
 	require.Equal(t, int64(2), got.Properties["revision"])
 	b.invalidateCachesAfterRestore()
-	got, err = b.GetNode(stale.ID)
+	got, err = b.GetNode(t.Context(), stale.ID)
 	require.NoError(t, err)
 	require.Empty(t, got.ChunkEmbeddings, "nor after a restart")
 
 	fresh := embedded("fresh")
 	twoWrites(fresh.ID, func(row *Node) { row.ChunkEmbeddings = [][]float32{{0.5, 0.6}} })
-	got, err = b.GetNode(fresh.ID)
+	got, err = b.GetNode(t.Context(), fresh.ID)
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{0.5, 0.6}}, got.ChunkEmbeddings)
 }

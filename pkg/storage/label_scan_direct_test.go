@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -11,7 +14,7 @@ import (
 func streamLabelNodes(t *testing.T, eng *BadgerEngine, scope, label string, properties []string) []*Node {
 	t.Helper()
 	var nodes []*Node
-	require.NoError(t, eng.StreamNodesByLabelProjectedInScope(scope, label, properties, func(node *Node) error {
+	require.NoError(t, eng.StreamNodesByLabelProjectedInScope(context.Background(), scope, label, properties, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	}))
@@ -31,13 +34,13 @@ func labelScanFixture(t *testing.T, count int) (*BadgerEngine, []NodeID) {
 			labels = append(labels, "Rare")
 		}
 		id := NodeID(fmt.Sprintf("test:n%04d", i))
-		_, err := eng.CreateNode(&Node{ID: id, Labels: labels, Properties: map[string]any{"i": int64(i), "big": "x"}})
+		_, err := eng.CreateNode(t.Context(), &Node{ID: id, Labels: labels, Properties: map[string]any{"i": int64(i), "big": "x"}})
 		require.NoError(t, err)
 		created = append(created, id)
 	}
-	_, err := eng.CreateNode(&Node{ID: "test:other", Labels: []string{"Other"}})
+	_, err := eng.CreateNode(t.Context(), &Node{ID: "test:other", Labels: []string{"Other"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&Node{ID: "elsewhere:n0", Labels: []string{"Common"}})
+	_, err = eng.CreateNode(t.Context(), &Node{ID: "elsewhere:n0", Labels: []string{"Common"}})
 	require.NoError(t, err)
 	eng.nodeCacheMu.Lock()
 	clear(eng.nodeCache)
@@ -49,13 +52,17 @@ func TestStreamNodesByLabelProjectedReadsRemainingNodesInOnePass(t *testing.T) {
 	const count = labelScanPointLookups + 300
 	eng, created := labelScanFixture(t, count)
 
-	require.True(t, eng.labelCoversScope("test:", "Common"))
-	require.False(t, eng.labelCoversScope("test:", "Rare"))
-	require.False(t, eng.labelCoversScope("test:", "Missing"))
-	require.True(t, eng.labelCoversScope("", "Common"))
-	require.False(t, eng.labelCoversScope("", "Rare"))
+	// Context-bearing owner adoption: storage-format-owners lane (Codex), 1 Nov.
+	for _, hint := range []struct {
+		scope, label string
+		covers       bool
+	}{{"test:", "Common", true}, {"test:", "Rare", false}, {"test:", "Missing", false}, {"", "Common", true}, {"", "Rare", false}} {
+		covers, err := eng.labelCoversScope(t.Context(), hint.scope, hint.label)
+		require.NoError(t, err)
+		require.Equal(t, hint.covers, covers)
+	}
 
-	eng.cacheStoreNode(&Node{ID: created[count-2], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}})
+	eng.cacheStoreNode(&Node{ID: created[count-2], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}}, eng.db.oracle.published.Load())
 	nodes := streamLabelNodes(t, eng, "test:", "Common", []string{"i"})
 	require.Len(t, nodes, count)
 	for index, node := range nodes {
@@ -85,14 +92,14 @@ func TestStreamNodesByLabelProjectedReadsRemainingNodesInOnePass(t *testing.T) {
 
 	stop := fmt.Errorf("stop")
 	visited := 0
-	require.ErrorIs(t, eng.StreamNodesByLabelProjectedInScope("test:", "Common", nil, func(*Node) error {
+	require.ErrorIs(t, eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", nil, func(*Node) error {
 		visited++
 		if visited == labelScanPointLookups+10 {
 			return stop
 		}
 		return nil
 	}), stop)
-	require.ErrorIs(t, eng.StreamNodesByLabelProjectedInScope("test:", "Common", nil, func(*Node) error { return stop }), stop)
+	require.ErrorIs(t, eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", nil, func(*Node) error { return stop }), stop)
 }
 
 func TestStreamNodesByLabelProjectedHidesDeindexedNodes(t *testing.T) {
@@ -100,7 +107,7 @@ func TestStreamNodesByLabelProjectedHidesDeindexedNodes(t *testing.T) {
 	eng, created := labelScanFixture(t, count)
 	eng.SetDecayEnabled(true)
 	hidden := []NodeID{created[0], created[count-1]}
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		for _, id := range hidden {
 			num, ok := eng.idDict.lookupNodeNumID(id)
 			require.True(t, ok)
@@ -121,7 +128,7 @@ func TestStreamNodesByLabelProjectedSkipsMissingRecords(t *testing.T) {
 	const count = labelScanPointLookups + 50
 	eng, created := labelScanFixture(t, count)
 	gone := []NodeID{created[1], created[count-1]}
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		for _, id := range gone {
 			if err := txn.Delete(nodeKey(id)); err != nil {
 				return err
@@ -135,11 +142,11 @@ func TestStreamNodesByLabelProjectedSkipsMissingRecords(t *testing.T) {
 		for _, node := range nodes {
 			require.NotContains(t, gone, node.ID)
 		}
-		tx, err := eng.BeginTransaction()
+		tx, err := eng.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		var txNodes []*Node
-		require.NoError(t, tx.StreamNodesByLabelProjected("Common", properties, func(node *Node) error {
+		require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, func(node *Node) error {
 			txNodes = append(txNodes, node)
 			return nil
 		}))
@@ -149,7 +156,7 @@ func TestStreamNodesByLabelProjectedSkipsMissingRecords(t *testing.T) {
 		}
 		stop := fmt.Errorf("stop")
 		visited := 0
-		require.ErrorIs(t, tx.StreamNodesByLabelProjected("Common", properties, func(*Node) error {
+		require.ErrorIs(t, tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, func(*Node) error {
 			visited++
 			if visited == labelScanPointLookups+5 {
 				return stop
@@ -169,7 +176,7 @@ func TestStreamNodesByLabelProjectedRejectsCorruptRecords(t *testing.T) {
 			if phase == "one-pass" {
 				corrupt = created[count-1]
 			}
-			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(nodeKey(corrupt), []byte{0xff})
 			}))
 			for _, properties := range [][]string{nil, {"i"}} {
@@ -178,14 +185,14 @@ func TestStreamNodesByLabelProjectedRejectsCorruptRecords(t *testing.T) {
 					name = "projected"
 				}
 				t.Run(name, func(t *testing.T) {
-					require.Error(t, eng.StreamNodesByLabelProjectedInScope("test:", "Common", properties, func(*Node) error {
+					require.Error(t, eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, func(*Node) error {
 						return nil
 					}))
-					tx, err := eng.BeginTransaction()
+					tx, err := eng.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					require.NoError(t, tx.SetNamespace("test"))
 					defer func() { _ = tx.Rollback() }()
-					require.Error(t, tx.StreamNodesByLabelProjected("Common", properties, func(*Node) error {
+					require.Error(t, tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, func(*Node) error {
 						return nil
 					}))
 				})
@@ -198,12 +205,12 @@ func TestTransactionLabelScanReadsRemainingNodesInOnePass(t *testing.T) {
 	const count = labelScanPointLookups + 200
 	eng, created := labelScanFixture(t, count)
 	for _, properties := range [][]string{nil, {"i"}} {
-		tx, err := eng.BeginTransaction()
+		tx, err := eng.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NotNil(t, tx.snapshotTx)
 		var nodes []*Node
-		require.NoError(t, tx.StreamNodesByLabelProjected("Common", properties, func(node *Node) error {
+		require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, func(node *Node) error {
 			nodes = append(nodes, node)
 			return nil
 		}))
@@ -232,7 +239,7 @@ func TestLabelScanReportsCorruptionInVisitOrder(t *testing.T) {
 			eng, created := labelScanFixture(t, count)
 			// Reverse creation order puts this last label candidate first in
 			// the one-pass record walk, before valid pending candidates.
-			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(nodeKey(created[count-1]), []byte{0xff})
 			}))
 			for _, transaction := range []bool{false, true} {
@@ -242,15 +249,15 @@ func TestLabelScanReportsCorruptionInVisitOrder(t *testing.T) {
 				}
 				t.Run(name, func(t *testing.T) {
 					scan := func(visit func(*Node) error) error {
-						return eng.StreamNodesByLabelProjectedInScope("test:", "Common", properties, visit)
+						return eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, visit)
 					}
 					if transaction {
-						tx, err := eng.BeginTransaction()
+						tx, err := eng.BeginTransaction(t.Context())
 						require.NoError(t, err)
 						require.NoError(t, tx.SetNamespace("test"))
 						defer func() { _ = tx.Rollback() }()
 						scan = func(visit func(*Node) error) error {
-							return tx.StreamNodesByLabelProjected("Common", properties, visit)
+							return tx.StreamNodesByLabelProjected(context.Background(), "Common", properties, visit)
 						}
 					}
 
@@ -284,7 +291,7 @@ func TestReadNodeRecordsInOnePassStopsOnCallbackError(t *testing.T) {
 	stop := fmt.Errorf("stop reading records")
 	visited := 0
 	require.ErrorIs(t, eng.withView(func(txn *badger.Txn) error {
-		return readNodeRecordsInOnePass(txn, "test:", ids, func(NodeID, *badger.Item) error {
+		return readNodeRecordsInOnePass(t.Context(), txn, "test:", ids, func(NodeID, *badger.Item) error {
 			visited++
 			return stop
 		})
@@ -295,7 +302,7 @@ func TestReadNodeRecordsInOnePassStopsOnCallbackError(t *testing.T) {
 // BenchmarkLabelRecordReads compares record reads and projected decoding, not
 // full queries or the label scan's initial point-lookup prefix.
 func BenchmarkLabelRecordReads(b *testing.B) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = eng.Close() })
 	const count = 40000
@@ -311,7 +318,7 @@ func BenchmarkLabelRecordReads(b *testing.B) {
 				Properties: map[string]any{"i": int64(index), "big": "x"},
 			})
 		}
-		require.NoError(b, eng.BulkCreateNodes(nodes))
+		require.NoError(b, eng.BulkCreateNodes(b.Context(), nodes))
 	}
 	txn, readTs, err := eng.db.beginTxn(false)
 	require.NoError(b, err)
@@ -342,7 +349,7 @@ func BenchmarkLabelRecordReads(b *testing.B) {
 		{
 			name: "one_pass",
 			read: func(read func(NodeID, *badger.Item) error) error {
-				return readNodeRecordsInOnePass(txn, "test:", ids, read)
+				return readNodeRecordsInOnePass(b.Context(), txn, "test:", ids, read)
 			},
 		},
 	} {
@@ -350,7 +357,7 @@ func BenchmarkLabelRecordReads(b *testing.B) {
 			visited := 0
 			read := func(id NodeID, item *badger.Item) error {
 				return item.Value(func(value []byte) error {
-					node, err := eng.decodeNodeProjected(namespaceForNodeID(id), value, include)
+					node, err := eng.decodeNodeProjected(txn, namespaceForNodeID(id), value, include)
 					if err != nil {
 						return err
 					}

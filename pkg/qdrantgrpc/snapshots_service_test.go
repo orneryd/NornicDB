@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,26 +35,32 @@ type snapshotErrEngine struct {
 	edgesErr error
 }
 
-func (e *snapshotErrEngine) AllNodes() ([]*storage.Node, error) {
-	if e.nodesErr != nil {
-		return nil, e.nodesErr
-	}
-	return e.Engine.AllNodes()
+func (e *snapshotErrEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.nodesErr, func(ctx context.Context) ([]*storage.Node, error) {
+		return e.Engine.AllNodes(ctx)
+	})
 }
 
-func (e *snapshotErrEngine) AllEdges() ([]*storage.Edge, error) {
-	if e.edgesErr != nil {
-		return nil, e.edgesErr
+func (e *snapshotErrEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
+	return fixtureowner.ReadWithFailure(ctx, e.edgesErr, func(ctx context.Context) ([]*storage.Edge, error) {
+		return e.Engine.AllEdges(ctx)
+	})
+}
+
+// The full-snapshot fallback streams stored nodes; the fake fails that stream
+// as it fails AllNodes.
+func (e *snapshotErrEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if e.nodesErr != nil {
+		return e.nodesErr
 	}
-	return e.Engine.AllEdges()
+	return e.Engine.StreamNodesWithOptions(ctx, opts, visit)
 }
 
 func setupSnapshotsTest(t *testing.T) (*SnapshotsService, *PointsService, CollectionStore, string, func()) {
-	base := storage.NewMemoryEngine()
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	vecIndex := newVectorIndexCache()
-	collections, err := NewDatabaseCollectionStore(dbm, vecIndex)
+	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
 
 	snapshotDir := t.TempDir()
@@ -68,7 +75,7 @@ func setupSnapshotsTest(t *testing.T) (*SnapshotsService, *PointsService, Collec
 	}
 
 	snapshotsService := NewSnapshotsService(config, collections, base, snapshotDir, nil)
-	pointsService := NewPointsService(config, collections, nil, vecIndex, nil)
+	pointsService := NewPointsService(config, collections, sharedSearchProvider(), nil)
 
 	// Create test collection
 	ctx := context.Background()
@@ -260,14 +267,14 @@ func TestSnapshotsService_CreateFull(t *testing.T) {
 	})
 
 	t.Run("backup interface success and error", func(t *testing.T) {
-		eng := &backupEngine{Engine: storage.NewMemoryEngine()}
+		eng := &backupEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 		backupSvc := NewSnapshotsService(service.config, service.collections, eng, snapshotDir, nil)
 		resp, err := backupSvc.CreateFull(ctx, &qpb.CreateFullSnapshotRequest{})
 		require.NoError(t, err)
 		require.NotNil(t, resp.SnapshotDescription)
 		require.True(t, eng.called)
 
-		engFail := &backupEngine{Engine: storage.NewMemoryEngine(), backupErr: os.ErrPermission}
+		engFail := &backupEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), backupErr: os.ErrPermission}
 		backupSvcFail := NewSnapshotsService(service.config, service.collections, engFail, snapshotDir, nil)
 		_, err = backupSvcFail.CreateFull(ctx, &qpb.CreateFullSnapshotRequest{})
 		require.Error(t, err)
@@ -283,14 +290,14 @@ func TestSnapshotsService_CreateFull(t *testing.T) {
 
 	t.Run("fallback allnodes/alledges errors", func(t *testing.T) {
 		nodesErrSvc := NewSnapshotsService(service.config, service.collections, &snapshotErrEngine{
-			Engine:   storage.NewMemoryEngine(),
+			Engine:   fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 			nodesErr: os.ErrPermission,
 		}, snapshotDir, nil)
 		_, err := nodesErrSvc.CreateFull(ctx, &qpb.CreateFullSnapshotRequest{})
 		require.Error(t, err)
 
 		edgesErrSvc := NewSnapshotsService(service.config, service.collections, &snapshotErrEngine{
-			Engine:   storage.NewMemoryEngine(),
+			Engine:   fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 			edgesErr: os.ErrPermission,
 		}, snapshotDir, nil)
 		_, err = edgesErrSvc.CreateFull(ctx, &qpb.CreateFullSnapshotRequest{})
@@ -377,10 +384,10 @@ func TestSnapshotsService_AccessCheckerPath(t *testing.T) {
 }
 
 func TestSnapshotsService_DefaultSnapshotDirBranch(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	collections, err := NewDatabaseCollectionStore(dbm, newVectorIndexCache())
+	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
 
 	svc := NewSnapshotsService(DefaultConfig(), collections, base, "", nil)

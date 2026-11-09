@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 	"time"
@@ -20,7 +22,7 @@ import (
 // path does not exercise the same way.
 func edgeConstraintFixture(t *testing.T, c Constraint) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -29,7 +31,7 @@ func edgeConstraintFixture(t *testing.T, c Constraint) *BadgerEngine {
 	)
 
 	for _, id := range []NodeID{"test:a", "test:b", "test:c", "test:d"} {
-		_, err := engine.CreateNode(&Node{
+		_, err := engine.CreateNode(t.Context(), &Node{
 			ID:         id,
 			Labels:     []string{"Endpoint"},
 			Properties: map[string]any{},
@@ -48,13 +50,13 @@ func TestCheckEdgeUniquenessInTxn_DuplicateRejected(t *testing.T) {
 		Properties: []string{"token"},
 	})
 
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "OWNS", Properties: map[string]any{"token": "abc"},
 	}))
 
 	// Duplicate token under same relationship type → constraint violation.
-	err := engine.CreateEdge(&Edge{
+	err := engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c",
 		Type: "OWNS", Properties: map[string]any{"token": "abc"},
 	})
@@ -68,7 +70,7 @@ func TestCheckEdgeUniquenessInTxn_DuplicateRejected(t *testing.T) {
 	require.Contains(t, cve.Message, "abc")
 
 	// A different token must succeed (proves index iteration didn't misfire).
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e3", StartNode: "test:a", EndNode: "test:c",
 		Type: "OWNS", Properties: map[string]any{"token": "different"},
 	}))
@@ -85,11 +87,11 @@ func TestCheckEdgeUniquenessInTxn_NullValueAllowed(t *testing.T) {
 
 	// Two edges with the property absent (i.e. NULL) — allowed by
 	// uniqueness semantics (NULL never equals NULL for this purpose).
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "OWNS", Properties: map[string]any{},
 	}))
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c",
 		Type: "OWNS", Properties: map[string]any{},
 	}))
@@ -104,13 +106,13 @@ func TestCheckEdgeUniquenessInTxn_DifferentTypeIgnored(t *testing.T) {
 		Properties: []string{"token"},
 	})
 
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "OWNS", Properties: map[string]any{"token": "shared"},
 	}))
 
 	// Same token but DIFFERENT type — must not collide.
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:b",
 		Type: "WORKS_WITH", Properties: map[string]any{"token": "shared"},
 	}))
@@ -125,13 +127,13 @@ func TestCheckEdgeUniquenessInTxn_CompositeKeyDuplicateRejected(t *testing.T) {
 		Properties: []string{"role", "team"},
 	})
 
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGN", Properties: map[string]any{"role": "lead", "team": "core"},
 	}))
 
 	// Same composite (role, team) under same type → reject.
-	err := engine.CreateEdge(&Edge{
+	err := engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c",
 		Type: "ASSIGN", Properties: map[string]any{"role": "lead", "team": "core"},
 	})
@@ -142,13 +144,13 @@ func TestCheckEdgeUniquenessInTxn_CompositeKeyDuplicateRejected(t *testing.T) {
 	require.ElementsMatch(t, []string{"role", "team"}, cve.Properties)
 
 	// Differ on one field — allowed.
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e3", StartNode: "test:a", EndNode: "test:c",
 		Type: "ASSIGN", Properties: map[string]any{"role": "lead", "team": "platform"},
 	}))
 
 	// One component NULL → composite key not built, no violation.
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e4", StartNode: "test:a", EndNode: "test:d",
 		Type: "ASSIGN", Properties: map[string]any{"role": "lead"},
 	}))
@@ -163,7 +165,7 @@ func TestCheckEdgeTemporalInTxn_OverlapRejected(t *testing.T) {
 		Properties: []string{"subject", "valid_from", "valid_to"},
 	})
 
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS",
 		Properties: map[string]any{
 			"subject":    "s1",
@@ -173,7 +175,7 @@ func TestCheckEdgeTemporalInTxn_OverlapRejected(t *testing.T) {
 	}))
 
 	// Overlapping interval, same subject → reject.
-	err := engine.CreateEdge(&Edge{
+	err := engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS",
 		Properties: map[string]any{
 			"subject":    "s1",
@@ -188,7 +190,7 @@ func TestCheckEdgeTemporalInTxn_OverlapRejected(t *testing.T) {
 	require.Contains(t, cve.Message, "test:e1")
 
 	// Adjacent (no overlap), same subject → allowed.
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e3", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS",
 		Properties: map[string]any{
 			"subject":    "s1",
@@ -198,7 +200,7 @@ func TestCheckEdgeTemporalInTxn_OverlapRejected(t *testing.T) {
 	}))
 
 	// Different subject, overlapping interval → allowed (different bucket).
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e4", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS",
 		Properties: map[string]any{
 			"subject":    "s2",
@@ -217,7 +219,7 @@ func TestCheckEdgeTemporalInTxn_NullKeyRejected(t *testing.T) {
 		Properties: []string{"subject", "valid_from", "valid_to"},
 	})
 
-	err := engine.CreateEdge(&Edge{
+	err := engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS",
 		Properties: map[string]any{
 			"valid_from": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -240,17 +242,17 @@ func TestCheckEdgeCardinalityInTxn_OutgoingMaxEnforced(t *testing.T) {
 		MaxCount:   2,
 	})
 
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "OWNS",
 		Properties: map[string]any{},
 	}))
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "OWNS",
 		Properties: map[string]any{},
 	}))
 
 	// Third outgoing OWNS from test:a violates MaxCount=2.
-	err := engine.CreateEdge(&Edge{
+	err := engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e3", StartNode: "test:a", EndNode: "test:d", Type: "OWNS",
 		Properties: map[string]any{},
 	})
@@ -264,7 +266,7 @@ func TestCheckEdgeCardinalityInTxn_OutgoingMaxEnforced(t *testing.T) {
 	require.Contains(t, cve.Message, "2")
 
 	// Different start node — the count for THAT node is 0, allowed.
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e4", StartNode: "test:b", EndNode: "test:d", Type: "OWNS",
 		Properties: map[string]any{},
 	}))
@@ -281,13 +283,13 @@ func TestCheckEdgeCardinalityInTxn_IncomingMaxEnforced(t *testing.T) {
 	})
 
 	// First incoming ASSIGNED edge into test:a is allowed.
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:b", EndNode: "test:a", Type: "ASSIGNED",
 		Properties: map[string]any{},
 	}))
 
 	// Second incoming ASSIGNED into test:a violates MaxCount=1.
-	err := engine.CreateEdge(&Edge{
+	err := engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:a", Type: "ASSIGNED",
 		Properties: map[string]any{},
 	})
@@ -299,7 +301,7 @@ func TestCheckEdgeCardinalityInTxn_IncomingMaxEnforced(t *testing.T) {
 	require.Contains(t, cve.Message, "test:a")
 
 	// Different relationship type doesn't count — allowed.
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e3", StartNode: "test:c", EndNode: "test:a", Type: "MENTIONS",
 		Properties: map[string]any{},
 	}))

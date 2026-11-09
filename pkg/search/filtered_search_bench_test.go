@@ -16,7 +16,7 @@ import (
 // searches.
 func BenchmarkFilteredSearch(b *testing.B) {
 	store := storage.NewNamespacedEngine(newNamespacedEngine(b), "test")
-	svc := NewServiceWithDimensions(store, 2)
+	svc := NewService(store, 2, nil)
 	svc.SetSearchResultCachePolicy(0, 0)
 	add := func(id, label, collection, content string, vector []float32) {
 		node := &storage.Node{
@@ -25,7 +25,7 @@ func BenchmarkFilteredSearch(b *testing.B) {
 			Properties:      map[string]any{"content": content, "collection": collection},
 			ChunkEmbeddings: [][]float32{vector},
 		}
-		if _, err := store.CreateNode(node); err != nil {
+		if _, err := store.CreateNode(b.Context(), node); err != nil {
 			b.Fatal(err)
 		}
 		if err := svc.IndexNode(node); err != nil {

@@ -1,6 +1,10 @@
 package cypher
 
-import "sort"
+import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"sort"
+)
 
 // mapDelimiter records the syntactic owner of one still-open delimiter.
 // Only the nearest owner controls a brace: a function/list expression inside
@@ -13,12 +17,12 @@ type mapDelimiter struct {
 	existsCall     bool
 }
 
-func (context *mapPatternContext) insidePatternDelimiter(query string, end int) bool {
+func (context *mapPatternContext) insidePatternDelimiter(ctx context.Context, query string, end int) bool {
 	var stack []mapDelimiter
 	previous, prior := -1, -1
 	for index := 0; index < end; index++ {
 		c := query[index]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			index = skipCypherQuotedText(query, index, c) - 1
 			prior, previous = previous, index
 			continue
@@ -29,13 +33,13 @@ func (context *mapPatternContext) insidePatternDelimiter(query string, end int) 
 				continue
 			}
 		}
-		if isCypherWhitespace(c) {
+		if cyphertext.IsWhitespaceAt(query, index) {
 			continue
 		}
 		if len(stack) > 0 && stack[len(stack)-1].kind == '(' && stack[len(stack)-1].pattern && matchKeywordAt(query, index, "WHERE") {
 			parent := &stack[len(stack)-1]
-			label := previous >= 0 && (query[previous] == ':' || query[previous] == '|' || query[previous] == '&' || query[previous] == '!' || equalFoldASCII(wordBefore(query, previous+1), "IS"))
-			next := mapDelimiterTail(query, index+len("WHERE")-1)
+			label := previous >= 0 && (query[previous] == ':' || query[previous] == '|' || query[previous] == '&' || query[previous] == '!' || equalFoldASCII(rawWordBefore(query, previous+1), "IS"))
+			next := queryGapEnd(query, index+len("WHERE"))
 			namedWhere := previous == parent.open && (next >= len(query) || query[next] == ':' || query[next] == '{' || query[next] == ')' || matchKeywordAt(query, next, "WHERE"))
 			if !label && !namedWhere {
 				parent.pattern = false
@@ -43,7 +47,7 @@ func (context *mapPatternContext) insidePatternDelimiter(query string, end int) 
 		}
 		switch c {
 		case '(':
-			pattern := mapNodeDelimiter(query, index, previous, prior, stack, context)
+			pattern := mapNodeDelimiter(ctx, query, index, previous, prior, stack, context)
 			existsCall := context.existsCall(query, previous+1)
 			existsArgument := existsCall || len(stack) > 0 && stack[len(stack)-1].existsArgument
 			stack = append(stack, mapDelimiter{open: index, kind: c, pattern: pattern, existsArgument: existsArgument, existsCall: existsCall})
@@ -62,17 +66,17 @@ func (context *mapPatternContext) insidePatternDelimiter(query string, end int) 
 	return len(stack) > 0 && stack[len(stack)-1].pattern
 }
 
-func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimiter, context *mapPatternContext) bool {
+func mapNodeDelimiter(ctx context.Context, query string, open, previous, prior int, stack []mapDelimiter, context *mapPatternContext) bool {
 	word := ""
 	if previous >= 0 {
-		word = wordBefore(query, previous+1)
+		word = rawWordBefore(query, previous+1)
 	}
 	// Qualified names are function calls, even when the final component
 	// spells a clause keyword or built-in path function.
 	if word != "" && context.qualified[previous+1-len(word)] {
 		return false
 	}
-	if isPatternClauseKeyword(word) || equalFoldASCII(word, "shortestPath") || equalFoldASCII(word, "allShortestPaths") || context.selected(query, open, stack) {
+	if isPatternClauseKeyword(word) || equalFoldASCII(word, "shortestPath") || equalFoldASCII(word, "allShortestPaths") || context.selected(ctx, query, open, stack) {
 		return true
 	}
 	if word != "" {
@@ -84,14 +88,14 @@ func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimi
 	}
 	close := context.close(open)
 	if close >= 0 {
-		next := mapDelimiterTail(query, close)
+		next := queryGapEnd(query, close+1)
 		// Property/index access after a grouped value is an expression,
 		// including a group following arithmetic subtraction.
 		if next < len(query) && (query[next] == '.' || query[next] == '[') {
 			if len(stack) > 0 && stack[len(stack)-1].existsArgument {
 				return false
 			}
-			return mapPatternScope(query, open, stack, context)
+			return mapPatternScope(ctx, query, open, stack, context)
 		}
 
 		if next < len(query) && query[next] == '<' && next+1 < len(query) && query[next+1] == '-' {
@@ -120,41 +124,23 @@ func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimi
 	if previous >= 0 && query[previous] != '(' && query[previous] != ',' && query[previous] != ')' && query[previous] != '=' {
 		return false
 	}
-	return mapPatternScope(query, open, stack, context)
+	return mapPatternScope(ctx, query, open, stack, context)
 }
 
-func mapPatternClause(query string) bool {
-	return isPatternClauseKeyword(mapClauseBefore(query))
+func mapPatternClause(ctx context.Context, query string) bool {
+	return isPatternClauseKeyword(mapClauseBefore(ctx, query))
 }
 
-func mapClauseBefore(query string) string {
+func mapClauseBefore(ctx context.Context, query string) string {
 	last, clause := -1, ""
 	for _, keyword := range []string{"MATCH", "CREATE", "MERGE", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "CALL", "FILTER", "LET", "YIELD"} {
-		positions := findAllTopLevelPipelineKeywordPositions(query, keyword)
+		positions := findAllTopLevelPipelineKeywordPositions(ctx, query, keyword)
 		if len(positions) > 0 && positions[len(positions)-1] > last {
 			last = positions[len(positions)-1]
 			clause = keyword
 		}
 	}
 	return clause
-}
-
-func mapDelimiterTail(query string, close int) int {
-	next := close + 1
-	for next < len(query) {
-		if isCypherWhitespace(query[next]) {
-			next++
-			continue
-		}
-		if query[next] == '/' {
-			if end := queryCommentEnd(query, next); end > next {
-				next = end
-				continue
-			}
-		}
-		break
-	}
-	return next
 }
 
 func mapRelationshipDelimiter(query string, open, previous int, context *mapPatternContext) bool {
@@ -165,26 +151,26 @@ func mapRelationshipDelimiter(query string, open, previous int, context *mapPatt
 	if close < 0 {
 		return false
 	}
-	next := mapDelimiterTail(query, close)
+	next := queryGapEnd(query, close+1)
 	if next >= len(query) || query[next] != '-' {
 		return false
 	}
-	next = mapDelimiterTail(query, next)
+	next = queryGapEnd(query, next+1)
 	if next < len(query) && query[next] == '>' {
-		next = mapDelimiterTail(query, next)
+		next = queryGapEnd(query, next+1)
 	}
 	return next < len(query) && query[next] == '('
 }
 
-func mapPatternScope(query string, open int, stack []mapDelimiter, context *mapPatternContext) bool {
+func mapPatternScope(ctx context.Context, query string, open int, stack []mapDelimiter, context *mapPatternContext) bool {
 	if len(stack) == 0 {
-		return context.scope(query, 0).pattern(open)
+		return context.scope(ctx, query, 0).pattern(open)
 	}
 	parent := stack[len(stack)-1]
 	if parent.kind != '{' {
 		return parent.pattern
 	}
-	return context.subqueries[parent.open] && context.scope(query, parent.open+1).pattern(open)
+	return context.subqueries[parent.open] && context.scope(ctx, query, parent.open+1).pattern(open)
 }
 
 // Matching delimiters and clause/selector positions are indexed once per
@@ -211,7 +197,7 @@ func newMapPatternContext(query string) *mapPatternContext {
 	previous := -1
 	for index := 0; index < len(query); index++ {
 		c := query[index]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			index = skipCypherQuotedText(query, index, c) - 1
 			previous = index
 			continue
@@ -226,7 +212,7 @@ func newMapPatternContext(query string) *mapPatternContext {
 			index += size - 1
 			continue
 		}
-		if isIdentStartByte(c) && (index == 0 || !isIdentByte(query[index-1])) && previous >= 0 && query[previous] == '.' {
+		if cyphertext.NameStartAt(query, index) && (index == 0 || !cyphertext.NamePartAt(query, index-1)) && previous >= 0 && query[previous] == '.' {
 			context.qualified[index] = true
 		}
 		if c == '{' && subqueryExpressionAfterLiveByte(query, index, previous) {
@@ -258,7 +244,7 @@ func (context *mapPatternContext) close(open int) int {
 	}
 	return -1
 }
-func (context *mapPatternContext) scope(query string, start int) *mapPatternClauseIndex {
+func (context *mapPatternContext) scope(ctx context.Context, query string, start int) *mapPatternClauseIndex {
 	if scope := context.scopes[start]; scope != nil {
 		return scope
 	}
@@ -272,7 +258,7 @@ func (context *mapPatternContext) scope(query string, start int) *mapPatternClau
 	}
 	text := query[start:end]
 	for _, keyword := range []string{"MATCH", "CREATE", "MERGE", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "CALL", "FILTER", "LET", "YIELD"} {
-		for _, position := range findAllTopLevelPipelineKeywordPositions(text, keyword) {
+		for _, position := range findAllTopLevelPipelineKeywordPositions(ctx, text, keyword) {
 			scope.clauses = append(scope.clauses, mapPatternClausePosition{start + position, isPatternClauseKeyword(keyword)})
 		}
 	}
@@ -281,7 +267,7 @@ func (context *mapPatternContext) scope(query string, start int) *mapPatternClau
 	// Invoke it at identifier starts once, never for every subsequent node.
 	for index := start; index < end; index++ {
 		c := query[index]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			index = skipCypherQuotedText(query, index, c) - 1
 			continue
 		}
@@ -291,7 +277,7 @@ func (context *mapPatternContext) scope(query string, start int) *mapPatternClau
 				continue
 			}
 		}
-		if !isIdentStartByte(c) || index > start && isIdentByte(query[index-1]) {
+		if !cyphertext.NameStartAt(query, index) || index > start && cyphertext.NamePartAt(query, index-1) {
 			continue
 		}
 		if prefix, ok, _ := scanPathPatternPrefix(query, index, end); ok && scope.pattern(prefix.end) {
@@ -304,7 +290,7 @@ func (scope *mapPatternClauseIndex) pattern(position int) bool {
 	index := sort.Search(len(scope.clauses), func(i int) bool { return scope.clauses[i].position >= position })
 	return index > 0 && scope.clauses[index-1].pattern
 }
-func (context *mapPatternContext) selected(query string, open int, stack []mapDelimiter) bool {
+func (context *mapPatternContext) selected(ctx context.Context, query string, open int, stack []mapDelimiter) bool {
 	start := 0
 	if len(stack) > 0 {
 		parent := stack[len(stack)-1]
@@ -313,10 +299,10 @@ func (context *mapPatternContext) selected(query string, open int, stack []mapDe
 		}
 		start = parent.open + 1
 	}
-	return context.scope(query, start).selected[open]
+	return context.scope(ctx, query, start).selected[open]
 }
 
 func (context *mapPatternContext) existsCall(query string, end int) bool {
-	word := wordBefore(query, end)
+	word := rawWordBefore(query, end)
 	return equalFoldASCII(word, "EXISTS") && !context.qualified[end-len(word)]
 }

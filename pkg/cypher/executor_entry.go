@@ -1,15 +1,19 @@
+// Author: Codex, NOR-180 terminal WAL outcome propagation, 2026-10-26.
 package cypher
 
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -97,11 +101,97 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
-	// Every rejection of the caller's statement fails its explicit transaction,
-	// including errors before parsing, routing or the system statement policy.
-	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
-		defer func() { e.failTransaction(retErr) }()
+	return e.execute(ctx, cypher, params, nil, true)
+}
+
+// executeRouted continues the same semantic statement through a transparent
+// dispatcher. Public Execute, including independent reentrant calls made by
+// consumers, always starts a fresh outcome instead.
+func (e *StorageExecutor) executeRouted(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+	var outcome *statementOutcome
+	if statement, ok := ctx.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok {
+		outcome = statement.outcome
 	}
+	return e.execute(ctx, cypher, params, outcome, false)
+}
+
+func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}, outcome *statementOutcome, clientText bool) (result *ExecuteResult, retErr error) {
+	member := e.membership(ctx)
+	if member.statement != nil && member.statement.executor.nativeOrigin != nil {
+		var release func()
+		ctx, release = bindNativeStatementLifetime(ctx, member.statement.executor.nativeOrigin)
+		defer release()
+	}
+	if member.storage != nil && (member.transaction == nil || member.transaction.controller != e) {
+		ctx = context.WithValue(ctx, ctxKeyTxStorage, member.storage)
+	}
+	if member.statement != nil {
+		ctx = &compositeContext{Context: ctx, statement: member.statement, storage: member.storage}
+	}
+	if member.transaction != nil && (member.statement == nil || member.statement.nativeRoot == nil) && e.txContext == nil && bareTransactionCommand(cypher) == "" && !transactionScriptShape(cypher) {
+		e = e.cloneWithStorage(e.storage)
+		e.txContext = member.transaction
+	}
+
+	// Preserve the existing explicit transaction failure contract. Terminal
+	// completion owns bookkeeping; uncommitted MERGE replay policy stays outside.
+	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
+		defer func() {
+			if cause := recover(); cause != nil {
+				e.failTransaction(ctx, fmt.Errorf("statement panicked: %v", cause))
+				panic(cause)
+			}
+			e.failTransaction(ctx, retErr)
+		}()
+	}
+
+	var statement *statementExecutionContext
+	ctx, source := cyphertext.WithSource(ctx, cypher)
+	if source.Err != nil {
+		if invalid, ok := source.Err.(*cyphertext.UnicodeSourceError); ok {
+			return nil, invalidUnicodeLiteralError(invalid.Offset)
+		}
+		return nil, source.Err
+	}
+	// Retain the original credential context across admission and routing errors.
+	// journalCtx is the originating request context. A statement that panics
+	// before creation has no terminal journal, so its completion must not be
+	// recorded into an enclosing statement's journal.
+	journalCtx := ctx
+	defer func(original string) {
+		owner, journaled := journalCtx, false
+		if statement != nil {
+			owner, journaled = statement, true
+		}
+		completeStatementTerminalOutcome(owner, journaled, &result, &retErr, func() {
+			redactAdminCommandErrorSource(source, original, &retErr, statementCredentials(ctx))
+			retErr = nornicerrors.ProjectTerminalOutcomeMessages(retErr, func(display error) error {
+				redactAdminCommandErrorSource(source, original, &display, statementCredentials(ctx))
+				return display
+			})
+		})
+	}(cypher)
+	// One classification decides both the credential context and the
+	// collected statistics: an administration command carries the caller's
+	// credentials for error redaction and is not recorded by the QUERIES
+	// collector.
+	administrative := StatementDatabase("", source.Text) == "system"
+	if administrative {
+		ctx = withStatementCredentials(ctx, cypher)
+	}
+	// The statement's context (deadlineCtx, once the database's query limits
+	// apply) ends at the first of its deadlines, and its cause names that
+	// deadline's owner: a Bolt client's tx_timeout, the server's statement
+	// timeout, the database's query time limit. A deadline error the
+	// statement returns is that owner's transaction timeout (#1339); a
+	// deadline no owner installed (a caller's own budget, a dependency's
+	// timeout) keeps its error as it is.
+	deadlineCtx := ctx
+	defer func() {
+		if retErr != nil {
+			retErr = nornicerrors.MarkStatementTimeout(retErr, context.Cause(deadlineCtx))
+		}
+	}()
 	defer func() {
 		if result != nil && retErr == nil && result.MapKeyOrders == nil {
 			if orders := snapshotMapKeyOrders(ctx); len(orders) > 0 {
@@ -125,7 +215,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// TRC-15: top-level cypher execute span. Started before timing so the
 	// span duration matches the metric observation window exactly. The span
 	// is ended in the same defer that emits the slow-query log.
-	ctx, execSpan := startExecuteSpan(ctx, "", cypher)
+	ctx, execSpan := e.startExecuteSpan(ctx, "", cypher)
 
 	// TRC-17: propagate span context to the storage layer so storage spans
 	// nest as children of the cypher execute span.
@@ -138,86 +228,162 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// the original query text — by the time the deferred emission fires,
 	// `cypher` has been normalized; we want to log what the client submitted.
 	slowStart := time.Now()
-	embeddingState := e.queryEmbeddingState(ctx)
+	elapsed := e.executionElapsed
+	if elapsed == nil {
+		elapsed = time.Since
+	}
+	statement = e.newStatementExecutionContext(ctx, slowStart.UTC(), outcome)
+	embeddingState := statement.state
 	var embeddingGeneration uint64
 	if embeddingState != nil {
 		embeddingGeneration = embeddingState.generation
 	}
-	ctx = &queryEmbeddingStatementContext{Context: ctx, instant: slowStart.UTC(), binding: e.queryEmbedder, state: embeddingState}
+	ctx = statement
+	// Logging is part of the statement's deadline. Release registry and query
+	// limit contexts after its deferred emission, so normal completion does
+	// not look like cancellation to the redactor.
 	originalCypher := cypher
-	collectionGeneration := e.queryStatistics.start(originalCypher, slowStart)
+	collectionGeneration := e.queryStatistics.start(originalCypher, slowStart, administrative)
+	var executionDuration time.Duration
+	var running runningStatement
+	var queryLimitCancel context.CancelFunc
 	defer func() {
-		dur := time.Since(slowStart)
-		e.queryStatistics.record(collectionGeneration, originalCypher, slowStart, dur, retErr == nil)
-		e.emitRejectionReport(originalCypher, retErr)
+		statementErr := ctx.Err()
+		if retErr == nil && running.tx != nil && !running.autoCommit && e.txContext != nil && e.txContext.active {
+			if tracker := running.tx.memory.Load(); tracker != nil {
+				if storageTx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
+					if err := tracker.settleStaged(storageTx.StagedMemoryBytes()); err != nil {
+						result, retErr = nil, err
+					}
+				}
+			}
+		}
+		if err := running.memoryFailure(); err != nil && !statement.outcome.committed() {
+			if statementErr != nil && (statementErr == context.Canceled || statementErr == context.DeadlineExceeded) {
+				result, retErr = nil, statement.outcome.retainTerminalFailures(statementErr)
+			} else {
+				result, retErr = nil, statement.outcome.retainTerminalFailures(err)
+			}
+		} else if retErr == nil && result != nil && running.memory != nil && !statement.outcome.committed() {
+			// A nested execution hands its retained rows to its parent scope.
+			if err := running.memory.handOver(running.memoryMark, result.Rows); err != nil {
+				result, retErr = nil, err
+			}
+			running.memory = nil
+		}
+		terminated := running.done()
+		if !statement.outcome.committed() {
+			if terminated {
+				result, retErr = nil, statement.outcome.retainTerminalFailures(transactionTerminatedError())
+			} else if retErr == nil && statementErr != nil {
+				result, retErr = nil, statementErr
+			}
+		}
+		e.queryStatistics.record(collectionGeneration, originalCypher, slowStart, executionDuration, retErr == nil)
+		e.observeSlowQueryIfThresholded(executionDuration)
+		redactAdminCommandError(originalCypher, &retErr, statementCredentials(ctx))
+		recordSpanError(execSpan, retErr)
+		execSpan.End()
+		if queryLimitCancel != nil {
+			queryLimitCancel()
+		}
+	}()
+	defer func() {
+		// Author: Codex, NOR-180. The producer already recorded every failed
+		// terminal append, before a callback or aggregate could discard it.
+		// Restore those outcomes before rejection logs and completion statistics.
+		if statement.outcome.hasTerminalFailures() {
+			retErr = statement.outcome.retainTerminalFailures(retErr)
+			result = nil
+		}
+		executionDuration = elapsed(slowStart)
+		dur := executionDuration
+		redactAdminCommandError(originalCypher, &retErr, statementCredentials(ctx))
+		e.emitRejectionReport(ctx, originalCypher, retErr)
 		// Plan is unavailable for non-EXPLAIN/PROFILE queries; pass nil and
 		// rely on PlanHash's zero-placeholder behavior. Phase 6 (TRC-04) will
 		// thread the planned tree here once cypher EXPLAIN refactoring is in.
-		e.emitSlowQueryLog(originalCypher, nil, dur)
-		// Plan 04-03 / MET-08 slow_queries_total: increments only when
-		// duration meets the configured threshold (matches the D-04c
-		// emitSlowQueryLog gate semantics — single threshold, single
-		// emission point per Execute return).
-		e.observeSlowQueryIfThresholded(dur)
-		recordSpanError(execSpan, retErr)
-		execSpan.End()
+		e.emitSlowQueryLog(ctx, originalCypher, nil, dur)
+
 	}()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	// Normalize query: trim BOM (some clients send it) then whitespace
-	cypher = trimBOM(cypher)
-	cypher = normalizeCypherSyntaxConfusables(cypher)
+	if cypher != source.Text {
+		normalized := sourceQueryRewrite(source)
+		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(ctx, result, retErr, nil) }()
+	}
+	cypher = source.Text
 	// The statement as the client sent it may not call NornicDB's internal
 	// functions; the rewrites below produce them (#1105).
-	if err := internalFunctionCallError(cypher); err != nil {
-		return nil, err
+	// Transparent routing continues already-admitted text, including generated
+	// functions. A public reentrant call still admits its own client text.
+	if clientText {
+		if err := internalFunctionCallError(ctx, cypher); err != nil {
+			return nil, err
+		}
 	}
 	// Comments and keyword spacing are canonical from here on; what the
 	// client sees (column names, messages, plans) is the text it sent (#740).
 	// NORNICDB_CYPHER_QUERY_NORMALIZATION=false skips the pass: the
 	// statement runs as sent.
 	canonical, rewrite := cypher, (*queryRewrite)(nil)
+	// Fabric admission is lexical; its planner reads the statement only once engaged.
+	fabricQuery := e.shouldUseFabricPlanner(ctx, cypher)
 	if config.IsCypherQueryNormalizationEnabled() {
-		canonical, rewrite = canonicalizeQueryText(cypher)
+		var err error
+		canonical, rewrite, err = normalizeQueryText(ctx, cypher)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if rewrite != nil {
 		cypher = canonical
-		defer func() { result, retErr = rewrite.restore(result, retErr) }()
+		ctx = withSourceRewrite(ctx, rewrite)
+		defer func() { result, retErr = (resultRestoration{source: rewrite}).restore(ctx, result, retErr, nil) }()
 	}
 	// Digit-grouping underscores (1_000) go here, on every route; columns
 	// and messages keep the client's text (#907).
 	if grouped, numericRewrite := canonicalizeNumericLiterals(cypher); numericRewrite != nil {
 		cypher = grouped
-		defer func() { result, retErr = numericRewrite.restore(result, retErr) }()
+		ctx = withSourceRewrite(ctx, numericRewrite)
+		defer func() { result, retErr = (resultRestoration{source: numericRewrite}).restore(ctx, result, retErr, nil) }()
 	}
 	// GQL function aliases (collect_list, ln, …) call the function they
 	// name; columns and messages keep the client's text.
 	if !rewriteFree(rewriteFreeFunctionAliases, false, cypher) {
 		if aliased, aliasRewrite := canonicalizeFunctionAliases(cypher); aliasRewrite != nil {
 			cypher = aliased
-			defer func() { result, retErr = aliasRewrite.restore(result, retErr) }()
+			ctx = withSourceRewrite(ctx, aliasRewrite)
+			defer func() { result, retErr = (resultRestoration{source: aliasRewrite}).restore(ctx, result, retErr, nil) }()
 		} else {
 			markRewriteFree(rewriteFreeFunctionAliases, false, cypher)
 		}
 	}
-	cypher = strings.TrimSpace(cypher)
-	cypher = trimTrailingStatementDelimiters(cypher)
+	ctx, cypher = trimSourceText(ctx, cypher, trimSourceLeadingTrivia)
 	ctx = withCypherVersion(ctx, cypher)
 	if err := validateCypherPreamble(cypher); err != nil {
 		return nil, err
 	}
 	if config.IsANTLRParser() {
 		body, _ := stripCypherPreamble(cypher)
-		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(body) {
+		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(ctx, body) {
 			return nil, sharedClauseSyntaxError("LET, FILTER and FOR require CYPHER 25 with the ANTLR parser")
 		}
 	}
 	// Neo4j 5 statement framing: leading CYPHER [version] [option=value …]
 	// groups run the statement they precede, and a trailing FINISH (on every
 	// UNION branch) runs it and returns no rows.
-	cypher, _ = stripCypherPreamble(cypher)
-	cypher = strings.TrimSpace(cypher)
+	var preambleRewrite *queryRewrite
+	cypher, _, preambleRewrite = readCypherPreamble(cypher)
+	if preambleRewrite != nil {
+		ctx = withSourceRewrite(ctx, preambleRewrite)
+		defer func() {
+			result, retErr = (resultRestoration{source: preambleRewrite}).restore(ctx, result, retErr, nil)
+		}()
+	}
+	ctx, cypher = trimSourceText(ctx, cypher, trimSourceTerminator)
 	// Cypher 25 expression forms (RETURN ALL, s"…{x}…", map comprehensions)
 	// become the expressions they stand for, once, here (#907).
 	cypher25 := cypherVersionFromContext(ctx) == "25"
@@ -226,21 +392,27 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if cypher25 {
 		if separated, separateRewrite := separateCypher25Parameters(cypher); separateRewrite != nil {
 			cypher = separated
-			defer func() { result, retErr = separateRewrite.restore(result, retErr) }()
+			ctx = withSourceRewrite(ctx, separateRewrite)
+			defer func() {
+				result, retErr = (resultRestoration{source: separateRewrite}).restore(ctx, result, retErr, nil)
+			}()
 		}
 	}
 	if !rewriteFree(rewriteFreeCypher25Expressions, cypher25, cypher) {
-		expanded, expressionRewrites, err := desugarCypher25Expressions(cypher, cypher25)
+		expanded, expressionRewrites, err := desugarCypher25Expressions(ctx, cypher, cypher25)
 		if err != nil {
 			return nil, err
 		}
 		if len(expressionRewrites) > 0 {
 			cypher = expanded
+			for _, expressionRewrite := range expressionRewrites {
+				ctx = withSourceRewrite(ctx, expressionRewrite)
+			}
 			// One defer, not one per pass: a defer in a loop would make every
 			// statement pay for heap-allocated defers. Restored last pass first.
 			defer func() {
 				for index := len(expressionRewrites) - 1; index >= 0; index-- {
-					result, retErr = expressionRewrites[index].restore(withoutGeneratedColumns(result), retErr)
+					result, retErr = (resultRestoration{source: expressionRewrites[index]}).restore(ctx, withoutGeneratedColumns(result), retErr, nil)
 				}
 			}()
 		} else {
@@ -251,21 +423,26 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// CALL subqueries and UNIONs it stands for, once, here; columns and
 	// errors are mapped back (#907).
 	if !rewriteFree(rewriteFreeQueryStructure, false, cypher) {
-		if composed, structureRewrite, err := desugarQueryStructure(cypher, e); err != nil {
+		if composed, structureRewrite, err := desugarQueryStructure(ctx, cypher, e); err != nil {
 			return nil, err
 		} else if structureRewrite != nil {
 			cypher = composed
-			defer func() { result, retErr = structureRewrite.restore(withoutGeneratedColumns(result), retErr) }()
-		} else if !mayUseQueryStructure(cypher) {
+			ctx = withSourceRewrite(ctx, structureRewrite)
+			defer func() {
+				result, retErr = (resultRestoration{source: structureRewrite}).restore(ctx, withoutGeneratedColumns(result), retErr, nil)
+			}()
+		} else if !mayUseQueryStructure(ctx, cypher) {
 			// Only the quick check's verdict is the text's alone.
-			markRewriteFree(rewriteFreeQueryStructure, false, cypher)
+			if ctx.Err() == nil {
+				markRewriteFree(rewriteFreeQueryStructure, false, cypher)
+			}
 		}
 	}
-	if err := e.validateStatementFraming(cypher); err != nil {
+	if err := e.validateStatementFraming(ctx, cypher); err != nil {
 		return nil, err
 	}
 	finishTerminated := false
-	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
+	if stripped, ok := stripUnionBranchFinishes(ctx, cypher); ok {
 		cypher = strings.TrimSpace(stripped)
 		finishTerminated = true
 		ctx = withFinishedStatement(ctx, cypher)
@@ -279,8 +456,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Knowledge-policy DDL that cannot be parsed (a missing profile or policy
 	// name, a missing OPTIONS block) is a syntax error on every route, the
 	// auto-commit and HTTP routes included (#514).
-	if isKnowledgePolicyDDLStatement(cypher) {
-		if _, _, err := ParseKnowledgePolicyDDL(cypher); err != nil {
+	if isKnowledgePolicyDDLStatement(ctx, cypher) {
+		if _, _, err := ParseKnowledgePolicyDDL(ctx, cypher, AcceptedSource); err != nil {
 			return nil, &classifiedCypherError{
 				cause:  err,
 				code:   "Neo.ClientError.Statement.SyntaxError",
@@ -290,10 +467,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	if finishTerminated {
 		defer func() {
-			if result != nil {
-				result.Columns = nil
-				result.Rows = nil
-			}
+			completeFinishedResult(result)
 		}()
 	}
 
@@ -312,32 +486,27 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if cypher == "" {
 		return shellResult, nil
 	}
-	if err := clientTransactionCommand(ctx, cypher); err != nil {
-		return nil, err
-	}
-	// Only BEGIN can start a script; avoid its allocating classifier for
-	// ordinary statements while admitting them through the same owner.
-	if bareTransactionCommand(cypher) == "" && (!startsWithKeywordFold(cypher, "BEGIN") || !transactionScriptShape(cypher)) {
-		// Neo4j parses a statement before it checks it against its
-		// transaction, so a rejected USE clause (USE before an
-		// administration command among them) is the SyntaxError in an
-		// explicit transaction too.
-		if startsWithKeywordFold(cypher, "USE") {
-			if _, _, _, err := parseUseClause(cypher, false); err != nil {
-				return nil, err
-			}
-		}
-		if err := e.admitTransactionStatement(cypher); err != nil {
+	// Parse a selected graph before transaction type admission, preserving
+	// the public SyntaxError ordering for invalid USE statements.
+	if startsWithUseClause(cypher) {
+		if _, _, _, err := parseUseClause(ctx, cypher, false, cyphertext.AcceptedSource); err != nil {
 			return nil, err
 		}
+	}
+	control, err := e.admitTransactionStatement(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
+	if !control {
 		routed, err := e.routeAdministrationStatement(ctx, cypher)
 		if err != nil {
 			return nil, err
 		}
 		if routed != e {
-			return routed.Execute(ctx, cypher, params)
+			return routed.executeRouted(ctx, cypher, params)
 		}
 	}
+
 	// A cached per-database executor is shared by every auto-commit client of
 	// its database. A bare transaction command must not open a transaction on
 	// it: any later statement (or one-statement script) would then run inside
@@ -362,47 +531,48 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	rowsRewritten := false
 	// Backtick-quoted variables become plain identifiers here, once, for
 	// every route; the result's columns and errors are mapped back (#734).
-	if canonical, names := canonicalizeQuotedVariables(cypher); names != nil {
+	fabricQuery = fabricQuery || e.shouldUseFabricPlanner(ctx, cypher)
+	if canonical, names := canonicalizeLocalQuotedVariables(ctx, cypher, fabricQuery); names != nil {
 		cypher = canonical
 		params = names.parameterValues(params)
 		ctx = withQuotedVariableNames(ctx, names)
 		rowsRewritten = true
-		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems) }()
+		defer func() {
+			result, retErr = (resultRestoration{names: names}).restore(ctx, result, retErr, func(text string) []returnItem { return e.parseReturnItems(ctx, text) })
+		}()
 	}
 
-	// Label expressions in patterns become the label forms and WHERE
-	// predicates every route reads, once, here; the result's columns and
-	// errors are mapped back (#860).
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
-	if err != nil {
-		return nil, err
-	}
-	if labelRewrite != nil {
-		rowsRewritten = true
-		cypher = desugared
-		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
-	}
 	// ORDER BY, SKIP / OFFSET and LIMIT as clauses of their own become the
 	// WITH * they stand for, once, here; errors are mapped back (#907).
-	if desugared, orderRewrite := desugarStandaloneOrderClauses(cypher); orderRewrite != nil {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if desugared, orderRewrite := desugarStandaloneOrderClauses(ctx, cypher); orderRewrite != nil {
 		cypher = desugared
-		defer func() { result, retErr = orderRewrite.restore(result, retErr) }()
+		ctx = withSourceRewrite(ctx, orderRewrite)
+		defer func() { result, retErr = (resultRestoration{source: orderRewrite}).restore(ctx, result, retErr, nil) }()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
-	if e.shouldUseFabricPlanner(cypher) {
-		if err := e.statementParametersError(ctx, cypher, params); err != nil {
-			return nil, err
-		}
+	if fabricQuery || e.shouldUseFabricPlanner(ctx, cypher) {
 		mergedParams := e.mergeShellParams(ctx, mergeInheritedQueryParams(ctx, params))
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
+		if finishTerminated {
+			ctx = withFinishedStatement(ctx, modeQuery)
+		}
 		if mode != ModeNormal {
-			if err := e.validateSyntax(modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
+			if err := e.validateSyntax(ctx, modeQuery, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
 				return nil, err
 			}
-			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
+			if err := e.validateFabricSemanticScopes(ctx, modeQuery, params); err != nil {
+				return nil, err
+			}
+			if err := e.statementParametersError(ctx, cypher, params); err != nil {
 				return nil, err
 			}
 			if mode == ModeExplain {
@@ -410,7 +580,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			}
 			return e.executeProfile(ctx, modeQuery)
 		}
-		info := e.analyzer.Analyze(cypher)
+		info, err := e.analyzer.Analyze(ctx, cypher)
+		if err != nil {
+			return nil, err
+		}
 		// Plan 04-03 Site 3 (fabric branch): isFabric=true → op_type="fabric"
 		// per RISK-1 corrected classifier. Observation pre-execute so the
 		// counter reflects intent regardless of execution outcome (errors
@@ -418,9 +591,19 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		// in the reference catalogs).
 		e.observeQuery(classifyOpType(info, true /* isFabric */, false), true, slowStart)
 		execSpan.SetAttributes(attribute.String("cypher.op_type", "fabric"))
-		inExplicitTx := e.txContext != nil && e.txContext.active
+		// As on one database, and as Neo4j compiles a statement, its
+		// variable scopes are checked before it plans, enlists a participant
+		// or runs any part: a CALL scope clause naming a variable the query
+		// doesn't define is rejected here. A missing parameter is reported
+		// after both, so these syntax errors come first.
+		if err := e.validateFabricSemanticScopes(ctx, cypher, params); err != nil {
+			return nil, err
+		}
 		preparedFabric, err := e.prepareFabricExecution(ctx, cypher)
 		if err != nil {
+			return nil, err
+		}
+		if err := e.statementParametersError(ctx, cypher, params); err != nil {
 			return nil, err
 		}
 		ctx = context.WithValue(ctx, fabricPreparedExecKey{}, preparedFabric)
@@ -439,20 +622,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			}
 		}
 
-		var result *ExecuteResult
-		var execErr error
-		// When an explicit transaction is active on a composite route, execute through
-		// the same FabricTransaction so many-read/one-write constraints are enforced
-		// across all statements in the session.
-		if inExplicitTx {
-			if ftx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
-				result, execErr = e.executeViaPreparedFabricWithTx(ctx, cypher, mergedParams, ftx, false, preparedFabric)
-			} else {
-				result, execErr = e.executeViaFabric(ctx, cypher, mergedParams)
-			}
-		} else {
-			result, execErr = e.executeViaFabric(ctx, cypher, mergedParams)
-		}
+		// The gateway alone selects the existing coordinator or rejects a native owner.
+
+		result, execErr := e.executeViaFabricWithTx(ctx, cypher, mergedParams, nil, true, preparedFabric)
 		if execErr != nil {
 			return nil, execErr
 		}
@@ -461,13 +633,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			e.cache.putWithLabelsAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), HotPathTrace{}, embeddingGeneration)
 		}
 
-		if info.IsWriteQuery && e.cache != nil {
-			if len(info.Labels) > 0 {
-				e.cache.InvalidateLabels(info.Labels)
-			} else {
-				e.cache.Invalidate()
-			}
-		}
+		e.invalidateResultCacheForQuery(info)
 
 		return result, nil
 	}
@@ -476,7 +642,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// statement itself (Neo4j's DatabaseNotFound for a missing one, #744),
 	// and the plan is the target database's.
 	if mode, inner := parseExecutionMode(cypher); mode != ModeNormal {
-		if use, remaining, hasUse, err := parseUseClause(inner, false); hasUse || err != nil {
+		if use, remaining, hasUse, err := parseUseClause(ctx, inner, false, cyphertext.AcceptedSource); hasUse || err != nil {
 			if err != nil {
 				return nil, err
 			}
@@ -491,7 +657,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 	}
 	// Handle leading Cypher USE clause (openCypher multi-graph syntax).
-	if use, remaining, hasUse, err := parseUseClause(cypher, false); hasUse || err != nil {
+	if use, remaining, hasUse, err := parseUseClause(ctx, cypher, false, cyphertext.AcceptedSource); hasUse || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -500,10 +666,27 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
 	}
+	// Label expressions in patterns become the label forms and WHERE
+	// predicates the local evaluator reads. Route source Cypher first: remote
+	// evaluators do not implement our internal functions. The result's columns and
+	// errors are mapped back (#860).
+	desugared, labelRewrite, err := desugarLabelExpressions(ctx, cypher, params, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return nil, err
+	}
+	if labelRewrite != nil {
+		rowsRewritten = true
+		cypher = desugared
+		ctx = withSourceRewrite(ctx, labelRewrite)
+		defer func() {
+			result, retErr = (resultRestoration{source: labelRewrite}).restore(ctx, withoutGeneratedColumns(result), retErr, nil)
+		}()
+	}
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
 	}
-	if err := e.systemDatabaseWriteError(cypher); err != nil {
+	e.statementAdmitted(ctx)
+	if err := e.systemDatabaseWriteError(ctx, cypher); err != nil {
 		return nil, err
 	}
 
@@ -513,7 +696,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// and so is a statement that reads or writes no graph (RETURN 1,
 	// UNWIND graph.names() AS g RETURN g), which runs on the composite
 	// itself, as in Neo4j.
-	if isCompositeRoot(e.storage) && !isCompositeAllowedCommand(cypher) && statementAccessesGraphText(cypher) {
+	if isCompositeRoot(e.storage) && !isCompositeAllowedCommand(cypher) && statementAccessesGraphText(ctx, cypher) {
 		return nil, localizedError(localization.CypherCoreCompositeTargetRequired(), nil)
 	}
 
@@ -532,12 +715,15 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// embedded caller that already owns an active transaction keeps running
 	// the script on itself, where handleBegin fails as before.
 	if transactionScriptShape(cypher) {
+		// Script execution precedes ordinary query routing, so install the
+		// same bound parameter values before its inner statements execute.
+		ctx = withQueryParams(ctx, normalizeQueryParameters(params))
 		if e.txContext != nil && e.txContext.active {
 			if result, err := e.executeTransactionScript(ctx, cypher); result != nil || err != nil {
 				return result, err
 			}
 		} else {
-			scriptExec := e.cloneForStorage(e.storage)
+			scriptExec := e.cloneWithStorage(e.storage, selectedDatabaseStorage)
 			scriptExec.txContext = nil
 			if result, err := scriptExec.executeTransactionScript(ctx, cypher); result != nil || err != nil {
 				return result, err
@@ -546,18 +732,22 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	} else if result, err := e.executeTransactionScript(ctx, cypher); result != nil || err != nil {
 		return result, err
 	}
-	if result, err := e.parseTransactionStatement(cypher); result != nil || err != nil {
+	if result, err := e.parseTransactionStatement(ctx, cypher); result != nil || err != nil {
 		if err == nil && e.txContext != nil && e.txContext.active {
+			e.txContext.coordinatorOwned = e.txContext.coordinatorOwned || storage.CoordinatorOwnsTransaction(ctx)
+			if tx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
+				tx.BindContext(ctx)
+			}
 			// BEGIN: the client's transaction metadata (WithTransactionMetadata).
 			if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
 				if metadataErr := applyTransactionMetadata(ctx, tx); metadataErr != nil {
-					_, _ = e.handleRollback()
-					return nil, metadataErr
+					_, cleanup := e.handleRollback(ctx, metadataErr)
+					return nil, nornicerrors.CombineTerminalOutcomes(metadataErr, cleanup)
 				}
 			}
 		}
 		if err == nil && e.txContext != nil && e.txContext.active && e.txContext.running == nil {
-			e.txContext.running = runningTransactions.begin(ctx, e.currentDatabaseName())
+			e.txContext.running = runningTransactions.begin(ctx, e.databaseName())
 		}
 		return result, err
 	}
@@ -583,13 +773,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// checked write path, the row loop) and whether it read or wrote;
 	// only an auto-commit statement that had already committed keeps its
 	// result (#751).
-	var running runningStatement
-	defer func() {
-		if running.tx != nil && running.tx.terminated.Load() && !running.tx.committed.Load() {
-			result, retErr = nil, transactionTerminatedError()
-		}
-		running.done()
-	}()
 	registerStatement := func() error {
 		statementCtx, statement, err := e.withRunningStatement(ctx, originalCypher)
 		if err != nil {
@@ -600,13 +783,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	if e.txContext != nil && e.txContext.active {
 		if runErr := registerStatement(); runErr != nil {
-			_, _ = e.handleRollback()
-			return nil, runErr
+			_, cleanup := e.handleRollback(ctx, runErr)
+			return nil, nornicerrors.CombineTerminalOutcomes(runErr, cleanup)
 		}
 	}
 
 	// Validate basic syntax
-	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
 		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
 		// per D-04b sixth enum value. No duration observation — parse cost is
 		// sub-microsecond and not meaningful to bucket. The queries_total
@@ -623,13 +806,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// fragment, and a FINISH terminator is itself the clause that follows, so
 	// both are exempt.
 	if !finishTerminated {
-		last := lastTopLevelClauseWord(cypher)
+		last := lastTopLevelClauseWord(ctx, cypher)
 		// `WITH EMBEDDING` is a NornicDB execution option, not a WITH
 		// projection: a statement that ends with it is complete. Only exempt
 		// it when the text before the trailer is itself a complete statement.
 		if last == "WITH" {
-			if scope, ok := stripWithEmbeddingSuffix(cypher); ok {
-				switch lastTopLevelClauseWord(scope) {
+			if scope, ok := stripWithEmbeddingSuffix(ctx, cypher); ok {
+				switch lastTopLevelClauseWord(ctx, scope) {
 				case "", "UNWIND", "MATCH", "OPTIONAL", "WITH", "CALL", "LET", "FILTER", "FOR":
 				default:
 					last = ""
@@ -649,11 +832,28 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 	}
 	// WITH EMBEDDING is an execution option, not a WITH projection: the
-	// scopes are those of the statement without it.
-	scopeText, _ := stripWithEmbeddingSuffix(cypher)
-	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
-		return nil, err
+	// scopes are those of the statement without it. EXPLAIN and PROFILE
+	// check the statement they plan, as Neo4j compiles it.
+	_, scopeText := parseExecutionMode(cypher)
+	scopeText, _ = stripWithEmbeddingSuffix(ctx, scopeText)
+	if finishTerminated {
+		scopeText += " FINISH"
 	}
+	admission, admissionErr := e.admitStatement(ctx, scopeText, fabricAdmission{})
+	if admissionErr != nil {
+		return nil, admissionErr
+	}
+	if admission.program != nil {
+		ctx = withBoundStatementProgram(ctx, admission.program)
+	}
+	defer func() {
+		if finishTerminated {
+			completeFinishedResult(result)
+		}
+		if retErr == nil && result != nil {
+			retErr = admission.verifyColumns(result.Columns)
+		}
+	}()
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {
 		return nil, err
 	}
@@ -675,7 +875,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Check query limits if storage engine supports it
 	// Uses interface{} to avoid importing multidb package (prevents circular dependencies)
-	var queryLimitCancel context.CancelFunc
 	if namespacedEngine, ok := e.storage.(interface {
 		GetQueryLimitChecker() interface {
 			CheckQueryRate() error
@@ -694,26 +893,46 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			// So we'll check it in the write handlers too
 
 			// Apply query timeout and concurrent query limits
-			var err error
-			ctx, queryLimitCancel, err = qlc.CheckQueryLimits(ctx)
+			// Author: storage-format-owners lane (Codex), 1 November 2026.
+			// A rejected admission has no replacement context. Cleanup still
+			// belongs to the original request, including its deferred readers.
+			limitedCtx, cancel, err := qlc.CheckQueryLimits(ctx)
 			if err != nil {
 				return nil, err
 			}
-			// Ensure cancel is called when done
-			defer func() {
-				if queryLimitCancel != nil {
-					queryLimitCancel()
-				}
-			}()
+			ctx, queryLimitCancel = limitedCtx, cancel
+			deadlineCtx = ctx
 		}
 	}
 
 	// TRC-15: plan span wraps the analysis/classification phase.
 	_, planSpan := startPlanSpan(ctx)
 	// Analyze query - uses cached analysis if available
-	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
+	// This extracts query metadata (HasMatch, ReadOnly(), Labels, etc.) once
 	// and caches it for repeated queries, avoiding redundant string parsing
-	info := e.analyzer.Analyze(cypher)
+	info, err := e.analyzer.Analyze(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
+	ctx, finishMode, modeErr := e.observeResolvedStatementMode(ctx, cypher)
+	if modeErr != nil {
+		return nil, modeErr
+	}
+	if state := e.resolvedStatementModeOf(ctx); state != nil {
+		var release func()
+		e, release = e.bindResolvedStatementMode(state)
+		defer release()
+	}
+	if finishMode != nil {
+		defer func() {
+			if retErr == nil {
+				result = finishMode(result)
+			}
+		}()
+	}
+	if err := e.admitResolvedStatementWrite(ctx, cypher); err != nil {
+		return nil, err
+	}
 
 	// Plan 04-03 Sites 1 + 3 (RISK-1 corrected): classify ONCE post-Analyze.
 	// isFabric=false here because the fabric branch returns at line ~963
@@ -723,16 +942,20 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// commands bucket as "admin" instead). Single observation point covers
 	// cache-hit early-return AND every downstream execution path so the
 	// counter reflects intent regardless of how the query resolves.
-	opType := classifyOpType(info, false /* isFabric */, isSystemCommandNoGraph(cypher))
+	opType := classifyOpType(info, false /* isFabric */, isMetadataCommand(ctx, cypher, metadataCatalogExecution))
 	e.observeQuery(opType, true /* observeDuration */, slowStart)
-	planSpan.SetAttributes(attribute.String("cypher.op_type", opType))
+	if planSpan.IsRecording() {
+		planSpan.SetAttributes(attribute.String("cypher.op_type", opType))
+	}
 	planSpan.End()
 	// Update the execute span with the resolved op_type.
-	execSpan.SetAttributes(attribute.String("cypher.op_type", opType))
+	if execSpan.IsRecording() {
+		execSpan.SetAttributes(attribute.String("cypher.op_type", opType))
+	}
 
 	// For routing, we still need upperQuery for some handlers
 	// TODO: Migrate handlers to use QueryInfo directly
-	upperQuery := e.cachedUpperQuery(cypher)
+	upperQuery := e.cachedUpperQuery(ctx, cypher)
 
 	// Capture the storage and search-index revisions before execution so
 	// mutations performed outside this executor cannot leave a stale cached
@@ -744,7 +967,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// (#907); a Cypher 5 key pays for no version text.
 	resultCacheKey := ""
 	if e.canUseResultCache(ctx, info, cypher) {
-		resultCacheKey = resultCacheEntryKey(cypher, params)
+		resultCacheKey = resultCacheEntryKey(ctx, cypher, params)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if version := cypherVersionFromContext(ctx); version != "5" {
 			resultCacheKey += ":cypher:" + version
 		}
@@ -753,8 +979,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)
 			}
 		}
-		if svc := e.searchService; svc != nil {
-			resultCacheKey += ":search:" + strconv.FormatUint(svc.IndexRevision(), 10)
+		if svc := e.search(); svc != nil {
+			resultCacheKey += searchCacheKey(svc)
 		}
 		if cached, trace, entities, found := e.cache.getWithTraceForEmbedding(resultCacheKey, embeddingGeneration); found {
 			e.restoreHotPathTrace(trace)
@@ -762,26 +988,33 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return cached, nil
 		}
 	}
-	if running.tx == nil {
+	if running.tx == nil && running.memory == nil {
 		// Registering an auto-commit statement can't fail: only a
 		// terminated explicit transaction refuses a statement, and a
 		// statement of one is registered above.
 		_ = registerStatement()
 	}
 
-	// Check for EXPLAIN/PROFILE execution modes (using cached analysis)
-	if info.HasExplain {
-		_, innerQuery := parseExecutionMode(cypher)
-		return e.executeExplain(ctx, innerQuery)
-	}
-	if info.HasProfile {
-		_, innerQuery := parseExecutionMode(cypher)
-		return e.executeProfile(ctx, innerQuery)
+	// Prefix consumption and dispatch share one reader, including comments
+	// and EOF. A classifier flag must never re-enter the unchanged statement.
+	if info.HasExplain || info.HasProfile {
+		mode, innerQuery := parseExecutionMode(cypher)
+		if finishTerminated {
+			ctx = withFinishedStatement(ctx, innerQuery)
+		}
+		if mode == ModeExplain {
+			return e.executeExplain(ctx, innerQuery)
+		}
+		if mode == ModeProfile {
+			return e.executeProfile(ctx, innerQuery)
+		}
 	}
 
 	// If in explicit transaction, execute within it
 	if e.txContext != nil && e.txContext.active {
 		ctx = withExpressionFailureSlot(ctx)
+		ctx = withStatementClausePlans(ctx, cypher)
+
 		result, err := e.executeInTransaction(ctx, cypher, upperQuery)
 		if failure := getExpressionFailure(ctx); failure != nil {
 			return result, failure
@@ -789,14 +1022,22 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return result, err
 	}
 
-	// System commands (CREATE/DROP DATABASE, SHOW DATABASES, etc.) must not use
+	// Catalog commands (CREATE/DROP DATABASE, SHOW DATABASES, etc.) must not use
 	// implicit transactions: they operate on dbManager/metadata, not graph
 	// storage. Routing them through executeWithoutTransaction directly ensures
-	// correct handling and avoids the write path.
-	if isSystemCommandNoGraph(cypher) || isOrdinarySchemaDDL(cypher) {
+	// correct handling and avoids the write path. Ordinary schema DDL is not a
+	// catalog command: it is a write whose one implicit transaction stages the
+	// declaration together with its fill and publishes both at commit
+	// (schema_transaction.go), so no reader sees a declared but unfilled index.
+	if isMetadataCommand(ctx, cypher, metadataCatalogExecution) {
 		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
 		if err != nil {
 			return nil, err
+		}
+		// This owner executes metadata effects directly, with no implicit
+		// transaction to publish their completed outcome.
+		if !info.ReadOnly() && !e.inTransaction(ctx) {
+			publishStatementCommit(ctx)
 		}
 		return result, nil
 	}
@@ -805,9 +1046,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// produces them (#939). The result-limit truncation and the restores of
 	// rewritten rows below need the whole result, so a statement with
 	// either keeps it. A streamed result is not cached.
-	if stream != nil && info.IsReadOnly && !rowsRewritten && !finishTerminated && e.maxResults() == 0 {
-		ctx = armResultStream(ctx, stream, cypher, func(columns []string) []string {
-			restored, _ := rewrite.restore(&ExecuteResult{Columns: columns}, nil)
+	if stream != nil && info.ReadOnly() && !rowsRewritten && !finishTerminated && e.maxResults() == 0 {
+		ctx = armResultStream(ctx, stream, cypher, func(ctx context.Context, columns []string) []string {
+			restored, _ := (resultRestoration{source: rewrite}).restore(ctx, &ExecuteResult{Columns: columns}, nil, nil)
 			return restored.Columns
 		}, func(rows [][]interface{}) {
 			e.recordMaterializedResultAccess(&ExecuteResult{Rows: rows})
@@ -816,6 +1057,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Auto-commit single query through the implicit-transaction write path.
 	ctx = withExpressionFailureSlot(ctx)
+	ctx = withStatementClausePlans(ctx, cypher)
 	result, err = e.executeImplicitAsync(ctx, cypher, upperQuery)
 	if result != nil && err == nil {
 		if orders := snapshotMapKeyOrders(ctx); len(orders) > 0 {
@@ -840,26 +1082,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Retain the revision captured before execution. A read overlapping a
 	// mutation must not publish its stale result under the newer revision.
 	if err == nil && resultCacheKey != "" && !stream.streamed() {
+		if finishMode != nil {
+			result = finishMode(result)
+		}
 		e.cache.putWithLabelsAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace(), embeddingGeneration)
 	}
 
-	// Invalidate caches on write operations (using cached analysis)
-	if info.IsWriteQuery {
-		// Only invalidate node lookup cache when NODES are deleted
-		// Relationship-only deletes (like benchmark CREATE rel DELETE rel) don't affect node cache
-		if info.HasDelete && queryDeletesNodes(cypher) {
-			e.invalidateNodeLookupCache()
-		}
-
-		// Invalidate query result cache using cached labels
-		if e.cache != nil {
-			if len(info.Labels) > 0 {
-				e.cache.InvalidateLabels(info.Labels)
-			} else {
-				e.cache.Invalidate()
-			}
-		}
-	}
+	e.invalidateCachesForQuery(ctx, info, cypher)
 
 	return result, err
 }
@@ -890,4 +1119,12 @@ func (e *StorageExecutor) maxResults() int64 {
 		return 0
 	}
 	return limits.GetMaxResults()
+}
+
+// searchCacheKey is the part of a result-cache key that depends on the search
+// service: its revision, and its instance, which tells a replacement service
+// (a reset or restore of the database's search) from the one it replaced,
+// whose revisions it would otherwise repeat.
+func searchCacheKey(svc *search.Service) string {
+	return ":search:" + strconv.FormatUint(svc.Instance(), 10) + ":" + strconv.FormatUint(svc.IndexRevision(), 10)
 }

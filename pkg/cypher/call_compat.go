@@ -1,4 +1,7 @@
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
 package cypher
+
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
 
 import (
 	"context"
@@ -17,62 +20,62 @@ import (
 
 // ===== Additional Neo4j Compatibility Procedures =====
 
-// callDbInfo returns database information - Neo4j db.info()
-func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
-	nodeCount, _ := e.storage.NodeCount()
-	edgeCount, _ := e.storage.EdgeCount()
-	name := e.currentDatabaseName()
-	if selected := GetUseDatabaseFromContext(ctx); selected != "" {
-		name = selected
+// infoScope selects the database or DBMS identity described by an info row.
+type infoScope uint8
+
+const (
+	infoScopeDatabase infoScope = iota
+	infoScopeDBMS
+)
+
+// callInfo owns identity projection for db.info and dbms.info. Database counts
+// belong only to db.info; both procedures retain their distinct column contracts.
+func (e *StorageExecutor) callInfo(ctx context.Context, scope infoScope) (*ExecuteResult, error) {
+	var name string
+	var columns []string
+	var row []interface{}
+	if scope == infoScopeDBMS {
+		name = "system"
+		if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
+			name = manager.SystemDatabaseName()
+		}
+		columns = columnNames(dbmsInfoColumns)
+		row = make([]interface{}, 3)
+	} else {
+		nodeCount, err := e.storage.NodeCount(ctx)
+		if err != nil {
+			return nil, err
+		}
+		edgeCount, err := e.storage.EdgeCount(ctx)
+		if err != nil {
+			return nil, err
+		}
+		name = e.databaseName()
+		if selected := GetUseDatabaseFromContext(ctx); selected != "" {
+			name = selected
+		}
+		columns = columnNames(dbInfoColumns)
+		row = make([]interface{}, 5)
+		row[3], row[4] = nodeCount, edgeCount
 	}
-	var id, creationDate interface{}
+	row[1] = name
 	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
 		databaseID, createdAt := provider.DatabaseIdentity(name)
 		if databaseID != "" {
-			id = databaseID
+			row[0] = databaseID
 		}
 		if !createdAt.IsZero() {
-			creationDate = createdAt.UTC().Format(time.RFC3339Nano)
+			row[2] = createdAt.UTC().Format(time.RFC3339Nano)
 		}
 	}
-
-	return &ExecuteResult{
-		Columns: []string{"id", "name", "creationDate", "nodeCount", "relationshipCount"},
-		Rows: [][]interface{}{
-			{id, name, creationDate, nodeCount, edgeCount},
-		},
-	}, nil
+	return &ExecuteResult{Columns: columns, Rows: [][]interface{}{row}}, nil
 }
 
 // callDbPing checks database connectivity - Neo4j db.ping()
 func (e *StorageExecutor) callDbPing() (*ExecuteResult, error) {
 	return &ExecuteResult{
-		Columns: []string{"success"},
+		Columns: columnNames(dbPingColumns),
 		Rows:    [][]interface{}{{true}},
-	}, nil
-}
-
-// callDbmsInfo returns DBMS information - Neo4j dbms.info()
-func (e *StorageExecutor) callDbmsInfo() (*ExecuteResult, error) {
-	name := "system"
-	if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
-		name = manager.SystemDatabaseName()
-	}
-	var id, creationDate interface{}
-	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
-		databaseID, createdAt := provider.DatabaseIdentity(name)
-		if databaseID != "" {
-			id = databaseID
-		}
-		if !createdAt.IsZero() {
-			creationDate = createdAt.UTC().Format(time.RFC3339Nano)
-		}
-	}
-	return &ExecuteResult{
-		Columns: []string{"id", "name", "creationDate"},
-		Rows: [][]interface{}{
-			{id, name, creationDate},
-		},
 	}, nil
 }
 
@@ -107,7 +110,7 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 	)
 	sort.Slice(rows, func(first, second int) bool { return rows[first][0].(string) < rows[second][0].(string) })
 	result := &ExecuteResult{
-		Columns: []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"},
+		Columns: columnNames(configSettingColumns),
 		Rows:    [][]interface{}{},
 	}
 	for _, row := range rows {
@@ -121,7 +124,7 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 // callDbmsClientConfig lists client-visible configuration - Neo4j dbms.clientConfig()
 func (e *StorageExecutor) callDbmsClientConfig() (*ExecuteResult, error) {
 	return &ExecuteResult{
-		Columns: []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"},
+		Columns: columnNames(configSettingColumns),
 		Rows: [][]interface{}{
 			{"server.bolt.advertised_address", "Bolt connector advertised address", "localhost:7687", false, nil, nil, false, "localhost:7687"},
 			{"server.http.advertised_address", "HTTP connector advertised address", "localhost:7474", false, nil, nil, false, "localhost:7474"},
@@ -136,7 +139,7 @@ func (e *StorageExecutor) callDbmsListConnections() (*ExecuteResult, error) {
 
 func (e *StorageExecutor) callDbmsListConnectionsWithContext(ctx context.Context) (*ExecuteResult, error) {
 	result := &ExecuteResult{
-		Columns: []string{"connectionId", "connectTime", "connector", "username", "userAgent", "serverAddress", "clientAddress"},
+		Columns: columnNames(dbmsListConnectionsColumns),
 		Rows:    [][]interface{}{},
 	}
 	identity := requestIdentityFromContext(ctx)
@@ -182,7 +185,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 		})
 	}
 	return &ExecuteResult{
-		Columns: []string{"analyzer", "description", "stopwords", "kind", "version", "digest", "dynamicLoad", "selectedDatabases"},
+		Columns: columnNames(dbIndexFulltextListAvailableAnalyzersColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -201,9 +204,9 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
-		Columns: []string{"relationship", "score"},
+		Columns: columnNames(relationshipScoreColumns),
 		Rows:    [][]interface{}{},
 	}
 	indexName, query, opts, err := fulltextQueryArguments("db.index.fulltext.queryRelationships", args)
@@ -236,7 +239,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 
 	// If the query asks for `<prop>:*` against a field the index didn't
 	// declare, mirror Neo4j-Lucene: empty result set (no postings list).
-	if isPresenceQuery && len(targetProperties) > 0 && !containsString(targetProperties, presenceProp) {
+	if fulltextPresenceOutsideIndex(isPresenceQuery, presenceProp, targetProperties) {
 		return result, nil
 	}
 
@@ -244,122 +247,20 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 		if opts.limit == 0 {
 			return result, nil
 		}
-		seen := 0
-		err := storage.StreamEdgesWithFallback(context.Background(), e.storage, 1024, func(edge *storage.Edge) error {
-			if !matchesRelationshipTypes(edge, targetTypes) {
-				return nil
-			}
-			if wildcard {
-				// As for nodes (and in Neo4j), a relationship with none of the
-				// indexed properties has no document, so the wildcard skips it
-				// (#547).
-				if len(targetProperties) > 0 && !edgeHasAnyNonEmptyProperty(edge, targetProperties) {
-					return nil
-				}
-				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{e.procedureRelationship(edge), 1.0}) {
-					return storage.ErrIterationStopped
-				}
-				return nil
-			}
-			if edgeHasNonEmptyProperty(edge, presenceProp) {
-				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{e.procedureRelationship(edge), 1.0}) {
-					return storage.ErrIterationStopped
-				}
-			}
-			return nil
-		})
-		if err != nil && err != storage.ErrIterationStopped {
+		if err := e.fulltextUnrankedRows(ctx, indexName, targetTypes, targetProperties, true, wildcard, presenceProp, opts, result); err != nil {
 			return nil, err
 		}
 		return result, nil
 	}
-
-	edges, err := e.storage.AllEdges()
+	hits, err := e.fulltextHits(ctx, indexName, query, targetTypes, targetProperties, true, opts)
 	if err != nil {
 		return nil, err
 	}
-
-	parsed, err := ParseFulltextQuery(query)
-	if err != nil {
-		return nil, err
+	for _, hit := range hits {
+		result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(storage.CopyEdge(hit.edge)), hit.score})
 	}
-	if parsed.IsEmpty() {
-		return result, nil
-	}
-
-	type edgeDoc struct {
-		edge *storage.Edge
-		doc  *ftDoc
-	}
-	docs := make([]edgeDoc, 0, len(edges))
-	docFreq := make(map[string]int, len(parsed.PrimaryTerms()))
-	var totalDocLen int64
-	for _, edge := range edges {
-		if !matchesRelationshipTypes(edge, targetTypes) {
-			continue
-		}
-		doc := buildEdgeFulltextDoc(edge, targetProperties)
-		if doc == nil {
-			continue
-		}
-		docs = append(docs, edgeDoc{edge: edge, doc: doc})
-		totalDocLen += int64(doc.contentTokenN)
-		for _, term := range parsed.PrimaryTerms() {
-			if strings.Contains(doc.contentLower, term) {
-				docFreq[term]++
-			}
-		}
-	}
-	totalDocs := len(docs)
-	avgDocLen := 100.0
-	if totalDocs > 0 {
-		avgDocLen = float64(totalDocLen) / float64(totalDocs)
-	}
-
-	ctx := &ftEvalCtx{
-		DefaultFields: targetProperties,
-		avgDocLen:     avgDocLen,
-		totalDocs:     totalDocs,
-		docFreq:       docFreq,
-	}
-
-	type scoredEdge struct {
-		edge  *storage.Edge
-		score float64
-	}
-	scored := make([]scoredEdge, 0, len(docs))
-	for _, d := range docs {
-		matched, score := parsed.Match(ctx, d.doc)
-		if !matched {
-			continue
-		}
-		if score <= 0 {
-			score = 1.0
-		}
-		scored = append(scored, scoredEdge{edge: d.edge, score: score})
-	}
-
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score == scored[j].score {
-			return scored[i].edge.ID < scored[j].edge.ID
-		}
-		return scored[i].score > scored[j].score
-	})
-	result.Rows = make([][]interface{}, 0, len(scored))
-	for _, s := range scored {
-		result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(s.edge), s.score})
-	}
-	applyFulltextOptions(result, opts)
 
 	return result, nil
-}
-
-// buildEdgeFulltextDoc mirrors buildNodeFulltextDoc for relationships.
-func buildEdgeFulltextDoc(edge *storage.Edge, properties []string) *ftDoc {
-	if edge == nil {
-		return nil
-	}
-	return buildFulltextDocFromProperties(edge.Properties, extractEdgeTextContent(edge, properties))
 }
 
 // edgeHasNonEmptyProperty mirrors nodeHasNonEmptyProperty: the
@@ -447,8 +348,15 @@ func extractEdgeTextContent(edge *storage.Edge, properties []string) string {
 		}
 		return strings.TrimSpace(content.String())
 	}
-	for _, val := range edge.Properties {
-		writeFulltextValue(&content, val)
+	// The all-property extension has no declared order. Sort exact property
+	// names so body statistics and phrase scoring never depend on Go map order.
+	keys := make([]string, 0, len(edge.Properties))
+	for key := range edge.Properties {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		writeFulltextValue(&content, edge.Properties[key])
 	}
 	return strings.TrimSpace(content.String())
 }
@@ -485,122 +393,12 @@ func edgeToMap(edge *storage.Edge) map[string]interface{} {
 	return result
 }
 
-// callDbIndexVectorQueryRelationships searches relationships using vector similarity - Neo4j db.index.vector.queryRelationships()
-// Syntax: CALL db.index.vector.queryRelationships('indexName', k, queryInput)
-// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
-func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Parse parameters from: CALL db.index.vector.queryRelationships('indexName', k, queryInput)
-	// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
-	indexName, k, input, err := e.parseVectorQueryParams(cypher)
-	if err != nil {
-		return nil, localizedError(localization.CypherProceduresVectorQueryParseFailed(err), err)
-	}
-	return e.callDbIndexVectorQueryRelationshipsInput(ctx, indexName, k, input)
-}
-
-func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
-	// Resolve the query vector (same logic as queryNodes)
-	var queryVector []float32
-
-	if len(input.vector) > 0 {
-		// Direct vector provided (Neo4j compatible)
-		queryVector = input.vector
-	} else if input.stringQuery != "" {
-		// String query - embed server-side (NornicDB enhancement)
-		if e.queryEmbedderForStatement(ctx) == nil {
-			return nil, localizedError(localization.CypherProceduresStringQueryEmbedderRequired(), nil)
-		}
-		embedded, embedErr := e.embedVectorQueryText(ctx, input.stringQuery)
-		if embedErr != nil {
-			return nil, localizedError(localization.CypherProceduresEmbedQueryFailed(input.stringQuery, embedErr), embedErr)
-		}
-		queryVector = embedded
-	} else if input.hasValue || input.paramName != "" {
-		// Parameter reference - resolve from context parameters
-		paramValue := input.value
-		if !input.hasValue {
-			params := getParamsFromContext(ctx)
-			if params == nil {
-				return &ExecuteResult{Columns: []string{"relationship", "score"}, Rows: [][]interface{}{}}, nil
-			}
-			var exists bool
-			paramValue, exists = params[input.paramName]
-			if !exists {
-				return nil, localizedError(localization.CypherProceduresParameterNotProvided(input.paramName), nil)
-			}
-		}
-
-		// Convert parameter value to []float32
-		// Parameter can be []float32, []float64, []interface{}, or string (to embed)
-		switch val := paramValue.(type) {
-		case []float32:
-			queryVector = val
-		case []float64:
-			queryVector = make([]float32, len(val))
-			for i, v := range val {
-				queryVector[i] = float32(v)
-			}
-		case []interface{}:
-			queryVector = make([]float32, 0, len(val))
-			for _, item := range val {
-				switch v := item.(type) {
-				case float32:
-					queryVector = append(queryVector, v)
-				case float64:
-					queryVector = append(queryVector, float32(v))
-				case int:
-					queryVector = append(queryVector, float32(v))
-				case int64:
-					queryVector = append(queryVector, float32(v))
-				default:
-					return nil, localizedError(localization.CypherProceduresParameterNonNumeric(input.paramName, fmt.Sprintf("%T", v)), nil)
-				}
-			}
-		case string:
-			// String parameter - embed it
-			if e.queryEmbedderForStatement(ctx) == nil {
-				return nil, localizedError(localization.CypherProceduresParameterStringEmbedderRequired(input.paramName), nil)
-			}
-			embedded, embedErr := e.embedVectorQueryText(ctx, val)
-			if embedErr != nil {
-				return nil, localizedError(localization.CypherProceduresEmbedParameterFailed(input.paramName, val, embedErr), embedErr)
-			}
-			queryVector = embedded
-		default:
-			return nil, localizedError(localization.CypherProceduresParameterUnsupportedType(input.paramName, cypherTypeName(val)), nil)
-		}
-	} else {
-		// No query input provided - check if this might be a substituted invalid parameter
-		params := getParamsFromContext(ctx)
-		if params != nil {
-			// Parameters were provided, so if we have no input, it might be a substituted invalid type
-			// Check which parameters have unsupported types to provide a better error message
-			var unsupportedParams []string
-			for paramName, paramValue := range params {
-				// Check if this parameter has an unsupported type for vector queries
-				switch paramValue.(type) {
-				case []float32, []float64, []interface{}, string:
-					// Supported types - skip
-					continue
-				default:
-					// Unsupported type - add to list
-					unsupportedParams = append(unsupportedParams, fmt.Sprintf("$%s (%T)", paramName, paramValue))
-				}
-			}
-
-			if len(unsupportedParams) > 0 {
-				// Found parameters with unsupported types - provide specific error
-				paramList := strings.Join(unsupportedParams, ", ")
-				return nil, localizedError(localization.CypherProceduresUnsupportedParameters(paramList), nil)
-			}
-			// Parameters exist but all have supported types - might be a different issue
-			return nil, localizedError(localization.CypherProceduresQueryInputPossiblyUnsupported(), nil)
-		}
-		return nil, localizedError(localization.CypherProceduresQueryInputRequired(), nil)
-	}
-
+// callDbIndexVectorQueryRelationshipsWithVector implements the search half of
+// db.index.vector.queryRelationships. The statement has already bound and
+// resolved the procedure's arguments, once, in callVectorQueryArguments.
+func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx context.Context, indexName string, k int, queryVector []float32) (*ExecuteResult, error) {
 	result := &ExecuteResult{
-		Columns: []string{"relationship", "score"},
+		Columns: columnNames(relationshipScoreColumns),
 		Rows:    [][]interface{}{},
 	}
 
@@ -625,8 +423,8 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		return nil, noSuchVectorIndexError(indexName)
 	}
 
-	if e.searchService != nil && targetProperty != "" && e.searchService.HasRelationshipVectorEntries(targetRelType, targetProperty) {
-		hits, err := e.searchService.VectorQueryRelationships(ctx, queryVector, search.RelationshipVectorQuerySpec{
+	if svc := e.search(); svc != nil && targetProperty != "" && svc.HasRelationshipVectorEntries(targetRelType, targetProperty) {
+		hits, err := svc.VectorQueryRelationships(ctx, queryVector, search.RelationshipVectorQuerySpec{
 			IndexName:  indexName,
 			Type:       targetRelType,
 			Property:   targetProperty,
@@ -637,7 +435,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 			return nil, err
 		}
 		for _, hit := range hits {
-			edge, err := e.storage.GetEdge(storage.EdgeID(hit.ID))
+			edge, err := e.storage.GetEdge(ctx, storage.EdgeID(hit.ID))
 			if err != nil {
 				continue
 			}
@@ -646,23 +444,22 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		return result, nil
 	}
 
-	// Get all edges and filter to those with embeddings
-	edges, err := e.storage.AllEdges()
-	if err != nil {
-		return nil, err
-	}
-
-	// Collect edges with embeddings and calculate similarities
+	// Collect edges with embeddings and calculate similarities. The population
+	// is read on the statement context, so a caller that cancels ends the scan
+	// and the scoring where they stand.
 	type scoredEdge struct {
 		edge  *storage.Edge
 		score float64
 	}
 	var scoredEdges []scoredEdge
 
-	for _, edge := range edges {
+	if err := storage.StreamEdgesWithFallback(ctx, e.storage, storage.StreamChunkSize, func(edge *storage.Edge) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Check relationship type filter if index specifies one
 		if targetRelType != "" && edge.Type != targetRelType {
-			continue
+			return nil
 		}
 
 		// Get embedding from property
@@ -674,21 +471,24 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		}
 
 		if len(edgeEmbedding) == 0 {
-			continue
+			return nil
 		}
 
 		// Skip if dimensions don't match
 		if len(edgeEmbedding) != len(queryVector) {
-			continue
+			return nil
 		}
 
 		// Neo4j's score for the index's similarity (#907).
 		score, ok := scoreVectorForFastPath(queryVector, edgeEmbedding, similarityFunc)
 		if !ok {
-			continue
+			return nil
 		}
 
 		scoredEdges = append(scoredEdges, scoredEdge{edge: edge, score: score})
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	// Sort by score descending
@@ -762,15 +562,16 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
 	}
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
+		if _, err := admitSchemaIndexCreation(ctx, schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
 			return err
 		}
-		if err := schema.AddVectorIndexForEntity(indexName, token, property, int(dimension), similarity, entity); err != nil {
+		if err := schema.AddVectorIndex(indexName, token, property, int(dimension), similarity, entity); err != nil {
 			return err
 		}
 		if entity == storage.ConstraintEntityNode {
-			e.afterSchemaCommit(ctx, func() {
+			return e.afterCommit(ctx, func(context.Context) error {
 				e.registerVectorSpace(indexName, token, property, int(dimension), similarity)
+				return nil
 			})
 		}
 		return nil
@@ -787,117 +588,103 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 	}
 	if entity == storage.ConstraintEntityRelationship {
 		return &ExecuteResult{
-			Columns: []string{"name", "relationshipType", "property", "dimension", "similarityFunction"},
+			Columns: legacyProcedureColumns("db.index.vector.createRelationshipIndex"),
 			Rows:    [][]interface{}{{indexName, token, property, int(dimension), similarity}},
 		}, nil
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
-// callDbIndexFulltextCreateNodeIndex creates a fulltext index on nodes - Neo4j db.index.fulltext.createNodeIndex()
-// Syntax: CALL db.index.fulltext.createNodeIndex(indexName, labels, properties, config)
-func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	const procedure = "db.index.fulltext.createNodeIndex"
-	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
-	if err != nil {
-		return nil, err
-	}
-	labels, err := requiredProcedureStringList(procedure, args, 1, "labels")
-	if err != nil {
-		return nil, err
-	}
-	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
-	if err != nil {
-		return nil, err
-	}
-
-	// Create fulltext index using schema manager
-	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", labels, properties, storage.ConstraintEntityNode); err != nil {
-			return err
-		}
-		return schema.AddFulltextIndex(indexName, labels, properties)
-	})
-	if err != nil {
-		return nil, localizedError(localization.CypherProceduresCreateFulltextIndexFailed(err), err)
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"name", "labels", "properties"},
-		Rows:    [][]interface{}{{indexName, labels, properties}},
-	}, nil
+// fulltextIndexProcedure names a fulltext index creation procedure and the
+// Neo4j name of its second argument: db.index.fulltext.createNodeIndex takes
+// labels, db.index.fulltext.createRelationshipIndex relationship types.
+type fulltextIndexProcedure struct {
+	name, token string
 }
 
-// callDbIndexFulltextCreateRelationshipIndex creates a fulltext index on relationships - Neo4j db.index.fulltext.createRelationshipIndex()
-// Syntax: CALL db.index.fulltext.createRelationshipIndex(indexName, relationshipTypes, properties, config)
-func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	const procedure = "db.index.fulltext.createRelationshipIndex"
-	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
+var (
+	fulltextNodeIndexProcedure         = fulltextIndexProcedure{"db.index.fulltext.createNodeIndex", "labels"}
+	fulltextRelationshipIndexProcedure = fulltextIndexProcedure{"db.index.fulltext.createRelationshipIndex", "relationshipTypes"}
+)
+
+// callDbIndexFulltextCreateIndex creates a fulltext index on nodes or
+// relationships from the call's evaluated arguments: (indexName, labels or
+// relationship types, properties[, config]). The relationship procedure keeps
+// NornicDB's row describing the created index.
+func (e *StorageExecutor) callDbIndexFulltextCreateIndex(ctx context.Context, args []interface{}, entity storage.ConstraintEntityType) (*ExecuteResult, error) {
+	procedure := fulltextNodeIndexProcedure
+	if entity == storage.ConstraintEntityRelationship {
+		procedure = fulltextRelationshipIndexProcedure
+	}
+	indexName, err := requiredProcedureString(procedure.name, args, 0, "indexName")
 	if err != nil {
 		return nil, err
 	}
-	relTypes, err := requiredProcedureStringList(procedure, args, 1, "relationshipTypes")
+	tokens, err := requiredProcedureStringList(procedure.name, args, 1, procedure.token)
 	if err != nil {
 		return nil, err
 	}
-	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
+	properties, err := requiredProcedureStringList(procedure.name, args, 2, "properties")
 	if err != nil {
 		return nil, err
 	}
 
-	// Create fulltext index using schema manager
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", relTypes, properties, storage.ConstraintEntityRelationship); err != nil {
+		if _, err := admitSchemaIndexCreation(ctx, schema, "", indexName, "FULLTEXT", tokens, properties, entity); err != nil {
 			return err
 		}
-		return schema.AddFulltextRelationshipIndex(indexName, relTypes, properties)
+		return schema.AddFulltextIndex(indexName, tokens, properties, entity)
 	})
 	if err != nil {
-		return nil, localizedError(localization.CypherProceduresCreateRelationshipFulltextIndexFailed(err), err)
+		failure := localization.CypherProceduresCreateFulltextIndexFailed(err)
+		if entity == storage.ConstraintEntityRelationship {
+			failure = localization.CypherProceduresCreateRelationshipFulltextIndexFailed(err)
+		}
+		return nil, localizedError(failure, err)
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "relationshipTypes", "properties"},
-		Rows:    [][]interface{}{{indexName, relTypes, properties}},
+		Columns: legacyProcedureColumns(procedure.name),
+		Rows:    [][]interface{}{{indexName, tokens, properties}},
 	}, nil
 }
 
 // callDbIndexFulltextDrop drops a fulltext index - Neo4j db.index.fulltext.drop()
 // Syntax: CALL db.index.fulltext.drop(indexName)
-func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextDrop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	indexName, err := requiredProcedureString("db.index.fulltext.drop", args, 0, "indexName")
 	if err != nil {
 		return nil, err
 	}
 
-	if err := e.dropIndexOfKind(indexName, "fulltext", func(schema *storage.SchemaManager) bool {
+	if err := e.dropIndexOfKind(ctx, indexName, "fulltext", func(schema *storage.SchemaManager) bool {
 		_, ok := schema.GetFulltextIndex(indexName)
 		return ok
 	}); err != nil {
 		return nil, err
 	}
 	return &ExecuteResult{
-		Columns: []string{"name", "dropped"},
+		Columns: legacyProcedureColumns("db.index.fulltext.drop"),
 		Rows:    [][]interface{}{{indexName, true}},
 	}, nil
 }
 
 // callDbIndexVectorDrop drops a vector index - Neo4j db.index.vector.drop()
 // Syntax: CALL db.index.vector.drop(indexName)
-func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexVectorDrop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	indexName, err := requiredProcedureString("db.index.vector.drop", args, 0, "indexName")
 	if err != nil {
 		return nil, err
 	}
 
-	if err := e.dropIndexOfKind(indexName, "vector", func(schema *storage.SchemaManager) bool {
+	if err := e.dropIndexOfKind(ctx, indexName, "vector", func(schema *storage.SchemaManager) bool {
 		_, ok := schema.GetVectorIndex(indexName)
 		return ok
 	}); err != nil {
 		return nil, err
 	}
 	return &ExecuteResult{
-		Columns: []string{"name", "dropped"},
+		Columns: legacyProcedureColumns("db.index.vector.drop"),
 		Rows:    [][]interface{}{{indexName, true}},
 	}, nil
 }
@@ -907,71 +694,17 @@ func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteRes
 // an index of that kind exists under the name, and otherwise fails with
 // Neo.ClientError.Schema.IndexDropFailed, so a procedure never reports a drop
 // that did not happen and never drops an index of another kind.
-func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storage.SchemaManager) bool) error {
-	if isCompositeRoot(e.storage) {
-		return localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
+func (e *StorageExecutor) dropIndexOfKind(ctx context.Context, name, kind string, exists func(*storage.SchemaManager) bool) error {
+	if err := schemaDDLTargetError(e.storage); err != nil {
+		return err
 	}
-	return e.mutateSchema(context.Background(), func(schema *storage.SchemaManager) error {
+	return e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
 		if schema == nil || !exists(schema) {
 			return newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex",
 				fmt.Sprintf("there is no %s index named %q", kind, name))
 		}
 		return e.dropIndexByName(name, false)
 	})
-}
-
-// splitArgsRespectingArrays splits arguments, keeping array brackets together
-func (e *StorageExecutor) splitArgsRespectingArrays(args string) []string {
-	var result []string
-	var current strings.Builder
-	depth := 0
-	inQuote := false
-	quoteChar := byte(0)
-
-	for i := 0; i < len(args); i++ {
-		c := args[i]
-		if (c == '\'' || c == '"') && !isBackslashEscaped(args, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-			current.WriteByte(c)
-		} else if c == '[' && !inQuote {
-			depth++
-			current.WriteByte(c)
-		} else if c == ']' && !inQuote {
-			depth--
-			current.WriteByte(c)
-		} else if c == ',' && depth == 0 && !inQuote {
-			result = append(result, current.String())
-			current.Reset()
-		} else {
-			current.WriteByte(c)
-		}
-	}
-	if current.Len() > 0 {
-		result = append(result, current.String())
-	}
-	return result
-}
-
-// parseStringArray parses a string that may be an array ['a', 'b'] or single value 'a'
-func (e *StorageExecutor) parseStringArray(s string) []string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
-		s = s[1 : len(s)-1]
-		var result []string
-		for _, item := range strings.Split(s, ",") {
-			item = strings.Trim(strings.TrimSpace(item), "'\"")
-			if item != "" {
-				result = append(result, item)
-			}
-		}
-		return result
-	}
-	return []string{strings.Trim(s, "'\"")}
 }
 
 // callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
@@ -1019,16 +752,32 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	}
 	store := e.getStorage(ctx)
 	if relationship {
-		edge, err := store.GetEdge(storage.EdgeID(identifier))
-		if err != nil {
-			return nil, localizedError(localization.CypherProceduresRelationshipNotFound(identifier), nil)
+		edge, supplied := arguments[0].(*storage.Edge)
+		if supplied {
+			image := *edge
+			edge = &image
+		} else {
+			var err error
+			edge, err = store.GetEdge(ctx, storage.EdgeID(identifier))
+			if err != nil {
+				return nil, localizedError(localization.CypherProceduresRelationshipNotFound(identifier), err)
+			}
 		}
 		if current, ok := toFloat64Slice(edge.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
+			// Detach only the map being changed; the immutable observation and
+			// unchanged vector arrays retain the image read by this statement.
+			before := observeEdge(edge)
+			edge.Properties = cloneStringAnyMap(edge.Properties)
 			edge.Properties[propertyKey] = vector
-			if err := updateMutatedEdge(store, edge); err != nil {
+			if err := mutateEdgeWithObservation(ctx, store, before, edge); err != nil {
 				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
 			}
 			e.notifyEdgeMutated(string(edge.ID))
+		} else {
+			// Preserve the typed vector in the returned row without a storage
+			// write or mutation of an earlier observation's property map.
+			edge.Properties = cloneStringAnyMap(edge.Properties)
+			edge.Properties[propertyKey] = vector
 		}
 		if entity, ok := arguments[0].(*storage.Edge); ok {
 			entity.Properties = edge.Properties
@@ -1036,16 +785,31 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
-	node, err := store.GetNode(storage.NodeID(identifier))
-	if err != nil {
-		return nil, localizedError(localization.CypherProceduresNodeNotFound(identifier), nil)
+	node, supplied := arguments[0].(*storage.Node)
+	if supplied {
+		image := *node
+		node = &image
+	} else {
+		var err error
+		node, err = store.GetNode(ctx, storage.NodeID(identifier))
+		if err != nil {
+			return nil, localizedError(localization.CypherProceduresNodeNotFound(identifier), err)
+		}
 	}
 	if current, ok := toFloat64Slice(node.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
+		// Detach only the map being changed; the immutable observation and
+		// unchanged vector arrays retain the image read by this statement.
+		before := observeNode(node)
+		node.Properties = cloneStringAnyMap(node.Properties)
 		node.Properties[propertyKey] = vector
-		if err := updateMutatedNode(store, node); err != nil {
+		if err := mutateNodeWithObservation(ctx, store, before, node); err != nil {
 			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 		}
 		e.notifyNodeMutated(string(node.ID))
+	} else {
+		// Keep result values typed while leaving the stored image untouched.
+		node.Properties = cloneStringAnyMap(node.Properties)
+		node.Properties[propertyKey] = vector
 	}
 	if entity, ok := arguments[0].(*storage.Node); ok {
 		entity.Properties = node.Properties
@@ -1061,18 +825,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 //
 // Uses the active explicit transaction or the statement's implicit transaction.
 // Metadata is stored with the transaction for logging, debugging, or audit trails.
-func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if !strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData") {
-		return nil, localizedError(localization.CypherProceduresMetadataInvalidSyntax(false), nil)
-	}
-	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "tx.setMetaData", MinArgs: 1, MaxArgs: 1}, cypher)
-	if err != nil {
-		return nil, err
-	}
-	return e.callTxSetMetadataArguments(ctx, arguments)
-}
-
-func (e *StorageExecutor) callTxSetMetadataArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
 	var tx *storage.BadgerTransaction
 	if e.txContext != nil && e.txContext.active {
 		var supported bool

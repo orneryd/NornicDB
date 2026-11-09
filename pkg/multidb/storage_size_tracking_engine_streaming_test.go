@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"strings"
 	"testing"
@@ -129,7 +131,7 @@ func (e *sizeTrackingStreamingInner) StreamNodesWithOptions(_ context.Context, o
 }
 
 func TestSizeTrackingEngine_StreamNodesByPrefix_Delegates(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	inner := &sizeTrackingStreamingInner{
@@ -161,7 +163,7 @@ func TestSizeTrackingEngine_StreamNodesByPrefix_Delegates(t *testing.T) {
 	assert.Equal(t, []storage.NodeID{"tenant_a:n1"}, got)
 }
 
-func (e *sizeTrackingStreamingInner) StreamNodesByLabelProjected(label string, properties []string, fn func(node *storage.Node) error) error {
+func (e *sizeTrackingStreamingInner) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, fn func(node *storage.Node) error) error {
 	e.streamLabelProjectedCalls++
 	e.lastProjectedLabel = label
 	e.lastProjectedProperties = properties
@@ -192,7 +194,7 @@ func (e *sizeTrackingStreamingInner) StreamNodesByLabelProjected(label string, p
 // label-scoped MATCH fall through to a whole-namespace storage.StreamNodes
 // scan (O(store) instead of O(label)).
 func TestSizeTrackingEngine_StreamNodesByLabelProjected_Delegates(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	inner := &sizeTrackingStreamingInner{
@@ -209,7 +211,7 @@ func TestSizeTrackingEngine_StreamNodesByLabelProjected_Delegates(t *testing.T) 
 	require.True(t, ok, "size tracking wrapper must preserve ProjectedLabelNodeReader")
 
 	var got []storage.NodeID
-	err := labelReader.StreamNodesByLabelProjected("Repository", []string{"name"}, func(node *storage.Node) error {
+	err := labelReader.StreamNodesByLabelProjected(context.Background(), "Repository", []string{"name"}, func(node *storage.Node) error {
 		got = append(got, node.ID)
 		return nil
 	})
@@ -222,11 +224,11 @@ func TestSizeTrackingEngine_StreamNodesByLabelProjected_Delegates(t *testing.T) 
 }
 
 func TestSizeTrackingEngine_ForEachNodeIDByLabel_Delegates(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	for i := 0; i < 5; i++ {
-		_, err := base.CreateNode(&storage.Node{
+		_, err := base.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("tenant_a:n-" + string(rune('0'+i))),
 			Labels: []string{"Person"},
 		})
@@ -238,7 +240,7 @@ func TestSizeTrackingEngine_ForEachNodeIDByLabel_Delegates(t *testing.T) {
 	require.True(t, ok, "size tracking wrapper must preserve LabelNodeIDLookupEngine")
 
 	var count int
-	err := lookup.ForEachNodeIDByLabel("Person", func(id storage.NodeID) bool {
+	err := lookup.ForEachNodeIDByLabel(context.Background(), "Person", func(id storage.NodeID) bool {
 		count++
 		return count < 2
 	})
@@ -247,7 +249,7 @@ func TestSizeTrackingEngine_ForEachNodeIDByLabel_Delegates(t *testing.T) {
 }
 
 func TestSizeTrackingEngine_MVCCLifecycleDelegates(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	inner := &sizeTrackingLifecycleInner{

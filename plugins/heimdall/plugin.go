@@ -33,6 +33,12 @@
 // # Built-in Registration
 //
 // This plugin is also registered as a built-in plugin, so no .so file is needed.
+// Import pkg/heimdall for the plugin contract; local inference is a host adapter.
+// Plugins load with Heimdall disabled and require no localllm dependency.
+// ActionFunc.External is opt-in public MCP exposure (external: true).
+// The default watcher examples remain internal (External defaults to false).
+// External actions keep their HeimdallInvoker and can use SendPrompt for inference.
+// Tool registration is FIFO; duplicate names are logged and the first wins.
 package heimdall
 
 import (
@@ -40,12 +46,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	cypherpkg "github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 )
 
@@ -198,12 +204,8 @@ func (p *WatcherPlugin) Config() map[string]interface{} {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	// Return copy
-	result := make(map[string]interface{})
-	for k, v := range p.config {
-		result[k] = v
-	}
-	return result
+	// The plugin keeps one shallow-snapshot owner; Config adds the lock.
+	return p.configSnapshotLocked()
 }
 
 func (p *WatcherPlugin) Configure(settings map[string]interface{}) error {
@@ -375,7 +377,7 @@ func (p *WatcherPlugin) actionRepoMap(ctx heimdall.ActionContext) (*heimdall.Act
 		dbName = ctx.Database.DefaultDatabaseName()
 	}
 
-	stats, err := ctx.Database.Stats(dbName)
+	stats, err := ctx.Database.Stats(ctx.Context, dbName)
 	if err != nil {
 		return &heimdall.ActionResult{
 			Success: false,
@@ -596,10 +598,10 @@ func (p *WatcherPlugin) actionQuery(ctx heimdall.ActionContext) (*heimdall.Actio
 			Message: "query too long (max 10000 characters)",
 		}, nil
 	}
-	if err := validateReadOnlyCypher(cypher); err != nil {
+	if err := cypherpkg.AuthorizeReadOnlyQuery(ctx.Context, cypher); err != nil {
 		return &heimdall.ActionResult{
 			Success: false,
-			Message: err.Error(),
+			Message: "query must be valid read-only Cypher",
 		}, nil
 	}
 	dbName := getDatabaseParam(ctx.Params)
@@ -679,7 +681,7 @@ func (p *WatcherPlugin) actionStatus(ctx heimdall.ActionContext) (*heimdall.Acti
 
 	if ctx.Database != nil {
 		dbName := getDatabaseParam(ctx.Params)
-		dbStats, err := ctx.Database.Stats(dbName)
+		dbStats, err := ctx.Database.Stats(ctx.Context, dbName)
 		if err == nil {
 			status["database"] = map[string]interface{}{
 				"database":      coalesceString(dbName, ctx.Database.DefaultDatabaseName()),
@@ -717,7 +719,7 @@ func (p *WatcherPlugin) actionDBStats(ctx heimdall.ActionContext) (*heimdall.Act
 
 	if ctx.Database != nil {
 		dbName := getDatabaseParam(ctx.Params)
-		dbStats, err := ctx.Database.Stats(dbName)
+		dbStats, err := ctx.Database.Stats(ctx.Context, dbName)
 		if err != nil {
 			stats["database"] = map[string]interface{}{
 				"database": coalesceString(dbName, ctx.Database.DefaultDatabaseName()),
@@ -1211,6 +1213,7 @@ func (p *WatcherPlugin) addEvent(eventType, message string, data map[string]inte
 
 	p.events = append(p.events, event)
 	if len(p.events) > 100 {
+		clear(p.events[:len(p.events)-100])
 		p.events = p.events[len(p.events)-100:]
 	}
 }
@@ -1343,6 +1346,7 @@ func (p *WatcherPlugin) appendFactLocked(fact string) {
 	}
 	p.facts = append(p.facts, fact)
 	if len(p.facts) > 50 {
+		clear(p.facts[:len(p.facts)-50])
 		p.facts = p.facts[len(p.facts)-50:]
 	}
 }
@@ -1545,33 +1549,14 @@ func (p *WatcherPlugin) refreshSessionMemoryFromGraph(ctx context.Context, userM
 	}
 }
 
+// configSnapshotLocked returns an independent map that shares the configured
+// values. The caller holds p.mu; Config is this snapshot plus the read lock.
 func (p *WatcherPlugin) configSnapshotLocked() map[string]interface{} {
 	result := make(map[string]interface{}, len(p.config))
 	for k, v := range p.config {
 		result[k] = v
 	}
 	return result
-}
-
-var readOnlyCypherPattern = regexp.MustCompile(`(?i)\b(CREATE|MERGE|SET|DELETE|REMOVE|FOREACH|DETACH\s+DELETE|LOAD\s+CSV|DROP|ALTER|GRANT|DENY|REVOKE)\b`)
-
-func validateReadOnlyCypher(cypher string) error {
-	cleaned := stripCypherComments(cypher)
-	if readOnlyCypherPattern.MatchString(cleaned) {
-		return fmt.Errorf("query contains write operations; heimdall_watcher_query only allows read-only Cypher")
-	}
-	return nil
-}
-
-func stripCypherComments(query string) string {
-	lines := strings.Split(query, "\n")
-	for i, line := range lines {
-		if idx := strings.Index(line, "//"); idx >= 0 {
-			line = line[:idx]
-		}
-		lines[i] = line
-	}
-	return strings.Join(lines, "\n")
 }
 
 func dedupeFacts(facts []string) []string {

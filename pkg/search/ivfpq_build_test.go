@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,7 +11,7 @@ import (
 
 func TestBuildIVFPQFromVectorStore(t *testing.T) {
 	dir := t.TempDir()
-	vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), 16)
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 16)
 	require.NoError(t, err)
 	defer vfs.Close()
 

@@ -4,6 +4,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -16,10 +17,27 @@ import (
 // never by materializing edges of the store.
 
 // getEdgesByTypeProbe records GetEdgesByType calls so the counter fast path
-// can be asserted structurally (the materializing path would show up here).
+// can be asserted structurally (the materializing path would show up here). It
+// adds no behavior of its own, so it is a transparent decorator and exposes the
+// canonical storage.EngineUnwrapper accessor: a write statement opens its
+// transaction on the engine underneath while read statements keep counting
+// through this probe.
 type getEdgesByTypeProbe struct {
 	storage.Engine
 	calls int
+}
+
+// GetInnerEngine is the canonical EngineUnwrapper accessor.
+func (p *getEdgesByTypeProbe) GetInnerEngine() storage.Engine { return p.Engine }
+
+// ReadCountStore forwards the label-presence probe the count owners ask
+// before they read a counter, so counting through this decorator still answers
+// from the counters instead of materializing edges.
+func (p *getEdgesByTypeProbe) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	if reader, ok := p.Engine.(storage.CountStoreReadEngine); ok {
+		return reader.ReadCountStore(ctx, request)
+	}
+	return storage.CountStoreRead{}, nil
 }
 
 type forwardingNamespacedEngine struct {
@@ -34,14 +52,14 @@ func (engine *forwardingNamespacedEngine) GetInnerEngine() storage.Engine {
 	return engine.Engine
 }
 
-func (p *getEdgesByTypeProbe) GetEdgesByType(edgeType string) ([]*storage.Edge, error) {
+func (p *getEdgesByTypeProbe) GetEdgesByType(ctx context.Context, edgeType string) ([]*storage.Edge, error) {
 	p.calls++
-	return p.Engine.GetEdgesByType(edgeType)
+	return p.Engine.GetEdgesByType(ctx, edgeType)
 }
 
 func newIssue638E2EStore(t *testing.T) (*storage.NamespacedEngine, *storage.BadgerEngine, *StorageExecutor, *getEdgesByTypeProbe) {
 	t.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
@@ -50,7 +68,7 @@ func newIssue638E2EStore(t *testing.T) (*storage.NamespacedEngine, *storage.Badg
 	ctx := context.Background()
 
 	for i := 0; i < 20; i++ {
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("f%d", i)),
 			Labels: []string{"Function"},
 		})
@@ -84,11 +102,11 @@ func newIssue638E2EStore(t *testing.T) (*storage.NamespacedEngine, *storage.Badg
 	}
 	for start := 0; start < n; start += 2000 {
 		end := min(start+2000, n)
-		require.NoError(t, store.BulkCreateNodes(calNodes[start:end]))
-		require.NoError(t, store.BulkCreateNodes(xNodes[start:end]))
-		require.NoError(t, store.BulkCreateNodes(yNodes[start:end]))
-		require.NoError(t, store.BulkCreateEdges(callsEdges[start:end]))
-		require.NoError(t, store.BulkCreateEdges(linksEdges[start:end]))
+		require.NoError(t, store.BulkCreateNodes(t.Context(), calNodes[start:end]))
+		require.NoError(t, store.BulkCreateNodes(t.Context(), xNodes[start:end]))
+		require.NoError(t, store.BulkCreateNodes(t.Context(), yNodes[start:end]))
+		require.NoError(t, store.BulkCreateEdges(t.Context(), callsEdges[start:end]))
+		require.NoError(t, store.BulkCreateEdges(t.Context(), linksEdges[start:end]))
 	}
 	return store, base, exec, probe
 }
@@ -123,6 +141,15 @@ func TestIssue638_RelationshipCountShapes_ExactRows(t *testing.T) {
 	}
 	// None of the counter-answered shapes may have materialized edges.
 	require.Zero(t, probe.calls-before, "counter shapes must not call GetEdgesByType")
+
+	// Undirected typed counting materializes relationships because each
+	// non-loop relationship contributes once from either endpoint. This public
+	// shape proves the materialization counter is connected to execution.
+	materializedBefore := probe.calls
+	undirected, undirectedErr := exec.Execute(ctx, "MATCH ()-[r:TICK]-() RETURN count(r) AS c", nil)
+	require.NoError(t, undirectedErr)
+	require.Equal(t, int64(40), undirected.Rows[0][0])
+	require.Greater(t, probe.calls, materializedBefore, "public materializing count must reach the probe")
 
 	// Both-labeled endpoints stay a real traversal (Neo4j plans
 	// NodeByLabelScan -> Expand -> Filter for this shape).
@@ -170,13 +197,13 @@ func TestOptionalOrderCountAfterBulkEdges(t *testing.T) {
 	ctx := context.Background()
 	const products = 200
 	for index := 0; index < products; index++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID: storage.NodeID(fmt.Sprintf("product%d", index)), Labels: []string{"Product"},
 			Properties: map[string]interface{}{"productName": fmt.Sprintf("Product %d", index)},
 		})
 		require.NoError(t, err)
 	}
-	_, err := store.CreateNode(&storage.Node{ID: "order", Labels: []string{"Order"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "order", Labels: []string{"Order"}})
 	require.NoError(t, err)
 	edges := make([]*storage.Edge, products)
 	for index := range edges {
@@ -185,7 +212,7 @@ func TestOptionalOrderCountAfterBulkEdges(t *testing.T) {
 			StartNode: "order", EndNode: storage.NodeID(fmt.Sprintf("product%d", max(1, index))),
 		}
 	}
-	require.NoError(t, store.BulkCreateEdges(edges))
+	require.NoError(t, store.BulkCreateEdges(t.Context(), edges))
 	result, err := exec.Execute(ctx, `MATCH (p:Product)
 		OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)
 		RETURN p.productName AS productName, count(o) AS orderCount
@@ -211,7 +238,10 @@ func TestOptionalOrderCountAfterBulkEdges(t *testing.T) {
 }
 
 func TestOptionalOrderCountThroughAsyncStorage(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if base != nil {
+		fixtureowner.Own(t, base)
+	}
 	require.NoError(t, err)
 	async := base
 	t.Cleanup(func() { require.NoError(t, async.Close()) })
@@ -221,10 +251,10 @@ func TestOptionalOrderCountThroughAsyncStorage(t *testing.T) {
 		{ID: "p2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "No orders"}},
 		{ID: "o1", Labels: []string{"Order"}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "line1", Type: "ORDERS", StartNode: "o1", EndNode: "p1"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "line1", Type: "ORDERS", StartNode: "o1", EndNode: "p1"}))
 	exec := NewStorageExecutor(&forwardingNamespacedEngine{Engine: store})
 	result, err := exec.Execute(context.Background(), `MATCH (p:Product)
 		OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)

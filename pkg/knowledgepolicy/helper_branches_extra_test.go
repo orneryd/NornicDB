@@ -1,6 +1,8 @@
 package knowledgepolicy
 
 import (
+	"context"
+
 	"testing"
 	"time"
 
@@ -98,14 +100,18 @@ func TestAccessFlusherSuppressionRecheckSetter(t *testing.T) {
 
 	var gotID string
 	var gotMeta EntityMeta
-	flusher.SetSuppressionRecheck(func(entityID string, meta EntityMeta) {
+	var gotCtx context.Context
+	flusher.SetSuppressionRecheck(func(ctx context.Context, entityID string, meta EntityMeta) {
+		gotCtx = ctx
 		gotID = entityID
 		gotMeta = meta
 	})
 	require.NotNil(t, flusher.suppressionRecheck)
 
 	meta := EntityMeta{Scope: ScopeNode, Labels: []string{"Memory"}, CreatedAtNanos: 11}
-	flusher.suppressionRecheck("n1", meta)
+	cycle := context.WithValue(context.Background(), struct{}{}, "flush-cycle")
+	flusher.suppressionRecheck(cycle, "n1", meta)
+	require.Equal(t, cycle, gotCtx, "the recheck runs under the flush cycle's own lifetime")
 	require.Equal(t, "n1", gotID)
 	require.Equal(t, meta, gotMeta)
 

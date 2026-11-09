@@ -300,9 +300,9 @@ func TestIssue894ClauseAfterName(t *testing.T) {
 	}
 }
 
-// The traversal executor's own path aggregation (the direct MATCH route,
-// which the pipeline doesn't use for aggregates) reads collect(DISTINCT …)
-// with the same rule as the pipeline: the answers match the statements above.
+// The traversal executor hands aggregate items to the row pipeline's
+// aggregation, which reads collect(DISTINCT …) with the same rule: the
+// answers match the statements above.
 func TestIssue894TraversalPathAggregateDistinct(t *testing.T) {
 	exec := newAsyncStackTestExecutor(t)
 	ctx := context.Background()
@@ -319,13 +319,13 @@ func TestIssue894TraversalPathAggregateDistinct(t *testing.T) {
 		sort.Slice(rows, func(i, j int) bool { return fmt.Sprint(rows[i]) < fmt.Sprint(rows[j]) })
 		return rows
 	}
-	result, err := exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "collect(DISTINCT b.k)", alias: "v"}}, nil, nil, "", nil, -1)
+	result, err := exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "collect(DISTINCT b.k)", alias: "v"}}, nil, nil, nil, "", nil, -1)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{"x", "y"}}}, sorted(result.Rows))
-	result, err = exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "a.id", alias: "a"}, {expr: "collect(DISTINCT b.k)", alias: "v"}}, nil, nil, "", nil, -1)
+	result, err = exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "a.id", alias: "a"}, {expr: "collect(DISTINCT b.k)", alias: "v"}}, nil, nil, nil, "", nil, -1)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1), []interface{}{"x"}}, {int64(4), []interface{}{"y"}}}, sorted(result.Rows))
-	result, err = exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(distinct:P)", "", []returnItem{{expr: "collect(distinct.k)", alias: "v"}}, nil, nil, "", nil, -1)
+	result, err = exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(distinct:P)", "", []returnItem{{expr: "collect(distinct.k)", alias: "v"}}, nil, nil, nil, "", nil, -1)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{"x", "x", "y"}}}, sorted(result.Rows))
 }

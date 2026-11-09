@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -42,10 +44,10 @@ const mapFromPairsFunction = "__nornic_map_from_pairs"
 // the result with each pass's rewrite, in order (restore them in reverse).
 // cypher25 is the statement's version, which decides where RETURN ALL
 // begins (projectionAllEdits).
-func desugarCypher25Expressions(query string, cypher25 bool) (string, []*queryRewrite, error) {
+func desugarCypher25Expressions(ctx context.Context, query string, cypher25 bool) (string, []*queryRewrite, error) {
 	var rewrites []*queryRewrite
-	projectionAll := func(query string) ([]labelRewriteEdit, error) { return projectionAllEdits(query, cypher25) }
-	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, mapComprehensionEdits, projectionAll, groupByEdits} {
+	projectionAll := func(query string) ([]labelRewriteEdit, error) { return projectionAllEdits(ctx, query, cypher25) }
+	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, func(text string) ([]labelRewriteEdit, error) { return mapComprehensionEdits(ctx, text) }, projectionAll, func(query string) ([]labelRewriteEdit, error) { return groupByEdits(ctx, query) }} {
 		edits, err := pass(query)
 		if err != nil {
 			return query, nil, err
@@ -67,7 +69,7 @@ func desugarCypher25Expressions(query string, cypher25 bool) (string, []*queryRe
 // expression (RETURN all + 1 is RETURN ALL +1, all[0] is ALL [0]), as in
 // Neo4j 2026.09; a Cypher 5 statement reads them as the variable all
 // (Neo4j 5.26).
-func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error) {
+func projectionAllEdits(ctx context.Context, query string, cypher25 bool) ([]labelRewriteEdit, error) {
 	if indexASCIIFold(query, "all") < 0 {
 		return nil, nil
 	}
@@ -92,6 +94,13 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 		if next >= len(query) {
 			return
 		}
+		// In Cypher 5, a complete binding clause ends WITH's all projection.
+		// Cypher 25 retains its ALL modifier before keyword-shaped subscripts.
+		if !cypher25 && equalFoldASCII(word, "WITH") {
+			if _, clause := splitUnwindBody(ctx, query[next:]); clause {
+				return
+			}
+		}
 		signOrList := cypher25 && strings.IndexByte("+-[", query[next]) >= 0
 		if !signOrList && (next == all+3 || !startsProjectedExpression(query, next)) {
 			return
@@ -107,11 +116,11 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 		// Neo4j: it stays one, quoted.
 		if matchKeywordAt(query, next, "DISTINCT") {
 			distinctEnd := next + len("DISTINCT")
-			if after := skipASCIISpaces(query, distinctEnd, len(query)); after > distinctEnd && after < len(query) && startsOperand(query[after]) &&
+			if after := skipASCIISpaces(query, distinctEnd, len(query)); after > distinctEnd && after < len(query) && startsOperand(query, after) &&
 				startsProjectedExpression(query, after) && !startsWithClauseKeyword(query[after:]) && !matchKeywordAt(query, after, "GROUP") {
 				token := strings.Fields(query[after:])[0]
-				if _, identifierEnd, identifier := scanIdentifierToken(query, after); identifier {
-					token = query[after:identifierEnd]
+				if identifierEnd, identifier := cyphertext.ScanIdentifier(query, after); identifier {
+					token = query[after:identifierEnd.End]
 				}
 				err = localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherCoreInvalidInput(token))
 				return
@@ -126,14 +135,18 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 
 // startsOperand reports whether an operand (a name, a number, a string or a
 // parameter) starts with c.
-func startsOperand(c byte) bool {
-	return isIdentStartByte(c) || isDigitByte(c) || c == '\'' || c == '"' || c == '`' || c == '$'
+func startsOperand(query string, at int) bool {
+	c := query[at]
+	return cyphertext.NameStartAt(query, at) || isDigitByte(c) || isCypherQuoteByte(c) || c == '$'
 }
 
 // startsProjectedExpression reports whether an expression, rather than a
 // keyword that would make ALL a variable (RETURN all AS x, RETURN all ORDER
 // BY …), starts at query[at].
 func startsProjectedExpression(query string, at int) bool {
+	if startsWithClauseAfterName(query[at:]) {
+		return false
+	}
 	if strings.IndexByte(",;)}=<>+-*/%^.[|", query[at]) >= 0 {
 		return false
 	}
@@ -150,7 +163,7 @@ func startsProjectedExpression(query string, at int) bool {
 func precededByWord(query string, start int, words ...string) bool {
 	end := skipBackSpaces(query, start)
 	for _, word := range words {
-		if end >= len(word) && strings.EqualFold(query[end-len(word):end], word) && (end == len(word) || !isIdentByte(query[end-len(word)-1])) {
+		if end >= len(word) && strings.EqualFold(query[end-len(word):end], word) && (end == len(word) || !cyphertext.NamePartAt(query, end-len(word)-1)) {
 			return true
 		}
 	}
@@ -162,20 +175,18 @@ func forEachQueryWord(query string, visit func(start, end int)) {
 	for i := 0; i < len(query); i++ {
 		c := query[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
 		case c == '/':
 			if end := queryCommentEnd(query, i); end >= 0 {
 				i = end - 1
 			}
-		case isIdentByte(c) && !isDigitByte(c):
-			if i > 0 && (isIdentByte(query[i-1]) || query[i-1] == '$') {
+		case cyphertext.NamePartAt(query, i) && !isDigitByte(c):
+			if i > 0 && (cyphertext.NamePartAt(query, i-1) || query[i-1] == '$') {
 				continue
 			}
 			j := i
-			for j < len(query) && isIdentByte(query[j]) {
-				j++
-			}
+			j = cyphertext.NamePartEnd(query, j)
 			visit(i, j)
 			i = j - 1
 		}
@@ -189,10 +200,10 @@ func interpolationEdits(query string) ([]labelRewriteEdit, error) {
 	for i := 0; i < len(query); i++ {
 		c := query[i]
 		switch {
-		case c == '`':
+		case isCypherBacktickByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
-		case c == '\'' || c == '"':
-			if i > 0 && query[i-1]|0x20 == 's' && (i == 1 || !isIdentByte(query[i-2]) && query[i-2] != '.' && query[i-2] != '$') {
+		case isCypherStringQuoteByte(c):
+			if i > 0 && query[i-1]|0x20 == 's' && (i == 1 || !cyphertext.NamePartAt(query, i-2) && query[i-2] != '.' && query[i-2] != '$') {
 				text, end, err := interpolatedStringText(query, i)
 				if err != nil {
 					return nil, err
@@ -214,23 +225,27 @@ func interpolationEdits(query string) ([]labelRewriteEdit, error) {
 // interpolatedStringText reads the interpolated string whose quote is at
 // query[open]: the expression it stands for and the index after it.
 func interpolatedStringText(query string, open int) (string, int, error) {
-	quote := query[open]
+	delimiter := query[open]
+	end, closed := cyphertext.ScanInterpolatedText(query, open, func(at int) int { return interpolationEnd(query, at) })
 	var out, literal strings.Builder
 	parts := 0
 	flush := func() {
 		if parts > 0 {
 			out.WriteString(" + ")
 		}
-		out.WriteByte(quote)
+		out.WriteByte(delimiter)
 		out.WriteString(literal.String())
-		out.WriteByte(quote)
+		out.WriteByte(delimiter)
 		literal.Reset()
 		parts++
 	}
 	syntaxError := func(message localization.Message) (string, int, error) {
 		return "", 0, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", message)
 	}
-	for i := open + 1; i < len(query); i++ {
+	if !closed {
+		return syntaxError(localization.CypherCoreInvalidInput(string(delimiter)))
+	}
+	for i := open + 1; i < end-1; i++ {
 		c := query[i]
 		switch {
 		case c == '\\' && i+1 < len(query):
@@ -240,11 +255,6 @@ func interpolatedStringText(query string, open int) (string, int, error) {
 				literal.WriteString(query[i : i+2])
 			}
 			i++
-		case c == quote:
-			if parts == 0 || literal.Len() > 0 {
-				flush()
-			}
-			return "(" + out.String() + ")", i + 1, nil
 		case c == '}':
 			return syntaxError(localization.CypherCoreInvalidInput("}"))
 		case c == '{':
@@ -271,7 +281,10 @@ func interpolatedStringText(query string, open int) (string, int, error) {
 			literal.WriteByte(c)
 		}
 	}
-	return syntaxError(localization.CypherCoreInvalidInput(string(quote)))
+	if parts == 0 || literal.Len() > 0 {
+		flush()
+	}
+	return "(" + out.String() + ")", end, nil
 }
 
 // interpolationEnd is the index of the } that closes the interpolation
@@ -280,8 +293,8 @@ func interpolatedStringText(query string, open int) (string, int, error) {
 func interpolationEnd(query string, open int) int {
 	depth := 0
 	for i := open; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '{':
 			depth++
@@ -297,7 +310,7 @@ func interpolationEnd(query string, open int) int {
 // fnInterpolate is an interpolated value as text: a string, boolean, number,
 // temporal value or duration as toString writes it; null for null; any other
 // value is Neo4j's TypeError.
-func fnInterpolate(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnInterpolate(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil || len(values) != 1 || values[0] == nil {
 		return nil, err
@@ -316,7 +329,7 @@ func fnInterpolate(ctx cypherfn.Context, args []string) (interface{}, error) {
 // fnMapFromPairs is the map a map comprehension builds from its [key, value]
 // pairs, as Neo4j does: a later key replaces an earlier one, a null value is
 // kept, and a key that isn't a string is a TypeError.
-func fnMapFromPairs(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnMapFromPairs(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil || len(values) != 1 || values[0] == nil {
 		return nil, err
@@ -339,7 +352,7 @@ func fnMapFromPairs(ctx cypherfn.Context, args []string) (interface{}, error) {
 }
 
 // mapComprehensionEdits rewrites each {k: v IN map [WHERE p] | key: value}.
-func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
+func mapComprehensionEdits(ctx context.Context, query string) ([]labelRewriteEdit, error) {
 	if !strings.Contains(query, "|") {
 		return nil, nil
 	}
@@ -347,14 +360,14 @@ func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
 	for i := 0; i < len(query); i++ {
 		c := query[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
 		case c == '{':
-			close := findMatchingDelimiter(query, i, '{', '}')
+			close := cyphertext.FindMatchingDelimiter(query, i, '{', '}', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return edits, nil
 			}
-			if text, ok := mapComprehensionText(query[i+1 : close]); ok {
+			if text, ok := mapComprehensionText(ctx, query[i+1:close]); ok {
 				edits = append(edits, labelRewriteEdit{start: i, end: close + 1, text: text})
 				i = close
 			}
@@ -370,14 +383,14 @@ func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
 //
 //	__nornic_map_from_pairs([k IN keys(m) WHERE any(v IN [m[k]] WHERE p) |
 //	    [v IN [m[k]] | [key, value]][0]])
-func mapComprehensionText(body string) (string, bool) {
-	key, end, ok := scanIdentifierToken(body, skipASCIISpaces(body, 0, len(body)))
-	colon := skipASCIISpaces(body, end, len(body))
+func mapComprehensionText(ctx context.Context, body string) (string, bool) {
+	key, ok := cyphertext.ScanIdentifier(body, skipASCIISpaces(body, 0, len(body)))
+	colon := skipASCIISpaces(body, key.End, len(body))
 	if !ok || colon >= len(body) || body[colon] != ':' {
 		return "", false
 	}
-	value, end, ok := scanIdentifierToken(body, skipASCIISpaces(body, colon+1, len(body)))
-	in := skipASCIISpaces(body, end, len(body))
+	value, ok := cyphertext.ScanIdentifier(body, skipASCIISpaces(body, colon+1, len(body)))
+	in := skipASCIISpaces(body, value.End, len(body))
 	if !ok || !matchKeywordAt(body, in, "IN") {
 		return "", false
 	}
@@ -387,11 +400,11 @@ func mapComprehensionText(body string) (string, bool) {
 		return "", false
 	}
 	source, predicate := strings.TrimSpace(rest[:bar]), ""
-	if where := topLevelKeywordIndex(source, "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(ctx, source, "WHERE"); where >= 0 {
 		source, predicate = strings.TrimSpace(source[:where]), strings.TrimSpace(source[where+len("WHERE"):])
 	}
 	projection := rest[bar+1:]
-	keyEnd := topLevelByteIndex(projection, 0, len(projection), ':')
+	keyEnd := findTopLevelOperator(projection, ":", false, true)
 	if source == "" || keyEnd < 0 {
 		return "", false
 	}
@@ -401,11 +414,11 @@ func mapComprehensionText(body string) (string, bool) {
 	}
 	// Map comprehensions nested in the parts.
 	for _, part := range []*string{&source, &predicate, &keyExpression, &valueExpression} {
-		if edits, _ := mapComprehensionEdits(*part); len(edits) > 0 {
+		if edits, _ := mapComprehensionEdits(ctx, *part); len(edits) > 0 {
 			*part, _ = applyLabelRewriteEdits(*part, edits, true)
 		}
 	}
-	keyName, valueName := labelExpressionNameText(key), labelExpressionNameText(value)
+	keyName, valueName := labelExpressionNameText(key.Value), labelExpressionNameText(value.Value)
 	entry := "[(" + source + ")[" + keyName + "]]"
 	filter := ""
 	if predicate != "" {

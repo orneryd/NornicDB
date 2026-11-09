@@ -67,9 +67,9 @@ func TestUserStatementsCannotCallInternalFunctions(t *testing.T) {
 		require.NoError(t, err, query)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
 	}
-	require.Nil(t, internalFunctionCallError("RETURN 1"))
+	require.Nil(t, internalFunctionCallError(ctx, "RETURN 1"))
 	// The text holds the prefix, but the call is an ordinary function.
-	require.Nil(t, internalFunctionCallError("RETURN toUpper('__nornic_x') AS v"))
+	require.Nil(t, internalFunctionCallError(ctx, "RETURN toUpper('__nornic_x') AS v"))
 }
 
 // executeAllowingInternalFunctions runs a test statement through the

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -14,24 +16,35 @@ type getNodesByLabelErrorEngine struct {
 	errOnLabel string
 }
 
-func (e *getNodesByLabelErrorEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *getNodesByLabelErrorEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if label == e.errOnLabel {
 		return nil, fmt.Errorf("forced label lookup error for %s", label)
 	}
-	return e.MemoryEngine.GetNodesByLabel(label)
+	return e.MemoryEngine.GetNodesByLabel(ctx, label)
 }
 
 // The database wrapper delegates label reads through the scoped methods
 // (storage.ScopedLabelNodeReader); without these overrides the embedded
 // engine's ones would bypass the fake.
-func (e *getNodesByLabelErrorEngine) GetNodesByLabelInScope(_, label string) ([]*storage.Node, error) {
-	return e.GetNodesByLabel(label)
+func (e *getNodesByLabelErrorEngine) GetNodesByLabelInScope(ctx context.Context, _, label string) ([]*storage.Node, error) {
+	return e.GetNodesByLabel(ctx, label)
+}
+
+// Index backfills read stored nodes (storage.StoredEntityReader and its
+// scoped form), so the fake fails those label reads too.
+func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	if label == e.errOnLabel {
+		return nil, fmt.Errorf("forced label lookup error for %s", label)
+	}
+	return e.MemoryEngine.GetStoredNodesByLabel(ctx, label)
+}
+
+func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabelInScope(ctx context.Context, _, label string) ([]*storage.Node, error) {
+	return e.GetStoredNodesByLabel(ctx, label)
 }
 
 func TestSchema_CreateIndexBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "schema_index_cov")
-	exec := NewStorageExecutor(store)
+	exec, _ := newTestExecutor(t, "schema_index_cov")
 	ctx := context.Background()
 
 	_, err := exec.executeCreateIndex(ctx, "CREATE INDEX idx_named IF NOT EXISTS FOR (n:IdxNodeA) ON (n.p)")
@@ -52,7 +65,7 @@ func TestSchema_CreateIndexBranches(t *testing.T) {
 }
 
 func TestSchema_CreateIndexBranches_BackfillErrorsAcrossSyntaxes(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &getNodesByLabelErrorEngine{MemoryEngine: base, errOnLabel: "ErrBackfill"}
 	exec := NewStorageExecutor(eng)
@@ -76,9 +89,7 @@ func TestSchema_CreateIndexBranches_BackfillErrorsAcrossSyntaxes(t *testing.T) {
 }
 
 func TestSchema_DropIndexAndDropConstraintBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "schema_drop_cov")
-	exec := NewStorageExecutor(store)
+	exec, _ := newTestExecutor(t, "schema_drop_cov")
 	ctx := context.Background()
 
 	_, err := exec.executeDropIndex(ctx, "DROP INDEX")
@@ -106,7 +117,7 @@ func TestSchema_DropIndexAndDropConstraintBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Vector index drop path should execute special cleanup branch.
-	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_drop FOR (n:VecNode) ON (n.embedding)")
+	_, err = exec.executeCreateIndex(ctx, "CREATE VECTOR INDEX vec_drop FOR (n:VecNode) ON (n.embedding)")
 	require.NoError(t, err)
 	_, err = exec.executeDropIndex(ctx, "DROP INDEX vec_drop")
 	require.NoError(t, err)
@@ -116,17 +127,17 @@ func TestSchema_BackfillCompositeIndex_ErrorBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// GetNodesByLabel error branch.
-	baseErr := storage.NewMemoryEngine()
+	baseErr := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = baseErr.Close() })
 	errEng := &getNodesByLabelErrorEngine{MemoryEngine: baseErr, errOnLabel: "ErrLabel"}
 	errStore := storage.NewNamespacedEngine(errEng, "schema_backfill_err")
 	errExec := NewStorageExecutor(errStore)
 
-	_, err := errStore.CreateNode(&storage.Node{ID: storage.NodeID("e1"), Labels: []string{"ErrLabel"}, Properties: map[string]interface{}{"p": "v"}})
+	_, err := errStore.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("e1"), Labels: []string{"ErrLabel"}, Properties: map[string]interface{}{"p": "v"}})
 	require.NoError(t, err)
 	require.NoError(t, errStore.GetSchema().AddPropertyIndex("idx_err_label", "ErrLabel", []string{"p"}))
 
-	err = errExec.backfillCompositeIndex("idx_err_label", "ErrLabel", []string{"p"})
+	err = errExec.backfillCompositeIndex(ctx, "idx_err_label", "ErrLabel", []string{"p"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill index for label ErrLabel")
 
@@ -135,9 +146,9 @@ func TestSchema_BackfillCompositeIndex_ErrorBranches(t *testing.T) {
 	missingStore := storage.NewNamespacedEngine(baseMissing, "schema_backfill_missing_idx")
 	missingExec := NewStorageExecutor(missingStore)
 
-	_, err = missingStore.CreateNode(&storage.Node{ID: storage.NodeID("m1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"p": "v"}})
+	_, err = missingStore.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("m1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"p": "v"}})
 	require.NoError(t, err)
-	err = missingExec.backfillCompositeIndex("missing_idx", "Doc", []string{"p"})
+	err = missingExec.backfillCompositeIndex(ctx, "missing_idx", "Doc", []string{"p"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill property index")
 

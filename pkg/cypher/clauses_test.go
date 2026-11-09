@@ -115,8 +115,8 @@ func TestUnionClause(t *testing.T) {
 	// Create test nodes
 	node1 := &storage.Node{ID: "n1", Labels: []string{"A"}, Properties: map[string]interface{}{"val": int64(1)}}
 	node2 := &storage.Node{ID: "n2", Labels: []string{"B"}, Properties: map[string]interface{}{"val": int64(2)}}
-	_, _ = store.CreateNode(node1)
-	_, _ = store.CreateNode(node2)
+	_, _ = store.CreateNode(t.Context(), node1)
+	_, _ = store.CreateNode(t.Context(), node2)
 
 	tests := []struct {
 		name    string
@@ -158,7 +158,7 @@ func TestOptionalMatch(t *testing.T) {
 
 	// Create a node without relationships
 	node := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
-	_, _ = store.CreateNode(node)
+	_, _ = store.CreateNode(t.Context(), node)
 
 	result, err := e.Execute(ctx, "OPTIONAL MATCH (n:Person) RETURN n.name", nil)
 	if err != nil {
@@ -218,9 +218,9 @@ func TestCallDbLabels(t *testing.T) {
 	ctx := context.Background()
 
 	// Create nodes with labels
-	_, _ = store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Company"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "n3", Labels: []string{"Person", "Employee"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Company"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n3", Labels: []string{"Person", "Employee"}})
 
 	result, err := e.Execute(ctx, "CALL db.labels()", nil)
 	if err != nil {
@@ -245,10 +245,10 @@ func TestCallDbRelationshipTypes(t *testing.T) {
 	ctx := context.Background()
 
 	// Create relationships
-	_, _ = store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}})
-	store.CreateEdge(&storage.Edge{ID: "r1", Type: "KNOWS", StartNode: "n1", EndNode: "n2"})
-	store.CreateEdge(&storage.Edge{ID: "r2", Type: "WORKS_WITH", StartNode: "n1", EndNode: "n2"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "r1", Type: "KNOWS", StartNode: "n1", EndNode: "n2"})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "r2", Type: "WORKS_WITH", StartNode: "n1", EndNode: "n2"})
 
 	result, err := e.Execute(ctx, "CALL db.relationshipTypes()", nil)
 	if err != nil {
@@ -287,8 +287,8 @@ func TestCallDbPropertyKeys(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, _ = store.CreateNode(&storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "Alice", "age": 30}})
-	_, _ = store.CreateNode(&storage.Node{ID: "n2", Properties: map[string]interface{}{"title": "Engineer"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "Alice", "age": 30}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n2", Properties: map[string]interface{}{"title": "Engineer"}})
 
 	result, err := e.Execute(ctx, "CALL db.propertyKeys()", nil)
 	if err != nil {
@@ -410,9 +410,9 @@ func TestCallNornicDbStats(t *testing.T) {
 	ctx := context.Background()
 
 	// Create some data
-	_, _ = store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}})
-	store.CreateEdge(&storage.Edge{ID: "r1", Type: "KNOWS", StartNode: "n1", EndNode: "n2"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "r1", Type: "KNOWS", StartNode: "n1", EndNode: "n2"})
 
 	result, err := e.Execute(ctx, "CALL nornicdb.stats()", nil)
 	if err != nil {
@@ -505,7 +505,7 @@ func TestCallDbSchemaNodeProperties(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, _ = store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice", "age": 30}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice", "age": 30}})
 
 	result, err := e.Execute(ctx, "CALL db.schema.nodeProperties()", nil)
 	if err != nil {
@@ -528,9 +528,9 @@ func TestCallDbSchemaRelProperties(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, _ = store.CreateNode(&storage.Node{ID: "n1"})
-	_, _ = store.CreateNode(&storage.Node{ID: "n2"})
-	store.CreateEdge(&storage.Edge{ID: "r1", Type: "KNOWS", StartNode: "n1", EndNode: "n2", Properties: map[string]interface{}{"since": 2020}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n1"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n2"})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "r1", Type: "KNOWS", StartNode: "n1", EndNode: "n2", Properties: map[string]interface{}{"since": 2020}})
 
 	result, err := e.Execute(ctx, "CALL db.schema.relProperties()", nil)
 	if err != nil {
@@ -559,11 +559,9 @@ func TestCallUnknownProcedure(t *testing.T) {
 
 	_, err := e.Execute(ctx, "CALL unknown.procedure()", nil)
 	if err == nil {
-		t.Error("Expected error for unknown procedure")
+		t.Fatal("Expected error for unknown procedure")
 	}
-	if !strings.Contains(err.Error(), "Neo.ClientError.Procedure.ProcedureNotFound: There is no procedure with the name") {
-		t.Errorf("Expected ProcedureNotFound error, got: %v", err)
-	}
+	requireStatusCode(t, err, "Neo.ClientError.Procedure.ProcedureNotFound")
 }
 
 // ========================================
@@ -749,7 +747,7 @@ func TestCallDbIndexVectorQueryNodes(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a node with an embedding
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:              "vec-node-1",
 		Labels:          []string{"Test"},
 		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
@@ -786,7 +784,7 @@ func TestCallDbIndexFulltextQueryNodes(t *testing.T) {
 	}
 
 	// Create nodes with searchable content
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "doc-1",
 		Labels: []string{"Document"},
 		Properties: map[string]interface{}{
@@ -794,7 +792,7 @@ func TestCallDbIndexFulltextQueryNodes(t *testing.T) {
 			"content": "This is searchable content about vectors",
 		},
 	})
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "doc-2",
 		Labels: []string{"Document"},
 		Properties: map[string]interface{}{
@@ -829,7 +827,7 @@ func TestCallDbIndexFulltextQueryNoMatch(t *testing.T) {
 		t.Fatalf("Failed to create fulltext index: %v", err)
 	}
 
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "doc-1",
 		Labels:     []string{"Document"},
 		Properties: map[string]interface{}{"content": "hello world"},
@@ -857,15 +855,15 @@ func TestCallApocPathSubgraphNodes(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a small graph: Alice -> Bob -> Carol
-	_, _ = store.CreateNode(&storage.Node{ID: "alice", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "bob", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "carol", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Carol"}})
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "alice", EndNode: "bob"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "KNOWS", StartNode: "bob", EndNode: "carol"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "alice", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "bob", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "carol", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Carol"}})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "alice", EndNode: "bob"})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e2", Type: "KNOWS", StartNode: "bob", EndNode: "carol"})
 
 	// Call subgraph nodes procedure
 	_, err := e.Execute(ctx, "CALL apoc.path.subgraphNodes(start, {maxLevel: 2, relationshipFilter: 'KNOWS'})", nil)
-	requireSyntaxErrorStatus(t, err, "standalone CALL does not declare start")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "standalone CALL does not declare start")
 	result, err := e.Execute(ctx, "CALL apoc.path.subgraphNodes('alice', {maxLevel: 2, relationshipFilter: 'KNOWS'})", nil)
 	if err != nil {
 		t.Fatalf("APOC subgraph query failed: %v", err)
@@ -887,11 +885,11 @@ func TestCallApocPathExpand(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a simple graph: n1 -> n2 -> n3
-	_, _ = store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Node"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Node"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "n3", Labels: []string{"Node"}})
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "LINK", StartNode: "n1", EndNode: "n2"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "LINK", StartNode: "n2", EndNode: "n3"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Node"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Node"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "n3", Labels: []string{"Node"}})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "LINK", StartNode: "n1", EndNode: "n2"})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e2", Type: "LINK", StartNode: "n2", EndNode: "n3"})
 
 	t.Run("basic_path_expansion", func(t *testing.T) {
 		// Call path expand procedure - should return paths from n1
@@ -939,7 +937,7 @@ func TestCallApocPathExpand(t *testing.T) {
 
 	t.Run("path_with_relationship_filter", func(t *testing.T) {
 		// Create additional edge with different type
-		store.CreateEdge(&storage.Edge{ID: "e3", Type: "OTHER", StartNode: "n1", EndNode: "n3"})
+		store.CreateEdge(t.Context(), &storage.Edge{ID: "e3", Type: "OTHER", StartNode: "n1", EndNode: "n3"})
 
 		result, err := e.Execute(ctx, "MATCH (start:Node {id: 'n1'}) CALL apoc.path.expand(start, 'LINK', null, 1, 2) YIELD path RETURN path", nil)
 		if err != nil {
@@ -1022,7 +1020,7 @@ func TestApocPathConfig(t *testing.T) {
 	}
 
 	x := newApocExpansion("NODE_GLOBAL")
-	if err := x.configure(nil, map[string]interface{}{"maxLevel": int64(5), "minLevel": int64(-3), "limit": int64(-1), "labelFilter": "+A|-B|/C|>D|E"}, true); err != nil {
+	if err := x.configure(t.Context(), nil, map[string]interface{}{"maxLevel": int64(5), "minLevel": int64(-3), "limit": int64(-1), "labelFilter": "+A|-B|/C|>D|E"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if x.maxLevel != 5 || x.minLevel != 0 || x.limit != -1 {
@@ -1045,10 +1043,10 @@ func TestExistsSubquery(t *testing.T) {
 	ctx := context.Background()
 
 	// Create nodes with relationships
-	_, _ = store.CreateNode(&storage.Node{ID: "watched-file", Labels: []string{"File"}, Properties: map[string]interface{}{"path": "/watched/file.txt"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "orphan-file", Labels: []string{"File"}, Properties: map[string]interface{}{"path": "/orphan/file.txt"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "watcher", Labels: []string{"WatchConfig"}})
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "WATCHES", StartNode: "watcher", EndNode: "watched-file"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "watched-file", Labels: []string{"File"}, Properties: map[string]interface{}{"path": "/watched/file.txt"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "orphan-file", Labels: []string{"File"}, Properties: map[string]interface{}{"path": "/orphan/file.txt"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "watcher", Labels: []string{"WatchConfig"}})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "WATCHES", StartNode: "watcher", EndNode: "watched-file"})
 
 	// Query files that have a WATCHES relationship
 	result, err := e.Execute(ctx, `
@@ -1075,10 +1073,10 @@ func TestNotExistsSubquery(t *testing.T) {
 	ctx := context.Background()
 
 	// Create nodes with relationships
-	_, _ = store.CreateNode(&storage.Node{ID: "watched-file", Labels: []string{"File"}, Properties: map[string]interface{}{"path": "/watched/file.txt"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "orphan-file", Labels: []string{"File"}, Properties: map[string]interface{}{"path": "/orphan/file.txt"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "watcher", Labels: []string{"WatchConfig"}})
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "WATCHES", StartNode: "watcher", EndNode: "watched-file"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "watched-file", Labels: []string{"File"}, Properties: map[string]interface{}{"path": "/watched/file.txt"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "orphan-file", Labels: []string{"File"}, Properties: map[string]interface{}{"path": "/orphan/file.txt"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "watcher", Labels: []string{"WatchConfig"}})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "WATCHES", StartNode: "watcher", EndNode: "watched-file"})
 
 	// Query files that don't have a WATCHES relationship
 	result, err := e.Execute(ctx, `
@@ -1109,7 +1107,7 @@ func TestSetPlusMerge(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a node with some properties
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test-node",
 		Labels: []string{"MergeTest"},
 		Properties: map[string]interface{}{
@@ -1131,7 +1129,7 @@ func TestSetPlusMerge(t *testing.T) {
 	t.Logf("Stats: %+v", result.Stats)
 
 	// Verify properties were merged - get fresh copy
-	node, err := store.GetNode("test-node")
+	node, err := store.GetNode(t.Context(), "test-node")
 	if err != nil {
 		t.Fatalf("Failed to get node: %v", err)
 	}
@@ -1153,7 +1151,7 @@ func TestSetPlusMergeWithParameter(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a node with some properties
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test-node-param",
 		Labels: []string{"MergeTest"},
 		Properties: map[string]interface{}{
@@ -1183,7 +1181,7 @@ func TestSetPlusMergeWithParameter(t *testing.T) {
 	t.Logf("Stats: %+v", result.Stats)
 
 	// Verify properties were merged - get fresh copy
-	node, err := store.GetNode("test-node-param")
+	node, err := store.GetNode(t.Context(), "test-node-param")
 	if err != nil {
 		t.Fatalf("Failed to get node: %v", err)
 	}
@@ -1211,7 +1209,7 @@ func TestSetPlusMergeWithMapVariable(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a node with some properties
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test-node-map-var",
 		Labels: []string{"MergeTest"},
 		Properties: map[string]interface{}{
@@ -1232,7 +1230,7 @@ func TestSetPlusMergeWithMapVariable(t *testing.T) {
 	t.Logf("Stats: %+v", result.Stats)
 
 	// Verify properties were merged - get fresh copy
-	node, err := store.GetNode("test-node-map-var")
+	node, err := store.GetNode(t.Context(), "test-node-map-var")
 	if err != nil {
 		t.Fatalf("Failed to get node: %v", err)
 	}
@@ -1267,7 +1265,7 @@ func TestRemoveProperty(t *testing.T) {
 			"temp":      "to-be-removed",
 		},
 	}
-	if _, err := store.CreateNode(node); err != nil {
+	if _, err := store.CreateNode(t.Context(), node); err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
 
@@ -1278,7 +1276,7 @@ func TestRemoveProperty(t *testing.T) {
 	}
 
 	// Verify property was removed
-	updatedNode, _ := store.GetNode("remove-test")
+	updatedNode, _ := store.GetNode(t.Context(), "remove-test")
 	if _, exists := updatedNode.Properties["embedding"]; exists {
 		t.Error("embedding property should have been removed")
 	}
@@ -1304,7 +1302,7 @@ func TestRemoveMultipleProperties(t *testing.T) {
 			"lockExpires": "2024-01-02",
 		},
 	}
-	if _, err := store.CreateNode(node); err != nil {
+	if _, err := store.CreateNode(t.Context(), node); err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
 
@@ -1314,7 +1312,7 @@ func TestRemoveMultipleProperties(t *testing.T) {
 		t.Fatalf("REMOVE multiple failed: %v", err)
 	}
 
-	updatedNode, _ := store.GetNode("multi-remove")
+	updatedNode, _ := store.GetNode(t.Context(), "multi-remove")
 	if _, exists := updatedNode.Properties["lockedBy"]; exists {
 		t.Error("lockedBy should have been removed")
 	}
@@ -1341,7 +1339,7 @@ func TestRemoveWithReturn(t *testing.T) {
 			"temp": "value",
 		},
 	}
-	if _, err := store.CreateNode(node); err != nil {
+	if _, err := store.CreateNode(t.Context(), node); err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
 
@@ -1350,7 +1348,7 @@ func TestRemoveWithReturn(t *testing.T) {
 		t.Fatalf("REMOVE with RETURN failed: %v", err)
 	}
 	// REMOVE executed - check the property was removed
-	updatedNode, _ := store.GetNode("remove-return")
+	updatedNode, _ := store.GetNode(t.Context(), "remove-return")
 	if _, exists := updatedNode.Properties["temp"]; exists {
 		t.Error("temp property should have been removed")
 	}
@@ -1371,7 +1369,7 @@ func TestSetThenRemoveLabel_SameQuery(t *testing.T) {
 			"name": "x",
 		},
 	}
-	if _, err := store.CreateNode(node); err != nil {
+	if _, err := store.CreateNode(t.Context(), node); err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
 
@@ -1380,7 +1378,7 @@ func TestSetThenRemoveLabel_SameQuery(t *testing.T) {
 		t.Fatalf("SET ... REMOVE label failed: %v", err)
 	}
 
-	updated, err := store.GetNode("set-remove-label")
+	updated, err := store.GetNode(t.Context(), "set-remove-label")
 	if err != nil {
 		t.Fatalf("Failed to reload node: %v", err)
 	}
@@ -1416,7 +1414,7 @@ func TestRemoveLabelOnly(t *testing.T) {
 			"originalText": "hello",
 		},
 	}
-	if _, err := store.CreateNode(node); err != nil {
+	if _, err := store.CreateNode(t.Context(), node); err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
 
@@ -1425,7 +1423,7 @@ func TestRemoveLabelOnly(t *testing.T) {
 		t.Fatalf("REMOVE label failed: %v", err)
 	}
 
-	updated, err := store.GetNode("remove-label-only")
+	updated, err := store.GetNode(t.Context(), "remove-label-only")
 	if err != nil {
 		t.Fatalf("Failed to reload node: %v", err)
 	}
@@ -1443,7 +1441,7 @@ func TestBatchRelationshipMergeWithUnwindKeys(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -1453,7 +1451,7 @@ func TestBatchRelationshipMergeWithUnwindKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create o-1 failed: %v", err)
 	}
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-2",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -1463,7 +1461,7 @@ func TestBatchRelationshipMergeWithUnwindKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create o-2 failed: %v", err)
 	}
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "t-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -1473,7 +1471,7 @@ func TestBatchRelationshipMergeWithUnwindKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create t-1 failed: %v", err)
 	}
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "t-2",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -1517,7 +1515,7 @@ func TestBatchRelationshipMergeWithMatchInKeys(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o2-1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -1527,7 +1525,7 @@ func TestBatchRelationshipMergeWithMatchInKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create o2-1 failed: %v", err)
 	}
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o2-2",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -1537,7 +1535,7 @@ func TestBatchRelationshipMergeWithMatchInKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create o2-2 failed: %v", err)
 	}
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "t2-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -1547,7 +1545,7 @@ func TestBatchRelationshipMergeWithMatchInKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create t2-1 failed: %v", err)
 	}
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "t2-2",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -1589,7 +1587,7 @@ func TestBatchRelationshipCreateWithMatchInKeys(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o3-1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -1599,7 +1597,7 @@ func TestBatchRelationshipCreateWithMatchInKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create o3-1 failed: %v", err)
 	}
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o3-2",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -1609,7 +1607,7 @@ func TestBatchRelationshipCreateWithMatchInKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create o3-2 failed: %v", err)
 	}
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "t3-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -1619,7 +1617,7 @@ func TestBatchRelationshipCreateWithMatchInKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create t3-1 failed: %v", err)
 	}
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "t3-2",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -1666,8 +1664,8 @@ func TestUnionAll(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test data
-	_, _ = store.CreateNode(&storage.Node{ID: "a1", Labels: []string{"TypeA"}, Properties: map[string]interface{}{"name": "A1"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "b1", Labels: []string{"TypeB"}, Properties: map[string]interface{}{"name": "B1"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"TypeA"}, Properties: map[string]interface{}{"name": "A1"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "b1", Labels: []string{"TypeB"}, Properties: map[string]interface{}{"name": "B1"}})
 
 	result, err := e.Execute(ctx, `MATCH (a:TypeA) RETURN a.name AS name UNION ALL MATCH (b:TypeB) RETURN b.name AS name`, nil)
 	if err != nil {
@@ -1684,8 +1682,8 @@ func TestUnionDistinct(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, _ = store.CreateNode(&storage.Node{ID: "u1", Labels: []string{"Union1"}, Properties: map[string]interface{}{"val": 1}})
-	_, _ = store.CreateNode(&storage.Node{ID: "u2", Labels: []string{"Union2"}, Properties: map[string]interface{}{"val": 1}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "u1", Labels: []string{"Union1"}, Properties: map[string]interface{}{"val": 1}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "u2", Labels: []string{"Union2"}, Properties: map[string]interface{}{"val": 1}})
 
 	result, err := e.Execute(ctx, `
 		MATCH (a:Union1) RETURN a.val AS val
@@ -1710,7 +1708,7 @@ func TestOptionalMatchWithNoResult(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, _ = store.CreateNode(&storage.Node{ID: "opt1", Labels: []string{"Orphan"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "opt1", Labels: []string{"Orphan"}})
 
 	result, err := e.Execute(ctx, `
 		OPTIONAL MATCH (n:NonExistent)
@@ -2003,17 +2001,17 @@ func TestGetRelType(t *testing.T) {
 	e := NewStorageExecutor(store)
 
 	// Create edge
-	_, _ = store.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Start"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "e1", Labels: []string{"End"}})
-	store.CreateEdge(&storage.Edge{ID: "r1", Type: "KNOWS", StartNode: "s1", EndNode: "e1"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "s1", Labels: []string{"Start"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "e1", Labels: []string{"End"}})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "r1", Type: "KNOWS", StartNode: "s1", EndNode: "e1"})
 
-	relType := e.getRelType("r1")
+	relType := e.getRelType(t.Context(), "r1")
 	if relType != "KNOWS" {
 		t.Errorf("Expected KNOWS, got %s", relType)
 	}
 
 	// Non-existent edge
-	relType = e.getRelType("nonexistent")
+	relType = e.getRelType(t.Context(), "nonexistent")
 	if relType != "" {
 		t.Errorf("Expected empty string for non-existent edge, got %s", relType)
 	}
@@ -2027,13 +2025,13 @@ func TestTraverseGraphDeeper(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a deeper graph: A -> B -> C -> D
-	_, _ = store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "LINK", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "LINK", StartNode: "b", EndNode: "c"})
-	store.CreateEdge(&storage.Edge{ID: "e3", Type: "LINK", StartNode: "c", EndNode: "d"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "LINK", StartNode: "a", EndNode: "b"})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e2", Type: "LINK", StartNode: "b", EndNode: "c"})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e3", Type: "LINK", StartNode: "c", EndNode: "d"})
 
 	// Test variable length path
 	result, err := e.Execute(ctx, `MATCH (a:Node {name: 'A'})-[*1..3]->(end) RETURN end.name`, nil)
@@ -2050,14 +2048,14 @@ func TestAllShortestPathsMultiple(t *testing.T) {
 	e := NewStorageExecutor(store)
 
 	// Create a diamond graph: A -> B -> D, A -> C -> D (two equal paths)
-	_, _ = store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "LINK", StartNode: "a", EndNode: "b"})
-	store.CreateEdge(&storage.Edge{ID: "e2", Type: "LINK", StartNode: "a", EndNode: "c"})
-	store.CreateEdge(&storage.Edge{ID: "e3", Type: "LINK", StartNode: "b", EndNode: "d"})
-	store.CreateEdge(&storage.Edge{ID: "e4", Type: "LINK", StartNode: "c", EndNode: "d"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "LINK", StartNode: "a", EndNode: "b"})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e2", Type: "LINK", StartNode: "a", EndNode: "c"})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e3", Type: "LINK", StartNode: "b", EndNode: "d"})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e4", Type: "LINK", StartNode: "c", EndNode: "d"})
 
 	result, err := e.Execute(context.Background(), "MATCH (a:Node {name: 'A'}), (d:Node {name: 'D'}) MATCH p = allShortestPaths((a)-[*..10]-(d)) RETURN [n IN nodes(p) | n.name] AS names ORDER BY names", nil)
 	if err != nil {
@@ -2081,7 +2079,7 @@ func TestCompoundMatchMerge(t *testing.T) {
 	ctx := context.Background()
 
 	// Create initial data
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "person1",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
@@ -2127,7 +2125,7 @@ func TestWhereWithExists(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "exist-test",
 		Labels: []string{"ExistsTest"},
 		Properties: map[string]interface{}{
@@ -2154,9 +2152,9 @@ func TestCheckSubqueryMatchOutgoing(t *testing.T) {
 	ctx := context.Background()
 
 	// Create nodes with outgoing relationship
-	_, _ = store.CreateNode(&storage.Node{ID: "parent", Labels: []string{"Parent"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "child", Labels: []string{"Child"}})
-	store.CreateEdge(&storage.Edge{ID: "e1", Type: "HAS_CHILD", StartNode: "parent", EndNode: "child"})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "parent", Labels: []string{"Parent"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "child", Labels: []string{"Child"}})
+	store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "HAS_CHILD", StartNode: "parent", EndNode: "child"})
 
 	// Query with EXISTS checking outgoing relationship
 	result, err := e.Execute(ctx, `
@@ -2228,7 +2226,7 @@ func TestFindKeywordIndex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := findKeywordIndex(tt.input, tt.keyword)
+			got := findKeywordIndex(t.Context(), tt.input, tt.keyword)
 			if got != tt.expected {
 				t.Errorf("findKeywordIndex(%q, %q) = %d, want %d", tt.input, tt.keyword, got, tt.expected)
 			}
@@ -2238,7 +2236,7 @@ func TestFindKeywordIndex(t *testing.T) {
 
 func TestTopLevelKeywordIndex_IgnoresCallSubqueryBody(t *testing.T) {
 	input := "CALL { RETURN 1 } RETURN 2"
-	got := topLevelKeywordIndex(input, "RETURN")
+	got := topLevelKeywordIndex(t.Context(), input, "RETURN")
 	if got != 18 {
 		t.Fatalf("topLevelKeywordIndex(%q, %q) = %d, want %d", input, "RETURN", got, 18)
 	}
@@ -2261,7 +2259,7 @@ func TestMatchWithLabelsContainingKeywords(t *testing.T) {
 				Labels:     []string{label},
 				Properties: map[string]interface{}{"name": label},
 			}
-			if _, err := store.CreateNode(node); err != nil {
+			if _, err := store.CreateNode(t.Context(), node); err != nil {
 				t.Fatalf("Failed to create node: %v", err)
 			}
 
@@ -2292,17 +2290,17 @@ func TestExecuteUnionDirect(t *testing.T) {
 	defer store.Close()
 
 	// Create test data
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "alice",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice", "age": int64(30)},
 	})
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "bob",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob", "age": int64(25)},
 	})
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "charlie",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Charlie", "age": int64(25)},
@@ -2312,7 +2310,7 @@ func TestExecuteUnionDirect(t *testing.T) {
 
 	t.Run("union_all_combines_all", func(t *testing.T) {
 		// Using direct execution since the main Execute router might not route to executeUnion
-		result, err := e.executeUnion(ctx, "MATCH (n:Person) WHERE n.age = 25 RETURN n.name UNION ALL MATCH (n:Person) WHERE n.age = 30 RETURN n.name", true)
+		result, err := e.executeUnion(ctx, "MATCH (n:Person) WHERE n.age = 25 RETURN n.name UNION ALL MATCH (n:Person) WHERE n.age = 30 RETURN n.name", true, nil)
 		if err != nil {
 			t.Fatalf("executeUnion failed: %v", err)
 		}
@@ -2322,7 +2320,7 @@ func TestExecuteUnionDirect(t *testing.T) {
 	})
 
 	t.Run("union_distinct_removes_duplicates", func(t *testing.T) {
-		result, err := e.executeUnion(ctx, "MATCH (n:Person) RETURN n.age UNION MATCH (n:Person) RETURN n.age", false)
+		result, err := e.executeUnion(ctx, "MATCH (n:Person) RETURN n.age UNION MATCH (n:Person) RETURN n.age", false, nil)
 		if err != nil {
 			t.Fatalf("executeUnion failed: %v", err)
 		}
@@ -2333,14 +2331,14 @@ func TestExecuteUnionDirect(t *testing.T) {
 	})
 
 	t.Run("union_error_no_clause", func(t *testing.T) {
-		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", false)
+		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", false, nil)
 		if err == nil {
 			t.Error("Expected error for missing UNION clause")
 		}
 	})
 
 	t.Run("union_all_error_no_clause", func(t *testing.T) {
-		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", true)
+		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", true, nil)
 		if err == nil {
 			t.Error("Expected error for missing UNION ALL clause")
 		}
@@ -2349,7 +2347,7 @@ func TestExecuteUnionDirect(t *testing.T) {
 	t.Run("union_column_mismatch", func(t *testing.T) {
 		// This might or might not error depending on implementation
 		// Just ensure it doesn't panic
-		_, _ = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false)
+		_, _ = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false, nil)
 	})
 }
 
@@ -2363,7 +2361,7 @@ func TestExecuteCompoundMatchMergeDirect(t *testing.T) {
 		defer store.Close()
 
 		// Create source node
-		_, _ = store.CreateNode(&storage.Node{
+		_, _ = store.CreateNode(t.Context(), &storage.Node{
 			ID:         "source-1",
 			Labels:     []string{"Source"},
 			Properties: map[string]interface{}{"name": "SourceNode", "value": "test"},
@@ -2373,7 +2371,7 @@ func TestExecuteCompoundMatchMergeDirect(t *testing.T) {
 		result, err := e.Execute(ctx, "MATCH (s:Source) MERGE (t:Target {name: 'NewTarget'})", nil)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, result.Stats.NodesCreated)
-		nodes, err := store.GetNodesByLabel("Target")
+		nodes, err := store.GetNodesByLabel(ctx, "Target")
 		require.NoError(t, err)
 		require.Len(t, nodes, 1)
 		require.Equal(t, "NewTarget", nodes[0].Properties["name"])
@@ -2390,7 +2388,7 @@ func TestExecuteCompoundMatchMergeDirect(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, result.Rows)
 		require.Zero(t, result.Stats.NodesCreated)
-		nodes, err := store.GetNodesByLabel("Target")
+		nodes, err := store.GetNodesByLabel(ctx, "Target")
 		require.NoError(t, err)
 		require.Empty(t, nodes)
 	})
@@ -2405,7 +2403,7 @@ func TestExecuteCompoundMatchMergeDirect(t *testing.T) {
 		result, err := e.Execute(ctx, "MERGE (t:Target)", nil)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, result.Stats.NodesCreated)
-		nodes, err := store.GetNodesByLabel("Target")
+		nodes, err := store.GetNodesByLabel(ctx, "Target")
 		require.NoError(t, err)
 		require.Len(t, nodes, 1)
 	})
@@ -2432,17 +2430,17 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	defer store.Close()
 
 	// Create test nodes
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "p1",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice", "age": int64(30)},
 	})
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "p2",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob", "age": int64(25)},
 	})
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "c1",
 		Labels:     []string{"Company"},
 		Properties: map[string]interface{}{"name": "Acme"},
@@ -2519,7 +2517,7 @@ func TestExecuteMergeWithContextDirect(t *testing.T) {
 			Labels:     []string{"Source"},
 			Properties: map[string]interface{}{"name": "Alice", "data": "important"},
 		}
-		_, _ = store.CreateNode(sourceNode)
+		_, _ = store.CreateNode(t.Context(), sourceNode)
 
 		e := NewStorageExecutor(store)
 
@@ -2995,7 +2993,7 @@ func TestShowConstraints_WithSchemaConstraintsAndPropertyTypes(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to add unique constraint: %v", err)
 	}
-	if err := store.GetSchema().AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger); err != nil {
+	if err := store.GetSchema().AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger, storage.PropertyTypeConstraintOptions{}); err != nil {
 		t.Fatalf("failed to add property type constraint: %v", err)
 	}
 
@@ -3195,7 +3193,7 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// DISTINCT UNION should dedupe.
-	res, err := e.executeUnion(ctx, "RETURN 1 AS x UNION RETURN 1 AS x UNION RETURN 2 AS x", false)
+	res, err := e.executeUnion(ctx, "RETURN 1 AS x UNION RETURN 1 AS x UNION RETURN 2 AS x", false, nil)
 	if err != nil {
 		t.Fatalf("distinct UNION failed: %v", err)
 	}
@@ -3204,7 +3202,7 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// UNION ALL should keep duplicates.
-	res, err = e.executeUnion(ctx, "RETURN 1 AS x UNION ALL RETURN 1 AS x UNION ALL RETURN 2 AS x", true)
+	res, err = e.executeUnion(ctx, "RETURN 1 AS x UNION ALL RETURN 1 AS x UNION ALL RETURN 2 AS x", true, nil)
 	if err != nil {
 		t.Fatalf("UNION ALL failed: %v", err)
 	}
@@ -3213,7 +3211,7 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// Mismatched column counts must error.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false)
+	_, err = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false, nil)
 	if err == nil {
 		t.Fatal("expected mismatched-column UNION error")
 	}
@@ -3222,13 +3220,13 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// Missing UNION separator must error.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS x", false)
+	_, err = e.executeUnion(ctx, "RETURN 1 AS x", false, nil)
 	if err == nil {
 		t.Fatal("expected UNION not found error")
 	}
 
 	// Error in a child query must be wrapped with query index.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS x UNION MATCH (n", false)
+	_, err = e.executeUnion(ctx, "RETURN 1 AS x UNION MATCH (n", false, nil)
 	if err == nil {
 		t.Fatal("expected wrapped error from second UNION query")
 	}
@@ -3250,7 +3248,7 @@ func TestOptionalMatch_AdditionalBranches(t *testing.T) {
 	require.Empty(t, res.Rows)
 
 	_, err = e.Execute(ctx, "OPTIONAL MATCH (n RETURN n", getParamsFromContext(ctx))
-	requireSyntaxErrorStatus(t, err, "OPTIONAL MATCH (n RETURN n")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "OPTIONAL MATCH (n RETURN n")
 
 	// Empty optional result should preserve columns with nil row.
 	res, err = e.Execute(ctx, "OPTIONAL MATCH (n:Missing) RETURN n.name", nil)

@@ -12,40 +12,62 @@ package storage
 // lock, so they never wait for the flush.
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/memory"
 )
 
-// bufferedOpKind identifies one committed mutation kind.
-type bufferedOpKind uint8
+// BufferedOpKind identifies one committed mutation kind: a node image, an
+// edge image, or a raw delete key.
+type BufferedOpKind uint8
 
 const (
-	bufferedOpNode bufferedOpKind = iota
-	bufferedOpEdge
-	bufferedOpDelete
+	// BufferedOpNode admits a node image in BufferedMutation.Node.
+	BufferedOpNode BufferedOpKind = iota
+	// BufferedOpEdge admits an edge image in BufferedMutation.Edge.
+	BufferedOpEdge
+	// BufferedOpDelete admits a raw delete key in BufferedMutation.ID.
+	BufferedOpDelete
 )
 
-// bufferedMutation is one ordered entry of a generation's replay log.
+// BufferedMutation is one transient committed mutation submitted to Append.
+// Append derives ID from the payload of a node or edge request, so a caller
+// sets the payload matching Kind and leaves ID empty; a delete request sets
+// only ID. It is a request value, not the generation replay record: the
+// replay log keeps its own private bufferedMutation entries.
+type BufferedMutation struct {
+	Kind BufferedOpKind
+	ID   string // node or edge ID derived by Append, or the raw delete key
+	Node *Node  // payload for BufferedOpNode
+	Edge *Edge  // payload for BufferedOpEdge
+}
+
+// bufferedMutation is one ordered entry of the generation replay log.
 type bufferedMutation struct {
-	kind bufferedOpKind
+	kind BufferedOpKind
 	id   string // node or edge ID, or the raw delete key
-	node *Node  // payload for bufferedOpNode
-	edge *Edge  // payload for bufferedOpEdge
+	node *Node  // payload for BufferedOpNode
+	edge *Edge  // payload for BufferedOpEdge
 }
 
 // bufferedCommit is one committed statement captured at BadgerTransaction
 // commit for background replay: its ordered physical operations, raw KV
 // writes/deletes, namespace, and staged ID-counter high-water marks.
 type bufferedCommit struct {
-	recovered bool // WAL operations require authoritative binary-body hydration before publication.
-	namespace string
-	txID      string // transaction ID, used for the WAL buffered-commit payload and flush marker
-	ops       []Operation
-	writes    map[string][]byte
-	deletes   map[string]bool
+	logicalTxID string        // Stable accepted lineage, empty for historical native records.
+	memoryLease *memory.Lease // Retained until this generation is retired.
+	recovered   bool          // WAL operations require authoritative binary-body hydration before publication.
+	namespace   string
+	txID        string // transaction ID, used for the WAL buffered-commit payload and flush marker
+	ops         []Operation
+	writes      map[string][]byte
+	deletes     map[string]bool
 
 	// version is the MVCC version allocated at ACK time. The DB-local
 	// sequence counter orders the commit's history exactly where it
@@ -61,6 +83,12 @@ type bufferedCommit struct {
 	// were pending; replay clears their mark once their keys are durable.
 	// Nil for commits recovered from the WAL, whose entries load as stored.
 	idEntries *txnCounterState
+	// walIDs is present only while the originating transaction captures its
+	// WAL record; buffered replay does not retain or consult the source owner.
+	walIDs *idDictionary
+	// numericBindings belongs to a recovered record and resolves its source
+	// numeric IDs against the receiving store before physical replay.
+	numericBindings []byte
 
 	// propKeyDrain carries the property-key dictionary tokens staged by this
 	// commit; they persist out-of-transaction at replay, as the normal
@@ -79,11 +107,12 @@ type bufferedCommit struct {
 // CommitBuffer is one generation of buffered committed writes. It is
 // append-only while active and read-only while draining.
 type CommitBuffer struct {
-	commits []bufferedCommit
+	readScopes map[string]struct{}
+	commits    []bufferedCommit
 
 	nodes   map[NodeID]*Node
 	edges   map[EdgeID]*Edge
-	deletes map[string]bool
+	deletes map[string]bufferedEntityKind // legacy generic deletion masks only
 	order   []bufferedMutation
 
 	nodesByLabel map[string][]NodeID
@@ -127,7 +156,16 @@ type CommitBuffer struct {
 	// retired guards the buffer's pending-node index retirement: a
 	// generation that reached the applied state retires its nodes from the
 	// index exactly once, whichever drain path reaches it first.
-	retired atomic.Bool
+	retired        atomic.Bool
+	beginPins      atomic.Int64
+	queueRetired   atomic.Bool
+	leasesReleased atomic.Bool
+
+	// settled is closed once the generation is applied and its
+	// notifications are delivered, or handed to the caller that drained it
+	// without dispatching (Settled).
+	settled    chan struct{}
+	settleOnce sync.Once
 }
 
 type labelSeenKey struct {
@@ -142,9 +180,10 @@ type typeSeenKey struct {
 
 func newCommitBuffer() *CommitBuffer {
 	return &CommitBuffer{
+		settled:        make(chan struct{}),
 		nodes:          make(map[NodeID]*Node),
 		edges:          make(map[EdgeID]*Edge),
-		deletes:        make(map[string]bool),
+		deletes:        make(map[string]bufferedEntityKind),
 		nodesByLabel:   make(map[string][]NodeID),
 		edgesByType:    make(map[string][]EdgeID),
 		labelSeen:      make(map[labelSeenKey]struct{}),
@@ -186,17 +225,21 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil && op.Node.ID != "" {
+				if c.version.CommitSequence != 0 {
+					state := op.Node.runtimeState()
+					state.embeddingRevision = EmbeddingBodyRevision{bufferedSequence: c.version.CommitSequence}
+					op.Node.setRuntimeState(state)
+				}
+				b.clearEntityDeletion(bufferedNodeEntity, string(op.Node.ID))
 				b.nodes[op.Node.ID] = op.Node
-				for _, label := range op.Node.Labels {
-					key := labelSeenKey{label: label, id: op.Node.ID}
-					if _, seen := b.labelSeen[key]; !seen {
-						b.labelSeen[key] = struct{}{}
-						b.nodesByLabel[label] = append(b.nodesByLabel[label], op.Node.ID)
-					}
+				b.indexNodeLabels(op.Node.ID, op.Node.Labels)
+				if op.OldNode != nil {
+					// Removing a label must shadow its durable membership and
+					// any older generation, just as deleting the node does.
+					b.indexNodeLabels(op.Node.ID, op.OldNode.Labels)
 				}
 			}
 		case OpDeleteNode:
-			b.deletes[string(op.NodeID)] = true
 			b.deletedNodeIDs[op.NodeID] = struct{}{}
 			// DETACH DELETE tombstones the node's relationships too. Fold
 			// them into the generation's delete set so the overlay hides
@@ -205,7 +248,6 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			// delete (and count) them a second time.
 			for _, edgeID := range op.DeletedEdgeIDs {
 				if edgeID != "" {
-					b.deletes[string(edgeID)] = true
 					b.deletedEdgeIDs[edgeID] = struct{}{}
 					b.edgeDeleteCount++
 				}
@@ -213,16 +255,11 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			if op.OldNode != nil {
 				// Mark the deleted node's labels as touched so scan overlays
 				// drop the committed row too, not just the buffered one.
-				for _, label := range op.OldNode.Labels {
-					key := labelSeenKey{label: label, id: op.NodeID}
-					if _, seen := b.labelSeen[key]; !seen {
-						b.labelSeen[key] = struct{}{}
-						b.nodesByLabel[label] = append(b.nodesByLabel[label], op.NodeID)
-					}
-				}
+				b.indexNodeLabels(op.NodeID, op.OldNode.Labels)
 			}
 		case OpCreateEdge, OpUpdateEdge:
 			if op.Edge != nil && op.Edge.ID != "" {
+				b.clearEntityDeletion(bufferedEdgeEntity, string(op.Edge.ID))
 				b.edges[op.Edge.ID] = op.Edge
 				key := typeSeenKey{edgeType: op.Edge.Type, id: op.Edge.ID}
 				if _, seen := b.typeSeen[key]; !seen {
@@ -230,12 +267,17 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 					b.edgesByType[op.Edge.Type] = append(b.edgesByType[op.Edge.Type], op.Edge.ID)
 				}
 				b.indexEdgeAdjacency(op.Edge)
-				if op.Type == OpCreateEdge {
+				if op.OldEdge != nil && op.OldEdge.ID == op.Edge.ID {
+					// Moving a relationship must shadow its durable adjacency
+					// at the endpoints it left, just as deleting it does: a
+					// read or a node delete's cascade there must not meet it.
+					b.indexEdgeAdjacency(op.OldEdge)
+				}
+				if op.Type == OpCreateEdge && !op.ReplacesExisting {
 					b.edgeCreateCount++
 				}
 			}
 		case OpDeleteEdge:
-			b.deletes[string(op.EdgeID)] = true
 			b.deletedEdgeIDs[op.EdgeID] = struct{}{}
 			b.edgeDeleteCount++
 			if op.OldEdge != nil && op.OldEdge.Type != "" {
@@ -270,6 +312,20 @@ func (b *CommitBuffer) markApplied() {
 	b.applied.Store(true)
 }
 
+// Settled is closed once the generation is applied and its notifications
+// are delivered (or, for a drain that does not dispatch, handed to the
+// caller that drained it): a waiter that needs the generation's listeners
+// to have run before it continues waits on it, not on IsApplied.
+func (b *CommitBuffer) Settled() <-chan struct{} {
+	return b.settled
+}
+
+func (b *CommitBuffer) settle() {
+	if b.settled != nil {
+		b.settleOnce.Do(func() { close(b.settled) })
+	}
+}
+
 func (b *CommitBuffer) addNode(n *Node) {
 	if n == nil || n.ID == "" {
 		return
@@ -278,10 +334,21 @@ func (b *CommitBuffer) addNode(n *Node) {
 		b.totalCounts.add(string(n.ID), false, 1)
 	}
 	copyNode := *n
+	b.clearEntityDeletion(bufferedNodeEntity, string(n.ID))
 	b.nodes[n.ID] = &copyNode
-	b.order = append(b.order, bufferedMutation{kind: bufferedOpNode, id: string(n.ID), node: &copyNode})
-	for _, label := range n.Labels {
-		b.nodesByLabel[label] = append(b.nodesByLabel[label], n.ID)
+	b.order = append(b.order, bufferedMutation{kind: BufferedOpNode, id: string(n.ID), node: &copyNode})
+	b.indexNodeLabels(n.ID, n.Labels)
+}
+
+// indexNodeLabels records every membership a generation touches. The latest
+// body decides whether that membership is still live when readers merge it.
+func (b *CommitBuffer) indexNodeLabels(id NodeID, labels []string) {
+	for _, label := range labels {
+		key := labelSeenKey{label: label, id: id}
+		if _, seen := b.labelSeen[key]; !seen {
+			b.labelSeen[key] = struct{}{}
+			b.nodesByLabel[label] = append(b.nodesByLabel[label], id)
+		}
 	}
 }
 
@@ -293,8 +360,9 @@ func (b *CommitBuffer) addEdge(e *Edge) {
 		b.totalCounts.add(string(e.ID), true, 1)
 	}
 	copyEdge := *e
+	b.clearEntityDeletion(bufferedEdgeEntity, string(e.ID))
 	b.edges[e.ID] = &copyEdge
-	b.order = append(b.order, bufferedMutation{kind: bufferedOpEdge, id: string(e.ID), edge: &copyEdge})
+	b.order = append(b.order, bufferedMutation{kind: BufferedOpEdge, id: string(e.ID), edge: &copyEdge})
 	b.edgesByType[e.Type] = append(b.edgesByType[e.Type], e.ID)
 	b.indexEdgeAdjacency(&copyEdge)
 	b.edgeCreateCount++
@@ -323,82 +391,49 @@ func (b *CommitBuffer) addDelete(key string) {
 	if key == "" {
 		return
 	}
-	b.deletes[key] = true
-	b.order = append(b.order, bufferedMutation{kind: bufferedOpDelete, id: key})
+	b.deletes[key] = bufferedNodeEntity | bufferedEdgeEntity
+	b.order = append(b.order, bufferedMutation{kind: BufferedOpDelete, id: key})
 }
 
 // getNode resolves the latest buffered state for id in this generation.
 // Returns (value, found, deleted). found is false when this generation has
 // no entry for id.
 func (b *CommitBuffer) getNode(id NodeID) (*Node, bool, bool) {
-	if b.deletes[string(id)] {
-		return nil, true, true
-	}
-	if n, ok := b.nodes[id]; ok {
-		return n, true, false
-	}
-	return nil, false, false
+	state := b.entityState(bufferedNodeEntity, string(id))
+	return state.node, state.found, state.deleted
 }
 
 // getEdge resolves the latest buffered state for id in this generation.
 func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
-	if b.deletes[string(id)] {
-		return nil, true, true
-	}
-	if e, ok := b.edges[id]; ok {
-		return e, true, false
-	}
-	return nil, false, false
-}
-
-// labelNodes lists buffered nodes carrying label, newest append first.
-func (b *CommitBuffer) labelNodes(label string) []*Node {
-	ids := b.nodesByLabel[label]
-	if len(ids) == 0 {
-		return nil
-	}
-	out := make([]*Node, 0, len(ids))
-	for _, id := range ids {
-		if b.deletes[string(id)] {
-			continue
-		}
-		if n, ok := b.nodes[id]; ok {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
-// typeEdges lists buffered edges of the given type, newest append first.
-func (b *CommitBuffer) typeEdges(edgeType string) []*Edge {
-	ids := b.edgesByType[edgeType]
-	if len(ids) == 0 {
-		return nil
-	}
-	out := make([]*Edge, 0, len(ids))
-	for _, id := range ids {
-		if b.deletes[string(id)] {
-			continue
-		}
-		if e, ok := b.edges[id]; ok {
-			out = append(out, e)
-		}
-	}
-	return out
+	state := b.entityState(bufferedEdgeEntity, string(id))
+	return state.edge, state.found, state.deleted
 }
 
 // WriteBehindBuffer holds the active generation and FIFO draining
 // generations. Apply is injected so the replay destination (Badger) stays a
 // detail of the caller.
 type WriteBehindBuffer struct {
-	mu       sync.RWMutex
-	active   *CommitBuffer
-	draining []*CommitBuffer
-	opCount  int
+	mu                  contextRWMutex
+	beginPresenceMu     sync.Mutex
+	beginPresences      *transactionBeginPresence
+	beginPresenceClosed bool
+	// order orders the writes that commit to Badger themselves after the
+	// commits acknowledged before them (orderAfterBufferedCommits).
+	order        writeOrder
+	readScopes   sync.Map
+	readEpoch    atomic.Uint64
+	readTracking bool
+	active       *CommitBuffer
+	draining     []*CommitBuffer
+	opCount      int
 
 	interval time.Duration
 	maxOps   int
 	apply    func(*CommitBuffer) error
+	// dispatch delivers the notifications a replay queued. A drain calls
+	// it once it released its claim on the generation, unless its caller
+	// holds write-order stripes and delivers them itself.
+	dispatch func()
 
 	// Adaptive sizing: draining a generation is deterministic — a drain of
 	// size S at throughput R takes S/R — so the size threshold that rotates
@@ -438,13 +473,12 @@ type WriteBehindBuffer struct {
 	// trackedPairs is the set of (label, property) pairs an attached
 	// schema indexes by value; the pending index rebuilds from it when it
 	// has been released empty. Guarded by mu.
-	trackedPairs []pendingPropertyKey
+	trackedPairs []nodePropertyKey
 
 	flushCh chan struct{}
-	done    chan struct{}
-	closeMu sync.Mutex
-	closed  bool
-	wg      sync.WaitGroup
+	// work is the buffer's one owner: the background flusher is its accepted
+	// work and Close is its one stop.
+	work lifecycle.WorkLifetime
 
 	errMu   sync.Mutex
 	lastErr error
@@ -488,16 +522,16 @@ func NewWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*Commit
 		interval = 50 * time.Millisecond
 	}
 	w := &WriteBehindBuffer{
-		active:      newCommitBuffer(),
-		interval:    interval,
-		curInterval: interval,
-		maxOps:      maxOps,
-		targetOps:   maxOps,
-		apply:       apply,
-		minDelay:    defaultWriteBehindMinDelay,
-		maxDelay:    defaultWriteBehindMaxDelay,
-		flushCh:     make(chan struct{}, 1),
-		done:        make(chan struct{}),
+		readTracking: true,
+		active:       newCommitBuffer(),
+		interval:     interval,
+		curInterval:  interval,
+		maxOps:       maxOps,
+		targetOps:    maxOps,
+		apply:        apply,
+		minDelay:     defaultWriteBehindMinDelay,
+		maxDelay:     defaultWriteBehindMaxDelay,
+		flushCh:      make(chan struct{}, 1),
 	}
 	if w.minDelay > interval {
 		w.minDelay = interval
@@ -505,8 +539,9 @@ func NewWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*Commit
 	if w.maxDelay < interval {
 		w.maxDelay = interval
 	}
-	w.wg.Add(1)
-	go w.run()
+	if w.work.Enter() {
+		go w.run()
+	}
 	return w
 }
 
@@ -543,48 +578,107 @@ func (w *WriteBehindBuffer) signal() {
 	}
 }
 
-// AppendNode appends a committed node write to the active generation.
-func (w *WriteBehindBuffer) AppendNode(n *Node) {
-	w.mu.Lock()
-	w.active.addNode(n)
-	w.opCount++
-	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
-	w.mu.Unlock()
-	if rotate {
-		w.signal()
+// namesScope reports whether the mutation names a read scope. A nil node or
+// edge payload is admitted without one; every delete names its raw key, the
+// empty key included.
+func (m BufferedMutation) namesScope() bool {
+	switch m.Kind {
+	case BufferedOpNode:
+		return m.Node != nil
+	case BufferedOpEdge:
+		return m.Edge != nil
 	}
+	return true
 }
 
-// AppendEdge appends a committed edge write to the active generation.
-func (w *WriteBehindBuffer) AppendEdge(e *Edge) {
-	w.mu.Lock()
-	w.active.addEdge(e)
-	w.opCount++
-	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
-	w.mu.Unlock()
-	if rotate {
-		w.signal()
+// validate rejects a mutation whose Kind and payload fields cannot describe
+// a buffered operation. Append calls it before copying a payload or taking
+// the buffer lock, so an invalid request leaves the overlay, the read epoch
+// and the operation count untouched.
+func (m BufferedMutation) validate() error {
+	switch m.Kind {
+	case BufferedOpNode:
+		if m.Edge != nil {
+			return fmt.Errorf("append buffered node: unexpected edge payload: %w", ErrInvalidData)
+		}
+	case BufferedOpEdge:
+		if m.Node != nil {
+			return fmt.Errorf("append buffered edge: unexpected node payload: %w", ErrInvalidData)
+		}
+	case BufferedOpDelete:
+		if m.Node != nil || m.Edge != nil {
+			return fmt.Errorf("append buffered delete: unexpected node or edge payload: %w", ErrInvalidData)
+		}
+	default:
+		return fmt.Errorf("append buffered mutation: unknown kind %d: %w", m.Kind, ErrInvalidData)
 	}
+	return nil
 }
 
-// AppendDelete appends a committed delete to the active generation.
-func (w *WriteBehindBuffer) AppendDelete(key string) {
+// Append appends one committed mutation to the active generation.
+//
+// Append owns its input: a node or edge payload is deep-copied before the
+// lock, so a caller may keep using, or drop, the value it passed and the
+// buffered overlay keeps the image it acknowledged. A node or edge request
+// derives ID from its payload. A nil node or edge payload names no read scope
+// and leaves the overlay unchanged, but it is still one admitted operation and
+// still counts toward the rotation threshold. A delete names its raw key and
+// touches no entity body. The read epoch, read scopes, size accounting,
+// rotation decision and rotation signal happen once here for every kind.
+//
+// Append returns ErrInvalidData for an unknown Kind or for payload fields that
+// do not match Kind, without changing the buffer.
+func (w *WriteBehindBuffer) Append(m BufferedMutation) error {
+	if err := m.validate(); err != nil {
+		return err
+	}
+	switch m.Kind {
+	case BufferedOpNode:
+		m.Node = copyNode(m.Node)
+		if m.Node != nil {
+			m.ID = string(m.Node.ID)
+		}
+	case BufferedOpEdge:
+		m.Edge = copyEdge(m.Edge)
+		if m.Edge != nil {
+			m.ID = string(m.Edge.ID)
+		}
+	}
 	w.mu.Lock()
-	w.active.addDelete(key)
+	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
+	if m.namesScope() {
+		w.markReadScopeLocked(m.ID)
+	}
+	switch m.Kind {
+	case BufferedOpNode:
+		w.active.addNode(m.Node)
+	case BufferedOpEdge:
+		w.active.addEdge(m.Edge)
+	case BufferedOpDelete:
+		w.active.addDelete(m.ID)
+	}
 	w.opCount++
 	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
 	w.mu.Unlock()
 	if rotate {
 		w.signal()
 	}
+	return nil
 }
 
 // AppendCommit appends one committed statement captured at transaction
 // commit. It folds the statement's operations into the read overlay and
-// counts every operation toward the size threshold.
-func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
+// counts every operation toward the size threshold. It returns the selected
+// frame for the caller's existing claim publication policy.
+func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) commitStates {
 	w.mu.Lock()
+	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
+	w.markCommitReadScopesLocked(c)
 	w.active.AddCommit(c)
+	// The statement is committed: its frame is selected on that commit's
+	// completion lifetime, so the fold cannot cancel.
+	accepted := context.Background()
+	states, _ := newCommitStates(accepted, c.ops)
 	w.opCount += len(c.ops) + len(c.writes) + len(c.deletes)
 	if w.opCount < 1 {
 		w.opCount = 1
@@ -598,7 +692,7 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 		// rebuild it from the tracked pairs before indexing this commit.
 		w.pendingIndex = newPendingNodeIndex()
 		for _, pair := range w.trackedPairs {
-			w.pendingIndex.track(pair.label, pair.property, func(id NodeID) *Node {
+			w.pendingIndex.track(accepted, pair.label, pair.property, func(id NodeID) *Node {
 				node, _ := w.nodeLocked(id)
 				return node
 			})
@@ -619,21 +713,49 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 	if rotate {
 		w.signal()
 	}
+	return states
 }
 
 // rotate moves the active generation into draining and installs a fresh one.
-// It is O(1); writers immediately continue on the new generation.
-func (w *WriteBehindBuffer) rotate() {
-	w.mu.Lock()
-	if w.opCount == 0 {
-		w.mu.Unlock()
-		return
+// Rotation is O(1); writers immediately continue on the new generation.
+// Optional frontier capture copies its generation pointers with cancellation.
+func (w *WriteBehindBuffer) rotate(ctx context.Context, capture ...bool) ([]*CommitBuffer, error) {
+	if err := w.mu.LockContext(ctx); err != nil {
+		return nil, err
 	}
-	w.active.ops = w.opCount
-	w.draining = append(w.draining, w.active)
-	w.active = newCommitBuffer()
-	w.opCount = 0
-	w.mu.Unlock()
+	defer w.mu.Unlock()
+	// Prepare the optional captured frontier before changing ownership. Once
+	// rotation is applied, accepted replay owns the generation independently.
+	var generations []*CommitBuffer
+	if len(capture) > 0 && capture[0] {
+		count := len(w.draining)
+		if w.opCount != 0 {
+			count++
+		}
+		if count > 0 {
+			generations = make([]*CommitBuffer, count)
+			var cancel bulkReadCancellation
+			for i, generation := range w.draining {
+				if err := cancel.check(ctx); err != nil {
+					return nil, err
+				}
+				generations[i] = generation
+			}
+			if w.opCount != 0 {
+				generations[count-1] = w.active
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if w.opCount != 0 {
+		w.active.ops = w.opCount
+		w.draining = append(w.draining, w.active)
+		w.active = newCommitBuffer()
+		w.opCount = 0
+	}
+	return generations, nil
 }
 
 // targetSizeLocked returns the current size threshold. Caller holds w.mu.
@@ -661,7 +783,8 @@ func (w *WriteBehindBuffer) effectiveMaxLocked() int {
 }
 
 func (w *WriteBehindBuffer) run() {
-	defer w.wg.Done()
+	defer w.work.Leave()
+	stop := w.work.Context().Done()
 	timer := time.NewTimer(w.interval)
 	defer timer.Stop()
 	reset := func() {
@@ -672,15 +795,15 @@ func (w *WriteBehindBuffer) run() {
 	}
 	for {
 		select {
-		case <-w.done:
+		case <-stop:
 			return
 		case <-timer.C:
-			w.rotate()
-			w.drainOne()
+			_, _ = w.rotate(context.Background()) // accepted worker rotation cannot cancel
+			w.drainOne(true, nil)
 			reset()
 		case <-w.flushCh:
-			w.rotate()
-			w.drainOne()
+			_, _ = w.rotate(context.Background()) // accepted worker rotation cannot cancel
+			w.drainOne(true, nil)
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -692,11 +815,15 @@ func (w *WriteBehindBuffer) run() {
 	}
 }
 
-// drainOne replays the oldest draining generation, if any.
-func (w *WriteBehindBuffer) drainOne() {
+// drainOne replays the oldest draining generation, if any, and none once
+// until (when set) is retired. dispatch delivers the notifications the
+// replay queued once the generation is retired and the claim released, so a
+// listener that writes back never waits on a writer that waits for this
+// generation.
+func (w *WriteBehindBuffer) drainOne(dispatch bool, until *CommitBuffer) {
 	w.mu.RLock()
 	buf := (*CommitBuffer)(nil)
-	if len(w.draining) > 0 {
+	if len(w.draining) > 0 && (until == nil || slices.Contains(w.draining, until)) {
 		buf = w.draining[0]
 	}
 	w.mu.RUnlock()
@@ -705,11 +832,35 @@ func (w *WriteBehindBuffer) drainOne() {
 	}
 	if buf.IsApplied() {
 		w.removeDrained(buf)
+		// Applied with no drain holding its claim (outside the drain loop,
+		// its claim released): no drain will deliver or settle it, and a
+		// flush delivers what it queued before it waits on it. A drain still
+		// holding the claim settles it once its notifications are delivered.
+		if !buf.draining.Load() {
+			buf.settle()
+		}
 		return
 	}
 	if !buf.claimDrain() {
 		return // another flusher (or Flush) is applying it
 	}
+	settled := false
+	defer func() {
+		if dispatch {
+			w.mu.RLock()
+			deliver := w.dispatch
+			w.mu.RUnlock()
+			if deliver != nil {
+				deliver()
+			}
+		}
+		// The generation settles after the notifications it queued are
+		// delivered; a drain that does not dispatch hands them to its
+		// caller, which holds them until its own publication point.
+		if settled {
+			buf.settle()
+		}
+	}()
 	if w.apply != nil {
 		start := time.Now()
 		err := w.apply(buf)
@@ -752,6 +903,7 @@ func (w *WriteBehindBuffer) drainOne() {
 	w.setLastErr(nil) // this generation applied; a prior failure is resolved
 	buf.markApplied()
 	w.removeDrained(buf)
+	settled = true
 }
 
 func (w *WriteBehindBuffer) setLastErr(err error) {
@@ -765,6 +917,16 @@ func (w *WriteBehindBuffer) setLastErr(err error) {
 // schema index covers them from the replay onward.
 func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	w.mu.Lock()
+	retired := false
+	if len(w.draining) > 0 && w.draining[0] == buf {
+		// Release the retired generation before repairing the pending index.
+		// Reslicing alone retains it through the queue's backing array.
+		w.draining[0] = nil
+		w.draining = w.draining[1:]
+		w.retireReadScopesLocked(buf)
+		retired = true
+	}
+
 	// The generation's writes are committed: the schema's committed index
 	// now covers its nodes, so retire them from the pending index exactly
 	// once. A later generation may already have replaced a node's entries;
@@ -787,34 +949,29 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 			}
 		}
 	}
-	if len(w.draining) > 0 && w.draining[0] == buf {
-		w.draining = w.draining[1:]
-	}
 	// A burst fills the pending index with map buckets Go never shrinks;
 	// drop it entirely once every generation has retired, so an idle
 	// buffer returns its memory and the next lookup rebuilds it lazily.
 	if w.pendingIndex != nil && w.pendingIndex.empty() {
 		w.pendingIndex = nil
 	}
+	if w.opCount == 0 && len(w.draining) == 0 {
+		w.readEpoch.Store((w.readEpoch.Load() + 2) &^ 1)
+	}
 	w.mu.Unlock()
+	if retired {
+		buf.queueRetired.Store(true)
+		if buf.beginPins.Load() == 0 {
+			buf.releaseMemoryLeases()
+		}
+	}
 }
 
 // nodeLocked resolves the newest buffered version of id across the active
 // and unapplied generations. Caller holds w.mu.
 func (w *WriteBehindBuffer) nodeLocked(id NodeID) (*Node, bool) {
-	if node, ok := w.active.nodes[id]; ok {
-		return node, true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if node, ok := buf.nodes[id]; ok {
-			return node, true
-		}
-	}
-	return nil, false
+	state := w.entityStateLocked(bufferedNodeEntity, string(id))
+	return state.node, state.found && !state.deleted
 }
 
 // pendingWriteSource: schemas attach the buffer so property-index (and
@@ -826,9 +983,17 @@ func (w *WriteBehindBuffer) nodeLocked(id NodeID) (*Node, bool) {
 
 // lockPendingWrites holds the pending nodes still until unlockPendingWrites,
 // so a lookup combines the committed index with a stable buffer view.
-func (w *WriteBehindBuffer) lockPendingWrites() pendingWriteView {
-	w.mu.RLock()
-	return pendingWriteView{index: w.pendingIndex, owner: w}
+func (w *WriteBehindBuffer) lockPendingWrites(ctx context.Context) (pendingWriteView, error) {
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return pendingWriteView{}, err
+	}
+	// The lease is still owned by the returned source even when no mutation
+	// can shadow a committed ID. Include raw order and draining generations:
+	// a delete-only generation must never be mistaken for empty membership.
+	if w.opCount == 0 && len(w.draining) == 0 && (w.active == nil || len(w.active.order) == 0) {
+		return pendingWriteView{}, nil
+	}
+	return pendingWriteView{index: w.pendingIndex, owner: w}, nil
 }
 
 // unlockPendingWrites releases the lock pendingWrites took.
@@ -838,37 +1003,95 @@ func (w *WriteBehindBuffer) unlockPendingWrites() {
 
 // trackPendingValues indexes these (label, property) pairs of buffered
 // nodes by value from now on, including the nodes already buffered.
-func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
+func (w *WriteBehindBuffer) trackPendingValues(ctx context.Context, pairs []nodePropertyKey) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(pairs) == 0 {
-		return
+		return nil
 	}
-	w.mu.Lock()
+	if err := w.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer w.mu.Unlock()
-	if w.pendingIndex == nil {
-		w.pendingIndex = newPendingNodeIndex()
-		// List every buffered node that has not reached the store yet;
-		// applied generations are already in the committed index.
-		for _, buf := range w.draining {
-			if buf.IsApplied() {
-				continue
-			}
-			for _, node := range buf.nodes {
-				w.pendingIndex.add(node)
-			}
+	missing := w.pendingIndex == nil
+	for _, pair := range pairs {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		for _, node := range w.active.nodes {
-			w.pendingIndex.add(node)
+		if !slices.Contains(w.trackedPairs, pair) {
+			missing = true
 		}
 	}
-	for _, pair := range pairs {
-		w.pendingIndex.track(pair.label, pair.property, func(id NodeID) *Node {
+	if !missing {
+		return nil
+	}
+	if len(pairs) == 1 && w.pendingIndex != nil {
+		// track already builds and publishes a single pair atomically. There
+		// must be no further fallible poll after that publication.
+		pair := pairs[0]
+		if err := w.pendingIndex.track(ctx, pair.label, pair.property, func(id NodeID) *Node {
 			node, _ := w.nodeLocked(id)
 			return node
-		})
-		if !slices.Contains(w.trackedPairs, pair) {
-			w.trackedPairs = append(w.trackedPairs, pair)
+		}); err != nil {
+			return err
+		}
+		w.trackedPairs = append(w.trackedPairs, pair)
+		return nil
+	}
+	// Keep the entire multi-pair publication private. track publishes each
+	// completed pair into this candidate, never the live buffer on failure.
+	candidate := newPendingNodeIndex()
+	if w.pendingIndex == nil {
+		nodes, _, err := w.allNodesOverlayLocked(ctx)
+		if err != nil {
+			return err
+		}
+		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate.add(node)
+		}
+	} else {
+		candidate.byLabel = w.pendingIndex.byLabel // read-only under w.mu
+		candidate.byValue = w.pendingIndex.byValue // track builds a replacement
+		for label, properties := range w.pendingIndex.tracked {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate.tracked[label] = properties // track replaces the inner map
+		}
+		for pair, ids := range w.pendingIndex.byProperty {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate.byProperty[pair] = ids // track replaces each new population
 		}
 	}
+	tracked := make([]nodePropertyKey, 0, len(w.trackedPairs)+len(pairs))
+	for _, pair := range w.trackedPairs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		tracked = append(tracked, pair)
+	}
+	for _, pair := range pairs {
+		if err := candidate.track(ctx, pair.label, pair.property, func(id NodeID) *Node {
+			node, _ := w.nodeLocked(id)
+			return node
+		}); err != nil {
+			return err
+		}
+		if !slices.Contains(tracked, pair) {
+			tracked = append(tracked, pair)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.pendingIndex, w.trackedPairs = candidate, tracked
+	return nil
 }
 
 // KeyCandidates returns the newest buffered version of every unflushed node
@@ -876,89 +1099,145 @@ func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
 // pending value index (the pair is tracked from its first use) instead of by
 // copying every buffered node of the label: constraint validation calls it on
 // every write of a bulk load.
-func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey interface{}) []*Node {
-	pair := pendingPropertyKey{label: label, property: property}
-	w.mu.RLock()
+func (w *WriteBehindBuffer) ensurePendingValueTracked(ctx context.Context, label, property string) error {
+	pair := nodePropertyKey{label: label, property: property}
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return err
+	}
 	tracked := slices.Contains(w.trackedPairs, pair)
 	w.mu.RUnlock()
 	if !tracked {
-		w.trackPendingValues([]pendingPropertyKey{pair})
+		return w.trackPendingValues(ctx, []nodePropertyKey{pair})
+	}
+	return ctx.Err()
+}
+
+func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey interface{}) []*Node {
+	// This exported context-free accessor owns its buffer maintenance lifetime.
+	if err := w.ensurePendingValueTracked(context.Background(), label, property); err != nil {
+		panic(err) // Background cannot cancel; do not silently lose candidates.
 	}
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if w.pendingIndex == nil {
-		return nil // nothing unflushed (the index is released once empty)
+	// A context-free buffer accessor: the copy runs on the buffer's own
+	// lifetime, so it cannot be canceled (see bulkReadCancellation).
+	nodes, _ := w.keyCandidatesLocked(context.Background(), label, property, valueKey)
+	return nodes
+}
+
+func (w *WriteBehindBuffer) keyCandidatesLocked(ctx context.Context, label, property string, valueKey interface{}) ([]*Node, error) {
+	if w == nil || w.pendingIndex == nil {
+		return nil, nil // nothing unflushed (the index is released once empty)
 	}
 	ids := w.pendingIndex.byValue[pendingValueKey{label: label, property: property, value: valueKey}]
+	var cancel bulkReadCancellation
 	out := make([]*Node, 0, len(ids))
 	for _, id := range ids {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
 		if node, ok := w.newestNodeLocked(id); ok {
 			out = append(out, node)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // newestNodeLocked is the newest buffered version of id across the unapplied
 // generations, or false when the newest buffered write deleted it or none
 // holds it. Caller holds w.mu.
 func (w *WriteBehindBuffer) newestNodeLocked(id NodeID) (*Node, bool) {
-	bufs := append([]*CommitBuffer{w.active}, nil...)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if !w.draining[i].IsApplied() {
-			bufs = append(bufs, w.draining[i])
-		}
-	}
-	for _, buf := range bufs {
-		if buf.deletes[string(id)] {
-			return nil, false
-		}
-		if node, ok := buf.nodes[id]; ok {
-			return node, true
-		}
-	}
-	return nil, false
+	return w.nodeLocked(id)
 }
 
 // nodeSupersededLocked reports whether a committed index entry for id is
 // stale: the buffer created, rewrote or deleted the node. The caller holds
 // the pending-write lock (w.mu), so no locking here.
 func (w *WriteBehindBuffer) nodeSupersededLocked(id NodeID) bool {
-	if _, ok := w.active.nodes[id]; ok {
-		return true
-	}
-	if w.active.deletes[string(id)] {
-		return true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if _, ok := buf.nodes[id]; ok {
-			return true
-		}
-		if buf.deletes[string(id)] {
-			return true
-		}
-	}
-	return false
+	return w.entityStateLocked(bufferedNodeEntity, string(id)).found
 }
 
 // Flush rotates the active generation and drains every generation
-// synchronously. It retries failed applies; if no generation makes progress
-// for ~2s it returns the last apply error.
+// synchronously, delivering their notifications. It retries failed applies
+// and waits for a generation another drain is applying; if no generation
+// makes progress for ~2s after an apply failed, it returns that error.
 func (w *WriteBehindBuffer) Flush() error {
-	w.rotate()
+	return w.flush(true, false)
+}
+
+// flush is Flush. dispatch false leaves the notifications of the commits it
+// replays to the caller; frontier true returns once the generations rotated
+// before it started are retired, without chasing later ones: the write order
+// (orderAfterBufferedCommits) holds the stripes of the caller's entities, so
+// no commit of theirs enters a later generation.
+func (w *WriteBehindBuffer) flush(dispatch, frontier bool) error {
+	// flush owns no request context, so it states the detached completion
+	// lifetime explicitly: the drain wait it starts cannot cancel.
+	return w.flushContext(context.Background(), dispatch, frontier)
+}
+
+// flushContext drains the generations this caller observes under its
+// completion lifetime. ctx is nonnil: a caller passes its own cancellable
+// context, or the detached completion lifetime the owners without a request
+// context select. A context whose Done is nil cannot cancel and waits for the
+// generations alone, without a timer and without allocating per wait.
+// A cancellable waiter never becomes the accepted replay owner.
+func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier bool) error {
+	if _, err := w.rotate(ctx); err != nil {
+		return err
+	}
 	w.signal()
+	var last *CommitBuffer
+	if frontier {
+		if err := w.mu.RLockContext(ctx); err != nil {
+			return err
+		}
+		if n := len(w.draining); n > 0 {
+			last = w.draining[n-1]
+		}
+		w.mu.RUnlock()
+		if last == nil {
+			return nil
+		}
+	}
+	noncancellable := ctx.Done() == nil
 	lastPending := -1
 	stalls := 0
 	for {
-		w.drainOne()
-		w.mu.RLock()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if noncancellable {
+			w.drainOne(dispatch, last)
+		} else {
+			// A cancellable waiter never becomes the accepted replay
+			// owner. Wake the existing worker for the next generation;
+			// cancellation can leave this wait while that worker keeps
+			// the same claim, application and settlement lifetime.
+			w.signal()
+		}
+		if err := w.mu.RLockContext(ctx); err != nil {
+			return err
+		}
 		pending := len(w.draining)
+		done := pending == 0
+		if last != nil && !done {
+			found := false
+			var cancel bulkReadCancellation
+			for _, generation := range w.draining {
+				if err := cancel.check(ctx); err != nil {
+					w.mu.RUnlock()
+					return err
+				}
+				if generation == last {
+					found = true
+					break
+				}
+			}
+			done = !found
+		}
 		w.mu.RUnlock()
-		if pending == 0 {
+		if done {
 			return nil
 		}
 		if pending == lastPending {
@@ -968,9 +1247,25 @@ func (w *WriteBehindBuffer) Flush() error {
 		}
 		lastPending = pending
 		if stalls > 2000 {
-			return w.LastErr()
+			if err := w.LastErr(); err != nil {
+				return err
+			}
+			// Another drain may still be applying a claimed generation:
+			// without an apply error, its absence is not completion.
+			stalls = 0
 		}
-		time.Sleep(time.Millisecond)
+		observeWriteAdmissionWait(w, ctx)
+		if noncancellable {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		timer := time.NewTimer(time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		}
 	}
 }
 
@@ -981,17 +1276,10 @@ func (w *WriteBehindBuffer) LastErr() error {
 	return w.lastErr
 }
 
-// Close stops the background flusher. Callers must Flush first to drain.
+// Close stops the background flusher and joins its actual return; every
+// caller joins the same stop. Callers must Flush first to drain.
 func (w *WriteBehindBuffer) Close() {
-	w.closeMu.Lock()
-	if w.closed {
-		w.closeMu.Unlock()
-		return
-	}
-	w.closed = true
-	close(w.done)
-	w.closeMu.Unlock()
-	w.wg.Wait()
+	<-w.work.BeginStop(nil)
 }
 
 // GetNode resolves the latest buffered state for id across generations,
@@ -999,18 +1287,8 @@ func (w *WriteBehindBuffer) Close() {
 func (w *WriteBehindBuffer) GetNode(id NodeID) (*Node, bool, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if n, found, deleted := w.active.getNode(id); found {
-		return n, true, deleted
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		if n, found, deleted := w.draining[i].getNode(id); found {
-			return n, true, deleted
-		}
-	}
-	return nil, false, false
+	state := w.entityStateLocked(bufferedNodeEntity, string(id))
+	return state.node, state.found, state.deleted
 }
 
 // GetEdge resolves the latest buffered state for id across generations,
@@ -1018,34 +1296,15 @@ func (w *WriteBehindBuffer) GetNode(id NodeID) (*Node, bool, bool) {
 func (w *WriteBehindBuffer) GetEdge(id EdgeID) (*Edge, bool, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if e, found, deleted := w.active.getEdge(id); found {
-		return e, true, deleted
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		if e, found, deleted := w.draining[i].getEdge(id); found {
-			return e, true, deleted
-		}
-	}
-	return nil, false, false
+	state := w.entityStateLocked(bufferedEdgeEntity, string(id))
+	return state.edge, state.found, state.deleted
 }
 
 // LabelNodes returns buffered nodes carrying label, newest generation first,
 // not yet applied. The caller merges these over committed rows.
 func (w *WriteBehindBuffer) LabelNodes(label string) []*Node {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var out []*Node
-	out = append(out, w.active.labelNodes(label)...)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		out = append(out, w.draining[i].labelNodes(label)...)
-	}
-	return out
+	nodes, _ := w.LabelOverlay(label)
+	return nodes
 }
 
 // LabelOverlay returns the buffered state for label as (nodes, touched):
@@ -1058,75 +1317,74 @@ func (w *WriteBehindBuffer) LabelNodes(label string) []*Node {
 func (w *WriteBehindBuffer) LabelOverlay(label string) ([]*Node, map[NodeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	// A context-free buffer accessor: the copy runs on the buffer's own
+	// lifetime, so it cannot be canceled (see bulkReadCancellation).
+	nodes, touched, _ := w.labelOverlayLocked(context.Background(), label)
+	return nodes, touched
+}
+
+// Keep closure-backed selection behind the nil check: captured result locals
+// otherwise escape at function entry even when an empty overlay returns early.
+func (w *WriteBehindBuffer) labelOverlayLocked(ctx context.Context, label string, prefixes ...string) ([]*Node, map[NodeID]bool, error) {
+	if w == nil {
+		return nil, nil, nil
+	}
+	return w.selectLabelOverlayLocked(ctx, label, prefixes...)
+}
+
+func (w *WriteBehindBuffer) selectLabelOverlayLocked(ctx context.Context, label string, prefixes ...string) ([]*Node, map[NodeID]bool, error) {
 	touched := make(map[NodeID]bool)
-	seen := make(map[NodeID]bool)
 	var out []*Node
-	collect := func(buf *CommitBuffer) {
+	if err := w.visitEntityOverlayLocked(ctx, bufferedNodeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		ids := buf.nodesByLabel[label]
 		for i := len(ids) - 1; i >= 0; i-- {
-			id := ids[i]
-			touched[id] = true
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			if buf.deletes[string(id)] {
-				continue
-			}
-			if n, ok := buf.nodes[id]; ok {
-				out = append(out, n)
+			if !emit(string(ids[i])) {
+				return
 			}
 		}
-	}
-	collect(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
+	}, func(id string, state bufferedEntityState) {
+		touched[NodeID(id)] = true
+		if !state.deleted && hasLabel(state.node.Labels, label) {
+			out = append(out, state.node)
 		}
-		collect(w.draining[i])
+	}, prefixes...); err != nil {
+		return nil, nil, err
 	}
-	return out, touched
+	return out, touched, nil
 }
 
 // TypeOverlay is LabelOverlay for buffered edges of edgeType.
 func (w *WriteBehindBuffer) TypeOverlay(edgeType string) ([]*Edge, map[EdgeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	// A context-free buffer accessor: the copy runs on the buffer's own
+	// lifetime, so it cannot be canceled (see bulkReadCancellation).
+	edges, touched, _ := w.typeOverlayLocked(context.Background(), edgeType)
+	return edges, touched
+}
+
+func (w *WriteBehindBuffer) typeOverlayLocked(ctx context.Context, edgeType string, prefixes ...string) ([]*Edge, map[EdgeID]bool, error) {
+	if w == nil {
+		return nil, nil, nil
+	}
 	touched := make(map[EdgeID]bool)
-	seen := make(map[EdgeID]bool)
 	var out []*Edge
-	collect := func(buf *CommitBuffer) {
+	if err := w.visitEntityOverlayLocked(ctx, bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		ids := buf.edgesByType[edgeType]
 		for i := len(ids) - 1; i >= 0; i-- {
-			id := ids[i]
-			touched[id] = true
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			if buf.deletes[string(id)] {
-				continue
-			}
-			if e, ok := buf.edges[id]; ok {
-				out = append(out, e)
+			if !emit(string(ids[i])) {
+				return
 			}
 		}
-		// Tombstones hide committed rows: a DETACH DELETE folds its
-		// relationships' IDs into the delete set without a type, so
-		// every buffered delete must shadow the committed row regardless
-		// of type (the ID spaces of nodes and edges never collide).
-		for key := range buf.deletes {
-			touched[EdgeID(key)] = true
+	}, func(id string, state bufferedEntityState) {
+		touched[EdgeID(id)] = true
+		if !state.deleted && state.edge.Type == edgeType {
+			out = append(out, state.edge)
 		}
+	}, prefixes...); err != nil {
+		return nil, nil, err
 	}
-	collect(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		collect(w.draining[i])
-	}
-	return out, touched
+	return out, touched, nil
 }
 
 // LookupNode resolves the newest buffered version of id, if the buffer has
@@ -1134,38 +1392,14 @@ func (w *WriteBehindBuffer) TypeOverlay(edgeType string) ([]*Edge, map[EdgeID]bo
 func (w *WriteBehindBuffer) LookupNode(id NodeID) (*Node, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if n, ok := w.active.nodes[id]; ok {
-		return n, true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if n, ok := buf.nodes[id]; ok {
-			return n, true
-		}
-	}
-	return nil, false
+	return w.nodeLocked(id)
 }
 
 // NodeDeleted reports whether the buffer's newest state for id is a delete.
 func (w *WriteBehindBuffer) NodeDeleted(id NodeID) bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if w.active.deletes[string(id)] {
-		return true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if buf.deletes[string(id)] {
-			return true
-		}
-	}
-	return false
+	return w.entityStateLocked(bufferedNodeEntity, string(id)).deleted
 }
 
 // LookupEdge resolves the newest buffered version of id, if the buffer has
@@ -1173,38 +1407,15 @@ func (w *WriteBehindBuffer) NodeDeleted(id NodeID) bool {
 func (w *WriteBehindBuffer) LookupEdge(id EdgeID) (*Edge, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if e, ok := w.active.edges[id]; ok {
-		return e, true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if e, ok := buf.edges[id]; ok {
-			return e, true
-		}
-	}
-	return nil, false
+	state := w.entityStateLocked(bufferedEdgeEntity, string(id))
+	return state.edge, state.found && !state.deleted
 }
 
 // EdgeDeleted reports whether the buffer's newest state for id is a delete.
 func (w *WriteBehindBuffer) EdgeDeleted(id EdgeID) bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if w.active.deletes[string(id)] {
-		return true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if buf.deletes[string(id)] {
-			return true
-		}
-	}
-	return false
+	return w.entityStateLocked(bufferedEdgeEntity, string(id)).deleted
 }
 
 // AllNodesOverlay returns the buffered node state as (nodes, touched):
@@ -1216,66 +1427,74 @@ func (w *WriteBehindBuffer) EdgeDeleted(id EdgeID) bool {
 func (w *WriteBehindBuffer) AllNodesOverlay() ([]*Node, map[NodeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	// A context-free buffer accessor: the copy runs on the buffer's own
+	// lifetime, so it cannot be canceled (see bulkReadCancellation).
+	nodes, touched, _ := w.allNodesOverlayLocked(context.Background())
+	return nodes, touched
+}
+
+func (w *WriteBehindBuffer) allNodesOverlayLocked(ctx context.Context, prefixes ...string) ([]*Node, map[NodeID]bool, error) {
+	if w == nil {
+		return nil, nil, nil
+	}
+	return w.selectAllNodesOverlayLocked(ctx, prefixes...)
+}
+
+func (w *WriteBehindBuffer) selectAllNodesOverlayLocked(ctx context.Context, prefixes ...string) ([]*Node, map[NodeID]bool, error) {
 	touched := make(map[NodeID]bool)
-	seen := make(map[NodeID]bool)
 	var out []*Node
-	collect := func(buf *CommitBuffer) {
+	if err := w.visitEntityOverlayLocked(ctx, bufferedNodeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		for id := range buf.nodes {
-			touched[id] = true
-			if seen[id] {
-				continue
+			if !emit(string(id)) {
+				return
 			}
-			seen[id] = true
-			if buf.deletes[string(id)] {
-				continue
-			}
-			out = append(out, buf.nodes[id])
 		}
-		for key := range buf.deletes {
-			touched[NodeID(key)] = true
+	}, func(id string, state bufferedEntityState) {
+		touched[NodeID(id)] = true
+		if !state.deleted {
+			out = append(out, state.node)
 		}
+	}, prefixes...); err != nil {
+		return nil, nil, err
 	}
-	collect(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		collect(w.draining[i])
-	}
-	return out, touched
+	return out, touched, nil
 }
 
 // AllEdgesOverlay is AllNodesOverlay for buffered edges.
 func (w *WriteBehindBuffer) AllEdgesOverlay() ([]*Edge, map[EdgeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	// A context-free buffer accessor: the copy runs on the buffer's own
+	// lifetime, so it cannot be canceled (see bulkReadCancellation).
+	edges, touched, _ := w.allEdgesOverlayLocked(context.Background())
+	return edges, touched
+}
+
+func (w *WriteBehindBuffer) allEdgesOverlayLocked(ctx context.Context, prefixes ...string) ([]*Edge, map[EdgeID]bool, error) {
+	if w == nil {
+		return nil, nil, nil
+	}
+	return w.selectAllEdgesOverlayLocked(ctx, prefixes...)
+}
+
+func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked(ctx context.Context, prefixes ...string) ([]*Edge, map[EdgeID]bool, error) {
 	touched := make(map[EdgeID]bool)
-	seen := make(map[EdgeID]bool)
 	var out []*Edge
-	collect := func(buf *CommitBuffer) {
+	if err := w.visitEntityOverlayLocked(ctx, bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		for id := range buf.edges {
-			touched[id] = true
-			if seen[id] {
-				continue
+			if !emit(string(id)) {
+				return
 			}
-			seen[id] = true
-			if buf.deletes[string(id)] {
-				continue
-			}
-			out = append(out, buf.edges[id])
 		}
-		for key := range buf.deletes {
-			touched[EdgeID(key)] = true
+	}, func(id string, state bufferedEntityState) {
+		touched[EdgeID(id)] = true
+		if !state.deleted {
+			out = append(out, state.edge)
 		}
+	}, prefixes...); err != nil {
+		return nil, nil, err
 	}
-	collect(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		collect(w.draining[i])
-	}
-	return out, touched
+	return out, touched, nil
 }
 
 // LabelCountDelta sums the derived label-count deltas of every buffered
@@ -1283,124 +1502,39 @@ func (w *WriteBehindBuffer) AllEdgesOverlay() ([]*Edge, map[EdgeID]bool) {
 // applies the same deltas to the persisted counters when it lands the
 // generation, so reads see committed counts + this delta.
 func (w *WriteBehindBuffer) LabelCountDelta(label string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			for key, delta := range c.labelDeltas {
-				if key.label == label {
-					total += delta
-				}
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindLabel, "", label, false)
 	return total
 }
 
 // LabelCountDeltaInNamespace is LabelCountDelta restricted to namespace.
 func (w *WriteBehindBuffer) LabelCountDeltaInNamespace(namespace, label string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			if delta, ok := c.labelDeltas[namespaceLabel{namespace: namespace, label: label}]; ok {
-				total += delta
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindLabel, namespace, label, true)
 	return total
 }
 
 // EdgeTypeCountDelta sums the derived edge-type count deltas of every
 // buffered commit that has not been replayed yet, across all namespaces.
 func (w *WriteBehindBuffer) EdgeTypeCountDelta(edgeType string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			for key, delta := range c.edgeTypeDeltas {
-				if key.edgeType == edgeType {
-					total += delta
-				}
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindEdgeType, "", edgeType, false)
 	return total
 }
 
 // EdgeTypeCountDeltaInNamespace is EdgeTypeCountDelta restricted to
 // namespace.
 func (w *WriteBehindBuffer) EdgeTypeCountDeltaInNamespace(namespace, edgeType string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			if delta, ok := c.edgeTypeDeltas[namespaceEdgeType{namespace: namespace, edgeType: edgeType}]; ok {
-				total += delta
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindEdgeType, namespace, edgeType, true)
 	return total
 }
 
 // TypeEdges returns buffered edges of edgeType, newest generation first,
 // not yet applied.
 func (w *WriteBehindBuffer) TypeEdges(edgeType string) []*Edge {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var out []*Edge
-	out = append(out, w.active.typeEdges(edgeType)...)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		out = append(out, w.draining[i].typeEdges(edgeType)...)
-	}
-	return out
+	edges, _ := w.TypeOverlay(edgeType)
+	return edges
 }
 
 // liveBuffers returns the active generation and every draining generation
@@ -1419,17 +1553,7 @@ func (w *WriteBehindBuffer) liveBuffers() []*CommitBuffer {
 // NodeDeletedOverlay reports whether a buffered delete hides nodeID from
 // committed reads (PR #1043 read-overlay parity).
 func (w *WriteBehindBuffer) NodeDeletedOverlay(nodeID NodeID) bool {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	for _, buf := range w.liveBuffers() {
-		if buf.deletes[string(nodeID)] {
-			return true
-		}
-		if _, ok := buf.nodes[nodeID]; ok {
-			return false
-		}
-	}
-	return false
+	return w.NodeDeleted(nodeID)
 }
 
 // EdgeAdjacencyOverlay returns the buffered live edges adjacent to nodeID
@@ -1441,48 +1565,46 @@ func (w *WriteBehindBuffer) NodeDeletedOverlay(nodeID NodeID) bool {
 func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	buffers := w.liveBuffers()
+	// A context-free buffer accessor: the copy runs on the buffer's own
+	// lifetime, so it cannot be canceled (see bulkReadCancellation).
+	live, suppressed, nodeDeleted, _ = w.edgeAdjacencyOverlayLocked(context.Background(), nodeID, outgoing)
+	return live, suppressed, nodeDeleted
+}
+
+func (w *WriteBehindBuffer) edgeAdjacencyOverlayLocked(ctx context.Context, nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool, err error) {
+	if w == nil {
+		return nil, nil, false, nil
+	}
+	return w.selectEdgeAdjacencyOverlayLocked(ctx, nodeID, outgoing)
+}
+
+func (w *WriteBehindBuffer) selectEdgeAdjacencyOverlayLocked(ctx context.Context, nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool, err error) {
+	nodeDeleted = w.entityStateLocked(bufferedNodeEntity, string(nodeID)).deleted
 	suppressed = make(map[EdgeID]struct{})
-	for _, buf := range buffers {
-		for id := range buf.deletedEdgeIDs {
-			suppressed[id] = struct{}{}
-		}
-	}
-	// Newest-first resolution of the node's own state: the first generation
-	// that mentions the node decides.
-	for _, buf := range buffers {
-		if buf.deletes[string(nodeID)] {
-			return nil, suppressed, true
-		}
-		if _, ok := buf.nodes[nodeID]; ok {
-			break
-		}
-	}
-	seen := make(map[EdgeID]struct{})
-	for _, buf := range buffers {
-		var ids []EdgeID
+	if err := w.visitEntityOverlayLocked(ctx, bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string) bool) {
+		ids := buf.incomingByNode[nodeID]
 		if outgoing {
 			ids = buf.outgoingByNode[nodeID]
-		} else {
-			ids = buf.incomingByNode[nodeID]
 		}
 		for _, id := range ids {
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			if _, dead := suppressed[id]; dead {
-				continue
-			}
-			if e, ok := buf.edges[id]; ok && e != nil {
-				// The buffered body shadows this identity even after its physical
-				// record is durable but publication has not retired the generation.
-				suppressed[id] = struct{}{}
-				live = append(live, e)
+			if !emit(string(id)) {
+				return
 			}
 		}
+	}, func(id string, state bufferedEntityState) {
+		// Both replacements and tombstones shadow the committed identity.
+		suppressed[EdgeID(id)] = struct{}{}
+		if state.deleted || nodeDeleted {
+			return
+		}
+		edge := state.edge
+		if (outgoing && edge.StartNode == nodeID) || (!outgoing && edge.EndNode == nodeID) {
+			live = append(live, edge)
+		}
+	}); err != nil {
+		return nil, nil, false, err
 	}
-	return live, suppressed, false
+	return live, suppressed, nodeDeleted, nil
 }
 
 // EdgesBetweenOverlay returns the buffered live edges from source to target
@@ -1490,91 +1612,55 @@ func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (
 // sourceDeleted / targetDeleted report buffered deletes of the endpoints,
 // which hide all committed between results for them.
 func (w *WriteBehindBuffer) EdgesBetweenOverlay(source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool) {
-	live, suppressed, _ = w.EdgeAdjacencyOverlay(source, true)
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	// A context-free buffer accessor: the copy runs on the buffer's own
+	// lifetime, so it cannot be canceled (see bulkReadCancellation).
+	live, suppressed, sourceDeleted, targetDeleted, _ = w.edgesBetweenOverlayLocked(context.Background(), source, target)
+	return live, suppressed, sourceDeleted, targetDeleted
+}
+
+func (w *WriteBehindBuffer) edgesBetweenOverlayLocked(ctx context.Context, source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool, err error) {
+	live, suppressed, _, err = w.edgeAdjacencyOverlayLocked(ctx, source, true)
+	if err != nil {
+		return nil, nil, false, false, err
+	}
+	var cancel bulkReadCancellation
 	filtered := live[:0]
 	for _, e := range live {
+		if err := cancel.check(ctx); err != nil {
+			return nil, nil, false, false, err
+		}
 		if e.EndNode == target {
 			filtered = append(filtered, e)
 		}
 	}
-	sourceDeleted = w.NodeDeletedOverlay(source)
-	targetDeleted = w.NodeDeletedOverlay(target)
-	return filtered, suppressed, sourceDeleted, targetDeleted
+	sourceDeleted = w.entityStateLocked(bufferedNodeEntity, string(source)).deleted
+	targetDeleted = w.entityStateLocked(bufferedNodeEntity, string(target)).deleted
+	return filtered, suppressed, sourceDeleted, targetDeleted, nil
 }
 
 // EdgeCountDelta is the buffered total edge-count delta: creates minus
 // deletes across every generation that has not been replayed yet.
 func (w *WriteBehindBuffer) EdgeCountDelta() int64 {
-	return w.totalCountDeltaForPrefix("", true)
-}
-
-// EdgeTypeLabelCountDeltaInNamespace sums the buffered positional
-// (label, type) count deltas of one tier (start or end label) in one
-// namespace, for reads answered from the positional counters.
-func (w *WriteBehindBuffer) EdgeTypeLabelCountDeltaInNamespace(sub byte, namespace, label, edgeType string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			if c.edgeTypeLabelDeltas == nil {
-				continue
-			}
-			for key, delta := range c.edgeTypeLabelDeltas {
-				if key.sub == sub && key.namespace == namespace && key.label == label && key.edgeType == edgeType {
-					total += delta
-				}
-			}
-		}
-	}
-	for _, buf := range w.liveBuffers() {
-		sum(buf)
-	}
-	return total
-}
-
-// EdgeTypeLabelCountDelta is EdgeTypeLabelCountDeltaInNamespace across every
-// namespace.
-func (w *WriteBehindBuffer) EdgeTypeLabelCountDelta(sub byte, label, edgeType string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			if c.edgeTypeLabelDeltas == nil {
-				continue
-			}
-			for key, delta := range c.edgeTypeLabelDeltas {
-				if key.sub == sub && key.label == label && key.edgeType == edgeType {
-					total += delta
-				}
-			}
-		}
-	}
-	for _, buf := range w.liveBuffers() {
-		sum(buf)
-	}
-	return total
+	delta, _ := w.totalCountDeltaForPrefix(context.Background(), "", true)
+	return delta
 }
 
 // EdgeCountDeltaForPrefix is the buffered total edge-count delta restricted to
 // edges whose ID starts with prefix: live buffered edge IDs minus buffered
 // deleted edge IDs. prefix may be empty for the whole graph.
 func (w *WriteBehindBuffer) EdgeCountDeltaForPrefix(prefix string) int64 {
-	return w.totalCountDeltaForPrefix(prefix, true)
+	delta, _ := w.totalCountDeltaForPrefix(context.Background(), prefix, true)
+	return delta
 }
 
 // NodeCountDeltaForPrefix is the buffered total node-count delta restricted to
 // nodes whose ID starts with prefix: live buffered node IDs minus buffered
 // deleted node IDs. prefix may be empty for the whole graph.
 func (w *WriteBehindBuffer) NodeCountDeltaForPrefix(prefix string) int64 {
-	return w.totalCountDeltaForPrefix(prefix, false)
+	delta, _ := w.totalCountDeltaForPrefix(context.Background(), prefix, false)
+	return delta
 }
 
 // PendingOps reports how many mutations are buffered but not yet applied.
@@ -1666,4 +1752,12 @@ func (w *WriteBehindBuffer) sizingWarningLocked() string {
 			w.maxDelay, w.drainDur)
 	}
 	return ""
+}
+
+// setDispatch installs the engine callback before the empty buffer is published.
+// Timer drains may already run, so both installation and reads use mu.
+func (w *WriteBehindBuffer) setDispatch(dispatch func()) {
+	w.mu.Lock()
+	w.dispatch = dispatch
+	w.mu.Unlock()
 }

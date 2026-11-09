@@ -20,7 +20,7 @@ func TestCreatePropertyValues_ResolveBoundLoopVariables(t *testing.T) {
 	res, err := exec.executeInternal(withValueBindings(ctx, map[string]interface{}{"x": int64(7)}), "CREATE (:BoundScalar {k: x})", nil)
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	nodes, err := engine.GetNodesByLabel("BoundScalar")
+	nodes, err := engine.GetNodesByLabel(ctx, "BoundScalar")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.EqualValues(t, 7, nodes[0].Properties["k"])
@@ -29,7 +29,7 @@ func TestCreatePropertyValues_ResolveBoundLoopVariables(t *testing.T) {
 	res, err = exec.executeInternal(withValueBindings(ctx, map[string]interface{}{"row": map[string]interface{}{"name": "ann"}}), "CREATE (:BoundDotted {v: row.name})", nil)
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	nodes, err = engine.GetNodesByLabel("BoundDotted")
+	nodes, err = engine.GetNodesByLabel(ctx, "BoundDotted")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.EqualValues(t, "ann", nodes[0].Properties["v"])
@@ -37,7 +37,7 @@ func TestCreatePropertyValues_ResolveBoundLoopVariables(t *testing.T) {
 	// MERGE property through a bound value.
 	_, err = exec.executeMergeWithContext(withValueBindings(ctx, map[string]interface{}{"x": int64(9)}), "MERGE (m:BoundMerge {id: x})", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
-	nodes, err = engine.GetNodesByLabel("BoundMerge")
+	nodes, err = engine.GetNodesByLabel(ctx, "BoundMerge")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.EqualValues(t, 9, nodes[0].Properties["id"])
@@ -47,9 +47,9 @@ func TestCreatePropertyValues_ResolveBoundLoopVariables(t *testing.T) {
 	// fallback stored the query text as data.
 	res, err = exec.executeInternal(ctx, "CREATE (:UnboundRef {k: x})", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "SyntaxError")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	require.Nil(t, res)
-	nodes, err = engine.GetNodesByLabel("UnboundRef")
+	nodes, err = engine.GetNodesByLabel(ctx, "UnboundRef")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }

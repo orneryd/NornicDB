@@ -27,12 +27,12 @@ func TestBadgerEventCallbacksFanOut(t *testing.T) {
 	engine.OnEdgeUpdated(nil)
 	engine.OnEdgeDeleted(nil)
 
-	engine.notifyNodeCreated(&Node{ID: "test:n"})
-	engine.notifyNodeUpdated(&Node{ID: "test:n"})
-	engine.notifyNodeDeleted("test:n")
-	engine.notifyEdgeCreated(&Edge{ID: "test:r"})
-	engine.notifyEdgeUpdated(&Edge{ID: "test:r"})
-	engine.notifyEdgeDeleted("test:r")
+	engine.queueCommitOperations(nil, &Operation{Type: OpCreateNode, Node: &Node{ID: "test:n"}}, notificationImmediate)
+	engine.queueCommitOperations(nil, &Operation{Type: OpUpdateNode, Node: &Node{ID: "test:n"}}, notificationImmediate)
+	engine.queueCommitOperations(nil, &Operation{Type: OpDeleteNode, NodeID: "test:n"}, notificationImmediate)
+	engine.queueCommitOperations(nil, &Operation{Type: OpCreateEdge, Edge: &Edge{ID: "test:r"}}, notificationImmediate)
+	engine.queueCommitOperations(nil, &Operation{Type: OpUpdateEdge, Edge: &Edge{ID: "test:r"}}, notificationImmediate)
+	engine.queueCommitOperations(nil, &Operation{Type: OpDeleteEdge, EdgeID: "test:r"}, notificationImmediate)
 	require.Equal(t, []string{
 		"first created test:n", "second created test:n",
 		"first updated test:n", "second updated test:n",

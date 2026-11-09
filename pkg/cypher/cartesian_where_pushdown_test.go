@@ -21,12 +21,12 @@ func BenchmarkCartesianMatchEqualityJoin(b *testing.B) {
 			{ID: storage.NodeID("left-" + key), Labels: []string{"CartesianLeft"}, Properties: map[string]interface{}{"key": key}},
 			{ID: storage.NodeID("right-" + key), Labels: []string{"CartesianRight"}, Properties: map[string]interface{}{"key": key}},
 		} {
-			if _, err := store.CreateNode(node); err != nil {
+			if _, err := store.CreateNode(b.Context(), node); err != nil {
 				b.Fatal(err)
 			}
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	query := "MATCH (a:CartesianLeft), (b:CartesianRight) WHERE a.key = b.key RETURN count(*) AS c"
 	b.ReportAllocs()
@@ -47,11 +47,11 @@ func BenchmarkGh728CartesianPreparedMembership(b *testing.B) {
 	for index := 0; index < 32; index++ {
 		key := "key-" + strconv.Itoa(index)
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
+			_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
 			require.NoError(b, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	query := "MATCH (a:PreparedLeft), (b:PreparedRight) WHERE a.key IN $keys OR b.key IN $keys RETURN a.key AS key"
 
 	for _, length := range []int{64, 4096} {
@@ -105,7 +105,7 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 		"RETURN a.key AS key, count(*) AS total", "RETURN a.key AS key, count(*) AS total LIMIT 0",
 	} {
 		t.Run(clause, func(t *testing.T) {
-			plan := returnProjectionPlanFor(clause)
+			plan := returnProjectionPlanFor(t.Context(), clause)
 			var rows []pipelineRow
 			for _, combination := range cartesianCombinations(patterns) {
 				values := make(pipelineRow, len(combination))
@@ -136,14 +136,14 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 		})
 	}
 	for _, clause := range []string{"RETURN sum(0.5)", "RETURN avg(a.value)", "RETURN collect(a.value)", "RETURN count(DISTINCT a.key)", "RETURN sum(a.value + 1)", "RETURN labels(a), count(*)"} {
-		groups, handled, err := exec.tryCartesianAggregatePartitions(context.Background(), patterns, returnProjectionPlanFor(clause), 4)
+		groups, handled, err := exec.tryCartesianAggregatePartitions(context.Background(), patterns, returnProjectionPlanFor(t.Context(), clause), 4)
 		require.False(t, handled, clause)
 		require.NoError(t, err)
 		require.Nil(t, groups)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor("RETURN count(*)"), 4)
+	_, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(t.Context(), "RETURN count(*)"), 4)
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -173,7 +173,7 @@ func TestGh713CartesianPartitionNullAndCancellation(t *testing.T) {
 	for _, clause := range []string{"RETURN count(a.value) AS total", "RETURN sum(a.value) AS total", "RETURN a.key AS key, count(*) AS total"} {
 		for _, workers := range []int{1, 2, 8} {
 			ctx := withExpressionFailureSlot(context.Background())
-			groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(clause), workers)
+			groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(t.Context(), clause), workers)
 			require.True(t, handled)
 			require.NoError(t, err)
 			result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
@@ -189,7 +189,7 @@ func TestGh713CartesianPartitionNullAndCancellation(t *testing.T) {
 		}
 	}
 	patterns[0].nodes = append(patterns[0].nodes, patterns[0].nodes...)
-	_, handled, err := exec.tryCartesianAggregatePartitions(&cartesianCancelContext{Context: context.Background()}, patterns, returnProjectionPlanFor("RETURN count(*)"), 4)
+	_, handled, err := exec.tryCartesianAggregatePartitions(&cartesianCancelContext{Context: context.Background()}, patterns, returnProjectionPlanFor(t.Context(), "RETURN count(*)"), 4)
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -212,7 +212,7 @@ func BenchmarkGh713CartesianPartitionWorkers(b *testing.B) {
 				if mode == "serial" {
 					workers = 1
 				}
-				plan := returnProjectionPlanFor(clause)
+				plan := returnProjectionPlanFor(b.Context(), clause)
 				ctx := withExpressionFailureSlot(context.Background())
 				b.ReportAllocs()
 				b.ResetTimer()
@@ -252,11 +252,11 @@ func BenchmarkGh713CartesianParallel(b *testing.B) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "cartesian-parallel-bench")
 			for index := 0; index < size; index++ {
 				for _, side := range []string{"Left", "Right"} {
-					_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + strconv.Itoa(index)), Labels: []string{"Parallel" + side}, Properties: map[string]interface{}{"key": "group-" + strconv.Itoa(index%16), "value": int64(index)}})
+					_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(side + strconv.Itoa(index)), Labels: []string{"Parallel" + side}, Properties: map[string]interface{}{"key": "group-" + strconv.Itoa(index%16), "value": int64(index)}})
 					require.NoError(b, err)
 				}
 			}
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			for _, test := range []struct {
 				name, clause string
 				rows         int
@@ -305,11 +305,11 @@ func BenchmarkGh713CartesianAggregation(b *testing.B) {
 	for index := 0; index < 32; index++ {
 		key := "key-" + strconv.Itoa(index)
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Aggregate" + side}, Properties: map[string]interface{}{"key": key}})
+			_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Aggregate" + side}, Properties: map[string]interface{}{"key": key}})
 			require.NoError(b, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, test := range []struct {
 		name, clause string
 		rows         int
@@ -348,11 +348,11 @@ func TestGh728CartesianMembershipParameterFreshness(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "cartesian-membership-test")
 	for _, key := range []string{"key-1", "key-2"} {
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
 			require.NoError(t, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	query := "MATCH (a:PreparedLeft), (b:PreparedRight) WHERE a.key IN $keys OR b.key IN $keys RETURN a.key AS left, b.key AS right"
 	keys := []interface{}{"key-1"}
 	ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"keys": keys}))
@@ -465,11 +465,11 @@ func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "cartesian-projection-test")
 	for _, key := range []string{"key-1", "key-2"} {
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"key": key}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"key": key}})
 			require.NoError(t, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, test := range []struct {
 		name, tail, code string
 		columns          []string
@@ -544,7 +544,7 @@ func TestCartesianWherePushdown_InAndEqualityJoin(t *testing.T) {
 	ctx := context.Background()
 
 	for _, k := range []string{"k1", "k2", "k3"} {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("nornic:o-" + k),
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -563,7 +563,7 @@ func TestCartesianWherePushdown_InAndEqualityJoin(t *testing.T) {
 		{"t-k2-es", "k2", "es"},
 		{"t-k9-es", "k9", "es"},
 	} {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("nornic:" + row.id),
 			Labels: []string{"TranslatedText"},
 			Properties: map[string]interface{}{
@@ -624,7 +624,7 @@ func TestCartesianWherePushdown_NullConstraint(t *testing.T) {
 	require.Equal(t, "o-1", string(filtered[0].nodes[0].ID))
 	require.Len(t, filtered[1].nodes, 1)
 	require.Equal(t, "t-1", string(filtered[1].nodes[0].ID))
-	joined, ok := exec.buildCombinationsUsingWhereJoin(filtered, "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
+	joined, ok := exec.buildCombinationsUsingWhereJoin(t.Context(), filtered, "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
 	require.True(t, ok)
 	require.Len(t, joined, 1)
 	require.Equal(t, "o-1", string(joined[0]["o"].ID))
@@ -693,7 +693,7 @@ func TestMatchCreate_BatchJoinWithDualInFilters(t *testing.T) {
 	ctx := context.Background()
 
 	for _, k := range []string{"k1", "k2", "k3"} {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("o-" + k),
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -701,7 +701,7 @@ func TestMatchCreate_BatchJoinWithDualInFilters(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("t-" + k),
 			Labels: []string{"TranslatedText"},
 			Properties: map[string]interface{}{
@@ -758,7 +758,7 @@ func TestBuildCombinationsUsingWhereJoin_TwoVarEquality(t *testing.T) {
 		{variable: "t", nodes: []*storage.Node{t1, t2, t3}},
 	}
 
-	joined, ok := exec.buildCombinationsUsingWhereJoin(
+	joined, ok := exec.buildCombinationsUsingWhereJoin(t.Context(),
 		patternMatches,
 		"o.joinKey IN ['k1','k2'] AND t.joinKey IN ['k1','k2'] AND o.joinKey = t.joinKey",
 	)
@@ -795,7 +795,7 @@ func TestBuildCombinationsUsingWhereJoin_ThreeVarEqualityChain(t *testing.T) {
 		{variable: "a", nodes: []*storage.Node{a1, a2, a3}},
 	}
 
-	joined, ok := exec.buildCombinationsUsingWhereJoin(
+	joined, ok := exec.buildCombinationsUsingWhereJoin(t.Context(),
 		patternMatches,
 		"o.joinKey IN ['k1','k2'] AND t.joinKey = o.joinKey AND a.joinKey = t.joinKey",
 	)

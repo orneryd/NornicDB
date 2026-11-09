@@ -34,11 +34,11 @@ func TestMatchRelationshipWithWhereIdFunction(t *testing.T) {
 		Labels:     []string{"Company"},
 		Properties: map[string]interface{}{"name": "TechCorp"},
 	}
-	_, err := store.CreateNode(n1)
+	_, err := store.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(n2)
+	_, err = store.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(n3)
+	_, err = store.CreateNode(t.Context(), n3)
 	require.NoError(t, err)
 
 	// Create relationships
@@ -56,8 +56,8 @@ func TestMatchRelationshipWithWhereIdFunction(t *testing.T) {
 		EndNode:    n3.ID,
 		Properties: map[string]interface{}{},
 	}
-	require.NoError(t, store.CreateEdge(edge1))
-	require.NoError(t, store.CreateEdge(edge2))
+	require.NoError(t, store.CreateEdge(t.Context(), edge1))
+	require.NoError(t, store.CreateEdge(t.Context(), edge2))
 
 	// Test: MATCH (n)-[r]->(m) WHERE id(n) = $nodeId RETURN r, id(n) as source, id(m) as target
 	t.Run("outgoing edges with id() function in WHERE", func(t *testing.T) {
@@ -108,7 +108,7 @@ func TestMatchRelationshipWithWhereIdFunction(t *testing.T) {
 	t.Run("outgoing edges with id() OR property in WHERE", func(t *testing.T) {
 		// Add id property to node for testing OR condition
 		n1.Properties["id"] = "node-1"
-		require.NoError(t, store.UpdateNode(n1))
+		require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: n1}))
 
 		query := "MATCH (n)-[r]->(m) WHERE (id(n) = $nodeId OR n.id = $nodeId) RETURN r, id(n) as source, id(m) as target"
 		params := map[string]interface{}{"nodeId": "node-1"}

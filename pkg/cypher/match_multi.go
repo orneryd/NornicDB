@@ -2,8 +2,12 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -24,10 +28,10 @@ func countKeywordOccurrences(upper, keyword string) int {
 		// Check word boundary before
 		pos := idx + found
 		// Must have space/newline/tab before, NOT ':' (which would indicate a label)
-		beforeOk := pos == 0 || (upper[pos-1] == ' ' || upper[pos-1] == '\n' || upper[pos-1] == '\t')
+		beforeOk := pos == 0 || (cyphertext.IsWhitespaceAt(upper, pos-1))
 		// Check word boundary after
 		afterPos := pos + len(keyword)
-		afterOk := afterPos >= len(upper) || (upper[afterPos] == ' ' || upper[afterPos] == '(' || upper[afterPos] == '\n' || upper[afterPos] == '\t')
+		afterOk := afterPos >= len(upper) || cyphertext.IsWhitespaceAt(upper, afterPos) || upper[afterPos] == '('
 
 		if beforeOk && afterOk {
 			count++
@@ -39,7 +43,7 @@ func countKeywordOccurrences(upper, keyword string) int {
 
 // lastKeywordIndexBefore returns the last occurrence of keyword before endIdx.
 // It uses keyword-aware scanning and returns -1 when not found.
-func lastKeywordIndexBefore(query, keyword string, endIdx int) int {
+func lastKeywordIndexBefore(ctx context.Context, query, keyword string, endIdx int) int {
 	if endIdx <= 0 {
 		return -1
 	}
@@ -50,7 +54,7 @@ func lastKeywordIndexBefore(query, keyword string, endIdx int) int {
 	pos := -1
 	search := 0
 	for {
-		rel := findKeywordIndex(segment[search:], keyword)
+		rel := findKeywordIndex(ctx, segment[search:], keyword)
 		if rel < 0 {
 			break
 		}
@@ -65,7 +69,7 @@ func lastKeywordIndexBefore(query, keyword string, endIdx int) int {
 }
 
 // splitMatchClauses splits the query into individual MATCH clause patterns
-func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
+func splitMatchClauses(ctx context.Context, cypher string, whereIdx, returnIdx int) []string {
 	var clauses []string
 
 	// Find the end of MATCH patterns (before WHERE or RETURN)
@@ -98,7 +102,7 @@ func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
 	start := 5 // After first MATCH
 	searchStart := start
 	for {
-		nextMatch := findKeywordIndex(cypher[searchStart:], "MATCH")
+		nextMatch := findKeywordIndex(ctx, cypher[searchStart:], "MATCH")
 		if nextMatch == -1 || searchStart+nextMatch >= endIdx {
 			// No more MATCH - take everything to end
 			clauses = append(clauses, strings.TrimSpace(cypher[start:endIdx]))
@@ -141,13 +145,6 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 	// Bracketed (-[r]->) and bare (-->, <--, --) relationships both make a
 	// traversal; only a lone node pattern is matched as a node.
 	isRelationshipPattern := containsRelationshipPattern(pattern)
-	var matches *TraversalMatch
-	if isRelationshipPattern {
-		matches = e.parseTraversalPattern(ctx, pattern)
-		if matches == nil {
-			return newBindings, newRelBindings
-		}
-	}
 
 	for idx, existing := range existingBindings {
 		var existingRels relationshipBinding
@@ -155,6 +152,25 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			existingRels = existingRelBindings[idx]
 		}
 
+		rowScope := valueBindingsLayer(ctx, len(existing)+len(existingRels))
+		for name, node := range existing {
+			rowScope[name] = node
+		}
+		for name, relationship := range existingRels {
+			rowScope[name] = relationship
+		}
+		rowCtx, rowPattern, prepareErr := e.bindPatternProperties(ctx, pattern, rowScope)
+		if prepareErr != nil {
+			recordExpressionFailure(ctx, prepareErr)
+			return nil, nil
+		}
+		var matches *TraversalMatch
+		if isRelationshipPattern {
+			matches = e.parseTraversalPattern(rowCtx, rowPattern)
+			if matches == nil {
+				return newBindings, newRelBindings
+			}
+		}
 		// Check for relationship pattern
 		if isRelationshipPattern {
 			// Check if any bound variables are referenced
@@ -163,13 +179,16 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			var paths []PathResult
 			if boundStartNode != nil {
+				if !e.pipelineNodeMatchesPattern(ctx, boundStartNode, matches.StartNode) {
+					continue
+				}
 				if matches.IsChained && len(matches.Segments) > 1 {
-					paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{boundStartNode})
+					paths = e.traverseChainedGraph(rowCtx, matches, []*storage.Node{boundStartNode})
 				} else {
-					paths = e.traverseFromNode(ctx, boundStartNode, matches)
+					paths = e.traverseFromNode(rowCtx, boundStartNode, matches)
 				}
 			} else {
-				paths = e.traverseGraph(ctx, matches)
+				paths = e.traverseGraph(rowCtx, matches)
 			}
 			for _, path := range paths {
 				if len(path.Nodes) == 0 {
@@ -179,8 +198,8 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 				endNode := path.Nodes[len(path.Nodes)-1]
 
 				// Check if path matches any bound variables
-				startMatches := boundStartNode == nil || startNode.ID == boundStartNode.ID
-				endMatches := boundEndNode == nil || endNode.ID == boundEndNode.ID
+				startMatches := boundStartNode == nil || startNode.Identity() == boundStartNode.Identity()
+				endMatches := boundEndNode == nil || endNode.Identity() == boundEndNode.Identity()
 
 				if startMatches && endMatches {
 					pathContext := e.buildPathContext(path, matches)
@@ -203,17 +222,23 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			}
 		} else {
 			// Simple node pattern
-			nodePattern := e.parseNodePattern(ctx, pattern)
+			nodePattern, parseErr := e.parseNodePattern(rowCtx, rowPattern)
+			if parseErr != nil {
+				recordExpressionFailure(ctx, parseErr)
+				return nil, nil
+			}
 
 			// Check if variable is already bound
 			if boundNode := existing[nodePattern.variable]; boundNode != nil {
-				// Variable is bound, just propagate
+				if !e.pipelineNodeMatchesPattern(ctx, boundNode, nodePattern) {
+					continue
+				}
 				newBindings = append(newBindings, existing)
 				newRelBindings = append(newRelBindings, existingRels)
 				continue
 			}
 
-			nodes, _ := e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
+			nodes, _ := e.loadPatternNodes(rowCtx, nodePattern.labels, nodePattern.properties)
 
 			for _, node := range nodes {
 				b := make(binding)
@@ -236,7 +261,7 @@ func mergeNodeBindingsChecked(existing binding, current map[string]*storage.Node
 		merged[name] = node
 	}
 	for name, node := range current {
-		if previous := merged[name]; previous != nil && node != nil && previous.ID != node.ID {
+		if previous := merged[name]; previous != nil && node != nil && previous.Identity() != node.Identity() {
 			return nil, false
 		}
 		if merged[name] == nil {
@@ -262,7 +287,7 @@ func mergeRelBindingsChecked(existing, current map[string]*storage.Edge) (map[st
 	}
 	for k, v := range current {
 		prev := merged[k]
-		if prev != nil && v != nil && prev.ID != v.ID {
+		if prev != nil && v != nil && prev.Identity() != v.Identity() {
 			return nil, false
 		}
 		if prev == nil {
@@ -405,7 +430,9 @@ func bindingWithRelView(b binding, rels map[string]*storage.Edge) binding {
 		if edge == nil {
 			continue
 		}
-		view[k] = &storage.Node{ID: storage.NodeID(edge.ID), Properties: edge.Properties}
+		node := &storage.Node{ID: storage.NodeID(edge.ID), Properties: edge.Properties}
+		node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: edge.Database})
+		view[k] = node
 	}
 	return view
 }
@@ -425,7 +452,9 @@ func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, par
 			}
 		}
 	}
-	return e.parseValue(ctx, s)
+	value, err := e.parseValue(ctx, s)
+	recordExpressionFailure(ctx, err)
+	return value
 }
 
 // resolveBindingItem resolves a return item against a binding. rels carries
@@ -458,10 +487,12 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	if strings.HasPrefix(lowerASCII(expr), "elementid(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[len("elementId(") : len(expr)-1])
 		if node := b[inner]; node != nil {
-			return storage.NodeElementID(e.executionDatabaseName(ctx), node.ID)
+			value, _ := cypherfn.EntityElementID(e.registryFunctionContext(ctx, nil), node)
+			return value
 		}
 		if edge, ok := rels[inner].(*storage.Edge); ok && edge != nil {
-			return storage.RelationshipElementID(e.executionDatabaseName(ctx), edge.ID)
+			value, _ := cypherfn.EntityElementID(e.registryFunctionContext(ctx, nil), edge)
+			return value
 		}
 		return nil
 	}
@@ -475,7 +506,9 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	if strings.HasPrefix(expr, "'") || strings.HasPrefix(expr, "\"") ||
 		strings.EqualFold(expr, "true") || strings.EqualFold(expr, "false") ||
 		strings.EqualFold(expr, "null") || isNumericLiteral(expr) {
-		return e.parseValue(ctx, expr)
+		value, err := e.parseValue(ctx, expr)
+		recordExpressionFailure(ctx, err)
+		return value
 	}
 
 	// Property access: var.prop — check node bindings first, then
@@ -538,31 +571,26 @@ func isNumericLiteral(s string) bool {
 	return err == nil
 }
 
-// collectNodesWithStreaming efficiently collects nodes from storage using streaming when possible.
-// This avoids loading all nodes into memory, which is critical for performance with large datasets.
+// collectNodesWithStreamingProjection efficiently collects nodes from
+// storage using streaming when possible. This avoids loading all nodes into
+// memory, which is critical for performance with large datasets. It is the
+// collect-mode caller of visitNodesWithStreamingProjection: the scan, its
+// filters, the caller's cancellation stop and the limit early stop belong to
+// that one owner; collecting adds the preallocated result slice.
 //
 // Parameters:
 //   - ctx: Context for cancellation
 //   - labels: Optional label filter (only nodes with this label)
 //   - properties: Optional property filters
+//   - whereVariable: The variable whereClause filters
+//   - whereClause: Optional residual predicate, evaluated per node
 //   - limit: Maximum number of nodes to collect (-1 for unlimited)
+//   - projection: The user properties the label scan reads (nil: whole nodes)
 //
-// Returns collected nodes or error.
-func (e *StorageExecutor) collectNodesWithStreaming(
-	ctx context.Context,
-	labels []string,
-	properties map[string]interface{},
-	whereVariable string,
-	whereClause string,
-	limit int,
-) ([]*storage.Node, error) {
-	return e.collectNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, nil)
-}
-
-// collectNodesWithStreamingProjection is collectNodesWithStreaming whose
-// label scan reads only the projection's user properties; nil reads whole
+// The label scan reads only the projection's user properties; nil reads whole
 // nodes. The caller guarantees nothing else in the statement uses the
-// returned nodes' other properties.
+// returned nodes' other properties. Returns the collected nodes in scan
+// order, or the error that ended the scan.
 func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	ctx context.Context,
 	labels []string,
@@ -609,6 +637,12 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		whereFilter = e.compileNodeWhereFilter(ctx, whereVariable, whereClause)
 	}
 	collect := func(node *storage.Node) error {
+		// The scan honors the same caller context, so a canceled statement ends
+		// in the storage loop; the check here stops before the row work of a
+		// node the iterator already read.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
 			return nil
 		}
@@ -641,22 +675,99 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		}
 		return nil
 	}
-	// A materialized fallback's nodes go to visit as a list.
+	// A materialized fallback's nodes go to visit as a list, with the same
+	// caller cancellation stop as the streaming visitor.
 	visitAll := func(nodes []*storage.Node) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if visit == nil {
 			*collected = append(*collected, nodes...)
 			return nil
 		}
-		return visitNodeList(nodes, visit)
+		return visitNodeList(nodes, func(node *storage.Node) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return visit(node)
+		})
+	}
+	// Whole query rows use the scan's metadata-only hydration decision. The
+	// label body and its sidecar state are read together, once, including in
+	// pinned transactions. Stores may ignore the label hint; collect retains
+	// every residual label and property check.
+	queryReader := e.queryNodeReader(store)
+	if projection == nil && queryReader != nil && len(labels) > 0 {
+		err := streamQueryNodes(ctx, store, labels, collect)
+		if err == storage.ErrIterationStopped {
+			return nil
+		}
+		return err
+	}
+	// A property equality narrows the scan before a node is decoded (#824):
+	// decode only the properties the row and the equality need, let the engine
+	// skip a node that fails them before decoding the rest of it, and make the
+	// node the scan supplies the row's node. A required string is compared with
+	// the stored bytes, so a node without it is skipped undecoded (#857). A
+	// labelled scan passes its label as the engine's index hint; a store may
+	// ignore every hint, so collect still applies every residual label,
+	// property, WHERE, visibility and viewport check to the node it streams.
+	// The required properties are the pattern's and the WHERE's top-level
+	// equalities on the variable (WHERE n.id = $id, #857), which every match
+	// satisfies. Without a projection the scan decodes every property, so the
+	// row carries the whole node.
+	required := e.scanRequiredProperties(ctx, properties, whereVariable, whereClause)
+	if len(required) > 0 {
+		keys := make([]string, 0, len(required))
+		var stringEquals map[string]string
+		for key, value := range required {
+			keys = append(keys, key)
+			if text, ok := value.(string); ok {
+				if stringEquals == nil {
+					stringEquals = make(map[string]string, len(required))
+				}
+				stringEquals[key] = text
+			}
+		}
+		opts := storage.StreamNodesOptions{
+			ApplyDecayFilter: true,
+			PropertyFilter: func(props map[string]interface{}) bool {
+				return nodePropertiesMatch(&storage.Node{Properties: props}, required)
+			},
+			PropertyStringEquals: stringEquals,
+		}
+		if projection != nil {
+			opts.Projection = scanProjectionWithRequired(projection, keys)
+		} else {
+			// The row is the whole node, so name the properties the filter
+			// reads: the scan settles it on those and skips a node it rejects
+			// before decoding the rest of that node's body (#1682). A store may
+			// ignore the hint; collect still tests every node it receives.
+			opts.PropertyFilterProjection = keys
+		}
+		if len(labels) > 0 {
+			opts.Label = labels[0]
+		}
+		// A query row keeps its embedding metadata. The scan settles it from
+		// the same snapshot as the body it decoded, so the row costs no second
+		// node read (queryNodeReader is the row read contract).
+		opts.QueryNodes = queryReader != nil
+		opts.WithEmbeddings = queryReader == nil
+		err := store.StreamNodesWithOptions(ctx, opts, collect)
+		if err != nil && err != storage.ErrIterationStopped {
+			return err
+		}
+		return nil
 	}
 
-	// A label-indexed stream is the primary physical scan for every labelled
-	// MATCH. It preserves the shared row pipeline while keeping work
-	// proportional to the matching label, applies residual predicates before
-	// materialising rows, and lets LIMIT stop the storage iterator early.
+	// The label-indexed stream is the physical scan for a labelled MATCH the
+	// equality hint does not restrict. It preserves the shared row pipeline
+	// while keeping work proportional to the matching label, applies residual
+	// predicates before materialising rows, and lets LIMIT stop the storage
+	// iterator early.
 	if len(labels) > 0 {
 		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
-			err := reader.StreamNodesByLabelProjected(labels[0], projection, collect)
+			err := reader.StreamNodesByLabelProjected(ctx, labels[0], projection, collect)
 			if err == nil || err == storage.ErrIterationStopped {
 				return nil
 			}
@@ -667,13 +778,13 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// Compatibility path for stores that expose label IDs but not label-node
 	// streaming. This still avoids a full graph scan for bounded simple reads.
 	if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
-		ids, err := storage.NodeIDsByLabel(store, labels[0], limit)
+		ids, err := storage.NodeIDsByLabel(ctx, store, labels[0], limit)
 		if err != nil {
 			return err
 		}
 		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
 		for _, id := range ids {
-			node, getErr := store.GetNode(id)
+			node, getErr := e.getQueryNode(ctx, store, id)
 			if getErr != nil {
 				return getErr
 			}
@@ -703,58 +814,23 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	var nodes []*storage.Node
 	var err error
 
-	// A label-less property match reads every node (#824): decode only the
-	// properties a match must have, let the engine skip a node that fails them
-	// before decoding the rest of it, and read the whole node only for a
-	// match. A required string is compared with the stored bytes, so a node
-	// without it is skipped undecoded (#857). The node then passes the same
-	// filters as on the full scan, including the whole WHERE. The required
-	// properties are the pattern's and the WHERE's top-level equalities on
-	// the variable (WHERE n.id = $id, #857), which every match satisfies.
-	var required map[string]interface{}
-	if len(labels) == 0 {
-		required = e.labellessScanRequiredProperties(ctx, properties, whereVariable, whereClause)
-	}
-	if len(required) > 0 {
-		keys := make([]string, 0, len(required))
-		var stringEquals map[string]string
-		for key, value := range required {
-			keys = append(keys, key)
-			if text, ok := value.(string); ok {
-				if stringEquals == nil {
-					stringEquals = make(map[string]string, len(required))
-				}
-				stringEquals[key] = text
-			}
-		}
-		matches := func(props map[string]interface{}) bool {
-			return nodePropertiesMatch(&storage.Node{Properties: props}, required)
-		}
-		err := store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: keys, ApplyDecayFilter: true, PropertyFilter: matches, PropertyStringEquals: stringEquals}, func(projected *storage.Node) error {
-			if projected == nil || !matches(projected.Properties) {
-				return nil
-			}
-			node, err := store.GetNode(projected.ID)
-			if errors.Is(err, storage.ErrNotFound) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			return collect(node)
-		})
-		if err != nil && err != storage.ErrIterationStopped {
-			return err
-		}
-		return nil
-	}
-
 	// Streaming is the shared scan primitive for the converged executor. Apply
 	// every residual filter in the visitor so both bounded and unbounded scans
 	// avoid the storage APIs that first materialize the complete population.
 	// LIMIT additionally stops storage iteration as soon as enough qualifying
 	// nodes have been produced.
-	if streamer, ok := store.(storage.StreamingEngine); ok {
+	if queryReader != nil {
+		if projection == nil {
+			err = streamQueryNodes(ctx, store, labels, collect)
+		} else {
+			err = store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: projection, ApplyDecayFilter: true}, collect)
+		}
+		if err == storage.ErrIterationStopped {
+			return nil
+		}
+		return err
+	}
+	if streamer, ok := storage.ResolveStreamingEngine(store); ok {
 		err = streamer.StreamNodes(ctx, collect)
 		if err == storage.ErrIterationStopped {
 			err = nil
@@ -764,9 +840,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	// Compatibility fallback for storage implementations without StreamingEngine.
 	if len(labels) > 0 {
-		nodes, err = store.GetNodesByLabel(labels[0])
+		nodes, err = store.GetNodesByLabel(ctx, labels[0])
 	} else {
-		nodes, err = store.AllNodes()
+		nodes, err = store.AllNodes(ctx)
 	}
 	if err != nil {
 		return err
@@ -775,6 +851,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// Filter out system nodes (labels starting with _)
 	filteredNodes := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
 			continue
 		}
@@ -819,13 +898,26 @@ func visitNodeList(nodes []*storage.Node, visit func(*storage.Node) error) error
 	return nil
 }
 
-// labellessScanRequiredProperties returns the property values every node a
-// label-less scan may match must have: the pattern's properties and the
-// WHERE's top-level equalities between variable.property and a constant
-// (parameter, literal or bound value; parseSimpleIndexedEquality). Over-
-// approximating the WHERE is safe because the caller still evaluates it on
-// every node the scan returns.
-func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, properties map[string]interface{}, variable, whereClause string) map[string]interface{} {
+// scanProjectionWithRequired returns the properties a narrowed scan decodes:
+// the row's projection plus the properties its equality filter tests, so a
+// filter never reads a property the node map does not have. The row keeps the
+// projection's properties; the required ones are decoded for the filter.
+func scanProjectionWithRequired(projection, required []string) []string {
+	union := make([]string, 0, len(projection)+len(required))
+	union = append(union, projection...)
+	union = append(union, required...)
+	sort.Strings(union)
+	return slices.Compact(union)
+}
+
+// scanRequiredProperties returns the property values every node a node scan
+// may match must have: the pattern's properties and the WHERE's top-level
+// equalities between variable.property and a constant (parameter, literal or
+// bound value; parseSimpleIndexedEquality). It serves a labelled and a
+// label-less scan alike: the label is only an engine hint, so both forms carry
+// the same required values. Over-approximating the WHERE is safe because the
+// caller still evaluates it on every node the scan returns.
+func (e *StorageExecutor) scanRequiredProperties(ctx context.Context, properties map[string]interface{}, variable, whereClause string) map[string]interface{} {
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" || strings.TrimSpace(variable) == "" {
 		return properties
@@ -834,7 +926,7 @@ func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, p
 	for key, value := range properties {
 		required[key] = value
 	}
-	for _, conjunct := range splitTopLevelAndConjuncts(clause) {
+	for _, conjunct := range splitTopLevelAndConjuncts(ctx, clause) {
 		property, value, ok := e.parseSimpleIndexedEquality(ctx, variable, unwrapOuterParens(strings.TrimSpace(conjunct)))
 		if !ok {
 			continue
@@ -856,12 +948,21 @@ func shouldHideSystemNodes(engine storage.Engine) bool {
 	return true
 }
 
+// internalLabelPrefix starts every label that names an internal node class: the
+// store's own records, which a user database reads as no rows.
+const internalLabelPrefix = "_"
+
+// isInternalLabel reports whether label names an internal node class.
+func isInternalLabel(label string) bool {
+	return strings.HasPrefix(label, internalLabelPrefix)
+}
+
 func isSystemNode(node *storage.Node) bool {
 	if node == nil {
 		return false
 	}
 	for _, label := range node.Labels {
-		if strings.HasPrefix(label, "_") {
+		if isInternalLabel(label) {
 			return true
 		}
 	}
@@ -910,7 +1011,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 	inConstraints := map[string]cartesianInConstraint{}
 	nullConstraints := map[string]cartesianNullConstraint{}
 	eqConstraints := make([]cartesianEqConstraint, 0, 2)
-	for _, term := range splitTopLevelAndConjuncts(whereClause) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, whereClause) {
 		term = strings.TrimSpace(term)
 		if term == "" {
 			continue
@@ -921,7 +1022,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 				c.prop = p
 				c.allowed = make(map[string]struct{}, len(vals))
 				for _, raw := range vals {
-					c.allowed[cartesianValueKey(raw)] = struct{}{}
+					c.allowed[cypherValueKey(raw, cypherValueEqualityContract)] = struct{}{}
 				}
 				c.hasValues = true
 			}
@@ -980,7 +1081,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 		if !ok {
 			continue
 		}
-		patternMatches[idx].nodes = filterNodesByAllowedPropSet(patternMatches[idx].nodes, c.prop, c.allowed)
+		patternMatches[idx].nodes = filterNodesByAllowedPropSet(patternMatches[idx].nodes, c.prop, c.allowed, cypherValueEqualityContract)
 	}
 
 	// Propagate equality constraints both directions until stable.
@@ -992,8 +1093,8 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 			if !lok || !rok {
 				continue
 			}
-			leftAllowed := collectPropValues(patternMatches[leftIdx].nodes, c.leftProp)
-			rightAllowed := collectPropValues(patternMatches[rightIdx].nodes, c.rightProp)
+			leftAllowed := collectPropValues(patternMatches[leftIdx].nodes, c.leftProp, cypherValueEqualityContract)
+			rightAllowed := collectPropValues(patternMatches[rightIdx].nodes, c.rightProp, cypherValueEqualityContract)
 			if len(leftAllowed) == 0 || len(rightAllowed) == 0 {
 				continue
 			}
@@ -1003,17 +1104,17 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 			rightCandidates := leftAllowed
 			leftCandidates := rightAllowed
 			if c.offset != 0 {
-				rightCandidates = shiftCartesianIntKeySet(leftAllowed, -c.offset)
-				leftCandidates = shiftCartesianIntKeySet(rightAllowed, c.offset)
+				rightCandidates = shiftCartesianIntKeySet(leftAllowed, -c.offset, cypherValueEqualityContract)
+				leftCandidates = shiftCartesianIntKeySet(rightAllowed, c.offset, cypherValueEqualityContract)
 				if len(rightCandidates) == 0 || len(leftCandidates) == 0 {
 					continue
 				}
 			}
-			if filtered := filterNodesByAllowedPropSet(patternMatches[rightIdx].nodes, c.rightProp, rightCandidates); len(filtered) != len(patternMatches[rightIdx].nodes) {
+			if filtered := filterNodesByAllowedPropSet(patternMatches[rightIdx].nodes, c.rightProp, rightCandidates, cypherValueEqualityContract); len(filtered) != len(patternMatches[rightIdx].nodes) {
 				patternMatches[rightIdx].nodes = filtered
 				changed = true
 			}
-			if filtered := filterNodesByAllowedPropSet(patternMatches[leftIdx].nodes, c.leftProp, leftCandidates); len(filtered) != len(patternMatches[leftIdx].nodes) {
+			if filtered := filterNodesByAllowedPropSet(patternMatches[leftIdx].nodes, c.leftProp, leftCandidates, cypherValueEqualityContract); len(filtered) != len(patternMatches[leftIdx].nodes) {
 				patternMatches[leftIdx].nodes = filtered
 				changed = true
 			}
@@ -1026,7 +1127,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 // set by offset, dropping keys that are not integers. The shifted set names
 // the property values that may pair with the original set under an
 // lv.lp = rv.rp + offset constraint (#692).
-func shiftCartesianIntKeySet(set map[string]struct{}, offset int64) map[string]struct{} {
+func shiftCartesianIntKeySet(set map[string]struct{}, offset int64, contract cypherComparisonContract) map[string]struct{} {
 	out := make(map[string]struct{}, len(set))
 	for key := range set {
 		var digits string
@@ -1114,7 +1215,7 @@ func parseCartesianSingleNodeComparisonTerm(term string) (string, bool) {
 	if !comparison || scan.count != 1 {
 		return "", false
 	}
-	span := scan.operator(0)
+	span := inlineOverflowAt(scan.inline[:], scan.overflow, 0)
 	operator := clause[span.offset : span.offset+span.length]
 	switch operator {
 	case "=", "<>", "!=", ">", ">=", "<", "<=", "=~":
@@ -1143,7 +1244,7 @@ func parseCartesianInListTerm(term string) (string, string, []interface{}, bool)
 	if !ok {
 		return "", "", nil, false
 	}
-	if !(strings.HasPrefix(rhs, "[") && strings.HasSuffix(rhs, "]")) {
+	if !isListLiteral(rhs) {
 		return "", "", nil, false
 	}
 	inner := strings.TrimSpace(rhs[1 : len(rhs)-1])
@@ -1162,22 +1263,7 @@ func parseCartesianInListTerm(term string) (string, string, []interface{}, bool)
 	return v, p, values, true
 }
 
-func isSimpleIdentifierCartesian(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if isIdentStartByte(ch) {
-			continue
-		}
-		if i > 0 && ch >= '0' && ch <= '9' {
-			continue
-		}
-		return false
-	}
-	return true
-}
+func isSimpleIdentifierCartesian(s string) bool { return cyphertext.IsIdentifier(s) }
 
 func parseCartesianVarPropEqualityTerm(term string) (string, string, string, string, int64, bool) {
 	idx := strings.Index(term, "=")
@@ -1247,7 +1333,7 @@ func addInt64Offset(value, offset int64) (int64, bool) {
 // (no float64 rounding above 2^53, #692), keeping its stored type in the
 // key. It reports false when the value is not an integer or the shift
 // overflows.
-func cartesianShiftValueKey(v interface{}, offset int64) (string, bool) {
+func cartesianShiftValueKey(v interface{}, offset int64, contract cypherComparisonContract) (string, bool) {
 	var base int64
 	switch x := v.(type) {
 	case int:
@@ -1263,9 +1349,9 @@ func cartesianShiftValueKey(v interface{}, offset int64) (string, bool) {
 	}
 	switch v.(type) {
 	case int:
-		return cartesianValueKey(int(sum)), true
+		return cypherValueKey(int(sum), contract), true
 	default:
-		return cartesianValueKey(sum), true
+		return cypherValueKey(sum, contract), true
 	}
 }
 
@@ -1287,21 +1373,14 @@ func cartesianOffsetValuesEqual(left, right interface{}, offset int64) bool {
 
 // int64OfValue reports an integer value exactly (int or int64).
 func int64OfValue(v interface{}) (int64, bool) {
-	switch x := v.(type) {
-	case int:
-		return int64(x), true
-	case int64:
-		return x, true
-	default:
-		return 0, false
-	}
+	return valueconvert.IntegerValue(v)
 }
 
-func cartesianValueKey(v interface{}) string {
-	return cypherEquivalenceKey(v)
-}
+// Cartesian keys implement predicate equality for both candidate pushdown
+// and indexed MATCH joins (including MATCH ... CREATE). DISTINCT/grouping
+// equivalence would discard equal named-zone overlap datetimes here.
 
-func collectPropValues(nodes []*storage.Node, prop string) map[string]struct{} {
+func collectPropValues(nodes []*storage.Node, prop string, contract cypherComparisonContract) map[string]struct{} {
 	out := make(map[string]struct{}, len(nodes))
 	for _, n := range nodes {
 		if n == nil || n.Properties == nil {
@@ -1311,12 +1390,12 @@ func collectPropValues(nodes []*storage.Node, prop string) map[string]struct{} {
 		if !ok {
 			continue
 		}
-		out[cartesianValueKey(val)] = struct{}{}
+		out[cypherValueKey(val, contract)] = struct{}{}
 	}
 	return out
 }
 
-func filterNodesByAllowedPropSet(nodes []*storage.Node, prop string, allowed map[string]struct{}) []*storage.Node {
+func filterNodesByAllowedPropSet(nodes []*storage.Node, prop string, allowed map[string]struct{}, contract cypherComparisonContract) []*storage.Node {
 	if len(nodes) == 0 || len(allowed) == 0 {
 		return nodes
 	}
@@ -1329,7 +1408,7 @@ func filterNodesByAllowedPropSet(nodes []*storage.Node, prop string, allowed map
 		if !ok {
 			continue
 		}
-		if _, keep := allowed[cartesianValueKey(val)]; keep {
+		if _, keep := allowed[cypherValueKey(val, contract)]; keep {
 			out = append(out, n)
 		}
 	}
@@ -1380,11 +1459,27 @@ func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClau
 // MATCH clause. The second return value distinguishes a valid pattern that did
 // not match from an expression that is not a relationship pattern.
 func (e *StorageExecutor) evaluateBoundRelationshipPattern(ctx context.Context, clause string, nodes map[string]*storage.Node) (bool, bool) {
-	match, recognized := e.parseBoundRelationshipPattern(ctx, clause)
+	return e.evaluateRowRelationshipPattern(ctx, clause, entityRow(ctx, nodes, nil))
+}
+
+// Every predicate adapter passes its complete row here, including scalar,
+// relationship and node bindings. Parsing consumes the same prepared values
+// as MATCH, instead of evaluating a node-only view during recognition.
+func (e *StorageExecutor) evaluateRowRelationshipPattern(ctx context.Context, clause string, values map[string]interface{}) (bool, bool) {
+	if !isRelationshipPatternOperand(strings.TrimSpace(clause)) {
+		return false, false
+	}
+	rowCtx, pattern, err := e.bindPatternProperties(ctx, strings.TrimSpace(clause), values)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false, true
+	}
+	match, recognized := e.parseBoundRelationshipPattern(rowCtx, pattern)
 	if !recognized {
 		return false, false
 	}
-	return e.evaluateParsedBoundRelationshipPattern(ctx, match, nodes), true
+	nodes, _ := withWhereValueContext(values)
+	return e.evaluateParsedBoundRelationshipPattern(rowCtx, match, nodes), true
 }
 
 // parseBoundRelationshipPattern parses clause as a relationship pattern
@@ -1393,12 +1488,20 @@ func (e *StorageExecutor) evaluateBoundRelationshipPattern(ctx context.Context, 
 // whose subqueries hold patterns, (NOT EXISTS { (h)-[:C]->(x) } AND …), is
 // not one.
 func (e *StorageExecutor) parseBoundRelationshipPattern(ctx context.Context, clause string) (*TraversalMatch, bool) {
+	return readBoundRelationshipPattern(ctx, clause, e.parseTraversalPattern)
+}
+
+func (e *StorageExecutor) parseBoundRelationshipPatternStructure(ctx context.Context, clause string) (*TraversalMatch, bool) {
+	return readBoundRelationshipPattern(ctx, clause, e.parseTraversalPatternStructure)
+}
+
+func readBoundRelationshipPattern(ctx context.Context, clause string, read func(context.Context, string) *TraversalMatch) (*TraversalMatch, bool) {
 	pattern := strings.TrimSpace(clause)
 	if !isRelationshipPatternOperand(pattern) {
 		return nil, false
 	}
 
-	match := e.parseTraversalPattern(ctx, pattern)
+	match := read(ctx, pattern)
 	if match == nil || len(match.Segments) == 0 && match.Relationship.MinHops == 0 && !match.Relationship.VariableLength {
 		return nil, false
 	}
@@ -1458,7 +1561,7 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 		reversed := reverseTraversalMatch(match)
 		return reversed != nil && e.evaluateBoundOneHopPattern(ctx, reversed, nodes)
 	}
-	if !e.pipelineNodeMatchesPattern(start, match.StartNode) {
+	if !e.pipelineNodeMatchesPattern(ctx, start, match.StartNode) {
 		return false
 	}
 	viewport, _ := TemporalViewportFromContext(ctx)

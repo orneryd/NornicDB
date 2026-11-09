@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -13,13 +14,13 @@ import (
 // uids/edge IDs the benchmark iteration will drive through the executor.
 func populateUnwindDeleteFixture(b *testing.B, batchSize int) (*storage.MemoryEngine, []string, []storage.EdgeID) {
 	b.Helper()
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	uids := make([]string, 0, batchSize)
 	edgeIDs := make([]storage.EdgeID, 0, batchSize)
 	for j := 0; j < batchSize; j++ {
 		uid := fmt.Sprintf("source-%d", j)
 		targetUID := fmt.Sprintf("target-%d", j)
-		sourceID, err := store.CreateNode(&storage.Node{
+		sourceID, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:         storage.NodeID("nornic:" + uid),
 			Labels:     []string{"Function"},
 			Properties: map[string]any{"uid": uid},
@@ -27,7 +28,7 @@ func populateUnwindDeleteFixture(b *testing.B, batchSize int) (*storage.MemoryEn
 		if err != nil {
 			b.Fatal(err)
 		}
-		targetID, err := store.CreateNode(&storage.Node{
+		targetID, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:         storage.NodeID("nornic:" + targetUID),
 			Labels:     []string{"Function"},
 			Properties: map[string]any{"uid": targetUID},
@@ -36,7 +37,7 @@ func populateUnwindDeleteFixture(b *testing.B, batchSize int) (*storage.MemoryEn
 			b.Fatal(err)
 		}
 		edgeID := storage.EdgeID(fmt.Sprintf("nornic:edge-%d", j))
-		if err := store.CreateEdge(&storage.Edge{
+		if err := store.CreateEdge(b.Context(), &storage.Edge{
 			ID:        edgeID,
 			StartNode: sourceID,
 			EndNode:   targetID,
@@ -94,7 +95,7 @@ DELETE rel`
 							b.Fatalf("relationships deleted = %+v, want %d", result.Stats, batchSize)
 						}
 						for _, edgeID := range edgeIDs {
-							if _, err := store.GetEdge(edgeID); err == nil {
+							if _, err := store.GetEdge(b.Context(), edgeID); err == nil {
 								b.Fatalf("edge %s survived", edgeID)
 							}
 						}

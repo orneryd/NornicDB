@@ -44,6 +44,8 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -58,8 +60,25 @@ import (
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"gopkg.in/yaml.v3"
 )
+
+// warnDeprecatedMemorySetting renders startup warnings in the configured
+// process language before a server localizer has been attached to the config.
+func warnDeprecatedMemorySetting(language string, message localization.Message) {
+	preferences, err := localization.ResolveProcessPreferences(language)
+	if err == nil {
+		manager, managerErr := localization.NewManager(preferences.Preferences, nil)
+		if managerErr == nil {
+			if rendered, _, renderErr := manager.Render(context.Background(), localization.MessageRequest(message)); renderErr == nil {
+				slog.Warn(rendered)
+				return
+			}
+		}
+	}
+	slog.Warn(message.Fallback)
+}
 
 // Configuration is organized into logical sections:
 //   - Auth: Authentication and authorization
@@ -97,6 +116,10 @@ type StorageRuntimeConfig struct {
 }
 
 type Config struct {
+	// generatedJWTSecret identifies the process-local default, which cannot be
+	// used as a durable credential key. Explicit YAML/env assignment clears it.
+	generatedJWTSecret string
+
 	// Authentication (NORNICDB_AUTH format: "username/password" or "none")
 	Auth AuthConfig
 
@@ -575,7 +598,7 @@ type ServerConfig struct {
 //   - NORNICDB_EMBED_SCAN_INTERVAL: How often to scan for unembedded nodes (default: 15m)
 //   - NORNICDB_EMBED_BATCH_DELAY: Delay between processing nodes (default: 500ms)
 //   - NORNICDB_EMBED_TRIGGER_DEBOUNCE: Delay before write-triggered scans fire (default: 2s)
-//   - NORNICDB_EMBED_MAX_RETRIES: Max attempts within one provider request cycle (default: 3)
+//   - NORNICDB_EMBED_MAX_RETRIES: DLQ retries after the first attempt, then terminal failure (default: 3)
 //   - NORNICDB_EMBED_CHUNK_SIZE: Max tokens per chunk (default: 8192; contextualized Voyage: 512)
 //   - NORNICDB_EMBED_CHUNK_OVERLAP: Tokens to overlap between chunks (default: 50;
 //     unset uses the provider default for contextualized Voyage)
@@ -593,8 +616,8 @@ type EmbeddingWorkerConfig struct {
 	BatchDelay time.Duration
 	// TriggerDebounceDelay delays write-triggered scans until mutation bursts settle.
 	TriggerDebounceDelay time.Duration
-	// MaxRetries bounds retries within one provider request cycle. Exhausting
-	// it leaves transiently failed nodes pending for a later cooldown cycle.
+	// MaxRetries bounds per-node DLQ retries after the initial attempt.
+	// Exhausting it parks the node until a body update or explicit retry.
 	MaxRetries int
 	// ChunkSize is max tokens per chunk.
 	ChunkSize int
@@ -756,11 +779,31 @@ type MemoryConfig struct {
 	// === Runtime Memory Management (Go runtime tuning) ===
 
 	// RuntimeLimit is the soft memory limit (GOMEMLIMIT) in bytes
-	// 0 = unlimited (Go manages automatically)
-	// Set to 80% of container memory for optimal performance
+	// 0 = unlimited (Go manages automatically). With RuntimeLimitStr "auto"
+	// (the default), ResolveRuntimeLimit derives it from the container's
+	// cgroup memory limit at startup, and clamps an explicit limit above it.
 	RuntimeLimit int64
-	// RuntimeLimitStr is the configured value in megabytes as a string (e.g., "500")
+	// RuntimeLimitStr is the configured byte value, legacy MiB value, or auto.
+	// RuntimeLimit contains the parsed byte count; this field retains the
+	// spelling needed to distinguish explicit zero from automatic sizing.
 	RuntimeLimitStr string
+	// ApplicationSoftMax is the opt-in application memory-pressure threshold in
+	// bytes. Zero leaves application admission and pressure cancellation off.
+	ApplicationSoftMax int64
+	// RecoveryIntervalMS and RecoveryRearmMS configure sampler-only heap recovery.
+	// Both are positive milliseconds; rearm must be at least the interval.
+	RecoveryIntervalMS int64
+	RecoveryRearmMS    int64
+	// TransactionMax is Neo4j's db.memory.transaction.max: the estimated
+	// memory, in bytes, one transaction may use (0 = unlimited). A
+	// database's own setting overrides it.
+	// Env: NORNICDB_MEMORY_TRANSACTION_MAX (default: 0)
+	TransactionMax int64
+	// TransactionTotalMax is Neo4j's dbms.memory.transaction.total.max: the
+	// estimated memory, in bytes, all transactions together may use.
+	// Zero leaves the aggregate limit disabled, independent of the Go GC target.
+	// Env: NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX (default: 0)
+	TransactionTotalMax int64
 	// GCPercent controls GC aggressiveness (GOGC)
 	// 100 = default, lower = more aggressive (less memory, more CPU)
 	GCPercent int
@@ -779,6 +822,8 @@ type MemoryConfig struct {
 	SearchCursorMax int64
 	// SearchCursorTTL is the fixed lifetime assigned when a cursor starts.
 	SearchCursorTTL time.Duration
+	// SearchCursorMaxPageSize bounds n on continuation START and PULL.
+	SearchCursorMaxPageSize int
 }
 
 // ComplianceConfig holds settings for GDPR/HIPAA/FISMA/SOC2 compliance.
@@ -877,6 +922,8 @@ type LoggingConfig struct {
 	QueryLogEnabled bool
 	// SlowQueryThreshold for logging slow queries (single source of truth
 	// per D-04d; replaces the prior pkg/server.Config.SlowQueryThreshold).
+	// Zero disables slow-query reporting (SlowQueryThresholdReached),
+	// including the prolonged MERGE-wait warning.
 	SlowQueryThreshold time.Duration
 	// SlowQueryLogFile is the optional file path for the slow-query log
 	// stream. Empty => log to the configured server logger. Single source of
@@ -1372,6 +1419,13 @@ func LoadFromEnv() *Config {
 //
 // Returns nil if configuration is valid, or an error describing the problem.
 func (c *Config) Validate() error {
+	// Legacy embedded literals omit both fields; Open supplies their defaults.
+	// File/environment parsing rejects explicit zero values before this point.
+	if c.Memory.RecoveryIntervalMS != 0 || c.Memory.RecoveryRearmMS != 0 {
+		if err := ValidateMemoryRecoveryTimings(c.Memory.RecoveryIntervalMS, c.Memory.RecoveryRearmMS); err != nil {
+			return err
+		}
+	}
 	if _, err := localization.NormalizeLanguage(c.Localization.Language); err != nil {
 		return fmt.Errorf("localization.language: %w", err)
 	}
@@ -1691,6 +1745,12 @@ type YAMLConfig struct {
 		AutoLinksEnabled             bool    `yaml:"auto_links_enabled"`
 		AutoLinksSimilarityThreshold float64 `yaml:"auto_links_similarity_threshold"`
 		RuntimeLimit                 string  `yaml:"runtime_limit"`
+		GoRuntimeLimit               string  `yaml:"go_runtime_limit_bytes"`
+		ApplicationSoftMax           string  `yaml:"application_soft_max"`
+		RecoveryIntervalMS           *string `yaml:"recovery_interval_ms"`
+		RecoveryRearmMS              *string `yaml:"recovery_rearm_ms"`
+		TransactionMax               string  `yaml:"transaction_max"`
+		TransactionTotalMax          string  `yaml:"transaction_total_max"`
 		GCPercent                    int     `yaml:"gc_percent"`
 		PoolEnabled                  bool    `yaml:"pool_enabled"`
 		PoolMaxSize                  int     `yaml:"pool_max_size"`
@@ -1699,6 +1759,8 @@ type YAMLConfig struct {
 		QueryCacheTTL                int64   `yaml:"query_cache_ttl"`
 		SearchCursorMax              int64   `yaml:"search_cursor_max"`
 		SearchCursorTTL              int64   `yaml:"search_cursor_ttl"`
+
+		SearchCursorMaxPageSize int `yaml:"search_cursor_max_page_size"`
 	} `yaml:"memory"`
 
 	// Embedding worker configuration
@@ -1938,6 +2000,7 @@ func LoadDefaults() *Config {
 	config.Auth.MinPasswordLength = 8
 	config.Auth.TokenExpiry = 24 * time.Hour
 	config.Auth.JWTSecret = generateDefaultSecret()
+	config.generatedJWTSecret = config.Auth.JWTSecret
 
 	// Database defaults
 	config.Database.DataDir = "./data"
@@ -2074,8 +2137,12 @@ func LoadDefaults() *Config {
 	config.Memory.AutoLinksSimilarityThreshold = 0.82
 	config.Memory.KmeansMinEmbeddings = 100
 	config.Memory.KmeansClusterInterval = 15 * time.Minute // timer-based clustering every 15 min (skips if no changes)
-	config.Memory.RuntimeLimitStr = "0"
+	config.Memory.RuntimeLimitStr = RuntimeLimitAuto
 	config.Memory.RuntimeLimit = 0
+	config.Memory.RecoveryIntervalMS = DefaultMemoryRecoveryIntervalMS
+	config.Memory.RecoveryRearmMS = DefaultMemoryRecoveryRearmMS
+	config.Memory.TransactionMax = 0
+	config.Memory.TransactionTotalMax = 0
 	config.Memory.GCPercent = 100
 	config.Memory.PoolEnabled = true
 	config.Memory.PoolMaxSize = 1000
@@ -2084,6 +2151,7 @@ func LoadDefaults() *Config {
 	config.Memory.QueryCacheTTL = 5 * time.Minute
 	config.Memory.SearchCursorMax = 0
 	config.Memory.SearchCursorTTL = 5 * time.Minute
+	config.Memory.SearchCursorMaxPageSize = resultstream.DefaultMaxPageSize
 
 	// Embedding worker defaults
 	config.EmbeddingWorker.NumWorkers = 1
@@ -2227,6 +2295,7 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnv("NORNICDB_AUTH_JWT_SECRET", ""); v != "" {
 		config.Auth.JWTSecret = v
+		config.generatedJWTSecret = ""
 	}
 
 	// Database settings
@@ -2244,13 +2313,8 @@ func applyEnvVars(config *Config) error {
 	if getEnvBool("NORNICDB_READ_ONLY", false) || getEnvBool("NEO4J_dbms_read__only", false) {
 		config.Database.ReadOnly = true
 	}
-	if v := getEnvDuration("NORNICDB_TRANSACTION_TIMEOUT", 0); v > 0 {
-		config.Database.TransactionTimeout = v
-	} else {
-		// Backward compatibility: Neo4j env name
-		if v := getEnvDuration("NEO4J_dbms_transaction_timeout", 0); v > 0 {
-			config.Database.TransactionTimeout = v
-		}
+	if err := transactionTimeoutSetting.applyEnv(config); err != nil {
+		return err
 	}
 	if v := getEnvInt("NORNICDB_MAX_TRANSACTIONS", 0); v > 0 {
 		config.Database.MaxConcurrentTransactions = v
@@ -2344,8 +2408,8 @@ func applyEnvVars(config *Config) error {
 	if v, ok := envutil.LookupBoolLoose("NORNICDB_MVCC_LIFECYCLE_ENABLED"); ok {
 		config.Database.MVCCLifecycleEnabled = v
 	}
-	if v := getEnvDuration("NORNICDB_MVCC_LIFECYCLE_INTERVAL", 0); v > 0 {
-		config.Database.MVCCLifecycleCycleInterval = v
+	if err := processDatabaseSetting(config, settingMVCCLifecycleInterval, nil); err != nil {
+		return err
 	}
 	if v := getEnvDuration("NORNICDB_MVCC_LIFECYCLE_MAX_SNAPSHOT_AGE", 0); v > 0 {
 		config.Database.MVCCLifecycleMaxSnapshotAge = v
@@ -2627,35 +2691,32 @@ func applyEnvVars(config *Config) error {
 		config.Memory.VisibilityThreshold = v
 	}
 	// Embedding enabled - check for explicit true/false
-	if v := getEnv("NORNICDB_EMBEDDING_ENABLED", ""); v != "" {
-		config.Memory.EmbeddingEnabled = v == "true" || v == "1"
+	if err := processDatabaseSetting(config, settingEmbeddingEnabled, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_PROVIDER", ""); v != "" {
-		config.Memory.EmbeddingProvider = v
+	if err := processDatabaseSetting(config, settingEmbeddingProvider, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_MODEL", ""); v != "" {
-		config.Memory.EmbeddingModel = v
-		config.EmbeddingExplicit.Model = true
+	if err := processDatabaseSetting(config, settingEmbeddingModel, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_API_URL", ""); v != "" {
-		config.Memory.EmbeddingAPIURL = v
-		config.EmbeddingExplicit.APIURL = true
+	if err := processDatabaseSetting(config, settingEmbeddingAPIURL, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_API_KEY", ""); v != "" {
-		config.Memory.EmbeddingAPIKey = v
+	if err := processDatabaseSetting(config, settingEmbeddingAPIKey, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_MODE", ""); v != "" {
-		config.Memory.EmbeddingMode = strings.TrimSpace(v)
+	if err := processDatabaseSetting(config, settingEmbeddingMode, nil); err != nil {
+		return err
 	}
-	if v := getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 0); v > 0 {
-		config.Memory.EmbeddingDimensions = v
-		config.EmbeddingExplicit.Dimensions = true
+	if err := processDatabaseSetting(config, settingEmbeddingDimensions, nil); err != nil {
+		return err
 	}
-	if v := getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 0); v > 0 {
-		config.Memory.EmbeddingCacheSize = v
+	if err := processDatabaseSetting(config, settingEmbeddingCacheSize, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_SEARCH_MIN_SIMILARITY", ""); v != "" {
-		config.Memory.SearchMinSimilarity = getEnvFloat("NORNICDB_SEARCH_MIN_SIMILARITY", 0.5)
+	if err := processDatabaseSetting(config, settingSearchMinSimilarity, nil); err != nil {
+		return err
 	}
 	// Per-database search index master switches and warming triggers (global
 	// defaults; per-DB overrides via dbconfig.Store always win). Apply env
@@ -2663,11 +2724,11 @@ func applyEnvVars(config *Config) error {
 	// from YAML (which runs before applyEnvVars) remain intact. The fallback
 	// to (enabled, startup) for callers that never went through LoadDefaults
 	// or LoadFromFile lives in nornicdb.Open()'s defensive defaults.
-	if v := getEnv("NORNICDB_SEARCH_BM25_ENABLED", ""); v != "" {
-		config.Memory.SearchBM25Enabled = v == "true" || v == "1"
+	if err := processDatabaseSetting(config, settingSearchBM25Enabled, nil); err != nil {
+		return err
 	}
-	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_BM25_WARMING", ""))); v == "lazy" || v == "startup" {
-		config.Memory.SearchBM25Warming = v
+	if err := processDatabaseSetting(config, settingSearchBM25Warming, nil); err != nil {
+		return err
 	}
 	if v := getEnvStringSlice("NORNICDB_SEARCH_BM25_PROPERTIES", nil); len(v) > 0 {
 		config.Memory.SearchBM25Properties = v
@@ -2678,26 +2739,26 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvStringSlice("NORNICDB_SEARCH_BM25_LABELS", nil); len(v) > 0 {
 		config.Memory.SearchBM25Labels = v
 	}
-	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_BM25_STEMMER", ""))); v != "" {
-		config.Memory.SearchBM25Stemmer = v
+	if err := processDatabaseSetting(config, settingSearchBM25Stemmer, nil); err != nil {
+		return err
 	}
 	if v := getEnv("NORNICDB_SEARCH_RELATIONSHIPS_ENABLED", ""); v != "" {
 		config.Memory.SearchRelationshipsEnabled = v == "true" || v == "1"
 	}
-	if v := getEnv("NORNICDB_SEARCH_VECTOR_ENABLED", ""); v != "" {
-		config.Memory.SearchVectorEnabled = v == "true" || v == "1"
+	if err := processDatabaseSetting(config, settingSearchVectorEnabled, nil); err != nil {
+		return err
 	}
-	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_VECTOR_WARMING", ""))); v == "lazy" || v == "startup" {
-		config.Memory.SearchVectorWarming = v
+	if err := processDatabaseSetting(config, settingSearchVectorWarming, nil); err != nil {
+		return err
 	}
 	if v := getEnv("NORNICDB_MODELS_DIR", ""); v != "" {
 		config.Memory.ModelsDir = v
 	}
-	if v := getEnvInt("NORNICDB_EMBEDDING_GPU_LAYERS", -999); v != -999 {
-		config.Memory.EmbeddingGPULayers = v
+	if err := processDatabaseSetting(config, settingEmbeddingGPULayers, nil); err != nil {
+		return err
 	}
-	if v := getEnvDuration("NORNICDB_EMBEDDING_WARMUP_INTERVAL", 0); v > 0 {
-		config.Memory.EmbeddingWarmupInterval = v
+	if err := processDatabaseSetting(config, settingEmbeddingWarmupInterval, nil); err != nil {
+		return err
 	}
 	// Embedding llama.cpp context features (per-model tuning via env)
 	if v := getEnvInt("NORNICDB_EMBEDDING_CTX_TYPE", 0); v != 0 {
@@ -2715,31 +2776,67 @@ func applyEnvVars(config *Config) error {
 	if v, ok := lookupEnvInt("NORNICDB_EMBEDDING_LAZY_MODE"); ok && v >= 0 && v <= 2 {
 		config.Memory.EmbeddingLazyMode = v
 	}
-	if v := getEnvInt("NORNICDB_KMEANS_MIN_EMBEDDINGS", 0); v > 0 {
-		config.Memory.KmeansMinEmbeddings = v
+	if err := processDatabaseSetting(config, settingKmeansMinEmbeddings, nil); err != nil {
+		return err
 	}
-	if v := getEnvDuration("NORNICDB_KMEANS_CLUSTER_INTERVAL", 0); v > 0 {
-		config.Memory.KmeansClusterInterval = v
+	if err := processDatabaseSetting(config, settingKmeansClusterInterval, nil); err != nil {
+		return err
 	}
-	if v := getEnvInt("NORNICDB_KMEANS_NUM_CLUSTERS", 0); v >= 0 {
-		config.Memory.KmeansNumClusters = v
+	if err := processDatabaseSetting(config, settingKmeansNumClusters, nil); err != nil {
+		return err
 	}
 	if v := getEnv("NORNICDB_DEFAULT_NODE_LABEL", ""); v != "" {
 		config.Memory.DefaultNodeLabel = v
 	}
-	if getEnv("NORNICDB_AUTO_LINKS_ENABLED", "") == "false" {
-		config.Memory.AutoLinksEnabled = false
+	if err := processDatabaseSetting(config, settingAutoLinksEnabled, nil); err != nil {
+		return err
 	}
-	if v := getEnvFloat("NORNICDB_AUTO_LINKS_THRESHOLD", 0); v > 0 {
-		config.Memory.AutoLinksSimilarityThreshold = v
+	if err := processDatabaseSetting(config, settingAutoLinksThreshold, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_MEMORY_LIMIT", ""); v != "" {
-		runtimeLimit, err := ParseMemoryLimitMB(v)
+	legacyRuntime, canonicalRuntime := getEnv("NORNICDB_MEMORY_LIMIT", ""), getEnv("NORNICDB_GO_MEMORY_LIMIT_BYTES", "")
+	if legacyRuntime != "" || canonicalRuntime != "" {
+		// TODO: Migrate deployments still using the legacy MiB environment variable to bytes.
+		choice, err := ResolveRuntimeLimitAliases(legacyRuntime, canonicalRuntime)
 		if err != nil {
-			return fmt.Errorf("invalid NORNICDB_MEMORY_LIMIT value %q: %w", v, err)
+			return fmt.Errorf("NORNICDB_MEMORY_LIMIT / NORNICDB_GO_MEMORY_LIMIT_BYTES: %w", err)
 		}
-		config.Memory.RuntimeLimitStr = v
-		config.Memory.RuntimeLimit = runtimeLimit
+		config.Memory.RuntimeLimitStr = choice.Raw
+		config.Memory.RuntimeLimit = choice.Bytes
+		if legacyRuntime != "" {
+			warnDeprecatedMemorySetting(config.Localization.Language, localization.NornicDBCLIEnvMemoryLimitDeprecated())
+		}
+	}
+	if v := getEnv("NORNICDB_MEMORY_APPLICATION_SOFT_MAX", ""); v != "" {
+		limit, err := ParseApplicationSoftMax(v)
+		if err != nil {
+			return fmt.Errorf("invalid NORNICDB_MEMORY_APPLICATION_SOFT_MAX value %q: %w", v, err)
+		}
+		config.Memory.ApplicationSoftMax = limit
+	}
+	for _, setting := range []struct {
+		name  string
+		value *int64
+	}{
+		{"NORNICDB_MEMORY_RECOVERY_INTERVAL_MS", &config.Memory.RecoveryIntervalMS},
+		{"NORNICDB_MEMORY_RECOVERY_REARM_MS", &config.Memory.RecoveryRearmMS},
+	} {
+		if raw := getEnv(setting.name, ""); raw != "" {
+			value, err := parseMemoryRecoveryMS(setting.name, raw)
+			if err != nil {
+				return err
+			}
+			*setting.value = value
+		}
+	}
+	if err := ValidateMemoryRecoveryTimings(config.Memory.RecoveryIntervalMS, config.Memory.RecoveryRearmMS); err != nil {
+		return err
+	}
+	if err := processDatabaseSetting(config, settingMemoryTransactionMax, nil); err != nil {
+		return err
+	}
+	if err := processDatabaseSetting(config, settingMemoryTransactionTotalMax, nil); err != nil {
+		return err
 	}
 	if v := getEnvInt("NORNICDB_GC_PERCENT", 0); v != 0 {
 		config.Memory.GCPercent = v
@@ -2753,11 +2850,11 @@ func applyEnvVars(config *Config) error {
 	if getEnv("NORNICDB_QUERY_CACHE_ENABLED", "") == "false" {
 		config.Memory.QueryCacheEnabled = false
 	}
-	if v := getEnvInt("NORNICDB_QUERY_CACHE_SIZE", 0); v > 0 {
-		config.Memory.QueryCacheSize = v
+	if err := processDatabaseSetting(config, settingQueryCacheSize, nil); err != nil {
+		return err
 	}
-	if milliseconds := getEnvInt("NORNICDB_QUERY_CACHE_TTL", 0); milliseconds > 0 {
-		config.Memory.QueryCacheTTL = time.Duration(milliseconds) * time.Millisecond
+	if err := processDatabaseSetting(config, settingQueryCacheTTL, nil); err != nil {
+		return err
 	}
 	if raw := strings.TrimSpace(getEnv("NORNICDB_SEARCH_CURSOR_MAX", "")); raw != "" {
 		if value, err := strconv.ParseInt(raw, 10, 64); err == nil && value >= 0 {
@@ -2767,42 +2864,37 @@ func applyEnvVars(config *Config) error {
 	if milliseconds := getEnvInt("NORNICDB_SEARCH_CURSOR_TTL", 0); milliseconds > 0 {
 		config.Memory.SearchCursorTTL = time.Duration(milliseconds) * time.Millisecond
 	}
+	if value := getEnvInt("NORNICDB_SEARCH_CURSOR_MAX_PAGE_SIZE", 0); value > 0 {
+		config.Memory.SearchCursorMaxPageSize = value
+	}
 
 	// Embedding worker settings
-	if raw := strings.TrimSpace(getEnv("NORNICDB_EMBED_WORKER_NUM_WORKERS", "")); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
-			config.EmbeddingWorker.NumWorkers = v
-		}
+	if err := processDatabaseSetting(config, settingEmbedWorkerNumWorkers, nil); err != nil {
+		return err
 	}
-	if v := getEnvDuration("NORNICDB_EMBED_SCAN_INTERVAL", 0); v > 0 {
-		config.EmbeddingWorker.ScanInterval = v
+	if err := processDatabaseSetting(config, settingEmbedScanInterval, nil); err != nil {
+		return err
 	}
-	if v := getEnvDuration("NORNICDB_EMBED_BATCH_DELAY", 0); v > 0 {
-		config.EmbeddingWorker.BatchDelay = v
+	if err := processDatabaseSetting(config, settingEmbedBatchDelay, nil); err != nil {
+		return err
 	}
-	if v := getEnvDuration("NORNICDB_EMBED_TRIGGER_DEBOUNCE", -1); v >= 0 {
-		config.EmbeddingWorker.TriggerDebounceDelay = v
+	if err := processDatabaseSetting(config, settingEmbedTriggerDebounce, nil); err != nil {
+		return err
 	}
-	if v := getEnvInt("NORNICDB_EMBED_MAX_RETRIES", 0); v > 0 {
-		config.EmbeddingWorker.MaxRetries = v
+	if err := processDatabaseSetting(config, settingEmbedMaxRetries, nil); err != nil {
+		return err
 	}
-	if raw := strings.TrimSpace(getEnv("NORNICDB_EMBED_CHUNK_SIZE", "")); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
-			config.EmbeddingWorker.ChunkSize = v
-			config.EmbeddingWorker.ChunkSizeSet = true
-		}
+	if err := processDatabaseSetting(config, settingEmbedChunkSize, nil); err != nil {
+		return err
 	}
-	if raw := strings.TrimSpace(getEnv("NORNICDB_EMBED_CHUNK_OVERLAP", "")); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
-			config.EmbeddingWorker.ChunkOverlap = v
-			config.EmbeddingWorker.ChunkOverlapSet = true
-		}
+	if err := processDatabaseSetting(config, settingEmbedChunkOverlap, nil); err != nil {
+		return err
 	}
-	if v := getEnvStringSlice("NORNICDB_EMBEDDING_PROPERTIES_INCLUDE", nil); len(v) > 0 {
-		config.EmbeddingWorker.PropertiesInclude = v
+	if err := processDatabaseSetting(config, settingEmbeddingPropertiesInclude, nil); err != nil {
+		return err
 	}
-	if v := getEnvStringSlice("NORNICDB_EMBEDDING_PROPERTIES_EXCLUDE", nil); len(v) > 0 {
-		config.EmbeddingWorker.PropertiesExclude = v
+	if err := processDatabaseSetting(config, settingEmbeddingPropertiesExclude, nil); err != nil {
+		return err
 	}
 	if v := getEnvStringSlice("NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_INCLUDE", nil); len(v) > 0 {
 		config.EmbeddingWorker.RelationshipPropertiesInclude = v
@@ -2810,14 +2902,14 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvStringSlice("NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_EXCLUDE", nil); len(v) > 0 {
 		config.EmbeddingWorker.RelationshipPropertiesExclude = v
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_LABELS_INCLUDE", ""); v != "" {
-		config.EmbeddingWorker.EligibleLabels = getEnvStringSlice("NORNICDB_EMBEDDING_LABELS_INCLUDE", nil)
+	if err := processDatabaseSetting(config, settingEmbeddingLabelsInclude, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_LABELS_EXCLUDE", ""); v != "" {
-		config.EmbeddingWorker.ExcludedLabels = getEnvStringSlice("NORNICDB_EMBEDDING_LABELS_EXCLUDE", nil)
+	if err := processDatabaseSetting(config, settingEmbeddingLabelsExclude, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_INCLUDE_LABELS", ""); v != "" {
-		config.EmbeddingWorker.IncludeLabels = getEnvBool("NORNICDB_EMBEDDING_INCLUDE_LABELS", config.EmbeddingWorker.IncludeLabels)
+	if err := processDatabaseSetting(config, settingEmbeddingIncludeLabels, nil); err != nil {
+		return err
 	}
 
 	// Compliance settings
@@ -2934,8 +3026,8 @@ func applyEnvVars(config *Config) error {
 	if getEnv("NORNICDB_QUERY_LOG_ENABLED", "") == "true" {
 		config.Logging.QueryLogEnabled = true
 	}
-	if v := getEnvDuration("NORNICDB_SLOW_QUERY_THRESHOLD", 0); v > 0 {
-		config.Logging.SlowQueryThreshold = v
+	if err := slowQueryThresholdSetting.applyEnv(config); err != nil {
+		return err
 	}
 	if v, exists := os.LookupEnv(localization.EnvLanguage); exists {
 		v = strings.TrimSpace(v)
@@ -3001,8 +3093,8 @@ func applyEnvVars(config *Config) error {
 		config.Features.KalmanEnabled = true
 	}
 	// Auto-TLP (Topological Link prediction) - used by macOS menu bar app
-	if getEnv("NORNICDB_AUTO_TLP_ENABLED", "") == "true" {
-		config.Features.TopologyAutoIntegrationEnabled = true
+	if err := processDatabaseSetting(config, settingAutoTLPEnabled, nil); err != nil {
+		return err
 	}
 	if v, ok := envutil.LookupBoolLoose("NORNICDB_HEIMDALL_ENABLED"); ok {
 		config.Features.HeimdallEnabled = v
@@ -3076,20 +3168,20 @@ func applyEnvVars(config *Config) error {
 			}
 		}
 	}
-	if getEnv("NORNICDB_SEARCH_RERANK_ENABLED", "") == "true" {
-		config.Features.SearchRerankEnabled = true
+	if err := processDatabaseSetting(config, settingSearchRerankEnabled, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_SEARCH_RERANK_PROVIDER", ""); v != "" {
-		config.Features.SearchRerankProvider = strings.TrimSpace(strings.ToLower(v))
+	if err := processDatabaseSetting(config, settingSearchRerankProvider, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_SEARCH_RERANK_MODEL", ""); v != "" {
-		config.Features.SearchRerankModel = v
+	if err := processDatabaseSetting(config, settingSearchRerankModel, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_SEARCH_RERANK_API_URL", ""); v != "" {
-		config.Features.SearchRerankAPIURL = v
+	if err := processDatabaseSetting(config, settingSearchRerankAPIURL, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_SEARCH_RERANK_API_KEY", ""); v != "" {
-		config.Features.SearchRerankAPIKey = v
+	if err := processDatabaseSetting(config, settingSearchRerankAPIKey, nil); err != nil {
+		return err
 	}
 	config.Features.SearchRerankDisableTruncation = !getEnvBool("NORNICDB_SEARCH_RERANK_TRUNCATION", !config.Features.SearchRerankDisableTruncation)
 	// Rerank llama.cpp context features
@@ -3244,7 +3336,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 
 	var yamlCfg YAMLConfig
 	if err := yaml.Unmarshal(data, &yamlCfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		return nil, fmt.Errorf("failed to parse config file: %w", configDisplayError(err, data, config))
 	}
 	// Decode presence separately so YAMLConfig keeps its public integer fields
 	// while explicit zero remains distinguishable from an omitted value.
@@ -3255,7 +3347,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 		} `yaml:"embedding_worker"`
 	}
 	if err := yaml.Unmarshal(data, &explicit); err != nil {
-		return nil, fmt.Errorf("failed to parse embedding worker config: %w", err)
+		return nil, fmt.Errorf("failed to parse embedding worker config: %w", configDisplayError(err, data, config))
 	}
 
 	// === Server Settings ===
@@ -3341,10 +3433,8 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Database.ReadOnly {
 		config.Database.ReadOnly = true
 	}
-	if yamlCfg.Database.TransactionTimeout != "" {
-		if d, err := time.ParseDuration(yamlCfg.Database.TransactionTimeout); err == nil {
-			config.Database.TransactionTimeout = d
-		}
+	if err := transactionTimeoutSetting.applyYAML(config, yamlCfg.Database.TransactionTimeout); err != nil {
+		return nil, err
 	}
 	if yamlCfg.Database.MaxConcurrentTransactions > 0 {
 		config.Database.MaxConcurrentTransactions = yamlCfg.Database.MaxConcurrentTransactions
@@ -3639,6 +3729,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 		yamlCfg.Auth.JWTSecret != "[stored-in-keychain]" &&
 		!strings.Contains(yamlCfg.Auth.JWTSecret, "stored-in-keychain") {
 		config.Auth.JWTSecret = yamlCfg.Auth.JWTSecret
+		config.generatedJWTSecret = ""
 	}
 
 	// === Per-DB search index master switches and warming triggers ===
@@ -3724,13 +3815,52 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Memory.AutoLinksSimilarityThreshold > 0 {
 		config.Memory.AutoLinksSimilarityThreshold = yamlCfg.Memory.AutoLinksSimilarityThreshold
 	}
-	if yamlCfg.Memory.RuntimeLimit != "" {
-		runtimeLimit, err := ParseMemoryLimitMB(yamlCfg.Memory.RuntimeLimit)
+	if yamlCfg.Memory.RuntimeLimit != "" || yamlCfg.Memory.GoRuntimeLimit != "" {
+		// TODO: Migrate legacy memory.runtime_limit YAML users to integer bytes.
+		choice, err := ResolveRuntimeLimitAliases(yamlCfg.Memory.RuntimeLimit, yamlCfg.Memory.GoRuntimeLimit)
 		if err != nil {
-			return nil, fmt.Errorf("invalid memory.runtime_limit value %q: %w", yamlCfg.Memory.RuntimeLimit, err)
+			return nil, fmt.Errorf("memory.runtime_limit / memory.go_runtime_limit_bytes: %w", err)
 		}
-		config.Memory.RuntimeLimitStr = yamlCfg.Memory.RuntimeLimit
-		config.Memory.RuntimeLimit = runtimeLimit
+		config.Memory.RuntimeLimitStr = choice.Raw
+		config.Memory.RuntimeLimit = choice.Bytes
+		if yamlCfg.Memory.RuntimeLimit != "" {
+			warnDeprecatedMemorySetting(yamlCfg.Localization.Language, localization.NornicDBCLIYAMLMemoryLimitDeprecated())
+		}
+	}
+	if yamlCfg.Memory.ApplicationSoftMax != "" {
+		limit, err := ParseApplicationSoftMax(yamlCfg.Memory.ApplicationSoftMax)
+		if err != nil {
+			return nil, fmt.Errorf("invalid memory.application_soft_max value %q: %w", yamlCfg.Memory.ApplicationSoftMax, err)
+		}
+		config.Memory.ApplicationSoftMax = limit
+	}
+	if yamlCfg.Memory.RecoveryIntervalMS != nil {
+		value, err := parseMemoryRecoveryMS("memory.recovery_interval_ms", *yamlCfg.Memory.RecoveryIntervalMS)
+		if err != nil {
+			return nil, err
+		}
+		config.Memory.RecoveryIntervalMS = value
+	}
+	if yamlCfg.Memory.RecoveryRearmMS != nil {
+		value, err := parseMemoryRecoveryMS("memory.recovery_rearm_ms", *yamlCfg.Memory.RecoveryRearmMS)
+		if err != nil {
+			return nil, err
+		}
+		config.Memory.RecoveryRearmMS = value
+	}
+	if yamlCfg.Memory.TransactionMax != "" {
+		limit, err := ParseByteSize(yamlCfg.Memory.TransactionMax)
+		if err != nil {
+			return nil, fmt.Errorf("invalid memory.transaction_max value %q: %w", yamlCfg.Memory.TransactionMax, err)
+		}
+		config.Memory.TransactionMax = limit
+	}
+	if yamlCfg.Memory.TransactionTotalMax != "" {
+		limit, err := ParseByteSize(yamlCfg.Memory.TransactionTotalMax)
+		if err != nil {
+			return nil, fmt.Errorf("invalid memory.transaction_total_max value %q: %w", yamlCfg.Memory.TransactionTotalMax, err)
+		}
+		config.Memory.TransactionTotalMax = limit
 	}
 	if yamlCfg.Memory.GCPercent > 0 {
 		config.Memory.GCPercent = yamlCfg.Memory.GCPercent
@@ -3755,6 +3885,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if yamlCfg.Memory.SearchCursorTTL > 0 {
 		config.Memory.SearchCursorTTL = time.Duration(yamlCfg.Memory.SearchCursorTTL) * time.Millisecond
+	}
+	if yamlCfg.Memory.SearchCursorMaxPageSize > 0 {
+		config.Memory.SearchCursorMaxPageSize = yamlCfg.Memory.SearchCursorMaxPageSize
 	}
 
 	// === Embedding Worker ===
@@ -4108,10 +4241,8 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Logging.QueryLogEnabled {
 		config.Logging.QueryLogEnabled = true
 	}
-	if yamlCfg.Logging.SlowQueryThreshold != "" {
-		if d, err := time.ParseDuration(yamlCfg.Logging.SlowQueryThreshold); err == nil {
-			config.Logging.SlowQueryThreshold = d
-		}
+	if err := slowQueryThresholdSetting.applyYAML(config, yamlCfg.Logging.SlowQueryThreshold); err != nil {
+		return nil, err
 	}
 
 	// === Localization Settings ===
@@ -4329,9 +4460,84 @@ func generateDefaultSecret() string {
 	return "CHANGE_ME_IN_PRODUCTION_" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
+// RuntimeLimitChoice preserves the difference between automatic sizing and
+// an explicit unlimited zero while comparing legacy/canonical aliases.
+type RuntimeLimitChoice struct {
+	Raw   string
+	Bytes int64
+	Auto  bool
+}
+
+// ErrRuntimeLimitAliasConflict means two simultaneously configured aliases
+// differ in either size or sizing mode.
+var ErrRuntimeLimitAliasConflict = errors.New("runtime memory limit aliases conflict")
+
+// ResolveRuntimeLimitAliases is the single alias and precedence rule used by
+// environment, YAML, and CLI settings. Legacy input is in MiB; canonical input
+// is an integer number of bytes. The canonical spelling wins when equal.
+func ResolveRuntimeLimitAliases(legacy, canonical string) (RuntimeLimitChoice, error) {
+	parseLegacy := func(raw string) (RuntimeLimitChoice, error) {
+		choice := RuntimeLimitChoice{Raw: raw, Auto: strings.EqualFold(strings.TrimSpace(raw), RuntimeLimitAuto)}
+		if choice.Auto {
+			return choice, nil
+		}
+		// TODO: Migrate existing legacy callers to integer bytes; do not add callers.
+		bytes, err := ParseMemoryLimitMB(raw)
+		choice.Bytes = bytes
+		return choice, err
+	}
+	parseCanonical := func(raw string) (RuntimeLimitChoice, error) {
+		value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err != nil || value < 0 {
+			return RuntimeLimitChoice{}, fmt.Errorf("must be a non-negative integer number of bytes")
+		}
+		return RuntimeLimitChoice{Raw: raw, Bytes: value}, nil
+	}
+	var old, current RuntimeLimitChoice
+	var err error
+	if legacy != "" {
+		old, err = parseLegacy(legacy)
+		if err != nil {
+			return RuntimeLimitChoice{}, err
+		}
+	}
+	if canonical != "" {
+		current, err = parseCanonical(canonical)
+		if err != nil {
+			return RuntimeLimitChoice{}, err
+		}
+	}
+	if legacy != "" && canonical != "" && (old.Auto != current.Auto || old.Bytes != current.Bytes) {
+		return RuntimeLimitChoice{}, ErrRuntimeLimitAliasConflict
+	}
+	if canonical != "" {
+		return current, nil
+	}
+	return old, nil
+}
+
+// ParseRuntimeLimit parses the legacy memory.runtime_limit value in MiB or auto.
+// DEPRECATED: Legacy MiB input only. New settings use integer bytes.
+func ParseRuntimeLimit(s string) (int64, error) {
+	// TODO: Migrate existing legacy callers to integer bytes; do not add callers.
+	if strings.TrimSpace(s) == "" {
+		return ParseMemoryLimitMB(s)
+	}
+	choice, err := ResolveRuntimeLimitAliases(s, "")
+	return choice.Bytes, err
+}
+
+// ParseApplicationSoftMax parses an opt-in application threshold in bytes.
+// k, m, g and t suffixes denote binary units; zero disables the policy.
+func ParseApplicationSoftMax(s string) (int64, error) {
+	return ParseByteSize(s)
+}
+
 // ParseMemoryLimitMB parses a memory limit value expressed in megabytes.
 // Valid examples: "0" (unlimited), "500" (500 MB).
 // Invalid examples: "500MB", "1GB", "unlimited".
+// DEPRECATED: Legacy MiB input only. NEVER use for new settings or features.
+// New memory settings accept integer byte values. Do not add callers.
 func ParseMemoryLimitMB(s string) (int64, error) {
 	const bytesPerMB int64 = 1024 * 1024
 
@@ -4352,6 +4558,40 @@ func ParseMemoryLimitMB(s string) (int64, error) {
 	}
 
 	return mb * bytesPerMB, nil
+}
+
+// ParseByteSize parses a byte size as the memory settings take it: a whole
+// number of bytes, optionally with a k, m, g or t suffix (kibibytes,
+// mebibytes, gibibytes, tebibytes): "0", "512m", "2g".
+func ParseByteSize(raw string) (int64, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return 0, fmt.Errorf("byte size is empty")
+	}
+	multiplier := int64(1)
+	if suffix := value[len(value)-1]; suffix < '0' || suffix > '9' {
+		switch suffix {
+		case 'k':
+			multiplier = 1 << 10
+		case 'm':
+			multiplier = 1 << 20
+		case 'g':
+			multiplier = 1 << 30
+		case 't':
+			multiplier = 1 << 40
+		default:
+			return 0, fmt.Errorf("invalid byte-size suffix in %q", raw)
+		}
+		value = strings.TrimSpace(value[:len(value)-1])
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("invalid byte size %q", raw)
+	}
+	if parsed > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("byte size overflows int64: %q", raw)
+	}
+	return parsed * multiplier, nil
 }
 
 // FormatMemorySize formats bytes as human-readable string.

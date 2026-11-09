@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -10,40 +11,65 @@ import (
 
 func TestStripLeadingWithImportsForFabricRecord_MatchIsStripped(t *testing.T) {
 	query := "WITH textKey128 MATCH (tt) WHERE tt.textKey128 = textKey128 RETURN collect(tt) AS texts"
-	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"textKey128": "h1"})
-	want := "MATCH (tt) WHERE tt.textKey128 = $textKey128 RETURN collect(tt) AS texts"
+	got := stripLeadingWithImportsForFabricRecord(t.Context(), query, map[string]interface{}{"textKey128": "h1"})
+	want := "MATCH (tt) WHERE tt.textKey128 = textKey128 RETURN collect(tt) AS texts"
 	if got != want {
 		t.Fatalf("expected stripped query %q, got %q", want, got)
+	}
+}
+
+func TestFabricRecordImportPreparationAvoidsCopies(t *testing.T) {
+	ctx := t.Context()
+	bindings := map[string]interface{}{"value": int64(9)}
+	const query = "WITH value MATCH (n) WHERE n.id = value RETURN n"
+	var prepared string
+	allocations := testing.AllocsPerRun(100, func() {
+		prepared = stripLeadingWithImportsForFabricRecord(ctx, query, bindings)
+	})
+	if allocations != 0 {
+		t.Fatalf("import preparation allocated %v times; record references need no parameter copies", allocations)
+	}
+	if prepared != "MATCH (n) WHERE n.id = value RETURN n" {
+		t.Fatalf("record variable was rewritten: %q", prepared)
 	}
 }
 
 func TestStripLeadingWithImportsForFabricRecord_UnwindPipelineIsStripped(t *testing.T) {
 	query := "WITH rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
-	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"rows": []interface{}{}})
-	want := "UNWIND $rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
+	got := stripLeadingWithImportsForFabricRecord(t.Context(), query, map[string]interface{}{"rows": []interface{}{}})
+	// Imported rows remain variables; caller parameters are a separate namespace.
+	want := "UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
 	if got != want {
 		t.Fatalf("expected stripped query %q, got %q", want, got)
+	}
+}
+
+func TestStrippedImportsExecuteWithTypedRecordBindings(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	bindings := map[string]interface{}{"rows": []interface{}{
+		map[string]interface{}{"textKey128": "a"},
+		map[string]interface{}{"textKey128": "b"},
+		map[string]interface{}{"textKey128": "a"},
+	}}
+	query := "WITH rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
+	generated := stripLeadingWithImportsForFabricRecord(t.Context(), query, bindings)
+	exec.fabricRecordBindings = bindings
+	result, err := exec.Execute(context.Background(), generated, map[string]interface{}{"rows": "caller parameter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]interface{}{{[]interface{}{"a", "b"}}}
+	if !reflect.DeepEqual(want, result.Rows) {
+		t.Fatalf("generated import must retain all distinct bound values: got %#v", result.Rows)
 	}
 }
 
 func TestStripLeadingWithImportsForFabricRecord_UseClauseIsStripped(t *testing.T) {
 	query := "WITH textKey128 USE translations.txr MATCH (tt) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts"
-	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"textKey128": "abc"})
-	want := "USE translations.txr MATCH (tt) WHERE tt.translationId = $textKey128 RETURN collect(tt) AS texts"
+	got := stripLeadingWithImportsForFabricRecord(t.Context(), query, map[string]interface{}{"textKey128": "abc"})
+	want := "USE translations.txr MATCH (tt) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts"
 	if got != want {
 		t.Fatalf("expected stripped query %q, got %q", want, got)
-	}
-}
-
-func TestFindLeadingWithEndLocalAndSplitCommaTopLevelLocal(t *testing.T) {
-	query := "WITH a, collect({k: b, t: c}) AS rows USE translations.txr MATCH (n) RETURN n"
-	idx := findLeadingWithEndLocal(query)
-	if idx <= 0 {
-		t.Fatalf("expected positive with-end index, got %d", idx)
-	}
-	parts := splitCommaTopLevelLocal("a, collect({k: b, t: c}) AS rows, `quoted`")
-	if len(parts) != 3 {
-		t.Fatalf("expected 3 top-level parts, got %#v", parts)
 	}
 }
 
@@ -57,7 +83,7 @@ func TestCypherFabricExecutor_ExecuteQuery_DelegatesAndReturnsRows(t *testing.T)
 		autoCommit: true,
 	}
 
-	cols, rows, err := cf.ExecuteQuery(context.Background(), "nornic", baseStore, "RETURN 1 AS one", nil)
+	cols, rows, err := cf.ExecuteQueryWithRecord(context.Background(), "nornic", baseStore, "RETURN 1 AS one", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected ExecuteQuery error: %v", err)
 	}
@@ -71,17 +97,17 @@ func TestCypherFabricExecutor_ExecuteQuery_DelegatesAndReturnsRows(t *testing.T)
 
 func TestExecute_TrailingSemicolonCompatibility(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	mgr, err := multidb.NewDatabaseManager(base, nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
-	if err := mgr.CreateDatabase("leaf_a"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "leaf_a"}); err != nil {
 		t.Fatalf("CreateDatabase leaf_a failed: %v", err)
 	}
-	if err := mgr.CreateDatabase("leaf_b"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "leaf_b"}); err != nil {
 		t.Fatalf("CreateDatabase leaf_b failed: %v", err)
 	}
-	if err := mgr.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
+	if err := mgr.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "leaf_a", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "leaf_b", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
@@ -121,17 +147,17 @@ func TestExecute_TrailingSemicolonCompatibility(t *testing.T) {
 
 func TestShouldUseFabricPlanner_OnlyForCompositeUseTargets(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	mgr, err := multidb.NewDatabaseManager(inner, nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
-	if err := mgr.CreateDatabase("leaf_a"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "leaf_a"}); err != nil {
 		t.Fatalf("CreateDatabase leaf_a failed: %v", err)
 	}
-	if err := mgr.CreateDatabase("leaf_b"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "leaf_b"}); err != nil {
 		t.Fatalf("CreateDatabase leaf_b failed: %v", err)
 	}
-	if err := mgr.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
+	if err := mgr.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "leaf_a", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "leaf_b", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
@@ -166,11 +192,43 @@ func TestShouldUseFabricPlanner_OnlyForCompositeUseTargets(t *testing.T) {
 			query: "CALL { USE cmp.a MATCH (n) RETURN n } RETURN 1 AS ok",
 			want:  true,
 		},
+		{
+			// A leading comment is trivia: the statement still begins with its
+			// top-level USE clause, whose grammar admits SHOW INDEXES.
+			name:  "leading line comment keeps the use top-level",
+			query: "// staged drop\nUSE cmp.a SHOW INDEXES",
+			want:  true,
+		},
+		{
+			name:  "leading BOM and comment keeps the use top-level",
+			query: "\xef\xbb\xbf/* staged drop */ USE cmp.a SHOW INDEXES",
+			want:  true,
+		},
+		{
+			name:  "leading block comment keeps the use top-level",
+			query: "/* staged drop */ USE cmp.a SHOW INDEXES",
+			want:  true,
+		},
+		{
+			// Leading trivia decides only the first USE: a comment before a
+			// non-composite target still stays native.
+			name:  "leading comment does not promote a non-composite use",
+			query: "/* staged drop */ USE leaf_a SHOW INDEXES",
+			want:  false,
+		},
+		{
+			// The subquery grammar has no administration command, so a nested
+			// USE followed by SHOW is not Fabric admission for a composite
+			// constituent: the statement keeps its own syntax error.
+			name:  "nested use keeps the subquery grammar",
+			query: "CALL { /* staged drop */ USE cmp.a SHOW INDEXES } RETURN 1 AS ok",
+			want:  false,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := exec.shouldUseFabricPlanner(tc.query)
+			got := exec.shouldUseFabricPlanner(t.Context(), tc.query)
 			if got != tc.want {
 				t.Fatalf("shouldUseFabricPlanner(%q) = %v, want %v", tc.query, got, tc.want)
 			}

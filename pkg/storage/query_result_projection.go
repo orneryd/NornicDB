@@ -60,23 +60,46 @@ func (p QueryResultProjection) qualified(id string) string {
 }
 
 // NodeProperties returns visible node properties without mutating their source.
-// With decay disabled it returns the original map without allocating.
-func (p QueryResultProjection) NodeProperties(node *Node) map[string]interface{} {
+// The optional selection keeps only the named properties: a nil or omitted
+// selection returns all properties, and an empty non-nil selection returns
+// none. For example, a pattern can check just the fields it names without
+// scoring the rest of the node via NodeProperties(node, selection). With decay
+// disabled and no selection it returns the original map without allocating.
+func (p QueryResultProjection) NodeProperties(node *Node, selection ...[]string) map[string]interface{} {
 	if node == nil {
 		return nil
 	}
-	if p.engine == nil {
+	var selected []string
+	if len(selection) > 0 {
+		selected = selection[0]
+	}
+	if p.engine == nil && selected == nil {
 		return node.Properties
 	}
 	created, updated := node.CreatedAt.UnixNano(), node.UpdatedAt.UnixNano()
 	if node.UpdatedAt.IsZero() {
 		updated = created
 	}
-	out := make(map[string]interface{}, len(node.Properties))
+	size := len(node.Properties)
+	if selected != nil {
+		size = len(selected)
+	}
+	out := make(map[string]interface{}, size)
 	id := NodeID(p.qualified(string(node.ID)))
-	for key, value := range node.Properties {
-		if !p.engine.filterNodePropertyByDecay(id, node.Labels, key, created, updated, p.now, !p.normalEvent) {
+	include := func(key string, value interface{}) {
+		if p.engine == nil || !p.engine.filterEntityByDecay(readVisibility(p.normalEvent), &decayPropertyRead{id: string(id), labels: node.Labels, property: key, created: created, updated: updated}, p.now) {
 			out[key] = value
+		}
+	}
+	if selected != nil {
+		for _, key := range selected {
+			if value, ok := node.Properties[key]; ok {
+				include(key, value)
+			}
+		}
+	} else {
+		for key, value := range node.Properties {
+			include(key, value)
 		}
 	}
 	return out
@@ -84,24 +107,44 @@ func (p QueryResultProjection) NodeProperties(node *Node) map[string]interface{}
 
 // EdgeProperties is NodeProperties' relationship counterpart, using the edge's
 // database, type, update time and property policy. Stored properties stay intact.
-func (p QueryResultProjection) EdgeProperties(edge *Edge) map[string]interface{} {
+func (p QueryResultProjection) EdgeProperties(edge *Edge, selection ...[]string) map[string]interface{} {
 	if edge == nil {
 		return nil
 	}
-	if p.engine == nil {
+	if p.engine == nil && len(selection) == 0 {
 		return edge.Properties
 	}
 	created, updated := edge.CreatedAt.UnixNano(), edge.UpdatedAt.UnixNano()
 	if edge.UpdatedAt.IsZero() {
 		updated = created
 	}
-	out := make(map[string]interface{}, len(edge.Properties))
+	var out map[string]interface{}
 	id := EdgeID(p.qualified(string(edge.ID)))
-	for key, value := range edge.Properties {
-		if !p.engine.filterRelationshipPropertyByDecay(id, edge.Type, key, created, updated, p.now, !p.normalEvent) {
-			out[key] = value
+	include := func(key string, value interface{}) {
+		if p.engine != nil && p.engine.filterEntityByDecay(readVisibility(p.normalEvent), &decayPropertyRead{id: string(id), edgeType: edge.Type, property: key, created: created, updated: updated, isEdge: true}, p.now) {
+			return
+		}
+		if out == nil {
+			out = make(map[string]interface{})
+		}
+		out[key] = value
+	}
+	if len(selection) > 0 && selection[0] != nil {
+		for _, key := range selection[0] {
+			if value, ok := edge.Properties[key]; ok {
+				include(key, value)
+			}
+		}
+	} else {
+		for key, value := range edge.Properties {
+			include(key, value)
 		}
 	}
+	// A policy projection has always returned an allocated empty property map.
+	if out == nil && p.engine != nil {
+		out = make(map[string]interface{})
+	}
+
 	return out
 }
 
@@ -118,12 +161,20 @@ func (p QueryResultProjection) Node(node *Node) *Node {
 
 // Edge projects a detached relationship for a query response. Mutation owners
 // must keep the original edge, so unrelated writes retain suppressed fields.
-func (p QueryResultProjection) Edge(edge *Edge) *Edge {
-	if edge == nil || p.engine == nil {
-		return edge
+func (p QueryResultProjection) Edge(edge *Edge, selection ...[]string) *Edge {
+	if edge == nil {
+		return nil
+	}
+	if p.engine == nil {
+		if len(selection) == 0 {
+			return edge
+		}
+		if selection[0] == nil {
+			return copyEdge(edge)
+		}
 	}
 	out := *edge
-	out.Properties = p.EdgeProperties(edge)
+	out.Properties = p.EdgeProperties(edge, selection...)
 	return &out
 }
 

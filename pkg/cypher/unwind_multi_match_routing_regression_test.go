@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"regexp"
@@ -16,12 +18,12 @@ type limitedLabelScanEngine struct {
 	calls    int
 }
 
-func (e *limitedLabelScanEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *limitedLabelScanEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	e.calls++
 	if e.maxCalls > 0 && e.calls > e.maxCalls {
 		return nil, fmt.Errorf("GetNodesByLabel called too many times: %d > %d", e.calls, e.maxCalls)
 	}
-	return e.MemoryEngine.GetNodesByLabel(label)
+	return e.MemoryEngine.GetNodesByLabel(ctx, label)
 }
 
 // BUG REGRESSION:
@@ -33,7 +35,7 @@ func TestBug_UnwindWithMultipleMatchClauses_RoutesAndExecutes(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test:o1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -42,7 +44,7 @@ func TestBug_UnwindWithMultipleMatchClauses_RoutesAndExecutes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test:t1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -70,7 +72,7 @@ func TestBug_TopLevelUnwindThenMultipleMatchClauses_Executes(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test:o2",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -79,7 +81,7 @@ func TestBug_TopLevelUnwindThenMultipleMatchClauses_Executes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test:t2",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -103,7 +105,7 @@ RETURN count(*) AS c
 
 func TestNormalizeMultiMatchWhereClauses(t *testing.T) {
 	in := "MATCH (o:OriginalText) WHERE o.joinKey = joinKey MATCH (t:TranslatedText) WHERE t.joinKey = joinKey RETURN count(*) AS c"
-	got := normalizeMultiMatchWhereClauses(in)
+	got := normalizeMultiMatchWhereClauses(t.Context(), in)
 	require.Equal(
 		t,
 		"MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey AND t.joinKey = joinKey RETURN count(*) AS c",
@@ -113,7 +115,7 @@ func TestNormalizeMultiMatchWhereClauses(t *testing.T) {
 
 func TestNormalizeMultiMatchWhereClauses_SingleWhereBetweenMatches(t *testing.T) {
 	in := "MATCH (o:OriginalText) WHERE o.joinKey = joinKey MATCH (t:TranslatedText) RETURN count(*) AS c"
-	got := normalizeMultiMatchWhereClauses(in)
+	got := normalizeMultiMatchWhereClauses(t.Context(), in)
 	require.Equal(
 		t,
 		"MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey RETURN count(*) AS c",
@@ -127,7 +129,7 @@ func TestBug_MatchWhereMatchSetReturn_Executes(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test:o1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -137,7 +139,7 @@ func TestBug_MatchWhereMatchSetReturn_Executes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test:t1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -151,7 +153,7 @@ func TestBug_MatchWhereMatchSetReturn_Executes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = store.CreateEdge(&storage.Edge{
+	err = store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "test:e1",
 		Type:      "TRANSLATES_TO",
 		StartNode: "test:o1",
@@ -216,7 +218,7 @@ func TestBug_MatchWhereOrCreateCreateReturn_DoesNotFanOut(t *testing.T) {
 
 	// Add many distractors to catch accidental broad scans/fan-out behavior.
 	for i := 0; i < 500; i++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("test:noise-%d", i)),
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -226,7 +228,7 @@ func TestBug_MatchWhereOrCreateCreateReturn_DoesNotFanOut(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test:o-target",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -276,7 +278,7 @@ RETURN elementId(t) AS id,
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1, "query should create exactly one translation row")
 
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	translatesTo := 0
 	for _, e := range edges {
@@ -295,7 +297,7 @@ func TestBug_MatchWhereOrCreateCreateReturn_NullTextKeySkipsSecondArm(t *testing
 
 	// Many rows match textKey arm; with textKey = null that arm must be disabled.
 	for i := 0; i < 100; i++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("test:bulk-%d", i)),
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -305,7 +307,7 @@ func TestBug_MatchWhereOrCreateCreateReturn_NullTextKeySkipsSecondArm(t *testing
 		})
 		require.NoError(t, err)
 	}
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "test:o-target-null",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -336,7 +338,8 @@ RETURN count(*) AS c
 
 func TestRewriteUnwindCorrelationToIn(t *testing.T) {
 	in := "MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey AND t.joinKey = joinKey CREATE (o)-[:TRANSLATES_TO]->(t) RETURN count(*) AS c"
-	got, ok := rewriteUnwindCorrelationToIn(in, "joinKey", "__unwind_items")
+	exec, base := newUnitExecutor(t)
+	_, _, got, ok := admitUnwindStatement(t, exec, base, "UNWIND ['k1'] AS joinKey "+in)
 	require.True(t, ok)
 	require.True(t, regexp.MustCompile(`o\.joinKey\s+IN\s+\$__unwind_items`).MatchString(got))
 	require.True(t, regexp.MustCompile(`t\.joinKey\s*=\s*o\.joinKey`).MatchString(got))
@@ -344,7 +347,7 @@ func TestRewriteUnwindCorrelationToIn(t *testing.T) {
 
 func TestRewriteTopLevelMultiMatchToCartesianMatch(t *testing.T) {
 	in := "MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey IN $__unwind_items AND t.joinKey = o.joinKey RETURN count(*) AS c"
-	got := rewriteTopLevelMultiMatchToCartesianMatch(in)
+	got := rewriteTopLevelMultiMatchToCartesianMatch(t.Context(), in)
 	require.Equal(
 		t,
 		"MATCH (o:OriginalText), (t:TranslatedText) WHERE o.joinKey IN $__unwind_items AND t.joinKey = o.joinKey RETURN count(*) AS c",
@@ -353,7 +356,7 @@ func TestRewriteTopLevelMultiMatchToCartesianMatch(t *testing.T) {
 }
 
 func TestBug_UnwindMatchCount_RewriteAvoidsPerItemLabelScans(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &limitedLabelScanEngine{MemoryEngine: base, maxCalls: 3}
 	exec := NewStorageExecutor(eng)
@@ -361,9 +364,9 @@ func TestBug_UnwindMatchCount_RewriteAvoidsPerItemLabelScans(t *testing.T) {
 
 	for i := 1; i <= 5; i++ {
 		k := fmt.Sprintf("k%d", i)
-		_, err := eng.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:o%d", i)), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"joinKey": k}})
+		_, err := eng.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:o%d", i)), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"joinKey": k}})
 		require.NoError(t, err)
-		_, err = eng.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:t%d", i)), Labels: []string{"TranslatedText"}, Properties: map[string]interface{}{"joinKey": k}})
+		_, err = eng.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:t%d", i)), Labels: []string{"TranslatedText"}, Properties: map[string]interface{}{"joinKey": k}})
 		require.NoError(t, err)
 	}
 
@@ -390,9 +393,9 @@ func TestBug_UnwindMatchCreate_CorrelatedJoinKeepsCardinality(t *testing.T) {
 
 	for i := 1; i <= 5; i++ {
 		k := fmt.Sprintf("k%d", i)
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:o%d", i)), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"joinKey": k}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("test:o%d", i)), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"joinKey": k}})
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:t%d", i)), Labels: []string{"TranslatedText"}, Properties: map[string]interface{}{"joinKey": k}})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("test:t%d", i)), Labels: []string{"TranslatedText"}, Properties: map[string]interface{}{"joinKey": k}})
 		require.NoError(t, err)
 	}
 
@@ -410,7 +413,7 @@ RETURN count(*) AS c
 	require.Len(t, res.Rows[0], 1)
 	require.Equal(t, int64(5), res.Rows[0][0])
 
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	translatesTo := 0
 	for _, edge := range edges {

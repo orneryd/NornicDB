@@ -35,7 +35,7 @@ func TestLabeledPropertyProjectionLimitReturnsRows(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, empty.Rows)
 			for _, id := range []int64{1, 2, 3} {
-				_, err := exec.storage.CreateNode(&storage.Node{
+				_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 					ID:     storage.NodeID(fmt.Sprintf("label-%d", id)),
 					Labels: []string{"Label"}, Properties: map[string]interface{}{"id": id},
 				})
@@ -238,30 +238,30 @@ func TestCollectNodesWithStreaming(t *testing.T) {
 	}
 
 	t.Run("WithLimit", func(t *testing.T) {
-		nodes, err := exec.collectNodesWithStreaming(ctx, nil, nil, "", "", 50)
+		nodes, err := exec.collectNodesWithStreamingProjection(ctx, nil, nil, "", "", 50, nil)
 		require.NoError(t, err)
 		assert.Len(t, nodes, 50, "Should return exactly 50 nodes with limit")
-		t.Logf("collectNodesWithStreaming(limit=50) returned %d nodes", len(nodes))
+		t.Logf("collectNodesWithStreamingProjection(limit=50) returned %d nodes", len(nodes))
 	})
 
 	t.Run("WithLabelAndLimit", func(t *testing.T) {
-		nodes, err := exec.collectNodesWithStreaming(ctx, []string{"TestLabel"}, nil, "", "", 50)
+		nodes, err := exec.collectNodesWithStreamingProjection(ctx, []string{"TestLabel"}, nil, "", "", 50, nil)
 		require.NoError(t, err)
 		assert.Len(t, nodes, 50, "Should return exactly 50 nodes with label filter and limit")
-		t.Logf("collectNodesWithStreaming(label=TestLabel, limit=50) returned %d nodes", len(nodes))
+		t.Logf("collectNodesWithStreamingProjection(label=TestLabel, limit=50) returned %d nodes", len(nodes))
 	})
 
 	t.Run("NoLimit", func(t *testing.T) {
-		nodes, err := exec.collectNodesWithStreaming(ctx, nil, nil, "", "", -1)
+		nodes, err := exec.collectNodesWithStreamingProjection(ctx, nil, nil, "", "", -1, nil)
 		require.NoError(t, err)
 		assert.Len(t, nodes, 500, "Should return all 500 nodes without limit")
-		t.Logf("collectNodesWithStreaming(limit=-1) returned %d nodes", len(nodes))
+		t.Logf("collectNodesWithStreamingProjection(limit=-1) returned %d nodes", len(nodes))
 	})
 
 	t.Run("ZeroLimit", func(t *testing.T) {
-		nodes, err := exec.collectNodesWithStreaming(ctx, nil, nil, "", "", 0)
+		nodes, err := exec.collectNodesWithStreamingProjection(ctx, nil, nil, "", "", 0, nil)
 		require.NoError(t, err)
 		// Zero limit should return all nodes (same as -1)
-		t.Logf("collectNodesWithStreaming(limit=0) returned %d nodes", len(nodes))
+		t.Logf("collectNodesWithStreamingProjection(limit=0) returned %d nodes", len(nodes))
 	})
 }

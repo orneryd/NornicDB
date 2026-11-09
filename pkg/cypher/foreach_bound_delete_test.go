@@ -20,7 +20,7 @@ func TestForeach_BoundStandaloneDelete(t *testing.T) {
 	_, err := exec.Execute(ctx, `CREATE (f:File {root: '/w'})-[:HAS_CHUNK]->(:Chunk {n: 1}), (f)-[:HAS_CHUNK]->(:Chunk {n: 2})`, nil)
 	require.NoError(t, err)
 
-	chunks, err := engine.GetNodesByLabel("Chunk")
+	chunks, err := engine.GetNodesByLabel(ctx, "Chunk")
 	require.NoError(t, err)
 	require.Len(t, chunks, 2)
 	chunkItems := []interface{}{chunks[0], chunks[1]}
@@ -29,25 +29,25 @@ func TestForeach_BoundStandaloneDelete(t *testing.T) {
 	foreachCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"chunks": chunkItems})
 	_, err = exec.sharedForeachForTest(foreachCtx, "FOREACH (chunk IN $chunks | DETACH DELETE chunk)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
-	left, err := engine.GetNodesByLabel("Chunk")
+	left, err := engine.GetNodesByLabel(ctx, "Chunk")
 	require.NoError(t, err)
 	require.Empty(t, left, "bound chunks must be deleted")
 
 	// The parent survives a DETACH of its chunks.
-	files, err := engine.GetNodesByLabel("File")
+	files, err := engine.GetNodesByLabel(ctx, "File")
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
 	// A bound edge can be deleted the same way.
 	_, err = exec.Execute(ctx, `MATCH (f:File {root: '/w'}) CREATE (f)-[:LINK]->(t:Target)`, nil)
 	require.NoError(t, err)
-	edges, err := engine.GetEdgesByType("LINK")
+	edges, err := engine.GetEdgesByType(ctx, "LINK")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	edgeCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"rels": []interface{}{edges[0]}})
 	_, err = exec.sharedForeachForTest(edgeCtx, "FOREACH (r IN $rels | DELETE r)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
-	edges, err = engine.GetEdgesByType("LINK")
+	edges, err = engine.GetEdgesByType(ctx, "LINK")
 	require.NoError(t, err)
 	require.Empty(t, edges, "bound relationship must be deleted")
 
@@ -63,8 +63,8 @@ func TestForeach_BoundStandaloneDelete(t *testing.T) {
 	// Unbound standalone DELETE is rejected by shared statement admission.
 	_, err = exec.Execute(ctx, "DELETE n", getParamsFromContext(ctx))
 	require.Error(t, err)
-	require.ErrorContains(t, err, "Neo.ClientError.Statement.SyntaxError")
-	require.ErrorContains(t, err, "undefined variable")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	require.EqualError(t, err, "Variable `n` not defined")
 }
 
 // TestForeach_BoundStandaloneDelete_StringIDs pins the string-ID bound target.
@@ -74,14 +74,14 @@ func TestForeach_BoundStandaloneDelete_StringIDs(t *testing.T) {
 
 	_, err := exec.Execute(ctx, `CREATE (:StrDel {k: 1})`, nil)
 	require.NoError(t, err)
-	nodes, err := engine.GetNodesByLabel("StrDel")
+	nodes, err := engine.GetNodesByLabel(ctx, "StrDel")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 
 	strCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"items": []interface{}{string(nodes[0].ID)}})
 	_, err = exec.sharedForeachForTest(strCtx, "FOREACH (id IN $items | DELETE id)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
-	nodes, err = engine.GetNodesByLabel("StrDel")
+	nodes, err = engine.GetNodesByLabel(ctx, "StrDel")
 	require.NoError(t, err)
 	require.Empty(t, nodes, "string-ID bound target must be deleted")
 }
@@ -95,7 +95,7 @@ func BenchmarkForeach_BoundStandaloneDelete(b *testing.B) {
 		if _, err := exec.Execute(ctx, `CREATE (:BDel)`, nil); err != nil {
 			b.Fatal(err)
 		}
-		nodes, err := engine.GetNodesByLabel("BDel")
+		nodes, err := engine.GetNodesByLabel(ctx, "BDel")
 		if err != nil || len(nodes) != 1 {
 			b.Fatalf("setup: %v %d", err, len(nodes))
 		}

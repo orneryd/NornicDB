@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -21,6 +22,30 @@ func (err *schemaAdmissionError) BoltErrorCode() string { return err.code }
 
 func newSchemaAdmissionError(code string, message localization.Message) error {
 	return &schemaAdmissionError{code: "Neo.ClientError.Schema." + code, cause: localizedError(message, nil)}
+}
+
+// HiddenEdgeIdentityConflictError is the permanent result of a CREATE whose
+// physical ID belongs to a hidden relationship but whose final transaction
+// image is not semantically identical. It unwraps to ErrAlreadyExists for
+// storage callers while exposing a non-retryable client status to Bolt/HTTP.
+type HiddenEdgeIdentityConflictError struct {
+	EdgeID    EdgeID
+	Namespace string
+}
+
+func (err *HiddenEdgeIdentityConflictError) Error() string {
+	id := strings.TrimPrefix(string(err.EdgeID), err.Namespace+":")
+	return localizedError(localization.StorageTransactionHiddenEdgeIdentityConflict(id), ErrAlreadyExists).Error()
+}
+
+func (err *HiddenEdgeIdentityConflictError) Unwrap() error { return ErrAlreadyExists }
+
+func (err *HiddenEdgeIdentityConflictError) BoltErrorCode() string {
+	return "Neo.ClientError.Schema.ConstraintValidationFailed"
+}
+
+func (err *HiddenEdgeIdentityConflictError) BoltErrorDetail() string {
+	return "RelationshipIdentityConflict"
 }
 
 // NodeStillConnectedError fails the commit of a transaction that deleted a
@@ -49,7 +74,22 @@ func (err *NodeStillConnectedError) BoltErrorDetail() string { return "DeleteCon
 
 // ConnectedNodeDeleter is a store that can delete a node that relationships
 // still connect, failing the commit unless they are deleted first
-// (BadgerTransaction.DeleteConnectedNode).
+// (BadgerTransaction.DeleteGraphNode with RejectConnected).
 type ConnectedNodeDeleter interface {
-	DeleteConnectedNode(id NodeID) error
+	DeleteGraphNode(ctx context.Context, id NodeID, mode NodeDeletionMode) error
+}
+
+// IncidentEdgeLister is a store that lists every relationship connecting a
+// node, those the visibility layer hides from reads included
+// (BadgerTransaction.IncidentEdges). A DELETE reads them: a hidden
+// relationship still connects its endpoints, so it keeps a non-DETACH DELETE
+// from removing the node, and DETACH DELETE removes and counts it.
+//
+// The list is a bulk read, so it carries the caller's context: the DELETE
+// checks and the DETACH DELETE count run before the statement is accepted, and
+// both were originated by the request (pipelineApplyDelete). A canceled or
+// expired request returns its own error and no partial relationship list,
+// and the enumeration stops instead of materializing it.
+type IncidentEdgeLister interface {
+	IncidentEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
 }

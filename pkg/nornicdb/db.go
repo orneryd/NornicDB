@@ -30,8 +30,6 @@ package nornicdb
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -44,13 +42,18 @@ import (
 
 	"github.com/google/uuid"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/encryption"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/inference"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	lifetime "github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/replication"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -152,10 +155,22 @@ func DefaultConfig() *Config {
 // Thread Safety:
 //
 //	All methods are thread-safe and can be called concurrently.
+type replicationWALPreparation struct {
+	dir          string
+	mode         string
+	allowUpgrade bool
+}
+
 type DB struct {
 	config *Config
-	mu     sync.RWMutex
-	closed bool
+	// The replication WAL is checked before opening the primary store.
+	preparedReplicationWAL replicationWALPreparation
+	// The boot selection is shared by the native upgrade and the catalog;
+	// server construction must not independently resolve a different key.
+	remoteCredentialKey       string
+	remoteCredentialKeySource string
+	mu                        sync.RWMutex
+	opened                    bool // only a published DB may write the clean marker
 
 	// Internal components
 	storage           storage.Engine // Namespaced storage for default database (all DB operations use this)
@@ -164,20 +179,30 @@ type DB struct {
 	accessAccumulator *knowledgepolicy.AccessAccumulator
 	accessFlusher     *knowledgepolicy.AccessFlusher
 	cypherExecutor    *cypher.StorageExecutor
+	memoryPolicy      *memory.Policy
 	gpuManagerMu      sync.RWMutex
 	gpuManager        interface{} // *gpu.Manager - interface to avoid circular import
 
 	// Search services (per database) using pre-computed embeddings.
-	embeddingDims        int     // Effective vector index dimensions in use
-	searchMinSimilarity  float64 // Default MinSimilarity threshold for search
-	searchServicesMu     sync.RWMutex
-	searchServices       map[string]*dbSearchService
+	embeddingDims       int     // Effective vector index dimensions in use
+	searchMinSimilarity float64 // Default MinSimilarity threshold for search
+	searchServicesMu    sync.RWMutex
+	searchServices      map[string]*dbSearchService
+	// searchGenerations counts, per database, the generations of its search
+	// state that invalidateSearchState ended (search_state.go).
+	searchGenerations map[string]uint64
+	// defaultSearchMetrics is attached to every default-database search
+	// service (AttachDefaultSearchMetrics), under searchServicesMu.
+	defaultSearchMetrics *observability.SearchMetrics
 	searchContinuationMu sync.Mutex
 	searchContinuation   *resultstream.Registry
-	// searchServiceCreationMu serializes the "create and insert" path in getOrCreateSearchService
-	// so only one goroutine creates a service per dbName at a time, avoiding RWMutex contention deadlock.
+	// Constructors are DB work and work of the current construction epoch;
+	// publication remains in searchServices. A reset seals that epoch and
+	// joins it, and publishes a new epoch only after it stopped.
 	searchServiceCreationMu sync.Mutex
-	searchReranker          search.Reranker // Optional Stage-2 reranker for hybrid search
+	searchConstruction      *lifetime.WorkLifetime   // searchServicesMu; the current constructor epoch
+	searchRetirement        *lifetime.OnceCompletion // searchServicesMu; the running reset, nil otherwise
+	searchReranker          search.Reranker          // Optional Stage-2 reranker for hybrid search
 
 	// Per-database inference engines (topology, Kalman, etc.).
 	inferenceServicesMu sync.RWMutex
@@ -190,14 +215,18 @@ type DB struct {
 
 	// K-means clustering timer (runs on schedule instead of trigger)
 	clusterTicker           *time.Ticker
-	clusterTickerStop       chan struct{}
 	lastClusteredEmbedCount int // Track embedding count at last clustering
 
 	// Encryption flag - when true, all data is encrypted at BadgerDB level
 	encryptionEnabled bool
 
-	// Background goroutine tracking
-	bgWg sync.WaitGroup
+	// work is the DB's one admission, completion and outcome owner: background
+	// tasks, constructors, provider users and the stop signal are its accepted
+	// work; Close seals it and retires the DB after they actually returned.
+	work lifetime.WorkLifetime
+	// replicationStop is the replicator's one shutdown, started by the stop
+	// signal and joined by retirement.
+	replicationStop lifetime.OnceCompletion
 
 	// buildCtx is cancelled when the DB closes so startup index build stops promptly.
 	buildCtx    context.Context
@@ -217,7 +246,7 @@ type DB struct {
 
 	// Optional: when set, per-database config overrides are applied for search/embed (dims, minSimilarity).
 	// Server wires this when system DB and DbConfigStore are available.
-	// Use dbConfigResolverMu (not db.mu) so getOrCreateSearchService does not contend with other db.mu users and avoid deadlock.
+	// Use dbConfigResolverMu (not db.mu) so GetOrCreateSearchService does not contend with other db.mu users and avoid deadlock.
 	dbConfigResolverMu      sync.RWMutex
 	dbConfigResolver        DbConfigResolver
 	dbSearchOptionsResolver DbSearchOptionsResolver
@@ -238,21 +267,23 @@ type DB struct {
 	// warming. The default DB hit this most visibly because it's the
 	// first thing warmed.
 	//
-	// Closed by MarkSearchWarmupReady (typically called by server.New
+	// Completed by MarkSearchWarmupReady (typically called by server.New
 	// AFTER SetDbSearchFlagsResolver). Embedded callers that never set
 	// a resolver still get warmup — the auto-ready timer in
-	// startSearchIndexWarmup closes the channel after a grace window
+	// startSearchIndexWarmup completes the gate after a grace window
 	// so callers without a server layer don't deadlock.
-	searchWarmupReady     chan struct{}
-	searchWarmupReadyOnce sync.Once
+	searchWarmupReady lifetime.OnceCompletion
 
 	// Per-DB embedder registry: keyed by embedConfigKey(cfg). Used by EmbedQueryForDB when embedConfigForDB is set.
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
-	defaultEmbedKey    string // key for the embedder set via SetEmbedder (global default)
+	ownedProviders     []*providerResource // protected by mu; released after workers join
+	ownedWork          lifetime.Outcomes   // lifetime completion outcomes, independent of host registry admission
+	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
+	defaultEmbedConfig *embed.Config       // protected by embedderRegistryMu; owns failure diagnostics
 	// embedderFactory allows tests to inject deterministic embedder creation behavior.
 	// Production uses embed.NewEmbedder.
-	embedderFactory func(cfg *embed.Config) (embed.Embedder, error)
+	embedderFactory func(ctx context.Context, cfg *embed.Config) (embed.Embedder, error)
 	// in-flight embedder creations keyed by embedConfigKey(cfg), used to avoid duplicate
 	// expensive model loads under concurrent query traffic.
 	embedderCreateMu sync.Mutex
@@ -260,18 +291,18 @@ type DB struct {
 	// embedConfigForDB returns resolved embed config for a database; when set, EmbedQueryForDB uses the registry.
 	embedConfigForDB func(dbName string) (*embed.Config, error)
 
-	// Optional: when set, getOrCreateSearchService uses this to get the reranker for a database (enables per-DB reranker).
+	// Optional: when set, GetOrCreateSearchService uses this to get the reranker for a database (enables per-DB reranker).
 	rerankerResolver func(dbName string) search.Reranker
 
 	lifecycleManager  *lifecycle.MVCCLifecycleManager
 	retentionManager  *retention.Manager
-	onRetentionAction func(action, recordID, category string)
+	onRetentionAction func(action, recordID, category string) error
 }
 
-// DbConfigResolver returns effective embedding dimensions, search min similarity, and BM25 engine for a database.
-// When set, getOrCreateSearchService uses these instead of the global db.config values.
-// Return ("", 0, 0) values to use global defaults for that DB.
-type DbConfigResolver func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string)
+// DbConfigResolver returns effective embedding dimensions and search min similarity for a database.
+// When set, GetOrCreateSearchService uses these instead of the global db.config values.
+// A non-positive dimension uses the global dimension; similarity is used as returned.
+type DbConfigResolver func(dbName string) (embeddingDims int, searchMinSimilarity float64)
 
 // DbSearchOptionsResolver returns resource options for a database search service.
 type DbSearchOptionsResolver func(dbName string) search.ServiceOptions
@@ -280,7 +311,7 @@ type DbSearchOptionsResolver func(dbName string) search.ServiceOptions
 // and warming triggers. Defaults reproduce today's behaviour: bm25Enabled=true,
 // vectorEnabled=true, both warming="startup".
 //
-// When set, getOrCreateSearchService and the boot orchestrator consult it to
+// When set, GetOrCreateSearchService and the boot orchestrator consult it to
 // decide whether to build, lazy-defer, or skip each index per database.
 //
 // Returning an empty `bm25Warming` or `vectorWarming` is treated as "startup".
@@ -308,6 +339,8 @@ type DatabaseAndStorage struct {
 // This initializes all database components including storage, decay management,
 // relationship inference, and search services based on the configuration. The
 // database is ready for use immediately after opening.
+// The supplied config owns the default database. Nil uses DefaultConfig; callers
+// loading environment or YAML settings pass the resolved config explicitly.
 //
 // # Initialization Steps
 //
@@ -413,7 +446,11 @@ type DatabaseAndStorage struct {
 //	go func() {
 //		ticker := time.NewTicker(1 * time.Hour)
 //		for range ticker.C {
-//			stats := db.Stats()
+//			stats, err := db.Stats(context.Background())
+//			if err != nil {
+//				log.Printf("Maintenance statistics unavailable: %v", err)
+//				continue
+//			}
 //			log.Printf("Nodes: %d, Edges: %d, Memory: %d MB",
 //				stats.NodeCount, stats.EdgeCount, stats.MemoryUsageMB)
 //		}
@@ -489,30 +526,24 @@ type DatabaseAndStorage struct {
 //	// Database recovered
 //	fmt.Println("Database opened successfully")
 //
-// Example (Migration):
+// Example (Enumerating Existing Data):
 //
-//	// Open old database
-//	oldDB, err := nornicdb.Open("/data/old", nil)
+//	db, err := nornicdb.Open("/data/existing", nil)
 //	if err != nil {
 //		log.Fatal(err)
 //	}
-//	defer oldDB.Close()
-//
-//	// Create new database with updated config
-//	newConfig := nornicdb.DefaultConfig()
-//	newConfig.EmbeddingDimensions = 3072 // Upgraded embeddings
-//	newDB, err := nornicdb.Open("/data/new", newConfig)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//	defer newDB.Close()
-//
-//	// Migrate data
-//	nodes, _ := oldDB.GetAllNodes(context.Background())
-//	for _, node := range nodes {
-//		// Re-embed with new model (done by the application)
-//		// Store in new database
-//		newDB.Store(context.Background(), node)
+//	defer db.Close()
+//	for offset := 0; ; offset += 1000 {
+//		nodes, err := db.ListNodes(context.Background(), "", 1000, offset)
+//		if err != nil {
+//			log.Fatal(err)
+//		}
+//		if len(nodes) == 0 {
+//			break
+//		}
+//		for _, node := range nodes {
+//			fmt.Println(node.ID, node.Labels)
+//		}
 //	}
 //
 // # Error Handling
@@ -576,9 +607,36 @@ type DatabaseAndStorage struct {
 //   - Search system keeps the catalog updated
 //
 // You just add books and search - the rest happens automatically!
-func Open(dataDir string, config *Config) (*DB, error) {
+func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	if config == nil {
 		config = DefaultConfig()
+	}
+	// Refuse an unsupported WAL before opening or migrating the Badger store.
+	// Otherwise a failed startup can advance the storage version while leaving
+	// the old WAL unreadable by the new binary.
+	if info, statErr := os.Stat(dataDir); dataDir != "" && statErr == nil && info.IsDir() {
+		walDir := filepath.Join(dataDir, "wal")
+		err := storage.ValidateWALFormat(walDir, storage.WALValidateCurrent)
+		if err != nil && config.Database.AllowStorageUpgrade && errors.Is(err, storage.ErrWALUnsupportedVersion) {
+			err = storage.ValidateWALFormat(walDir, storage.WALValidateV4Upgrade)
+		}
+		if err != nil {
+			return nil, localizedError(localization.NornicDBCoreWALInitializeFailed(err), err)
+		}
+	}
+	intervalMS, rearmMS := config.Memory.RecoveryIntervalMS, config.Memory.RecoveryRearmMS
+	// Literal embedded configurations predate these fields. The all-zero pair
+	// means omitted here; explicit zero in YAML or environment fails parsing.
+	if intervalMS == 0 && rearmMS == 0 {
+		intervalMS, rearmMS = nornicConfig.DefaultMemoryRecoveryIntervalMS, nornicConfig.DefaultMemoryRecoveryRearmMS
+	}
+	if err := nornicConfig.ValidateMemoryRecoveryTimings(intervalMS, rearmMS); err != nil {
+		return nil, err
+	}
+	mode := os.Getenv("NORNICDB_CLUSTER_MODE")
+	preparedWAL := replicationWALPreparation{dir: replicationWALDirectory(dataDir, mode), mode: mode, allowUpgrade: config.Database.AllowStorageUpgrade}
+	if err := prepareReplicationWAL(preparedWAL.dir, preparedWAL.allowUpgrade, preparedWAL.mode); err != nil {
+		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 	}
 	config.Database.DataDir = dataDir
 	// Defensive defaults for the per-DB search-index master switches.
@@ -613,8 +671,28 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 
 	db := &DB{
-		config:            config,
-		searchWarmupReady: make(chan struct{}),
+		config:                 config,
+		preparedReplicationWAL: preparedWAL,
+	}
+	db.remoteCredentialKey, db.remoteCredentialKeySource = config.RemoteCredentialEncryptionKey()
+	// Every construction failure enters the same retirement owner as Close.
+	// Register each acquired component before the next fallible start site.
+	defer func() {
+		if openErr != nil {
+			openErr = compose.Outcomes(openErr, db.Close())
+		}
+	}()
+
+	if limit := config.Memory.ApplicationSoftMax; limit > 0 {
+		headroom := max(int64(128<<20), limit/10)
+		db.memoryPolicy = memory.NewPolicy(limit, headroom, 2*time.Second, memory.CgroupSample, time.Now,
+			memory.WithRecoveryTimings(time.Duration(intervalMS)*time.Millisecond,
+				time.Duration(rearmMS)*time.Millisecond))
+	}
+
+	selectedDefaultDBName := config.Database.DefaultDatabase
+	if selectedDefaultDBName == "" {
+		selectedDefaultDBName = "nornic"
 	}
 
 	// Initialize storage - use BadgerEngine for persistence, MemoryEngine for testing
@@ -622,6 +700,12 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Configure BadgerDB based on memory mode
 		// HighPerformance uses ~1GB RAM, LowMemory uses ~50MB
 		badgerOpts, walConfig := resolveDurabilityOptions(dataDir, config)
+		catalogUpgrade, err := multidb.NewCatalogUpgradeV4("system", db.remoteCredentialKey)
+		if err != nil {
+			return nil, err
+		}
+		badgerOpts.CatalogUpgradeV4 = catalogUpgrade
+		badgerOpts.MemoryPolicy = db.memoryPolicy
 		providerMode := strings.TrimSpace(strings.ToLower(config.Database.EncryptionProvider))
 		if providerMode == "" {
 			providerMode = "password"
@@ -643,8 +727,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 					fmt.Println("🔐 Loading existing encryption salt")
 				} else {
 					// Generate new salt for new encrypted database
-					salt = make([]byte, 32)
-					if _, err := rand.Read(salt); err != nil {
+					var err error
+					salt, err = encryption.GenerateSalt()
+					if err != nil {
 						return nil, localizedError(localization.NornicDBCoreEncryptionSaltGenerateFailed(err), err)
 					}
 					// Persist salt (required for decryption after restart)
@@ -726,7 +811,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			if autoRecoverEnabled && !config.Database.EncryptionEnabled && recoverableArtifacts && (corruptionSuspected || autoRecoverExplicit) {
 				log.Printf("🔧 Auto-recover setting: enabled=%t env(NORNICDB_AUTO_RECOVER_ON_CORRUPTION)=%q", autoRecoverEnabled, os.Getenv("NORNICDB_AUTO_RECOVER_ON_CORRUPTION"))
 				log.Printf("⚠️  Persistent store open failed: %v; attempting auto-recovery from snapshots + WAL (dataDir=%s)", err, dataDir)
-				recovered, backupDir, recErr := recoverBadgerFromSnapshotAndWAL(dataDir, badgerOpts)
+				recovered, backupDir, recErr := recoverBadgerFromSnapshotAndWAL(db.work.Context(), dataDir, badgerOpts)
 				if recErr != nil {
 					return nil, fmt.Errorf("failed to open persistent storage: %v (auto-recovery failed: %w)", err, recErr)
 				}
@@ -737,6 +822,10 @@ func Open(dataDir string, config *Config) (*DB, error) {
 					autoRecoverEnabled, os.Getenv("NORNICDB_AUTO_RECOVER_ON_CORRUPTION"), corruptionSuspected, config.Database.EncryptionEnabled)
 				return nil, localizedError(localization.NornicDBCorePersistentStorageOpenFailed(err), err)
 			}
+		}
+		db.baseStorage = badgerEngine
+		if err := db.upgradeRelationshipSnapshots(config.Database.AllowStorageUpgrade, nil); err != nil {
+			return nil, fmt.Errorf("upgrading search snapshots: %w", err)
 		}
 		if config.Database.MVCCLifecycleEnabled {
 			lifecycleConfig := lifecycle.DefaultLifecycleConfig()
@@ -812,21 +901,18 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				}
 			}
 
-			rm.SetDeleteCallback(func(record *retention.DataRecord) error {
-				if err := db.storage.DeleteNode(storage.NodeID(record.ID)); err != nil {
+			rm.SetDeleteCallback(func(ctx context.Context, record *retention.DataRecord) error {
+				if err := db.storage.DeleteNode(ctx, storage.NodeID(record.ID)); err != nil {
 					return err
 				}
-				if db.onRetentionAction != nil {
-					db.onRetentionAction("RETENTION_DELETE", record.ID, string(record.Category))
-				}
-				return nil
+				return db.retentionAuditOutcome("RETENTION_DELETE", record.ID, string(record.Category))
 			})
-			rm.SetArchiveCallback(func(record *retention.DataRecord, archivePath string) error {
-				node, err := db.storage.GetNode(storage.NodeID(record.ID))
+			rm.SetArchiveCallback(func(ctx context.Context, record *retention.DataRecord, archivePath string) error {
+				node, err := db.storage.GetNode(ctx, storage.NodeID(record.ID))
 				if err != nil {
 					return err
 				}
-				data, err := json.Marshal(node)
+				data, err := valueconvert.PropertyJSON.Marshal(node)
 				if err != nil {
 					return err
 				}
@@ -837,10 +923,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				if err := os.WriteFile(archiveFile, data, 0644); err != nil {
 					return err
 				}
-				if db.onRetentionAction != nil {
-					db.onRetentionAction("RETENTION_ARCHIVE", record.ID, string(record.Category))
-				}
-				return nil
+				return db.retentionAuditOutcome("RETENTION_ARCHIVE", record.ID, string(record.Category))
 			})
 
 			db.retentionManager = rm
@@ -850,25 +933,20 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Initialize WAL for durability (uses batch sync mode by default for better performance)
 		wal, err := storage.NewWAL(walConfig.Dir, walConfig)
 		if err != nil {
-			badgerEngine.Close()
 			return nil, localizedError(localization.NornicDBCoreWALInitializeFailed(err), err)
 		}
 		db.wal = wal
 
 		// Wrap storage with WAL for durability
 		walEngine := storage.NewWALEngine(badgerEngine, wal)
+		db.baseStorage = walEngine
 
-		// Replay write-behind commits that were acknowledged into the WAL
-		// but never reached Badger before a crash lost the in-memory
-		// buffer. Runs before any traffic; a no-op when write-behind is
-		// disabled or nothing is pending.
-		if badgerOpts.WriteBehind {
-			if recovered, recErr := storage.RecoverBufferedCommits(badgerEngine, wal); recErr != nil {
-				badgerEngine.Close()
-				return nil, fmt.Errorf("failed to replay buffered commits from WAL: %w", recErr)
-			} else if recovered > 0 {
-				fmt.Printf("♻️  Recovered %d acknowledged write-behind commits from the WAL\n", recovered)
-			}
+		// Replay accepted semantic transactions and buffered ACKs before traffic.
+		// Semantic records can precede physical publication in either mode.
+		if recovered, recErr := storage.RecoverBufferedCommitsAtOpen(badgerEngine, wal); recErr != nil {
+			return nil, fmt.Errorf("failed to replay accepted commits from WAL: %w", recErr)
+		} else if recovered > 0 {
+			fmt.Printf("♻️  Recovered %d accepted commits from the WAL\n", recovered)
 		}
 
 		// Enable auto-compaction to prevent unbounded WAL growth
@@ -917,28 +995,27 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// and routes ALL writes through a Replicator, while reads remain local.
 		baseStorage, err = db.maybeEnableReplication(baseStorage)
 		if err != nil {
-			_ = db.baseStorage.Close()
 			return nil, err
 		}
 
 		// Wrap base storage with NamespacedEngine for the default database ("nornic")
 		// This ensures everything uses namespaced storage - no direct base storage access
-		// Get default database name from global config (same as server does)
-		globalConfig := nornicConfig.LoadFromEnv()
-		defaultDBName := globalConfig.Database.DefaultDatabase
-		if defaultDBName == "" {
-			defaultDBName = "nornic" // Fallback to "nornic" if not configured
-		}
-		db.storage = storage.NewNamespacedEngine(baseStorage, defaultDBName)
+		// Use the same resolved config snapshot as the other startup components.
+		db.storage = storage.NewNamespacedEngine(baseStorage, selectedDefaultDBName)
 		if config.Memory.DecayEnabled {
-			if err := maybeBootstrapDefaultKnowledgePolicy(baseStorage, defaultDBName); err != nil {
-				_ = db.baseStorage.Close()
+			if err := maybeBootstrapDefaultKnowledgePolicy(db.LifetimeContext(), baseStorage, selectedDefaultDBName); err != nil {
 				return nil, err
 			}
 		}
-		fmt.Printf("📦 Wrapped storage with namespace '%s' (all operations are namespaced)\n", defaultDBName)
+		fmt.Printf("📦 Wrapped storage with namespace '%s' (all operations are namespaced)\n", selectedDefaultDBName)
 	} else {
-		var baseStorage storage.Engine = storage.NewMemoryEngine()
+		// The in-memory store opens with the same engine-wide policy as a
+		// persistent one (resolveEngineOptions).
+		memoryEngine, err := storage.NewMemoryEngineWithOptions(storage.BadgerOptions{EngineOptions: resolveEngineOptions(config), Logger: config.Logger})
+		if err != nil {
+			return nil, err
+		}
+		var baseStorage storage.Engine = memoryEngine
 		fmt.Println("⚠️  Using in-memory storage (data will not persist)")
 
 		// Track the underlying storage chain so Close() can cleanly shut down goroutines/locks.
@@ -947,26 +1024,19 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Optionally wrap base storage with replication.
 		replicated, err := db.maybeEnableReplication(baseStorage)
 		if err != nil {
-			_ = db.baseStorage.Close()
 			return nil, err
 		}
 		baseStorage = replicated
 
 		// Wrap in-memory storage with NamespacedEngine for consistency
-		// Get default database name from global config (same as server does)
-		globalConfig := nornicConfig.LoadFromEnv()
-		defaultDBName := globalConfig.Database.DefaultDatabase
-		if defaultDBName == "" {
-			defaultDBName = "nornic" // Fallback to "nornic" if not configured
-		}
-		db.storage = storage.NewNamespacedEngine(baseStorage, defaultDBName)
+		// Use the same resolved config snapshot as the other startup components.
+		db.storage = storage.NewNamespacedEngine(baseStorage, selectedDefaultDBName)
 		if config.Memory.DecayEnabled {
-			if err := maybeBootstrapDefaultKnowledgePolicy(baseStorage, defaultDBName); err != nil {
-				_ = db.baseStorage.Close()
+			if err := maybeBootstrapDefaultKnowledgePolicy(db.LifetimeContext(), baseStorage, selectedDefaultDBName); err != nil {
 				return nil, err
 			}
 		}
-		fmt.Printf("📦 Wrapped in-memory storage with namespace '%s' (all operations are namespaced)\n", defaultDBName)
+		fmt.Printf("📦 Wrapped in-memory storage with namespace '%s' (all operations are namespaced)\n", selectedDefaultDBName)
 	}
 	// How long change data capture events are kept (#937).
 	if capture, ok := storage.ChangeCaptureOf(db.baseStorage); ok {
@@ -975,6 +1045,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Initialize Cypher executor
 	db.cypherExecutor = cypher.NewStorageExecutor(db.storage)
+	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.beginProviderUse)
 	// The base executor is shared by every embedded caller of DB.Cypher /
 	// ExecuteCypher: a statement must never leave it inside a transaction.
 	// Embedded callers that want explicit transactions create their own
@@ -989,14 +1060,13 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// Load function plugins from configured directory
 	// Heimdall plugins will be loaded later by the server after Heimdall is initialized
 	if db.config.Server.PluginsDir != "" {
-		if err := LoadPluginsFromDir(db.config.Server.PluginsDir, nil); err != nil {
+		if err := LoadPluginsFromDir(context.Background(), db.config.Server.PluginsDir, nil); err != nil {
 			fmt.Printf("⚠️  Plugin loading warning: %v\n", err)
 		}
 	}
 	if db.config.Server.StemmerPluginsDir != "" {
 		diagnostics, err := stemmer.LoadDirBestEffort(db.config.Server.StemmerPluginsDir)
 		if err != nil {
-			_ = db.baseStorage.Close()
 			return nil, fmt.Errorf("loading stemmer plugins: %w", err)
 		}
 		for _, diagnostic := range diagnostics {
@@ -1005,7 +1075,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		selectedStemmer := stemmer.NormalizeSelection(db.config.Memory.SearchBM25Stemmer)
 		if selectedStemmer != stemmer.NoneID {
 			if _, ok := stemmer.Lookup(selectedStemmer); !ok {
-				_ = db.baseStorage.Close()
 				return nil, fmt.Errorf("configured stemmer %q is unavailable after loading plugins", selectedStemmer)
 			}
 		}
@@ -1013,7 +1082,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Wire up plugin function lookup and listing for Cypher executor
 	cypher.PluginFunctionList = pluginFunctionInfos
-	cypher.PluginFunctionLookup = func(name string) (interface{}, bool) {
+	// Author: Codex NOR-184 lane. Only admitted callables reach query dispatch.
+	cypher.PluginFunctionLookup = func(name string) (*cypher.PluginFunctionHandler, bool) {
 		fn, found := GetPluginFunction(name)
 		if !found {
 			return nil, false
@@ -1102,8 +1172,10 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				be,
 				func(entityID string) { be.AddToPendingEmbeddings(storage.NodeID(entityID)) },
 			)
-			db.accessFlusher.SetSuppressionRecheck(func(entityID string, meta knowledgepolicy.EntityMeta) {
-				becameSuppressed, err := be.EnqueueDeindexIfSuppressed(entityID, meta.Scope == knowledgepolicy.ScopeEdge)
+			db.accessFlusher.SetSuppressionRecheck(func(ctx context.Context, entityID string, meta knowledgepolicy.EntityMeta) {
+				// ctx is the flush cycle that observed the change: the write belongs to
+				// that accepted work, not to a request or run lifetime that has ended.
+				becameSuppressed, err := be.EnqueueDeindexIfSuppressed(ctx, entityID, meta.Scope == knowledgepolicy.ScopeEdge)
 				if err == nil && becameSuppressed {
 					// Emit deindex counter + on-access suppression record.
 					if kp := observability.GetKnowledgePolicyMetrics(); kp != nil {
@@ -1131,10 +1203,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		db.inferenceServices = make(map[string]*inference.Engine)
 		// Eagerly create default DB inference for parity with prior behavior.
 		if _, err := db.getOrCreateInferenceService(db.defaultDatabaseName(), db.storage); err != nil {
-			db.mu.Lock()
-			db.closed = true
-			db.mu.Unlock()
-			_ = db.closeInternal()
 			return nil, localizedError(localization.NornicDBCoreInferenceInitializeFailed(err), err)
 		}
 	}
@@ -1205,60 +1273,36 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// This preserves Neo4j/Cypher interface compatibility while centralizing the
 	// implementation in the core search layer.
 	if db.cypherExecutor != nil {
-		if svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); err == nil {
-			db.cypherExecutor.SetSearchService(svc)
+		if _, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); err == nil {
+			db.cypherExecutor.SetSearchServiceResolver(db.defaultDatabaseName(), db.SearchServiceResolver())
 		} else {
 			fmt.Printf("⚠️  Search service unavailable for Cypher executor: %v\n", err)
 		}
 	}
 
-	// Wire up storage event callbacks to keep search indexes synchronized
-	// Storage is the single source of truth - it notifies when changes happen
-	// The storage chain is: WALEngine -> BadgerEngine
-	var underlyingEngine storage.Engine = db.storage
-
-	// Unwrap NamespacedEngine first so we can:
-	//  1) Reach the underlying engine that emits events (BadgerEngine)
-	//  2) Receive events with fully-qualified node IDs (<db>:<id>)
-	if namespacedEngine, ok := underlyingEngine.(*storage.NamespacedEngine); ok {
-		underlyingEngine = namespacedEngine.GetInnerEngine()
-	}
-
-	// Unwrap WALEngine if present
-	if walEngine, ok := underlyingEngine.(*storage.WALEngine); ok {
-		underlyingEngine = walEngine.GetInnerEngine()
-	}
-
-	// Set callbacks on the actual storage engine (BadgerEngine which implements StorageEventNotifier)
-	if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok {
-		// When a node is created/updated/deleted, route the event to the correct
-		// per-database search service based on the namespace prefix (<db>:<id>).
-		// The downstream mutation path is debounced, so we can enqueue inline here
-		// without spawning one goroutine per write event.
-		notifier.OnNodeCreated(func(node *storage.Node) {
-			if node == nil {
-				return
-			}
-			nodeCopy := storage.CopyNode(node)
-			db.indexNodeFromEvent(nodeCopy)
+	// Storage is the single source of truth for search: every node and
+	// relationship event, and every namespace reset (a DeleteByPrefix from any
+	// DROP DATABASE path, or a replicated one), reaches it. The subscription
+	// goes through the engine this DB's namespaced view wraps, so events carry
+	// fully-qualified IDs (<db>:<id>); every wrapper in between forwards it
+	// (storage.EventSubscriber), and one that does not fails Open.
+	if namespaced, ok := db.storage.(*storage.NamespacedEngine); ok {
+		// The downstream mutation path is debounced, so events are queued
+		// inline; only the ID is queued, the refresh reads the stored state.
+		err := storage.SubscribeEvents(namespaced.GetInnerEngine(), storage.EventHandlers{
+			NodeCreated: db.indexNodeFromEvent,
+			NodeUpdated: db.indexNodeFromEvent,
+			NodeDeleted: func(id storage.NodeID) { db.queueSearchRefreshEvent(searchNodeDelete, string(id)) },
+			// Relationship vectors are indexed whether or not relationship
+			// search (#1065) is on.
+			EdgeCreated:    db.indexRelationshipFromEvent,
+			EdgeUpdated:    db.indexRelationshipFromEvent,
+			EdgeDeleted:    func(id storage.EdgeID) { db.queueSearchRefreshEvent(searchRelationshipChange, string(id)) },
+			NamespaceReset: db.dropSearchForPrefix,
 		})
-		notifier.OnNodeUpdated(func(node *storage.Node) {
-			if node == nil {
-				return
-			}
-			nodeCopy := storage.CopyNode(node)
-			db.indexNodeFromEvent(nodeCopy)
-		})
-		notifier.OnNodeDeleted(func(nodeID storage.NodeID) {
-			db.removeNodeFromEvent(nodeID)
-		})
-	}
-
-	// Relationship search (#1065) follows relationship writes too.
-	if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok && db.config != nil && db.config.Memory.SearchRelationshipsEnabled {
-		notifier.OnEdgeCreated(func(edge *storage.Edge) { db.indexRelationshipFromEvent(edge) })
-		notifier.OnEdgeUpdated(func(edge *storage.Edge) { db.indexRelationshipFromEvent(edge) })
-		notifier.OnEdgeDeleted(func(edgeID storage.EdgeID) { db.removeRelationshipFromEvent(edgeID) })
+		if err != nil {
+			return nil, fmt.Errorf("subscribing search to storage events: %w", err)
+		}
 	}
 
 	// Enable k-means clustering if feature flag is set (applied lazily per database).
@@ -1273,7 +1317,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// This ensures search is ready before first query and k-means runs after indexes exist.
 	// Use a context cancelled on DB close so the build stops when the process is killed.
 	defaultDBName := db.defaultDatabaseName()
-	db.buildCtx, db.buildCancel = context.WithCancel(context.Background())
+	// The database lifetime context is the DB owner's: stopping the DB, or a
+	// signalled stop, cancels it.
+	db.buildCtx, db.buildCancel = context.WithCancel(db.work.Context())
 	if db.accessFlusher != nil {
 		db.accessFlusher.Start(db.buildCtx)
 	}
@@ -1289,7 +1335,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	db.derivedIndexesHealthy = prepareDerivedIndexes(bootstrapCtx, db.baseStorage)
 	bootstrapCancel()
 
-	_ = db.startBackgroundTask(func() {
+	_ = db.RunBackgroundTask(func(backgroundCtx context.Context) {
 		ctx, cancel := context.WithTimeout(db.buildCtx, 4*time.Hour)
 		defer cancel()
 
@@ -1316,7 +1362,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// race window: either the caller signed up for the gate and
 		// will release it, or it was never closed.
 		select {
-		case <-db.searchWarmupReady:
+		case <-db.searchWarmupReady.Done():
 		case <-ctx.Done():
 			return
 		}
@@ -1364,7 +1410,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				default:
 					log.Printf("🔍 Building BM25 + vector indexes for database %s (bm25=%v vector=%v)...", dbName, bm25On, vectorOn)
 				}
-				_, err := db.EnsureSearchIndexesBuilt(ctx, dbName, storageEngine)
+				_, err := db.EnsureSearchIndexes(ctx, dbName, storageEngine, SearchIndexBuildWait)
 				results <- searchBuildResult{dbName: dbName, err: err, outcome: outcome}
 			}(dbName)
 		}
@@ -1385,8 +1431,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		}
 
 		// Start embed queue workers after warmup so they don't compete with index build on startup.
-		if db.embedQueue != nil {
-			db.embedQueue.StartWorkers()
+		db.mu.RLock()
+		embedQueue := db.embedQueue
+		db.mu.RUnlock()
+		if embedQueue != nil {
+			embedQueue.StartWorkers()
 		}
 	})
 
@@ -1404,7 +1453,21 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if !config.DeferSearchWarmup {
 		db.MarkSearchWarmupReady()
 	}
+	if db.memoryPolicy != nil {
+		_ = db.memoryPolicy.Refresh()
+		ticks := time.NewTicker(250 * time.Millisecond)
+		if !db.RunBackgroundTask(func(backgroundCtx context.Context) {
+			defer ticks.Stop()
+			db.memoryPolicy.Run(db.buildCtx, ticks.C)
+		}) {
+			ticks.Stop()
+		}
+	}
 
+	// Publish process-wide transaction defaults only after every fallible open
+	// step succeeded. A failed second Open must not reset a serving DB's limits.
+	cypher.ConfigureTransactionMemory(config.Memory.TransactionTotalMax, cypher.TransactionMemoryLimits{TransactionMax: config.Memory.TransactionMax})
+	db.opened = true
 	return db, nil
 }
 
@@ -1430,14 +1493,27 @@ func resolveBadgerOptions(dataDir string, config *Config) storage.BadgerOptions 
 		NodeCacheMaxEntries:   config.Database.BadgerNodeCacheMaxEntries,
 		EdgeTypeCacheMaxTypes: config.Database.BadgerEdgeTypeCacheMaxTypes,
 		AllowStorageUpgrade:   config.Database.AllowStorageUpgrade,
-		EngineOptions: storage.EngineOptions{
-			RetentionPolicy: storage.RetentionPolicy{
-				MaxVersionsPerKey: config.Database.MVCCRetentionMaxVersions,
-				TTL:               config.Database.MVCCRetentionTTL,
-			},
-			IDFreelistTTL: config.Database.IDFreelistTTL,
+		EngineOptions:         resolveEngineOptions(config),
+		Logger:                config.Logger,
+	}
+}
+
+// resolveEngineOptions is the engine-wide policy a database's storage opens
+// with, persistent or in memory: MVCC retention, ID recycling, and how long a
+// MERGE waits for a node key another transaction holds: at most the
+// transaction timeout, and a wait past the slow-query threshold is logged
+// (NOR-284).
+func resolveEngineOptions(config *Config) storage.EngineOptions {
+	return storage.EngineOptions{
+		RetentionPolicy: storage.RetentionPolicy{
+			MaxVersionsPerKey: config.Database.MVCCRetentionMaxVersions,
+			TTL:               config.Database.MVCCRetentionTTL,
 		},
-		Logger: config.Logger,
+		IDFreelistTTL: config.Database.IDFreelistTTL,
+		LockWait: storage.LockWaitOptions{
+			Timeout:  config.Database.TransactionTimeout,
+			LogAfter: config.Logging.SlowQueryThreshold,
+		},
 	}
 }
 
@@ -1509,74 +1585,127 @@ func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOpt
 	return badgerOptions, walConfig
 }
 
+func replicationWALDirectory(dataDir, mode string) string {
+	replicationDir := os.Getenv("NORNICDB_CLUSTER_DATA_DIR")
+	if replicationDir == "" {
+		if dataDir == "" {
+			if mode == "" || mode == string(replication.ModeStandalone) {
+				return ""
+			}
+			replicationDir = filepath.Join("data", "replication")
+		} else {
+			replicationDir = filepath.Join(dataDir, "replication")
+		}
+	}
+	return filepath.Join(replicationDir, "wal")
+}
+
+// prepareReplicationWAL checks or upgrades the separate replication log before
+// the primary store can change.
+func prepareReplicationWAL(dir string, allowUpgrade bool, mode string) error {
+	if dir == "" {
+		return nil
+	}
+	if allowUpgrade {
+		_, err := storage.UpgradeWALV4(dir, storage.WALV4UpgradeOptions{Transform: replication.TranscodeV4WALPayload})
+		return err
+	}
+	if mode != "" && mode != string(replication.ModeStandalone) {
+		return storage.ValidateWALFormat(dir, storage.WALValidateCurrent)
+	}
+	return nil
+}
+
 func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error) {
 	mode := os.Getenv("NORNICDB_CLUSTER_MODE")
+	dataDir, allowUpgrade := "", false
+	if db.config != nil {
+		dataDir, allowUpgrade = db.config.Database.DataDir, db.config.Database.AllowStorageUpgrade
+	}
+	replicationWALDir := replicationWALDirectory(dataDir, mode)
+	preparation := replicationWALPreparation{dir: replicationWALDir, mode: mode, allowUpgrade: allowUpgrade}
+	if db.preparedReplicationWAL != preparation {
+		if err := prepareReplicationWAL(replicationWALDir, allowUpgrade, mode); err != nil {
+			return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
+		}
+		db.preparedReplicationWAL = preparation
+	}
 	if mode == "" || mode == string(replication.ModeStandalone) {
 		return base, nil
 	}
-
 	replCfg := replication.LoadFromEnv()
-
-	// Keep replication state under the DB data dir unless explicitly overridden.
-	if os.Getenv("NORNICDB_CLUSTER_DATA_DIR") == "" {
-		if db.config != nil && db.config.Database.DataDir != "" {
-			replCfg.DataDir = db.config.Database.DataDir + "/replication"
-		} else {
-			replCfg.DataDir = "./data/replication"
-		}
-	}
-
-	adapter, err := replication.NewStorageAdapterWithWAL(base, replCfg.DataDir+"/wal")
+	replCfg.DataDir = filepath.Dir(replicationWALDir)
+	runtime, err := replication.StartRuntime(context.Background(), base, replCfg)
 	if err != nil {
-		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
+		return nil, err
 	}
-
-	replicator, err := replication.NewReplicator(replCfg, adapter)
-	if err != nil {
-		_ = adapter.Close()
-		return nil, localizedError(localization.NornicDBCoreReplicationReplicatorCreateFailed(err), err)
-	}
-
-	transport := replication.NewDefaultTransport(&replication.ClusterTransportConfig{
-		NodeID:   replCfg.NodeID,
-		BindAddr: replCfg.BindAddr,
-	})
-
-	// Wire transport into modes that support it.
-	if r, ok := replicator.(interface{ SetTransport(replication.Transport) }); ok {
-		r.SetTransport(transport)
-	}
-	// If we're using the default ClusterTransport, register message handlers for the replicator.
-	if ct, ok := transport.(*replication.ClusterTransport); ok {
-		replication.RegisterClusterHandlers(ct, replicator)
-	}
-
-	if err := replicator.Start(context.Background()); err != nil {
-		_ = transport.Close()
-		_ = replicator.Shutdown()
-		_ = adapter.Close()
-		return nil, localizedError(localization.NornicDBCoreReplicationStartFailed(err), err)
-	}
-
-	db.replicator = replicator
-	db.replicationAdapter = adapter
-	db.replicationTrans = transport
-
-	return replication.NewReplicatedEngine(base, replicator, 30*time.Second), nil
+	db.replicator = runtime.Replicator
+	db.replicationAdapter = runtime.Adapter
+	db.replicationTrans = runtime.Transport
+	return runtime.Engine, nil
 }
 
 // SetEmbedder configures the auto-embed queue with the given embedder.
 // This should be called by the server after creating a working embedder.
 // The embedder is shared with the MCP server and Cypher executor for consistency.
-func (db *DB) SetEmbedder(embedder embed.Embedder) {
+// It reports whether the database took the embedder. A closing or closed
+// database refuses it and closes it, so a caller can't be left holding a
+// model (and its warmup goroutine) after DB.Close: the decision is made
+// under db.mu, where Close sets closed, not by a cancellation check made
+// before the call.
+func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	if embedder == nil {
-		return
+		return false
+	}
+	// Metadata is provider code too. Enroll before invoking it, then keep the
+	// same DB retention through publication so Close cannot dispose the model
+	// between an unlocked metadata call and installing the queue binding.
+	_, finish, retained := db.RetainBackground()
+	if !retained {
+		// Preserve the existing rejected-provider disposal contract.
+		_, _ = db.OwnEmbedder(embedder)
+		return false
+	}
+	defer finish()
+	if _, accepted := db.OwnEmbedder(embedder); !accepted {
+		return false
+	}
+	model, dimensions := embedder.Model(), embedder.Dimensions()
+
+	// Publication callbacks can acquire db.mu. Wait for their provider/write
+	// barrier BEFORE holding db.mu, then recheck the queue under the lifecycle
+	// lock. A concurrently created queue must be admitted through its barrier.
+	var queue *EmbedQueue
+	for {
+		db.mu.RLock()
+		queue = db.embedQueue
+		db.mu.RUnlock()
+		if queue != nil {
+			queue.providerWriteMu.Lock()
+		}
+		db.mu.Lock()
+		if queue == db.embedQueue {
+			break
+		}
+		db.mu.Unlock()
+		if queue != nil {
+			queue.providerWriteMu.Unlock()
+		}
+	}
+	if queue != nil {
+		defer queue.providerWriteMu.Unlock()
+	}
+
+	if db.work.Closing() {
+		// Close has stopped, or is stopping, the queue and timers this
+		// would start.
+		db.mu.Unlock()
+		// Ownership was already registered; Close releases it after joining users.
+		return false
 	}
 	// Relationships whose embedding failed for want of an embedder are
 	// embedded now, not after the retry delay (#1065).
 	defer db.wakeRelationshipEmbedding()
-
-	db.mu.Lock()
 
 	if db.baseStorage == nil {
 		// baseStorage is required for correctness (it’s the only engine that can see all namespaces).
@@ -1596,17 +1725,19 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 		if db.embedQueueYieldFn != nil {
 			db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
 		}
-		db.embedQueue.SetEmbedder(embedder)
+		db.embedQueue.setEmbedderUnderWriteBarrier(embedder)
 		log.Printf("🧠 Auto-embed queue started using %s (%d dims)",
-			embedder.Model(), embedder.Dimensions())
+			model, dimensions)
 		db.mu.Unlock()
+		db.registerDefaultEmbedder(embedder)
+		db.refreshEmbedFailureRedactor()
 		if nornicConfig.IsGPUClusteringEnabled() {
 			interval := db.config.Memory.KmeansClusterInterval
 			if interval > 0 {
 				db.startClusteringTimer(interval)
 			}
 		}
-		return
+		return true
 	}
 
 	// Create embed queue against the un-namespaced base storage so it can pull work
@@ -1645,13 +1776,23 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 	}
 
 	log.Printf("🧠 Auto-embed queue started using %s (%d dims)",
-		embedder.Model(), embedder.Dimensions())
+		model, dimensions)
 
 	db.mu.Unlock()
+	db.registerDefaultEmbedder(embedder)
+	db.mu.RLock()
+	configResolver := db.embedConfigForDB
+	db.mu.RUnlock()
+	if configResolver != nil {
+		db.SetEmbedConfigForDB(configResolver)
+	} else {
+		db.refreshEmbedFailureRedactor()
+	}
 
 	if startClusterTimer {
 		db.startClusteringTimer(clusterInterval)
 	}
+	return true
 }
 
 // SetEmbedQueueShouldYield sets an optional foreground-pressure callback used to
@@ -1664,56 +1805,6 @@ func (db *DB) SetEmbedQueueShouldYield(fn func() bool) {
 	if q != nil {
 		q.SetShouldYield(fn)
 	}
-}
-
-// SetDefaultEmbedConfig registers the current global embedder (must have been set via SetEmbedder first)
-// under the given config key so the per-DB embedder registry can use it as the default when a database
-// has no overrides. Call this after SetEmbedder when per-DB config is available (e.g. server with dbConfigStore).
-func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
-	if defaultConfig == nil {
-		return
-	}
-	db.mu.Lock()
-	eq := db.embedQueue
-	db.mu.Unlock()
-	if eq == nil {
-		return
-	}
-	defaultEmbedder := eq.currentEmbedder()
-	if defaultEmbedder == nil {
-		return
-	}
-	key := embedConfigKey(defaultConfig)
-	db.embedderRegistryMu.Lock()
-	if db.embedderRegistry == nil {
-		db.embedderRegistry = make(map[string]embed.Embedder)
-	}
-	db.embedderRegistry[key] = defaultEmbedder
-	db.defaultEmbedKey = key
-	db.embedderRegistryMu.Unlock()
-}
-
-// SetEmbedConfigForDB sets the optional resolver that returns resolved embed config for a database.
-// When set, EmbedQueryForDB uses the embedder registry (get or create by config key) instead of the global embedder.
-func (db *DB) SetEmbedConfigForDB(fn func(dbName string) (*embed.Config, error)) {
-	db.mu.Lock()
-	db.embedConfigForDB = fn
-	queue := db.embedQueue
-	db.mu.Unlock()
-	if queue == nil {
-		return
-	}
-	if fn == nil {
-		queue.SetEmbedderResolver(nil)
-		return
-	}
-	queue.SetEmbedderResolver(func(nodeID storage.NodeID) (embed.Embedder, error) {
-		dbName, _, ok := splitQualifiedID(string(nodeID))
-		if !ok {
-			return nil, nil
-		}
-		return db.getOrCreateEmbedderForDB(dbName)
-	})
 }
 
 // getOrCreateEmbedderForDB returns the embedder for the given database, using the registry when embedConfigForDB is set.
@@ -1742,6 +1833,13 @@ func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 // embedderForConfig shares the model registry and single-flight creation between
 // document workers and query snapshots. The caller owns its fallback provider.
 func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
+	// Per-database model construction is also part of the DB lifetime. In
+	// particular, a constructor ignoring cancellation cannot outlive Close.
+	if !db.work.Enter() {
+		return nil
+	}
+	defer db.work.Leave()
+
 	key := embedConfigKey(cfg)
 	db.embedderRegistryMu.RLock()
 	if db.embedderRegistry != nil {
@@ -1799,17 +1897,29 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 	db.embedderCreate[key] = ch
 	db.embedderCreateMu.Unlock()
 
-	newEmbedder, createErr := create(cfg)
+	newEmbedder, createErr := create(db.LifetimeContext(), cfg)
+	release, accepted := db.OwnEmbedder(newEmbedder)
+	if createErr != nil || !accepted {
+		_ = release()
+		newEmbedder = nil
+	}
 
+	discard := false
 	db.embedderRegistryMu.Lock()
 	if createErr == nil && newEmbedder != nil {
 		if existing, ok := db.embedderRegistry[key]; ok {
+			// SetDefaultEmbedConfig may publish this key during construction.
+			// The unused model still has to be released.
+			discard = !sameEmbedder(existing, newEmbedder)
 			newEmbedder = existing
 		} else {
 			db.embedderRegistry[key] = newEmbedder
 		}
 	}
 	db.embedderRegistryMu.Unlock()
+	if discard {
+		_ = release()
+	}
 
 	db.embedderCreateMu.Lock()
 	close(ch)
@@ -1835,7 +1945,7 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 // each call rebuilds the indexes.
 func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.RUnlock()
 	if closed {
 		return ErrClosed
@@ -1849,20 +1959,24 @@ func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	db.searchServicesMu.RLock()
 	entry := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
-	if entry != nil && entry.svc == svc && entry.buildDone != nil {
-		ranInitial := false
-		var initialErr error
-		entry.buildOnce.Do(func() {
-			ranInitial = true
-			initialErr = db.runInitialSearchIndexBuild(entry, ctx)
-		})
-		if ranInitial {
-			return initialErr
-		}
+	if entry != nil && entry.svc == svc {
 		select {
-		case <-entry.buildDone:
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-entry.build.Done():
+			// The initial build finished earlier: this call rebuilds below.
+		default:
+			// Join the initial build before rebuilding from current storage.
+			// Its snapshot may predate data loaded before this call.
+			db.startSearchIndexBuild(entry, ctx)
+			select {
+			case <-entry.build.Done():
+				if err := entry.build.Err(); err != nil {
+					return err
+				}
+			case <-svc.LifetimeContext().Done():
+				return svc.LifetimeContext().Err()
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
 	return svc.BuildIndexes(ctx)
@@ -1911,22 +2025,24 @@ func (db *DB) StopEmbedQueue() {
 	}
 }
 
-// startBackgroundTask tracks DB-owned goroutines and prevents new tracked tasks
-// from being launched once shutdown has started.
-func (db *DB) startBackgroundTask(fn func()) bool {
-	db.mu.RLock()
-	if db.closed {
-		db.mu.RUnlock()
+// RunBackgroundTask enrolls fn before launch and passes its actual owner ticket.
+// Close joins fn before disposing database resources. Ordinary jobs observe the
+// ticket's cancellation; accepted completion may explicitly retain its values
+// without cancellation while the same release credit remains held.
+func (db *DB) RunBackgroundTask(fn func(context.Context)) bool {
+	ctx, release, accepted := db.RetainBackground()
+	if !accepted {
 		return false
 	}
-	db.bgWg.Add(1)
-	db.mu.RUnlock()
-
-	go func() {
-		defer db.bgWg.Done()
-		fn()
-	}()
+	go func() { defer release(); fn(ctx) }()
 	return true
+}
+
+// RetainBackground enrolls construction before it can run. The returned context
+// carries the admitted ticket; release belongs to actual completion, never a
+// caller deadline. Construction may discard an unused ticket context explicitly.
+func (db *DB) RetainBackground() (context.Context, func(), bool) {
+	return db.work.Acquire(db.work.Context())
 }
 
 // GetRetentionManager returns the retention manager or nil when retention is disabled.
@@ -1936,7 +2052,33 @@ func (db *DB) GetRetentionManager() *retention.Manager {
 
 // SetRetentionAuditCallback installs a callback invoked after retention archive/delete actions.
 func (db *DB) SetRetentionAuditCallback(fn func(action, recordID, category string)) {
+	if fn == nil {
+		db.SetRetentionAuditOutcomeCallback(nil)
+		return
+	}
+	db.SetRetentionAuditOutcomeCallback(func(action, recordID, category string) error { fn(action, recordID, category); return nil })
+}
+
+// SetRetentionAuditOutcomeCallback installs the error-producing audit consumer.
+// Native enforcement receives its result, and DB.Close retains outcomes from
+// scheduled enforcement before releasing the DB's background lifetime.
+func (db *DB) SetRetentionAuditOutcomeCallback(fn func(action, recordID, category string) error) {
+	db.mu.Lock()
 	db.onRetentionAction = fn
+	db.mu.Unlock()
+}
+func (db *DB) retentionAuditOutcome(action, recordID, category string) error {
+	db.mu.RLock()
+	fn := db.onRetentionAction
+	db.mu.RUnlock()
+	if fn == nil {
+		return nil
+	}
+	err := fn(action, recordID, category)
+	if err != nil {
+		db.recordBackgroundError(fmt.Errorf("retention audit %s %s: %w", action, recordID, err))
+	}
+	return err
 }
 
 // EmbedQueueStats returns statistics about the async embedding queue.
@@ -1970,16 +2112,13 @@ func (db *DB) RetryEmbeddingFailures(ctx context.Context, ids []storage.NodeID) 
 // by embedding workers. This prevents completion polling from observing an empty
 // durable queue while provider requests, retries, or batch bisection are active.
 func (db *DB) PendingEmbeddingsCount() int {
-	pending := 0
-	if db.baseStorage != nil {
-		if counter, ok := db.baseStorage.(interface{ PendingEmbeddingsCount() int }); ok {
-			pending = counter.PendingEmbeddingsCount()
-		}
-	}
 	if db.embedQueue != nil {
-		pending += db.embedQueue.Stats().InFlight
+		return db.embedQueue.PendingEmbeddingsCount()
 	}
-	return pending
+	if counter, ok := db.baseStorage.(interface{ PendingEmbeddingsCount() int }); ok {
+		return counter.PendingEmbeddingsCount()
+	}
+	return 0
 }
 
 // WaitForEmbeddings waits for queued and claimed embedding work to drain.
@@ -2069,8 +2208,8 @@ func (db *DB) SetAllDatabasesProvider(provider func() []DatabaseAndStorage) {
 }
 
 // SetDbConfigResolver sets an optional resolver for per-database config
-// (embedding dims, search min similarity, BM25 engine).
-// When set, getOrCreateSearchService uses the resolver for the given dbName instead of global db.config.
+// (embedding dimensions and search min similarity).
+// When set, GetOrCreateSearchService uses the resolver for the given dbName instead of global db.config.
 // Call with nil to use global config only.
 func (db *DB) SetDbConfigResolver(resolver DbConfigResolver) {
 	db.dbConfigResolverMu.Lock()
@@ -2087,7 +2226,7 @@ func (db *DB) SetDbSearchOptionsResolver(resolver DbSearchOptionsResolver) {
 
 // SetDbSearchFlagsResolver sets an optional resolver for per-database search
 // index master switches and warming triggers. When set, the boot orchestrator
-// and getOrCreateSearchService consult it to decide whether to build, lazy-
+// and GetOrCreateSearchService consult it to decide whether to build, lazy-
 // defer, or skip each index per database. Call with nil to use global defaults
 // (today's behaviour).
 func (db *DB) SetDbSearchFlagsResolver(resolver DbSearchFlagsResolver) {
@@ -2106,11 +2245,7 @@ func (db *DB) SetDbSearchFlagsResolver(resolver DbSearchFlagsResolver) {
 // that don't run a server layer don't need to call this — Open's
 // warmup auto-readies after a grace window so they aren't blocked.
 func (db *DB) MarkSearchWarmupReady() {
-	db.searchWarmupReadyOnce.Do(func() {
-		if db.searchWarmupReady != nil {
-			close(db.searchWarmupReady)
-		}
-	})
+	db.searchWarmupReady.Do(func() error { return nil })
 }
 
 // resolveSearchFlags returns the per-database search index master switches
@@ -2196,8 +2331,10 @@ func (db *DB) ResetEmbedWorker() error {
 func (db *DB) ClearAllEmbeddings() (int, error) {
 	// First, clear the search service's vector index
 	// This ensures EmbeddingCount() returns 0 immediately
-	if svc, _ := db.getOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {
-		svc.ClearVectorIndex()
+	if svc, _ := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {
+		if err := svc.ClearVectorIndex(); err != nil {
+			return 0, err
+		}
 	}
 
 	// Unwrap storage layers to find the BadgerEngine
@@ -2289,14 +2426,16 @@ func (db *DB) GetReplicator() replication.Replicator {
 // Cypher executes a Cypher query.
 func (db *DB) Cypher(ctx context.Context, query string, params map[string]any) ([]map[string]any, error) {
 	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
+	if db.work.Closing() {
+		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
+	executor := db.cypherExecutor
+	db.mu.RUnlock()
 
-	// Execute query through Cypher executor
-	result, err := db.cypherExecutor.Execute(ctx, query, params)
+	// The executor's shared lifetime guard joins this statement. Do not hold
+	// mu while it runs: Close needs the lock to cancel a blocked embedding.
+	result, err := executor.Execute(ctx, query, params)
 	if err != nil {
 		return nil, err
 	}

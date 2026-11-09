@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 
@@ -23,7 +25,7 @@ func init() {
 
 // fnVectorSimilarity checks a, then b, then their dimensions, as Neo4j does.
 func fnVectorSimilarity(function string, valid func([]float64) bool, similarity func(a, b []float64) (float64, bool)) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, argumentCountError("vector.similarity."+function, "2", len(args))
 		}
@@ -64,44 +66,19 @@ func similarityVectorArgument(function, argument string, value interface{}, vali
 		}
 		return coordinates, nil
 	}
-	items, isList := cypherListValue(value)
+	items, isList := valueconvert.ReadList(value)
 	if !isList {
 		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 			localization.CypherCoreFunctionArgumentInvalid("vector.similarity."+function, "LIST<INTEGER | FLOAT>", neo4jValueRepr(value)))
 	}
-	coordinates := make([]float64, len(items))
-	for i, item := range items {
-		switch number := item.(type) {
-		case int64:
-			coordinates[i] = float64(number)
-		case float64:
-			coordinates[i] = number
-		default:
-			converted, isNumber := numericCoordinate(item)
-			if !isNumber {
-				return nil, invalidSimilarityVector(function, argument)
-			}
-			coordinates[i] = converted
-		}
+	coordinates, numeric := items.Numbers()
+	if !numeric {
+		return nil, invalidSimilarityVector(function, argument)
 	}
 	if !valid(coordinates) {
 		return nil, invalidSimilarityVector(function, argument)
 	}
 	return coordinates, nil
-}
-
-// numericCoordinate is a Go number of another width as a float64 (stored
-// float32 embeddings, ints); ok is false for anything that isn't a number.
-func numericCoordinate(value interface{}) (float64, bool) {
-	switch number := value.(type) {
-	case float32:
-		return float64(number), true
-	case int:
-		return float64(number), true
-	case int32:
-		return float64(number), true
-	}
-	return 0, false
 }
 
 func invalidSimilarityVector(function, argument string) error {

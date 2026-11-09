@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -18,8 +19,8 @@ func validateArrowOperators(query string) error {
 		return nil
 	}
 	for i := 0; i+1 < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '/':
 			if end := queryCommentEnd(query, i); end >= 0 {
@@ -50,19 +51,19 @@ func validatePlaceholderOperands(query string) error {
 		return nil
 	}
 	for i := 0; i+1 < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '/':
 			if end := queryCommentEnd(query, i); end >= 0 {
 				i = end - 1
 			}
 		case '<':
-			if !isIdentStartByte(query[i+1]) {
+			if !cyphertext.NameStartAt(query, i+1) {
 				continue
 			}
 			before := i - 1
-			for before >= 0 && isASCIIWhitespace(query[before]) {
+			for before >= 0 && cyphertext.IsWhitespaceAt(query, before) {
 				before--
 			}
 			if before >= 0 && strings.IndexByte(":=,([{", query[before]) >= 0 {

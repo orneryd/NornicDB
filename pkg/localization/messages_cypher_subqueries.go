@@ -5,6 +5,13 @@ import (
 	"strconv"
 )
 
+const MessageCypherSubqueriesBatchSizeInvalid MessageID = "cyphersubqueries.batch_size_invalid"
+
+// CypherSubqueriesBatchSizeInvalid identifies a rejected explicit OF expression.
+func CypherSubqueriesBatchSizeInvalid(value string) Message {
+	return cypherSubqueriesMessage(MessageCypherSubqueriesBatchSizeInvalid, "CALL IN TRANSACTIONS requires a positive INTEGER batch size, got "+value, map[string]any{"Value": value})
+}
+
 const (
 	MessageCypherSubqueriesCallNotFound                      MessageID = "cyphersubqueries.call_not_found"
 	MessageCypherSubqueriesMatchBeforeCallNotFound           MessageID = "cyphersubqueries.match_before_call_not_found"
@@ -107,6 +114,14 @@ func CypherSubqueriesStaticUnionBranchFailed(branch int, cause error) Message {
 
 func CypherSubqueriesCorrelatedUnionBranchFailed(branch int, seed string, cause error) Message {
 	return cypherSubqueriesMessage(MessageCypherSubqueriesCorrelatedUnionBranchFailed, fmt.Sprintf("failed correlated UNION subquery branch %d for seed %s: %s", branch, seed, cause), map[string]any{"Branch": branch, "Seed": seed, "Cause": cause.Error()})
+}
+
+const MessageCypherSubqueriesCollectProjection MessageID = "cyphersubqueries.collect_projection"
+
+// CypherSubqueriesCollectProjection identifies a COLLECT body without exactly
+// one explicit returned expression, including a wildcard-only projection.
+func CypherSubqueriesCollectProjection() Message {
+	return cypherSubqueriesMessage(MessageCypherSubqueriesCollectProjection, "A Collect Expression must end with a single return column.", nil)
 }
 
 // CypherSubqueriesCollectSingleColumn identifies a COLLECT subquery whose
@@ -245,4 +260,18 @@ func CypherSubqueriesWhereFilterInvalid(procedure string) Message {
 
 func CypherSubqueriesRAGFailClosedEmbeddingUnavailable(cause error) Message {
 	return cypherSubqueriesCauseMessage(MessageCypherSubqueriesRAGFailClosedEmbeddingUnavailable, "db.retrieve failClosed requires a usable query embedding: ", cause)
+}
+
+const MessageCypherSubqueriesBatchContextInvalid MessageID = "cyphersubqueries.batch_context_invalid"
+
+func CypherSubqueriesBatchContextInvalid(reason string) Message {
+	return cypherSubqueriesMessage(MessageCypherSubqueriesBatchContextInvalid, "invalid transactional CALL context: "+reason, map[string]any{"Reason": reason})
+}
+
+const MessageCypherSubqueriesBatchAggregateInvalid MessageID = "cyphersubqueries.batch_aggregate_invalid"
+
+// CypherSubqueriesBatchAggregateInvalid reports an aggregate evaluated outside
+// an aggregation operator, including a transactional CALL batch-size binding.
+func CypherSubqueriesBatchAggregateInvalid() Message {
+	return cypherSubqueriesMessage(MessageCypherSubqueriesBatchAggregateInvalid, "Aggregations should not be used like this.", nil)
 }

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -11,7 +12,7 @@ import (
 // The coll.* list functions of Cypher 25 (#907), as Neo4j 2026.09 computes
 // them. They order values as ORDER BY does (compareValuesForSort: null after
 // everything, NaN after every number) and tell values apart as DISTINCT does
-// (cypherEquivalenceKey). A null list, index or depth gives null. Neo4j 5.26
+// (explicit equivalence keys). A null list, index or depth gives null. Neo4j 5.26
 // and Cypher 5 statements don't have them; NornicDB offers them in every
 // statement.
 
@@ -77,19 +78,17 @@ func functionArgumentOutOfRange(function string) error {
 
 // fnCollDistinct is coll.distinct(list): the first of every set of
 // equivalent values, in order (1 and 1.0 are one value; two NaNs two).
-func fnCollDistinct(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnCollDistinct(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	list, _, null, err := collArguments(ctx, "coll.distinct", args, 1, 1)
 	if err != nil || null {
 		return nil, err
 	}
-	seen := make(map[string]struct{}, len(list))
+	var seen cypherValueIndex
 	out := make([]interface{}, 0, len(list))
 	for _, item := range list {
-		key := cypherEquivalenceKey(item)
-		if _, duplicate := seen[key]; duplicate {
+		if _, duplicate := seen.addByContract(item, cypherEquivalenceContract); duplicate {
 			continue
 		}
-		seen[key] = struct{}{}
 		out = append(out, item)
 	}
 	return out, nil
@@ -98,7 +97,7 @@ func fnCollDistinct(ctx cypherfn.Context, args []string) (interface{}, error) {
 // fnCollFlatten is coll.flatten(list [, depth]): the list with nested lists
 // spliced in, depth levels deep (1 by default; 0 keeps the list). A negative
 // depth is out of range.
-func fnCollFlatten(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnCollFlatten(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	list, rest, null, err := collArguments(ctx, "coll.flatten", args, 1, 2)
 	if err != nil || null {
 		return nil, err
@@ -130,7 +129,7 @@ func collFlatten(out, list []interface{}, depth int64) []interface{} {
 // fnCollIndexOf is coll.indexOf(list, value): the index of the first item
 // equal to value, -1 when none is (an item whose equality is unknown, such
 // as null, doesn't match); null for a null value.
-func fnCollIndexOf(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnCollIndexOf(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	list, rest, null, err := collArguments(ctx, "coll.indexOf", args, 2, 2)
 	if err != nil || null || rest[0] == nil {
 		return nil, err
@@ -145,7 +144,7 @@ func fnCollIndexOf(ctx cypherfn.Context, args []string) (interface{}, error) {
 
 // fnCollInsert is coll.insert(list, index, value): value inserted before
 // list[index]; index runs from 0 to the list's length.
-func fnCollInsert(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnCollInsert(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	list, rest, null, err := collArguments(ctx, "coll.insert", args, 3, 3)
 	if err != nil || null {
 		return nil, err
@@ -166,7 +165,7 @@ func fnCollInsert(ctx cypherfn.Context, args []string) (interface{}, error) {
 // fnCollRemove is coll.remove(list, index): the list without list[index];
 // index runs from 0 to the list's length less one, and an empty list is
 // its own error.
-func fnCollRemove(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnCollRemove(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	list, rest, null, err := collArguments(ctx, "coll.remove", args, 2, 2)
 	if err != nil || null {
 		return nil, err
@@ -192,7 +191,7 @@ func fnCollRemove(ctx cypherfn.Context, args []string) (interface{}, error) {
 // list. null sorts after everything, so a list holding null has max null,
 // and min of anything else.
 func fnCollExtreme(function string, sign int) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+	return func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		list, _, null, err := collArguments(ctx, function, args, 1, 1)
 		if err != nil || null || len(list) == 0 {
 			return nil, err
@@ -209,7 +208,7 @@ func fnCollExtreme(function string, sign int) cypherfn.Func {
 
 // fnCollSort is coll.sort(list): the list in ORDER BY order, equal items
 // kept in their order.
-func fnCollSort(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnCollSort(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	list, _, null, err := collArguments(ctx, "coll.sort", args, 1, 1)
 	if err != nil || null {
 		return nil, err

@@ -57,6 +57,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/embeddingsource"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/textchunk"
 )
 
@@ -125,6 +127,9 @@ type TypedEmbedder interface {
 // DocumentChunkResult is returned by embedders that can chunk and embed a full
 // document in one provider call.
 type DocumentChunkResult struct {
+	// Source records consumed properties and fallback-text use. Nil on a
+	// structured result means the complete map plus text (legacy contract).
+	Source         *embeddingsource.Source
 	Chunks         []string
 	Embeddings     [][]float32
 	Model          string
@@ -176,7 +181,7 @@ func embedLocallyChunkedDocuments(
 	texts []string,
 	maxTokens, overlap int,
 	chunk func(string, int, int) ([]string, error),
-	embedBatch func(context.Context, []string) ([][]float32, error),
+	embedBatch func(context.Context, []string) ([][]float32, []providerBatchUsage, error),
 	model string,
 ) ([]*DocumentChunkResult, error) {
 	results := make([]*DocumentChunkResult, len(texts))
@@ -194,7 +199,7 @@ func embedLocallyChunkedDocuments(
 	if len(allChunks) == 0 {
 		return results, nil
 	}
-	embeddings, err := embedBatch(ctx, allChunks)
+	embeddings, usage, err := embedBatch(ctx, allChunks)
 	if err != nil {
 		return nil, err
 	}
@@ -206,6 +211,7 @@ func embedLocallyChunkedDocuments(
 		results[i].Embeddings = append([][]float32(nil), embeddings[offset:offset+count]...)
 		offset += count
 	}
+	attributeDocumentUsage(results, usage)
 	return results, nil
 }
 
@@ -499,7 +505,8 @@ type ollamaRequest struct {
 
 // ollamaResponse is the response format from Ollama.
 type ollamaResponse struct {
-	Embedding []float32 `json:"embedding"`
+	Embedding       []float32 `json:"embedding"`
+	PromptEvalCount int       `json:"prompt_eval_count"`
 }
 
 // Embed generates a vector embedding for a single text string.
@@ -520,47 +527,65 @@ type ollamaResponse struct {
 //	// Output: Generated 1024-dimensional vector
 //
 // Returns the embedding vector, or an error if the API request fails.
-func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+func (e *OllamaEmbedder) Embed(ctx context.Context, text string) (_ []float32, err error) {
+	defer func() {
+		err = observability.RedactClientError(err, e.config.APIURL, e.config.APIKey)
+	}()
+	path, arrayInput := e.embeddingEndpoint(false)
+	if arrayInput {
+		vectors, err := e.EmbedBatch(ctx, []string{text})
+		if err != nil {
+			return nil, err
+		}
+		return vectors[0], nil
+	}
 	req := ollamaRequest{
 		Model:  e.config.Model,
 		Prompt: text,
 	}
 
+	endpoint, err := observability.ComposeRequestURL(e.config.APIURL, path, observability.AppendRequestRoute)
+	credentials := observability.ClientCredentials(e.config.APIURL, e.config.APIKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compose request URL: %w", observability.RedactError(err, credentials...))
+	}
+	credentials = observability.ClientCredentials(endpoint, e.config.APIKey)
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", observability.RedactError(err, credentials...))
 	}
 
-	url := e.config.APIURL + e.config.APIPath
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", observability.RedactError(err, credentials...))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", observability.RedactError(err, credentials...))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, &ProviderError{Provider: "ollama", StatusCode: resp.StatusCode, Body: string(bodyBytes)}
+		return nil, &ProviderError{Provider: "ollama", StatusCode: resp.StatusCode, Body: observability.RedactText(string(bodyBytes), credentials...)}
 	}
 
 	var ollamaResp ollamaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("failed to decode response: %w", observability.RedactError(err, credentials...))
 	}
+	recordEmbeddingUsage(ctx, "ollama", e.Model(), 1, ollamaResp.PromptEvalCount)
 
 	return ollamaResp.Embedding, nil
 }
 
 // EmbedBatch generates embeddings for multiple texts efficiently.
 //
-// For Ollama, this currently makes one request per text. Future versions
-// may support true batch processing for better performance.
+// Uses Ollama's array-input /api/embed endpoint. The legacy single-text
+// /api/embeddings configuration selects /api/embed for batch calls. Custom
+// legacy endpoints retain their prompt protocol with one request per text.
 //
 // Example:
 //
@@ -582,16 +607,79 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 //	}
 //
 // Returns a slice of embeddings (one per input text), or an error if any request fails.
-func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	results := make([][]float32, len(texts))
-	for i, text := range texts {
-		embedding, err := e.Embed(ctx, text)
-		if err != nil {
-			return nil, fmt.Errorf("failed to embed text %d: %w", i, err)
-		}
-		results[i] = embedding
+func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) (_ [][]float32, err error) {
+	defer func() {
+		err = observability.RedactClientError(err, e.config.APIURL, e.config.APIKey)
+	}()
+	if len(texts) == 0 {
+		return [][]float32{}, nil
 	}
-	return results, nil
+	path, arrayInput := e.embeddingEndpoint(true)
+	if !arrayInput {
+		vectors := make([][]float32, len(texts))
+		for i, text := range texts {
+			vector, err := e.Embed(ctx, text)
+			if err != nil {
+				return nil, err
+			}
+			vectors[i] = vector
+		}
+		if err := CheckEmbeddings(vectors, len(texts), e.Dimensions()); err != nil {
+			return nil, err
+		}
+		return vectors, nil
+	}
+	endpoint, err := observability.ComposeRequestURL(e.config.APIURL, path, observability.AppendRequestRoute)
+	credentials := observability.ClientCredentials(e.config.APIURL, e.config.APIKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compose request URL: %w", observability.RedactError(err, credentials...))
+	}
+	credentials = observability.ClientCredentials(endpoint, e.config.APIKey)
+	body, err := json.Marshal(openaiRequest{Model: e.Model(), Input: texts})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", observability.RedactError(err, credentials...))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", observability.RedactError(err, credentials...))
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", observability.RedactError(err, credentials...))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, &ProviderError{Provider: "ollama", StatusCode: resp.StatusCode, Body: observability.RedactText(string(raw), credentials...)}
+	}
+	var wire struct {
+		Embeddings      [][]float32 `json:"embeddings"`
+		PromptEvalCount int         `json:"prompt_eval_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", observability.RedactError(err, credentials...))
+	}
+	recordEmbeddingUsage(ctx, "ollama", e.Model(), len(texts), wire.PromptEvalCount)
+	if err := CheckEmbeddings(wire.Embeddings, len(texts), e.Dimensions()); err != nil {
+		return nil, err
+	}
+	return wire.Embeddings, nil
+}
+
+// embeddingEndpoint owns Ollama route/protocol selection. Only the documented
+// legacy route has a known array-capable counterpart; aliases keep the prompt
+// protocol that Embed has always used. Proxy prefixes and queries survive.
+func (e *OllamaEmbedder) embeddingEndpoint(batch bool) (string, bool) {
+	route, query, hasQuery := strings.Cut(e.config.APIPath, "?")
+	if batch && strings.HasSuffix(route, "/api/embeddings") {
+		route = strings.TrimSuffix(route, "/embeddings") + "/embed"
+	}
+	arrayInput := strings.HasSuffix(route, "/api/embed")
+	if hasQuery {
+		route += "?" + query
+	}
+	return route, arrayInput
 }
 
 func (e *OllamaEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
@@ -819,6 +907,9 @@ type openaiResponse struct {
 		Embedding []float32 `json:"embedding"`
 		Index     int       `json:"index"`
 	} `json:"data"`
+	Usage struct {
+		TotalTokens int `json:"total_tokens"`
+	} `json:"usage"`
 }
 
 // Embed generates a vector embedding for a single text string.
@@ -879,43 +970,80 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 //
 // Returns a slice of embeddings (one per input text), or an error if the API request fails.
 func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return [][]float32{}, nil
+	}
+	var results [][]float32
+	err := forProviderBatches(ctx, len(texts), 2048, 300000, func(i int) int { return min(len(texts[i]), 8192) }, func(start, end int) error {
+		vectors, err := e.embedBatchRequest(ctx, texts[start:end])
+		if err == nil {
+			results = mergeProviderBatch(results, vectors, start, len(texts))
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func (e *OpenAIEmbedder) embedBatchRequest(ctx context.Context, texts []string) (_ [][]float32, err error) {
+	defer func() {
+		err = observability.RedactClientError(err, e.config.APIURL, e.config.APIKey)
+	}()
+	provider := "openai"
+	if e.config.Provider == "orca" {
+		provider = "orca"
+	}
 	req := openaiRequest{
 		Model: e.config.Model,
 		Input: texts,
 	}
 
+	endpoint, err := observability.ComposeRequestURL(e.config.APIURL, e.config.APIPath, observability.AppendRequestRoute)
+	credentials := observability.ClientCredentials(e.config.APIURL, e.config.APIKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compose request URL: %w", observability.RedactError(err, credentials...))
+	}
+	credentials = observability.ClientCredentials(endpoint, e.config.APIKey)
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", observability.RedactError(err, credentials...))
 	}
 
-	url := e.config.APIURL + e.config.APIPath
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", observability.RedactError(err, credentials...))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+e.config.APIKey)
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", observability.RedactError(err, credentials...))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, &ProviderError{Provider: "openai", StatusCode: resp.StatusCode, Body: string(bodyBytes)}
+		return nil, &ProviderError{Provider: provider, StatusCode: resp.StatusCode, Body: observability.RedactText(string(bodyBytes), credentials...)}
 	}
 
 	var openaiResp openaiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&openaiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("failed to decode response: %w", observability.RedactError(err, credentials...))
 	}
 
-	results := make([][]float32, len(openaiResp.Data))
+	recordEmbeddingUsage(ctx, provider, e.Model(), len(texts), openaiResp.Usage.TotalTokens)
+	results := make([][]float32, len(texts))
 	for _, data := range openaiResp.Data {
+		if data.Index < 0 || data.Index >= len(results) || results[data.Index] != nil {
+			return nil, &UnusableEmbeddingError{Input: -1, Dimensions: len(openaiResp.Data), Want: len(texts)}
+		}
 		results[data.Index] = data.Embedding
+	}
+	if err := CheckEmbeddings(results, len(texts), e.Dimensions()); err != nil {
+		return nil, err
 	}
 
 	return results, nil
@@ -959,7 +1087,7 @@ func (e *OpenAIEmbedder) Backend() string {
 // Example:
 //
 //	config := embed.ResolveProviderConfig(&embed.Config{Provider: "orca", APIKey: apiKey})
-//	embedder, err := embed.NewEmbedder(config)
+//	embedder, err := embed.NewEmbedder(context.Background(), config)
 func ResolveProviderConfig(config *Config) *Config {
 	if config == nil {
 		return nil
@@ -1036,7 +1164,7 @@ func ResolveProviderConfigWithProvenance(config *Config, explicit ProviderConfig
 //		config = embed.DefaultOllamaConfig()
 //	}
 //
-//	embedder, err := embed.NewEmbedder(config)
+//	embedder, err := embed.NewEmbedder(context.Background(), config)
 //	if err != nil {
 //		log.Fatal(err)
 //	}
@@ -1046,14 +1174,15 @@ func ResolveProviderConfigWithProvenance(config *Config, explicit ProviderConfig
 //
 // Returns an Embedder interface, or an error if the provider is unknown or
 // configuration is invalid (e.g., OpenAI without API key, local without model).
-func NewEmbedder(config *Config) (Embedder, error) {
+// Context cancellation prevents starting a native model load after shutdown.
+func NewEmbedder(ctx context.Context, config *Config) (Embedder, error) {
 	config = ResolveProviderConfig(config)
 	if config == nil {
 		return nil, fmt.Errorf("embedding config is required")
 	}
 	switch config.Provider {
 	case "local":
-		return NewLocalGGUF(config)
+		return NewLocalGGUF(ctx, config)
 	case "ollama":
 		return NewOllama(config), nil
 	case "openai":

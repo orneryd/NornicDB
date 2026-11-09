@@ -2,6 +2,8 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -10,7 +12,7 @@ import (
 
 func buildClusteredServiceForRouting(t *testing.T) *Service {
 	t.Helper()
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	svc.EnableClustering(nil, 2)
 	svc.SetMinEmbeddingsForClustering(1)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "a1", Properties: map[string]interface{}{"text": "alpha one"}, ChunkEmbeddings: [][]float32{{1, 0}}}))
@@ -23,16 +25,11 @@ func buildClusteredServiceForRouting(t *testing.T) *Service {
 }
 
 func TestHybridRouting_RebuildProfilesGuardBranches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
-	svc.clusterLexicalProfiles = map[int]map[string]float64{1: {"x": 1}}
-	svc.rebuildClusterLexicalProfiles()
-	require.Empty(t, svc.clusterLexicalProfiles)
-
-	svc = buildClusteredServiceForRouting(t)
+	svc := buildClusteredServiceForRouting(t)
+	clustering, err := svc.clusterIndex.ComputeClustering(context.Background())
+	require.NoError(t, err)
 	svc.setFulltext(nil)
-	svc.clusterLexicalProfiles = map[int]map[string]float64{1: {"x": 1}}
-	svc.rebuildClusterLexicalProfiles()
-	require.Empty(t, svc.clusterLexicalProfiles)
+	require.Nil(t, svc.deriveClusterTerms(clustering.MemberIDs(0)))
 }
 
 func TestHybridRouting_SelectHybridClustersMoreBranches(t *testing.T) {
@@ -49,9 +46,7 @@ func TestHybridRouting_SelectHybridClustersMoreBranches(t *testing.T) {
 	require.NotEmpty(t, out)
 
 	// profiles empty branch.
-	svc.clusterLexicalMu.Lock()
-	svc.clusterLexicalProfiles = map[int]map[string]float64{}
-	svc.clusterLexicalMu.Unlock()
+	setClusterProfilesForTest(t, svc, map[int]map[string]float64{})
 	out = svc.selectHybridClusters(withQueryText(context.Background(), "alpha"), []float32{1, 0}, 2)
 	require.NotEmpty(t, out)
 
@@ -62,31 +57,29 @@ func TestHybridRouting_SelectHybridClustersMoreBranches(t *testing.T) {
 	// negative lexical/semantic weights branch and sum==0 normalization branch.
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM", "-1")
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX", "-1")
-	svc.clusterLexicalMu.Lock()
-	svc.clusterLexicalProfiles = map[int]map[string]float64{
+	setClusterProfilesForTest(t, svc, map[int]map[string]float64{
 		semantic[0]: {"alpha": 1.0},
 		semantic[1]: {"beta": 1.0},
-	}
-	svc.clusterLexicalMu.Unlock()
+	})
 	out = svc.selectHybridClusters(withQueryText(context.Background(), "beta"), []float32{1, 0}, 1)
 	require.Len(t, out, 1)
 }
 
 func TestHybridRouting_ApplyBM25SeedHintsMoreBranches(t *testing.T) {
 	t.Run("nil_fields_and_nonclustered_empty_index", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.applyBM25SeedHints() // nil cluster/fulltext
 
 		svc.EnableClustering(nil, 2)
-		svc.setFulltext(NewFulltextIndex())
+		svc.setFulltext(NewFulltextIndexV2WithAnalyzer(nil))
 		svc.applyBM25SeedHints() // !IsClustered && Count==0
 	})
 
 	t.Run("no_indices_for_seed_ids", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.EnableClustering(nil, 2)
 		require.NoError(t, svc.clusterIndex.Add("existing", []float32{1, 0}))
-		svc.setFulltext(&seedOverrideFulltext{FulltextIndex: NewFulltextIndex(), seedIDs: []string{"missing"}})
+		svc.setFulltext(&seedOverrideFulltext{FulltextIndexV2: NewFulltextIndexV2WithAnalyzer(nil), seedIDs: []string{"missing"}})
 		svc.applyBM25SeedHints()
 		require.Empty(t, preferredSeedsForTest(t, svc.clusterIndex))
 	})

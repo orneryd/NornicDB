@@ -195,13 +195,24 @@ func TestOllamaEmbedder(t *testing.T) {
 			t.Error("expected JSON content type")
 		}
 
-		var req ollamaRequest
+		var req struct {
+			ollamaRequest
+			Input []string `json:"input"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("failed to decode request: %v", err)
 		}
 
 		resp := ollamaResponse{
 			Embedding: []float32{0.1, 0.2, 0.3, 0.4},
+		}
+		if r.URL.Path == "/api/embed" {
+			vectors := make([][]float32, len(req.Input))
+			for i := range vectors {
+				vectors[i] = resp.Embedding
+			}
+			json.NewEncoder(w).Encode(map[string]any{"embeddings": vectors})
+			return
 		}
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -374,11 +385,12 @@ func TestOrcaEmbedderUsesOpenAIWireFormat(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder, err := NewEmbedder(&Config{
-		Provider: "orca",
-		APIURL:   server.URL + "/v1",
-		APIKey:   "test-key",
-		Timeout:  time.Second,
+	embedder, err := NewEmbedder(context.Background(), &Config{
+		Provider:   "orca",
+		APIURL:     server.URL + "/v1",
+		APIKey:     "test-key",
+		Dimensions: 2,
+		Timeout:    time.Second,
 	})
 	if err != nil {
 		t.Fatalf("NewEmbedder() error = %v", err)
@@ -447,7 +459,7 @@ func TestOpenAIEmbedderNoEmbedding(t *testing.T) {
 
 func TestNewEmbedder(t *testing.T) {
 	t.Run("nil config", func(t *testing.T) {
-		_, err := NewEmbedder(nil)
+		_, err := NewEmbedder(context.Background(), nil)
 		if err == nil {
 			t.Error("expected error for nil config")
 		}
@@ -457,7 +469,7 @@ func TestNewEmbedder(t *testing.T) {
 		config := &Config{
 			Provider: "ollama",
 		}
-		embedder, err := NewEmbedder(config)
+		embedder, err := NewEmbedder(context.Background(), config)
 		if err != nil {
 			t.Fatalf("NewEmbedder() error = %v", err)
 		}
@@ -472,7 +484,7 @@ func TestNewEmbedder(t *testing.T) {
 			Provider: "openai",
 			APIKey:   "test-key",
 		}
-		embedder, err := NewEmbedder(config)
+		embedder, err := NewEmbedder(context.Background(), config)
 		if err != nil {
 			t.Fatalf("NewEmbedder() error = %v", err)
 		}
@@ -486,14 +498,14 @@ func TestNewEmbedder(t *testing.T) {
 		config := &Config{
 			Provider: "openai",
 		}
-		_, err := NewEmbedder(config)
+		_, err := NewEmbedder(context.Background(), config)
 		if err == nil {
 			t.Error("expected error for missing API key")
 		}
 	})
 
 	t.Run("orca without key", func(t *testing.T) {
-		_, err := NewEmbedder(&Config{Provider: "orca"})
+		_, err := NewEmbedder(context.Background(), &Config{Provider: "orca"})
 		if err == nil {
 			t.Error("expected error for missing API key")
 		}
@@ -503,7 +515,7 @@ func TestNewEmbedder(t *testing.T) {
 		config := &Config{
 			Provider: "unknown",
 		}
-		_, err := NewEmbedder(config)
+		_, err := NewEmbedder(context.Background(), config)
 		if err == nil {
 			t.Error("expected error for unknown provider")
 		}
@@ -551,19 +563,9 @@ func TestConfigStruct(t *testing.T) {
 }
 
 func TestOllamaEmbedBatchError(t *testing.T) {
-	// Server that fails on second request
-	requestCount := 0
+	// A provider failure still propagates from the array-input batch request.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		if requestCount > 1 {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("error"))
-			return
-		}
-		resp := ollamaResponse{
-			Embedding: []float32{0.1, 0.2, 0.3},
-		}
-		json.NewEncoder(w).Encode(resp)
+		http.Error(w, "error", http.StatusInternalServerError)
 	}))
 	defer server.Close()
 

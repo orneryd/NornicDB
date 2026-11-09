@@ -2,9 +2,9 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"io"
 	"log/slog"
 	"net"
@@ -15,6 +15,8 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
+	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -105,6 +107,23 @@ func (s *Server) isRBACEnforced() bool {
 	return !auth.AuthenticationDisabled(s.auth)
 }
 
+// serverDatabaseAccessMode binds roles to the live allowlist and the existing
+// direct-operation admission owner. No map or permission result is copied.
+type serverDatabaseAccessMode struct {
+	server *Server
+	roles  []string
+}
+
+func (m *serverDatabaseAccessMode) CanSeeDatabase(database string) bool {
+	return m.CanAccessDatabase(database)
+}
+func (m *serverDatabaseAccessMode) CanAccessDatabase(database string) bool {
+	if !m.server.isRBACEnforced() {
+		return true
+	}
+	return m.server.allowlistStore != nil && m.server.allowlistStore.CanAccessDatabaseForRoles(m.roles, database)
+}
+
 // getDatabaseAccessMode returns the per-database access mode for the given principal (claims).
 // When auth is disabled returns Full; when unauthenticated returns DenyAll;
 // when allowlist is loaded returns allowlist-based mode for claims.Roles.
@@ -116,7 +135,7 @@ func (s *Server) getDatabaseAccessMode(claims *auth.JWTClaims) auth.DatabaseAcce
 		return auth.DenyAllDatabaseAccessMode
 	}
 	if s.allowlistStore != nil {
-		return auth.NewAllowlistDatabaseAccessMode(s.allowlistStore.Allowlist(), claims.Roles)
+		return &serverDatabaseAccessMode{server: s, roles: claims.Roles}
 	}
 	return auth.DenyAllDatabaseAccessMode
 }
@@ -131,7 +150,7 @@ func (s *Server) GetDatabaseAccessModeForRoles(roles []string) auth.DatabaseAcce
 		return auth.DenyAllDatabaseAccessMode
 	}
 	if s.allowlistStore != nil {
-		return auth.NewAllowlistDatabaseAccessMode(s.allowlistStore.Allowlist(), roles)
+		return &serverDatabaseAccessMode{server: s, roles: roles}
 	}
 	return auth.DenyAllDatabaseAccessMode
 }
@@ -159,30 +178,184 @@ func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.R
 	return s.GetResolvedAccessForRoles(claims.Roles, dbName)
 }
 
+// databaseReadTargets resolves the physical population of a direct reader.
+func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMode, targets []string) ([]string, bool) {
+	var manager cypher.GraphDatabaseResolver
+	if s.dbManager != nil {
+		manager = s.dbManager
+	}
+	var canAccess func(string) bool
+	if mode != nil {
+		canAccess = mode.CanAccessDatabase
+	}
+	physical, remote, allowed := cypher.GraphAccessTarget(manager, database, canAccess)
+	if !allowed {
+		return nil, false
+	}
+	if s.dbManager == nil || remote {
+		return append(targets, physical), true
+	}
+	// A dotted local constituent may name a local alias. Remote names above
+	// keep their foreign identity even when a local alias has the same spelling.
+	if strings.Contains(database, ".") {
+		physical, _, allowed = cypher.GraphAccessTarget(manager, physical, canAccess)
+		if !allowed {
+			return nil, false
+		}
+	}
+	if !s.dbManager.IsCompositeDatabase(physical) {
+		return append(targets, physical), true
+	}
+	refs, err := s.dbManager.GetCompositeConstituents(physical)
+	if err != nil {
+		return nil, false
+	}
+	targets = append(targets, physical)
+	for _, ref := range refs {
+		var target string
+		switch ref.Type {
+		case "local":
+			target, _, allowed = cypher.GraphAccessTarget(manager, ref.DatabaseName, canAccess)
+		case "remote":
+			target, _, allowed = cypher.GraphAccessTarget(nil, ref.DatabaseName, canAccess)
+		default:
+			return nil, false
+		}
+		if !allowed {
+			return nil, false
+		}
+		targets = append(targets, target)
+	}
+	return targets, true
+}
+
+// databaseReadAccess is the one check of whether the principal may read a
+// database through a route that reads it directly (search, similarity, the
+// graph routes): accessible is whether the database allowlist lets it use the
+// database at all, readable whether it may also read it (the per-database
+// read privilege of a signed-in principal; a request without claims passes
+// the allowlist only when authentication is disabled).
+func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (accessible, readable bool) {
+	var roles []string
+	if claims != nil {
+		roles = claims.Roles
+	}
+	accessible, access := s.databaseAccessForRoles(roles, dbName, s.getDatabaseAccessMode(claims), false)
+	return accessible, access.Read
+}
+
+// databaseAccessForRoles evaluates the existing selection and per-database
+// privileges over one resolved target population. HTTP, request read callbacks
+// and gRPC share this decision; no authorization result survives the operation.
+func (s *Server) databaseAccessForRoles(roles []string, database string, mode auth.DatabaseAccessMode, write bool) (bool, auth.ResolvedAccess) {
+	var buffer [8]string
+	targets, allowed := s.databaseReadTargets(database, mode, buffer[:0])
+	if !allowed {
+		return false, auth.ResolvedAccess{}
+	}
+	access := auth.ResolvedAccess{Read: true, Write: true}
+	if !s.isRBACEnforced() {
+		return true, access
+	}
+	for _, target := range targets {
+		if !write {
+			access.Read = auth.DatabaseReadAllowed(roles, target, s.privilegesStore, s.roleEntitlementsStore) && access.Read
+			continue
+		}
+		resolved := s.GetResolvedAccessForRoles(roles, target)
+		access.Read = access.Read && resolved.Read
+		access.Write = access.Write && resolved.Write
+	}
+	return true, access
+}
+
+// authorizeDatabaseRead refuses, with Neo4j's Forbidden status, a request
+// whose principal may not read dbName (databaseReadAccess), and reports
+// whether the request may go on.
+func (s *Server) authorizeDatabaseRead(w http.ResponseWriter, r *http.Request, dbName string) bool {
+	if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		return false
+	}
+	return true
+}
+
+// authorizeDatabaseOperation checks direct data operations against the same
+// principal permission resolver as Cypher, before feature or data handling.
+func (s *Server) authorizeDatabaseOperation(w http.ResponseWriter, r *http.Request, database string, permissions ...auth.Permission) bool {
+	access := s.principalAccess(getClaims(r))
+	for _, permission := range permissions {
+		if !access.Allows(database, string(permission)) {
+			s.writeBoundaryNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", &cypher.PermissionDeniedError{Permission: string(permission)})
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) authorizeAllDatabaseOperation(w http.ResponseWriter, r *http.Request, permissions ...auth.Permission) bool {
+	if len(permissions) == 0 {
+		permissions = []auth.Permission{auth.PermRead, auth.PermWrite, auth.PermAdmin}
+	}
+	access := s.principalAccess(getClaims(r))
+	var denied auth.Permission
+	_, all := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), func(database string) bool {
+		if denied != "" {
+			return false
+		}
+		for _, permission := range permissions {
+			if !access.Allows(database, string(permission)) {
+				denied = permission
+				return false
+			}
+		}
+		return true
+	})
+	if !all {
+		s.writeBoundaryNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", &cypher.PermissionDeniedError{Permission: string(denied)})
+	}
+	return all
+}
+
+func (s *Server) canReadAllDatabases(r *http.Request) bool {
+	_, all := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), s.databaseReadPredicate(getClaims(r)))
+	return all
+}
+
 // withBifrostRBAC enriches the request context with RBAC (principal roles, DatabaseAccessMode, ResolvedAccess)
 // so that Bifrost, GraphQL, and plugins can enforce per-database access. Call before passing r to heimdallHandler or graphqlHandler.
 func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	claims := getClaims(r)
 	if claims == nil {
+		if !s.isRBACEnforced() {
+			return r.WithContext(auth.WithRequestAuthenticationDisabled(r.Context()))
+		}
 		return r
 	}
 	ctx := r.Context()
+	ctx = cypher.WithAuthToken(ctx, r.Header.Get("Authorization"))
+	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
 	databaseAccessMode := s.getDatabaseAccessMode(claims)
 	ctx = auth.WithRequestPrincipalRoles(ctx, claims.Roles)
 	ctx = auth.WithRequestDatabaseAccessMode(ctx, databaseAccessMode)
 	// The principal's one permission resolver (principalAccess), which
 	// HTTP and Bolt use too, and its boosted procedure grants: GraphQL,
 	// Heimdall, MCP and plugins authorize through them.
-	access := s.principalAccess(claims)
 	ctx = auth.WithRequestEntitlementResolver(ctx, func(database string, permission auth.Permission) bool {
-		return access.Allows(database, string(permission))
+		// Streaming consumers must observe current database privileges and
+		// allowlists through the mode already bound to this request.
+		if permission == auth.PermRead {
+			_, access := s.databaseAccessForRoles(claims.Roles, database, databaseAccessMode, false)
+			return access.Read
+		}
+		return s.principalAccess(claims).Allows(database, string(permission))
 	})
 	ctx = cypher.WithProcedureGrantChecker(ctx, s.ProcedureGrantChecker(claims.Roles))
 	selections := make(map[string]string)
 	defaultDatabase := ""
 	if s.dbManager != nil {
 		for _, database := range s.dbManager.ListDatabases() {
-			if database == nil || database.Type == "system" || !databaseAccessMode.CanAccessDatabase(database.Name) {
+			if database == nil || !databaseAccessMode.CanAccessDatabase(database.Name) {
 				continue
 			}
 			selections[database.Name] = database.Name
@@ -195,7 +368,10 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 			defaultDatabase = configuredDefault
 		}
 	}
-	ctx = auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScope(defaultDatabase, selections))
+	ctx = auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScopeWithSelectionCheck(defaultDatabase, selections, func(selection string) bool {
+		_, allowed := s.graphAccess(databaseAccessMode, selection)
+		return allowed
+	}))
 	return r.WithContext(ctx)
 }
 
@@ -214,64 +390,6 @@ func (s *Server) GetEffectivePermissions(roles []string) []string {
 // and role entitlements. HTTP (principalAccess), Bolt and gRPC use it.
 func (s *Server) GetResolvedAccessForRoles(roles []string, dbName string) auth.ResolvedAccess {
 	return auth.ResolveDatabaseAccess(roles, dbName, s.privilegesStore, s.roleEntitlementsStore)
-}
-
-// isCreateDatabaseStatement returns true if the statement is CREATE DATABASE or CREATE COMPOSITE DATABASE.
-// Used to trigger auto-grant of access when a new database is created.
-func isCreateDatabaseStatement(statement string) bool {
-	t := strings.TrimSpace(statement)
-	u := strings.ToUpper(t)
-	return strings.HasPrefix(u, "CREATE COMPOSITE DATABASE") || strings.HasPrefix(u, "CREATE DATABASE")
-}
-
-// parseCreatedDatabaseName extracts the database name from a CREATE DATABASE or CREATE COMPOSITE DATABASE statement.
-// Returns (name, true) when the statement matches and name is non-empty; otherwise ("", false).
-// Handles "CREATE DATABASE name [IF NOT EXISTS]" and "CREATE COMPOSITE DATABASE name ...".
-func parseCreatedDatabaseName(statement string) (dbName string, ok bool) {
-	t := strings.TrimSpace(statement)
-	if t == "" {
-		return "", false
-	}
-	u := strings.ToUpper(t)
-	if strings.HasPrefix(u, "CREATE COMPOSITE DATABASE") {
-		// Skip "CREATE COMPOSITE DATABASE" (case-insensitive, flexible whitespace)
-		rest := t[len("CREATE COMPOSITE DATABASE"):]
-		rest = strings.TrimLeft(rest, " \t\n\r")
-		if rest == "" {
-			return "", false
-		}
-		// Name is first token (until whitespace or newline)
-		end := 0
-		for end < len(rest) && rest[end] != ' ' && rest[end] != '\t' && rest[end] != '\n' && rest[end] != '\r' {
-			end++
-		}
-		name := strings.TrimSpace(rest[:end])
-		return name, name != ""
-	}
-	if strings.HasPrefix(u, "CREATE DATABASE") {
-		// Skip "CREATE DATABASE" (case-insensitive, flexible whitespace)
-		rest := t[len("CREATE DATABASE"):]
-		rest = strings.TrimLeft(rest, " \t\n\r")
-		if rest == "" {
-			return "", false
-		}
-		// Name runs until "IF NOT EXISTS" or end; may be backtick-quoted
-		restUpper := strings.ToUpper(rest)
-		ifIdx := strings.Index(restUpper, "IF NOT EXISTS")
-		if ifIdx > 0 {
-			rest = strings.TrimSpace(rest[:ifIdx])
-		}
-		rest = strings.TrimSpace(rest)
-		if rest == "" {
-			return "", false
-		}
-		// Unquote backticks if present
-		if len(rest) >= 2 && rest[0] == '`' && rest[len(rest)-1] == '`' {
-			rest = rest[1 : len(rest)-1]
-		}
-		return rest, rest != ""
-	}
-	return "", false
 }
 
 // hasPermission reports a global entitlement of roles, through the one
@@ -323,11 +441,6 @@ func (s *Server) ProcedureGrantChecker(roles []string) func(procedure string) bo
 	}
 }
 
-func isMutationQuery(query string) bool {
-	requirements := cypher.QueryPermissionRequirements(query)
-	return requirements.Write || requirements.Schema
-}
-
 // canAccessGraph reports whether the principal may use graph, a request's
 // database: a database, an alias, or a composite constituent, which needs
 // access to its composite and its database (graphAccess), as the executor
@@ -338,17 +451,18 @@ func (s *Server) canAccessGraph(claims *auth.JWTClaims, graph string) bool {
 }
 
 // graphAccess reports whether mode allows graph and the database its data
-// is in (cypher.GraphAccess). A nil mode allows every database.
+// is in (cypher.GraphAccessTarget). A nil mode allows every database.
 func (s *Server) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDatabase string, allowed bool) {
-	var manager cypher.DatabaseManagerInterface
+	var manager cypher.GraphDatabaseResolver
 	if s.dbManager != nil {
-		manager = &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}
+		manager = s.dbManager
 	}
 	var canAccess func(string) bool
 	if mode != nil {
 		canAccess = mode.CanAccessDatabase
 	}
-	return cypher.GraphAccess(manager, graph, canAccess)
+	dataDatabase, _, allowed = cypher.GraphAccessTarget(manager, graph, canAccess)
+	return dataDatabase, allowed
 }
 
 // isShowDatabasesQuery returns true if the normalized statement is SHOW DATABASES (flexible whitespace).
@@ -393,23 +507,21 @@ func (w *responseWriter) WriteHeader(status int) {
 // Flush implements http.Flusher interface for SSE streaming.
 // This is critical for Bifrost chat streaming to work properly.
 func (w *responseWriter) Flush() {
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
+	_ = w.FlushError()
 }
+
+func (w *responseWriter) FlushError() error {
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+func (w *responseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // JSON helpers
 
 func (s *Server) readJSON(r *http.Request, v interface{}) error {
 	// Limit body size
 	body := io.LimitReader(r.Body, s.config.MaxRequestSize)
-	return json.NewDecoder(body).Decode(v)
-}
-
-func (s *Server) writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	return valueconvert.CypherInputJSON.NewDecoder(body).Decode(v)
 }
 
 func (s *Server) applyMVCCPressureWarnings(w http.ResponseWriter, dbName string, response *TransactionResponse) {
@@ -485,11 +597,11 @@ func (s *Server) writeError(w http.ResponseWriter, status int, message string, e
 		"code":    status,
 	}
 
-	s.writeJSON(w, status, response)
+	httpresponse.WritePropertyJSON(w, status, response)
 }
 
 // writeNeo4jError writes an error in Neo4j format.
-func (s *Server) writeNeo4jError(w http.ResponseWriter, status int, code, message string) {
+func (s *Server) writeNeo4jError(w http.ResponseWriter, status int, code, message string, additional ...QueryError) {
 	s.errorCount.Add(1)
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
@@ -498,7 +610,8 @@ func (s *Server) writeNeo4jError(w http.ResponseWriter, status int, code, messag
 			Message: message,
 		}},
 	}
-	s.writeJSON(w, status, response)
+	response.Errors = append(response.Errors, additional...)
+	httpresponse.WritePropertyJSON(w, status, response)
 }
 
 // Logging helpers
@@ -514,7 +627,9 @@ func (s *Server) logSlowQuery(query string, params map[string]interface{}, durat
 		return
 	}
 
-	if duration < s.config.Logging.SlowQueryThreshold {
+	// A zero threshold disables slow-query reporting, as in the Cypher
+	// executor and the MERGE wait (NOR-284).
+	if !nornicConfig.SlowQueryThresholdReached(s.config.Logging.SlowQueryThreshold, duration) {
 		return
 	}
 
@@ -534,18 +649,18 @@ func (s *Server) logSlowQuery(query string, params map[string]interface{}, durat
 	// per Phase 2 D-04c. The full slow-query observability pipeline (with
 	// AST literal redactor + plan_hash) lands in Plan 02-03 (cypher wave).
 	if s.slowQueryLogger != nil {
-		s.slowQueryLogger.Println(logMsg)
+		s.shutdown.work.RecordError("", s.slowQueryLogger.Output(2, logMsg))
 	} else {
 		s.logEvent(context.Background(), slog.LevelWarn, localization.ServerSlowQueryEvent(logMsg))
 	}
 }
 
 func (s *Server) logAudit(r *http.Request, userID, eventType string, success bool, details string) {
-	if s.audit == nil {
+	logger := s.auditLogger()
+	if logger == nil {
 		return
 	}
-
-	s.audit.Log(audit.Event{
+	s.shutdown.work.RecordError("", logger.Log(audit.Event{
 		Timestamp:   time.Now(),
 		Type:        audit.EventType(eventType),
 		UserID:      userID,
@@ -554,18 +669,19 @@ func (s *Server) logAudit(r *http.Request, userID, eventType string, success boo
 		Success:     success,
 		Reason:      details,
 		RequestPath: r.URL.Path,
-	})
+	}))
 }
 
 func (s *Server) logMVCCSnapshotExpiration(session *txsession.Session, err error) {
-	if s.audit == nil || session == nil || err == nil {
+	logger := s.auditLogger()
+	if logger == nil || session == nil || err == nil {
 		return
 	}
 	expirationKind := "graceful"
 	if errors.Is(err, storage.ErrMVCCSnapshotHardExpired) {
 		expirationKind = "hard"
 	}
-	s.audit.Log(audit.Event{
+	s.shutdown.work.RecordError("", logger.Log(audit.Event{
 		Timestamp:  time.Now(),
 		Type:       audit.EventSnapshotExpired,
 		UserID:     session.Owner,
@@ -579,5 +695,5 @@ func (s *Server) logMVCCSnapshotExpiration(session *txsession.Session, err error
 			"expiration_kind": expirationKind,
 			"database":        session.Database,
 		},
-	})
+	}))
 }

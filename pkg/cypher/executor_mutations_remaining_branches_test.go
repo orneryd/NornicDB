@@ -56,16 +56,16 @@ func TestCountSubqueryMatches_NoDirectionCountsBoth(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "count_both_dirs_cov")
 	exec := NewStorageExecutor(store)
 
-	_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"N"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"N"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "c", Labels: []string{"N"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e1", Type: "R", StartNode: "a", EndNode: "b"}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e2", Type: "R", StartNode: "c", EndNode: "a"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "R", StartNode: "a", EndNode: "b"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e2", Type: "R", StartNode: "c", EndNode: "a"}))
 
-	nodeA, err := store.GetNode("a")
+	nodeA, err := store.GetNode(t.Context(), "a")
 	require.NoError(t, err)
 	require.NotNil(t, nodeA)
 
@@ -93,11 +93,11 @@ func TestPolicyHelpers_AdditionalBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "policy_label_change_empty_cov")
 	node := &storage.Node{ID: "n1", Labels: []string{"User"}, Properties: map[string]interface{}{}}
-	_, err = store.CreateNode(node)
+	_, err = store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// No policy constraints in schema: label change validation should be a no-op.
-	require.NoError(t, validatePolicyOnLabelChange(store, node, []string{"OldUser"}))
+	require.NoError(t, validatePolicyOnLabelChange(context.Background(), store, node, []string{"OldUser"}))
 }
 
 func TestExecuteSet_MergeAssignmentErrorAndFallbackBranches(t *testing.T) {
@@ -110,10 +110,10 @@ func TestExecuteSet_MergeAssignmentErrorAndFallbackBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET += {a:1}", getParamsFromContext(ctx))
-	requireSyntaxErrorStatus(t, err, "MATCH (n:P) SET += {a:1}")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH (n:P) SET += {a:1}")
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += $", getParamsFromContext(ctx))
-	requireSyntaxErrorStatus(t, err, "MATCH (n:P) SET n += $")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "MATCH (n:P) SET n += $")
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += $props", getParamsFromContext(ctx))
 	require.Error(t, err)
@@ -126,7 +126,7 @@ func TestExecuteSet_MergeAssignmentErrorAndFallbackBranches(t *testing.T) {
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += props", getParamsFromContext(ctx))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// The source's type is known before the statement runs (Neo4j 5.26.30).
 	_, err = exec.Execute(ctx, "MATCH (n:P) WITH n, 1 AS props SET n += props", getParamsFromContext(ctx))
@@ -149,11 +149,11 @@ func TestValidatePolicyOnLabelChange_OutgoingAndIncomingViolations(t *testing.T)
 
 		src := &storage.Node{ID: "u1", Labels: []string{"User"}, Properties: map[string]interface{}{}}
 		dst := &storage.Node{ID: "d1", Labels: []string{"Doc"}, Properties: map[string]interface{}{}}
-		_, err := store.CreateNode(src)
+		_, err := store.CreateNode(t.Context(), src)
 		require.NoError(t, err)
-		_, err = store.CreateNode(dst)
+		_, err = store.CreateNode(t.Context(), dst)
 		require.NoError(t, err)
-		require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e1", Type: "CAN_EDIT", StartNode: "u1", EndNode: "d1"}))
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "CAN_EDIT", StartNode: "u1", EndNode: "d1"}))
 
 		err = store.GetSchema().AddConstraint(storage.Constraint{
 			Name:        "policy_disallow_user_doc",
@@ -165,7 +165,7 @@ func TestValidatePolicyOnLabelChange_OutgoingAndIncomingViolations(t *testing.T)
 		}, false)
 		require.NoError(t, err)
 
-		err = validatePolicyOnLabelChange(store, src, []string{"User"})
+		err = validatePolicyOnLabelChange(context.Background(), store, src, []string{"User"})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "DISALLOWED")
 	})
@@ -176,11 +176,11 @@ func TestValidatePolicyOnLabelChange_OutgoingAndIncomingViolations(t *testing.T)
 
 		src := &storage.Node{ID: "t1", Labels: []string{"Team"}, Properties: map[string]interface{}{}}
 		dst := &storage.Node{ID: "u1", Labels: []string{"User"}, Properties: map[string]interface{}{}}
-		_, err := store.CreateNode(src)
+		_, err := store.CreateNode(t.Context(), src)
 		require.NoError(t, err)
-		_, err = store.CreateNode(dst)
+		_, err = store.CreateNode(t.Context(), dst)
 		require.NoError(t, err)
-		require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e1", Type: "CAN_ASSIGN", StartNode: "t1", EndNode: "u1"}))
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "CAN_ASSIGN", StartNode: "t1", EndNode: "u1"}))
 
 		err = store.GetSchema().AddConstraint(storage.Constraint{
 			Name:        "policy_disallow_team_user",
@@ -192,7 +192,7 @@ func TestValidatePolicyOnLabelChange_OutgoingAndIncomingViolations(t *testing.T)
 		}, false)
 		require.NoError(t, err)
 
-		err = validatePolicyOnLabelChange(store, dst, []string{"User"})
+		err = validatePolicyOnLabelChange(context.Background(), store, dst, []string{"User"})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "DISALLOWED")
 	})

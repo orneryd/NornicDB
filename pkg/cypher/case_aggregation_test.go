@@ -194,7 +194,7 @@ func TestEvaluateCaseExpressionDirectly(t *testing.T) {
 			"name":   "test",
 		},
 	}
-	_, _ = store.CreateNode(node)
+	_, _ = store.CreateNode(t.Context(), node)
 
 	nodes := map[string]*storage.Node{"n": node}
 
@@ -245,7 +245,7 @@ func TestEvaluateConditionContains(t *testing.T) {
 			"name":   "test",
 		},
 	}
-	_, _ = store.CreateNode(node)
+	_, _ = store.CreateNode(t.Context(), node)
 
 	nodes := map[string]*storage.Node{"n": node}
 
@@ -394,7 +394,8 @@ func TestCaseConditionEvaluation(t *testing.T) {
 
 	t.Run("CASE WHEN with CONTAINS unicode", func(t *testing.T) {
 		// Test resolveReturnItem directly with the node we created
-		nodes := exec.storage.GetAllNodes()
+		nodes, err := exec.storage.AllNodes(context.Background())
+		require.NoError(t, err)
 
 		var testNode *storage.Node
 		for _, node := range nodes {
@@ -470,7 +471,7 @@ func TestEvaluateCondition_OperatorAndPredicateMatrix(t *testing.T) {
 			"age":  int64(10),
 		},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	nodes := map[string]*storage.Node{"n": node}

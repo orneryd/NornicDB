@@ -1,0 +1,218 @@
+package storage
+
+import "context"
+
+// The write-behind overlay serves acknowledged bodies until the flush lands
+// them, so every read that merges it with storage must leave out what the
+// visibility layer hides from that read, exactly as its storage path does.
+// Scans use the adapters here; point reads pass a complete bufferedReadVisibility
+// to entityStateLocked. TestOverlayBodiesAreReadThroughVisibility rejects raw
+// body reads outside these owners. Each takes the read's visibility and applies
+// filterEntityByDecay, the predicate the storage paths use. A hidden
+// buffered body stays in the touched or
+// suppressed set it comes with, so it masks its stored predecessor instead of
+// revealing it. All of them run where the caller holds the buffer's read
+// lock (withReadView's capture, captureReadView's cached callback).
+
+// visibleBufferedEntities compacts either fresh overlay slice through the same
+// visibility owner while observing the read's cancellation. Hidden bodies still
+// mask their stored predecessor through the caller's untouched
+// touched/suppressed sets. A canceled read returns the caller's own context
+// error and no overlay: nothing it managed to copy is published or cached.
+func visibleBufferedEntities[E *Node | *Edge](ctx context.Context, b *BadgerEngine, v readVisibility, entities []E) ([]E, error) {
+	if len(entities) == 0 {
+		return entities, nil
+	}
+	var cancel bulkReadCancellation
+	if v == storedRead || !b.visibilityFiltered() {
+		// Nothing is filtered out, so this pass exists only to observe the
+		// caller's cancellation once per buffered entity.
+		for range entities {
+			if err := cancel.check(ctx); err != nil {
+				return nil, err
+			}
+		}
+		return entities, nil
+	}
+	now := DecayScoringTime()
+	visible := entities[:0]
+	for _, entity := range entities {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
+		if !b.filterEntityByDecay(v, entity, now) {
+			visible = append(visible, entity)
+		}
+	}
+	return visible, nil
+}
+
+// bufferedReadVisibility is a read's stack-only policy. Omission means a
+// physical buffered read; no policy is retained on the shared buffer.
+type bufferedReadVisibility struct {
+	engine     *BadgerEngine
+	visibility readVisibility
+}
+
+// bufferedEntityRead selects one overlay index while retaining the read policy.
+// An empty label/type still means that exact index key; only kind selects a
+// whole-entity scan. Prefix is empty for the complete physical namespace set.
+type bufferedEntityRead struct {
+	kind                              bufferedEntityReadKind
+	prefix, label, edgeType, property string
+	valueKey                          any
+	source, target                    NodeID
+	outgoing                          bool
+}
+type bufferedEntityReadKind uint8
+
+const (
+	bufferedNodes bufferedEntityReadKind = iota
+	bufferedLabel
+	bufferedKey
+	bufferedEdges
+	bufferedType
+	bufferedAdjacency
+	bufferedLiveAdjacency
+	bufferedBetween
+)
+
+type bufferedEntityResult struct {
+	nodes                        []*Node
+	edges                        []*Edge
+	nodesTouched                 map[NodeID]bool
+	edgesTouched                 map[EdgeID]bool
+	suppressed                   map[EdgeID]struct{}
+	sourceDeleted, targetDeleted bool
+}
+
+// readBufferedEntities is the sole indexed-overlay capture/filter owner. The
+// caller holds w's read lock; touched IDs and deletion masks remain unfiltered
+// so hidden buffered bodies cannot reveal their older committed predecessors.
+//
+// ctx is the read's own context, threaded from the caller's route (a statement
+// read's context, or context.Background at a documented context-free
+// boundary). The overlay copy itself observes that cancellation inside every
+// candidate, touched and deletion loop it runs, and the visibility pass that
+// follows observes it per buffered entity, so a canceled read retires with the
+// caller's error and no overlay instead of copying a population nobody will
+// consume.
+func (b *BadgerEngine) readBufferedEntities(ctx context.Context, w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (bufferedEntityResult, error) {
+	if err := ctx.Err(); err != nil {
+		return bufferedEntityResult{}, err
+	}
+	var result bufferedEntityResult
+	var copyErr error
+	switch request.kind {
+	case bufferedNodes:
+		result.nodes, result.nodesTouched, copyErr = w.allNodesOverlayLocked(ctx, request.prefix)
+	case bufferedLabel:
+		result.nodes, result.nodesTouched, copyErr = w.labelOverlayLocked(ctx, request.label, request.prefix)
+	case bufferedKey:
+		result.nodes, copyErr = w.keyCandidatesLocked(ctx, request.label, request.property, request.valueKey)
+	case bufferedEdges:
+		result.edges, result.edgesTouched, copyErr = w.allEdgesOverlayLocked(ctx, request.prefix)
+	case bufferedType:
+		result.edges, result.edgesTouched, copyErr = w.typeOverlayLocked(ctx, request.edgeType, request.prefix)
+	case bufferedAdjacency:
+		result.edges, result.suppressed, result.sourceDeleted, copyErr = w.edgeAdjacencyOverlayLocked(ctx, request.source, request.outgoing)
+	case bufferedLiveAdjacency:
+		result.edges, copyErr = w.liveAdjacencyLocked(ctx, request.source, request.outgoing)
+	case bufferedBetween:
+		result.edges, result.suppressed, result.sourceDeleted, result.targetDeleted, copyErr = w.edgesBetweenOverlayLocked(ctx, request.source, request.target)
+	}
+	if copyErr != nil {
+		return bufferedEntityResult{}, copyErr
+	}
+	if request.kind <= bufferedKey {
+		visible, err := visibleBufferedEntities(ctx, b, v, result.nodes)
+		if err != nil {
+			return bufferedEntityResult{}, err
+		}
+		result.nodes = visible
+		return result, nil
+	}
+	visible, err := visibleBufferedEntities(ctx, b, v, result.edges)
+	if err != nil {
+		return bufferedEntityResult{}, err
+	}
+	result.edges = visible
+	return result, nil
+}
+
+// commitsAfterBegin visits unapplied acknowledgements outside the transaction's
+// captured BEGIN prefix. Reserved MVCC versions do not establish publication
+// order: a writer can reserve before BEGIN and acknowledge afterward.
+func (w *WriteBehindBuffer) commitsAfterBegin(ctx context.Context, begin *transactionBeginPresence, visit func(context.Context, MVCCVersion, []Operation) (bool, error)) error {
+	// An idle BEGIN retains no buffer prefix. Every later buffered commit
+	// is outside that empty cut; keep the allocation-free idle representation.
+	if begin != nil {
+		begin.mu.RLock()
+		defer begin.mu.RUnlock()
+		if begin.released || begin.buffer != w {
+			return ErrStorageClosed
+		}
+	}
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return err
+	}
+	defer w.mu.RUnlock()
+	for generation := -1; generation < len(w.draining); generation++ {
+		buf := w.active
+		if generation >= 0 {
+			buf = w.draining[generation]
+		}
+		first := 0
+		if begin != nil && buf == begin.active {
+			first = len(begin.commits)
+		} else if begin != nil {
+			// Rotation never appends to draining generations and always
+			// installs a fresh active buffer; captured draining cuts are whole.
+			for _, captured := range begin.draining {
+				if captured == buf {
+					first = len(buf.commits)
+					break
+				}
+			}
+		}
+		for i := len(buf.commits) - 1; i >= first; i-- {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			c := &buf.commits[i]
+			more, err := visit(ctx, c.version, c.ops)
+			if err != nil {
+				return err
+			}
+			if !more {
+				return nil
+			}
+		}
+	}
+	return ctx.Err()
+}
+
+// readBufferedBeginPresence projects physical existence at an immutable BEGIN
+// cut. It deliberately uses stored visibility: a hidden entity still existed
+// for missing-write conflict classification. Only presence facts escape this
+// composition owner, never buffered bodies or indexes.
+func (presence *transactionBeginPresence) readBufferedBeginPresence(kind bufferedEntityKind, id string) (found, present bool, err error) {
+	if presence == nil {
+		return false, false, nil
+	}
+	presence.mu.RLock()
+	defer presence.mu.RUnlock()
+	if presence.released {
+		return false, false, ErrStorageClosed
+	}
+	state := presence.active.entityState(kind, id, presence.commits)
+	if !state.found {
+		for _, generation := range presence.draining {
+			state = generation.entityState(kind, id)
+			if state.found {
+				break
+			}
+		}
+	}
+	return state.found, state.found && !state.deleted, nil
+}

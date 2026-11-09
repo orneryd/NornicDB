@@ -2,7 +2,9 @@ package search
 
 import (
 	"context"
-	"errors"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"path/filepath"
 	"testing"
 
@@ -12,7 +14,7 @@ import (
 
 func TestLiveVectorIndexingCreatesConfiguredFileStore(t *testing.T) {
 	vectorPath := filepath.Join(t.TempDir(), "vectors")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.SetVectorIndexPath(vectorPath)
 	svc.SetPersistenceEnabled(true)
@@ -38,7 +40,7 @@ func TestLiveVectorIndexingCreatesConfiguredFileStore(t *testing.T) {
 
 func TestEnablingVectorPersistenceMigratesExistingLiveVectors(t *testing.T) {
 	vectorPath := filepath.Join(t.TempDir(), "vectors")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	require.NoError(t, svc.IndexNode(&storage.Node{
@@ -63,7 +65,7 @@ func TestEnablingVectorPersistenceMigratesExistingLiveVectors(t *testing.T) {
 	require.Zero(t, svc.vectorIndex.Count())
 }
 
-func TestLiveVectorIndexSurvivesRestartWithoutStorageRebuild(t *testing.T) {
+func TestLiveVectorIndexRestartRebuildsUncertifiedSource(t *testing.T) {
 	engine := newNamespacedEngine(t)
 	node := &storage.Node{
 		ID:              "live-node",
@@ -74,24 +76,28 @@ func TestLiveVectorIndexSurvivesRestartWithoutStorageRebuild(t *testing.T) {
 			"embedding": []float32{1, 0},
 		},
 	}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	indexDir := t.TempDir()
 	fulltextPath := filepath.Join(indexDir, "bm25")
 	vectorPath := filepath.Join(indexDir, "vectors")
-	first := NewServiceWithDimensions(engine, 2)
+	first := NewService(engine, 2, nil)
 	first.SetFulltextIndexPath(fulltextPath)
 	first.SetVectorIndexPath(vectorPath)
 	first.SetPersistenceEnabled(true)
+	// Author of the recovered vector-checkpoint work: #1683 implementation lane
+	// (Codex), 2026-11-01. Establish the complete database population before
+	// testing live reuse: an arbitrary IndexNode prefix alone cannot certify
+	// absent source rows.
+	require.NoError(t, first.BuildIndexes(context.Background()))
 	require.NoError(t, first.IndexNode(node))
 	first.PersistIndexesToDisk()
 	require.NoError(t, first.Close())
 
-	restarted := NewServiceWithDimensions(&iteratorEngine{
-		Engine:     engine,
-		iterateErr: errors.New("persisted live index must not rebuild from storage"),
-	}, 2)
+	restarted := NewService(&iteratorEngine{
+		Engine: engine,
+	}, 2, nil)
 	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
 	restarted.SetFulltextIndexPath(fulltextPath)
 	restarted.SetVectorIndexPath(vectorPath)

@@ -392,15 +392,15 @@ func edgeBetweenHeadKey(startNumID, endNumID uint64, edgeType string) []byte {
 // scanners recover the string ID without a reverse-dict lookup while the
 // KEY stays compact (8+8+type+8 bytes).
 func (b *BadgerEngine) writeEdgeBetweenIndexesInTxn(txn *badger.Txn, edge *Edge) error {
-	startNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.StartNode)
+	startNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(edge.StartNode))
 	if err != nil {
 		return err
 	}
-	endNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.EndNode)
+	endNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(edge.EndNode))
 	if err != nil {
 		return err
 	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edge.ID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edge.ID))
 	if err != nil {
 		return err
 	}
@@ -468,7 +468,8 @@ func (b *BadgerEngine) deleteEdgeBetweenHeadIfMatchesInTxn(txn *badger.Txn, edge
 // value, which readers answer from the record, as for entries written before
 // the values existed.
 func adjacencyValueFromRecord(record []byte) []byte {
-	if _, _, _, headerEnd, err := decodeEdgeCompactHeader(record, edgeFormatCompactV2); err == nil {
+	var edge Edge
+	if _, _, headerEnd, err := decodeEdgeCompactHeaderInto(record, edgeFormatCompactV2, &edge); err == nil {
 		return append([]byte(nil), record[:headerEnd]...)
 	}
 	return []byte{}
@@ -493,11 +494,11 @@ func (b *BadgerEngine) setAdjacencyValuesInTxn(txn kvWriter, edge *Edge, record 
 // (allocating num IDs if missing) and returns the compact-keyed key.
 // Callers on write paths pass a txn so the allocation persists.
 func (b *BadgerEngine) outgoingIndexKeyString(txn kvWriter, nodeID NodeID, edgeID EdgeID) ([]byte, error) {
-	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(nodeID))
 	if err != nil {
 		return nil, err
 	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edgeID))
 	if err != nil {
 		return nil, err
 	}
@@ -506,11 +507,11 @@ func (b *BadgerEngine) outgoingIndexKeyString(txn kvWriter, nodeID NodeID, edgeI
 
 // incomingIndexKeyString is the incoming-side analogue.
 func (b *BadgerEngine) incomingIndexKeyString(txn kvWriter, nodeID NodeID, edgeID EdgeID) ([]byte, error) {
-	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(nodeID))
 	if err != nil {
 		return nil, err
 	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edgeID))
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +520,7 @@ func (b *BadgerEngine) incomingIndexKeyString(txn kvWriter, nodeID NodeID, edgeI
 
 // edgeTypeIndexKeyString is the edge-type analogue.
 func (b *BadgerEngine) edgeTypeIndexKeyString(txn kvWriter, edgeType string, edgeID EdgeID) ([]byte, error) {
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edgeID))
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +579,7 @@ func (b *BadgerEngine) incomingIndexPrefixString(nodeID NodeID) []byte {
 // labelIndexKeyString resolves the node string ID via the dict,
 // allocating a numID if missing, and returns the compact label key.
 func (b *BadgerEngine) labelIndexKeyString(txn kvWriter, label string, nodeID NodeID) ([]byte, error) {
-	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(nodeID))
 	if err != nil {
 		return nil, err
 	}
@@ -599,7 +600,7 @@ func (b *BadgerEngine) labelIndexKeyStringLookup(label string, nodeID NodeID) []
 // MVCC head key with dict-backed string ID resolution. Writers allocate
 // the numID; readers use lookup-only.
 func (b *BadgerEngine) mvccNodeHeadKeyString(txn kvWriter, id NodeID) ([]byte, error) {
-	num, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, id)
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -607,7 +608,7 @@ func (b *BadgerEngine) mvccNodeHeadKeyString(txn kvWriter, id NodeID) ([]byte, e
 }
 
 func (b *BadgerEngine) mvccEdgeHeadKeyString(txn kvWriter, id EdgeID) ([]byte, error) {
-	num, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, id)
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -633,7 +634,7 @@ func (b *BadgerEngine) mvccEdgeHeadKeyStringLookup(id EdgeID) []byte {
 // mvccNodeVersionKeyString / mvccEdgeVersionKeyString wrap the
 // numeric-keyed MVCC version keys.
 func (b *BadgerEngine) mvccNodeVersionKeyString(txn kvWriter, id NodeID, version MVCCVersion) ([]byte, error) {
-	num, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, id)
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -641,7 +642,7 @@ func (b *BadgerEngine) mvccNodeVersionKeyString(txn kvWriter, id NodeID, version
 }
 
 func (b *BadgerEngine) mvccEdgeVersionKeyString(txn kvWriter, id EdgeID, version MVCCVersion) ([]byte, error) {
-	num, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, id)
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -683,28 +684,28 @@ func (b *BadgerEngine) mvccEdgeVersionPrefixString(id EdgeID) []byte {
 	return mvccEdgeVersionPrefix(num)
 }
 
-func (b *BadgerEngine) mvccOutgoingAdjacencyKeyString(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion) ([]byte, error) {
-	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
+type mvccAdjacencyKeyDirection bool
+
+const (
+	mvccAdjacencyOutgoing mvccAdjacencyKeyDirection = false
+	mvccAdjacencyIncoming mvccAdjacencyKeyDirection = true
+)
+
+// mvccAdjacencyKeyString resolves the same dictionary identities for both
+// directions and selects the existing on-disk key encoding for each direction.
+func (b *BadgerEngine) mvccAdjacencyKeyString(direction mvccAdjacencyKeyDirection, txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion) ([]byte, error) {
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, nodeID)
 	if err != nil {
 		return nil, err
 	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, edgeID)
 	if err != nil {
 		return nil, err
+	}
+	if direction == mvccAdjacencyIncoming {
+		return mvccIncomingAdjacencyKey(nodeNum, edgeNum, version), nil
 	}
 	return mvccOutgoingAdjacencyKey(nodeNum, edgeNum, version), nil
-}
-
-func (b *BadgerEngine) mvccIncomingAdjacencyKeyString(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion) ([]byte, error) {
-	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
-	if err != nil {
-		return nil, err
-	}
-	return mvccIncomingAdjacencyKey(nodeNum, edgeNum, version), nil
 }
 
 func (b *BadgerEngine) mvccOutgoingAdjacencyPrefixString(nodeID NodeID) []byte {
@@ -873,6 +874,29 @@ func embeddingPrefix(nodeID NodeID) []byte {
 	return key
 }
 
+// visitEmbeddingKeys owns enumeration for every embedding replacement and
+// cleanup. Each callback receives a key it may retain until its write commits.
+type embeddingKeyScanOptions struct {
+	after []byte
+}
+
+func visitEmbeddingKeys(txn *badger.Txn, nodeID NodeID, visit func([]byte) error, options ...embeddingKeyScanOptions) error {
+	return visitEmbeddingKeysExcept(txn, nodeID, embeddingRangeRetention{}, visit, options...)
+}
+
+// visitEmbeddingKeysExcept observes the full range but copies only keys whose
+// old values are not already replaced by the caller's final write set.
+func visitEmbeddingKeysExcept(txn *badger.Txn, nodeID NodeID, retained embeddingRangeRetention, visit func([]byte) error, options ...embeddingKeyScanOptions) error {
+	var scan embeddingKeyScanOptions
+	if len(options) > 0 {
+		scan = options[0]
+	}
+	if indexed, err := visitEmbeddingManifestKeys(txn, nodeID, retained, visit, scan.after); indexed || err != nil {
+		return err
+	}
+	return visitEmbeddingPrefixKeys(txn, embeddingPrefix(nodeID), scan.after, visit, retained)
+}
+
 // extractEdgeNumIDFromOutgoingKey pulls the trailing 8-byte edge numID from
 // an outgoing/incoming index key. Returns (0, false) if the key is malformed.
 //
@@ -948,7 +972,11 @@ func encodeNodeV1Body(n *Node) ([]byte, bool, error) {
 	chunkCount := len(nodeCopy.ChunkEmbeddings)
 	nodeCopy.ChunkEmbeddings = nil
 
-	nodeCopy.EmbeddingsStoredSeparately = true
+	{
+		metadata := nodeCopy.RuntimeMetadata()
+		metadata.EmbeddingsStoredSeparately = true
+		nodeCopy.SetRuntimeMetadata(metadata)
+	}
 	if nodeCopy.EmbedMeta == nil {
 		nodeCopy.EmbedMeta = make(map[string]any)
 	}
@@ -1014,7 +1042,11 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 
 	chunkCount := len(bodyCopy.ChunkEmbeddings)
 	bodyCopy.ChunkEmbeddings = nil
-	bodyCopy.EmbeddingsStoredSeparately = true
+	{
+		metadata := bodyCopy.RuntimeMetadata()
+		metadata.EmbeddingsStoredSeparately = true
+		bodyCopy.SetRuntimeMetadata(metadata)
+	}
 	if bodyCopy.EmbedMeta == nil {
 		bodyCopy.EmbedMeta = make(map[string]any)
 	}
@@ -1080,46 +1112,24 @@ func (b *BadgerEngine) encodeNode(txn *badger.Txn, node *Node) ([]byte, bool, er
 	return b.encodeNodeInTxn(txn, namespace, node)
 }
 
-// decodeEdgeBodyByID is the engine-attached convenience wrapper that
-// derives the namespace from the edge ID. Replaces the old
-// decodeEdgeBodyWithID(data, id) signature at call sites.
-func (b *BadgerEngine) decodeEdgeBodyByID(data []byte, id EdgeID) (*Edge, error) {
-	return b.decodeEdgeBodyWithID(namespaceForEdgeID(id), data, id)
-}
-
-// decodeNode is the V2 hot-path decoder. Rejects any body that does
-// not start with the V2 format byte — V2 stores have been fully
-// rewritten by the V1→V2 migration, so a non-V2 body indicates
-// corruption or a forgotten upgrade.
-func (b *BadgerEngine) decodeNode(namespace string, data []byte) (*Node, error) {
-	return b.decodeNodeProjected(namespace, data, nil)
-}
-
-// decodeNodeProjected decodes a V2 node body with only the included
-// properties (all of them when include is nil). A scan that tests properties
-// before keeping a node uses projectedNodeDecoder instead (#857).
-func (b *BadgerEngine) decodeNodeProjected(namespace string, data []byte, include map[string]struct{}) (*Node, error) {
-	if len(data) < 1 {
-		return nil, fmt.Errorf("node body empty")
+// decodeNodeProjected is the V2 hot-path node decoder. It decodes only the
+// included properties (all of them when include is nil) and rejects every
+// envelope frame it does not own (#1693). txn is the Badger transaction whose
+// snapshot the body was read from and owns the names of the body's stored
+// property tokens; nil is the context-free standalone boundary
+// (decodeTokenizedPropertiesProjected). A scan that tests properties before
+// keeping a node uses projectedNodeDecoder instead (#857).
+func (b *BadgerEngine) decodeNodeProjected(txn *badger.Txn, namespace string, data []byte, include map[string]struct{}) (*Node, error) {
+	envelope, err := SplitNodeEnvelope(data)
+	if err != nil {
+		return nil, err
 	}
-	if data[0] != nodeFormatTokenizedV1 {
-		return nil, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
-	}
-	rest := data[1:]
-	propsLen, n := binary.Uvarint(rest)
-	if n <= 0 {
-		return nil, fmt.Errorf("node body: malformed properties length varint")
-	}
-	rest = rest[n:]
-	if uint64(len(rest)) < propsLen {
-		return nil, fmt.Errorf("node body: properties payload truncated")
-	}
-	props, err := b.decodeTokenizedPropertiesProjected(namespace, rest[:propsLen], include)
+	props, err := b.decodeTokenizedPropertiesProjected(txn, namespace, envelope.properties, include)
 	if err != nil {
 		return nil, err
 	}
 	node := &Node{}
-	if err := decodeValue(rest[propsLen:], node); err != nil {
+	if err := decodeValue(envelope.metadata, node); err != nil {
 		return nil, err
 	}
 	node.Properties = props
@@ -1129,43 +1139,61 @@ func (b *BadgerEngine) decodeNodeProjected(namespace string, data []byte, includ
 // decodeNodeWithEmbeddings deserializes a Node and loads separately stored embeddings from transaction.
 // Works in both View and Update transactions (only reads embeddings).
 func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, nodeID NodeID) (*Node, error) {
+	return b.decodeNodeEmbeddingState(txn, data, nodeID, true)
+}
+
+// decodeNodeEmbeddingState is decodeNodeWithEmbeddings; with vectors false
+// it settles the embedding metadata without reading a stored chunk vector
+// (loadNodeEmbeddingState).
+func (b *BadgerEngine) decodeNodeEmbeddingState(txn *badger.Txn, data []byte, nodeID NodeID, vectors bool) (*Node, error) {
 	namespace, _, _ := ParseDatabasePrefix(string(nodeID))
-	node, err := b.decodeNode(namespace, data)
+	node, err := b.decodeNodeProjected(txn, namespace, data, nil)
 	if err != nil {
 		return nil, err
 	}
-	return b.loadNodeEmbeddings(txn, node, nodeID)
+	return b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, nodeID, vectors)
 }
 
-// loadNodeEmbeddings hydrates separately stored chunk vectors into a decoded
-// node body. Keeping this separate lets the body cache retain only metadata and
-// properties while preserving full-node read semantics on cache hits.
-//
-// The worker's embedding sidecar (embeddingMetaKey) takes precedence over
-// body-inline embedding state when present and fresh: sidecar metadata
-// replaces EmbedMeta and chunk vectors are hydrated from the embedding key
-// space. A stale sidecar (the body changed after the embedding was generated)
-// is ignored, leaving the node embedding-free so the worker re-embeds the
-// new content.
-func (b *BadgerEngine) loadNodeEmbeddings(txn *badger.Txn, node *Node, nodeID NodeID) (*Node, error) {
-	if sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(txn, node, nodeID); err != nil {
+// loadNodeEmbeddingState settles fresh sidecar metadata against the caller's
+// pinned body. With vectors true it hydrates complete chunk payloads; false
+// preserves query metadata without fetching those payloads. Stale sidecars
+// remain ignored under the same source-body validation policy.
+func (b *BadgerEngine) loadNodeEmbeddingState(read embeddingRecordReader, node *Node, nodeID NodeID, vectors bool) (*Node, error) {
+	if sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(read, node, nodeID); err != nil {
 		return nil, err
 	} else if fresh {
 		node.EmbedMeta = sidecarMeta
-		node.EmbeddingsStoredSeparately = false
-		if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCountFromMeta(sidecarMeta)); err != nil {
+		{
+			metadata := node.RuntimeMetadata()
+			metadata.EmbeddingsStoredSeparately = false
+			node.SetRuntimeMetadata(metadata)
+		}
+		chunkCount := chunkCountFromMeta(sidecarMeta)
+		if !vectors {
+			if chunkCount > 0 {
+				node.ChunkEmbeddings = nil
+			}
+			return node, nil
+		}
+		if err := loadEmbeddingChunksFrom(read, node, nodeID, chunkCount); err != nil {
 			return nil, err
 		}
 		return node, nil
 	}
 
 	// Legacy body-flag path: embeddings stored separately during encode.
-	if node.EmbeddingsStoredSeparately {
+	if node.RuntimeMetadata().EmbeddingsStoredSeparately {
 		if chunkCount := chunkCountFromMeta(node.EmbedMeta); chunkCount > 0 {
-			if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCount); err != nil {
-				return nil, err
+			if vectors {
+				if err := loadEmbeddingChunksFrom(read, node, nodeID, chunkCount); err != nil {
+					return nil, err
+				}
 			}
-			node.EmbeddingsStoredSeparately = false
+			{
+				metadata := node.RuntimeMetadata()
+				metadata.EmbeddingsStoredSeparately = false
+				node.SetRuntimeMetadata(metadata)
+			}
 		}
 	}
 
@@ -1220,32 +1248,55 @@ func (b *BadgerEngine) loadEmbeddingChunks(txn *badger.Txn, node *Node, nodeID N
 }
 
 // embeddingRecordReader uses the ordinary transaction directly for normal reads.
-// Only recovery supplies a commit overlay. Appending into dst preserves the
+// Recovery supplies a real commit overlay; prepared capture supplies its owned
+// staged maps while holding tx.mu. Neither constructs a synthetic WAL generation.
+// Appending into dst preserves the
 // existing sharded-vector allocation behavior without reader closures.
 type embeddingRecordReader struct {
-	txn    *badger.Txn
-	commit *bufferedCommit
+	txn           *badger.Txn
+	commit        *bufferedCommit
+	stagedWrites  map[string][]byte
+	stagedDeletes map[string]bool
 }
 
-func (r embeddingRecordReader) read(key, dst []byte) ([]byte, error) {
+type embeddingRecord struct {
+	item *badger.Item
+	data []byte
+}
+
+func (r embeddingRecordReader) record(key []byte) (embeddingRecord, error) {
+	writes, deletes := r.stagedWrites, r.stagedDeletes
 	if r.commit != nil {
-		if r.commit.deletes[string(key)] {
-			return nil, badger.ErrKeyNotFound
-		}
-		if data, ok := r.commit.writes[string(key)]; ok {
-			return append(dst, data...), nil
-		}
+		writes, deletes = r.commit.writes, r.commit.deletes
+	}
+	if deletes[string(key)] {
+		return embeddingRecord{}, badger.ErrKeyNotFound
+	}
+	if data, ok := writes[string(key)]; ok {
+		return embeddingRecord{data: data}, nil
 	}
 	item, err := r.txn.Get(key)
+	return embeddingRecord{item: item}, err
+}
+func (r embeddingRecord) value(visit func([]byte) error) error {
+	if r.item != nil {
+		return r.item.Value(visit)
+	}
+	return visit(r.data)
+}
+func (r embeddingRecordReader) value(key []byte, visit func([]byte) error) error {
+	record, err := r.record(key)
+	if err != nil {
+		return err
+	}
+	return record.value(visit)
+}
+func (r embeddingRecordReader) read(key, dst []byte) ([]byte, error) {
+	record, err := r.record(key)
 	if err != nil {
 		return nil, err
 	}
-	// ValueCopy replaces dst rather than appending. Preserve earlier shards
-	// when persisted and staged records share the same assembly buffer.
-	err = item.Value(func(value []byte) error {
-		dst = append(dst, value...)
-		return nil
-	})
+	err = record.value(func(value []byte) error { dst = append(dst, value...); return nil })
 	return dst, err
 }
 

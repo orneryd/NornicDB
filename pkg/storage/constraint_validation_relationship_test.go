@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func TestValidateRelUniquenessOnEdges_SingleProperty_Pass(t *testing.T) {
 		Label:      "KNOWS",
 		Properties: []string{"label"},
 	}
-	require.NoError(t, validateRelUniquenessOnEdges(edges, c))
+	require.NoError(t, validateRelUniquenessOnEdges(context.Background(), edges, c))
 }
 
 func TestValidateRelUniquenessOnEdges_SingleProperty_DuplicateFails(t *testing.T) {
@@ -46,7 +47,7 @@ func TestValidateRelUniquenessOnEdges_SingleProperty_DuplicateFails(t *testing.T
 		Label:      "KNOWS",
 		Properties: []string{"label"},
 	}
-	cve := asConstraintViolation(t, validateRelUniquenessOnEdges(edges, c))
+	cve := asConstraintViolation(t, validateRelUniquenessOnEdges(context.Background(), edges, c))
 	require.Equal(t, ConstraintUnique, cve.Type)
 	require.Equal(t, "KNOWS", cve.Label)
 	require.Equal(t, []string{"label"}, cve.Properties)
@@ -64,7 +65,7 @@ func TestValidateRelUniquenessOnEdges_NilValueSkipped(t *testing.T) {
 	c := Constraint{Type: ConstraintUnique, Label: "KNOWS", Properties: []string{"label"}}
 	// Two edges with nil don't constitute a duplicate; the
 	// uniqueness check skips nil per the function's contract.
-	require.NoError(t, validateRelUniquenessOnEdges(edges, c))
+	require.NoError(t, validateRelUniquenessOnEdges(context.Background(), edges, c))
 }
 
 func TestValidateRelUniquenessOnEdges_MultiPropertyDelegatesToComposite(t *testing.T) {
@@ -77,7 +78,7 @@ func TestValidateRelUniquenessOnEdges_MultiPropertyDelegatesToComposite(t *testi
 		Label:      "KNOWS",
 		Properties: []string{"a", "b"},
 	}
-	cve := asConstraintViolation(t, validateRelUniquenessOnEdges(edges, c))
+	cve := asConstraintViolation(t, validateRelUniquenessOnEdges(context.Background(), edges, c))
 	require.Equal(t, ConstraintUnique, cve.Type)
 	require.ElementsMatch(t, []string{"a", "b"}, cve.Properties)
 	require.Contains(t, cve.Message, "duplicate composite key")
@@ -91,7 +92,7 @@ func TestValidateRelCompositeUniquenessOnEdges_NilSkipsRow(t *testing.T) {
 		{ID: "e2", Type: "KNOWS", Properties: map[string]any{"a": "x", "b": nil}},
 	}
 	c := Constraint{Type: ConstraintUnique, Label: "KNOWS", Properties: []string{"a", "b"}}
-	require.NoError(t, validateRelCompositeUniquenessOnEdges(edges, c))
+	require.NoError(t, validateRelCompositeUniquenessOnEdges(context.Background(), edges, c))
 }
 
 func TestValidateRelExistenceOnEdges_AllPresent(t *testing.T) {
@@ -101,7 +102,7 @@ func TestValidateRelExistenceOnEdges_AllPresent(t *testing.T) {
 		{ID: "e3", Type: "OTHER", Properties: map[string]any{}}, // wrong type, ignored
 	}
 	c := Constraint{Type: ConstraintExists, Label: "KNOWS", Properties: []string{"a", "b"}}
-	require.NoError(t, validateRelExistenceOnEdges(edges, c))
+	require.NoError(t, validateRelExistenceOnEdges(context.Background(), edges, c))
 }
 
 func TestValidateRelExistenceOnEdges_MissingFails(t *testing.T) {
@@ -110,7 +111,7 @@ func TestValidateRelExistenceOnEdges_MissingFails(t *testing.T) {
 		{ID: "e2", Type: "KNOWS", Properties: map[string]any{"a": "x"}}, // missing b
 	}
 	c := Constraint{Type: ConstraintExists, Label: "KNOWS", Properties: []string{"a", "b"}}
-	cve := asConstraintViolation(t, validateRelExistenceOnEdges(edges, c))
+	cve := asConstraintViolation(t, validateRelExistenceOnEdges(context.Background(), edges, c))
 	require.Equal(t, ConstraintExists, cve.Type)
 	require.Equal(t, []string{"b"}, cve.Properties)
 	require.Contains(t, cve.Message, "e2")
@@ -121,7 +122,7 @@ func TestTemporalCompositeKey(t *testing.T) {
 	edge := &Edge{ID: "e1", Properties: map[string]any{"x": "a", "y": int64(7)}}
 	got, err := temporalCompositeKey(edge, []string{"x", "y"})
 	require.NoError(t, err)
-	require.Equal(t, "a\x007", got)
+	require.Equal(t, []interface{}{"a", int64(7)}, got)
 
 	// Nil component → error mentioning the property name.
 	edgeBad := &Edge{ID: "e2", Properties: map[string]any{"x": "a"}}
@@ -156,7 +157,7 @@ func TestValidateRelTemporalOnCreationForEngine_NoOverlap(t *testing.T) {
 		Label:      "RECORDS",
 		Properties: []string{"subject", "target", "valid_from", "valid_to"},
 	}
-	require.NoError(t, validateRelTemporalOnCreationForEngine(edges, c))
+	require.NoError(t, validateRelTemporalOnCreationForEngine(context.Background(), edges, c))
 }
 
 func TestValidateRelTemporalOnCreationForEngine_OverlapFails(t *testing.T) {
@@ -177,7 +178,7 @@ func TestValidateRelTemporalOnCreationForEngine_OverlapFails(t *testing.T) {
 		Label:      "RECORDS",
 		Properties: []string{"subject", "target", "valid_from", "valid_to"},
 	}
-	cve := asConstraintViolation(t, validateRelTemporalOnCreationForEngine(edges, c))
+	cve := asConstraintViolation(t, validateRelTemporalOnCreationForEngine(context.Background(), edges, c))
 	require.Equal(t, ConstraintTemporal, cve.Type)
 	require.Contains(t, cve.Message, "overlap")
 	require.Contains(t, cve.Message, "e1")
@@ -186,7 +187,7 @@ func TestValidateRelTemporalOnCreationForEngine_OverlapFails(t *testing.T) {
 
 func TestValidateRelTemporalOnCreationForEngine_TooFewProperties(t *testing.T) {
 	c := Constraint{Type: ConstraintTemporal, Label: "RECORDS", Properties: []string{"valid_from", "valid_to"}}
-	err := validateRelTemporalOnCreationForEngine(nil, c)
+	err := validateRelTemporalOnCreationForEngine(context.Background(), nil, c)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least 3 properties")
 }
@@ -204,7 +205,7 @@ func TestValidateRelTemporalOnCreationForEngine_BadTimeValueRejected(t *testing.
 		Label:      "RECORDS",
 		Properties: []string{"subject", "target", "valid_from", "valid_to"},
 	}
-	cve := asConstraintViolation(t, validateRelTemporalOnCreationForEngine(edges, c))
+	cve := asConstraintViolation(t, validateRelTemporalOnCreationForEngine(context.Background(), edges, c))
 	require.Equal(t, ConstraintTemporal, cve.Type)
 	require.Contains(t, cve.Message, "valid_from")
 }
@@ -233,7 +234,7 @@ func TestValidateRelDomainOnCreationForEngine_AllAllowed(t *testing.T) {
 		Properties:    []string{"v"},
 		AllowedValues: []interface{}{"active", "inactive"},
 	}
-	require.NoError(t, validateRelDomainOnCreationForEngine(edges, c))
+	require.NoError(t, validateRelDomainOnCreationForEngine(context.Background(), edges, c))
 }
 
 func TestValidateRelDomainOnCreationForEngine_DisallowedValueFails(t *testing.T) {
@@ -247,7 +248,7 @@ func TestValidateRelDomainOnCreationForEngine_DisallowedValueFails(t *testing.T)
 		Properties:    []string{"v"},
 		AllowedValues: []interface{}{"active", "inactive"},
 	}
-	cve := asConstraintViolation(t, validateRelDomainOnCreationForEngine(edges, c))
+	cve := asConstraintViolation(t, validateRelDomainOnCreationForEngine(context.Background(), edges, c))
 	require.Equal(t, ConstraintDomain, cve.Type)
 	require.Equal(t, []string{"v"}, cve.Properties)
 	require.Contains(t, cve.Message, "e2")
@@ -256,14 +257,14 @@ func TestValidateRelDomainOnCreationForEngine_DisallowedValueFails(t *testing.T)
 
 func TestValidateRelDomainOnCreationForEngine_PropertyCountValidation(t *testing.T) {
 	c := Constraint{Type: ConstraintDomain, Label: "X", Properties: []string{"a", "b"}, AllowedValues: []interface{}{"x"}}
-	err := validateRelDomainOnCreationForEngine(nil, c)
+	err := validateRelDomainOnCreationForEngine(context.Background(), nil, c)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exactly 1 property")
 }
 
 func TestValidateRelDomainOnCreationForEngine_EmptyAllowedListRejected(t *testing.T) {
 	c := Constraint{Type: ConstraintDomain, Label: "X", Properties: []string{"a"}, AllowedValues: nil}
-	err := validateRelDomainOnCreationForEngine(nil, c)
+	err := validateRelDomainOnCreationForEngine(context.Background(), nil, c)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least one allowed value")
 }

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"maps"
 	"reflect"
 	"strings"
@@ -21,13 +22,13 @@ import (
 // that isn't a list is a list of that one value (coerceToUnwindItems). Variables
 // bound to a node, relationship or path are checked with their scope
 // (graphListOperandTypeError).
-func validateListOperands(cypher string, params map[string]interface{}) error {
-	return forEachListOperand(cypher, func(start, in int) error {
+func validateListOperands(ctx context.Context, cypher string, params map[string]interface{}) error {
+	return forEachListOperand(ctx, cypher, func(start, in int) error {
 		// FOREACH (x IN 5 | …) runs once with x = 5 in Neo4j, not a type error.
-		if foreachDeclaration(cypher, in) || forIterationDeclaration(cypher, in) {
+		if coercingIterationDeclaration(ctx, cypher, in) {
 			return nil
 		}
-		end, typeName, parameter := staticListOperand(cypher, start, params)
+		end, typeName, parameter := staticListOperand(ctx, cypher, start, params)
 		if typeName == "" || !wholeListOperand(cypher, end) {
 			return nil
 		}
@@ -42,24 +43,17 @@ func validateListOperands(cypher string, params map[string]interface{}) error {
 // forEachListOperand calls visit with the offset of each list-position
 // operand in text (the operand after an IN keyword outside quotes) and the
 // offset of that IN, stopping at the first error.
-func forEachListOperand(text string, visit func(start, in int) error) error {
+func forEachListOperand(ctx context.Context, text string, visit func(start, in int) error) error {
 	for i := 0; i < len(text); i++ {
-		switch text[i] {
-		case '\'', '"', '`':
-			quote := text[i]
-			i++
-			for i < len(text) && (text[i] != quote || (quote != '`' && isBackslashEscaped(text, i))) {
-				i++
-			}
+		if end, quoted := skipCypherLexicalToken(text, i); quoted {
+			i = end - 1
 			continue
-		case '/':
-			if end := queryCommentEnd(text, i); end >= 0 {
-				i = end - 1
-				continue
-			}
 		}
-		if (text[i] != 'I' && text[i] != 'i') || i+1 >= len(text) || (text[i+1] != 'N' && text[i+1] != 'n') || (i > 0 && (isIdentByte(text[i-1]) || text[i-1] == ':' || text[i-1] == '.')) ||
-			i+2 >= len(text) || isIdentByte(text[i+2]) {
+		if (text[i] != 'I' && text[i] != 'i') || i+1 >= len(text) || (text[i+1] != 'N' && text[i+1] != 'n') || (i > 0 && (cyphertext.NamePartAt(text, i-1) || text[i-1] == ':' || text[i-1] == '.')) ||
+			i+2 >= len(text) || cyphertext.NamePartAt(text, i+2) {
+			continue
+		}
+		if wordIsName(ctx, text, i) {
 			continue
 		}
 		if err := visit(queryGapEnd(text, i+2), i); err != nil {
@@ -74,7 +68,7 @@ func forEachListOperand(text string, visit func(start, in int) error) error {
 // n[0], x + y).
 func wholeListOperand(text string, end int) bool {
 	next := queryGapEnd(text, end)
-	return next >= len(text) || strings.IndexByte(")],}|", text[next]) >= 0 || isIdentByte(text[next])
+	return next >= len(text) || strings.IndexByte(")],}|", text[next]) >= 0 || cyphertext.NamePartAt(text, next)
 }
 
 // graphListOperandTypeError is Neo4j's compile-time SyntaxError for a list
@@ -84,19 +78,17 @@ func wholeListOperand(text string, end int) bool {
 // and subquery bodies. FOREACH (x IN n | …) is not a type error in Neo4j (it
 // runs once). A list element declaration (`[n IN list | …]`) is not itself
 // an operand and cannot change the type of a separate `IN n` operand.
-func graphListOperandTypeError(text string, scope matchSemanticScope) error {
-	return staticListOperandTypeError(text, staticTypeScope{kinds: scope})
+func graphListOperandTypeError(ctx context.Context, text string, scope matchSemanticScope) error {
+	return staticListOperandTypeError(ctx, text, staticTypeScope{kinds: scope})
 }
 
-func staticListOperandTypeError(text string, scope staticTypeScope) error {
+func staticListOperandTypeError(ctx context.Context, text string, scope staticTypeScope) error {
 	if len(scope.kinds) == 0 && len(scope.values) == 0 {
 		return nil
 	}
-	return forEachListOperand(text, func(start, in int) error {
+	return forEachListOperand(ctx, text, func(start, in int) error {
 		end := start
-		for end < len(text) && isIdentByte(text[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(text, end)
 		if end == start || !wholeListOperand(text, end) {
 			return nil
 		}
@@ -105,7 +97,7 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 		if typeName == "" || mayBeListType(typeName) {
 			return nil
 		}
-		if foreachDeclaration(text, in) || forIterationDeclaration(text, in) || localVariableShadowsAt(text, start, name) {
+		if coercingIterationDeclaration(ctx, text, in) || localVariableShadowsAt(text, start, name) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListOperandTypeMismatch(typeName))
@@ -115,62 +107,44 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 // mayBeListType reports whether a static type is a list or names one among
 // its choices (a property value's type may be a List<T>).
 func mayBeListType(typeName string) bool {
-	for _, choice := range staticTypeChoices(typeName) {
-		if strings.HasPrefix(choice, "List<") {
-			return true
-		}
-	}
-	return false
+	// The owner's admission: a null alternative fits too.
+	return typeName != "" && !typedOperand(typeName).proved().excludes(isListTypeName)
 }
 
-// foreachDeclaration reports whether the IN at offset in is FOREACH's own
-// (`FOREACH (x IN …`).
-func foreachDeclaration(text string, in int) bool {
-	if !containsFold(text[:in], "FOREACH") {
-		return false
-	}
+// coercingIterationDeclaration reports whether IN belongs to a scalar-coercing
+// iteration header: FOREACH (x IN ...) or FOR x IN .... A separate membership
+// expression inside either clause still requires a list operand.
+func coercingIterationDeclaration(ctx context.Context, text string, in int) bool {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
-	for from := 0; from < in; {
-		start := keywordIndexFrom(text, "FOREACH", from, opts)
-		if start < 0 || start >= in {
-			return false
+	for _, header := range [...]struct {
+		keyword       string
+		parenthesized bool
+	}{{"FOREACH", true}, {"FOR", false}} {
+		if !containsFold(text[:in], header.keyword) {
+			continue
 		}
-		open := queryGapEnd(text, start+len("FOREACH"))
-		if open < len(text) && text[open] == '(' {
-			_, end, ok := scanIdentifierToken(text, queryGapEnd(text, open+1))
-			if ok && queryGapEnd(text, end) == in {
-				return true
+		for from := 0; from < in; {
+			start := keywordIndexFrom(ctx, text, header.keyword, from, opts)
+			if start < 0 || start >= in {
+				break
 			}
-		}
-		from = start + len("FOREACH")
-	}
-	return false
-}
-
-// forIterationDeclaration reports whether the IN at offset in is a FOR
-// iteration clause's own (`FOR x IN …`). FOR iterates like UNWIND, coercing a
-// non-list operand to a single item, so its operand is not a list type error.
-func forIterationDeclaration(text string, in int) bool {
-	if !containsFold(text[:in], "FOR") {
-		return false
-	}
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	for from := 0; from < in; {
-		start := keywordIndexFrom(text, "FOR", from, opts)
-		if start < 0 || start >= in {
-			return false
-		}
-		nameStart := queryGapEnd(text, start+len("FOR"))
-		if nameStart < in {
-			if _, nameEnd, ok := scanIdentifierToken(text, nameStart); ok && queryGapEnd(text, nameEnd) == in {
-				return true
+			nameStart := queryGapEnd(text, start+len(header.keyword))
+			if header.parenthesized {
+				if nameStart >= len(text) || text[nameStart] != '(' {
+					from = start + len(header.keyword)
+					continue
+				}
+				nameStart = queryGapEnd(text, nameStart+1)
 			}
+			if nameStart < in {
+				if name, ok := cyphertext.ScanIdentifier(text, nameStart); ok && queryGapEnd(text, name.End) == in {
+					return true
+				}
+			}
+			from = start + len(header.keyword)
 		}
-		from = start + len("FOR")
 	}
 	return false
 }
@@ -220,7 +194,7 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 		if list {
 			closeBy = ']'
 		}
-		if close := findMatchingDelimiter(text, open, rune(text[open]), closeBy); close >= 0 {
+		if close := cyphertext.FindMatchingDelimiter(text, open, rune(text[open]), closeBy, cyphertext.OpeningDelimiter); close >= 0 {
 			return close
 		}
 		return len(text)
@@ -234,7 +208,7 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 		if !ok {
 			return binding, false
 		}
-		comma := open + 1 + findTopLevelByte(text[open+1:binding.close], ',')
+		comma := open + 1 + findTopLevelOperator(text[open+1:binding.close], ",", false, true)
 		binding.scope = localScopeStart(text, comma+1, binding.close, true, false)
 		accumulator := queryGapEnd(text, open+1)
 		equals := open + 1 + strings.IndexByte(text[open+1:comma], '=')
@@ -269,11 +243,11 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 // patternComprehensionHead and the quoted-variable classifier.
 func namedPathDeclaration(text string, from int) (name string, at, pattern int, ok bool) {
 	at = queryGapEnd(text, from)
-	name, end, ok := scanIdentifierToken(text, at)
+	identifier, ok := cyphertext.ScanIdentifier(text, at)
 	if !ok {
 		return "", 0, 0, false
 	}
-	next := queryGapEnd(text, end)
+	next := queryGapEnd(text, identifier.End)
 	if next+1 >= len(text) || text[next] != '=' || text[next+1] == '~' {
 		return "", 0, 0, false
 	}
@@ -281,7 +255,7 @@ func namedPathDeclaration(text string, from int) (name string, at, pattern int, 
 	if pattern >= len(text) || text[pattern] != '(' {
 		return "", 0, 0, false
 	}
-	return name, at, pattern, true
+	return identifier.Value, at, pattern, true
 }
 
 // bindingDeclaration reads the declaration that opens a binding's arguments
@@ -292,15 +266,15 @@ func namedPathDeclaration(text string, from int) (name string, at, pattern int, 
 // parseQuantifierArguments).
 func bindingDeclaration(text string, from int) (name string, at, list int, ok bool) {
 	at = queryGapEnd(text, from)
-	name, end, ok := scanIdentifierToken(text, at)
+	identifier, ok := cyphertext.ScanIdentifier(text, at)
 	if !ok {
 		return "", 0, 0, false
 	}
-	next := queryGapEnd(text, end)
-	if next+2 > len(text) || !strings.EqualFold(text[next:next+2], "IN") || next+2 < len(text) && isIdentByte(text[next+2]) {
+	next := queryGapEnd(text, identifier.End)
+	if next+2 > len(text) || !strings.EqualFold(text[next:next+2], "IN") || next+2 < len(text) && cyphertext.NamePartAt(text, next+2) {
 		return "", 0, 0, false
 	}
-	return name, at, next + 2, true
+	return identifier.Value, at, next + 2, true
 }
 
 // localScopeStart is where a binding's names come into scope in
@@ -309,8 +283,8 @@ func bindingDeclaration(text string, from int) (name string, at, list int, ok bo
 func localScopeStart(text string, from, close int, pipe, where bool) int {
 	depth := 0
 	for index := from; index < close; index++ {
-		switch c := text[index]; c {
-		case '\'', '"', '`':
+		switch c := text[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(text, index, c) - 1
 			continue
 		case '/':
@@ -328,7 +302,7 @@ func localScopeStart(text string, from, close int, pipe, where bool) int {
 			}
 		}
 		if where && depth == 0 && index+5 <= close && strings.EqualFold(text[index:index+5], "WHERE") &&
-			!isIdentByte(text[index-1]) && (index+5 == len(text) || !isIdentByte(text[index+5])) {
+			!cyphertext.NamePartAt(text, index-1) && (index+5 == len(text) || !cyphertext.NamePartAt(text, index+5)) {
 			return index
 		}
 	}
@@ -384,11 +358,7 @@ func localBindingOf(text string, operand int, name string) (localBinding, int, b
 // than the byte c at its offset; the walks step over any other byte
 // themselves.
 func localBindingStepReads(c byte) bool {
-	switch c {
-	case '\'', '"', '`', '/', '[', '(':
-		return true
-	}
-	return false
+	return isCypherQuoteByte(c) || c == '/' || c == '[' || c == '('
 }
 
 // localBindingStep is one step of the walk that finds the bindings of name
@@ -399,8 +369,8 @@ func localBindingStepReads(c byte) bool {
 // passed over without being read whole. It is called only at a byte
 // localBindingStepReads reads.
 func localBindingStep(text string, open int, name string) (int, localBinding, bool) {
-	switch text[open] {
-	case '\'', '"', '`':
+	switch cypherLexicalByte(text[open]) {
+	case cypherQuoteClass:
 		return skipCypherQuotedText(text, open, text[open]), localBinding{}, false
 	case '/':
 		if end := queryCommentEnd(text, open); end >= 0 {
@@ -410,7 +380,7 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 	}
 	// text[open] is '[' or '(': the walks step over the bytes
 	// localBindingStepReads doesn't read themselves.
-	if declared, _, named := scanIdentifierToken(text, queryGapEnd(text, open+1)); !named || declared != name {
+	if declared, named := cyphertext.ScanIdentifier(text, queryGapEnd(text, open+1)); !named || declared.Value != name {
 		if text[open] != '(' || !isReduceFormFunction(bindingFunctionBeforeParen(text, open)) {
 			return open + 1, localBinding{}, false
 		}
@@ -422,35 +392,37 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 // localBindingOperand is the static type of the local name read at offset
 // at of text (localBindingOf): a named path is a Path; an element is its
 // list's element (listElementOperand: an Integer of [1], a node of [y]
-// for a node y); reduce's accumulator is its initial value's type. The
+// for a node y); reduce's accumulator is typed from its initial value as the
+// deriver types it (reduceAccumulatorOperand). The
 // source is typed in the scope at its own position, with the locals
 // around it typed first (withLocalTypes): in
 // all(x IN [y] WHERE all(r IN [x] WHERE …)) [x] holds the outer local's
 // node. It is unknown when that type isn't known.
-func localBindingOperand(text string, at int, name string, scope staticTypeScope) staticOperand {
+func localBindingOperand(ctx context.Context, text string, at int, name string, scope staticTypeScope) staticOperand {
 	binding, index, ok := localBindingOf(text, at, name)
 	if !ok {
 		return staticOperand{}
 	}
 	if binding.path[index] {
-		return typedOperand("Path")
+		return provenOperand("Path")
 	}
 	span := binding.source[index]
 	if span[0] <= 0 || span[1] <= span[0] || span[1] > len(text) {
 		return staticOperand{}
 	}
 	source := strings.TrimSpace(text[span[0]:span[1]])
-	inner := withLocalTypes(scope, text, span[0])
+	inner := withLocalTypes(ctx, scope, text, span[0])
 	types := typeScopeOf(inner)
 	if binding.element[index] {
-		return listElementOperand(types, inner, source)
+		return listElementOperand(ctx, types, inner, source)
 	}
-	return projectedOperand(types, inner, source)
+	// The one other local is reduce's accumulator.
+	return reduceAccumulatorOperand(projectedOperand(ctx, types, inner, source))
 }
 
 // localBindingKind is localBindingOperand's binding kind.
-func localBindingKind(text string, at int, name string, scope staticTypeScope) matchBindingKind {
-	return localBindingOperand(text, at, name, scope).bindingKind()
+func localBindingKind(ctx context.Context, text string, at int, name string, scope staticTypeScope) matchBindingKind {
+	return localBindingOperand(ctx, text, at, name, scope).bindingKind()
 }
 
 // withLocalTypes is scope with each name a local binds around offset at of
@@ -458,7 +430,7 @@ func localBindingKind(text string, at int, name string, scope staticTypeScope) m
 // (localBindingOperand): in all(r IN [1] WHERE EXISTS { (r)-->() }) the r
 // a subquery's pattern reads is an Integer, not the clause's relationship.
 // The scope goes through typeScope, the one type of every variable.
-func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope {
+func withLocalTypes(ctx context.Context, scope staticTypeScope, text string, at int) staticTypeScope {
 	var types typeScope
 	for name := range expressionLocalBindings(text) {
 		if !localVariableShadowsAt(text, at, name) {
@@ -467,7 +439,7 @@ func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope 
 		if types == nil {
 			types = typeScopeOf(scope)
 		}
-		types[name] = localBindingOperand(text, at, name, scope)
+		types[name] = localBindingOperand(ctx, text, at, name, scope)
 	}
 	if types == nil {
 		return scope
@@ -482,22 +454,27 @@ func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope 
 // single / filter, reduce / allReduce), as written; "" for any other.
 func bindingFunctionBeforeParen(text string, open int) string {
 	end := open
-	for end > 0 && isWhitespace(text[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(text, end-1) {
 		end--
 	}
 	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(text, start-1) {
 		start--
 	}
-	if start == end || start > 0 && isIdentByte(text[start-1]) {
+	if start == end || start > 0 && cyphertext.NamePartAt(text, start-1) {
 		return ""
 	}
-	switch strings.ToLower(text[start:end]) {
-	case "any", "all", "none", "single", "filter", "reduce", "allreduce":
-		return text[start:end]
-	default:
-		return ""
+	name := text[start:end]
+	if !cyphertext.PlainASCII(name) {
+		// Retain this reader's existing Unicode lower-case admission.
+		name = strings.ToLower(name)
 	}
+	for _, function := range [...]string{"any", "all", "none", "single", "filter", "reduce", "allreduce", "foreach"} {
+		if equalFoldASCII(name, function) {
+			return text[start:end]
+		}
+	}
+	return ""
 }
 
 // localBindingNames caches the names a text binds itself
@@ -616,7 +593,7 @@ func (occurrences *localOccurrences) binds(name string) bool {
 // localReader answers localVariableShadowsAt for one text, reading the
 // names the text binds once (expressionLocalBindings), so a name no binding
 // declares costs a map lookup. The reference scanners
-// (semanticFreeReferences, expressionFreeVariables) ask it for each
+// (forEachFreeSemanticReference, expressionFreeVariables) ask it for each
 // occurrence they read.
 type localReader struct {
 	text  string
@@ -686,16 +663,14 @@ func withoutLocalVariables(scope staticTypeScope, text string, at int) (staticTy
 // staticListOperand reads the operand of a list position starting at start
 // and returns where it ends and, when its type is static and not a list, that
 // type's Neo4j name (with the parameter's name for a parameter).
-func staticListOperand(cypher string, start int, params map[string]interface{}) (end int, typeName, parameter string) {
+func staticListOperand(ctx context.Context, cypher string, start int, params map[string]interface{}) (end int, typeName, parameter string) {
 	if start >= len(cypher) {
 		return start, "", ""
 	}
 	switch c := cypher[start]; {
 	case c == '$':
 		end = start + 1
-		for end < len(cypher) && isIdentByte(cypher[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(cypher, end)
 		name := cypher[start+1 : end]
 		value, bound := params[name]
 		if name == "" || !bound || value == nil || isCypherListParameter(value) {
@@ -707,46 +682,59 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 			typeName = "Map, Node or Relationship"
 		}
 		return end, typeName, name
-	case c == '\'' || c == '"':
-		end = start + 1
-		for end < len(cypher) && (cypher[end] != c || isBackslashEscaped(cypher, end)) {
-			end++
+	case isCypherStringQuoteByte(c):
+		var closed bool
+		end, _, closed = cyphertext.ScanStringToken(cypher, start)
+		if !closed {
+			return end, "", ""
 		}
-		return end + 1, "String", ""
 	case c == '{':
-		close := findMatchingDelimiter(cypher, start, '{', '}')
+		close := cyphertext.FindMatchingDelimiter(cypher, start, '{', '}', cyphertext.OpeningDelimiter)
 		if close < 0 {
 			return start, "", ""
 		}
-		return close + 1, "Map", ""
+		end = close + 1
 	default:
+		numberStart := start
+		if cypher[start] == '-' {
+			numberStart++
+		}
+		if number, ok := cyphertext.ScanNumber(cypher, numberStart); ok {
+			end = number.TailEnd
+			break
+		}
 		end = start
-		for end < len(cypher) && (isIdentByte(cypher[end]) || cypher[end] == '.' || cypher[end] == '-' && end == start) {
+		if c == '-' {
 			end++
 		}
-		word := cypher[start:end]
-		switch {
-		case strings.EqualFold(word, "true"), strings.EqualFold(word, "false"):
-			return end, "Boolean", ""
-		case c != '-' && c != '.' && (c < '0' || c > '9'):
-			// A call returning a vector or UUID ([x IN vector(…) | x],
-			// 1 IN uuid()) is Neo4j's type mismatch; a variable, a property
-			// or any other function is known per row.
+		for {
+			name, ok := cyphertext.ScanIdentifier(cypher, end)
+			if !ok {
+				break
+			}
+			end = name.End
+			if end >= len(cypher) || cypher[end] != '.' {
+				break
+			}
+			end++
+		}
+		// A whole call ([x IN vector(…) | x], 1 IN size(l)) is the operand.
+		if c != '-' && c != '.' && (!cyphertext.IsDigit(c)) {
 			if open := queryGapEnd(cypher, end); open < len(cypher) && cypher[open] == '(' {
 				if close := findMatchingParen(cypher, open); close > open {
-					if result := staticValueCallType(cypher[start : close+1]); result != "" {
-						return close + 1, result, ""
-					}
+					end = close + 1
 				}
 			}
-			return end, "", ""
 		}
-		value, literal := parseLiteralValueFromComputedRow(word)
-		if !literal || value == nil {
-			return end, "", ""
-		}
-		return end, cypherTypeName(value), ""
 	}
+	// The operator check types the operand (a variable or a property is
+	// known per row); a list position rejects a type with no list or null
+	// alternative.
+	operand := (staticTypeScope{}).operandOf(ctx, cypher[start:end])
+	if operand.typeName() == "" || !operand.excludes(isListTypeName) {
+		return end, "", ""
+	}
+	return end, operand.typeName(), ""
 }
 
 func isCypherListParameter(value interface{}) bool {
@@ -811,8 +799,13 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 	if value, literal := parseLiteralValueFromComputedRow(expression); literal {
 		return value, true
 	}
+	if len(expressionVariables(expression)) > 0 {
+		return nil, false
+	}
 	if strings.HasPrefix(expression, "{") && strings.HasSuffix(expression, "}") {
-		return e.evaluateMapLiteralFromValues(expression, nil), true
+		value, err := e.evaluateMapLiteralFromValues(ctx, expression, nil)
+		recordExpressionFailure(ctx, err)
+		return value, err == nil
 	}
 	for _, operator := range []string{" OR ", " XOR ", " AND ", "<=", ">=", "<>", "!=", "=", "<", ">"} {
 		if _, _, found := splitByOperatorWithOptions(expression, operator, true, true); found {
@@ -827,9 +820,6 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 	if !defined {
 		return nil, false
 	}
-	if text, unresolved := value.(string); unresolved && text == expression && !isWholeCypherQuotedString(expression) {
-		return nil, false
-	}
 	return value, true
 }
 
@@ -837,7 +827,7 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 // Cypher requires a local iterator name, including nested projections.
 func validateListComprehensionVariables(text string) error {
 	for index := 0; index < len(text); index++ {
-		if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
+		if isCypherQuoteByte(text[index]) {
 			index = skipCypherQuotedText(text, index, text[index]) - 1
 			continue
 		}

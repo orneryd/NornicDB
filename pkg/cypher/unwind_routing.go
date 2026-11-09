@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"strings"
+	"unicode"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -14,34 +15,30 @@ type topLevelUnwindPlan struct {
 	parameterName string
 	items         []interface{}
 	remainder     string
+	// aliasStart and aliasEnd span the UNWIND alias in the statement source
+	// and bodyOffset is where the trimmed remainder starts there. The
+	// set-based rewrite proves the binding dead against the admitted statement
+	// program, whose binding identities and reads address the same source.
+	aliasStart int
+	aliasEnd   int
+	bodyOffset int
 }
 
 // prepareTopLevelUnwind parses and evaluates the leading UNWIND exactly once
 // for both optimized physical operators and the general row pipeline.
 func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher string) (topLevelUnwindPlan, error) {
-	unwindIdx := findKeywordIndex(cypher, "UNWIND")
-	if unwindIdx == -1 {
+	head := queryGapEnd(cypher, 0)
+	if !startsWithKeywordFold(cypher[head:], "UNWIND") {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
-	afterUnwind := cypher[unwindIdx+len("UNWIND"):]
-	asRelativeIdx := findKeywordNotInBrackets(afterUnwind, " AS ")
-	if asRelativeIdx == -1 {
+	product, ok := splitUnwindBody(ctx, cypher)
+	if !ok {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
 	}
-	asIdx := unwindIdx + len("UNWIND") + asRelativeIdx
-	listExpr := strings.TrimSpace(cypher[unwindIdx+len("UNWIND") : asIdx])
-	remainderStart := asIdx + len("AS")
-	for remainderStart < len(cypher) && isASCIISpace(cypher[remainderStart]) {
-		remainderStart++
-	}
-	remainder := strings.TrimSpace(cypher[remainderStart:])
-	spaceIdx := strings.IndexAny(remainder, " \t\r\n")
-	plan := topLevelUnwindPlan{}
-	if spaceIdx > 0 {
-		plan.variable = strings.TrimSpace(remainder[:spaceIdx])
-		plan.remainder = strings.TrimSpace(remainder[spaceIdx:])
-	} else {
-		plan.variable = strings.TrimSpace(remainder)
+	listExpr := product.expression
+	plan := topLevelUnwindPlan{variable: product.variableWritten, remainder: product.remainder, bodyOffset: -1}
+	if aliasStart, aliasEnd, bodyOffset, located := unwindBodySpans(cypher, plan.remainder, plan.variable); located {
+		plan.aliasStart, plan.aliasEnd, plan.bodyOffset = aliasStart, aliasEnd, bodyOffset
 	}
 
 	params := getParamsFromContext(ctx)
@@ -72,6 +69,63 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 	return plan, nil
 }
 
+// unwindBodySpans locates the UNWIND alias token and the trimmed body after it
+// in the statement source. The body split keeps only the alias text, so both
+// spans are re-derived from the source: the body is its trimmed suffix and the
+// alias is the last token before it.
+func unwindBodySpans(source, remainder, variable string) (aliasStart, aliasEnd, bodyOffset int, ok bool) {
+	if remainder == "" || variable == "" {
+		return 0, 0, 0, false
+	}
+	end := len(strings.TrimRightFunc(source, unicode.IsSpace))
+	if end < len(remainder) || source[end-len(remainder):end] != remainder {
+		return 0, 0, 0, false
+	}
+	bodyOffset = end - len(remainder)
+	aliasEnd = len(strings.TrimRightFunc(source[:bodyOffset], unicode.IsSpace))
+	aliasStart = aliasEnd - len(variable)
+	if aliasStart < 0 || source[aliasStart:aliasEnd] != variable {
+		return 0, 0, 0, false
+	}
+	return aliasStart, aliasEnd, bodyOffset, true
+}
+
+// rewriteUnwindCorrelations is the one owner of the set-based UNWIND rewrite
+// decision. It replaces the conjunctive WHERE equalities whose right side is
+// exactly a read of the UNWIND binding, and admits the result only when the
+// admitted statement program proves those replacements are the binding's own
+// reads and cover every read of it, including the reads a wildcard projection
+// expands to. Without that proof it declines, and the caller runs the canonical
+// row plan instead.
+func (e *StorageExecutor) rewriteUnwindCorrelations(ctx context.Context, plan topLevelUnwindPlan) (string, bool) {
+	program, _ := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram)
+	declaration, ok := unwindDeclaration(program, plan.aliasStart, plan.aliasEnd)
+	if !ok {
+		return "", false
+	}
+	product := readUnwindCorrelations(program.syntax, declaration, plan.remainder, plan.bodyOffset)
+	if !product.eliminates(unwindBindingProof{program: program, declaration: declaration}) {
+		return "", false
+	}
+	rewritten, ok := product.rewrite("__unwind_items")
+	if !ok {
+		return "", false
+	}
+	rewritten = normalizeMultiMatchWhereClauses(ctx, rewritten)
+	return rewriteTopLevelMultiMatchToCartesianMatch(ctx, rewritten), true
+}
+
+// executeUnwindCorrelationRewrite runs one proven set-based rewrite with the
+// UNWIND items bound as its IN-list parameter.
+func (e *StorageExecutor) executeUnwindCorrelationRewrite(ctx context.Context, plan topLevelUnwindPlan, rewritten string) (*ExecuteResult, error) {
+	params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
+	for key, value := range getParamsFromContext(ctx) {
+		params[key] = value
+	}
+	params["__unwind_items"] = plan.items
+	return e.executeRequiredPipeline(withQueryParams(ctx, params), rewritten)
+}
+
 // executeUnwindBatchOperator chooses an optimized physical operator without
 // changing clause semantics. Unsupported shapes return handled=false and are
 // executed by the same pipeline's general row operators.
@@ -81,7 +135,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	}
 	upperRest := upperASCII(strings.TrimSpace(plan.remainder))
 	matchMutation := (strings.HasPrefix(upperRest, "MATCH") || strings.HasPrefix(upperRest, "OPTIONAL MATCH")) &&
-		(findKeywordIndexInContext(plan.remainder, "MERGE") >= 0 || findKeywordIndexInContext(plan.remainder, "CREATE") >= 0 || findKeywordIndexInContext(plan.remainder, "SET") >= 0)
+		(findKeywordIndexInContext(ctx, plan.remainder, "MERGE") >= 0 || findKeywordIndexInContext(ctx, plan.remainder, "CREATE") >= 0 || findKeywordIndexInContext(ctx, plan.remainder, "SET") >= 0)
 	if matchMutation {
 		if strings.HasPrefix(upperRest, "MATCH") {
 			if result, handled, err := e.executeUnwindRelationshipMergeBatch(ctx, plan.variable, plan.items, plan.remainder); handled || err != nil {
@@ -94,7 +148,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 				return result, true, err
 			}
 		}
-		returnIndex := findKeywordIndex(plan.remainder, "RETURN")
+		returnIndex := findKeywordIndex(ctx, plan.remainder, "RETURN")
 		mutationPart := plan.remainder
 		returnPart := ""
 		if returnIndex > 0 {
@@ -112,7 +166,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 		}
 	}
 	if strings.HasPrefix(upperRest, "MERGE") || strings.HasPrefix(upperRest, "OPTIONAL MATCH") {
-		returnIndex := findKeywordIndex(plan.remainder, "RETURN")
+		returnIndex := findKeywordIndex(ctx, plan.remainder, "RETURN")
 		mutationPart := plan.remainder
 		returnPart := ""
 		if returnIndex > 0 {
@@ -127,16 +181,14 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 		}
 	}
 	if strings.HasPrefix(upperRest, "MATCH") {
-		normalized := normalizeMultiMatchWhereClauses(plan.remainder)
-		if canApplySetBasedUnwindRewrite(normalized, plan.items) {
-			if rewritten, ok := rewriteUnwindCorrelationToIn(normalized, plan.variable, "__unwind_items"); ok {
-				rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
-				params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
-				for key, value := range getParamsFromContext(ctx) {
-					params[key] = value
-				}
-				params["__unwind_items"] = plan.items
-				result, err := e.executeRequiredPipeline(withQueryParams(ctx, params), rewritten)
+		eligible, eligibilityErr := e.canApplySetBasedUnwindRewrite(ctx, plan.remainder, plan.items)
+		if eligibilityErr != nil {
+			return nil, true, eligibilityErr
+		}
+		if eligible {
+			if rewritten, ok := e.rewriteUnwindCorrelations(ctx, plan); ok {
+				result, err := e.executeUnwindCorrelationRewrite(ctx, plan, rewritten)
+
 				return result, true, err
 			}
 		}
@@ -149,15 +201,12 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	// could read what another row writes (MERGE, SET, MATCH, aggregation
 	// via WITH) keeps the row-by-row route.
 	if strings.HasPrefix(upperRest, "CREATE") &&
-		findKeywordIndexInContext(plan.remainder, "MERGE") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "SET") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "DELETE") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "REMOVE") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "FOREACH") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "MATCH") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "WITH") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "CALL") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "LOAD CSV") < 0 {
+		!hasNonCreateMutationClause(ctx, plan.remainder) &&
+		findKeywordIndexInContext(ctx, plan.remainder, "FOREACH") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "MATCH") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "WITH") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "CALL") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "LOAD CSV") < 0 {
 		ctx = context.WithValue(ctx, pipelineIndependentCreateBatchKey{}, true)
 		return e.executeUnwindRowsPipeline(ctx, plan.variable, plan.items, plan.remainder)
 	}
@@ -165,7 +214,8 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 }
 
 func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variable string, items []interface{}, query string) (*ExecuteResult, bool, error) {
-	clauses, ok, _ := parsePipelineClauses(query)
+	split := parsePipelineClauses(ctx, query)
+	clauses, ok := split.clauses, split.ok
 	if !ok {
 		return nil, false, nil
 	}
@@ -180,7 +230,7 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 		}
 		if len(patterns) > 1 {
 			combined := "MATCH " + strings.Join(patterns, ", ")
-			if e.compilePipelineNodeMatchSource(combined).supported {
+			if e.compilePipelineNodeMatchSource(ctx, combined).supported {
 				clauses = append([]pipelineClause{{kind: pipelineClauseMatch, text: combined}}, clauses[len(patterns):]...)
 			}
 		}
@@ -203,7 +253,7 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 		row[variable] = item
 		rows = append(rows, row)
 	}
-	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, originalClauses)
+	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, originalClauses, nil)
 	if failure := getExpressionFailure(ctx); failure != nil && err == nil {
 		return nil, true, failure
 	}
@@ -211,32 +261,33 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 }
 
 func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {
-	query := normalizeMultiMatchWhereClauses(plan.remainder)
-	if findKeywordIndexInContext(query, "CREATE") < 0 ||
-		findKeywordIndexInContext(query, "MERGE") >= 0 ||
-		findKeywordIndexInContext(query, "SET") >= 0 ||
-		findKeywordIndexInContext(query, "DELETE") >= 0 ||
-		findKeywordIndexInContext(query, "REMOVE") >= 0 ||
+	query := plan.remainder
+	if findKeywordIndexInContext(ctx, query, "CREATE") < 0 ||
+		hasNonCreateMutationClause(ctx, query) ||
 		!unwindItemsAreDistinctComparable(plan.items) {
 		return nil, false, nil
 	}
-	returnIndex := findKeywordIndexInContext(query, "RETURN")
+	returnIndex := findKeywordIndexInContext(ctx, query, "RETURN")
 	if returnIndex < 0 {
 		return nil, false, nil
 	}
-	if _, ok := parseUnwindBatchCountReturn(strings.TrimSpace(query[returnIndex:])); !ok {
+	if _, ok := parseUnwindBatchCountReturn(ctx, strings.TrimSpace(query[returnIndex:])); !ok {
 		return nil, false, nil
 	}
-	rewritten, ok := rewriteUnwindCorrelationToIn(query, plan.variable, "__unwind_items")
+	rewritten, ok := e.rewriteUnwindCorrelations(ctx, plan)
 	if !ok {
 		return nil, false, nil
 	}
-	rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
-	params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
-	for key, value := range getParamsFromContext(ctx) {
-		params[key] = value
-	}
-	params["__unwind_items"] = plan.items
-	result, err := e.executeRequiredPipeline(withQueryParams(ctx, params), rewritten)
+	result, err := e.executeUnwindCorrelationRewrite(ctx, plan, rewritten)
 	return result, true, err
+}
+
+// hasNonCreateMutationClause is the shared CREATE-only batching restriction.
+// It checks top-level clauses, preserving per-row semantics for other mutations.
+// Read-only rewrite admission uses the complete statement-effect owner instead.
+func hasNonCreateMutationClause(ctx context.Context, query string) bool {
+	return findKeywordIndexInContext(ctx, query, "MERGE") >= 0 ||
+		findKeywordIndexInContext(ctx, query, "SET") >= 0 ||
+		findKeywordIndexInContext(ctx, query, "DELETE") >= 0 ||
+		findKeywordIndexInContext(ctx, query, "REMOVE") >= 0
 }

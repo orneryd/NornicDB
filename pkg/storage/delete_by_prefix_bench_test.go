@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"strings"
 	"testing"
@@ -16,10 +19,10 @@ func BenchmarkBadgerEngine_DeleteByPrefix(b *testing.B) {
 	b.StopTimer()
 
 	for i := 0; i < b.N; i++ {
-		engine := NewMemoryEngine()
+		engine := runtimeFixtureOwner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 
 		for n := 0; n < nodes; n++ {
-			_, err := engine.CreateNode(&Node{
+			_, err := engine.CreateNode(b.Context(), &Node{
 				ID:     NodeID(fmt.Sprintf("%sn%d", dbPrefix, n)),
 				Labels: []string{"Person"},
 				Properties: map[string]any{
@@ -32,7 +35,7 @@ func BenchmarkBadgerEngine_DeleteByPrefix(b *testing.B) {
 		}
 
 		for e := 0; e < nodes-1; e++ {
-			err := engine.CreateEdge(&Edge{
+			err := engine.CreateEdge(b.Context(), &Edge{
 				ID:        EdgeID(fmt.Sprintf("%se%d", dbPrefix, e)),
 				StartNode: NodeID(fmt.Sprintf("%sn%d", dbPrefix, e)),
 				EndNode:   NodeID(fmt.Sprintf("%sn%d", dbPrefix, e+1)),
@@ -44,8 +47,8 @@ func BenchmarkBadgerEngine_DeleteByPrefix(b *testing.B) {
 		}
 
 		// Populate caches so DROP behavior is realistic.
-		_, _ = engine.GetNodesByLabel("Person")
-		_, _ = engine.GetEdgesByType("KNOWS")
+		_, _ = engine.GetNodesByLabel(context.Background(), "Person")
+		_, _ = engine.GetEdgesByType(context.Background(), "KNOWS")
 
 		b.StartTimer()
 		_, _, err := engine.DeleteByPrefix(dbPrefix)
@@ -65,7 +68,7 @@ func BenchmarkBadgerEngine_DeleteByPartialPrefix(b *testing.B) {
 	b.StopTimer()
 
 	for i := 0; i < b.N; i++ {
-		engine := NewMemoryEngine()
+		engine := runtimeFixtureOwner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 		for n := 0; n < nodes; n++ {
 			kind := "keep"
 			labels := []string{"Person", "Permanent"}
@@ -73,7 +76,7 @@ func BenchmarkBadgerEngine_DeleteByPartialPrefix(b *testing.B) {
 				kind = "delete"
 				labels = []string{"Person", "Temporary"}
 			}
-			_, err := engine.CreateNode(&Node{
+			_, err := engine.CreateNode(b.Context(), &Node{
 				ID:         NodeID(fmt.Sprintf("benchdb:%s-%d", kind, n)),
 				Labels:     labels,
 				Properties: map[string]any{"content": payload},

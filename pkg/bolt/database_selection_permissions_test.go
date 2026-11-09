@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -17,8 +18,8 @@ import (
 func TestBoltDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 	ctx := context.Background()
 	users, _, fixture, stores := boltProductionFixture(t)
-	base := storage.NewMemoryEngine()
-	mgr, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	config := fixture.config
@@ -31,7 +32,7 @@ func TestBoltDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 			"loader": {"nornic"}, "observer": {"nornic"}, "blocked": {"nornic"},
 		}, roles)
 	})
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	for _, access := range []struct {
 		role        string
 		read, write bool
@@ -43,7 +44,7 @@ func TestBoltDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 		require.NoError(t, stores.roles.CreateRole(ctx, access.role))
 		require.NoError(t, stores.entitlements.Set(ctx, access.role, []string{"read", "write"}))
 		require.NoError(t, stores.privileges.SavePrivilege(ctx, access.role, "nornic", access.read, access.write))
-		_, err := users.CreateUser(access.role, "password123", []auth.Role{auth.Role(access.role)})
+		_, err := users.CreateUser(context.Background(), access.role, "password123", []auth.Role{auth.Role(access.role)})
 		require.NoError(t, err)
 		driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.BasicAuth(access.role, "password123", ""))
 		require.NoError(t, err)
@@ -87,7 +88,7 @@ func TestBoltDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 	}
 	nornic, err := mgr.GetStorage("nornic")
 	require.NoError(t, err)
-	nodes, err := nornic.GetNodesByLabel("Loaded")
+	nodes, err := nornic.GetNodesByLabel(ctx, "Loaded")
 	require.NoError(t, err)
 	require.Len(t, nodes, 6, "only the write-only role's statements committed")
 }

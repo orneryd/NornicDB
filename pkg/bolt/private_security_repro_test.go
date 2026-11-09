@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -23,11 +24,11 @@ func (privateReproAccessMode) CanAccessDatabase(name string) bool {
 }
 
 func TestPrivateReproBoltBareBeginPoolReuse(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": store}, defaultDB: "nornic"}
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	t.Cleanup(func() { _ = server.Close() })
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth(), func(c *neo4jdriver.Config) {
 		c.MaxConnectionPoolSize = 1
@@ -58,18 +59,18 @@ func TestPrivateReproBoltBareBeginPoolReuse(t *testing.T) {
 }
 
 func TestPrivateReproBoltConstituentAccess(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	manager, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
-	require.NoError(t, manager.CreateDatabase("private_denied"))
-	require.NoError(t, manager.CreateCompositeDatabase("private_cmp", []multidb.ConstituentRef{
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_denied"}))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "private_cmp", []multidb.ConstituentRef{
 		{Alias: "b", DatabaseName: "private_denied", Type: "local", AccessMode: "read_write"},
 	}))
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	server.SetDatabaseAccessModeResolver(func([]string) auth.DatabaseAccessMode { return privateReproAccessMode{} })
 	t.Cleanup(func() { _ = server.Close() })
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
 	require.NoError(t, err)

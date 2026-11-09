@@ -11,15 +11,15 @@ import (
 func TestBadgerConstraintValidation_MoreEdgeBranchCoverage(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"User"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"User"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"Report"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"Report"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:c", Labels: []string{"Secret"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:c", Labels: []string{"Secret"}})
 	require.NoError(t, err)
 
 	now := time.Now().UTC()
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID:        "test:e1",
 		StartNode: "test:a",
 		EndNode:   "test:b",
@@ -37,19 +37,19 @@ func TestBadgerConstraintValidation_MoreEdgeBranchCoverage(t *testing.T) {
 	t.Run("checkEdgeUniqueness single-key nil and composite branches", func(t *testing.T) {
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			// Single-key uniqueness: nil new value short-circuits as non-violating.
-			err := engine.checkEdgeUniquenessInTxn(txn, &Edge{ID: "test:new-1", Type: "LINK", Properties: map[string]any{"token": nil}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"token"}}, "test", "")
+			err := engine.checkEdgeUniquenessInTxn(t.Context(), txn, &Edge{ID: "test:new-1", Type: "LINK", Properties: map[string]any{"token": nil}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"token"}}, "test", "")
 			require.NoError(t, err)
 
 			// Composite uniqueness: missing component short-circuits as non-violating.
-			err = engine.checkEdgeUniquenessInTxn(txn, &Edge{ID: "test:new-2", Type: "LINK", Properties: map[string]any{"a": "x", "b": nil}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"a", "b"}}, "test", "")
+			err = engine.checkEdgeUniquenessInTxn(t.Context(), txn, &Edge{ID: "test:new-2", Type: "LINK", Properties: map[string]any{"a": "x", "b": nil}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"a", "b"}}, "test", "")
 			require.NoError(t, err)
 
 			// Composite uniqueness: full match reports violation.
-			err = engine.checkEdgeUniquenessInTxn(txn, &Edge{ID: "test:new-3", Type: "LINK", Properties: map[string]any{"a": "x", "b": "y"}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"a", "b"}}, "test", "")
+			err = engine.checkEdgeUniquenessInTxn(t.Context(), txn, &Edge{ID: "test:new-3", Type: "LINK", Properties: map[string]any{"a": "x", "b": "y"}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"a", "b"}}, "test", "")
 			require.Error(t, err)
 
 			// Namespace filter skips when target namespace doesn't match existing edge IDs.
-			err = engine.checkEdgeUniquenessInTxn(txn, &Edge{ID: "other:new", Type: "LINK", Properties: map[string]any{"token": "tok-1"}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"token"}}, "other", "")
+			err = engine.checkEdgeUniquenessInTxn(t.Context(), txn, &Edge{ID: "other:new", Type: "LINK", Properties: map[string]any{"token": "tok-1"}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"token"}}, "other", "")
 			require.NoError(t, err)
 			return nil
 		}))
@@ -88,7 +88,7 @@ func TestBadgerConstraintValidation_MoreEdgeBranchCoverage(t *testing.T) {
 	t.Run("checkEdgePolicy no-constraints and disallowed violation", func(t *testing.T) {
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			emptySchema := NewSchemaManager()
-			require.NoError(t, engine.checkEdgePolicyInTxn(txn, &Edge{Type: "LINK", StartNode: "test:a", EndNode: "test:b"}, emptySchema, "test"))
+			require.NoError(t, engine.checkEdgePolicyInTxn(t.Context(), txn, &Edge{Type: "LINK", StartNode: "test:a", EndNode: "test:b"}, emptySchema, "test"))
 
 			schema := NewSchemaManager()
 			require.NoError(t, schema.AddConstraint(Constraint{
@@ -101,7 +101,7 @@ func TestBadgerConstraintValidation_MoreEdgeBranchCoverage(t *testing.T) {
 				TargetLabel: "Report",
 			}))
 
-			err := engine.checkEdgePolicyInTxn(txn, &Edge{Type: "LINK", StartNode: "test:a", EndNode: "test:b"}, schema, "test")
+			err := engine.checkEdgePolicyInTxn(t.Context(), txn, &Edge{Type: "LINK", StartNode: "test:a", EndNode: "test:b"}, schema, "test")
 			require.Error(t, err)
 			return nil
 		}))

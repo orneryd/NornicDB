@@ -23,10 +23,10 @@ func TestSubqueryValueHelperBranches(t *testing.T) {
 	require.False(t, patternHasRelationship("(`we->ird`)"))
 	require.True(t, patternHasRelationship("(a)-->(b)"))
 
-	// projectionAliasIndex: AS without whitespace on both sides is no alias.
-	require.Equal(t, -1, projectionAliasIndex("AS x"))
-	require.Equal(t, -1, projectionAliasIndex("x AS"))
-	require.Equal(t, -1, projectionAliasIndex("n.alias"))
+	// Admitted source without a complete AS definition has no alias offset.
+	require.Equal(t, -1, readProjectionItemSource(t.Context(), "AS x", projectionAdmitted).as)
+	require.Equal(t, -1, readProjectionItemSource(t.Context(), "x AS", projectionAdmitted).as)
+	require.Equal(t, -1, readProjectionItemSource(t.Context(), "n.alias", projectionAdmitted).as)
 
 	// findSubqueryExpressions stops at an unterminated backtick.
 	require.Empty(t, findSubqueryExpressions("`abc COUNT { (a) }"))
@@ -36,10 +36,11 @@ func TestSubqueryValueHelperBranches(t *testing.T) {
 	require.True(t, containsIdentifierWord("xab ab", "ab"))
 	require.False(t, containsIdentifierWord("abc", "b"))
 
-	// entityRow and entityBindings keep only non-nil nodes and relationships.
+	// The evaluation row preserves explicit NULL bindings; writer entity scopes
+	// contain only real entities.
 	edge := &storage.Edge{ID: "r1"}
 	row := entityRow(context.Background(), map[string]*storage.Node{"a": nil}, map[string]*storage.Edge{"r": edge, "s": nil})
-	require.Equal(t, pipelineRow{"r": edge}, row)
+	require.Equal(t, pipelineRow{"a": (*storage.Node)(nil), "r": edge, "s": (*storage.Edge)(nil)}, row)
 	nodes, rels := entityBindings(map[string]interface{}{"r": edge, "s": (*storage.Edge)(nil), "x": 1})
 	require.Empty(t, nodes)
 	require.Equal(t, map[string]*storage.Edge{"r": edge}, rels)
@@ -90,9 +91,9 @@ func TestSubqueryValueEvaluatorBranches(t *testing.T) {
 // body the pipeline declines runs through the full executor with the row's
 // values bound.
 func TestSubqueryBodiesWithCallSubqueries(t *testing.T) {
-	require.Equal(t, -1, firstTopLevelCallSubquery("MATCH (n) RETURN COUNT { MATCH (n)-->(o) CALL (o) { RETURN 1 AS x } RETURN x } AS c"))
-	require.Equal(t, -1, firstTopLevelCallSubquery("RETURN 'CALL { }' AS s"))
-	require.Equal(t, len("MATCH (n) "), firstTopLevelCallSubquery("MATCH (n) CALL (n) { RETURN 1 AS x } RETURN x"))
+	require.Equal(t, -1, firstTopLevelCallSubquery(t.Context(), "MATCH (n) RETURN COUNT { MATCH (n)-->(o) CALL (o) { RETURN 1 AS x } RETURN x } AS c"))
+	require.Equal(t, -1, firstTopLevelCallSubquery(t.Context(), "RETURN 'CALL { }' AS s"))
+	require.Equal(t, len("MATCH (n) "), firstTopLevelCallSubquery(t.Context(), "MATCH (n) CALL (n) { RETURN 1 AS x } RETURN x"))
 
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
@@ -112,9 +113,31 @@ func TestSubqueryBodiesWithCallSubqueries(t *testing.T) {
 	matched, err := exec.Execute(ctx, "MATCH (a:SC {v: 1})-[r:R]->(b:SC) RETURN a, r", nil)
 	require.NoError(t, err)
 	a, r := matched.Rows[0][0].(*storage.Node), matched.Rows[0][1].(*storage.Edge)
-	result, err := exec.executeCorrelatedSubqueryBody(ctx, "MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e", map[string]interface{}{
+	result, err := exec.correlatedSubqueryExecutor(ctx, map[string]interface{}{
 		"a": a, "r": r, "k": int64(10), "m": (*storage.Node)(nil), "e": (*storage.Edge)(nil), "$ignored": 1,
-	})
+	}).executeInternal(ctx, "MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(12), nil, nil}}, result.Rows)
+}
+
+func TestCollectProjectionContractPreservesDeclaredAndObservedDiagnostics(t *testing.T) {
+	for _, origin := range []collectProjectionOrigin{declaredCollectProjection, observedCollectProjection} {
+		require.NoError(t, collectProjectionError(1, false, origin))
+		for _, columns := range []int{0, 3} {
+			err := collectProjectionError(columns, false, origin)
+			require.Error(t, err)
+			var classified interface {
+				BoltErrorCode() string
+				BoltErrorDetail() string
+			}
+			require.ErrorAs(t, err, &classified)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode())
+			require.Equal(t, "InvalidCollectSubquery", classified.BoltErrorDetail())
+			if origin == observedCollectProjection && columns == 3 {
+				require.Contains(t, err.Error(), "3", "an observed-width diagnostic retains the actual width")
+			}
+		}
+	}
+	// Wildcard syntax is rejected even if it would expand to one column.
+	require.Error(t, collectProjectionError(1, true, declaredCollectProjection))
 }

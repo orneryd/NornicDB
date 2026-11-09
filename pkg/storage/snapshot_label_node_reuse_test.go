@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 func streamTxLabel(t *testing.T, tx *BadgerTransaction, label string) []*Node {
 	t.Helper()
 	var nodes []*Node
-	require.NoError(t, tx.StreamNodesByLabelProjected(label, nil, func(node *Node) error {
+	require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), label, nil, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	}))
@@ -24,13 +25,13 @@ func streamTxLabel(t *testing.T, tx *BadgerTransaction, label string) []*Node {
 func TestTransactionWritesReuseNodesFromCompletedLabelStream(t *testing.T) {
 	eng := newTestEngine(t)
 	for i := 0; i < 3; i++ {
-		_, err := eng.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"V"}, Properties: map[string]any{"id": int64(i)}})
+		_, err := eng.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"V"}, Properties: map[string]any{"id": int64(i)}})
 		require.NoError(t, err)
 	}
 	// n2 has worker-sidecar embedding state, so it is read again.
-	require.NoError(t, eng.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, eng, "test:n2", [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})))
+	require.NoError(t, eng.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, eng, "test:n2", [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})))
 
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer func() { _ = tx.Rollback() }()
@@ -38,7 +39,7 @@ func TestTransactionWritesReuseNodesFromCompletedLabelStream(t *testing.T) {
 	require.Len(t, tx.snapshotLabelNodeByID, 3)
 
 	tx.mu.Lock()
-	reused, err := tx.getCommittedNodeLocked("test:n0")
+	reused, err := tx.getCommittedNodeLocked(t.Context(), "test:n0")
 	tx.mu.Unlock()
 	require.NoError(t, err)
 	require.Equal(t, int64(0), reused.Properties["id"])
@@ -47,7 +48,7 @@ func TestTransactionWritesReuseNodesFromCompletedLabelStream(t *testing.T) {
 	require.Equal(t, int64(0), tx.snapshotLabelNodeByID["test:n0"].Properties["id"])
 
 	tx.mu.Lock()
-	reread, err := tx.getCommittedNodeLocked("test:n2")
+	reread, err := tx.getCommittedNodeLocked(t.Context(), "test:n2")
 	tx.mu.Unlock()
 	require.NoError(t, err)
 	require.Equal(t, int64(2), reread.Properties["id"])
@@ -55,24 +56,24 @@ func TestTransactionWritesReuseNodesFromCompletedLabelStream(t *testing.T) {
 
 	updated := copyNode(tx.snapshotLabelNodeByID["test:n1"])
 	updated.Properties["x"] = int64(1)
-	require.NoError(t, tx.UpdateNode(updated))
-	require.NoError(t, tx.DeleteNode("test:n0"))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: updated, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:n0", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
-	node, err := eng.GetNode("test:n1")
+	node, err := eng.GetNode(t.Context(), "test:n1")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), node.Properties["x"])
-	_, err = eng.GetNode("test:n0")
+	_, err = eng.GetNode(t.Context(), "test:n0")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
 // With decay filtering on, label streams are not reused for writes.
 func TestTransactionLabelStreamNotReusedWithDecay(t *testing.T) {
 	eng := newTestEngine(t)
-	_, err := eng.CreateNode(&Node{ID: "test:n0", Labels: []string{"V"}})
+	_, err := eng.CreateNode(t.Context(), &Node{ID: "test:n0", Labels: []string{"V"}})
 	require.NoError(t, err)
 	eng.SetDecayEnabled(true)
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer func() { _ = tx.Rollback() }()

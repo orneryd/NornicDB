@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -39,7 +40,7 @@ func TestUseClauseGrammar(t *testing.T) {
 	}
 	for _, tc := range valid {
 		t.Run(tc.query, func(t *testing.T) {
-			db, remaining, hasUse, err := parseLeadingUseClause(tc.query)
+			db, remaining, hasUse, err := parseLeadingUseClause(t.Context(), tc.query, cyphertext.RawSource)
 			require.NoError(t, err)
 			require.True(t, hasUse)
 			require.Equal(t, tc.target, db)
@@ -111,7 +112,7 @@ func TestUseClauseGrammar(t *testing.T) {
 	}
 	for _, tc := range invalid {
 		t.Run(tc.query, func(t *testing.T) {
-			_, _, hasUse, err := parseLeadingUseClause(tc.query)
+			_, _, hasUse, err := parseLeadingUseClause(t.Context(), tc.query, cyphertext.RawSource)
 			require.True(t, hasUse)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tc.message)
@@ -132,7 +133,7 @@ func requireStatusCode(t *testing.T, err error, code string) {
 // TestSubqueryUseClauseGrammar checks a USE clause that starts a CALL { }
 // subquery body, as Neo4j 5.26 reads it (#738).
 func TestSubqueryUseClauseGrammar(t *testing.T) {
-	use, remaining, hasUse, err := parseUseClause("USE neo4j RETURN 1 AS y", true)
+	use, remaining, hasUse, err := parseUseClause(t.Context(), "USE neo4j RETURN 1 AS y", true, cyphertext.RawSource)
 	require.NoError(t, err)
 	require.True(t, hasUse)
 	require.Equal(t, "neo4j", use.Name)
@@ -145,7 +146,7 @@ func TestSubqueryUseClauseGrammar(t *testing.T) {
 		"USE neo4j EXPLAIN RETURN 1":        "Invalid input 'EXPLAIN': expected a database name",
 		"USE neo4j USE neo4j RETURN 1 AS y": "USE clause must be either the first clause in a (sub-)query",
 	} {
-		_, _, hasUse, err := parseUseClause(query, true)
+		_, _, hasUse, err := parseUseClause(t.Context(), query, true, cyphertext.RawSource)
 		require.True(t, hasUse, query)
 		require.ErrorContains(t, err, message, query)
 	}

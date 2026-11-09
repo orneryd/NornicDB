@@ -52,7 +52,7 @@ func TestTemporalHelperFunctions(t *testing.T) {
 
 func TestTemporalClearBadgerPrefix_ContextCancel(t *testing.T) {
 	engine := newTestEngine(t)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set([]byte{prefixTemporalIndex, 0x01}, []byte("x"))
 	}))
 
@@ -62,35 +62,43 @@ func TestTemporalClearBadgerPrefix_ContextCancel(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestRebuildTemporalNodeInTxn_Branches(t *testing.T) {
+// newTemporalConstraintEngine returns an engine whose namespace carries the node
+// temporal constraint over properties, the fixture both temporal branch tests
+// start from.
+func newTemporalConstraintEngine(t *testing.T, namespace, label string, properties ...string) *BadgerEngine {
+	t.Helper()
 	engine := newTestEngine(t)
-	ns := "tenant"
-	sm := engine.GetSchemaForNamespace(ns)
-	require.NoError(t, sm.AddConstraint(Constraint{
+	require.NoError(t, engine.GetSchemaForNamespace(namespace).AddConstraint(Constraint{
 		Name:       "temporal_role",
 		Type:       ConstraintTemporal,
-		Label:      "Role",
+		Label:      label,
 		EntityType: ConstraintEntityNode,
-		Properties: []string{"entity_id", "valid_from", "valid_to"},
+		Properties: properties,
 	}))
+	return engine
+}
+
+func TestRebuildTemporalNodeInTxn_Branches(t *testing.T) {
+	engine := newTemporalConstraintEngine(t, "tenant", "Role", "entity_id", "valid_from", "valid_to")
+	ns := "tenant"
 
 	now := time.Now().UTC()
 	older := &Node{ID: "tenant:old", Labels: []string{"Role"}, Properties: map[string]any{"entity_id": "u1", "valid_from": now.Add(-3 * time.Hour), "valid_to": now.Add(-time.Hour)}}
 	newer := &Node{ID: "tenant:new", Labels: []string{"Role"}, Properties: map[string]any{"entity_id": "u1", "valid_from": now.Add(-30 * time.Minute), "valid_to": nil}}
-	_, err := engine.CreateNode(older)
+	_, err := engine.CreateNode(t.Context(), older)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(newer)
+	_, err = engine.CreateNode(t.Context(), newer)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		require.NoError(t, engine.rebuildTemporalNodeInTxn(txn, nil, now))
-		require.NoError(t, engine.rebuildTemporalNodeInTxn(txn, &Node{ID: "unprefixed", Labels: []string{"Role"}}, now))
-		require.NoError(t, engine.rebuildTemporalNodeInTxn(txn, older, now))
-		require.NoError(t, engine.rebuildTemporalNodeInTxn(txn, newer, now))
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), txn, nil, now))
+		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), txn, &Node{ID: "unprefixed", Labels: []string{"Role"}}, now))
+		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), txn, older, now))
+		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), txn, newer, now))
 		return nil
 	}))
 
-	current, err := engine.GetTemporalNodeAsOfInNamespace(ns, "Role", "entity_id", "u1", "valid_from", "valid_to", now)
+	current, err := engine.GetTemporalNodeAsOfInNamespace(context.Background(), ns, "Role", "entity_id", "u1", "valid_from", "valid_to", now)
 	require.NoError(t, err)
 	require.NotNil(t, current)
 	require.Equal(t, NodeID("tenant:new"), current.ID)

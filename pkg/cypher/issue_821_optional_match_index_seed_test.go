@@ -23,11 +23,23 @@ type labelStreamCountingEngine struct {
 	scanErr      error
 }
 
-func (s *labelStreamCountingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+// Whole query-node seeds moved to this scan contract in #1608. Keep the
+// error injection and visit counter on the path the shared seed owner uses.
+func (s *labelStreamCountingEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
 	if s.scanErr != nil {
 		return s.scanErr
 	}
-	return s.NamespacedEngine.StreamNodesByLabelProjected(label, properties, func(node *storage.Node) error {
+	return s.NamespacedEngine.StreamNodesWithOptions(ctx, opts, func(node *storage.Node) error {
+		s.nodesVisited++
+		return visit(node)
+	})
+}
+
+func (s *labelStreamCountingEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
+	if s.scanErr != nil {
+		return s.scanErr
+	}
+	return s.NamespacedEngine.StreamNodesByLabelProjected(ctx, label, properties, func(node *storage.Node) error {
 		s.nodesVisited++
 		return visit(node)
 	})
@@ -40,14 +52,14 @@ func (s *labelStreamCountingEngine) StreamNodes(ctx context.Context, fn func(nod
 	})
 }
 
-func (s *labelStreamCountingEngine) AllNodes() ([]*storage.Node, error) {
-	nodes, err := s.NamespacedEngine.AllNodes()
+func (s *labelStreamCountingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	nodes, err := s.NamespacedEngine.AllNodes(ctx)
 	s.nodesVisited += int64(len(nodes))
 	return nodes, err
 }
 
-func (s *labelStreamCountingEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	nodes, err := s.NamespacedEngine.GetNodesByLabel(label)
+func (s *labelStreamCountingEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	nodes, err := s.NamespacedEngine.GetNodesByLabel(ctx, label)
 	s.nodesVisited += int64(len(nodes))
 	return nodes, err
 }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
@@ -19,43 +20,43 @@ func TestBufferedPublicationCallbacksKeepAcknowledgedRevision(t *testing.T) {
 	engine.OnEdgeUpdated(func(*Edge) { record("edge update") })
 	engine.OnEdgeDeleted(func(EdgeID) { record("edge delete") })
 	write := func(change func(*Transaction)) {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))
 		change(tx)
 		require.NoError(t, tx.Commit())
 		acknowledged, _ := engine.GraphMutationVersionInNamespace("test")
-		require.NoError(t, engine.FlushWriteBehind())
+		require.NoError(t, engine.FlushWriteBehind(context.Background()))
 		persisted, _ := engine.GraphMutationVersionInNamespace("test")
 		require.Equal(t, acknowledged, persisted, "durability does not change the logical graph")
 	}
 	write(func(tx *Transaction) {
-		_, err := tx.CreateNode(&Node{ID: "test:a", Properties: map[string]interface{}{"v": int64(1)}})
+		_, err := tx.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]interface{}{"v": int64(1)}})
 		require.NoError(t, err)
-		_, err = tx.CreateNode(&Node{ID: "test:b"})
+		_, err = tx.CreateNode(t.Context(), &Node{ID: "test:b"})
 		require.NoError(t, err)
-		require.NoError(t, tx.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]interface{}{"v": int64(1)}}))
+		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]interface{}{"v": int64(1)}}))
 	})
 	write(func(tx *Transaction) {
-		node, err := tx.GetNode("test:a")
+		node, err := tx.GetNode(t.Context(), "test:a")
 		require.NoError(t, err)
 		node.Properties["v"] = int64(2)
-		require.NoError(t, tx.UpdateNode(node))
-		edge, err := tx.GetEdge("test:e")
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+		edge, err := tx.GetEdge(t.Context(), "test:e")
 		require.NoError(t, err)
 		edge.Properties["v"] = int64(2)
-		require.NoError(t, tx.UpdateEdge(edge))
+		require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 	})
 	write(func(tx *Transaction) {
-		require.NoError(t, tx.DeleteEdge("test:e"))
-		require.NoError(t, tx.DeleteNode("test:a"))
+		require.NoError(t, tx.DeleteEdge(t.Context(), "test:e"))
+		require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
 	})
 	mu.Lock()
 	require.Equal(t, map[string]int{"node create": 2, "node update": 1, "node delete": 1, "edge create": 1, "edge update": 1, "edge delete": 1}, calls)
 	mu.Unlock()
 	before, _ := engine.GraphMutationVersionInNamespace("test")
-	_, err := engine.CreateNode(&Node{ID: "test:direct"})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:direct"})
 	require.NoError(t, err)
 	after, _ := engine.GraphMutationVersionInNamespace("test")
 	require.Greater(t, after, before, "direct writes still publish a new graph revision")

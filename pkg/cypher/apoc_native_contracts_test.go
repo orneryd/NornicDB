@@ -6,6 +6,7 @@ import (
 	apocnodes "github.com/orneryd/nornicdb/apoc/nodes"
 	apocpath "github.com/orneryd/nornicdb/apoc/path"
 	apocrel "github.com/orneryd/nornicdb/apoc/rel"
+	apocstorage "github.com/orneryd/nornicdb/apoc/storage"
 	apoctime "github.com/orneryd/nornicdb/apoc/temporal"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -18,18 +19,26 @@ import (
 
 func nativeAPOCFixture(t *testing.T) *StorageExecutor {
 	t.Helper()
+	// The entity helpers that read the graph are bound to one backend instance;
+	// this fixture admits those handler signatures beside the native catalog and
+	// gives them an independent backend so admission never reaches the graph the
+	// assertions measure.
+	bound := apocstorage.NewInMemoryStorage()
+	nodeFunctions := apocnode.New(bound)
+	relFunctions := apocrel.New(bound)
+	nodesFunctions := apocnodes.New(bound)
 	withPluginFunctions(t, map[string]interface{}{
-		"apoc.node.id": apocnode.ID, "apoc.node.labels": apocnode.Labels, "apoc.node.degree": apocnode.Degree,
-		"apoc.rel.id": apocrel.ID, "apoc.rel.type": apocrel.Type, "apoc.rel.startNode": apocrel.StartNode, "apoc.rel.endNode": apocrel.EndNode,
-		"apoc.nodes.connected": apocnodes.Connected, "apoc.path.elements": apocpath.Elements, "apoc.path.slice": apocpath.Slice, "apoc.path.combine": apocpath.Combine, "apoc.temporal.format": apoctime.Format,
+		"apoc.node.id": apocnode.ID, "apoc.node.labels": apocnode.Labels, "apoc.node.degree": nodeFunctions.Degree,
+		"apoc.rel.id": apocrel.ID, "apoc.rel.type": apocrel.Type, "apoc.rel.startNode": relFunctions.StartNode, "apoc.rel.endNode": relFunctions.EndNode,
+		"apoc.nodes.connected": nodesFunctions.Connected, "apoc.path.elements": apocpath.Elements, "apoc.path.slice": apocpath.Slice, "apoc.path.combine": apocpath.Combine, "apoc.temporal.format": apoctime.Format,
 	})
 	s := storage.NewNamespacedEngine(newTestMemoryEngine(t), "native_apoc")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err := s.CreateNode(&storage.Node{ID: id, Labels: []string{"NativeAPOC"}, Properties: map[string]interface{}{"key": string(id)}})
+		_, err := s.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"NativeAPOC"}, Properties: map[string]interface{}{"key": string(id)}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, s.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "APOC_R"}))
-	require.NoError(t, s.CreateEdge(&storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "APOC_S"}))
+	require.NoError(t, s.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "APOC_R"}))
+	require.NoError(t, s.CreateEdge(t.Context(), &storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "APOC_S"}))
 	return NewStorageExecutor(s)
 }
 
@@ -108,7 +117,7 @@ func TestAPOCNativeContractsBoundaries(t *testing.T) {
 		})
 	}
 	// Self-relationships contribute twice to BOTH degree, once per directed degree.
-	require.NoError(t, e.storage.CreateEdge(&storage.Edge{ID: "loop", StartNode: "a", EndNode: "a", Type: "APOC_LOOP"}))
+	require.NoError(t, e.storage.CreateEdge(t.Context(), &storage.Edge{ID: "loop", StartNode: "a", EndNode: "a", Type: "APOC_LOOP"}))
 	r, err := e.Execute(ctx, "MATCH (a:NativeAPOC {key:'a'}) RETURN apoc.node.degree(a),apoc.node.degree(a,'APOC_LOOP>')", nil)
 	require.NoError(t, err)
 	require.EqualValues(t, []interface{}{int64(3), int64(1)}, r.Rows[0])
@@ -162,7 +171,7 @@ func TestAPOCNativeRemoteTransportPaths(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: server.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN recorded_fixture", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN recorded_fixture", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	path := rows[0][5].(storage.RemotePathValue)
 	e := nativeAPOCFixture(t)

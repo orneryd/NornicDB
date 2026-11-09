@@ -1,48 +1,15 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCompositeEngine_Deduplication_GetNodesByLabel(t *testing.T) {
-	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
-
-	// Create same node in both constituents (same ID)
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node1) // Same ID
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get nodes by label - should deduplicate
-	nodes, err := composite.GetNodesByLabel("Person")
-	require.NoError(t, err)
-	// Should only return one node, not two
-	assert.Equal(t, 1, len(nodes))
-	assert.Equal(t, node1.ID, nodes[0].ID)
-}
-
 func TestCompositeEngine_GetNodesByLabelPropagatesConstituentError(t *testing.T) {
-	backing := NewMemoryEngine()
+	backing := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	readErr := errors.New("constituent label scan failed")
 	composite := NewCompositeEngine(
@@ -50,30 +17,30 @@ func TestCompositeEngine_GetNodesByLabelPropagatesConstituentError(t *testing.T)
 		nil,
 		map[string]string{"failed": "read"},
 	)
-	nodes, err := composite.GetNodesByLabel("Evidence")
+	nodes, err := composite.GetNodesByLabel(context.Background(), "Evidence")
 	require.ErrorIs(t, err, readErr)
 	require.Nil(t, nodes)
 }
 
 func TestCompositeEngine_StreamNodesByLabelProjected(t *testing.T) {
-	first := NewMemoryEngine()
-	second := NewMemoryEngine()
+	first := newTestMemoryEngine(t)
+	second := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, first.Close()) })
 	t.Cleanup(func() { require.NoError(t, second.Close()) })
 	shared := NodeID(prefixTestID("shared-projected"))
 	unique := NodeID(prefixTestID("unique-projected"))
 	for _, engine := range []*MemoryEngine{first, second} {
-		_, err := engine.CreateNode(&Node{ID: shared, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "shared", "unused": "hidden"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: shared, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "shared", "unused": "hidden"}})
 		require.NoError(t, err)
 	}
-	_, err := second.CreateNode(&Node{ID: unique, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "unique", "unused": "hidden"}})
+	_, err := second.CreateNode(t.Context(), &Node{ID: unique, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "unique", "unused": "hidden"}})
 	require.NoError(t, err)
 	composite := NewCompositeEngine(
 		map[string]Engine{"first": first, "second": second}, nil,
 		map[string]string{"first": "read", "second": "read"},
 	)
 	seen := make(map[NodeID]map[string]any)
-	err = composite.StreamNodesByLabelProjected("Evidence", []string{"asset_id"}, func(node *Node) error {
+	err = composite.StreamNodesByLabelProjected(context.Background(), "Evidence", []string{"asset_id"}, func(node *Node) error {
 		seen[node.ID] = node.Properties
 		return nil
 	})
@@ -84,7 +51,7 @@ func TestCompositeEngine_StreamNodesByLabelProjected(t *testing.T) {
 	}, seen)
 
 	visited := 0
-	err = composite.StreamNodesByLabelProjected("Evidence", nil, func(*Node) error {
+	err = composite.StreamNodesByLabelProjected(context.Background(), "Evidence", nil, func(*Node) error {
 		visited++
 		return ErrIterationStopped
 	})
@@ -93,7 +60,7 @@ func TestCompositeEngine_StreamNodesByLabelProjected(t *testing.T) {
 }
 
 func TestCompositeEngine_StreamNodesByLabelProjectedUnsupportedConstituent(t *testing.T) {
-	backing := NewMemoryEngine()
+	backing := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	unsupported := struct{ Engine }{backing}
 	composite := NewCompositeEngine(
@@ -101,7 +68,7 @@ func TestCompositeEngine_StreamNodesByLabelProjectedUnsupportedConstituent(t *te
 		map[string]string{"supported": "read", "unsupported": "read"},
 	)
 	visited := false
-	err := composite.StreamNodesByLabelProjected("Evidence", nil, func(*Node) error {
+	err := composite.StreamNodesByLabelProjected(context.Background(), "Evidence", nil, func(*Node) error {
 		visited = true
 		return nil
 	})
@@ -109,230 +76,66 @@ func TestCompositeEngine_StreamNodesByLabelProjectedUnsupportedConstituent(t *te
 	require.False(t, visited)
 }
 
-func TestCompositeEngine_Deduplication_GetEdgesByType(t *testing.T) {
-	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
-
-	// Create nodes and same edge in both constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node1) // Same nodes
-	engine2.CreateNode(node2)
-	engine2.CreateEdge(edge1) // Same edge ID
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
+// Every readable source retains its own entity even when its stored local ID
+// equals another source's ID. All seven original read paths share this fixture
+// and assertion owner; node-only cases retain their one-node population.
+func TestCompositeEngine_ReadsPreserveEqualIDsAcrossDatabases(t *testing.T) {
+	node1 := NodeID(prefixTestID("node1"))
+	node2 := NodeID(prefixTestID("node2"))
+	edge := EdgeID(prefixTestID("edge1"))
+	for _, test := range []struct {
+		name     string
+		edgeRead bool
+		read     func(context.Context, *CompositeEngine) ([]string, error)
+	}{
+		{name: "TestCompositeEngine_Deduplication_GetNodesByLabel", read: func(ctx context.Context, c *CompositeEngine) ([]string, error) {
+			values, err := c.GetNodesByLabel(ctx, "Person")
+			return nodeIDs(values), err
+		}},
+		{name: "TestCompositeEngine_Deduplication_AllNodes", read: func(ctx context.Context, c *CompositeEngine) ([]string, error) {
+			values, err := c.AllNodes(ctx)
+			return nodeIDs(values), err
+		}},
+		{name: "TestCompositeEngine_Deduplication_GetEdgesByType", edgeRead: true, read: func(ctx context.Context, c *CompositeEngine) ([]string, error) {
+			values, err := c.GetEdgesByType(ctx, "KNOWS")
+			return edgeIDs(values), err
+		}},
+		{name: "TestCompositeEngine_Deduplication_AllEdges", edgeRead: true, read: func(ctx context.Context, c *CompositeEngine) ([]string, error) {
+			values, err := c.AllEdges(ctx)
+			return edgeIDs(values), err
+		}},
+		{name: "TestCompositeEngine_Deduplication_GetOutgoingEdges", edgeRead: true, read: func(ctx context.Context, c *CompositeEngine) ([]string, error) {
+			values, err := c.GetOutgoingEdges(ctx, node1)
+			return edgeIDs(values), err
+		}},
+		{name: "TestCompositeEngine_Deduplication_GetIncomingEdges", edgeRead: true, read: func(ctx context.Context, c *CompositeEngine) ([]string, error) {
+			values, err := c.GetIncomingEdges(ctx, node2)
+			return edgeIDs(values), err
+		}},
+		{name: "TestCompositeEngine_Deduplication_GetEdgesBetween", edgeRead: true, read: func(ctx context.Context, c *CompositeEngine) ([]string, error) {
+			values, err := c.GetEdgesBetween(ctx, node1, node2)
+			return edgeIDs(values), err
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			first, second := newTestMemoryEngine(t), newTestMemoryEngine(t)
+			for _, engine := range []*MemoryEngine{first, second} {
+				_, err := engine.CreateNode(t.Context(), &Node{ID: node1, Labels: []string{"Person"}})
+				require.NoError(t, err)
+				if test.edgeRead {
+					_, err = engine.CreateNode(t.Context(), &Node{ID: node2, Labels: []string{"Person"}})
+					require.NoError(t, err)
+					require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edge, StartNode: node1, EndNode: node2, Type: "KNOWS"}))
+				}
+			}
+			composite := NewCompositeEngine(map[string]Engine{"db1": first, "db2": second}, map[string]string{"db1": "db1", "db2": "db2"}, map[string]string{"db1": "read_write", "db2": "read_write"})
+			ids, err := test.read(context.Background(), composite)
+			require.NoError(t, err)
+			want := string(node1)
+			if test.edgeRead {
+				want = string(edge)
+			}
+			require.Equal(t, []string{want, want}, ids, "both constituent records must survive with their original local IDs")
+		})
 	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get edges by type - should deduplicate
-	edges, err := composite.GetEdgesByType("KNOWS")
-	require.NoError(t, err)
-	// Should only return one edge, not two
-	assert.Equal(t, 1, len(edges))
-	assert.Equal(t, edge1.ID, edges[0].ID)
-}
-
-func TestCompositeEngine_Deduplication_AllNodes(t *testing.T) {
-	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
-
-	// Create same node in both constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node1) // Same ID
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get all nodes - should deduplicate
-	nodes, err := composite.AllNodes()
-	require.NoError(t, err)
-	// Should only return one node, not two
-	assert.Equal(t, 1, len(nodes))
-	assert.Equal(t, node1.ID, nodes[0].ID)
-}
-
-func TestCompositeEngine_Deduplication_AllEdges(t *testing.T) {
-	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
-
-	// Create nodes and same edge in both constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node1)
-	engine2.CreateNode(node2)
-	engine2.CreateEdge(edge1) // Same edge ID
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get all edges - should deduplicate
-	edges, err := composite.AllEdges()
-	require.NoError(t, err)
-	// Should only return one edge, not two
-	assert.Equal(t, 1, len(edges))
-	assert.Equal(t, edge1.ID, edges[0].ID)
-}
-
-func TestCompositeEngine_Deduplication_GetOutgoingEdges(t *testing.T) {
-	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
-
-	// Create nodes and same edge in both constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node1)
-	engine2.CreateNode(node2)
-	engine2.CreateEdge(edge1) // Same edge ID
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get outgoing edges - should deduplicate
-	edges, err := composite.GetOutgoingEdges(node1.ID)
-	require.NoError(t, err)
-	// Should only return one edge, not two
-	assert.Equal(t, 1, len(edges))
-	assert.Equal(t, edge1.ID, edges[0].ID)
-}
-
-func TestCompositeEngine_Deduplication_GetIncomingEdges(t *testing.T) {
-	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
-
-	// Create nodes and same edge in both constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node1)
-	engine2.CreateNode(node2)
-	engine2.CreateEdge(edge1) // Same edge ID
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get incoming edges - should deduplicate
-	edges, err := composite.GetIncomingEdges(node2.ID)
-	require.NoError(t, err)
-	// Should only return one edge, not two
-	assert.Equal(t, 1, len(edges))
-	assert.Equal(t, edge1.ID, edges[0].ID)
-}
-
-func TestCompositeEngine_Deduplication_GetEdgesBetween(t *testing.T) {
-	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
-
-	// Create nodes and same edge in both constituents
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node1)
-	engine2.CreateNode(node2)
-	engine2.CreateEdge(edge1) // Same edge ID
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get edges between - should deduplicate
-	edges, err := composite.GetEdgesBetween(node1.ID, node2.ID)
-	require.NoError(t, err)
-	// Should only return one edge, not two
-	assert.Equal(t, 1, len(edges))
-	assert.Equal(t, edge1.ID, edges[0].ID)
 }

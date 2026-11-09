@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -15,17 +16,7 @@ import (
 // alias needs itself and its database); without one (no server, or a
 // manager that is not a *multidb.DatabaseManager) it needs only its name.
 func TestSessionGraphAccessDataDatabase(t *testing.T) {
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
-	for _, name := range []string{"da", "db"} {
-		require.NoError(t, mgr.CreateDatabase(name))
-	}
-	require.NoError(t, mgr.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
-		{Alias: "a", DatabaseName: "da", Type: "local", AccessMode: "read_write"},
-		{Alias: "b", DatabaseName: "db", Type: "local", AccessMode: "read_write"},
-	}))
-	require.NoError(t, mgr.CreateAlias("alias_b", "db"))
+	mgr := newSessionGraphAccessFixture(t)
 
 	session := &Session{server: &Server{dbManager: mgr}}
 	for graph, want := range map[string]string{
@@ -42,7 +33,7 @@ func TestSessionGraphAccessDataDatabase(t *testing.T) {
 		require.Equal(t, want, dataDatabase, graph)
 	}
 
-	noServer := &Session{}
+	noServer := &Session{server: &Server{}}
 	dataDatabase, allowed := noServer.graphAccess(nil, "cmp.a")
 	require.Equal(t, "cmp.a", dataDatabase)
 	require.True(t, allowed)
@@ -57,17 +48,7 @@ func TestSessionGraphAccessDataDatabase(t *testing.T) {
 // its composite and its target database are, and without a multidb manager
 // only the name itself is checked.
 func TestSessionCanAccessGraph(t *testing.T) {
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
-	for _, name := range []string{"da", "db"} {
-		require.NoError(t, mgr.CreateDatabase(name))
-	}
-	require.NoError(t, mgr.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
-		{Alias: "a", DatabaseName: "da", Type: "local", AccessMode: "read_write"},
-		{Alias: "b", DatabaseName: "db", Type: "local", AccessMode: "read_write"},
-	}))
-	require.NoError(t, mgr.CreateAlias("alias_b", "db"))
+	mgr := newSessionGraphAccessFixture(t)
 
 	editor := []string{string(auth.RoleEditor)}
 	withComposite := auth.NewAllowlistDatabaseAccessMode(map[string][]string{string(auth.RoleEditor): {"da", "cmp"}}, editor)
@@ -87,7 +68,7 @@ func TestSessionCanAccessGraph(t *testing.T) {
 	require.True(t, sessionAllows(session, auth.FullDatabaseAccessMode, "cmp.b"))
 	require.False(t, sessionAllows(session, auth.DenyAllDatabaseAccessMode, "da"))
 
-	noManager := &Session{}
+	noManager := &Session{server: &Server{}}
 	require.False(t, sessionAllows(noManager, withComposite, "cmp.a"), "without a manager cmp.a is checked by its own name")
 	require.True(t, sessionAllows(noManager, auth.NewAllowlistDatabaseAccessMode(map[string][]string{string(auth.RoleEditor): {"cmp.a"}}, editor), "cmp.a"))
 }
@@ -96,4 +77,23 @@ func TestSessionCanAccessGraph(t *testing.T) {
 func sessionAllows(session *Session, mode auth.DatabaseAccessMode, graph string) bool {
 	_, allowed := session.graphAccess(mode, graph)
 	return allowed
+}
+
+// newSessionGraphAccessFixture builds the multidb manager shared by the
+// session graph access tests: engine da and db, composite cmp over them, and
+// alias alias_b for db. Each test gets its own manager.
+func newSessionGraphAccessFixture(t *testing.T) *multidb.DatabaseManager {
+	t.Helper()
+	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = mgr.Close() })
+	for _, name := range []string{"da", "db"} {
+		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
+	}
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
+		{Alias: "a", DatabaseName: "da", Type: "local", AccessMode: "read_write"},
+		{Alias: "b", DatabaseName: "db", Type: "local", AccessMode: "read_write"},
+	}))
+	require.NoError(t, mgr.CreateAlias(t.Context(), "alias_b", "db"))
+	return mgr
 }

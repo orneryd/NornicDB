@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"regexp"
 	"strings"
 
@@ -20,8 +21,8 @@ var constraintRequirementSpelling = regexp.MustCompile(`(?is)^(.*?)\s+IS\s+(?:(N
 // RELATIONSHIP KEY`. An entity that isn't the pattern's is Neo4j's
 // SyntaxError ('IS NODE KEY' does not allow relationship patterns). Any
 // other statement is returned as it is.
-func (e *StorageExecutor) canonicalConstraintRequirement(cypher string) (string, error) {
-	_, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(cypher)
+func (e *StorageExecutor) canonicalConstraintRequirement(ctx context.Context, cypher string) (string, error) {
+	_, patternSpan, requireExpr, _, err := e.parseCreateConstraintForRequireHead(ctx, cypher)
 	if err != nil {
 		return cypher, nil
 	}
@@ -44,6 +45,11 @@ func (e *StorageExecutor) canonicalConstraintRequirement(cypher string) (string,
 		}
 		return "", localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidConstraintPattern",
 			localization.CypherSchemaConstraintEntityMismatch("IS "+entity+" "+kind, pattern))
+	}
+	if kind == "KEY" && !relationship {
+		if inside, _, parenthesized := extractParenSection(properties); parenthesized && len(indexPropertiesFromOnClause(inside, false)) == 0 {
+			return "", localizedError(localization.CypherSchemaConstraintPropertiesRequired("NODE KEY"), nil)
+		}
 	}
 	canonical := properties + " IS UNIQUE"
 	switch {

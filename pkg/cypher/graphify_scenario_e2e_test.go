@@ -21,6 +21,13 @@
 //  6. Re-running every per-node and per-edge statement on the same payload
 //     leaves node/edge counts unchanged (true idempotency)
 //
+// Coverage split: every assertion above runs through the public Execute entry,
+// where the atomic statement owner commits each write in one native
+// transaction. Per-method storage counts (CreateNode, UpdateNode, CreateEdge,
+// UpdateEdge) cannot be observed from that route, so they are asserted by
+// TestGraphifyScenarioE2EComponent_ReRunDoesNotProduceWritesForEqualPayload,
+// which runs the same statements through the pipeline the owner wraps.
+//
 // Inventory sources for the query shapes asserted below:
 //   - graphify/graphify/export.py: push_to_neo4j, push_to_falkordb
 //   - graphify/tests/test_falkordb_integration.py: post-condition counts
@@ -172,21 +179,21 @@ type graphifyCountingEngine struct {
 	edgeUpdates int64
 }
 
-func (e *graphifyCountingEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *graphifyCountingEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	atomic.AddInt64(&e.nodeCreates, 1)
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
-func (e *graphifyCountingEngine) UpdateNode(node *storage.Node) error {
+func (e *graphifyCountingEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	atomic.AddInt64(&e.nodeUpdates, 1)
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
-func (e *graphifyCountingEngine) CreateEdge(edge *storage.Edge) error {
+func (e *graphifyCountingEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
 	atomic.AddInt64(&e.edgeCreates, 1)
-	return e.Engine.CreateEdge(edge)
+	return e.Engine.CreateEdge(ctx, edge)
 }
-func (e *graphifyCountingEngine) UpdateEdge(edge *storage.Edge) error {
+func (e *graphifyCountingEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	atomic.AddInt64(&e.edgeUpdates, 1)
-	return e.Engine.UpdateEdge(edge)
+	return e.Engine.UpdateEdge(ctx, updateRequest)
 }
 
 func (e *graphifyCountingEngine) NodeCreateCount() int64 { return atomic.LoadInt64(&e.nodeCreates) }
@@ -419,38 +426,156 @@ func TestGraphifyScenarioE2E_EdgeUpsertOnExistingEndpoints(t *testing.T) {
 	require.Equal(t, int64(3), mustCountRows(t, exec, ctx, graphifyAllEdgeCountQuery, nil))
 }
 
-// TestGraphifyScenarioE2E_ReRunDoesNotProduceWritesForEqualPayload is the
-// strict-idempotency contract: pushing the EXACT same payload twice must not
-// produce extra storage-level writes beyond the second SET-equal-to-current
-// pass. We can't legally assert zero updates (graphify's SET n += $props
-// touches every property, and `n += {...}` is an upsert at the storage layer)
-// but we CAN assert that the second pass doesn't produce extra CreateNode /
-// CreateEdge calls — i.e. graphify never duplicates entities.
-func TestGraphifyScenarioE2E_ReRunDoesNotProduceWritesForEqualPayload(t *testing.T) {
+// TestGraphifyScenarioE2E_ReRunDoesNotCreateEntitiesOrRewriteUnchangedPayload is
+// the PUBLIC native-transaction idempotency proof for the graphify statements:
+// every push below runs through StorageExecutor.Execute, which the atomic
+// statement owner commits in one native transaction.
+//
+// Coverage split (stated instead of pretended): no public hook observes the
+// per-method storage calls of a statement that the owner commits through a
+// native transaction, so this test proves the observable half of idempotency —
+//   - re-running the identical payload creates no entity (NodesCreated = 0 for
+//     every node upsert), and node/edge counts are unchanged;
+//   - the stored entity image is unchanged;
+//   - the stored entity revision (storage.Node.UpdatedAt) is unchanged, because
+//     graphify's payload is primitive-only, so SET n += $props with equal values
+//     reaches the SET owner's changed-property check and writes nothing;
+//   - the changed-value controls below prove a changed value does reach storage
+//     (new value, advanced revision) without creating an entity or edge.
+//
+// The per-method CreateNode/UpdateNode/CreateEdge/UpdateEdge counts are owned by
+// TestGraphifyScenarioE2EComponent_ReRunDoesNotProduceWritesForEqualPayload.
+func TestGraphifyScenarioE2E_ReRunDoesNotCreateEntitiesOrRewriteUnchangedPayload(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
-	counting := &graphifyCountingEngine{Engine: ns}
-	exec := NewStorageExecutor(counting)
+	exec := NewStorageExecutor(ns)
 	ctx := context.Background()
 	for _, q := range []string{
 		"CREATE INDEX code_id IF NOT EXISTS FOR (n:Code) ON (n.id)",
 		"CREATE INDEX entity_id IF NOT EXISTS FOR (n:Entity) ON (n.id)",
 	} {
 		_, err := exec.Execute(ctx, q, nil)
-		require.NoError(t, err)
+		require.NoErrorf(t, err, "scenario index: %s", q)
 	}
 
 	payload := buildGraphifyScenarioPayload(8, 0, 0)
-
 	pushGraphifyPayload(t, exec, ctx, payload)
-	nc1 := counting.NodeCreateCount()
-	ec1 := counting.EdgeCreateCount()
-	require.Equal(t, int64(len(payload.nodes)), nc1, "first push must create exactly one node per payload node")
-	require.Equal(t, int64(len(payload.edges)), ec1, "first push must create exactly one edge per payload edge")
 
-	pushGraphifyPayload(t, exec, ctx, payload)
-	require.Equal(t, nc1, counting.NodeCreateCount(), "second push of identical payload must not create new nodes")
-	require.Equal(t, ec1, counting.EdgeCreateCount(), "second push of identical payload must not create new edges")
+	nodeID := storedNodeID(t, exec, ctx, fmt.Sprintf("MATCH (n:%s {id: $id})", payload.nodes[0].label), map[string]interface{}{"id": payload.nodes[0].id})
+	firstNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
+	require.NoError(t, err)
+	firstImage := cloneProperties(firstNode.Properties)
+
+	// Re-run every per-node statement graphify emits; the MERGE must create
+	// nothing.
+	nodeCreates := 0
+	for _, n := range payload.nodes {
+		res, err := exec.Execute(ctx, fmt.Sprintf(graphifyNodeUpsertQuery, n.label), map[string]interface{}{"id": n.id, "props": n.props})
+		require.NoErrorf(t, err, "re-run node upsert %s/%s", n.label, n.id)
+		require.NotNil(t, res.Stats)
+		nodeCreates += res.Stats.NodesCreated
+	}
+	require.Zero(t, nodeCreates, "re-running the identical graphify payload must not create entities")
+
+	for _, edge := range payload.edges {
+		result, err := exec.Execute(ctx, fmt.Sprintf(graphifyEdgeUpsertQuery, edge.relType), map[string]interface{}{"src": edge.src, "tgt": edge.tgt, "props": edge.props})
+		require.NoError(t, err)
+		require.Zero(t, result.Stats.RelationshipsCreated, "identical edge upsert must reuse its entity")
+	}
+
+	secondNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
+	require.NoError(t, err)
+	require.Equal(t, firstImage, secondNode.Properties, "an identical payload must leave the stored image unchanged")
+	require.True(t, firstNode.UpdatedAt.Equal(secondNode.UpdatedAt),
+		"an identical primitive-only payload must not rewrite the stored entity (revision %v -> %v)", firstNode.UpdatedAt, secondNode.UpdatedAt)
+	require.Equal(t, int64(len(payload.nodes)), mustCountRows(t, exec, ctx, "MATCH (n:Code) RETURN count(n)", nil))
+	require.Equal(t, int64(len(payload.edges)), mustCountRows(t, exec, ctx, graphifyAllEdgeCountQuery, nil))
+
+	// Healthy changed-value control: a changed value must reach storage.
+	changedNode := payload.nodes[0]
+	changedProperties := cloneProperties(changedNode.props)
+	changedProperties["label"] = "Renamed_000"
+	res, err := exec.Execute(ctx, fmt.Sprintf(graphifyNodeUpsertQuery, changedNode.label), map[string]interface{}{
+		"id": changedNode.id, "props": changedProperties,
+	})
+	require.NoError(t, err)
+	require.Zero(t, res.Stats.NodesCreated, "a changed payload must update, not create")
+	thirdNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
+	require.NoError(t, err)
+	require.Equal(t, "Renamed_000", thirdNode.Properties["label"], "a changed value must reach storage")
+	require.False(t, thirdNode.UpdatedAt.Equal(firstNode.UpdatedAt), "a changed value must rewrite the stored entity")
+
+	// Healthy changed-value control for the edge shape: the changed property is
+	// stored and the edge is not duplicated.
+	changedEdge := payload.edges[0]
+	changedEdgeProperties := cloneProperties(changedEdge.props)
+	changedEdgeProperties["confidence"] = "INFERRED"
+	_, err = exec.Execute(ctx, fmt.Sprintf(graphifyEdgeUpsertQuery, changedEdge.relType), map[string]interface{}{
+		"src": changedEdge.src, "tgt": changedEdge.tgt, "props": changedEdgeProperties,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), mustCountRows(t, exec, ctx,
+		fmt.Sprintf("MATCH ({id:'%s'})-[r:%s]->({id:'%s'}) WHERE r.confidence = 'INFERRED' RETURN count(r)", changedEdge.src, changedEdge.relType, changedEdge.tgt), nil))
+	require.Equal(t, int64(len(payload.edges)), mustCountRows(t, exec, ctx, graphifyAllEdgeCountQuery, nil),
+		"changed edge properties must not duplicate the edge")
+}
+
+// TestGraphifyScenarioE2EComponent_ReRunDoesNotProduceWritesForEqualPayload keeps
+// the original per-method write counts as an explicit COMPONENT test.
+//
+// graphifyCountingEngine wraps the namespace engine opaquely (no
+// EngineUnwrapper), so public write statements are rejected before they reach it
+// — see TestGraphifyScenarioE2E_PublicWriteRejectsOpaqueCountingDouble. The
+// counts below therefore come from executeComponentStatement, the same statement
+// pipeline the atomic statement owner wraps, and every CreateNode/UpdateNode/
+// CreateEdge/UpdateEdge of the real graphify statements reaches the double.
+func TestGraphifyScenarioE2EComponent_ReRunDoesNotProduceWritesForEqualPayload(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	ns := storage.NewNamespacedEngine(base, "test")
+	seed := NewStorageExecutor(ns)
+	ctx := context.Background()
+	for _, q := range []string{
+		"CREATE INDEX code_id IF NOT EXISTS FOR (n:Code) ON (n.id)",
+		"CREATE INDEX entity_id IF NOT EXISTS FOR (n:Entity) ON (n.id)",
+	} {
+		_, err := seed.Execute(ctx, q, nil)
+		require.NoErrorf(t, err, "component index: %s", q)
+	}
+
+	counting := &graphifyCountingEngine{Engine: ns}
+	exec := NewStorageExecutor(counting)
+	payload := buildGraphifyScenarioPayload(8, 0, 0)
+
+	push := func() {
+		for _, n := range payload.nodes {
+			executeComponentStatement(t, exec, ctx, fmt.Sprintf(graphifyNodeUpsertQuery, n.label), map[string]interface{}{"id": n.id, "props": n.props})
+		}
+		for _, e := range payload.edges {
+			executeComponentStatement(t, exec, ctx, fmt.Sprintf(graphifyEdgeUpsertQuery, e.relType), map[string]interface{}{"src": e.src, "tgt": e.tgt, "props": e.props})
+		}
+	}
+
+	push()
+	require.Equal(t, int64(len(payload.nodes)), counting.NodeCreateCount(), "first push must create exactly one node per payload node")
+	require.Equal(t, int64(len(payload.edges)), counting.EdgeCreateCount(), "first push must create exactly one edge per payload edge")
+	require.Equal(t, int64(len(payload.nodes)), counting.NodeUpdateCount(), "first push must pay exactly one SET n += $props update per node")
+	require.Equal(t, int64(len(payload.edges)), counting.EdgeUpdateCount(), "first push must pay exactly one SET r += $props update per edge")
+
+	push()
+	require.Equal(t, int64(len(payload.nodes)), counting.NodeCreateCount(), "second push of an identical payload must not create nodes")
+	require.Equal(t, int64(len(payload.edges)), counting.EdgeCreateCount(), "second push of an identical payload must not create edges")
+	require.Equal(t, int64(len(payload.nodes)), counting.NodeUpdateCount(), "second push of an identical payload must not update nodes")
+	require.Equal(t, int64(len(payload.edges)), counting.EdgeUpdateCount(), "second push of an identical payload must not update edges")
+
+	// Healthy changed-value control: a changed value must cost exactly one
+	// update on that entity and must not create anything.
+	changedProperties := cloneProperties(payload.nodes[0].props)
+	changedProperties["label"] = "Renamed_001"
+	executeComponentStatement(t, exec, ctx, fmt.Sprintf(graphifyNodeUpsertQuery, payload.nodes[0].label), map[string]interface{}{
+		"id": payload.nodes[0].id, "props": changedProperties,
+	})
+	require.Equal(t, int64(len(payload.nodes))+1, counting.NodeUpdateCount(), "a changed value must produce exactly one node update")
+	require.Equal(t, int64(len(payload.nodes)), counting.NodeCreateCount(), "a changed value must not create a node")
 }
 
 // mustOneRow is the project-wide-friendly assertion that a query returns

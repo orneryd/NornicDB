@@ -6,12 +6,16 @@ package storage
 
 import (
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/labelrouting"
 )
 
 // QueryAnalyzer analyzes queries to extract routing information.
 type QueryAnalyzer struct {
-	// Label-based routing: label -> []constituent aliases
-	labelRouting map[string][]string
+	// Label-based routing: normalized label -> []constituent aliases. The
+	// label table is the shared labelrouting owner; this analyzer keeps its
+	// current lock-free access because it has never held a lock.
+	labelRouting labelrouting.Table
 
 	// Property-based routing: property name -> value -> constituent alias
 	propertyRouting map[string]map[interface{}]string
@@ -23,7 +27,7 @@ type QueryAnalyzer struct {
 // NewQueryAnalyzer creates a new query analyzer for composite routing.
 func NewQueryAnalyzer() *QueryAnalyzer {
 	return &QueryAnalyzer{
-		labelRouting:     make(map[string][]string),
+		labelRouting:     labelrouting.New(),
 		propertyRouting:  make(map[string]map[interface{}]string),
 		propertyDefaults: make(map[string]string),
 	}
@@ -31,7 +35,7 @@ func NewQueryAnalyzer() *QueryAnalyzer {
 
 // SetLabelRouting configures label-based routing.
 func (a *QueryAnalyzer) SetLabelRouting(label string, constituents []string) {
-	a.labelRouting[strings.ToLower(label)] = constituents
+	a.labelRouting.Set(label, constituents)
 }
 
 // SetPropertyRouting configures property-based routing.
@@ -47,14 +51,17 @@ func (p *QueryAnalyzer) SetPropertyDefault(propertyName string, constituent stri
 	p.propertyDefaults[propertyName] = constituent
 }
 
-// AnalyzeQuery extracts routing information from a Cypher query string.
-// This is a simplified analyzer - a full implementation would parse the AST.
-func (a *QueryAnalyzer) AnalyzeQuery(cypher string) *QueryInfo {
+// AnalyzeQuery extracts routing information from a Cypher query string and
+// records the statement effect the caller already resolved canonically:
+// writes is true when the statement may write. This is a simplified analyzer -
+// a full implementation would parse the AST - and it never classifies a
+// statement's effects itself.
+func (a *QueryAnalyzer) AnalyzeQuery(cypher string, writes bool) *QueryInfo {
 	upper := strings.ToUpper(cypher)
 	info := &QueryInfo{
 		Labels:     []string{},
 		Properties: make(map[string]interface{}),
-		IsWrite:    strings.Contains(upper, "CREATE") || strings.Contains(upper, "MERGE") || strings.Contains(upper, "SET") || strings.Contains(upper, "DELETE"),
+		IsWrite:    writes,
 		IsFullScan: false,
 	}
 
@@ -88,31 +95,15 @@ func (a *QueryAnalyzer) AnalyzeQuery(cypher string) *QueryInfo {
 }
 
 // RouteQuery determines which constituents to query based on query info.
+//
+// Only a complete nonempty label mapping wins. No labels, any unknown label
+// and an all-known mapping whose union is empty all continue into the existing
+// property lookup and finally return the caller slice; label routing never
+// introduces property fallback of its own.
 func (a *QueryAnalyzer) RouteQuery(queryInfo *QueryInfo, allConstituents []string) []string {
 	// Try label-based routing first
-	if len(queryInfo.Labels) > 0 {
-		constituentSet := make(map[string]bool)
-		allFound := true
-
-		for _, label := range queryInfo.Labels {
-			labelLower := strings.ToLower(label)
-			if constituents, exists := a.labelRouting[labelLower]; exists {
-				for _, alias := range constituents {
-					constituentSet[alias] = true
-				}
-			} else {
-				allFound = false
-				break
-			}
-		}
-
-		if allFound && len(constituentSet) > 0 {
-			result := make([]string, 0, len(constituentSet))
-			for alias := range constituentSet {
-				result = append(result, alias)
-			}
-			return result
-		}
+	if selection := a.labelRouting.Select(queryInfo.Labels); selection.Kind == labelrouting.SelectionMapped {
+		return selection.Aliases
 	}
 
 	// Try property-based routing
@@ -138,6 +129,9 @@ func (a *QueryAnalyzer) RouteQuery(queryInfo *QueryInfo, allConstituents []strin
 type QueryInfo struct {
 	Labels     []string
 	Properties map[string]interface{}
-	IsWrite    bool
+	// IsWrite is the statement effect the caller resolved canonically, reported
+	// by AnalyzeQuery and never guessed from the query text.
+	IsWrite bool
+	// IsFullScan reports a statement with no label token that cannot write.
 	IsFullScan bool
 }

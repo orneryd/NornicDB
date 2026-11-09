@@ -1,18 +1,20 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers are the declared values in procedure_result_headers.go.
+
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func (e *StorageExecutor) callDbRetrieve(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
@@ -54,10 +56,9 @@ func (e *StorageExecutor) callDbRerank(ctx context.Context, args []interface{}) 
 		opts.RerankMinScore = v
 	}
 
-	svc := e.searchService
+	svc := e.search()
 	if svc == nil {
-		svc = search.NewService(e.storage)
-		e.SetSearchService(svc)
+		svc = e.newUnmanagedSearchService(search.DefaultVectorDimensions)
 	}
 	reranked, err := svc.RerankCandidates(ctx, query, candidates, opts)
 	if err != nil {
@@ -65,7 +66,7 @@ func (e *StorageExecutor) callDbRerank(ctx context.Context, args []interface{}) 
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"id", "content", "original_rank", "new_rank", "bi_score", "cross_score", "final_score"},
+		Columns: columnNames(dbRerankColumns),
 		Rows:    make([][]interface{}, 0, len(reranked)),
 	}
 	for _, r := range reranked {
@@ -164,12 +165,12 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (
 		model = stringOr(req["model"], "")
 	}
 
-	if json.Unmarshal([]byte(text), &structured) != nil {
+	if valueconvert.CypherInputJSON.Unmarshal([]byte(text), &structured) != nil {
 		structured = nil
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"text", "structured", "model", "usage", "latencyMs", "finishReason"},
+		Columns: columnNames(dbInferColumns),
 		Rows: [][]interface{}{{
 			text,
 			structured,
@@ -183,13 +184,12 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (
 
 func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]interface{}, forceRerank bool, useConfiguredRerank bool) (*ExecuteResult, error) {
 	query := stringOr(req["query"], stringOr(req["text"], ""))
-	qid := stringOr(req["qid"], "")
-	discard, _ := toBool(req["discard"])
-	n, nPresent := toInt(req["n"])
-	mode := search.SearchContinuationMode(lowerASCII(strings.TrimSpace(stringOr(req["mode"], ""))))
-	groupBy := stringOr(firstPresent(req, "groupBy", "group_by"), "")
-	rankedLimit, rankedLimitPresent := toInt(firstPresent(req, "rankedLimit", "ranked_limit"))
-	continuationRequested := qid != "" || discard || nPresent || mode != "" || groupBy != "" || rankedLimitPresent
+	continuation := readRetrievalContinuation(req)
+	qid, discard := continuation.qid, continuation.discard
+	n, nPresent := continuation.n, continuation.nPresent
+	mode, groupBy := continuation.mode, continuation.groupBy
+	rankedLimit, rankedLimitPresent := continuation.rankedLimit, continuation.rankedLimitPresent
+	continuationRequested := continuation.requested()
 	if qid != "" && !nPresent {
 		n = 50
 	}
@@ -255,12 +255,12 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if err != nil {
 				return nil, err
 			}
-			opts.Where = e.compileNodeWhereFilter(context.WithoutCancel(ctx), "node", where)
+			opts.Where = e.compileNodeWhereFilter(withStatementClausePlans(context.WithoutCancel(ctx), where), "node", where)
 			if opts.Graph || opts.Relationships {
 				// One predicate serves both kinds: a node candidate reads
 				// relationship, start and end as null, a relationship
 				// candidate reads node as null.
-				whereCtx := context.WithoutCancel(ctx)
+				whereCtx := withStatementClausePlans(context.WithoutCancel(ctx), where)
 				nodeScope := valueBindingsLayer(whereCtx, 3)
 				nodeScope["relationship"], nodeScope["start"], nodeScope["end"] = nil, nil, nil
 				opts.Where = e.compileNodeWhereFilter(withValueBindings(whereCtx, nodeScope), "node", where)
@@ -290,15 +290,14 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		return nil, err
 	}
 
-	svc := e.searchService
+	svc := e.search()
 	ensureSearchService := func(queryEmbedding []float32) *search.Service {
 		if svc == nil {
 			dims := search.DefaultVectorDimensions
 			if len(queryEmbedding) > 0 {
 				dims = len(queryEmbedding)
 			}
-			svc = search.NewServiceWithDimensions(e.storage, dims)
-			e.SetSearchService(svc)
+			svc = e.newUnmanagedSearchService(dims)
 		}
 		return svc
 	}
@@ -324,7 +323,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		if continuationErr != nil {
 			return nil, continuationErr
 		}
-		return executeSearchContinuationPage(page), nil
+		return executeSearchContinuationPage(page, storage.DatabaseOf(e.storage)), nil
 	}
 	if mode == search.SearchContinuationID {
 		page, continuationErr := ensureSearchService(nil).SearchTextContinuation(
@@ -333,7 +332,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		if continuationErr != nil {
 			return nil, continuationErr
 		}
-		return executeSearchContinuationPage(page), nil
+		return executeSearchContinuationPage(page, storage.DatabaseOf(e.storage)), nil
 	}
 	if useConfiguredRerank && svc != nil {
 		opts.RerankEnabled = svc.RerankerAvailable(ctx)
@@ -356,11 +355,20 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if continuationErr != nil {
 				return nil, continuationErr
 			}
-			return executeSearchContinuationPage(page), nil
+			return executeSearchContinuationPage(page, storage.DatabaseOf(e.storage)), nil
 		}
 		response, err = service.Search(ctx, query, embedding, opts)
 	} else {
 		embedder := e.queryEmbedderForStatement(ctx)
+		if embedder != nil {
+			var finish func()
+			var err error
+			ctx, finish, err = e.queryEmbedder.BeginUse(ctx)
+			if err != nil {
+				return nil, err
+			}
+			defer finish()
+		}
 		if embedder == nil && failClosed {
 			return nil, failClosedEmbeddingUnavailable(localizedError(localization.CypherCoreEmbedderNotConfigured(), nil))
 		}
@@ -395,7 +403,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			}
 			return service.Search(ctx, text, queryEmbedding, searchOpts)
 		}
-		chunkQuery := func(_ context.Context, text string) ([]string, error) {
+		chunkQuery := func(readerCtx context.Context, text string) ([]string, error) {
 			return embedder.ChunkText(text, 512, 50)
 		}
 		// failClosed disables every fallback: an embedding failure or a
@@ -413,7 +421,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if continuationErr != nil {
 				return nil, continuationErr
 			}
-			return executeSearchContinuationPage(page), nil
+			return executeSearchContinuationPage(page, storage.DatabaseOf(e.storage)), nil
 		}
 		response, err = search.SearchTextChunksWithErrorPolicy(
 			ctx,
@@ -430,16 +438,16 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 	if opts.Graph {
 		if graphPage {
-			return e.graphSearchPage(response), nil
+			return e.graphSearchPage(ctx, response), nil
 		}
-		return e.graphSearchResult(response), nil
+		return e.graphSearchResult(ctx, response), nil
 	}
 	if opts.Relationships {
-		return e.relationshipSearchResult(response), nil
+		return e.relationshipSearchResult(ctx, response), nil
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"},
+		Columns: retrievalResultSchemas(retrievalColumns)[0],
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
 	// Of a query split into chunks, how many were searched; 0 and 0 for a
@@ -447,11 +455,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	chunksSearched, chunksTotal := int64(response.QueryChunksSearched), int64(response.QueryChunksTotal)
 
 	for _, r := range response.Results {
-		node := &storage.Node{
-			ID:         storage.NodeID(r.ID),
-			Labels:     r.Labels,
-			Properties: r.Properties,
-		}
+		node := r.MaterializedNode(storage.DatabaseOf(e.storage))
 		result.Rows = append(result.Rows, []interface{}{
 			node,
 			r.Score,
@@ -470,12 +474,12 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	return result, nil
 }
 
-func executeSearchContinuationPage(page *search.SearchContinuationPage) *ExecuteResult {
+func executeSearchContinuationPage(page *search.SearchContinuationPage, database string) *ExecuteResult {
 	results := make([]interface{}, 0, len(page.Results))
 	for index := range page.Results {
 		result := page.Results[index]
 		mapped := map[string]interface{}{
-			"node":  &storage.Node{ID: storage.NodeID(result.ID), Labels: result.Labels, Properties: result.Properties},
+			"node":  result.MaterializedNode(database),
 			"score": result.Score, "rrf_score": result.RRFScore,
 			"vector_rank": int64(result.VectorRank), "bm25_rank": int64(result.BM25Rank),
 			"group_key": result.GroupKey, "phase": result.Phase,
@@ -489,7 +493,7 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 			for passageIndex := range result.Passages {
 				passage := result.Passages[passageIndex]
 				passages[passageIndex] = map[string]interface{}{
-					"node":  &storage.Node{ID: storage.NodeID(passage.ID), Labels: passage.Labels, Properties: passage.Properties},
+					"node":  passage.MaterializedNode(database),
 					"score": passage.Score, "rrf_score": passage.RRFScore,
 					"vector_rank": int64(passage.VectorRank), "bm25_rank": int64(passage.BM25Rank),
 					"phase":   passage.Phase,
@@ -522,13 +526,14 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 		"mode":               string(page.Mode), "ranked_count": int64(page.RankedCount),
 		"eligible_count": eligibleCount, "ranked_pool_exhausted": page.RankedPoolExhausted,
 		"collection_exhausted": page.CollectionExhausted, "completion": page.Completion,
+		"max_page_size": int64(page.MaxPageSize),
 	}
 	if page.QueryChunksTotal > 0 {
 		pageMap["query_chunks_searched"] = int64(page.QueryChunksSearched)
 		pageMap["query_chunks_total"] = int64(page.QueryChunksTotal)
 	}
 	result := &ExecuteResult{
-		Columns: []string{"page"},
+		Columns: retrievalResultSchemas(retrievalColumns)[1],
 		Rows:    [][]interface{}{{pageMap}},
 	}
 	metadata := continuationResultMetadata(page.SearchResponse())
@@ -644,31 +649,15 @@ func parseRetrieveEmbedding(raw interface{}, failClosed bool) ([]float32, error)
 }
 
 func strictNumericEmbedding(raw interface{}) ([]float32, error) {
-	switch val := raw.(type) {
-	case []float32:
-		return val, nil
-	case []float64:
-		out := make([]float32, len(val))
-		for i, f := range val {
-			out[i] = float32(f)
-		}
-		return out, nil
-	case []interface{}:
-		out := make([]float32, len(val))
-		for i, item := range val {
-			if _, isString := item.(string); isString {
-				return nil, errRetrieveEmbeddingNotAVector
-			}
-			f, ok := ragToFloat64(item)
-			if !ok {
-				return nil, errRetrieveEmbeddingNotAVector
-			}
-			out[i] = float32(f)
-		}
-		return out, nil
-	default:
+	list, ok := valueconvert.ReadList(raw)
+	if !ok {
 		return nil, errRetrieveEmbeddingNotAVector
 	}
+	values, issue := list.Numbers32()
+	if issue != nil {
+		return nil, errRetrieveEmbeddingNotAVector
+	}
+	return values, nil
 }
 
 // queryEmbedderDimensions is the embedder's vector dimension when it reports
@@ -753,7 +742,11 @@ func parseRetrievalFilters(raw interface{}) map[string][]string {
 	}
 	parsed := make(map[string][]string, len(filters))
 	for property, rawValues := range filters {
-		if strings.TrimSpace(property) == "" {
+		// A property name is the node's key exactly, whitespace included: " ",
+		// "  " and "key " name properties of their own (search.nodeMatchesFilters
+		// compares exact keys, #938), so only a truly empty name is dropped
+		// (NOR46).
+		if property == "" {
 			continue
 		}
 		var values []string
@@ -874,14 +867,15 @@ func continuationResultMetadata(value any) map[string]any {
 }
 
 // desugarRetrievalWhere rewrites a retrieval's where predicate as a
-// statement's text is rewritten when it enters the executor
-// (desugarLabelExpressions): a pattern element's own WHERE
+// statement's text is rewritten when it enters the executor: function aliases,
+// then desugarLabelExpressions for a pattern element's own WHERE
 // ((m:Coll WHERE m.id IN $ids)), label expressions and the other pattern
 // forms every route reads. The predicate is rewritten as the expression of
 // RETURN <where> AS …, and taken back from it.
 func desugarRetrievalWhere(ctx context.Context, where string) (string, error) {
+	where, _ = canonicalizeFunctionAliases(where)
 	const prefix, suffix = "RETURN ", " AS __nornic_where"
-	rewritten, rewrite, err := desugarLabelExpressions(prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
+	rewritten, rewrite, err := desugarLabelExpressions(ctx, prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return "", err
 	}

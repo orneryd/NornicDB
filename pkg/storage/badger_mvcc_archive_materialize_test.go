@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -8,26 +9,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// archiveNodeAndEdgePrimaryImagesInTxn archives the primary node and edge images
+// at v in one update transaction, the pair both archive tests exercise.
+func archiveNodeAndEdgePrimaryImagesInTxn(t *testing.T, engine *BadgerEngine, nodeID NodeID, edgeID EdgeID, v MVCCVersion) {
+	t.Helper()
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, nodeID, v, nil, MVCCVersion{}))
+		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, edgeID, v, nil, MVCCVersion{}))
+		return nil
+	}))
+}
+
 func TestArchivePrimaryIntoMVCCVersionInTxn_NodeAndEdge(t *testing.T) {
 	engine := newTestEngine(t)
 
 	node := &Node{ID: "tenant:n1", Labels: []string{"L"}, Properties: map[string]any{"k": "v"}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	edge := &Edge{ID: "tenant:e1", StartNode: "tenant:n1", EndNode: "tenant:n1", Type: "SELF", Properties: map[string]any{"w": int64(1)}}
-	err = engine.CreateEdge(edge)
+	err = engine.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 11}
 	engine.activeMVCCSnapshotReaders.Store(1)
 	defer engine.activeMVCCSnapshotReaders.Store(0)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, node.ID, v, nil, MVCCVersion{}))
-		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, edge.ID, v, nil, MVCCVersion{}))
-		return nil
-	}))
+	archiveNodeAndEdgePrimaryImagesInTxn(t, engine, node.ID, edge.ID, v)
 
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 		_, err := engine.loadNodeMVCCRecordExactInTxn(txn, node.ID, v)
@@ -43,11 +51,7 @@ func TestArchivePrimaryIntoMVCCVersionInTxn_NoHistoryOrMissing_NoOp(t *testing.T
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 7}
 
 	// Head-only retention and no active readers => archive short-circuits.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, "tenant:missing", v, nil, MVCCVersion{}))
-		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, "tenant:missing", v, nil, MVCCVersion{}))
-		return nil
-	}))
+	archiveNodeAndEdgePrimaryImagesInTxn(t, engine, "tenant:missing", "tenant:missing", v)
 }
 
 func TestMaterializeMVCCCommitInTxn_CoversOperationSwitch(t *testing.T) {
@@ -56,20 +60,20 @@ func TestMaterializeMVCCCommitInTxn_CoversOperationSwitch(t *testing.T) {
 	defer engine.activeMVCCSnapshotReaders.Store(0)
 
 	// Seed entities for update/delete paths.
-	_, err := engine.CreateNode(&Node{ID: "tenant:u", Labels: []string{"L"}, Properties: map[string]any{"p": "old"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "tenant:u", Labels: []string{"L"}, Properties: map[string]any{"p": "old"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "tenant:d", Labels: []string{"L"}, Properties: map[string]any{"p": "gone"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "tenant:d", Labels: []string{"L"}, Properties: map[string]any{"p": "gone"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "tenant:a", Labels: []string{"L"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "tenant:a", Labels: []string{"L"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "tenant:b", Labels: []string{"L"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "tenant:b", Labels: []string{"L"}})
 	require.NoError(t, err)
 
-	err = engine.CreateEdge(&Edge{ID: "tenant:eu", StartNode: "tenant:a", EndNode: "tenant:b", Type: "R", Properties: map[string]any{"p": "old"}})
+	err = engine.CreateEdge(t.Context(), &Edge{ID: "tenant:eu", StartNode: "tenant:a", EndNode: "tenant:b", Type: "R", Properties: map[string]any{"p": "old"}})
 	require.NoError(t, err)
-	err = engine.CreateEdge(&Edge{ID: "tenant:ed", StartNode: "tenant:a", EndNode: "tenant:b", Type: "R", Properties: map[string]any{"p": "gone"}})
+	err = engine.CreateEdge(t.Context(), &Edge{ID: "tenant:ed", StartNode: "tenant:a", EndNode: "tenant:b", Type: "R", Properties: map[string]any{"p": "gone"}})
 	require.NoError(t, err)
-	err = engine.CreateEdge(&Edge{ID: "tenant:child", StartNode: "tenant:d", EndNode: "tenant:b", Type: "R"})
+	err = engine.CreateEdge(t.Context(), &Edge{ID: "tenant:child", StartNode: "tenant:d", EndNode: "tenant:b", Type: "R"})
 	require.NoError(t, err)
 
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(time.Second), CommitSequence: 101}
@@ -84,23 +88,23 @@ func TestMaterializeMVCCCommitInTxn_CoversOperationSwitch(t *testing.T) {
 		{Type: OpDeleteEdge, EdgeID: "tenant:ed", OldEdge: &Edge{ID: "tenant:ed", StartNode: "tenant:a", EndNode: "tenant:b", Type: "R", Properties: map[string]any{"p": "gone"}}},
 	}
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, opList)
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), version, opList)
 	}))
 
-	head, err := engine.GetNodeCurrentHead("tenant:u")
+	head, err := engine.GetNodeCurrentHead(context.Background(), "tenant:u")
 	require.NoError(t, err)
 	require.Equal(t, uint64(101), head.Version.CommitSequence)
 
-	delHead, err := engine.GetNodeCurrentHead("tenant:d")
+	delHead, err := engine.GetNodeCurrentHead(context.Background(), "tenant:d")
 	require.NoError(t, err)
 	require.True(t, delHead.Tombstoned)
 
-	eHead, err := engine.GetEdgeCurrentHead("tenant:eu")
+	eHead, err := engine.GetEdgeCurrentHead(context.Background(), "tenant:eu")
 	require.NoError(t, err)
 	require.Equal(t, uint64(101), eHead.Version.CommitSequence)
 
-	edHead, err := engine.GetEdgeCurrentHead("tenant:ed")
+	edHead, err := engine.GetEdgeCurrentHead(context.Background(), "tenant:ed")
 	require.NoError(t, err)
 	require.True(t, edHead.Tombstoned)
 }

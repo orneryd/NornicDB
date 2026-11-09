@@ -66,8 +66,13 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/grpcresponse"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/util"
 	"log"
+	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -96,6 +101,12 @@ type Config struct {
 	// TLSConfig enables TLS transport when non-nil. ClientAuth and ClientCAs
 	// control optional mutual TLS authentication.
 	TLSConfig *tls.Config
+
+	// Logger receives request completion events at debug for success, warning
+	// for client failures, and error for internal/service failures. Production
+	// callers should pass their configured logger, e.g. cfg.Logger = logger.
+	// Nil uses an info-level text logger on stderr for standalone callers.
+	Logger *slog.Logger
 
 	// Localizer renders public protocol messages. Nil preserves source English.
 	Localizer *localization.Manager
@@ -150,6 +161,12 @@ type Config struct {
 	// If nil, those query variants return FailedPrecondition.
 	EmbedQuery func(ctx context.Context, text string) ([]float32, error)
 
+	// DropDatabase drops a collection's database together with the state the
+	// server derives from it, such as its search index, as Cypher's DROP
+	// DATABASE does. nil drops it from the database manager only, which leaves
+	// a dropped collection's vectors in its search service.
+	DropDatabase func(ctx context.Context, name string) error
+
 	// BindQueryEmbedding captures the provider used by EmbedQuery for a text
 	// request. It must preserve an existing binding in nested batch calls.
 	// ID and numeric-vector requests never invoke it.
@@ -172,12 +189,19 @@ type Config struct {
 	// Collection name = database name. Called with the principal's roles from context;
 	// CanAccessDatabase(collectionName) is checked before opening the collection.
 	DatabaseAccessModeResolver func(roles []string) auth.DatabaseAccessMode
-	// ResolvedAccessResolver, when set, is used for write RPCs: ResolvedAccess.Write
-	// for (roles, collectionName) must be true or the request is denied.
+	// ResolvedAccessResolver, when set, gates read and write RPCs: ResolvedAccess.Write
+	// for writes, or ResolvedAccess.Read for reads, must be true.
 	ResolvedAccessResolver func(roles []string, dbName string) auth.ResolvedAccess
+
+	// DatabaseOperationAccessResolver explicitly binds a combined selection and
+	// permission decision. When set, it replaces the separate permission callback
+	// for direct operations; existing resolver configurations retain their contract.
+	DatabaseOperationAccessResolver func(roles []string, database string, mode auth.DatabaseAccessMode, write bool) (bool, auth.ResolvedAccess)
 }
 
 // SearchServiceProvider returns a search service configured for the provided database namespace.
+// A nil service with nil error means vector search is intentionally disabled;
+// a non-nil error means the index is unavailable and must reach the caller.
 // When nil, Qdrant point writes still persist but do not update NornicDB search indexes.
 type SearchServiceProvider func(database string, store storage.Engine) (*search.Service, error)
 
@@ -215,20 +239,24 @@ type Server struct {
 	collections    CollectionStore
 	baseStorage    storage.Engine
 	searchService  SearchServiceProvider
-	vecIndex       *vectorIndexCache
 	authenticator  *auth.Authenticator // Authentication for gRPC requests
 	basicAuthCache *auth.BasicAuthCache
 
 	// Per-database RBAC (optional). When set, collection = database and access is checked before each RPC.
-	databaseAccessModeResolver func(roles []string) auth.DatabaseAccessMode
-	resolvedAccessResolver     func(roles []string, dbName string) auth.ResolvedAccess
+	databaseAccessModeResolver      func(roles []string) auth.DatabaseAccessMode
+	resolvedAccessResolver          func(roles []string, dbName string) auth.ResolvedAccess
+	databaseOperationAccessResolver func([]string, string, auth.DatabaseAccessMode, bool) (bool, auth.ResolvedAccess)
 
-	grpcServer *grpc.Server
-	listener   net.Listener
-	register   []func(*grpc.Server)
+	grpcServer   *grpc.Server
+	listener     net.Listener
+	listenNative func(string, string) (net.Listener, error)
+	register     []func(*grpc.Server)
 
 	mu      sync.RWMutex
-	started bool
+	started bool // a server starts once
+	// work admits Start and the serving goroutine, joins them on Stop and keeps
+	// their outcomes.
+	work lifecycle.WorkLifetime
 }
 
 // AuthenticatedPrincipalID returns the trusted principal installed by this
@@ -243,19 +271,38 @@ func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write
 	if s.databaseAccessModeResolver == nil {
 		return nil
 	}
+	if admitted, ok := ctx.Value(contextKeyDatabaseAdmission{}).(*authenticatedUnaryContext); ok && admitted.admitted && admitted.server == s && admitted.database == database && admitted.write == write {
+		return nil
+	}
 	claims, _ := ctx.Value(contextKeyClaims{}).(*auth.JWTClaims)
 	var roles []string
 	if claims != nil {
 		roles = claims.Roles
 	}
 	mode := s.databaseAccessModeResolver(roles)
-	if mode == nil || !mode.CanAccessDatabase(database) {
-		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
+	if mode == nil {
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database), grpcresponse.QdrantSourceFallback)
 	}
-	if write && s.resolvedAccessResolver != nil {
-		ra := s.resolvedAccessResolver(roles, database)
-		if !ra.Write {
-			return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseWriteDenied(database))
+	var accessible bool
+	var access auth.ResolvedAccess
+	if s.databaseOperationAccessResolver != nil {
+		accessible, access = s.databaseOperationAccessResolver(roles, database, mode, write)
+	} else {
+		accessible = mode.CanAccessDatabase(database)
+		access = auth.ResolvedAccess{Read: true, Write: true}
+		if accessible && s.resolvedAccessResolver != nil {
+			access = s.resolvedAccessResolver(roles, database)
+		}
+	}
+	if !accessible {
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database), grpcresponse.QdrantSourceFallback)
+	}
+	if !write && !access.Read {
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database), grpcresponse.QdrantSourceFallback)
+	}
+	if write {
+		if !access.Write {
+			return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseWriteDenied(database), grpcresponse.QdrantSourceFallback)
 		}
 	}
 	return nil
@@ -273,18 +320,102 @@ func (s *Server) VisibleDatabases(ctx context.Context, candidates []string) ([]s
 	}
 	mode := s.databaseAccessModeResolver(roles)
 	if mode == nil {
-		return candidates, nil
+		return nil, nil
 	}
 	out := make([]string, 0, len(candidates))
 	for _, name := range candidates {
-		if mode.CanSeeDatabase(name) {
+		if mode.CanSeeDatabase(name) && s.AllowDatabaseAccess(ctx, name, false) == nil {
 			out = append(out, name)
 		}
 	}
 	return out, nil
 }
 
+// AllowAllDatabaseAccess checks the population a full storage snapshot can
+// expose, including ordinary graph databases which are not Qdrant collections.
+func (s *Server) AllowAllDatabaseAccess(ctx context.Context) error {
+	if s.databaseAccessModeResolver == nil {
+		return nil
+	}
+	var names []string
+	if store, ok := s.collections.(*databaseCollectionStore); ok {
+		names = store.dbManager.ListDatabaseNames()
+	} else if lister, ok := s.baseStorage.(interface{ ListNamespaces() []string }); ok {
+		names = lister.ListNamespaces()
+	} else {
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied(), grpcresponse.QdrantSourceFallback)
+	}
+	var denied error
+	auth.DatabasePopulationAccess(names, func(database string) bool {
+		if denied == nil {
+			denied = s.AllowDatabaseAccess(ctx, database, false)
+			if denied == nil {
+				denied = s.AllowDatabaseAccess(ctx, database, true)
+			}
+		}
+		return denied == nil
+	})
+	return denied
+}
+
+// authorizeRequestDatabase covers named and empty/batch requests before the
+// service dispatch. Per-statement and child-request checks remain at their
+// existing owners when a method can select more than one database.
+func (s *Server) authorizeRequestDatabase(ctx context.Context, req interface{}, fullMethod string) error {
+	key, _ := methodKey(fullMethod)
+	if key == "Snapshots/CreateFull" || key == "Snapshots/ListFull" || key == "Snapshots/DeleteFull" {
+		return s.AllowAllDatabaseAccess(ctx)
+	}
+	if selected, ok := req.(interface{ GetCollectionName() string }); ok {
+		permission, known := requiredPermissionForMethod(fullMethod)
+		if known {
+			write := permission != auth.PermRead && permission != auth.PermAdmin
+			// Snapshot deletion has global admin entitlement but a database
+			// write effect; snapshot creation/listing read the collection.
+			if key == "Snapshots/Delete" {
+				write = true
+			}
+			database := selected.GetCollectionName()
+			if err := s.AllowDatabaseAccess(ctx, database, write); err != nil {
+				return err
+			}
+			// The service dispatch is part of this same unary operation. Preserve
+			// its admission only for this exact server, selection and operation.
+			if request, ok := ctx.Value(contextKeyDatabaseAdmission{}).(*authenticatedUnaryContext); ok && request.server == s {
+				request.database, request.write, request.admitted = database, write, true
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 type contextKeyClaims struct{}
+
+// authenticatedUnaryContext carries the claims and completed admission through
+// one unary dispatch, without allocating another context or a per-request map.
+// Admission is set before dispatch and immutable while the handler runs. It is
+// never installed on streams or retained for subscription delivery.
+type contextKeyDatabaseAdmission struct{}
+type authenticatedUnaryContext struct {
+	context.Context
+	server   *Server
+	claims   *auth.JWTClaims
+	database string
+	write    bool
+	admitted bool
+}
+
+func (c *authenticatedUnaryContext) Value(key interface{}) interface{} {
+	switch key.(type) {
+	case contextKeyClaims:
+		return c.claims
+	case contextKeyDatabaseAdmission:
+		return c
+	default:
+		return c.Context.Value(key)
+	}
+}
 
 // NewServer creates a new Qdrant gRPC server.
 //
@@ -300,8 +431,36 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 	if config == nil {
 		config = DefaultConfig()
 	}
+	if config.Logger == nil {
+		config.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+	}
 	if collections == nil {
 		return nil, fmt.Errorf("collection store required")
+	}
+	// Both exported constructor assemblies pair default storage retirement
+	// with complete derived-state retirement. Preserve custom lifecycle hooks.
+	if store, ok := collections.(*databaseCollectionStore); ok && store.defaultDrop && searchProvider != nil {
+		paired := *store
+		paired.defaultDrop = false
+		paired.dropDatabase = func(ctx context.Context, name string) error {
+			engine, err := store.dbManager.GetStorage(name)
+			if err != nil {
+				// No live storage means no live index; the DROP owner decides.
+				return store.dropDatabase(ctx, name)
+			}
+			svc, err := searchProvider(name, engine)
+			if err != nil {
+				return err
+			}
+			if err := store.dropDatabase(ctx, name); err != nil {
+				return err
+			}
+			if svc != nil {
+				return svc.ClearIndexes()
+			}
+			return nil
+		}
+		collections = &paired
 	}
 
 	srv := &Server{
@@ -309,7 +468,6 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 		collections:    collections,
 		baseStorage:    baseStorage,
 		searchService:  searchProvider,
-		vecIndex:       newVectorIndexCache(),
 		authenticator:  authenticator,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 		register:       nil,
@@ -319,6 +477,7 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 	if config != nil {
 		srv.databaseAccessModeResolver = config.DatabaseAccessModeResolver
 		srv.resolvedAccessResolver = config.ResolvedAccessResolver
+		srv.databaseOperationAccessResolver = config.DatabaseOperationAccessResolver
 	}
 	return srv, nil
 }
@@ -351,18 +510,39 @@ func (s *Server) RegisterAdditionalServices(fn func(*grpc.Server)) error {
 // Start begins listening for gRPC connections.
 func (s *Server) Start() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.started {
-		return fmt.Errorf("server already started")
+		s.mu.Unlock()
+		return fmt.Errorf("server already started or stopped")
 	}
+	startCtx, startRelease, accepted := s.work.Acquire(context.Background())
+	if !accepted {
+		s.mu.Unlock()
+		return fmt.Errorf("server already started or stopped")
+	}
+	s.started = true
+	callbacks := append([]func(*grpc.Server){}, s.register...)
+	s.mu.Unlock()
+	defer startRelease()
 
 	// Create listener
-	listener, err := net.Listen("tcp", s.config.ListenAddr)
+	listen := s.listenNative
+	if listen == nil {
+		listen = net.Listen
+	}
+	listener, err := listen("tcp", s.config.ListenAddr)
 	if err != nil {
+		s.work.RecordError("", err)
+		s.mu.Lock()
+		s.started = false
+		s.mu.Unlock()
 		return fmt.Errorf("failed to listen on %s: %w", s.config.ListenAddr, err)
 	}
+	listener = util.ObserveListenerClose(listener, func(err error) {
+		s.work.RecordError("gRPC listener close", err)
+	})
+	s.mu.Lock()
 	s.listener = listener
+	s.mu.Unlock()
 
 	// Create gRPC server with options
 	unaryInterceptors := make([]grpc.UnaryServerInterceptor, 0, 2)
@@ -377,6 +557,7 @@ func (s *Server) Start() error {
 	}
 
 	opts := []grpc.ServerOption{
+		grpc.StatsHandler(searchContinuationStats{}),
 		grpc.MaxRecvMsgSize(s.config.MaxRecvMsgSize),
 		grpc.MaxSendMsgSize(s.config.MaxSendMsgSize),
 		grpc.MaxConcurrentStreams(s.config.MaxConcurrentStreams),
@@ -398,36 +579,51 @@ func (s *Server) Start() error {
 		opts = append(opts, grpc.Creds(credentials.NewTLS(s.config.TLSConfig.Clone())))
 	}
 
-	s.grpcServer = grpc.NewServer(opts...)
+	server := grpc.NewServer(opts...)
 
 	var checker DatabaseAccessChecker = s
 	if s.databaseAccessModeResolver == nil {
 		checker = nil // no per-DB RBAC when resolvers not set
 	}
-	collectionsService := NewCollectionsService(s.collections, s.vecIndex, checker)
+	collectionsService := NewCollectionsService(s.collections, checker)
 	collectionsService.localizer = s.config.Localizer
-	qpb.RegisterCollectionsServer(s.grpcServer, collectionsService)
+	qpb.RegisterCollectionsServer(server, collectionsService)
 
-	pointsService := NewPointsService(s.config, s.collections, s.searchService, s.vecIndex, checker)
-	qpb.RegisterPointsServer(s.grpcServer, pointsService)
+	pointsService := NewPointsService(s.config, s.collections, s.searchService, checker)
+	qpb.RegisterPointsServer(server, pointsService)
 
 	snapshotsService := NewSnapshotsService(s.config, s.collections, s.baseStorage, s.config.SnapshotDir, checker)
-	qpb.RegisterSnapshotsServer(s.grpcServer, snapshotsService)
+	qpb.RegisterSnapshotsServer(server, snapshotsService)
 
-	for _, fn := range s.register {
-		fn(s.grpcServer)
+	for _, fn := range callbacks {
+		fn(server)
 	}
 
 	// Enable reflection for debugging
 	if s.config.EnableReflection {
-		reflection.Register(s.grpcServer)
+		reflection.Register(server)
 	}
 
-	s.started = true
+	// Publish and check under the same lock as Stop's read: either Stop sees
+	// this server, or Start sees the closed admission and stops it itself.
+	s.mu.Lock()
+	s.grpcServer = server
+	closing := s.work.Closing()
+	s.mu.Unlock()
+	if closing {
+		server.Stop()
+		if err := listener.Close(); err != nil {
+			s.work.RecordError("", err)
+		}
+		return fmt.Errorf("server stopped during start")
+	}
 
-	// Start serving in background
+	// The serving goroutine is a child of this Start's admission.
+	_, serveRelease, _ := s.work.Acquire(startCtx)
 	go func() {
-		if err := s.grpcServer.Serve(listener); err != nil {
+		defer serveRelease()
+		if err := server.Serve(listener); err != nil && err != grpc.ErrServerStopped {
+			s.work.RecordError("", err)
 			log.Printf("Qdrant gRPC server error: %v", err)
 		}
 	}()
@@ -436,29 +632,44 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop gracefully shuts down the server.
+// Stop gracefully shuts down the server. It is the owner's one stop: the
+// first caller signals the transport; every caller joins actual retirement.
 func (s *Server) Stop() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.started {
-		return
+	first := s.work.CloseAdmission()
+	server := s.grpcServer
+	s.mu.Unlock()
+	if first {
+		s.work.Cancel()
+		if server != nil {
+			server.GracefulStop()
+		}
 	}
+	<-s.work.BeginStop(s.retire)
+}
 
-	if s.grpcServer != nil {
-		s.grpcServer.GracefulStop()
-	}
+// retire runs once, after Start and the serving goroutine actually returned.
+func (s *Server) retire() error {
+	s.mu.Lock()
 	s.started = false
+	s.mu.Unlock()
 	log.Println("Qdrant gRPC server stopped")
+	return nil
+}
+
+// WaitStopped observes actual transport completion and its serving outcome.
+func (s *Server) WaitStopped(ctx context.Context) error {
+	return s.work.WaitStopped(ctx)
 }
 
 // Addr returns the server's listen address.
 func (s *Server) Addr() string {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	listener := s.listener
+	s.mu.RUnlock()
 
-	if s.listener != nil {
-		return s.listener.Addr().String()
+	if listener != nil {
+		return listener.Addr().String()
 	}
 	return ""
 }
@@ -474,7 +685,7 @@ func (s *Server) authorizeMethod(ctx context.Context, fullMethod string, claims 
 	required, ok := requiredPermissionForMethod(fullMethod)
 	if !ok {
 		// Default-deny: unknown method should not be allowed implicitly.
-		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied(), grpcresponse.QdrantSourceFallback)
 	}
 	if s.config != nil && s.config.MethodPermissions != nil {
 		if key, ok := methodKey(fullMethod); ok {
@@ -486,7 +697,7 @@ func (s *Server) authorizeMethod(ctx context.Context, fullMethod string, claims 
 	if hasPermissionFromClaims(claims, required) {
 		return nil
 	}
-	return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
+	return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied(), grpcresponse.QdrantSourceFallback)
 }
 
 // unaryAuthInterceptor authenticates unary gRPC requests.
@@ -511,7 +722,10 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 					if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
 						return nil, err
 					}
-					ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+					ctx = &authenticatedUnaryContext{Context: ctx, server: s, claims: claims}
+					if err := s.authorizeRequestDatabase(ctx, req, info.FullMethod); err != nil {
+						return nil, err
+					}
 					return handler(ctx, req)
 				}
 				// If Basic Auth fails, fall through to try Bearer token
@@ -522,20 +736,23 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 	// Try Bearer/JWT token extraction
 	token, err := s.extractTokenFromMetadata(ctx)
 	if err != nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Validate token
 	claims, err = s.authenticator.ValidateToken(token)
 	if err != nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken(), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Add claims to context for use in handlers
 	if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
 		return nil, err
 	}
-	ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+	ctx = &authenticatedUnaryContext{Context: ctx, server: s, claims: claims}
+	if err := s.authorizeRequestDatabase(ctx, req, info.FullMethod); err != nil {
+		return nil, err
+	}
 	return handler(ctx, req)
 }
 
@@ -573,13 +790,13 @@ func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, in
 	// Try Bearer/JWT token extraction
 	token, err := s.extractTokenFromMetadata(ctx)
 	if err != nil {
-		return localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()))
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Validate token
 	claims, err = s.authenticator.ValidateToken(token)
 	if err != nil {
-		return localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken())
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken(), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Add claims to context for use in handlers
@@ -593,17 +810,43 @@ func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, in
 func (s *Server) unaryLoggingInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	start := time.Now()
 	resp, err := handler(ctx, req)
-	code := status.Code(err)
-	log.Printf("[gRPC] UNARY %s %s %v", info.FullMethod, code.String(), time.Since(start))
+	s.logRequest(ctx, "unary", info.FullMethod, start, err)
 	return resp, err
 }
 
 func (s *Server) streamLoggingInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	start := time.Now()
 	err := handler(srv, ss)
-	code := status.Code(err)
-	log.Printf("[gRPC] STREAM %s %s %v", info.FullMethod, code.String(), time.Since(start))
+	s.logRequest(ss.Context(), "stream", info.FullMethod, start, err)
 	return err
+}
+
+// logRequest uses the injected level policy before formatting completion fields.
+// Protocol/client failures are warnings; service/internal failures are errors.
+func (s *Server) logRequest(ctx context.Context, kind, method string, start time.Time, err error) {
+	code := status.Code(err)
+	level := slog.LevelDebug
+	outcome := "success"
+	if code != codes.OK {
+		level = slog.LevelWarn
+		outcome = "failure"
+		switch code {
+		case codes.Unknown, codes.Internal, codes.DataLoss, codes.Unavailable:
+			level = slog.LevelError
+		}
+	}
+	logger := s.config.Logger
+	if !logger.Enabled(ctx, level) {
+		return
+	}
+	logger.LogAttrs(ctx, level, "gRPC request completed",
+		slog.String("event_id", "qdrant.grpc.request"),
+		slog.String("component", "qdrantgrpc"),
+		slog.String("rpc_type", kind),
+		slog.String("rpc_method", method),
+		slog.String("grpc_code", code.String()),
+		slog.String("outcome", outcome),
+		slog.Duration("duration", time.Since(start)))
 }
 
 // handleBasicAuth handles Basic authentication for gRPC requests.
@@ -645,7 +888,7 @@ func (s *Server) handleBasicAuth(ctx context.Context, authHeader string) (*auth.
 
 	// Authenticate and get user
 	generation := s.basicAuthCache.Generation()
-	_, user, err := s.authenticator.Authenticate(username, password, clientIP, "gRPC")
+	_, user, err := s.authenticator.Authenticate(ctx, username, password, clientIP, "gRPC")
 	if err != nil {
 		return nil, err
 	}
@@ -709,19 +952,36 @@ func methodKey(fullMethod string) (string, bool) {
 }
 
 var defaultMethodPermissions = map[string]auth.Permission{
+	"Points/DeleteVectorName":                  auth.PermWrite,
+	"Points/UpdateBatch":                       auth.PermWrite,
+	"Points/RecommendGroups":                   auth.PermRead,
+	"Points/CreateFieldIndex":                  auth.PermWrite,
+	"Points/CreateVectorName":                  auth.PermWrite,
+	"Collections/CreateShardKey":               auth.PermAdmin,
+	"Points/QueryBatch":                        auth.PermRead,
+	"Points/DeletePayload":                     auth.PermWrite,
+	"Collections/CollectionClusterInfo":        auth.PermRead,
+	"Collections/ListShardKeys":                auth.PermRead,
+	"NornicSearch/SearchText":                  auth.PermRead,
+	"Points/SearchGroups":                      auth.PermRead,
+	"Collections/DeleteShardKey":               auth.PermAdmin,
+	"Collections/UpdateCollectionClusterSetup": auth.PermAdmin,
+	"Points/DeleteFieldIndex":                  auth.PermWrite,
+	"Points/SearchMatrixOffsets":               auth.PermRead,
+	"Points/Query":                             auth.PermRead,
+	"Collections/ListCollectionAliases":        auth.PermRead,
+	"Collections/ListAliases":                  auth.PermRead,
+	"Points/Facet":                             auth.PermRead,
+	"Points/SearchMatrixPairs":                 auth.PermRead,
+	"Points/QueryGroups":                       auth.PermRead,
 	// Collections (admin/DDL-ish)
-	"Collections/Create":                   auth.PermCreate,
-	"Collections/Update":                   auth.PermCreate,
-	"Collections/UpdateAliases":            auth.PermCreate,
-	"Collections/CreateAlias":              auth.PermCreate,
-	"Collections/DeleteAlias":              auth.PermCreate,
-	"Collections/RenameAlias":              auth.PermCreate,
-	"Collections/Delete":                   auth.PermDelete,
-	"Collections/Get":                      auth.PermRead,
-	"Collections/List":                     auth.PermRead,
-	"Collections/GetAliases":               auth.PermRead,
-	"Collections/CollectionExists":         auth.PermRead,
-	"Collections/GetCollectionClusterInfo": auth.PermRead,
+	"Collections/Create":           auth.PermCreate,
+	"Collections/Update":           auth.PermCreate,
+	"Collections/UpdateAliases":    auth.PermCreate,
+	"Collections/Delete":           auth.PermDelete,
+	"Collections/Get":              auth.PermRead,
+	"Collections/List":             auth.PermRead,
+	"Collections/CollectionExists": auth.PermRead,
 
 	// Points (data plane)
 	"Points/Search":         auth.PermRead,
@@ -744,10 +1004,12 @@ var defaultMethodPermissions = map[string]auth.Permission{
 	"Points/Delete": auth.PermDelete,
 
 	// Snapshots are privileged operations.
-	"Snapshots/Create":  auth.PermAdmin,
-	"Snapshots/List":    auth.PermAdmin,
-	"Snapshots/Delete":  auth.PermAdmin,
-	"Snapshots/Recover": auth.PermAdmin,
+	"Snapshots/Create":     auth.PermAdmin,
+	"Snapshots/CreateFull": auth.PermAdmin,
+	"Snapshots/List":       auth.PermAdmin,
+	"Snapshots/ListFull":   auth.PermAdmin,
+	"Snapshots/Delete":     auth.PermAdmin,
+	"Snapshots/DeleteFull": auth.PermAdmin,
 
 	// gRPC reflection is useful for debugging but should be gated.
 	"ServerReflection/ServerReflectionInfo": auth.PermAdmin,
@@ -811,7 +1073,7 @@ func (a *authServerStream) Context() context.Context {
 // Example:
 //
 //	storage := badger.NewEngine("./data")
-//	searchSvc := search.NewService(storage)
+//	searchSvc := search.NewService(storage, search.DefaultVectorDimensions, nil)
 //	authenticator := auth.NewAuthenticator(auth.DefaultAuthConfig())
 //	srv, registry, err := qdrantgrpc.NewServerWithPersistentRegistry(nil, storage, searchSvc, authenticator)
 //	if err != nil {
@@ -827,16 +1089,13 @@ func NewServerWithDatabaseManager(config *Config, dbManager *multidb.DatabaseMan
 	if dbManager == nil {
 		return nil, fmt.Errorf("db manager required")
 	}
-	vecIndex := newVectorIndexCache()
-	collections, err := NewDatabaseCollectionStore(dbManager, vecIndex)
+	var dropDatabase func(ctx context.Context, name string) error
+	if config != nil {
+		dropDatabase = config.DropDatabase
+	}
+	collections, err := NewDatabaseCollectionStore(dbManager, dropDatabase)
 	if err != nil {
 		return nil, err
 	}
-	srv, err := NewServer(config, collections, baseStorage, searchProvider, authenticator)
-	if err != nil {
-		return nil, err
-	}
-	// Ensure server and store share the same index cache.
-	srv.vecIndex = vecIndex
-	return srv, nil
+	return NewServer(config, collections, baseStorage, searchProvider, authenticator)
 }

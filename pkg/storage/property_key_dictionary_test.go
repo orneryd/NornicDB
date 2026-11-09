@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 
@@ -17,7 +19,7 @@ func TestPropertyKeyDict_ResolveAndLookup(t *testing.T) {
 	dict := eng.propKeyDict
 
 	var idA, idB uint64
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		idA, err = dict.resolveOrAllocateInTxn(txn, "ns", "alpha")
 		if err != nil {
@@ -44,12 +46,27 @@ func TestPropertyKeyDict_ResolveAndLookup(t *testing.T) {
 
 	// Resolve of an already-allocated name returns the same ID without
 	// allocating a new one.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		got, err := dict.resolveOrAllocateInTxn(txn, "ns", "alpha")
 		if err != nil {
 			return err
 		}
 		require.Equal(t, idA, got)
+		return nil
+	}))
+}
+
+// inPropertyKeyTxn runs fn for each namespace inside one update transaction and
+// flushes the property-key counters, the lifecycle a persisted token requires.
+func inPropertyKeyTxn(t *testing.T, eng *BadgerEngine, namespaces []string, fn func(txn *badger.Txn, namespace string) error) {
+	t.Helper()
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+		for _, namespace := range namespaces {
+			if err := fn(txn, namespace); err != nil {
+				return err
+			}
+		}
+		_ = eng.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
 }
@@ -60,27 +77,19 @@ func TestPropertyKeyDict_NamespaceIsolation(t *testing.T) {
 	eng := newTestEngine(t)
 	dict := eng.propKeyDict
 
-	var idNs1, idNs2 uint64
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		var err error
-		idNs1, err = dict.resolveOrAllocateInTxn(txn, "tenant1", "name")
-		if err != nil {
-			return err
-		}
-		idNs2, err = dict.resolveOrAllocateInTxn(txn, "tenant2", "name")
-		if err != nil {
-			return err
-		}
-		_ = dict.flushTxnCounters(txn)
-		return nil
-	}))
+	ids := map[string]uint64{}
+	inPropertyKeyTxn(t, eng, []string{"tenant1", "tenant2"}, func(txn *badger.Txn, namespace string) error {
+		id, err := dict.resolveOrAllocateInTxn(txn, namespace, "name")
+		ids[namespace] = id
+		return err
+	})
 
 	// Both start fresh per namespace, so both see ID 1.
-	require.Equal(t, uint64(1), idNs1)
-	require.Equal(t, uint64(1), idNs2)
+	require.Equal(t, uint64(1), ids["tenant1"])
+	require.Equal(t, uint64(1), ids["tenant2"])
 
 	// Lookups respect namespace boundaries.
-	name1, ok1 := dict.lookup("tenant1", idNs1)
+	name1, ok1 := dict.lookup("tenant1", ids["tenant1"])
 	require.True(t, ok1)
 	require.Equal(t, "name", name1)
 
@@ -89,7 +98,7 @@ func TestPropertyKeyDict_NamespaceIsolation(t *testing.T) {
 	require.False(t, ok)
 
 	// tenant2 also has id 1 but it points to a different (logical) entry.
-	name2, ok2 := dict.lookup("tenant2", idNs2)
+	name2, ok2 := dict.lookup("tenant2", ids["tenant2"])
 	require.True(t, ok2)
 	require.Equal(t, "name", name2)
 }
@@ -103,10 +112,15 @@ func TestPropertyKeyDict_Lookup_UnknownNamespaceReturnsFalse(t *testing.T) {
 }
 
 func TestPropertyKeyDict_PersistTxnCountersReportsFailure(t *testing.T) {
-	eng := newTestEngine(t)
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	require.NoError(t, err)
+	var finalOutcome error
+	fixtureowner.OwnWithCloseAssertion(t, eng, func(err error) bool {
+		return finalOutcome != nil && err == finalOutcome
+	})
 	require.NoError(t, eng.db.Close())
 
-	err := eng.propKeyDict.persistTxnCounters(eng.db, propKeyTxnDrain{
+	err = eng.propKeyDict.persistTxnCounters(context.Background(), eng.db, propKeyTxnDrain{
 		counters: map[string]uint64{"nornic": 20},
 		pending: []propKeyPersistEntry{{
 			namespace: "nornic",
@@ -115,6 +129,12 @@ func TestPropertyKeyDict_PersistTxnCountersReportsFailure(t *testing.T) {
 		}},
 	})
 	require.Error(t, err)
+
+	// The injected state is the closed native handle: retirement reports the
+	// handle it lost, and repeated Close retains that same outcome.
+	finalOutcome = eng.Close()
+	require.ErrorIs(t, finalOutcome, badger.ErrDBClosed)
+	require.EqualError(t, finalOutcome, "label-count final fold: DB Closed\nedge-type-count final fold: DB Closed")
 }
 
 func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
@@ -126,9 +146,14 @@ func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
 	require.NoError(t, err)
 	drain := dict.flushTxnCounters(firstTxn)
 	firstTxn.Discard()
-	closed := newTestEngine(t)
+	closed, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	require.NoError(t, err)
+	var closedOutcome error
+	fixtureowner.OwnWithCloseAssertion(t, closed, func(err error) bool {
+		return closedOutcome != nil && err == closedOutcome
+	})
 	require.NoError(t, closed.db.Close())
-	require.Error(t, dict.persistTxnCounters(closed.db, drain))
+	require.Error(t, dict.persistTxnCounters(context.Background(), closed.db, drain))
 
 	secondTxn := eng.db.testTxn(true)
 	_, err = dict.resolveOrAllocateInTxn(secondTxn, "nornic", "novelProperty")
@@ -136,12 +161,21 @@ func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
 	retryDrain := dict.flushTxnCounters(secondTxn)
 	secondTxn.Discard()
 	require.Len(t, retryDrain.pending, 1, "an unpersisted token must be restaged on retry")
-	require.NoError(t, dict.persistTxnCounters(eng.db, retryDrain))
+	require.NoError(t, dict.persistTxnCounters(context.Background(), eng.db, retryDrain))
+
+	// Only the failed attempt's engine lost its native handle; retirement reports
+	// it there, and repeated Close retains that same outcome.
+	closedOutcome = closed.Close()
+	require.ErrorIs(t, closedOutcome, badger.ErrDBClosed)
+	require.EqualError(t, closedOutcome, "label-count final fold: DB Closed\nedge-type-count final fold: DB Closed")
 }
 
 func TestPropertyKeyDict_NovelKeySurvivesCleanReopen(t *testing.T) {
 	dir := t.TempDir()
-	first, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	if first != nil {
+		fixtureowner.Own(t, first)
+	}
 	require.NoError(t, err)
 
 	node := &Node{
@@ -149,15 +183,15 @@ func TestPropertyKeyDict_NovelKeySurvivesCleanReopen(t *testing.T) {
 		Labels:     []string{"Document"},
 		Properties: map[string]interface{}{"neverBeforeUsedProperty": "value"},
 	}
-	_, err = first.CreateNode(node)
+	_, err = first.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, first.Close())
 
-	second, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	second, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, second.Close()) })
 
-	stored, err := second.GetNode(node.ID)
+	stored, err := second.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, "value", stored.Properties["neverBeforeUsedProperty"])
 }
@@ -168,12 +202,15 @@ func TestPropertyKeyDict_NovelKeySurvivesCleanReopen(t *testing.T) {
 func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 	dir := t.TempDir()
 
-	first, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	if first != nil {
+		fixtureowner.Own(t, first)
+	}
 	require.NoError(t, err)
 
 	var allocated []uint64
 	var counters propKeyTxnDrain
-	require.NoError(t, first.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, first.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		for _, name := range []string{"productID", "productName", "sku"} {
 			id, err := first.propKeyDict.resolveOrAllocateInTxn(txn, "shop", name)
 			if err != nil {
@@ -184,12 +221,12 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, counters))
+	require.NoError(t, first.propKeyDict.persistTxnCounters(context.Background(), first.db, counters))
 	require.NoError(t, first.Close())
 
 	// Reopen — V0 store with no bodies, so the upgrade gate doesn't
 	// trigger and the runner advances straight to V2 silently.
-	second, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	second, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { second.Close() })
 
@@ -200,7 +237,7 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 	}
 
 	// The next allocation continues the counter rather than restarting.
-	require.NoError(t, second.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, second.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		id, err := second.propKeyDict.resolveOrAllocateInTxn(txn, "shop", "newField")
 		if err != nil {
 			return err
@@ -217,11 +254,14 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 // id in the forward map.
 func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 	dir := t.TempDir()
-	first, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	if first != nil {
+		fixtureowner.Own(t, first)
+	}
 	require.NoError(t, err)
 
 	var counters propKeyTxnDrain
-	require.NoError(t, first.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, first.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		_, err := first.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "a")
 		require.NoError(t, err)
 		_, err = first.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "b")
@@ -229,7 +269,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, counters))
+	require.NoError(t, first.propKeyDict.persistTxnCounters(context.Background(), first.db, counters))
 
 	// Manually delete the counter key to simulate a partial write.
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {
@@ -237,7 +277,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 	}))
 	require.NoError(t, first.Close())
 
-	second, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	second, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { second.Close() })
 
@@ -247,7 +287,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 
 	// The next allocation still produces a fresh ID (not one that
 	// collides with "a" or "b").
-	require.NoError(t, second.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, second.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		id, err := second.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "c")
 		if err != nil {
 			return err
@@ -267,7 +307,7 @@ func TestPropertyKeyDict_CounterFlushesOncePerNamespace(t *testing.T) {
 	dict := eng.propKeyDict
 
 	var batchedCounters propKeyTxnDrain
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		for i := 0; i < 50; i++ {
 			_, err := dict.resolveOrAllocateInTxn(txn, "nsA", "k"+string(rune('a'+i%26)))
 			require.NoError(t, err)
@@ -279,7 +319,7 @@ func TestPropertyKeyDict_CounterFlushesOncePerNamespace(t *testing.T) {
 		batchedCounters = dict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, dict.persistTxnCounters(eng.db, batchedCounters))
+	require.NoError(t, dict.persistTxnCounters(context.Background(), eng.db, batchedCounters))
 
 	// Exactly two counter keys should exist.
 	require.NoError(t, eng.db.View(func(txn *badger.Txn) error {
@@ -301,7 +341,7 @@ func TestPropertyKeyDict_CounterFlushesOncePerNamespace(t *testing.T) {
 // branch of flushTxnCounters when no allocations were staged.
 func TestPropertyKeyDict_FlushOnEmptyTxnIsNoop(t *testing.T) {
 	eng := newTestEngine(t)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		got := eng.propKeyDict.flushTxnCounters(txn)
 		require.Nil(t, got.counters, "empty-txn drain must return nil counter map")
 		require.Nil(t, got.pending, "empty-txn drain must return nil pending entries")
@@ -325,7 +365,7 @@ func TestPropertyKeyDict_DiscardTxnCounters(t *testing.T) {
 
 	// A fresh txn that flushes immediately should not write a counter
 	// for "ns" — the staged state from the discarded txn is gone.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		_ = dict.flushTxnCounters(txn)
 		return nil
 	}))
@@ -353,7 +393,7 @@ func TestPropertyKeyDict_ConcurrentAllocate(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			err := eng.withUpdate(func(txn *badger.Txn) error {
+			err := eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				id, err := dict.resolveOrAllocateInTxn(txn, "race", "key")
 				if err != nil {
 					return err
@@ -519,18 +559,21 @@ func TestPropKeyDictCounters_NilEngine(t *testing.T) {
 // rather than refusing to start.
 func TestPropertyKeyDict_HydrateSkipsMalformedKeys(t *testing.T) {
 	dir := t.TempDir()
-	first, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	if first != nil {
+		fixtureowner.Own(t, first)
+	}
 	require.NoError(t, err)
 
 	// One real entry so reopen exercises the loop body.
 	var counters propKeyTxnDrain
-	require.NoError(t, first.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, first.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		_, err := first.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "real")
 		require.NoError(t, err)
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, counters))
+	require.NoError(t, first.propKeyDict.persistTxnCounters(context.Background(), first.db, counters))
 
 	// Inject malformed keys under both prefixes.
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {
@@ -545,7 +588,7 @@ func TestPropertyKeyDict_HydrateSkipsMalformedKeys(t *testing.T) {
 	}))
 	require.NoError(t, first.Close())
 
-	second, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	second, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err, "engine must skip malformed dict entries rather than refuse to open")
 	t.Cleanup(func() { second.Close() })
 
@@ -559,7 +602,10 @@ func TestPropertyKeyDict_HydrateSkipsMalformedKeys(t *testing.T) {
 // inner "value malformed" error branch in loadFromBadger.
 func TestPropertyKeyDict_HydrateRejectsMalformedForwardValue(t *testing.T) {
 	dir := t.TempDir()
-	first, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	if first != nil {
+		fixtureowner.Own(t, first)
+	}
 	require.NoError(t, err)
 
 	// Inject a valid forward key with a zero-byte value (varint of 0
@@ -570,7 +616,7 @@ func TestPropertyKeyDict_HydrateRejectsMalformedForwardValue(t *testing.T) {
 	}))
 	require.NoError(t, first.Close())
 
-	_, err = NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	_, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "property key forward value malformed")
 }
@@ -579,7 +625,10 @@ func TestPropertyKeyDict_HydrateRejectsMalformedForwardValue(t *testing.T) {
 // counter-value parse error branch.
 func TestPropertyKeyDict_HydrateRejectsMalformedCounterValue(t *testing.T) {
 	dir := t.TempDir()
-	first, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	first, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	if first != nil {
+		fixtureowner.Own(t, first)
+	}
 	require.NoError(t, err)
 
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {
@@ -587,7 +636,7 @@ func TestPropertyKeyDict_HydrateRejectsMalformedCounterValue(t *testing.T) {
 	}))
 	require.NoError(t, first.Close())
 
-	_, err = NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	_, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "property key counter malformed")
 }

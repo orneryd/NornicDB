@@ -13,13 +13,13 @@ import (
 func TestStatementHTTPUseTarget(t *testing.T) {
 	ctx := context.Background()
 	server, users := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("other"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "other"}))
 	require.NoError(t, server.roleStore.CreateRole(ctx, "r2loader"))
 	require.NoError(t, server.roleEntitlementsStore.Set(ctx, "r2loader", []string{"read", "write"}))
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "r2loader", []string{"nornic", "other"}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "r2loader", "nornic", true, false))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "r2loader", "other", false, true))
-	_, err := users.CreateUser("r2loader", "password123", []auth.Role{"r2loader"})
+	_, err := users.CreateUser(context.Background(), "r2loader", "password123", []auth.Role{"r2loader"})
 	require.NoError(t, err)
 	token := getAuthToken(t, users, "r2loader")
 	for _, prefix := range []string{"USE other ", ":USE other\n", "/* comment */ USE other ", "EXPLAIN USE other ", "PROFILE USE other ", "\xef\xbb\xbf USE other "} {
@@ -37,10 +37,10 @@ func TestStatementHTTPUseTarget(t *testing.T) {
 	for database, want := range map[string]int{"nornic": 0, "other": 6} {
 		store, err := server.dbManager.GetStorage(database)
 		require.NoError(t, err)
-		nodes, err := store.GetNodesByLabel("R2")
+		nodes, err := store.GetNodesByLabel(ctx, "R2")
 		require.NoError(t, err)
 		require.Len(t, nodes, want)
-		nodes, err = store.GetNodesByLabel("RejectedSelection")
+		nodes, err = store.GetNodesByLabel(ctx, "RejectedSelection")
 		require.NoError(t, err)
 		require.Empty(t, nodes)
 	}
@@ -59,9 +59,9 @@ func TestStatementHTTPFabricFragmentRequirements(t *testing.T) {
 	ctx := context.Background()
 	server, users := setupTestServer(t)
 	for _, database := range []string{"r2source", "r2target"} {
-		require.NoError(t, server.dbManager.CreateDatabase(database))
+		require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 	}
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("r2cmp", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "r2cmp", []multidb.ConstituentRef{
 		{Alias: "source", DatabaseName: "r2source", Type: "local", AccessMode: "read_write"},
 		{Alias: "target", DatabaseName: "r2target", Type: "local", AccessMode: "read_write"},
 	}))
@@ -75,11 +75,11 @@ func TestStatementHTTPFabricFragmentRequirements(t *testing.T) {
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "r2fabric", "r2cmp", true, false))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "r2fabric", "r2source", true, false))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "r2fabric", "r2target", false, true))
-	_, err = users.CreateUser("r2fabric", "password123", []auth.Role{"r2fabric"})
+	_, err = users.CreateUser(context.Background(), "r2fabric", "password123", []auth.Role{"r2fabric"})
 	require.NoError(t, err)
 	token := getAuthToken(t, users, "r2fabric")
 	query := "CALL { USE r2cmp.source MATCH (n:R2Source) RETURN n.v AS v } CALL { USE r2cmp.target WITH v CREATE (n:R2Loaded {v: v}) RETURN n.v AS loaded } RETURN loaded"
-	exec, err := server.getExecutorForDatabase("r2cmp")
+	exec, err := server.executorCache.Get("r2cmp")
 	require.NoError(t, err)
 	claims := &auth.JWTClaims{Roles: []string{"r2fabric"}}
 	embedded, embeddedErr := exec.Execute(cypher.WithDatabasePermissionResolver(ctx, "r2cmp", server.principalAccess(claims).Allows), query, nil)

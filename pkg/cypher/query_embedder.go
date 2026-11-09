@@ -2,17 +2,53 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
+
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
+
+// ErrQueryEmbedderClosed reports provider use after the binding's owner stopped.
+var ErrQueryEmbedderClosed = errors.New("query embedder binding is closed")
 
 // QueryEmbedderBinding publishes one query provider to every protocol and scope.
 // The zero value has no provider. A load takes one atomic snapshot; publication
 // replaces both the provider's embedding cache and its result-cache generation.
 // It retains no registry of services, executors, caches, or previous providers.
 type QueryEmbedderBinding struct {
-	current atomic.Pointer[queryEmbedderState]
-	next    atomic.Uint64
+	current  atomic.Pointer[queryEmbedderState]
+	next     atomic.Uint64
+	beginUse func(context.Context) (context.Context, func(), error) // the host's admission, when bound
+	work     lifecycle.WorkLifetime                                 // the binding's own owner otherwise
+}
+
+// SetLifetime binds provider users to their database owner. Configure it during
+// construction, before exposing the binding or sharing it with scoped executors.
+func (b *QueryEmbedderBinding) SetLifetime(begin func(context.Context) (context.Context, func(), error)) {
+	b.beginUse = begin
+}
+
+// BeginUse admits one provider-using operation and returns its cancellation
+// context and release function. A host-bound binding admits through its host;
+// a standalone binding enrolls the use in its own owner, which Shutdown joins.
+// Callers must release before returning, including on errors.
+func (b *QueryEmbedderBinding) BeginUse(ctx context.Context) (context.Context, func(), error) {
+	if b.beginUse != nil {
+		return b.beginUse(ctx)
+	}
+	ctx, release, accepted := b.work.Acquire(ctx)
+	if !accepted {
+		return nil, nil, ErrQueryEmbedderClosed
+	}
+	return ctx, release, nil
+}
+
+// Shutdown stops a standalone binding: it refuses new provider use and joins
+// every admitted one, so its caller may then dispose the provider it stored.
+// A host-bound binding's users are joined by the host's own stop.
+func (b *QueryEmbedderBinding) Shutdown(ctx context.Context) error {
+	return b.work.Shutdown(ctx, nil)
 }
 
 // Load returns the current provider, or nil while it is unavailable.
@@ -70,28 +106,8 @@ func (e *StorageExecutor) ShareEmbedderFrom(parent *StorageExecutor) {
 
 type queryEmbeddingStatementKey struct{}
 
-// This replaces the existing statement-clock context, so capturing a provider
-// adds no context allocation. Nested scopes reuse the outer snapshot, including
-// its nil startup state. Embedding helpers never reload a published provider.
-type queryEmbeddingStatementContext struct {
-	context.Context
-	instant any // Box the statement clock once, rather than on each Value call.
-	binding *QueryEmbedderBinding
-	state   *queryEmbedderState
-}
-
-func (c *queryEmbeddingStatementContext) Value(key any) any {
-	switch key.(type) {
-	case temporalStatementTimeKey:
-		return c.instant
-	case queryEmbeddingStatementKey:
-		return c
-	}
-	return c.Context.Value(key)
-}
-
 func (e *StorageExecutor) queryEmbeddingState(ctx context.Context) *queryEmbedderState {
-	if statement, ok := ctx.Value(queryEmbeddingStatementKey{}).(*queryEmbeddingStatementContext); ok && statement.binding == e.queryEmbedder {
+	if statement, ok := ctx.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok && statement.binding == e.queryEmbedder {
 		return statement.state
 	}
 	return e.currentQueryEmbedder()

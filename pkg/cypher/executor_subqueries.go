@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"regexp"
 	"sort"
@@ -21,16 +22,16 @@ import (
 // isCallSubquery detects if a query is a CALL {} subquery vs CALL procedure()
 // CALL {} subqueries have "CALL" followed by optional whitespace and "{"
 // CALL procedures have "CALL procedure.name()"
-func isCallSubquery(cypher string) bool {
+func isCallSubquery(ctx context.Context, cypher string) bool {
 	// Use regex for flexible whitespace matching: CALL followed by optional whitespace and {
-	return hasSubqueryPattern(cypher, callSubqueryRe)
+	return hasSubqueryPattern(ctx, cypher, callSubqueryRe)
 }
 
 // startsWithCallSubquery reports whether cypher begins with a CALL { } or
 // CALL (vars) { } subquery clause (as opposed to a procedure CALL, or a
 // subquery later in the statement).
-func startsWithCallSubquery(cypher string) bool {
-	return callSubqueryAt(strings.TrimSpace(cypher), 0)
+func startsWithCallSubquery(ctx context.Context, cypher string) bool {
+	return callSubqueryAt(ctx, strings.TrimSpace(cypher), 0)
 }
 
 func appendCorrelatedBinding(result *ExecuteResult, name string, value interface{}) *ExecuteResult {
@@ -105,20 +106,17 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 	//   MATCH (o) ... OPTIONAL MATCH (o)-[:R]->(t:Label {...}) WITH o,t CALL { ... }
 	// where `t` can be null/non-null per seed.
 	if !strings.EqualFold(importVar, seedVar) {
-		if optIdx := findMultiWordKeywordIndex(outerPart, "OPTIONAL", "MATCH"); optIdx >= 0 {
+		if optIdx := findMultiWordKeywordIndex(ctx, outerPart, "OPTIONAL", "MATCH"); optIdx >= 0 {
 			optionalPart := strings.TrimSpace(outerPart[optIdx:])
 			end := len(optionalPart)
 			for _, kw := range []string{"WITH", "RETURN", "ORDER BY", "SKIP", "LIMIT"} {
-				if idx := findKeywordIndex(optionalPart, kw); idx >= 0 && idx < end {
+				if idx := findKeywordIndex(ctx, optionalPart, kw); idx >= 0 && idx < end {
 					end = idx
 				}
 			}
 			optionalPart = strings.TrimSpace(optionalPart[:end])
-			if strings.HasPrefix(upperASCII(optionalPart), "OPTIONAL MATCH") {
-				requiredPart := optionalPart
-				if len(requiredPart) >= len("OPTIONAL MATCH") {
-					requiredPart = "MATCH" + requiredPart[len("OPTIONAL MATCH"):]
-				}
+			if prefixEnd := keywordEndAt(optionalPart, 0, "OPTIONAL MATCH"); prefixEnd > 0 {
+				requiredPart := "MATCH" + optionalPart[prefixEnd:]
 				seedScoped := fmt.Sprintf("MATCH (%s) WHERE id(%s) = %s %s RETURN %s", seedVar, seedVar, quoteCypherStringLiteral(seedID), requiredPart, importVar)
 				fallbackRes, fallbackErr := e.executeInternal(ctx, seedScoped, nil)
 				if fallbackErr != nil {
@@ -185,80 +183,26 @@ func rowMatchesSeedID(value interface{}, seedID string) bool {
 	return false
 }
 
-func (e *StorageExecutor) normalizeUnionBranchColumns(query string, result *ExecuteResult) {
-	if result == nil || len(result.Columns) > 0 {
-		return
-	}
-	if inferred := e.inferTopLevelReturnColumns(query); len(inferred) > 0 {
-		result.Columns = inferred
-		return
-	}
-	if inferred := e.inferExplainColumns(query); len(inferred) > 0 {
-		result.Columns = inferred
-	}
-}
-
 // isCallSubqueryPureReturn checks whether innerBody is a pure RETURN projection
 // with no MATCH/CALL/UNWIND/write clauses. Precomputed once per branch to avoid
 // repeated keyword scans on every seed row.
-func isCallSubqueryPureReturn(innerBody string) bool {
+func isCallSubqueryPureReturn(ctx context.Context, innerBody string) bool {
 	trimmed := strings.TrimSpace(innerBody)
 	// Accept any valid RETURN clause start (space/newline/tab after RETURN),
 	// not just a single-space prefix.
-	if findKeywordIndex(trimmed, "RETURN") != 0 {
+	if findKeywordIndex(ctx, trimmed, "RETURN") != 0 {
 		return false
 	}
-	return findKeywordIndex(trimmed, "MATCH") < 0 &&
-		findKeywordIndex(trimmed, "CALL") < 0 &&
-		findKeywordIndex(trimmed, "UNWIND") < 0 &&
-		findKeywordIndex(trimmed, "MERGE") < 0 &&
-		findKeywordIndex(trimmed, "CREATE") < 0 &&
-		findKeywordIndex(trimmed, "DELETE") < 0 &&
-		findKeywordIndex(trimmed, "SET") < 0 &&
-		findKeywordIndex(trimmed, "REMOVE") < 0 &&
-		findKeywordIndex(trimmed, "WITH") < 0 &&
-		findKeywordIndex(trimmed, "UNION") < 0
-}
-
-func (e *StorageExecutor) tryExecuteCorrelatedReturnProjection(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string) (*ExecuteResult, bool, error) {
-	return e.tryExecuteCorrelatedReturnProjectionPreChecked(ctx, seedRow, seedCols, withVars, innerBody, false)
-}
-
-// tryExecuteCorrelatedReturnProjectionPreChecked is the same as tryExecuteCorrelatedReturnProjection
-// but accepts a precomputed isPureReturn flag to skip redundant keyword scanning.
-func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string, isPureReturn bool) (*ExecuteResult, bool, error) {
-	if !isPureReturn {
-		// Caller didn't precompute — do the check now.
-		if !isCallSubqueryPureReturn(innerBody) {
-			return nil, false, nil
-		}
-	}
-	trimmed := strings.TrimSpace(innerBody)
-
-	colIdx := make(map[string]int, len(seedCols))
-	for i, c := range seedCols {
-		colIdx[c] = i
-	}
-
-	row := make([]interface{}, 0, len(withVars))
-	cols := make([]string, 0, len(withVars))
-	for _, v := range withVars {
-		idx, ok := colIdx[v]
-		if !ok || idx < 0 || idx >= len(seedRow) {
-			return nil, true, localizedError(localization.CypherSubqueriesWithImportUnknownVariable(v), nil)
-		}
-		cols = append(cols, v)
-		row = append(row, seedRow[idx])
-	}
-	seedOnly := &ExecuteResult{
-		Columns: cols,
-		Rows:    [][]interface{}{row},
-	}
-	res, err := e.processCallSubqueryReturn(ctx, seedOnly, trimmed)
-	if err != nil {
-		return nil, true, err
-	}
-	return res, true, nil
+	return findKeywordIndex(ctx, trimmed, "MATCH") < 0 &&
+		findKeywordIndex(ctx, trimmed, "CALL") < 0 &&
+		findKeywordIndex(ctx, trimmed, "UNWIND") < 0 &&
+		findKeywordIndex(ctx, trimmed, "MERGE") < 0 &&
+		findKeywordIndex(ctx, trimmed, "CREATE") < 0 &&
+		findKeywordIndex(ctx, trimmed, "DELETE") < 0 &&
+		findKeywordIndex(ctx, trimmed, "SET") < 0 &&
+		findKeywordIndex(ctx, trimmed, "REMOVE") < 0 &&
+		findKeywordIndex(ctx, trimmed, "WITH") < 0 &&
+		findKeywordIndex(ctx, trimmed, "UNION") < 0
 }
 
 // seedNodesFromOuterMatch executes the outer MATCH/WHERE segment through the normal
@@ -271,25 +215,25 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 	}
 
 	trimmedOuter := strings.TrimSpace(outerPart)
-	hasOuterPipelineClauses := findKeywordIndex(trimmedOuter, "WITH") >= 0 ||
-		findKeywordIndex(trimmedOuter, "RETURN") >= 0
+	hasOuterPipelineClauses := findKeywordIndex(ctx, trimmedOuter, "WITH") >= 0 ||
+		findKeywordIndex(ctx, trimmedOuter, "RETURN") >= 0
 
 	// Fast path for simple seeded MATCH queries without relationship patterns:
 	//   MATCH (v[:Label] {props}) [WHERE ...]
 	// including ID/property indexed WHERE predicates.
-	if findKeywordIndex(trimmedOuter, "MATCH") == 0 &&
+	if findKeywordIndex(ctx, trimmedOuter, "MATCH") == 0 &&
 		!hasOuterPipelineClauses &&
-		!containsRelationshipPattern(trimmedOuter) {
+		!containsRelationshipPattern(trimmedOuter) && patternMapsAreConstant(trimmedOuter) {
 		matchBody := strings.TrimSpace(trimmedOuter[len("MATCH"):])
 		whereClause := ""
-		if whereIdx := findKeywordIndex(matchBody, "WHERE"); whereIdx >= 0 {
+		if whereIdx := findKeywordIndex(ctx, matchBody, "WHERE"); whereIdx >= 0 {
 			whereClause = strings.TrimSpace(matchBody[whereIdx+len("WHERE"):])
 			// Keep WHERE-only predicate text for fast-path parsing. Trailing clauses
 			// (WITH/RETURN/ORDER/SKIP/LIMIT) belong to the outer pipeline and must not
 			// be interpreted as part of the predicate expression.
 			whereEnd := len(whereClause)
 			for _, kw := range []string{"WITH", "RETURN", "ORDER BY", "SKIP", "LIMIT"} {
-				if idx := findKeywordIndex(whereClause, kw); idx >= 0 && idx < whereEnd {
+				if idx := findKeywordIndex(ctx, whereClause, kw); idx >= 0 && idx < whereEnd {
 					whereEnd = idx
 				}
 			}
@@ -297,11 +241,23 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			matchBody = strings.TrimSpace(matchBody[:whereIdx])
 		}
 
-		np := e.parseNodePattern(ctx, matchBody)
+		np, parseErr := readNodePattern(ctx, matchBody, patternPropertyKeys)
+		if parseErr != nil {
+			return nil, parseErr
+		}
 		if np.variable != "" && !isIdentifierReferenced(trimmedOuter, variable) {
 			return nil, nil
 		}
 		if strings.EqualFold(strings.TrimSpace(np.variable), variable) {
+			rowCtx, prepared, prepareErr := e.bindPatternProperties(ctx, matchBody, nil)
+			if prepareErr != nil {
+				return nil, prepareErr
+			}
+			ctx, matchBody = rowCtx, prepared
+			np, parseErr = e.parseNodePattern(ctx, matchBody)
+			if parseErr != nil {
+				return nil, parseErr
+			}
 			if whereClause != "" {
 				// O(1) direct ID seek path for: MATCH (v) WHERE id(v)=...
 				if nodes, ok, err := e.tryCollectNodesFromIDEquality(ctx, np, whereClause); ok || err != nil {
@@ -315,7 +271,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				}
 				// Indexed IN-list path for batched correlated lookups.
 				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(np, whereClause, params); ok || err != nil {
+					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(ctx, np, whereClause, params); ok || err != nil {
 						return nodes, err
 					}
 				}
@@ -335,12 +291,12 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				if whereClause == "" {
 					return nodes, nil
 				}
-				seedQuery := strings.TrimSpace(outerPart) + " RETURN " + variable
+				seedQuery := "MATCH " + matchBody + " WHERE " + whereClause + " RETURN " + variable
 				outerRes, err := e.executeInternal(ctx, seedQuery, nil)
 				if err != nil {
 					return nil, err
 				}
-				return e.extractSeedNodesFromResult(outerRes, variable)
+				return e.extractSeedNodesFromResult(ctx, outerRes, variable)
 			}
 			filtered := make([]*storage.Node, 0, len(nodes))
 			for _, n := range nodes {
@@ -353,29 +309,29 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			}
 			// Same rule: preserve non-indexable WHERE semantics through generic executor.
 			if whereClause != "" {
-				seedQuery := strings.TrimSpace(outerPart) + " RETURN " + variable
+				seedQuery := "MATCH " + matchBody + " WHERE " + whereClause + " RETURN " + variable
 				outerRes, err := e.executeInternal(ctx, seedQuery, nil)
 				if err != nil {
 					return nil, err
 				}
-				return e.extractSeedNodesFromResult(outerRes, variable)
+				return e.extractSeedNodesFromResult(ctx, outerRes, variable)
 			}
 			return filtered, nil
 		}
 	}
 
 	seedQuery := trimmedOuter
-	if topLevelKeywordIndex(seedQuery, "RETURN") < 0 {
+	if topLevelKeywordIndex(ctx, seedQuery, "RETURN") < 0 {
 		seedQuery += " RETURN " + variable
 	}
 	outerRes, err := e.executeInternal(ctx, seedQuery, nil)
 	if err != nil {
 		return nil, err
 	}
-	return e.extractSeedNodesFromResult(outerRes, variable)
+	return e.extractSeedNodesFromResult(ctx, outerRes, variable)
 }
 
-func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, variable string) ([]*storage.Node, error) {
+func (e *StorageExecutor) extractSeedNodesFromResult(ctx context.Context, outerRes *ExecuteResult, variable string) ([]*storage.Node, error) {
 	if outerRes == nil || len(outerRes.Rows) == 0 {
 		return []*storage.Node{}, nil
 	}
@@ -403,11 +359,11 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 				seedNodes = append(seedNodes, v)
 			}
 		case map[string]interface{}:
-			if n := e.seedNodeFromMap(v); n != nil {
+			if n := e.seedNodeFromMap(ctx, v); n != nil {
 				seedNodes = append(seedNodes, n)
 			}
 		case string:
-			if n := e.seedNodeFromIDString(v); n != nil {
+			if n := e.seedNodeFromIDString(ctx, v); n != nil {
 				seedNodes = append(seedNodes, n)
 			}
 		case []interface{}:
@@ -419,11 +375,11 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 						seedNodes = append(seedNodes, wrapped)
 					}
 				case map[string]interface{}:
-					if n := e.seedNodeFromMap(wrapped); n != nil {
+					if n := e.seedNodeFromMap(ctx, wrapped); n != nil {
 						seedNodes = append(seedNodes, n)
 					}
 				case string:
-					if n := e.seedNodeFromIDString(wrapped); n != nil {
+					if n := e.seedNodeFromIDString(ctx, wrapped); n != nil {
 						seedNodes = append(seedNodes, n)
 					}
 				}
@@ -433,11 +389,11 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 	return seedNodes, nil
 }
 
-func (e *StorageExecutor) seedNodeFromMap(m map[string]interface{}) *storage.Node {
+func (e *StorageExecutor) seedNodeFromMap(ctx context.Context, m map[string]interface{}) *storage.Node {
 	for _, key := range []string{"_nodeId", "id", "_id", "elementId"} {
 		if raw, ok := m[key]; ok {
 			if id, ok := raw.(string); ok && id != "" {
-				if n := e.seedNodeFromIDString(id); n != nil {
+				if n := e.seedNodeFromIDString(ctx, id); n != nil {
 					return n
 				}
 			}
@@ -446,82 +402,23 @@ func (e *StorageExecutor) seedNodeFromMap(m map[string]interface{}) *storage.Nod
 	return nil
 }
 
-func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
+func (e *StorageExecutor) seedNodeFromIDString(ctx context.Context, id string) *storage.Node {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil
 	}
 	// Direct NodeID lookup first.
-	if n, err := e.storage.GetNode(storage.NodeID(id)); err == nil && n != nil {
+	if n, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id)); err == nil && n != nil {
 		return n
 	}
 	// Handle elementId-style values: "<prefix>:<db>:<id>" -> "<id>"
 	if last := strings.LastIndex(id, ":"); last >= 0 && last+1 < len(id) {
 		idTail := id[last+1:]
-		if n, err := e.storage.GetNode(storage.NodeID(idTail)); err == nil && n != nil {
+		if n, err := e.getQueryNode(ctx, e.storage, storage.NodeID(idTail)); err == nil && n != nil {
 			return n
 		}
 	}
 	return nil
-}
-
-// parseCallSubquery extracts the body from CALL { ... } and any trailing clauses
-// Returns: body, afterCall, inTransactions bool, batchSize int
-func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batchSize int) {
-	batchSize = 1000 // Default batch size
-
-	trimmed := strings.TrimSpace(cypher)
-
-	// Find the opening brace
-	braceStart := strings.Index(trimmed, "{")
-	if braceStart == -1 {
-		return "", "", false, batchSize
-	}
-
-	// The matching closing brace; a brace in quoted text isn't one
-	// (CALL () { RETURN '}' AS y } …).
-	braceEnd := findMatchingDelimiter(trimmed, braceStart, '{', '}')
-	if braceEnd < 0 {
-		return "", "", false, batchSize
-	}
-
-	// Extract body (between braces)
-	body = strings.TrimSpace(trimmed[braceStart+1 : braceEnd])
-	if stripped, finishes := stripUnionBranchFinishes(body); finishes && strings.TrimSpace(stripped) != "" {
-		body = stripped
-	}
-
-	// Get what's after the closing brace
-	afterCall = strings.TrimSpace(trimmed[braceEnd+1:])
-
-	// Check for IN TRANSACTIONS
-	upperAfter := upperASCII(afterCall)
-	if strings.HasPrefix(upperAfter, "IN TRANSACTIONS") {
-		inTransactions = true
-		afterTx := strings.TrimSpace(afterCall[15:])
-		upperAfterTx := upperASCII(afterTx)
-
-		// Check for OF n ROWS
-		if strings.HasPrefix(upperAfterTx, "OF ") {
-			// Parse batch size
-			ofPart := afterTx[3:]
-			// Find ROWS keyword
-			rowsIdx := strings.Index(upperASCII(ofPart), " ROWS")
-			if rowsIdx > 0 {
-				sizeStr := strings.TrimSpace(ofPart[:rowsIdx])
-				if size, err := strconv.Atoi(sizeStr); err == nil && size > 0 {
-					batchSize = size
-				}
-				afterCall = strings.TrimSpace(ofPart[rowsIdx+5:])
-			} else {
-				afterCall = ""
-			}
-		} else {
-			afterCall = afterTx
-		}
-	}
-
-	return body, afterCall, inTransactions, batchSize
 }
 
 // callSubqueryHasScopeClause reports whether a CALL subquery declares its
@@ -529,53 +426,25 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 // { … }). Its body's leading WITH is then an ordinary projection, never an
 // import list (parseLeadingWithImports): CALL () { WITH 1 AS x FINISH } is a
 // unit subquery whose body is just that WITH (#907).
-func callSubqueryHasScopeClause(cypher string) bool {
-	trimmed := strings.TrimSpace(cypher)
-	if findKeywordIndex(trimmed, "CALL") != 0 {
-		return false
-	}
-	idx := skipSpaces(trimmed, len("CALL"))
-	return idx < len(trimmed) && trimmed[idx] == '('
+func callSubqueryHasScopeClause(ctx context.Context, cypher string) bool {
+	return readCallSubqueryScope(ctx, cypher, 0).scoped
 }
 
-func parseCallSubqueryImportVariables(cypher string) []string {
-	trimmed := strings.TrimSpace(cypher)
-	if findKeywordIndex(trimmed, "CALL") != 0 {
-		return nil
+// parseCallSubqueryImportVariables is the legacy names-only view. Scope and
+// result-schema consumers use StatementFacts, which preserves syntax errors.
+func parseCallSubqueryImportVariables(ctx context.Context, cypher string) ([]string, error) {
+	scope := readCallSubqueryScope(ctx, cypher, 0)
+	if scope.invalid {
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
 	}
-	idx := skipSpaces(trimmed, len("CALL"))
-	if idx >= len(trimmed) || trimmed[idx] != '(' {
-		return nil
-	}
-	close := findMatchingCallParen(trimmed, idx)
-	if close < 0 {
-		return nil
-	}
-	body := strings.TrimSpace(trimmed[idx+1 : close])
-	if body == "" {
-		return []string{}
-	}
-	if body == "*" {
-		return nil
-	}
-	parts := splitProcedureTopLevelComma(body)
-	vars := make([]string, 0, len(parts))
-	for _, part := range parts {
-		name := strings.TrimSpace(part)
-		name = strings.Trim(name, "`")
-		if !isSimpleIdentifier(name) {
-			continue
-		}
-		vars = append(vars, name)
-	}
-	return vars
+	return scope.names, nil
 }
 
 // prefixUnionBranches puts prefix before body, or before each branch of a
 // UNION / UNION ALL body: every branch of a CALL subquery imports the same
 // outer variables.
-func prefixUnionBranches(prefix, body string) string {
-	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(body)
+func prefixUnionBranches(ctx context.Context, prefix, body string) string {
+	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(ctx, body)
 	if !ok || mixed || len(branches) < 2 {
 		return prefix + " " + body
 	}
@@ -589,76 +458,6 @@ func prefixUnionBranches(prefix, body string) string {
 	return strings.Join(branches, separator)
 }
 
-// callSeedIsFirstNode reports whether a MATCH … CALL { … } needs only the
-// MATCH's first node from the outer row: the pattern is that one node pattern,
-// and every variable the subquery imports (CALL (x, …) or a leading WITH x, …)
-// is that node's variable.
-func callSeedIsFirstNode(pattern, variable string, callImportVars []string, subqueryBody string) bool {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" || pattern[0] != '(' || findMatchingDelimiter(pattern, 0, '(', ')') != len(pattern)-1 {
-		return false
-	}
-	imports := callImportVars
-	if withVars, _, hasWith, err := parseLeadingWithImports(subqueryBody); err == nil && hasWith {
-		imports = append(append([]string(nil), imports...), withVars...)
-	}
-	for _, imported := range imports {
-		if !strings.EqualFold(strings.TrimSpace(imported), variable) && strings.TrimSpace(imported) != "*" {
-			return false
-		}
-	}
-	return true
-}
-
-func importsVariable(vars []string, variable string) bool {
-	for _, v := range vars {
-		if strings.EqualFold(strings.TrimSpace(v), strings.TrimSpace(variable)) {
-			return true
-		}
-	}
-	return false
-}
-
-// executeCallInTransactions executes a CALL {} IN TRANSACTIONS query
-// This batches operations for large datasets by processing results in separate transactions.
-//
-// The subquery is executed in batches where each batch is processed in its own transaction.
-// This is useful for large imports/updates to avoid memory issues and provide transaction boundaries.
-//
-// Example:
-//
-//	CALL {
-//	  MATCH (p:Person)
-//	  SET p.processed = true
-//	  RETURN p.name AS name
-//	} IN TRANSACTIONS OF 2 ROWS
-//
-// This will process Person nodes in batches of 2, each batch in a separate transaction.
-//
-// Strategy:
-//  1. First execute the subquery to determine the total number of rows (read-only)
-//  2. If it contains write operations, process in batches by adding LIMIT/SKIP to the MATCH
-//  3. Each batch is executed in its own transaction via executeWithImplicitTransaction
-//
-// rejectCallInTransactionsInExplicitTx enforces the Neo4j rule that
-// CALL { ... } IN TRANSACTIONS cannot run inside an explicit transaction:
-// its batches would execute inside the caller's transaction and survive a
-// ROLLBACK (#648).
-func (e *StorageExecutor) rejectCallInTransactionsInExplicitTx() error {
-	if e.txContext != nil && e.txContext.active {
-		if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok && tx.OperationCount() > 0 {
-			return &classifiedCypherError{
-				cause:  errors.New("Expected transaction state to be empty when calling transactional subquery. (Transactions committed: 0)"),
-				code:   "Neo.DatabaseError.Statement.ExecutionFailed",
-				detail: "InvalidCallInTransactions",
-			}
-		}
-		return newSemanticError("Neo.DatabaseError.Transaction.TransactionStartFailed", "InvalidCallInTransactions",
-			"CALL { ... } IN TRANSACTIONS is not allowed inside an explicit transaction")
-	}
-	return nil
-}
-
 // makeSubqueryReadOnly converts a subquery with writes to a read-only version for row counting.
 // This is used to determine how many batches we need before executing the actual writes.
 // Returns empty string if conversion is not possible.
@@ -667,10 +466,10 @@ func (e *StorageExecutor) rejectCallInTransactionsInExplicitTx() error {
 // row, the rows the batches page through. The subquery's own RETURN can't
 // be kept, since it reads variables the dropped write clause binds
 // (MATCH (s) CREATE (t) RETURN t.value).
-func (e *StorageExecutor) makeSubqueryReadOnly(subquery string) string {
-	matchIdx := findKeywordIndex(subquery, "MATCH")
-	setIdx := findKeywordIndex(subquery, "SET")
-	returnIdx := findKeywordIndex(subquery, "RETURN")
+func (e *StorageExecutor) makeSubqueryReadOnly(ctx context.Context, subquery string) string {
+	matchIdx := findKeywordIndex(ctx, subquery, "MATCH")
+	setIdx := findKeywordIndex(ctx, subquery, "SET")
+	returnIdx := findKeywordIndex(ctx, subquery, "RETURN")
 
 	// MATCH ... SET ... RETURN
 	if matchIdx >= 0 && setIdx > matchIdx && returnIdx > setIdx {
@@ -678,7 +477,7 @@ func (e *StorageExecutor) makeSubqueryReadOnly(subquery string) string {
 	}
 
 	// MATCH ... CREATE ... RETURN
-	createIdx := findKeywordIndex(subquery, "CREATE")
+	createIdx := findKeywordIndex(ctx, subquery, "CREATE")
 	if matchIdx >= 0 && createIdx > matchIdx && returnIdx > createIdx {
 		return strings.TrimSpace(subquery[matchIdx:createIdx]) + " RETURN 1"
 	}
@@ -694,18 +493,18 @@ func (e *StorageExecutor) makeSubqueryReadOnly(subquery string) string {
 //
 // This ensures that batching limits the number of matched rows processed, not just
 // the number of returned rows.
-func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip int) string {
+func (e *StorageExecutor) addLimitSkipToSubquery(ctx context.Context, subquery string, limit, skip int) string {
 	// Check for MATCH ... SET/CREATE/DELETE/MERGE ... RETURN pattern
 	// For these, we want to add LIMIT/SKIP after MATCH to limit how many rows are processed
-	matchIdx := findKeywordIndex(subquery, "MATCH")
+	matchIdx := findKeywordIndex(ctx, subquery, "MATCH")
 	if matchIdx >= 0 {
 		// Find the first operation after MATCH (SET, CREATE, DELETE, MERGE, or RETURN)
 		remaining := subquery[matchIdx+5:] // Skip "MATCH"
-		setIdx := findKeywordIndex(remaining, "SET")
-		createIdx := findKeywordIndex(remaining, "CREATE")
-		deleteIdx := findKeywordIndex(remaining, "DELETE")
-		mergeIdx := findKeywordIndex(remaining, "MERGE")
-		returnIdx := findKeywordIndex(remaining, "RETURN")
+		setIdx := findKeywordIndex(ctx, remaining, "SET")
+		createIdx := findKeywordIndex(ctx, remaining, "CREATE")
+		deleteIdx := findKeywordIndex(ctx, remaining, "DELETE")
+		mergeIdx := findKeywordIndex(ctx, remaining, "MERGE")
+		returnIdx := findKeywordIndex(ctx, remaining, "RETURN")
 
 		// Find the earliest operation after MATCH
 		firstOpIdx := -1
@@ -737,10 +536,10 @@ func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip in
 			matchEnd := matchIdx + 5 + firstOpIdx // End of MATCH pattern, start of first operation
 
 			// Check if there's a WHERE clause between MATCH and the first operation
-			whereIdx := findKeywordIndex(subquery[matchIdx+5:matchIdx+5+firstOpIdx], "WHERE")
+			whereIdx := findKeywordIndex(ctx, subquery[matchIdx+5:matchIdx+5+firstOpIdx], "WHERE")
 			if whereIdx >= 0 {
 				// Find end of WHERE clause (before first operation)
-				whereEnd := findKeywordIndex(subquery[matchIdx+5+whereIdx:matchIdx+5+firstOpIdx], firstOpName)
+				whereEnd := findKeywordIndex(ctx, subquery[matchIdx+5+whereIdx:matchIdx+5+firstOpIdx], firstOpName)
 				if whereEnd > 0 {
 					matchEnd = matchIdx + 5 + whereIdx + 5 + whereEnd // After WHERE clause
 				}
@@ -751,8 +550,8 @@ func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip in
 			afterOp := subquery[matchEnd:]
 
 			// Extract variable name from MATCH pattern (e.g., "MATCH (s:Source)" -> "s")
-			varNames := e.extractVariableNamesFromPattern(matchPart[5:]) // Skip "MATCH"
-			varName := "n"                                               // Default fallback
+			varNames := e.extractVariableNamesFromPattern(ctx, matchPatternStructure(ctx, matchPart[5:])) // Skip "MATCH"
+			varName := "n"                                                                                // Default fallback
 			if len(varNames) > 0 {
 				varName = varNames[0]
 			}
@@ -767,7 +566,7 @@ func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip in
 	}
 
 	// Fallback: Add LIMIT/SKIP before RETURN (or at end if no RETURN)
-	returnIdx := findKeywordIndex(subquery, "RETURN")
+	returnIdx := findKeywordIndex(ctx, subquery, "RETURN")
 	if returnIdx == -1 {
 		// No RETURN clause - append LIMIT/SKIP at the end
 		if skip > 0 {
@@ -827,8 +626,8 @@ var withImportClauseKeywords = []string{"WHERE", "OPTIONAL MATCH", "MATCH", "UNW
 func leadingWithClause(text string) (clause string, followed bool) {
 	depth := 0
 	for index := len("WITH"); index < len(text); index++ {
-		switch c := text[index]; c {
-		case '\'', '"', '`':
+		switch c := text[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(text, index, c) - 1
 			continue
 		case '(', '[', '{':
@@ -840,13 +639,11 @@ func leadingWithClause(text string) (clause string, followed bool) {
 			}
 			continue
 		}
-		if depth > 0 || !isIdentStartByte(text[index]) || isIdentByte(text[index-1]) {
+		if depth > 0 || !cyphertext.NameStartAt(text, index) || cyphertext.NamePartAt(text, index-1) {
 			continue
 		}
 		end := index + 1
-		for end < len(text) && isIdentByte(text[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(text, end)
 		previous := text[index-1]
 		if previous != '.' && previous != '$' && previous != ':' && isLeadingWithFollower(text[index:end]) &&
 			!(equalFoldASCII(text[index:end], "with") && isOperatorWith(text, index)) {
@@ -880,136 +677,162 @@ func isLeadingWithFollower(word string) bool {
 }
 
 // unscopedCallImports reads the importing WITHs of an unscoped CALL
-// subquery's body: whether any UNION branch (or the body, without UNION)
-// starts with an importing WITH (branchLeadingWithImport), and the
-// variables those WITHs list. A branch that imports nothing adds none,
-// whatever the other branches import (#907); it still reads outer variables
-// through NornicDB's implicit import (pipelineApplyCallSubqueryWithMetadata).
-// A CALL with a scope clause has no importing WITH
-// (callSubqueryHasScopeClause).
+// subquery's retained body (branchSyntaxImports): whether any UNION branch (or
+// the body, without UNION) starts with an importing WITH, and the variables
+// those WITHs list. A branch that imports nothing adds none, whatever the other
+// branches import (#907); it still reads outer variables through NornicDB's
+// implicit import (pipelineApplyCallSubqueryWithMetadata). A CALL with a scope
+// clause has no importing WITH (callSubqueryHasScopeClause). The body is the
+// statement's own retained product: no branch text is rebuilt and re-read here.
 //
 // names is filled only when collectNames.
-func unscopedCallImports(subqueryBody string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	trimmed := strings.TrimSpace(subqueryBody)
-	if indexASCIIFold(trimmed, "with") < 0 {
-		return nil, false, nil
-	}
-	if indexASCIIFold(trimmed, "union") >= 0 {
-		if branches, _, _, union := parseTopLevelUnionBranches(trimmed); union {
-			for _, branch := range branches {
-				branchNames, branchImports, err := branchLeadingWithImport(branch, outer, collectNames)
-				if err != nil {
-					return nil, false, err
-				}
-				if branchImports {
-					importing = true
-					names = append(names, branchNames...)
-				}
-			}
-			return names, importing, nil
+func unscopedCallImports(ctx context.Context, body queryBody, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
+	for _, branch := range body.branches {
+		next, imports, failure := branchSyntaxImports(ctx, branch, outer, collectNames)
+		if failure != nil {
+			return nil, false, failure
+		}
+		if imports {
+			importing = true
+			names = append(names, next...)
 		}
 	}
-	return branchLeadingWithImport(trimmed, outer, collectNames)
+	return names, importing, nil
 }
 
-// branchLeadingWithImport reports whether one branch of an unscoped CALL
-// body starts with an importing WITH: WITH * or a WITH that reads a
-// variable from outside (outer), and the variables it lists (not *). Any
-// other leading WITH (WITH 1 AS x, WITH 2 AS i over an outer i) is an
-// ordinary projection inside the subquery (#907). An importing WITH must
-// be followed by a query clause: CALL { WITH x } imports and is an error.
-func branchLeadingWithImport(branch string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	trimmed := strings.TrimSpace(branch)
-	if !startsWithKeywordFold(trimmed, "WITH") {
+func branchSyntaxImports(ctx context.Context, branch queryBodyBranch, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(branch.clauses) == 0 || branch.clauses[0].kind != pipelineClauseWith {
 		return nil, false, nil
 	}
-	clause, followed := leadingWithClause(trimmed)
-	projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	var buffer [8]string
-	for _, item := range appendTopLevelComma(buffer[:0], projection) {
-		expression, alias := parseProjectionExprAlias(item)
-		expression = strings.TrimSpace(expression)
-		if expression == "*" {
-			importing = true
-			continue
-		}
+	plan := projectionPlanFromSyntax(branch.clauses[0].syntax)
+	importing = plan.star
+	if plan.star {
+		plan = plan.withStarExpanded(nil)
+	}
+	for _, item := range plan.projections {
 		if collectNames {
-			// The item's name: the variable itself for a plain reference.
-			names = append(names, alias)
-		} else if importing {
-			break
+			names = append(names, item.alias)
 		}
-		if importing || expression == "" {
-			continue
-		}
-		// A plain reference (the usual import) needs no expression scan.
-		if expression[0] != '`' && isSimpleIdentifier(expression) {
-			importing = outer(expression)
-			continue
-		}
-		for _, variable := range expressionFreeVariables(expression) {
-			if outer(variable) {
+		for _, name := range expressionFreeVariables(ctx, item.expr) {
+			if outer(name) {
 				importing = true
-				break
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
 			}
 		}
 	}
 	if !importing {
 		return nil, false, nil
 	}
-	if !followed {
+	if len(branch.clauses) == 1 && branch.useStart < 0 && !branch.finished {
 		return names, true, localizedError(localization.CypherSubqueriesWithQueryClauseRequired(), nil)
 	}
 	return names, true, nil
 }
 
-// unscopedBranchLocals returns the outer variables (names) that one branch
-// of an unscoped CALL body declares itself (branchDeclaresVariable): the
+// unscopedBranchLocals returns the outer variables (names) that one retained
+// branch of an unscoped CALL body declares itself (branchDeclaresVariable): the
 // branch doesn't receive their outer values through NornicDB's implicit
 // import, so they are new variables there, as in Cypher (#907).
-func unscopedBranchLocals(branch string, names []string) []string {
+func unscopedBranchLocals(ctx context.Context, branch queryBodyBranch, names []string) []string {
 	var locals []string
 	for _, name := range names {
-		if branchDeclaresVariable(branch, name) {
+		if branchDeclaresVariable(ctx, branch, name) {
 			locals = append(locals, name)
 		}
 	}
 	return locals
 }
 
-// branchDeclaresVariable reports whether a branch of an unscoped CALL body
-// declares variable before it reads it: its first use is a node or
+// branchDeclaresVariable reports whether a retained branch of an unscoped CALL
+// body declares variable before it reads it: its first use is a node or
 // relationship variable of a MATCH, OPTIONAL MATCH, CREATE or MERGE pattern
-// (or the pattern's path name), or the name UNWIND … AS or WITH … AS binds.
+// (or the pattern's path name), or the name UNWIND ... AS or WITH ... AS binds.
 // Cypher gives such a branch a new variable; NornicDB's implicit import of an
-// outer variable applies only to a name the branch reads first (#907).
-func branchDeclaresVariable(branch, variable string) bool {
-	clauses, ok := splitPipelineClauses(strings.TrimSpace(branch))
-	if !ok {
+// outer variable applies only to a name the branch reads first (#907). The
+// branch's clauses are its own retained split (cachedPipelineClausesBranch):
+// its WITH and UNWIND bindings are read from their grammar tokens
+// (projectionItemsFromSyntax, iterationClauseFor), so the alias a comment or a
+// newline separates from AS binds the same name a printed alias does.
+func branchDeclaresVariable(ctx context.Context, branch queryBodyBranch, variable string) bool {
+	split := cachedPipelineClausesBranch(ctx, branch, false)
+	if !split.ok {
 		return false
 	}
-	for _, clause := range clauses {
-		index := firstVariableOccurrence(clause.text, variable)
-		if index < 0 {
-			continue
-		}
+	for _, clause := range split.clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseCreate, pipelineClauseMerge:
-			return index < patternPartEnd(clause) && isPatternVariableAt(clause.text, index, len(variable))
+			index := firstVariableOccurrence(clause.text, variable)
+			if index < 0 {
+				continue
+			}
+			return index < patternPartEnd(ctx, clause) && isPatternVariableAt(clause.text, index, len(variable))
 		case pipelineClauseUnwind, pipelineClauseWith:
-			return precededByAS(clause.text, index)
+			// The clause decides: its binding declares the name, and its items or
+			// tail merely reading it do not.
+			declares, mentioned := clauseBindingDeclares(ctx, clause, variable)
+			if !mentioned {
+				continue
+			}
+			return declares
+		default:
+			// The branch reads the name here before any clause binds it.
+			if firstVariableOccurrence(clause.text, variable) >= 0 {
+				return false
+			}
 		}
-		return false
 	}
 	return false
 }
 
+// clauseBindingDeclares reports whether a WITH or UNWIND clause declares
+// variable, and whether the clause mentions it at all. A binding is the alias
+// its grammar item records after AS (projectionItemsFromSyntax) or the
+// variable the clause's UNWIND ... AS binds (iterationClauseFor), so a comment
+// or a newline between AS and the name changes nothing. A clause that reads the
+// name in an item's expression before the alias binding it, or only in its
+// WHERE / ORDER BY / SKIP / LIMIT tail, reads it first and declares nothing.
+func clauseBindingDeclares(ctx context.Context, clause pipelineClause, variable string) (declares, mentioned bool) {
+	switch clause.kind {
+	case pipelineClauseWith:
+		for _, item := range projectionItemsFromSyntax(clause.syntax) {
+			if item.star {
+				continue
+			}
+			if containsString(expressionFreeVariables(ctx, item.expression), variable) {
+				return false, true
+			}
+			if item.as >= 0 && item.alias == variable {
+				return true, true
+			}
+		}
+	case pipelineClauseUnwind:
+		iteration, ok := iterationClauseFor(clause)
+		if !ok {
+			break
+		}
+		if containsString(expressionFreeVariables(ctx, iteration.expression), variable) {
+			return false, true
+		}
+		// A shared-grammar FOR clause binds without AS: not a declaration here.
+		if !forIterationClause(clause) && iteration.variable == variable {
+			return true, true
+		}
+	}
+	// A mention left here is the clause's tail, after its bindings.
+	return false, firstVariableOccurrence(clause.text, variable) >= 0
+}
+
 // patternPartEnd is where a MATCH, CREATE or MERGE clause's pattern ends:
 // at its WHERE, or MERGE's ON CREATE / ON MATCH, else the clause's end.
-func patternPartEnd(clause pipelineClause) int {
+func patternPartEnd(ctx context.Context, clause pipelineClause) int {
 	end := len(clause.text)
 	for _, keyword := range [...]string{"WHERE", "ON"} {
-		if index := topLevelKeywordIndex(clause.text, keyword); index > 0 && index < end {
+		if index := topLevelKeywordIndex(ctx, clause.text, keyword); index > 0 && index < end {
 			end = index
 		}
 	}
@@ -1022,8 +845,8 @@ func patternPartEnd(clause pipelineClause) int {
 // -1 when there is none.
 func firstVariableOccurrence(text, variable string) int {
 	for index := 0; index+len(variable) <= len(text); index++ {
-		switch c := text[index]; c {
-		case '\'', '"', '`':
+		switch c := text[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(text, index, c) - 1
 			continue
 		}
@@ -1031,7 +854,7 @@ func firstVariableOccurrence(text, variable string) int {
 			continue
 		}
 		end := index + len(variable)
-		if (index > 0 && isIdentByte(text[index-1])) || (end < len(text) && isIdentByte(text[end])) {
+		if (index > 0 && cyphertext.NamePartAt(text, index-1)) || (end < len(text) && cyphertext.NamePartAt(text, end)) {
 			continue
 		}
 		previous, next := previousNonSpace(text, index), nextNonSpace(text, end)
@@ -1053,7 +876,7 @@ func isPatternVariableAt(text string, index, length int) bool {
 		// parenthesis is a function, unless it is the clause keyword
 		// (MATCH (n), OPTIONAL MATCH (n), CREATE (n), MERGE (n)).
 		opening := strings.LastIndexByte(text[:index], '(')
-		if word := wordBefore(text, opening); word != "" && !isPatternClauseKeyword(word) {
+		if word := rawWordBefore(text, opening); word != "" && !isPatternClauseKeyword(word) {
 			return false
 		}
 		return next == ':' || next == ')' || next == '{'
@@ -1069,55 +892,34 @@ func isPatternVariableAt(text string, index, length int) bool {
 
 // wordBefore is the identifier that ends right before index (spaces
 // skipped), "" when another character comes first.
-func wordBefore(text string, index int) string {
-	end := index
-	for end > 0 && isASCIISpace(text[end-1]) {
-		end--
-	}
-	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
-		start--
-	}
-	return text[start:end]
-}
-
 // isPatternClauseKeyword reports whether word is a keyword a pattern
 // follows: MATCH, CREATE, MERGE.
 func isPatternClauseKeyword(word string) bool {
 	return equalFoldASCII(word, "MATCH") || equalFoldASCII(word, "CREATE") || equalFoldASCII(word, "MERGE")
 }
 
-// precededByAS reports whether the word at index follows the keyword AS.
-func precededByAS(text string, index int) bool {
-	end := index
-	for end > 0 && isASCIISpace(text[end-1]) {
-		end--
-	}
-	return end >= 3 && equalFoldASCII(text[end-2:end], "AS") && !isIdentByte(text[end-3])
-}
-
 // previousNonSpace is the last non-space byte before index, 0 at the start.
 func previousNonSpace(text string, index int) byte {
-	for index > 0 {
-		index--
-		if !isASCIISpace(text[index]) {
-			return text[index]
-		}
+	if index <= 0 {
+		return 0
 	}
-	return 0
+	at, found := cyphertext.NeighborIndex(text, index, cyphertext.Before)
+	if !found {
+		return 0
+	}
+	return text[at]
 }
 
 // nextNonSpace is the first non-space byte at or after index, 0 at the end.
 func nextNonSpace(text string, index int) byte {
-	for ; index < len(text); index++ {
-		if !isASCIISpace(text[index]) {
-			return text[index]
-		}
+	at, found := cyphertext.NeighborIndex(text, index, cyphertext.AtOrAfter)
+	if !found {
+		return 0
 	}
-	return 0
+	return text[at]
 }
 
-func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody string, hasWith bool, err error) {
+func parseLeadingWithImports(ctx context.Context, subqueryBody string) (withVars []string, innerBody string, hasWith bool, err error) {
 	trimmed := strings.TrimSpace(subqueryBody)
 	if !hasPrefixFoldASCII(trimmed, "WITH ") {
 		return nil, trimmed, false, nil
@@ -1126,9 +928,9 @@ func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody 
 	afterWith := strings.TrimSpace(trimmed[len("WITH "):])
 	// The import list ends at the first clause keyword after it (one scan
 	// for all of them); a keyword at the very start is part of the list.
-	nextIdx := firstKeywordIndexFromDefault(afterWith, 0, withImportClauseKeywords...)
+	nextIdx := firstKeywordIndexFromDefault(ctx, afterWith, 0, withImportClauseKeywords...)
 	if nextIdx == 0 {
-		nextIdx = firstKeywordIndexFromDefault(afterWith, 1, withImportClauseKeywords...)
+		nextIdx = firstKeywordIndexFromDefault(ctx, afterWith, 1, withImportClauseKeywords...)
 	}
 	if nextIdx < 0 {
 		nextIdx = len(afterWith)
@@ -1140,11 +942,11 @@ func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody 
 
 	withExpr := strings.TrimSpace(afterWith[:nextIdx])
 	innerBody = strings.TrimSpace(afterWith[nextIdx:])
-	if nextIdx < len(afterWith) && findKeywordIndex(afterWith[nextIdx:], "WHERE") == 0 {
+	if nextIdx < len(afterWith) && findKeywordIndex(ctx, afterWith[nextIdx:], "WHERE") == 0 {
 		// Preserve `WITH ... WHERE ...` as part of the inner body so correlated
 		// branch semantics remain identical to openCypher behavior.
 		innerBody = strings.TrimSpace("WITH " + withExpr + " " + afterWith[nextIdx:])
-		if whereExpr, whereRest, ok := splitLeadingWhereNullGuard(innerBody); ok {
+		if whereExpr, whereRest, ok := splitLeadingWhereNullGuard(ctx, innerBody); ok {
 			innerBody = strings.TrimSpace("WITH " + withExpr + " WHERE " + whereExpr + " " + whereRest)
 		}
 	}
@@ -1187,12 +989,12 @@ func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody 
 // and returns (<expr>, <rest-after-where-expr>, true).
 // It is intentionally conservative and only used by the correlated write branch
 // fallback path in executeMatchWithCallSubquery.
-func splitLeadingWhereNullGuard(query string) (whereExpr string, rest string, ok bool) {
+func splitLeadingWhereNullGuard(ctx context.Context, query string) (whereExpr string, rest string, ok bool) {
 	trimmed := strings.TrimSpace(query)
 	var afterWhere string
 	if strings.HasPrefix(upperASCII(trimmed), "WITH ") {
 		afterWith := strings.TrimSpace(trimmed[len("WITH "):])
-		whereIdx := findKeywordIndex(afterWith, "WHERE")
+		whereIdx := findKeywordIndex(ctx, afterWith, "WHERE")
 		if whereIdx <= 0 {
 			return "", "", false
 		}
@@ -1208,17 +1010,17 @@ func splitLeadingWhereNullGuard(query string) (whereExpr string, rest string, ok
 
 	nextIdx := len(afterWhere)
 	clauseStarts := []int{
-		findKeywordIndex(afterWhere, "SET"),
-		findKeywordIndex(afterWhere, "CREATE"),
-		findKeywordIndex(afterWhere, "MERGE"),
-		findKeywordIndex(afterWhere, "DELETE"),
-		findKeywordIndex(afterWhere, "REMOVE"),
-		findKeywordIndex(afterWhere, "MATCH"),
-		findMultiWordKeywordIndex(afterWhere, "OPTIONAL", "MATCH"),
-		findKeywordIndex(afterWhere, "UNWIND"),
-		findKeywordIndex(afterWhere, "CALL"),
-		findKeywordIndex(afterWhere, "RETURN"),
-		findKeywordIndex(afterWhere, "WITH"),
+		findKeywordIndex(ctx, afterWhere, "SET"),
+		findKeywordIndex(ctx, afterWhere, "CREATE"),
+		findKeywordIndex(ctx, afterWhere, "MERGE"),
+		findKeywordIndex(ctx, afterWhere, "DELETE"),
+		findKeywordIndex(ctx, afterWhere, "REMOVE"),
+		findKeywordIndex(ctx, afterWhere, "MATCH"),
+		findMultiWordKeywordIndex(ctx, afterWhere, "OPTIONAL", "MATCH"),
+		findKeywordIndex(ctx, afterWhere, "UNWIND"),
+		findKeywordIndex(ctx, afterWhere, "CALL"),
+		findKeywordIndex(ctx, afterWhere, "RETURN"),
+		findKeywordIndex(ctx, afterWhere, "WITH"),
 	}
 	for _, idx := range clauseStarts {
 		if idx > 0 && idx < nextIdx {
@@ -1248,7 +1050,7 @@ func splitLeadingWhereNullGuard(query string) (whereExpr string, rest string, ok
 func evalWhereNullGuard(whereExpr string, vars map[string]interface{}) (pass bool, handled bool) {
 	expr := strings.TrimSpace(whereExpr)
 	// Accept optional wrapping parentheses.
-	for strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
+	for strings.HasPrefix(expr, "(") && cyphertext.FindMatchingDelimiter(expr, 0, '(', ')', cyphertext.OpeningDelimiter) == len(expr)-1 {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])
 		if inner == expr {
 			break
@@ -1256,136 +1058,66 @@ func evalWhereNullGuard(whereExpr string, vars map[string]interface{}) (pass boo
 		expr = inner
 	}
 
-	// Case-insensitive single-variable null checks only.
-	// Examples:
-	//   t IS NULL
-	//   t IS NOT NULL
-	m := variableNullCheckPattern.FindStringSubmatch(expr)
-	if len(m) != 3 {
+	name, present := cyphertext.ScanIdentifier(expr, 0)
+	if !present {
 		return false, false
 	}
+	index, unclosed := cyphertext.GapEnd(expr, name.End)
+	if unclosed >= 0 {
+		return false, false
+	}
+	next := keywordEndAt(expr, index, "IS")
+	if next == index {
+		return false, false
+	}
+	index = next
+	index, unclosed = cyphertext.GapEnd(expr, index)
+	if unclosed >= 0 {
+		return false, false
+	}
+	isNot := false
+	if end := keywordEndAt(expr, index, "NOT"); end > index {
+		isNot = true
+		index, unclosed = cyphertext.GapEnd(expr, end)
+	}
+	if unclosed >= 0 {
+		return false, false
+	}
+	next = keywordEndAt(expr, index, "NULL")
+	if next == index {
+		return false, false
+	}
+	index = next
+	index, unclosed = cyphertext.GapEnd(expr, index)
+	if unclosed >= 0 || index != len(expr) {
+		return false, false
+	}
+	value, exists := vars[name.Value]
+	isNull := !exists || value == nil
 
-	varName := m[1]
-	_, exists := vars[varName]
-	isNull := !exists || vars[varName] == nil
-	isNot := strings.TrimSpace(upperASCII(m[2])) == "NOT"
 	if isNot {
 		return !isNull, true
 	}
 	return isNull, true
 }
 
-// splitTopLevelUnionBranches splits a query by top-level UNION/UNION ALL separators.
-// Returns branches, unionAllMode, ok.
-func splitTopLevelUnionBranches(query string) ([]string, bool, bool) {
-	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(query)
-	return branches, unionAll, ok && !mixed
-}
-
 // parseTopLevelUnionBranches preserves whether a composition mixes UNION and
 // UNION ALL so callers can report the Cypher semantic error rather than
 // treating the statement as an unsplittable query.
-func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, mixed, ok bool) {
-	trimmed := strings.TrimSpace(query)
-	if trimmed == "" {
+func parseTopLevelUnionBranches(ctx context.Context, query string) (branches []string, unionAllMode, mixed, ok bool) {
+	body := readQueryBody(ctx, query, 0, len(query))
+	if body.status == queryBodyDeclined || len(body.branches) < 2 {
 		return nil, false, false, false
 	}
-
-	type sep struct {
-		pos int
-		end int
-		all bool
-	}
-	seps := make([]sep, 0)
-	depthParen := 0
-	depthBracket := 0
-	depthBrace := 0
-
-	for i := 0; i < len(trimmed); i++ {
-		ch := trimmed[i]
-		switch ch {
-		case '\'', '"', '`':
-			// A string or a backticked name (`union`) holds no UNION.
-			i = skipCypherQuotedText(trimmed, i, ch) - 1
-			continue
-		case '(':
-			depthParen++
-			continue
-		case ')':
-			if depthParen > 0 {
-				depthParen--
-			}
-			continue
-		case '[':
-			depthBracket++
-			continue
-		case ']':
-			if depthBracket > 0 {
-				depthBracket--
-			}
-			continue
-		case '{':
-			depthBrace++
-			continue
-		case '}':
-			if depthBrace > 0 {
-				depthBrace--
-			}
-			continue
-		}
-
-		if depthParen != 0 || depthBracket != 0 || depthBrace != 0 {
-			continue
-		}
-		// A variable named union is a name, not the operator (#894).
-		if !matchKeywordAt(trimmed, i, "UNION") || clauseKeywordUsedAsName(trimmed, i, i+len("UNION"), "UNION") {
-			continue
-		}
-		j := skipSpaces(trimmed, i+len("UNION"))
-		all := false
-		if matchKeywordAt(trimmed, j, "ALL") {
-			all = true
-			j = skipSpaces(trimmed, j+len("ALL"))
-		}
-		seps = append(seps, sep{pos: i, end: j, all: all})
-		i = j - 1
-	}
-
-	if len(seps) == 0 {
-		return nil, false, false, false
-	}
-
 	unionAllMode = true
-	hasDistinct := false
-	hasAll := false
-	for _, s := range seps {
-		if s.all {
-			hasAll = true
-		} else {
-			hasDistinct = true
+	for i, branch := range body.branches {
+		branches = append(branches, query[branch.start:branch.end])
+		if i > 0 && !branch.unionAll {
 			unionAllMode = false
 		}
 	}
-	mixed = hasDistinct && hasAll
-
-	branches = make([]string, 0, util.SafePreallocSum(len(seps), 1))
-	start := 0
-	for _, s := range seps {
-		part := strings.TrimSpace(trimmed[start:s.pos])
-		if part == "" {
-			return nil, false, false, false
-		}
-		branches = append(branches, part)
-		start = s.end
-	}
-	last := strings.TrimSpace(trimmed[start:])
-	if last == "" {
-		return nil, false, false, false
-	}
-	branches = append(branches, last)
-	return branches, unionAllMode, mixed, true
+	return branches, unionAllMode, body.status == queryBodyMixedUnion, true
 }
-
 func (e *StorageExecutor) refreshCallSeedNodeValues(ctx context.Context, seedRow []interface{}, colMap map[string]int, importVars []string, stats *QueryStats) ([]interface{}, error) {
 	if !queryStatsMayContainNodeMutation(stats) {
 		return seedRow, nil
@@ -1443,7 +1175,7 @@ func (e *StorageExecutor) refreshCallSeedNodeAfterWrite(ctx context.Context, nod
 	if node == nil || !queryStatsMayContainNodeMutation(stats) {
 		return node, nil
 	}
-	current, err := e.getStorage(ctx).GetNode(node.ID)
+	current, err := e.getQueryNode(ctx, e.getStorage(ctx), node.ID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return node, nil
 	}
@@ -1460,551 +1192,8 @@ func queryStatsMayContainNodeMutation(stats *QueryStats) bool {
 	return stats != nil && (stats.PropertiesSet > 0 || stats.LabelsAdded > 0 || stats.LabelsRemoved > 0)
 }
 
-func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
-	ctx context.Context,
-	seedResult *ExecuteResult,
-	innerBody string,
-	importVars []string,
-	colMap map[string]int,
-) (*ExecuteResult, bool, error) {
-	if seedResult == nil || len(seedResult.Rows) == 0 || len(importVars) != 1 {
-		return nil, false, nil
-	}
-
-	importCol := strings.TrimSpace(importVars[0])
-	if importCol == "" {
-		return nil, false, nil
-	}
-	importIdx, ok := colMap[importCol]
-	if !ok {
-		return nil, false, nil
-	}
-
-	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(innerBody), ";"))
-	if findKeywordIndex(trimmed, "MATCH") != 0 || !containsFold(trimmed, "RETURN ") || callSubqueryQueryIsWrite(trimmed) {
-		return nil, false, nil
-	}
-	if containsFold(trimmed, "OPTIONAL MATCH") {
-		return nil, false, nil
-	}
-
-	returnIdx := indexTopLevelKeywordCallSubquery(trimmed, "RETURN")
-	if returnIdx < 0 {
-		return nil, false, nil
-	}
-	beforeReturn := strings.TrimSpace(trimmed[:returnIdx])
-	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN"):])
-	if beforeReturn == "" || returnPart == "" {
-		return nil, false, nil
-	}
-
-	matchPart := beforeReturn
-	wherePart := ""
-	if whereIdx := indexTopLevelKeywordCallSubquery(beforeReturn, "WHERE"); whereIdx >= 0 {
-		matchPart = strings.TrimSpace(beforeReturn[:whereIdx])
-		wherePart = strings.TrimSpace(beforeReturn[whereIdx+len("WHERE"):])
-	}
-	if matchPart == "" || wherePart == "" {
-		return nil, false, nil
-	}
-
-	matchVar, matchProp, otherWhere, ok := extractCallSubqueryCorrelationWhere(wherePart, importCol)
-	if !ok || matchVar == "" || matchProp == "" {
-		return nil, false, nil
-	}
-	if sanitized, ok := sanitizeCallSubqueryOtherWhere(otherWhere, importCol); ok {
-		otherWhere = sanitized
-	} else {
-		return nil, false, nil
-	}
-
-	projection, modifiers := splitTopLevelResultModifiersCallSubquery(returnPart)
-	projection = strings.TrimSpace(projection)
-	if projection == "" {
-		return nil, false, nil
-	}
-
-	// Collect unique lookup keys from seed rows.
-	keys := make([]interface{}, 0, len(seedResult.Rows))
-	seenKeys := make(map[string]struct{}, len(seedResult.Rows))
-	for _, row := range seedResult.Rows {
-		if importIdx < 0 || importIdx >= len(row) {
-			continue
-		}
-		k := row[importIdx]
-		ks := callSubqueryLookupKeyString(k)
-		if _, exists := seenKeys[ks]; exists {
-			continue
-		}
-		seenKeys[ks] = struct{}{}
-		keys = append(keys, k)
-	}
-	if len(keys) == 0 {
-		return &ExecuteResult{
-			Columns: append([]string{}, seedResult.Columns...),
-			Rows:    [][]interface{}{},
-		}, true, nil
-	}
-
-	var rewritten strings.Builder
-	rewritten.Grow(len(trimmed) + len(projection) + 128)
-	rewritten.WriteString(matchPart)
-	if strings.TrimSpace(otherWhere) != "" {
-		rewritten.WriteString(" WHERE ")
-		rewritten.WriteString(otherWhere)
-		rewritten.WriteString(" AND ")
-	} else {
-		rewritten.WriteString(" WHERE ")
-	}
-	rewritten.WriteString(matchVar)
-	rewritten.WriteString(".")
-	rewritten.WriteString(matchProp)
-	rewritten.WriteString(" IN $__call_subquery_lookup_keys")
-	rewritten.WriteString(" RETURN ")
-	rewritten.WriteString(matchVar)
-	rewritten.WriteString(".")
-	rewritten.WriteString(matchProp)
-	rewritten.WriteString(" AS __call_subquery_lookup_key, ")
-	rewritten.WriteString(projection)
-	if strings.TrimSpace(modifiers) != "" {
-		rewritten.WriteString(" ")
-		rewritten.WriteString(strings.TrimSpace(modifiers))
-	}
-
-	params := map[string]interface{}{
-		"__call_subquery_lookup_keys": keys,
-	}
-	innerRes, err := e.executeInternal(ctx, rewritten.String(), params)
-	if err != nil {
-		return nil, true, localizedError(localization.CypherSubqueriesBatchedLookupFailed(err), err)
-	}
-
-	if innerRes == nil {
-		return &ExecuteResult{
-			Columns: append([]string{}, seedResult.Columns...),
-			Rows:    [][]interface{}{},
-		}, true, nil
-	}
-	if len(innerRes.Columns) == 0 || !strings.EqualFold(strings.TrimSpace(innerRes.Columns[0]), "__call_subquery_lookup_key") {
-		return nil, true, localizedError(localization.CypherSubqueriesBatchedLookupColumnsUnexpected(fmt.Sprint(innerRes.Columns)), nil)
-	}
-
-	// Keep only inner columns not already present in seed columns and not join-key column.
-	innerKeepIdx := make([]int, 0, len(innerRes.Columns))
-	innerKeepCols := make([]string, 0, len(innerRes.Columns))
-	for i, col := range innerRes.Columns {
-		if i == 0 {
-			continue
-		}
-		if _, exists := colMap[col]; exists {
-			continue
-		}
-		innerKeepIdx = append(innerKeepIdx, i)
-		innerKeepCols = append(innerKeepCols, col)
-	}
-
-	grouped := make(map[string][][]interface{}, len(innerRes.Rows))
-	for _, r := range innerRes.Rows {
-		if len(r) == 0 {
-			continue
-		}
-		k := callSubqueryLookupKeyString(r[0])
-		vals := make([]interface{}, 0, len(innerKeepIdx))
-		for _, idx := range innerKeepIdx {
-			if idx >= 0 && idx < len(r) {
-				vals = append(vals, r[idx])
-			} else {
-				vals = append(vals, nil)
-			}
-		}
-		grouped[k] = append(grouped[k], vals)
-	}
-
-	combinedCols := append([]string{}, seedResult.Columns...)
-	combinedCols = append(combinedCols, innerKeepCols...)
-	combinedRows := make([][]interface{}, 0, len(seedResult.Rows))
-	for _, seedRow := range seedResult.Rows {
-		if importIdx < 0 || importIdx >= len(seedRow) {
-			continue
-		}
-		matches := grouped[callSubqueryLookupKeyString(seedRow[importIdx])]
-		if len(matches) == 0 {
-			continue
-		}
-		for _, m := range matches {
-			joined := append([]interface{}{}, seedRow...)
-			joined = append(joined, m...)
-			combinedRows = append(combinedRows, joined)
-		}
-	}
-
-	return &ExecuteResult{
-		Columns: combinedCols,
-		Rows:    combinedRows,
-	}, true, nil
-}
-
-func callSubqueryLookupKeyString(v interface{}) string {
-	switch x := v.(type) {
-	case nil:
-		return "<nil>"
-	case string:
-		return "s:" + normalizeCallSubqueryLookupString(x)
-	case []byte:
-		return "s:" + normalizeCallSubqueryLookupString(string(x))
-	case int:
-		return fmt.Sprintf("i:%d", x)
-	case int64:
-		return fmt.Sprintf("i64:%d", x)
-	case float64:
-		return fmt.Sprintf("f:%g", x)
-	case bool:
-		if x {
-			return "b:1"
-		}
-		return "b:0"
-	default:
-		return fmt.Sprintf("%T:%v", v, v)
-	}
-}
-
-func normalizeCallSubqueryLookupString(s string) string {
-	s = strings.TrimSpace(s)
-	return strings.Trim(s, `"`)
-}
-
-func extractCallSubqueryCorrelationWhere(whereClause, importCol string) (matchVar, matchProp, otherWhere string, ok bool) {
-	terms := splitTopLevelAndConjuncts(whereClause)
-	if len(terms) == 0 {
-		return "", "", "", false
-	}
-	correlationIdx := -1
-	for i, term := range terms {
-		lhs, rhs, isEq := splitTopLevelEqualityCallSubquery(term)
-		if !isEq {
-			continue
-		}
-		leftVar, leftProp, leftOK := parseCallSubqueryVarProp(lhs)
-		rightVar, rightProp, rightOK := parseCallSubqueryVarProp(rhs)
-		switch {
-		case leftOK && isSimpleIdentifier(strings.TrimSpace(rhs)) && strings.EqualFold(strings.TrimSpace(rhs), importCol):
-			matchVar, matchProp = leftVar, leftProp
-			correlationIdx = i
-		case rightOK && isSimpleIdentifier(strings.TrimSpace(lhs)) && strings.EqualFold(strings.TrimSpace(lhs), importCol):
-			matchVar, matchProp = rightVar, rightProp
-			correlationIdx = i
-		}
-		if correlationIdx >= 0 {
-			break
-		}
-	}
-	if correlationIdx < 0 || matchVar == "" || matchProp == "" {
-		return "", "", "", false
-	}
-	remaining := make([]string, 0, len(terms)-1)
-	for i, term := range terms {
-		if i == correlationIdx {
-			continue
-		}
-		t := strings.TrimSpace(term)
-		if t != "" {
-			remaining = append(remaining, t)
-		}
-	}
-	return matchVar, matchProp, strings.Join(remaining, " AND "), true
-}
-
-func parseCallSubqueryVarProp(expr string) (string, string, bool) {
-	expr = strings.TrimSpace(expr)
-	dot := strings.Index(expr, ".")
-	if dot <= 0 || dot >= len(expr)-1 {
-		return "", "", false
-	}
-	v := strings.Trim(expr[:dot], "`")
-	p := strings.Trim(expr[dot+1:], "`")
-	if !isSimpleIdentifier(v) || !isSimpleIdentifier(p) {
-		return "", "", false
-	}
-	return v, p, true
-}
-
-func sanitizeCallSubqueryOtherWhere(otherWhere string, importCol string) (string, bool) {
-	if strings.TrimSpace(otherWhere) == "" {
-		return "", true
-	}
-	terms := splitTopLevelAndConjuncts(otherWhere)
-	if len(terms) == 0 {
-		return "", true
-	}
-	kept := make([]string, 0, len(terms))
-	for _, term := range terms {
-		term = strings.TrimSpace(term)
-		if term == "" {
-			continue
-		}
-		if isCallSubqueryImportNotNullGuardTerm(term, importCol) {
-			continue
-		}
-		if containsStandaloneIdentifier(term, importCol) {
-			return "", false
-		}
-		kept = append(kept, term)
-	}
-	if len(kept) == 0 {
-		return "", true
-	}
-	return strings.Join(kept, " AND "), true
-}
-
-func isCallSubqueryImportNotNullGuardTerm(term string, importCol string) bool {
-	parts := strings.Fields(strings.TrimSpace(term))
-	if len(parts) != 4 {
-		return false
-	}
-	left := strings.TrimSpace(parts[0])
-	left = strings.Trim(left, "`")
-	if !strings.EqualFold(left, strings.TrimSpace(importCol)) {
-		return false
-	}
-	return strings.EqualFold(parts[1], "IS") &&
-		strings.EqualFold(parts[2], "NOT") &&
-		strings.EqualFold(parts[3], "NULL")
-}
-
-func splitTopLevelEqualityCallSubquery(expr string) (lhs, rhs string, ok bool) {
-	inSingle, inDouble, inBacktick := false, false, false
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(expr); i++ {
-		ch := expr[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
-		case '(':
-			paren++
-			continue
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-			continue
-		case '[':
-			bracket++
-			continue
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-			continue
-		case '{':
-			brace++
-			continue
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-			continue
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if ch == '=' {
-			left := strings.TrimSpace(expr[:i])
-			right := strings.TrimSpace(expr[i+1:])
-			if left == "" || right == "" {
-				return "", "", false
-			}
-			return left, right, true
-		}
-	}
-	return "", "", false
-}
-
-func indexTopLevelKeywordCallSubquery(s string, keyword string) int {
-	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if findKeywordIndex(s[i:], keyword) == 0 {
-			return i
-		}
-	}
-	return -1
-}
-
-func splitTopLevelResultModifiersCallSubquery(returnPart string) (projection string, modifiers string) {
-	idx := indexTopLevelKeywordCallSubquery(returnPart, "ORDER BY")
-	if idx < 0 {
-		idx = indexTopLevelKeywordCallSubquery(returnPart, "SKIP")
-	}
-	if idx < 0 {
-		idx = indexTopLevelKeywordCallSubquery(returnPart, "LIMIT")
-	}
-	if idx < 0 {
-		return strings.TrimSpace(returnPart), ""
-	}
-	return strings.TrimSpace(returnPart[:idx]), strings.TrimSpace(returnPart[idx:])
-}
-
-func callSubqueryQueryIsWrite(query string) bool {
-	// Single-pass: check each write keyword once with findKeywordIndex from position 0.
-	// Previous implementation was O(n*m) — called findKeywordIndex from every byte offset.
-	return findKeywordIndex(query, "CREATE") >= 0 ||
-		findKeywordIndex(query, "MERGE") >= 0 ||
-		findKeywordIndex(query, "DELETE") >= 0 ||
-		findKeywordIndex(query, "SET") >= 0 ||
-		findKeywordIndex(query, "REMOVE") >= 0
-}
-
 func isSimpleIdentifier(s string) bool {
-	s = strings.TrimSpace(strings.Trim(s, "`"))
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if i == 0 {
-			if !isIdentStartByte(ch) {
-				return false
-			}
-			continue
-		}
-		if !isIdentByte(ch) {
-			return false
-		}
-	}
-	return true
-}
-
-func containsStandaloneIdentifier(expr, ident string) bool {
-	ident = strings.TrimSpace(strings.Trim(ident, "`"))
-	if ident == "" {
-		return false
-	}
-	isWord := func(b byte) bool {
-		return isIdentByte(b)
-	}
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i < len(expr); i++ {
-		ch := expr[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
-		}
-		if i+len(ident) > len(expr) {
-			break
-		}
-		if !strings.EqualFold(expr[i:i+len(ident)], ident) {
-			continue
-		}
-		if i > 0 {
-			prev := expr[i-1]
-			if isWord(prev) || prev == '.' {
-				continue
-			}
-		}
-		if i+len(ident) < len(expr) {
-			next := expr[i+len(ident)]
-			if isWord(next) || next == '.' {
-				continue
-			}
-		}
-		return true
-	}
-	return false
+	return cyphertext.IsIdentifier(strings.TrimSpace(strings.Trim(s, "`")))
 }
 
 func crossJoinCallResults(left, right *ExecuteResult) *ExecuteResult {
@@ -2046,39 +1235,6 @@ func crossJoinCallResults(left, right *ExecuteResult) *ExecuteResult {
 	return &ExecuteResult{Columns: combinedCols, Rows: rows}
 }
 
-// processCallSubqueryReturn processes the RETURN clause after CALL {}
-func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
-	if findKeywordIndex(afterCall, "RETURN") == -1 {
-		return innerResult, nil
-	}
-	rows := make([]pipelineRow, 0, len(innerResult.Rows))
-	scope := make(map[string]struct{}, len(innerResult.Columns))
-	for _, column := range innerResult.Columns {
-		scope[column] = struct{}{}
-	}
-	for _, values := range innerResult.Rows {
-		row := make(pipelineRow, len(innerResult.Columns))
-		for index, column := range innerResult.Columns {
-			if index < len(values) {
-				row[column] = values[index]
-			} else {
-				row[column] = nil
-			}
-		}
-		rows = append(rows, row)
-	}
-	clauses := []pipelineClause{{kind: pipelineClauseReturn, text: afterCall}}
-	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
-	if err != nil {
-		return nil, err
-	}
-	if !handled || result == nil {
-		return nil, localizedError(localization.CypherSubqueriesAfterCallClauseUnsupported("RETURN"), nil)
-	}
-	result.Stats = innerResult.Stats
-	return result, nil
-}
-
 // applyResultModifiers applies ORDER BY, LIMIT, SKIP to a result
 func (e *StorageExecutor) applyResultModifiers(ctx context.Context, result *ExecuteResult, modifiers string) (*ExecuteResult, error) {
 	skip := 0
@@ -2089,17 +1245,7 @@ func (e *StorageExecutor) applyResultModifiers(ctx context.Context, result *Exec
 	if value, ok := e.parseIntModifier(ctx, modifiers, "LIMIT"); ok {
 		limit = value
 	}
-	return e.applyCallResultOrderWindow(ctx, result, parseOrderByTerms(modifiers), skip, limit)
-}
-
-// applyOrderByToResult applies ORDER BY to a result set
-func (e *StorageExecutor) applyOrderByToResult(result *ExecuteResult, orderByClause string) *ExecuteResult {
-	terms := parseOrderByTerms(orderByClause)
-	if len(terms) == 0 {
-		terms = parseOrderByClause(orderByClause)
-	}
-	_, _ = e.applyCallResultOrderWindow(context.Background(), result, terms, 0, -1)
-	return result
+	return e.applyCallResultOrderWindow(ctx, result, parseOrderByTerms(ctx, modifiers), skip, limit)
 }
 
 func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result *ExecuteResult, terms []orderByTerm, skip, limit int) (*ExecuteResult, error) {
@@ -2151,27 +1297,37 @@ type orderByTerm struct {
 // parseOrderByTerms parses the ORDER BY of a projection's modifiers. Keywords
 // inside braces (COLLECT { … ORDER BY … }, map literals) belong to nested
 // expressions, never to the projection (#652, #547).
-func parseOrderByTerms(modifiers string) []orderByTerm {
-	orderByIndex := topLevelKeywordIndex(modifiers, "ORDER BY")
+func parseOrderByTerms(ctx context.Context, modifiers string) []orderByTerm {
+	orderByIndex := topLevelKeywordIndex(ctx, modifiers, "ORDER BY")
 	if orderByIndex < 0 {
 		return nil
 	}
-	return parseOrderByClause(modifiers[orderByIndex+len("ORDER BY"):])
+	return parseOrderByClause(ctx, modifiers[keywordEndAt(modifiers, orderByIndex, "ORDER BY"):])
 }
 
 // parseOrderByClause parses the sort items that follow ORDER BY. The list ends
 // at SKIP / LIMIT, and at the WHERE that may follow ORDER BY in a WITH clause
 // (WITH n ORDER BY n.x WHERE n.y > 0): that WHERE filters the sorted rows and
-// is not part of the last sort item.
-func parseOrderByClause(clause string) []orderByTerm {
+// is not part of the last sort item. A word at the start is the first sort
+// item, even one named like those keywords (ORDER BY skip{.a}).
+func parseOrderByClause(ctx context.Context, clause string) []orderByTerm {
 	clause = strings.TrimSpace(clause)
 	end := len(clause)
+	keywordAfterFirstItem := func(keyword string) int {
+		index := topLevelKeywordIndex(ctx, clause, keyword)
+		if index == 0 {
+			opts := defaultKeywordScanOpts()
+			opts.SkipBraces = true
+			index = keywordIndexFrom(ctx, clause, keyword, len(keyword), opts)
+		}
+		return index
+	}
 	for _, keyword := range []string{"LIMIT", "SKIP"} {
-		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
+		if index := keywordAfterFirstItem(keyword); index >= 0 && index < end {
 			end = index
 		}
 	}
-	if index := topLevelKeywordIndex(clause, "WHERE"); index >= 0 && index < end {
+	if index := keywordAfterFirstItem("WHERE"); index >= 0 && index < end {
 		end = index
 	}
 	clause = strings.TrimSpace(clause[:end])
@@ -2326,8 +1482,8 @@ func compareOrderedInts(left, right int) int {
 	return 0
 }
 
-func parseOrderByModifier(modifiers string) (column string, descending bool, ok bool) {
-	terms := parseOrderByTerms(modifiers)
+func parseOrderByModifier(ctx context.Context, modifiers string) (column string, descending bool, ok bool) {
+	terms := parseOrderByTerms(ctx, modifiers)
 	if len(terms) == 0 {
 		return "", false, false
 	}
@@ -2342,7 +1498,7 @@ func parseOrderByModifier(modifiers string) (column string, descending bool, ok 
 // ok is false when the keyword is absent or the value is not a non-negative
 // integer.
 func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keyword string) (value int, ok bool) {
-	idx := findKeywordIndex(modifiers, keyword)
+	idx := topLevelKeywordIndex(ctx, modifiers, keyword)
 	if idx == -1 {
 		return 0, false
 	}
@@ -2352,7 +1508,7 @@ func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keywo
 		if otherKeyword == keyword {
 			continue
 		}
-		if kidx := findKeywordIndex(kwPart, otherKeyword); kidx != -1 && kidx < nextKw {
+		if kidx := topLevelKeywordIndex(ctx, kwPart, otherKeyword); kidx != -1 && kidx < nextKw {
 			nextKw = kidx
 		}
 	}
@@ -2477,6 +1633,4 @@ func selectTopKRowsForOrder(rows [][]interface{}, colIdx int, descending bool, k
 var (
 	// callPropertyAccessPattern is a variable.property reference in a CALL.
 	callPropertyAccessPattern = regexp.MustCompile(`(\w+)\.(\w+)`)
-	// variableNullCheckPattern is "variable IS [NOT] NULL".
-	variableNullCheckPattern = regexp.MustCompile(`(?i)^([A-Za-z_][A-Za-z0-9_]*)\s+IS\s+(NOT\s+)?NULL$`)
 )

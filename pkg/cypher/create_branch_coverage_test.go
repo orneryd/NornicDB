@@ -18,25 +18,25 @@ func TestExecuteCreate_BranchCoverage(t *testing.T) {
 	t.Run("rejects empty split patterns without writes", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (a:KeepMe), , (b:KeepMe)", nil)
 		require.Error(t, err)
-		nodes, err := store.GetNodesByLabel("KeepMe")
+		nodes, err := store.GetNodesByLabel(ctx, "KeepMe")
 		require.NoError(t, err)
 		require.Empty(t, nodes)
 	})
 
 	t.Run("empty label name is rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (n:)", getParamsFromContext(ctx))
-		requireSyntaxErrorStatus(t, err, "CREATE (n:)")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "CREATE (n:)")
 	})
 
 	t.Run("invalid label identifier is rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (n:Bad-Label)", getParamsFromContext(ctx))
-		requireSyntaxErrorStatus(t, err, "CREATE (n:Bad-Label)")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "CREATE (n:Bad-Label)")
 	})
 
 	t.Run("invalid relationship type is rejected", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE (a:Person)-[:BAD-TYPE]->(b:Person)", getParamsFromContext(ctx))
-		requireSyntaxErrorStatus(t, err, "CREATE (a:Person)-[:BAD-TYPE]->(b:Person)")
-		nodes, err := store.GetNodesByLabel("Person")
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "CREATE (a:Person)-[:BAD-TYPE]->(b:Person)")
+		nodes, err := store.GetNodesByLabel(ctx, "Person")
 		require.NoError(t, err)
 		require.Empty(t, nodes)
 	})
@@ -48,7 +48,7 @@ func TestExecuteCreate_BranchCoverage(t *testing.T) {
 		assert.Equal(t, 2, res.Stats.NodesCreated)
 		assert.Equal(t, 1, res.Stats.RelationshipsCreated)
 
-		edges, err := store.AllEdges()
+		edges, err := store.AllEdges(ctx)
 		require.NoError(t, err)
 		found := false
 		for _, e := range edges {

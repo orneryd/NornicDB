@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -16,7 +18,7 @@ import (
 // take the batched fast path (UnwindMultiMatchCreateBatch) and produce
 // exactly one edge per row.
 func TestUnwindMultiMatchCreatePokecShape(t *testing.T) {
-	badger, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir()})
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badger.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(badger, "test"))
@@ -53,7 +55,7 @@ func TestUnwindMultiMatchCreatePokecShape(t *testing.T) {
 // TestUnwindMultiMatchCreateCommaMatchMissingRow covers a row whose value
 // matches no node: the fast path must skip the row, not fabricate edges.
 func TestUnwindMultiMatchCreateCommaMatchMissingRow(t *testing.T) {
-	badger, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir()})
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badger.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(badger, "test"))
@@ -78,7 +80,7 @@ func TestUnwindMultiMatchCreateCommaMatchMissingRow(t *testing.T) {
 // TestUnwindMultiMatchCreateRowMapPrefetch verifies the map-row shape still
 // produces exact edges after the pipeline consumes the batch prefetch index.
 func TestUnwindMultiMatchCreateRowMapPrefetch(t *testing.T) {
-	badger, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir()})
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badger.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(badger, "test"))

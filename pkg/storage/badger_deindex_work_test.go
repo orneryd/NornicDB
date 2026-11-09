@@ -13,7 +13,7 @@ func TestDeindexWork_PutAndGet(t *testing.T) {
 		Status:      "pending",
 	}
 
-	if err := eng.PutDeindexWorkItem(item); err != nil {
+	if err := eng.PutDeindexWorkItem(t.Context(), item); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,10 +51,10 @@ func TestDeindexWork_Delete(t *testing.T) {
 		TargetID:   "nornic:node1",
 		Status:     "pending",
 	}
-	if err := eng.PutDeindexWorkItem(item); err != nil {
+	if err := eng.PutDeindexWorkItem(t.Context(), item); err != nil {
 		t.Fatal(err)
 	}
-	if err := eng.DeleteDeindexWorkItem("deindex:nornic:node1"); err != nil {
+	if err := eng.DeleteDeindexWorkItem(t.Context(), "deindex:nornic:node1"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := eng.GetDeindexWorkItem("deindex:nornic:node1")
@@ -75,7 +75,7 @@ func TestDeindexWork_ScanPending(t *testing.T) {
 		{WorkItemID: "w3", TargetID: "nornic:c", Status: "pending"},
 	}
 	for _, item := range items {
-		if err := eng.PutDeindexWorkItem(item); err != nil {
+		if err := eng.PutDeindexWorkItem(t.Context(), item); err != nil {
 			t.Fatal(err)
 		}
 	}

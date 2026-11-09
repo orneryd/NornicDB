@@ -1,7 +1,10 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +33,7 @@ func (r bridgeFirstReranker) Rerank(_ context.Context, _ string, candidates []se
 		}
 		ranked = append(ranked, search.RerankResult{ID: candidate.ID, Content: candidate.Content, OriginalRank: index + 1, FinalScore: score})
 	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].FinalScore > ranked[j].FinalScore })
 	return ranked, nil
 }
 
@@ -39,11 +43,11 @@ func (r bridgeFirstReranker) Rerank(_ context.Context, _ string, candidates []se
 // an unavailable one isn't called.
 func TestCallDbRRetrieveGraphReranksFusedPool(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
-	svc := search.NewServiceWithDimensions(store, 3)
+	svc := search.NewService(store, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.EnableRelationshipSearch(nil)
 	svc.StartRelationshipIndex()
@@ -116,9 +120,9 @@ func TestCallDbRRetrieveGraphReranksChunkedQueryHits(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	exec.SetEmbedder(oneChunkMatchingEmbedder{chunks: []string{"bravo", "zzzz", "yyyy"}})
-	_, err := store.CreateNode(&storage.Node{ID: "src", Labels: []string{"Source"}, Properties: map[string]interface{}{"text": "bravo notes"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "src", Labels: []string{"Source"}, Properties: map[string]interface{}{"text": "bravo notes"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 	require.NoError(t, err)
-	svc := search.NewServiceWithDimensions(store, 2)
+	svc := search.NewService(store, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.BuildIndexes(ctx))
 	exec.SetSearchService(svc)

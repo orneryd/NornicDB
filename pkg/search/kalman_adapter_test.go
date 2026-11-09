@@ -2,12 +2,311 @@ package search
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
+
+type kalmanPartialReranker struct{}
+
+func (kalmanPartialReranker) Name() string                     { return "kalman-partial" }
+func (kalmanPartialReranker) Enabled() bool                    { return true }
+func (kalmanPartialReranker) IsAvailable(context.Context) bool { return true }
+func (kalmanPartialReranker) Rerank(_ context.Context, _ string, candidates []RerankCandidate) ([]RerankResult, error) {
+	for index := range candidates {
+		if candidates[index].ID == "c" {
+			return []RerankResult{{
+				ID: candidates[index].ID, OriginalRank: index + 1,
+				BiScore: candidates[index].Score, CrossScore: 0.005, FinalScore: 0.005,
+			}}, nil
+		}
+	}
+	return nil, nil
+}
+
+type kalmanFailingReranker struct{ calls *int }
+
+func (r kalmanFailingReranker) Name() string                     { return "kalman-failing" }
+func (r kalmanFailingReranker) Enabled() bool                    { return true }
+func (r kalmanFailingReranker) IsAvailable(context.Context) bool { return true }
+func (r kalmanFailingReranker) Rerank(context.Context, string, []RerankCandidate) ([]RerankResult, error) {
+	*r.calls++
+	return nil, fmt.Errorf("forced provider failure")
+}
+
+func TestKalmanSearchAdapterPreservesCanonicalRerankOrder(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
+	t.Cleanup(func() { _ = service.Close() })
+
+	query := "canonical order"
+	options := DefaultSearchOptions()
+	options.Limit = 3
+	options.RerankEnabled = true
+	options.RerankTopK = 3
+	candidates := []RerankCandidate{
+		{ID: "a", Content: "alpha", Score: 0.03},
+		{ID: "b", Content: "beta", Score: 0.02},
+		{ID: "c", Content: "gamma", Score: 0.01},
+	}
+	outcome := service.runRerank(ctx, kalmanPartialReranker{}, query, candidates, rerankRunOptions{providerLimit: 3})
+	if outcome.Method != rerankMethodApplied || outcome.FallbackTriggered {
+		t.Fatalf("unexpected owner outcome: method=%q fallback=%v reason=%q", outcome.Method, outcome.FallbackTriggered, outcome.FallbackReason)
+	}
+
+	results := make([]SearchResult, len(outcome.Results))
+	for index := range outcome.Results {
+		result := outcome.Results[index]
+		results[index] = SearchResult{ID: result.ID, NodeID: storage.NodeID(result.ID), Score: result.FinalScore}
+	}
+	response := &SearchResponse{
+		Status: "success", Query: query, Results: results, Returned: len(results),
+		SearchMethod: "rrf_hybrid+rerank", rerankApplied: true, rerankOrderOwned: true,
+	}
+	options.MinSimilarity = service.resolveMinSimilarity(options)
+	service.resultCache = newSearchResultCache(4, time.Minute)
+	cacheKey := service.cacheNamespace + "\x00" + strconv.FormatUint(service.IndexRevision(), 10) + "\x00" + searchCacheKey(query, nil, options)
+	service.resultCache.Put(context.Background(), cacheKey, response)
+
+	config := DefaultKalmanSearchConfig()
+	config.EnableScoreSmoothing = false
+	config.EnableRankingStability = false
+	config.EnableLatencyPrediction = false
+	adapter := NewKalmanSearchAdapter(service, config)
+	got, err := adapter.Search(ctx, query, nil, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotIDs := make([]string, len(got.Results))
+	for index := range got.Results {
+		gotIDs[index] = got.Results[index].ID
+	}
+	wantIDs := []string{"c", "a", "b"}
+	if fmt.Sprint(gotIDs) != fmt.Sprint(wantIDs) {
+		t.Fatalf("canonical order changed: got %v want %v", gotIDs, wantIDs)
+	}
+	if got.SearchMethod != "rrf_hybrid+rerank" || got.FallbackTriggered || got.FallbackReason != SearchFallbackNone {
+		t.Fatalf("unexpected adapter outcome: method=%q fallback=%v reason=%q", got.SearchMethod, got.FallbackTriggered, got.FallbackReason)
+	}
+}
+
+func TestKalmanSearchAdapterPreservesCanonicalFallbackOrderAfterStabilityHistory(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
+	t.Cleanup(func() { _ = service.Close() })
+	calls := 0
+
+	options := DefaultSearchOptions()
+	options.Limit = 3
+	options.RerankEnabled = true
+	options.RerankTopK = 3
+	candidates := []RerankCandidate{
+		{ID: "a", Content: "alpha", Score: 2.0 / 61.0},
+		{ID: "b", Content: "beta", Score: 2.0 / 62.0},
+		{ID: "c", Content: "gamma", Score: 2.0 / 63.0},
+	}
+	outcome := service.runRerank(ctx, kalmanFailingReranker{calls: &calls}, "fallback", candidates, rerankRunOptions{providerLimit: 3})
+	if outcome.Method != rerankMethodOriginal || !outcome.FallbackTriggered || outcome.FallbackReason != SearchFallbackRerankFailed {
+		t.Fatalf("unexpected owner outcome: method=%q fallback=%v reason=%q", outcome.Method, outcome.FallbackTriggered, outcome.FallbackReason)
+	}
+	if calls != 1 {
+		t.Fatalf("provider calls=%d want 1", calls)
+	}
+
+	service.resultCache = newSearchResultCache(4, time.Minute)
+	cacheResponse := func(query string, response *SearchResponse) {
+		resolved := *options
+		resolved.MinSimilarity = service.resolveMinSimilarity(&resolved)
+		key := service.cacheNamespace + "\x00" + strconv.FormatUint(service.IndexRevision(), 10) + "\x00" + searchCacheKey(query, nil, &resolved)
+		service.resultCache.Put(context.Background(), key, response)
+	}
+	config := DefaultKalmanSearchConfig()
+	config.EnableScoreSmoothing = false
+	config.EnableRankingStability = true
+	config.EnableLatencyPrediction = false
+	adapter := NewKalmanSearchAdapter(service, config)
+	for _, query := range []string{"history-1", "history-2"} {
+		cacheResponse(query, &SearchResponse{
+			Status: "success", Query: query,
+			Results:  []SearchResult{{ID: "b", NodeID: storage.NodeID("b"), Score: 2.0 / 62.0}},
+			Returned: 1, SearchMethod: "rrf_hybrid",
+		})
+		if _, err := adapter.Search(ctx, query, nil, options); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results := make([]SearchResult, len(outcome.Results))
+	for index, result := range outcome.Results {
+		results[index] = SearchResult{ID: result.ID, NodeID: storage.NodeID(result.ID), Score: result.FinalScore}
+	}
+	fallbackResponse := &SearchResponse{
+		Status: "success", Query: "fallback", Results: results, Returned: len(results),
+		SearchMethod:      "rrf_hybrid",
+		FallbackTriggered: true, FallbackReason: SearchFallbackRerankFailed,
+		rerankOrderOwned: true,
+	}
+	cacheResponse("fallback", fallbackResponse)
+	got, err := adapter.Search(ctx, "fallback", nil, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotIDs := make([]string, len(got.Results))
+	for index := range got.Results {
+		gotIDs[index] = got.Results[index].ID
+	}
+	wantIDs := []string{"a", "b", "c"}
+	if fmt.Sprint(gotIDs) != fmt.Sprint(wantIDs) {
+		t.Fatalf("canonical fallback order changed: got %v want %v", gotIDs, wantIDs)
+	}
+	if got.SearchMethod != "rrf_hybrid" || !got.FallbackTriggered || got.FallbackReason != SearchFallbackRerankFailed {
+		t.Fatalf("unexpected adapter outcome: method=%q fallback=%v reason=%q", got.SearchMethod, got.FallbackTriggered, got.FallbackReason)
+	}
+}
+
+func TestKalmanSearchAdapterPreservesCanonicalFallbackOrderThroughPublicSearch(t *testing.T) {
+	ctx := context.Background()
+	engine := newNamespacedEngine(t)
+	service := NewService(engine, 2, nil)
+	t.Cleanup(func() { _ = service.Close() })
+	for index, spec := range []struct {
+		id     string
+		labels []string
+		vector []float32
+	}{
+		{id: "a", labels: []string{"Doc"}, vector: []float32{1, 0}},
+		{id: "b", labels: []string{"Doc", "History"}, vector: []float32{0.99, 0.01}},
+		{id: "c", labels: []string{"Doc"}, vector: []float32{0.98, 0.02}},
+	} {
+		node := &storage.Node{
+			ID: storage.NodeID(spec.id), Labels: spec.labels,
+			Properties:      map[string]any{"content": "alpha document " + fmt.Sprint(index)},
+			ChunkEmbeddings: [][]float32{spec.vector},
+		}
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
+			t.Fatal(err)
+		}
+		if err := service.IndexNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(service.vectorIndex), NewCPUExactScorer(service.vectorIndex))
+	calls := 0
+	service.SetReranker(kalmanFailingReranker{calls: &calls})
+	config := DefaultKalmanSearchConfig()
+	config.EnableScoreSmoothing = false
+	config.EnableRankingStability = true
+	config.EnableLatencyPrediction = false
+	adapter := NewKalmanSearchAdapter(service, config)
+
+	history := DefaultSearchOptions()
+	history.Limit = 1
+	history.Types = []string{"History"}
+	history.RerankEnabled = true
+	for range 2 {
+		response, err := adapter.Search(ctx, "alpha", []float32{1, 0}, history)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(response.Results) != 1 || response.Results[0].ID != "b" {
+			t.Fatalf("history did not establish b: %+v", response.Results)
+		}
+	}
+
+	options := DefaultSearchOptions()
+	options.Limit = 3
+	options.Types = []string{"Doc"}
+	options.RerankEnabled = true
+	options.RerankTopK = 3
+	got, err := adapter.Search(ctx, "alpha", []float32{1, 0}, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotIDs := make([]string, len(got.Results))
+	for index := range got.Results {
+		gotIDs[index] = got.Results[index].ID
+	}
+	wantIDs := []string{"a", "b", "c"}
+	if fmt.Sprint(gotIDs) != fmt.Sprint(wantIDs) {
+		t.Fatalf("public search fallback order changed: got %v want %v", gotIDs, wantIDs)
+	}
+	if got.SearchMethod != "rrf_hybrid" || !got.FallbackTriggered || got.FallbackReason != SearchFallbackRerankFailed {
+		t.Fatalf("unexpected public adapter outcome: method=%q fallback=%v reason=%q", got.SearchMethod, got.FallbackTriggered, got.FallbackReason)
+	}
+	if calls < 2 {
+		t.Fatalf("provider calls=%d want at least 2", calls)
+	}
+}
+
+func TestConcurrentCachedKalmanReadersOwnTheirResponses(t *testing.T) {
+	ctx := context.Background()
+	engine := newNamespacedEngine(t)
+	service := NewService(engine, 2, nil)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	for _, id := range []string{"a", "b", "c"} {
+		node := &storage.Node{
+			ID: storage.NodeID(id), Labels: []string{"Doc"},
+			Properties:      map[string]any{"content": "alpha document " + id},
+			ChunkEmbeddings: [][]float32{{1, 0}},
+		}
+		_, err := engine.CreateNode(t.Context(), node)
+		require.NoError(t, err)
+		require.NoError(t, service.IndexNode(node))
+	}
+	service.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(service.vectorIndex), NewCPUExactScorer(service.vectorIndex))
+	service.SetReranker(kalmanPartialReranker{})
+	options := DefaultSearchOptions()
+	options.Limit = 3
+	options.RerankEnabled = true
+	options.RerankTopK = 3
+	warm, err := service.Search(ctx, "alpha", []float32{1, 0}, options)
+	require.NoError(t, err)
+	require.Equal(t, "rrf_hybrid+rerank", warm.SearchMethod)
+	wantIDs := make([]string, len(warm.Results))
+	for index := range warm.Results {
+		wantIDs[index] = warm.Results[index].ID
+	}
+
+	config := DefaultKalmanSearchConfig()
+	config.EnableScoreSmoothing = false
+	config.EnableRankingStability = false
+	config.EnableLatencyPrediction = false
+	adapters := []*KalmanSearchAdapter{NewKalmanSearchAdapter(service, config), NewKalmanSearchAdapter(service, config)}
+	start := make(chan struct{})
+	errors := make(chan error, len(adapters))
+	var group sync.WaitGroup
+	for _, adapter := range adapters {
+		group.Add(1)
+		go func(adapter *KalmanSearchAdapter) {
+			defer group.Done()
+			<-start
+			for range 100 {
+				owned := *options
+				response, err := adapter.Search(ctx, "alpha", []float32{1, 0}, &owned)
+				if err != nil {
+					errors <- err
+					return
+				}
+				if got := []string{response.Results[0].ID, response.Results[1].ID, response.Results[2].ID}; fmt.Sprint(got) != fmt.Sprint(wantIDs) {
+					errors <- fmt.Errorf("cached order changed: %v", got)
+					return
+				}
+			}
+		}(adapter)
+	}
+	close(start)
+	group.Wait()
+	close(errors)
+	for err := range errors {
+		require.NoError(t, err)
+	}
+}
 
 func TestDefaultKalmanSearchConfig(t *testing.T) {
 	cfg := DefaultKalmanSearchConfig()
@@ -34,7 +333,7 @@ func TestNewKalmanSearchAdapter(t *testing.T) {
 	engine := newNamespacedEngine(t)
 
 	// Create search service
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -43,6 +342,16 @@ func TestNewKalmanSearchAdapter(t *testing.T) {
 	}
 	if adapter.service != service {
 		t.Error("Service not set correctly")
+	}
+	if got := adapter.GetService(); got != service {
+		t.Errorf("GetService returned %v, want the service the adapter was built with", got)
+	}
+	stats := adapter.GetStats()
+	if stats.TotalQueries != 0 {
+		t.Errorf("Initial TotalQueries should be 0")
+	}
+	if stats.ScoresSmoothed != 0 {
+		t.Errorf("Initial ScoresSmoothed should be 0")
 	}
 	if adapter.docFilters == nil {
 		t.Error("docFilters should be initialized")
@@ -61,7 +370,7 @@ func TestKalmanSearchAdapter_EnhanceResult(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	result := SearchResult{
@@ -85,7 +394,7 @@ func TestKalmanSearchAdapter_EnhanceResult(t *testing.T) {
 
 func TestKalmanSearchAdapter_ApplyRankingStability(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	// Create some ranking history
@@ -113,100 +422,74 @@ func TestKalmanSearchAdapter_ApplyRankingStability(t *testing.T) {
 	if !doc1Boosted {
 		t.Error("Expected doc-1 to have stability boost")
 	}
-}
 
-func TestKalmanSearchAdapter_RecordRanking(t *testing.T) {
-	engine := newNamespacedEngine(t)
-	service := NewService(engine)
-
-	cfg := DefaultKalmanSearchConfig()
-	cfg.StabilityWindow = 3
-	adapter := NewKalmanSearchAdapter(service, cfg)
-
-	results := []SearchResult{
+	// Ranking history keeps at most StabilityWindow entries.
+	trimmedConfig := DefaultKalmanSearchConfig()
+	trimmedConfig.StabilityWindow = 3
+	trimmed := NewKalmanSearchAdapter(service, trimmedConfig)
+	trimmedResults := []SearchResult{
 		{ID: "doc-1", Score: 0.9},
 		{ID: "doc-2", Score: 0.8},
 		{ID: "doc-3", Score: 0.7},
 	}
-
-	// Record multiple rankings
 	for i := 0; i < 5; i++ {
-		adapter.recordRanking("query", results)
+		trimmed.recordRanking("query", trimmedResults)
 	}
-
-	// Should trim to window size
-	if len(adapter.recentRankings) != 3 {
-		t.Errorf("Expected 3 rankings (window size), got %d", len(adapter.recentRankings))
+	if len(trimmed.recentRankings) != 3 {
+		t.Errorf("Expected 3 rankings (window size), got %d", len(trimmed.recentRankings))
 	}
 }
 
 func TestKalmanSearchAdapter_SortByScore(t *testing.T) {
-	engine := newNamespacedEngine(t)
-	service := NewService(engine)
-	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
-
-	results := []SearchResult{
+	response := &SearchResponse{Results: []SearchResult{
 		{ID: "doc-1", Score: 0.5},
 		{ID: "doc-2", Score: 0.9},
 		{ID: "doc-3", Score: 0.7},
-	}
+	}}
 
-	adapter.sortByScore(results)
+	if !response.reorderResultsByScore() {
+		t.Fatal("expected non-reranked response to be sortable")
+	}
 
 	// Should be sorted highest first
-	if results[0].ID != "doc-2" {
-		t.Errorf("Expected doc-2 first, got %s", results[0].ID)
+	if response.Results[0].ID != "doc-2" {
+		t.Errorf("Expected doc-2 first, got %s", response.Results[0].ID)
 	}
-	if results[1].ID != "doc-3" {
-		t.Errorf("Expected doc-3 second, got %s", results[1].ID)
+	if response.Results[1].ID != "doc-3" {
+		t.Errorf("Expected doc-3 second, got %s", response.Results[1].ID)
 	}
-	if results[2].ID != "doc-1" {
-		t.Errorf("Expected doc-1 third, got %s", results[2].ID)
-	}
-}
-
-func TestKalmanSearchAdapter_GetPredictedLatency(t *testing.T) {
-	// Enable Kalman filtering
-	cleanup := config.WithKalmanEnabled()
-	defer cleanup()
-
-	engine := newNamespacedEngine(t)
-	service := NewService(engine)
-	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
-
-	// Simulate some latency measurements
-	for i := 0; i < 10; i++ {
-		adapter.latencyFilter.Process(float64(10 + i))
-	}
-
-	predicted := adapter.GetPredictedLatency(5)
-
-	// Should predict a reasonable value
-	if predicted < 0 {
-		t.Errorf("Predicted latency should be non-negative, got %f", predicted)
+	if response.Results[2].ID != "doc-1" {
+		t.Errorf("Expected doc-1 third, got %s", response.Results[2].ID)
 	}
 }
 
-func TestKalmanSearchAdapter_GetLatencyTrend(t *testing.T) {
-	// Enable Kalman filtering
+func TestKalmanSearchAdapter_LatencyForecast(t *testing.T) {
 	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
-
-	engine := newNamespacedEngine(t)
-	service := NewService(engine)
-	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
-
-	// Simulate increasing latency (positive trend)
-	for i := 0; i < 10; i++ {
-		adapter.latencyFilter.Process(float64(10 + i*2))
-	}
-
-	trend := adapter.GetLatencyTrend()
-
-	// Should show positive velocity (getting slower)
-	if trend <= 0 {
-		t.Logf("Trend may depend on filter convergence: %f", trend)
-		// Don't fail - filter behavior depends on many factors
+	for _, tc := range []struct {
+		name  string
+		step  int
+		trend bool
+	}{{name: "predicted latency", step: 1}, {name: "latency trend", step: 2, trend: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newNamespacedEngine(t)
+			service := NewService(engine, DefaultVectorDimensions, nil)
+			adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
+			for i := 0; i < 10; i++ {
+				adapter.latencyFilter.Process(float64(10 + i*tc.step))
+			}
+			if tc.trend {
+				trend := adapter.GetLatencyTrend()
+				if trend <= 0 {
+					t.Logf("Trend may depend on filter convergence: %f", trend)
+				}
+				return
+			}
+			predicted := adapter.GetPredictedLatency(5)
+			if predicted < 0 {
+				t.Errorf("Predicted latency should be non-negative, got %f", predicted)
+			}
+		})
 	}
 }
 
@@ -216,7 +499,7 @@ func TestKalmanSearchAdapter_GetDocumentRelevanceTrend(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	// Process some results to create document filters
@@ -246,7 +529,7 @@ func TestKalmanSearchAdapter_GetRisingDocuments(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	// Create some document filters with different trends
@@ -263,38 +546,13 @@ func TestKalmanSearchAdapter_GetRisingDocuments(t *testing.T) {
 	_ = falling
 }
 
-func TestKalmanSearchAdapter_GetStats(t *testing.T) {
-	engine := newNamespacedEngine(t)
-	service := NewService(engine)
-	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
-
-	stats := adapter.GetStats()
-
-	if stats.TotalQueries != 0 {
-		t.Errorf("Initial TotalQueries should be 0")
-	}
-	if stats.ScoresSmoothed != 0 {
-		t.Errorf("Initial ScoresSmoothed should be 0")
-	}
-}
-
-func TestKalmanSearchAdapter_GetService(t *testing.T) {
-	engine := newNamespacedEngine(t)
-	service := NewService(engine)
-	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
-
-	if adapter.GetService() != service {
-		t.Error("GetService should return the underlying service")
-	}
-}
-
 func TestKalmanSearchAdapter_Reset(t *testing.T) {
 	// Enable Kalman filtering
 	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	// Create some state
@@ -325,7 +583,7 @@ func TestKalmanSearchAdapter_DisabledSmoothing(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 
 	cfg := DefaultKalmanSearchConfig()
 	cfg.EnableScoreSmoothing = false
@@ -358,14 +616,14 @@ func TestKalmanSearchAdapter_Search_Integration(t *testing.T) {
 		for j := range embedding {
 			embedding[j] = float32(i*j) / 1024.0
 		}
-		_, _ = engine.CreateNode(&storage.Node{
+		_, _ = engine.CreateNode(t.Context(), &storage.Node{
 			Labels:          []string{"Document"},
 			Properties:      map[string]interface{}{"title": "Doc " + string(rune('A'+i))},
 			ChunkEmbeddings: [][]float32{embedding},
 		})
 	}
 
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	_ = service.BuildIndexes(ctx)
 
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
@@ -413,7 +671,7 @@ func BenchmarkKalmanSearchAdapter_EnhanceResult(b *testing.B) {
 	defer config.DisableKalmanFiltering()
 
 	engine := newNamespacedEngine(b)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	result := SearchResult{

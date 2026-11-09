@@ -10,51 +10,94 @@ package storage
 // transactions and snapshot opens drain the buffer first.
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 )
+
+// bufferedMemoryAdmissionError keeps the shared application-pressure status
+// through storage, Cypher, Bolt and HTTP while retaining the limiting cause.
+type bufferedMemoryAdmissionError struct{ cause error }
+
+func (e *bufferedMemoryAdmissionError) Error() string { return e.StatusMessage() }
+func (e *bufferedMemoryAdmissionError) Unwrap() error { return e.cause }
+func (e *bufferedMemoryAdmissionError) BoltErrorCode() string {
+	return "Neo.TransientError.General.MemoryPoolOutOfMemoryError"
+}
+func (e *bufferedMemoryAdmissionError) StatusMessage() string {
+	if errors.Is(e.cause, memory.ErrStaleSample) {
+		return localization.ApplicationMemoryUnavailable().Fallback
+	}
+	return localization.ApplicationMemoryPressure().Fallback
+}
+
+func bufferedMemoryError(cause error) error {
+	message := localization.ApplicationMemoryPressure()
+	if cause == memory.ErrStaleSample {
+		message = localization.ApplicationMemoryUnavailable()
+	}
+	return &bufferedMemoryAdmissionError{cause: localization.NewLocalizedError(
+		"Neo.TransientError.General.MemoryPoolOutOfMemoryError", message, cause)}
+}
+
+// estimateBufferedCommitBytes forecasts payload plus read-overlay growth
+// before the replayable WAL boundary. The physical cgroup sample remains the
+// final pressure check; this deliberately overestimates shared references.
+func estimateBufferedCommitBytes(c *bufferedCommit) int64 {
+	bytes := int64(256 + len(c.namespace) + len(c.txID) + 256*len(c.ops))
+	for _, op := range c.ops {
+		bytes += estimateAffectedFactsBytes(op.DeletedEdgeFacts)
+		bytes += int64(len(op.NodeID) + len(op.EdgeID) + 16*len(op.DeletedEdgeIDs))
+		for _, node := range [2]*Node{op.Node, op.OldNode} {
+			bytes += estimateRetainedNodeBytes(node)
+		}
+		for _, edge := range [2]*Edge{op.Edge, op.OldEdge} {
+			bytes += estimateRetainedEdgeBytes(edge)
+		}
+	}
+	for key, value := range c.writes {
+		bytes += int64(64 + len(key) + len(value))
+	}
+	for key := range c.deletes {
+		bytes += int64(48 + len(key))
+	}
+	if c.idEntries != nil {
+		bytes += 64 + int64(16*(len(c.idEntries.nodes)+len(c.idEntries.edges)))
+		for _, id := range c.idEntries.nodes {
+			bytes += int64(len(id))
+		}
+		for _, id := range c.idEntries.edges {
+			bytes += int64(len(id))
+		}
+	}
+	for namespace := range c.propKeyDrain.counters {
+		bytes += int64(32 + len(namespace))
+	}
+	for _, entry := range c.propKeyDrain.pending {
+		bytes += int64(48 + len(entry.namespace) + len(entry.name))
+	}
+	bytes += int64(64*len(c.labelDeltas) + 64*len(c.edgeTypeDeltas) + 80*len(c.edgeTypeLabelDeltas))
+	return bytes
+}
 
 // SetBufferedCommitWAL installs the WAL that receives the durable payload of
 // every acknowledged write-behind commit. It is called once, at construction,
 // by NewWALEngine before the engine serves traffic.
 func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
-	b.bufferedCommitWAL = w
-}
-
-// bufferedFlushKey is the Badger key that marks one write-behind commit as
-// having reached Badger. It is written inside the same transaction that
-// applies the generation's data, so the marker is durable exactly when the
-// data is — replay at open skips any commit whose marker exists.
-func bufferedFlushKey(txID string) []byte {
-	key := make([]byte, 0, 1+len(txID))
-	key = append(key, prefixBufferedFlush)
-	key = append(key, txID...)
-	return key
-}
-
-// bufferedFlushMarkerExists reports whether a buffered commit's data has
-// already been applied to Badger (marker present).
-func (b *BadgerEngine) bufferedFlushMarkerExists(txID string) (bool, error) {
-	if txID == "" {
-		return false, nil
+	_, err := b.beginHelperTxn()
+	if err != nil {
+		return
 	}
-	key := bufferedFlushKey(txID)
-	exists := false
-	err := b.withView(func(txn *badger.Txn) error {
-		_, err := txn.Get(key)
-		if err == badger.ErrKeyNotFound {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		exists = true
-		return nil
-	})
-	return exists, err
+	defer b.work.Leave()
+	if b.writeBehind != nil {
+		w.bindPropertyDictionary(b.propKeyDict)
+	}
+	b.bufferedCommitWAL = w
 }
 
 // commitBufferedLocked captures the transaction's validated, materialized
@@ -62,7 +105,30 @@ func (b *BadgerEngine) bufferedFlushMarkerExists(txID string) (bool, error) {
 // transaction as committed without writing to Badger. The caller has already
 // run every validation phase (constraints, snapshot isolation, connected
 // deletes) and holds the engine write barrier.
-func (tx *BadgerTransaction) commitBufferedLocked() error {
+func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Context) error {
+	// The commit is acknowledged under its entities' write-order stripes, so
+	// a write of the same entities that commits to Badger itself
+	// (orderAfterBufferedCommits) falls wholly before or after it. They are
+	// taken first, as such a write takes them before any commit lock.
+	// A node it deletes is held exclusively, so no commit writing a
+	// relationship of that node is acknowledged alongside it.
+	var stripes, deletions orderStripeSet
+	entities, err := operationEntities(preparationContext, tx.operations)
+	if err != nil {
+		return tx.abortCommitLocked(err)
+	}
+	stripes.entities(entities)
+	for _, id := range entities.deletedNodes {
+		deletions.add(string(id))
+	}
+	if err := tx.engine.writeBehind.order.lockMixedContext(preparationContext, &stripes, &deletions); err != nil {
+		return tx.abortCommitLocked(err)
+	}
+	defer tx.engine.writeBehind.order.unlockMixed(&stripes, &deletions)
+	if err := tx.revalidateEndpointsLocked(preparationContext); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
 	physicalOps := tx.physicalOperationsLocked()
 	if len(physicalOps) == 0 && len(tx.pendingWrites) == 0 && len(tx.pendingDeletes) == 0 {
 		tx.releaseSnapshotReaderLocked()
@@ -80,11 +146,12 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// The tx keeps its slice header (OperationCount reads it post-commit);
 	// the backing arrays are exclusively consumed by the buffer from here.
 	c := bufferedCommit{
-		namespace: tx.namespace,
-		txID:      tx.ID,
-		ops:       physicalOps,
-		writes:    tx.pendingWrites,
-		deletes:   tx.pendingDeletes,
+		logicalTxID: tx.commitLogicalID,
+		namespace:   tx.namespace,
+		txID:        tx.ID,
+		ops:         physicalOps,
+		writes:      tx.pendingWrites,
+		deletes:     tx.pendingDeletes,
 	}
 	// Allocate the commit's MVCC version NOW, at ACK time: the DB-local
 	// sequence counter pins the commit's place in history, so the flusher
@@ -95,9 +162,31 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 		return err
 	} else {
 		c.version = version
+		// The version is published at the acknowledgement below, or
+		// abandoned if the commit fails before it, whichever ends this call.
+		defer tx.engine.mvccReservations.publishTxn(tx.badgerTx)
 	}
 	c.counterNodeMax, c.counterEdgeMax = tx.engine.idDict.flushTxnCounters(tx.badgerTx)
 	c.idEntries = tx.engine.idDict.takeTxnCommitting(tx.badgerTx)
+	// A rejected pre-WAL commit drops entries that no other transaction adopted.
+	transferred := false
+	defer func() {
+		if transferred {
+			return
+		}
+		tx.engine.idDict.abandonPending(c.idEntries)
+		if c.idEntries != nil {
+			clear(c.idEntries.nodes)
+			clear(c.idEntries.edges)
+			clear(c.idEntries.claims)
+			c.idEntries.nodes = nil
+			c.idEntries.edges = nil
+			c.idEntries.claims = nil
+		}
+		if c.memoryLease != nil {
+			c.memoryLease.Release()
+		}
+	}()
 	c.hasCounters = true
 	c.propKeyDrain = tx.engine.propKeyDict.flushTxnCounters(tx.badgerTx)
 	// Capture the derived-count deltas the sync path applies after commit;
@@ -109,6 +198,42 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	c.edgeTypeDeltas = tx.pendingEdgeTypeCountDeltas
 	c.edgeTypeLabelDeltas = tx.pendingEdgeTypeLabelCountDeltas
 
+	logicalID := tx.ID
+	if tx.commitLogicalID != "" {
+		logicalID = tx.commitLogicalID
+	}
+	var accounting func()
+	if registry := tx.engine.storedEntityObservers.Load(); registry != nil {
+		if observer := (*registry)[tx.namespace].observer; observer != nil {
+			changes, err := tx.engine.captureStoredEntityChanges(preparationContext, storedEntityCapture{staged: tx})
+			if err != nil {
+				tx.closeLocked(TxStatusRolledBack, true, nil)
+				return err
+			}
+			accounting, err = observer(StoredEntityPublication{Namespace: tx.namespace, LogicalID: logicalID, Changes: changes})
+			if err == nil {
+				err = preparationContext.Err()
+			}
+			if err != nil {
+				tx.closeLocked(TxStatusRolledBack, true, nil)
+				return err
+			}
+		}
+	}
+
+	forecast := estimateBufferedCommitBytes(&c)
+	if forecast > maxBufferedWALPayloadBytes {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return fmt.Errorf("wal: buffered commit exceeds decoded payload limit: %w", badger.ErrTxnTooBig)
+	}
+	if policy := tx.engine.memoryPolicy; policy != nil {
+		lease, err := policy.Reserve(forecast)
+		if err != nil {
+			tx.closeLocked(TxStatusRolledBack, true, nil)
+			return bufferedMemoryError(err)
+		}
+		c.memoryLease = lease
+	}
 	// Durability boundary: write the commit's full payload to the WAL and
 	// push it to the kernel page cache BEFORE acknowledging. If the process
 	// is killed before the background flusher lands the generation, the WAL
@@ -117,27 +242,44 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// kill -9 loss window without reintroducing the per-commit fsync the
 	// buffer exists to avoid; power-loss durability remains the durable
 	// synchronous path's contract.
-	if tx.engine.bufferedCommitWAL != nil {
-		if err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c); err != nil {
-			// The ACK must never outrun the durable record: failing to log
-			// the payload fails the commit.
-			tx.closeLocked(TxStatusRolledBack, true, nil)
-			return err
+	if err := DecidePublication(preparationContext, func() error {
+		if tx.engine.bufferedCommitWAL != nil {
+			c.walIDs = tx.engine.idDict
+			err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c, tx.engine.propKeyDict)
+			c.walIDs = nil
+			if err != nil {
+				return err
+			}
 		}
-	}
 
-	tx.releaseSnapshotReaderLocked()
-	tx.bufferedStagingTransferred = true
-	tx.engine.writeBehind.AppendCommit(c)
-	// The write is committed and visible to every later read the moment it is
-	// buffered, so the query-result cache's revision token must advance NOW,
-	// not at flush. The sync path advances it per-op through the notify*
-	// callbacks in its commit tail; the buffered path defers those callbacks
-	// to the flusher, so without this a cached read that shares no label with
-	// the write (e.g. a whole-type relationship count) stays stale until the
-	// generation flushes (PR #1043 retest @39f0f03f, issue A).
-	tx.engine.graphMutationVersions.changed(tx.namespace)
-	tx.bufferedAck.Store(true)
+		tx.releaseSnapshotReaderLocked()
+		tx.bufferedStagingTransferred = true
+		states := tx.engine.writeBehind.AppendCommit(c)
+		// Acknowledged: the commit's version is published to every later cut.
+		tx.engine.mvccReservations.publish(c.namespace, c.version.CommitSequence)
+		// Claims follow logical visibility, not the later materialization of
+		// historical images. Entity/value authority remains held until return.
+		// A concurrent flusher never republishes these normal ACK-time claims.
+		schema := tx.engine.GetSchemaForNamespace(tx.namespace)
+		tx.engine.publishUniqueValues(schema, states, ValidatedUniqueClaim)
+		if accounting != nil {
+			accounting()
+		}
+		transferred = true
+		// The write is committed and visible to every later read the moment it is
+		// buffered, so the query-result cache's revision token must advance NOW,
+		// not at flush. The sync path advances it per-op through the notify*
+		// callbacks in its commit tail; the buffered path defers those callbacks
+		// to the flusher, so without this a cached read that shares no label with
+		// the write (e.g. a whole-type relationship count) stays stale until the
+		// generation flushes (PR #1043 retest @39f0f03f, issue A).
+		tx.engine.graphMutationVersions.changed(tx.namespace)
+		tx.bufferedAck.Store(true)
+		return nil
+	}); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
 	tx.closeLocked(TxStatusCommitted, true, nil)
 	return nil
 }
@@ -148,24 +290,11 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 // and must not re-enter it), and through ordinary commits otherwise,
 // mirroring the sync commit path's finish.
 func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyTxnDrain) error {
-	if drain.empty() {
-		return nil
-	}
 	var to batchTarget = b.db
 	if cw.large != nil {
 		to = cw.large
 	}
-	w := &batchWriter{to: to}
-	defer w.discard()
-	err := drain.writeTo(w)
-	if err == nil {
-		err = w.flush()
-	}
-	if err != nil {
-		return err
-	}
-	b.propKeyDict.markPersisted(drain)
-	return nil
+	return b.propKeyDict.persistTxnCounters(cw.ctx, to, drain)
 }
 
 // replayWriteBehind replays one drained generation into Badger. It marks
@@ -175,11 +304,16 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	if len(commits) == 0 {
 		return nil
 	}
-	if err := b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }); err != nil {
-		return err
-	}
-	buf.markApplied()
-	return nil
+	return b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }, func() {
+		buf.markApplied()
+		// A claimed drain owns settlement after dispatch. Remove its overlay
+		// before a listener can Flush and wait on that same claim. Unclaimed
+		// replay keeps the existing replay/retirement separation: a later
+		// drain can retire and settle it itself.
+		if buf.draining.Load() {
+			b.writeBehind.removeDrained(buf)
+		}
+	})
 }
 
 // applyBufferedCommits replays buffered commits into Badger: a single Badger
@@ -190,18 +324,45 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 // durable exactly when the data is — recovery at open skips any commit whose
 // marker exists.
 func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
+	defer b.drainCommitNotifications()
 	return b.applyBufferedCommitsWithCountPublication(commits, nil)
 }
 
 // publishCounts retires the generation count overlay under the same locks that
-// publish persisted counters. Entity/cache callbacks run afterward without locks.
-func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func()) error {
+// publish persisted counters. beforeNotifications runs on success after the
+// count locks are released and before listener notifications become ready.
+func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func(), beforeNotifications ...func()) error {
 	if len(commits) == 0 {
 		return nil
 	}
 
-	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
-	cw := b.newCommitWriter(b.db, txn)
+	txn, readTs, err := b.db.beginTxn(true)
+	if err != nil {
+		return err
+	}
+	defer b.db.endRead(readTs)
+	// Acknowledged replay owns detached completion, independent of both the
+	// original caller and engine-stop cancellation. Select it once for the
+	// writer, token persistence and required post-durable count tail.
+	accepted := context.Background()
+	cw := b.newCommitWriter(accepted, b.db, txn)
+	// A recovered commit without a version reserves one in this writer; it
+	// is published with the replay, or abandoned with it.
+	defer b.mvccReservations.publishTxn(txn)
+	recovered := false
+	for _, commit := range commits {
+		if commit.recovered {
+			recovered = true
+			break
+		}
+	}
+	if !recovered {
+		cw.configureStoredEntityPublication("", true)
+	}
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	cw.notification = notification
+	defer func() { b.readyCommitNotification(notification) }()
+
 	// Write through the commit writer's own batch writer, exactly like the
 	// sync commit path: cw.finish() commits cw.batchWriter's open batch, so
 	// a separate batchWriter whose txn never follows the batch rotation
@@ -209,12 +370,63 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	// (discarded) transaction.
 	w := &cw.batchWriter
 
+	originalHoldLabel, originalHoldEdge := false, false
+	for _, commit := range commits {
+		originalHoldLabel = originalHoldLabel || len(commit.labelDeltas) > 0
+		originalHoldEdge = originalHoldEdge || len(commit.edgeTypeDeltas) > 0 || len(commit.edgeTypeLabelDeltas) > 0
+	}
+	commits, err = unappliedBufferedCommits(accepted, txn, commits)
+	if err != nil {
+		cw.discard()
+		return err
+	}
 	versions := make(map[string]MVCCVersion, 1)
 	var maxNode, maxEdge uint64
 	anyCounters := false
 	labelDeltas := make(map[namespaceLabel]int64)
 	edgeTypeDeltas := make(map[namespaceEdgeType]int64)
 	edgeTypeLabelDeltas := make(map[edgeTypeLabelDelta]int64)
+
+	// Count locks precede the commit gate even when assembly turns large.
+	for _, c := range commits {
+		for k, d := range c.labelDeltas {
+			labelDeltas[k] += d
+		}
+		for k, d := range c.edgeTypeDeltas {
+			edgeTypeDeltas[k] += d
+		}
+		for k, d := range c.edgeTypeLabelDeltas {
+			edgeTypeLabelDeltas[k] += d
+		}
+	}
+	holdLabel := len(labelDeltas) > 0 || originalHoldLabel
+	holdEdge := len(edgeTypeDeltas) > 0 || len(edgeTypeLabelDeltas) > 0 || originalHoldEdge
+	countsHeld := false
+	acquireCounts := func() {
+		if countsHeld {
+			return
+		}
+		if holdLabel {
+			b.labelCountWriteMu.Lock()
+		}
+		if holdEdge {
+			b.edgeTypeCountWriteMu.Lock()
+		}
+		b.totalCountWriteMu.Lock()
+		countsHeld = true
+	}
+	cw.beforeLarge = func(context.Context) error { acquireCounts(); return nil }
+	defer func() {
+		if countsHeld {
+			b.totalCountWriteMu.Unlock()
+			if holdEdge {
+				b.edgeTypeCountWriteMu.Unlock()
+			}
+			if holdLabel {
+				b.labelCountWriteMu.Unlock()
+			}
+		}
+	}()
 	abort := func(err error) error {
 		// Mirror the sync commit's abort: if the generation's writes turned
 		// the commit large, beginLargeCommit holds the commit gate
@@ -231,6 +443,48 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		return err
 	}
 
+	if len(commits) == 0 {
+		cw.discard()
+		acquireCounts()
+		if publishCounts != nil {
+			publishCounts()
+		}
+		b.totalCountWriteMu.Unlock()
+		if holdEdge {
+			b.edgeTypeCountWriteMu.Unlock()
+		}
+		if holdLabel {
+			b.labelCountWriteMu.Unlock()
+		}
+		countsHeld = false
+		for _, before := range beforeNotifications {
+			before()
+		}
+		return nil
+	}
+
+	// Capture constraint metadata before any write can promote the physical
+	// writer to the exclusive commit gate. Recovered operation images are
+	// hydrated below; their late key derivation reads only these snapshots.
+	schemas := make(map[string]*SchemaManager, 1)
+	constraints := make(map[string]*publicationConstraintView, 1)
+	for _, c := range commits {
+		if _, exists := schemas[c.namespace]; exists {
+			continue
+		}
+		if c.namespace == "" {
+			schemas[c.namespace] = nil // historical frames still publish membership
+			continue
+		}
+		schema := b.GetSchemaForNamespace(c.namespace)
+		schemas[c.namespace] = schema
+		view, err := capturePublicationConstraintView(accepted, schema)
+		if err != nil {
+			return abort(err)
+		}
+		constraints[c.namespace] = &view
+	}
+
 	for commitIndex := range commits {
 		c := &commits[commitIndex]
 		// The commit's MVCC version was allocated at ACK time; the flusher
@@ -244,7 +498,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			}
 		}
 		versions[c.namespace] = v
-		if c.hasCounters {
+		if c.hasCounters && !c.recovered {
 			anyCounters = true
 			if c.counterNodeMax > maxNode {
 				maxNode = c.counterNodeMax
@@ -262,27 +516,38 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		if err := b.persistReplayTxnCounters(cw, c.propKeyDrain); err != nil {
 			return abort(err)
 		}
+		writes, deletes := c.writes, c.deletes
 		if c.recovered {
-			if err := b.restoreBufferedOperationBodies(cw.txn, c); err != nil {
+			var err error
+			writes, deletes, err = b.rebindBufferedNumericIDs(cw.txn, c)
+			if err != nil {
+				return abort(err)
+			}
+			if err := b.restoreBufferedOperationBodies(cw.txn, c, writes, deletes); err != nil {
+				return abort(err)
+			}
+			if err := validateReboundWALWrites(writes, deletes); err != nil {
 				return abort(err)
 			}
 		}
-		if err := b.materializeMVCCCommitWithHeads(w, versions[c.namespace], c.ops, true); err != nil {
+		if err := b.materializeMVCCCommitWithHeads(accepted, w, versions[c.namespace], c.ops, true); err != nil {
 			return abort(err)
 		}
-		for keyStr := range c.deletes {
+		for keyStr := range deletes {
 			key := []byte(keyStr)
-			if err := w.write(func(t *badger.Txn) error { return t.Delete(key) }); err != nil {
+			cw.rawCache.add(b, key, c.writes[keyStr])
+			if err := w.write(accepted, func(t *badger.Txn) error { return t.Delete(key) }); err != nil {
 				return abort(err)
 			}
 		}
-		for keyStr, value := range c.writes {
-			if c.deletes[keyStr] {
+		for keyStr, value := range writes {
+			if deletes[keyStr] {
 				continue
 			}
 			key := []byte(keyStr)
+			cw.rawCache.add(b, key, c.writes[keyStr])
 			val := value
-			if err := w.write(func(t *badger.Txn) error { return t.Set(key, val) }); err != nil {
+			if err := w.write(accepted, func(t *badger.Txn) error { return b.setKeyWithPendingHint(t, key, val) }); err != nil {
 				return abort(err)
 			}
 		}
@@ -290,43 +555,66 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		// in Badger means the commit's writes are committed, so recovery
 		// replay can treat marker-present as already-applied.
 		if c.txID != "" {
-			markerKey := bufferedFlushKey(c.txID)
-			if err := w.write(func(t *badger.Txn) error { return t.Set(markerKey, nil) }); err != nil {
+			markerKey := bufferedCommitMarkerKey(c.namespace, c.txID, c.logicalTxID)
+			if err := w.write(accepted, func(t *badger.Txn) error { return t.Set(markerKey, nil) }); err != nil {
 				return abort(err)
 			}
 		}
-		for key, delta := range c.labelDeltas {
-			labelDeltas[key] += delta
-		}
-		for key, delta := range c.edgeTypeDeltas {
-			edgeTypeDeltas[key] += delta
-		}
-		for key, delta := range c.edgeTypeLabelDeltas {
-			edgeTypeLabelDeltas[key] += delta
-		}
 	}
 
-	// Derived counts change: hold the count locks from the moment the
-	// generation's writes can reach Badger until the deltas publish, in the
-	// same order the sync path acquires them (label, then edge type), so
-	// count readers never observe committed entities without their counts.
-	holdLabel := len(labelDeltas) > 0
-	holdEdge := len(edgeTypeDeltas) > 0 || len(edgeTypeLabelDeltas) > 0
-	if holdLabel {
-		b.labelCountWriteMu.Lock()
-	}
-	if holdEdge {
-		b.edgeTypeCountWriteMu.Lock()
-	}
+	acquireCounts()
 
-	// Total readers also cover cold prefix scans: keep the durable publication
-	// and counter-overlay retirement in one read boundary. Lock order is
-	// label, edge type, total; callbacks execute after all three unlock.
-	b.totalCountWriteMu.Lock()
+	var notificationOps []Operation
+	for _, c := range commits {
+		var err error
+		cw.publishKeys, err = appendOperationPublicationKeys(accepted, cw.publishKeys, constraints[c.namespace], c.ops)
+		if err != nil {
+			return abort(err)
+		}
+		notificationOps = append(notificationOps, c.ops...)
+	}
+	capturePublicationOperations(notification, notificationOps)
+	cw.publish = func(images *commitCacheImages) {
+		// All frames land at one physical boundary. Publish its endpoints,
+		// never historical intermediate operations or acknowledged frames.
+		for namespace, schema := range schemas {
+			var frames, recoveryFrames [][]Operation
+			for _, c := range commits {
+				if c.namespace == namespace {
+					frames = append(frames, c.ops)
+					if c.recovered {
+						recoveryFrames = append(recoveryFrames, c.ops)
+					}
+				}
+			}
+			// The generation is durable: its frames are selected on that
+			// accepted completion lifetime, so the fold cannot cancel.
+			states, _ := newCommitStates(accepted, frames...)
+			if len(recoveryFrames) > 0 {
+				claims := states
+				if len(recoveryFrames) != len(frames) {
+					// Normal frames already published their claims at ACK.
+					claims, _ = newCommitStates(accepted, recoveryFrames...)
+				}
+				b.publishUniqueValues(schema, claims, RecoveredUniqueClaim)
+			}
+			b.publishIndexMembership(states)
+			images.acceptStates(states)
+		}
+		for _, c := range commits {
+			b.publishCommitEffects(c.ops, false, c.recovered)
+		}
+	}
 
 	// The replay resolves IDs too: entries it found pending are persisted
 	// by its commit, as the sync path's (markTxnCommitted).
-	b.idDict.flushTxnCounters(cw.txn)
+	replayNodeMax, replayEdgeMax := b.idDict.flushTxnCounters(cw.txn)
+	if replayNodeMax > maxNode {
+		maxNode, anyCounters = replayNodeMax, true
+	}
+	if replayEdgeMax > maxEdge {
+		maxEdge, anyCounters = replayEdgeMax, true
+	}
 	committing := cw.txn
 	if err := cw.finish(); err != nil {
 		b.totalCountWriteMu.Unlock()
@@ -337,6 +625,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		if holdLabel {
 			b.labelCountWriteMu.Unlock()
 		}
+		countsHeld = false
 		return abort(err)
 	}
 	b.idDict.markTxnCommitted(committing)
@@ -358,10 +647,15 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	// rebuilding the authoritative counts — the sync path's recovery
 	// boundary. The combined transaction is atomic: on failure nothing was
 	// applied, so the per-tier retry below stays safe.
-	if err := b.applyWriteBehindCountDeltasLocked(labelDeltas, edgeTypeDeltas, edgeTypeLabelDeltas); err != nil {
+	//
+	// The generation was accepted before this tail (cw above carries its
+	// explicitly detached completion context): its count writes and any
+	// repair run on that same unbounded accepted lifetime, never on a
+	// caller's request or the engine stop signal.
+	if err := b.applyWriteBehindCountDeltasLocked(accepted, labelDeltas, edgeTypeDeltas, edgeTypeLabelDeltas); err != nil {
 		if holdLabel {
-			if tierErr := b.applyLabelCountDeltasLocked(labelDeltas); tierErr != nil {
-				if repairErr := b.rebuildAuthoritativeLabelCountsLocked(); repairErr != nil && b.log != nil {
+			if tierErr := b.applyLabelCountDeltasLocked(accepted, labelDeltas); tierErr != nil {
+				if repairErr := b.rebuildAuthoritativeLabelCountsLocked(accepted); repairErr != nil && b.log != nil {
 					b.log.Error("write-behind replay: label count delta apply and repair failed",
 						"subsystem", "storage", "update_error", tierErr, "repair_error", repairErr)
 				} else if b.log != nil {
@@ -371,8 +665,8 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			}
 		}
 		if holdEdge {
-			if tierErr := b.applyEdgeTypeCountDeltasLocked(edgeTypeDeltas); tierErr != nil {
-				if repairErr := b.rebuildAuthoritativeEdgeTypeCountsLocked(); repairErr != nil && b.log != nil {
+			if tierErr := b.applyEdgeTypeCountDeltasLocked(accepted, edgeTypeDeltas); tierErr != nil {
+				if repairErr := b.rebuildAuthoritativeEdgeTypeCountsLocked(accepted); repairErr != nil && b.log != nil {
 					b.log.Error("write-behind replay: edge-type count delta apply and repair failed",
 						"subsystem", "storage", "update_error", tierErr, "repair_error", repairErr)
 				} else if b.log != nil {
@@ -380,8 +674,8 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 						"subsystem", "storage", "error", tierErr)
 				}
 			}
-			if tierErr := b.applyEdgeTypeLabelCountDeltasLocked(edgeTypeLabelDeltas); tierErr != nil {
-				if repairErr := b.rebuildAuthoritativeEdgeTypeCountsLocked(); repairErr != nil && b.log != nil {
+			if tierErr := b.applyEdgeTypeLabelCountDeltasLocked(accepted, edgeTypeLabelDeltas); tierErr != nil {
+				if repairErr := b.rebuildAuthoritativeEdgeTypeCountsLocked(accepted); repairErr != nil && b.log != nil {
 					b.log.Error("write-behind replay: (label, type) count delta apply and repair failed",
 						"subsystem", "storage", "update_error", tierErr, "repair_error", repairErr)
 				} else if b.log != nil {
@@ -406,130 +700,48 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	if holdLabel {
 		b.labelCountWriteMu.Unlock()
 	}
-	// publishCommitOperations below advances the node-cache generation per
-	// written node (cacheStoreNode) and invalidates per deleted node, the
-	// same protection the sync tail uses; clearing the whole cache here
-	// would only destroy warm entries and re-decode work for readers.
-	schemas := make(map[string]*SchemaManager, 1)
-	for _, c := range commits {
-		schema := schemas[c.namespace]
-		if schema == nil && c.namespace != "" {
-			schema = b.GetSchemaForNamespace(c.namespace)
-			schemas[c.namespace] = schema
-		}
-		b.publishCommitOperations(c.namespace, schema, c.ops, c.recovered)
+
+	countsHeld = false
+	for _, before := range beforeNotifications {
+		before()
 	}
 	return nil
 }
 
-// publishCommitOperations mirrors the commit tail's callback and unique-value
-// cache updates for one buffered statement.
-func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishRevision bool) {
-	// Normal buffered writes already advanced their logical revision at ACK.
-	// Replaying durability must not invalidate stable query results once per row.
-	// Recovery has no prior ACK in this process and still publishes its revision.
-	notifyNodeCreated, notifyNodeUpdated := b.dispatchNodeCreated, b.dispatchNodeUpdated
-	notifyNodeDeleted := b.publishNodeDeleted
-	notifyEdgeCreated, notifyEdgeUpdated := b.dispatchEdgeCreated, b.dispatchEdgeUpdated
-	notifyEdgeDeleted := b.dispatchEdgeDeleted
-	if publishRevision {
-		notifyNodeCreated, notifyNodeUpdated, notifyNodeDeleted = b.notifyNodeCreated, b.notifyNodeUpdated, b.notifyNodeDeleted
-		notifyEdgeCreated, notifyEdgeUpdated, notifyEdgeDeleted = b.notifyEdgeCreated, b.notifyEdgeUpdated, b.notifyEdgeDeleted
+// publishCommitOperations publishes only derived memory state. The commit
+// writer orders it by entity and UNIQUE value; listeners run after retirement.
+// A nil schema explicitly excludes UNIQUE claims already published at logical
+// buffered ACK. Cache/count/revision publication retains its existing timing.
+func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishCounts bool, publishRevision bool, images *commitCacheImages) {
+	if namespace == "" {
+		schema = nil
 	}
-
-	for _, op := range ops {
-		switch op.Type {
-		case OpCreateNode:
-			b.cacheOnNodeCreatedWithCounts(op.Node, false)
-			notifyNodeCreated(op.Node)
-		case OpUpdateNode:
-			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-			notifyNodeUpdated(op.Node)
-		case OpDeleteNode:
-			if op.OldNode != nil {
-				// The replay's own pre-delete snapshot drives the property
-				// indexes: buffered nodes never entered the engine node
-				// cache, so the cache-based maintenance would leave their
-				// committed index entries dangling.
-				b.maintainPropertyIndexesOnNodeDeletedWithNode(op.NodeID, op.OldNode)
-				b.cacheOnNodeDeletedWithLabelsAndCounts(op.NodeID, op.OldNode.Labels, op.EdgesDeleted, false)
-			} else {
-				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, false)
-			}
-			for _, edgeID := range op.DeletedEdgeIDs {
-				notifyEdgeDeleted(edgeID)
-			}
-			notifyNodeDeleted(op.NodeID)
-		case OpCreateEdge:
-			b.cacheOnEdgeCreatedWithCounts(op.Edge, false)
-			notifyEdgeCreated(op.Edge)
-		case OpUpdateEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			b.cacheOnEdgeUpdated(oldType, op.Edge)
-			notifyEdgeUpdated(op.Edge)
-		case OpDeleteEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			b.cacheOnEdgeDeletedWithCounts(op.EdgeID, oldType, false)
-			notifyEdgeDeleted(op.EdgeID)
-		}
-	}
-
-	if namespace != "" && schema != nil && schema.HasUniqueValueTracking() {
-		for _, op := range ops {
-			switch op.Type {
-			case OpCreateNode:
-				if op.Node == nil {
-					continue
-				}
-				for _, label := range op.Node.Labels {
-					for propName, propValue := range op.Node.Properties {
-						schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-					}
-				}
-			case OpUpdateNode:
-				if op.OldNode != nil {
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-				if op.Node != nil {
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				}
-			case OpDeleteNode:
-				if op.OldNode == nil {
-					continue
-				}
-				for _, label := range op.OldNode.Labels {
-					for propName, propValue := range op.OldNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-		}
-	}
+	// The commit is accepted: its frame is selected on that completion
+	// lifetime, so the fold cannot cancel.
+	states, _ := newCommitStates(context.Background(), ops)
+	b.publishUniqueValues(schema, states, ValidatedUniqueClaim)
+	b.publishIndexMembership(states)
+	images.acceptStates(states)
+	b.publishCommitEffects(ops, publishCounts, publishRevision)
 }
 
-// applyWriteBehindCountDeltasLocked persists one generation's merged
-// derived-count deltas in a single metadata transaction. The caller must
-// hold labelCountWriteMu (for label deltas) and edgeTypeCountWriteMu (for
-// the edge-type tiers) across the user-data commit and this metadata update.
-func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(label map[namespaceLabel]int64, edgeType map[namespaceEdgeType]int64, edgeTypeLabel map[edgeTypeLabelDelta]int64) error {
+// publishCommitEffects retains operation multiplicity for cardinality,
+// observation and notifications. It never edits entity index membership.
+func (b *BadgerEngine) publishCommitEffects(ops []Operation, publishCounts, publishRevision bool) {
+	for _, op := range ops {
+		if publishCounts {
+			visitOperationTotalCounts(op, b.publishTotalCountChange)
+		}
+		observeCommitCacheOperation(op)
+	}
+	b.prepareCommitOperations(ops, false, publishRevision)
+}
+
+func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(ctx context.Context, label map[namespaceLabel]int64, edgeType map[namespaceEdgeType]int64, edgeTypeLabel map[edgeTypeLabelDelta]int64) error {
 	if len(label) == 0 && len(edgeType) == 0 && len(edgeTypeLabel) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for key, delta := range label {
 			if err := b.adjustLabelCountInTxn(txn, key.namespace, key.label, delta); err != nil {
 				return err
@@ -550,12 +762,77 @@ func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(label map[namespaceLabe
 }
 
 // FlushWriteBehind drains every buffered generation synchronously. It is a
-// no-op when write-behind is disabled.
-func (b *BadgerEngine) FlushWriteBehind() error {
+// no-op when write-behind is disabled. It holds the write barrier shared
+// while it drains, so Close does not release Badger under it (Close's own
+// final drain is admitted), and delivers the drained commits' notifications
+// once it released it, so no listener runs while a barrier waiter waits for
+// it.
+// Cancellation ends this wait; independently accepted replay retains its
+// terminal and settlement ownership. Callers supply a non-nil context;
+// context.Background selects a non-cancellable flush. Accepted replay retains
+// its separate completion lifetime.
+func (b *BadgerEngine) FlushWriteBehind(ctx context.Context) error {
 	if b.writeBehind == nil {
 		return nil
 	}
-	return b.writeBehind.Flush()
+	if err := b.writeBarrier.RLockContext(ctx); err != nil {
+		return err
+	}
+	b.mu.RLock()
+	closed := b.ensureOpenLocked(false) != nil
+	b.mu.RUnlock()
+	if closed {
+		b.writeBarrier.RUnlock()
+		if b.writeBehind.PendingOps() > 0 {
+			return ErrStorageClosed
+		}
+		return nil
+	}
+	gens, rotationErr := b.writeBehind.rotate(ctx, true)
+	// Every commit acknowledged before the flush is captured; the barrier
+	// goes before they are applied. The background worker applies a
+	// generation it claimed holding no barrier and then delivers its
+	// notifications: a flush waiting for it under the barrier would hold it
+	// across that generation's listeners.
+	b.writeBarrier.RUnlock()
+	if rotationErr != nil {
+		return rotationErr
+	}
+	// Rotation handed acknowledged work to the existing replay owner. Wake it
+	// even if cancellation prevents this caller from entering its wait.
+	b.writeBehind.signal()
+	err := b.writeBehind.flushContext(ctx, false, false)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// Retain any real apply failure already returned.
+		if err != nil {
+			return err
+		}
+		return ctxErr
+	}
+	b.drainCommitNotifications()
+	if err != nil {
+		return err
+	}
+	// A generation the background worker claimed is applied when flush
+	// returns, but the worker may still be delivering its notifications:
+	// wait for them, holding no lock, so every listener of a write
+	// acknowledged before the flush has run when it returns. A listener
+	// that flushes cannot wait on its own generation: it left the queue
+	// before its notifications were delivered.
+	for _, g := range gens {
+		if ctx.Done() == nil {
+			// A request that cannot cancel waits on the generation alone: no
+			// timer and no allocation per wait.
+			<-g.Settled()
+			continue
+		}
+		select {
+		case <-g.Settled():
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 // writeBehindEnabled reports whether the buffer is active.

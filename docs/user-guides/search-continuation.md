@@ -9,7 +9,7 @@ principal, and canonical database.
 
 | Operation | Fields                 | Result                                       |
 | --------- | ---------------------- | -------------------------------------------- |
-| START     | query/options plus `n` | First page and a qid when more results exist |
+| START     | query/options plus `n` | First page and a qid while more work may remain |
 | PULL      | `qid`, `n`             | Deterministic page at the token position     |
 | DISCARD   | `qid`, `discard: true` | Releases the retained stream                 |
 
@@ -18,6 +18,17 @@ not a lifetime ceiling. `max_results` is the optional explicit lifetime
 ceiling. A terminal response has `has_more: false` and no next qid; inspect
 `completion` to distinguish true exhaustion from a configured candidate budget
 or a requested result ceiling.
+
+In progressive ranked mode, a full buffered page returns immediately without
+searching ahead to prove that another row exists. `has_more: true` means the
+cursor is not known to be finished; it does not promise another nonempty page.
+A later pull may return zero rows with `has_more: false`. Clients continue using
+the returned qid until that terminal response, or explicitly discard it.
+
+When fewer than `n` rows are buffered, a pull retrieves more until it can return
+`n` rows or the search finishes. Expansion is demand driven; this does not add
+a background population worker. Repeated tokens retain the same row positions,
+although exhaustion and discovered-count metadata can advance as work finishes.
 
 ## Modes
 
@@ -183,6 +194,25 @@ lifetime in milliseconds and defaults to `300000` (five minutes). Ordinary
 searches without continuation fields are unaffected when the feature is
 disabled.
 
+`n` on START and PULL must be a positive integer at most
+`memory.search_cursor_max_page_size` (or
+`NORNICDB_SEARCH_CURSOR_MAX_PAGE_SIZE`). The default maximum is **500**;
+set a positive integer to raise or lower it. This page limit is separate from
+the initial retrieval `limit` and the overall `max_results` ceiling.
+HTTP and Cypher page maps advertise `max_page_size`, including on START.
+Native gRPC advertises it in the `max_page_size` response header metadata,
+without changing the protobuf response.
+
+An oversized page returns HTTP 400 with `request_status: "page_size_exceeded"`
+and `max_page_size`. Native gRPC returns `InvalidArgument` with an `ErrorInfo`
+detail (`reason: "PAGE_SIZE_EXCEEDED"`, metadata `request_status`,
+`max_page_size`, and `http_code: "400"`). Bolt returns
+`Neo.ClientError.Statement.ArgumentError` with `request_status` and
+`max_page_size` in FAILURE metadata; Cypher errors also identify
+`page_size_exceeded` and the maximum in their message. A malformed qid retains
+its existing invalid-continuation error. Retry a valid qid with a smaller `n`
+after an oversized-page error.
+
 Qids are signed, fixed-expiry, process-local tokens. Registry state stores a
 keyed owner/database digest, not credentials. Pull and discard require the same
 validated principal and canonical database. A different server instance cannot
@@ -227,3 +257,42 @@ may inspect arbitrary properties. Engines without streaming support use
 `AllNodes` fallback, whose temporary full node slice is outside retained
 descriptor admission; operators using a fallback engine must budget for that
 additional build-time memory.
+
+### Stream lifetime
+
+Reading the last page releases the stream's count and retained-byte capacity
+immediately. Earlier qids then return `continuation_gone` on PULL; deterministic
+replay is available only while the stream is active. DISCARD with any valid
+same-owner/database qid succeeds after completion, a previous discard, expiry,
+invalidation or database drop. It never releases another stream's capacity.
+
+If a PULL returns a cancellation or deadline-exceeded error during page
+production, the previously issued qid remains active. Retry that same qid with a
+fresh request/context to resume at the same position. The failed attempt does
+not advance the cursor or extend its fixed TTL. Other producer errors retire
+the stream and release its capacity.
+
+Once a produced page is handed to the transport, failed delivery retires its
+stream, including a disconnect or timeout during delivery. HTTP detects delivery
+failure outside the timeout middleware's response buffer. Successfully delivered
+qids remain usable across requests/connections until a terminal outcome or their
+fixed TTL. Abandoned catalog cursors invalidated by writes/backfill/policy changes
+are collected by registry maintenance and before a capacity rejection. Database
+reset/drop retires that database's cursors without closing the shared registry.
+
+HTTP transactions, GraphQL and the search endpoint keep delivery ownership until
+the response's cursor references are written and its final page flush succeeds.
+Bolt recognizes cursor references in encoded records, including pages returned
+as JSON text or nested values. RUN metadata does not acknowledge a page: PULL
+must deliver its records. A FAILURE requiring RESET immediately retires
+undelivered pages; references already delivered remain resumable. Partial
+DISCARD retires references in the selected records using the same record encoder.
+Projected or selected results that omit a cursor reference release that page's
+admission when the response/result ends. Independent records and statements keep
+separate delivery ownership. A reset/drop also invalidates a service's pending
+first-page preparation, so old work cannot publish a cursor afterward.
+
+Pure one-shot `db.rretrieve($request)` calls retain result caching. Eligibility
+uses the same evaluated continuation options as execution; START/PULL/DISCARD
+always reach the registry. Qids bound their self-contained database-name payload
+to 64 KiB and reject longer encoded input before allocating decoded storage.

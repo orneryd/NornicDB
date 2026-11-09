@@ -16,7 +16,7 @@ func BenchmarkCallSubqueryUnion_FixedCost_CacheMiss(b *testing.B) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(b.Context(), &storage.Node{
 		ID:     "sp-1",
 		Labels: []string{"SystemPrompt"},
 		Properties: map[string]interface{}{
@@ -61,7 +61,7 @@ func BenchmarkCallSubqueryUnion_VectorRelBranch(b *testing.B) {
 	ctx := context.Background()
 
 	// Create seed SystemPrompt node
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(b.Context(), &storage.Node{
 		ID:     "sp-1",
 		Labels: []string{"SystemPrompt"},
 		Properties: map[string]interface{}{
@@ -81,7 +81,7 @@ func BenchmarkCallSubqueryUnion_VectorRelBranch(b *testing.B) {
 	}
 	for i := 0; i < 10; i++ {
 		otID := storage.NodeID(fmt.Sprintf("ot-%d", i))
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:     otID,
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -94,7 +94,7 @@ func BenchmarkCallSubqueryUnion_VectorRelBranch(b *testing.B) {
 		}
 		for _, lang := range []string{"en", "es"} {
 			ttID := storage.NodeID(fmt.Sprintf("tt-%d-%s", i, lang))
-			_, err := store.CreateNode(&storage.Node{
+			_, err := store.CreateNode(b.Context(), &storage.Node{
 				ID:     ttID,
 				Labels: []string{"TranslatedText"},
 				Properties: map[string]interface{}{
@@ -105,7 +105,7 @@ func BenchmarkCallSubqueryUnion_VectorRelBranch(b *testing.B) {
 			if err != nil {
 				b.Fatalf("create TranslatedText failed: %v", err)
 			}
-			err = store.CreateEdge(&storage.Edge{
+			err = store.CreateEdge(b.Context(), &storage.Edge{
 				ID:        storage.EdgeID(fmt.Sprintf("e-%d-%s", i, lang)),
 				StartNode: otID,
 				EndNode:   ttID,
@@ -119,7 +119,7 @@ func BenchmarkCallSubqueryUnion_VectorRelBranch(b *testing.B) {
 
 	// Create vector index
 	schema := store.GetSchema()
-	if err := schema.AddVectorIndex("idx_original_text", "OriginalText", "embedding", dim, "cosine"); err != nil {
+	if err := schema.AddVectorIndex("idx_original_text", "OriginalText", "embedding", dim, "cosine", storage.ConstraintEntityNode); err != nil {
 		b.Fatalf("create vector index failed: %v", err)
 	}
 

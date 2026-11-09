@@ -10,6 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Manager handles Heimdall SLM model loading and inference.
@@ -25,7 +28,11 @@ type Manager struct {
 	generator Generator
 	config    Config
 	modelPath string
-	closed    bool
+	// work owns every model call: Close disposes the generator only after the
+	// calls it admitted have returned. A bound host admission (the DB's
+	// foreground owner) is taken in addition, never instead.
+	work     lifecycle.WorkLifetime
+	lifetime func(context.Context) (context.Context, func(), error)
 
 	// Stats
 	requestCount int64
@@ -59,6 +66,7 @@ func NewManager(cfg Config) (*Manager, error) {
 	if !cfg.Enabled {
 		return nil, nil // Feature disabled
 	}
+	diagnosticCredentials := observability.ClientCredentials(cfg.APIURL, cfg.APIKey)
 
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
 	if provider == "" {
@@ -72,11 +80,12 @@ func NewManager(cfg Config) (*Manager, error) {
 	if provider == "local" || provider == "" {
 		generator, modelPath, err = loadLocalGenerator(cfg)
 		if err != nil {
-			return nil, err
+			return nil, observability.RedactError(err, diagnosticCredentials...)
 		}
 	} else if factory, ok := heimdallProviderFactories[provider]; ok {
 		generator, err = factory(cfg)
 		if err != nil {
+			err = observability.RedactError(err, diagnosticCredentials...)
 			return nil, fmt.Errorf("Heimdall %s provider: %w", provider, err)
 		}
 		modelPath = generator.ModelPath()
@@ -84,7 +93,7 @@ func NewManager(cfg Config) (*Manager, error) {
 	} else {
 		generator, modelPath, err = loadLocalGenerator(cfg)
 		if err != nil {
-			return nil, err
+			return nil, observability.RedactError(err, diagnosticCredentials...)
 		}
 	}
 
@@ -124,7 +133,7 @@ type GeneratorLoader func(modelPath string, gpuLayers, contextSize, batchSize, l
 
 // DefaultGeneratorLoader is the default loader (stub without CGO).
 var DefaultGeneratorLoader GeneratorLoader = func(modelPath string, gpuLayers, contextSize, batchSize, lazyMode int) (Generator, error) {
-	return nil, fmt.Errorf("SLM generation requires CGO build with localllm tag")
+	return nil, fmt.Errorf("local inference backend unavailable; the host must import pkg/heimdall/local and include local inference support")
 }
 
 // generatorLoader is the active loader function.
@@ -157,6 +166,9 @@ func loadLocalGenerator(cfg Config) (Generator, string, error) {
 	}
 
 	modelsDir := cfg.ModelsDir
+	if modelsDir == "" {
+		modelsDir = strings.TrimSpace(os.Getenv("NORNICDB_MODELS_DIR"))
+	}
 	if modelsDir == "" {
 		candidates := []string{
 			"/usr/local/var/nornicdb/models",
@@ -217,8 +229,13 @@ func loadLocalGenerator(cfg Config) (Generator, string, error) {
 
 // Generate produces a response for the given prompt.
 func (m *Manager) Generate(ctx context.Context, prompt string, params GenerateParams) (string, error) {
+	ctx, finish, err := m.beginUse(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer finish()
 	m.mu.RLock()
-	if m.closed {
+	if m.work.Closing() {
 		m.mu.RUnlock()
 		return "", fmt.Errorf("manager is closed")
 	}
@@ -234,21 +251,27 @@ func (m *Manager) Generate(ctx context.Context, prompt string, params GeneratePa
 	m.lastUsed = time.Now()
 	m.mu.Unlock()
 
-	result, err := gen.Generate(ctx, prompt, params)
+	safePrompt, credentials := redactGeneratorPrompt(prompt)
+	result, err := gen.Generate(ctx, safePrompt, params)
 	if err != nil {
 		m.mu.Lock()
 		m.errorCount++
 		m.mu.Unlock()
-		return "", err
+		return "", observability.RedactError(err, credentials...)
 	}
 
-	return result, nil
+	return observability.RedactText(result, credentials...), nil
 }
 
 // GenerateStream produces tokens via callback.
 func (m *Manager) GenerateStream(ctx context.Context, prompt string, params GenerateParams, callback func(token string) error) error {
+	ctx, finish, useErr := m.beginUse(ctx)
+	if useErr != nil {
+		return useErr
+	}
+	defer finish()
 	m.mu.RLock()
-	if m.closed {
+	if m.work.Closing() {
 		m.mu.RUnlock()
 		return fmt.Errorf("manager is closed")
 	}
@@ -264,14 +287,45 @@ func (m *Manager) GenerateStream(ctx context.Context, prompt string, params Gene
 	m.lastUsed = time.Now()
 	m.mu.Unlock()
 
-	err := gen.GenerateStream(ctx, prompt, params, callback)
+	safePrompt, credentials := redactGeneratorPrompt(prompt)
+	// A generated URL may carry credentials even when the prompt did not. Keep
+	// the entire response inside the manager until URL boundaries are known, so
+	// a credential split across callbacks cannot reach a consumer early.
+	var response strings.Builder
+	var chunks []string
+	err := gen.GenerateStream(ctx, safePrompt, params, func(token string) error {
+		chunks = append(chunks, token)
+		response.WriteString(token)
+		return nil
+	})
 	if err != nil {
 		m.mu.Lock()
 		m.errorCount++
 		m.mu.Unlock()
-		return err
+		return observability.RedactError(err, credentials...)
 	}
-
+	if response.Len() == 0 {
+		return nil
+	}
+	joined := response.String()
+	safe := observability.RedactText(joined, credentials...)
+	if safe == joined {
+		for _, chunk := range chunks {
+			if err := callback(chunk); err != nil {
+				m.mu.Lock()
+				m.errorCount++
+				m.mu.Unlock()
+				return observability.RedactError(err, credentials...)
+			}
+		}
+		return nil
+	}
+	if err := callback(safe); err != nil {
+		m.mu.Lock()
+		m.errorCount++
+		m.mu.Unlock()
+		return observability.RedactError(err, credentials...)
+	}
 	return nil
 }
 
@@ -291,8 +345,13 @@ func (m *Manager) SupportsTools() bool {
 // GenerateWithTools runs one round of chat with tools (agentic loop). Only valid when SupportsTools() is true.
 // Returns content and/or toolCalls; caller executes tools and calls again until no toolCalls.
 func (m *Manager) GenerateWithTools(ctx context.Context, messages []ToolRoundMessage, tools []MCPTool, params GenerateParams) (content string, toolCalls []ParsedToolCall, err error) {
+	ctx, finish, useErr := m.beginUse(ctx)
+	if useErr != nil {
+		return "", nil, useErr
+	}
+	defer finish()
 	m.mu.RLock()
-	if m.closed {
+	if m.work.Closing() {
 		m.mu.RUnlock()
 		return "", nil, fmt.Errorf("manager is closed")
 	}
@@ -312,7 +371,21 @@ func (m *Manager) GenerateWithTools(ctx context.Context, messages []ToolRoundMes
 	m.lastUsed = time.Now()
 	m.mu.Unlock()
 
-	return gwt.GenerateWithTools(ctx, messages, tools, params)
+	safeMessages, safeTools, credentials := redactToolRoundInput(messages, tools)
+	content, toolCalls, err = gwt.GenerateWithTools(ctx, safeMessages, safeTools, params)
+	if err != nil {
+		m.mu.Lock()
+		m.errorCount++
+		m.mu.Unlock()
+		return "", nil, observability.RedactError(err, credentials...)
+	}
+	content = observability.RedactText(content, credentials...)
+	for i := range toolCalls {
+		toolCalls[i].Id = observability.RedactText(toolCalls[i].Id, credentials...)
+		toolCalls[i].Name = observability.RedactText(toolCalls[i].Name, credentials...)
+		toolCalls[i].Arguments = observability.RedactText(toolCalls[i].Arguments, credentials...)
+	}
+	return content, toolCalls, nil
 }
 
 // Chat handles chat completion requests.
@@ -377,23 +450,53 @@ func (m *Manager) Stats() ManagerStats {
 	}
 }
 
-// Close releases all resources.
+// Close releases all resources once every admitted model call has returned.
+// Every caller joins the same close and receives its outcome.
 func (m *Manager) Close() error {
+	m.work.BeginStop(m.closeGenerator)
+	return m.work.JoinStopped()
+}
+
+func (m *Manager) closeGenerator() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.closed {
-		return nil
-	}
-	m.closed = true
-
-	if m.generator != nil {
+	generator, cfg, requests, failures := m.generator, m.config, m.requestCount, m.errorCount
+	m.mu.Unlock()
+	if generator != nil {
 		logHeimdallPrintf(slog.LevelInfo, "🧠 Closing SLM model")
-		logHeimdallPrintf(slog.LevelInfo, "   Total requests: %d", m.requestCount)
-		logHeimdallPrintf(slog.LevelInfo, "   Total errors: %d", m.errorCount)
-		return m.generator.Close()
+		logHeimdallPrintf(slog.LevelInfo, "   Total requests: %d", requests)
+		logHeimdallPrintf(slog.LevelInfo, "   Total errors: %d", failures)
+		return observability.RedactError(generator.Close(), observability.ClientCredentials(cfg.APIURL, cfg.APIKey)...)
 	}
 	return nil
+}
+
+// SetLifetime binds shared model calls to their canonical DB owner before the
+// manager is published to HTTP, db.infer or other aliases.
+func (m *Manager) SetLifetime(use func(context.Context) (context.Context, func(), error)) {
+	m.mu.Lock()
+	m.lifetime = use
+	m.mu.Unlock()
+}
+
+// beginUse admits one model call in the manager's own lifetime, and also in
+// the bound host admission when one is set.
+func (m *Manager) beginUse(ctx context.Context) (context.Context, func(), error) {
+	_, release, accepted := m.work.Acquire(m.work.Context())
+	if !accepted {
+		return nil, nil, fmt.Errorf("manager is closed")
+	}
+	m.mu.RLock()
+	use := m.lifetime
+	m.mu.RUnlock()
+	if use == nil {
+		return ctx, release, nil
+	}
+	ctx, finishHost, err := use(ctx)
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	return ctx, func() { finishHost(); release() }, nil
 }
 
 // ModelPath returns the path to the loaded model.

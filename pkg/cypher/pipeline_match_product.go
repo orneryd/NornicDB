@@ -20,12 +20,12 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "(") && !containsRelationshipPattern(part) {
-			if variable := e.parseNodePattern(ctx, part).variable; variable != "" {
+			if variable := nodePatternStructure(part).variable; variable != "" {
 				nodeVariables = append(nodeVariables, variable)
 			}
 		}
 	}
-	nodeWhere, rest := splitWhereByVariable(where, nodeVariables)
+	nodeWhere, rest := splitWhereByVariable(ctx, where, nodeVariables)
 	if joined, handled, err := e.pipelineApplyNodeJoinProduct(ctx, rows, parts, where); handled || err != nil {
 		return joined, handled, err
 	}
@@ -65,7 +65,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 			}
 			paths = append(paths, path)
 		} else if strings.HasPrefix(part, "(") {
-			if variable := e.parseNodePattern(ctx, part).variable; variable == "" {
+			if variable := nodePatternStructure(part).variable; variable == "" {
 				part = "(" + newBinding() + part[1:]
 			} else if own := nodeWhere[variable]; own != "" {
 				part += " WHERE " + own
@@ -107,13 +107,19 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 // candidates are narrowed by the conditions that read its variable only
 // (splitWhereByVariable) first.
 func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, true, err
+	}
 	if strings.TrimSpace(where) == "" {
 		return nil, false, nil
 	}
 	templates := make([]*pipelineNodeMatchTemplate, len(parts))
 	variables := make(map[string]struct{}, len(parts))
 	for index, part := range parts {
-		template := e.pipelineNodeMatchTemplateFor("MATCH " + strings.TrimSpace(part))
+		template := e.pipelineNodeMatchTemplateFor(ctx, "MATCH "+strings.TrimSpace(part))
+		if err := ctx.Err(); err != nil {
+			return nil, true, err
+		}
 		if !template.usable || template.labelErr != nil {
 			return nil, false, nil
 		}
@@ -125,16 +131,16 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	}
 	for _, template := range templates {
 		for _, property := range template.properties {
-			for _, reference := range semanticExpressionReferences(property.expr) {
-				variable := strings.SplitN(reference, ".", 2)[0]
-				if _, dependent := variables[variable]; dependent {
-					return nil, false, nil
-				}
+			if !forEachSemanticExpressionReference(property.expr, func(variable, _ string, _ bool, _ int) bool {
+				_, dependent := variables[variable]
+				return !dependent
+			}) {
+				return nil, false, nil
 			}
 		}
 	}
 	joinable := false
-	for _, term := range splitTopLevelAndConjuncts(where) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, where) {
 		left, _, right, _, _, equality := parseCartesianVarPropEqualityTerm(strings.TrimSpace(term))
 		_, leftLocal := variables[left]
 		_, rightLocal := variables[right]
@@ -147,7 +153,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	for name := range variables {
 		names = append(names, name)
 	}
-	nodeWhere, _ := splitWhereByVariable(where, names)
+	nodeWhere, _ := splitWhereByVariable(ctx, where, names)
 	var out []pipelineRow
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
@@ -158,13 +164,16 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 			nodes    []*storage.Node
 		}, len(templates))
 		for index, template := range templates {
-			pattern, resolved := template.node(ctx, e, row)
+			pattern, resolved, evalErr := template.node(ctx, e, row)
+			if evalErr != nil {
+				return nil, true, evalErr
+			}
 			if !resolved {
 				return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "Cannot evaluate MATCH properties")
 			}
 			var nodes []*storage.Node
 			if value, bound := row[pattern.variable]; bound {
-				if node, typed := value.(*storage.Node); typed && node != nil && e.pipelineNodeMatchesPattern(node, pattern) {
+				if node, typed := value.(*storage.Node); typed && node != nil && e.pipelineNodeMatchesPattern(ctx, node, pattern) {
 					nodes = []*storage.Node{node}
 				}
 			} else {
@@ -182,7 +191,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 			}
 			matches[index].variable, matches[index].nodes = pattern.variable, nodes
 		}
-		combinations, _ := e.buildCombinationsUsingWhereJoin(matches, where)
+		combinations, _ := e.buildCombinationsUsingWhereJoin(ctx, matches, where)
 		for _, combination := range combinations {
 			joined := make(pipelineRow, len(row)+len(combination))
 			for name, value := range row {
@@ -203,7 +212,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 }
 
 func pipelineProductPathsUnique(row pipelineRow, variables []string) bool {
-	seen := make(map[storage.EdgeID]struct{})
+	seen := make(map[storage.EntityIdentity]struct{})
 	for _, variable := range variables {
 		value, ok := row[variable].(map[string]interface{})
 		if !ok {
@@ -218,10 +227,10 @@ func pipelineProductPathsUnique(row pipelineRow, variables []string) bool {
 			if !ok || edge == nil {
 				return false
 			}
-			if _, reused := seen[edge.ID]; reused {
+			if _, reused := seen[edge.Identity()]; reused {
 				return false
 			}
-			seen[edge.ID] = struct{}{}
+			seen[edge.Identity()] = struct{}{}
 		}
 	}
 	return true

@@ -36,7 +36,8 @@ func TestCompileTimeErrorPhase(t *testing.T) {
 }
 
 // TestMapTransientTransactionError verifies the protocol-code boundary for
-// retryable transaction failures and non-retryable ordinary errors.
+// retryable transaction failures and non-retryable ordinary errors, and that
+// IsTransientTransactionError gives the same classification.
 func TestMapTransientTransactionError(t *testing.T) {
 	tests := []struct {
 		name string
@@ -93,7 +94,10 @@ func TestMapTransientTransactionError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := MapTransientTransactionError(tt.err)
+			got, ok := transientTransactionStatus(tt.err)
+			if IsTransientTransactionError(tt.err) != ok {
+				t.Fatalf("IsTransientTransactionError = %v, want %v", !ok, ok)
+			}
 			if ok != tt.ok {
 				t.Fatalf("ok = %v, want %v", ok, tt.ok)
 			}
@@ -147,7 +151,7 @@ func TestTransactionTooBigStatus(t *testing.T) {
 			if !HasNeo4jStatus(err) {
 				t.Fatal("HasNeo4jStatus = false, want true")
 			}
-			if commitCode, _ := Neo4jCommitStatus(err); commitCode != ClientTransactionOutOfMemory {
+			if commitCode, _ := Neo4jStatus(TransactionControlFailure(TerminalCommit, err)); commitCode != ClientTransactionOutOfMemory {
 				t.Fatalf("commit code = %q, want %q", commitCode, ClientTransactionOutOfMemory)
 			}
 			for _, want := range []string{badger.ErrTxnTooBig.Error(), "CALL { ... } IN TRANSACTIONS"} {

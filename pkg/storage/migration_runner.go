@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,22 +16,25 @@ import (
 func (b *BadgerEngine) isStorageEmpty() (bool, error) {
 	empty := true
 	err := b.db.View(func(txn *badger.Txn) error {
-		for _, prefix := range [][]byte{{prefixNode}, {prefixEdge}} {
-			opts := badgerIteratorOptions()
-			opts.Prefix = prefix
-			it := txn.NewIterator(opts)
-			it.Rewind()
-			if it.ValidForPrefix(prefix) {
-				empty = false
-			}
-			it.Close()
-			if !empty {
-				return nil
-			}
-		}
+		empty = isStorageEmptyInTxn(txn)
 		return nil
 	})
 	return empty, err
+}
+
+func isStorageEmptyInTxn(txn *badger.Txn) bool {
+	for _, prefix := range [][]byte{{prefixNode}, {prefixEdge}} {
+		opts := badgerIteratorOptions()
+		opts.Prefix = prefix
+		it := txn.NewIterator(opts)
+		it.Rewind()
+		present := it.ValidForPrefix(prefix)
+		it.Close()
+		if present {
+			return false
+		}
+	}
+	return true
 }
 
 // ErrStorageUpgradeRequired is returned by RunOnStartMigrations when
@@ -65,19 +69,123 @@ func (e *ErrStorageUpgradeRequired) Error() string {
 //	         property-key codec; bumps the version after a clean pass.
 //	V2 → V3: restore versioned adjacency and exact-case label/type indexes.
 //
+// Manual invocations cannot perform a V4 catalog payload upgrade: reopening
+// is required before any manager can retain the legacy catalog snapshot.
+// Existing V0/V1/V2/V3 manual migration behavior is retained.
+//
 // Sets engine.storageVersion to the post-migration version so the
 // encode path can deterministically pick codecs from it.
 func (b *BadgerEngine) RunOnStartMigrations(allowUpgrade bool) error {
+	return b.runOnStartMigrations(allowUpgrade, migrationManual)
+}
+
+type migrationPhase uint8
+
+const (
+	migrationStartupOpening migrationPhase = iota
+	migrationManual
+)
+
+// runOnStartMigrations is the single ordered runner. Opening owns the only
+// point before a DatabaseManager can retain the catalog image; manual calls
+// cannot safely replace that image without a supported owner refresh protocol.
+func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPhase) error {
+	// Opening has not published this engine, so recovery can use the normal
+	// transaction owner before the migration takes its exclusive write barrier.
+	// A durable marker lets a retry finish recovery and the V4 catalog transform.
+	replayCurrentCatalog := false
+	upgradeAuthorized := allowUpgrade
+	if phase == migrationStartupOpening && !b.inMemory {
+		version, err := b.readSchemaVersion()
+		if err != nil {
+			return fmt.Errorf("read schema version: %w", err)
+		}
+		catalogPending, formatPending, err := b.v4WALRecoveryState()
+		if err != nil {
+			return err
+		}
+		pending := catalogPending || formatPending
+		if formatPending && version != storageVersionCatalogV4 {
+			return fmt.Errorf("wal: format-only recovery requires a V4 store")
+		}
+		// The marker is written only after the upgrade gate has admitted the
+		// original attempt, including the empty-store case. A retry must finish
+		// that admitted transaction even if replay made the store non-empty.
+		upgradeAuthorized = upgradeAuthorized || pending
+		oldWAL := false
+		dir := filepath.Join(b.dataDir, "wal")
+		if version == storageVersionCatalogV4 && allowUpgrade {
+			if err := ValidateWALFormat(dir, WALValidateCurrent); err != nil {
+				if !errors.Is(err, ErrWALUnsupportedVersion) {
+					return err
+				}
+				oldWAL = true
+			}
+		}
+		formatOnly := formatPending
+		if version == storageVersionCatalogV4 && oldWAL && !pending {
+			formatOnly, err = walV5OrLaterOnly(dir)
+			if err != nil {
+				return err
+			}
+		}
+		if version < storageVersionCatalogV4 || pending || oldWAL {
+			if version < storageVersionCatalogV4 && !upgradeAuthorized {
+				empty, err := b.isStorageEmpty()
+				if err != nil {
+					return fmt.Errorf("checking storage emptiness: %w", err)
+				}
+				if !empty {
+					return &ErrStorageUpgradeRequired{OnDisk: version, Current: storageVersionCurrent}
+				}
+				// The empty store is admitted without a flag. Remember that
+				// decision: replay can populate it before the migration's
+				// second emptiness check runs.
+				upgradeAuthorized = true
+			}
+			if version == storageVersionCatalogV4 && !formatOnly && b.catalogUpgradeV4 == nil {
+				empty, err := b.isStorageEmpty()
+				if err != nil {
+					return err
+				}
+				if !empty {
+					return fmt.Errorf("V4 WAL recovery requires an explicit catalog transform plan")
+				}
+			}
+			b.storageVersion = version
+			recovered, err := b.recoverV4WALAtOpen(allowUpgrade, pending, formatOnly)
+			if err != nil {
+				return fmt.Errorf("V4 WAL migration and recovery: %w", err)
+			}
+			replayCurrentCatalog = version == storageVersionCatalogV4 && recovered && !formatOnly
+		}
+	}
+	// The migrations rewrite stored state wholesale: a maintenance write
+	// (beginMaintenanceWrite). Opened by NewBadgerEngineWithOptions, the engine
+	// has no write-behind buffer yet and nothing else holds it; called on an
+	// engine that serves, it also applies every acknowledged commit first and
+	// keeps every write out.
+	lifecycle, err := b.beginMaintenanceWrite(b.work.Context(), nil)
+	if err != nil {
+		return err
+	}
+	defer lifecycle.finish()
 	currentVersion, err := b.readSchemaVersion()
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
+	}
+
+	// Reject before any older arm can mutate a store: V4 catalog replacement
+	// is startup-only even when the store first needs V0/V1/V2 repairs.
+	if storageVersionCurrent >= storageVersionCatalogV4 && currentVersion < storageVersionCatalogV4 && phase != migrationStartupOpening {
+		return fmt.Errorf("catalog V4 payload upgrade is startup-only; reopen the database with --upgrade-storage")
 	}
 
 	if b.log != nil {
 		b.log.Info("storage migration check",
 			"on_disk_version", currentVersion,
 			"binary_version", storageVersionCurrent,
-			"upgrade_authorized", allowUpgrade,
+			"upgrade_authorized", upgradeAuthorized,
 		)
 	}
 
@@ -85,7 +193,7 @@ func (b *BadgerEngine) RunOnStartMigrations(allowUpgrade bool) error {
 	// key. Skip the upgrade gate for them — there is nothing to lose
 	// and no operator decision to gate behind. Detect emptiness by
 	// looking for any node body at all.
-	if currentVersion < storageVersionCurrent && !allowUpgrade {
+	if currentVersion < storageVersionCurrent && !upgradeAuthorized {
 		empty, emptyErr := b.isStorageEmpty()
 		if emptyErr != nil {
 			return fmt.Errorf("checking storage emptiness: %w", emptyErr)
@@ -99,6 +207,16 @@ func (b *BadgerEngine) RunOnStartMigrations(allowUpgrade bool) error {
 	}
 
 	if currentVersion == storageVersionCurrent {
+		if replayCurrentCatalog {
+			if err := b.migrateV3ToV4(b.work.Context(), true); err != nil {
+				return fmt.Errorf("V4 catalog recovery: %w", err)
+			}
+		}
+		if phase == migrationStartupOpening && !b.inMemory {
+			if err := finalizeV4WALBackup(b.db, filepath.Join(b.dataDir, "wal")); err != nil {
+				return err
+			}
+		}
 		if b.log != nil {
 			b.log.Info("storage version current; no migrations to run", "version", currentVersion)
 		}
@@ -158,6 +276,17 @@ func (b *BadgerEngine) RunOnStartMigrations(allowUpgrade bool) error {
 		currentVersion = storageVersionEdgeAdjacencyV3
 		if b.log != nil {
 			b.log.Info("migration arm v2→v3 complete", "duration_ms", time.Since(armStart).Milliseconds())
+		}
+	}
+	if currentVersion < storageVersionCatalogV4 {
+		if err := b.migrateV3ToV4(b.work.Context(), false); err != nil {
+			return fmt.Errorf("migration v3→v4 failed: %w", err)
+		}
+		currentVersion = storageVersionCatalogV4
+		if phase == migrationStartupOpening && !b.inMemory && b.dataDir != "" {
+			if err := finalizeV4WALBackup(b.db, filepath.Join(b.dataDir, "wal")); err != nil {
+				return err
+			}
 		}
 	}
 	b.storageVersion = currentVersion

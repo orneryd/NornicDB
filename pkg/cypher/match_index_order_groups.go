@@ -3,31 +3,16 @@ package cypher
 import (
 	"container/heap"
 	"context"
-	"sort"
+	"errors"
+	"github.com/orneryd/nornicdb/internal/ctxsort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) parseIndexedNodeOrderSpecs(orderExpr, variable string) ([]nodeOrderSpec, bool) {
-	parts := splitOutsideParens(orderExpr, ',')
-	if len(parts) == 0 || variable == "" {
-		return nil, false
-	}
-	prefix := variable + "."
-	for _, part := range parts {
-		fields := strings.Fields(strings.TrimSpace(part))
-		if len(fields) == 0 || !strings.HasPrefix(fields[0], prefix) {
-			return nil, false
-		}
-	}
-	specs := e.parseNodeOrderSpecs(orderExpr, variable)
-	return specs, len(specs) == len(parts)
-}
-
-func (e *StorageExecutor) indexedOrderRequiresNonNull(variable, property, where string) bool {
-	for _, term := range splitTopLevelAndConjuncts(unwrapOuterParens(strings.TrimSpace(where))) {
-		required, ok := e.parseSimpleIndexedIsNotNull(variable, unwrapOuterParens(strings.TrimSpace(term)))
+func (e *StorageExecutor) indexedOrderRequiresNonNull(ctx context.Context, variable, property, where string) bool {
+	for _, term := range splitTopLevelAndConjuncts(ctx, unwrapOuterParens(strings.TrimSpace(where))) {
+		required, ok := e.parseSimpleIndexedIsNotNull(ctx, variable, unwrapOuterParens(strings.TrimSpace(term)))
 		if ok && strings.EqualFold(required, property) {
 			return true
 		}
@@ -71,13 +56,19 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 		return strings.Compare(string(a.ID), string(b.ID))
 	}
 	nodes := make([]*storage.Node, 0, limit)
+	// The window keeps only a page of the ordered index. Internal system
+	// nodes (labels starting with "_") are not MATCH rows, so they are
+	// skipped before the page is filled: a page that counted them would
+	// return fewer visible rows than the LIMIT asks for, and the rows the
+	// query does show would be the wrong ones.
+	hideSystemNodes := shouldHideSystemNodes(e.getStorage(ctx))
 	var filter func(*storage.Node) bool
 	if strings.TrimSpace(where) != "" {
 		filter = e.compileNodeWhereFilter(ctx, pattern.variable, where)
 	}
 	var visitErr error
 	visited := false
-	found := schema.VisitPropertyIndexGroupsInRange(label, specs[0].propName, specs[0].descending, bounds, func(ids []storage.NodeID) bool {
+	found, err := schema.VisitPropertyIndexGroupsInRange(ctx, label, specs[0].propName, specs[0].descending, bounds, func(ids []storage.NodeID) bool {
 		visited = true
 		remaining := limit - len(nodes)
 		groupTop := &indexedOrderHeap{
@@ -89,11 +80,14 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 				visitErr = err
 				return false
 			}
-			node, err := e.storage.GetNode(id)
+			node, err := e.getQueryNode(ctx, e.storage, id)
 			if err != nil || node == nil {
 				continue
 			}
-			if (len(pattern.labels) > 0 && !nodeHasAnyLabel(node, pattern.labels)) || !e.nodeMatchesProps(node, pattern.properties) {
+			if hideSystemNodes && isSystemNode(node) {
+				continue
+			}
+			if (len(pattern.labels) > 0 && !mergeNodeHasLabels(node, pattern.labels)) || !e.nodeMatchesProps(node, pattern.properties) {
 				continue
 			}
 			if filter != nil && !filter(node) {
@@ -106,15 +100,26 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 				heap.Fix(groupTop, 0)
 			}
 		}
-		sort.Slice(groupTop.nodes, func(i, j int) bool {
-			return compareWithinGroup(groupTop.nodes[i], groupTop.nodes[j]) < 0
-		})
+		if err := ctxsort.Sort(ctx, groupTop.nodes, compareWithinGroup, false); err != nil {
+			visitErr = err
+			return false
+		}
+		if err := ctx.Err(); err != nil {
+			visitErr = err
+			return false
+		}
 		nodes = append(nodes, groupTop.nodes...)
 		if len(nodes) == limit {
 			return false
 		}
 		return true
 	})
+	if errors.Is(err, storage.ErrPropertyIndexValueOrderUnavailable) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
 	if visitErr != nil {
 		return nil, false, visitErr
 	}

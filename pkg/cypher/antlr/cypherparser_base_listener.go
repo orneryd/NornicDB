@@ -110,11 +110,85 @@ func (s *BaseCypherParserListener) EnterAdministrationCommand(ctx *Administratio
 // ExitAdministrationCommand is called when production administrationCommand is exited.
 func (s *BaseCypherParserListener) ExitAdministrationCommand(ctx *AdministrationCommandContext) {}
 
+// EnterCompositeConstituent is called when production compositeConstituent is entered.
+func (s *BaseCypherParserListener) EnterCompositeConstituent(ctx *CompositeConstituentContext) {}
+
+// ExitCompositeConstituent is called when production compositeConstituent is exited.
+func (s *BaseCypherParserListener) ExitCompositeConstituent(ctx *CompositeConstituentContext) {}
+
+// EnterCompositeConstituentOption is called when production compositeConstituentOption is entered.
+func (s *BaseCypherParserListener) EnterCompositeConstituentOption(ctx *CompositeConstituentOptionContext) {
+}
+
+// ExitCompositeConstituentOption is called when production compositeConstituentOption is exited.
+func (s *BaseCypherParserListener) ExitCompositeConstituentOption(ctx *CompositeConstituentOptionContext) {
+}
+
+// EnterCompositeValue is called when production compositeValue is entered.
+func (s *BaseCypherParserListener) EnterCompositeValue(ctx *CompositeValueContext) {}
+
+// ExitCompositeValue is called when production compositeValue is exited.
+func (s *BaseCypherParserListener) ExitCompositeValue(ctx *CompositeValueContext) {}
+
 // EnterQualifiedName is called when production qualifiedName is entered.
 func (s *BaseCypherParserListener) EnterQualifiedName(ctx *QualifiedNameContext) {}
 
 // ExitQualifiedName is called when production qualifiedName is exited.
 func (s *BaseCypherParserListener) ExitQualifiedName(ctx *QualifiedNameContext) {}
+
+// EnterCompositeAt is called when production compositeAt is entered.
+func (s *BaseCypherParserListener) EnterCompositeAt(ctx *CompositeAtContext) {}
+
+// ExitCompositeAt is called when production compositeAt is exited.
+func (s *BaseCypherParserListener) ExitCompositeAt(ctx *CompositeAtContext) {}
+
+// EnterCompositePassword is called when production compositePassword is entered.
+func (s *BaseCypherParserListener) EnterCompositePassword(ctx *CompositePasswordContext) {}
+
+// ExitCompositePassword is called when production compositePassword is exited.
+func (s *BaseCypherParserListener) ExitCompositePassword(ctx *CompositePasswordContext) {}
+
+// EnterCompositeOidc is called when production compositeOidc is entered.
+func (s *BaseCypherParserListener) EnterCompositeOidc(ctx *CompositeOidcContext) {}
+
+// ExitCompositeOidc is called when production compositeOidc is exited.
+func (s *BaseCypherParserListener) ExitCompositeOidc(ctx *CompositeOidcContext) {}
+
+// EnterCompositeCredential is called when production compositeCredential is entered.
+func (s *BaseCypherParserListener) EnterCompositeCredential(ctx *CompositeCredentialContext) {}
+
+// ExitCompositeCredential is called when production compositeCredential is exited.
+func (s *BaseCypherParserListener) ExitCompositeCredential(ctx *CompositeCredentialContext) {}
+
+// EnterCompositeForwarding is called when production compositeForwarding is entered.
+func (s *BaseCypherParserListener) EnterCompositeForwarding(ctx *CompositeForwardingContext) {}
+
+// ExitCompositeForwarding is called when production compositeForwarding is exited.
+func (s *BaseCypherParserListener) ExitCompositeForwarding(ctx *CompositeForwardingContext) {}
+
+// EnterCompositeSecret is called when production compositeSecret is entered.
+func (s *BaseCypherParserListener) EnterCompositeSecret(ctx *CompositeSecretContext) {}
+
+// ExitCompositeSecret is called when production compositeSecret is exited.
+func (s *BaseCypherParserListener) ExitCompositeSecret(ctx *CompositeSecretContext) {}
+
+// EnterCompositeRef is called when production compositeRef is entered.
+func (s *BaseCypherParserListener) EnterCompositeRef(ctx *CompositeRefContext) {}
+
+// ExitCompositeRef is called when production compositeRef is exited.
+func (s *BaseCypherParserListener) ExitCompositeRef(ctx *CompositeRefContext) {}
+
+// EnterCompositeAccess is called when production compositeAccess is entered.
+func (s *BaseCypherParserListener) EnterCompositeAccess(ctx *CompositeAccessContext) {}
+
+// ExitCompositeAccess is called when production compositeAccess is exited.
+func (s *BaseCypherParserListener) ExitCompositeAccess(ctx *CompositeAccessContext) {}
+
+// EnterCompositeConstituents is called when production compositeConstituents is entered.
+func (s *BaseCypherParserListener) EnterCompositeConstituents(ctx *CompositeConstituentsContext) {}
+
+// ExitCompositeConstituents is called when production compositeConstituents is exited.
+func (s *BaseCypherParserListener) ExitCompositeConstituents(ctx *CompositeConstituentsContext) {}
 
 // EnterSchemaCommand is called when production schemaCommand is entered.
 func (s *BaseCypherParserListener) EnterSchemaCommand(ctx *SchemaCommandContext) {}
@@ -181,6 +255,12 @@ func (s *BaseCypherParserListener) EnterCallSubquery(ctx *CallSubqueryContext) {
 
 // ExitCallSubquery is called when production callSubquery is exited.
 func (s *BaseCypherParserListener) ExitCallSubquery(ctx *CallSubqueryContext) {}
+
+// EnterTransactionBatch is called when production transactionBatch is entered.
+func (s *BaseCypherParserListener) EnterTransactionBatch(ctx *TransactionBatchContext) {}
+
+// ExitTransactionBatch is called when production transactionBatch is exited.
+func (s *BaseCypherParserListener) ExitTransactionBatch(ctx *TransactionBatchContext) {}
 
 // EnterSubqueryBody is called when production subqueryBody is entered.
 func (s *BaseCypherParserListener) EnterSubqueryBody(ctx *SubqueryBodyContext) {}
@@ -295,6 +375,12 @@ func (s *BaseCypherParserListener) EnterForSt(ctx *ForStContext) {}
 
 // ExitForSt is called when production forSt is exited.
 func (s *BaseCypherParserListener) ExitForSt(ctx *ForStContext) {}
+
+// EnterLoadCSVSt is called when production loadCSVSt is entered.
+func (s *BaseCypherParserListener) EnterLoadCSVSt(ctx *LoadCSVStContext) {}
+
+// ExitLoadCSVSt is called when production loadCSVSt is exited.
+func (s *BaseCypherParserListener) ExitLoadCSVSt(ctx *LoadCSVStContext) {}
 
 // EnterReadingStatement is called when production readingStatement is entered.
 func (s *BaseCypherParserListener) EnterReadingStatement(ctx *ReadingStatementContext) {}
@@ -854,3 +940,59 @@ func (s *BaseCypherParserListener) EnterReservedWord(ctx *ReservedWordContext) {
 
 // ExitReservedWord is called when production reservedWord is exited.
 func (s *BaseCypherParserListener) ExitReservedWord(ctx *ReservedWordContext) {}
+
+// EnterSyntaxFragment is called when production syntaxFragment is entered.
+func (s *BaseCypherParserListener) EnterSyntaxFragment(ctx *SyntaxFragmentContext) {}
+
+// ExitSyntaxFragment is called when production syntaxFragment is exited.
+func (s *BaseCypherParserListener) ExitSyntaxFragment(ctx *SyntaxFragmentContext) {}
+
+// EnterPathSelector is called when production pathSelector is entered.
+func (s *BaseCypherParserListener) EnterPathSelector(ctx *PathSelectorContext) {}
+
+// ExitPathSelector is called when production pathSelector is exited.
+func (s *BaseCypherParserListener) ExitPathSelector(ctx *PathSelectorContext) {}
+
+// EnterPrivilegeCommand is called when production privilegeCommand is entered.
+func (s *BaseCypherParserListener) EnterPrivilegeCommand(ctx *PrivilegeCommandContext) {}
+
+// ExitPrivilegeCommand is called when production privilegeCommand is exited.
+func (s *BaseCypherParserListener) ExitPrivilegeCommand(ctx *PrivilegeCommandContext) {}
+
+// EnterProcedurePrivilegePattern is called when production procedurePrivilegePattern is entered.
+func (s *BaseCypherParserListener) EnterProcedurePrivilegePattern(ctx *ProcedurePrivilegePatternContext) {
+}
+
+// ExitProcedurePrivilegePattern is called when production procedurePrivilegePattern is exited.
+func (s *BaseCypherParserListener) ExitProcedurePrivilegePattern(ctx *ProcedurePrivilegePatternContext) {
+}
+
+// EnterCredentialValue is called when production credentialValue is entered.
+func (s *BaseCypherParserListener) EnterCredentialValue(ctx *CredentialValueContext) {}
+
+// ExitCredentialValue is called when production credentialValue is exited.
+func (s *BaseCypherParserListener) ExitCredentialValue(ctx *CredentialValueContext) {}
+
+// EnterCredentialURL is called when production credentialURL is entered.
+func (s *BaseCypherParserListener) EnterCredentialURL(ctx *CredentialURLContext) {}
+
+// ExitCredentialURL is called when production credentialURL is exited.
+func (s *BaseCypherParserListener) ExitCredentialURL(ctx *CredentialURLContext) {}
+
+// EnterUseGraphArguments is called when production useGraphArguments is entered.
+func (s *BaseCypherParserListener) EnterUseGraphArguments(ctx *UseGraphArgumentsContext) {}
+
+// ExitUseGraphArguments is called when production useGraphArguments is exited.
+func (s *BaseCypherParserListener) ExitUseGraphArguments(ctx *UseGraphArgumentsContext) {}
+
+// EnterUseGraphPrefix is called when production useGraphPrefix is entered.
+func (s *BaseCypherParserListener) EnterUseGraphPrefix(ctx *UseGraphPrefixContext) {}
+
+// ExitUseGraphPrefix is called when production useGraphPrefix is exited.
+func (s *BaseCypherParserListener) ExitUseGraphPrefix(ctx *UseGraphPrefixContext) {}
+
+// EnterUseReferencePrefix is called when production useReferencePrefix is entered.
+func (s *BaseCypherParserListener) EnterUseReferencePrefix(ctx *UseReferencePrefixContext) {}
+
+// ExitUseReferencePrefix is called when production useReferencePrefix is exited.
+func (s *BaseCypherParserListener) ExitUseReferencePrefix(ctx *UseReferencePrefixContext) {}

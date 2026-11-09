@@ -17,14 +17,14 @@ func TestServerStorageEventsStillReachSearch(t *testing.T) {
 	server, _ := setupTestServer(t)
 	defer stopTestServer(t, server)
 	ctx := context.Background()
-	_, err := server.db.GetStorage().CreateNode(&storage.Node{ID: "event-node", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "quokkalicious"}})
+	_, err := server.db.GetStorage().CreateNode(t.Context(), &storage.Node{ID: "event-node", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "quokkalicious"}})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		results, err := server.db.Search(ctx, "quokkalicious", nil, 10)
 		return err == nil && len(results) == 1
 	}, 5*time.Second, 25*time.Millisecond)
 
-	require.NoError(t, server.db.GetStorage().DeleteNode("event-node"))
+	require.NoError(t, server.db.GetStorage().DeleteNode(t.Context(), "event-node"))
 	require.Eventually(t, func() bool {
 		results, err := server.db.Search(ctx, "quokkalicious", nil, 10)
 		return err == nil && len(results) == 0

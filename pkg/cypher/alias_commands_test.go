@@ -11,16 +11,66 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testutil/compositeddl"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/language"
 )
+
+func TestAliasCommands_ShowAliasesConsumesCommandHead(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	dbm := newAliasTestDatabaseManager(t)
+	require.NoError(t, dbm.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant-a"}))
+	require.NoError(t, dbm.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant.b"}))
+	require.NoError(t, dbm.CreateAlias(t.Context(), "main", "tenant-a"))
+	require.NoError(t, dbm.CreateAlias(t.Context(), "other", "tenant.b"))
+	exec.SetDatabaseManager(dbm)
+	ctx := context.Background()
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	for _, c := range compositeddl.Cases() {
+		if !strings.HasPrefix(c.Name, "show_aliases_invalid_") {
+			continue
+		}
+		t.Run(c.Name, func(t *testing.T) {
+			result, err := exec.Execute(ctx, strings.ReplaceAll(c.Statement, "$db", "tenant-a"), nil)
+			require.Nil(t, result)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
+			// The statement boundary can refuse a second statement first. Also
+			// exercise the listing owner directly, including that same suffix.
+			result, err = exec.executeShowAliases(ctx, showCommandHead(ctx, strings.ReplaceAll(c.Statement, "$db", "tenant-a")))
+			require.Nil(t, result)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
+			var typed *localization.LocalizedError
+			require.ErrorAs(t, err, &typed)
+			require.Equal(t, localization.MessageCypherResidualShowAliasesSyntaxInvalid, typed.Message.ID)
+			spanish, _, err := manager.Render(localization.WithPreferences(ctx, language.EuropeanSpanish), localization.ErrorRequest(typed))
+			require.NoError(t, err)
+			require.NotEqual(t, typed.Error(), spanish)
+		})
+	}
+	for query, count := range map[string]int{
+		"SHOW ALIASES":                                            2,
+		"SHOW ALIASES FOR DATABASES;":                             2,
+		"SHOW\tALIASES\nFOR\tDATABASE tenant-a;":                  1,
+		"SHOW ALIASES FOR DATABASE tenant.b":                      1,
+		"SHOW ALIASES WHERE alias = 'main'":                       1,
+		"SHOW ALIASES YIELD alias, database WHERE alias = 'main'": 1,
+		"SHOW ALIASES FOR DATABASE tenant-a YIELD * ORDER BY alias LIMIT 1 RETURN alias, database": 1,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Len(t, result.Rows, count, query)
+	}
+}
 
 // aliasTestDatabaseManager implements DatabaseManagerInterface for alias testing.
 type aliasTestDatabaseManager struct {
-	databases map[string]*multidb.DatabaseInfo
-	aliases   map[string]string // alias -> database
+	testDatabaseRegistry[*multidb.DatabaseInfo]
+	aliases map[string]string // alias -> database
 
 	systemStore storage.Engine
 }
@@ -28,19 +78,19 @@ type aliasTestDatabaseManager struct {
 func newAliasTestDatabaseManager(t testing.TB) *aliasTestDatabaseManager {
 	t.Helper()
 	return &aliasTestDatabaseManager{
-		databases: make(map[string]*multidb.DatabaseInfo),
-		aliases:   make(map[string]string),
+		testDatabaseRegistry: testDatabaseRegistry[*multidb.DatabaseInfo]{databases: make(map[string]*multidb.DatabaseInfo)},
+		aliases:              make(map[string]string),
 
 		systemStore: storage.NewNamespacedEngine(newTestMemoryEngine(t), "system"),
 	}
 }
 
-func (m *aliasTestDatabaseManager) CreateDatabase(name string) error {
-	if _, exists := m.databases[name]; exists {
-		return fmt.Errorf("database '%s' already exists", name)
+func (m *aliasTestDatabaseManager) CreateDatabase(ctx context.Context, request multidb.DatabaseCreateRequest) error {
+	if _, exists := m.databases[request.Name]; exists {
+		return fmt.Errorf("database '%s' already exists", request.Name)
 	}
-	m.databases[name] = &multidb.DatabaseInfo{
-		Name:      name,
+	m.databases[request.Name] = &multidb.DatabaseInfo{
+		Name:      request.Name,
 		CreatedAt: time.Now(),
 		Status:    "online",
 		Type:      "standard",
@@ -52,14 +102,6 @@ func (m *aliasTestDatabaseManager) CreateDatabase(name string) error {
 	return nil
 }
 
-func (m *aliasTestDatabaseManager) DropDatabase(name string) error {
-	if _, exists := m.databases[name]; !exists {
-		return fmt.Errorf("database '%s' does not exist", name)
-	}
-	delete(m.databases, name)
-	return nil
-}
-
 func (m *aliasTestDatabaseManager) ListDatabases() []DatabaseInfoInterface {
 	result := make([]DatabaseInfoInterface, 0, len(m.databases))
 	for _, db := range m.databases {
@@ -68,12 +110,7 @@ func (m *aliasTestDatabaseManager) ListDatabases() []DatabaseInfoInterface {
 	return result
 }
 
-func (m *aliasTestDatabaseManager) Exists(name string) bool {
-	_, exists := m.databases[name]
-	return exists
-}
-
-func (m *aliasTestDatabaseManager) CreateAlias(alias, databaseName string) error {
+func (m *aliasTestDatabaseManager) CreateAlias(ctx context.Context, alias, databaseName string) error {
 	if _, exists := m.aliases[alias]; exists {
 		return fmt.Errorf("alias '%s' already exists", alias)
 	}
@@ -88,7 +125,7 @@ func (m *aliasTestDatabaseManager) CreateAlias(alias, databaseName string) error
 	return nil
 }
 
-func (m *aliasTestDatabaseManager) DropAlias(alias string) error {
+func (m *aliasTestDatabaseManager) DropAlias(ctx context.Context, alias string) error {
 	if _, exists := m.aliases[alias]; !exists {
 		return fmt.Errorf("alias '%s' does not exist", alias)
 	}
@@ -134,7 +171,7 @@ func (m *aliasTestDatabaseManager) ResolveDatabase(nameOrAlias string) (string, 
 	return "", fmt.Errorf("database not found")
 }
 
-func (m *aliasTestDatabaseManager) SetDatabaseLimits(databaseName string, limits interface{}) error {
+func (m *aliasTestDatabaseManager) SetDatabaseLimits(ctx context.Context, databaseName string, limits interface{}) error {
 	return fmt.Errorf("not implemented")
 }
 
@@ -142,19 +179,19 @@ func (m *aliasTestDatabaseManager) GetDatabaseLimits(databaseName string) (inter
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *aliasTestDatabaseManager) CreateCompositeDatabase(name string, constituents []interface{}) error {
+func (m *aliasTestDatabaseManager) CreateCompositeDatabase(ctx context.Context, name string, constituents []interface{}) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *aliasTestDatabaseManager) DropCompositeDatabase(name string) error {
+func (m *aliasTestDatabaseManager) DropCompositeDatabase(ctx context.Context, name string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *aliasTestDatabaseManager) AddConstituent(compositeName string, constituent interface{}) error {
+func (m *aliasTestDatabaseManager) AddConstituent(ctx context.Context, compositeName string, constituent interface{}) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (m *aliasTestDatabaseManager) RemoveConstituent(compositeName string, alias string) error {
+func (m *aliasTestDatabaseManager) RemoveConstituent(ctx context.Context, compositeName string, alias string) error {
 	return fmt.Errorf("not implemented")
 }
 
@@ -217,9 +254,9 @@ func TestAliasCommands_CreateAlias_WhitespaceVariations(t *testing.T) {
 	ctx := context.Background()
 
 	mockDBM := newAliasTestDatabaseManager(t)
-	mockDBM.CreateDatabase("tenant_a")
-	mockDBM.CreateDatabase("tenant_b")
-	mockDBM.CreateDatabase("tenant_c")
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"})
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_b"})
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_c"})
 	exec.SetDatabaseManager(mockDBM)
 
 	baseQueries := []string{
@@ -275,7 +312,7 @@ func TestAliasCommands_DropAlias_WhitespaceVariations(t *testing.T) {
 	ctx := context.Background()
 
 	mockDBM := newAliasTestDatabaseManager(t)
-	mockDBM.CreateDatabase("tenant_a")
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"})
 	exec.SetDatabaseManager(mockDBM)
 
 	baseQueries := []string{
@@ -300,10 +337,10 @@ func TestAliasCommands_DropAlias_WhitespaceVariations(t *testing.T) {
 
 					// Create alias first if testing DROP with IF EXISTS
 					if strings.Contains(baseQuery, "IF EXISTS") {
-						mockDBM.CreateAlias(aliasName, "tenant_a")
+						mockDBM.CreateAlias(t.Context(), aliasName, "tenant_a")
 					} else {
 						// Create alias for non-IF EXISTS tests
-						mockDBM.CreateAlias(aliasName, "tenant_a")
+						mockDBM.CreateAlias(t.Context(), aliasName, "tenant_a")
 					}
 
 					result, err := exec.Execute(ctx, testQuery, nil)
@@ -332,10 +369,10 @@ func TestAliasCommands_ShowAliases_WhitespaceVariations(t *testing.T) {
 	ctx := context.Background()
 
 	mockDBM := newAliasTestDatabaseManager(t)
-	mockDBM.CreateDatabase("tenant_a")
-	mockDBM.CreateDatabase("tenant_b")
-	mockDBM.CreateAlias("main", "tenant_a")
-	mockDBM.CreateAlias("prod", "tenant_b")
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"})
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_b"})
+	mockDBM.CreateAlias(t.Context(), "main", "tenant_a")
+	mockDBM.CreateAlias(t.Context(), "prod", "tenant_b")
 	exec.SetDatabaseManager(mockDBM)
 
 	baseQueries := []string{
@@ -367,109 +404,6 @@ func TestAliasCommands_ShowAliases_WhitespaceVariations(t *testing.T) {
 	}
 }
 
-func TestAliasCommands_CreateAlias_ErrorCases_WhitespaceVariations(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	mockDBM := newAliasTestDatabaseManager(t)
-	mockDBM.CreateDatabase("tenant_a")
-	mockDBM.CreateAlias("existing", "tenant_a")
-	exec.SetDatabaseManager(mockDBM)
-
-	// Test cases that should fail
-	testCases := []struct {
-		name      string
-		query     string
-		expectErr bool
-	}{
-		{
-			name:      "alias_already_exists",
-			query:     "CREATE ALIAS existing FOR DATABASE tenant_a",
-			expectErr: true,
-		},
-		{
-			name:      "database_not_found",
-			query:     "CREATE ALIAS new_alias FOR DATABASE nonexistent",
-			expectErr: true,
-		},
-		{
-			name:      "invalid_syntax_missing_FOR",
-			query:     "CREATE ALIAS new_alias tenant_a",
-			expectErr: true,
-		},
-		{
-			name:      "invalid_syntax_missing_DATABASE",
-			query:     "CREATE ALIAS new_alias FOR tenant_a",
-			expectErr: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			variations := whitespaceVariations(tc.query)
-			for i, query := range variations {
-				t.Run(fmt.Sprintf("variation_%d", i), func(t *testing.T) {
-					_, err := exec.Execute(ctx, query, nil)
-					if tc.expectErr {
-						assert.Error(t, err, "Expected error for query: %q", query)
-					} else {
-						assert.NoError(t, err, "Unexpected error for query: %q", query)
-					}
-				})
-			}
-		})
-	}
-}
-
-func TestAliasCommands_DropAlias_ErrorCases_WhitespaceVariations(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	mockDBM := newAliasTestDatabaseManager(t)
-	mockDBM.CreateDatabase("tenant_a")
-	exec.SetDatabaseManager(mockDBM)
-
-	// Test cases that should fail
-	testCases := []struct {
-		name      string
-		query     string
-		expectErr bool
-	}{
-		{
-			name:      "alias_not_found",
-			query:     "DROP ALIAS nonexistent",
-			expectErr: true,
-		},
-		{
-			name:      "alias_not_found_with_IF_EXISTS",
-			query:     "DROP ALIAS nonexistent IF EXISTS",
-			expectErr: false, // IF EXISTS should not error
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			variations := whitespaceVariations(tc.query)
-			for i, query := range variations {
-				t.Run(fmt.Sprintf("variation_%d", i), func(t *testing.T) {
-					_, err := exec.Execute(ctx, query, nil)
-					if tc.expectErr {
-						assert.Error(t, err, "Expected error for query: %q", query)
-					} else {
-						assert.NoError(t, err, "Unexpected error for query: %q", query)
-					}
-				})
-			}
-		})
-	}
-}
-
 func TestAliasCommands_ComplexWhitespacePatterns(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 
@@ -478,8 +412,8 @@ func TestAliasCommands_ComplexWhitespacePatterns(t *testing.T) {
 	ctx := context.Background()
 
 	mockDBM := newAliasTestDatabaseManager(t)
-	mockDBM.CreateDatabase("tenant_a")
-	mockDBM.CreateDatabase("tenant_b")
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"})
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_b"})
 	exec.SetDatabaseManager(mockDBM)
 
 	// Complex whitespace patterns
@@ -503,7 +437,7 @@ func TestAliasCommands_ComplexWhitespacePatterns(t *testing.T) {
 			} else if strings.HasPrefix(strings.TrimSpace(query), "DROP ALIAS") {
 				// Drop alias (create first if needed)
 				if !strings.Contains(query, "main") || mockDBM.ListAliases("")["main"] == "" {
-					mockDBM.CreateAlias("main", "tenant_a")
+					mockDBM.CreateAlias(t.Context(), "main", "tenant_a")
 				}
 				_, err := exec.Execute(ctx, query, nil)
 				require.NoError(t, err, "Query failed: %q", query)
@@ -517,60 +451,79 @@ func TestAliasCommands_ComplexWhitespacePatterns(t *testing.T) {
 	}
 }
 
-func TestAliasCommands_EdgeCases_Whitespace(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	mockDBM := newAliasTestDatabaseManager(t)
-	mockDBM.CreateDatabase("tenant_a")
-	exec.SetDatabaseManager(mockDBM)
-
-	// Edge cases with whitespace - use unique alias names to avoid conflicts
-	edgeCases := []struct {
-		name      string
-		query     string
-		aliasName string
-		expectErr bool
+func TestAliasCommandWhitespaceErrors(t *testing.T) {
+	for _, group := range []struct {
+		name           string
+		createExisting bool
+		cases          []struct {
+			name, query string
+			expectErr   bool
+		}
 	}{
-		{
-			name:      "leading_whitespace",
-			query:     "   CREATE ALIAS alias_leading FOR DATABASE tenant_a",
-			aliasName: "alias_leading",
-			expectErr: false,
-		},
-		{
-			name:      "trailing_whitespace",
-			query:     "CREATE ALIAS alias_trailing FOR DATABASE tenant_a   ",
-			aliasName: "alias_trailing",
-			expectErr: false,
-		},
-		{
-			name:      "mixed_whitespace",
-			query:     "\tCREATE\nALIAS\talias_mixed\r\nFOR DATABASE\ttenant_a\n",
-			aliasName: "alias_mixed",
-			expectErr: false,
-		},
-		{
-			name:      "only_whitespace_between_keywords",
-			query:     "CREATE\t\tALIAS\n\nalias_whitespace\r\n\r\nFOR\t\tDATABASE\n\ntenant_a",
-			aliasName: "alias_whitespace",
-			expectErr: false,
-		},
-	}
-
-	for _, tc := range edgeCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Drop alias if it exists from previous test runs
-			mockDBM.DropAlias(tc.aliasName)
-
-			_, err := exec.Execute(ctx, tc.query, nil)
-			if tc.expectErr {
-				assert.Error(t, err, "Expected error for query: %q", tc.query)
-			} else {
-				assert.NoError(t, err, "Query must succeed: %q", tc.query)
+		{name: "TestAliasCommands_CreateAlias_ErrorCases_WhitespaceVariations", createExisting: true, cases: []struct {
+			name, query string
+			expectErr   bool
+		}{
+			{
+				name:      "alias_already_exists",
+				query:     "CREATE ALIAS existing FOR DATABASE tenant_a",
+				expectErr: true,
+			},
+			{
+				name:      "database_not_found",
+				query:     "CREATE ALIAS new_alias FOR DATABASE nonexistent",
+				expectErr: true,
+			},
+			{
+				name:      "invalid_syntax_missing_FOR",
+				query:     "CREATE ALIAS new_alias tenant_a",
+				expectErr: true,
+			},
+			{
+				name:      "invalid_syntax_missing_DATABASE",
+				query:     "CREATE ALIAS new_alias FOR tenant_a",
+				expectErr: true,
+			}}},
+		{name: "TestAliasCommands_DropAlias_ErrorCases_WhitespaceVariations", createExisting: false, cases: []struct {
+			name, query string
+			expectErr   bool
+		}{
+			{
+				name:      "alias_not_found",
+				query:     "DROP ALIAS nonexistent",
+				expectErr: true,
+			},
+			{
+				name:      "alias_not_found_with_IF_EXISTS",
+				query:     "DROP ALIAS nonexistent IF EXISTS",
+				expectErr: false, // IF EXISTS should not error
+			}}},
+	} {
+		t.Run(group.name, func(t *testing.T) {
+			baseStore := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			mockDBM := newAliasTestDatabaseManager(t)
+			mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"})
+			if group.createExisting {
+				mockDBM.CreateAlias(t.Context(), "existing", "tenant_a")
+			}
+			exec.SetDatabaseManager(mockDBM)
+			for _, tc := range group.cases {
+				t.Run(tc.name, func(t *testing.T) {
+					variations := whitespaceVariations(tc.query)
+					for i, query := range variations {
+						t.Run(fmt.Sprintf("variation_%d", i), func(t *testing.T) {
+							_, err := exec.Execute(ctx, query, nil)
+							if tc.expectErr {
+								assert.Error(t, err, "Expected error for query: %q", query)
+							} else {
+								assert.NoError(t, err, "Unexpected error for query: %q", query)
+							}
+						})
+					}
+				})
 			}
 		})
 	}

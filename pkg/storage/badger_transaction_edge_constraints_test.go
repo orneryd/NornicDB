@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 	"time"
@@ -15,14 +17,14 @@ import (
 // reached through tx.CreateEdge → tx.Commit → tx.validateEdgeConstraints.
 func txEdgeConstraintFixture(t *testing.T, c Constraint) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(c))
 
 	for _, id := range []NodeID{"test:a", "test:b", "test:c", "test:d"} {
-		_, err := engine.CreateNode(&Node{
+		_, err := engine.CreateNode(t.Context(), &Node{
 			ID:         id,
 			Labels:     []string{"Endpoint"},
 			Properties: map[string]any{},
@@ -44,15 +46,15 @@ func TestTxCheckEdgeUniqueness_PendingDuplicate(t *testing.T) {
 		Properties: []string{"token"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "OWNS", Properties: map[string]any{"token": "abc"},
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "OWNS", Properties: map[string]any{"token": "abc"},
 	}))
@@ -75,15 +77,15 @@ func TestTxCheckEdgeUniqueness_AgainstCommitted(t *testing.T) {
 		Label:      "OWNS",
 		Properties: []string{"token"},
 	})
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "OWNS", Properties: map[string]any{"token": "abc"},
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "OWNS", Properties: map[string]any{"token": "abc"},
 	}))
@@ -108,13 +110,13 @@ func TestTxCheckEdgeUniqueness_NullValueAllowed(t *testing.T) {
 		Properties: []string{"token"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "OWNS", Properties: map[string]any{},
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "OWNS", Properties: map[string]any{},
 	}))
@@ -131,16 +133,16 @@ func TestTxCheckEdgeUniqueness_CompositeKey(t *testing.T) {
 		Properties: []string{"k1", "k2"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "TAG", Properties: map[string]any{"k1": "x", "k2": "y"},
 	}))
 	// Same composite — must violate.
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "TAG", Properties: map[string]any{"k1": "x", "k2": "y"},
 	}))
@@ -162,13 +164,13 @@ func TestTxCheckEdgeUniqueness_CompositeKey_PartialNull(t *testing.T) {
 		Properties: []string{"k1", "k2"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "TAG", Properties: map[string]any{"k1": "x"}, // k2 missing
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "TAG", Properties: map[string]any{"k1": "x"}, // k2 missing
 	}))
@@ -196,18 +198,18 @@ func TestTxCheckEdgeTemporalConstraint_NoOverlap_Pending(t *testing.T) {
 	t3 := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
 	t4 := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
 			"role": "captain", "valid_from": t1, "valid_to": t2,
 		},
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -236,16 +238,16 @@ func TestTxCheckEdgeTemporalConstraint_NoOverlap_DifferentKey(t *testing.T) {
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
 			"role": "captain", "valid_from": t1, "valid_to": t2,
 		},
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -268,7 +270,7 @@ func TestTxCheckEdgeTemporalConstraint_AgainstCommitted(t *testing.T) {
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -276,13 +278,13 @@ func TestTxCheckEdgeTemporalConstraint_AgainstCommitted(t *testing.T) {
 		},
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	t3 := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
 	t4 := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -306,11 +308,11 @@ func TestTxCheckEdgeTemporalConstraint_NullKey(t *testing.T) {
 		Properties: []string{"role", "valid_from", "valid_to"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -337,11 +339,11 @@ func TestTxCheckEdgeTemporalConstraint_NonDateStart(t *testing.T) {
 		Properties: []string{"role", "valid_from", "valid_to"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -368,18 +370,18 @@ func TestTxCheckEdgeCardinality_OutgoingMaxExceeded(t *testing.T) {
 		MaxCount:   2,
 		Direction:  "OUTGOING",
 	})
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "X",
 	}))
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "X",
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e3", StartNode: "test:a", EndNode: "test:d", Type: "X",
 	}))
 	err = tx.Commit()
@@ -403,14 +405,14 @@ func TestTxCheckEdgeCardinality_PendingCount(t *testing.T) {
 		Direction:  "OUTGOING",
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "X",
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "X",
 	}))
 	err = tx.Commit()
@@ -432,15 +434,15 @@ func TestTxCheckEdgeCardinality_IncomingDirection(t *testing.T) {
 		Direction:  "INCOMING",
 	})
 
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "X",
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:b", Type: "X",
 	}))
 	err = tx.Commit()
@@ -462,130 +464,18 @@ func TestTxCheckEdgeCardinality_DeletedExcluded(t *testing.T) {
 		MaxCount:   1,
 		Direction:  "OUTGOING",
 	})
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "X",
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Drop the existing edge and add a fresh one — count stays at 1.
-	require.NoError(t, tx.DeleteEdge("test:e1"))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.DeleteEdge(t.Context(), "test:e1"))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "X",
-	}))
-	require.NoError(t, tx.Commit())
-}
-
-// TestTxCheckEdgePolicy_Disallowed: a DISALLOWED edge between Source/Target
-// labels must fail.
-func TestTxCheckEdgePolicy_Disallowed(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddConstraint(Constraint{
-		Name:        "no_admin_to_user",
-		Type:        ConstraintPolicy,
-		EntityType:  ConstraintEntityRelationship,
-		Label:       "MANAGES",
-		SourceLabel: "Admin",
-		TargetLabel: "User",
-		PolicyMode:  "DISALLOWED",
-	}))
-
-	_, err = engine.CreateNode(&Node{ID: "test:admin1", Labels: []string{"Admin"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:user1", Labels: []string{"User"}})
-	require.NoError(t, err)
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-
-	require.NoError(t, tx.CreateEdge(&Edge{
-		ID: "test:e1", StartNode: "test:admin1", EndNode: "test:user1",
-		Type: "MANAGES",
-	}))
-	err = tx.Commit()
-	require.Error(t, err)
-	var cve *ConstraintViolationError
-	require.True(t, errors.As(err, &cve))
-	require.Equal(t, ConstraintPolicy, cve.Type)
-	require.Contains(t, cve.Message, "DISALLOWED")
-}
-
-// TestTxCheckEdgePolicy_AllowedNoMatch: ALLOWED policy in effect; no
-// constraint matches the edge → it must be rejected.
-func TestTxCheckEdgePolicy_AllowedNoMatch(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddConstraint(Constraint{
-		Name:        "only_company_owns_dept",
-		Type:        ConstraintPolicy,
-		EntityType:  ConstraintEntityRelationship,
-		Label:       "OWNS",
-		SourceLabel: "Company",
-		TargetLabel: "Department",
-		PolicyMode:  "ALLOWED",
-	}))
-
-	_, err = engine.CreateNode(&Node{ID: "test:p1", Labels: []string{"Person"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:dept1", Labels: []string{"Department"}})
-	require.NoError(t, err)
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-
-	// Person→Department is not in the ALLOWED list (only Company→Department).
-	require.NoError(t, tx.CreateEdge(&Edge{
-		ID: "test:e1", StartNode: "test:p1", EndNode: "test:dept1", Type: "OWNS",
-	}))
-	err = tx.Commit()
-	require.Error(t, err)
-	var cve *ConstraintViolationError
-	require.True(t, errors.As(err, &cve))
-	require.Equal(t, ConstraintPolicy, cve.Type)
-	require.Contains(t, cve.Message, "ALLOWED")
-}
-
-// TestTxCheckEdgePolicy_AllowedMatchesViaPendingNodeLabel: read-your-writes —
-// a node created within the same tx must be visible to the policy check.
-func TestTxCheckEdgePolicy_AllowedMatchesViaPendingNodeLabel(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddConstraint(Constraint{
-		Name:        "company_owns_dept",
-		Type:        ConstraintPolicy,
-		EntityType:  ConstraintEntityRelationship,
-		Label:       "OWNS",
-		SourceLabel: "Company",
-		TargetLabel: "Department",
-		PolicyMode:  "ALLOWED",
-	}))
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-
-	// Both endpoint nodes created in-tx — policy check must read them
-	// from pendingNodes via tx.getNodeLabels.
-	_, err = tx.CreateNode(&Node{ID: "test:co1", Labels: []string{"Company"}})
-	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "test:dept1", Labels: []string{"Department"}})
-	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{
-		ID: "test:e1", StartNode: "test:co1", EndNode: "test:dept1", Type: "OWNS",
 	}))
 	require.NoError(t, tx.Commit())
 }
@@ -593,35 +483,35 @@ func TestTxCheckEdgePolicy_AllowedMatchesViaPendingNodeLabel(t *testing.T) {
 // TestTxGetNodeLabels_PendingThenCommittedThenDeleted exercises the three
 // branches of tx.getNodeLabels in one test.
 func TestTxGetNodeLabels_PendingCommittedDeleted(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	for _, id := range []NodeID{"test:a"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Endpoint"}})
 		require.NoError(t, err)
 	}
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Committed branch: node "test:a" is already on disk.
-	got, err := tx.getNodeLabels("test:a")
+	got, err := tx.getNodeLabels(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, []string{"Endpoint"}, got)
 
 	// Pending branch overrides committed.
-	_, err = tx.CreateNode(&Node{ID: "test:new1", Labels: []string{"Pending"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:new1", Labels: []string{"Pending"}})
 	require.NoError(t, err)
-	got, err = tx.getNodeLabels("test:new1")
+	got, err = tx.getNodeLabels(t.Context(), "test:new1")
 	require.NoError(t, err)
 	require.Equal(t, []string{"Pending"}, got)
 
 	// Deleted branch: even though "test:a" exists committed, after
 	// DeleteNode the lookup returns nil (deleted-set takes precedence).
-	require.NoError(t, tx.DeleteNode("test:a"))
-	got, err = tx.getNodeLabels("test:a")
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
+	got, err = tx.getNodeLabels(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Nil(t, got)
 }

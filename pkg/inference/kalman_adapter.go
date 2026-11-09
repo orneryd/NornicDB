@@ -204,16 +204,14 @@ func (ka *KalmanAdapter) SetTracker(t *temporal.Tracker) {
 //  4. Smooths confidence scores with Kalman filter
 //  5. Detects cross-session patterns
 func (ka *KalmanAdapter) OnAccess(ctx context.Context, nodeID string) ([]EdgeSuggestion, error) {
+	ka.recordAccess(nodeID)
+
+	// Get base suggestions from engine, without holding ka.mu: the engine
+	// takes its own lock and must never be called under the adapter's.
+	baseSuggestions := ka.engine.OnAccess(ctx, nodeID)
+
 	ka.mu.Lock()
 	defer ka.mu.Unlock()
-
-	// Record access in temporal tracker
-	if ka.tracker != nil {
-		ka.tracker.RecordAccess(nodeID)
-	}
-
-	// Get base suggestions from engine
-	baseSuggestions := ka.engine.OnAccess(ctx, nodeID)
 
 	// Enhance with session-aware co-access
 	sessionSuggestions := ka.getSessionCoAccessSuggestions(nodeID)
@@ -230,21 +228,29 @@ func (ka *KalmanAdapter) OnAccess(ctx context.Context, nodeID string) ([]EdgeSug
 	return enhancedSuggestions, nil
 }
 
+// recordAccess records nodeID in the temporal tracker, if one is set. The
+// tracker locks internally, so it is called after ka.mu is released.
+func (ka *KalmanAdapter) recordAccess(nodeID string) {
+	ka.mu.RLock()
+	tracker := ka.tracker
+	ka.mu.RUnlock()
+	if tracker != nil {
+		tracker.RecordAccess(nodeID)
+	}
+}
+
 // OnStore processes a new node and returns enhanced suggestions.
 func (ka *KalmanAdapter) OnStore(ctx context.Context, nodeID string, embedding []float32) ([]EdgeSuggestion, error) {
-	ka.mu.Lock()
-	defer ka.mu.Unlock()
+	ka.recordAccess(nodeID)
 
-	// Record in temporal tracker
-	if ka.tracker != nil {
-		ka.tracker.RecordAccess(nodeID)
-	}
-
-	// Get base suggestions from engine
+	// Get base suggestions from engine, without holding ka.mu (see OnAccess).
 	baseSuggestions, err := ka.engine.OnStore(ctx, nodeID, embedding)
 	if err != nil {
 		return nil, err
 	}
+
+	ka.mu.Lock()
+	defer ka.mu.Unlock()
 
 	// Apply Kalman smoothing
 	enhancedSuggestions := make([]EdgeSuggestion, 0, len(baseSuggestions))

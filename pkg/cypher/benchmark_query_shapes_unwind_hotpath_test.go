@@ -78,7 +78,7 @@ RETURN count(o) AS prepared`
 	require.Equal(t, int64(1), toInt64ForTest(t, res.Rows[0][0]))
 	require.True(t, exec.LastHotPathTrace().UnwindSimpleMergeBatch, "expected unwind simple merge batch hot path")
 
-	nodes, err := store.GetNodesByLabel("OriginalText")
+	nodes, err := store.GetNodesByLabel(ctx, "OriginalText")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 
@@ -187,7 +187,7 @@ RETURN count(o) AS prepared
 	})
 	require.NoError(t, err)
 
-	originals, err := store.GetNodesByLabel("OriginalText")
+	originals, err := store.GetNodesByLabel(ctx, "OriginalText")
 	require.NoError(t, err)
 	require.Len(t, originals, 2)
 	idByTextKey := map[string]string{}
@@ -232,8 +232,8 @@ MERGE (h5)-[:BENCH_HOP]->(h6)
 RETURN count(o) AS prepared`
 
 	rows := []map[string]interface{}{
-		{"rootID": "4:nornicdb:" + idByTextKey["benchhop-000"], "rootKey": "benchhop-000"},
-		{"rootID": "4:nornicdb:" + idByTextKey["benchhop-001"], "rootKey": "benchhop-001"},
+		{"rootID": storage.NodeElementID("test", storage.NodeID(idByTextKey["benchhop-000"])), "rootKey": "benchhop-000"},
+		{"rootID": storage.NodeElementID("test", storage.NodeID(idByTextKey["benchhop-001"])), "rootKey": "benchhop-001"},
 	}
 	res, err := exec.Execute(ctx, linkQuery, map[string]interface{}{"rows": rows})
 	require.NoError(t, err)

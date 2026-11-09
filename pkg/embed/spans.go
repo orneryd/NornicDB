@@ -118,7 +118,7 @@ func (t *TracedEmbedder) EmbedDocumentPropertyBatchChunks(ctx context.Context, f
 	if provider, ok := t.inner.(DocumentPropertyBatchChunkEmbedder); ok && provider.UsesDocumentProperties() {
 		results, err = provider.EmbedDocumentPropertyBatchChunks(ctx, fallbackTexts, properties, maxTokens, overlap)
 	} else {
-		results, err = embedDocumentPropertyBatchFallback(ctx, fallbackTexts, properties, maxTokens, overlap, t.EmbedDocumentPropertyChunks)
+		results, err = embedDocumentPropertyBatchFallback(ctx, fallbackTexts, properties, maxTokens, overlap, t, t.EmbedDocumentBatchChunks)
 	}
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
@@ -133,8 +133,9 @@ func (t *TracedEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []s
 	if batcher, ok := t.inner.(DocumentBatchChunkEmbedder); ok {
 		return batcher.EmbedDocumentBatchChunks(ctx, texts, maxTokens, overlap)
 	}
-	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, t.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, error) {
-		return t.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, t.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, []providerBatchUsage, error) {
+		vectors, err := t.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+		return vectors, nil, err
 	}, t.Model())
 }
 

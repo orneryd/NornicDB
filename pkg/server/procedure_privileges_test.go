@@ -1,6 +1,8 @@
 package server
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,7 +56,7 @@ func TestBoostedProcedureGrantOverHTTP(t *testing.T) {
 	// The role reads (its global entitlement) and reads the one database.
 	require.NotNil(t, server.roleEntitlementsStore)
 	require.NoError(t, server.roleEntitlementsStore.Set(ctx, "cdc_reader", []string{string(auth.PermRead)}))
-	_, err := authenticator.CreateUser("worker", "password123", []auth.Role{"cdc_reader"})
+	_, err := authenticator.CreateUser(context.Background(), "worker", "password123", []auth.Role{"cdc_reader"})
 	require.NoError(t, err)
 	admin := getAuthToken(t, authenticator, "admin")
 	worker := getAuthToken(t, authenticator, "worker")
@@ -106,7 +108,7 @@ type unreadableGrantsEngine struct {
 
 var errGrantsUnreadable = errors.New("grants unreadable")
 
-func (unreadableGrantsEngine) GetNodesByLabel(string) ([]*storage.Node, error) {
+func (unreadableGrantsEngine) GetNodesByLabel(ctx context.Context, _ string) ([]*storage.Node, error) {
 	return nil, errGrantsUnreadable
 }
 
@@ -120,7 +122,7 @@ func grantedWorker(t *testing.T, server *Server, authenticator *auth.Authenticat
 	require.NoError(t, server.roleStore.CreateRole(ctx, "cdc_reader"))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "cdc_reader", "nornic", true, false))
 	require.NoError(t, server.roleEntitlementsStore.Set(ctx, "cdc_reader", []string{string(auth.PermRead)}))
-	_, err := authenticator.CreateUser("worker", "password123", []auth.Role{"cdc_reader"})
+	_, err := authenticator.CreateUser(context.Background(), "worker", "password123", []auth.Role{"cdc_reader"})
 	require.NoError(t, err)
 	admin = getAuthToken(t, authenticator, "admin")
 	worker = getAuthToken(t, authenticator, "worker")
@@ -178,11 +180,11 @@ func TestBoostedProcedureGrantThroughUserRoles(t *testing.T) {
 	require.NoError(t, server.roleStore.CreateRole(ctx, "cdc_reader"))
 	require.Empty(t, txErrorCode(t, server, "system", admin, "ALTER DATABASE nornic SET OPTION txLogEnrichment 'FULL'"))
 	require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO cdc_reader"))
-	_, err := authenticator.CreateUser("member", "password123", []auth.Role{auth.RoleViewer})
+	_, err := authenticator.CreateUser(context.Background(), "member", "password123", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 	require.Equal(t, "Neo.ClientError.Security.Forbidden", txErrorCode(t, server, "nornic", getAuthToken(t, authenticator, "member"), "CALL db.cdc.query()"))
 
-	require.NoError(t, authenticator.UpdateRoles("member", []auth.Role{auth.RoleViewer, "cdc_reader"}))
+	require.NoError(t, authenticator.UpdateRoles(context.Background(), "member", []auth.Role{auth.RoleViewer, "cdc_reader"}))
 	require.Empty(t, txErrorCode(t, server, "nornic", getAuthToken(t, authenticator, "member"), "CALL db.cdc.query()"))
 }
 
@@ -193,7 +195,7 @@ func TestBoostedProcedureGrantThroughUserRoles(t *testing.T) {
 // can't be made there, and the editor stays refused after a later GRANT.
 func TestSystemDatabaseGraphWritesOverHTTP(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	_, err := authenticator.CreateUser("editor_user", "password123", []auth.Role{auth.RoleEditor})
+	_, err := authenticator.CreateUser(context.Background(), "editor_user", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	admin := getAuthToken(t, authenticator, "admin")
 	editor := getAuthToken(t, authenticator, "editor_user")
@@ -273,7 +275,7 @@ func TestImmutableProcedureGrantOverHTTP(t *testing.T) {
 	database, err := nornicdb.Open(t.TempDir(), nornicdb.DefaultConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = database.Close() })
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	open, err := auth.NewAuthenticator(auth.AuthConfig{SecurityEnabled: false}, authStorage)
 	require.NoError(t, err)

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"container/list"
+	"sync"
 	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -14,20 +15,21 @@ import (
 // This module centralizes cache writes/invalidations for BadgerEngine.
 //
 // Invariants:
-//   - Node cache stores deep copies (see copyNode) and GetNode returns a deep
-//     copy, so callers cannot mutate cached state.
+//   - Full and query node images share a byte budget, including hydrated
+//     vector payloads. Query reads keep their lightweight decoded image
+//     instead of deep-copying a full cached image's stored chunks.
+//   - Cached images and returned images are detached, so callers cannot
+//     mutate cached state.
 //   - Edge type cache is an acceleration structure for GetEdgesByType and must
 //     be invalidated whenever edges of a type are created/deleted OR when an
 //     edge changes its Type.
 //   - Cached node/edge counts are maintained on successful mutations to keep
 //     Stats() O(1).
 //
-// Entry points:
-//   - cacheOnNodeCreated / cacheOnNodeUpdated / cacheOnNodeDeleted
-//   - cacheOnEdgeCreated / cacheOnEdgeUpdated / cacheOnEdgeDeleted
-//
-// These functions should be the only places that mutate/invalidate the caches
-// in response to successful storage mutations.
+// Durable write scopes revoke affected cache entries before the physical
+// timestamp becomes readable. The commit writer installs one final body per
+// key after derived publication. cacheOn* retains index/count transitions;
+// cacheFill* admits read images against their captured source version.
 
 type nodeBodyCacheEntry struct {
 	itemVersion uint64
@@ -52,22 +54,61 @@ func (g *cacheGeneration) current() uint64 { return g.n.Load() }
 // advance records a write; the caller holds the cache's lock.
 func (g *cacheGeneration) advance() { g.n.Add(1) }
 
-// cacheStoreNode caches node as written (a write: see cacheGeneration).
-func (b *BadgerEngine) cacheStoreNode(node *Node) {
+// copyNodeForReadCache avoids copying an image that cannot fit the byte
+// budget. Cache admission itself is serialized in putNodeLocked.
+func (b *BadgerEngine) copyNodeForReadCache(node *Node) *Node {
+	if node == nil || estimateNodeReadCacheBytes(node) > b.nodeReadCacheLimit() {
+		return nil
+	}
+	return copyNode(node)
+}
+
+// cacheStoreNode caches an eligible node as written (a write: see
+// cacheGeneration). An ineligible replacement still invalidates every older
+// image, including a query image from before this write.
+func (b *BadgerEngine) cacheStoreNode(node *Node, source uint64) {
 	if node == nil {
 		return
 	}
-	b.nodeCacheMu.Lock()
-	b.nodeCacheGen.advance()
-	b.putNodeLocked(node)
+	// Prepare immutable state before publication. Ordinary cache-hit copies
+	// inherit this same owner record without allocating another one.
+	cached := b.copyNodeForReadCache(node)
+	if cached != nil {
+		state := cached.runtimeState()
+		state.embeddingOwner, state.embeddingOwnerID = b, node.ID
+		state.embeddingRevision, state.embeddingAttempt = EmbeddingBodyRevision{}, nil
+		cached.setRuntimeState(state)
+	}
+	b.durableCaches.mu.Lock()
+	defer b.durableCaches.mu.Unlock()
+	if source < b.durableCaches.nodeFloor(node.ID) {
+		return
+	}
+	b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
+	b.deleteNodeReadCacheLocked(node.ID, nodeReadCacheQuery)
+	if cached != nil {
+		b.putNodeLocked(cached, nodeReadCacheFull)
+	} else {
+		b.deleteNodeReadCacheLocked(node.ID, nodeReadCacheFull)
+	}
 	b.nodeCacheMu.Unlock()
-	b.cacheDeleteNodeBody(node.ID)
+	b.cacheDeleteNode(node.ID, nodeCacheBodyOnly)
 }
 
 // cacheFillNode caches node as read by a read that captured gen before it
 // read; a write since then means node may be stale, and it isn't cached.
-func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node) {
+// The read owns node, so it copies before taking either cache admission lock.
+func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node, mode nodeReadCacheMode, source uint64) {
 	if node == nil {
+		return
+	}
+	cached := b.copyNodeForReadCache(node)
+	if cached == nil {
+		return
+	}
+	b.durableCaches.mu.Lock()
+	defer b.durableCaches.mu.Unlock()
+	if source < b.durableCaches.nodeFloor(node.ID) {
 		return
 	}
 	b.nodeCacheMu.Lock()
@@ -75,24 +116,125 @@ func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node) {
 		b.nodeCacheMu.Unlock()
 		return
 	}
-	b.putNodeLocked(node)
+	if mode == nodeReadCacheQuery {
+		if full := b.nodeCache[node.ID]; full == nil || len(full.ChunkEmbeddings) > 0 {
+			b.putNodeLocked(cached, nodeReadCacheQuery)
+		}
+		b.nodeCacheMu.Unlock()
+		return
+	}
+	b.putNodeLocked(cached, nodeReadCacheFull)
 	b.nodeCacheMu.Unlock()
-	b.cacheDeleteNodeBody(node.ID)
+	b.cacheDeleteNode(node.ID, nodeCacheBodyOnly)
 }
 
-// putNodeLocked stores a copy of node; the caller holds nodeCacheMu.
-func (b *BadgerEngine) putNodeLocked(node *Node) {
-	// Simple eviction: if cache is too large, clear it.
-	// Keeps behavior consistent with existing code paths.
-	if b.nodeCacheMaxEntries > 0 && len(b.nodeCache) > b.nodeCacheMaxEntries {
+// putNodeLocked stores an already-copied body in the selected cache while the
+// caller holds nodeCacheMu. A full read may coexist with a lightweight query
+// image; a write invalidates that image before entering this owner.
+func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
+	b.deleteNodeReadCacheLocked(copied.ID, mode)
+	bytes := estimateNodeReadCacheBytes(copied)
+	limit := b.nodeReadCacheLimit()
+	if bytes > limit {
+		return
+	}
+	// Evict individual immutable images instead of clearing every hot node
+	// when one large vector payload reaches the budget.
+	for id := range b.nodeCache {
+		if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.nodeCache) < b.nodeCacheMaxEntries || mode == nodeReadCacheQuery) {
+			break
+		}
+		b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
+	}
+	for id := range b.queryNodeCache {
+		if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.queryNodeCache) < b.nodeCacheMaxEntries || mode != nodeReadCacheQuery) {
+			break
+		}
+		b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
+	}
+	if mode == nodeReadCacheQuery {
+		if b.queryNodeCache == nil {
+			b.queryNodeCache = make(map[NodeID]*Node)
+		}
+		b.queryNodeCache[copied.ID] = copied
+		b.nodeCacheBytes += bytes
+		return
+	}
+	if b.nodeCache == nil {
 		b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
 	}
-	cached := copyNode(node)
-	normalizePropertyMapShapes(cached.Properties)
-	b.nodeCache[node.ID] = cached
+	b.nodeCache[copied.ID] = copied
+	b.nodeCacheBytes += bytes
 }
 
-func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64) (*Node, bool) {
+func (b *BadgerEngine) nodeReadCacheLimit() int64 {
+	if b.nodeCacheMaxBytes > 0 {
+		return b.nodeCacheMaxBytes
+	}
+	return defaultBadgerNodeCacheMaxBytes
+}
+
+func estimateNodeReadCacheBytes(node *Node) int64 {
+	bytes := estimateNodeBodyCacheBytes(node)
+	for _, chunk := range node.ChunkEmbeddings {
+		bytes += 24 + int64(len(chunk))*4
+	}
+	for name, vector := range node.NamedEmbeddings {
+		bytes += 48 + int64(len(name)) + int64(len(vector))*4
+	}
+	return bytes
+}
+
+// deleteNodeReadCacheLocked is the sole per-image removal/accounting owner.
+func (b *BadgerEngine) deleteNodeReadCacheLocked(id NodeID, mode nodeReadCacheMode) {
+	cache := b.nodeCache
+	if mode == nodeReadCacheQuery {
+		cache = b.queryNodeCache
+	}
+	if node := cache[id]; node != nil {
+		b.nodeCacheBytes -= estimateNodeReadCacheBytes(node)
+	}
+	delete(cache, id)
+}
+
+func (b *BadgerEngine) resetNodeReadCachesLocked() {
+	b.nodeCache = make(map[NodeID]*Node)
+	b.queryNodeCache = nil
+	b.nodeCacheBytes = 0
+}
+
+// nodeReadCacheImageLocked selects an immutable current-value image. A query
+// read never borrows hydrated chunks from a full image: its first read decodes
+// the lightweight storage image, and subsequent point/label reads reuse that
+// query image. The caller holds nodeCacheMu for reading.
+func (b *BadgerEngine) nodeReadCacheImageLocked(id NodeID, mode nodeReadCacheMode) (*Node, bool) {
+	if mode == nodeReadCacheQuery {
+		if query, found := b.queryNodeCache[id]; found {
+			return query, true
+		}
+	}
+	node, found := b.nodeCache[id]
+	if found && mode == nodeReadCacheQuery && len(node.ChunkEmbeddings) > 0 {
+		return nil, false
+	}
+	return node, found
+}
+
+// cacheLoadQueryNode returns a caller-owned copy of id's GetQueryNode entry,
+// including any in-memory vectors.
+// Cached query images are immutable, so their copies can be made after the
+// map lookup releases its read lock.
+func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
+	b.nodeCacheMu.RLock()
+	cached, ok := b.queryNodeCache[id]
+	b.nodeCacheMu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	return copyNode(cached), true
+}
+
+func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properties []string, access nodeBodyAccess) (*Node, bool) {
 	if id == "" {
 		return nil, false
 	}
@@ -110,22 +252,40 @@ func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64) (*Node, 
 		return nil, false
 	}
 	entry.referenced.Store(true)
-	node := copyNodeWithoutEmbeddings(entry.node)
+	node := entry.node
+	if access != nodeBodyBorrowed {
+		node = projectCachedNodeForRead(node, properties, true)
+	}
 	b.nodeBodyCacheMu.RUnlock()
 	return node, true
 }
 
-func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *Node) {
+// nodeBodyCacheable reports whether a decoded body can be cached without
+// loss. A cached body carries no vectors, and a hit hydrates only the chunk
+// vectors the codec stored under their own keys (loadNodeEmbeddingState).
+// Named vectors always live inline in the body, and chunk vectors do unless
+// the codec moved them out, so a body holding either of those is never
+// cached: every read decodes it again, as reads did before the cache.
+func nodeBodyCacheable(node *Node) bool {
+	if len(node.NamedEmbeddings) > 0 {
+		return false
+	}
+	return len(node.ChunkEmbeddings) == 0 || node.RuntimeMetadata().EmbeddingsStoredSeparately
+}
+
+func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *Node, source uint64) {
 	if id == "" || node == nil {
 		return
 	}
-	// Inline vectors cannot be reconstructed from separate keys. Avoid caching
-	// a lossy projection; large separately stored vectors are rehydrated on hit.
-	if !node.EmbeddingsStoredSeparately && (len(node.ChunkEmbeddings) > 0 || len(node.NamedEmbeddings) > 0) {
+	b.durableCaches.mu.Lock()
+	defer b.durableCaches.mu.Unlock()
+	if source < b.durableCaches.nodeFloor(id) {
+		return
+	}
+	if !nodeBodyCacheable(node) {
 		return
 	}
 	cached := copyNodeWithoutEmbeddings(node)
-	normalizePropertyMapShapes(cached.Properties)
 	retainedBytes := estimateNodeBodyCacheBytes(cached)
 	if retainedBytes > b.nodeBodyCacheMaxBytes {
 		return
@@ -156,17 +316,6 @@ func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *N
 	b.nodeBodyCacheMu.Unlock()
 }
 
-func (b *BadgerEngine) cacheDeleteNodeBody(id NodeID) {
-	if id == "" {
-		return
-	}
-	b.nodeBodyCacheMu.Lock()
-	if entry, ok := b.nodeBodyCache[id]; ok {
-		b.removeNodeBodyCacheEntryLocked(id, entry)
-	}
-	b.nodeBodyCacheMu.Unlock()
-}
-
 func (b *BadgerEngine) removeNodeBodyCacheEntryLocked(id NodeID, entry *nodeBodyCacheEntry) {
 	delete(b.nodeBodyCache, id)
 	if entry == nil {
@@ -189,10 +338,16 @@ func estimateNodeBodyCacheBytes(node *Node) int64 {
 	for _, label := range node.Labels {
 		bytes += int64(16 + len(label))
 	}
-	for key, value := range node.Properties {
+	bytes += estimateEntityPropertyBytes(node.Properties)
+	for key, value := range node.EmbedMeta {
 		bytes += int64(32+len(key)) + util.EstimateValueBytes(value)
 	}
-	for key, value := range node.EmbedMeta {
+	return bytes
+}
+
+func estimateEntityPropertyBytes(properties map[string]interface{}) int64 {
+	var bytes int64
+	for key, value := range properties {
 		bytes += int64(32+len(key)) + util.EstimateValueBytes(value)
 	}
 	return bytes
@@ -221,40 +376,91 @@ func (b *BadgerEngine) cacheLoadEdge(id EdgeID) (*Edge, bool) {
 	return cached, true
 }
 
+// cacheLoadEdgeForRead keeps the cache shortcut inside its source view. A
+// newer final image must never replace a body in an older captured transaction.
+func (b *BadgerEngine) cacheLoadEdgeForRead(id EdgeID, readTs uint64) (*Edge, bool) {
+	b.durableCaches.mu.Lock()
+	defer b.durableCaches.mu.Unlock()
+	b.edgeCacheMu.RLock()
+	defer b.edgeCacheMu.RUnlock()
+	version := b.edgeCacheSources[id]
+	edge := b.edgeCache[id]
+	// Every installed image already passed its source floor, and durability
+	// removes affected entries before publication. A coarsened fill floor
+	// must not reject an unrelated entry that remains valid in this view.
+	return edge, edge != nil && version != 0 && version <= readTs
+}
+
 // cacheStoreEdge inserts edge into the per-engine edge body cache as written
 // (a write: see cacheGeneration). Stores a deep copy so callers cannot
 // mutate the cached state.
-func (b *BadgerEngine) cacheStoreEdge(edge *Edge) {
+func (b *BadgerEngine) cacheStoreEdge(edge *Edge, source uint64) {
 	if edge == nil {
 		return
 	}
-	b.edgeCacheMu.Lock()
-	b.edgeCacheGen.advance()
-	b.putEdgeLocked(edge)
+	b.durableCaches.mu.Lock()
+	defer b.durableCaches.mu.Unlock()
+	if source < b.durableCaches.edgeFloor(edge.ID) {
+		return
+	}
+	b.edgeCacheGen.lockInvalidation(&b.edgeCacheMu)
+	b.putEdgeLocked(edge, 0, source)
 	b.edgeCacheMu.Unlock()
 }
 
 // cacheFillEdge caches edge as read by a read that captured gen before it
 // read, unless the edge cache was written since.
-func (b *BadgerEngine) cacheFillEdge(gen uint64, edge *Edge) {
+func (b *BadgerEngine) cacheFillEdge(gen uint64, edge *Edge, source uint64) {
+	b.cacheFillEdgeAtVersion(gen, edge, 0, source)
+}
+
+func (b *BadgerEngine) cacheFillEdgeAtVersion(gen uint64, edge *Edge, version uint64, source uint64) {
 	if edge == nil {
+		return
+	}
+	b.durableCaches.mu.Lock()
+	defer b.durableCaches.mu.Unlock()
+	readTs := source
+	if readTs < b.durableCaches.edgeFloor(edge.ID) {
 		return
 	}
 	b.edgeCacheMu.Lock()
 	if b.edgeCacheGen.current() == gen {
-		b.putEdgeLocked(edge)
+		b.putEdgeLocked(edge, version, readTs)
 	}
 	b.edgeCacheMu.Unlock()
 }
 
-// putEdgeLocked stores a copy of edge; the caller holds edgeCacheMu.
-func (b *BadgerEngine) putEdgeLocked(edge *Edge) {
+// putEdgeLocked stores a copy of edge, a body as storage returns it (see
+// putNodeLocked); the caller holds edgeCacheMu.
+func (b *BadgerEngine) putEdgeLocked(edge *Edge, version uint64, source uint64) {
 	if b.edgeCacheMaxItems > 0 && len(b.edgeCache) > b.edgeCacheMaxItems {
 		b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
+		b.edgeCacheVersions = nil
+		b.edgeCacheSources = nil
 	}
 	cached := copyEdge(edge)
-	normalizePropertyMapShapes(cached.Properties)
 	b.edgeCache[edge.ID] = cached
+	if b.edgeCacheSources == nil {
+		b.edgeCacheSources = make(map[EdgeID]uint64)
+	}
+	readTs := source
+	b.edgeCacheSources[edge.ID] = readTs
+	if version == 0 {
+		delete(b.edgeCacheVersions, edge.ID)
+	} else {
+		if b.edgeCacheVersions == nil {
+			b.edgeCacheVersions = make(map[EdgeID]uint64)
+		}
+		b.edgeCacheVersions[edge.ID] = version
+	}
+}
+
+// lockInvalidation begins the mutation owned by this cache generation. The
+// caller releases mu after its typed cache changes are complete.
+func (generation *cacheGeneration) lockInvalidation(mu *sync.RWMutex) {
+	mu.Lock()
+	generation.advance()
 }
 
 // cacheDeleteEdge drops an edge from the body cache. Called from the edge
@@ -263,69 +469,59 @@ func (b *BadgerEngine) cacheDeleteEdge(id EdgeID) {
 	if id == "" {
 		return
 	}
-	b.edgeCacheMu.Lock()
-	b.edgeCacheGen.advance()
+	b.edgeCacheGen.lockInvalidation(&b.edgeCacheMu)
 	delete(b.edgeCache, id)
+	delete(b.edgeCacheVersions, id)
+	delete(b.edgeCacheSources, id)
 	b.edgeCacheMu.Unlock()
 }
 
 // cacheInvalidateEdges clears the entire edge body cache. Used by bulk
 // delete and other callers that can't enumerate affected IDs cheaply.
 func (b *BadgerEngine) cacheInvalidateEdges() {
-	b.edgeCacheMu.Lock()
-	b.edgeCacheGen.advance()
+	b.edgeCacheGen.lockInvalidation(&b.edgeCacheMu)
 	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
+	b.edgeCacheVersions = nil
+	b.edgeCacheSources = nil
 	b.edgeCacheMu.Unlock()
 }
 
-// adjCacheLoadOutgoing returns the cached EdgeIDs incident to nodeID as
-// outgoing, or (nil, false) on miss. Returned slice is shared with the
-// cache; callers must treat it as read-only.
-func (b *BadgerEngine) adjCacheLoadOutgoing(nodeID NodeID) ([]EdgeID, bool) {
+// adjCacheLoad returns one direction's cached IDs. The shared slice is
+// read-only; a miss returns nil, false.
+func (b *BadgerEngine) adjCacheLoad(nodeID NodeID, outgoing bool) ([]EdgeID, bool) {
 	b.adjCacheMu.RLock()
-	ids, ok := b.outgoingAdjCache[nodeID]
+	cache := b.incomingAdjCache
+	if outgoing {
+		cache = b.outgoingAdjCache
+	}
+	ids, ok := cache[nodeID]
 	b.adjCacheMu.RUnlock()
 	return ids, ok
 }
 
-func (b *BadgerEngine) adjCacheLoadIncoming(nodeID NodeID) ([]EdgeID, bool) {
-	b.adjCacheMu.RLock()
-	ids, ok := b.incomingAdjCache[nodeID]
-	b.adjCacheMu.RUnlock()
-	return ids, ok
-}
-
-// adjCacheStoreOutgoing caches the outgoing IDs a read captured gen before
-// reading, unless the adjacency cache was written since (cacheGeneration).
-func (b *BadgerEngine) adjCacheStoreOutgoing(gen uint64, nodeID NodeID, ids []EdgeID) {
+// adjCacheStore owns directional cache admission and the durable read floor.
+// It copies IDs only after both generation and source timestamp remain valid.
+func (b *BadgerEngine) adjCacheStore(gen uint64, nodeID NodeID, ids []EdgeID, source uint64, outgoing bool) {
+	b.durableCaches.mu.Lock()
+	defer b.durableCaches.mu.Unlock()
+	if source < max(b.durableCaches.all, b.durableCaches.adjacency[nodeID]) {
+		return
+	}
 	b.adjCacheMu.Lock()
 	defer b.adjCacheMu.Unlock()
 	if b.adjCacheGen.current() != gen {
 		return
 	}
-	if b.adjCacheMaxNodes > 0 && len(b.outgoingAdjCache) > b.adjCacheMaxNodes {
-		b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	cache := &b.incomingAdjCache
+	if outgoing {
+		cache = &b.outgoingAdjCache
 	}
-	// Defensive copy: the iterator's growslice can re-allocate, but the
-	// caller's slice is the canonical one. Store a fresh slice header.
-	cached := make([]EdgeID, len(ids))
-	copy(cached, ids)
-	b.outgoingAdjCache[nodeID] = cached
-}
-
-// adjCacheStoreIncoming is adjCacheStoreOutgoing for incoming IDs.
-func (b *BadgerEngine) adjCacheStoreIncoming(gen uint64, nodeID NodeID, ids []EdgeID) {
-	b.adjCacheMu.Lock()
-	defer b.adjCacheMu.Unlock()
-	if b.adjCacheGen.current() != gen {
-		return
-	}
-	if b.adjCacheMaxNodes > 0 && len(b.incomingAdjCache) > b.adjCacheMaxNodes {
-		b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	if b.adjCacheMaxNodes > 0 && len(*cache) > b.adjCacheMaxNodes {
+		*cache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	}
 	cached := make([]EdgeID, len(ids))
 	copy(cached, ids)
-	b.incomingAdjCache[nodeID] = cached
+	(*cache)[nodeID] = cached
 }
 
 // adjCacheInvalidateForEdge drops the entries for both endpoints of edge.
@@ -335,27 +531,42 @@ func (b *BadgerEngine) adjCacheInvalidateForEdge(edge *Edge) {
 	if edge == nil {
 		return
 	}
-	b.adjCacheMu.Lock()
-	b.adjCacheGen.advance()
+	b.adjCacheGen.lockInvalidation(&b.adjCacheMu)
 	delete(b.outgoingAdjCache, edge.StartNode)
 	delete(b.incomingAdjCache, edge.EndNode)
 	b.adjCacheMu.Unlock()
 }
 
-// adjCacheInvalidateAll clears the entire adjacency cache. Used by edge
-// deletion paths that can't cheaply enumerate the affected node IDs. An
-// empty cache is left as it is: a commit that deletes many edges calls this
-// once per edge, and re-allocating two maps sized for the whole cache each
-// time made deleting n edges cost n full-size allocations.
-func (b *BadgerEngine) adjCacheInvalidateAll() {
-	b.adjCacheMu.Lock()
-	b.adjCacheGen.advance()
-	if len(b.outgoingAdjCache) == 0 && len(b.incomingAdjCache) == 0 {
-		b.adjCacheMu.Unlock()
-		return
+// adjCacheInvalidate drops the selected nodes in both directions, or clears
+// all adjacency when called with no IDs. Explicit empty IDs remain no-ops;
+// a full invalidation of empty maps advances the generation without allocating.
+func (b *BadgerEngine) adjCacheInvalidate(ids ...NodeID) {
+	if len(ids) > 0 {
+		nonempty := false
+		for _, id := range ids {
+			if id != "" {
+				nonempty = true
+				break
+			}
+		}
+		if !nonempty {
+			return
+		}
 	}
-	b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
-	b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	b.adjCacheGen.lockInvalidation(&b.adjCacheMu)
+	if len(ids) == 0 {
+		if len(b.outgoingAdjCache) != 0 || len(b.incomingAdjCache) != 0 {
+			b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+			b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+		}
+	} else {
+		for _, id := range ids {
+			if id != "" {
+				delete(b.outgoingAdjCache, id)
+				delete(b.incomingAdjCache, id)
+			}
+		}
+	}
 	b.adjCacheMu.Unlock()
 }
 
@@ -371,8 +582,13 @@ func (b *BadgerEngine) labelCacheGetFirst(label string) (NodeID, bool) {
 
 // labelCacheSetFirst caches the first node of label a read captured gen
 // before reading, unless the label cache was written since (cacheGeneration).
-func (b *BadgerEngine) labelCacheSetFirst(gen uint64, label string, id NodeID) {
+func (b *BadgerEngine) labelCacheSetFirst(gen uint64, label string, id NodeID, source uint64) {
 	if label == "" || id == "" {
+		return
+	}
+	b.durableCaches.mu.Lock()
+	defer b.durableCaches.mu.Unlock()
+	if source < max(b.durableCaches.all, b.durableCaches.labels[label]) {
 		return
 	}
 	b.labelFirstNodeCacheMu.Lock()
@@ -445,15 +661,30 @@ func (b *BadgerEngine) labelCacheInvalidateForRemovedLabels(oldLabels, newLabels
 	b.labelFirstNodeCacheMu.Unlock()
 }
 
-func (b *BadgerEngine) cacheDeleteNode(id NodeID) {
+type nodeCacheSelection uint8
+
+const (
+	nodeCacheBodyOnly nodeCacheSelection = iota
+	nodeCacheAllForms
+)
+
+// cacheDeleteNode owns removal of one node's cached representations. The
+// body-only selection preserves point-cache entries and their generation.
+func (b *BadgerEngine) cacheDeleteNode(id NodeID, selection nodeCacheSelection) {
 	if id == "" {
 		return
 	}
-	b.nodeCacheMu.Lock()
-	b.nodeCacheGen.advance()
-	delete(b.nodeCache, id)
-	b.nodeCacheMu.Unlock()
-	b.cacheDeleteNodeBody(id)
+	if selection == nodeCacheAllForms {
+		b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
+		b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
+		b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
+		b.nodeCacheMu.Unlock()
+	}
+	b.nodeBodyCacheMu.Lock()
+	if entry, ok := b.nodeBodyCache[id]; ok {
+		b.removeNodeBodyCacheEntryLocked(id, entry)
+	}
+	b.nodeBodyCacheMu.Unlock()
 }
 
 // cacheStoreWrittenNode caches node as a write just committed it, except a
@@ -463,236 +694,12 @@ func (b *BadgerEngine) cacheDeleteNode(id NodeID) {
 // over it would hide the embedding from every read until the entry is
 // evicted. Such a node's entry is dropped instead, and the next read loads
 // it from storage.
-func (b *BadgerEngine) cacheStoreWrittenNode(node *Node) {
+func (b *BadgerEngine) cacheStoreWrittenNode(node *Node, source uint64) {
 	if node != nil && b.shouldIndexPendingEmbed(node) {
-		b.cacheDeleteNode(node.ID)
+		b.cacheDeleteNode(node.ID, nodeCacheAllForms)
 		return
 	}
-	b.cacheStoreNode(node)
-}
-
-func (b *BadgerEngine) cacheOnNodeCreated(node *Node) {
-	b.cacheOnNodeCreatedWithCounts(node, true)
-}
-
-func (b *BadgerEngine) cacheOnNodeCreatedWithCounts(node *Node, publishCounts bool) {
-	b.cacheStoreWrittenNode(node)
-	if publishCounts {
-		b.nodeCount.Add(1)
-		b.addNamespaceNodeCount(node.ID, 1)
-	}
-	b.maintainPropertyIndexesOnNodeCreated(node)
-}
-
-func (b *BadgerEngine) cacheOnNodeUpdated(node *Node) {
-	b.cacheStoreWrittenNode(node)
-	// Updates are handled by cacheOnNodeUpdatedWithOldNode which has the
-	// old-property context needed to remove stale index entries. The
-	// `oldNode == nil` path is legitimately "we don't know the diff" —
-	// fall back to treating it as a create so the new values at least
-	// land in the indexes (no stale-removal possible without oldNode).
-	b.maintainPropertyIndexesOnNodeCreated(node)
-}
-
-func (b *BadgerEngine) cacheOnNodeUpdatedWithOldNode(node *Node, oldNode *Node) {
-	b.cacheStoreWrittenNode(node)
-	if oldNode != nil {
-		b.labelCacheInvalidateForRemovedLabels(oldNode.Labels, node.Labels, node.ID)
-	}
-	b.maintainPropertyIndexesOnNodeUpdated(node, oldNode)
-}
-
-// cacheOnNodeDeleted invalidates node cache and updates cached counts.
-// edgesDeleted is the number of edges removed as part of deleting this node.
-func (b *BadgerEngine) cacheOnNodeDeleted(id NodeID, edgesDeleted int64) {
-	b.cacheOnNodeDeletedWithCounts(id, edgesDeleted, true)
-}
-
-func (b *BadgerEngine) cacheOnNodeDeletedWithCounts(id NodeID, edgesDeleted int64, publishCounts bool) {
-	b.cacheDeleteNode(id)
-
-	// Decrement cached node count for O(1) stats.
-	if publishCounts {
-		b.nodeCount.Add(-1)
-		b.addNamespaceNodeCount(id, -1)
-	}
-
-	// Decrement cached edge count for edges deleted with this node.
-	if edgesDeleted > 0 {
-		if publishCounts {
-			b.edgeCount.Add(-edgesDeleted)
-			b.addNamespaceEdgeCountFromNode(id, -edgesDeleted)
-		}
-		// We don't know which types were removed cheaply; invalidate whole type cache.
-		b.InvalidateEdgeTypeCache()
-	}
-}
-
-func (b *BadgerEngine) cacheOnNodeDeletedWithLabels(nodeID NodeID, labels []string, edgesDeleted int64) {
-	b.cacheOnNodeDeletedWithLabelsAndCounts(nodeID, labels, edgesDeleted, true)
-}
-
-func (b *BadgerEngine) cacheOnNodeDeletedWithLabelsAndCounts(nodeID NodeID, labels []string, edgesDeleted int64, publishCounts bool) {
-	b.cacheDeleteNode(nodeID)
-	b.labelCacheInvalidateForNodeLabels(labels, nodeID)
-
-	// Decrement cached node count for O(1) stats.
-	if publishCounts {
-		b.nodeCount.Add(-1)
-		b.addNamespaceNodeCount(nodeID, -1)
-	}
-
-	// Decrement cached edge count for edges deleted with this node.
-	if edgesDeleted > 0 {
-		if publishCounts {
-			b.edgeCount.Add(-edgesDeleted)
-			b.addNamespaceEdgeCountFromNode(nodeID, -edgesDeleted)
-		}
-		// We don't know which types were removed cheaply; invalidate whole type cache.
-		b.InvalidateEdgeTypeCache()
-	}
-
-	// Remove stale property-index entries. Without labels + properties of
-	// the deleted node we can't do targeted removal, so the narrower
-	// cacheOnNodeDeleted (without labels) leaves the index potentially
-	// dangling — callers MUST use this variant when property indexes exist.
-	b.maintainPropertyIndexesOnNodeDeletedWithLabels(nodeID, labels)
-}
-
-func (b *BadgerEngine) cacheOnEdgeCreated(edge *Edge) {
-	b.cacheOnEdgeCreatedWithCounts(edge, true)
-}
-
-func (b *BadgerEngine) cacheOnEdgeCreatedWithCounts(edge *Edge, publishCounts bool) {
-	if edge == nil {
-		return
-	}
-	b.updateRelationshipUniqueIndexes(edge)
-	b.InvalidateEdgeTypeCacheForType(edge.Type)
-	b.cacheStoreEdge(edge)
-	b.adjCacheInvalidateForEdge(edge)
-	if publishCounts {
-		b.edgeCount.Add(1)
-		b.addNamespaceEdgeCount(edge.ID, 1)
-	}
-}
-
-// cacheOnEdgeUpdated invalidates relevant edge type cache entries when an edge changes.
-func (b *BadgerEngine) cacheOnEdgeUpdated(oldType string, newEdge *Edge) {
-	if newEdge == nil {
-		return
-	}
-	b.updateRelationshipUniqueIndexes(newEdge)
-	// If type changed, invalidate both old and new (old cache would still contain this edge).
-	if oldType != "" && oldType != newEdge.Type {
-		b.InvalidateEdgeTypeCacheForType(oldType)
-	}
-	b.InvalidateEdgeTypeCacheForType(newEdge.Type)
-	b.cacheStoreEdge(newEdge)
-	// Endpoints can change on update; the safe move is to drop the
-	// adjacency entries for the new endpoints. (Old endpoints, if any
-	// changed, are handled by the writer that supplied oldNode/oldEdge —
-	// see the per-engine UpdateEdge path which calls this hook AFTER
-	// already passing the stale pair through DeleteEdge index removal.)
-	b.adjCacheInvalidateForEdge(newEdge)
-}
-
-func (b *BadgerEngine) cacheOnEdgeDeleted(id EdgeID, edgeType string) {
-	b.cacheOnEdgeDeletedWithCounts(id, edgeType, true)
-}
-
-func (b *BadgerEngine) cacheOnEdgeDeletedWithCounts(id EdgeID, edgeType string, publishCounts bool) {
-	b.deleteRelationshipUniqueIndexes(id)
-	if edgeType != "" {
-		b.InvalidateEdgeTypeCacheForType(edgeType)
-	} else {
-		b.InvalidateEdgeTypeCache()
-	}
-	b.cacheDeleteEdge(id)
-	// Without the edge body we can't target the endpoint nodes; clear
-	// everything. Bulk delete paths use the same fallback. Adjacency
-	// cache misses recover via a single index iteration on the next
-	// read, so the worst case is one extra iteration per affected node.
-	b.adjCacheInvalidateAll()
-	if publishCounts {
-		b.edgeCount.Add(-1)
-		b.addNamespaceEdgeCount(id, -1)
-	}
-}
-
-func (b *BadgerEngine) cacheOnEdgesDeleted(deletedIDs []EdgeID) {
-	if len(deletedIDs) == 0 {
-		return
-	}
-	b.deleteRelationshipUniqueIndexes(deletedIDs...)
-	// Bulk delete may cover many types; invalidate once.
-	b.InvalidateEdgeTypeCache()
-	b.cacheInvalidateEdges()
-	b.adjCacheInvalidateAll()
-	b.edgeCount.Add(-int64(len(deletedIDs)))
-
-	// Batch namespace updates under a single lock.
-	deltas := make(map[string]int64)
-	for _, id := range deletedIDs {
-		prefix, ok := namespacePrefixFromID(string(id))
-		if !ok {
-			continue
-		}
-		deltas[prefix]--
-	}
-	if len(deltas) == 0 {
-		return
-	}
-	b.namespaceCountsMu.Lock()
-	for prefix, delta := range deltas {
-		b.namespaceEdgeCounts[prefix] += delta
-	}
-	b.namespaceCountsMu.Unlock()
-}
-
-func (b *BadgerEngine) cacheOnNodesDeleted(deletedNodeIDs []NodeID, deletedNodeCount, totalEdgesDeleted int64) {
-	if deletedNodeCount <= 0 {
-		return
-	}
-
-	for _, nodeID := range deletedNodeIDs {
-		b.cacheDeleteNode(nodeID)
-	}
-	b.nodeCount.Add(-deletedNodeCount)
-
-	// Update per-namespace node counts.
-	namespaces := make(map[string]int64)
-	for _, nodeID := range deletedNodeIDs {
-		prefix, ok := namespacePrefixFromID(string(nodeID))
-		if !ok {
-			continue
-		}
-		namespaces[prefix]--
-	}
-	if len(namespaces) > 0 {
-		b.namespaceCountsMu.Lock()
-		for prefix, delta := range namespaces {
-			b.namespaceNodeCounts[prefix] += delta
-		}
-		b.namespaceCountsMu.Unlock()
-	}
-
-	if totalEdgesDeleted > 0 {
-		b.edgeCount.Add(-totalEdgesDeleted)
-
-		// We only have an aggregate edge delete count. If the deleted nodes span
-		// multiple namespaces, we can't attribute edges precisely.
-		if len(namespaces) == 1 {
-			for prefix := range namespaces {
-				b.namespaceCountsMu.Lock()
-				b.namespaceEdgeCounts[prefix] -= totalEdgesDeleted
-				b.namespaceCountsMu.Unlock()
-				break
-			}
-		}
-
-		b.InvalidateEdgeTypeCache()
-	}
+	b.cacheStoreNode(node, source)
 }
 
 func (b *BadgerEngine) addNamespaceNodeCount(id NodeID, delta int64) {
@@ -707,16 +714,6 @@ func (b *BadgerEngine) addNamespaceNodeCount(id NodeID, delta int64) {
 
 func (b *BadgerEngine) addNamespaceEdgeCount(id EdgeID, delta int64) {
 	prefix, ok := namespacePrefixFromID(string(id))
-	if !ok {
-		return
-	}
-	b.namespaceCountsMu.Lock()
-	b.namespaceEdgeCounts[prefix] += delta
-	b.namespaceCountsMu.Unlock()
-}
-
-func (b *BadgerEngine) addNamespaceEdgeCountFromNode(nodeID NodeID, delta int64) {
-	prefix, ok := namespacePrefixFromID(string(nodeID))
 	if !ok {
 		return
 	}

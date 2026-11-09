@@ -20,7 +20,7 @@ func TestGH455_RelationshipMergeOnCreatePersistsAndMatches(t *testing.T) {
 				{ID: "ann", Labels: []string{"P"}, Properties: map[string]interface{}{"name": "Ann", "age": 30}},
 				{ID: "dee", Labels: []string{"P"}, Properties: map[string]interface{}{"name": "Dee", "city": "Riga"}},
 			} {
-				_, err := store.CreateNode(node)
+				_, err := store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			exec := NewStorageExecutor(store)

@@ -2,11 +2,9 @@ package observability
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/pprof"
 	"runtime"
 	"time"
 
@@ -19,8 +17,9 @@ import (
 // goroutine stacks and heap state, so a non-loopback default would be a
 // credential-exfiltration surface.
 type pprofListener struct {
-	srv *http.Server
-	ln  net.Listener
+	srv        *http.Server
+	ln         net.Listener
+	retirement listenerLifetime
 }
 
 // Compile-time interface assertion.
@@ -47,11 +46,9 @@ func resolvePprofListen(cfg PprofConfig) string {
 // NORNICDB_PPROF_LISTEN. The /debug/pprof/* handlers expose goroutine
 // stacks and heap data; a non-loopback default would be a security bug.
 //
-// Handlers are registered EXPLICITLY on a custom mux. We do NOT use the
-// blank/underscore side-effect import form because that registers on
-// http.DefaultServeMux, which we deliberately avoid for isolation. A
-// dedicated mux also prevents accidental cross-pollution if some unrelated
-// import elsewhere ever registers something on DefaultServeMux.
+// Handlers use runtime profiling APIs and are registered only on this listener's
+// mux. Importing the HTTP profiling package would register its raw argv handler
+// on DefaultServeMux even when this listener is disabled.
 func NewPprofListener(cfg PprofConfig) (*pprofListener, error) {
 	if !cfg.Enabled {
 		return nil, nil
@@ -72,21 +69,7 @@ func NewPprofListener(cfg PprofConfig) (*pprofListener, error) {
 	runtime.SetBlockProfileRate(1_000_000)
 
 	mux := http.NewServeMux()
-	// Explicit registration — see godoc above for the rationale.
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	// Named profiles (mutex, block, goroutine, heap, allocs, threadcreate)
-	// are all routed through pprof.Index, but we register explicit handles
-	// so operators can query them directly with short paths.
-	mux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
-	mux.Handle("/debug/pprof/heap", pprof.Handler("heap"))
-	mux.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
-	mux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
-	mux.Handle("/debug/pprof/block", pprof.Handler("block"))
-	mux.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+	registerPprofHandlers(mux)
 
 	return &pprofListener{
 		srv: &http.Server{
@@ -106,34 +89,30 @@ func (l *pprofListener) Name() string { return "pprof" }
 // as telemetryListener.Start — see the longer rationale in
 // listener.go for why Start MUST observe ctx (Plan 04 integration).
 //
+// A nil ctx means "no caller cancellation" and is normalized once by the
+// shared owner; the returned non-nil ctx bounds this entry only.
+//
 // http.ErrServerClosed is filtered to nil so errgroup does not
 // interpret a clean shutdown as a fault.
 func (l *pprofListener) Start(ctx context.Context) error {
-	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- l.srv.Serve(l.ln)
-	}()
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), lifecycle.ShutdownTimeout)
-		defer cancel()
-		_ = l.Shutdown(shutdownCtx)
-		err := <-serveErr
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case err := <-serveErr:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	}
+	ctx = l.retirement.init(ctx, l.srv, l.ln, nil)
+	return l.retirement.run(ctx)
 }
 
 // Shutdown drains in-flight requests with the supervisor-provided budget.
 // pprof has no analog of the OQ4 BSP-flush ordering — there's nothing to
 // flush, so a plain srv.Shutdown is the entire drain.
+//
+// A nil ctx means "no caller budget" and is normalized once by the shared
+// owner; a caller's own context keeps its values, deadline and cancellation.
 func (l *pprofListener) Shutdown(ctx context.Context) error {
-	return l.srv.Shutdown(ctx)
+	ctx = l.retirement.init(ctx, l.srv, l.ln, nil)
+	return l.retirement.shutdown(ctx)
+}
+
+// WaitStopped observes actual component retirement without initiating it.
+// A nil ctx waits for retirement; a caller's own context bounds only that wait.
+func (l *pprofListener) WaitStopped(ctx context.Context) error {
+	ctx = l.retirement.init(ctx, l.srv, l.ln, nil)
+	return l.retirement.wait(ctx)
 }

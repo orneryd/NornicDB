@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +23,7 @@ type candidateFilterReadSpy struct {
 }
 
 func BenchmarkTypeOnlyCandidateFilterFromMetadata(b *testing.B) {
-	service := NewService(storage.NewMemoryEngine())
+	service := NewService(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), DefaultVectorDimensions, nil)
 	b.Cleanup(func() { require.NoError(b, service.engine.Close()) })
 	results := make([]indexResult, 1000)
 	for i := range results {
@@ -45,17 +47,17 @@ func BenchmarkTypeOnlyCandidateFilterFromMetadata(b *testing.B) {
 	}
 }
 
-func (s *candidateFilterReadSpy) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func (s *candidateFilterReadSpy) BatchGetNodes(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	s.fullBatchReads++
-	return s.Engine.BatchGetNodes(ids)
+	return s.Engine.BatchGetNodes(ctx, ids)
 }
 
-func (s *candidateFilterReadSpy) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (s *candidateFilterReadSpy) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	s.fullIndividualReads++
-	return s.Engine.GetNode(id)
+	return s.Engine.GetNode(ctx, id)
 }
 
-func (s *candidateFilterReadSpy) BatchGetNodesWithoutEmbeddings(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func (s *candidateFilterReadSpy) BatchGetNodesWithoutEmbeddings(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	s.lightBatchReads++
 	if s.batchErr != nil {
 		return nil, s.batchErr
@@ -69,7 +71,7 @@ func (s *candidateFilterReadSpy) BatchGetNodesWithoutEmbeddings(ids []storage.No
 	return result, nil
 }
 
-func (s *candidateFilterReadSpy) GetNodeWithoutEmbeddings(id storage.NodeID) (*storage.Node, error) {
+func (s *candidateFilterReadSpy) GetNodeWithoutEmbeddings(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	s.lightReads++
 	if node, ok := s.lightNodes[id]; ok {
 		return node, nil
@@ -78,7 +80,7 @@ func (s *candidateFilterReadSpy) GetNodeWithoutEmbeddings(id storage.NodeID) (*s
 }
 
 func TestCandidateFiltersUseEmbeddingFreeBatchReads(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	spy := &candidateFilterReadSpy{
 		Engine: base,
@@ -87,7 +89,7 @@ func TestCandidateFiltersUseEmbeddingFreeBatchReads(t *testing.T) {
 			"doc-b": {ID: "doc-b", Labels: []string{"Document"}, Properties: map[string]any{"state": "draft"}},
 		},
 	}
-	service := NewService(spy)
+	service := NewService(spy, DefaultVectorDimensions, nil)
 	for _, node := range spy.lightNodes {
 		require.NoError(t, service.IndexNode(node))
 	}
@@ -106,7 +108,7 @@ func TestCandidateFiltersUseEmbeddingFreeBatchReads(t *testing.T) {
 }
 
 func TestTypeOnlyCandidateFilterUsesInMemoryMetadata(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	spy := &candidateFilterReadSpy{
 		Engine: base,
@@ -128,7 +130,7 @@ func TestTypeOnlyCandidateFilterUsesInMemoryMetadata(t *testing.T) {
 			},
 		},
 	}
-	service := NewService(spy)
+	service := NewService(spy, DefaultVectorDimensions, nil)
 	for _, node := range spy.lightNodes {
 		require.NoError(t, service.IndexNode(node))
 	}

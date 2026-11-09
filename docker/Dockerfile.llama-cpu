@@ -6,7 +6,7 @@
 FROM debian:bookworm-slim AS builder
 
 ARG TARGETARCH
-ARG LLAMA_VERSION=v0.4.1
+ARG LLAMA_VERSION=v0.7.0
 ARG LLAMA_BUILD_JOBS=2
 
 WORKDIR /llama
@@ -49,6 +49,9 @@ RUN mkdir -p /output/lib /output/include && \
     ar -M < /tmp/ar.mri && \
     cp include/llama.h ggml/include/*.h /output/include/ && \
     ls -lh /output/lib/libllama_combined.a
+
+COPY lib/llama/REVISION /llama-expected-revision
+RUN test "$(git rev-parse HEAD)" = "$(tr -d '\r\n' < /llama-expected-revision)"
 
 FROM debian:bookworm-slim
 

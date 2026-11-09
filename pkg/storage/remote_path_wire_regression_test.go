@@ -65,14 +65,14 @@ func TestRemoteHTTPRESTPathRejectsInconsistentCounts(t *testing.T) {
 }
 
 func TestRemoteHTTPMalformedPathEntitiesAreRejected(t *testing.T) {
-	node := map[string]interface{}{"elementId": "n", "labels": []interface{}{}, "properties": map[string]interface{}{"a": float64(1)}}
+	node := map[string]interface{}{"elementId": "n", "labels": []interface{}{}, "properties": map[string]interface{}{"a": int64(1)}}
 	meta := map[string]interface{}{"elementId": "n", "type": "node"}
 	for _, tc := range []struct {
 		raw      string
 		metadata []interface{}
 	}{{`1`, []interface{}{}}, {`[1]`, []interface{}{nil}}, {`[]`, []interface{}{}}, {`[{"a":1},{"a":1},{"a":1}]`, []interface{}{meta, meta, meta}}} {
 		index := 0
-		_, err := decodeRemoteHTTPValue(json.RawMessage(tc.raw), []interface{}{tc.metadata}, &index, map[string]interface{}{"n": node})
+		_, err := decodeRemoteHTTPValue(json.RawMessage(tc.raw), nil, []interface{}{tc.metadata}, &index, map[string]interface{}{"n": node}, remoteHTTPAuto)
 		require.Error(t, err, tc.raw)
 	}
 	require.Equal(t, int64(-1), remoteHTTPNumericID("not-numeric"))

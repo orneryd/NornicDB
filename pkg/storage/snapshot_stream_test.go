@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -21,54 +22,58 @@ type embeddingFreeSnapshotSpy struct {
 	lightNodeStreams int
 }
 
-func (s *embeddingFreeSnapshotSpy) StreamNodes(ctx context.Context, fn func(*Node) error) error {
-	s.fullNodeStreams++
-	return s.MemoryEngine.StreamNodes(ctx, fn)
-}
-
-func (s *embeddingFreeSnapshotSpy) StreamNodesWithoutEmbeddings(ctx context.Context, fn func(*Node) error) error {
+// StreamNodesWithOptions counts the snapshot's node streams by whether they
+// load separately stored embeddings; a snapshot reads stored nodes.
+func (s *embeddingFreeSnapshotSpy) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(*Node) error) error {
+	if opts.ApplyDecayFilter {
+		return errors.New("a snapshot must read stored nodes")
+	}
+	if opts.WithEmbeddings {
+		s.fullNodeStreams++
+		return s.MemoryEngine.StreamNodesWithOptions(ctx, opts, fn)
+	}
 	s.lightNodeStreams++
-	return s.MemoryEngine.StreamNodes(ctx, func(node *Node) error {
+	return s.MemoryEngine.StreamNodesWithOptions(ctx, opts, func(node *Node) error {
 		return fn(copyNodeWithoutEmbeddings(node))
 	})
 }
 
-func (v *collectingSnapshotVisitor) VisitNode(node *Node) error {
+func (v *collectingSnapshotVisitor) VisitNode(ctx context.Context, node *Node) error {
 	v.nodes = append(v.nodes, node)
 	return nil
 }
 
-func (v *collectingSnapshotVisitor) VisitEdge(edge *Edge) error {
+func (v *collectingSnapshotVisitor) VisitEdge(ctx context.Context, edge *Edge) error {
 	v.edges = append(v.edges, edge)
 	return nil
 }
 
 func TestStreamingSnapshotRoundTripAndFooter(t *testing.T) {
-	engine := NewMemoryEngine()
-	_, err := engine.CreateNode(&Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "alpha"}})
+	engine := newTestMemoryEngine(t)
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "alpha"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "nornic:n2"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:n2"})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "LINKS"}))
 
 	var output bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), engine, &output, SnapshotOptions{Sequence: 42}))
 
 	visitor := &collectingSnapshotVisitor{}
-	metadata, err := ReadSnapshot(bytes.NewReader(output.Bytes()), visitor)
+	metadata, err := ReadSnapshot(t.Context(), bytes.NewReader(output.Bytes()), visitor)
 	require.NoError(t, err)
 	require.Equal(t, uint64(42), metadata.Sequence)
 	require.Len(t, visitor.nodes, 2)
 	require.Len(t, visitor.edges, 1)
 
-	_, err = ReadSnapshot(bytes.NewReader(output.Bytes()[:output.Len()-1]), &collectingSnapshotVisitor{})
+	_, err = ReadSnapshot(t.Context(), bytes.NewReader(output.Bytes()[:output.Len()-1]), &collectingSnapshotVisitor{})
 	require.Error(t, err)
 }
 
 func TestWriteSnapshotUsesEmbeddingFreeNodeStream(t *testing.T) {
-	engine := &embeddingFreeSnapshotSpy{MemoryEngine: NewMemoryEngine()}
+	engine := &embeddingFreeSnapshotSpy{MemoryEngine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID:              "nornic:document",
 		Labels:          []string{"Document"},
 		Properties:      map[string]any{"body": "preserved"},
@@ -82,7 +87,7 @@ func TestWriteSnapshotUsesEmbeddingFreeNodeStream(t *testing.T) {
 	require.Zero(t, engine.fullNodeStreams, "snapshot must not decode separately stored embeddings")
 
 	visitor := &collectingSnapshotVisitor{}
-	_, err = ReadSnapshot(&output, visitor)
+	_, err = ReadSnapshot(t.Context(), &output, visitor)
 	require.NoError(t, err)
 	require.Len(t, visitor.nodes, 1)
 	require.Equal(t, "preserved", visitor.nodes[0].Properties["body"])
@@ -96,8 +101,8 @@ type failingSnapshotVisitor struct {
 	edgeErr error
 }
 
-func (v *failingSnapshotVisitor) VisitNode(*Node) error { return v.nodeErr }
-func (v *failingSnapshotVisitor) VisitEdge(*Edge) error { return v.edgeErr }
+func (v *failingSnapshotVisitor) VisitNode(context.Context, *Node) error { return v.nodeErr }
+func (v *failingSnapshotVisitor) VisitEdge(context.Context, *Edge) error { return v.edgeErr }
 
 type failingStreamingSnapshotEngine struct {
 	*MemoryEngine
@@ -105,22 +110,27 @@ type failingStreamingSnapshotEngine struct {
 	edgeErr error
 }
 
-func (e *failingStreamingSnapshotEngine) StreamNodes(context.Context, func(*Node) error) error {
+func (e *failingStreamingSnapshotEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(*Node) error) error {
 	if e.nodeErr != nil {
 		return e.nodeErr
 	}
-	return nil
+	return e.MemoryEngine.StreamNodesWithOptions(ctx, opts, fn)
 }
 
-func (e *failingStreamingSnapshotEngine) StreamNodesWithoutEmbeddings(context.Context, func(*Node) error) error {
-	if e.nodeErr != nil {
-		return e.nodeErr
+func (e *failingStreamingSnapshotEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string, fn func(*Edge) error) error {
+	if e.edgeErr != nil {
+		return e.edgeErr
 	}
-	return nil
+	return e.MemoryEngine.StreamStoredEdgesByType(ctx, edgeType, fn)
 }
 
-func (e *failingStreamingSnapshotEngine) StreamEdges(context.Context, func(*Edge) error) error {
-	return e.edgeErr
+// writeFrame is this file's one frame producer for hand-built streams: the
+// same snapshotFrameWriter (and its reusable encoder) that writes real
+// snapshots, so corruption fixtures carry production frames.
+func writeFrame(t *testing.T, writer io.Writer, frameType byte, value any) {
+	t.Helper()
+	frames := snapshotFrameWriter{writer: writer}
+	require.NoError(t, frames.write(frameType, value, defaultSnapshotRecordSize))
 }
 
 func streamingSnapshotHeader(t *testing.T) *bytes.Buffer {
@@ -135,13 +145,13 @@ func streamingSnapshotHeader(t *testing.T) *bytes.Buffer {
 
 func TestWriteSnapshotRequiresStreamingEngine(t *testing.T) {
 	var output bytes.Buffer
-	err := WriteSnapshot(context.Background(), &materializingOnlyEngine{Engine: NewMemoryEngine()}, &output, SnapshotOptions{})
+	err := WriteSnapshot(context.Background(), &materializingOnlyEngine{Engine: newTestMemoryEngine(t)}, &output, SnapshotOptions{})
 	require.ErrorIs(t, err, ErrStreamingSnapshotUnsupported)
 }
 
 func TestWriteSnapshotRejectsUnreadableRecordLimit(t *testing.T) {
 	var output bytes.Buffer
-	err := WriteSnapshot(context.Background(), NewMemoryEngine(), &output, SnapshotOptions{
+	err := WriteSnapshot(context.Background(), newTestMemoryEngine(t), &output, SnapshotOptions{
 		MaxRecordBytes: defaultSnapshotRecordSize + 1,
 	})
 	require.ErrorContains(t, err, "snapshot max record bytes")
@@ -158,8 +168,8 @@ func TestWriteSnapshotPropagatesStreamingFailures(t *testing.T) {
 		want   error
 		prefix string
 	}{
-		{name: "nodes", engine: &failingStreamingSnapshotEngine{MemoryEngine: NewMemoryEngine(), nodeErr: nodeErr}, want: nodeErr, prefix: "stream snapshot nodes"},
-		{name: "edges", engine: &failingStreamingSnapshotEngine{MemoryEngine: NewMemoryEngine(), edgeErr: edgeErr}, want: edgeErr, prefix: "stream snapshot edges"},
+		{name: "nodes", engine: &failingStreamingSnapshotEngine{MemoryEngine: newTestMemoryEngine(t), nodeErr: nodeErr}, want: nodeErr, prefix: "stream snapshot nodes"},
+		{name: "edges", engine: &failingStreamingSnapshotEngine{MemoryEngine: newTestMemoryEngine(t), edgeErr: edgeErr}, want: edgeErr, prefix: "stream snapshot edges"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
@@ -172,61 +182,61 @@ func TestWriteSnapshotPropagatesStreamingFailures(t *testing.T) {
 
 func TestReadSnapshotRejectsInvalidStructure(t *testing.T) {
 	t.Run("header", func(t *testing.T) {
-		_, err := ReadSnapshot(bytes.NewReader([]byte("bad")), &collectingSnapshotVisitor{})
+		_, err := ReadSnapshot(t.Context(), bytes.NewReader([]byte("bad")), &collectingSnapshotVisitor{})
 		require.ErrorContains(t, err, "invalid streaming snapshot header")
 	})
 
 	t.Run("version", func(t *testing.T) {
 		input := append([]byte(streamSnapshotMagic), streamSnapshotVersion+1)
-		_, err := ReadSnapshot(bytes.NewReader(input), &collectingSnapshotVisitor{})
+		_, err := ReadSnapshot(t.Context(), bytes.NewReader(input), &collectingSnapshotVisitor{})
 		require.ErrorContains(t, err, "unsupported streaming snapshot version")
 	})
 
 	t.Run("unknown frame", func(t *testing.T) {
 		input := streamingSnapshotHeader(t)
-		require.NoError(t, writeSnapshotFrame(input, 77, map[string]string{"value": "unknown"}, defaultSnapshotRecordSize))
-		_, err := ReadSnapshot(bytes.NewReader(input.Bytes()), &collectingSnapshotVisitor{})
+		writeFrame(t, input, 77, map[string]string{"value": "unknown"})
+		_, err := ReadSnapshot(t.Context(), bytes.NewReader(input.Bytes()), &collectingSnapshotVisitor{})
 		require.ErrorContains(t, err, "unknown streaming snapshot frame type 77")
 	})
 
 	t.Run("footer count mismatch", func(t *testing.T) {
 		input := streamingSnapshotHeader(t)
-		require.NoError(t, writeSnapshotFrame(input, streamSnapshotFooter, struct {
+		writeFrame(t, input, streamSnapshotFooter, struct {
 			Nodes uint64 `json:"nodes"`
 			Edges uint64 `json:"edges"`
-		}{Nodes: 1}, defaultSnapshotRecordSize))
-		_, err := ReadSnapshot(bytes.NewReader(input.Bytes()), &collectingSnapshotVisitor{})
+		}{Nodes: 1})
+		_, err := ReadSnapshot(t.Context(), bytes.NewReader(input.Bytes()), &collectingSnapshotVisitor{})
 		require.ErrorContains(t, err, "footer count mismatch")
 	})
 
 	t.Run("trailing data", func(t *testing.T) {
 		input := streamingSnapshotHeader(t)
-		require.NoError(t, writeSnapshotFrame(input, streamSnapshotFooter, struct {
+		writeFrame(t, input, streamSnapshotFooter, struct {
 			Nodes uint64 `json:"nodes"`
 			Edges uint64 `json:"edges"`
-		}{}, defaultSnapshotRecordSize))
+		}{})
 		input.WriteByte(0)
-		_, err := ReadSnapshot(bytes.NewReader(input.Bytes()), &collectingSnapshotVisitor{})
+		_, err := ReadSnapshot(t.Context(), bytes.NewReader(input.Bytes()), &collectingSnapshotVisitor{})
 		require.ErrorContains(t, err, "trailing data")
 	})
 }
 
 func TestReadSnapshotPropagatesVisitorErrors(t *testing.T) {
-	engine := NewMemoryEngine()
-	_, err := engine.CreateNode(&Node{ID: "nornic:n1"})
+	engine := newTestMemoryEngine(t)
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "nornic:n1"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "nornic:n2"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:n2"})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "LINKS"}))
 	var output bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), engine, &output, SnapshotOptions{}))
 
 	nodeErr := errors.New("forced node visitor failure")
-	_, err = ReadSnapshot(bytes.NewReader(output.Bytes()), &failingSnapshotVisitor{nodeErr: nodeErr})
+	_, err = ReadSnapshot(t.Context(), bytes.NewReader(output.Bytes()), &failingSnapshotVisitor{nodeErr: nodeErr})
 	require.ErrorIs(t, err, nodeErr)
 
 	edgeErr := errors.New("forced edge visitor failure")
-	_, err = ReadSnapshot(bytes.NewReader(output.Bytes()), &failingSnapshotVisitor{edgeErr: edgeErr})
+	_, err = ReadSnapshot(t.Context(), bytes.NewReader(output.Bytes()), &failingSnapshotVisitor{edgeErr: edgeErr})
 	require.ErrorIs(t, err, edgeErr)
 }
 

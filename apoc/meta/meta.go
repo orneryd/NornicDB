@@ -5,7 +5,9 @@
 package meta
 
 import (
+	"context"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
@@ -16,20 +18,49 @@ type Node = storage.Node
 // Relationship represents a graph relationship.
 type Relationship = storage.Relationship
 
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
+// BoundFunctions binds this package's storage-dependent helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for. The name
+// keeps the pure list helper Functions free: the bound instance and the value
+// function are different owners, and only one of them depends on storage.
+type BoundFunctions struct {
+	backend storage.Storage
+}
+
+// New returns this package's helpers bound to backend. One instance serves one
+// backend; a reconfiguration builds a new instance instead of rebinding this
+// one.
+func New(backend storage.Storage) *BoundFunctions {
+	return &BoundFunctions{backend: backend}
+}
 
 // Schema returns the graph schema.
 //
 // Example:
 //
 //	apoc.meta.schema() => schema information
-func Schema() map[string]interface{} {
-	return map[string]interface{}{
-		"labels":            NodeLabels(),
-		"relationshipTypes": RelTypes(),
-		"propertyKeys":      PropertyKeys(),
+func (f *BoundFunctions) Schema(ctx context.Context) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
+
+	helperValue1, helperError1 := f.NodeLabels(ctx)
+	if helperError1 != nil {
+		return nil, helperError1
+	}
+	helperValue2, helperError2 := f.RelTypes(ctx)
+	if helperError2 != nil {
+		return nil, helperError2
+	}
+	helperValue3, helperError3 := f.PropertyKeys(ctx)
+	if helperError3 != nil {
+		return nil, helperError3
+	}
+	return map[string]interface{}{
+		"labels":            helperValue1,
+		"relationshipTypes": helperValue2,
+		"propertyKeys":      helperValue3,
+	}, nil
 }
 
 // Graph returns graph statistics.
@@ -37,28 +68,61 @@ func Schema() map[string]interface{} {
 // Example:
 //
 //	apoc.meta.graph() => {nodes: 1000, relationships: 5000}
-func Graph() map[string]interface{} {
-	nodes, _ := Storage.AllNodes()
-	rels, _ := Storage.AllRelationships()
+func (f *BoundFunctions) Graph(ctx context.Context) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	// The caller supplies the lifetime for storage work.
+	nodes, storageError1 := f.backend.AllNodes(ctx)
+	if storageError1 != nil {
+		return nil, storageError1
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	rels, storageError2 := f.backend.AllRelationships(ctx)
+	if storageError2 != nil {
+		return nil, storageError2
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 
 	labelCounts := make(map[string]int)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			labelCounts[label]++
 		}
 	}
 
 	relTypeCounts := make(map[string]int)
 	for _, rel := range rels {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		relTypeCounts[rel.Type]++
 	}
 
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 	return map[string]interface{}{
 		"nodes":         len(nodes),
 		"relationships": len(rels),
 		"labels":        labelCounts,
 		"relTypes":      relTypeCounts,
-	}
+	}, nil
 }
 
 // Stats returns detailed statistics.
@@ -66,36 +130,77 @@ func Graph() map[string]interface{} {
 // Example:
 //
 //	apoc.meta.stats() => detailed statistics
-func Stats() map[string]interface{} {
-	nodes, _ := Storage.AllNodes()
-	rels, _ := Storage.AllRelationships()
+func (f *BoundFunctions) Stats(ctx context.Context) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	// The caller supplies the lifetime for storage work.
+	nodes, storageError3 := f.backend.AllNodes(ctx)
+	if storageError3 != nil {
+		return nil, storageError3
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	rels, storageError4 := f.backend.AllRelationships(ctx)
+	if storageError4 != nil {
+		return nil, storageError4
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 
 	labelSet := make(map[string]bool)
 	propSet := make(map[string]bool)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			labelSet[label] = true
 		}
 		for prop := range node.Properties {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			propSet[prop] = true
 		}
 	}
 
 	relTypeSet := make(map[string]bool)
 	for _, rel := range rels {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		relTypeSet[rel.Type] = true
 		for prop := range rel.Properties {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			propSet[prop] = true
 		}
 	}
 
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 	return map[string]interface{}{
 		"labelCount":       len(labelSet),
 		"relTypeCount":     len(relTypeSet),
 		"propertyKeyCount": len(propSet),
 		"nodeCount":        len(nodes),
 		"relCount":         len(rels),
-	}
+	}, nil
 }
 
 // Type returns the type of a value.
@@ -104,17 +209,20 @@ func Stats() map[string]interface{} {
 //
 //	apoc.meta.type(value) => 'STRING', 'INTEGER', etc.
 func Type(value interface{}) string {
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if number.IsInteger() {
+			return "INTEGER"
+		}
+		return "FLOAT"
+	}
+	if _, list := valueconvert.ReadList(value); list {
+		return "LIST"
+	}
 	switch value.(type) {
 	case string:
 		return "STRING"
-	case int, int64:
-		return "INTEGER"
-	case float64:
-		return "FLOAT"
 	case bool:
 		return "BOOLEAN"
-	case []interface{}:
-		return "LIST"
 	case map[string]interface{}:
 		return "MAP"
 	case *Node:
@@ -201,15 +309,6 @@ func SubGraph(config map[string]interface{}) map[string]interface{} {
 	}
 }
 
-// GraphSample samples the graph for metadata.
-//
-// Example:
-//
-//	apoc.meta.graphSample(1000) => sampled metadata
-func GraphSample(sampleSize int) map[string]interface{} {
-	return Graph()
-}
-
 // IsType checks if a value is of a specific type.
 //
 // Example:
@@ -217,24 +316,6 @@ func GraphSample(sampleSize int) map[string]interface{} {
 //	apoc.meta.isType(value, 'STRING') => true/false
 func IsType(value interface{}, typeName string) bool {
 	return Type(value) == typeName
-}
-
-// Cypher returns Cypher type information.
-//
-// Example:
-//
-//	apoc.meta.cypher.type(value) => Cypher type
-func CypherType(value interface{}) string {
-	return Type(value)
-}
-
-// CypherTypes returns Cypher types for all properties.
-//
-// Example:
-//
-//	apoc.meta.cypher.types(node) => property types
-func CypherTypes(node *Node) map[string]string {
-	return Types(node)
 }
 
 // IsNode checks if a value is a node.
@@ -272,24 +353,53 @@ func IsPath(value interface{}) bool {
 // Example:
 //
 //	apoc.meta.nodeLabels() => ['Person', 'Company', 'Product']
-func NodeLabels() []string {
-	nodes, err := Storage.AllNodes()
+func (f *BoundFunctions) NodeLabels(ctx context.Context) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	nodes, err := f.backend.AllNodes(ctx)
 	if err != nil {
-		return []string{}
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	labelSet := make(map[string]bool)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			labelSet[label] = true
 		}
 	}
 
 	result := make([]string, 0, len(labelSet))
 	for label := range labelSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		result = append(result, label)
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // RelTypes returns all relationship types in the graph.
@@ -297,22 +407,47 @@ func NodeLabels() []string {
 // Example:
 //
 //	apoc.meta.relTypes() => ['KNOWS', 'WORKS_AT', 'BOUGHT']
-func RelTypes() []string {
-	rels, err := Storage.AllRelationships()
+func (f *BoundFunctions) RelTypes(ctx context.Context) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	rels, err := f.backend.AllRelationships(ctx)
 	if err != nil {
-		return []string{}
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	typeSet := make(map[string]bool)
 	for _, rel := range rels {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		typeSet[rel.Type] = true
 	}
 
 	result := make([]string, 0, len(typeSet))
 	for relType := range typeSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		result = append(result, relType)
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // PropertyKeys returns all property keys in the graph.
@@ -320,22 +455,56 @@ func RelTypes() []string {
 // Example:
 //
 //	apoc.meta.propertyKeys() => ['name', 'age', 'email']
-func PropertyKeys() []string {
+func (f *BoundFunctions) PropertyKeys(ctx context.Context) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	propSet := make(map[string]bool)
 
-	nodes, err := Storage.AllNodes()
+	nodes, err := f.backend.AllNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err == nil {
 		for _, node := range nodes {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			for prop := range node.Properties {
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
 				propSet[prop] = true
 			}
 		}
 	}
 
-	rels, err := Storage.AllRelationships()
+	rels, err := f.backend.AllRelationships(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err == nil {
 		for _, rel := range rels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			for prop := range rel.Properties {
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
 				propSet[prop] = true
 			}
 		}
@@ -343,9 +512,16 @@ func PropertyKeys() []string {
 
 	result := make([]string, 0, len(propSet))
 	for prop := range propSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		result = append(result, prop)
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // Constraints returns all constraints in the graph.
@@ -377,7 +553,9 @@ func Procedures() []map[string]interface{} {
 	return []map[string]interface{}{}
 }
 
-// Functions returns all available functions.
+// Functions returns all available functions. It reads no storage and has no
+// instance: the storage-dependent metadata helpers are methods of
+// BoundFunctions, and this list answers without a backend.
 //
 // Example:
 //
@@ -434,15 +612,6 @@ func Validate(schema map[string]interface{}) map[string]interface{} {
 	}
 }
 
-// Export exports metadata.
-//
-// Example:
-//
-//	apoc.meta.export() => exported metadata
-func Export() map[string]interface{} {
-	return Schema()
-}
-
 // Import imports metadata.
 //
 // Example:
@@ -451,33 +620,6 @@ func Export() map[string]interface{} {
 func Import(metadata map[string]interface{}) error {
 	// Placeholder - would import metadata
 	return nil
-}
-
-// Diff compares two metadata snapshots.
-//
-// Example:
-//
-//	apoc.meta.diff(before, after) => differences
-func Diff(before, after map[string]interface{}) map[string]interface{} {
-	return Compare(before, after)
-}
-
-// Snapshot creates a metadata snapshot.
-//
-// Example:
-//
-//	apoc.meta.snapshot() => snapshot
-func Snapshot() map[string]interface{} {
-	return Export()
-}
-
-// Restore restores from a metadata snapshot.
-//
-// Example:
-//
-//	apoc.meta.restore(snapshot) => restored
-func Restore(snapshot map[string]interface{}) error {
-	return Import(snapshot)
 }
 
 // Analyze analyzes graph structure.

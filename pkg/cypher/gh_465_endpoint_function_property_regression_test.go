@@ -34,10 +34,10 @@ func TestGH465_PropertyAccessOnEndpointFunctionResult(t *testing.T) {
 				{ID: "order", Labels: []string{"O"}, Properties: map[string]interface{}{"id": int64(1)}},
 				{ID: "item", Labels: []string{"I"}, Properties: map[string]interface{}{"sku": "a1"}},
 			} {
-				_, err := store.CreateNode(node)
+				_, err := store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
-			require.NoError(t, store.CreateEdge(&storage.Edge{
+			require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 				ID: "has", StartNode: "order", EndNode: "item", Type: "HAS",
 				Properties: map[string]interface{}{"n": int64(2)},
 			}))

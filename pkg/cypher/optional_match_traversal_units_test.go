@@ -138,7 +138,7 @@ func TestGh713SharedAggregateAdapterBoundaries(t *testing.T) {
 	t.Run("unaliased aggregate", func(t *testing.T) {
 		executor, ctx := newUnitExecutor(t)
 		items := []returnItem{{expr: "count(*)", alias: "count(*)"}}
-		plan := returnProjectionPlanFromItems(items)
+		plan := returnProjectionPlanFor(ctx, "RETURN count(*)")
 		require.True(t, plan.valid)
 		require.Equal(t, []string{"count(*)"}, plan.columns)
 		rows, err := executor.aggregateTraversalOptionalRows(ctx, []traversalOptRow{{values: map[string]interface{}{}}}, items)
@@ -365,9 +365,9 @@ func TestFirstParenGroup(t *testing.T) {
 }
 
 func TestEnsureLeadingNodeNamed(t *testing.T) {
-	require.Equal(t, "(a:L)-[:T]->(b)", ensureLeadingNodeNamed("(a:L)-[:T]->(b)"), "named pattern unchanged")
-	require.Equal(t, "("+traversalAnonVar+":L)-[:T]->(:M)", ensureLeadingNodeNamed("(:L)-[:T]->(:M)"), "anonymous pattern gets a synthetic variable")
-	require.Equal(t, "no parens", ensureLeadingNodeNamed("no parens"), "patterns without a node group pass through")
+	require.Equal(t, "(a:L)-[:T]->(b)", ensureLeadingNodeNamed(t.Context(), "(a:L)-[:T]->(b)"), "named pattern unchanged")
+	require.Equal(t, "("+traversalAnonVar+":L)-[:T]->(:M)", ensureLeadingNodeNamed(t.Context(), "(:L)-[:T]->(:M)"), "anonymous pattern gets a synthetic variable")
+	require.Equal(t, "no parens", ensureLeadingNodeNamed(t.Context(), "no parens"), "patterns without a node group pass through")
 }
 
 func TestCandidateAgreesWithRow(t *testing.T) {
@@ -817,7 +817,7 @@ func TestGh713TraversalAggregatePlannerParity(t *testing.T) {
 				rows = append(rows, row)
 				bindings = append(bindings, pipelineRowFromTraversalOptionalRow(row))
 			}
-			items := executor.parseReturnItems(test.expr + " AS value")
+			items := executor.parseReturnItems(t.Context(), test.expr+" AS value")
 			shared, err := executor.projectMergeReturn(ctx, bindings, "RETURN "+test.expr+" AS value")
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{test.want}}, shared.Rows)

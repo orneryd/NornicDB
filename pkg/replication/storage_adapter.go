@@ -3,6 +3,7 @@ package replication
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -11,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -19,14 +20,24 @@ import (
 // StorageAdapter bridges the replication.Storage interface to storage.Engine.
 // It translates replication commands into storage operations and maintains WAL state.
 type StorageAdapter struct {
-	engine   storage.Engine
-	executor *cypher.StorageExecutor // Cypher executor for executing replicated Cypher queries
+	// calls seals WAL producer/barrier ingress before the writer stop. Close waits
+	// owned queue/I/O admissions, never foreign native application/listeners. The worker
+	// never takes this lock, so admitted barriers can finish before sealing.
+	calls  sync.RWMutex
+	sealed bool
+
+	engine storage.Engine
 
 	// Persistent WAL for replication commands
 	wal         *storage.WAL
 	walDir      string
 	walMu       sync.RWMutex // Protects wal and walPosition
 	walPosition atomic.Uint64
+	// projectedIDs maps each retained accepted command identity (its database and
+	// logical ID) to its journal position. It is rebuilt from the retained journal
+	// and protected by walMu.
+	projectedIDs      map[projectionIdentity]uint64
+	projectionLoadErr error
 
 	// In-memory WAL for fast streaming (avoids re-reading wal.log continuously).
 	memWALMu sync.RWMutex
@@ -36,22 +47,43 @@ type StorageAdapter struct {
 	walQueue   chan *walWriteRequest
 	walBatch   []*walWriteRequest
 	walBatchMu sync.Mutex
-	walStopCh  chan struct{}
-	walWg      sync.WaitGroup
+	// work is the adapter's one owner: the async WAL writer is its accepted
+	// work, its cancellation is the writer's stop, and Close is its one stop.
+	work lifecycle.WorkLifetime
+}
+
+// walCompletion is the sole writer's typed outcome for one queued request.
+// position is the physical WAL sequence that request's own record received and
+// is zero when the record was not published; err is the append failure that
+// prevented publication.
+type walCompletion struct {
+	position uint64
+	err      error
 }
 
 // walWriteRequest represents a pending WAL write.
 type walWriteRequest struct {
-	record  replicationWALRecord
-	posCh   chan uint64 // Channel to receive the WAL position
-	errCh   chan error  // Channel to receive any error
-	waiting bool        // If true, caller is waiting for completion
+	record   replicationWALRecord
+	identity projectionIdentity // resolved before native application or queue transfer
+	// done carries the writer's typed completion. Every request allocates one
+	// buffered outcome channel, replacing the former record error channel and
+	// barrier position/error channels; the writer sends exactly once.
+	done chan walCompletion
 
 	// barrier marks a sentinel request. flushWALBatch does not append a
-	// barrier to the WAL but does signal posCh once the surrounding batch
+	// barrier to the WAL but does signal done once the surrounding batch
 	// completes. Used by FlushWAL to deterministically wait for every
 	// previously-queued request to drain without sleeping.
 	barrier bool
+}
+
+// complete delivers this request's single typed outcome without blocking the
+// writer's batch loop.
+func (req *walWriteRequest) complete(outcome walCompletion) {
+	select {
+	case req.done <- outcome:
+	default:
+	}
 }
 
 type replicationWALRecord struct {
@@ -92,21 +124,20 @@ func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAda
 	}
 
 	adapter := &StorageAdapter{
-		engine:    engine,
-		executor:  cypher.NewStorageExecutor(engine),
-		wal:       wal,
-		walDir:    walDir,
-		walQueue:  make(chan *walWriteRequest, 1000), // Buffered channel for async WAL writes
-		walBatch:  make([]*walWriteRequest, 0, 100),  // Pre-allocated batch buffer
-		walStopCh: make(chan struct{}),
+		engine:   engine,
+		wal:      wal,
+		walDir:   walDir,
+		walQueue: make(chan *walWriteRequest, 1000), // Buffered channel for async WAL writes
+		walBatch: make([]*walWriteRequest, 0, 100),  // Pre-allocated batch buffer
 	}
 
 	// Load existing WAL position
-	_ = adapter.loadWALPosition()
+	adapter.projectionLoadErr = adapter.loadWALPosition()
 
 	// Start async WAL writer
-	adapter.walWg.Add(1)
-	go adapter.walWriterLoop()
+	if adapter.work.Enter() {
+		go adapter.walWriterLoop()
+	}
 
 	return adapter, nil
 }
@@ -118,20 +149,91 @@ func (a *StorageAdapter) loadWALPosition() error {
 	if a.wal != nil {
 		a.walPosition.Store(a.wal.Sequence())
 	}
+	entries, err := storage.ReadWALEntriesFromDir(a.work.Context(), a.walDir)
+	if err != nil {
+		return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+	}
+	a.projectedIDs = make(map[projectionIdentity]uint64)
+	for _, entry := range entries {
+		if entry.Operation != storage.OperationType("replication_command") {
+			continue
+		}
+		record, err := decodeProjectionRecord(entry)
+		if err != nil {
+			return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+		}
+		var envelope storage.EntityTransactionEnvelope
+		if record.Command.Type == CmdCommitTransaction {
+			var err error
+			envelope, _, err = storage.DecodeEntityTransaction(record.Command.Data)
+			if err != nil {
+				return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+			}
+		}
+		identity := projectionCommandIdentity(record.Command, envelope)
+		if identity.logicalID != "" {
+			if _, exists := a.projectedIDs[identity]; !exists {
+				a.projectedIDs[identity] = entry.Sequence
+			}
+		}
+	}
 	return nil
 }
 
-// SetExecutor sets a custom Cypher executor for the adapter.
-// This allows using an executor with additional configuration (e.g., database manager, embedder).
-func (a *StorageAdapter) SetExecutor(executor *cypher.StorageExecutor) {
-	a.executor = executor
-}
-
-// ApplyCommand applies a replicated command to storage.
-// WAL writes are now asynchronous for better performance.
-func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
+// ApplyCommand applies a replicated command and reports the publication of its
+// own replication WAL record.
+//
+// waitCtx, publication and cmd are validated before any queue or native side
+// effect. Valid intent is transferred to the bounded FIFO WAL writer before the
+// native command is applied, and the native result stays the primary contract.
+// waitCtx bounds only this caller's publication wait: it never retracts accepted
+// intent, suppresses native application, removes a queued record or implies a
+// rollback.
+func (a *StorageAdapter) ApplyCommand(waitCtx context.Context, cmd *Command, publication WALPublicationMode) (CommandPublication, error) {
 	if cmd == nil {
-		return localizedError(localization.ReplicationStorageCommandRequired(), nil)
+		return CommandPublication{}, localizedError(localization.ReplicationStorageCommandRequired(), nil)
+	}
+	if publication != WALQueued && publication != WALPublished {
+		return CommandPublication{}, fmt.Errorf("replication: unknown WAL publication mode %d", publication)
+	}
+
+	if err := retiredCommandError(cmd.Type); err != nil {
+		return CommandPublication{}, err
+	}
+	if a.projectionLoadErr != nil {
+		return CommandPublication{}, a.projectionLoadErr
+	}
+
+	// Observed client requests are admission input, never accepted state-machine
+	// records. Only the leader preparer may normalize them into a validated
+	// CmdCommitTransaction before any replication/WAL publication.
+	if cmd.Type == CmdUpdateNodeRequest || cmd.Type == CmdUpdateEdgeRequest {
+		return CommandPublication{}, storage.ErrInvalidData
+	}
+
+	// Decode once before publishing to the replication WAL. An unreadable
+	// command must never be replayed to a peer after its caller saw rejection.
+	var envelope storage.EntityTransactionEnvelope
+	var operations []storage.Operation
+	var prefix string
+	var err error
+	switch cmd.Type {
+	case CmdCommitTransaction:
+		if cmd.accepted.AppliesTo(a.engine) {
+			envelope.Namespace, envelope.LogicalTxID = cmd.accepted.Identity()
+		} else {
+			envelope, operations, err = storage.DecodeEntityTransaction(cmd.Data)
+		}
+	case CmdCreateNode, CmdUpdateNode, CmdDeleteNode, CmdCreateEdge, CmdUpdateEdge,
+		CmdDeleteEdge, CmdBulkCreateNodes, CmdBulkCreateEdges, CmdBulkDeleteNodes, CmdBulkDeleteEdges:
+		operations, _, err = decodeEntityCommandOperations(cmd.Type, cmd.Data)
+	case CmdDeleteByPrefix:
+		prefix, err = decodeDeleteByPrefix(cmd.Data)
+	default:
+		return CommandPublication{}, localizedError(localization.ReplicationStorageUnknownCommandType(uint8(cmd.Type)), nil)
+	}
+	if err != nil {
+		return CommandPublication{}, err
 	}
 
 	// Record in persistent WAL (write-ahead logging)
@@ -140,86 +242,114 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		Command:   cmd,
 	}
 
-	// Queue async WAL write (non-blocking)
+	// Transfer the replicated record to the bounded FIFO WAL writer.
 	req := &walWriteRequest{
-		record:  record,
-		posCh:   make(chan uint64, 1),
-		errCh:   make(chan error, 1),
-		waiting: false, // Don't wait for WAL write to complete
+		record:   record,
+		identity: projectionCommandIdentity(cmd, envelope),
+		done:     make(chan walCompletion, 1),
 	}
 
-	// Try to queue async write
-	select {
-	case a.walQueue <- req:
-		// Successfully queued, continue
-	default:
-		// Channel full - fall back to synchronous write to avoid blocking
-		// This should be rare with a 1000-item buffer
-		a.walMu.Lock()
-		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
-			a.walMu.Unlock()
-			return localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
-		}
-		pos := a.wal.Sequence()
-		a.walPosition.Store(pos)
-		a.walMu.Unlock()
-		a.appendToMemWAL(pos, record, cmd)
+	if err := a.enqueueWAL(req); err != nil {
+		return CommandPublication{}, err
 	}
+
+	// The replicated command is accepted. Native application and completion
+	// are independent of the publication waiter and engine shutdown signal.
+	completionCtx := context.Background()
 
 	// Execute the command immediately (don't wait for WAL write)
 	// This allows storage operations to proceed in parallel with WAL I/O
 	var execErr error
 	switch cmd.Type {
-	case CmdCreateNode:
-		execErr = a.applyCreateNode(cmd.Data)
-	case CmdUpdateNode:
-		execErr = a.applyUpdateNode(cmd.Data)
-	case CmdDeleteNode:
-		execErr = a.applyDeleteNode(cmd.Data)
-	case CmdCreateEdge:
-		execErr = a.applyCreateEdge(cmd.Data)
-	case CmdUpdateEdge:
-		execErr = a.applyUpdateEdge(cmd.Data)
-	case CmdDeleteEdge:
-		execErr = a.applyDeleteEdge(cmd.Data)
-	case CmdSetProperty:
-		execErr = a.applySetProperty(cmd.Data)
-	case CmdBatchWrite:
-		execErr = a.applyBatchWrite(cmd.Data)
-	case CmdCypher:
-		execErr = a.applyCypher(cmd.Data)
-	case CmdDeleteByPrefix:
-		execErr = a.applyDeleteByPrefix(cmd.Data)
-	case CmdBulkCreateNodes:
-		execErr = a.applyBulkCreateNodes(cmd.Data)
-	case CmdBulkCreateEdges:
-		execErr = a.applyBulkCreateEdges(cmd.Data)
-	case CmdBulkDeleteNodes:
-		execErr = a.applyBulkDeleteNodes(cmd.Data)
-	case CmdBulkDeleteEdges:
-		execErr = a.applyBulkDeleteEdges(cmd.Data)
-	default:
-		execErr = localizedError(localization.ReplicationStorageUnknownCommandType(uint8(cmd.Type)), nil)
-	}
-
-	// Try to get position from async write (non-blocking, best-effort)
-	// If not ready yet, walWriterLoop will update it later
-	select {
-	case pos := <-req.posCh:
-		a.walPosition.Store(pos)
-		a.appendToMemWAL(pos, record, cmd)
-	case err := <-req.errCh:
-		if err != nil {
-			// Log error but don't fail the operation (WAL is for durability, not correctness)
-			// The command was already applied to storage
-			logReplicationPrintf(context.Background(), slog.LevelError, "[WAL] Async write error (non-fatal): %v", err)
+	case CmdCommitTransaction:
+		if cmd.accepted.AppliesTo(a.engine) {
+			execErr = cmd.accepted.ApplyContext(completionCtx, cmd.Data)
+			break
 		}
-	default:
-		// Position not ready yet, will be set by walWriterLoop
-		// This is fine - the command was applied and WAL write is queued
+		receipt, err := storage.SubmitAcceptedEntityTransaction(completionCtx, a.engine, envelope, operations, nil)
+		if err != nil {
+			execErr = err
+		} else {
+			execErr = receipt.WaitPhysicalOutcome(completionCtx).Err
+		}
+	case CmdCreateNode, CmdUpdateNode, CmdDeleteNode, CmdCreateEdge, CmdUpdateEdge,
+		CmdDeleteEdge, CmdBulkCreateNodes, CmdBulkCreateEdges, CmdBulkDeleteNodes, CmdBulkDeleteEdges:
+		execErr = applyDirectEntityCommand(completionCtx, a.engine, cmd.Type, operations)
+	case CmdDeleteByPrefix:
+		_, _, execErr = a.engine.DeleteByPrefix(prefix)
 	}
 
-	return execErr
+	if publication == WALQueued {
+		// WALQueued keeps the nonwaiting asynchronous native-result contract:
+		// the writer owns this record's publication and its error observation,
+		// so only an outcome that already arrived is logged here.
+		select {
+		case outcome := <-req.done:
+			if outcome.err != nil {
+				// Log error but don't fail the operation (WAL is for durability, not correctness)
+				// The command was already applied to storage
+				logReplicationPrintf(context.Background(), slog.LevelError, "[WAL] Async write error (non-fatal): %v", outcome.err)
+			}
+		default:
+			// The writer will finish publication or report its asynchronous error.
+		}
+		return CommandPublication{}, execErr
+	}
+
+	if execErr != nil {
+		// The native application outcome is the primary contract and is
+		// returned unchanged. The record already belongs to the writer, so its
+		// publication, or the writer's retained append failure, still completes.
+		return CommandPublication{}, execErr
+	}
+
+	outcome, waitErr := awaitWALCompletion(waitCtx, req.done)
+	if waitErr != nil {
+		// The wait expired; accepted intent and native application remain.
+		return CommandPublication{}, waitErr
+	}
+	if outcome.err != nil {
+		// Publication failed after native acceptance: report the publication
+		// failure without implying rejected or rolled-back native work.
+		return CommandPublication{}, outcome.err
+	}
+	if outcome.position == 0 {
+		// A published record always has its own physical sequence.
+		return CommandPublication{}, fmt.Errorf("replication: published record has no WAL position")
+	}
+	return CommandPublication{Position: outcome.position}, nil
+}
+
+// awaitWALCompletion waits for this request's own publication outcome under the
+// caller's wait context. The context bounds the wait only.
+func awaitWALCompletion(ctx context.Context, done <-chan walCompletion) (walCompletion, error) {
+	select {
+	case outcome := <-done:
+		return outcome, nil
+	case <-ctx.Done():
+		// The writer can complete as the deadline expires; an outcome that already
+		// arrived is the truthful result.
+		select {
+		case outcome := <-done:
+			return outcome, nil
+		default:
+			return walCompletion{}, fmt.Errorf("replication: WAL publication wait: %w", ctx.Err())
+		}
+	}
+}
+
+// enqueueWAL transfers this replicated record to the one FIFO writer. The
+// admission covers only queue ownership, never native storage or its listeners.
+// Close waits these producers before stopping/draining the writer. Full queues
+// exert backpressure; a later command cannot append ahead of their prefix.
+func (a *StorageAdapter) enqueueWAL(req *walWriteRequest) error {
+	a.calls.RLock()
+	defer a.calls.RUnlock()
+	if a.sealed {
+		return ErrClosed
+	}
+	a.walQueue <- req
+	return nil
 }
 
 // appendToMemWAL appends an entry to the in-memory WAL for fast streaming.
@@ -235,16 +365,17 @@ func (a *StorageAdapter) appendToMemWAL(pos uint64, record replicationWALRecord,
 
 // walWriterLoop processes WAL writes asynchronously in batches.
 func (a *StorageAdapter) walWriterLoop() {
-	defer a.walWg.Done()
+	defer a.work.Leave()
 
 	ticker := time.NewTicker(10 * time.Millisecond) // Batch interval
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-a.walStopCh:
-			// Flush remaining writes
-			a.flushWALBatch()
+		case <-a.work.Context().Done():
+			// Ingress is sealed and all admitted calls have returned. Drain the
+			// finite accepted queue through the same physical append owner.
+			a.flushWALBatch(true)
 			return
 		case req := <-a.walQueue:
 			// Add to batch
@@ -255,71 +386,58 @@ func (a *StorageAdapter) walWriterLoop() {
 
 			// Flush if batch is large enough (100 items)
 			if batchSize >= 100 {
-				a.flushWALBatch()
+				a.flushWALBatch(false)
 			}
 		case <-ticker.C:
 			// Periodic flush
-			a.flushWALBatch()
+			a.flushWALBatch(false)
 		}
 	}
 }
 
 // flushWALBatch writes all pending WAL entries.
 // Uses individual appends but processes them in a batch to reduce lock contention.
-func (a *StorageAdapter) flushWALBatch() {
+func (a *StorageAdapter) flushWALBatch(drain bool) {
 	a.walBatchMu.Lock()
+	if drain {
+	drainQueue:
+		for {
+			select {
+			case req := <-a.walQueue:
+				a.walBatch = append(a.walBatch, req)
+			default:
+				break drainQueue
+			}
+		}
+	}
 	if len(a.walBatch) == 0 {
 		a.walBatchMu.Unlock()
 		return
 	}
 	batch := a.walBatch
+	// The batch belongs to this worker through replay and barrier delivery.
+	defer clear(batch)
 	a.walBatch = a.walBatch[:0] // Clear batch
 	a.walBatchMu.Unlock()
 
 	// Write each entry to WAL in a single lock to reduce contention
 	// The WAL's internal buffering will batch the actual file writes
 	a.walMu.Lock()
-	positions := make([]uint64, 0, len(batch))
 	for _, req := range batch {
 		if req.barrier {
-			// Sentinel for FlushWAL — no WAL append. The post position
-			// signal happens below so callers are blocked until every
-			// real append in this batch has completed.
-			positions = append(positions, 0)
 			continue
 		}
-		if err := a.wal.Append(storage.OperationType("replication_command"), req.record); err != nil {
-			// Send error to waiting request
-			select {
-			case req.errCh <- localizedError(localization.ReplicationStorageWALAppendFailed(err), err):
-			default:
-			}
-			positions = append(positions, 0) // Placeholder for failed entry
+		position, err := a.appendProjectionLocked(req.record, req.identity)
+		if err != nil {
+			a.work.RecordError("replication WAL append", err)
+			req.complete(walCompletion{err: err})
 			continue
 		}
-		// Get position after append (sequence is incremented atomically by WAL)
-		pos := a.wal.Sequence()
-		positions = append(positions, pos)
-
-		// Send position to request (non-blocking)
-		select {
-		case req.posCh <- pos:
-		default:
-		}
-	}
-	// Update global position
-	if len(batch) > 0 {
-		a.walPosition.Store(a.wal.Sequence())
+		req.complete(walCompletion{position: position})
 	}
 	currentPos := a.wal.Sequence()
+	a.walPosition.Store(currentPos)
 	a.walMu.Unlock()
-
-	// Update in-memory WAL outside the lock to avoid deadlock
-	for i, req := range batch {
-		if positions[i] > 0 {
-			a.appendToMemWAL(positions[i], req.record, req.record.Command)
-		}
-	}
 
 	// Release any barrier waiters now that every real entry in the
 	// batch has been appended and walPosition has been updated.
@@ -327,308 +445,82 @@ func (a *StorageAdapter) flushWALBatch() {
 		if !req.barrier {
 			continue
 		}
-		select {
-		case req.posCh <- currentPos:
-		default:
+		if err := a.work.Err(); err != nil {
+			req.complete(walCompletion{err: err})
+		} else {
+			req.complete(walCompletion{position: currentPos})
 		}
 	}
 }
 
-// applyCreateNode creates a node from command data.
-func (a *StorageAdapter) applyCreateNode(data []byte) error {
-	node, err := decodeNodePayload(data)
-	if err != nil {
-		return localizedError(localization.ReplicationStorageDecodeNodeFailed(err), err)
-	}
-	_, err = a.engine.CreateNode(node)
-	return err
-}
-
-// applyUpdateNode updates a node from command data.
-func (a *StorageAdapter) applyUpdateNode(data []byte) error {
-	node, err := decodeNodePayload(data)
-	if err != nil {
-		return localizedError(localization.ReplicationStorageDecodeNodeFailed(err), err)
-	}
-	return a.engine.UpdateNode(node)
-}
-
-// applyDeleteNode deletes a node.
-func (a *StorageAdapter) applyDeleteNode(data []byte) error {
-	var req struct {
-		NodeID string
-	}
-	if err := decodeGob(data, &req); err == nil && req.NodeID != "" {
-		return a.engine.DeleteNode(storage.NodeID(req.NodeID))
-	}
-	// Legacy fallback: raw ID bytes.
-	return a.engine.DeleteNode(storage.NodeID(string(data)))
-}
-
-// applyCreateEdge creates an edge from command data.
-func (a *StorageAdapter) applyCreateEdge(data []byte) error {
-	edge, err := decodeEdgePayload(data)
-	if err != nil {
-		return localizedError(localization.ReplicationStorageDecodeEdgeFailed(err), err)
-	}
-	return a.engine.CreateEdge(edge)
-}
-
-func (a *StorageAdapter) applyUpdateEdge(data []byte) error {
-	edge, err := decodeEdgePayload(data)
-	if err != nil {
-		return localizedError(localization.ReplicationStorageDecodeEdgeFailed(err), err)
-	}
-	return a.engine.UpdateEdge(edge)
-}
-
-// applyDeleteEdge deletes an edge.
-func (a *StorageAdapter) applyDeleteEdge(data []byte) error {
-	var req struct {
-		EdgeID string
-	}
-	if err := decodeGob(data, &req); err != nil {
-		return localizedError(localization.ReplicationStorageDecodeDeleteEdgeFailed(err), err)
-	}
-	return a.engine.DeleteEdge(storage.EdgeID(req.EdgeID))
-}
-
-// applySetProperty sets a property on a node.
-func (a *StorageAdapter) applySetProperty(data []byte) error {
-	var req struct {
-		NodeID string
-		Key    string
-		Value  interface{}
-	}
-	if err := decodeGob(data, &req); err != nil {
-		return localizedError(localization.ReplicationStorageDecodeSetPropertyFailed(err), err)
-	}
-
-	// Get node, update property, save
-	node, err := a.engine.GetNode(storage.NodeID(req.NodeID))
-	if err != nil {
-		return err
-	}
-	if node.Properties == nil {
-		node.Properties = make(map[string]interface{})
-	}
-	node.Properties[req.Key] = req.Value
-	return a.engine.UpdateNode(node)
-}
-
-// applyBatchWrite applies a batch of operations.
-func (a *StorageAdapter) applyBatchWrite(data []byte) error {
-	var batch struct {
-		Nodes [][]byte
-		Edges [][]byte
-	}
-	if err := decodeGob(data, &batch); err != nil {
-		return localizedError(localization.ReplicationStorageDecodeBatchFailed(err), err)
-	}
-
-	for _, nodeBytes := range batch.Nodes {
-		node, err := decodeNodePayload(nodeBytes)
-		if err != nil {
-			return err
-		}
-		if _, err := a.engine.CreateNode(node); err != nil {
-			return err
-		}
-	}
-	for _, edgeBytes := range batch.Edges {
-		edge, err := decodeEdgePayload(edgeBytes)
-		if err != nil {
-			return err
-		}
-		if err := a.engine.CreateEdge(edge); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (a *StorageAdapter) applyDeleteByPrefix(data []byte) error {
+func decodeDeleteByPrefix(data []byte) (string, error) {
 	var req struct {
 		Prefix string
 	}
-	if err := decodeGob(data, &req); err != nil {
-		return localizedError(localization.ReplicationStorageDecodeDeletePrefixFailed(err), err)
+	if err := storage.DecodeCommandPayload(data, &req); err != nil {
+		return "", localizedError(localization.ReplicationStorageDecodeDeletePrefixFailed(err), err)
 	}
 	if req.Prefix == "" {
-		return localizedError(localization.ReplicationStoragePrefixRequired(), nil)
+		return "", localizedError(localization.ReplicationStoragePrefixRequired(), nil)
 	}
-	_, _, err := a.engine.DeleteByPrefix(req.Prefix)
-	return err
+	return req.Prefix, nil
 }
 
-func (a *StorageAdapter) applyBulkCreateNodes(data []byte) error {
-	var encoded [][]byte
-	if err := decodeGob(data, &encoded); err != nil {
-		return localizedError(localization.ReplicationStorageDecodeBulkCreateNodesFailed(err), err)
-	}
-	nodes := make([]*storage.Node, 0, len(encoded))
-	for _, b := range encoded {
-		n, err := decodeNodePayload(b)
-		if err != nil {
-			return err
-		}
-		nodes = append(nodes, n)
-	}
-	return a.engine.BulkCreateNodes(nodes)
-}
-
-func (a *StorageAdapter) applyBulkCreateEdges(data []byte) error {
-	var encoded [][]byte
-	if err := decodeGob(data, &encoded); err != nil {
-		return localizedError(localization.ReplicationStorageDecodeBulkCreateEdgesFailed(err), err)
-	}
-	edges := make([]*storage.Edge, 0, len(encoded))
-	for _, b := range encoded {
-		edge, err := decodeEdgePayload(b)
-		if err != nil {
-			return err
-		}
-		edges = append(edges, edge)
-	}
-	return a.engine.BulkCreateEdges(edges)
-}
-
-func (a *StorageAdapter) applyBulkDeleteNodes(data []byte) error {
-	var ids []storage.NodeID
-	if err := decodeGob(data, &ids); err != nil {
-		return localizedError(localization.ReplicationStorageDecodeBulkDeleteNodesFailed(err), err)
-	}
-	return a.engine.BulkDeleteNodes(ids)
-}
-
-func (a *StorageAdapter) applyBulkDeleteEdges(data []byte) error {
-	var ids []storage.EdgeID
-	if err := decodeGob(data, &ids); err != nil {
-		return localizedError(localization.ReplicationStorageDecodeBulkDeleteEdgesFailed(err), err)
-	}
-	return a.engine.BulkDeleteEdges(ids)
-}
-
-// applyCypher executes a Cypher command (for write queries).
-// The data should be a JSON object with "query" (string) and optional "params" (map[string]interface{}).
-func (a *StorageAdapter) applyCypher(data []byte) error {
-	if a.executor == nil {
-		return localizedError(localization.ReplicationStorageCypherUnavailable(), nil)
-	}
-
-	// Parse Cypher command data
-	var cypherCmd struct {
-		Query  string
-		Params map[string]interface{}
-	}
-
-	if err := decodeGob(data, &cypherCmd); err != nil {
-		return localizedError(localization.ReplicationStorageDecodeCypherFailed(err), err)
-	}
-
-	if cypherCmd.Query == "" {
-		return localizedError(localization.ReplicationStorageCypherQueryEmpty(), nil)
-	}
-
-	// Execute the Cypher query
-	// Use background context since this is a replicated command (no user context)
-	ctx := context.Background()
-	_, err := a.executor.Execute(ctx, cypherCmd.Query, cypherCmd.Params)
-	if err != nil {
-		return localizedError(localization.ReplicationStorageExecuteCypherFailed(err), err)
-	}
-
-	return nil
-}
-
-// FlushWAL waits for all pending WAL writes to complete.
-// This is useful for tests or when you need to ensure durability before proceeding.
-//
-// The previous version slept 20ms hoping walWriterLoop would drain the
-// queue — on slow runners (CI) goroutine scheduling jitter could leave
-// the tail request still in walQueue at sync time, so callers that
-// immediately observed GetWALPosition saw a count one short of what
-// they queued. The fix is to send a barrier request through the same
-// channel and wait for its acknowledgement. Because the writer reads
-// requests from walQueue in FIFO order, every request queued before
-// the barrier is guaranteed to be flushed before the barrier itself
-// completes.
 func (a *StorageAdapter) FlushWAL() error {
+	a.calls.RLock()
+	defer a.calls.RUnlock()
+	if a.sealed {
+		return ErrClosed
+	}
+
 	// Build a sentinel write request. barrier=true tells flushWALBatch
-	// to skip the WAL append for this entry but still ack posCh after
+	// to skip the WAL append for this entry but still complete after
 	// the surrounding batch completes — so the writer goroutine drives
 	// the synchronization without us touching its channels directly.
 	barrier := &walWriteRequest{
-		posCh:   make(chan uint64, 1),
-		errCh:   make(chan error, 1),
-		waiting: true,
+		done:    make(chan walCompletion, 1),
 		barrier: true,
 	}
 
-	// Push the barrier behind everything already queued.
-	select {
-	case a.walQueue <- barrier:
-	case <-a.walStopCh:
-		// Writer is shutting down; fall through to a best-effort sync.
-		a.walMu.Lock()
-		defer a.walMu.Unlock()
-		if a.wal != nil {
-			return a.wal.Sync()
-		}
-		return nil
-	}
+	// The admission keeps the writer running until this barrier returns.
+	// Ingress cannot be sealed and the worker cannot stop while calls.RLock is held.
+	a.walQueue <- barrier
 
 	// Wait for the writer goroutine to flush the batch containing the
-	// barrier. posCh is signaled inside flushWALBatch after the WAL
-	// append completes, so by the time we read from it every prior
-	// request is also persisted.
-	select {
-	case <-barrier.posCh:
-	case err := <-barrier.errCh:
-		if err != nil {
-			return localizedError(localization.ReplicationStorageFlushWALFailed(err), err)
-		}
-	case <-a.walStopCh:
-		// Adapter closing; drop barrier wait.
+	// barrier. The outcome is signaled inside flushWALBatch after the WAL
+	// append completes, so by the time we read it every prior request is
+	// also persisted. FlushWAL keeps its existing unbounded barrier policy.
+	if outcome := <-barrier.done; outcome.err != nil {
+		return localizedError(localization.ReplicationStorageFlushWALFailed(outcome.err), outcome.err)
 	}
 
 	// Sync the WAL to ensure all writes are on disk.
 	a.walMu.Lock()
 	defer a.walMu.Unlock()
 	if a.wal != nil {
-		return a.wal.Sync()
+		err := a.wal.Sync()
+		if err != nil {
+			a.work.RecordError("replication WAL sync", err)
+		}
+		return err
 	}
 	return nil
 }
 
-// stopWALWriterForTest halts the async WAL writer goroutine without closing
-// the WAL itself. Tests that want to mutate walQueue (to force the
-// "channel full" sync-fallback branch in ApplyCommand) call this first so
-// the swap doesn't race with walWriterLoop's channel read. Idempotent.
-//
-// Production callers should use Close instead — this helper exists only
-// for tests that need to swap the queue mid-life.
-func (a *StorageAdapter) stopWALWriterForTest() {
-	select {
-	case <-a.walStopCh:
-		// Already stopped.
-	default:
-		close(a.walStopCh)
-	}
-	a.walWg.Wait()
-}
-
 // Close releases replication resources (WAL file handles/background goroutines).
 func (a *StorageAdapter) Close() error {
-	// Stop async WAL writer (only once)
-	select {
-	case <-a.walStopCh:
-		// Already closed
-	default:
-		close(a.walStopCh)
-	}
-	a.walWg.Wait()
+	a.calls.Lock()
+	a.sealed = true
+	a.calls.Unlock()
 
+	// The owner's stop: the writer flushes and returns, then the WAL closes
+	// once. Every caller joins the same stop and outcome.
+	a.work.BeginStop(a.closeWAL)
+	return a.work.JoinStopped()
+}
+
+// closeWAL is the adapter owner's dispose, after the WAL writer returned.
+func (a *StorageAdapter) closeWAL() error {
 	a.walMu.Lock()
 	defer a.walMu.Unlock()
 	if a.wal != nil {
@@ -644,12 +536,19 @@ func (a *StorageAdapter) GetWALPosition() (uint64, error) {
 	return a.walPosition.Load(), nil
 }
 
-// GetWALEntries returns WAL entries starting from the given position.
+// GetWALEntries returns WAL entries after the given position. A zero limit
+// returns an empty window; a negative limit is invalid.
 func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*WALEntry, error) {
-	// Fast path: serve from in-memory WAL.
+	if maxEntries < 0 {
+		return nil, fmt.Errorf("replication WAL entry limit must not be negative: %d", maxEntries)
+	}
+	if maxEntries == 0 {
+		return []*WALEntry{}, nil
+	}
+	// Keep the shared backing array locked until the result window is copied:
+	// pruning compacts and clears it in place.
 	a.memWALMu.RLock()
 	mem := a.memWAL
-	a.memWALMu.RUnlock()
 
 	if len(mem) > 0 && fromPosition >= mem[0].Position {
 		// Binary search first entry with Position > fromPosition
@@ -663,22 +562,25 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 			}
 		}
 		if lo >= len(mem) {
+			a.memWALMu.RUnlock()
 			return []*WALEntry{}, nil
 		}
-		end := lo + maxEntries
-		if end > len(mem) {
-			end = len(mem)
+		end := len(mem)
+		if maxEntries < len(mem)-lo {
+			end = lo + maxEntries
 		}
 		entries := make([]*WALEntry, end-lo)
 		copy(entries, mem[lo:end])
+		a.memWALMu.RUnlock()
 		return entries, nil
 	}
+	a.memWALMu.RUnlock()
 
 	// Read from persistent WAL
 	a.walMu.RLock()
 	defer a.walMu.RUnlock()
 
-	storageEntries, err := storage.ReadWALEntriesFromDir(a.walDir)
+	storageEntries, err := storage.ReadWALEntriesFromDir(a.work.Context(), a.walDir)
 	if err != nil {
 		// Handle missing WAL file gracefully (may not exist yet)
 		if os.IsNotExist(err) {
@@ -699,29 +601,23 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 			continue
 		}
 
-		// Prefer the current record format, but tolerate older WALs.
-		var (
-			ts  int64
-			cmd *Command
-		)
-		var rec replicationWALRecord
-		if err := decodeGob(storageEntry.Data, &rec); err == nil && rec.Command != nil {
-			ts = rec.Timestamp
-			cmd = rec.Command
-		} else {
-			continue // Skip corrupted/legacy entries
-		}
-
 		pos := storageEntry.Sequence
-		if pos > fromPosition {
-			entries = append(entries, &WALEntry{
-				Position:  pos,
-				Timestamp: ts,
-				Command:   cmd,
-			})
-			if len(entries) >= maxEntries {
-				break
-			}
+		if pos <= fromPosition {
+			continue
+		}
+		// Never return a later position after dropping an unreadable command:
+		// the receiver could acknowledge a window with a missing write.
+		rec, err := decodeProjectionRecord(storageEntry)
+		if err != nil {
+			return nil, localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+		}
+		entries = append(entries, &WALEntry{
+			Position:  pos,
+			Timestamp: rec.Timestamp,
+			Command:   rec.Command,
+		})
+		if len(entries) >= maxEntries {
+			break
 		}
 	}
 
@@ -750,34 +646,32 @@ func (a *StorageAdapter) PruneWALEntries(uptoPosition uint64) {
 		return
 	}
 	// Drop prefix in-place to avoid allocating a new backing array.
-	copy(a.memWAL, a.memWAL[lo:])
-	a.memWAL = a.memWAL[:len(a.memWAL)-lo]
+	remaining := copy(a.memWAL, a.memWAL[lo:])
+	clear(a.memWAL[remaining:])
+	a.memWAL = a.memWAL[:remaining]
 }
 
 // WriteSnapshot writes a full snapshot to the given writer.
 func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
-	// Get all nodes and edges
-	nodes, err := a.engine.AllNodes()
+	// Every stored node and edge: the ones the visibility layer hides from
+	// reads are replicated data too.
+	nodes, err := storage.CollectStoredNodes(context.Background(), a.engine)
 	if err != nil {
 		return localizedError(localization.ReplicationStorageGetAllNodesFailed(err), err)
 	}
 
-	edges, err := a.engine.AllEdges()
+	edges, err := storage.CollectStoredEdges(context.Background(), a.engine)
 	if err != nil {
 		return localizedError(localization.ReplicationStorageGetAllEdgesFailed(err), err)
 	}
 
-	snapshot := struct {
-		WALPosition uint64
-		Nodes       []*storage.Node
-		Edges       []*storage.Edge
-	}{
+	snapshot := storage.ReplicationSnapshot{
 		WALPosition: a.walPosition.Load(),
 		Nodes:       nodes,
 		Edges:       edges,
 	}
 
-	data, err := encodeGob(snapshot)
+	data, err := storage.EncodeCommandPayload(snapshot)
 	if err != nil {
 		return localizedError(localization.ReplicationStorageEncodeSnapshotFailed(err), err)
 	}
@@ -788,31 +682,29 @@ func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 
 // RestoreSnapshot restores state from a snapshot.
 func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
+	// Snapshot restore is an existing context-free completion boundary.
+	completionCtx := context.Background()
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return localizedError(localization.ReplicationStorageReadSnapshotFailed(err), err)
 	}
 
-	var snapshot struct {
-		WALPosition uint64
-		Nodes       []*storage.Node
-		Edges       []*storage.Edge
-	}
+	var snapshot storage.ReplicationSnapshot
 
-	if err := decodeGob(data, &snapshot); err != nil {
+	if err := storage.DecodeCommandPayload(data, &snapshot); err != nil {
 		return localizedError(localization.ReplicationStorageDecodeSnapshotFailed(err), err)
 	}
 
 	// Restore nodes
 	for _, node := range snapshot.Nodes {
-		if _, err := a.engine.CreateNode(node); err != nil {
+		if _, err := a.engine.CreateNode(completionCtx, node); err != nil {
 			return localizedError(localization.ReplicationStorageRestoreNodeFailed(err), err)
 		}
 	}
 
 	// Restore edges
 	for _, edge := range snapshot.Edges {
-		if err := a.engine.CreateEdge(edge); err != nil {
+		if err := a.engine.CreateEdge(completionCtx, edge); err != nil {
 			return localizedError(localization.ReplicationStorageRestoreEdgeFailed(err), err)
 		}
 	}

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,10 @@ import (
 // default) and always keeps the last transaction's; dropping a database
 // removes its events; Close stops the job.
 func TestChangeEventRetentionAndDrop(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.Equal(t, ChangeCaptureOff, engine.ChangeCapture("cdc"))
 	require.Equal(t, defaultChangeRetention, engine.changeRetention())
@@ -24,7 +28,7 @@ func TestChangeEventRetentionAndDrop(t *testing.T) {
 	require.Equal(t, time.Hour, engine.changeRetention())
 
 	for _, id := range []NodeID{"cdc:a", "cdc:b"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
 		require.NoError(t, err)
 	}
 	earliest, last, err := engine.ChangeBounds("cdc")
@@ -32,11 +36,11 @@ func TestChangeEventRetentionAndDrop(t *testing.T) {
 	require.Equal(t, [2]uint64{1, 2}, [2]uint64{earliest, last})
 
 	// Nothing is old enough now; two hours on, all but the last transaction.
-	engine.changes.job.RunOnce(time.Now())
+	engine.changes.job.RunOnce(context.Background(), time.Now())
 	events, err := engine.ChangeEvents("cdc", 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, events, 2)
-	engine.changes.job.RunOnce(time.Now().Add(2 * time.Hour))
+	engine.changes.job.RunOnce(context.Background(), time.Now().Add(2*time.Hour))
 	events, err = engine.ChangeEvents("cdc", 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
@@ -62,17 +66,17 @@ func TestChangeEventRetentionAndDrop(t *testing.T) {
 // A capturing database's direct writes run as transactions: the bulk and
 // relationship writes too, each one transaction.
 func TestChangeCaptureDirectBulkWrites(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetChangeCapture("cdc", ChangeCaptureFull)
-	require.NoError(t, engine.BulkCreateNodes([]*Node{{ID: "cdc:a", Labels: []string{"A"}}, {ID: "cdc:b", Labels: []string{"B"}}}))
-	require.NoError(t, engine.BulkCreateEdges([]*Edge{{ID: "cdc:r", Type: "R", StartNode: "cdc:a", EndNode: "cdc:b"}}))
-	require.NoError(t, engine.UpdateEdge(&Edge{ID: "cdc:r", Type: "R", StartNode: "cdc:a", EndNode: "cdc:b", Properties: map[string]any{"w": int64(2)}}))
-	require.NoError(t, engine.DeleteEdge("cdc:r"))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "cdc:s", Type: "S", StartNode: "cdc:a", EndNode: "cdc:b"}))
-	require.NoError(t, engine.BulkDeleteEdges([]EdgeID{"cdc:s"}))
-	require.NoError(t, engine.BulkDeleteNodes([]NodeID{"cdc:a", "cdc:b"}))
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), []*Node{{ID: "cdc:a", Labels: []string{"A"}}, {ID: "cdc:b", Labels: []string{"B"}}}))
+	require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{{ID: "cdc:r", Type: "R", StartNode: "cdc:a", EndNode: "cdc:b"}}))
+	require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "cdc:r", Type: "R", StartNode: "cdc:a", EndNode: "cdc:b", Properties: map[string]any{"w": int64(2)}}}))
+	require.NoError(t, engine.DeleteEdge(t.Context(), "cdc:r"))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "cdc:s", Type: "S", StartNode: "cdc:a", EndNode: "cdc:b"}))
+	require.NoError(t, engine.BulkDeleteEdges(t.Context(), []EdgeID{"cdc:s"}))
+	require.NoError(t, engine.BulkDeleteNodes(t.Context(), []NodeID{"cdc:a", "cdc:b"}))
 	events, err := engine.ChangeEvents("cdc", 0, 0, 0)
 	require.NoError(t, err)
 	var shape []string
@@ -108,7 +112,7 @@ func changeShape(events []ChangeEvent) []string {
 // relationship first), endpoint labels read from stored nodes, metadata,
 // a rollback (nothing), and reading after a position.
 func TestChangeCaptureTransactions(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	require.Equal(t, ChangeCaptureDiff, ParseChangeCaptureMode(" diff "))
@@ -118,7 +122,7 @@ func TestChangeCaptureTransactions(t *testing.T) {
 
 	run := func(write func(tx *BadgerTransaction) error) {
 		t.Helper()
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, write(tx))
 		require.NoError(t, tx.Commit())
@@ -129,37 +133,37 @@ func TestChangeCaptureTransactions(t *testing.T) {
 		engine.SetChangeCapture(ns, mode)
 		// Endpoints stored before the relationship's transaction.
 		for _, local := range []string{"a", "b"} {
-			_, err := engine.CreateNode(&Node{ID: id(local), Labels: []string{"L" + local}, Properties: map[string]any{"v": int64(1), "k": "x"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: id(local), Labels: []string{"L" + local}, Properties: map[string]any{"v": int64(1), "k": "x"}})
 			require.NoError(t, err)
 		}
 		run(func(tx *BadgerTransaction) error {
 			require.NoError(t, tx.SetMetadata(map[string]interface{}{"app": "pd"}))
-			return tx.CreateEdge(&Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(1)}})
+			return tx.CreateEdge(t.Context(), &Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(1)}})
 		})
 		run(func(tx *BadgerTransaction) error {
-			if err := tx.UpdateNode(&Node{ID: id("a"), Labels: []string{"La", "New"}, Properties: map[string]any{"v": int64(2), "k": "x"}}); err != nil {
+			if err := tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: id("a"), Labels: []string{"La", "New"}, Properties: map[string]any{"v": int64(2), "k": "x"}}, Policy: ClientNodeEdits}); err != nil {
 				return err
 			}
-			return tx.UpdateEdge(&Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(2)}})
+			return tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(2)}}})
 		})
 		run(func(tx *BadgerTransaction) error { // no change, and created then deleted
-			if err := tx.UpdateNode(&Node{ID: id("b"), Labels: []string{"Lb"}, Properties: map[string]any{"v": int64(1), "k": "x"}}); err != nil {
+			if err := tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: id("b"), Labels: []string{"Lb"}, Properties: map[string]any{"v": int64(1), "k": "x"}}, Policy: ClientNodeEdits}); err != nil {
 				return err
 			}
-			if err := tx.UpdateEdge(&Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(2)}}); err != nil {
+			if err := tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(2)}}}); err != nil {
 				return err
 			}
-			if _, err := tx.CreateNode(&Node{ID: id("tmp")}); err != nil {
+			if _, err := tx.CreateNode(t.Context(), &Node{ID: id("tmp")}); err != nil {
 				return err
 			}
-			return tx.DeleteNode(id("tmp"))
+			return tx.DeleteGraphNode(t.Context(), id("tmp"), CascadeEdges)
 		})
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
-		_, err = tx.CreateNode(&Node{ID: id("gone")})
+		_, err = tx.CreateNode(t.Context(), &Node{ID: id("gone")})
 		require.NoError(t, err)
 		require.NoError(t, tx.Rollback())
-		run(func(tx *BadgerTransaction) error { return tx.DeleteNode(id("a")) }) // cascades, as DETACH DELETE
+		run(func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(t.Context(), id("a"), CascadeEdges) }) // cascades, as DETACH DELETE
 
 		events, err := engine.ChangeEvents(ns, 0, 0, 0)
 		require.NoError(t, err)
@@ -189,7 +193,7 @@ func TestChangeCaptureTransactions(t *testing.T) {
 // The retention job starts and stops, and ChangeCaptureOf finds the Badger
 // engine under a namespace wrapper, and nothing for no engine.
 func TestChangeRetentionJobAndCaptureOf(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	job := newChangeRetentionJob(engine, 0)
@@ -213,44 +217,44 @@ func TestChangeRetentionJobAndCaptureOf(t *testing.T) {
 // creates, updates and deletes alike; an upsert of a missing node creates
 // it; a failing direct write rolls back and records nothing.
 func TestChangeCaptureWithWriteBehindAndFailedWrites(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: true})
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: true}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	require.True(t, engine.writeBehindEnabled())
 	engine.SetChangeCapture("cdc", ChangeCaptureFull)
 	async := engine
 
-	require.NoError(t, engine.UpdateNode(&Node{ID: "cdc:a", Labels: []string{"A"}})) // upsert: a create
+	require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "cdc:a", Labels: []string{"A"}}})) // upsert: a create
 	for _, id := range []NodeID{"cdc:b", "cdc:c", "cdc:d"} {
-		_, err := async.CreateNode(&Node{ID: id, Labels: []string{"N"}})
+		_, err := async.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"N"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, async.CreateEdge(&Edge{ID: "cdc:r", Type: "R", StartNode: "cdc:a", EndNode: "cdc:b"}))
-	require.NoError(t, async.CreateEdge(&Edge{ID: "cdc:s", Type: "S", StartNode: "cdc:a", EndNode: "cdc:c"}))
-	require.NoError(t, async.DeleteEdge("cdc:r"))
-	require.NoError(t, async.BulkDeleteEdges([]EdgeID{"cdc:s"}))
-	require.NoError(t, async.DeleteNode("cdc:b"))
-	require.NoError(t, async.BulkDeleteNodes([]NodeID{"cdc:c", "cdc:d"}))
+	require.NoError(t, async.CreateEdge(t.Context(), &Edge{ID: "cdc:r", Type: "R", StartNode: "cdc:a", EndNode: "cdc:b"}))
+	require.NoError(t, async.CreateEdge(t.Context(), &Edge{ID: "cdc:s", Type: "S", StartNode: "cdc:a", EndNode: "cdc:c"}))
+	require.NoError(t, async.DeleteEdge(t.Context(), "cdc:r"))
+	require.NoError(t, async.BulkDeleteEdges(t.Context(), []EdgeID{"cdc:s"}))
+	require.NoError(t, async.DeleteNode(t.Context(), "cdc:b"))
+	require.NoError(t, async.BulkDeleteNodes(t.Context(), []NodeID{"cdc:c", "cdc:d"}))
 
 	// Failing direct writes: a duplicate create, a bulk create holding one,
 	// a relationship to a missing node, a delete of a missing node.
-	_, err = engine.CreateNode(&Node{ID: "cdc:a"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "cdc:a"})
 	require.Error(t, err)
-	require.Error(t, engine.BulkCreateNodes([]*Node{{ID: "cdc:e"}, {ID: "cdc:a"}}))
-	require.Error(t, engine.BulkCreateEdges([]*Edge{{ID: "cdc:t", Type: "T", StartNode: "cdc:a", EndNode: "cdc:missing"}}))
-	require.Error(t, engine.DeleteNode("cdc:missing"))
+	require.Error(t, engine.BulkCreateNodes(t.Context(), []*Node{{ID: "cdc:e"}, {ID: "cdc:a"}}))
+	require.Error(t, engine.BulkCreateEdges(t.Context(), []*Edge{{ID: "cdc:t", Type: "T", StartNode: "cdc:a", EndNode: "cdc:missing"}}))
+	require.Error(t, engine.DeleteNode(t.Context(), "cdc:missing"))
 
 	events, err := engine.ChangeEvents("cdc", 0, 0, 0)
 	require.NoError(t, err)
 	require.Equal(t, []string{"nc", "nc", "nc", "nc", "rc", "rc", "rd", "rd", "nd", "nd", "nd"}, changeShape(events))
-	_, err = engine.GetNode("cdc:e")
+	_, err = engine.GetNode(t.Context(), "cdc:e")
 	require.ErrorIs(t, err, ErrNotFound, "the failed bulk create rolled back")
 
 	// An implicit transaction in the capturing database: events at once.
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	_, err = tx.CreateNode(&Node{ID: "cdc:implicit", Labels: []string{"I"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "cdc:implicit", Labels: []string{"I"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	events, err = engine.ChangeEvents("cdc", 0, 0, 0)

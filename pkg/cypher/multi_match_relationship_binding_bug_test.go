@@ -73,7 +73,7 @@ func setupRelSeedFixture(t *testing.T, exec *StorageExecutor) []storage.EdgeID {
 		map[string]interface{}{"src": uidFor(1), "tgt": uidFor(3)})
 	require.NoError(t, err)
 
-	edges, err := exec.getStorage(ctx).AllEdges()
+	edges, err := exec.getStorage(ctx).AllEdges(ctx)
 	require.NoError(t, err)
 	require.Len(t, edges, 6, "fixture must seed exactly 6 edges")
 
@@ -175,13 +175,13 @@ func TestBug_MultiMatchRelationshipBindingLost(t *testing.T) {
 			 DELETE rel`, params)
 		require.NoError(t, err)
 
-		remaining, err := exec.getStorage(ctx).AllEdges()
+		remaining, err := exec.getStorage(ctx).AllEdges(ctx)
 		require.NoError(t, err)
 		require.Len(t, remaining, 1, "DELETE rel must remove exactly the 5 reducer edges, leaving 1")
 		require.Equal(t, "manual", remaining[0].Properties["evidence_source"])
 
 		for _, id := range reducerEdgeIDs {
-			_, err := exec.getStorage(ctx).GetEdge(id)
+			_, err := exec.getStorage(ctx).GetEdge(t.Context(), id)
 			require.Error(t, err, "reducer edge %s must be gone after DELETE", id)
 		}
 	})
@@ -207,7 +207,7 @@ func TestBug_MultiMatchRelationshipBindingLost_Variations(t *testing.T) {
 			 DELETE rel`, map[string]interface{}{"u": allCloudResourceUIDs()})
 		require.NoError(t, err)
 
-		remaining, err := exec.getStorage(ctx).AllEdges()
+		remaining, err := exec.getStorage(ctx).AllEdges(ctx)
 		require.NoError(t, err)
 		require.Empty(t, remaining, "with no rel-WHERE, all 6 outgoing edges from the 5 sources must be deleted")
 	})
@@ -271,13 +271,13 @@ func TestBug_MultiMatchRelationshipBindingLost_Variations(t *testing.T) {
 				 DELETE rel`, params)
 			require.NoError(t, err)
 
-			remaining, err := exec.getStorage(ctx).AllEdges()
+			remaining, err := exec.getStorage(ctx).AllEdges(ctx)
 			require.NoError(t, err)
 			require.Len(t, remaining, 1, "WITH-pipelined DELETE rel must remove exactly the 5 reducer edges, leaving 1")
 			require.Equal(t, "manual", remaining[0].Properties["evidence_source"])
 
 			for _, id := range reducerEdgeIDs {
-				_, err := exec.getStorage(ctx).GetEdge(id)
+				_, err := exec.getStorage(ctx).GetEdge(t.Context(), id)
 				require.Error(t, err, "reducer edge %s must be gone after WITH-pipelined DELETE", id)
 			}
 		})

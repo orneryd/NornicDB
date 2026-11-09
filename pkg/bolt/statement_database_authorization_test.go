@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -18,13 +19,13 @@ import (
 // a composite constituent, whose access is its composite's and its target
 // database's).
 func TestBoltEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	for _, name := range []string{"da", "db"} {
-		require.NoError(t, mgr.CreateDatabase(name))
+		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 	}
-	require.NoError(t, mgr.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "da", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "db", Type: "local", AccessMode: "read_write"},
 	}))
@@ -32,11 +33,11 @@ func TestBoltEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	authCfg.SecurityEnabled = true
-	authenticator, err := auth.NewAuthenticator(authCfg, storage.NewMemoryEngine())
+	authenticator, err := auth.NewAuthenticator(authCfg, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("admin", "admin-password", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "admin-password", []auth.Role{auth.RoleAdmin})
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("limited", "limited-password", []auth.Role{auth.RoleEditor})
+	_, err = authenticator.CreateUser(context.Background(), "limited", "limited-password", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 
 	server := NewWithDatabaseManager(&Config{
@@ -58,7 +59,7 @@ func TestBoltEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
 	server.SetResolvedAccessResolver(func(roles []string, _ string) auth.ResolvedAccess {
 		return auth.ResolvedAccess{Read: true, Write: true}
 	})
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	ctx := context.Background()
 
 	connect := func(user, password string) neo4jdriver.DriverWithContext {

@@ -5,10 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -50,21 +53,21 @@ func (c *countingEmbed) embed(_ context.Context, edge *storage.Edge) (Relationsh
 
 func relationshipTestEngine(t *testing.T) storage.Engine {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"name": "doc " + string(id)}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"name": "doc " + string(id)}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r1", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"reason": "zephyrine bridge over the river"}}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r2", StartNode: "b", EndNode: "c", Type: "CONTRADICTS", Properties: map[string]any{"reason": "quarrel about dates"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "r1", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"reason": "zephyrine bridge over the river"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "r2", StartNode: "b", EndNode: "c", Type: "CONTRADICTS", Properties: map[string]any{"reason": "quarrel about dates"}}))
 	return engine
 }
 
 func startRelationshipService(t *testing.T, engine storage.Engine, embed RelationshipEmbedFunc, configure func(*Service)) *Service {
 	t.Helper()
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	if configure != nil {
 		configure(svc)
@@ -74,9 +77,45 @@ func startRelationshipService(t *testing.T, engine storage.Engine, embed Relatio
 	return svc
 }
 
-func waitRelationshipVectors(t *testing.T, svc *Service, want int) {
+// waitRelationshipVectors waits for the expected vector population and any
+// additional publication boundary required by the caller.
+func waitRelationshipVectors(t *testing.T, svc *Service, want int, published ...func(*Service) bool) {
 	t.Helper()
-	require.Eventually(t, func() bool { return svc.RelationshipEmbeddingCount() == want }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		if svc.RelationshipEmbeddingCount() != want {
+			return false
+		}
+		for _, boundary := range published {
+			if !boundary(svc) {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
+// relationshipSnapshotPublished checks the complete durable image, independently
+// of vector visibility. Both boundaries must hold before read/reopen assertions.
+func relationshipSnapshotPublished(svc *Service) bool {
+	saved, err := svc.loadRelationshipVectors()
+	if err != nil {
+		return false
+	}
+	rs := svc.relationshipSearch()
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	count := 0
+	for id, entry := range rs.entries {
+		if len(entry.Vectors) == 0 {
+			continue
+		}
+		count++
+		stored := saved[id]
+		if stored == nil || stored.Source != entry.Source || !reflect.DeepEqual(stored.Vectors, entry.Vectors) || !reflect.DeepEqual(stored.Spans, entry.Spans) {
+			return false
+		}
+	}
+	return len(saved) == count
 }
 
 // Relationship search finds a relationship by a word in its properties, and
@@ -149,7 +188,7 @@ func TestRelationshipSearchFollowsWrites(t *testing.T) {
 	opts := &SearchOptions{Limit: 10, Relationships: true}
 
 	edge := &storage.Edge{ID: "r3", StartNode: "a", EndNode: "c", Type: "CITES", Properties: map[string]any{"reason": "obsidian river"}}
-	require.NoError(t, engine.CreateEdge(edge))
+	require.NoError(t, engine.CreateEdge(t.Context(), edge))
 	require.NoError(t, svc.IndexEdge(edge))
 	waitRelationshipVectors(t, svc, 3)
 	response, err := svc.SearchRelationships(ctx, "obsidian", nil, opts)
@@ -160,7 +199,7 @@ func TestRelationshipSearchFollowsWrites(t *testing.T) {
 	calls := embed.calls.Load()
 	require.NoError(t, svc.IndexEdge(edge))
 	edge.Properties = map[string]any{"reason": "basalt span"}
-	require.NoError(t, engine.UpdateEdge(edge))
+	require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 	require.NoError(t, svc.IndexEdge(edge))
 	require.Eventually(t, func() bool { return embed.calls.Load() == calls+1 }, 5*time.Second, 10*time.Millisecond)
 	waitRelationshipVectors(t, svc, 3)
@@ -172,7 +211,7 @@ func TestRelationshipSearchFollowsWrites(t *testing.T) {
 	require.Len(t, response.Results, 1)
 
 	// Deleted in storage: not returned. Removed: gone from the index.
-	require.NoError(t, engine.DeleteEdge("r3"))
+	require.NoError(t, engine.DeleteEdge(t.Context(), "r3"))
 	response, err = svc.SearchRelationships(ctx, "basalt", nil, opts)
 	require.NoError(t, err)
 	require.Empty(t, response.Results)
@@ -200,16 +239,16 @@ func TestRelationshipSearchPersistsVectors(t *testing.T) {
 	}
 	first := &countingEmbed{}
 	svc := startRelationshipService(t, engine, first.embed, persisted)
-	waitRelationshipVectors(t, svc, 2)
+	waitRelationshipVectors(t, svc, 2, relationshipSnapshotPublished)
 	require.NoError(t, svc.Close())
 
-	edge, err := engine.GetEdge("r2")
+	edge, err := engine.GetEdge(t.Context(), "r2")
 	require.NoError(t, err)
 	edge.Properties["reason"] = "quarrel about river dates"
-	require.NoError(t, engine.UpdateEdge(edge))
+	require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 	second := &countingEmbed{}
 	svc = startRelationshipService(t, engine, second.embed, persisted)
-	waitRelationshipVectors(t, svc, 2)
+	waitRelationshipVectors(t, svc, 2, relationshipSnapshotPublished)
 	require.Equal(t, int64(1), second.calls.Load(), "only the changed relationship is embedded")
 	response, err := svc.SearchRelationships(ctx, "span", wordVector("span"), &SearchOptions{Limit: 1, Relationships: true})
 	require.NoError(t, err)
@@ -219,7 +258,7 @@ func TestRelationshipSearchPersistsVectors(t *testing.T) {
 	// No embedder yet: nothing embedded, and a search still works by keyword.
 	failing := &countingEmbed{}
 	failing.fail.Store(true)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r4", StartNode: "c", EndNode: "a", Type: "CITES", Properties: map[string]any{"reason": "granite"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "r4", StartNode: "c", EndNode: "a", Type: "CITES", Properties: map[string]any{"reason": "granite"}}))
 	svc = startRelationshipService(t, engine, failing.embed, persisted)
 	require.Eventually(t, func() bool { return failing.calls.Load() >= 1 }, 5*time.Second, 10*time.Millisecond)
 	response, err = svc.SearchRelationships(ctx, "granite", nil, &SearchOptions{Relationships: true})
@@ -231,7 +270,7 @@ func TestRelationshipSearchPersistsVectors(t *testing.T) {
 // Off by default: a relationship search fails with a localized error, and
 // the relationship hooks are no-ops (#1065).
 func TestRelationshipSearchDisabled(t *testing.T) {
-	svc := NewServiceWithDimensions(relationshipTestEngine(t), 3)
+	svc := NewService(relationshipTestEngine(t), 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.False(t, svc.RelationshipSearchEnabled())
 	require.Zero(t, svc.RelationshipEmbeddingCount())
@@ -253,7 +292,7 @@ func TestRelationshipSearchDisabled(t *testing.T) {
 	require.Zero(t, keyword.RelationshipEmbeddingCount())
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	pending := NewServiceWithDimensions(relationshipTestEngine(t), 3)
+	pending := NewService(relationshipTestEngine(t), 3, nil)
 	t.Cleanup(func() { _ = pending.Close() })
 	pending.EnableRelationshipSearch(nil)
 	_, err = pending.SearchRelationships(cancelled, "zephyrine", nil, nil)
@@ -262,7 +301,7 @@ func TestRelationshipSearchDisabled(t *testing.T) {
 
 type failingEdgeStreamEngine struct{ storage.Engine }
 
-func (failingEdgeStreamEngine) AllEdges() ([]*storage.Edge, error) {
+func (failingEdgeStreamEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	return nil, errors.New("storage unavailable")
 }
 
@@ -273,8 +312,8 @@ func (failingEdgeStreamEngine) AllEdges() ([]*storage.Edge, error) {
 func TestRelationshipSearchEdges(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r5", StartNode: "a", EndNode: "c", Type: "CITES", Properties: map[string]any{"title": "Twin", "description": "first twin", "content": "twin content"}}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r6", StartNode: "c", EndNode: "a", Type: "CITES", Properties: map[string]any{"title": "Twin", "description": "first twin", "text": "twin content"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "r5", StartNode: "a", EndNode: "c", Type: "CITES", Properties: map[string]any{"title": "Twin", "description": "first twin", "content": "twin content"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "r6", StartNode: "c", EndNode: "a", Type: "CITES", Properties: map[string]any{"title": "Twin", "description": "first twin", "text": "twin content"}}))
 	svc := startRelationshipService(t, engine, nil, nil)
 	response, err := svc.SearchRelationships(ctx, "twin", nil, &SearchOptions{Limit: 1})
 	require.NoError(t, err)
@@ -300,7 +339,7 @@ func TestRelationshipSearchEdges(t *testing.T) {
 	}
 
 	// A build whose storage scan fails still opens, empty.
-	failing := NewServiceWithDimensions(failingEdgeStreamEngine{Engine: engine}, 3)
+	failing := NewService(failingEdgeStreamEngine{Engine: engine}, 3, nil)
 	t.Cleanup(func() { _ = failing.Close() })
 	failing.EnableRelationshipSearch(nil)
 	failing.StartRelationshipIndex()
@@ -310,15 +349,17 @@ func TestRelationshipSearchEdges(t *testing.T) {
 	var nilService *Service
 	require.NoError(t, nilService.IndexEdge(&storage.Edge{ID: "x"}))
 
-	// An unreadable vector file is ignored; an unwritable one is logged.
+	// An unreadable vector file is reported and ignored; an unwritable one is logged.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bm25")
 	require.NoError(t, os.WriteFile(path+relationshipVectorsFileSuffix, []byte("not gob"), 0o600))
-	persisted := NewServiceWithDimensions(engine, 3)
+	persisted := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = persisted.Close() })
 	persisted.SetPersistenceEnabled(true)
 	persisted.SetFulltextIndexPath(path)
-	require.Nil(t, persisted.loadRelationshipVectors())
+	unreadable, err := persisted.loadRelationshipVectors()
+	require.Error(t, err, "an unreadable vector file is reported")
+	require.Nil(t, unreadable)
 	require.NoError(t, os.Remove(path+relationshipVectorsFileSuffix))
 	require.NoError(t, os.MkdirAll(filepath.Join(path+relationshipVectorsFileSuffix, "occupied"), 0o700))
 	persisted.EnableRelationshipSearch(nil)
@@ -327,7 +368,7 @@ func TestRelationshipSearchEdges(t *testing.T) {
 	persisted.saveRelationshipVectors(prs)
 	_, err = os.Stat(path + relationshipVectorsFileSuffix + ".tmp")
 	require.True(t, os.IsNotExist(err), "the temporary file is removed")
-	missingDir := NewServiceWithDimensions(engine, 3)
+	missingDir := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = missingDir.Close() })
 	missingDir.SetPersistenceEnabled(true)
 	missingDir.SetFulltextIndexPath(filepath.Join(dir, "missing", "bm25"))
@@ -397,7 +438,7 @@ func TestRelationshipSearchEmbedsReportedCopy(t *testing.T) {
 	svc.IndexRelationship(&storage.Edge{ID: "unread", StartNode: "a", EndNode: "c", Type: "CITES", Properties: map[string]any{"reason": "a bridge not yet stored"}})
 	waitRelationshipVectors(t, svc, 3)
 	svc.WakeRelationshipEmbedding() // no pending work: a no-op
-	NewServiceWithDimensions(engine, 3).WakeRelationshipEmbedding()
+	NewService(engine, 3, nil).WakeRelationshipEmbedding()
 }
 
 // A relationship hit carries matches as a node hit does: the query terms in

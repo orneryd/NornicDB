@@ -84,13 +84,20 @@ type Operation struct {
 	Node    *Node  `json:"node,omitempty"`     // New state (for create/update) or nil
 	OldNode *Node  `json:"old_node,omitempty"` // Old state (for update/delete rollback)
 	// For delete operations that cascade (e.g., DeleteNode deletes edges).
-	EdgesDeleted   int64    `json:"edges_deleted,omitempty"`
-	DeletedEdgeIDs []EdgeID `json:"deleted_edge_ids,omitempty"`
+	EdgesDeleted     int64          `json:"edges_deleted,omitempty"`
+	DeletedEdgeIDs   []EdgeID       `json:"deleted_edge_ids,omitempty"`
+	DeletedEdgeFacts []AffectedFact `json:"deleted_edge_facts,omitempty"`
 
 	// For edge operations
 	EdgeID  EdgeID `json:"edge_id,omitempty"`
 	Edge    *Edge  `json:"edge,omitempty"`     // New state (for create/update) or nil
 	OldEdge *Edge  `json:"old_edge,omitempty"` // Old state (for update/delete rollback)
+	// ReplacesExisting is decode-only compatibility for buffered WAL records
+	// acknowledged by the short-lived 68db5d16d release writer. Current
+	// writers never set it: CREATE no longer replaces a stored relationship.
+	// Recovery must nevertheless preserve those records' zero-cardinality
+	// meaning instead of publishing them as a second physical relationship.
+	ReplacesExisting bool `json:"replaces_existing,omitempty"`
 
 	// FreshID is set on OpCreateNode / OpCreateEdge when the caller asserted
 	// the ID is newly minted and cannot collide with any prior tombstoned
@@ -100,13 +107,22 @@ type Operation struct {
 	// loop falls back to the read-before-write path, preserving snapshot
 	// semantics for recreated user-supplied IDs.
 	FreshID bool `json:"fresh_id,omitempty"`
+
+	// Runtime fields never enter WAL or persisted data. Pack their small flags
+	// beside the existing flags so observed intent does not grow each operation.
+	skipMissingDelete  bool
+	embeddingOutcome   bool
+	nodeImagePolicy    EntityImagePolicy
+	nodeObservedBefore *Node
 }
 
 // Transaction is the public closure-facing transaction type used by DB.Update and DB.View.
 type Transaction = BadgerTransaction
 
-// copyNode creates a deep copy of a node.
-// Used by transactions to preserve state for rollback.
+// copyNode creates a deep copy of a node that the caller owns: label, property,
+// embedding-metadata and embedding-vector images are all its own. Used by
+// transactions to preserve state for rollback, by the exported CopyNode, and by
+// a query read whose delivered node belongs to the caller.
 func copyNode(node *Node) *Node {
 	nodeCopy := copyNodeWithoutEmbeddings(node)
 	if nodeCopy == nil {
@@ -133,68 +149,32 @@ func copyNode(node *Node) *Node {
 	return nodeCopy
 }
 
-// copyNodeForCaller is a copy of a node the transaction keeps in its snapshot
-// caches, for a caller that may change it: its labels, properties and
-// embedding metadata are its own, so a caller writing the node (a Cypher SET)
-// leaves the cached snapshot copy, and the old version an update compares
-// against, unchanged (#963). The embedding vectors, which callers replace
-// rather than modify, are shared.
-func copyNodeForCaller(node *Node) *Node {
-	nodeCopy := copyNodeWithoutEmbeddings(node)
-	if nodeCopy == nil {
-		return nil
-	}
-	nodeCopy.ChunkEmbeddings = node.ChunkEmbeddings
-	nodeCopy.NamedEmbeddings = node.NamedEmbeddings
-	nodeCopy.VisibilitySuppressed = node.VisibilitySuppressed
-	return nodeCopy
-}
-
 func copyNodeWithoutEmbeddings(node *Node) *Node {
 	if node == nil {
 		return nil
 	}
 
+	// The runtime record is immutable, so every copy of an image shares it:
+	// a mutator replaces the record on the image it is called for. Reading the
+	// source nil-safe keeps a detached copy of a zero node zero.
 	nodeCopy := &Node{
-		ID:                         node.ID,
-		Labels:                     make([]string, 0, len(node.Labels)),
-		CreatedAt:                  node.CreatedAt,
-		UpdatedAt:                  node.UpdatedAt,
-		EmbeddingsStoredSeparately: node.EmbeddingsStoredSeparately,
-		VisibilitySuppressed:       node.VisibilitySuppressed,
+		runtime: node.runtime,
+		ID:      node.ID,
+		Labels:  make([]string, 0, len(node.Labels)),
 	}
+	nodeCopy.CreatedAt = node.CreatedAt
+	nodeCopy.UpdatedAt = node.UpdatedAt
 	nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)
 
 	if node.Properties != nil {
-		nodeCopy.Properties = make(map[string]interface{}, len(node.Properties))
-		for k, v := range node.Properties {
-			nodeCopy.Properties[k] = v
-		}
+		nodeCopy.Properties = ownedEntries(nil, node.Properties)
 	}
 
 	if node.EmbedMeta != nil {
-		nodeCopy.EmbedMeta = make(map[string]any, len(node.EmbedMeta))
-		for k, v := range node.EmbedMeta {
-			nodeCopy.EmbedMeta[k] = v
-		}
+		nodeCopy.EmbedMeta = ownedEntries(nil, node.EmbedMeta)
 	}
 
 	return nodeCopy
-}
-
-func copyNodeProjectedWithoutEmbeddings(node *Node, properties []string) *Node {
-	out := copyNodeWithoutEmbeddings(node)
-	if out == nil || properties == nil {
-		return out
-	}
-	projected := make(map[string]any, len(properties))
-	for _, property := range properties {
-		if value, ok := out.Properties[property]; ok {
-			projected[property] = value
-		}
-	}
-	out.Properties = projected
-	return out
 }
 
 // copyEdge creates a deep copy of an edge.
@@ -205,6 +185,7 @@ func copyEdge(edge *Edge) *Edge {
 	}
 
 	edgeCopy := &Edge{
+		Database:             edge.Database,
 		ID:                   edge.ID,
 		StartNode:            edge.StartNode,
 		EndNode:              edge.EndNode,
@@ -217,10 +198,7 @@ func copyEdge(edge *Edge) *Edge {
 	}
 
 	if edge.Properties != nil {
-		edgeCopy.Properties = make(map[string]interface{})
-		for k, v := range edge.Properties {
-			edgeCopy.Properties[k] = v
-		}
+		edgeCopy.Properties = ownedEntries(nil, edge.Properties)
 	}
 
 	return edgeCopy

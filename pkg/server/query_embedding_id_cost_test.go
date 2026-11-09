@@ -30,7 +30,7 @@ func TestIDStreamDoesNotResolveQueryModel(t *testing.T) {
 			store, err := server.dbManager.GetStorage(server.dbManager.DefaultDatabaseName())
 			require.NoError(t, err)
 			for i := range 3 {
-				_, err = store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("id-only-doc-%d", i)), Properties: map[string]any{"content": "alpha"}})
+				_, err = store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("id-only-doc-%d", i)), Properties: map[string]any{"content": "alpha"}})
 				require.NoError(t, err)
 			}
 			provider := &nativeRequestEmbedder{}

@@ -3,7 +3,7 @@
 // The Badger read-path filter (pkg/storage/badger_decay_filter.go) fires on
 // EVERY node returned from a Cypher MATCH when decay is enabled. Threading
 // a *KnowledgePolicyMetrics handle through every storage iterator signature
-// would widen CreateNode / GetNode / iterateNodesVisibleAtInTxn and their
+// would widen CreateNode / GetNode / iterateNodesVisibleAtInScopeInTxn and their
 // many callers. Instead we use the same atomic.Pointer bridge the BSP self-
 // metrics pattern (bsp_self_metrics.go) already established for injecting
 // observability into a deep-nested subsystem without inverting ownership.

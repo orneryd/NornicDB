@@ -76,11 +76,11 @@ transactionStatement
 
 // statements
 query
-    : queryPrefix* cypherPreamble? useClause? (regularQuery | standaloneCall | schemaCommand | administrationCommand | showCommand | terminateCommand)
+    : queryPrefix* cypherPreamble? queryPrefix* useClause? (regularQuery | standaloneCall | privilegeCommand | schemaCommand | administrationCommand | showCommand | terminateCommand)
     ;
 
 useClause
-    : USE (symbol (DOT symbol)* | functionInvocation)
+    : USE useGraphPrefix invocationName useGraphArguments? {p.useReferenceComplete()}?
     ;
 
 // EXPLAIN/PROFILE prefix
@@ -93,7 +93,7 @@ queryPrefix
 showCommand
         : SHOW ((ALL | FULLTEXT | RANGE_INDEX | TEXT | POINT | VECTOR | LOOKUP)? (INDEXES | INDEX)
             | showConstraintKind? (CONSTRAINTS | CONSTRAINT) | CONSTRAINT CONTRACTS | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
-            | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | USERS | CURRENT USER | ALL
+            | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | compositeConstituents FOR COMPOSITE DATABASE qualifiedName | USERS | CURRENT USER | ALL
             | (TRANSACTION | TRANSACTIONS) (expression (COMMA expression)*)?
             | (SETTING | SETTINGS) (expression (COMMA expression)*)?
             | (DEFAULT | HOME) DATABASE
@@ -122,27 +122,64 @@ terminateCommand
 
 administrationCommand
     : CREATE (OR REPLACE)? DATABASE name (IF NOT EXISTS)?
-    | CREATE (OR REPLACE)? COMPOSITE DATABASE name (IF NOT EXISTS)? (ALIAS name FOR DATABASE qualifiedName)*
-    | DROP COMPOSITE? DATABASE name (IF EXISTS)?
+    | CREATE (OR REPLACE)? COMPOSITE DATABASE qualifiedName (IF NOT EXISTS)? compositeConstituent*
+    | DROP COMPOSITE? DATABASE qualifiedName (IF EXISTS)?
     | CREATE ALIAS qualifiedName (IF NOT EXISTS)? FOR DATABASE qualifiedName
     | DROP ALIAS qualifiedName (IF EXISTS)? (FOR DATABASE)?
-    | ALTER COMPOSITE DATABASE name (ADD ALIAS qualifiedName FOR DATABASE qualifiedName | DROP ALIAS qualifiedName)
+    | ALTER COMPOSITE DATABASE qualifiedName (ADD compositeConstituent | DROP ALIAS qualifiedName)
+    ;
+
+// Inline constituents and ALTER ... ADD are NornicDB extensions to Neo4j
+// 5.26's separate CREATE ALIAS command. Both use parseConstituentFromTokens
+// for semantics, including order-independent options and localized errors.
+compositeConstituent
+    : ALIAS compositeValue FOR DATABASE compositeValue compositeConstituentOption*
+    ;
+
+compositeConstituentOption
+    : compositeAt credentialURL
+    | USER compositeValue
+    | compositePassword credentialValue
+    | compositeOidc compositeCredential compositeForwarding
+    | compositeSecret compositeRef credentialValue
+    | TYPE compositeValue
+    | compositeAccess compositeValue
+    ;
+
+compositeValue
+    : qualifiedName
+    | STRING_LITERAL
+    | CHAR_LITERAL
+    | numLit
+    | parameter
     ;
 
 qualifiedName
-    : name (DOT name)*
+    : name ((DOT | SUB) (name | INTEGER) | {p.compositeNumericNameSuffix()}? FLOAT)*
     ;
+
+// These words are contextual to composite administration. Keep them as ID in
+// the shared lexer: its other consumers include native statement redaction.
+compositeAt : {p.compositeKeyword("AT")}? ID;
+compositePassword : {p.compositeKeyword("PASSWORD")}? ID;
+compositeOidc : {p.compositeKeyword("OIDC")}? ID;
+compositeCredential : {p.compositeKeyword("CREDENTIAL")}? ID;
+compositeForwarding : {p.compositeKeyword("FORWARDING")}? ID;
+compositeSecret : {p.compositeKeyword("SECRET")}? ID;
+compositeRef : {p.compositeKeyword("REF")}? ID;
+compositeAccess : {p.compositeKeyword("ACCESS")}? ID;
+compositeConstituents : {p.compositeKeyword("CONSTITUENTS")}? ID;
 
 // Schema commands (DROP INDEX, CREATE INDEX, etc.)
 schemaCommand
     : DROP INDEX name? (IF EXISTS)?
-    | CREATE (RANGE_INDEX | TEXT | POINT)? INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS mapLit)?
-    | CREATE FULLTEXT INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? EACH? LBRACK expressionChain RBRACK (OPTIONS mapLit)?
-    | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS mapLit)?
+    | CREATE (RANGE_INDEX | TEXT | POINT)? INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS (mapLit | parameter))?
+    | CREATE FULLTEXT INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? EACH? LBRACK expressionChain RBRACK (OPTIONS (mapLit | parameter))?
+    | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS (mapLit | parameter))?
     | CREATE LOOKUP INDEX name? (IF NOT EXISTS)? FOR (nodePattern | relationshipsChainPattern) ON EACH functionInvocation
     | DROP CONSTRAINT name? (IF EXISTS)?
-    | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE constraintRequirement (OPTIONS mapLit)?
-    | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS ((NODE | RELATIONSHIP | REL)? (UNIQUE | KEY) | NOT NULL_W | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS mapLit)?
+    | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE constraintRequirement (OPTIONS (mapLit | parameter))?
+    | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS ((NODE | RELATIONSHIP | REL)? (UNIQUE | KEY) | NOT NULL_W | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS (mapLit | parameter))?
     ;
 
 constraintRequirement
@@ -174,7 +211,7 @@ singleQuery
     ;
 
 standaloneCall
-    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt?)?
+    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt?)?
     ;
 
 // Subqueries
@@ -191,12 +228,22 @@ collectSubquery
     ;
 
 callSubquery
-    : OPTIONAL? CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE (IN TRANSACTIONS (OF (numLit | parameter) (ROW | ROWS))?)?
+    : OPTIONAL? CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE transactionBatch?
+    ;
+
+// Both executor parser modes read this production. Options are represented
+// even when execution does not support them, so admission can reject them
+// before a preceding clause commits.
+transactionBatch
+    : IN (concurrency=expression? CONCURRENT)? TRANSACTIONS
+      (OF size=expression (ROW | ROWS))?
+      (ON ERROR errorMode=(CONTINUE | BREAK | FAIL))?
+      (REPORT STATUS AS statusVariable=symbol)?
     ;
 
 // Subquery body can start with WITH (to import variables) or have statements
 subqueryBody
-    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (returnSt | FINISH)? (UNION ALL? subqueryBody)?
+    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (embeddingSt | returnSt | FINISH)? (UNION ALL? subqueryBody)?
     ;
 
 returnSt
@@ -208,7 +255,7 @@ withSt
     ;
 
 embeddingSt
-    : WITH EMBEDDING
+    : {p.EmbeddingOptionTerminal()}? WITH EMBEDDING
     ;
 
 skipSt
@@ -240,9 +287,10 @@ orderSt
     ;
 
 // Reads may follow writes without a WITH (CREATE … MATCH … RETURN), as in
-// Neo4j 5 and 25.
+// Neo4j 5 and 25. The embedding option ends the query grammatically, so a
+// nonterminal WITH EMBEDDING can only be the multiPartQ projection.
 singlePartQ
-    : readingStatement* (returnSt | updatingStatement (readingStatement | updatingStatement)* embeddingSt? returnSt?)?
+    : readingStatement* (returnSt | FINISH | updatingStatement (readingStatement | updatingStatement)* (embeddingSt | returnSt | FINISH)?)?
     | callSubquery orderSt?
     ;
 
@@ -274,12 +322,24 @@ forSt
     : FOR symbol IN expression
     ;
 
+// Neo4j's LOAD CSV reading clause: the clause binds one record variable per
+// row of the named resource, optionally naming the first row's columns and
+// setting the field separator. It is a reading clause, so the clauses that
+// follow it - and therefore the statement's effects and scope - are read from
+// the same grammar product; the resource itself belongs to the participant
+// that owns it.
+loadCSVSt
+    : LOAD CSV (WITH HEADERS)? FROM expression AS symbol (FIELDTERMINATOR (charLit | stringLit))?
+    ;
+
 readingStatement
-    : matchSt
+    : useClause
+    | matchSt
     | unwindSt
     | letSt
     | filterSt
     | forSt
+    | loadCSVSt
     | queryCallSt
     | callSubquery
     ;
@@ -312,7 +372,7 @@ foreachSt
     ;
 
 queryCallSt
-    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt?)?
+    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt?)?
     ;
 
 parenExpressionChain
@@ -491,7 +551,7 @@ propertyExpression
     ;
 
 patternPart
-    : (symbol ASSIGN)? patternElem
+    : (symbol ASSIGN)? pathSelector? patternElem
     | (symbol ASSIGN)? pathFunction
     ;
 
@@ -501,7 +561,7 @@ pathFunction
 
 patternElem
     : patternElemStart patternElemPart*
-    | LPAREN patternElem RPAREN
+    | LPAREN patternElem where? RPAREN
     ;
 
 // A quantified path pattern repeats a parenthesised path; the node patterns
@@ -537,11 +597,12 @@ properties
     ;
 
 nodePattern
-    : LPAREN symbol? nodeLabels? properties? RPAREN
+    : LPAREN symbol? nodeLabels? properties? where? RPAREN
     ;
 
 atom
-    : literal
+    : listComprehension
+    | literal
     | parameter
     | mapProjection
     | caseExpression
@@ -550,7 +611,6 @@ atom
     | countAll
     | countSubquery
     | collectSubquery
-    | listComprehension
     | patternComprehension
     | filterWith
     | relationshipsChainPattern
@@ -580,7 +640,7 @@ relationshipPattern
     ;
 
 relationDetail
-    : LBRACK symbol? relationshipTypes? rangeLit? properties? RBRACK
+    : LBRACK symbol? relationshipTypes? rangeLit? properties? where? RBRACK
     ;
 
 relationshipTypes
@@ -600,7 +660,7 @@ invocationName
     ;
 
 functionInvocation
-    : invocationName LPAREN DISTINCT? expressionChain? RPAREN
+    : invocationName LPAREN (DISTINCT? expressionChain)? RPAREN
     | TRIM LPAREN (LEADING | TRAILING | BOTH)? expression? FROM expression RPAREN
     ;
 
@@ -650,7 +710,7 @@ allReduceExpression
     ;
 
 parameter
-    : DOLLAR (name | numLit | DIGIT_NAME)
+    : DOLLAR (UNION | name | numLit | DIGIT_NAME)
     ;
 
 // literals
@@ -705,12 +765,15 @@ mapPair
 // primitive ids
 name
     : symbol
+    | SHORTEST | PATH | PATHS | GROUP | GROUPS
+    | GRANT | REVOKE | DENY | EXECUTE | BOOSTED | PROCEDURE | DBMS | TO
     | reservedWord
     ;
 
 symbol
     : ESC_LITERAL
     | ID
+    | UNION
     | COUNT
     | SUM
     | AVG
@@ -753,6 +816,7 @@ symbol
     | ROW
     | TRIM
     | FROM
+    | LOAD | CSV | HEADERS | FIELDTERMINATOR
     | LEADING
     | TRAILING
     | BOTH
@@ -824,6 +888,8 @@ symbol
     | ALL
     | SHORTESTPATH
     | ALLSHORTESTPATHS
+    | SHORTEST | PATH | PATHS | GROUP | GROUPS
+    | GRANT | REVOKE | DENY | EXECUTE | BOOSTED | PROCEDURE | DBMS | TO
     | reservedWord
     ;
 
@@ -886,4 +952,53 @@ reservedWord
     | DROP
     | FOREACH
     | REDUCE
+    | CONCURRENT
+    | ERROR
+    | CONTINUE
+    | BREAK
+    | FAIL
+    | REPORT
+    | STATUS
+    ;
+
+// One complete lexical product for scope-independent structural inspection.
+// This entry does not make a fragment an executable statement.
+syntaxFragment
+    : (script | subqueryBody | expression) EOF
+    ;
+// Existing execution path selectors, represented before the path's elements.
+pathSelector
+    : (ANY | ALL)? SHORTEST INTEGER? ((PATH | PATHS) (GROUP | GROUPS)?)?
+    | ANY INTEGER? (PATH | PATHS)?
+    ;
+
+privilegeCommand
+    : (GRANT | DENY) EXECUTE BOOSTED? (PROCEDURE | PROCEDURES) procedurePrivilegePattern (COMMA procedurePrivilegePattern)* ON DBMS TO symbol (COMMA symbol)*
+    | REVOKE (GRANT | DENY)? EXECUTE BOOSTED? (PROCEDURE | PROCEDURES) procedurePrivilegePattern (COMMA procedurePrivilegePattern)* ON DBMS FROM symbol (COMMA symbol)*
+    ;
+
+procedurePrivilegePattern
+    : (symbol | MULT) (DOT (symbol | MULT))*
+    ;
+
+// Credential roles are part of the value grammar; remote DDL productions in
+// the parity layer use these nodes to populate the statement redaction set.
+credentialValue
+    : qualifiedName | STRING_LITERAL | CHAR_LITERAL | numLit | parameter
+    ;
+credentialURL
+    : qualifiedName | STRING_LITERAL | CHAR_LITERAL | numLit | parameter
+    ;
+
+useGraphArguments
+    : LPAREN (DISTINCT? expressionChain)? RPAREN
+    ;
+
+// GRAPH is selected once, including in a prefix view with arbitrary followers.
+useGraphPrefix
+    : {p.useGraphKeyword()}? ID
+    | {!p.useGraphKeyword()}?
+    ;
+useReferencePrefix
+    : useClause .* EOF
     ;

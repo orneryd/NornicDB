@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -15,11 +17,11 @@ import (
 // relationship search; db.retrieve still searches nodes (#1065).
 func TestCallDbRetrieveRelationships(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
-	svc := search.NewServiceWithDimensions(store, 3)
+	svc := search.NewService(store, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.EnableRelationshipSearch(nil)
 	svc.StartRelationshipIndex()
@@ -45,8 +47,8 @@ func TestCallDbRetrieveRelationships(t *testing.T) {
 	require.Equal(t, [][]interface{}{{"CITES", "a", "b"}}, yielded.Rows)
 
 	// An endpoint no longer visible is null.
-	require.NoError(t, store.DeleteNode(relationship.EndNode))
-	require.Nil(t, exec.relationshipSearchResult(&search.SearchResponse{Results: []search.SearchResult{{
+	require.NoError(t, store.DeleteNode(t.Context(), relationship.EndNode))
+	require.Nil(t, exec.relationshipSearchResult(t.Context(), &search.SearchResponse{Results: []search.SearchResult{{
 		Relationship: relationship,
 	}}}).Rows[0][2])
 
@@ -54,7 +56,7 @@ func TestCallDbRetrieveRelationships(t *testing.T) {
 	require.ErrorContains(t, err, "can't be continued")
 
 	plain := NewStorageExecutor(store)
-	plainService := search.NewServiceWithDimensions(store, 3)
+	plainService := search.NewService(store, 3, nil)
 	t.Cleanup(func() { _ = plainService.Close() })
 	plain.SetSearchService(plainService)
 	_, err = plain.Execute(ctx, "CALL db.retrieveRelationships({query: 'zephyrine'})", nil)
@@ -64,11 +66,11 @@ func TestCallDbRetrieveRelationships(t *testing.T) {
 // db.retrieve ignores a relationships key: it searches nodes.
 func TestCallDbRetrieveIgnoresRelationshipsKey(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
-	svc := search.NewServiceWithDimensions(store, 3)
+	svc := search.NewService(store, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.EnableRelationshipSearch(nil)
 	svc.StartRelationshipIndex()
@@ -97,11 +99,11 @@ func TestRetrieveRelationshipsMetadata(t *testing.T) {
 // too, left unchanged) or a string as the query; null is refused (#1065).
 func TestCallDbRetrieveRelationshipsRequestForms(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
-	svc := search.NewServiceWithDimensions(store, 3)
+	svc := search.NewService(store, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.EnableRelationshipSearch(nil)
 	svc.StartRelationshipIndex()

@@ -2,14 +2,18 @@ package qdrantgrpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
+	"math"
+	"reflect"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/grpcresponse"
+
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
@@ -23,47 +27,87 @@ type PointsService struct {
 	config         *Config
 	collections    CollectionStore
 	searchProvider SearchServiceProvider
-	vecIndex       *vectorIndexCache
 	checker        DatabaseAccessChecker // optional; when set, enforces per-database (per-collection) RBAC
 }
 
-func NewPointsService(config *Config, collections CollectionStore, searchProvider SearchServiceProvider, vecIndex *vectorIndexCache, checker DatabaseAccessChecker) *PointsService {
+func NewPointsService(config *Config, collections CollectionStore, searchProvider SearchServiceProvider, checker DatabaseAccessChecker) *PointsService {
 	return &PointsService{
 		config:         config,
 		collections:    collections,
 		searchProvider: searchProvider,
-		vecIndex:       vecIndex,
 		checker:        checker,
 	}
 }
 
-func (s *PointsService) allowAccess(ctx context.Context, collectionName string, write bool) error {
+// pointCollectionAccess keeps the batch endpoint's existing empty-request
+// contract distinct from operations that require a collection name.
+type pointCollectionAccess uint8
+
+const (
+	pointCollectionRead pointCollectionAccess = iota
+	pointCollectionWrite
+	pointCollectionBatchRead
+)
+
+// admitCollection owns name validation and authorization in their original
+// order. An empty QueryBatch still performs its authorization check; concrete
+// child queries retain their ordinary required-name validation.
+func (s *PointsService) admitCollection(ctx context.Context, collectionName string, access pointCollectionAccess) error {
+	if collectionName == "" && access != pointCollectionBatchRead {
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
+	}
 	if s.checker == nil {
 		return nil
 	}
-	return s.checker.AllowDatabaseAccess(ctx, collectionName, write)
+	return s.checker.AllowDatabaseAccess(ctx, collectionName, access == pointCollectionWrite)
 }
 
 func (s *PointsService) openCollection(ctx context.Context, name string) (storage.Engine, *CollectionMeta, error) {
 	if s.collections == nil {
-		return nil, nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCollectionStoreNotConfigured())
+		return nil, nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCollectionStoreNotConfigured(), grpcresponse.QdrantSourceFallback)
 	}
 	engine, meta, err := s.collections.Open(ctx, name)
 	if err != nil {
-		return nil, nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFoundWithCause(err))
+		return nil, nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFoundWithCause(err), grpcresponse.QdrantSourceFallback)
 	}
 	return engine, meta, nil
 }
 
-func (s *PointsService) getSearchService(database string, store storage.Engine) *search.Service {
+func (s *PointsService) getSearchService(ctx context.Context, database string, store storage.Engine, metadata *CollectionMeta) (*search.Service, error) {
 	if s.searchProvider == nil {
-		return nil
+		return nil, nil
 	}
 	svc, err := s.searchProvider(database, store)
 	if err != nil {
-		return nil
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(err), grpcresponse.QdrantSourceFallback)
 	}
-	return svc
+	if svc != nil && metadata != nil && metadata.Quantization != nil {
+		cfg, configErr := searchQuantizationConfig(metadata.Quantization)
+		if configErr == nil {
+			configErr = svc.ConfigureHNSWQuantization(ctx, cfg)
+		}
+		if configErr != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(configErr), grpcresponse.QdrantSourceFallback)
+		}
+	}
+	return svc, nil
+}
+
+// getVectorWriteSearchService returns the collection's search service for a
+// write that stores vectors of the collection's dimension, after checking the
+// service can index them. Upsert and UpdateVectors store points before
+// indexing them, so a collection whose dimension the service doesn't admit
+// (a service fixed at the embedding dimension) is rejected here, before
+// anything is stored, instead of leaving stored points the index never holds.
+func (s *PointsService) getVectorWriteSearchService(ctx context.Context, database string, store storage.Engine, metadata *CollectionMeta) (*search.Service, error) {
+	svc, err := s.getSearchService(ctx, database, store, metadata)
+	if err != nil {
+		return nil, err
+	}
+	if svc != nil && metadata != nil && !svc.AdmitsVectorDimensions(metadata.Dimensions) {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(metadata.Dimensions, svc.VectorIndexDimensions()), grpcresponse.QdrantSourceFallback)
+	}
+	return svc, nil
 }
 
 // Only text requests capture a provider. The owner keeps the same binding when
@@ -108,23 +152,24 @@ func queryRequestHasText(request any) bool {
 func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if !s.config.AllowVectorMutations {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled(), grpcresponse.QdrantSourceFallback)
 	}
 	if len(req.GetPoints()) == 0 {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("points"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("points"), grpcresponse.QdrantSourceFallback)
 	}
 	if len(req.GetPoints()) > s.config.MaxBatchPoints {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantTooManyPoints(len(req.GetPoints()), s.config.MaxBatchPoints))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantTooManyPoints(len(req.GetPoints()), s.config.MaxBatchPoints), grpcresponse.QdrantSourceFallback)
 	}
 
 	store, meta, err := s.openCollection(ctx, req.CollectionName)
+	if err != nil {
+		return nil, err
+	}
+	searchSvc, err := s.getVectorWriteSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -132,25 +177,24 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 	nodeIDs := make([]storage.NodeID, 0, len(req.Points))
 	for _, point := range req.Points {
 		if point == nil || point.Id == nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("point id"))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("point id"), grpcresponse.QdrantSourceFallback)
 		}
 		nodeIDs = append(nodeIDs, pointIDToNodeID(point.Id))
 	}
 
-	existing, err := store.BatchGetNodes(nodeIDs)
+	existing, err := store.BatchGetNodes(ctx, nodeIDs)
 	if err != nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantReadExistingPointsFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantReadExistingPointsFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	nodesToCreate := make([]*storage.Node, 0, len(req.Points))
 	nodesToUpdate := make([]*storage.Node, 0, len(req.Points))
-	oldVectorNamesByID := make(map[string][]string, len(req.Points))
 
 	for i, point := range req.Points {
 		nodeID := nodeIDs[i]
 
 		if point.Vectors == nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("vectors"))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("vectors"), grpcresponse.QdrantSourceFallback)
 		}
 		vecNames, vecs, err := extractVectors(ctx, s.config.Localizer, point.Vectors)
 		if err != nil {
@@ -158,7 +202,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		}
 		for _, v := range vecs {
 			if len(v) != meta.Dimensions {
-				return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(v), meta.Dimensions))
+				return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(v), meta.Dimensions), grpcresponse.QdrantSourceFallback)
 			}
 		}
 
@@ -188,64 +232,29 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		}
 
 		if prev := existing[nodeID]; prev != nil {
-			oldVectorNamesByID[string(node.ID)] = nodeVectorNames(prev)
 			node.CreatedAt = prev.CreatedAt
 			node.UpdatedAt = time.Now()
 			nodesToUpdate = append(nodesToUpdate, node)
 		} else {
-			oldVectorNamesByID[string(node.ID)] = nil
 			node.CreatedAt = time.Now()
 			nodesToCreate = append(nodesToCreate, node)
 		}
 	}
 
 	if len(nodesToCreate) > 0 {
-		if err := store.BulkCreateNodes(nodesToCreate); err != nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreatePointsFailed(err))
+		if err := store.BulkCreateNodes(ctx, nodesToCreate); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreatePointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 	}
 	for _, node := range nodesToUpdate {
-		if err := store.UpdateNode(node); err != nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err))
+		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: existing[node.ID], After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
 
-	searchSvc := s.getSearchService(req.CollectionName, store)
-	if searchSvc != nil {
-		for _, node := range nodesToCreate {
-			_ = searchSvc.IndexNode(node)
-		}
-		for _, node := range nodesToUpdate {
-			_ = searchSvc.RemoveNode(node.ID)
-			_ = searchSvc.IndexNode(node)
-		}
-	}
-
-	// Maintain a per-collection in-memory vector index for Qdrant gRPC searches.
-	// This avoids falling back to storage scans when Qdrant collection dimensions
-	// differ from the DB's default embedding dimensions.
-	if s.vecIndex != nil {
-		for _, node := range append(nodesToCreate, nodesToUpdate...) {
-			if node == nil {
-				continue
-			}
-			newNames := nodeVectorNames(node)
-			if len(newNames) == 0 {
-				newNames = []string{""}
-			}
-
-			oldNames := oldVectorNamesByID[string(node.ID)]
-			vectors := make([][]float32, 0, len(newNames))
-			for _, name := range newNames {
-				vec, ok := nodeVectorByName(node, name)
-				if !ok {
-					return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantMissingVectorForPoint(name, string(node.ID)))
-				}
-				vectors = append(vectors, vec)
-			}
-			if err := s.vecIndex.replacePoint(req.CollectionName, meta.Dimensions, meta.Distance, string(node.ID), oldNames, newNames, vectors); err != nil {
-				return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
-			}
+	for _, node := range append(nodesToCreate, nodesToUpdate...) {
+		if err := indexPoint(ctx, searchSvc, node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
 
@@ -258,14 +267,11 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 func (s *PointsService) Get(ctx context.Context, req *qpb.GetPoints) (*qpb.GetResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 	if len(req.GetIds()) == 0 {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("ids"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("ids"), grpcresponse.QdrantSourceFallback)
 	}
 
 	store, _, err := s.openCollection(ctx, req.CollectionName)
@@ -281,7 +287,7 @@ func (s *PointsService) Get(ctx context.Context, req *qpb.GetPoints) (*qpb.GetRe
 			continue
 		}
 		nodeID := pointIDToNodeID(pid)
-		node, err := store.GetNode(nodeID)
+		node, err := store.GetNode(ctx, nodeID)
 		if err != nil {
 			continue
 		}
@@ -305,21 +311,21 @@ func (s *PointsService) Get(ctx context.Context, req *qpb.GetPoints) (*qpb.GetRe
 func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if req.Points == nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"), grpcresponse.QdrantSourceFallback)
 	}
 
-	store, _, err := s.openCollection(ctx, req.CollectionName)
+	store, meta, err := s.openCollection(ctx, req.CollectionName)
 	if err != nil {
 		return nil, err
 	}
-	searchSvc := s.getSearchService(req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
+	if err != nil {
+		return nil, err
+	}
 
 	nodeIDs, err := s.resolvePointsSelector(ctx, store, req.Points)
 	if err != nil {
@@ -327,18 +333,14 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 	}
 
 	for _, nodeID := range nodeIDs {
+		// Persist first, as upserts do: population must either see the deletion
+		// or finish before the final shared-index removal can be acknowledged.
+		if err := store.DeleteNode(ctx, nodeID); err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantDeletePointFailed(string(nodeID)), grpcresponse.QdrantSourceFallback)
+		}
 		if searchSvc != nil {
-			_ = searchSvc.RemoveNode(nodeID)
+			_ = searchSvc.RefreshNode(context.WithoutCancel(ctx), nodeID)
 		}
-		if s.vecIndex != nil {
-			node, err := store.GetNode(nodeID)
-			if err == nil {
-				s.vecIndex.deletePoint(req.CollectionName, string(nodeID), nodeVectorNames(node))
-			} else {
-				s.vecIndex.deletePoint(req.CollectionName, string(nodeID), nil)
-			}
-		}
-		_ = store.DeleteNode(nodeID)
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -350,10 +352,7 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 func (s *PointsService) Count(ctx context.Context, req *qpb.CountPoints) (*qpb.CountResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 
@@ -362,9 +361,9 @@ func (s *PointsService) Count(ctx context.Context, req *qpb.CountPoints) (*qpb.C
 		return nil, err
 	}
 
-	nodes, err := store.GetNodesByLabel(QdrantPointLabel)
+	nodes, err := store.GetNodesByLabel(ctx, QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	count := uint64(0)
@@ -387,14 +386,11 @@ func (s *PointsService) Count(ctx context.Context, req *qpb.CountPoints) (*qpb.C
 func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb.SearchResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 	if len(req.GetVector()) == 0 {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector"), grpcresponse.QdrantSourceFallback)
 	}
 
 	store, meta, err := s.openCollection(ctx, req.CollectionName)
@@ -402,7 +398,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 		return nil, err
 	}
 	if len(req.Vector) != meta.Dimensions {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(req.Vector), meta.Dimensions))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(req.Vector), meta.Dimensions), grpcresponse.QdrantSourceFallback)
 	}
 
 	limit := int(req.Limit)
@@ -410,13 +406,13 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 		limit = 10
 	}
 	if limit > s.config.MaxTopK {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantLimitTooLarge(uint64(limit), s.config.MaxTopK))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantLimitTooLarge(uint64(limit), s.config.MaxTopK), grpcresponse.QdrantSourceFallback)
 	}
 
 	offset := 0
 	if req.Offset != nil {
 		if *req.Offset > uint64(^uint(0)>>1) {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantOffsetTooLarge())
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantOffsetTooLarge(), grpcresponse.QdrantSourceFallback)
 		}
 		offset = int(*req.Offset)
 	}
@@ -425,16 +421,17 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 	if req.Params != nil && req.Params.HnswEf != nil {
 		raw := req.Params.GetHnswEf()
 		if raw > uint64(^uint(0)>>1) {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantHNSWEfTooLarge())
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantHNSWEfTooLarge(), grpcresponse.QdrantSourceFallback)
 		}
 		ef = int(raw)
-		// Keep `ef` sane: HNSW ef must be at least the number of candidates we need.
-		need := limit + offset
-		if ef > 0 && ef < need {
-			ef = need
-		}
 	}
 
+	if q := req.GetParams().GetQuantization(); q != nil && q.Oversampling != nil {
+		value := q.GetOversampling()
+		if value < 1 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantInvalidQuantizationOversampling(), grpcresponse.QdrantSourceFallback)
+		}
+	}
 	minSimilarity := float64(-1)
 	if req.ScoreThreshold != nil {
 		minSimilarity = float64(*req.ScoreThreshold)
@@ -451,26 +448,20 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, store)
 	defer releaseProjection()
 
-	searchSvc := s.getSearchService(req.CollectionName, store)
-	results := s.searchCollection(ctx, store, searchSvc, req.CollectionName, meta.Distance, vectorName, req.Vector, req.Filter, limit, offset, minSimilarity, ef)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
+	if err != nil {
+		return nil, err
+	}
+	results, err := searchCollection(ctx, searchSvc, meta.Distance, vectorName, req.Vector, req.Filter, limit, offset, minSimilarity, ef, req.GetParams().GetExact(), req.GetParams().GetQuantization())
+	if err != nil {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(err), grpcresponse.QdrantSourceFallback)
+	}
 
 	out := make([]*qpb.ScoredPoint, 0, len(results))
 	for _, r := range results {
-		var pid *qpb.PointId
 		needNode := includePayload || includeVectors
-		var nodeID storage.NodeID
-		if strings.HasPrefix(r.ID, "qdrant:") {
-			pid = nodeIDToPointID(storage.NodeID(r.ID))
-			if needNode {
-				nodeID = storage.NodeID(r.ID)
-			}
-		} else {
-			// Fast path for vecIndex results: IDs are compact "<id>" (no "qdrant:point:" prefix).
-			pid = pointIDFromCompactString(r.ID)
-			if needNode {
-				nodeID = storage.NodeID(expandPointID(r.ID))
-			}
-		}
+		nodeID := storage.NodeID(r.ID)
+		pid := nodeIDToPointID(nodeID)
 
 		sp := &qpb.ScoredPoint{
 			Id:    pid,
@@ -478,7 +469,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 		}
 
 		if needNode {
-			node, err := store.GetNode(nodeID)
+			node, err := store.GetNode(ctx, nodeID)
 			if err == nil {
 				if includePayload {
 					sp.Payload = propertiesToPayload(withPayloadSelection(projection.NodeProperties(node), req.WithPayload))
@@ -501,10 +492,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 func (s *PointsService) Scroll(ctx context.Context, req *qpb.ScrollPoints) (*qpb.ScrollResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 
@@ -523,9 +511,9 @@ func (s *PointsService) Scroll(ctx context.Context, req *qpb.ScrollPoints) (*qpb
 	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, store)
 	defer releaseProjection()
 
-	nodes, err := store.GetNodesByLabel(QdrantPointLabel)
+	nodes, err := store.GetNodesByLabel(ctx, QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	var points []*storage.Node
@@ -592,17 +580,18 @@ func (s *PointsService) OverwritePayload(ctx context.Context, req *qpb.SetPayloa
 func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPoints, overwrite bool) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if req.Payload == nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("payload"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("payload"), grpcresponse.QdrantSourceFallback)
 	}
 
-	store, _, err := s.openCollection(ctx, req.CollectionName)
+	store, meta, err := s.openCollection(ctx, req.CollectionName)
+	if err != nil {
+		return nil, err
+	}
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -613,14 +602,19 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 	}
 
 	for _, nodeID := range nodeIDs {
-		node, err := store.GetNode(nodeID)
-		if err != nil {
+		node, err := store.GetNode(ctx, nodeID)
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
+		if err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(nodeID), err), grpcresponse.QdrantSourceFallback)
+		}
 
+		before := *node
 		if overwrite {
 			node.Properties = payloadToProperties(req.Payload)
 		} else {
+			before.Properties = maps.Clone(node.Properties)
 			if node.Properties == nil {
 				node.Properties = make(map[string]any)
 			}
@@ -629,7 +623,12 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 			}
 		}
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
+		if err := indexPoint(ctx, searchSvc, node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -641,17 +640,18 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloadPoints) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if len(req.GetKeys()) == 0 {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("keys"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("keys"), grpcresponse.QdrantSourceFallback)
 	}
 
-	store, _, err := s.openCollection(ctx, req.CollectionName)
+	store, meta, err := s.openCollection(ctx, req.CollectionName)
+	if err != nil {
+		return nil, err
+	}
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -662,15 +662,25 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 	}
 
 	for _, nodeID := range nodeIDs {
-		node, err := store.GetNode(nodeID)
-		if err != nil {
+		node, err := store.GetNode(ctx, nodeID)
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
+		if err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(nodeID), err), grpcresponse.QdrantSourceFallback)
+		}
+		before := *node
+		before.Properties = maps.Clone(node.Properties)
 		for _, k := range req.Keys {
 			delete(node.Properties, k)
 		}
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
+		if err := indexPoint(ctx, searchSvc, node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -682,17 +692,18 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadPoints) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if req.Points == nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"), grpcresponse.QdrantSourceFallback)
 	}
 
-	store, _, err := s.openCollection(ctx, req.CollectionName)
+	store, meta, err := s.openCollection(ctx, req.CollectionName)
+	if err != nil {
+		return nil, err
+	}
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -703,13 +714,22 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 	}
 
 	for _, nodeID := range nodeIDs {
-		node, err := store.GetNode(nodeID)
-		if err != nil {
+		node, err := store.GetNode(ctx, nodeID)
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
+		if err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(nodeID), err), grpcresponse.QdrantSourceFallback)
+		}
+		before := *node
 		node.Properties = nil
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
+		if err := indexPoint(ctx, searchSvc, node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -721,36 +741,38 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointVectors) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if !s.config.AllowVectorMutations {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled(), grpcresponse.QdrantSourceFallback)
 	}
 	if len(req.GetPoints()) == 0 {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("points"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("points"), grpcresponse.QdrantSourceFallback)
 	}
 
 	store, meta, err := s.openCollection(ctx, req.CollectionName)
 	if err != nil {
 		return nil, err
 	}
-	searchSvc := s.getSearchService(req.CollectionName, store)
+	searchSvc, err := s.getVectorWriteSearchService(ctx, req.CollectionName, store, meta)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, pv := range req.Points {
 		if pv == nil || pv.Id == nil || pv.Vectors == nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantPointIDAndVectorsRequired())
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantPointIDAndVectorsRequired(), grpcresponse.QdrantSourceFallback)
 		}
 
 		nodeID := pointIDToNodeID(pv.Id)
-		node, err := store.GetNode(nodeID)
-		if err != nil {
+		node, err := store.GetNode(ctx, nodeID)
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
-		oldNames := nodeVectorNames(node)
+		if err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(nodeID), err), grpcresponse.QdrantSourceFallback)
+		}
 
 		names, vecs, err := extractVectors(ctx, s.config.Localizer, pv.Vectors)
 		if err != nil {
@@ -758,29 +780,20 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 		}
 		for _, v := range vecs {
 			if len(v) != meta.Dimensions {
-				return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(v), meta.Dimensions))
+				return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(v), meta.Dimensions), grpcresponse.QdrantSourceFallback)
 			}
 		}
 
+		before := *node
+		before.NamedEmbeddings = maps.Clone(node.NamedEmbeddings)
 		upsertNodeVectors(node, names, vecs)
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
-
-		if searchSvc != nil {
-			_ = searchSvc.RemoveNode(node.ID)
-			_ = searchSvc.IndexNode(node)
+		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
-		if s.vecIndex != nil {
-			newNames := nodeVectorNames(node)
-			vectors := make([][]float32, 0, len(newNames))
-			for _, name := range newNames {
-				vec, ok := nodeVectorByName(node, name)
-				if !ok {
-					continue
-				}
-				vectors = append(vectors, vec)
-			}
-			_ = s.vecIndex.replacePoint(req.CollectionName, meta.Dimensions, meta.Distance, string(node.ID), oldNames, newNames, vectors)
+
+		if err := indexPoint(ctx, searchSvc, node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
 
@@ -793,27 +806,27 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointVectors) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
 		return nil, err
 	}
 	if !s.config.AllowVectorMutations {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled(), grpcresponse.QdrantSourceFallback)
 	}
 	if req.PointsSelector == nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points_selector"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points_selector"), grpcresponse.QdrantSourceFallback)
 	}
 	if req.Vectors == nil || len(req.Vectors.Names) == 0 {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vectors.names"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vectors.names"), grpcresponse.QdrantSourceFallback)
 	}
 
 	store, meta, err := s.openCollection(ctx, req.CollectionName)
 	if err != nil {
 		return nil, err
 	}
-	searchSvc := s.getSearchService(req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
+	if err != nil {
+		return nil, err
+	}
 
 	nodeIDs, err := s.resolvePointsSelector(ctx, store, req.PointsSelector)
 	if err != nil {
@@ -821,30 +834,23 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 	}
 
 	for _, nodeID := range nodeIDs {
-		node, err := store.GetNode(nodeID)
-		if err != nil {
+		node, err := store.GetNode(ctx, nodeID)
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
-		oldNames := nodeVectorNames(node)
+		if err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(nodeID), err), grpcresponse.QdrantSourceFallback)
+		}
+		before := *node
+		before.NamedEmbeddings = maps.Clone(node.NamedEmbeddings)
 		deleteNodeVectors(node, req.Vectors.Names)
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
-
-		if searchSvc != nil {
-			_ = searchSvc.RemoveNode(node.ID)
-			_ = searchSvc.IndexNode(node)
+		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
-		if s.vecIndex != nil {
-			newNames := nodeVectorNames(node)
-			vectors := make([][]float32, 0, len(newNames))
-			for _, name := range newNames {
-				vec, ok := nodeVectorByName(node, name)
-				if !ok {
-					continue
-				}
-				vectors = append(vectors, vec)
-			}
-			_ = s.vecIndex.replacePoint(req.CollectionName, meta.Dimensions, meta.Distance, string(node.ID), oldNames, newNames, vectors)
+
+		if err := indexPoint(ctx, searchSvc, node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
 	}
 
@@ -857,29 +863,22 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 func (s *PointsService) SearchBatch(ctx context.Context, req *qpb.SearchBatchPoints) (*qpb.SearchBatchResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 	if len(req.GetSearchPoints()) == 0 {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("search_points"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("search_points"), grpcresponse.QdrantSourceFallback)
 	}
 
-	results := make([]*qpb.BatchResult, 0, len(req.SearchPoints))
-	for _, sp := range req.SearchPoints {
-		if sp == nil {
-			results = append(results, &qpb.BatchResult{Result: nil})
-			continue
-		}
-		// Ensure child request uses parent collection name (SDKs typically set it).
-		sp.CollectionName = req.CollectionName
+	results, err := batchEachChild(ctx, req.SearchPoints, req.CollectionName, batchNilAsEmpty, func(sp *qpb.SearchPoints) *string { return &sp.CollectionName }, func(ctx context.Context, sp *qpb.SearchPoints) (*qpb.BatchResult, error) {
 		resp, err := s.Search(ctx, sp)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, &qpb.BatchResult{Result: resp.Result})
+		return &qpb.BatchResult{Result: resp.Result}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &qpb.SearchBatchResponse{
@@ -888,13 +887,43 @@ func (s *PointsService) SearchBatch(ctx context.Context, req *qpb.SearchBatchPoi
 	}, nil
 }
 
+// batchEachChild is the batch workflow SearchBatch and RecommendBatch share:
+// a present child is pointed at the parent's collection name (SDKs typically
+// set it, but the parent is authoritative) through the child's collection-name
+// field, which only this owner writes; a nil child contributes an empty result
+// under batchNilAsEmpty. QueryBatch dispatches nil to its original validator.
+// The first child error ends the batch without a
+// partial result. Only the per-child operation differs.
+type batchNilChildPolicy uint8
+
+const (
+	batchNilAsEmpty batchNilChildPolicy = iota
+	batchDispatchNil
+)
+
+func batchEachChild[T any](ctx context.Context, children []*T, collectionName string, nilPolicy batchNilChildPolicy, named func(*T) *string, operation func(context.Context, *T) (*qpb.BatchResult, error)) ([]*qpb.BatchResult, error) {
+	results := make([]*qpb.BatchResult, 0, len(children))
+	for _, child := range children {
+		if child == nil && nilPolicy == batchNilAsEmpty {
+			results = append(results, &qpb.BatchResult{Result: nil})
+			continue
+		}
+		if child != nil {
+			*named(child) = collectionName
+		}
+		result, err := operation(ctx, child)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
 func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints) (*qpb.RecommendResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 
@@ -903,7 +932,7 @@ func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints)
 		limit = req.Limit
 	}
 	if limit > uint64(s.config.MaxTopK) {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantLimitTooLarge(limit, s.config.MaxTopK))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantLimitTooLarge(limit, s.config.MaxTopK), grpcresponse.QdrantSourceFallback)
 	}
 
 	using := ""
@@ -918,6 +947,7 @@ func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints)
 	}
 
 	searchResp, err := s.Search(ctx, &qpb.SearchPoints{
+		Params:         req.Params,
 		CollectionName: req.CollectionName,
 		Vector:         queryVec,
 		Filter:         req.Filter,
@@ -941,29 +971,23 @@ func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints)
 func (s *PointsService) RecommendBatch(ctx context.Context, req *qpb.RecommendBatchPoints) (*qpb.RecommendBatchResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 	if len(req.GetRecommendPoints()) == 0 {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("recommend_points"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("recommend_points"), grpcresponse.QdrantSourceFallback)
 	}
 
 	ctx = s.bindQueryEmbedding(ctx, req)
-	results := make([]*qpb.BatchResult, 0, len(req.RecommendPoints))
-	for _, r := range req.RecommendPoints {
-		if r == nil {
-			results = append(results, &qpb.BatchResult{Result: nil})
-			continue
-		}
-		r.CollectionName = req.CollectionName
+	results, err := batchEachChild(ctx, req.RecommendPoints, req.CollectionName, batchNilAsEmpty, func(r *qpb.RecommendPoints) *string { return &r.CollectionName }, func(ctx context.Context, r *qpb.RecommendPoints) (*qpb.BatchResult, error) {
 		resp, err := s.Recommend(ctx, r)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, &qpb.BatchResult{Result: resp.Result})
+		return &qpb.BatchResult{Result: resp.Result}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &qpb.RecommendBatchResponse{
@@ -975,17 +999,14 @@ func (s *PointsService) RecommendBatch(ctx context.Context, req *qpb.RecommendBa
 func (s *PointsService) SearchGroups(ctx context.Context, req *qpb.SearchPointGroups) (*qpb.SearchGroupsResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 	if len(req.GetVector()) == 0 {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector"), grpcresponse.QdrantSourceFallback)
 	}
 	if req.GroupBy == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("group_by"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("group_by"), grpcresponse.QdrantSourceFallback)
 	}
 
 	groupLimit := int(req.Limit)
@@ -999,6 +1020,7 @@ func (s *PointsService) SearchGroups(ctx context.Context, req *qpb.SearchPointGr
 
 	// Oversample then group.
 	searchResp, err := s.Search(ctx, &qpb.SearchPoints{
+		Params:         req.Params,
 		CollectionName: req.CollectionName,
 		Vector:         req.Vector,
 		Filter:         req.Filter,
@@ -1058,43 +1080,31 @@ func (s *PointsService) SearchGroups(ctx context.Context, req *qpb.SearchPointGr
 }
 
 func (s *PointsService) CreateFieldIndex(ctx context.Context, req *qpb.CreateFieldIndexCollection) (*qpb.PointsOperationResponse, error) {
-	start := time.Now()
-
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
-		return nil, err
-	}
-	if req.FieldName == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"))
-	}
-
-	if _, _, err := s.openCollection(ctx, req.CollectionName); err != nil {
-		return nil, err
-	}
-	// NornicDB schema indexes are managed internally; treat as a no-op.
-
-	return &qpb.PointsOperationResponse{
-		Result: &qpb.UpdateResult{Status: qpb.UpdateStatus_Completed},
-		Time:   time.Since(start).Seconds(),
-	}, nil
+	return s.fieldIndexOperation(ctx, req.GetCollectionName(), func() string { return req.FieldName })
 }
 
 func (s *PointsService) DeleteFieldIndex(ctx context.Context, req *qpb.DeleteFieldIndexCollection) (*qpb.PointsOperationResponse, error) {
+	return s.fieldIndexOperation(ctx, req.GetCollectionName(), func() string { return req.FieldName })
+}
+
+// fieldIndexOperation is the shared workflow of the field-index endpoints. They
+// differ only in the operation being completed: both admit the collection for
+// write, require a field name, and open the collection, but NornicDB manages
+// schema indexes internally, so neither has anything left to do.
+func (s *PointsService) fieldIndexOperation(ctx context.Context, collectionName string, requestFieldName func() string) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.admitCollection(ctx, collectionName, pointCollectionWrite); err != nil {
 		return nil, err
 	}
-	if req.FieldName == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"))
+	// Read request fields after admission, preserving the original nil-request
+	// ordering even when authorization rejects the request.
+	fieldName := requestFieldName()
+	if fieldName == "" {
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"), grpcresponse.QdrantSourceFallback)
 	}
 
-	if _, _, err := s.openCollection(ctx, req.CollectionName); err != nil {
+	if _, _, err := s.openCollection(ctx, collectionName); err != nil {
 		return nil, err
 	}
 
@@ -1113,10 +1123,7 @@ func (s *PointsService) DeleteFieldIndex(ctx context.Context, req *qpb.DeleteFie
 func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.QueryResponse, error) {
 	start := time.Now()
 
-	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
-	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionRead); err != nil {
 		return nil, err
 	}
 
@@ -1132,7 +1139,7 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 
 	if req.Query == nil {
 		// No query: treat as scroll-by-id (not implemented here).
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantQueryVariantMissing())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantQueryVariantMissing(), grpcresponse.QdrantSourceFallback)
 	}
 
 	ctx = s.bindQueryEmbedding(ctx, req)
@@ -1157,6 +1164,7 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 			ReadConsistency:  req.ReadConsistency,
 			ShardKeySelector: req.ShardKeySelector,
 			Timeout:          req.Timeout,
+			Params:           req.Params,
 		})
 		if err != nil {
 			return nil, err
@@ -1168,21 +1176,26 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 			Time:   time.Since(start).Seconds(),
 		}, nil
 	default:
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantQueryVariantUnsupported(q))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantQueryVariantUnsupported(q), grpcresponse.QdrantSourceFallback)
 	}
 }
 
 func (s *PointsService) QueryBatch(ctx context.Context, req *qpb.QueryBatchPoints) (*qpb.QueryBatchResponse, error) {
 	start := time.Now()
+	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionBatchRead); err != nil {
+		return nil, err
+	}
 
 	ctx = s.bindQueryEmbedding(ctx, req)
-	results := make([]*qpb.BatchResult, 0, len(req.GetQueryPoints()))
-	for _, q := range req.GetQueryPoints() {
+	results, err := batchEachChild(ctx, req.GetQueryPoints(), req.GetCollectionName(), batchDispatchNil, func(q *qpb.QueryPoints) *string { return &q.CollectionName }, func(ctx context.Context, q *qpb.QueryPoints) (*qpb.BatchResult, error) {
 		resp, err := s.Query(ctx, q)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, &qpb.BatchResult{Result: resp.Result})
+		return &qpb.BatchResult{Result: resp.Result}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &qpb.QueryBatchResponse{
@@ -1193,46 +1206,46 @@ func (s *PointsService) QueryBatch(ctx context.Context, req *qpb.QueryBatchPoint
 
 func (s *PointsService) vectorFromInput(ctx context.Context, collection string, using string, in *qpb.VectorInput) ([]float32, error) {
 	if in == nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector input"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector input"), grpcresponse.QdrantSourceFallback)
 	}
 	switch v := in.Variant.(type) {
 	case *qpb.VectorInput_Dense:
 		if v.Dense == nil || len(v.Dense.Data) == 0 {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("dense vector"))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("dense vector"), grpcresponse.QdrantSourceFallback)
 		}
 		return v.Dense.Data, nil
 	case *qpb.VectorInput_Id:
 		if v.Id == nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("id"))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("id"), grpcresponse.QdrantSourceFallback)
 		}
 		store, _, err := s.openCollection(ctx, collection)
 		if err != nil {
 			return nil, err
 		}
 		nodeID := pointIDToNodeID(v.Id)
-		node, err := store.GetNode(nodeID)
+		node, err := store.GetNode(ctx, nodeID)
 		if err != nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantPointNotFoundWithCause(err))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantPointNotFoundWithCause(err), grpcresponse.QdrantSourceFallback)
 		}
 		emb, ok := nodeVectorByName(node, using)
 		if !ok {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantVectorNotFoundForPoint())
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantVectorNotFoundForPoint(), grpcresponse.QdrantSourceFallback)
 		}
 		return emb, nil
 	case *qpb.VectorInput_Document:
 		if v.Document == nil || v.Document.Text == "" {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("document.text"))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("document.text"), grpcresponse.QdrantSourceFallback)
 		}
 		if s.config.EmbedQuery == nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantTextQueryEmbeddingsRequired())
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantTextQueryEmbeddingsRequired(), grpcresponse.QdrantSourceFallback)
 		}
 		emb, err := s.config.EmbedQuery(ctx, v.Document.Text)
 		if err != nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantEmbedQueryFailed(err))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantEmbedQueryFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 		return emb, nil
 	default:
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantVectorInputVariantUnsupported(v))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantVectorInputVariantUnsupported(v), grpcresponse.QdrantSourceFallback)
 	}
 }
 
@@ -1255,7 +1268,7 @@ func (s *PointsService) recommendQueryVector(
 		if id == nil {
 			continue
 		}
-		node, err := store.GetNode(pointIDToNodeID(id))
+		node, err := store.GetNode(ctx, pointIDToNodeID(id))
 		if err != nil {
 			continue
 		}
@@ -1272,7 +1285,7 @@ func (s *PointsService) recommendQueryVector(
 	}
 
 	if len(vectorsPos) == 0 {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantPositiveExampleRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantPositiveExampleRequired(), grpcresponse.QdrantSourceFallback)
 	}
 
 	var vectorsNeg [][]float32
@@ -1280,7 +1293,7 @@ func (s *PointsService) recommendQueryVector(
 		if id == nil {
 			continue
 		}
-		node, err := store.GetNode(pointIDToNodeID(id))
+		node, err := store.GetNode(ctx, pointIDToNodeID(id))
 		if err != nil {
 			continue
 		}
@@ -1298,17 +1311,17 @@ func (s *PointsService) recommendQueryVector(
 
 	pos := averageVectors(vectorsPos)
 	if pos == nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantPositiveAverageFailed())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantPositiveAverageFailed(), grpcresponse.QdrantSourceFallback)
 	}
 	if len(vectorsNeg) == 0 {
 		return pos, nil
 	}
 	neg := averageVectors(vectorsNeg)
 	if neg == nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantNegativeAverageFailed())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantNegativeAverageFailed(), grpcresponse.QdrantSourceFallback)
 	}
 	if len(pos) != len(neg) {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantRecommendationDimensionMismatch(len(pos), len(neg)))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantRecommendationDimensionMismatch(len(pos), len(neg)), grpcresponse.QdrantSourceFallback)
 	}
 	for i := range pos {
 		pos[i] = pos[i] - neg[i]
@@ -1318,7 +1331,7 @@ func (s *PointsService) recommendQueryVector(
 
 func (s *PointsService) vectorFromVector(ctx context.Context, v *qpb.Vector) ([]float32, error) {
 	if v == nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector"), grpcresponse.QdrantSourceFallback)
 	}
 	if dense := v.GetDense(); dense != nil && len(dense.Data) > 0 {
 		return dense.Data, nil
@@ -1328,15 +1341,15 @@ func (s *PointsService) vectorFromVector(ctx context.Context, v *qpb.Vector) ([]
 	}
 	if doc := v.GetDocument(); doc != nil && doc.Text != "" {
 		if s.config.EmbedQuery == nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantTextQueryEmbeddingsRequired())
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantTextQueryEmbeddingsRequired(), grpcresponse.QdrantSourceFallback)
 		}
 		emb, err := s.config.EmbedQuery(ctx, doc.Text)
 		if err != nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantEmbedQueryFailed(err))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantEmbedQueryFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 		return emb, nil
 	}
-	return nil, localizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantUnsupportedVectorKind())
+	return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantUnsupportedVectorKind(), grpcresponse.QdrantSourceFallback)
 }
 
 func averageVectors(vectors [][]float32) []float32 {
@@ -1374,195 +1387,92 @@ type searchResult struct {
 	Score float64
 }
 
-func (s *PointsService) searchCollection(ctx context.Context, store storage.Engine, searchSvc *search.Service, collection string, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64, ef int) []searchResult {
-	if s.vecIndex != nil {
-		// Request extra candidates only when we need to apply payload filters.
-		// For filter-free searches, returning exactly limit+offset avoids unnecessary
-		// ANN work (and is closer to Qdrant's behavior).
-		want := limit + offset
-		if filter != nil {
-			want = (limit + offset) * 10
-			if want < limit+offset {
-				want = limit + offset
-			}
-			if want > s.config.MaxTopK*10 {
-				want = s.config.MaxTopK * 10
-			}
-		}
-
-		cands := s.vecIndex.search(ctx, collection, len(queryVec), dist, vectorName, queryVec, want, minScore, ef)
-		if len(cands) > 0 {
-			if filter == nil {
-				if offset > 0 {
-					if offset >= len(cands) {
-						return nil
-					}
-					cands = cands[offset:]
-				}
-				if len(cands) > limit {
-					cands = cands[:limit]
-				}
-				return cands
-			}
-
-			filtered := make([]searchResult, 0, len(cands))
-			for _, r := range cands {
-				node, err := store.GetNode(storage.NodeID(expandPointID(r.ID)))
-				if err != nil || !matchesFilter(node, filter) {
-					continue
-				}
-				filtered = append(filtered, r)
-				if len(filtered) >= limit+offset {
-					break
-				}
-			}
-
-			if offset > 0 {
-				if offset >= len(filtered) {
-					return nil
-				}
-				filtered = filtered[offset:]
-			}
-			if len(filtered) > limit {
-				filtered = filtered[:limit]
-			}
-			return filtered
-		}
-	}
-
-	// Use search service for default vector (vectorName == "" or "default")
-	// TODO: Once IndexRegistry supports named vectors, use it for all vectorName searches
-	// For named vectors, we currently use vecIndex (deprecated) or brute-force fallback
-	effectiveVectorName := vectorName
-	if effectiveVectorName == "" {
-		effectiveVectorName = "default"
-	}
-
-	// Try search service for default vector (uses unified pipeline with HNSW/k-means)
-	if searchSvc != nil && effectiveVectorName == "default" {
-		// Fast path: avoid per-candidate storage lookups for type filtering.
-		prefix := "qdrant:point:"
-
-		// Qdrant's score_threshold is optional; if not set, do not apply a threshold.
-		// Our search.Service defaults may otherwise prune results unexpectedly.
-		minSimilarity := float64(-1)
-		if minScore >= 0 {
-			minSimilarity = minScore
-		}
-
-		// Ask for extra candidates, since we still need to:
-		// - filter to this collection by ID prefix (and drop chunk-suffixed IDs)
-		// - optionally apply payload filters
-		candidateLimit := (limit + offset) * 10
-		if candidateLimit < limit+offset {
-			candidateLimit = limit + offset
-		}
-		if candidateLimit > s.config.MaxTopK*10 {
-			candidateLimit = s.config.MaxTopK * 10
-		}
-
-		cands, err := searchSvc.VectorSearchCandidates(ctx, queryVec, &search.SearchOptions{
-			Limit:         candidateLimit,
-			MinSimilarity: &minSimilarity,
-		})
-		if err == nil && len(cands) > 0 {
-			results := make([]searchResult, 0, len(cands))
-			for _, r := range cands {
-				if !strings.HasPrefix(r.ID, prefix) {
-					continue
-				}
-				if strings.Contains(r.ID, "-chunk-") {
-					continue
-				}
-				if filter != nil {
-					node, err := store.GetNode(storage.NodeID(r.ID))
-					if err != nil || !matchesFilter(node, filter) {
-						continue
-					}
-				}
-				results = append(results, searchResult{ID: r.ID, Score: r.Score})
-				if len(results) >= limit+offset {
-					// Enough results after filtering; keep tail latency bounded.
-					break
-				}
-			}
-
-			if offset > 0 {
-				if offset >= len(results) {
-					return nil
-				}
-				results = results[offset:]
-			}
-			if len(results) > limit {
-				results = results[:limit]
-			}
-			return results
-		}
-	}
-
-	// Brute-force fallback: scan all nodes and filter by label. This keeps the
-	// measured path comparable to the Bolt/Cypher vector procedure and avoids
-	// label-index iterator overhead on some storage backends under high concurrency.
-	nodes, err := store.AllNodes()
-	if err != nil {
+// indexPoint brings the collection database's search index in step with a
+// point just written: its previous vectors are removed and its stored ones
+// indexed, which is what Search finds. The refresh reads the point back, so a
+// newer write or delete of it wins over this one. A database without a search
+// service (vector search disabled for it) has nothing to index.
+func indexPoint(ctx context.Context, searchSvc *search.Service, node *storage.Node) error {
+	if searchSvc == nil {
 		return nil
 	}
-
-	normalizedQuery := vector.Normalize(queryVec)
-	var scored []searchResult
-
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-
-		if !isQdrantPointNode(node) {
-			continue
-		}
-		if filter != nil && !matchesFilter(node, filter) {
-			continue
-		}
-
-		emb, ok := nodeVectorByName(node, vectorName)
-		if !ok {
-			continue
-		}
-
-		score := scoreVector(dist, normalizedQuery, emb)
-		if minScore >= 0 && score < minScore {
-			continue
-		}
-		scored = append(scored, searchResult{ID: string(node.ID), Score: score})
-	}
-
-	sort.Slice(scored, func(i, j int) bool { return scored[i].Score > scored[j].Score })
-
-	if offset > 0 {
-		if offset >= len(scored) {
-			return nil
-		}
-		scored = scored[offset:]
-	}
-	if len(scored) > limit {
-		scored = scored[:limit]
-	}
-	return scored
+	return searchSvc.RefreshNode(context.WithoutCancel(ctx), node.ID)
 }
 
-func scoreVector(dist qpb.Distance, normalizedQuery []float32, candidate []float32) float64 {
+// searchCollection runs a Qdrant vector search on the collection database's
+// search service: the same index, ANN strategy (NORNICDB_VECTOR_ANN_QUALITY)
+// and query as Cypher's db.index.vector.queryNodes, restricted to the
+// collection's points and the requested vector name. Scores are Qdrant's raw
+// similarities. A database without a search service (vector search disabled
+// for it) has no hits, as for Cypher.
+//
+// ef is the request's hnsw_ef (0 for the index's configured ef, see
+// qdrantSearchEf); minScore < 0 means no score_threshold.
+func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64, ef int, exact bool, quantization *qpb.QuantizationSearchParams) ([]searchResult, error) {
+	if searchSvc == nil {
+		return nil, nil
+	}
+	if vectorName == "" {
+		vectorName = "default"
+	}
+	opts := &search.SearchOptions{HNSWEf: qdrantSearchEf(ef, limit+offset)}
+	if quantization != nil {
+		q := quantization
+		opts.QuantizationIgnore = q.GetIgnore()
+		opts.QuantizationRescore = q.Rescore
+		opts.QuantizationOversampling = q.GetOversampling()
+	}
+	if filter != nil {
+		opts.Where = func(node *storage.Node) bool { return matchesFilter(node, filter) }
+	}
+	hits, err := searchSvc.VectorQueryNodesWithOptions(ctx, queryVec, search.VectorQuerySpec{
+		Label:      QdrantPointLabel,
+		Property:   vectorName,
+		Similarity: similarityName(dist),
+		Limit:      limit + offset,
+		ScoreScale: search.VectorScoreSimilarity,
+		Exact:      exact,
+	}, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]searchResult, 0, len(hits))
+	for _, hit := range hits {
+		// Hits are best first, so score_threshold cuts the tail.
+		if minScore >= 0 && hit.Score < minScore {
+			break
+		}
+		results = append(results, searchResult{ID: hit.ID, Score: hit.Score})
+	}
+	if offset >= len(results) {
+		return nil, nil
+	}
+	return results[offset:], nil
+}
+
+// qdrantSearchEf is the HNSW beam width (ef) of a Qdrant search: the request's
+// hnsw_ef, or, as Qdrant defaults it, the index's configured ef (the
+// NORNICDB_VECTOR_ANN_QUALITY preset's efSearch) when the request has none;
+// never less than the results it must return. A Cypher vector query without an
+// ef keeps the pipeline's wider default instead.
+func qdrantSearchEf(requested, need int) int {
+	ef := requested
+	if ef <= 0 {
+		ef = search.HNSWConfigFromEnv().EfSearch
+	}
+	return max(ef, need)
+}
+
+// similarityName is the search service's name for a Qdrant distance.
+func similarityName(dist qpb.Distance) string {
 	switch dist {
 	case qpb.Distance_Dot:
-		return float64(vector.DotProduct(normalizedQuery, candidate))
+		return "dot"
 	case qpb.Distance_Euclid:
-		return vector.EuclideanSimilarity(normalizedQuery, candidate)
-	case qpb.Distance_Cosine, qpb.Distance_UnknownDistance:
-		fallthrough
+		return "euclidean"
 	default:
-		// Avoid per-candidate allocations: Normalize(candidate) returns a copy.
-		// CosineSimilarity computes dot/(|a||b|) without allocating.
-		return vector.CosineSimilarity(normalizedQuery, candidate)
+		return "cosine"
 	}
 }
 
@@ -1580,12 +1490,12 @@ func isQdrantPointNode(node *storage.Node) bool {
 
 func resolvePointIDs(ctx context.Context, manager *localization.Manager, sel *qpb.PointsSelector) ([]*qpb.PointId, error) {
 	if sel == nil {
-		return nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
+		return nil, grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"), grpcresponse.QdrantSourceFallback)
 	}
 	switch opt := sel.PointsSelectorOneOf.(type) {
 	case *qpb.PointsSelector_Points:
 		if opt.Points == nil || len(opt.Points.Ids) == 0 {
-			return nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldsRequired("ids"))
+			return nil, grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldsRequired("ids"), grpcresponse.QdrantSourceFallback)
 		}
 		return opt.Points.Ids, nil
 	default:
@@ -1595,7 +1505,7 @@ func resolvePointIDs(ctx context.Context, manager *localization.Manager, sel *qp
 
 func (s *PointsService) resolvePointsSelector(ctx context.Context, store storage.Engine, sel *qpb.PointsSelector) ([]storage.NodeID, error) {
 	if sel == nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"), grpcresponse.QdrantSourceFallback)
 	}
 
 	switch opt := sel.PointsSelectorOneOf.(type) {
@@ -1610,9 +1520,9 @@ func (s *PointsService) resolvePointsSelector(ctx context.Context, store storage
 		}
 		return out, nil
 	case *qpb.PointsSelector_Filter:
-		nodes, err := store.GetNodesByLabel(QdrantPointLabel)
+		nodes, err := store.GetNodesByLabel(ctx, QdrantPointLabel)
 		if err != nil && err != storage.ErrNotFound {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantScanPointsFailed(err))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantScanPointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 		out := make([]storage.NodeID, 0, len(nodes))
 		for _, node := range nodes {
@@ -1625,7 +1535,7 @@ func (s *PointsService) resolvePointsSelector(ctx context.Context, store storage
 		}
 		return out, nil
 	default:
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantInvalidPointsSelector())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantInvalidPointsSelector(), grpcresponse.QdrantSourceFallback)
 	}
 }
 
@@ -1657,19 +1567,6 @@ func nodeIDToPointID(id storage.NodeID) *qpb.PointId {
 	return &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: raw}}
 }
 
-func pointIDFromCompactString(raw string) *qpb.PointId {
-	// Qdrant PointId is either uint64 or UUID string.
-	if len(raw) > 0 {
-		first := raw[0]
-		if first >= '0' && first <= '9' {
-			if n, err := strconv.ParseUint(raw, 10, 64); err == nil {
-				return &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: n}}
-			}
-		}
-	}
-	return &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: raw}}
-}
-
 func splitNodeID(nodeID string) []string {
 	// Expected: qdrant:point:<id>
 	parts := make([]string, 0, 3)
@@ -1692,7 +1589,7 @@ func splitNodeID(nodeID string) []string {
 // kinds (sparse/multi/document) are rejected for storage.
 func extractVectors(ctx context.Context, manager *localization.Manager, v *qpb.Vectors) ([]string, [][]float32, error) {
 	if v == nil {
-		return nil, nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("vectors"))
+		return nil, nil, grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("vectors"), grpcresponse.QdrantSourceFallback)
 	}
 
 	switch opt := v.VectorsOptions.(type) {
@@ -1704,7 +1601,7 @@ func extractVectors(ctx context.Context, manager *localization.Manager, v *qpb.V
 		return []string{""}, [][]float32{vec}, nil
 	case *qpb.Vectors_Vectors:
 		if opt.Vectors == nil || len(opt.Vectors.Vectors) == 0 {
-			return nil, nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldsRequired("vectors"))
+			return nil, nil, grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldsRequired("vectors"), grpcresponse.QdrantSourceFallback)
 		}
 		keys := make([]string, 0, len(opt.Vectors.Vectors))
 		for k := range opt.Vectors.Vectors {
@@ -1725,13 +1622,13 @@ func extractVectors(ctx context.Context, manager *localization.Manager, v *qpb.V
 		}
 		return names, vecs, nil
 	default:
-		return nil, nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantUnsupportedVectorsType())
+		return nil, nil, grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantUnsupportedVectorsType(), grpcresponse.QdrantSourceFallback)
 	}
 }
 
 func extractDenseFromVector(ctx context.Context, manager *localization.Manager, v *qpb.Vector) ([]float32, error) {
 	if v == nil {
-		return nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("vector"))
+		return nil, grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("vector"), grpcresponse.QdrantSourceFallback)
 	}
 	if dense := v.GetDense(); dense != nil && len(dense.Data) > 0 {
 		return dense.Data, nil
@@ -1739,28 +1636,7 @@ func extractDenseFromVector(ctx context.Context, manager *localization.Manager, 
 	if len(v.Data) > 0 {
 		return v.Data, nil
 	}
-	return nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("dense vector data"))
-}
-
-func nodeVectorNames(node *storage.Node) []string {
-	if node == nil {
-		return nil
-	}
-	if len(node.NamedEmbeddings) == 0 {
-		return nil
-	}
-	// Extract vector names from NamedEmbeddings keys (stable order).
-	names := make([]string, 0, len(node.NamedEmbeddings))
-	for name := range node.NamedEmbeddings {
-		// Map "default" back to empty string for unnamed vector
-		if name == "default" {
-			names = append(names, "")
-		} else {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return names
+	return nil, grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("dense vector data"), grpcresponse.QdrantSourceFallback)
 }
 
 func nodeVectorByName(node *storage.Node, vectorName string) ([]float32, bool) {
@@ -2063,9 +1939,23 @@ func anyToValue(v any) *qpb.Value {
 			fields[k] = anyToValue(v)
 		}
 		return &qpb.Value{Kind: &qpb.Value_StructValue{StructValue: &qpb.Struct{Fields: fields}}}
-	default:
-		return &qpb.Value{Kind: &qpb.Value_NullValue{NullValue: qpb.NullValue_NULL_VALUE}}
 	}
+	// Storage returns a homogeneous list as a typed slice and a number in the
+	// width its codec keeps.
+	rv := reflect.ValueOf(v)
+	switch {
+	case rv.CanInt():
+		return &qpb.Value{Kind: &qpb.Value_IntegerValue{IntegerValue: rv.Int()}}
+	case rv.CanUint():
+		return &qpb.Value{Kind: &qpb.Value_IntegerValue{IntegerValue: int64(rv.Uint())}}
+	case rv.Kind() == reflect.Slice:
+		values := make([]*qpb.Value, 0, rv.Len())
+		for i := 0; i < rv.Len(); i++ {
+			values = append(values, anyToValue(rv.Index(i).Interface()))
+		}
+		return &qpb.Value{Kind: &qpb.Value_ListValue{ListValue: &qpb.ListValue{Values: values}}}
+	}
+	return &qpb.Value{Kind: &qpb.Value_NullValue{NullValue: qpb.NullValue_NULL_VALUE}}
 }
 
 func matchesFilter(node *storage.Node, filter *qpb.Filter) bool {
@@ -2185,17 +2075,8 @@ func matchesRange(v any, r *qpb.Range) bool {
 		return true
 	}
 
-	var f float64
-	switch n := v.(type) {
-	case int:
-		f = float64(n)
-	case int64:
-		f = float64(n)
-	case float64:
-		f = n
-	case float32:
-		f = float64(n)
-	default:
+	f, ok := storedNumber(v)
+	if !ok {
 		return false
 	}
 

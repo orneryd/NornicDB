@@ -2,14 +2,18 @@ package search
 
 import (
 	"context"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-func TestManagedEmbeddingContentIsExcludedFromDefaultSearchText(t *testing.T) {
-	service := NewService(storage.NewMemoryEngine())
+func TestManagedEmbeddingContentIsExcludedFromSearchTextAndResults(t *testing.T) {
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	service.SetFulltextProperties([]string{"title"})
 	node := &storage.Node{
 		ID:     "test:visual",
@@ -25,18 +29,12 @@ func TestManagedEmbeddingContentIsExcludedFromDefaultSearchText(t *testing.T) {
 	require.NotContains(t, text, "image_base64")
 	require.NotContains(t, text, "c2VjcmV0LXBheWxvYWQ")
 	require.NotContains(t, service.searchableTextValues(node), "_embedding_content")
-}
 
-func TestManagedEmbeddingContentIsExcludedFromSearchResultProperties(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	node := &storage.Node{ID: "test:visual", Properties: map[string]any{
-		"title":              "Architecture diagram",
-		"_embedding_content": "large-image-payload",
-	}}
-	_, err := engine.CreateNode(node)
+	service.SetFulltextProperties(nil)
+	node.Properties["_embedding_content"] = "large-image-payload"
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
-	service := NewService(engine)
 	opts := &SearchOptions{Limit: 1, ExcludeProperties: []string{"_embedding_content"}}
 	results := service.enrichResults(context.Background(), []rrfResult{{ID: string(node.ID), RRFScore: 1}}, opts, nil, hitMatchQuery{})
 	require.Len(t, results, 1)
@@ -59,7 +57,7 @@ func TestSearchResultPropertyProjectionCombinesIncludeAndExclude(t *testing.T) {
 
 func TestBM25PropertyAllowlistDoesNotProjectSearchResponses(t *testing.T) {
 	properties := map[string]any{"title": "diagram", "structured_payload": "opaque-value"}
-	service := NewService(storage.NewMemoryEngine())
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), DefaultVectorDimensions, nil)
 	service.SetFulltextProperties([]string{"title"})
 
 	require.NotContains(t, service.extractSearchableText(&storage.Node{Properties: properties}), "opaque-value")
@@ -67,11 +65,11 @@ func TestBM25PropertyAllowlistDoesNotProjectSearchResponses(t *testing.T) {
 }
 
 func TestContinuationHydrationPreservesCallerPropertyProjection(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	node := &storage.Node{ID: "test:visual", Properties: map[string]any{
 		"title": "diagram", "structured_payload": "opaque-value",
 	}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	projection := newResultPropertyProjection([]string{"title"}, nil)

@@ -37,7 +37,7 @@ func setupTraversalTestData(t *testing.T, exec *StorageExecutor) {
 
 	// Create relationships using direct storage
 	// Alice -> Bob (KNOWS)
-	alice, _ := exec.storage.GetNodesByLabel("Person")
+	alice, _ := exec.storage.GetNodesByLabel(ctx, "Person")
 	var aliceNode, bobNode, carolNode, daveNode *storage.Node
 	for _, n := range alice {
 		switch n.Properties["name"] {
@@ -53,7 +53,7 @@ func setupTraversalTestData(t *testing.T, exec *StorageExecutor) {
 	}
 
 	if aliceNode != nil && bobNode != nil {
-		exec.storage.CreateEdge(&storage.Edge{
+		exec.storage.CreateEdge(t.Context(), &storage.Edge{
 			ID:        "e1",
 			Type:      "KNOWS",
 			StartNode: aliceNode.ID,
@@ -61,7 +61,7 @@ func setupTraversalTestData(t *testing.T, exec *StorageExecutor) {
 		})
 	}
 	if bobNode != nil && carolNode != nil {
-		exec.storage.CreateEdge(&storage.Edge{
+		exec.storage.CreateEdge(t.Context(), &storage.Edge{
 			ID:        "e2",
 			Type:      "KNOWS",
 			StartNode: bobNode.ID,
@@ -69,7 +69,7 @@ func setupTraversalTestData(t *testing.T, exec *StorageExecutor) {
 		})
 	}
 	if aliceNode != nil && carolNode != nil {
-		exec.storage.CreateEdge(&storage.Edge{
+		exec.storage.CreateEdge(t.Context(), &storage.Edge{
 			ID:        "e3",
 			Type:      "WORKS_WITH",
 			StartNode: aliceNode.ID,
@@ -77,7 +77,7 @@ func setupTraversalTestData(t *testing.T, exec *StorageExecutor) {
 		})
 	}
 	if bobNode != nil && daveNode != nil {
-		exec.storage.CreateEdge(&storage.Edge{
+		exec.storage.CreateEdge(t.Context(), &storage.Edge{
 			ID:        "e4",
 			Type:      "FOLLOWS",
 			StartNode: bobNode.ID,
@@ -111,7 +111,7 @@ func TestParseRelationshipPattern(t *testing.T) {
 		t.Run(tt.pattern, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := exec.parseRelationshipPattern(ctx, tt.pattern)
+			result := parsedTestValue(exec.parseRelationshipPattern(ctx, tt.pattern))
 
 			if result.Direction != tt.direction {
 				t.Errorf("Direction = %s, want %s", result.Direction, tt.direction)
@@ -134,7 +134,7 @@ func TestParseRelationshipPattern(t *testing.T) {
 
 func TestParseRelationshipPatternWithArrowheadsAtBothEnds(t *testing.T) {
 	exec := &StorageExecutor{}
-	pattern := exec.parseRelationshipPattern(context.Background(), "<-[:LIKES*3]->")
+	pattern := parsedTestValue(exec.parseRelationshipPattern(context.Background(), "<-[:LIKES*3]->"))
 
 	if pattern.Direction != "both" {
 		t.Fatalf("expected bidirectional traversal, got %q", pattern.Direction)
@@ -314,7 +314,7 @@ func TestVariableLengthPaths(t *testing.T) {
 	// Parse a variable length pattern
 	ctx := context.Background()
 
-	pattern := exec.parseRelationshipPattern(ctx, "-[*1..2:KNOWS]->")
+	pattern := parsedTestValue(exec.parseRelationshipPattern(ctx, "-[*1..2:KNOWS]->"))
 
 	if pattern.MinHops != 1 {
 		t.Errorf("MinHops = %d, want 1", pattern.MinHops)
@@ -332,7 +332,7 @@ func TestDegreeFunctionsWithTraversal(t *testing.T) {
 	setupTraversalTestData(t, exec)
 
 	// Get Bob's node
-	people, _ := exec.storage.GetNodesByLabel("Person")
+	people, _ := exec.storage.GetNodesByLabel(context.Background(), "Person")
 	var bob *storage.Node
 	for _, n := range people {
 		if n.Properties["name"] == "Bob" {

@@ -3,8 +3,11 @@ package nornicdb
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -21,7 +24,7 @@ type pendingCountEngine struct {
 func (p *pendingCountEngine) PendingEmbeddingsCount() int { return p.count }
 
 func TestDBWrapperHelpers_StorageAccess(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	namespaced := storage.NewNamespacedEngine(base, "nornic")
@@ -71,7 +74,7 @@ func TestDBWrapperHelpers_EmbedConfigRegistration(t *testing.T) {
 }
 
 func TestDBWrapperHelpers_QueueAndExecutorAccess(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	queueCfg := DefaultEmbedQueueConfig()
@@ -100,11 +103,11 @@ func TestDBWrapperHelpers_QueueAndExecutorAccess(t *testing.T) {
 	})
 	require.NotNil(t, db.allDatabasesProvider)
 
-	db.SetDbConfigResolver(func(dbName string) (int, float64, string) {
+	db.SetDbConfigResolver(func(dbName string) (int, float64) {
 		if dbName == "tenant_a" {
-			return 768, 0.42, "v2"
+			return 768, 0.42
 		}
-		return 0, 0, ""
+		return 0, 0
 	})
 	require.NotNil(t, db.dbConfigResolver)
 
@@ -137,7 +140,7 @@ func TestDBWrapperHelpers_VectorDimensionsHelpers(t *testing.T) {
 
 	// Cached helper falls back to configured dims when no service exists, then to 0.
 	db2 := &DB{embeddingDims: 9, searchServices: map[string]*dbSearchService{}}
-	namespaced := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	namespaced := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	db2.storage = namespaced
 	require.Equal(t, 9, db2.VectorIndexDimensionsCached())
 	db2.embeddingDims = 0
@@ -189,10 +192,10 @@ func TestDBWrapperHelpers_EmbeddingAndPendingCounts(t *testing.T) {
 	// Pending count uses optional storage fast-path interface. It is checked
 	// on separate DB values without background tasks: assigning baseStorage
 	// on the open db races with its clustering timer, which reads it.
-	counting := storage.NewMemoryEngine()
+	counting := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = counting.Close() })
 	require.Equal(t, 7, (&DB{baseStorage: &pendingCountEngine{Engine: counting, count: 7}}).PendingEmbeddingsCount())
-	plain := storage.NewMemoryEngine()
+	plain := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = plain.Close() })
 	require.Equal(t, 0, (&DB{baseStorage: plain}).PendingEmbeddingsCount())
 }
@@ -231,7 +234,7 @@ func TestDBWrapperHelpers_MaybeEnableReplicationPaths(t *testing.T) {
 		}
 	})
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	db := &DB{config: DefaultConfig()}
 
@@ -247,7 +250,7 @@ func TestDBWrapperHelpers_MaybeEnableReplicationPaths(t *testing.T) {
 
 	// Non-standalone mode should attempt replication setup. Force adapter creation failure
 	// by pointing DataDir at a file path, so mkdir for replication/wal fails deterministically.
-	badPath := t.TempDir() + "/not-a-dir"
+	badPath := filepath.Join(t.TempDir(), "not-a-dir")
 	require.NoError(t, os.WriteFile(badPath, []byte("x"), 0644))
 	cfg := DefaultConfig()
 	cfg.Database.DataDir = badPath
@@ -270,7 +273,7 @@ func TestDBWrapperHelpers_MaybeEnableReplicationPaths(t *testing.T) {
 	require.Contains(t, err.Error(), "unknown replication mode")
 
 	// Explicit cluster data dir override path is honored when set.
-	overridePath := t.TempDir() + "/not-a-dir-override"
+	overridePath := filepath.Join(t.TempDir(), "not-a-dir-override")
 	require.NoError(t, os.WriteFile(overridePath, []byte("x"), 0644))
 	require.NoError(t, os.Setenv("NORNICDB_CLUSTER_DATA_DIR", overridePath))
 	_, err = db.maybeEnableReplication(base)
@@ -331,7 +334,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 	})
 
 	t.Run("creates embed queue when not present", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		cfg := DefaultConfig()
 		cfg.Memory.KmeansClusterInterval = 0 // avoid timer side effects
@@ -358,7 +361,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 	})
 
 	t.Run("reuses existing queue and swaps embedder", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		cfg := DefaultConfig()
 		cfg.Memory.KmeansClusterInterval = 0
@@ -387,7 +390,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 		cleanup := featureflags.WithGPUClusteringEnabled()
 		t.Cleanup(cleanup)
 
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		cfg := DefaultConfig()
 		cfg.Memory.KmeansClusterInterval = 5 * time.Millisecond
@@ -418,7 +421,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 }
 
 func TestDBWrapperHelpers_CountAndBuildBranches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	db := &DB{
 		storage:             storage.NewNamespacedEngine(base, "nornic"),
@@ -430,7 +433,7 @@ func TestDBWrapperHelpers_CountAndBuildBranches(t *testing.T) {
 		buildCtx:            context.Background(),
 	}
 
-	_, err := db.storage.CreateNode(&storage.Node{ID: "default", Properties: map[string]any{"content": "default"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
+	_, err := db.storage.CreateNode(t.Context(), &storage.Node{ID: "default", Properties: map[string]any{"content": "default"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 	require.NoError(t, err)
 	require.NoError(t, db.BuildSearchIndexes(context.Background()))
 	require.Equal(t, 1, db.EmbeddingCount())
@@ -438,9 +441,9 @@ func TestDBWrapperHelpers_CountAndBuildBranches(t *testing.T) {
 	require.Equal(t, 3, db.VectorIndexDimensionsCached())
 
 	tenantStorage := storage.NewNamespacedEngine(base, "tenant_count")
-	_, err = tenantStorage.CreateNode(&storage.Node{ID: "tenant", Properties: map[string]any{"content": "tenant"}, ChunkEmbeddings: [][]float32{{0, 1, 0}}})
+	_, err = tenantStorage.CreateNode(t.Context(), &storage.Node{ID: "tenant", Properties: map[string]any{"content": "tenant"}, ChunkEmbeddings: [][]float32{{0, 1, 0}}})
 	require.NoError(t, err)
-	tenantSvc, err := db.EnsureSearchIndexesBuilt(context.Background(), "tenant_count", tenantStorage)
+	tenantSvc, err := db.EnsureSearchIndexes(context.Background(), "tenant_count", tenantStorage, SearchIndexBuildWait)
 	require.NoError(t, err)
 	require.Equal(t, 1, tenantSvc.EmbeddingCount())
 
@@ -455,6 +458,6 @@ func TestDBWrapperHelpers_CountAndBuildBranches(t *testing.T) {
 	})
 	require.Equal(t, 2, db.EmbeddingCount())
 
-	db.closed = true
+	db.work.CloseAdmission()
 	require.ErrorIs(t, db.BuildSearchIndexes(context.Background()), ErrClosed)
 }

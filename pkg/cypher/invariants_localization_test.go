@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"testing"
@@ -15,17 +17,17 @@ type invariantCreateErrEngine struct {
 	err error
 }
 
-func (e *invariantCreateErrEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *invariantCreateErrEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	return "", e.err
 }
 
-func (e *invariantCreateErrEngine) BulkCreateNodes(nodes []*storage.Node) error {
+func (e *invariantCreateErrEngine) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
 	return e.err
 }
 
 func TestCypherInvariantErrorsHaveTypedIdentityAndExactEnglish(t *testing.T) {
 	t.Run("pipeline create failure", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		store := storage.NewNamespacedEngine(base, "pipeline_invariant")
 		seed := NewStorageExecutor(store)

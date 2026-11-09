@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -15,11 +17,11 @@ type seedLabelBehaviorEngine struct {
 	nilLabel   string
 }
 
-func (e *seedLabelBehaviorEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *seedLabelBehaviorEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if label == e.errorLabel {
 		return nil, fmt.Errorf("forced label error for %s", label)
 	}
-	nodes, err := e.MemoryEngine.GetNodesByLabel(label)
+	nodes, err := e.MemoryEngine.GetNodesByLabel(ctx, label)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +31,7 @@ func (e *seedLabelBehaviorEngine) GetNodesByLabel(label string) ([]*storage.Node
 	return nodes, nil
 }
 
-func (e *seedLabelBehaviorEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+func (e *seedLabelBehaviorEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
 	if label == e.errorLabel {
 		return fmt.Errorf("forced label error for %s", label)
 	}
@@ -38,31 +40,31 @@ func (e *seedLabelBehaviorEngine) StreamNodesByLabelProjected(label string, prop
 			return err
 		}
 	}
-	return e.MemoryEngine.StreamNodesByLabelProjected(label, properties, visit)
+	return e.MemoryEngine.StreamNodesByLabelProjected(ctx, label, properties, visit)
 }
 
 // The database wrapper delegates label reads through the scoped methods
 // (storage.ScopedLabelNodeReader); without these overrides the embedded
 // engine's ones would bypass the fake.
-func (e *seedLabelBehaviorEngine) GetNodesByLabelInScope(_, label string) ([]*storage.Node, error) {
-	return e.GetNodesByLabel(label)
+func (e *seedLabelBehaviorEngine) GetNodesByLabelInScope(ctx context.Context, _, label string) ([]*storage.Node, error) {
+	return e.GetNodesByLabel(ctx, label)
 }
 
-func (e *seedLabelBehaviorEngine) StreamNodesByLabelProjectedInScope(_, label string, properties []string, visit func(*storage.Node) error) error {
-	return e.StreamNodesByLabelProjected(label, properties, visit)
+func (e *seedLabelBehaviorEngine) StreamNodesByLabelProjectedInScope(ctx context.Context, _, label string, properties []string, visit func(*storage.Node) error) error {
+	return e.StreamNodesByLabelProjected(ctx, label, properties, visit)
 }
 
 func TestSeedNodesFromOuterMatch_ErrorAndNilBranches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &seedLabelBehaviorEngine{MemoryEngine: base, errorLabel: "ErrSeed", nilLabel: "NilSeed"}
 	store := storage.NewNamespacedEngine(eng, "seed_nodes_err_paths_cov")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: storage.NodeID("e1"), Labels: []string{"ErrSeed"}, Properties: map[string]interface{}{"id": "e1"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("e1"), Labels: []string{"ErrSeed"}, Properties: map[string]interface{}{"id": "e1"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"NilSeed"}, Properties: map[string]interface{}{"id": "n1", "team": "red"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"NilSeed"}, Properties: map[string]interface{}{"id": "n1", "team": "red"}})
 	require.NoError(t, err)
 
 	_, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:ErrSeed)", "n")

@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 
@@ -9,23 +12,23 @@ import (
 
 type ccErrScanNodesEngine struct{ Engine }
 
-func (e *ccErrScanNodesEngine) GetNodesByLabel(label string) ([]*Node, error) {
+func (e *ccErrScanNodesEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
 	return nil, errors.New("scan nodes failed")
 }
 
 type ccErrScanEdgesEngine struct{ Engine }
 
-func (e *ccErrScanEdgesEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+func (e *ccErrScanEdgesEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
 	return nil, errors.New("scan edges failed")
 }
 
 func TestValidateConstraintContractOnCreationForEngine_Branches(t *testing.T) {
-	eng := NewMemoryEngine()
-	_, err := eng.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
+	eng := newTestMemoryEngine(t)
+	_, err := eng.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
+	_, err = eng.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)
-	err = eng.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "KNOWS", Properties: map[string]any{"kind": "peer"}})
+	err = eng.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "KNOWS", Properties: map[string]any{"kind": "peer"}})
 	require.NoError(t, err)
 
 	nodeContract := ConstraintContract{
@@ -34,7 +37,7 @@ func TestValidateConstraintContractOnCreationForEngine_Branches(t *testing.T) {
 		TargetLabelOrType: "Person",
 		Entries:           []ConstraintContractEntry{{Kind: ConstraintContractKindBooleanNode, Expression: "n.team IN ['core']"}},
 	}
-	require.NoError(t, ValidateConstraintContractOnCreationForEngine(eng, nodeContract))
+	require.NoError(t, ValidateConstraintContractOnCreationForEngine(context.Background(), eng, nodeContract))
 
 	edgeContract := ConstraintContract{
 		Name:              "edge_rule",
@@ -42,7 +45,7 @@ func TestValidateConstraintContractOnCreationForEngine_Branches(t *testing.T) {
 		TargetLabelOrType: "KNOWS",
 		Entries:           []ConstraintContractEntry{{Kind: ConstraintContractKindBooleanRelationship, Expression: "startNode(r) <> endNode(r)"}},
 	}
-	require.NoError(t, ValidateConstraintContractOnCreationForEngine(eng, edgeContract))
+	require.NoError(t, ValidateConstraintContractOnCreationForEngine(context.Background(), eng, edgeContract))
 
 	violatingNode := ConstraintContract{
 		Name:              "node_fail",
@@ -50,20 +53,20 @@ func TestValidateConstraintContractOnCreationForEngine_Branches(t *testing.T) {
 		TargetLabelOrType: "Person",
 		Entries:           []ConstraintContractEntry{{Kind: ConstraintContractKindBooleanNode, Expression: "n.team IN ['ops']"}},
 	}
-	err = ValidateConstraintContractOnCreationForEngine(eng, violatingNode)
+	err = ValidateConstraintContractOnCreationForEngine(context.Background(), eng, violatingNode)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "violated")
 
 	unsupported := ConstraintContract{Name: "bad", TargetEntityType: "INVALID", TargetLabelOrType: "X"}
-	err = ValidateConstraintContractOnCreationForEngine(eng, unsupported)
+	err = ValidateConstraintContractOnCreationForEngine(context.Background(), eng, unsupported)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsupported constraint contract target entity type")
 
-	err = ValidateConstraintContractOnCreationForEngine(&ccErrScanNodesEngine{Engine: eng}, nodeContract)
+	err = ValidateConstraintContractOnCreationForEngine(context.Background(), &ccErrScanNodesEngine{Engine: eng}, nodeContract)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "scanning nodes")
 
-	err = ValidateConstraintContractOnCreationForEngine(&ccErrScanEdgesEngine{Engine: eng}, edgeContract)
+	err = ValidateConstraintContractOnCreationForEngine(context.Background(), &ccErrScanEdgesEngine{Engine: eng}, edgeContract)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "scanning relationships")
 }
@@ -135,21 +138,21 @@ func TestAddConstraintContractBundle_Branches(t *testing.T) {
 
 func TestConstraintContractExpressionComparisonParseErrors_Propagate(t *testing.T) {
 	t.Run("engine evaluator malformed literal", func(t *testing.T) {
-		eng := NewMemoryEngine()
+		eng := newTestMemoryEngine(t)
 		node := &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"age": 10}}
-		_, err := evaluateNodeConstraintContractExpressionEngine(eng, node, "n.age >= [not_a_literal]")
+		_, err := evaluateNodeConstraintContractExpressionEngine(context.Background(), eng, node, "n.age >= [not_a_literal]")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unsupported literal")
 	})
 
 	t.Run("transaction evaluator malformed literal", func(t *testing.T) {
 		engine := newTestEngine(t)
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
 		node := &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"age": 10}}
-		ok, evalErr := tx.evaluateNodeConstraintContractExpressionLocked(node, "n.age >= [not_a_literal]")
+		ok, evalErr := tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, "n.age >= [not_a_literal]")
 		require.False(t, ok)
 		require.Error(t, evalErr)
 		require.Contains(t, evalErr.Error(), "unsupported literal")
@@ -158,22 +161,22 @@ func TestConstraintContractExpressionComparisonParseErrors_Propagate(t *testing.
 
 func TestNodeConstraintComparisonExpressions_EvaluatedInEngineAndTransaction(t *testing.T) {
 	t.Run("engine evaluator comparison", func(t *testing.T) {
-		eng := NewMemoryEngine()
+		eng := newTestMemoryEngine(t)
 		node := &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"age": int64(10)}}
 
-		ok, err := evaluateNodeConstraintContractExpressionEngine(eng, node, "n.age >= 10")
+		ok, err := evaluateNodeConstraintContractExpressionEngine(context.Background(), eng, node, "n.age >= 10")
 		require.NoError(t, err)
 		require.True(t, ok)
 	})
 
 	t.Run("transaction evaluator comparison", func(t *testing.T) {
 		engine := newTestEngine(t)
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
 		node := &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"age": int64(10)}}
-		ok, evalErr := tx.evaluateNodeConstraintContractExpressionLocked(node, "n.age >= 10")
+		ok, evalErr := tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, "n.age >= 10")
 		require.NoError(t, evalErr)
 		require.True(t, ok)
 	})
@@ -185,28 +188,28 @@ func TestNodeConstraintComparisonExpressions_EvaluatedInEngineAndTransaction(t *
 // every expression shape.
 func TestConstraintContractEvaluation_EngineAndTransactionViewsAgree(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:alice", Labels: []string{"Person"}, Properties: map[string]any{"state": "active", "age": int64(30), "team": "core"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:alice", Labels: []string{"Person"}, Properties: map[string]any{"state": "active", "age": int64(30), "team": "core"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:bob", Labels: []string{"Person"}, Properties: map[string]any{"state": "banned", "team": "platform"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:bob", Labels: []string{"Person"}, Properties: map[string]any{"state": "banned", "team": "platform"}})
 	require.NoError(t, err)
 	for i, ep := range []string{"test:i1", "test:i2", "test:i3"} {
-		_, err = engine.CreateNode(&Node{ID: NodeID(ep), Labels: []string{"Item"}, Properties: map[string]any{}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(ep), Labels: []string{"Item"}, Properties: map[string]any{}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 			ID: EdgeID("test:o-" + string(rune('1'+i))), StartNode: "test:alice",
 			EndNode: NodeID(ep), Type: "OWNS", Properties: map[string]any{},
 		}))
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:k", StartNode: "test:alice", EndNode: "test:bob", Type: "KNOWS", Properties: map[string]any{"v": "active", "score": int64(75)}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:k", StartNode: "test:alice", EndNode: "test:bob", Type: "KNOWS", Properties: map[string]any{"v": "active", "score": int64(75)}}))
 
-	alice, err := engine.GetNode("test:alice")
+	alice, err := engine.GetNode(t.Context(), "test:alice")
 	require.NoError(t, err)
-	bob, err := engine.GetNode("test:bob")
+	bob, err := engine.GetNode(t.Context(), "test:bob")
 	require.NoError(t, err)
-	edge, err := engine.GetEdge("test:k")
+	edge, err := engine.GetEdge(t.Context(), "test:k")
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -225,22 +228,22 @@ func TestConstraintContractEvaluation_EngineAndTransactionViewsAgree(t *testing.
 	}
 	engineNode := func(node *Node, expr string) outcome {
 		return evalNode(func() (bool, error) {
-			return evaluateNodeConstraintContractExpressionEngine(engine, node, expr)
+			return evaluateNodeConstraintContractExpressionEngine(context.Background(), engine, node, expr)
 		})
 	}
 	txNode := func(node *Node, expr string) outcome {
 		return evalNode(func() (bool, error) {
-			return tx.evaluateNodeConstraintContractExpressionLocked(node, expr)
+			return tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, expr)
 		})
 	}
 	engineEdge := func(expr string) outcome {
 		return evalNode(func() (bool, error) {
-			return evaluateRelationshipConstraintContractExpressionEngine(engine, edge, expr)
+			return evaluateRelationshipConstraintContractExpressionEngine(context.Background(), engine, edge, expr)
 		})
 	}
 	txEdge := func(expr string) outcome {
 		return evalNode(func() (bool, error) {
-			return tx.evaluateRelationshipConstraintContractExpressionLocked(edge, expr)
+			return tx.evaluateRelationshipConstraintContractExpressionLocked(t.Context(), edge, expr)
 		})
 	}
 
@@ -273,27 +276,27 @@ func TestConstraintContractEvaluation_EngineAndTransactionViewsAgree(t *testing.
 // BenchmarkConstraintContractEvaluation_EngineView pins the converged
 // evaluator cost (shared constraintGraphView kernel, count-pattern shape).
 func BenchmarkConstraintContractEvaluation_EngineView(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	defer engine.Close()
-	if _, err := engine.CreateNode(&Node{ID: "test:alice", Labels: []string{"Person"}, Properties: map[string]any{}}); err != nil {
+	if _, err := engine.CreateNode(b.Context(), &Node{ID: "test:alice", Labels: []string{"Person"}, Properties: map[string]any{}}); err != nil {
 		b.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := engine.CreateNode(&Node{ID: NodeID("test:item-" + string(rune('1'+i))), Labels: []string{"Item"}, Properties: map[string]any{}}); err != nil {
+		if _, err := engine.CreateNode(b.Context(), &Node{ID: NodeID("test:item-" + string(rune('1'+i))), Labels: []string{"Item"}, Properties: map[string]any{}}); err != nil {
 			b.Fatal(err)
 		}
-		if err := engine.CreateEdge(&Edge{ID: EdgeID("test:o-" + string(rune('1'+i))), StartNode: "test:alice", EndNode: NodeID("test:item-" + string(rune('1'+i))), Type: "OWNS"}); err != nil {
+		if err := engine.CreateEdge(b.Context(), &Edge{ID: EdgeID("test:o-" + string(rune('1'+i))), StartNode: "test:alice", EndNode: NodeID("test:item-" + string(rune('1'+i))), Type: "OWNS"}); err != nil {
 			b.Fatal(err)
 		}
 	}
-	alice, err := engine.GetNode("test:alice")
+	alice, err := engine.GetNode(b.Context(), "test:alice")
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ok, err := evaluateNodeConstraintContractExpressionEngine(engine, alice, "COUNT { (n)-[:OWNS]->(:Item) } <= 5")
+		ok, err := evaluateNodeConstraintContractExpressionEngine(context.Background(), engine, alice, "COUNT { (n)-[:OWNS]->(:Item) } <= 5")
 		if err != nil || !ok {
 			b.Fatalf("eval failed: %v ok=%v", err, ok)
 		}

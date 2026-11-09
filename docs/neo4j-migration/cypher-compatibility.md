@@ -148,9 +148,25 @@ SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and v
 
 `CALL { … }` subqueries accept three unambiguous forms that Neo4j 5.26 rejects, as intentional extensions (#907):
 
-- An unscoped body may read an outer variable without an importing `WITH`: `MATCH (p) CALL { MATCH (p)-->(f) RETURN count(f) AS c } RETURN p, c`. Neo4j reports `Variable p not defined`.
+- An unscoped body may read an outer variable without an importing `WITH`: `MATCH (p) CALL { RETURN p.name AS name } RETURN p, name`. Neo4j reports `Variable p not defined`.
 - A body may return an outer variable as itself when it never declares that name again: `MATCH (seed) CALL (seed) { MATCH (seed)--(c) RETURN seed, collect(c) AS cs } RETURN seed, cs`. The column is the outer value. Returning any other value under an outer name is rejected, as in Neo4j (`Variable a already declared in outer scope`).
 - A scoped body (`CALL (a)`, `CALL (*)`) may declare an imported name again, as a top-level `WITH 1 AS a WITH 2 AS a` does: `CALL (a) { WITH a * 10 AS a … }`. The new value holds inside the body only; the enclosing query keeps its own. Neo4j reports that the variable is shadowing an imported variable.
+
+A scoped import remains readable after a `WITH`, but an unread import is not
+an exported wildcard column. For example,
+`WITH 1 AS a CALL (a) { WITH 5 AS v RETURN * UNION RETURN 6 AS v } RETURN a, v`
+returns `[1,5]` and `[1,6]`. An expression read can add an imported name to the
+current query part; a following `WITH` replaces that part's wildcard members.
+Thus `UNWIND [a] AS z RETURN *` exports both `a` and `z`, while
+`UNWIND [a] AS z WITH z RETURN *` exports only `z`. UNION still requires matching
+exported columns. Reads in a WITH's WHERE or ORDER BY tail do not add output
+columns. These membership rules also determine headers on empty results.
+
+Expression subqueries (`COUNT`, `EXISTS`, `COLLECT`) capture outer bindings as
+readable constants. Captures are not implicit `*` columns: a local projection
+such as `RETURN a AS value` explicitly names the result. An unchanged capture
+passed through `WITH a` remains a capture; a fresh alias becomes a local result.
+A same-spelled local in another subquery does not create an outer dependency.
 
 ### Aggregation Functions
 
@@ -176,6 +192,20 @@ SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and v
   `x IS [NOT] TYPED TYPE` (all types and synonyms, `NOT NULL`, `LIST<T>`,
   unions, `ANY`, `NOTHING`, `NULL`, `PROPERTY VALUE`)
 -  Date/time functions: date, datetime, timestamp
+
+### Element-ID database identity in v1.4.4
+
+Database qualifiers in textual element IDs are part of the identity. An ID
+returned by database `archive` cannot select an entity in database `nornic`,
+even if both entities have the same local ID. This applies to MATCH equality
+and IN predicates, relationship-ID lookups, and graph-function inputs.
+Composite queries retain the constituent database in their element IDs.
+
+Earlier versions accepted arbitrary database prefixes on plain databases;
+that extension is retired. Clients must retain the complete ID returned by
+`elementId()` and use it in the database that produced it. Existing unqualified
+local-ID inputs remain a NornicDB extension. No stored key or payload migration
+is required.
 
 ### Bolt Handshake Compatibility for `cypher-shell`
 
@@ -413,20 +443,31 @@ RETURN nodes(p), relationships(p), length(p)
 ### 13. **Transaction Atomicity**
 
 ```go
-// Transaction support with full rollback
-tx := engine.BeginTransaction()
+// Uses the standard-library maps package and pkg/storage.
+func renameNode(engine *storage.BadgerEngine, nodeID storage.NodeID, name string) error {
+    tx, err := engine.BeginTransaction()
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback() // Discard staged changes if any operation fails.
 
-// All operations are buffered
-tx.CreateNode(&storage.Node{...})
-tx.CreateEdge(&storage.Edge{...})
-tx.UpdateNode(nodeID, &storage.Node{...})
-tx.DeleteNode(nodeID)
-
-// Atomic commit - all or nothing
-err := tx.Commit()
-
-// Or rollback to discard all changes
-tx.Rollback()
+    before, err := tx.GetNode(nodeID)
+    if err != nil {
+        return err
+    }
+    after := *before
+    after.Properties = maps.Clone(before.Properties)
+    if after.Properties == nil {
+        after.Properties = make(map[string]interface{})
+    }
+    after.Properties["name"] = name
+    if err := tx.UpdateGraphNode(storage.NodeUpdateRequest{
+        Before: before, After: &after, Policy: storage.ClientNodeEdits,
+    }); err != nil {
+        return err
+    }
+    return tx.Commit() // All staged operations commit together.
+}
 ```
 
 **Features Implemented**:
@@ -434,8 +475,8 @@ tx.Rollback()
 -  `BeginTransaction()` - Start new transaction
 -  `Commit()` - Atomically apply all buffered operations
 -  `Rollback()` - Discard all buffered operations
--  `CreateNode/UpdateNode/DeleteNode` - Node operations in transaction
--  `CreateEdge/DeleteEdge` - Edge operations in transaction
+-  `CreateNode/UpdateGraphNode/DeleteGraphNode` - Node operations in transaction
+-  `CreateEdge/UpdateEdge/DeleteEdge` - Edge operations in transaction
 -  `GetNode()` - Read-your-writes consistency
 -  `IsActive()` - Check transaction status
 -  Isolation - Uncommitted changes not visible to other operations

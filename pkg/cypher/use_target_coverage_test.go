@@ -25,8 +25,9 @@ func (m *accessTestManager) GetCompositeConstituents(name string) ([]interface{}
 		return nil, m.constituentsErr
 	}
 	return []interface{}{
-		multidb.ConstituentRef{Alias: "a", DatabaseName: "dba", Type: "local"},
-		map[string]interface{}{"alias": "B", "database_name": "dbb", "type": "local"},
+		multidb.ConstituentRef{Alias: "a", DatabaseName: "dba", Type: "local", AccessMode: "read_write"},
+		map[string]interface{}{"alias": "B", "database_name": "dbb", "type": "local", "access_mode": "read_write"},
+		multidb.ConstituentRef{Alias: "readonly", DatabaseName: "dba", Type: "local", AccessMode: "read"},
 		"not a constituent",
 	}, nil
 }
@@ -91,7 +92,7 @@ func TestAuthorizeSelectedDatabase(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
 	exec.SetDatabaseManager(&accessTestManager{})
 
-	// Without a resolver in the context nothing is checked.
+	// Without a resolver, no principal grant is checked; catalog policy still applies.
 	require.NoError(t, exec.authorizeSelectedDatabase(context.Background(), "cmp.a", "RETURN 1"))
 
 	asked, resolver := recording()
@@ -330,16 +331,16 @@ func TestGraphAccess(t *testing.T) {
 			return false
 		}
 	}
-	data, allowed := GraphAccess(manager, "cmp.a", allow("cmp", "dba"))
+	data, _, allowed := GraphAccessTarget(manager, "cmp.a", allow("cmp", "dba"))
 	require.True(t, allowed)
 	require.Equal(t, "dba", data)
-	data, allowed = GraphAccess(manager, "cmp.a", allow("dba"))
+	data, _, allowed = GraphAccessTarget(manager, "cmp.a", allow("dba"))
 	require.False(t, allowed, "the composite isn't allowed")
 	require.Equal(t, "dba", data)
-	data, allowed = GraphAccess(manager, "al", nil)
+	data, _, allowed = GraphAccessTarget(manager, "al", nil)
 	require.True(t, allowed)
 	require.Equal(t, "target", data)
-	data, allowed = GraphAccess(&accessTestManager{constituentsErr: errors.New("unavailable")}, "cmp.a", nil)
+	data, _, allowed = GraphAccessTarget(&accessTestManager{constituentsErr: errors.New("unavailable")}, "cmp.a", nil)
 	require.False(t, allowed, "an unreadable composite refuses access")
 	require.Equal(t, "cmp.a", data)
 }
@@ -372,18 +373,36 @@ func TestCypherTypeSystemNameWithArticle(t *testing.T) {
 // resolve leaves the call unresolved; a well-formed call returns the value.
 func TestRowGraphFunctionArguments(t *testing.T) {
 	exec := newCompositeFixture(t)
-	value, resolved, err := exec.evaluateRowGraphFunction("graph.propertiesByName", "1 / 0", map[string]interface{}{})
+	value, _, resolved, err := exec.evaluateRowGraphFunction(t.Context(), "graph.propertiesByName", "1 / 0", map[string]interface{}{})
 	require.Error(t, err)
 	require.False(t, resolved)
 	require.Nil(t, value)
-	value, resolved, err = exec.evaluateRowGraphFunction("graph.propertiesByName", "missing", map[string]interface{}{})
+	value, _, resolved, err = exec.evaluateRowGraphFunction(t.Context(), "graph.propertiesByName", "missing", map[string]interface{}{})
 	require.NoError(t, err)
 	require.False(t, resolved)
 	require.Nil(t, value)
 	graphs, composite := exec.CompositeGraphs()
 	require.True(t, composite)
-	value, resolved, err = exec.evaluateRowGraphFunction("graph.propertiesByName", "g", map[string]interface{}{"g": graphs[0]})
+	value, _, resolved, err = exec.evaluateRowGraphFunction(t.Context(), "graph.propertiesByName", "g", map[string]interface{}{"g": graphs[0]})
 	require.NoError(t, err)
 	require.True(t, resolved)
 	require.Equal(t, map[string]interface{}{}, value)
+}
+
+func TestReadOnlyConstituentPolicyIndependentOfGrants(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
+	exec.SetDatabaseManager(&accessTestManager{})
+	for _, ctx := range []context.Context{
+		context.Background(),
+		WithDatabasePermissionResolver(context.Background(), "cmp.readonly", func(string, string) bool { return true }),
+	} {
+		require.NoError(t, exec.authorizeSelectedDatabase(ctx, "cmp.readonly", "MATCH (n) RETURN n"))
+		for _, query := range []string{"CREATE (:Denied)", "MATCH (n) SET n.x = 1", "CREATE INDEX denied FOR (n:D) ON (n.x)"} {
+			err := exec.authorizeSelectedDatabase(ctx, "cmp.readonly", query)
+			var denied *PermissionDeniedError
+			require.ErrorAs(t, err, &denied, query)
+			require.Equal(t, permissionReadOnlyConstituent, denied.Permission)
+			requireStatusCode(t, err, "Neo.ClientError.Security.Forbidden")
+		}
+	}
 }

@@ -1,6 +1,9 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -9,24 +12,41 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) knowledgePolicySchema() (*storage.SchemaManager, error) {
+// knowledgePolicyContext owns source and transactional schema selection for
+// policy procedures and scalar readers alike.
+func (e *StorageExecutor) knowledgePolicyContext(database string) (storage.Engine, *storage.SchemaManager, error) {
+	engine := e.storage
+	if source, ok := engine.(interface {
+		ConstituentStorage(string) (storage.Engine, error)
+	}); ok && database != "" {
+		var err error
+		engine, err = source.ConstituentStorage(database)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	var transaction *storage.BadgerTransaction
-	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+	if wrapper, ok := engine.(*transactionStorageWrapper); ok {
 		transaction = wrapper.tx
-	} else if e.txContext != nil && e.txContext.active {
+	} else if database == "" && e.txContext != nil && e.txContext.active {
 		transaction, _ = e.txContext.tx.(*storage.BadgerTransaction)
 	}
 	if transaction == nil {
-		return e.storage.GetSchema(), nil
+		return engine, engine.GetSchema(), nil
 	}
-	if err := transaction.SetNamespace(e.currentDatabaseName()); err != nil {
-		return nil, err
+	namespace := database
+	if namespace == "" {
+		namespace = e.databaseName()
 	}
-	return transaction.KnowledgePolicySchema()
+	if err := transaction.SetNamespace(namespace); err != nil {
+		return nil, nil, err
+	}
+	schema, err := transaction.Schema(storage.KnowledgePolicyChanges)
+	return engine, schema, err
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult, error) {
-	schema, err := e.knowledgePolicySchema()
+	_, schema, err := e.knowledgePolicyContext("")
 	if err != nil {
 		return nil, err
 	}
@@ -88,13 +108,13 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult,
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"kind", "Name", "HalfLifeSeconds", "VisibilityThreshold", "ScoreFloor", "Function", "Scope", "DecayEnabled", "ScoreFrom", "ScoreFromProperty", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "ProfileRef", "NoDecay", "Order", "Apply"},
+		Columns: columnNames(kpProfilesColumns),
 		Rows:    rows,
 	}, nil
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies() (*ExecuteResult, error) {
-	schema, err := e.knowledgePolicySchema()
+	_, schema, err := e.knowledgePolicyContext("")
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +159,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies() (*ExecuteResult,
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"kind", "Name", "Scope", "Multiplier", "ScoreFloor", "ScoreCap", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "Apply"},
+		Columns: columnNames(kpPoliciesColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -234,15 +254,15 @@ func parseKnowledgePolicyEntityID(entityID string) (string, knowledgePolicyEntit
 	}
 	switch parts[0] {
 	case "4":
-		return parts[2], knowledgePolicyEntityNode
+		return entityID, knowledgePolicyEntityNode
 	case "5":
-		return parts[2], knowledgePolicyEntityEdge
+		return entityID, knowledgePolicyEntityEdge
 	default:
 		return entityID, knowledgePolicyEntityAny
 	}
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	entityID, err := optionalStringArg(args, 0)
 	if err != nil {
 		return nil, err
@@ -279,14 +299,25 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 	var resolution knowledgepolicy.ScoringResolution
 	if entityID != "" {
 		lookupID, entityKind := parseKnowledgePolicyEntityID(entityID)
-		if node, nodeErr := e.storage.GetNode(storage.NodeID(lookupID)); entityKind != knowledgePolicyEntityEdge && nodeErr == nil && node != nil {
+		if entityKind != knowledgePolicyEntityAny {
+			kind := "4"
+			if entityKind == knowledgePolicyEntityEdge {
+				kind = "5"
+			}
+			var found, applicable bool
+			lookupID, found, applicable = e.entitySeekLookup(lookupID, kind, "elementId")
+			if !found || !applicable {
+				return nil, localizedError(localization.CypherKnowledgePolicyEntityNotFound(entityID), nil)
+			}
+		}
+		if node, nodeErr := e.storage.GetNode(ctx, storage.NodeID(lookupID)); entityKind != knowledgePolicyEntityEdge && nodeErr == nil && node != nil {
 			createdNanos := node.CreatedAt.UnixNano()
 			versionNanos := createdNanos
 			if !node.UpdatedAt.IsZero() {
 				versionNanos = node.UpdatedAt.UnixNano()
 			}
 			resolution = scorer.ScoreNode(entityID, node.Labels, loadAccessMeta(e.storage, lookupID), createdNanos, versionNanos, nowNanos)
-		} else if edge, edgeErr := e.storage.GetEdge(storage.EdgeID(lookupID)); entityKind != knowledgePolicyEntityNode && edgeErr == nil && edge != nil {
+		} else if edge, edgeErr := e.storage.GetEdge(ctx, storage.EdgeID(lookupID)); entityKind != knowledgePolicyEntityNode && edgeErr == nil && edge != nil {
 			createdNanos := edge.CreatedAt.UnixNano()
 			versionNanos := createdNanos
 			if !edge.UpdatedAt.IsZero() {
@@ -304,7 +335,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"TargetID", "TargetScope", "ResolvedDecayProfileID", "ResolvedScoreFrom", "ResolutionSourceChain", "AppliedDecayProfileNames", "AppliedPromotionPolicyName", "AppliedPromotionProfileName", "EffectiveRate", "EffectiveThreshold", "EffectiveMultiplier", "BaseScore", "FinalScore", "NoDecay", "SuppressionEligible", "Explanation"},
+		Columns: columnNames(kpResolveColumns),
 		Rows: [][]interface{}{{
 			resolution.TargetID,
 			string(resolution.TargetScope),
@@ -327,7 +358,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyDeindexStatus() (*ExecuteResult, error) {
-	columns := []string{"pending_count", "supported", "message", "workItemId", "targetId", "targetScope", "enqueuedAt", "status"}
+	columns := columnNames(kpDeindexStatusColumns)
 	be := unwrapBadgerEngine(e.storage)
 	if be == nil {
 		return &ExecuteResult{
@@ -391,9 +422,9 @@ func loadAccessMeta(eng storage.Engine, entityID string) *knowledgepolicy.Access
 	if be == nil {
 		return nil
 	}
-	meta, err := be.GetAccessMeta(storage.QualifiedEntityID(eng, entityID))
+	result, err := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: storage.QualifiedEntityID(eng, entityID)})
 	if err != nil {
 		return nil
 	}
-	return meta
+	return result.Entry
 }

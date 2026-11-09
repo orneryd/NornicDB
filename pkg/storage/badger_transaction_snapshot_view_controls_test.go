@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -40,9 +41,8 @@ func TestTransactionLegacySnapshotViewDelegatesAndPreservesCallbackError(t *test
 func TestTransactionSnapshotHeadMissingPhysicalBindingPreservesLogicalConflict(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	_, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-	key := engine.mvccEdgeHeadKeyStringLookup(edgeID)
-	require.NotEmpty(t, key)
-	pinned, err := engine.BeginTransaction()
+	require.NotEmpty(t, engine.mvccEdgeHeadKeyStringLookup(edgeID))
+	pinned, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pinned.Rollback() })
 	readVersion := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 10}
@@ -51,18 +51,19 @@ func TestTransactionSnapshotHeadMissingPhysicalBindingPreservesLogicalConflict(t
 	for _, tc := range []struct {
 		name string
 		tx   *BadgerTransaction
-		key  []byte
+		id   string
 	}{
-		{"legacy_reader", legacy, key},
-		{"nil_key", pinned, nil},
+		{"legacy_reader", legacy, string(edgeID)},
+		// An ID with no dictionary binding has no head key to read.
+		{"unbound_id", pinned, "test:never-bound-edge"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			conflict, err := tc.tx.snapshotHeadConflict(tc.key, readVersion)
+			conflict, err := tc.tx.snapshotHeadConflict(bufferedEdgeEntity, tc.id, readVersion)
 			require.NoError(t, err)
 			require.False(t, conflict, "missing physical binding must not fabricate a conflict")
 			newer := readVersion
 			newer.CommitSequence++
-			conflict, err = tc.tx.snapshotHeadConflict(tc.key, newer)
+			conflict, err = tc.tx.snapshotHeadConflict(bufferedEdgeEntity, tc.id, newer)
 			require.NoError(t, err)
 			require.True(t, conflict, "logical conflict must be checked before physical fallback")
 		})
@@ -74,7 +75,7 @@ func TestTransactionSnapshotHeadAbsentMetadataDoesNotInventConflict(t *testing.T
 	// Allocate a valid dictionary-backed head key without publishing an edge.
 	// This is an absent metadata read, not a malformed/empty-key error probe.
 	var key []byte
-	require.NoError(t, engine.withUpdate(func(view *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(view *badger.Txn) error {
 		var err error
 		key, err = engine.mvccEdgeHeadKeyString(view, EdgeID("test:unpublished-edge"))
 		return err
@@ -85,10 +86,10 @@ func TestTransactionSnapshotHeadAbsentMetadataDoesNotInventConflict(t *testing.T
 		require.ErrorIs(t, err, badger.ErrKeyNotFound)
 		return nil
 	}))
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
-	conflict, err := reader.snapshotHeadConflict(key, MVCCVersion{})
+	conflict, err := reader.snapshotHeadConflict(bufferedEdgeEntity, "test:unpublished-edge", MVCCVersion{})
 	require.NoError(t, err)
 	require.False(t, conflict, "an absent valid head is not evidence of a peer publication")
 }
@@ -111,7 +112,7 @@ func TestTransactionSnapshotHeadInViewShortCircuitsAndPropagatesReadErrors(t *te
 	require.NoError(t, err)
 	require.True(t, conflict, "logical conflicts must short-circuit before accessing the view")
 
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	discarded := engine.db.testTxn(false)

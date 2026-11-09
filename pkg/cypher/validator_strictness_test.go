@@ -9,7 +9,6 @@ import (
 	"context"
 	"testing"
 
-	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -19,63 +18,72 @@ func strictnessExec(t *testing.T, name string) *StorageExecutor {
 	return NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "strict_"+name))
 }
 
-func requireSyntaxErrorStatus(t *testing.T, err error, query string) {
-	t.Helper()
-	require.Error(t, err, query)
-	code, _ := nornicerrors.Neo4jStatus(err)
-	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
-}
-
-func TestNotInOperatorRejected(t *testing.T) {
-	exec := strictnessExec(t, "notin")
+// TestNotInAndListLiteralMalformationsRejected owns the reject/accept lifecycle
+// for the NOT IN operator form and for list-literal comma placement. Each entry
+// keeps its own namespace and seeded node property, then runs every malformed
+// query through the shared syntax-error assertion and every control query as a
+// plain success.
+func TestNotInAndListLiteralMalformationsRejected(t *testing.T) {
 	ctx := context.Background()
-	_, err := exec.Execute(ctx, "CREATE (:T {id: 1})", nil)
-	require.NoError(t, err)
-	for _, query := range []string{
-		"MATCH (n:T) WHERE n.id NOT IN [1] RETURN count(n) AS c",
-		"MATCH (n:T) WHERE NOT  IN [1] RETURN count(n) AS c",
-		"RETURN 1 NOT IN [1] AS x",
-	} {
-		_, err := exec.Execute(ctx, query, nil)
-		requireSyntaxErrorStatus(t, err, query)
+	tests := []struct {
+		name      string
+		namespace string
+		seed      string
+		rejected  []string
+		accepted  []string
+	}{
+		{
+			name:      "not in operator",
+			namespace: "notin",
+			seed:      "CREATE (:T {id: 1})",
+			rejected: []string{
+				"MATCH (n:T) WHERE n.id NOT IN [1] RETURN count(n) AS c",
+				"MATCH (n:T) WHERE NOT  IN [1] RETURN count(n) AS c",
+				"RETURN 1 NOT IN [1] AS x",
+			},
+			// The valid negation keeps working, and quoted/comment text never matches.
+			accepted: []string{
+				"MATCH (n:T) WHERE NOT n.id IN [1] RETURN count(n) AS c",
+				"MATCH (n:T) WHERE NOT (n.id IN [1]) RETURN count(n) AS c",
+				"RETURN 'NOT IN' AS s",
+				"RETURN 1 AS x // NOT IN here is a comment",
+				"RETURN 'a' + 'b' AS s",
+			},
+		},
+		{
+			name:      "list literal comma placement",
+			namespace: "listcomma",
+			seed:      "CREATE (:T {v: 1})",
+			rejected: []string{
+				"RETURN [1, 2,] AS l",
+				"UNWIND [1, 2,] AS x RETURN x",
+				"MATCH (n:T) WHERE n.v IN [1, 2,] RETURN count(n) AS c",
+				"RETURN [, 1] AS l",
+				"RETURN [[1],] AS l",
+			},
+			accepted: []string{
+				"RETURN [1, 2] AS l",
+				"RETURN [[1], [2]] AS l",
+				"RETURN {a: 1, b: 2} AS m",
+				"RETURN '[,]' AS s",
+				"MATCH (n:T) WHERE n.v IN [1, 2] RETURN count(n) AS c",
+			},
+		},
 	}
-	// The valid negation keeps working, and quoted/comment text never matches.
-	for _, query := range []string{
-		"MATCH (n:T) WHERE NOT n.id IN [1] RETURN count(n) AS c",
-		"MATCH (n:T) WHERE NOT (n.id IN [1]) RETURN count(n) AS c",
-		"RETURN 'NOT IN' AS s",
-		"RETURN 1 AS x // NOT IN here is a comment",
-		"RETURN 'a' + 'b' AS s",
-	} {
-		_, err := exec.Execute(ctx, query, nil)
-		require.NoError(t, err, query)
-	}
-}
-
-func TestListLiteralTrailingCommaRejected(t *testing.T) {
-	exec := strictnessExec(t, "listcomma")
-	ctx := context.Background()
-	_, err := exec.Execute(ctx, "CREATE (:T {v: 1})", nil)
-	require.NoError(t, err)
-	for _, query := range []string{
-		"RETURN [1, 2,] AS l",
-		"UNWIND [1, 2,] AS x RETURN x",
-		"MATCH (n:T) WHERE n.v IN [1, 2,] RETURN count(n) AS c",
-		"RETURN [, 1] AS l",
-		"RETURN [[1],] AS l",
-	} {
-		_, err := exec.Execute(ctx, query, nil)
-		requireSyntaxErrorStatus(t, err, query)
-	}
-	for _, query := range []string{
-		"RETURN [1, 2] AS l",
-		"RETURN [[1], [2]] AS l",
-		"RETURN {a: 1, b: 2} AS m",
-		"RETURN '[,]' AS s",
-		"MATCH (n:T) WHERE n.v IN [1, 2] RETURN count(n) AS c",
-	} {
-		_, err := exec.Execute(ctx, query, nil)
-		require.NoError(t, err, query)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exec := strictnessExec(t, tt.namespace)
+			_, err := exec.Execute(ctx, tt.seed, nil)
+			require.NoError(t, err, tt.seed)
+			for _, query := range tt.rejected {
+				_, err := exec.Execute(ctx, query, nil)
+				requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
+			}
+			for _, query := range tt.accepted {
+				_, err := exec.Execute(ctx, query, nil)
+				require.NoError(t, err, query)
+			}
+		})
 	}
 }
 
@@ -88,7 +96,7 @@ func TestAdjacentStringLiteralsRejected(t *testing.T) {
 		`RETURN 'a''b''c' AS s`,
 	} {
 		_, err := exec.Execute(ctx, query, nil)
-		requireSyntaxErrorStatus(t, err, query)
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
 	}
 	// Backslash is the Cypher string escape; an empty literal stays valid.
 	for _, query := range []string{
@@ -111,7 +119,7 @@ func TestDanglingUnwindRejected(t *testing.T) {
 		"MATCH (n) UNWIND [1] AS x",
 	} {
 		_, err := exec.Execute(ctx, query, nil)
-		requireSyntaxErrorStatus(t, err, query)
+		requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", query)
 	}
 	for _, query := range []string{
 		"UNWIND [1] AS x RETURN x",

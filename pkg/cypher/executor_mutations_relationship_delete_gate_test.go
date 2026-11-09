@@ -1,172 +1,155 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
-// These tests lock the bound-relationship-delete eligibility gate: the pure
-// predicates that decide whether a DELETE query is routed through the fast
-// path. They cover the rejection branches (blocked clauses, malformed
-// WITH ... LIMIT, unknown relationship types) that the query-level tests do
-// not exercise directly.
-
-func TestIsSimpleBoundRelationshipDeleteMatchSegment(t *testing.T) {
+// These cases exercise supported public routing, not the eligibility booleans
+// of the retired private DELETE implementation.
+func TestPublicRelationshipDeleteShapes(t *testing.T) {
 	cases := []struct {
-		name    string
-		segment string
-		want    bool
+		name, query string
+		deleted     int
+		bad         bool
 	}{
-		{"empty", "   ", false},
-		{"plain", "MATCH (a) MATCH (a)-[r]->(b)", true},
-		{"with", "MATCH (a)-[r]->(b) WITH r", false},
-		{"limit", "MATCH (a)-[r]->(b) LIMIT 1", false},
-		{"skip", "MATCH (a)-[r]->(b) SKIP 1", false},
-		{"order by", "MATCH (a)-[r]->(b) ORDER BY r", false},
-		{"call", "CALL db.foo() MATCH (a)-[r]->(b)", false},
-		{"unwind", "UNWIND [1] AS x MATCH (a)-[r]->(b)", false},
-		{"optional match", "MATCH (a) OPTIONAL MATCH (a)-[r]->(b)", false},
+		{"plain", `MATCH(a:N{id:'a'}) MATCH(a)-[r:R]->() DELETE r`, 1, false},
+		{"with", `MATCH(a:N{id:'a'})-[r:R]->() WITH r DELETE r`, 1, false},
+		{"non-simple limited base", `MATCH(a:N) WITH a MATCH(a)-[r:R]->() WITH r LIMIT 1 DELETE r`, 1, false},
+		{"missing target", `MATCH(a:N{id:'a'})-[r:R]->(target:N{id:'ghost'}) DELETE r`, 0, false},
+		{"multiple delete vars", `MATCH(a:N{id:'a'})-[r:R]->(b)-[other:R]->() DELETE r,other`, 2, false},
+		{"union property and limited rows", `MATCH(a:N{id:'a'}) MATCH(a)-[r:R|S]->() WHERE r.mark='yes' WITH r LIMIT 1 DELETE r`, 1, false},
+		{"unwind", `UNWIND [1] AS x MATCH(a:N{id:'a'})-[r:R]->() DELETE r`, 1, false},
+		{"optional", `MATCH(a:N{id:'a'}) OPTIONAL MATCH(a)-[r:Missing]->() DELETE r`, 0, false},
+		{"missing source", `MATCH(a:N{id:'missing'}) MATCH(a)-[r]->() DELETE r`, 0, false},
+		{"type excluded", `MATCH(a:N{id:'a'}) MATCH(a)-[r:Missing]->() DELETE r`, 0, false},
+		{"property excluded", `MATCH(a:N{id:'a'}) MATCH(a)-[r:R{mark:'no'}]->() DELETE r`, 0, false},
+		{"target label excluded", `MATCH(a:N{id:'a'}) MATCH(a)-[r:R]->(:Missing) DELETE r`, 0, false},
+		{"where excluded", `MATCH(a:N{id:'a'}) MATCH(a)-[r:R]->() WHERE r.mark='no' DELETE r`, 0, false},
+		{"unnamed source clause", `MATCH() MATCH(a:N{id:'a'})-[r:R]->() DELETE r`, 1, false},
+		{"chained", `MATCH(a:N{id:'a'}) MATCH(a)-[r:R]->(b)-[other:R]->() DELETE r`, 1, false},
+		{"independent start binding", `MATCH(source:N{id:'c'}) MATCH(other:N{id:'a'})-[r:R]->() DELETE r`, 1, false},
+		{"variable length", `MATCH(a:N{id:'a'}) MATCH(a)-[r:R*1..2]->() DELETE r`, 2, false},
+		{"empty", `DELETE`, 0, true},
+		{"undefined delete variable", `MATCH(a)-[other:R]->(b) DELETE r`, 0, true},
+		{"unknown procedure", `CALL db.no_such_delete_fixture() MATCH(a)-[r]->() DELETE r`, 0, true},
+		{"direct match limit", `MATCH(a)-[r]->() LIMIT 1 DELETE r`, 1, false},
+		{"direct match skip", `MATCH(a)-[r]->() SKIP 1 DELETE r`, 3, false},
+		{"direct match order", `MATCH(a)-[r]->() ORDER BY r DELETE r`, 4, false},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isSimpleBoundRelationshipDeleteMatchSegment(tc.segment); got != tc.want {
-				t.Fatalf("isSimpleBoundRelationshipDeleteMatchSegment(%q) = %v, want %v", tc.segment, got, tc.want)
+	for _, parser := range []struct {
+		name  string
+		setup func() func()
+	}{{"nornic", config.WithNornicParser}, {"antlr", config.WithANTLRParser}} {
+		t.Run(parser.name, func(t *testing.T) {
+			t.Cleanup(parser.setup())
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					exec := seedPublicDeleteGraph(t)
+					r, err := exec.Execute(t.Context(), tc.query, nil)
+					if tc.bad {
+						require.Error(t, err)
+					} else {
+						require.NoError(t, err)
+						require.Equal(t, tc.deleted, r.Stats.RelationshipsDeleted)
+					}
+					requirePublicDeleteEdges(t, exec, 4-tc.deleted)
+				})
 			}
 		})
 	}
 }
 
-func TestParseBoundRelationshipDeleteWithLimitSegment(t *testing.T) {
-	const deleteVar = "r"
-	base := "MATCH (a) MATCH (a)-[r]->(b)"
+func seedPublicDeleteGraph(t testing.TB) *StorageExecutor {
+	t.Helper()
+	exec, _ := newTestExecutor(t, "delete_public")
+	_, err := exec.Execute(context.Background(), `CREATE(a:N{id:'a'}),(b:N{id:'b'}),(c:N{id:'c'}),(a)-[:R{mark:'yes'}]->(b),(a)-[:S{mark:'yes'}]->(c),(a)-[:T]->(a),(b)-[:R]->(c)`, nil)
+	require.NoError(t, err)
+	return exec
+}
+func requirePublicDeleteEdges(t testing.TB, exec *StorageExecutor, want int) {
+	t.Helper()
+	r, err := exec.Execute(context.Background(), `MATCH()-[r]->() RETURN count(r) AS edges`, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, want, r.Rows[0][0])
+}
 
-	t.Run("valid", func(t *testing.T) {
-		gotBase, gotLimit, ok := parseBoundRelationshipDeleteWithLimitSegment(base+" WITH r LIMIT 5", deleteVar)
-		if !ok {
-			t.Fatal("expected ok for WITH r LIMIT 5")
-		}
-		if gotLimit != 5 {
-			t.Fatalf("limit = %d, want 5", gotLimit)
-		}
-		if gotBase != base {
-			t.Fatalf("base = %q, want %q", gotBase, base)
-		}
-	})
-
-	rejections := []struct {
-		name    string
-		segment string
+func TestPublicRelationshipDeleteLimits(t *testing.T) {
+	base := `MATCH(a:N{id:'a'}) MATCH(a)-[r]->()`
+	cases := []struct {
+		name, suffix string
+		deleted      int
+		bad          bool
 	}{
-		{"blocked order by", base + " WITH r ORDER BY r LIMIT 1"},
-		{"blocked skip", base + " WITH r SKIP 1 LIMIT 1"},
-		{"blocked call", base + " CALL db.x() WITH r LIMIT 1"},
-		{"blocked unwind", base + " UNWIND [1] AS x WITH r LIMIT 1"},
-		{"blocked optional match", base + " OPTIONAL MATCH (a)-[r2]->(c) WITH r LIMIT 1"},
-		{"no with", base + " LIMIT 1"},
-		{"non-simple base", "MATCH (a) WITH a MATCH (a)-[r]->(b) WITH r LIMIT 1"},
-		{"no limit", base + " WITH r"},
-		{"wrong var", base + " WITH x LIMIT 1"},
-		{"non-numeric limit", base + " WITH r LIMIT abc"},
-		{"zero limit", base + " WITH r LIMIT 0"},
-		{"negative limit", base + " WITH r LIMIT -1"},
-		{"multi-field limit", base + " WITH r LIMIT 1 2"},
+		{"valid5", " WITH r LIMIT 5", 3, false}, {"limit1", " WITH r LIMIT 1", 1, false},
+		{"order", " WITH r ORDER BY id(r) LIMIT 1", 1, false}, {"skip", " WITH r SKIP 1 LIMIT 1", 1, false},
+		{"unwind", " UNWIND [1] AS x WITH r LIMIT 1", 1, false},
+		{"optional", " OPTIONAL MATCH(a)-[other:Missing]->() WITH r LIMIT 1", 1, false},
+		{"no limit", " WITH r", 3, false},
+		{"skip without limit", " WITH r SKIP 1", 2, false}, {"zero", " WITH r LIMIT 0", 0, false},
+		{"wrong var", " WITH x LIMIT 1", 0, true}, {"nonnumeric", " WITH r LIMIT abc", 0, true},
+		{"negative", " WITH r LIMIT -1", 0, true}, {"trailing tokens", " WITH r LIMIT 1 2", 0, true},
+		{"call", " CALL db.no_such_delete_fixture() WITH r LIMIT 1", 0, true},
 	}
-	for _, tc := range rejections {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, _, ok := parseBoundRelationshipDeleteWithLimitSegment(tc.segment, deleteVar); ok {
-				t.Fatalf("expected rejection for %q", tc.segment)
+	for _, p := range []struct {
+		name  string
+		setup func() func()
+	}{{"nornic", config.WithNornicParser}, {"antlr", config.WithANTLRParser}} {
+		t.Run(p.name, func(t *testing.T) {
+			t.Cleanup(p.setup())
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					e := seedPublicDeleteGraph(t)
+					r, err := e.Execute(t.Context(), base+tc.suffix+" DELETE r", nil)
+					if tc.bad {
+						require.Error(t, err)
+					} else {
+						require.NoError(t, err)
+						require.Equal(t, tc.deleted, r.Stats.RelationshipsDeleted)
+					}
+					requirePublicDeleteEdges(t, e, 4-tc.deleted)
+				})
 			}
 		})
 	}
 }
 
-func TestBoundRelationshipDeleteTargetNode(t *testing.T) {
-	store := newTestMemoryEngine(t)
-	exec := NewStorageExecutor(store)
-
-	src := storage.NodeID("test:s")
-	dst := storage.NodeID("test:t")
-	_, err := store.CreateNode(&storage.Node{ID: src, Labels: []string{"N"}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: dst, Labels: []string{"N"}})
-	require.NoError(t, err)
-	edge := &storage.Edge{ID: "test:e", StartNode: src, EndNode: dst, Type: "LINKS"}
-
-	t.Run("outgoing resolves end node", func(t *testing.T) {
-		target, ok, err := exec.boundRelationshipDeleteTargetNode(store, src, edge, "outgoing")
-		require.NoError(t, err)
-		require.True(t, ok)
-		require.Equal(t, dst, target.ID)
-	})
-	t.Run("outgoing rejects when source is not the start", func(t *testing.T) {
-		_, ok, err := exec.boundRelationshipDeleteTargetNode(store, dst, edge, "outgoing")
-		require.NoError(t, err)
-		require.False(t, ok)
-	})
-	t.Run("incoming resolves start node", func(t *testing.T) {
-		target, ok, err := exec.boundRelationshipDeleteTargetNode(store, dst, edge, "incoming")
-		require.NoError(t, err)
-		require.True(t, ok)
-		require.Equal(t, src, target.ID)
-	})
-	t.Run("incoming rejects when source is not the end", func(t *testing.T) {
-		_, ok, err := exec.boundRelationshipDeleteTargetNode(store, src, edge, "incoming")
-		require.NoError(t, err)
-		require.False(t, ok)
-	})
-	t.Run("both resolves from either endpoint", func(t *testing.T) {
-		fromStart, ok, err := exec.boundRelationshipDeleteTargetNode(store, src, edge, "both")
-		require.NoError(t, err)
-		require.True(t, ok)
-		require.Equal(t, dst, fromStart.ID)
-
-		fromEnd, ok, err := exec.boundRelationshipDeleteTargetNode(store, dst, edge, "both")
-		require.NoError(t, err)
-		require.True(t, ok)
-		require.Equal(t, src, fromEnd.ID)
-	})
-	t.Run("both rejects unrelated source", func(t *testing.T) {
-		_, ok, err := exec.boundRelationshipDeleteTargetNode(store, storage.NodeID("test:other"), edge, "both")
-		require.NoError(t, err)
-		require.False(t, ok)
-	})
-	t.Run("unknown direction rejects", func(t *testing.T) {
-		_, ok, err := exec.boundRelationshipDeleteTargetNode(store, src, edge, "sideways")
-		require.NoError(t, err)
-		require.False(t, ok)
-	})
-	t.Run("missing target node skips candidate", func(t *testing.T) {
-		danglingEdge := &storage.Edge{ID: "test:e2", StartNode: src, EndNode: storage.NodeID("test:ghost"), Type: "LINKS"}
-		// A missing target resolves to "no match"; whether the engine reports
-		// that as ErrNotFound or a nil node, the fast path must not select it.
-		_, ok, _ := exec.boundRelationshipDeleteTargetNode(store, src, danglingEdge, "outgoing")
-		require.False(t, ok)
-	})
-}
-
-func TestRelationshipTypeAllowed(t *testing.T) {
-	multi := []string{"LINKS", "OWNS"}
-	multiSet := buildRelTypeSet(multi)
-
+func TestPublicRelationshipDeleteDirectionsAndTypes(t *testing.T) {
 	cases := []struct {
-		name       string
-		edgeType   string
-		allowed    []string
-		allowedSet map[string]struct{}
-		want       bool
+		name, pattern string
+		deleted       int
 	}{
-		{"no restriction", "ANY", nil, nil, true},
-		{"single match", "LINKS", []string{"LINKS"}, nil, true},
-		{"single mismatch", "OWNS", []string{"LINKS"}, nil, false},
-		{"multi match", "OWNS", multi, multiSet, true},
-		{"multi mismatch", "REFERS", multi, multiSet, false},
+		{"outgoing", `(a:N{id:'a'})-[r:R]->(b:N{id:'b'})`, 1},
+		{"outgoing wrong endpoint", `(b:N{id:'b'})-[r:R]->(a:N{id:'a'})`, 0},
+		{"incoming", `(b:N{id:'b'})<-[r:R]-(a:N{id:'a'})`, 1},
+		{"incoming wrong endpoint", `(a:N{id:'a'})<-[r:R]-(b:N{id:'b'})`, 0},
+		{"both start", `(a:N{id:'a'})-[r:R]-(b:N{id:'b'})`, 1},
+		{"both end", `(b:N{id:'b'})-[r:R]-(a:N{id:'a'})`, 1},
+		{"unrelated", `(c:N{id:'c'})-[r:R]-(a:N{id:'a'})`, 0},
+		{"self loop", `(a:N{id:'a'})-[r:T]-(a)`, 1},
+		{"no restriction", `(a:N{id:'a'})-[r]->()`, 3},
+		{"single mismatch", `(a:N{id:'a'})-[r:Missing]->()`, 0},
+		{"union match", `(a:N{id:'a'})-[r:R|S]->()`, 2},
+		{"union mismatch", `(a:N{id:'a'})-[r:Missing|Other]->()`, 0},
+		{"named end where", `(a:N{id:'a'})-[r:R]->(dest:N) WHERE dest.id='b' AND r.mark='yes'`, 1},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := relationshipTypeAllowed(tc.edgeType, tc.allowed, tc.allowedSet); got != tc.want {
-				t.Fatalf("relationshipTypeAllowed(%q, %v) = %v, want %v", tc.edgeType, tc.allowed, got, tc.want)
+	for _, p := range []struct {
+		name  string
+		setup func() func()
+	}{{"nornic", config.WithNornicParser}, {"antlr", config.WithANTLRParser}} {
+		t.Run(p.name, func(t *testing.T) {
+			t.Cleanup(p.setup())
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					e := seedPublicDeleteGraph(t)
+					r, err := e.Execute(t.Context(), "MATCH "+tc.pattern+" DELETE r", nil)
+					require.NoError(t, err)
+					require.Equal(t, tc.deleted, r.Stats.RelationshipsDeleted)
+					requirePublicDeleteEdges(t, e, 4-tc.deleted)
+				})
 			}
 		})
 	}

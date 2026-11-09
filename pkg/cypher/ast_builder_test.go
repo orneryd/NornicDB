@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -248,7 +250,7 @@ func TestASTBuilder_Build(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ast, err := builder.Build(tt.query)
+			ast, err := builder.Build(t.Context(), tt.query)
 			if err != nil {
 				t.Fatalf("Build() error = %v", err)
 			}
@@ -404,7 +406,7 @@ func TestASTBuilder_ParseExpression(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			expr := builder.parseExpression(tt.expr)
+			expr := builder.parseExpression(cyphertext.NormalizeSource(tt.expr))
 
 			if expr.Type != tt.wantType {
 				t.Errorf("Type = %v, want %v", expr.Type, tt.wantType)
@@ -421,7 +423,7 @@ func TestQueryInfo_GetAST(t *testing.T) {
 	analyzer := NewQueryAnalyzer(100)
 
 	t.Run("lazy AST building", func(t *testing.T) {
-		info := analyzer.Analyze("MATCH (n:Person) WHERE n.age > 21 RETURN n.name")
+		info := mustAnalyze(t, analyzer, t.Context(), "MATCH (n:Person) WHERE n.age > 21 RETURN n.name")
 
 		// AST should not be built yet
 		if info.HasAST() {
@@ -429,7 +431,8 @@ func TestQueryInfo_GetAST(t *testing.T) {
 		}
 
 		// Get AST
-		ast := info.GetAST()
+		ast, err := info.GetAST(t.Context())
+		require.NoError(t, err)
 		if ast == nil {
 			t.Fatal("AST should not be nil")
 		}
@@ -445,7 +448,8 @@ func TestQueryInfo_GetAST(t *testing.T) {
 		}
 
 		// Second call should return same cached AST
-		ast2 := info.GetAST()
+		ast2, err := info.GetAST(t.Context())
+		require.NoError(t, err)
 		if ast != ast2 {
 			t.Error("Second GetAST() should return cached AST")
 		}
@@ -455,11 +459,12 @@ func TestQueryInfo_GetAST(t *testing.T) {
 		query := "MATCH (n:Test) RETURN n"
 
 		// First analysis
-		info1 := analyzer.Analyze(query)
-		ast1 := info1.GetAST()
+		info1 := mustAnalyze(t, analyzer, t.Context(), query)
+		ast1, err := info1.GetAST(t.Context())
+		require.NoError(t, err)
 
 		// Second analysis (should be cached)
-		info2 := analyzer.Analyze(query)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query)
 
 		// Same QueryInfo should be returned
 		if info1 != info2 {
@@ -467,7 +472,8 @@ func TestQueryInfo_GetAST(t *testing.T) {
 		}
 
 		// AST should still be cached
-		ast2 := info2.GetAST()
+		ast2, err := info2.GetAST(t.Context())
+		require.NoError(t, err)
 		if ast1 != ast2 {
 			t.Error("AST should be cached in QueryInfo")
 		}
@@ -487,35 +493,35 @@ func BenchmarkASTBuilder_Build(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		query := queries[i%len(queries)]
-		_, _ = builder.Build(query)
+		_, _ = builder.Build(b.Context(), query)
 	}
 }
 
-func BenchmarkQueryInfo_GetAST_Cold(b *testing.B) {
-	analyzer := NewQueryAnalyzer(100)
-	query := "MATCH (n:Person) WHERE n.age > 21 RETURN n.name, n.age ORDER BY n.age DESC LIMIT 10"
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// Clear cache to force fresh analysis
-		analyzer.ClearCache()
-		info := analyzer.Analyze(query)
-		_ = info.GetAST()
-	}
-}
-
-func BenchmarkQueryInfo_GetAST_Warm(b *testing.B) {
-	analyzer := NewQueryAnalyzer(100)
-	query := "MATCH (n:Person) WHERE n.age > 21 RETURN n.name, n.age ORDER BY n.age DESC LIMIT 10"
-
-	// Warm up
-	info := analyzer.Analyze(query)
-	_ = info.GetAST()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		info := analyzer.Analyze(query)
-		_ = info.GetAST()
+func BenchmarkQueryInfo_GetAST(b *testing.B) {
+	for _, state := range []string{"Cold", "Warm"} {
+		b.Run(state, func(b *testing.B) {
+			analyzer := NewQueryAnalyzer(100)
+			query := "MATCH (n:Person) WHERE n.age > 21 RETURN n.name, n.age ORDER BY n.age DESC LIMIT 10"
+			if state == "Cold" {
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					analyzer.ClearCache()
+					info := mustAnalyze(b, analyzer, b.Context(), query)
+					_, err := info.GetAST(b.Context())
+					require.NoError(b, err)
+				}
+			} else {
+				info := mustAnalyze(b, analyzer, b.Context(), query)
+				_, err := info.GetAST(b.Context())
+				require.NoError(b, err)
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					info := mustAnalyze(b, analyzer, b.Context(), query)
+					_, err := info.GetAST(b.Context())
+					require.NoError(b, err)
+				}
+			}
+		})
 	}
 }
 
@@ -525,8 +531,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 
 	t.Run("same query returns cached QueryInfo", func(t *testing.T) {
 		query := "MATCH (n:Test) RETURN n"
-		info1 := analyzer.Analyze(query)
-		info2 := analyzer.Analyze(query)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query)
 
 		// Should be same pointer
 		if info1 != info2 {
@@ -538,8 +544,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 		query1 := "MATCH (n:Test) RETURN n"
 		query2 := "MATCH  (n:Test)  RETURN  n" // Extra spaces
 
-		info1 := analyzer.Analyze(query1)
-		info2 := analyzer.Analyze(query2)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query1)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query2)
 
 		// Should be same after normalization
 		if info1 != info2 {
@@ -551,8 +557,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 		query1 := "MATCH (n:Person) RETURN n"
 		query2 := "MATCH (n:Company) RETURN n"
 
-		info1 := analyzer.Analyze(query1)
-		info2 := analyzer.Analyze(query2)
+		info1 := mustAnalyze(t, analyzer, t.Context(), query1)
+		info2 := mustAnalyze(t, analyzer, t.Context(), query2)
 
 		if info1 == info2 {
 			t.Error("Different queries should have different QueryInfo")
@@ -568,16 +574,16 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 		smallAnalyzer := NewQueryAnalyzer(3) // Very small cache
 
 		// Fill cache
-		smallAnalyzer.Analyze("MATCH (a:A) RETURN a")
-		smallAnalyzer.Analyze("MATCH (b:B) RETURN b")
-		smallAnalyzer.Analyze("MATCH (c:C) RETURN c")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (a:A) RETURN a")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (b:B) RETURN b")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (c:C) RETURN c")
 
 		if smallAnalyzer.CacheSize() != 3 {
 			t.Errorf("Cache should have 3 entries, got %d", smallAnalyzer.CacheSize())
 		}
 
 		// Add one more, should evict
-		smallAnalyzer.Analyze("MATCH (d:D) RETURN d")
+		mustAnalyze(t, smallAnalyzer, t.Context(), "MATCH (d:D) RETURN d")
 
 		if smallAnalyzer.CacheSize() != 3 {
 			t.Errorf("Cache should still have 3 entries after eviction, got %d", smallAnalyzer.CacheSize())
@@ -586,8 +592,8 @@ func TestQueryAnalyzer_CacheConsistency(t *testing.T) {
 
 	t.Run("ClearCache empties cache", func(t *testing.T) {
 		localAnalyzer := NewQueryAnalyzer(100)
-		localAnalyzer.Analyze("MATCH (n) RETURN n")
-		localAnalyzer.Analyze("CREATE (n:Node)")
+		mustAnalyze(t, localAnalyzer, t.Context(), "MATCH (n) RETURN n")
+		mustAnalyze(t, localAnalyzer, t.Context(), "CREATE (n:Node)")
 
 		if localAnalyzer.CacheSize() != 2 {
 			t.Errorf("Expected 2 cached entries, got %d", localAnalyzer.CacheSize())
@@ -607,13 +613,14 @@ func TestAST_ConcurrentAccess(t *testing.T) {
 	query := "MATCH (n:Person) WHERE n.age > 21 RETURN n.name"
 
 	// Pre-analyze to get cached QueryInfo
-	info := analyzer.Analyze(query)
+	info := mustAnalyze(t, analyzer, t.Context(), query)
 
 	// Concurrent GetAST calls
 	done := make(chan bool, 10)
 	for i := 0; i < 10; i++ {
 		go func() {
-			ast := info.GetAST()
+			ast, err := info.GetAST(t.Context())
+			require.NoError(t, err)
 			if ast == nil {
 				t.Error("AST should not be nil")
 			}
@@ -762,7 +769,7 @@ func TestASTBuilder_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ast, err := builder.Build(tt.query)
+			ast, err := builder.Build(t.Context(), tt.query)
 			if err != nil {
 				t.Fatalf("Build() error = %v", err)
 			}

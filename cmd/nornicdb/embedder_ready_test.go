@@ -9,7 +9,6 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/pkg/bolt"
-	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -52,7 +51,7 @@ func TestHybridSearchPicksUpEmbedderAfterStartup(t *testing.T) {
 			db, err := nornicdb.Open(t.TempDir(), cfg)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			_, err = db.GetStorage().CreateNode(&storage.Node{
+			_, err = db.GetStorage().CreateNode(t.Context(), &storage.Node{
 				ID: "doc", Labels: []string{"Document"},
 				Properties:      map[string]interface{}{"content": "alpha"},
 				ChunkEmbeddings: [][]float32{{1, 0}},
@@ -60,16 +59,19 @@ func TestHybridSearchPicksUpEmbedderAfterStartup(t *testing.T) {
 			require.NoError(t, err)
 			svc, err := db.GetOrCreateSearchService("nornic", db.GetStorage())
 			require.NoError(t, err)
-			require.NoError(t, svc.BuildIndexes(ctx))
+			// Coordinate this explicit rebuild with the database's initial build.
+			require.NoError(t, db.BuildSearchIndexes(ctx))
+			require.True(t, svc.IsReady())
 			require.Nil(t, db.GetCypherExecutor().GetEmbedder())
 
-			manager, err := multidb.NewDatabaseManager(db.GetBaseStorageForManager(), nil)
-			require.NoError(t, err)
-			t.Cleanup(func() {
-				_ = db.Close()
-				_ = manager.Close()
-			})
-			server := bolt.NewWithDatabaseManager(bolt.DefaultConfig(), NewDBQueryExecutor(db), manager)
+			// Bolt takes the host's canonical per-database executor factory and
+			// the database manager it shares with HTTP, exactly as runServe
+			// wires them, so the embedder published after startup reaches Bolt
+			// sessions through the wiring production uses.
+			httpServer := newBoltExecutorHost(t, db)
+			boltConfig := bolt.DefaultConfig()
+			boltConfig.DatabaseExecutorOptions = httpServer.DatabaseScopedExecutorOptions
+			server := bolt.NewWithDatabaseManager(boltConfig, NewDBQueryExecutor(db), httpServer.GetDatabaseManager())
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(t, err)
 			served := make(chan error, 1)

@@ -77,6 +77,7 @@ func TestShowFunctionsListsApocFunctions(t *testing.T) {
 		{"apoc.map.fromPairs", false},
 		{"apoc.map.merge", false},
 		{"apoc.map.removeKey", false},
+		{"apoc.map.removeKeys", false},
 		{"apoc.map.setKey", false},
 		{"apoc.meta.isType", false},
 		{"apoc.meta.type", false},
@@ -93,6 +94,9 @@ func TestShowFunctionsListsApocFunctions(t *testing.T) {
 		{"apoc.rel.type", false},
 		{"apoc.temporal.format", false},
 		{"apoc.text.join", false},
+		{"apoc.util.md5", false},
+		{"apoc.util.sha1", false},
+		{"apoc.util.sha256", false},
 	}, result.Rows)
 
 	result, err = exec.Execute(ctx, "SHOW FUNCTIONS YIELD name, description WHERE name = 'apoc.coll.sum' RETURN description", nil)

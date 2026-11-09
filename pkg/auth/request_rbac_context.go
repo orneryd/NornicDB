@@ -7,33 +7,44 @@ package auth
 import (
 	"context"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
-type requestRBACKey string
+type requestRBACKey uint8
 
-var (
-	requestRBACKeyResolvedAccessResolver = requestRBACKey("resolved_access_resolver")
-	requestRBACKeyPrincipalRoles         = requestRBACKey("principal_roles")
-	requestRBACKeyDatabaseAccessMode     = requestRBACKey("database_access_mode")
-	requestRBACKeyEntitlementResolver    = requestRBACKey("entitlement_resolver")
-	requestRBACKeyDatabaseScope          = requestRBACKey("database_scope")
+const (
+	requestRBACKeyResolvedAccessResolver requestRBACKey = iota
+	requestRBACKeyPrincipalRoles
+	requestRBACKeyDatabaseAccessMode
+	requestRBACKeyEntitlementResolver
+	requestRBACKeyDatabaseScope
+	requestRBACKeyAuthenticationDisabled
 )
 
 // RequestEntitlementResolver checks an effective permission for a database.
 type RequestEntitlementResolver func(database string, permission Permission) bool
 
 // RequestDatabaseScope is the server-derived set of database names and aliases
-// an authenticated principal may select for one request.
+// available to a request. A live selection check can restrict these catalog names.
 type RequestDatabaseScope struct {
 	defaultDatabase string
 	selections      map[string]string
 	canonical       []string
+	selectionCheck  func(string) bool
 }
 
 // NewRequestDatabaseScope constructs an immutable request scope. Selection
 // keys are normalized for lookup and the supplied map is defensively copied.
 func NewRequestDatabaseScope(defaultDatabase string, selections map[string]string) *RequestDatabaseScope {
-	scope := &RequestDatabaseScope{selections: make(map[string]string, len(selections))}
+	return NewRequestDatabaseScopeWithSelectionCheck(defaultDatabase, selections, nil)
+}
+
+// NewRequestDatabaseScopeWithSelectionCheck binds the existing live graph-selection
+// owner. Catalog aliases do not confer authority, and later grants/revocations
+// are observed without rebuilding the request context.
+func NewRequestDatabaseScopeWithSelectionCheck(defaultDatabase string, selections map[string]string, check func(string) bool) *RequestDatabaseScope {
+	scope := &RequestDatabaseScope{selections: make(map[string]string, len(selections)), selectionCheck: check}
 	canonicalSeen := make(map[string]struct{})
 	for selection, database := range selections {
 		selection = normalizeDatabaseSelection(selection)
@@ -47,16 +58,35 @@ func NewRequestDatabaseScope(defaultDatabase string, selections map[string]strin
 			scope.canonical = append(scope.canonical, database)
 		}
 	}
-	if database, ok := scope.selections[normalizeDatabaseSelection(defaultDatabase)]; ok {
-		scope.defaultDatabase = database
+	if _, ok := scope.selections[normalizeDatabaseSelection(defaultDatabase)]; ok {
+		scope.defaultDatabase = normalizeDatabaseSelection(defaultDatabase)
 	}
 	return scope
 }
 
-// Resolve returns the canonical database for an explicit selection. An omitted
-// selection resolves to the authorized default, or to the sole authorized
-// database when no authorized default exists.
+// Resolve validates the requested name before returning its canonical database.
+// An omitted name uses the configured default or the sole scoped database.
 func (s *RequestDatabaseScope) Resolve(selection string) (string, bool) {
+	database, found := s.resolve(selection)
+	return database, found && s.allowsSelection(selection, database)
+}
+
+func (s *RequestDatabaseScope) allowsSelection(selection, database string) bool {
+	if s.selectionCheck == nil {
+		return true
+	}
+	selection = normalizeDatabaseSelection(selection)
+	if selection == "" {
+		selection = s.defaultDatabase
+		if selection == "" {
+			selection = database
+		}
+	}
+	return s.selectionCheck(selection)
+}
+
+// resolve binds catalog identity without caching an authorization decision.
+func (s *RequestDatabaseScope) resolve(selection string) (string, bool) {
 	if s == nil {
 		return "", false
 	}
@@ -66,7 +96,7 @@ func (s *RequestDatabaseScope) Resolve(selection string) (string, bool) {
 		return database, ok
 	}
 	if s.defaultDatabase != "" {
-		return s.defaultDatabase, true
+		return s.selections[s.defaultDatabase], true
 	}
 	if len(s.canonical) == 1 {
 		return s.canonical[0], true
@@ -75,7 +105,7 @@ func (s *RequestDatabaseScope) Resolve(selection string) (string, bool) {
 }
 
 func normalizeDatabaseSelection(selection string) string {
-	return strings.ToLower(strings.TrimSpace(selection))
+	return cyphertext.NameLower(strings.TrimSpace(selection))
 }
 
 // WithRequestPrincipalRoles attaches the principal's role names to the context.
@@ -106,6 +136,31 @@ func WithRequestResolvedAccessResolver(ctx context.Context, fn func(string) Reso
 // read and write from it.
 func WithRequestEntitlementResolver(ctx context.Context, resolver RequestEntitlementResolver) context.Context {
 	return context.WithValue(ctx, requestRBACKeyEntitlementResolver, resolver)
+}
+
+// WithRequestPrincipal attaches a principal as callers that authorize through
+// the request read it: its permission resolver (WithRequestEntitlementResolver)
+// and the databases and aliases it may select (WithRequestDatabaseScope),
+// together. A context with a resolver and no scope is an incomplete
+// principal, which those callers refuse.
+func WithRequestPrincipal(ctx context.Context, resolver RequestEntitlementResolver, scope *RequestDatabaseScope) context.Context {
+	return WithRequestDatabaseScope(WithRequestEntitlementResolver(ctx, resolver), scope)
+}
+
+// WithRequestAuthenticationDisabled marks a request the server serves with
+// authentication disabled, which therefore carries no principal. Callers that
+// authorize through the request principal (RequestEntitlementResolverFromContext)
+// treat a context with neither a resolver nor this mark as refused.
+func WithRequestAuthenticationDisabled(ctx context.Context) context.Context {
+	return context.WithValue(ctx, requestRBACKeyAuthenticationDisabled, true)
+}
+
+// RequestAuthenticationDisabledFromContext reports whether the server marked
+// the request as served with authentication disabled
+// (WithRequestAuthenticationDisabled).
+func RequestAuthenticationDisabledFromContext(ctx context.Context) bool {
+	disabled, _ := ctx.Value(requestRBACKeyAuthenticationDisabled).(bool)
+	return disabled
 }
 
 // WithRequestDatabaseScope attaches the server-derived database scope.

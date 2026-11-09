@@ -52,7 +52,7 @@ func TestAPITokenNeedsTheAdminEntitlement(t *testing.T) {
 	server, users := setupTestServer(t)
 	require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
 	require.NoError(t, server.roleEntitlementsStore.Set(ctx, "ops", []string{"read", "admin"}))
-	_, err := users.CreateUser("opsuser", "password123", []auth.Role{"ops"})
+	_, err := users.CreateUser(context.Background(), "opsuser", "password123", []auth.Role{"ops"})
 	require.NoError(t, err)
 	response := makeRequest(t, server, "POST", "/auth/api-token", map[string]any{"subject": "svc"}, "Bearer "+getAuthToken(t, users, "opsuser"))
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())

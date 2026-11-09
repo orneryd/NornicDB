@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -66,10 +67,11 @@ func (c *CreateClause) clauseMarker() { _ = c }
 
 // ReturnClause represents a RETURN clause.
 type ReturnClause struct {
-	Items   []ReturnItem
-	OrderBy []OrderItem
-	Skip    *int
-	Limit   *int
+	Distinct bool
+	Items    []ReturnItem
+	OrderBy  []OrderItem
+	Skip     *int
+	Limit    *int
 }
 
 func (c *ReturnClause) clauseMarker() { _ = c }
@@ -191,10 +193,25 @@ type SetItem struct {
 	Value    Expression
 }
 
-// Parse parses a Cypher query string into a Query AST.
-func (p *Parser) Parse(cypher string) (*Query, error) {
-	// Normalize whitespace
-	cypher = strings.TrimSpace(cypher)
+// Parse parses a Cypher query string into a Query AST under ctx. Cancellation
+// returns no partial Query; lexical token boundaries and clause preparation
+// retain the caller. The caller must supply a non-nil context.
+func (p *Parser) Parse(ctx context.Context, cypher string) (*Query, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ctx, source := cyphertext.WithSource(ctx, cypher)
+	if source.Err != nil {
+		return nil, source.Err
+	}
+	if err := validateStaticMapKeys(ctx, source.Text); err != nil {
+		return nil, err
+	}
+	trimmed := strings.TrimSpace(source.Text)
+	start := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
+	source = source.Window(start, start+len(trimmed))
+	ctx = cyphertext.WithSourceView(ctx, source)
+	cypher = source.Text
 
 	query := &Query{
 		Clauses:    make([]Clause, 0),
@@ -202,7 +219,7 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 	}
 
 	// Tokenize and parse
-	tokens, err := tokenize(cypher)
+	tokens, err := tokenize(ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -210,9 +227,16 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
 	}
 
+	// RETURN projections use the same source-preserving owner as ASTBuilder;
+	// the token loop below remains responsible for the lightweight Query shape.
+	var returns []*ASTReturn
+	returnIndex := 0
 	// Simple top-down parser
 	pos := 0
 	for pos < len(tokens) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		token := upperASCII(tokens[pos])
 
 		switch token {
@@ -239,9 +263,25 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 			query.Type = QueryCreate
 
 		case "RETURN":
-			clause, newPos := p.parseReturn(tokens, pos)
-			query.Clauses = append(query.Clauses, clause)
-			pos = newPos
+			if returns == nil {
+				builder := NewASTBuilder()
+				for _, fragment := range builder.splitIntoClauses(ctx, cypher) {
+					if fragment.clauseType == ASTClauseReturn {
+						items, distinct := builder.parseProjection(ctx, source.Window(fragment.startPos, fragment.startPos+len(fragment.text)), len("RETURN"))
+						returns = append(returns, &ASTReturn{Items: items, Distinct: distinct})
+					}
+				}
+			}
+			if returnIndex < len(returns) {
+				projection := returns[returnIndex]
+				clause := &ReturnClause{Distinct: projection.Distinct, Items: make([]ReturnItem, 0, len(projection.Items))}
+				for _, item := range projection.Items {
+					clause.Items = append(clause.Items, ReturnItem{Expression: item.Expression, Alias: item.Alias})
+				}
+				query.Clauses = append(query.Clauses, clause)
+				returnIndex++
+			}
+			pos++
 
 		case "WHERE":
 			clause, newPos := p.parseWhere(tokens, pos)
@@ -288,15 +328,6 @@ func (p *Parser) parseCreate(tokens []string, pos int) (*CreateClause, int) {
 	return clause, pos
 }
 
-// parseReturn parses a RETURN clause.
-func (p *Parser) parseReturn(tokens []string, pos int) (*ReturnClause, int) {
-	pos++
-	clause := &ReturnClause{
-		Items: make([]ReturnItem, 0),
-	}
-	return clause, pos
-}
-
 // parseWhere parses a WHERE clause.
 func (p *Parser) parseWhere(tokens []string, pos int) (*WhereClause, int) {
 	pos++
@@ -327,56 +358,88 @@ func (p *Parser) parseDelete(tokens []string, pos int) (*DeleteClause, int) {
 }
 
 // tokenize splits Cypher into tokens.
-func tokenize(cypher string) ([]string, error) {
-	// Simple tokenizer - will need improvement
-	tokens := make([]string, 0)
-	current := strings.Builder{}
-	inString := false
-	stringChar := byte(0)
+func tokenize(ctx context.Context, cypher string) ([]string, error) {
+	tokens, _, err := tokenizeSource(ctx, cypher)
+	return tokens, err
+}
 
-	for i := 0; i < len(cypher); i++ {
-		c := cypher[i]
+type sourceToken struct{ start, end int }
 
-		if inString {
-			current.WriteByte(c)
-			if c == stringChar {
-				inString = false
-				tokens = append(tokens, current.String())
-				current.Reset()
+// tokenizeSource retains exact source spans for the DDL value reader.
+func tokenizeSource(ctx context.Context, cypher string, sets ...*cyphertext.CredentialSet) ([]string, []sourceToken, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	var tokens []string
+	var spans []sourceToken
+	start := -1
+	emit := func(end int) {
+		if start >= 0 {
+			tokens = append(tokens, cypher[start:end])
+			spans = append(spans, sourceToken{start, end})
+			for _, set := range sets {
+				value, err := parseCypherValueToken(cypher[start:end])
+				if err == nil {
+					set.Record(cypher, start, end, value, false)
+				}
 			}
+			start = -1
+		}
+	}
+	var lexicalWork uint32
+	for i := 0; i < len(cypher); i++ {
+		if lexicalWork&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+		}
+		lexicalWork++
+		if end := cyphertext.CommentEnd(cypher, i); end >= 0 {
+			emit(i)
+			i = end - 1
 			continue
 		}
-
-		switch c {
-		case '"', '\'':
-			inString = true
-			stringChar = c
-			current.WriteByte(c)
-		case ' ', '\t', '\n', '\r':
-			if current.Len() > 0 {
-				tokens = append(tokens, current.String())
-				current.Reset()
+		if start < 0 && cyphertext.NumberStartsAt(cypher, i) {
+			number, _ := cyphertext.ScanNumber(cypher, i)
+			start = i
+			emit(number.TailEnd)
+			i = number.TailEnd - 1
+			continue
+		}
+		c := cypher[i]
+		if isCypherQuoteByte(c) {
+			if start < 0 {
+				start = i
 			}
-		case '(', ')', '[', ']', '{', '}', ':', ',', '.', '=', '<', '>', '-', '+', '*', '/':
-			if current.Len() > 0 {
-				tokens = append(tokens, current.String())
-				current.Reset()
+			end, closed, scanErr := cyphertext.ScanQuotedTextContext(ctx, cypher, i)
+			if scanErr != nil {
+				return nil, nil, scanErr
 			}
-			tokens = append(tokens, string(c))
+			if !closed {
+				return nil, nil, localizedError(localization.CypherCoreUnterminatedStringLiteral(), nil)
+			}
+			emit(end)
+			i = end - 1
+			continue
+		}
+		switch {
+		case cyphertext.IsWhitespaceAt(cypher, i):
+			emit(i)
+		case strings.ContainsRune("()[]{}:,.=<>-+*/", rune(c)):
+			emit(i)
+			start = i
+			emit(i + 1)
 		default:
-			current.WriteByte(c)
+			if start < 0 {
+				start = i
+			}
 		}
 	}
-
-	if inString {
-		return nil, localizedError(localization.CypherCoreUnterminatedStringLiteral(), nil)
+	emit(len(cypher))
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
-
-	if current.Len() > 0 {
-		tokens = append(tokens, current.String())
-	}
-
-	return tokens, nil
+	return tokens, spans, nil
 }
 
 // Executor executes Cypher queries.
@@ -395,7 +458,7 @@ func NewExecutor() *Executor {
 // parses and validates a Cypher query but, does not execute.
 func (e *Executor) ParseAndValidate(ctx context.Context, cypher string, params map[string]any) (*Result, error) {
 	// Parse query
-	query, err := e.parser.Parse(cypher)
+	query, err := e.parser.Parse(ctx, cypher)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreParseFailed(err), err)
 	}

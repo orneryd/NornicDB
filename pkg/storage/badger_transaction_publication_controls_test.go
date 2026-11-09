@@ -2,8 +2,10 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 	"time"
@@ -15,19 +17,22 @@ import (
 func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 	dir := t.TempDir()
 	open := func() *BadgerEngine {
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true})
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true}))
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		return engine
 	}
 	engine := open()
 	keepID := NodeID(prefixTestID("keep"))
-	_, err := engine.CreateNode(&Node{ID: keepID, Labels: []string{"Keep"}, Properties: map[string]interface{}{"value": "original"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: keepID, Labels: []string{"Keep"}, Properties: map[string]interface{}{"value": "original"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteNode(keepID))
-	_, err = tx.CreateNode(&Node{ID: NodeID(prefixTestID("staged-0")), Labels: []string{"Staged"}})
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), keepID, CascadeEdges))
+	_, err = tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("staged-0")), Labels: []string{"Staged"}})
 	require.NoError(t, err)
 	largeKeySuffix := strings.Repeat("k", 32<<10)
 	var oversizedErr error
@@ -47,12 +52,12 @@ func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 
 	engine = open()
 	defer engine.Close()
-	kept, err := engine.GetNode(keepID)
+	kept, err := engine.GetNode(t.Context(), keepID)
 	require.NoError(t, err)
 	require.Equal(t, "original", kept.Properties["value"])
-	_, err = engine.GetNode(NodeID(prefixTestID("staged-0")))
+	_, err = engine.GetNode(t.Context(), NodeID(prefixTestID("staged-0")))
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("after")), Labels: []string{"Keep"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("after")), Labels: []string{"Keep"}})
 	require.NoError(t, err)
 }
 
@@ -62,132 +67,120 @@ func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 // the same logical-reservation window as the regression.
 func stageReservedPublication(t *testing.T, peer *BadgerTransaction) {
 	t.Helper()
-	require.NoError(t, peer.validateSnapshotIsolationConflicts())
+	require.NoError(t, peer.validateSnapshotIsolationConflicts(t.Context()))
 	version, err := peer.engine.allocateMVCCVersion(peer.badgerTx, peer.namespace, time.Now())
 	require.NoError(t, err)
 	peer.CommitVersion = version
-	require.NoError(t, peer.engine.materializeMVCCCommit(singleBatchWriter(peer.badgerTx), version, peer.operations))
-	require.NoError(t, peer.flushBufferedWrites(singleBatchWriter(peer.badgerTx)))
+	require.NoError(t, peer.engine.materializeMVCCCommit(t.Context(), singleBatchWriter(peer.badgerTx), version, peer.operations))
+	require.NoError(t, peer.flushBufferedWrites(t.Context(), singleBatchWriter(peer.badgerTx)))
 }
 
 func publishReservedPublication(t *testing.T, peer *BadgerTransaction) {
 	t.Helper()
-	require.NoError(t, peer.engine.db.commit(peer.badgerTx))
+	require.NoError(t, peer.engine.db.commit(context.Background(), peer.badgerTx, nil))
 	peer.mu.Lock()
 	peer.closeLocked(TxStatusCommitted, false, nil)
 	peer.mu.Unlock()
 }
 
-func TestTransactionSnapshotReservedPeerEdgeUpdateConflictsAtCommit(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-	_, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-
-	peer, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = peer.Rollback() })
-	peerEdge, err := peer.GetEdge(edgeID)
-	require.NoError(t, err)
-	peerEdge.Properties = map[string]interface{}{"writer": "peer"}
-	require.NoError(t, peer.UpdateEdge(peerEdge))
-	stageReservedPublication(t, peer)
-
-	reader, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = reader.Rollback() })
-	require.NoError(t, reader.SetNamespace(peer.namespace))
-	readerEdge, err := reader.GetEdge(edgeID)
-	require.NoError(t, err)
-	require.Empty(t, readerEdge.Properties, "reader must see the pre-publication edge body")
-	readerEdge.Properties = map[string]interface{}{"writer": "reader"}
-	require.NoError(t, reader.UpdateEdge(readerEdge))
-
-	publishReservedPublication(t, peer)
-	latest, err := engine.GetEdge(edgeID)
-	require.NoError(t, err)
-	require.Equal(t, "peer", latest.Properties["writer"], "peer update must be independently committed")
-	require.ErrorIs(t, reader.Commit(), ErrConflict, "reader cannot overwrite a peer update published after its physical snapshot")
-
-	latest, err = engine.GetEdge(edgeID)
-	require.NoError(t, err)
-	require.Equal(t, "peer", latest.Properties["writer"], "failed reader must not alter latest truth")
-}
-
-func TestTransactionSnapshotReservedPeerNodeDeleteConflictsAtCommit(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-	source, _, _ := seedSnapshotAdjacencyGraph(t, engine, 0)
-
-	peer, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = peer.Rollback() })
-	require.NoError(t, peer.DeleteNode(source))
-	stageReservedPublication(t, peer)
-
-	reader, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = reader.Rollback() })
-	require.NoError(t, reader.SetNamespace(peer.namespace))
-	readerNode, err := reader.GetNode(source)
-	require.NoError(t, err)
-	require.Empty(t, readerNode.Properties, "reader must see the pre-publication node body")
-	readerNode.Properties = map[string]interface{}{"writer": "reader"}
-	require.NoError(t, reader.UpdateNode(readerNode))
-
-	publishReservedPublication(t, peer)
-	// The barrier publishes native bytes before normal post-commit cache
-	// maintenance. A fresh transaction independently observes durable truth.
-	latestReader, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = latestReader.Rollback() })
-	_, latestErr := latestReader.GetNode(source)
-	require.ErrorIs(t, latestErr, ErrNotFound, "peer node deletion must be independently committed")
-	require.ErrorIs(t, reader.Commit(), ErrConflict, "reader cannot update a node deleted after its physical snapshot")
-	afterCommitReader, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = afterCommitReader.Rollback() })
-	_, latestErr = afterCommitReader.GetNode(source)
-	require.ErrorIs(t, latestErr, ErrNotFound, "failed reader must not resurrect the deleted node")
+func TestTransactionSnapshotReservedPeerMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name                                       string
+		node, deletion, lateUpdate                 bool
+		bodyMessage, stageMessage, conflictMessage string
+		beforeMessage, afterMessage                string
+	}{
+		{name: "EdgeUpdateConflictsAtCommit", bodyMessage: "reader must see the pre-publication edge body", conflictMessage: "reader cannot overwrite a peer update published after its physical snapshot", beforeMessage: "peer update must be independently committed", afterMessage: "failed reader must not alter latest truth"},
+		{name: "NodeDeleteConflictsAtCommit", node: true, deletion: true, bodyMessage: "reader must see the pre-publication node body", conflictMessage: "reader cannot update a node deleted after its physical snapshot", beforeMessage: "peer node deletion must be independently committed", afterMessage: "failed reader must not resurrect the deleted node"},
+		{name: "DeleteAllowsUpdateUntilCommit", deletion: true, lateUpdate: true, stageMessage: "snapshot write must not leak a hard missing-edge error after peer publication", conflictMessage: "peer deletion must reject the stale write at commit", beforeMessage: "peer deletion must be independently committed", afterMessage: "failed reader must not resurrect the deleted edge"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := createTestBadgerEngine(t)
+			source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
+			peer, err := engine.BeginTransaction(t.Context())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = peer.Rollback() })
+			switch {
+			case tc.node:
+				require.NoError(t, peer.DeleteGraphNode(t.Context(), source, CascadeEdges))
+			case tc.deletion:
+				require.NoError(t, peer.DeleteEdge(t.Context(), edgeID))
+			default:
+				edge, err := peer.GetEdge(t.Context(), edgeID)
+				require.NoError(t, err)
+				edge.Properties = map[string]interface{}{"writer": "peer"}
+				require.NoError(t, peer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
+			}
+			stageReservedPublication(t, peer)
+			reader, err := engine.BeginTransaction(t.Context())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = reader.Rollback() })
+			require.NoError(t, reader.SetNamespace(peer.namespace))
+			var node *Node
+			var edge *Edge
+			if tc.node {
+				node, err = reader.GetNode(t.Context(), source)
+				require.NoError(t, err)
+				require.Empty(t, node.Properties, tc.bodyMessage)
+			} else {
+				edge, err = reader.GetEdge(t.Context(), edgeID)
+				require.NoError(t, err)
+				require.Empty(t, edge.Properties, tc.bodyMessage)
+			}
+			stageUpdate := func() {
+				if tc.node {
+					node.Properties = map[string]interface{}{"writer": "reader"}
+					require.NoError(t, reader.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}), tc.stageMessage)
+				} else {
+					edge.Properties = map[string]interface{}{"writer": "reader"}
+					require.NoError(t, reader.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}), tc.stageMessage)
+				}
+			}
+			if !tc.lateUpdate {
+				stageUpdate()
+			}
+			publishReservedPublication(t, peer)
+			assertLatest := func(message string) {
+				if tc.node {
+					// Native bytes are published before normal cache maintenance.
+					// Each observation needs its own fresh durable snapshot.
+					fresh, err := engine.BeginTransaction(t.Context())
+					require.NoError(t, err)
+					t.Cleanup(func() { _ = fresh.Rollback() })
+					_, err = fresh.GetNode(t.Context(), source)
+					require.ErrorIs(t, err, ErrNotFound, message)
+				} else {
+					latest, err := engine.GetEdge(t.Context(), edgeID)
+					if tc.deletion {
+						require.ErrorIs(t, err, ErrNotFound, message)
+					} else {
+						require.NoError(t, err)
+						require.Equal(t, "peer", latest.Properties["writer"], message)
+					}
+				}
+			}
+			assertLatest(tc.beforeMessage)
+			if tc.lateUpdate {
+				stageUpdate()
+			}
+			require.ErrorIs(t, reader.Commit(), ErrConflict, tc.conflictMessage)
+			assertLatest(tc.afterMessage)
+		})
+	}
 }
 
 func TestTransactionPinnedSnapshotDiscardedOnRollbackAndCommit(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	rolledBack, err := engine.BeginTransaction()
+	rolledBack, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, rolledBack.snapshotTx)
 	require.NoError(t, rolledBack.Rollback())
 	require.Nil(t, rolledBack.snapshotTx)
 
-	committed, err := engine.BeginTransaction()
+	committed, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, committed.snapshotTx)
 	require.NoError(t, committed.Commit())
 	require.Nil(t, committed.snapshotTx)
-}
-
-func TestTransactionSnapshotReservedPeerDeleteAllowsUpdateUntilCommit(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-	_, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-
-	peer, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = peer.Rollback() })
-	require.NoError(t, peer.DeleteEdge(edgeID))
-	stageReservedPublication(t, peer)
-
-	reader, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = reader.Rollback() })
-	require.NoError(t, reader.SetNamespace(peer.namespace))
-	readerEdge, err := reader.GetEdge(edgeID)
-	require.NoError(t, err)
-	require.Empty(t, readerEdge.Properties)
-
-	publishReservedPublication(t, peer)
-	_, err = engine.GetEdge(edgeID)
-	require.ErrorIs(t, err, ErrNotFound, "peer deletion must be independently committed")
-	readerEdge.Properties = map[string]interface{}{"writer": "reader"}
-	require.NoError(t, reader.UpdateEdge(readerEdge), "snapshot write must not leak a hard missing-edge error after peer publication")
-	require.ErrorIs(t, reader.Commit(), ErrConflict, "peer deletion must reject the stale write at commit")
-	_, err = engine.GetEdge(edgeID)
-	require.ErrorIs(t, err, ErrNotFound, "failed reader must not resurrect the deleted edge")
 }

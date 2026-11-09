@@ -1,14 +1,17 @@
 package qdrantgrpc
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
+	"testing"
+	"time"
+
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 func setupSimilarityPropertyPolicy(t *testing.T, be *storage.BadgerEngine, namespace, label string) {
@@ -20,10 +23,10 @@ func setupSimilarityPropertyPolicy(t *testing.T, be *storage.BadgerEngine, names
 }
 
 func TestQdrantQueriesProjectSuppressedPayload(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
-	dbm, err := multidb.NewDatabaseManager(be, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), be, nil)
 	require.NoError(t, err)
 	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
@@ -33,9 +36,9 @@ func TestQdrantQueriesProjectSuppressedPayload(t *testing.T) {
 	require.NoError(t, err)
 	setupSimilarityPropertyPolicy(t, be, "tenant", QdrantPointLabel)
 	old := time.Now().Add(-time.Hour)
-	_, err = engine.CreateNode(&storage.Node{ID: "qdrant:point:1", Labels: []string{QdrantPointLabel}, Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, NamedEmbeddings: map[string][]float32{"default": {1, 0}}, CreatedAt: old, UpdatedAt: old})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "qdrant:point:1", Labels: []string{QdrantPointLabel}, Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, NamedEmbeddings: map[string][]float32{"default": {1, 0}}, CreatedAt: old, UpdatedAt: old})
 	require.NoError(t, err)
-	service := NewPointsService(DefaultConfig(), collections, nil, nil, nil)
+	service := NewPointsService(DefaultConfig(), collections, sharedSearchProvider(), nil)
 	payload := &qpb.WithPayloadSelector{SelectorOptions: &qpb.WithPayloadSelector_Enable{Enable: true}}
 	t.Run("search", func(t *testing.T) {
 		resp, err := service.Search(ctx, &qpb.SearchPoints{CollectionName: "tenant", Vector: []float32{1, 0}, Limit: 1, WithPayload: payload})
@@ -55,7 +58,7 @@ func TestQdrantQueriesProjectSuppressedPayload(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got.Result, 1)
 	require.Contains(t, got.Result[0].Payload, "secret", "direct-ID Get intentionally returns raw stored payload")
-	raw, err := engine.GetNode("qdrant:point:1")
+	raw, err := engine.GetNode(t.Context(), "qdrant:point:1")
 	require.NoError(t, err)
 	require.Contains(t, raw.Properties, "secret")
 }

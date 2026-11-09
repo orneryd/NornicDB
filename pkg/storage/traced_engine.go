@@ -42,164 +42,156 @@ func (t *TracedEngine) getCtx() context.Context {
 // through the tracing decorator via the canonical EngineUnwrapper accessor.
 func (t *TracedEngine) GetInnerEngine() Engine { return t.Engine }
 
-func (t *TracedEngine) CreateNode(node *Node) (NodeID, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.CreateNode",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "node")),
-	)
-	defer span.End()
-	return t.Engine.CreateNode(node)
+// tracedStreamingEngine is exposed only through capability resolution when
+// the decorated view itself supports streaming.
+type tracedStreamingEngine struct {
+	*TracedEngine
+	inner StreamingEngine
 }
 
-func (t *TracedEngine) GetNode(id NodeID) (*Node, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.GetNode",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "node")),
-	)
+func (t *tracedStreamingEngine) StreamNodes(ctx context.Context, fn func(*Node) error) error {
+	span := t.startOperation("nornicdb.storage.StreamNodes", "node")
 	defer span.End()
-	return t.Engine.GetNode(id)
+	return t.inner.StreamNodes(ctx, fn)
 }
 
-func (t *TracedEngine) UpdateNode(node *Node) error {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.UpdateNode",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "node")),
-	)
+func (t *tracedStreamingEngine) StreamEdges(ctx context.Context, fn func(*Edge) error) error {
+	span := t.startOperation("nornicdb.storage.StreamEdges", "edge")
 	defer span.End()
-	return t.Engine.UpdateNode(node)
+	return t.inner.StreamEdges(ctx, fn)
 }
 
-func (t *TracedEngine) DeleteNode(id NodeID) error {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.DeleteNode",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "node")),
-	)
+func (t *tracedStreamingEngine) StreamNodeChunks(ctx context.Context, size int, fn func([]*Node) error) error {
+	span := t.startOperation("nornicdb.storage.StreamNodeChunks", "node")
 	defer span.End()
-	return t.Engine.DeleteNode(id)
+	return t.inner.StreamNodeChunks(ctx, size, fn)
 }
 
-func (t *TracedEngine) CreateEdge(edge *Edge) error {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.CreateEdge",
+// startOperation is the single owner of storage span construction. It starts a
+// nornicdb.storage.<op> span of kind SpanKindInternal parented by the context
+// installed via SetContext, tagged with the entity kind. The caller owns the
+// returned span and must End it (the facades defer End right after starting so
+// the span covers the backing operation, including a panic).
+func (t *TracedEngine) startOperation(name, kind string) trace.Span {
+	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), name,
 		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "edge")),
+		trace.WithAttributes(attribute.String("kind", kind)),
 	)
-	defer span.End()
-	return t.Engine.CreateEdge(edge)
+	return span
 }
 
-func (t *TracedEngine) GetEdge(id EdgeID) (*Edge, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.GetEdge",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "edge")),
-	)
+func (t *TracedEngine) CreateNode(ctx context.Context, node *Node) (NodeID, error) {
+	span := t.startOperation("nornicdb.storage.CreateNode", "node")
 	defer span.End()
-	return t.Engine.GetEdge(id)
+	return t.Engine.CreateNode(ctx, node)
 }
 
-func (t *TracedEngine) UpdateEdge(edge *Edge) error {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.UpdateEdge",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "edge")),
-	)
+func (t *TracedEngine) GetNode(ctx context.Context, id NodeID) (*Node, error) {
+	span := t.startOperation("nornicdb.storage.GetNode", "node")
 	defer span.End()
-	return t.Engine.UpdateEdge(edge)
+	return t.Engine.GetNode(ctx, id)
 }
 
-func (t *TracedEngine) DeleteEdge(id EdgeID) error {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.DeleteEdge",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "edge")),
-	)
+func (t *TracedEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateRequest) error {
+	span := t.startOperation("nornicdb.storage.UpdateNode", "node")
 	defer span.End()
-	return t.Engine.DeleteEdge(id)
+	return t.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (t *TracedEngine) GetNodesByLabel(label string) ([]*Node, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.GetNodesByLabel",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "node")),
-	)
+func (t *TracedEngine) DeleteNode(ctx context.Context, id NodeID) error {
+	span := t.startOperation("nornicdb.storage.DeleteNode", "node")
 	defer span.End()
-	return t.Engine.GetNodesByLabel(label)
+	return t.Engine.DeleteNode(ctx, id)
 }
 
-func (t *TracedEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.GetOutgoingEdges",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "edge")),
-	)
+func (t *TracedEngine) CreateEdge(ctx context.Context, edge *Edge) error {
+	span := t.startOperation("nornicdb.storage.CreateEdge", "edge")
 	defer span.End()
-	return t.Engine.GetOutgoingEdges(nodeID)
+	return t.Engine.CreateEdge(ctx, edge)
 }
 
-func (t *TracedEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.GetIncomingEdges",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "edge")),
-	)
+func (t *TracedEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
+	span := t.startOperation("nornicdb.storage.GetEdge", "edge")
 	defer span.End()
-	return t.Engine.GetIncomingEdges(nodeID)
+	return t.Engine.GetEdge(ctx, id)
 }
 
-func (t *TracedEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.GetEdgesByType",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "edge")),
-	)
+func (t *TracedEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateRequest) error {
+	span := t.startOperation("nornicdb.storage.UpdateEdge", "edge")
 	defer span.End()
-	return t.Engine.GetEdgesByType(edgeType)
+	return t.Engine.UpdateEdge(ctx, updateRequest)
 }
 
-func (t *TracedEngine) AllNodes() ([]*Node, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.AllNodes",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "node")),
-	)
+func (t *TracedEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
+	span := t.startOperation("nornicdb.storage.DeleteEdge", "edge")
 	defer span.End()
-	return t.Engine.AllNodes()
+	return t.Engine.DeleteEdge(ctx, id)
 }
 
-func (t *TracedEngine) AllEdges() ([]*Edge, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.AllEdges",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(attribute.String("kind", "edge")),
-	)
+func (t *TracedEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
+	span := t.startOperation("nornicdb.storage.GetNodesByLabel", "node")
 	defer span.End()
-	return t.Engine.AllEdges()
+	return t.Engine.GetNodesByLabel(ctx, label)
 }
 
-func (t *TracedEngine) BulkCreateNodes(nodes []*Node) error {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.BulkCreateNodes",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			attribute.String("kind", "node"),
-			attribute.Int("batch_size", len(nodes)),
-		),
-	)
+func (t *TracedEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	span := t.startOperation("nornicdb.storage.GetOutgoingEdges", "edge")
 	defer span.End()
-	return t.Engine.BulkCreateNodes(nodes)
+	return t.Engine.GetOutgoingEdges(ctx, nodeID)
 }
 
-func (t *TracedEngine) BulkCreateEdges(edges []*Edge) error {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.BulkCreateEdges",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			attribute.String("kind", "edge"),
-			attribute.Int("batch_size", len(edges)),
-		),
-	)
+func (t *TracedEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	span := t.startOperation("nornicdb.storage.GetIncomingEdges", "edge")
 	defer span.End()
-	return t.Engine.BulkCreateEdges(edges)
+	return t.Engine.GetIncomingEdges(ctx, nodeID)
 }
 
-func (t *TracedEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.BatchGetNodes",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			attribute.String("kind", "node"),
-			attribute.Int("batch_size", len(ids)),
-		),
-	)
+func (t *TracedEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
+	span := t.startOperation("nornicdb.storage.GetEdgesByType", "edge")
 	defer span.End()
-	return t.Engine.BatchGetNodes(ids)
+	return t.Engine.GetEdgesByType(ctx, edgeType)
+}
+
+func (t *TracedEngine) AllNodes(ctx context.Context) ([]*Node, error) {
+	span := t.startOperation("nornicdb.storage.AllNodes", "node")
+	defer span.End()
+	return t.Engine.AllNodes(ctx)
+}
+
+func (t *TracedEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
+	span := t.startOperation("nornicdb.storage.AllEdges", "edge")
+	defer span.End()
+	return t.Engine.AllEdges(ctx)
+}
+
+func (t *TracedEngine) BulkCreateNodes(ctx context.Context, nodes []*Node) error {
+	span := t.startOperation("nornicdb.storage.BulkCreateNodes", "node")
+	span.SetAttributes(attribute.Int("batch_size", len(nodes)))
+	defer span.End()
+	return t.Engine.BulkCreateNodes(ctx, nodes)
+}
+
+func (t *TracedEngine) BulkCreateEdges(ctx context.Context, edges []*Edge) error {
+	span := t.startOperation("nornicdb.storage.BulkCreateEdges", "edge")
+	span.SetAttributes(attribute.Int("batch_size", len(edges)))
+	defer span.End()
+	return t.Engine.BulkCreateEdges(ctx, edges)
+}
+
+func (t *TracedEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
+	span := t.startOperation("nornicdb.storage.BatchGetNodes", "node")
+	span.SetAttributes(attribute.Int("batch_size", len(ids)))
+	defer span.End()
+	return t.Engine.BatchGetNodes(ctx, ids)
+}
+
+// ReadCountStore preserves a single count-store observation through tracing.
+func (t *TracedEngine) ReadCountStore(ctx context.Context, request CountStoreReadRequest) (CountStoreRead, error) {
+	reader, ok := t.Engine.(CountStoreReadEngine)
+	if !ok {
+		return CountStoreRead{}, nil
+	}
+	span := t.startOperation("ReadCountStore", "read")
+	defer span.End()
+	return reader.ReadCountStore(ctx, request)
 }

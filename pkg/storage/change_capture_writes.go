@@ -1,18 +1,19 @@
 package storage
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
-// inCaptureTransaction runs a direct (non-transactional) write as a
-// transaction when the database it writes captures changes, so that its
-// changes are recorded by the one capture point, BadgerTransaction.Commit
-// (#937); handled is false for a database that doesn't capture, which keeps
-// the direct write. id is any of the write's prefixed entity IDs.
-func (b *BadgerEngine) inCaptureTransaction(id string, write func(tx *BadgerTransaction) error) (handled bool, err error) {
+// inMutationTransaction uses the native transaction owner when a write must
+// validate an observed predecessor or capture changes. Blind writes without
+// capture retain their direct path. id identifies the target namespace.
+func (b *BadgerEngine) inMutationTransaction(ctx context.Context, id string, observed bool, write func(tx *BadgerTransaction) error) (handled bool, err error) {
 	namespace, _, ok := ParseDatabasePrefix(id)
-	if !ok || b.ChangeCapture(namespace) == ChangeCaptureOff {
+	if !observed && (!ok || b.ChangeCapture(namespace) == ChangeCaptureOff) {
 		return false, nil
 	}
-	tx, err := b.BeginTransaction()
+	tx, err := BeginEntityTransaction(ctx, b, CommitModeDirect)
 	if err != nil {
 		return true, err
 	}
@@ -20,15 +21,16 @@ func (b *BadgerEngine) inCaptureTransaction(id string, write func(tx *BadgerTran
 		_ = tx.Rollback()
 		return true, err
 	}
-	return true, tx.Commit()
+	return true, tx.CommitContext(ctx)
 }
 
-// upsertNodeInTransaction is UpdateNode's upsert in a transaction: an
+// ApplyNodeUpdate is UpdateNode's upsert in a transaction: an
 // update, or a create when the node doesn't exist.
-func upsertNodeInTransaction(tx *BadgerTransaction, node *Node) error {
-	err := tx.UpdateNode(node)
+func ApplyNodeUpdate(ctx context.Context, tx *BadgerTransaction, updateRequest NodeUpdateRequest) error {
+	node := updateRequest.After
+	err := tx.UpdateGraphNode(ctx, updateRequest)
 	if errors.Is(err, ErrNotFound) {
-		_, err = tx.CreateNode(node)
+		_, err = tx.CreateNode(ctx, node)
 	}
 	return err
 }

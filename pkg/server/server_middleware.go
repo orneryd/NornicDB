@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -9,10 +10,14 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
 // =============================================================================
@@ -140,7 +145,7 @@ func (s *Server) handleBasicAuth(authHeader string, r *http.Request) (*auth.Toke
 	username, password := parts[0], parts[1]
 
 	// Authenticate and get token
-	tokenResp, user, err := s.auth.Authenticate(username, password, getClientIP(r), r.UserAgent())
+	tokenResp, user, err := s.auth.Authenticate(r.Context(), username, password, getClientIP(r), r.UserAgent())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -289,30 +294,160 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 		}
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return continuationDeliveryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
 		case path == "/status":
-			http.TimeoutHandler(next, statusTimeout, "request timeout: status busy").ServeHTTP(w, r)
+			s.serveRequestTimeout(next, w, r, statusTimeout, "request timeout: status busy")
 			return
 		case path == "/nornicdb/embed/stats":
-			http.TimeoutHandler(next, embedStatsTimeout, "request timeout: embed stats busy").ServeHTTP(w, r)
+			s.serveRequestTimeout(next, w, r, embedStatsTimeout, "request timeout: embed stats busy")
 			return
 		case path == "/nornicdb/search":
-			http.TimeoutHandler(next, searchTimeout, "request timeout: search busy").ServeHTTP(w, r)
+			s.serveRequestTimeout(next, w, r, searchTimeout, "request timeout: search busy")
 			return
 		case strings.HasPrefix(path, "/db/") && strings.Contains(path, "/tx"):
+			// Keep the execution deadline and retention wrapper, while binding
+			// participant completion to server lifetime and admitting terminal
+			// commits through the transaction phase owner.
+			ctx, cancel := txphase.WithExecutionDeadline(r.Context(), txTimeout)
+			ctx = fabric.WithTransactionLifetime(ctx, s.shutdown.work.Context())
+			defer cancel()
 			txWrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				s.activeTxReqs.Add(1)
 				defer s.activeTxReqs.Add(-1)
 				next.ServeHTTP(w, r)
 			})
-			http.TimeoutHandler(txWrapped, txTimeout, "request timeout: transaction busy").ServeHTTP(w, r)
+			s.serveTransactionRequest(txWrapped, w, r.WithContext(ctx))
 			return
 		default:
 			next.ServeHTTP(w, r)
 		}
-	})
+	}))
+}
+
+func (s *Server) serveRequestTimeout(next http.Handler, w http.ResponseWriter, r *http.Request, timeout time.Duration, message string) {
+	// Retain before TimeoutHandler starts its goroutine, even if cancellation
+	// wins before the worker is scheduled. The worker releases on return/panic.
+	next = s.shutdown.work.RetainHandler(memory.WireRequestFromContext(r.Context()).RetainHandler(next), r)
+	http.TimeoutHandler(next, timeout, message).ServeHTTP(w, r)
+}
+
+// serveTransactionRequest returns the timeout response while an unadmitted
+// transaction handler remains retained. After COMMIT admission, it waits for
+// the storage outcome instead of replacing that result with a timeout.
+func (s *Server) serveTransactionRequest(next http.Handler, w http.ResponseWriter, r *http.Request) {
+	// The phase owner controls when the caller may stop waiting. The shared
+	// handler owner retains this real worker before it can be dispatched.
+	next = s.shutdown.work.RetainHandler(memory.WireRequestFromContext(r.Context()).RetainHandler(next), r)
+	response := &transactionResponseWriter{header: make(http.Header)}
+	done := make(chan struct{})
+	panicCh := make(chan any, 1)
+	go func() {
+		defer close(done)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				panicCh <- recovered
+			}
+		}()
+		next.ServeHTTP(response, r)
+	}()
+
+	writeResponse := func() {
+		select {
+		case recovered := <-panicCh:
+			panic(recovered)
+		default:
+		}
+		response.writeTo(w)
+	}
+	select {
+	case recovered := <-panicCh:
+		panic(recovered)
+	case <-done:
+		if r.Context().Err() == context.DeadlineExceeded && !txphase.CommitAdmitted(r.Context()) {
+			response.markTimedOut()
+			s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request timeout: transaction busy")
+			return
+		}
+		writeResponse()
+	case <-r.Context().Done():
+		if txphase.CommitAdmitted(r.Context()) {
+			select {
+			case recovered := <-panicCh:
+				panic(recovered)
+			case <-done:
+				writeResponse()
+			}
+			return
+		}
+		response.markTimedOut()
+		if r.Context().Err() == context.DeadlineExceeded {
+			s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request timeout: transaction busy")
+		}
+	}
+}
+
+type transactionResponseWriter struct {
+	mu        sync.Mutex
+	header    http.Header
+	body      bytes.Buffer
+	status    int
+	timedOut  bool
+	wroteBody bool
+}
+
+func (w *transactionResponseWriter) Header() http.Header { return w.header }
+
+func (w *transactionResponseWriter) WriteHeader(status int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.timedOut && w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *transactionResponseWriter) Write(body []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.timedOut {
+		return 0, http.ErrHandlerTimeout
+	}
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	if len(body) > 0 && !w.wroteBody {
+		if w.header.Get("Content-Type") == "" {
+			w.header.Set("Content-Type", http.DetectContentType(body))
+		}
+		w.wroteBody = true
+	}
+	return w.body.Write(body)
+}
+
+func (w *transactionResponseWriter) markTimedOut() {
+	w.mu.Lock()
+	w.timedOut = true
+	w.mu.Unlock()
+}
+
+func (w *transactionResponseWriter) writeTo(dst http.ResponseWriter) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for key, values := range w.header {
+		dst.Header().Del(key)
+		for _, value := range values {
+			dst.Header().Add(key, value)
+		}
+	}
+	status := w.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	dst.WriteHeader(status)
+	if w.body.Len() > 0 {
+		_, _ = dst.Write(w.body.Bytes())
+	}
 }
 
 func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {

@@ -104,8 +104,8 @@ func TestSlowQueryReportOmitsCommentSecrets(t *testing.T) {
 	testEnv.CaptureRecords()
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	exec.SetLogger(testEnv.Logger)
-	exec.SetSlowQueryThreshold(time.Nanosecond)
-	exec.emitSlowQueryLog("RETURN 'literal-secret' AS value // comment-secret", nil, time.Millisecond)
+	forceSlowQueryLogging(t, exec)
+	exec.emitSlowQueryLog(t.Context(), "RETURN 'literal-secret' AS value // comment-secret", nil, time.Millisecond)
 
 	var reports int
 	for _, record := range testEnv.LoggedRecords() {
