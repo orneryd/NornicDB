@@ -27,11 +27,16 @@ import (
 // later read of it, exactly as it was. A write accepts caller-owned values for
 // the same reason: the store retains its own copy, so a caller that keeps
 // mutating the containers it supplied cannot change the graph afterwards.
+//
+// An explicit property update is a patch: PropertyUpdate names the properties
+// to set and the property names to remove, and the store applies the removals
+// first, so one update can remove and set a name and a patch that sets nothing
+// leaves an absent property bag absent.
 type Storage interface {
 	// Node operations
 	GetNode(ctx context.Context, id int64) (*Node, error)
 	CreateNode(ctx context.Context, labels []string, properties map[string]interface{}) (*Node, error)
-	UpdateNode(ctx context.Context, id int64, properties map[string]interface{}) error
+	UpdateNode(ctx context.Context, id int64, properties PropertyUpdate) error
 	// DeleteNode also removes incident relationships, matching the native backend.
 	DeleteNode(ctx context.Context, id int64) error
 	AddLabels(ctx context.Context, id int64, labels []string) error
@@ -49,7 +54,7 @@ type Storage interface {
 	// Relationship operations
 	GetRelationship(ctx context.Context, id int64) (*Relationship, error)
 	CreateRelationship(ctx context.Context, startID, endID int64, relType string, properties map[string]interface{}) (*Relationship, error)
-	UpdateRelationship(ctx context.Context, id int64, properties map[string]interface{}) error
+	UpdateRelationship(ctx context.Context, id int64, properties PropertyUpdate) error
 	DeleteRelationship(ctx context.Context, id int64) error
 	UpdateRelationshipType(ctx context.Context, id int64, newType string) error
 
@@ -71,6 +76,15 @@ type Storage interface {
 	// Traversal operations
 	BFS(ctx context.Context, startID int64, relType string, maxDepth int, visitor func(*Node) bool) error
 	DFS(ctx context.Context, startID int64, relType string, maxDepth int, visitor func(*Node) bool) error
+}
+
+// PropertyUpdate is one accepted property patch. Set holds the properties to
+// write and Remove names the properties to delete; the removals are applied
+// first, so one update may remove a name and set it again. A zero PropertyUpdate
+// changes no property.
+type PropertyUpdate struct {
+	Set    map[string]interface{}
+	Remove []string
 }
 
 // Direction represents relationship direction.
@@ -171,12 +185,23 @@ func (s *InMemoryStorage) CreateNode(ctx context.Context, labels []string, prope
 	return nativestorage.CopyValue(node, nil).(*Node), nil
 }
 
-// mergeProperties owns update inputs and initializes an absent retained bag.
-func mergeProperties(current, updates map[string]interface{}) map[string]interface{} {
-	if len(updates) == 0 {
+// ApplyTo applies the patch to an already caller-owned property bag: it removes the
+// named properties first and then writes the Set values, which are copied so a
+// caller that keeps mutating what it supplied cannot change the graph. A patch
+// that sets nothing leaves an absent bag absent. Callers must exclusively own
+// current; storage implementations call this only after write admission.
+//
+// Example:
+//
+//	bag = (PropertyUpdate{Remove: []string{"old"}, Set: map[string]interface{}{"new": 1}}).ApplyTo(bag)
+func (update PropertyUpdate) ApplyTo(current map[string]interface{}) map[string]interface{} {
+	for _, name := range update.Remove {
+		delete(current, name)
+	}
+	if len(update.Set) == 0 {
 		return current
 	}
-	owned := nativestorage.CopyValue(updates, nil).(map[string]interface{})
+	owned := nativestorage.CopyValue(update.Set, nil).(map[string]interface{})
 	if current == nil {
 		return owned
 	}
@@ -184,12 +209,12 @@ func mergeProperties(current, updates map[string]interface{}) map[string]interfa
 	return current
 }
 
-func (s *InMemoryStorage) UpdateNode(ctx context.Context, id int64, properties map[string]interface{}) error {
+func (s *InMemoryStorage) UpdateNode(ctx context.Context, id int64, properties PropertyUpdate) error {
 	node, err := retainedEntry(ctx, s.nodes, id, ErrNodeNotFound)
 	if err != nil {
 		return err
 	}
-	node.Properties = mergeProperties(node.Properties, properties)
+	node.Properties = properties.ApplyTo(node.Properties)
 	return nil
 }
 
@@ -270,12 +295,12 @@ func (s *InMemoryStorage) CreateRelationship(ctx context.Context, startID, endID
 	return nativestorage.CopyValue(rel, nil).(*Relationship), nil
 }
 
-func (s *InMemoryStorage) UpdateRelationship(ctx context.Context, id int64, properties map[string]interface{}) error {
+func (s *InMemoryStorage) UpdateRelationship(ctx context.Context, id int64, properties PropertyUpdate) error {
 	rel, err := retainedEntry(ctx, s.relationships, id, ErrRelationshipNotFound)
 	if err != nil {
 		return err
 	}
-	rel.Properties = mergeProperties(rel.Properties, properties)
+	rel.Properties = properties.ApplyTo(rel.Properties)
 	return nil
 }
 

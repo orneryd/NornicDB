@@ -9,10 +9,10 @@ Base: release/v1.5.0 bea145d518c9ae2c9df7ced456b245321cad9565.
 - [x] Reproduce ordinary/smart query-cache mutation through public execution.
 - [x] Establish NOR-310 reachability independently of NOR-307.
 - [x] Integrate reuse without compatibility wrappers or duplicate copying code.
-- [ ] Preserve result values/types, ordering, explicit writes, nil and lifecycle.
-- [ ] Profile and measure representative ownership-boundary workloads.
+- [x] Preserve result values/types, ordering, explicit writes, nil and lifecycle.
+- [x] Profile and measure representative ownership-boundary workloads.
 - [ ] Run affected public, race and integration checks and resolve failures.
-- [ ] Update Linear AC evidence; open and push release PR.
+- [x] Update Linear AC evidence; open and push release PR.
 - [ ] Complete exact-head make-test CI and disposition duplicate findings.
 - [ ] Clean completed task resources when merge-ready.
 
@@ -30,8 +30,15 @@ collection census or speculative mutation API. No duplicate-checker changes.
 - [x] Fix absent property-map updates without changing partial-update semantics.
 - [x] Reject publication when point-read copying observes caller cancellation.
 - [x] Degree and shortest-path walks copy only payloads returned to callers.
-- [ ] Decide the typed APOC property removal/update contract and migrate callers.
-  Existing property-rename assertions remain red; do not weaken them or restore
-  retained object exposure. Proposal is awaiting the operator's API decision.
-- [ ] Repeat full APOC integration after the write-contract correction.
+- [x] Operator approved typed PropertyUpdate; migrated interfaces, both backends,
+  callers and mocks. One ApplyTo owner applies removals before owned sets.
+  Existing property rename assertions pass without exposing retained reads.
+- [x] Repeat full APOC integration after the write-contract correction.
+  Full APOC packages pass locally; native memory/Badger update integration passes
+  with race detection. Full census and exact-head CI remain separate gates.
 - [ ] Request full make-test CI on the final pushed head; keep this PR draft.
+
+- [x] Reconcile all five candidates and four current-owner entries from the CI
+  duplicate advisory. Remove trace-cache forwarding methods; combine ordinary
+  and ownership relationship-type tests without dropping missing-type controls.
+  PR comment: https://github.com/orneryd/NornicDB/pull/1778#issuecomment-6753995829

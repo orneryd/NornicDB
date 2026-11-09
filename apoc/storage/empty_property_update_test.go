@@ -18,13 +18,13 @@ func TestExplicitUpdatesInitializeAbsentPropertyBagsAndOwnValues(t *testing.T) {
 		t.Run(entity, func(t *testing.T) {
 			values := map[string]interface{}{"nested": []string{"accepted"}}
 			if entity == "node" {
-				require.NoError(t, store.UpdateNode(t.Context(), a.ID, values))
+				require.NoError(t, store.UpdateNode(t.Context(), a.ID, PropertyUpdate{Set: values}))
 				values["nested"].([]string)[0] = "caller changed"
 				got, err := store.GetNode(t.Context(), a.ID)
 				require.NoError(t, err)
 				require.Equal(t, []string{"accepted"}, got.Properties["nested"])
 			} else {
-				require.NoError(t, store.UpdateRelationship(t.Context(), rel.ID, values))
+				require.NoError(t, store.UpdateRelationship(t.Context(), rel.ID, PropertyUpdate{Set: values}))
 				values["nested"].([]string)[0] = "caller changed"
 				got, err := store.GetRelationship(t.Context(), rel.ID)
 				require.NoError(t, err)

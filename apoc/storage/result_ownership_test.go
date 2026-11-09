@@ -407,7 +407,7 @@ func TestUpdateNodeKeepsRetainedStateAwayFromTheCaller(t *testing.T) {
 		"profile": map[string]interface{}{"city": "Paris"},
 		"tags":    []interface{}{"updated"},
 	}
-	require.NoError(t, graph.store.UpdateNode(ctx, graph.bob, update))
+	require.NoError(t, graph.store.UpdateNode(ctx, graph.bob, PropertyUpdate{Set: update}))
 
 	update["profile"].(map[string]interface{})["city"] = "Mutated"
 	update["tags"].([]interface{})[0] = "mutated"
@@ -445,16 +445,16 @@ func TestOwnershipControlsKeepOrdinaryResults(t *testing.T) {
 	graph := newOwnershipGraph(t)
 	ctx := t.Context()
 
-	require.NoError(t, graph.store.UpdateNode(ctx, graph.bob, map[string]interface{}{"age": int64(25)}))
+	require.NoError(t, graph.store.UpdateNode(ctx, graph.bob, PropertyUpdate{Set: map[string]interface{}{"age": int64(25)}}))
 	bob, err := graph.store.GetNode(ctx, graph.bob)
 	require.NoError(t, err)
 	require.Equal(t, "Bob", bob.Properties["name"], "an explicit update merges into the retained value")
 	require.Equal(t, int64(25), bob.Properties["age"])
 
-	require.NoError(t, graph.store.UpdateNode(ctx, graph.bob, nil))
+	require.NoError(t, graph.store.UpdateNode(ctx, graph.bob, PropertyUpdate{}))
 	bob, err = graph.store.GetNode(ctx, graph.bob)
 	require.NoError(t, err)
-	require.Equal(t, int64(25), bob.Properties["age"], "a nil update changes nothing")
+	require.Equal(t, int64(25), bob.Properties["age"], "a zero update changes nothing")
 
 	require.NoError(t, graph.store.AddLabels(ctx, graph.bob, []string{"Employee", "Employee"}))
 	bob, err = graph.store.GetNode(ctx, graph.bob)

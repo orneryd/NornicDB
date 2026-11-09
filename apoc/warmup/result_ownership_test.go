@@ -273,9 +273,11 @@ func TestWarmupRunKeepsSeeingExplicitBackendUpdates(t *testing.T) {
 	fixture := newOwnershipWarmupFixture(t)
 	fixture.warm(t)
 
-	require.NoError(t, fixture.backend.UpdateNode(t.Context(), fixture.alice, map[string]interface{}{
-		"name": "Alicia",
-		"age":  int64(31),
+	require.NoError(t, fixture.backend.UpdateNode(t.Context(), fixture.alice, storage.PropertyUpdate{
+		Set: map[string]interface{}{
+			"name": "Alicia",
+			"age":  int64(31),
+		},
 	}))
 	_, err := fixture.functions.Run(t.Context())
 	require.NoError(t, err)

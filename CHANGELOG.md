@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Isolate APOC graph/warmup and Cypher query-cache results from retained state:
+  embedded callers can change returned containers without changing later reads.
+  APOC Go property updates now use `PropertyUpdate{Set, Remove}` so explicit
+  renames remove the old key while preserving unrelated properties. Go callers
+  and plugins must rebuild; stored formats are unchanged. See the
+  [migration guide](docs/development/apoc-result-ownership.md).
+
 - Keep embedding WAL audit records independent of document and vector size.
   Large multi-chunk documents can persist their embeddings without exceeding
   the 16 MiB WAL frame limit; permanent failure markers use the same bounded

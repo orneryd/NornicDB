@@ -92,7 +92,7 @@ func (s *scanBenchStorage) CreateNode(context.Context, []string, map[string]inte
 	return &apocstorage.Node{}, nil
 }
 
-func (s *scanBenchStorage) UpdateNode(context.Context, int64, map[string]interface{}) error {
+func (s *scanBenchStorage) UpdateNode(context.Context, int64, apocstorage.PropertyUpdate) error {
 	return nil
 }
 
@@ -112,7 +112,7 @@ func (s *scanBenchStorage) CreateRelationship(context.Context, int64, int64, str
 	return &apocstorage.Relationship{}, nil
 }
 
-func (s *scanBenchStorage) UpdateRelationship(context.Context, int64, map[string]interface{}) error {
+func (s *scanBenchStorage) UpdateRelationship(context.Context, int64, apocstorage.PropertyUpdate) error {
 	return nil
 }
 
