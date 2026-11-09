@@ -17,11 +17,11 @@ const props = defineProps({
   mode = ref("Browser full-text search"),
   loading = ref(false),
   loadError = ref(false),
-  notice = ref(""),
-  timing = ref(null);
+  notice = ref("");
 let sequence = 0,
   timer,
-  noticeTimer;
+  noticeTimer,
+  activeRequest;
 function notify(message) {
   notice.value = message;
   clearTimeout(noticeTimer);
@@ -30,9 +30,10 @@ function notify(message) {
 async function search() {
   const request = ++sequence;
   clearTimeout(timer);
+  activeRequest?.abort();
+  activeRequest = undefined;
   loadError.value = false;
   mode.value = "Browser full-text search";
-  timing.value = null;
   if (!query.value.trim()) {
     results.value = [];
     loading.value = false;
@@ -57,11 +58,13 @@ async function search() {
     });
   if (historical || text.trim().length < 3) return;
   timer = setTimeout(async () => {
-    const started = performance.now();
+    const controller = new AbortController();
+    activeRequest = controller;
+    const timeout = setTimeout(() => controller.abort(), 1800);
     try {
       const response = await apiFetch(
         "/search?" + new URLSearchParams({ q: text, type: scope }),
-        { signal: AbortSignal.timeout(1800), cache: "no-cache" },
+        { signal: controller.signal, cache: "no-cache" },
       );
       if (request !== sequence) return;
       if (!response.ok) {
@@ -77,15 +80,6 @@ async function search() {
         semantic = true;
         results.value = payload.results;
         mode.value = "Semantic search";
-        const server = Number(
-          response.headers
-            .get("server-timing")
-            ?.match(/(?:^|,)\s*app;dur=([\d.]+)/)?.[1],
-        );
-        timing.value = {
-          latency: Math.round(performance.now() - started),
-          server: Number.isFinite(server) ? server : null,
-        };
         loading.value = false;
         notice.value = "";
       }
@@ -94,8 +88,11 @@ async function search() {
         notify(
           "Nornic search did not respond. Using full-text search instead.",
         );
+    } finally {
+      clearTimeout(timeout);
+      if (activeRequest === controller) activeRequest = undefined;
     }
-  }, 250);
+  }, 1000);
 }
 onMounted(() => {
   if (props.embedded) type.value = props.externalScope || "docs";
@@ -128,6 +125,7 @@ watch(
 onBeforeUnmount(() => {
   sequence++;
   clearTimeout(timer);
+  activeRequest?.abort();
   clearTimeout(noticeTimer);
 });
 </script>
@@ -149,7 +147,7 @@ onBeforeUnmount(() => {
         v-model="query"
         type="search"
         maxlength="240"
-        placeholder="For example: hybrid search"
+        placeholder="How do I use hybrid search?"
       /><label class="search-scope"
         >Search in
         <select v-model="type">
@@ -161,21 +159,6 @@ onBeforeUnmount(() => {
     <p v-if="!embedded || query.trim()" class="status" role="status">
       {{ loading ? "Loading full-text results…" : mode
       }}{{ historical ? " · archived version" : "" }}
-    </p>
-    <p v-if="timing" class="search-timing" aria-label="Semantic search timing">
-      <span
-        title="Total request time measured in the browser, including network transit."
-        >Latency <strong>{{ timing.latency }} ms</strong></span
-      >
-      <span
-        title="Processing time measured by the API, including database search and excluding network transit."
-        >Server
-        <strong>{{
-          timing.server === null
-            ? "unavailable"
-            : Number(timing.server.toFixed(2)) + " ms"
-        }}</strong></span
-      >
     </p>
     <p v-if="loadError" role="alert">
       The browser search index could not be loaded.
