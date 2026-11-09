@@ -15,3 +15,10 @@ Shared release corrections from #1769 are integrated by rebase for testing. The 
 - [x] Integrated blocking context census passes without a policy or assertion change.
 - [ ] Refresh generated stored-entity source positions from the final shared-fix head and rerun freshness.
 - [ ] Final-head full make-test CI and advisory review.
+
+## CI server-shard follow-up
+
+- [x] Reproduce both CI failures locally on `7b9ac63b7` (6.704s): stale nil-claims error expectation and unauthenticated slow-log fixture never reaching its gate.
+- [x] Assert early unattributed-request denial and no persisted mutation; supply the shutdown fixture's authenticated principal before driving the common statement runner.
+- [x] Preserve shutdown time budgets and resource/slow-log assertions. Focused public/server race controls pass (15.390s).
+- [ ] Run full final-head make-test CI after shared-fix integration; earlier server-shard run is failed, not passed.
