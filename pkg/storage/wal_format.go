@@ -105,7 +105,12 @@ func validateWALFileVersion(path string, optional bool) error {
 		}
 		size := binary.LittleEndian.Uint32(header[5:])
 		if size > walMaxEntrySize {
-			return nil // repair/integrity owner reports the malformed record
+			_, length, err := readOversizedEmbeddingAudit(io.NewSectionReader(file, offset+9, int64(size)+19), size, header[4])
+			if err != nil {
+				return nil // repair/integrity owner reports the malformed record
+			}
+			offset += length
+			continue
 		}
 		offset += alignUp(int64(9) + int64(size) + 4 + 8)
 	}
