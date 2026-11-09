@@ -2275,9 +2275,9 @@
     {
       "space": "prefixMVCCMeta+\"wal-property-clean\"",
       "class": "store-metadata",
-      "origin": "pkg/storage/wal_property_epoch_close.go:338",
-      "func": "pkg/storage.BadgerEngine.finishPropertyWALOnClose$2 pkg/storage/wal_property_epoch_close.go:338",
-      "where": "pkg/storage.BadgerEngine.finishPropertyWALOnClose$2 pkg/storage/wal_property_epoch_close.go:338"
+      "origin": "pkg/storage/wal_property_epoch_close.go:354",
+      "func": "pkg/storage.BadgerEngine.finishPropertyWALOnClose$2 pkg/storage/wal_property_epoch_close.go:354",
+      "where": "pkg/storage.BadgerEngine.finishPropertyWALOnClose$2 pkg/storage/wal_property_epoch_close.go:354"
     },
     {
       "space": "prefixMVCCMeta+\"wal-property-identity\"",
@@ -3538,7 +3538,7 @@
       "field": "pkg/storage.bufferedWALDisplayPayload.Deletes",
       "class": "WAL inspection serialization scratch",
       "func": "pkg/storage.bufferedWALDisplay",
-      "pos": "pkg/storage/wal_entry_display.go:106"
+      "pos": "pkg/storage/wal_entry_display.go:109"
     },
     {
       "field": "pkg/storage.bulkReadCancellation.remaining",

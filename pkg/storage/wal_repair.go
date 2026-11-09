@@ -128,6 +128,12 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 
 		payloadLen := binary.LittleEndian.Uint32(header[5:9])
 		if payloadLen > walMaxEntrySize {
+			entry, length, readErr := readOversizedEmbeddingAudit(io.NewSectionReader(file, offset+9, fileSize-offset-9), payloadLen, version)
+			if readErr == nil {
+				lastGoodSeq = entry.Sequence
+				offset += length
+				continue
+			}
 			return offset, lastGoodSeq, "invalid_payload_size", false, nil
 		}
 
