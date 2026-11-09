@@ -328,11 +328,7 @@ fs.writeFileSync(
 );
 fs.writeFileSync(
   path.join(site, "corpus-manifest.json"),
-  JSON.stringify(
-    { revision, files: inventory, exactDuplicates: duplicates },
-    null,
-    2,
-  ),
+  JSON.stringify({ files: inventory, exactDuplicates: duplicates }, null, 2) + "\n",
 );
 fs.writeFileSync(
   path.join(output, "library.md"),

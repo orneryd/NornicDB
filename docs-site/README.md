@@ -16,9 +16,11 @@ npm run dev
 
 Open `http://127.0.0.1:4173/NornicDB/`. Browser tests use installed Chrome. CI can use Playwright Chromium instead. The production output is `.vitepress/dist`.
 
-The corpus remains in `docs/`; `.generated` is disposable build output. `corpus-manifest.json` records every source file and its hash. `source-provenance.json` records additional release documentation retained when the PR moved to main. Production code and changelogs are outside this change.
+The corpus remains in `docs/`; `.generated` is disposable build output. `corpus-manifest.json` records every source file and its hash. `source-provenance.json` records additional release documentation retained when the PR moved to main.
 
-Release-only pages carry a branch-reference notice and link source files at their original release commit. They remain published and browser-searchable, but are excluded from the current semantic index and current-source cross-links.
+Before their source changes are integrated, release-only pages carry a branch-reference notice and link source files at their original release commit. They remain published and browser-searchable, but are excluded from the current semantic index and current-source cross-links.
+
+`releaseContentIntegrated` marks the retained release documentation as current once its code lands. Integrated pages participate in semantic search and source cross-links; development archives stay excluded. Current source links use the checked-out head, while tagged bundles stay pinned to their tag. The tracked corpus manifest contains file hashes rather than a self-referencing build commit.
 
 ## Public search
 

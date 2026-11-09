@@ -70,17 +70,18 @@ test("unknown routes become an editable search page", async ({ page }) => {
     "unknown hybrid search",
   );
 });
-test("mobile code explorer has no horizontal page overflow", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("explore");
-  await expect(page.locator(".graph-panel pre")).toBeVisible({
-    timeout: 30000,
+for (const width of [320, 390])
+  test(`mobile code explorer has no horizontal page overflow at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("explore");
+    await expect(page.locator(".graph-panel pre")).toBeVisible({
+      timeout: 30000,
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBeTruthy();
   });
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth + 1,
-    ),
-  ).toBeTruthy();
-});
