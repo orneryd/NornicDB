@@ -45,7 +45,7 @@
       "Reason": "post-commit index retirement completes after the DDL commit is accepted.",
       "Approver": "orneryd (2 November 2026)",
       "Occurrences": [
-        "call context.Background (+29 in (*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).dropIndexByName)"
+        "call context.Background (+38 in (*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).dropIndexByName)"
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/heimdall.BifrostClient).acquire": {

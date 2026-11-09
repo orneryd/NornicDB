@@ -345,7 +345,14 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 	switch tx := e.txContext.tx.(type) {
 	case *storage.BadgerTransaction:
 		opCount = tx.OperationCount()
+		wrapper := e.txContext.storageWrapper
+		if wrapper != nil {
+			wrapper.beginVectorIndexPublications(e.search())
+		}
 		err = e.commitStorageTransaction(commitCtx, tx)
+		if err != nil && wrapper != nil {
+			wrapper.abortVectorIndexPublications()
+		}
 		acknowledgedBuffered = tx.AcknowledgedBuffered()
 	case *fabric.FabricTransaction:
 		err = tx.Commit(fabric.TerminalContexts{Commit: commitCtx, Cleanup: commitCtx}, nil, nil)

@@ -86,16 +86,20 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			property := parsed.properties[0]
 			// Persist operator intent even with vector search disabled. Only
 			// node indexes register an in-memory vector space, after commit.
+			publication := e.declareVectorIndexPublication(ctx, name, label, property, dimensions, parsed.isRelationship)
 			if err := e.storage.GetSchema().AddVectorIndex(name, label, property, dimensions, similarity, entityType); err != nil {
+				publication.abort()
 				return nil, err
 			}
-			if svc := e.search(); !parsed.isRelationship && (svc == nil || svc.VectorEnabled()) {
-				if err := e.afterCommit(ctx, func(context.Context) error {
+			svc := e.search()
+			register := !parsed.isRelationship && (svc == nil || svc.VectorEnabled())
+			if err := e.afterCommit(ctx, func(ctx context.Context) error {
+				if register {
 					e.registerVectorSpace(name, label, property, dimensions, similarity)
-					return nil
-				}); err != nil {
-					return nil, err
 				}
+				return e.populateVectorIndexPublication(ctx, publication, e.search())
+			}); err != nil {
+				return nil, err
 			}
 		} else if parsed.isRelationship {
 			if err := e.storage.GetSchema().AddRangeIndexForEntity(name, label, parsed.properties, entityType); err != nil {

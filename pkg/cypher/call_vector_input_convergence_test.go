@@ -334,18 +334,30 @@ func TestVectorQueryInputEmbedErrors(t *testing.T) {
 }
 
 // TestVectorQueryInputDimensions pins the index's dimensions as the search's
-// dimensions: a query vector of another length matches nothing.
+// dimensions: a query vector of another length is Neo4j's ProcedureCallFailed,
+// and one of the indexed length searches the indexed population.
 func TestVectorQueryInputDimensions(t *testing.T) {
 	ctx := context.Background()
 	exec := newVectorInputExecutor(t, 2)
 
 	for _, procedure := range vectorInputProcedures {
 		t.Run(procedure.name, func(t *testing.T) {
-			result, err := exec.Execute(ctx, vectorInputQuery(procedure.procedure, procedure.index, "5", "[1.0, 0.0, 0.0]"), nil)
+			for _, mismatch := range []string{"[]", "[1.0]", "[1.0, 0.0, 0.0]"} {
+				result, err := exec.Execute(ctx, vectorInputQuery(procedure.procedure, procedure.index, "5", mismatch), nil)
+				require.Nil(t, result, "a rejected query vector must not produce a result")
+				require.ErrorContains(t, err, "Neo.ClientError.Procedure.ProcedureCallFailed: query vector must be nonempty and match the vector index dimensions")
+				code, message := nerrors.Neo4jStatus(err)
+				require.Equal(t, "Neo.ClientError.Procedure.ProcedureCallFailed", code)
+				require.Equal(t, "query vector must be nonempty and match the vector index dimensions", message)
+			}
+
+			wantIDs := []string{"n1", "n2"}
+			if procedure.name == "queryRelationships" {
+				wantIDs = []string{"r1", "r2"}
+			}
+			result, err := exec.Execute(ctx, vectorInputQuery(procedure.procedure, procedure.index, "5", vectorLiteral(2, 0)), nil)
 			require.NoError(t, err)
-			require.NotNil(t, result)
-			require.Empty(t, result.Rows)
-			require.Equal(t, []string{procedure.entityColumn, "score"}, result.Columns)
+			requireVectorInputRows(t, result, procedure.entityColumn, wantIDs)
 		})
 	}
 }

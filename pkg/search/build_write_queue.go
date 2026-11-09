@@ -66,6 +66,8 @@ type deferredIndexWrite struct {
 	edge   *storage.Edge // IndexEdge
 	edgeID string        // RemoveEdge
 	apply  func()        // an administrative operation (orderWithBuild)
+	// afterBuild delivers error-path ownership only after buildMu is released.
+	afterBuild func()
 	// dims marks an administrative operation that can change the dimension
 	// decision (orderDimensionChange).
 	dims bool
@@ -79,6 +81,10 @@ type deferredIndexWrite struct {
 	// (IndexRelationship, RemoveRelationship). Its text and source depend on
 	// settings ordered in this sequence, so it is ordered here too.
 	relationship bool
+	// refresh marks node or edge as the stored state a storage-following
+	// refresh installs: entry by entry (installStored), so an entry a budget
+	// or a dimension refuses is decided on its own and is not a build failure.
+	refresh bool
 	// valid, when set, is checked when the write is installed, before it is
 	// applied: false means a later write superseded it (a refresh whose
 	// reservation is no longer current), so it is skipped. It is called with
@@ -88,8 +94,19 @@ type deferredIndexWrite struct {
 	size int
 }
 
+// buildNodeAdmissionError identifies the snapshot generation whose replacement
+// could not be admitted. A later build owns a newer stored baseline.
+type buildNodeAdmissionError struct {
+	cause      error
+	generation uint64
+}
+
+func (e *buildNodeAdmissionError) Error() string { return e.cause.Error() }
+func (e *buildNodeAdmissionError) Unwrap() error { return e.cause }
+
 type buildWriteQueue struct {
-	open atomic.Bool // fast path: a build owns or awaits buildMu
+	generation atomic.Uint64
+	open       atomic.Bool // fast path: a build owns or awaits buildMu
 	// deferring is set while the queue's builds read through a storage
 	// snapshot; without one writes wait for the build.
 	deferring atomic.Bool
@@ -113,6 +130,7 @@ type buildWriteQueue struct {
 	// calls leave (bm25, vector).
 	flags       [2]bool
 	flagsQueued bool
+	afterBuild  []func()
 }
 
 // beginBuildWrites opens the queue for a build about to take buildMu.
@@ -135,6 +153,7 @@ func (s *Service) beginBuildWrites(deferring bool) {
 func (s *Service) startBuildWrites() {
 	q := &s.buildWrites
 	q.mu.Lock()
+	q.generation.Add(1)
 	q.populated = false
 	q.mu.Unlock()
 }
@@ -144,7 +163,7 @@ func (s *Service) startBuildWrites() {
 // A build that another one waits for leaves the rest, and publication, to it.
 // Caller owns buildMu and releases it next, so a write that finds the queue
 // closed waits only for that release.
-func (s *Service) endBuildWrites(ctx context.Context, buildErr error) error {
+func (s *Service) endBuildWrites(ctx context.Context, buildErr error) (error, []func()) {
 	s.ready.Store(false)
 	if buildErr != nil {
 		s.population.state.Store(populationFailed)
@@ -155,7 +174,7 @@ func (s *Service) endBuildWrites(ctx context.Context, buildErr error) error {
 	if q.owners > 0 {
 		q.mu.Unlock()
 		s.setBuildPhase("idle")
-		return s.finishPopulationPersistence(ctx, buildErr, true, false)
+		return s.finishPopulationPersistence(ctx, buildErr, true, false), nil
 	}
 	q.open.Store(false)
 	q.deferring.Store(false)
@@ -174,8 +193,10 @@ func (s *Service) endBuildWrites(ctx context.Context, buildErr error) error {
 	} else {
 		s.setBuildPhase("idle")
 	}
+	notifications := q.afterBuild
+	q.afterBuild = nil
 	q.mu.Unlock()
-	return resultErr
+	return resultErr, notifications
 }
 
 // completeBuildPopulation records that the build's baseline is installed and
@@ -199,7 +220,9 @@ func (s *Service) completeBuildPopulation() error {
 // the caller's data (copied), the temporal decision, and the settings while
 // no setting change is queued. An error from the checks the live path
 // reports is returned and nothing is queued, as a write that waited would
-// have failed. wait reports that the outcome depends on the operations ahead
+// have failed; a storage-following refresh is the exception: an embedding of
+// other dimensions refuses that entry only, so the write is queued and the
+// refusal returned with it, as the live install reports it. wait reports that the outcome depends on the operations ahead
 // (vectorNeedsOrderedDecision, a queued setting change) or that the copy does
 // not fit the queue's memory reservation (queueFitsLocked): the write waits
 // for the build and the live path decides it in order. Administrative
@@ -209,16 +232,22 @@ func (s *Service) queueBuildWrite(ctx context.Context, write deferredIndexWrite)
 	if !q.open.Load() || !s.buildDefersWrites() {
 		return false, false, nil
 	}
+	var refused error
 	switch {
 	case write.node != nil:
-		current, wait, err := s.admitQueuedNode(ctx, write.node)
-		if err != nil {
-			return false, false, err
+		generation := q.generation.Load()
+		current, wait, admission := s.admitQueuedNode(ctx, write.node)
+		if admission != nil && !(write.refresh && errors.Is(admission, ErrDimensionMismatch)) {
+			if write.refresh {
+				return false, false, &buildNodeAdmissionError{cause: admission, generation: generation}
+			}
+			return false, false, admission
 		}
 		if wait {
 			return false, true, nil
 		}
 		write.current = current
+		refused = admission
 	case write.edge != nil && !write.relationship:
 		// An edge's vectors are judged at install, by the dimensions and
 		// flags of its turn; only automatic dimensions make that turn's
@@ -244,7 +273,7 @@ func (s *Service) queueBuildWrite(ctx context.Context, write deferredIndexWrite)
 	if write.dims {
 		q.pendingOps++
 	}
-	return true, false, nil
+	return true, false, refused
 }
 
 // fitsLocked reports whether size more retained bytes fit the queue's
@@ -517,11 +546,15 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 		case write.relationship:
 			s.updateRelationshipNow(write)
 		case write.node != nil:
-			err = s.indexNodeOwned(s.LifetimeContext(), write.node, &write.current)
+			install := installPayload
+			if write.refresh {
+				install = installStored
+			}
+			err = s.indexNodeOwned(s.LifetimeContext(), write.node, &write.current, install)
 		case write.nodeID != "":
 			s.removeNodeOwned(storage.NodeID(write.nodeID))
 		case write.edge != nil:
-			err = s.indexEdgeOwned(write.edge)
+			err = s.indexEdgeOwned(write.edge, write.refresh)
 		case write.edgeID != "":
 			s.removeEdgeOwned(storage.EdgeID(write.edgeID))
 		case write.apply != nil:
@@ -529,6 +562,14 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 			if write.dims {
 				s.buildWrites.opApplied()
 			}
+		}
+		if write.afterBuild != nil {
+			s.buildWrites.mu.Lock()
+			s.buildWrites.afterBuild = append(s.buildWrites.afterBuild, write.afterBuild)
+			s.buildWrites.mu.Unlock()
+		}
+		if write.refresh {
+			err = withoutRefusals(err)
 		}
 		if err != nil {
 			s.population.state.Store(populationFailed)

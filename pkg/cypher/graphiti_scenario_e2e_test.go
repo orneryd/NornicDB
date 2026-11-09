@@ -630,7 +630,7 @@ func TestGraphitiScenarioE2E_BulkEdgeSaveIndexedEntityMatchesSurviveIncompleteIn
 // service over the same store, so ingest still feeds the index the read
 // statements consult.
 
-func TestGraphitiScenarioE2E_ExternalVectorIngestDoesNotUseExactScanFallbackBeforeWarmup(t *testing.T) {
+func TestGraphitiScenarioE2E_PreWarmupVectorReadsScanStoredPopulationsOnce(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
 	counting := &countingStreamingEngine{Engine: ns}
@@ -695,11 +695,48 @@ func TestGraphitiScenarioE2E_ExternalVectorIngestDoesNotUseExactScanFallbackBefo
 			require.NotEmpty(t, edgeRes.Rows)
 		}
 
-		require.Equal(t, 0, counting.allNodesCalls, "episode %d must not use node exact full-scan fallback", episode)
-		require.Equal(t, 0, counting.allEdgesCalls, "episode %d must not use edge exact full-scan fallback", episode)
-		require.Equal(t, 0, counting.labelCalls, "episode %d must not use node exact label-scan fallback", episode)
+		// Startup is incomplete, so both similarity reads answer from the stored
+		// populations: one entity label scan per node query and one edge scan per
+		// edge query, and neither scans every node nor stream-scans.
+		require.Equal(t, searchesPerEpisode, counting.labelCalls, "episode %d must read the entity population from storage once per node query", episode)
+		require.Equal(t, searchesPerEpisode, counting.allEdgesCalls, "episode %d must read the edge population from storage once per edge query", episode)
+		require.Equal(t, 0, counting.allNodesCalls, "episode %d must not scan every node", episode)
 		require.Equal(t, 0, counting.streamNodesCalls, "episode %d must not stream-scan nodes for cosine resolution", episode)
 	}
+
+	// Complete startup is the case that answers from the published index
+	// population: build it, then the same reads stay off the scan paths.
+	require.NoError(t, searchSvc.BuildIndexes(ctx))
+	require.True(t, searchSvc.IsReady())
+	counting.allNodesCalls = 0
+	counting.allEdgesCalls = 0
+	counting.labelCalls = 0
+	counting.streamNodesCalls = 0
+
+	queryVec := unitVectorF64(episodes, dim)
+	nodeRes, err := exec.Execute(ctx, graphitiNodeSimilarityQuery+"\n/* graphiti_node_resolution_ready */", map[string]interface{}{
+		"group_id":      graphitiGroupID,
+		"search_vector": queryVec,
+		"min_score":     -1.0,
+		"limit":         8,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, nodeRes.Rows)
+	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath, "a ready node population must answer from the vector index")
+	assertNonIncreasingScores(t, nodeRes.Rows, 1)
+
+	edgeRes, err := exec.Execute(ctx, graphitiEdgeSimilarityQuery+"\n/* graphiti_edge_fact_ready */", map[string]interface{}{
+		"search_vector": queryVec,
+		"min_score":     -1.0,
+		"limit":         8,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, edgeRes.Rows)
+	assertNonIncreasingScores(t, edgeRes.Rows, 2)
+	require.Equal(t, 0, counting.allNodesCalls, "a ready node population must not scan every node")
+	require.Equal(t, 0, counting.allEdgesCalls, "a ready edge population must not scan every edge")
+	require.Equal(t, 0, counting.labelCalls, "a ready population must not label-scan")
+	require.Equal(t, 0, counting.streamNodesCalls, "a ready population must not stream-scan nodes")
 }
 
 func TestGraphitiScenarioE2E_ChunkSimilarityWithoutVectorIndex_UsesExactFastPathDuringFreshIngest(t *testing.T) {

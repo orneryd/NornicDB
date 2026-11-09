@@ -106,6 +106,10 @@ type transactionStorageWrapper struct {
 	mutatedNodeIDs      map[string]struct{}
 	mutatedNodeIDsMu    sync.Mutex
 
+	// vectorPublications are the vector indexes this transaction creates; their
+	// populations begin at its commit (vector_index_publication.go).
+	vectorPublications []*vectorIndexPublication
+
 	// searchNodeRefreshes and searchEdgeRefreshes are what the transaction
 	// changed for search. Search reads them back once the commit makes them
 	// visible (refreshSearchAfterCommit), and never after a rollback.
