@@ -522,7 +522,7 @@ func TestStoredRefreshTemporalAdmissionFailureRetainsRetryOwnership(t *testing.T
 }
 
 func TestFailedTemporalAdmissionWithdrawsBuildSnapshotUntilRetry(t *testing.T) {
-	for _, mode := range []string{"retry_after_build", "newer_refresh_during_build", "newer_refresh_before_failure", "no_retry_owner", "notification_only"} {
+	for _, mode := range []string{"retry_after_build", "newer_refresh_during_build", "newer_refresh_before_failure", "no_retry_owner", "notification_only", "later_build_repairs_population"} {
 		t.Run(mode, func(t *testing.T) {
 			failure := errors.New("temporal admission unavailable")
 			failed := false
@@ -551,7 +551,7 @@ func TestFailedTemporalAdmissionWithdrawsBuildSnapshotUntilRetry(t *testing.T) {
 			var retries []RefreshRetry
 			notified := false
 			switch mode {
-			case "no_retry_owner":
+			case "no_retry_owner", "later_build_repairs_population":
 			case "notification_only":
 				svc.SetRefreshRetry(func(id storage.NodeID, _ storage.EdgeID, err error) {
 					require.Equal(t, node.ID, id)
@@ -566,6 +566,9 @@ func TestFailedTemporalAdmissionWithdrawsBuildSnapshotUntilRetry(t *testing.T) {
 			default:
 				svc.SetRefreshRetryOwner(func(work RefreshRetry, err error) { require.ErrorIs(t, err, failure); retries = append(retries, work) })
 			}
+			if mode == "later_build_repairs_population" {
+				svc.SetPersistenceEnabled(true)
+			}
 			mutation := svc.ReserveNodeMutation(node.ID)
 			if mode == "newer_refresh_before_failure" {
 				require.NoError(t, svc.RefreshNode(t.Context(), node.ID))
@@ -578,12 +581,25 @@ func TestFailedTemporalAdmissionWithdrawsBuildSnapshotUntilRetry(t *testing.T) {
 			if mode == "newer_refresh_during_build" {
 				require.NoError(t, svc.RefreshNode(t.Context(), node.ID))
 			}
+			var second chan error
+			if mode == "later_build_repairs_population" {
+				second = make(chan error, 1)
+				go func() { second <- svc.BuildIndexes(t.Context()) }()
+				require.Eventually(t, func() bool {
+					svc.buildWrites.mu.Lock()
+					defer svc.buildWrites.mu.Unlock()
+					return svc.buildWrites.owners == 2
+				}, 5*time.Second, time.Millisecond)
+			}
 			base.open()
 			require.NoError(t, <-built)
+			if second != nil {
+				require.NoError(t, <-second)
+			}
 			joined = true
 			require.True(t, svc.IsReady())
 			require.Empty(t, svc.fulltext().Search("oldterm", 10), "build must not publish the replaced snapshot")
-			if mode != "newer_refresh_during_build" && mode != "newer_refresh_before_failure" {
+			if mode != "newer_refresh_during_build" && mode != "newer_refresh_before_failure" && mode != "later_build_repairs_population" {
 				require.Zero(t, svc.EmbeddingCount(), "unverified replacement must withdraw the old vector")
 				if mode == "no_retry_owner" || mode == "notification_only" {
 					require.True(t, mutation.mutation.retire())

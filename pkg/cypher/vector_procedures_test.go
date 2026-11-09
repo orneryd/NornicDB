@@ -801,13 +801,13 @@ func TestVectorSearchQueryModes(t *testing.T) {
 		assert.Contains(t, err.Error(), "use vector array")
 	})
 
-	t.Run("dimension_mismatch_silently_filters", func(t *testing.T) {
-		// Query with different dimension vector - should return 0 results (not error)
+	t.Run("dimension_mismatch_fails", func(t *testing.T) {
+		// Query with different dimension vector - Neo4j's ProcedureCallFailed,
+		// not an empty successful result.
 		result, err := exec.Execute(ctx,
 			"CALL db.index.vector.queryNodes('doc_idx', 10, [0.5, 0.5]) YIELD node, score", nil) // 2-dim vs 4-dim
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Empty(t, result.Rows, "Dimension mismatch should filter out all nodes")
+		require.Nil(t, result)
+		require.ErrorContains(t, err, "Neo.ClientError.Procedure.ProcedureCallFailed: query vector must be nonempty and match the vector index dimensions")
 	})
 
 	t.Run("limit_results", func(t *testing.T) {
@@ -1980,7 +1980,8 @@ func TestNeo4jCompatibleWorkflow(t *testing.T) {
 		`, nil)
 		require.NoError(t, err)
 
-		// 4. Set embedding (simulating what an embedding service does)
+		// 4. Set embedding (simulating what an embedding service does), at the
+		// indexed 1024 dimensions so the managed index and the query agree.
 		embedding := make([]float32, 1024)
 		for i := range embedding {
 			embedding[i] = float32(i) / 1024.0
@@ -1989,18 +1990,19 @@ func TestNeo4jCompatibleWorkflow(t *testing.T) {
 		// Using Cypher SET instead of procedure for embedding (Neo4j style)
 		_, err = exec.Execute(ctx, `
 			MATCH (n:Decision {id: 'decision-123'})
-			SET n.embedding = [0.1, 0.2, 0.3, 0.4],
+			SET n.embedding = $embedding,
 			    n.has_embedding = true
-		`, nil)
+		`, map[string]interface{}{"embedding": embedding})
 		require.NoError(t, err)
 
-		// 5. Search - both fulltext and vector
+		// 5. Search - both fulltext and vector, with the stored dimensions
 		result, err = exec.Execute(ctx,
 			"CALL db.index.fulltext.queryNodes('node_fulltext_index', 'PostgreSQL') YIELD node, score", nil)
 		require.NoError(t, err)
 
 		result, err = exec.Execute(ctx,
-			"CALL db.index.vector.queryNodes('node_embedding_index', 10, [0.1, 0.2, 0.3, 0.4]) YIELD node, score", nil)
+			"CALL db.index.vector.queryNodes('node_embedding_index', 10, $queryVector) YIELD node, score",
+			map[string]interface{}{"queryVector": embedding})
 		require.NoError(t, err)
 		assert.NotNil(t, result)
 	})

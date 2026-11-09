@@ -3588,13 +3588,18 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 		return nil
 	}
 	if queued, err := s.readLockOrQueue(ctx, reservedWrite(deferredIndexWrite{node: node}, applyMutation)); queued || err != nil {
-		if !queued && withoutRefusals(err) != nil {
+		var admission *buildNodeAdmissionError
+		if !queued && errors.As(err, &admission) && withoutRefusals(err) != nil {
 			// A failed eligibility lookup cannot leave the build's older snapshot
 			// visible. Order withdrawal after that snapshot, without completing the
 			// reservation; transfer retry ownership after withdrawal and lock release.
 			withdraw := deferredIndexWrite{
 				apply: func() {
 					_ = applyReservedIndexMutation(applyMutation, func() error {
+						// Do not withdraw a later build's newly captured stored image.
+						if s.buildWrites.generation.Load() != admission.generation {
+							return err
+						}
 						s.removeNodeOwned(applyMutation.id)
 						return err
 					})
@@ -3997,7 +4002,9 @@ func (s *Service) buildNodeIterator(snapshot storage.ReadSnapshotView) NodeItera
 // streamed from the build's snapshot (the engine itself when the build has
 // none). Writes handed over meanwhile wait in the queue: they are applied
 // after the baseline (completeBuildPopulation), so none is overtaken by this
-// stream's copy.
+// stream's copy. A stored relationship the index cannot serve (a budget
+// refusal) stops the stream with that refusal: the population is incomplete,
+// so the build fails and readiness is not published (endBuildWrites).
 func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, snapshot storage.ReadSnapshotView) error {
 	if s == nil || !s.vectorEnabled.Load() {
 		return nil
@@ -4008,9 +4015,9 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, snapshot s
 		}
 		s.adoptBuildVectorDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
-		_ = s.indexEdgeLocked(edge, false)
+		err := s.indexEdgeLocked(edge, false)
 		s.indexMu.Unlock()
-		return nil
+		return err
 	}
 	if snapshot != nil {
 		return snapshot.StreamEdges(ctx, install)
@@ -4053,6 +4060,14 @@ type NodeIterator interface {
 // if both load with count > 0 (and semver format version matches), the full iteration
 // is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
 func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
+	var notifications []func()
+	// Retry owners may re-enter the service. Run them after all build locks,
+	// snapshots and the service read lease have been released.
+	defer func() {
+		for _, notify := range notifications {
+			notify()
+		}
+	}()
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return err
@@ -4067,13 +4082,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	// for the build instead.
 	s.beginBuildWrites(storage.SupportsReadSnapshot(ctx, s.engine))
 	s.buildMu.Lock()
-	var notifications []func()
-	defer func() {
-		s.buildMu.Unlock()
-		for _, notify := range notifications {
-			notify()
-		}
-	}()
+	defer s.buildMu.Unlock()
 	defer func() {
 		if resultErr == nil {
 			resultErr = ctx.Err()

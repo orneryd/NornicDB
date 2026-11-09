@@ -94,8 +94,19 @@ type deferredIndexWrite struct {
 	size int
 }
 
+// buildNodeAdmissionError identifies the snapshot generation whose replacement
+// could not be admitted. A later build owns a newer stored baseline.
+type buildNodeAdmissionError struct {
+	cause      error
+	generation uint64
+}
+
+func (e *buildNodeAdmissionError) Error() string { return e.cause.Error() }
+func (e *buildNodeAdmissionError) Unwrap() error { return e.cause }
+
 type buildWriteQueue struct {
-	open atomic.Bool // fast path: a build owns or awaits buildMu
+	generation atomic.Uint64
+	open       atomic.Bool // fast path: a build owns or awaits buildMu
 	// deferring is set while the queue's builds read through a storage
 	// snapshot; without one writes wait for the build.
 	deferring atomic.Bool
@@ -142,6 +153,7 @@ func (s *Service) beginBuildWrites(deferring bool) {
 func (s *Service) startBuildWrites() {
 	q := &s.buildWrites
 	q.mu.Lock()
+	q.generation.Add(1)
 	q.populated = false
 	q.mu.Unlock()
 }
@@ -223,8 +235,12 @@ func (s *Service) queueBuildWrite(ctx context.Context, write deferredIndexWrite)
 	var refused error
 	switch {
 	case write.node != nil:
+		generation := q.generation.Load()
 		current, wait, admission := s.admitQueuedNode(ctx, write.node)
 		if admission != nil && !(write.refresh && errors.Is(admission, ErrDimensionMismatch)) {
+			if write.refresh {
+				return false, false, &buildNodeAdmissionError{cause: admission, generation: generation}
+			}
 			return false, false, admission
 		}
 		if wait {
