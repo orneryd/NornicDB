@@ -10,3 +10,9 @@
 - [ ] Track main-only docs verification fixes and numeric-owner integration separately.
 - [x] Push draft PR #1766 against release/v1.4.4 with precise AC and verification evidence.
 - [ ] Run final-head full make test in CI and review duplicate advisory findings.
+
+## Follow-up after #1766 merge
+
+- [x] Confirm release 12c2b2b24 still fails capturecensus in CI run 42552016802, job 128949582578.
+- [x] Preserve the exact diagnostic: one context substitution, zero nil-context flows; implementation was not part of #1766.
+- [ ] Implement and verify the caller-context correction in the follow-up PR; keep census assertions blocking.
