@@ -143,3 +143,24 @@ func TestCurrentDatabaseCatalogRowHonorsVisibility(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, allowed.Rows, 1)
 }
+
+func TestCatalogVisibilityUsesExplicitSeeGrant(t *testing.T) {
+	exec := newCatalogVisibilityExecutor(t)
+	ctx := WithDatabasePermissionResolver(context.Background(), "nornic", func(database, permission string) bool { return database == "nornic" })
+	ctx = auth.WithRequestDatabaseAccessMode(ctx, catalogVisibilityEverywhere)
+	result, err := exec.Execute(ctx, "SHOW DATABASES YIELD name RETURN name", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"hidden", "nornic", "system"}, catalogVisibilityTextValues(t, result, "name"))
+}
+
+func TestCatalogVisibilityPrecedesPaginationAndHandlesEmptyPopulation(t *testing.T) {
+	exec := newCatalogVisibilityExecutor(t)
+	ctx := auth.WithRequestDatabaseAccessMode(context.Background(), catalogVisibilityNornicOnly)
+	result, err := exec.Execute(ctx, "SHOW DATABASES YIELD name ORDER BY name SKIP 1 LIMIT 1 RETURN name", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
+	ctx = auth.WithRequestDatabaseAccessMode(context.Background(), auth.DenyAllDatabaseAccessMode)
+	result, err = exec.Execute(ctx, "SHOW DATABASES YIELD name RETURN count(*) AS total", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+}
