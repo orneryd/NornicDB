@@ -3200,25 +3200,9 @@ func (s *Service) checkEmbeddingDimensions(node *storage.Node) error {
 	return nil
 }
 
-// indexStoredNodeLocked indexes one of the build's own stored nodes. Unlike a
-// caller's write it is not rejected for an embedding whose dimensions differ
-// from the index's: the indexer logs and skips that vector and indexes the
-// rest of the node, so one bad stored embedding cannot fail the whole build.
-func (s *Service) indexStoredNodeLocked(node *storage.Node, skipFulltext, current bool) error {
-	return s.indexNodeAsLocked(node, skipFulltext, current, installBuild)
-}
-
-func (s *Service) indexNodeLocked(ctx context.Context, node *storage.Node, skipFulltext bool) error {
-	shouldIndex, err := s.shouldIndexNode(ctx, node)
-	if err != nil {
-		return err
-	}
-	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex, installPayload)
-}
-
-// indexNodeAsLocked is indexNodeLocked with the temporal decision already
-// made: by indexNodeLocked, or at the call for a write handed to a build.
-// install decides what an entry the node cannot have does (nodeInstall).
+// indexNodeAsLocked installs a node using the temporal decision already made
+// by the live owner or at admission to the build. install controls whether a
+// refused entry rejects a payload or is omitted from a stored population.
 func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex bool, install nodeInstall) error {
 	var indexErr error
 	// refused is what installStored could not give the node.
@@ -4565,7 +4549,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 					}
 				}
 				for _, node := range filtered {
-					if err := s.indexStoredNodeLocked(node, false, true); err != nil {
+					if err := s.indexNodeAsLocked(node, false, true, installBuild); err != nil {
 						return err
 					}
 				}
@@ -4603,7 +4587,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			}
 			s.indexMu.Lock()
 			for _, n := range filtered {
-				if err := s.indexStoredNodeLocked(n, true, true); err != nil {
+				if err := s.indexNodeAsLocked(n, true, true, installBuild); err != nil {
 					s.indexMu.Unlock()
 					return err
 				}
@@ -4729,7 +4713,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		}
 		s.indexMu.Lock()
 		for _, n := range filtered {
-			if err := s.indexStoredNodeLocked(n, true, true); err != nil {
+			if err := s.indexNodeAsLocked(n, true, true, installBuild); err != nil {
 				s.indexMu.Unlock()
 				return err
 			}

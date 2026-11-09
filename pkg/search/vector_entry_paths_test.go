@@ -150,9 +150,8 @@ func TestIndexNodeRejectsMismatchedEntriesBeforeMutation(t *testing.T) {
 		assert.False(t, unchanged, "rejected entries must never match the indexed state")
 	}
 	svc.indexMu.RLock()
-	usage, err := svc.checkNodeIndexCapacityLocked(invalid, nodeFulltext{})
+	usage := svc.nodeIndexUsageLocked(invalid, nodeFulltext{})
 	svc.indexMu.RUnlock()
-	require.NoError(t, err)
 	assert.Equal(t, int64(len("n")+16+len(nodeNamedVectorKey("n", "v"))+16+len("n")+16), usage.vectorMetadata,
 		"the capacity estimate charges only canonical entries with the destination dimension")
 }

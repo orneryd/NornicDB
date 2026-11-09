@@ -27,14 +27,6 @@ type nodeFulltext struct {
 	frequency map[string]int // the same distinct terms and counts the index will write
 }
 
-func (s *Service) checkNodeIndexCapacityLocked(node *storage.Node, fulltext nodeFulltext) (indexCapacityUsage, error) {
-	usage := s.nodeIndexUsageLocked(node, fulltext)
-	if _, _, first := s.indexCapacityLocked(s.indexCapacityByNode[string(node.ID)], usage); first != nil {
-		return indexCapacityUsage{}, first
-	}
-	return usage, nil
-}
-
 // nodeIndexUsageLocked is the BM25 and vector memory indexing node takes:
 // its text, and its vectors with their metadata (the node's identity and
 // labels, and each entry's key).
