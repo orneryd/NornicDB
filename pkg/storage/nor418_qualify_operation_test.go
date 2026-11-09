@@ -10,8 +10,7 @@ import (
 // a relationship update's observation is scoped with its replacement, and the
 // caller's records are not changed.
 func TestNamespacedQualifyOperationScopesObservation(t *testing.T) {
-	base := NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
+	base := newTestMemoryEngine(t)
 	scope := NewNamespacedEngine(base, "tenant")
 	ctx := t.Context()
 	before := &Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "T"}
