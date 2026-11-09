@@ -446,3 +446,49 @@ func TestSearchService_IndexNodeRemovesClosedTemporalVersion(t *testing.T) {
 	require.NoError(t, svc.IndexNode(closed))
 	require.Zero(t, svc.EmbeddingCount())
 }
+
+// A transient temporal lookup failure must leave the committed image repairable
+// through the existing retry owner, using the original refresh reservation.
+func TestStoredRefreshTemporalFailureRetainsRetryOwnership(t *testing.T) {
+	for _, failure := range []error{context.Canceled, context.DeadlineExceeded, errors.New("transient temporal read")} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			var failed bool
+			_, ns, svc := newTemporalDecisionTestService(t, func(context.Context, *storage.Node) (bool, error) {
+				if failed {
+					return false, failure
+				}
+				return true, nil
+			})
+			node := &storage.Node{ID: "retry-temporal", Labels: []string{"FactVersion"}, Properties: map[string]any{"title": "oldterm", "fact_key": "retry", "valid_from": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), "valid_to": nil}, ChunkEmbeddings: [][]float32{{1, 0, 0}}}
+			_, err := ns.CreateNode(t.Context(), node)
+			require.NoError(t, err)
+			require.NoError(t, svc.RefreshNode(t.Context(), node.ID))
+			changed := storage.CopyNode(node)
+			changed.Properties["title"] = "newterm"
+			changed.ChunkEmbeddings = [][]float32{{0, 1, 0}}
+			require.NoError(t, ns.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: changed}))
+			var retries []RefreshRetry
+			svc.SetRefreshRetryOwner(func(work RefreshRetry, err error) {
+				require.ErrorIs(t, err, failure)
+				retries = append(retries, work)
+			})
+			failed = true
+			mutation := svc.ReserveNodeMutation(node.ID)
+			require.ErrorIs(t, svc.RefreshNodeWithMutation(t.Context(), mutation), failure)
+			require.Len(t, retries, 1, "installation failure must reach the retry owner")
+			require.True(t, retries[0].Current(), "the reservation must remain owned until repaired")
+			require.False(t, retries[0].Retired())
+			require.Empty(t, svc.fulltext().Search("oldterm", 10), "failed refresh withdraws the replaced text")
+			require.Zero(t, svc.EmbeddingCount(), "failed refresh withdraws the replaced vectors")
+			failed = false
+			require.NoError(t, svc.RefreshNodeWithMutation(t.Context(), retries[0].Node))
+			require.True(t, retries[0].Retired())
+			require.Len(t, retries, 1)
+			require.Empty(t, svc.fulltext().Search("oldterm", 10))
+			require.Len(t, svc.fulltext().Search("newterm", 10), 1)
+			hits, err := svc.VectorQueryNodes(t.Context(), []float32{0, 1, 0}, VectorQuerySpec{Limit: 10})
+			require.NoError(t, err)
+			require.Len(t, hits, 1)
+		})
+	}
+}

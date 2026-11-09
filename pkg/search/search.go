@@ -2988,6 +2988,11 @@ func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, curren
 		var err error
 		shouldIndex, err = s.shouldIndexNode(ctx, node)
 		if err != nil {
+			if install == installStored {
+				// The committed replacement cannot keep serving the old image
+				// while its eligibility lookup waits for retry.
+				s.removeNodeOwned(node.ID)
+			}
 			return err
 		}
 	}
@@ -3604,8 +3609,14 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 		}
 		return err
 	}
-	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(ctx, node, nil, installStored) })
+	err := func() error {
+		defer s.buildMu.RUnlock()
+		return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(ctx, node, nil, installStored) })
+	}()
+	if err != nil && withoutRefusals(err) != nil {
+		s.retryRefresh(RefreshRetry{Node: mutation}, err)
+	}
+	return err
 }
 
 // reservedWrite is write, a reserved refresh's install or removal, as it is

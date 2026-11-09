@@ -342,7 +342,7 @@ func claimReservedIndexMutation[ID ~string](mutation identityMutation[ID]) bool 
 
 // applyReservedIndexMutation completes one node or relationship reservation
 // while retaining the identity lane over its index application.
-func applyReservedIndexMutation[ID ~string](mutation identityMutation[ID], apply func() error) error {
+func applyReservedIndexMutation[ID ~string](mutation identityMutation[ID], apply func() error) (err error) {
 	s := mutation.owner()
 	if s == nil || mutation.generation == 0 {
 		return nil
@@ -355,7 +355,11 @@ func applyReservedIndexMutation[ID ~string](mutation identityMutation[ID], apply
 	s.nodeMutationMu.Unlock()
 	defer func() {
 		s.nodeMutationMu.Lock()
-		mutation.complete(s)
+		// A transient installation failure still belongs to its retry owner.
+		// Budget/dimension refusals are final outcomes, not pending work.
+		if withoutRefusals(err) == nil {
+			mutation.complete(s)
+		}
 		s.unlockMutation(lane)
 	}()
 	return apply()
