@@ -28,8 +28,7 @@
     "ITypePredicateContext": "children"
   },
   "INotExpressionContext": {
-    "IComparisonExpressionContext": "children",
-    "IExistsSubqueryContext": "effect"
+    "IComparisonExpressionContext": "children"
   },
   "IReadingStatementContext": {
     "IMatchStContext": "effect",
@@ -50,19 +49,13 @@
     "IRemoveStContext": "effect",
     "IForeachStContext": "effect"
   },
-  "ISinglePartQContext": {
+  "ISingleQueryContext": {
     "IReadingStatementContext": "children",
-    "IReturnStContext": "effect",
     "IUpdatingStatementContext": "children",
-    "IEmbeddingStContext": "children",
-    "ICallSubqueryContext": "effect",
-    "IOrderStContext": "effect"
-  },
-  "IMultiPartQContext": {
-    "ISinglePartQContext": "children",
     "IWithStContext": "effect",
-    "IReadingStatementContext": "children",
-    "IUpdatingStatementContext": "children"
+    "IEmbeddingStContext": "children",
+    "IReturnStContext": "effect",
+    "IOrderStContext": "effect"
   },
   "IProjectionBodyContext": {
     "IProjectionItemsContext": "children",

@@ -43,7 +43,7 @@ func forEachQueryBody(ctx context.Context, source string, containers []string, v
 		switch node.Rule() {
 		case cypherantlr.CypherParserRULE_callSubquery:
 			container = "CALL"
-		case cypherantlr.CypherParserRULE_existsSubquery, cypherantlr.CypherParserRULE_subqueryExist:
+		case cypherantlr.CypherParserRULE_subqueryExist:
 			container = "EXISTS"
 		case cypherantlr.CypherParserRULE_countSubquery:
 			container = "COUNT"
@@ -320,7 +320,7 @@ func setQueryBodyUse(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
 // expression or CALL body; those belong to their own retained statement views.
 func appendQuerySyntax(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
 	switch node.Rule() {
-	case cypherantlr.CypherParserRULE_singleQuery, cypherantlr.CypherParserRULE_singlePartQ, cypherantlr.CypherParserRULE_multiPartQ, cypherantlr.CypherParserRULE_readingStatement, cypherantlr.CypherParserRULE_updatingStatement:
+	case cypherantlr.CypherParserRULE_singleQuery, cypherantlr.CypherParserRULE_readingStatement, cypherantlr.CypherParserRULE_updatingStatement:
 		for i := 0; i < node.ChildCount(); i++ {
 			appendQuerySyntax(branch, node.Child(i))
 		}

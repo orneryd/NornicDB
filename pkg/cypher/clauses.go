@@ -1577,7 +1577,7 @@ func unwindConjunctiveComparison(comparison cypherantlr.SyntaxNode) bool {
 	// the only read of the key lives in the child predicate.
 	for parent, valid := filter.Parent(); valid; parent, valid = parent.Parent() {
 		switch parent.Rule() {
-		case cypherantlr.CypherParserRULE_callSubquery, cypherantlr.CypherParserRULE_collectSubquery, cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_existsSubquery, cypherantlr.CypherParserRULE_subqueryExist:
+		case cypherantlr.CypherParserRULE_callSubquery, cypherantlr.CypherParserRULE_collectSubquery, cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_subqueryExist:
 			return false
 		}
 	}

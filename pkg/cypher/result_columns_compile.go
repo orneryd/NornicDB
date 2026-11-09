@@ -370,7 +370,7 @@ func (compilation *boundCompilation) prepareClause(ctx context.Context, branch *
 			return nil
 		}
 		switch node.Rule() {
-		case cypherantlr.CypherParserRULE_existsSubquery, cypherantlr.CypherParserRULE_subqueryExist, cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_collectSubquery:
+		case cypherantlr.CypherParserRULE_subqueryExist, cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_collectSubquery:
 		default:
 			return nil
 		}
@@ -381,7 +381,7 @@ func (compilation *boundCompilation) prepareClause(ctx context.Context, branch *
 		// Only the expression bodies owned by this clause. A nested CALL's
 		// compiler registers its own expression bodies.
 		for parent, ok := node.Parent(); ok && parent.ID() != source.syntax.ID(); parent, ok = parent.Parent() {
-			if parent.Rule() == cypherantlr.CypherParserRULE_callSubquery || parent.Rule() == cypherantlr.CypherParserRULE_collectSubquery || parent.Rule() == cypherantlr.CypherParserRULE_countSubquery || parent.Rule() == cypherantlr.CypherParserRULE_existsSubquery || parent.Rule() == cypherantlr.CypherParserRULE_subqueryExist {
+			if parent.Rule() == cypherantlr.CypherParserRULE_callSubquery || parent.Rule() == cypherantlr.CypherParserRULE_collectSubquery || parent.Rule() == cypherantlr.CypherParserRULE_countSubquery || parent.Rule() == cypherantlr.CypherParserRULE_subqueryExist {
 				return nil
 			}
 		}

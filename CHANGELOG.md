@@ -18,6 +18,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Long Cypher statements no longer take seconds to read. The first run of a
+  statement of tens of kilobytes parsed it twice, the second time in the
+  grammar's slow prediction mode, and every later run reread the statement
+  once per word for two of its entry checks. The grammar now chooses each
+  clause, operator and dotted function name from the token it starts with, and
+  the per-word text lookups share one index of the statement. A 67 KB
+  statement's first run goes from 36 s to 3 s and allocates 1 GB instead of
+  16 GB; results are unchanged. The grammar rules `singlePartQ`, `multiPartQ`
+  and `existsSubquery` are gone (a query is its clauses in order;
+  `EXISTS { ... }` is the atom `subqueryExist`). A constraint contract block's
+  entries are read with the grammar after the statement, one after another,
+  and are part of the statement's parse tree as before; the blocks accepted
+  are unchanged. A malformed entry that follows a well-formed one is now
+  reported once, at the malformed entry: `REQUIRE { n.a IS :: LIST<INTEGER>
+  n.age > }` reports line 1:72, where the error was reported at the block's
+  first entry (1:40), and after an entry with a contract of its own the
+  second of two reports is the one that stays.
+  A shell command's arguments (`:param`, `:use`) are read by the grammar as
+  balanced tokens with maps as map literals: the command that runs them still
+  reads their expressions, but a syntax check of the text alone no longer
+  reports a malformed expression in them.
 - Explicit-transaction label and equality reads apply live suppression consistently
   with point reads while preserving the pinned data population. Native indexed
   transaction reads reuse their actual pinned snapshot, reducing repeated history

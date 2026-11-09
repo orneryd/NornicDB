@@ -208,6 +208,20 @@ func (s *BaseCypherParserListener) EnterConstraintBlock(ctx *ConstraintBlockCont
 // ExitConstraintBlock is called when production constraintBlock is exited.
 func (s *BaseCypherParserListener) ExitConstraintBlock(ctx *ConstraintBlockContext) {}
 
+// EnterConstraintBlockEntry is called when production constraintBlockEntry is entered.
+func (s *BaseCypherParserListener) EnterConstraintBlockEntry(ctx *ConstraintBlockEntryContext) {}
+
+// ExitConstraintBlockEntry is called when production constraintBlockEntry is exited.
+func (s *BaseCypherParserListener) ExitConstraintBlockEntry(ctx *ConstraintBlockEntryContext) {}
+
+// EnterConstraintBlockRequirementEntry is called when production constraintBlockRequirementEntry is entered.
+func (s *BaseCypherParserListener) EnterConstraintBlockRequirementEntry(ctx *ConstraintBlockRequirementEntryContext) {
+}
+
+// ExitConstraintBlockRequirementEntry is called when production constraintBlockRequirementEntry is exited.
+func (s *BaseCypherParserListener) ExitConstraintBlockRequirementEntry(ctx *ConstraintBlockRequirementEntryContext) {
+}
+
 // EnterPropertyTypeName is called when production propertyTypeName is entered.
 func (s *BaseCypherParserListener) EnterPropertyTypeName(ctx *PropertyTypeNameContext) {}
 
@@ -231,12 +245,6 @@ func (s *BaseCypherParserListener) EnterStandaloneCall(ctx *StandaloneCallContex
 
 // ExitStandaloneCall is called when production standaloneCall is exited.
 func (s *BaseCypherParserListener) ExitStandaloneCall(ctx *StandaloneCallContext) {}
-
-// EnterExistsSubquery is called when production existsSubquery is entered.
-func (s *BaseCypherParserListener) EnterExistsSubquery(ctx *ExistsSubqueryContext) {}
-
-// ExitExistsSubquery is called when production existsSubquery is exited.
-func (s *BaseCypherParserListener) ExitExistsSubquery(ctx *ExistsSubqueryContext) {}
 
 // EnterCountSubquery is called when production countSubquery is entered.
 func (s *BaseCypherParserListener) EnterCountSubquery(ctx *CountSubqueryContext) {}
@@ -327,18 +335,6 @@ func (s *BaseCypherParserListener) EnterOrderSt(ctx *OrderStContext) {}
 
 // ExitOrderSt is called when production orderSt is exited.
 func (s *BaseCypherParserListener) ExitOrderSt(ctx *OrderStContext) {}
-
-// EnterSinglePartQ is called when production singlePartQ is entered.
-func (s *BaseCypherParserListener) EnterSinglePartQ(ctx *SinglePartQContext) {}
-
-// ExitSinglePartQ is called when production singlePartQ is exited.
-func (s *BaseCypherParserListener) ExitSinglePartQ(ctx *SinglePartQContext) {}
-
-// EnterMultiPartQ is called when production multiPartQ is entered.
-func (s *BaseCypherParserListener) EnterMultiPartQ(ctx *MultiPartQContext) {}
-
-// ExitMultiPartQ is called when production multiPartQ is exited.
-func (s *BaseCypherParserListener) ExitMultiPartQ(ctx *MultiPartQContext) {}
 
 // EnterMatchSt is called when production matchSt is entered.
 func (s *BaseCypherParserListener) EnterMatchSt(ctx *MatchStContext) {}
