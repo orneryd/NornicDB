@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/orneryd/nornicdb/internal/labelrouting"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -44,6 +45,10 @@ type CompositeEngine struct {
 	// Track which constituent each node was created in (for same-statement edge creation)
 	// Following Neo4j TransactionState pattern: track nodes created in current transaction
 	nodeToConstituent map[NodeID]string
+
+	// transactionTimeout is the server's transaction timeout for explicit
+	// transactions on the composite (SetServerTransactionTimeout).
+	transactionTimeout time.Duration
 
 	mu sync.RWMutex
 }
@@ -1780,6 +1785,17 @@ func (c *CompositeEngine) IsComposite() bool { return true }
 // queries run under (a USE target is in its scope; graph.names() lists its
 // constituents).
 func (c *CompositeEngine) SetCompositeName(name string) { c.name = name }
+
+// SetServerTransactionTimeout records the server's transaction timeout for
+// explicit transactions on the composite; its database manager sets the
+// value it configures for every database (NOR-284).
+func (c *CompositeEngine) SetServerTransactionTimeout(timeout time.Duration) {
+	c.transactionTimeout = timeout
+}
+
+// ServerTransactionTimeout is the server's transaction timeout for explicit
+// transactions on the composite (ServerTransactionTimeoutOf).
+func (c *CompositeEngine) ServerTransactionTimeout() time.Duration { return c.transactionTimeout }
 
 // CompositeName is the composite database's name, or "" if not recorded.
 func (c *CompositeEngine) CompositeName() string { return c.name }

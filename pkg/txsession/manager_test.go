@@ -140,6 +140,8 @@ func TestManagerTouchDoesNotReviveExpiredSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The session retires only a transaction its end owner has ended.
+	endTransactionThroughOwner(t, session)
 	mgr.nowFunc = func() time.Time { return base.Add(2 * time.Second) }
 	mgr.Touch(session)
 	if _, ok := mgr.Get(session.ID); ok {

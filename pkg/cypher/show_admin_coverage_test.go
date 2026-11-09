@@ -71,7 +71,7 @@ func TestRunningTransactionRegistryEdges(t *testing.T) {
 	tx.endQuery()
 
 	for _, id := range []string{"nornic", "nornic-transaction-x", "nornic-transaction-"} {
-		_, found := runningTransactions.terminate(id)
+		_, found := runningTransactions.terminate(t.Context(), id)
 		require.False(t, found, id)
 	}
 }
@@ -106,7 +106,7 @@ func TestShowTransactionsIDsAndStatus(t *testing.T) {
 
 	tx := runningTransactions.begin(ctx, "covtx")
 	defer runningTransactions.end(tx)
-	_, found := runningTransactions.terminate(tx.id())
+	_, found := runningTransactions.terminate(t.Context(), tx.id())
 	require.True(t, found)
 	result, err := exec.Execute(ctx, "SHOW TRANSACTIONS $id YIELD transactionId, currentQueryId, status", map[string]interface{}{"id": tx.id()})
 	require.NoError(t, err)

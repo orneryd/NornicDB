@@ -214,6 +214,13 @@ type runningTransaction struct {
 	connection ClientConnection
 	started    time.Time
 	terminated atomic.Bool
+	// timedOut records that the server's transaction timeout, not
+	// TERMINATE TRANSACTIONS, terminated the transaction (NOR-284). It is
+	// set before terminated.
+	timedOut atomic.Bool
+	// end is an explicit transaction's end owner (transactionEnd); nil for
+	// an auto-commit statement and for a participant.
+	end *transactionEnd
 	// memory is the running statement's memory estimate, nil while no
 	// limit is configured (#1343).
 	memory atomic.Pointer[transactionMemoryTracker]
@@ -235,6 +242,12 @@ type runningTransactionRegistry struct {
 	byNumber map[uint64]*runningTransaction
 	nextTx   atomic.Uint64
 	nextQry  atomic.Uint64
+	// owners maps each listed local participant to its owner: the running
+	// entry of the composite transaction it is part of (withLocalParticipant,
+	// NOR-284). End requests on the participant go to the owner, and the
+	// owner's termination is the participant's. Kept here, not in the
+	// entry, so an auto-commit statement's entry doesn't grow.
+	owners map[*runningTransaction]*runningTransaction
 }
 
 // runningTransactions is the process's registry: SHOW TRANSACTIONS lists
@@ -265,14 +278,45 @@ func (r *runningTransactionRegistry) register(ctx context.Context, tx *runningTr
 	r.mu.Unlock()
 }
 
+// setOwner records owner (nil: none) as the owner of tx, a local
+// participant, before tx is listed: an end request can find tx only with
+// its owner.
+func (r *runningTransactionRegistry) setOwner(tx, owner *runningTransaction) {
+	if owner == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.owners == nil {
+		r.owners = make(map[*runningTransaction]*runningTransaction)
+	}
+	r.owners[tx] = owner
+	r.mu.Unlock()
+}
+
 func (r *runningTransactionRegistry) end(tx *runningTransaction) {
 	if tx == nil {
 		return
 	}
+	tx.stopIdleTimeout()
 	tx.releaseMemory()
 	r.mu.Lock()
 	delete(r.byNumber, tx.number)
+	if tx.end == nil && r.owners != nil {
+		delete(r.owners, tx) // a participant's owner
+	}
 	r.mu.Unlock()
+}
+
+// terminationOf is the entry whose termination is tx's: its owner for a
+// local participant, else tx.
+func (r *runningTransactionRegistry) terminationOf(tx *runningTransaction) *runningTransaction {
+	r.mu.RLock()
+	owner := r.owners[tx]
+	r.mu.RUnlock()
+	if owner != nil {
+		return owner
+	}
+	return tx
 }
 
 func (tx *runningTransaction) releaseMemory() {
@@ -316,8 +360,9 @@ func (r *runningTransactionRegistry) snapshot() []*runningTransaction {
 }
 
 // terminate terminates the transaction with id, a checked
-// <database>-transaction-<n> (terminateTransactionID).
-func (r *runningTransactionRegistry) terminate(id string) (*runningTransaction, bool) {
+// <database>-transaction-<n> (terminateTransactionID), for the TERMINATE
+// TRANSACTIONS statement running with ctx.
+func (r *runningTransactionRegistry) terminate(ctx context.Context, id string) (*runningTransaction, bool) {
 	separator := strings.LastIndex(id, "-transaction-")
 	if separator < 0 {
 		return nil, false
@@ -328,16 +373,29 @@ func (r *runningTransactionRegistry) terminate(id string) (*runningTransaction, 
 	}
 	r.mu.RLock()
 	tx, ok := r.byNumber[number]
-	defer r.mu.RUnlock()
 	if !ok || !strings.EqualFold(tx.database, id[:separator]) {
+		r.mu.RUnlock()
 		return nil, false
 	}
-	tx.terminated.Store(true)
-	tx.mu.Lock()
-	statement := tx.statement
-	tx.mu.Unlock()
+	// A participant is never an end owner: the request goes to its owner,
+	// whose end reaches the participant through the failure rule (NOR-284).
+	target := tx
+	if owner := r.owners[tx]; owner != nil {
+		target = owner
+	}
+	target.mu.Lock()
+	claimed := target.markTerminatedLocked(false)
+	statement := target.statement
+	target.mu.Unlock()
+	r.mu.RUnlock()
 	if statement != nil {
 		statement.cancel(context.Canceled)
+	}
+	// An idle explicit transaction has no statement to notice: it is ended
+	// here, so its keys and write admission are free when TERMINATE returns
+	// (NOR-284).
+	if claimed {
+		target.endIdle(context.WithoutCancel(ctx))
 	}
 	return tx, true
 }
@@ -525,7 +583,7 @@ func (e *StorageExecutor) withRunningStatement(ctx context.Context, query string
 	if e.txContext != nil && e.txContext.active && e.txContext.running != nil {
 		tx := e.txContext.running
 		if tx.terminated.Load() {
-			return ctx, runningStatement{}, transactionTerminatedError()
+			return ctx, runningStatement{}, tx.terminationError()
 		}
 		statement := &statementContext{parent: ctx, tx: tx}
 		e.beginTransactionMemory(tx, statement)
@@ -671,8 +729,12 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 		query, queryNumber, queryStarted := tx.query, tx.queryNumber, tx.queryStarted
 		tx.mu.Unlock()
 		status := "Running"
-		if tx.terminated.Load() {
+		termination := runningTransactions.terminationOf(tx) // a participant's is its owner's
+		if termination.terminated.Load() {
 			status = "Terminated with reason: Transaction terminated."
+			if termination.timedOut.Load() {
+				status = "Terminated with reason: Transaction timed out."
+			}
 		}
 		var currentQueryID, currentQueryStart, currentQueryElapsed interface{}
 		currentQueryStatus := "idle"
@@ -775,7 +837,7 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 			rows = append(rows, []interface{}{nil, nil, "Transaction not found."})
 			continue
 		}
-		tx, found := runningTransactions.terminate(text)
+		tx, found := runningTransactions.terminate(ctx, text)
 		if !found {
 			rows = append(rows, []interface{}{id, nil, "Transaction not found."})
 			continue

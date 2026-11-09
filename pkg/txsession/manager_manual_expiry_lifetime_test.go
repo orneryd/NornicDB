@@ -18,6 +18,8 @@ func TestManagerManualExpiryJoinsStoppedTimer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// The session retires only a transaction its end owner has ended.
+			endTransactionThroughOwner(t, session)
 			now = now.Add(2 * time.Hour)
 			if operation == "touch" {
 				manager.Touch(session)

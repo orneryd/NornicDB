@@ -1680,7 +1680,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok && running.terminated.Load() {
 		tx.Rollback()
 		txExec.invalidateNodeLookupCache()
-		return nil, bookkeeping.abort(ctx, transactionTerminatedError(), "terminated")
+		return nil, bookkeeping.abort(ctx, running.terminationError(), "terminated")
 	}
 
 	// Commit successful transaction. The statement's context makes commit-time

@@ -158,6 +158,9 @@ type remoteCypherTx struct {
 	commitURL    string
 	rollbackURL  string
 	closed       bool
+	// leaseEvery is how often its coordinator renews an HTTP transaction's
+	// remote session (RenewLease); zero for Bolt.
+	leaseEvery time.Duration
 }
 
 func newBoltTransport(uri, database string, cfg RemoteEngineConfig) (*boltTransport, error) {
@@ -600,23 +603,24 @@ func (h *httpTransport) queryBatch(ctx context.Context, statements []remoteState
 	return err
 }
 
-// openTransaction exchanges HTTP's explicit-transaction handshake and returns its URLs.
-func (h *httpTransport) openTransaction(ctx context.Context, mode RemoteAccessMode) (_ string, _ string, err error) {
+// openTransaction exchanges HTTP's explicit-transaction handshake and returns
+// its URLs and the expiry the server reported for its session.
+func (h *httpTransport) openTransaction(ctx context.Context, mode RemoteAccessMode) (_ string, _ string, _ string, err error) {
 	openBody := remoteTxRequest{Statements: []remoteStatement{}, TransactionMetadata: coordinatorTransactionMetadata(ctx)}
 	if mode == RemoteAccessRead {
 		openBody.AccessMode = "READ"
 	}
 	raw, err := valueconvert.CypherInputJSON.Marshal(openBody)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	target, err := h.txOpenURL()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if mode == RemoteAccessRead {
@@ -629,44 +633,78 @@ func (h *httpTransport) openTransaction(ctx context.Context, mode RemoteAccessMo
 	}
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	var openResp struct {
-		Commit string `json:"commit"`
+		Commit      string `json:"commit"`
+		Transaction struct {
+			Expires string `json:"expires"`
+		} `json:"transaction"`
 		Errors []struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
 	if err := jsontext.Unmarshal(body, &openResp); err != nil {
-		return "", "", localizedError(localization.StorageRemoteTransactionOpenDecodeFailed(resp.StatusCode, err), err)
+		return "", "", "", localizedError(localization.StorageRemoteTransactionOpenDecodeFailed(resp.StatusCode, err), err)
 	}
 	if len(openResp.Errors) > 0 {
-		return "", "", localizedError(localization.StorageRemoteError(openResp.Errors[0].Code, openResp.Errors[0].Message), nil)
+		return "", "", "", localizedError(localization.StorageRemoteError(openResp.Errors[0].Code, openResp.Errors[0].Message), nil)
 	}
 	if strings.TrimSpace(openResp.Commit) == "" {
-		return "", "", localizedError(localization.StorageRemoteTransactionCommitURLMissing(), nil)
+		return "", "", "", localizedError(localization.StorageRemoteTransactionCommitURLMissing(), nil)
 	}
 	commitURL, err := observability.ComposeRequestURL(h.baseURL, openResp.Commit, observability.MergeRequestFollowup)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	commit, err := url.Parse(commitURL)
 	if err != nil {
-		return "", "", fmt.Errorf("invalid composed remote transaction URL")
+		return "", "", "", fmt.Errorf("invalid composed remote transaction URL")
 	}
 	commit.Path = strings.TrimSuffix(commit.Path, "/commit")
 	commit.RawPath = strings.TrimSuffix(commit.RawPath, "/commit")
 	executeURL := commit.String()
-	return executeURL, commitURL, nil
+	return executeURL, commitURL, openResp.Transaction.Expires, nil
 }
 
 func (h *httpTransport) close() error { return nil }
+
+// remoteLeaseRenewalInterval is how often a coordinator renews its HTTP
+// participant's remote session (NOR-284): a third of the lifetime the
+// server reported at open (expires, an HTTP date), at most 10 s and at
+// least 100 ms; 10 s when it reported none. NornicDB's session expiry is
+// 30 s, Neo4j's HTTP transaction idle timeout 60 s by default.
+func remoteLeaseRenewalInterval(expires string, now time.Time) time.Duration {
+	const most, least = 10 * time.Second, 100 * time.Millisecond
+	at, err := http.ParseTime(expires)
+	if err != nil {
+		return most
+	}
+	return max(least, min(most, at.Sub(now)/3))
+}
+
+// LeaseRenewalInterval is how often the coordinator holding this
+// transaction renews its remote session (RenewLease): zero over Bolt, whose
+// connection is the lease.
+func (t *remoteCypherTx) LeaseRenewalInterval() time.Duration { return t.leaseEvery }
+
+// RenewLease renews an HTTP transaction's remote session with the HTTP API's
+// keep-alive request, which runs no statement (NOR-284). The remote server
+// ends a coordinator's participant whose session expires unrenewed; its
+// coordinator renews it while its composite transaction lives.
+func (t *remoteCypherTx) RenewLease(ctx context.Context) error {
+	if t.transport == nil {
+		return nil
+	}
+	_, err := t.transport.doRequestToURL(ctx, http.MethodPost, t.executeURL, remoteTxRequest{Statements: []remoteStatement{}})
+	return err
+}
 
 // QueryCypher executes through the selected wire mechanism while owning the
 // common result-mode and credential-safe error boundary.
@@ -1572,11 +1610,13 @@ func (r *RemoteEngine) BeginCypherTx(ctx context.Context, mode RemoteAccessMode)
 		}
 	}()
 	if t.transport != nil {
-		t.executeURL, t.commitURL, err = t.transport.openTransaction(ctx, mode)
+		var expires string
+		t.executeURL, t.commitURL, expires, err = t.transport.openTransaction(ctx, mode)
 		if err != nil {
 			return nil, err
 		}
 		t.rollbackURL = t.executeURL
+		t.leaseEvery = remoteLeaseRenewalInterval(expires, time.Now())
 	} else {
 		wire := r.transport.(*boltTransport)
 		accessMode := neo4j.AccessModeWrite

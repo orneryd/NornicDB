@@ -439,7 +439,17 @@ func (c *stopR2RollbackController) AcquireSnapshotReader(storage.SnapshotReaderI
 func (*stopR2RollbackController) StopLifecycle() {}
 func stopR2RollbackManager(t *testing.T, s *Server, ttl time.Duration, gate *stopR2Gate) (*storage.BadgerEngine, *stopR2RollbackController) {
 	t.Helper()
-	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	// The transaction's end follows the engine's configured transaction
+	// timeout (its end owner, NOR-284), the session's expiry interval here;
+	// the session expiry then retires the ended session.
+	timeout := time.Duration(0)
+	if ttl < time.Hour {
+		timeout = ttl
+	}
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+		InMemory:      true,
+		EngineOptions: storage.EngineOptions{LockWait: storage.LockWaitOptions{Timeout: timeout}},
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	t.Cleanup(gate.open)

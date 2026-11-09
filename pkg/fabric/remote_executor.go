@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -48,11 +49,67 @@ type remoteParticipant struct {
 	committed bool // primary operation requested commit
 	primary   *remoteCompletion
 	cleanup   *remoteCompletion
+	// lease renews the participant's remote session while it is open
+	// (holdLease); nil when its transport needs no renewal. leaseCancel
+	// cancels the renewals' context when the participant ends.
+	lease       *time.Timer
+	leaseCancel context.CancelFunc
+}
+
+// remoteLease is a remote transaction whose remote session its coordinator
+// renews (storage's HTTP transaction): the remote server ends a
+// coordinator's participant whose session expires unrenewed (NOR-284).
+type remoteLease interface {
+	LeaseRenewalInterval() time.Duration
+	RenewLease(context.Context) error
+}
+
+// holdLease keeps the participant's remote session alive while the
+// participant is open: the composite transaction it belongs to holds it as a
+// lease, renewed at the transaction's renewal interval until the
+// participant's terminal operation (end). The remote server ends the part
+// when the lease lapses, so a coordinator that is gone leaves nothing held
+// there, and a working one never loses it. A failed renewal is retried at
+// the next interval; a participant the remote server already ended reports
+// that at its next statement or COMMIT. The renewals run with the context
+// that enlisted the participant, without its cancellation (its values and
+// trace survive), until the participant ends.
+func (p *remoteParticipant) holdLease(ctx context.Context) {
+	lease, ok := p.tx.(remoteLease)
+	if !ok {
+		return
+	}
+	every := lease.LeaseRenewalInterval()
+	if every <= 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.primary != nil {
+		return
+	}
+	lifetime, cancelLifetime := context.WithCancel(context.WithoutCancel(ctx))
+	p.leaseCancel = cancelLifetime
+	p.lease = time.AfterFunc(every, func() {
+		renewCtx, cancel := context.WithTimeout(lifetime, every)
+		_ = lease.RenewLease(renewCtx)
+		cancel()
+		p.mu.Lock()
+		if p.primary == nil {
+			p.lease.Reset(every)
+		}
+		p.mu.Unlock()
+	})
 }
 
 func (p *remoteParticipant) end(ctx context.Context, commit bool) error {
 	p.mu.Lock()
 	if p.primary == nil {
+		// The participant's terminal operation releases its lease.
+		if p.lease != nil {
+			p.lease.Stop()
+			p.leaseCancel()
+		}
 		result := &remoteCompletion{done: make(chan struct{})}
 		p.primary, p.committed = result, commit
 		p.mu.Unlock()
@@ -417,6 +474,7 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 	}
 	r.txHandles[sub.ShardName] = handle
 	registered = true
+	handle.holdLease(ctx)
 	return handle, nil
 }
 

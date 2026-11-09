@@ -136,6 +136,13 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Preserve the existing explicit transaction failure contract. Terminal
 	// completion owns bookkeeping; uncommitted MERGE replay policy stays outside.
 	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
+		// The owner's operation excludes an end from outside it
+		// (transactionEnd); a termination that arrives meanwhile is applied
+		// when it returns, after the failure rule below.
+		if running := e.txContext.running; running != nil && running.end != nil {
+			running.enterOwner()
+			defer running.leaveOwner(ctx)
+		}
 		defer func() {
 			if cause := recover(); cause != nil {
 				e.failTransaction(ctx, fmt.Errorf("statement panicked: %v", cause))
@@ -274,7 +281,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		terminated := running.done()
 		if !statement.outcome.committed() {
 			if terminated {
-				result, retErr = nil, statement.outcome.retainTerminalFailures(transactionTerminatedError())
+				result, retErr = nil, statement.outcome.retainTerminalFailures(running.tx.terminationError())
 			} else if retErr == nil && statementErr != nil {
 				result, retErr = nil, statementErr
 			}
@@ -496,6 +503,39 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	control, err := e.admitTransactionStatement(ctx, cypher)
 	if err != nil {
 		return nil, err
+	}
+	// SHOW TRANSACTIONS lists the statement while it runs; TERMINATE
+	// TRANSACTIONS cancels it (#718). A statement whose transaction
+	// TERMINATE TRANSACTIONS terminated while it ran fails with Neo4j's
+	// Neo.ClientError.Transaction.Terminated, whichever layer noticed the
+	// cancellation (a storage call, the checked write path, the row loop) and
+	// whether it read or wrote; only an auto-commit statement that had
+	// already committed keeps its result (#751).
+	registerStatement := func() error {
+		statementCtx, statement, err := e.withRunningStatement(ctx, originalCypher)
+		if err != nil {
+			return err
+		}
+		running, ctx = statement, statementCtx
+		return nil
+	}
+	// The explicit transaction's one statement gate (NOR-284): every
+	// statement of an open client transaction is admitted above (a failed
+	// transaction refuses it, #683, and a statement of the other transaction
+	// type gets ForbiddenDueToTransactionType there, even after the
+	// transaction ended) and registered here, before routing
+	// splits it to the administration route, :USE, Fabric or this executor.
+	// A terminated transaction refuses it with the termination's status and
+	// stays the client's failed handle (only its COMMIT, ROLLBACK or
+	// transport retires it); an admitted statement is registered, so
+	// TERMINATE TRANSACTIONS cancels it on whichever route it runs. An
+	// auto-commit statement is registered after the result cache below,
+	// since a statement served from the cache runs nothing that could be
+	// listed or terminated.
+	if !control && e.txContext != nil && e.txContext.active {
+		if runErr := registerStatement(); runErr != nil {
+			return nil, runErr
+		}
 	}
 	if !control {
 		routed, err := e.routeAdministrationStatement(ctx, cypher)
@@ -747,46 +787,12 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			}
 		}
 		if err == nil && e.txContext != nil && e.txContext.active && e.txContext.running == nil {
-			e.txContext.running = runningTransactions.begin(ctx, e.databaseName())
+			runningTransactions.beginExplicit(ctx, e.databaseName(), e.txContext)
 		}
 		return result, err
 	}
-	// A statement that fails in an explicit transaction marks it failed, as in
-	// Neo4j (#683): later statements are refused, COMMIT rolls it back and
-	// ROLLBACK discards everything it wrote. Only the caller's own statement
-	// counts: executions nested inside a statement (they carry the
-	// transaction's storage wrapper) handle their own errors.
-	if tx := e.txContext; tx != nil && tx.active && ctx.Value(ctxKeyTxStorage) == nil {
-		if tx.failed != nil {
-			return nil, queryOnFailedTransactionError(tx.failed)
-		}
-	}
-	// SHOW TRANSACTIONS lists the statement while it runs; TERMINATE
-	// TRANSACTIONS cancels it (#718). A statement of an explicit
-	// transaction is registered here, so a terminated transaction refuses
-	// it before anything else; an auto-commit statement after the result
-	// cache, since a statement served from the cache runs nothing that
-	// could be listed or terminated.
-	// A statement whose transaction TERMINATE TRANSACTIONS terminated while
-	// it ran fails with Neo4j's Neo.ClientError.Transaction.Terminated,
-	// whichever layer noticed the cancellation (a storage call, the
-	// checked write path, the row loop) and whether it read or wrote;
-	// only an auto-commit statement that had already committed keeps its
-	// result (#751).
-	registerStatement := func() error {
-		statementCtx, statement, err := e.withRunningStatement(ctx, originalCypher)
-		if err != nil {
-			return err
-		}
-		running, ctx = statement, statementCtx
-		return nil
-	}
-	if e.txContext != nil && e.txContext.active {
-		if runErr := registerStatement(); runErr != nil {
-			_, cleanup := e.handleRollback(ctx, runErr)
-			return nil, nornicerrors.CombineTerminalOutcomes(runErr, cleanup)
-		}
-	}
+	// A statement of an explicit transaction was admitted and registered at
+	// the transaction's statement gate, before routing (NOR-284).
 
 	// Validate basic syntax
 	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
