@@ -128,7 +128,7 @@ func TestResidualRegisteredPropertyImages(t *testing.T) {
 			}()
 			if wal != nil {
 				require.NoError(t, wal.Close())
-				recovered, result, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(walDir, ""))
+				recovered, result, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(t.Context(), walDir, ""))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = recovered.Close() })
 				require.Empty(t, result.Errors)

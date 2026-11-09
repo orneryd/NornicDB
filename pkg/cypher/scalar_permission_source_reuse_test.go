@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -130,7 +131,6 @@ type cancellingPublicationHandler struct {
 	cancelled bool
 }
 
-func (h *cancellingPublicationHandler) Enabled(context.Context, slog.Level) bool { return true }
 func (h *cancellingPublicationHandler) Handle(_ context.Context, record slog.Record) error {
 	if record.Message == "slow query" && !h.cancelled {
 		h.cancelled = true
@@ -138,8 +138,6 @@ func (h *cancellingPublicationHandler) Handle(_ context.Context, record slog.Rec
 	}
 	return nil
 }
-func (h *cancellingPublicationHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *cancellingPublicationHandler) WithGroup(string) slog.Handler      { return h }
 
 func TestDirectStatementPublicationPreservesCommittedWrites(t *testing.T) {
 	for name, testCase := range map[string]struct {
@@ -173,7 +171,7 @@ func TestDirectPublicationReportsStoredWriteAcrossCancellation(t *testing.T) {
 	cancelCtx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	h.cancel = cancel
-	exec.SetLogger(slog.New(h))
+	exec.SetLogger(slog.New(fixtureowner.RawLogHandler(h.Handle)))
 	forceSlowQueryLogging(t, exec)
 
 	result, err := exec.Execute(cancelCtx, "CREATE (:PublishedDirect)", nil)

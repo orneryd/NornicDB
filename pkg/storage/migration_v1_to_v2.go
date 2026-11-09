@@ -31,7 +31,7 @@ func (b *BadgerEngine) migrateV1ToV2() error {
 	// The startup migration is a context-free entry: it establishes its own
 	// unbounded lifetime once here and hands it to every private helper below,
 	// so no helper needs to choose one.
-	ctx := context.Background()
+	ctx := b.work.Context()
 	overallStart := time.Now()
 	if b.log != nil {
 		b.log.Info("starting v1→v2 storage upgrade",

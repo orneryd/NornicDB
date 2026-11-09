@@ -26,7 +26,7 @@ func TestAcceptedReplayTakesApplyingEngineLifetime(t *testing.T) {
 		require.NoError(t, err)
 		entry := WALEntry{Sequence: 1, Timestamp: time.Unix(1, 0), Operation: OpEntityCommit, Database: "test", Data: data, Checksum: crc32Checksum(data)}
 		done := make(chan error, 1)
-		go func() { done <- ReplayWALEntry(base, entry) }()
+		go func() { done <- ReplayWALEntry(t.Context(), base, entry) }()
 		require.NoError(t, requireWithin(t, "replay into an open engine", done))
 		require.NoError(t, base.Close())
 		reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))

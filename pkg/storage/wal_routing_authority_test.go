@@ -116,8 +116,8 @@ func TestWALTransparentAuthorityOwnsEveryMutation(t *testing.T) {
 				recovered := newTestMemoryEngine(t)
 				require.NoError(t, recovered.BulkCreateNodes(t.Context(), []*Node{{ID: physical("a")}, {ID: physical("b")}, {ID: physical("doomed")}}))
 				require.NoError(t, recovered.CreateEdge(t.Context(), &Edge{ID: EdgeID(physical("e")), StartNode: physical("a"), EndNode: physical("b"), Type: "R"}))
-				require.NoError(t, ReplayWALEntry(recovered, entries[0]))
-				require.NoError(t, ReplayWALEntry(recovered, entries[0]))
+				require.NoError(t, ReplayWALEntry(t.Context(), recovered, entries[0]))
+				require.NoError(t, ReplayWALEntry(t.Context(), recovered, entries[0]))
 				wantNodes, wantEdges := int64(3), int64(1)
 				switch kind {
 				case "create-node":

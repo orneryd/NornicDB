@@ -72,7 +72,7 @@ func runAtHeldWALAppend(t *testing.T, wal *WAL, run func() error, blocked func()
 func walClientEntries(t *testing.T, wal *WAL) []WALEntry {
 	t.Helper()
 	require.NoError(t, wal.Sync())
-	entries, err := ReadWALEntries(wal.file.Name(), nil)
+	entries, err := ReadWALEntries(t.Context(), wal.file.Name(), nil)
 	require.NoError(t, err)
 	return entries
 }
@@ -124,12 +124,12 @@ func TestWALSidecarDecisionAcceptedBeforeAppendCompletesNatively(t *testing.T) {
 	require.Equal(t, OpUpdateEmbedding, entries[0].Operation)
 	// A healthy audit record is skipped so later graph records still replay.
 	recovered := newTestMemoryEngine(t)
-	require.NoError(t, ReplayWALEntry(recovered, entries[0]))
+	require.NoError(t, ReplayWALEntry(ctx, recovered, entries[0]))
 	_, err = wrapped.CreateNode(t.Context(), &Node{ID: "test:after-audit"})
 	require.NoError(t, err)
 	entries = walClientEntries(t, wal)
 	require.Len(t, entries, 2)
-	require.NoError(t, ReplayWALEntry(recovered, entries[1]))
+	require.NoError(t, ReplayWALEntry(ctx, recovered, entries[1]))
 	_, err = recovered.GetNode(t.Context(), payload.ID)
 	require.ErrorIs(t, err, ErrNotFound, "audit payload never becomes a graph node")
 	count, err := recovered.NodeCount(t.Context())

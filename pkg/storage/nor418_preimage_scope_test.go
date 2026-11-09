@@ -13,8 +13,7 @@ import (
 // validation, so the commit-time validation phase allocates nothing,
 // whatever the frame size (NOR-418).
 func TestPlainMixedImportPreimageValidationAllocatesNothing(t *testing.T) {
-	b := NewMemoryEngine()
-	t.Cleanup(func() { _ = b.Close() })
+	b := newTestMemoryEngine(t)
 	ctx := t.Context()
 	_, err := b.CreateNode(ctx, &Node{ID: "test:existing", Properties: map[string]any{"n": int64(0)}})
 	require.NoError(t, err)

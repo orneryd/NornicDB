@@ -147,14 +147,14 @@ including its common copy-on-write payload transform and export boundary.
 
 ## Go batch replay
 
-`ReplayWALEntry(engine, entry) error` is the canonical public entry applier.
+`ReplayWALEntry(ctx, engine, entry) error` is the canonical public entry applier.
 The former `ReplayWALEntries` convenience wrapper is removed in v1.4.4. Migrate
 Go batch callers to the same single-entry owner and the shared outcome collector:
 
 ```go
 result := storage.ReplayResult{Errors: make([]storage.ReplayError, 0)}
 for _, entry := range entries {
-    result.Record(entry, storage.ReplayWALEntry(engine, entry))
+    result.Record(entry, storage.ReplayWALEntry(ctx, engine, entry))
 }
 ```
 

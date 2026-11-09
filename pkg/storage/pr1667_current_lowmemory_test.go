@@ -64,8 +64,6 @@ type pr1667LogCapture struct {
 	records []string
 }
 
-func (c *pr1667LogCapture) Enabled(context.Context, slog.Level) bool { return true }
-
 func (c *pr1667LogCapture) Handle(_ context.Context, record slog.Record) error {
 	var line strings.Builder
 	line.WriteString(record.Level.String())
@@ -83,9 +81,6 @@ func (c *pr1667LogCapture) Handle(_ context.Context, record slog.Record) error {
 	c.mu.Unlock()
 	return nil
 }
-
-func (c *pr1667LogCapture) WithAttrs([]slog.Attr) slog.Handler { return c }
-func (c *pr1667LogCapture) WithGroup(string) slog.Handler      { return c }
 
 // rebuildDiagnostics returns the captured label-index rebuild lines, so a
 // failed readiness assertion can state why the rebuild stopped.
@@ -113,7 +108,7 @@ func pr1667Engine(t *testing.T, capture *pr1667LogCapture, dir string, lowMemory
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:   dir,
 		LowMemory: lowMemory,
-		Logger:    slog.New(capture),
+		Logger:    slog.New(fixtureowner.RawLogHandler(capture.Handle)),
 	}))
 	if engine != nil {
 		fixtureowner.Own(t, engine)

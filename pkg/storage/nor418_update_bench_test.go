@@ -13,9 +13,7 @@ func newNOR418BenchEngine(b *testing.B, writeBehind bool) *BadgerEngine {
 	if writeBehind {
 		return newWriteBehindTestEngine(b, time.Hour)
 	}
-	engine := NewMemoryEngine()
-	b.Cleanup(func() { _ = engine.Close() })
-	return engine.BadgerEngine
+	return newTestMemoryEngine(b).BadgerEngine
 }
 
 // BenchmarkNOR418MixedImport commits one observed node update plus 4,096

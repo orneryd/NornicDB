@@ -35,7 +35,7 @@ func TestWALBindingReuseKeepsRecordAuthority(t *testing.T) {
 			play := func() error {
 				raw, err := json.Marshal(data)
 				require.NoError(t, err)
-				return ReplayWALEntry(destination, WALEntry{Operation: OpBufferedCommit, Data: raw})
+				return ReplayWALEntry(t.Context(), destination, WALEntry{Operation: OpBufferedCommit, Data: raw})
 			}
 			for i := 0; i < 3; i++ {
 				require.NoError(t, play())

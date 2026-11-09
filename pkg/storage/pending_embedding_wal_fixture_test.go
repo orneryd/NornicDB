@@ -21,7 +21,7 @@ func TestPendingCandidatesBufferedFixtureOwnsWALState(t *testing.T) {
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:fixture", Labels: []string{"Doc"}, Properties: map[string]any{"content": "WAL fixture"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.NotEmpty(t, entries, "the acknowledged buffered write must actually reach the WAL")
 }

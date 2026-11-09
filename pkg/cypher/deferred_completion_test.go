@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -15,7 +16,6 @@ type deferredCompletionHandler struct {
 	release chan struct{}
 }
 
-func (h *deferredCompletionHandler) Enabled(context.Context, slog.Level) bool { return true }
 func (h *deferredCompletionHandler) Handle(_ context.Context, r slog.Record) error {
 	if r.Message == "slow query" || r.Message == "query rejected" {
 		select {
@@ -26,8 +26,6 @@ func (h *deferredCompletionHandler) Handle(_ context.Context, r slog.Record) err
 	}
 	return nil
 }
-func (h *deferredCompletionHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *deferredCompletionHandler) WithGroup(string) slog.Handler      { return h }
 
 func TestExecuteDeferredLoggingFinalOutcome(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
@@ -53,7 +51,7 @@ func TestExecuteDeferredLoggingFinalOutcome(t *testing.T) {
 						close(h.release)
 					}
 				}()
-				session.SetLogger(slog.New(h))
+				session.SetLogger(slog.New(fixtureowner.RawLogHandler(h.Handle)))
 				forceSlowQueryLogging(t, session)
 				query := "MATCH (n) RETURN n"
 				if outcome == "rejection" {

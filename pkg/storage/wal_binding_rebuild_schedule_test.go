@@ -38,7 +38,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 	// appends commits to this WAL. Its applied markers cannot cover that writer.
 	require.NoError(t, journal.Close())
 	rebuilt := reviewBindingEngine(t, t.TempDir(), nil)
-	first, _, err := RecoverIntoEngine(rebuilt, walDir, "")
+	first, _, err := RecoverIntoEngine(t.Context(), rebuilt, walDir, "")
 	require.NoError(t, err)
 	t.Logf("first rebuild: %s", first.Summary())
 	require.Zero(t, first.Failed)
@@ -70,7 +70,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 	require.True(t, tx.AcknowledgedBuffered())
 	require.NoError(t, rebuilt.FlushWriteBehind(context.Background()))
 	require.NoError(t, continuedJournal.Close())
-	entries, err := ReadWALEntriesFromDir(walDir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), walDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 3)
 	for _, entry := range entries {
@@ -81,7 +81,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 		t.Logf("seq=%d tx=%s complete bindings=%+v", entry.Sequence, record.TxID, legacyBindingEntries(t, record.PropertyBindings))
 	}
 	secondStore := reviewBindingEngine(t, t.TempDir(), nil)
-	second, _, err := RecoverIntoEngine(secondStore, walDir, "")
+	second, _, err := RecoverIntoEngine(t.Context(), secondStore, walDir, "")
 	require.NoError(t, err)
 	t.Logf("second rebuild: %s errors=%+v", second.Summary(), second.Errors)
 	require.Zero(t, second.Failed, "each new-format record owns a complete source binding table")

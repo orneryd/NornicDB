@@ -16,7 +16,7 @@ func TestWALPropertyAuthorityRejectsInvalidRecords(t *testing.T) {
 	b, w, c := bindingCostFixture(t, 1)
 	uninitialized := newPropertyKeyDictionary()
 	require.ErrorContains(t, w.AppendBufferedCommit(c, uninitialized), "identity is uninitialized")
-	entries, err := ReadWALEntriesFromDir(w.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), w.Config().Dir)
 	require.NoError(t, err)
 	require.Empty(t, entries, "invalid export must not append an ambiguous record")
 	for _, payload := range [][]byte{
@@ -25,12 +25,12 @@ func TestWALPropertyAuthorityRejectsInvalidRecords(t *testing.T) {
 		[]byte(`{"_nornicdb_encoding":"storage-msgpack-v1"}`),
 		[]byte(`{"_nornicdb_encoding":"storage-msgpack-v1","_nornicdb_data":"wQ=="}`),
 	} {
-		require.Error(t, ReplayWALEntry(b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
+		require.Error(t, ReplayWALEntry(t.Context(), b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
 	}
 	for _, bindings := range [][]byte{{0}, {1, 0x80}, appendWALPropertyBinding(appendWALPropertyBinding([]byte{1}, "perf", 1, "first"), "perf", 1, "second")} {
 		payload, err := json.Marshal(WALBufferedCommitData{Writes: c.writes, PropertyBindings: bindings})
 		require.NoError(t, err)
-		require.Error(t, ReplayWALEntry(b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
+		require.Error(t, ReplayWALEntry(t.Context(), b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
 	}
 	assertPropertyDictionaryBijection(t, b)
 	node, err := b.GetNode(t.Context(), "perf:a")
@@ -91,7 +91,7 @@ func TestWALPropertyLosslessLegacyEdge(t *testing.T) {
 	require.NoError(t, err)
 	payload, err := json.Marshal(walRecoverySidecar{Encoding: walRecoveryEncoding, Data: typed})
 	require.NoError(t, err)
-	require.NoError(t, ReplayWALEntry(destination, WALEntry{Operation: OpBufferedCommit, Data: payload}))
+	require.NoError(t, ReplayWALEntry(t.Context(), destination, WALEntry{Operation: OpBufferedCommit, Data: payload}))
 	got, err := destination.GetEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	stamp, ok := got.Properties["stamp"].(time.Time)
@@ -105,6 +105,6 @@ func TestWALPropertyLosslessLegacyEdge(t *testing.T) {
 	require.NoError(t, err)
 	payload, err = json.Marshal(walRecoverySidecar{Encoding: walRecoveryEncoding, Data: typed})
 	require.NoError(t, err)
-	require.ErrorContains(t, ReplayWALEntry(destination, WALEntry{Operation: OpBufferedCommit, Data: payload}), "after-image is incomplete")
+	require.ErrorContains(t, ReplayWALEntry(t.Context(), destination, WALEntry{Operation: OpBufferedCommit, Data: payload}), "after-image is incomplete")
 	assertPropertyDictionaryBijection(t, destination)
 }

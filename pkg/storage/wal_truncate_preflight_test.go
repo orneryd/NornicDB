@@ -33,7 +33,7 @@ func TestTruncateAfterSnapshotRejectsInvalidManifestWithoutChangingWAL(t *testin
 		require.NoError(t, manifestErr)
 	}
 
-	err = wal.ManageSnapshot(0, WALSnapshotTruncate)
+	err = wal.ManageSnapshot(t.Context(), 0, WALSnapshotTruncate)
 	require.ErrorContains(t, err, "invalid segment path")
 	after, err := os.ReadFile(walActivePath(dir))
 	require.NoError(t, err)
@@ -57,7 +57,7 @@ func TestTruncateAfterSnapshotPreservesUnreadableWAL(t *testing.T) {
 	raw[crcOffset] ^= 0xff
 	require.NoError(t, os.WriteFile(path, raw, 0600))
 
-	err = wal.ManageSnapshot(0, WALSnapshotTruncate)
+	err = wal.ManageSnapshot(t.Context(), 0, WALSnapshotTruncate)
 	require.Error(t, err)
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -80,12 +80,12 @@ func TestTruncateAfterSnapshotPreservesUncoveredSegments(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, before.Segments, 2)
 
-	require.NoError(t, wal.ManageSnapshot(1, WALSnapshotTruncate))
+	require.NoError(t, wal.ManageSnapshot(t.Context(), 1, WALSnapshotTruncate))
 	after, err := accessWALManifest(dir, walReadManifest, nil)
 	require.NoError(t, err)
 	require.Len(t, after.Segments, 1)
 	require.Equal(t, before.Segments[1].Path, after.Segments[0].Path)
-	entries, err := ReadWALEntriesFromDir(dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, uint64(2), entries[0].Sequence)
@@ -117,9 +117,9 @@ func TestTruncateAfterSnapshotKeepsSegmentSpanningSnapshot(t *testing.T) {
 					require.NoError(t, manifestErr)
 				}
 			}
-			require.NoError(t, wal.ManageSnapshot(1, WALSnapshotTruncate))
+			require.NoError(t, wal.ManageSnapshot(t.Context(), 1, WALSnapshotTruncate))
 			require.FileExists(t, segment)
-			entries, err := ReadWALEntriesAfter(dir, 1, WALReadDirectory)
+			entries, err := ReadWALEntriesAfter(t.Context(), dir, 1, WALReadDirectory)
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
 			require.Equal(t, uint64(2), entries[0].Sequence)
@@ -152,10 +152,10 @@ func TestTruncateAfterSnapshotKeepsSegmentsAcrossReplacementFailures(t *testing.
 				}
 				return failure
 			}
-			err = wal.ManageSnapshot(1, WALSnapshotTruncate)
+			err = wal.ManageSnapshot(t.Context(), 1, WALSnapshotTruncate)
 			require.ErrorIs(t, err, failure)
 			require.FileExists(t, uncovered)
-			entries, err := ReadWALEntriesAfter(dir, 1, WALReadDirectory)
+			entries, err := ReadWALEntriesAfter(t.Context(), dir, 1, WALReadDirectory)
 			require.NoError(t, err)
 			require.Len(t, entries, 2)
 			require.Equal(t, []uint64{2, 3}, []uint64{entries[0].Sequence, entries[1].Sequence})

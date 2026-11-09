@@ -98,7 +98,7 @@ func testCatalogV4ResumesPendingReplayAfterTransformFailure(t *testing.T, versio
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "system:databases:metadata", Properties: map[string]any{"data": "pending"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), capture.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	entry := entries[0]

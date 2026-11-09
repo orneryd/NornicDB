@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -230,7 +231,7 @@ func resolveWALSegmentPath(walDir, segmentName string) (string, error) {
 }
 
 // ReadWALEntriesFromDir reads WAL entries across all segments and the active WAL file.
-func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
+func ReadWALEntriesFromDir(ctx context.Context, walDir string) ([]WALEntry, error) {
 	info, err := os.Stat(walDir)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -249,7 +250,7 @@ func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
 		if err != nil {
 			return nil, err
 		}
-		segmentEntries, err := ReadWALEntries(segmentPath, nil)
+		segmentEntries, err := ReadWALEntries(ctx, segmentPath, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -258,7 +259,7 @@ func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
 
 	activePath := walActivePath(walDir)
 	if _, err := os.Stat(activePath); err == nil {
-		activeEntries, err := ReadWALEntries(activePath, nil)
+		activeEntries, err := ReadWALEntries(ctx, activePath, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -270,14 +271,14 @@ func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
 
 // VisitWALEntriesAfterFromDir visits WAL entries after the given sequence in
 // segment order without retaining the complete WAL in memory.
-func VisitWALEntriesAfterFromDir(walDir string, afterSeq uint64, visit func(WALEntry) error) error {
+func VisitWALEntriesAfterFromDir(ctx context.Context, walDir string, afterSeq uint64, visit func(WALEntry) error) error {
 	manifest, err := accessWALManifest(walDir, walReadManifest, nil)
 	if err != nil {
 		return err
 	}
 
 	visitFile := func(path string) error {
-		return visitWALEntriesWithLogger(path, discardWALSlog(), func(entry WALEntry) error {
+		return visitWALEntriesWithLogger(ctx, path, discardWALSlog(), func(entry WALEntry) error {
 			if entry.Sequence <= afterSeq {
 				return nil
 			}
@@ -304,8 +305,8 @@ func VisitWALEntriesAfterFromDir(walDir string, afterSeq uint64, visit func(WALE
 }
 
 // ReadWALEntriesRangeFromDir reads entries in [fromSeq, toSeq] (inclusive).
-func ReadWALEntriesRangeFromDir(walDir string, fromSeq, toSeq uint64) ([]WALEntry, error) {
-	all, err := ReadWALEntriesFromDir(walDir)
+func ReadWALEntriesRangeFromDir(ctx context.Context, walDir string, fromSeq, toSeq uint64) ([]WALEntry, error) {
+	all, err := ReadWALEntriesFromDir(ctx, walDir)
 	if err != nil {
 		return nil, err
 	}
@@ -325,12 +326,12 @@ func ReadWALEntriesRangeFromDir(walDir string, fromSeq, toSeq uint64) ([]WALEntr
 
 // FindWALEntriesByTxID scans entries and returns those with a matching tx_id.
 // Use maxEntries <= 0 to return all matches.
-func FindWALEntriesByTxID(walDir, txID string, maxEntries int) ([]WALEntry, error) {
+func FindWALEntriesByTxID(ctx context.Context, walDir, txID string, maxEntries int) ([]WALEntry, error) {
 	if txID == "" {
 		return nil, fmt.Errorf("tx_id is required")
 	}
 
-	all, err := ReadWALEntriesFromDir(walDir)
+	all, err := ReadWALEntriesFromDir(ctx, walDir)
 	if err != nil {
 		return nil, err
 	}

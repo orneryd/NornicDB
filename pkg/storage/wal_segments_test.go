@@ -10,45 +10,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWALEntriesFromDirWithSegments(t *testing.T) {
-	cleanup := config.WithWALEnabled()
-	defer cleanup()
-
-	dir := t.TempDir()
-	cfg := &WALConfig{
-		Dir:         dir,
-		SyncMode:    "none",
-		MaxEntries:  2,
-		MaxFileSize: 0,
-	}
-
-	wal, err := NewWAL(dir, cfg)
-	require.NoError(t, err)
-
-	for i := 0; i < 5; i++ {
-		node := &Node{ID: NodeID(fmt.Sprintf("test:%d", i))}
-		_, err := wal.AppendWithDatabaseReturningSeq(OpCreateNode, WALNodeData{
-			Node: node,
-			TxID: "tx-seg",
-		}, "test")
-		require.NoError(t, err)
-	}
-
-	require.NoError(t, wal.Close())
-
-	entries, err := ReadWALEntriesFromDir(dir)
-	require.NoError(t, err)
-	require.Len(t, entries, 5)
-
-	for i := 1; i < len(entries); i++ {
-		if entries[i].Sequence <= entries[i-1].Sequence {
-			t.Fatalf("expected ascending sequences, got %d then %d", entries[i-1].Sequence, entries[i].Sequence)
+func TestWALDirectoryReadsRetainedSegments(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	for _, missingManifest := range []bool{false, true} {
+		name := "manifest"
+		if missingManifest {
+			name = "segment scan"
 		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			wal, err := NewWAL(dir, &WALConfig{Dir: dir, SyncMode: "none", MaxEntries: 2, MaxFileSize: 0})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = wal.Close() })
+			for i := 0; i < 5; i++ {
+				_, err := wal.AppendWithDatabaseReturningSeq(OpCreateNode, WALNodeData{Node: &Node{ID: NodeID(fmt.Sprintf("test:%d", i))}, TxID: "tx-seg"}, "test")
+				require.NoError(t, err)
+			}
+			require.NoError(t, wal.Close())
+			if missingManifest {
+				require.NoError(t, os.Remove(walManifestPath(dir)))
+			}
+			entries, err := ReadWALEntriesFromDir(t.Context(), dir)
+			require.NoError(t, err)
+			require.Len(t, entries, 5)
+			for i := 1; i < len(entries); i++ {
+				require.Greater(t, entries[i].Sequence, entries[i-1].Sequence)
+			}
+			matches, err := FindWALEntriesByTxID(t.Context(), dir, "tx-seg", 0)
+			require.NoError(t, err)
+			require.Len(t, matches, 5)
+		})
 	}
-
-	matches, err := FindWALEntriesByTxID(dir, "tx-seg", 0)
-	require.NoError(t, err)
-	require.Len(t, matches, 5)
 }
 
 func TestReadWALEntriesFromDir_RejectsManifestPathTraversal(t *testing.T) {
@@ -69,7 +61,7 @@ func TestReadWALEntriesFromDir_RejectsManifestPathTraversal(t *testing.T) {
 		require.NoError(t, manifestErr)
 	}
 
-	_, err := ReadWALEntriesFromDir(dir)
+	_, err := ReadWALEntriesFromDir(t.Context(), dir)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid segment path")
 }
@@ -183,37 +175,6 @@ func TestWALSegmentPathHelpers(t *testing.T) {
 	})
 }
 
-func TestReadWALEntriesFromDir_FallsBackToSegmentScan(t *testing.T) {
-	cleanup := config.WithWALEnabled()
-	defer cleanup()
-
-	dir := t.TempDir()
-	cfg := &WALConfig{
-		Dir:         dir,
-		SyncMode:    "none",
-		MaxEntries:  2,
-		MaxFileSize: 0,
-	}
-
-	wal, err := NewWAL(dir, cfg)
-	require.NoError(t, err)
-
-	for i := 0; i < 5; i++ {
-		_, err := wal.AppendWithDatabaseReturningSeq(OpCreateNode, WALNodeData{
-			Node: &Node{ID: NodeID(fmt.Sprintf("scan:%d", i))},
-			TxID: "tx-scan",
-		}, "test")
-		require.NoError(t, err)
-	}
-	require.NoError(t, wal.Close())
-
-	require.NoError(t, os.Remove(walManifestPath(dir)))
-
-	entries, err := ReadWALEntriesFromDir(dir)
-	require.NoError(t, err)
-	require.Len(t, entries, 5)
-}
-
 func TestWALEntryRangeAndTxIDQueries(t *testing.T) {
 	cleanup := config.WithWALEnabled()
 	defer cleanup()
@@ -242,29 +203,29 @@ func TestWALEntryRangeAndTxIDQueries(t *testing.T) {
 	}
 	require.NoError(t, wal.Close())
 
-	after, err := ReadWALEntriesAfter(dir, 3, WALReadDirectory)
+	after, err := ReadWALEntriesAfter(t.Context(), dir, 3, WALReadDirectory)
 	require.NoError(t, err)
 	require.Len(t, after, 3)
 	require.Equal(t, uint64(4), after[0].Sequence)
 
-	inRange, err := ReadWALEntriesRangeFromDir(dir, 2, 4)
+	inRange, err := ReadWALEntriesRangeFromDir(t.Context(), dir, 2, 4)
 	require.NoError(t, err)
 	require.Len(t, inRange, 3)
 	require.Equal(t, uint64(2), inRange[0].Sequence)
 	require.Equal(t, uint64(4), inRange[2].Sequence)
 
-	openEnded, err := ReadWALEntriesRangeFromDir(dir, 5, 0)
+	openEnded, err := ReadWALEntriesRangeFromDir(t.Context(), dir, 5, 0)
 	require.NoError(t, err)
 	require.Len(t, openEnded, 2)
 	require.Equal(t, uint64(5), openEnded[0].Sequence)
 
-	matches, err := FindWALEntriesByTxID(dir, "tx-even", 2)
+	matches, err := FindWALEntriesByTxID(t.Context(), dir, "tx-even", 2)
 	require.NoError(t, err)
 	require.Len(t, matches, 2)
 	for _, entry := range matches {
 		require.Equal(t, "tx-even", GetEntryTxID(entry))
 	}
 
-	_, err = FindWALEntriesByTxID(dir, "", 1)
+	_, err = FindWALEntriesByTxID(t.Context(), dir, "", 1)
 	require.ErrorContains(t, err, "tx_id is required")
 }

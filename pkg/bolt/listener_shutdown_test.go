@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,9 +18,6 @@ type startupLogGate struct {
 	once             sync.Once
 }
 
-func (h *startupLogGate) Enabled(context.Context, slog.Level) bool { return true }
-func (h *startupLogGate) WithAttrs([]slog.Attr) slog.Handler       { return h }
-func (h *startupLogGate) WithGroup(string) slog.Handler            { return h }
 func (h *startupLogGate) Handle(context.Context, slog.Record) error {
 	h.once.Do(func() { close(h.entered); <-h.release })
 	return nil
@@ -48,7 +46,7 @@ func TestCloseDuringDiscoveryStartupClosesListenerOnce(t *testing.T) {
 	var releaseLog, releaseClose sync.Once
 	defer releaseClose.Do(func() { close(closeGate.release) })
 	defer releaseLog.Do(func() { close(logGate.release) })
-	server := New(&Config{Logger: slog.New(logGate)}, &mockExecutor{})
+	server := New(&Config{Logger: slog.New(fixtureowner.RawLogHandler(logGate.Handle))}, &mockExecutor{})
 	served, closed := make(chan error, 1), make(chan error, 1)
 	go func() { served <- server.Serve(closeGate) }()
 	select {

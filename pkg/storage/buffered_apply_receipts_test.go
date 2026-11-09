@@ -18,7 +18,7 @@ func bufferedReceiptEntries(t *testing.T) []WALEntry {
 	source := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
 	require.NoError(t, source.BulkCreateNodes(t.Context(), []*Node{{ID: "test:receipt-a", Labels: []string{"Receipt"}}, {ID: "test:receipt-b", Labels: []string{"Receipt"}}}))
 	require.NoError(t, source.BulkCreateNodes(t.Context(), []*Node{{ID: "test:receipt-c", Labels: []string{"Receipt"}}}))
-	entries, err := ReadWALEntriesFromDir(source.bufferedCommitWAL.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), source.bufferedCommitWAL.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	return entries
@@ -46,7 +46,7 @@ func TestBufferedReplayDuplicateConflictPinsManagedReadAndRetries(t *testing.T) 
 	defer unlock()
 	done := make(chan error, 2)
 	for range 2 {
-		go func() { done <- ReplayWALEntry(dest, entries[0]) }()
+		go func() { done <- ReplayWALEntry(t.Context(), dest, entries[0]) }()
 	}
 	joined := 0
 	defer func() {
@@ -88,7 +88,7 @@ func TestBufferedReplayDuplicateConflictPinsManagedReadAndRetries(t *testing.T) 
 	}
 	require.Equal(t, 1, successful)
 	require.Equal(t, 1, conflicted)
-	require.NoError(t, ReplayWALEntry(dest, entries[0]), "explicit retry observes the applied marker")
+	require.NoError(t, ReplayWALEntry(t.Context(), dest, entries[0]), "explicit retry observes the applied marker")
 	count, err := dest.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)
@@ -105,7 +105,7 @@ func TestBufferedReplayDuplicateConflictPinsManagedReadAndRetries(t *testing.T) 
 func TestBufferedReplayMixedDuplicateAndNewUsesOneApplyOwner(t *testing.T) {
 	entries := bufferedReceiptEntries(t)
 	dest := newTestMemoryEngine(t).BadgerEngine
-	require.NoError(t, ReplayWALEntry(dest, entries[0]))
+	require.NoError(t, ReplayWALEntry(t.Context(), dest, entries[0]))
 	var applied []bufferedCommit
 	for _, index := range []int{0, 1, 0, 1} {
 		data, err := decodeBufferedWALRecord(entries[index])
@@ -133,7 +133,7 @@ func TestBufferedReplayMarkerFailureReopenAndRetry(t *testing.T) {
 	dest := openLargeCommitTestEngine(t, dir)
 	injected := errors.New("component native commit admission failure")
 	dest.db.oracle.fail(injected)
-	require.ErrorIs(t, ReplayWALEntry(dest, entries[0]), injected)
+	require.ErrorIs(t, ReplayWALEntry(t.Context(), dest, entries[0]), injected)
 	data, err := decodeBufferedWALRecord(entries[0])
 	require.NoError(t, err)
 	require.NoError(t, dest.withView(func(txn *badger.Txn) error {
@@ -147,7 +147,7 @@ func TestBufferedReplayMarkerFailureReopenAndRetry(t *testing.T) {
 	require.Zero(t, remaining)
 	require.NoError(t, dest.Close())
 	reopened := openLargeCommitTestEngine(t, dir)
-	require.NoError(t, ReplayWALEntry(reopened, entries[0]))
+	require.NoError(t, ReplayWALEntry(t.Context(), reopened, entries[0]))
 	count, err := reopened.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)

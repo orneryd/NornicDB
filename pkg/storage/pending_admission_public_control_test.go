@@ -22,7 +22,7 @@ import (
 func TestPublicPublishCommitWarmPendingAdmissionCancellation(t *testing.T) {
 	barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
 	engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
-		DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour, Logger: slog.New(barrier),
+		DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour, Logger: slog.New(fixtureowner.RawLogHandler(barrier.Handle)),
 	}))
 	require.NoError(t, err)
 	schema := engine.GetSchemaForNamespace("test")

@@ -62,8 +62,6 @@ type pr1655ExecuteHandler struct {
 	next  slog.Handler
 }
 
-func (h *pr1655ExecuteHandler) Enabled(context.Context, slog.Level) bool { return true }
-
 func (h *pr1655ExecuteHandler) Handle(ctx context.Context, record slog.Record) error {
 	if record.Message == pr1655ExecuteCommitReadMessage && h.matches(record) {
 		h.fault.once.Do(func() {
@@ -94,9 +92,6 @@ func (h *pr1655ExecuteHandler) matches(record slog.Record) bool {
 	})
 	return matched
 }
-
-func (h *pr1655ExecuteHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *pr1655ExecuteHandler) WithGroup(string) slog.Handler      { return h }
 
 // inject corrupts the target node's committed MVCC head once the commit path
 // is between its optimistic and authoritative passes.
@@ -161,7 +156,7 @@ func pr1655RunExecuteScenario(t *testing.T, scenario pr1655ExecuteScenario) {
 		LowMemory:           true,
 		WriteBehind:         scenario.writeBehind,
 		WriteBehindInterval: time.Hour,
-		Logger:              slog.New(&pr1655ExecuteHandler{fault: fault, next: slog.DiscardHandler}),
+		Logger:              slog.New(testfixture.RawLogHandler((&pr1655ExecuteHandler{fault: fault, next: slog.DiscardHandler}).Handle)),
 	}))
 	require.NoError(t, err)
 	require.NotNil(t, base)

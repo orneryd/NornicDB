@@ -150,7 +150,7 @@ func TestWALRefusesSupersededCodecRecordsWithoutChangingFiles(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "wal.log")
 			require.NoError(t, os.WriteFile(path, record, 0644))
 
-			all, err := ReadWALEntries(path, nil)
+			all, err := ReadWALEntries(t.Context(), path, nil)
 			require.ErrorIs(t, err, ErrWALUnsupportedVersion)
 			require.Empty(t, all)
 
@@ -193,7 +193,7 @@ func TestWALCurrentPayloadRecordsReadBack(t *testing.T) {
 	require.Equal(t, data, entries[0].Data, "raw Data must decode byte-for-byte")
 
 	// Also verify the full ReadWALEntries path.
-	all, err := ReadWALEntries(path, nil)
+	all, err := ReadWALEntries(t.Context(), path, nil)
 	require.NoError(t, err)
 	require.Len(t, all, 1)
 	require.Equal(t, data, all[0].Data)
@@ -217,7 +217,7 @@ func TestWALCurrentFrameEndToEndViaAppend(t *testing.T) {
 	require.Greater(t, len(raw), 9)
 	require.Equal(t, walFormatVersionCurrent, raw[4], "Append must write current-frame records")
 
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
+	entries, err := ReadWALEntries(t.Context(), filepath.Join(dir, "wal.log"), nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, OpCreateNode, entries[0].Operation)

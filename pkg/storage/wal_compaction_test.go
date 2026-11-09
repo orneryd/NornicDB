@@ -341,7 +341,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		sizeBefore := statBefore.Size()
 
 		// Truncate WAL
-		err = wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
+		err = wal.ManageSnapshot(t.Context(), snapshot.Sequence, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// WAL should be empty or near-empty (only entries after snapshot)
@@ -384,12 +384,12 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		}
 
 		// Truncate WAL (should keep entries after snapshot)
-		err = wal.ManageSnapshot(snapshotSeq, WALSnapshotTruncate)
+		err = wal.ManageSnapshot(t.Context(), snapshotSeq, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// Read remaining entries
 		walPath := filepath.Join(walDir, "wal.log")
-		entries, err := ReadWALEntries(walPath, nil)
+		entries, err := ReadWALEntries(t.Context(), walPath, nil)
 		require.NoError(t, err)
 
 		// Should have ~50 entries (from after snapshot)
@@ -429,7 +429,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 			require.NoError(t, SaveSnapshot(snapshot, snapshotPath))
 
 			// Truncate WAL
-			require.NoError(t, wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate))
+			require.NoError(t, wal.ManageSnapshot(t.Context(), snapshot.Sequence, WALSnapshotTruncate))
 
 			// Add more nodes after truncation
 			for i := 101; i <= 150; i++ {
@@ -442,7 +442,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 
 		// Session 2: Recover from snapshot + truncated WAL
 		snapshotPath := filepath.Join(snapshotDir, "snapshot.json")
-		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, snapshotPath))
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, snapshotPath))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -814,7 +814,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 		latestSnapshot := filepath.Join(snapshotDir, names[len(names)-1])
 
 		// Session 2: Recover
-		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, latestSnapshot))
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, latestSnapshot))
 		require.NoError(t, err)
 
 		// Should have all 100 nodes (5 batches x 20 nodes)
@@ -845,7 +845,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 		}()
 
 		// Session 2: Recover without snapshot
-		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, ""))
 		require.NoError(t, err)
 
 		count, err := recovered.NodeCount(t.Context())
@@ -898,7 +898,7 @@ func TestWALCompactionEdgeCases(t *testing.T) {
 		wal.Close()
 
 		// Truncate should return error
-		err = wal.ManageSnapshot(100, WALSnapshotTruncate)
+		err = wal.ManageSnapshot(t.Context(), 100, WALSnapshotTruncate)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrWALClosed)
 	})
@@ -950,7 +950,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 			b.StartTimer()
 
 			// Benchmark truncation
-			wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
+			wal.ManageSnapshot(b.Context(), snapshot.Sequence, WALSnapshotTruncate)
 
 			b.StopTimer()
 			walEngine.Close()

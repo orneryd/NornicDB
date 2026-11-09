@@ -477,7 +477,7 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context) error {
 
 	// Truncate WAL to remove entries before snapshot
 	// This is the key compaction step that prevents unbounded growth
-	if err := w.wal.ManageSnapshot(snapshotSequence, WALSnapshotTruncate); err != nil {
+	if err := w.wal.ManageSnapshot(ctx, snapshotSequence, WALSnapshotTruncate); err != nil {
 		// Log error but don't fail - snapshot is still valid
 		// Next compaction will try again
 		return fmt.Errorf("failed to truncate WAL (snapshot saved): %w", err)

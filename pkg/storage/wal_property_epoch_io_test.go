@@ -117,7 +117,7 @@ func TestWALPropertyEpochEmptyLogAppend(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = wal.Close() })
 	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
-	entries, err := ReadWALEntriesFromDir(dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.NotNil(t, entries[0].PropertyEpoch)

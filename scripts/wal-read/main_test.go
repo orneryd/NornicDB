@@ -100,7 +100,7 @@ func writeWALFixture(t *testing.T, frames ...frame) (string, []uint64) {
 func runCommand(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := run(args, &stdout, &stderr)
+	code := run(t.Context(), args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -202,7 +202,7 @@ func TestWalReadUnpacksActualCompressedBufferedCommit(t *testing.T) {
 	}
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	entries, err := storage.ReadWALEntriesFromDir(walDir)
+	entries, err := storage.ReadWALEntriesFromDir(t.Context(), walDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, []byte{0x28, 0xb5, 0x2f, 0xfd}, entries[0].Data[:4], "the actual commit must be zstd compressed")
@@ -474,7 +474,7 @@ func TestWalReadLeavesTheWALBytesUnchanged(t *testing.T) {
 		nodeFrame("n2", "other"),
 	)
 	require.Len(t, seqs, 3)
-	entries, err := storage.ReadWALEntriesFromDir(dir)
+	entries, err := storage.ReadWALEntriesFromDir(t.Context(), dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 3, "the fixture's entries are readable before the run")
 
@@ -590,7 +590,7 @@ func writeRawFrames(t *testing.T, path string, frames ...rawFrame) {
 	}
 	require.NoError(t, os.WriteFile(path, content, 0o600))
 
-	read, err := storage.ReadWALEntriesFromDir(filepath.Dir(path))
+	read, err := storage.ReadWALEntriesFromDir(t.Context(), filepath.Dir(path))
 	require.NoError(t, err)
 	require.Len(t, read, len(frames), "the fixture's frames must all be readable")
 	for i, entry := range read {

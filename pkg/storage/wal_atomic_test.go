@@ -95,7 +95,7 @@ func TestAtomicWALWriteFormat(t *testing.T) {
 	}
 
 	// Verify we can read back the entry
-	entries, err := ReadWALEntries(walPath, nil)
+	entries, err := ReadWALEntries(t.Context(), walPath, nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestAtomicWALMultipleEntries(t *testing.T) {
 				require.NoError(t, wal.Append(OpCreateNode, WALNodeData{Node: node}), "entry %d", i)
 			}
 			require.NoError(t, wal.Close())
-			entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
+			entries, err := ReadWALEntries(t.Context(), filepath.Join(dir, "wal.log"), nil)
 			require.NoError(t, err)
 			require.Len(t, entries, tc.count)
 			for i, entry := range entries {
@@ -259,7 +259,8 @@ func TestAtomicWALMultipleEntries(t *testing.T) {
 // =============================================================================
 
 // TestAtomicWALDetectsIncompleteOrCorruptFrames covers the incomplete
-// magic, header, payload and CRC cases as well as a bad complete CRC.
+// magic, header, payload, CRC and trailer cases, an invalid trailer,
+// and a bad complete CRC.
 func TestAtomicWALDetectsIncompleteOrCorruptFrames(t *testing.T) {
 	config.EnableWAL()
 	defer config.DisableWAL()
@@ -289,6 +290,18 @@ func TestAtomicWALDetectsIncompleteOrCorruptFrames(t *testing.T) {
 			p := payload(t)
 			return append(atomicHeader(walFormatVersionCurrent, uint32(len(p))), p...)
 		}},
+		{"missing trailer", true, false, func(t *testing.T) []byte {
+			p := payload(t)
+			frame := append(atomicHeader(walFormatVersionCurrent, uint32(len(p))), p...)
+			return binary.LittleEndian.AppendUint32(frame, crc32Checksum(p))
+		}},
+		{"corrupted trailer", true, false, func(t *testing.T) []byte {
+			p := payload(t)
+			frame := append(atomicHeader(walFormatVersionCurrent, uint32(len(p))), p...)
+			frame = binary.LittleEndian.AppendUint32(frame, crc32Checksum(p))
+			frame = binary.LittleEndian.AppendUint64(frame, 0xBADBADBADBADBAD)
+			return append(frame, make([]byte, ((len(frame)+7)&^7)-len(frame))...)
+		}},
 		{"CRC mismatch", false, true, func(t *testing.T) []byte {
 			p := payload(t)
 			record := append(atomicHeader(walFormatVersionCurrent, uint32(len(p))), p...)
@@ -310,7 +323,7 @@ func TestAtomicWALDetectsIncompleteOrCorruptFrames(t *testing.T) {
 			_, err = f.Write(tc.tail(t))
 			require.NoError(t, err)
 			require.NoError(t, f.Close())
-			entries, err := ReadWALEntries(path, nil)
+			entries, err := ReadWALEntries(t.Context(), path, nil)
 			if tc.corrupt {
 				require.ErrorIs(t, err, ErrWALChecksumFailed)
 				return
@@ -359,7 +372,7 @@ func TestLegacyJSONFormatRejected(t *testing.T) {
 	f.Close()
 
 	// The legacy layout is an unsupported format, not a torn current record.
-	result, err := ReadWALEntries(walPath, nil)
+	result, err := ReadWALEntries(t.Context(), walPath, nil)
 	require.ErrorIs(t, err, ErrWALUnsupportedVersion)
 	require.Empty(t, result)
 
@@ -425,7 +438,7 @@ func TestFormatAutoDetection(t *testing.T) {
 		}
 
 		// The legacy layout is refused rather than read.
-		entries, err := ReadWALEntries(walPath, nil)
+		entries, err := ReadWALEntries(t.Context(), walPath, nil)
 		require.ErrorIs(t, err, ErrWALUnsupportedVersion)
 		require.Empty(t, entries)
 	})
@@ -460,7 +473,7 @@ func TestAtomicWALFullRecovery(t *testing.T) {
 
 	// Phase 2: Recover from WAL
 	// Recovery will use the database name from each WAL entry
-	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -508,7 +521,7 @@ func TestAtomicWALRecoveryWithPartialWrite(t *testing.T) {
 
 	// Recovery should work, getting the 2 valid entries
 	// Use the same database name as the WAL entries (testDBName declared above)
-	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery should succeed: %v", err)
 	}
@@ -626,105 +639,6 @@ func TestAtomicWALAlignment(t *testing.T) {
 	}
 }
 
-// TestAtomicWALDetectsMissingTrailer verifies missing trailer is detected.
-func TestAtomicWALDetectsMissingTrailer(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
-	dir := t.TempDir()
-	walPath := filepath.Join(dir, "wal.log")
-
-	// Write a valid entry first
-	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
-	wal, _ := NewWAL(dir, cfg)
-	wal.Append(OpCreateNode, WALNodeData{Node: &Node{ID: "n1", Labels: []string{"Test"}}})
-	wal.Close()
-
-	// Manually craft a current-version record with missing trailer
-	// (simulates crash after CRC)
-	f, _ := os.OpenFile(walPath, os.O_APPEND|os.O_WRONLY, 0644)
-
-	// Create payload with the current codec
-	entryBytes := currentWALPayload(t, WALEntry{
-		Sequence:  2,
-		Timestamp: time.Now(),
-		Operation: OpCreateNode,
-	})
-	entryCRC := crc32Checksum(entryBytes)
-
-	// Write header + payload + CRC (but NO trailer)
-	f.Write(atomicHeader(walFormatVersionCurrent, uint32(len(entryBytes))))
-	f.Write(entryBytes)
-
-	crcBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(crcBytes, entryCRC)
-	f.Write(crcBytes)
-	// Intentionally NOT writing trailer - simulating crash
-	f.Close()
-
-	// Should recover first entry and detect incomplete second entry
-	entries, err := ReadWALEntries(walPath, nil)
-	if err != nil {
-		t.Fatalf("Should recover valid entries, got error: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Errorf("Expected 1 valid entry (second incomplete), got %d", len(entries))
-	}
-}
-
-// TestAtomicWALDetectsCorruptedTrailer verifies corrupted trailer is detected.
-func TestAtomicWALDetectsCorruptedTrailer(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
-	dir := t.TempDir()
-	walPath := filepath.Join(dir, "wal.log")
-
-	// Write a valid entry first
-	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
-	wal, _ := NewWAL(dir, cfg)
-	wal.Append(OpCreateNode, WALNodeData{Node: &Node{ID: "n1", Labels: []string{"Test"}}})
-	wal.Close()
-
-	// Manually craft a current-version record with corrupted trailer
-	f, _ := os.OpenFile(walPath, os.O_APPEND|os.O_WRONLY, 0644)
-
-	// Create payload with the current codec
-	entryBytes := currentWALPayload(t, WALEntry{
-		Sequence:  2,
-		Timestamp: time.Now(),
-		Operation: OpCreateNode,
-	})
-	entryCRC := crc32Checksum(entryBytes)
-
-	// Write header + payload + CRC + WRONG trailer
-	f.Write(atomicHeader(walFormatVersionCurrent, uint32(len(entryBytes))))
-	f.Write(entryBytes)
-
-	crcBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(crcBytes, entryCRC)
-	f.Write(crcBytes)
-
-	// Write corrupted trailer (wrong value)
-	trailerBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(trailerBytes, 0xBADBADBADBADBAD)
-	f.Write(trailerBytes)
-
-	// Pad to 8-byte alignment
-	rawLen := int64(9 + len(entryBytes) + 4 + 8)
-	alignedLen := (rawLen + 7) &^ 7
-	padding := make([]byte, alignedLen-rawLen)
-	f.Write(padding)
-	f.Close()
-
-	// Should recover first entry and detect corrupted second entry
-	entries, err := ReadWALEntries(walPath, nil)
-	if err != nil {
-		t.Fatalf("Should recover valid entries, got error: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Errorf("Expected 1 valid entry (second corrupted), got %d", len(entries))
-	}
-}
-
 // TestAtomicWALBatchWriterTrailer verifies batch writes include trailer.
 func TestAtomicWALBatchWriterTrailer(t *testing.T) {
 	config.EnableWAL()
@@ -768,7 +682,7 @@ func TestAtomicWALBatchWriterTrailer(t *testing.T) {
 	}
 
 	// Verify all entries can be read back
-	entries, err := ReadWALEntries(walPath, nil)
+	entries, err := ReadWALEntries(t.Context(), walPath, nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}

@@ -154,7 +154,7 @@ func TestPR1655StagedTargetRevalidatedAfterMetadataCallback(t *testing.T) {
 			t.Run("writebehind="+boolString(writeBehind)+"/implicit="+boolString(implicit), func(t *testing.T) {
 				barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
 				b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
-					DataDir: t.TempDir(), LowMemory: true, WriteBehind: writeBehind, WriteBehindInterval: time.Hour, Logger: slog.New(barrier),
+					DataDir: t.TempDir(), LowMemory: true, WriteBehind: writeBehind, WriteBehindInterval: time.Hour, Logger: slog.New(fixtureowner.RawLogHandler(barrier.Handle)),
 				}))
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, b.Close()) })

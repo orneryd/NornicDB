@@ -3,6 +3,7 @@ package multidb
 import (
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -21,8 +22,7 @@ func BenchmarkNOR418ManagedRelationshipUpdate(b *testing.B) {
 	} {
 		b.Run(variant.name, func(b *testing.B) {
 			ctx := b.Context()
-			base := storage.NewMemoryEngine()
-			b.Cleanup(func() { _ = base.Close() })
+			base := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			manager, err := NewDatabaseManager(ctx, base, nil)
 			if err != nil {
 				b.Fatal(err)

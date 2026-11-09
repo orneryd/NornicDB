@@ -84,7 +84,7 @@ func TestAcceptedEnvelopeMetadataNilEmptyImages(t *testing.T) {
 				live := image(base)
 				liveBytes, liveNodes, liveEdges := manager.GetStorageSize(context.Background(), name)
 				require.NoError(t, manager.Close())
-				cold, replay, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(dir, ""))
+				cold, replay, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(t.Context(), dir, ""))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = cold.Close() })
 				require.Empty(t, replay.Errors)

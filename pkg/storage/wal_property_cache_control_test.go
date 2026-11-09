@@ -76,7 +76,7 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 	require.NoError(t, err)
 	payload, err := json.Marshal(data)
 	require.NoError(t, err)
-	require.NoError(t, ReplayWALEntry(destination, WALEntry{Operation: OpBufferedCommit, Data: payload}))
+	require.NoError(t, ReplayWALEntry(t.Context(), destination, WALEntry{Operation: OpBufferedCommit, Data: payload}))
 	assertInverse(destination)
 	got, err := destination.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)

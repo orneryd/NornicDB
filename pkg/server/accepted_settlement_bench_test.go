@@ -195,7 +195,7 @@ func benchmarkPublicCypherManagedEntitySettlement(b *testing.B, explicit, writeB
 // when its envelope — the originating mode included — is readable.
 func settlementSemanticRecords(tb testing.TB, dir string) []storage.EntityTransactionEnvelope {
 	tb.Helper()
-	entries, err := storage.ReadWALEntriesFromDir(dir)
+	entries, err := storage.ReadWALEntriesFromDir(tb.Context(), dir)
 	if err != nil {
 		tb.Fatalf("read wal entries: %v", err)
 	}

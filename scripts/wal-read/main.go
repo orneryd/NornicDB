@@ -31,6 +31,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -84,11 +85,11 @@ const (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
 }
 
 // run executes the command and returns its exit code.
-func run(args []string, stdout io.Writer, stderr io.Writer) int {
+func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	options, err := parseArgs(args, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -101,7 +102,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "wal-read: %v\n", err)
 		return exitUsage
 	}
-	if err := writeEntries(options.dir, options.bounds, stdout); err != nil {
+	if err := writeEntries(ctx, options.dir, options.bounds, stdout); err != nil {
 		fmt.Fprintf(stderr, "wal-read: %v\n", err)
 		return exitRead
 	}
@@ -182,11 +183,11 @@ func parseBounds(from, to int64) (bounds, error) {
 // The visitor streams entries, and each line is encoded as it is visited, so
 // memory stays bounded by one entry rather than by the WAL length. A payload
 // that cannot be rendered fails the read instead of producing a partial line.
-func writeEntries(dir string, span bounds, out io.Writer) error {
+func writeEntries(ctx context.Context, dir string, span bounds, out io.Writer) error {
 	buffered := bufio.NewWriterSize(out, 64*1024)
 	encoder := json.NewEncoder(buffered)
 	encoder.SetEscapeHTML(false)
-	err := storage.VisitWALEntriesAfterFromDir(dir, span.scanAfter, func(entry storage.WALEntry) error {
+	err := storage.VisitWALEntriesAfterFromDir(ctx, dir, span.scanAfter, func(entry storage.WALEntry) error {
 		if !span.retained(entry.Sequence) {
 			return nil
 		}

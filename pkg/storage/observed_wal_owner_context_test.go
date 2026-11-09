@@ -159,7 +159,7 @@ func TestObservedWALPreparationUsesCallerContext(t *testing.T) {
 	stored, err := b.GetStoredNode(t.Context(), before.ID)
 	require.NoError(t, err)
 	require.Equal(t, "before", stored.Properties["v"])
-	entries, err := ReadWALEntriesFromDir(owner.GetWAL().Config().Dir)
+	entries, err := ReadWALEntriesFromDir(ctx, owner.GetWAL().Config().Dir)
 	require.NoError(t, err)
 	require.Empty(t, entries, "canceled preparation must not journal an accepted change")
 	require.NoError(t, owner.Close())

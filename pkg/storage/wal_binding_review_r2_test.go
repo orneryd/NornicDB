@@ -98,7 +98,7 @@ func TestReviewR2DoubleReplay(t *testing.T) {
 	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
-		require.NoError(t, ReplayWALEntry(dest, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), dest, entry))
 		assertPropertyDictionaryBijection(t, dest)
 	}
 	node, err := dest.GetNode(t.Context(), "perf:a")
@@ -129,7 +129,7 @@ func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 		require.NoError(t, tx.Commit())
 		require.NoError(t, source.FlushWriteBehind(context.Background()))
 	}
-	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), capture.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	for i := range entries {
@@ -158,7 +158,7 @@ func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 	require.NoError(t, err)
 	// The imported prefix happens to use an identical mapping; its unobserved
 	// source token 2 means beta, while destination token 2 means other.
-	require.NoError(t, ReplayWALEntry(dest, entries[0]))
+	require.NoError(t, ReplayWALEntry(t.Context(), dest, entries[0]))
 	require.NoError(t, dest.Close())
 	dest = reviewBindingEngine(t, dir, nil)
 	n, recoverErr := RecoverBufferedCommitsAtOpen(dest, wal)

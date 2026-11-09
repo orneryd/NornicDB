@@ -59,7 +59,7 @@ func TestNOR140RetainedHistoryRestoreCacheAgreement(t *testing.T) {
 	require.True(t, storage.NOR140BufferedNodeForTest(source, "binding:a"), "the source update must use buffered acknowledgement")
 	require.NoError(t, source.FlushWriteBehind(context.Background()))
 	require.NoError(t, journal.Close())
-	entries, err := storage.ReadWALEntriesFromDir(walDir)
+	entries, err := storage.ReadWALEntriesFromDir(t.Context(), walDir)
 	require.NoError(t, err)
 	buffered := 0
 	for _, entry := range entries {
@@ -87,7 +87,7 @@ func TestNOR140RetainedHistoryRestoreCacheAgreement(t *testing.T) {
 				if writeBehind {
 					storage.NOR140StopReplayWorkerForTest(fresh)
 				}
-				result, _, err := storage.RecoverIntoEngine(fresh, walDir, snapshotPath)
+				result, _, err := storage.RecoverIntoEngine(t.Context(), fresh, walDir, snapshotPath)
 				require.NoError(t, err)
 				require.Zero(t, result.Failed, "%s", result.Summary())
 				check := func(target *storage.BadgerEngine, phase string) {

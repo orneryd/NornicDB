@@ -164,7 +164,7 @@ func TestWALDetectsCorruptedChecksum(t *testing.T) {
 	file.Close()
 
 	// Read should fail on corrupted entry
-	_, err = ReadWALEntries(walPath, nil)
+	_, err = ReadWALEntries(t.Context(), walPath, nil)
 	if err == nil {
 		t.Error("Expected error reading WAL with corrupted entry, got nil")
 	}
@@ -214,7 +214,7 @@ func TestWALSkipsCorruptedEmbeddingEntries(t *testing.T) {
 	}
 
 	// Read should skip corrupted embedding entry and return valid entries
-	result, err := ReadWALEntries(walPath, nil)
+	result, err := ReadWALEntries(t.Context(), walPath, nil)
 	if err != nil {
 		t.Fatalf("Should skip corrupted embedding, got error: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestReplayResultTracking(t *testing.T) {
 
 	result := ReplayResult{Errors: make([]ReplayError, 0)}
 	for _, entry := range entries {
-		result.Record(entry, ReplayWALEntry(engine, entry))
+		result.Record(entry, ReplayWALEntry(t.Context(), engine, entry))
 	}
 
 	if result.Applied != 2 {
@@ -345,7 +345,7 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 	}
 
 	// Recovery should track results
-	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestWALEntryIntegrity(t *testing.T) {
 	wal.Close()
 
 	// Read back and verify
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
+	entries, err := ReadWALEntries(t.Context(), filepath.Join(dir, "wal.log"), nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestWALRecoveryFromCorruptTail(t *testing.T) {
 	file.Close()
 
 	// Reading should fail on the corrupt JSON
-	_, err := ReadWALEntries(walPath, nil)
+	_, err := ReadWALEntries(t.Context(), walPath, nil)
 	if err == nil {
 		t.Error("Expected error on corrupt tail, got nil")
 	}

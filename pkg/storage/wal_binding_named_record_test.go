@@ -34,12 +34,12 @@ func TestWALUnstampedForeignCannotBorrowPriorRecord(t *testing.T) {
 	require.NoError(t, err)
 	payload, err := json.Marshal(data)
 	require.NoError(t, err)
-	require.NoError(t, ReplayWALEntry(dest, WALEntry{Operation: OpBufferedCommit, Data: payload}))
+	require.NoError(t, ReplayWALEntry(t.Context(), dest, WALEntry{Operation: OpBufferedCommit, Data: payload}))
 	data.TxID = "unstamped-suffix"
 	data.PropertyBindings, data.PropKeys, data.PropertyDictionaryID = nil, nil, ""
 	payload, err = json.Marshal(data)
 	require.NoError(t, err)
-	require.ErrorContains(t, ReplayWALEntry(dest, WALEntry{Operation: OpBufferedCommit, Data: payload}), "missing property name binding")
+	require.ErrorContains(t, ReplayWALEntry(t.Context(), dest, WALEntry{Operation: OpBufferedCommit, Data: payload}), "missing property name binding")
 	node, err := dest.GetNode(t.Context(), "perf:a")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"property_000": int64(0)}, node.Properties)

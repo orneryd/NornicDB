@@ -102,7 +102,7 @@ func TestWALStatementOwnedMutations(t *testing.T) {
 					require.Greater(t, calls, before, "%s: the owner's rejection is authoritative", operation.name)
 					for _, wal := range journals {
 						require.Zero(t, wal.Sequence(), "decorators never journal pending owned effects")
-						entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+						entries, err := ReadWALEntriesFromDir(ctx, wal.Config().Dir)
 						require.NoError(t, err)
 						require.Empty(t, entries, "neither accepted nor rejected owned operations enter a decorator's replay log")
 					}

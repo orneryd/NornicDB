@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -166,7 +165,7 @@ func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPh
 	// has no write-behind buffer yet and nothing else holds it; called on an
 	// engine that serves, it also applies every acknowledged commit first and
 	// keeps every write out.
-	lifecycle, err := b.beginMaintenanceWrite(context.Background(), nil)
+	lifecycle, err := b.beginMaintenanceWrite(b.work.Context(), nil)
 	if err != nil {
 		return err
 	}
@@ -209,7 +208,7 @@ func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPh
 
 	if currentVersion == storageVersionCurrent {
 		if replayCurrentCatalog {
-			if err := b.migrateV3ToV4(context.Background(), true); err != nil {
+			if err := b.migrateV3ToV4(b.work.Context(), true); err != nil {
 				return fmt.Errorf("V4 catalog recovery: %w", err)
 			}
 		}
@@ -280,7 +279,7 @@ func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPh
 		}
 	}
 	if currentVersion < storageVersionCatalogV4 {
-		if err := b.migrateV3ToV4(context.Background(), false); err != nil {
+		if err := b.migrateV3ToV4(b.work.Context(), false); err != nil {
 			return fmt.Errorf("migration v3→v4 failed: %w", err)
 		}
 		currentVersion = storageVersionCatalogV4

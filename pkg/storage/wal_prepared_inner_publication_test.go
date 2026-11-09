@@ -108,6 +108,6 @@ func TestWALNativePublicationSharesObserverLogicalIdentity(t *testing.T) {
 	require.NotEmpty(t, observedID)
 	require.Equal(t, envelope.LogicalTxID, observedID)
 	require.Equal(t, 1, publications)
-	require.NoError(t, ReplayWALEntry(native, entries[0]))
+	require.NoError(t, ReplayWALEntry(t.Context(), native, entries[0]))
 	require.Equal(t, 1, publications, "same receipt cannot publish observer delta twice")
 }

@@ -73,8 +73,6 @@ type pr1655FaultHandler struct {
 	next  slog.Handler
 }
 
-func (h *pr1655FaultHandler) Enabled(context.Context, slog.Level) bool { return true }
-
 func (h *pr1655FaultHandler) Handle(ctx context.Context, record slog.Record) error {
 	if record.Message == pr1655CommitReadFaultMessage && h.hasMetadataAttr(record) {
 		h.fault.handlerOnce.Do(func() {
@@ -103,9 +101,6 @@ func (h *pr1655FaultHandler) hasMetadataAttr(record slog.Record) bool {
 	return found
 }
 
-func (h *pr1655FaultHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *pr1655FaultHandler) WithGroup(string) slog.Handler      { return h }
-
 // pr1655NewCommitReadFaultEngine opens the real BadgerEngine the commit-read
 // regression runs against: the custom slog.Handler is supplied in
 // BadgerOptions at construction so the fixture can arm the one-shot fault on
@@ -119,7 +114,7 @@ func pr1655NewCommitReadFaultEngine(t *testing.T, writeBehind bool) (*BadgerEngi
 		LowMemory:           true,
 		WriteBehind:         writeBehind,
 		WriteBehindInterval: time.Hour,
-		Logger:              slog.New(&pr1655FaultHandler{fault: fault, next: slog.DiscardHandler}),
+		Logger:              slog.New(fixtureowner.RawLogHandler((&pr1655FaultHandler{fault: fault, next: slog.DiscardHandler}).Handle)),
 	}))
 	require.NoError(t, err)
 	require.NotNil(t, engine)

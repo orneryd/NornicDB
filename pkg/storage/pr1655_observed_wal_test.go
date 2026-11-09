@@ -29,7 +29,7 @@ func TestPR1655ObservedWALRejectsBeforeJournaling(t *testing.T) {
 			}
 			require.ErrorIs(t, updateErr, ErrConflict)
 			require.Zero(t, wal.Sequence(), "a rejected observation must not enter the replay log")
-			entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+			entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 			require.NoError(t, err)
 			require.Empty(t, entries)
 			_, err = b.GetNode(t.Context(), "test:gone")
@@ -65,12 +65,12 @@ func TestObservedWALAcceptedSemanticReplay(t *testing.T) {
 	afterEdge := *beforeEdge
 	afterEdge.Properties = map[string]any{"v": "after"}
 	require.NoError(t, owner.UpdateEdge(t.Context(), EdgeUpdateRequest{Before: beforeEdge, After: &afterEdge}))
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	for _, entry := range entries {
 		require.Equal(t, OpEntityCommit, entry.Operation, "only accepted semantic images belong in recovery")
-		require.NoError(t, ReplayWALEntry(destination, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), destination, entry))
 	}
 	for _, engine := range []*BadgerEngine{b, destination} {
 		node, err := engine.GetNode(t.Context(), "test:a")
@@ -123,7 +123,7 @@ func TestObservedWALPreservesAcceptedFailure(t *testing.T) {
 	require.NotEmpty(t, accepted.LogicalID)
 	_, pending := owner.pendingEntityCommits.Load(acceptedApplicationKey{namespace: "test", logicalID: accepted.LogicalID})
 	require.True(t, pending, "recovery pending ownership survives caller error")
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, OpEntityCommit, entries[0].Operation)
@@ -272,7 +272,7 @@ func TestPR1655ObservedWALUpdateKeepsMissingTimeDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, created.Equal(stored.CreatedAt))
 	require.False(t, stored.UpdatedAt.IsZero())
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	var payload walEntityCommitData

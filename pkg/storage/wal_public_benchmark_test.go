@@ -173,7 +173,7 @@ func walPublicSource(b *testing.B, root string, nodes []*storage.Node, keys int,
 	walPublicValidate(b, store, nodes, keys)
 	walPublicCheck(b, journal.Close())
 	store = nil
-	entries, err := storage.ReadWALEntriesFromDir(walDir)
+	entries, err := storage.ReadWALEntriesFromDir(b.Context(), walDir)
 	walPublicCheck(b, err)
 	if len(entries) != walPublicBatch {
 		b.Fatalf("WAL has %d records, want %d", len(entries), walPublicBatch)
@@ -216,7 +216,7 @@ func walPublicRecover(b *testing.B, dir, walDir, backup string, nodes []*storage
 		applied, err = storage.RecoverBufferedCommits(store, wal)
 		walPublicCheck(b, err)
 	} else {
-		result, _, err := storage.RecoverIntoEngine(store, walDir, "")
+		result, _, err := storage.RecoverIntoEngine(b.Context(), store, walDir, "")
 		walPublicCheck(b, err)
 		if result.Failed != 0 {
 			b.Fatal(result.Summary())

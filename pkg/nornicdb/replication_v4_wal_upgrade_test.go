@@ -127,7 +127,7 @@ func TestReplicationWALUpgradeRequiresStorageAuthorization(t *testing.T) {
 				require.NotErrorIs(t, err, storage.ErrWALUnsupportedVersion)
 			}
 			require.NoError(t, storage.ValidateWALFormat(walDir, storage.WALValidateCurrent))
-			entries, err := storage.ReadWALEntriesFromDir(walDir)
+			entries, err := storage.ReadWALEntriesFromDir(t.Context(), walDir)
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
 			var record struct {

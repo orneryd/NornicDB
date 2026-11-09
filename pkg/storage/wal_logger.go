@@ -8,10 +8,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-func logWALRecoveryEvent(logger *slog.Logger, event localization.LogEvent) {
-	logStorageEvent(context.Background(), logger, slog.LevelWarn, event)
-}
-
 // logStorageEvent emits event at level with its stable event_id. A nil
 // logger discards it.
 func logStorageEvent(ctx context.Context, logger *slog.Logger, level slog.Level, event localization.LogEvent) {

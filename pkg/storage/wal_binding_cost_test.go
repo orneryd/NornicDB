@@ -63,7 +63,7 @@ func TestBufferedWALBindingAllocationBounds(t *testing.T) {
 			// for JSON/compression pool misses, not an allocation per key.
 			// The bounded non-race benchmark reports the actual bytes/counts.
 			require.LessOrEqual(t, appendAllocs, float64(64), "append must avoid per-key JSON object allocations")
-			entries, err := ReadWALEntriesFromDir(w.Config().Dir)
+			entries, err := ReadWALEntriesFromDir(t.Context(), w.Config().Dir)
 			require.NoError(t, err)
 			require.NotEmpty(t, entries, "every measured append must reach the log")
 			beforePayload, err := decompressWALBufferedCommitPayload(entries[0].Data)
@@ -84,7 +84,7 @@ func BenchmarkWALPropertyBindingCost(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/%d", action, count), func(b *testing.B) {
 				store, w, c := bindingCostFixture(b, count)
 				require.NoError(b, w.AppendBufferedCommit(c, store.propKeyDict))
-				entries, err := ReadWALEntriesFromDir(w.Config().Dir)
+				entries, err := ReadWALEntriesFromDir(b.Context(), w.Config().Dir)
 				require.NoError(b, err)
 				require.Len(b, entries, 1)
 				b.ReportAllocs()
@@ -96,7 +96,7 @@ func BenchmarkWALPropertyBindingCost(b *testing.B) {
 					case "Append":
 						err = w.AppendBufferedCommit(c, store.propKeyDict)
 					case "Replay":
-						err = ReplayWALEntry(store, entries[0])
+						err = ReplayWALEntry(b.Context(), store, entries[0])
 					}
 					if err != nil {
 						b.Fatal(err)

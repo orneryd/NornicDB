@@ -69,7 +69,7 @@ func jsonPublicWALWriteBatch(b *testing.B, dir string, nodes []*storage.Node, sy
 	}
 	b.StopTimer()
 	jsonPublicStorageCheck(b, wal.Sync())
-	entries, err := storage.ReadWALEntriesFromDir(dir)
+	entries, err := storage.ReadWALEntriesFromDir(ctx, dir)
 	jsonPublicStorageCheck(b, err)
 	if len(entries) != len(nodes) {
 		b.Fatalf("WAL has %d records, want %d", len(entries), len(nodes))
@@ -124,7 +124,7 @@ func jsonPublicBufferedSource(b *testing.B, root string, nodes []*storage.Node) 
 	jsonPublicStorageCheck(b, store.FlushWriteBehind(context.Background()))
 	jsonPublicStorageValidate(b, store, nodes)
 	jsonPublicStorageCheck(b, wal.Sync())
-	entries, err := storage.ReadWALEntriesFromDir(walDir)
+	entries, err := storage.ReadWALEntriesFromDir(ctx, walDir)
 	jsonPublicStorageCheck(b, err)
 	if len(entries) != len(nodes) {
 		b.Fatalf("source has %d WAL entries, want %d", len(entries), len(nodes))
@@ -173,7 +173,7 @@ func BenchmarkJSONPublicRecoveryRetainedDocBounded(b *testing.B) {
 		jsonPublicStorageCheck(b, wal.AppendWithDatabase(storage.OpCreateNode, storage.WALNodeData{Node: node}, "jsonbench"))
 	}
 	jsonPublicStorageCheck(b, wal.Close())
-	entries, err := storage.ReadWALEntriesFromDir(filepath.Join(root, "source"))
+	entries, err := storage.ReadWALEntriesFromDir(b.Context(), filepath.Join(root, "source"))
 	jsonPublicStorageCheck(b, err)
 	if len(entries) != len(nodes) {
 		b.Fatalf("source has %d records, want %d", len(entries), len(nodes))
@@ -197,7 +197,7 @@ func jsonPublicRetainedRecoverBatch(b *testing.B, entries []storage.WALEntry, no
 	b.StartTimer()
 	var result storage.ReplayResult
 	for _, entry := range entries {
-		result.Record(entry, storage.ReplayWALEntry(engine, entry))
+		result.Record(entry, storage.ReplayWALEntry(b.Context(), engine, entry))
 	}
 	b.StopTimer()
 	if result.Failed != 0 || result.Applied != len(nodes) || result.Skipped != 0 {

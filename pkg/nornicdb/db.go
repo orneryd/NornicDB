@@ -811,7 +811,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 			if autoRecoverEnabled && !config.Database.EncryptionEnabled && recoverableArtifacts && (corruptionSuspected || autoRecoverExplicit) {
 				log.Printf("🔧 Auto-recover setting: enabled=%t env(NORNICDB_AUTO_RECOVER_ON_CORRUPTION)=%q", autoRecoverEnabled, os.Getenv("NORNICDB_AUTO_RECOVER_ON_CORRUPTION"))
 				log.Printf("⚠️  Persistent store open failed: %v; attempting auto-recovery from snapshots + WAL (dataDir=%s)", err, dataDir)
-				recovered, backupDir, recErr := recoverBadgerFromSnapshotAndWAL(dataDir, badgerOpts)
+				recovered, backupDir, recErr := recoverBadgerFromSnapshotAndWAL(db.work.Context(), dataDir, badgerOpts)
 				if recErr != nil {
 					return nil, fmt.Errorf("failed to open persistent storage: %v (auto-recovery failed: %w)", err, recErr)
 				}

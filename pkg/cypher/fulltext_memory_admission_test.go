@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/internal/testutil/memorypressure"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -33,7 +34,7 @@ func TestFulltextRetainedMemoryApplicationPublic(t *testing.T) {
 	service := search.NewService(store, search.DefaultVectorDimensions, &options)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	logs := &fulltextMemoryLogs{}
-	service.SetLogger(slog.New(logs))
+	service.SetLogger(slog.New(fixtureowner.RawLogHandler(logs.Handle)))
 	executor := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
 	executor.SetSearchServiceResolver("fulltext_fixture", func(string) *search.Service { return service })
 	require.NoError(t, policy.Refresh())

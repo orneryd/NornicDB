@@ -225,7 +225,7 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered(), "fixture must recover a genuinely buffered ACK")
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	found := false
 	for _, entry := range entries {

@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -179,7 +180,7 @@ func latestSnapshotPath(snapshotDir string) (string, error) {
 
 // recoverBadgerFromSnapshotAndWAL rebuilds a new Badger store in-place from the latest
 // snapshot + WAL replay, preserving the original store before rebuilding it.
-func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOptions) (*storage.BadgerEngine, string, error) {
+func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badgerOpts storage.BadgerOptions) (*storage.BadgerEngine, string, error) {
 	status := RecoveryStatus{
 		Phase:         RecoveryPhaseInspect,
 		StartedAt:     time.Now().UTC(),
@@ -252,7 +253,7 @@ func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOp
 	}
 
 	status.Phase = RecoveryPhaseReplay
-	replay, streamStatus, err := storage.RecoverIntoEngine(newStore, walDir, snapPath)
+	replay, streamStatus, err := storage.RecoverIntoEngine(ctx, newStore, walDir, snapPath)
 	status.SnapshotStreaming = streamStatus.SnapshotStreaming
 	status.SnapshotNodes = streamStatus.SnapshotNodes
 	status.SnapshotEdges = streamStatus.SnapshotEdges

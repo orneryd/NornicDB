@@ -444,7 +444,7 @@ func TestNewWAL(t *testing.T) {
 		require.NoError(t, wal2.Sync())
 		require.NoError(t, wal2.Close())
 
-		entries, err := ReadWALEntries(walPath, nil)
+		entries, err := ReadWALEntries(t.Context(), walPath, nil)
 		require.NoError(t, err)
 		require.Len(t, entries, 2)
 		require.Equal(t, uint64(1), entries[0].Sequence)
@@ -829,7 +829,7 @@ func TestWAL_Append(t *testing.T) {
 		assert.Equal(t, uint64(2), commitSeq)
 		assert.Equal(t, uint64(3), abortSeq)
 
-		entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
+		entries, err := ReadWALEntries(t.Context(), filepath.Join(dir, "wal.log"), nil)
 		require.NoError(t, err)
 		require.Len(t, entries, 3)
 		assert.Equal(t, OpTxBegin, entries[0].Operation)
@@ -1048,7 +1048,7 @@ func TestWAL_ReadEntries(t *testing.T) {
 
 	// Read entries back
 	walPath := filepath.Join(dir, "wal.log")
-	entries, err := ReadWALEntries(walPath, nil)
+	entries, err := ReadWALEntries(t.Context(), walPath, nil)
 	require.NoError(t, err)
 	assert.Len(t, entries, 3)
 	assert.Equal(t, OpCreateNode, entries[0].Operation)
@@ -1071,11 +1071,11 @@ func TestWAL_ReadEntriesAfter(t *testing.T) {
 
 	// Read only entries after sequence 5
 	walPath := filepath.Join(dir, "wal.log")
-	entries, err := ReadWALEntriesAfter(walPath, 5, WALReadFile)
+	entries, err := ReadWALEntriesAfter(t.Context(), walPath, 5, WALReadFile)
 	require.NoError(t, err)
 	assert.Len(t, entries, 5) // Entries 6-10
 	assert.Equal(t, uint64(6), entries[0].Sequence)
-	entries, err = ReadWALEntriesAfter(walPath, 5, WALReadScope(255))
+	entries, err = ReadWALEntriesAfter(t.Context(), walPath, 5, WALReadScope(255))
 	require.ErrorContains(t, err, "invalid read scope")
 	require.Nil(t, entries)
 }
@@ -1181,7 +1181,7 @@ func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
 		wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
 		require.NoError(t, err)
 		require.NoError(t, wal.Close())
-		assert.Equal(t, ErrWALClosed, wal.ManageSnapshot(1, WALSnapshotRetention))
+		assert.Equal(t, ErrWALClosed, wal.ManageSnapshot(t.Context(), 1, WALSnapshotRetention))
 	})
 
 	t.Run("removes old segments after snapshot", func(t *testing.T) {
@@ -1221,7 +1221,7 @@ func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
 			require.NoError(t, manifestErr)
 		}
 
-		require.NoError(t, wal.ManageSnapshot(10, WALSnapshotRetention))
+		require.NoError(t, wal.ManageSnapshot(t.Context(), 10, WALSnapshotRetention))
 
 		_, err = os.Stat(filepath.Join(segDir, oldSeg.Path))
 		assert.True(t, os.IsNotExist(err), "oldest segment should be pruned")
@@ -1244,7 +1244,7 @@ func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
 		defer wal.Close()
 
 		require.NoError(t, os.WriteFile(walManifestPath(dir), []byte("{bad-json"), 0644))
-		err = wal.ManageSnapshot(10, WALSnapshotRetention)
+		err = wal.ManageSnapshot(t.Context(), 10, WALSnapshotRetention)
 		require.Error(t, err)
 	})
 
@@ -1255,7 +1255,7 @@ func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 		defer wal.Close()
-		require.NoError(t, wal.ManageSnapshot(0, WALSnapshotRetention))
+		require.NoError(t, wal.ManageSnapshot(t.Context(), 0, WALSnapshotRetention))
 	})
 
 	t.Run("retention respects age and max-segment limits together", func(t *testing.T) {
@@ -1288,7 +1288,7 @@ func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
 			require.NoError(t, manifestErr)
 		}
 
-		require.NoError(t, wal.ManageSnapshot(6, WALSnapshotRetention))
+		require.NoError(t, wal.ManageSnapshot(t.Context(), 6, WALSnapshotRetention))
 
 		manifest, loadErr := accessWALManifest(dir, walReadManifest, nil)
 		require.NoError(t, loadErr)
@@ -1335,7 +1335,7 @@ func TestSnapshot_CreateAndLoad(t *testing.T) {
 	require.NoError(t, err)
 
 	// Load snapshot
-	loaded, err := LoadSnapshot(snapshotPath)
+	loaded, err := LoadSnapshot(t.Context(), snapshotPath)
 	require.NoError(t, err)
 	assert.Equal(t, snapshot.Sequence, loaded.Sequence)
 	assert.Len(t, loaded.Nodes, 2)
@@ -1380,7 +1380,7 @@ func TestReplayWALEntry(t *testing.T) {
 		}
 		entry.Checksum = crc32Checksum(entry.Data)
 
-		err := ReplayWALEntry(engine, entry)
+		err := ReplayWALEntry(t.Context(), engine, entry)
 		assert.NoError(t, err)
 
 		node, err := engine.GetNode(t.Context(), "n1")
@@ -1400,7 +1400,7 @@ func TestReplayWALEntry(t *testing.T) {
 		}
 		entry.Checksum = crc32Checksum(entry.Data)
 
-		err := ReplayWALEntry(engine, entry)
+		err := ReplayWALEntry(t.Context(), engine, entry)
 		assert.NoError(t, err)
 
 		node, _ := engine.GetNode(t.Context(), "n1")
@@ -1427,7 +1427,7 @@ func TestReplayWALEntry(t *testing.T) {
 		}
 		entry.Checksum = crc32Checksum(entry.Data)
 
-		err := ReplayWALEntry(engine, entry)
+		err := ReplayWALEntry(t.Context(), engine, entry)
 		assert.NoError(t, err)
 
 		_, err = engine.GetNode(t.Context(), "n1")
@@ -1447,7 +1447,7 @@ func TestReplayWALEntry(t *testing.T) {
 		}
 		entry.Checksum = crc32Checksum(entry.Data)
 
-		err := ReplayWALEntry(engine, entry)
+		err := ReplayWALEntry(t.Context(), engine, entry)
 		assert.NoError(t, err)
 
 		edge, err := engine.GetEdge(t.Context(), "e1")
@@ -1470,7 +1470,7 @@ func TestReplayWALEntry(t *testing.T) {
 		}
 		entry.Checksum = crc32Checksum(entry.Data)
 
-		err := ReplayWALEntry(engine, entry)
+		err := ReplayWALEntry(t.Context(), engine, entry)
 		assert.NoError(t, err)
 
 		count, _ := engine.NodeCount(t.Context())
@@ -1486,7 +1486,7 @@ func TestReplayWALEntry(t *testing.T) {
 		}
 		entry.Checksum = crc32Checksum(entry.Data)
 
-		err := ReplayWALEntry(engine, entry)
+		err := ReplayWALEntry(t.Context(), engine, entry)
 		assert.NoError(t, err)
 	})
 
@@ -1498,7 +1498,7 @@ func TestReplayWALEntry(t *testing.T) {
 			Data:      []byte("{}"),
 		}
 
-		err := ReplayWALEntry(engine, entry)
+		err := ReplayWALEntry(t.Context(), engine, entry)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown operation")
 	})
@@ -1536,7 +1536,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		wal.Close()
 
 		// Recover.
-		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, snapshotPath))
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, snapshotPath))
 		require.NoError(t, err)
 
 		// Verify state (wrap recovered base engine with namespace used in WAL)
@@ -1571,7 +1571,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "n2", Labels: []string{"Test"}}}, "test"))
 		wal.Close()
 
-		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, ""))
 		require.NoError(t, err)
 
 		recoveredNS := NewNamespacedEngine(recovered, "test")
@@ -1586,7 +1586,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		walDir := filepath.Join(dir, "wal")
 		os.MkdirAll(walDir, 0755)
 
-		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, ""))
 		// If no WAL file exists, should still return empty engine (not error)
 		require.NoError(t, err)
 
@@ -1612,7 +1612,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		}, "test"))
 		require.NoError(t, wal.Close())
 
-		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, ""))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -1633,7 +1633,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 		snapshotPath := filepath.Join(dir, "snapshot.json")
 		require.NoError(t, os.WriteFile(snapshotPath, []byte("{invalid-json"), 0644))
 
-		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshotPath))
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to load snapshot")
 	})
 
@@ -1649,7 +1649,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 				{ID: "tenant_x:e1", StartNode: "tenant_x:a", EndNode: "tenant_x:b", Type: "REL"},
 			},
 		}, edgeSnapshotPath))
-		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal-edge"), edgeSnapshotPath))
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), filepath.Join(dir, "wal-edge"), edgeSnapshotPath))
 		require.ErrorContains(t, err, "failed to restore edges")
 	})
 
@@ -1669,7 +1669,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 			},
 		}, snapshotPath))
 
-		engine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshotPath))
+		engine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), filepath.Join(dir, "wal"), snapshotPath))
 		require.NoError(t, err)
 		require.Equal(t, 0, result.Failed)
 
@@ -1692,7 +1692,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 			})
 			require.NoError(t, manifestErr)
 		}
-		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 		require.ErrorContains(t, err, "failed to read WAL")
 	})
 
@@ -1702,7 +1702,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-bad.json")
 		require.NoError(t, os.WriteFile(snapshotPath, []byte("{bad-json"), 0644))
-		_, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(filepath.Join(dir, "wal"), snapshotPath))
+		_, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to load snapshot")
 	})
 
@@ -1721,7 +1721,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 		}, "test"))
 		require.NoError(t, wal.Close())
 
-		engine, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
+		engine, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, ""))
 		require.NoError(t, err)
 		require.NotNil(t, engine)
 	})
@@ -2169,7 +2169,7 @@ func TestBatchWriter_CommitWithTxID(t *testing.T) {
 	err = batch.Commit()
 	require.NoError(t, err)
 
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
+	entries, err := ReadWALEntries(t.Context(), filepath.Join(dir, "wal.log"), nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -2225,7 +2225,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		sizeBefore := statBefore.Size()
 
 		// Truncate WAL to remove entries before snapshot
-		err = wal.ManageSnapshot(snapshotSeq, WALSnapshotTruncate)
+		err = wal.ManageSnapshot(t.Context(), snapshotSeq, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// Get WAL size after truncation
@@ -2237,7 +2237,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		assert.Less(t, sizeAfter, sizeBefore, "WAL should shrink after truncation")
 
 		// Read WAL entries to verify only post-snapshot entries remain
-		entries, err := ReadWALEntries(walPath, nil)
+		entries, err := ReadWALEntries(t.Context(), walPath, nil)
 		require.NoError(t, err)
 
 		// All remaining entries should have sequence > snapshotSeq
@@ -2284,7 +2284,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		}
 
 		// Truncate
-		err = wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
+		err = wal.ManageSnapshot(t.Context(), snapshot.Sequence, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// Verify we can still append after truncation
@@ -2294,7 +2294,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		wal.Close()
 
 		// Recover from snapshot + truncated WAL
-		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, snapshotPath))
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, snapshotPath))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -2344,7 +2344,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		// NO new entries after snapshot
 
 		// Truncate should leave WAL nearly empty (just checkpoint possibly)
-		err = wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
+		err = wal.ManageSnapshot(t.Context(), snapshot.Sequence, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// WAL should be very small or empty
@@ -2367,7 +2367,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, wal.Close())
 
-		err = wal.ManageSnapshot(1, WALSnapshotTruncate)
+		err = wal.ManageSnapshot(t.Context(), 1, WALSnapshotTruncate)
 		require.ErrorIs(t, err, ErrWALClosed)
 	})
 
@@ -2405,10 +2405,10 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
 
-		err = wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
+		err = wal.ManageSnapshot(t.Context(), snapshot.Sequence, WALSnapshotTruncate)
 		require.NoError(t, err)
 
-		entries, err := ReadWALEntries(walPath, nil)
+		entries, err := ReadWALEntries(t.Context(), walPath, nil)
 		require.NoError(t, err)
 		for _, e := range entries {
 			require.Greater(t, e.Sequence, snapshot.Sequence)
@@ -2434,9 +2434,9 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, f.Close())
 
 		// Snapshot sequence beyond all valid entries -> salvage returns empty.
-		require.NoError(t, wal.ManageSnapshot(999, WALSnapshotTruncate))
+		require.NoError(t, wal.ManageSnapshot(t.Context(), 999, WALSnapshotTruncate))
 
-		entries, err := ReadWALEntries(walPath, nil)
+		entries, err := ReadWALEntries(t.Context(), walPath, nil)
 		require.NoError(t, err)
 		require.Len(t, entries, 0)
 	})
@@ -2457,7 +2457,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 			writer: bufio.NewWriterSize(bytes.NewBuffer(nil), 16),
 		}
 
-		err = w.ManageSnapshot(0, WALSnapshotTruncate)
+		err = w.ManageSnapshot(t.Context(), 0, WALSnapshotTruncate)
 		require.ErrorContains(t, err, "cannot truncate unreadable active WAL")
 	})
 
@@ -2475,7 +2475,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 			moved := filepath.Join(parent, "moved")
 			require.NoError(t, os.Rename(dir, moved))
-			err = wal.ManageSnapshot(0, WALSnapshotTruncate)
+			err = wal.ManageSnapshot(t.Context(), 0, WALSnapshotTruncate)
 			require.ErrorContains(t, err, "cannot truncate unreadable active WAL")
 			require.NoError(t, os.Rename(moved, dir))
 			require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"after": true}))
@@ -2494,7 +2494,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 				writer: bufio.NewWriterSize(&walErrWriter{err: fmt.Errorf("flush-fail")}, 16),
 			}
 			_, _ = w.writer.WriteString("pending")
-			err = w.ManageSnapshot(1, WALSnapshotTruncate)
+			err = w.ManageSnapshot(t.Context(), 1, WALSnapshotTruncate)
 			require.ErrorContains(t, err, "failed to flush before truncate")
 		})
 
@@ -2510,7 +2510,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 				file:   f,
 				writer: bufio.NewWriterSize(bytes.NewBuffer(nil), 16),
 			}
-			err = w.ManageSnapshot(1, WALSnapshotTruncate)
+			err = w.ManageSnapshot(t.Context(), 1, WALSnapshotTruncate)
 			require.ErrorContains(t, err, "failed to close for truncate")
 		})
 
@@ -2530,7 +2530,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 				writer: bufio.NewWriterSize(bytes.NewBuffer(nil), 16),
 			}
 
-			err = w.ManageSnapshot(0, WALSnapshotTruncate)
+			err = w.ManageSnapshot(t.Context(), 0, WALSnapshotTruncate)
 			require.ErrorContains(t, err, "cannot truncate before validating WAL")
 			info, err := os.Stat(walPath)
 			require.NoError(t, err)
@@ -2671,7 +2671,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		latestSnapshot := filepath.Join(snapshotDir, jsonFiles[len(jsonFiles)-1].Name())
 
 		// Second session: recover from snapshot + WAL
-		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, latestSnapshot))
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(t.Context(), walDir, latestSnapshot))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 

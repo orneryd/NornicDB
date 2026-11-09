@@ -27,7 +27,7 @@ func TestBufferedWALPreservesPhysicalKeysAndTypedOperations(t *testing.T) {
 	commit.ops = []Operation{{Type: OpCreateNode, Node: &Node{ID: "perf:typed", Properties: properties}}}
 
 	require.NoError(t, wal.AppendBufferedCommit(commit, b.propKeyDict))
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	payload, err := decompressWALBufferedCommitPayload(entries[0].Data)
@@ -76,7 +76,7 @@ func TestBufferedWALBinaryIndexPublicReplay(t *testing.T) {
 	require.NotEmpty(t, binaryKeys)
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	entries, err := ReadWALEntriesFromDir(source.bufferedCommitWAL.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), source.bufferedCommitWAL.Config().Dir)
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
 	entry := entries[len(entries)-1]
@@ -86,7 +86,7 @@ func TestBufferedWALBinaryIndexPublicReplay(t *testing.T) {
 	for _, key := range binaryKeys {
 		require.Contains(t, decoded.Writes, key)
 	}
-	require.NoError(t, ReplayWALEntry(dest, entry))
+	require.NoError(t, ReplayWALEntry(t.Context(), dest, entry))
 	edge, err := dest.GetEdge(t.Context(), "test:r")
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:r"), edge.ID)
@@ -127,12 +127,12 @@ func TestBufferedWALForeignNumericIDsPublicReplay(t *testing.T) {
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:n128", EndNode: "test:n139", Type: "LINK", Properties: map[string]any{"p": int64(1)}}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	entries, err := ReadWALEntriesFromDir(source.bufferedCommitWAL.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), source.bufferedCommitWAL.Config().Dir)
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
 	entry := entries[len(entries)-1]
 	require.Equal(t, OpBufferedCommit, entry.Operation)
-	require.NoError(t, ReplayWALEntry(dest, entry))
+	require.NoError(t, ReplayWALEntry(t.Context(), dest, entry))
 	got, err := dest.GetEdge(t.Context(), "test:r")
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:n128"), got.StartNode)
@@ -160,7 +160,7 @@ func TestBufferedWALRejectsOversizedTypedPayloadBeforeAppend(t *testing.T) {
 	commit.writes[string([]byte{prefixNode})+"oversized"] = bytes.Repeat([]byte{1}, maxBufferedWALPayloadBytes)
 	err := wal.AppendBufferedCommit(commit, b.propKeyDict)
 	require.ErrorContains(t, err, "exceeds decoded payload limit")
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.Empty(t, entries)
 }
@@ -175,7 +175,7 @@ func TestBufferedWALRejectsUnreadableOversizedFrameBeforeAppend(t *testing.T) {
 	commit.writes[string([]byte{prefixNode})+"incompressible"] = value
 	err = wal.AppendBufferedCommit(commit, b.propKeyDict)
 	require.ErrorContains(t, err, "exceeds maximum WAL frame size")
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.Empty(t, entries)
 }

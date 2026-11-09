@@ -32,7 +32,7 @@ func TestWriteBehindMemoryAdmissionRejectsBeforeWAL(t *testing.T) {
 	require.Zero(t, policy.Reserved())
 	_, err = engine.GetNode(t.Context(), "test:large")
 	require.ErrorIs(t, err, ErrNotFound)
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	for _, entry := range entries {
 		require.NotEqual(t, OpBufferedCommit, entry.Operation, "rejected write must not reach replayable WAL")

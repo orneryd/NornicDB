@@ -48,7 +48,7 @@ func TestStorageAdapterAsyncWALPublishesOnceBeforeApplyReturns(t *testing.T) {
 	require.Len(t, entries, 1, "one physical append must have one streamed entry")
 	require.Same(t, command, entries[0].Command)
 	require.Equal(t, adapter.wal.Sequence(), entries[0].Position)
-	records, err := storage.ReadWALEntriesFromDir(adapter.wal.Config().Dir)
+	records, err := storage.ReadWALEntriesFromDir(t.Context(), adapter.wal.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	node, err := storage.GetStoredNode(t.Context(), adapter.engine, "once")

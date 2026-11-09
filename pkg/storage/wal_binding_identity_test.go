@@ -25,14 +25,14 @@ func TestWALPropertyIdentityForeignAndRestoreRotation(t *testing.T) {
 			case "matching-import":
 				payload, err := json.Marshal(data)
 				require.NoError(t, err)
-				require.NoError(t, ReplayWALEntry(b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
+				require.NoError(t, ReplayWALEntry(t.Context(), b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
 			case "snapshot":
 				path := filepath.Join(t.TempDir(), "snapshot.bin")
 				require.NoError(t, SaveSnapshot(&Snapshot{Timestamp: time.Now(), Nodes: []*Node{{ID: "perf:snapshot"}}}, path))
 				w, err := NewWAL(t.TempDir(), DefaultWALConfig())
 				require.NoError(t, err)
 				require.NoError(t, w.Close())
-				result, _, err := RecoverIntoEngine(b, w.Config().Dir, path)
+				result, _, err := RecoverIntoEngine(t.Context(), b, w.Config().Dir, path)
 				require.NoError(t, err)
 				require.Zero(t, result.Failed)
 			case "native-restore":

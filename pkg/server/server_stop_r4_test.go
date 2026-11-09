@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/audit"
 	cfgpkg "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -331,7 +332,7 @@ func TestServerStopR4StartLoggerReentry(t *testing.T) {
 	callback := newStopR2Gate(t)
 	read := make(chan struct{})
 	var once sync.Once
-	s.log = slogForR4(func() {
+	s.log = slog.New(fixtureowner.RawLogHandler(func(_ context.Context, _ slog.Record) error {
 		once.Do(func() {
 			go func() { _ = s.Addr(); close(read) }()
 			select {
@@ -339,7 +340,8 @@ func TestServerStopR4StartLoggerReentry(t *testing.T) {
 			case <-callback.release.Done():
 			}
 		})
-	})
+		return nil
+	}))
 	done := make(chan error, 1)
 	go func() { done <- s.Start() }()
 	select {
@@ -355,10 +357,6 @@ func TestServerStopR4StartLoggerReentry(t *testing.T) {
 		t.Fatal("startup did not complete")
 	}
 	require.NoError(t, s.Stop(context.Background()))
-}
-
-func slogForR4(fn func()) *slog.Logger {
-	return slog.New(&stopR3LogHandler{fn: func(slog.Record) { fn() }})
 }
 
 func TestServerStopR4ConstructorRetention(t *testing.T) {
@@ -385,11 +383,12 @@ func TestServerStopR4ConstructorRetention(t *testing.T) {
 			cfg.SlowQueryEnabled = true
 			cfg.ModelsDir = t.TempDir()
 			cfg.Features = &cfgpkg.FeatureFlagsConfig{SearchRerankEnabled: true, SearchRerankProvider: "local"}
-			cfg.Logger = slog.New(&stopR3LogHandler{fn: func(r slog.Record) {
+			cfg.Logger = slog.New(fixtureowner.RawLogHandler(func(_ context.Context, r slog.Record) error {
 				if strings.Contains(strings.ToLower(r.Message), "slow query") {
 					construction.block()
 				}
-			}})
+				return nil
+			}))
 			type result struct {
 				s   *Server
 				err error

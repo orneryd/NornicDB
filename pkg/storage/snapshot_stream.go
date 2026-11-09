@@ -38,9 +38,12 @@ type SnapshotMetadata struct {
 	EdgeCount uint64
 }
 
+// SnapshotVisitor consumes decoded entities on the context supplied to ReadSnapshot.
+// A visitor may stop the read by returning an error; recovery supplies its own
+// completion context when applying acknowledged data.
 type SnapshotVisitor interface {
-	VisitNode(*Node) error
-	VisitEdge(*Edge) error
+	VisitNode(context.Context, *Node) error
+	VisitEdge(context.Context, *Edge) error
 }
 
 // WriteSnapshot writes lossless NDS2 v2 entity frames using streaming enumeration.
@@ -134,12 +137,13 @@ func IsStreamingSnapshot(path string) (bool, error) {
 }
 
 // ReadSnapshot visits entities from NDS2 v1 JSON or v2 typed frames.
-// Unsupported versions fail before visiting entities.
-func ReadSnapshot(reader io.Reader, visitor SnapshotVisitor) (SnapshotMetadata, error) {
-	return readSnapshot(reader, visitor, nil, defaultSnapshotRecordSize)
+// Unsupported versions fail before visiting entities. The non-nil ctx is
+// passed unchanged to every visitor callback.
+func ReadSnapshot(ctx context.Context, reader io.Reader, visitor SnapshotVisitor) (SnapshotMetadata, error) {
+	return readSnapshot(ctx, reader, visitor, nil, defaultSnapshotRecordSize)
 }
 
-func readSnapshot(reader io.Reader, visitor SnapshotVisitor, collection *Snapshot, maxRecordBytes int64) (SnapshotMetadata, error) {
+func readSnapshot(ctx context.Context, reader io.Reader, visitor SnapshotVisitor, collection *Snapshot, maxRecordBytes int64) (SnapshotMetadata, error) {
 	var metadata SnapshotMetadata
 	buffered := bufio.NewReader(reader)
 	magic := make([]byte, len(streamSnapshotMagic))
@@ -170,7 +174,7 @@ func readSnapshot(reader io.Reader, visitor SnapshotVisitor, collection *Snapsho
 			if err := decodeRecoveryPayload(payload, &node); err != nil {
 				return metadata, err
 			}
-			if err := visitor.VisitNode(&node); err != nil {
+			if err := visitor.VisitNode(ctx, &node); err != nil {
 				return metadata, err
 			}
 			metadata.NodeCount++
@@ -179,7 +183,7 @@ func readSnapshot(reader io.Reader, visitor SnapshotVisitor, collection *Snapsho
 			if err := decodeRecoveryPayload(payload, &edge); err != nil {
 				return metadata, err
 			}
-			if err := visitor.VisitEdge(&edge); err != nil {
+			if err := visitor.VisitEdge(ctx, &edge); err != nil {
 				return metadata, err
 			}
 			metadata.EdgeCount++

@@ -66,7 +66,7 @@ func TestResidualBatchSerializationOwnsInput(t *testing.T) {
 	node.Properties["nested"].(map[string]any)["value"] = "changed"
 	require.NoError(t, batch.Commit())
 	require.NoError(t, wal.Close())
-	entries, err := storage.ReadWALEntriesFromDir(dir)
+	entries, err := storage.ReadWALEntriesFromDir(t.Context(), dir)
 	require.NoError(t, err)
 	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
@@ -75,7 +75,7 @@ func TestResidualBatchSerializationOwnsInput(t *testing.T) {
 	for _, entry := range entries {
 		if entry.Operation == storage.OpCreateNode {
 			entry.Database = "test"
-			require.NoError(t, storage.ReplayWALEntry(b, entry))
+			require.NoError(t, storage.ReplayWALEntry(t.Context(), b, entry))
 			found = true
 		}
 	}

@@ -23,7 +23,7 @@ func TestReviewerR6FinalDrainDoesNotPublishReadiness(t *testing.T) {
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	injected := errors.New("reviewer final-drain I/O failure")
 	reached, published := false, false
-	svc.SetLogger(slog.New(&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
+	svc.SetLogger(slog.New(fixtureowner.RawLogHandler((&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
 		svc.vectorFileStore.mu.Lock()
 		svc.vectorFileStore.writeRecord = func(file *os.File, id string, vec []float32) error {
 			if strings.Contains(id, "bad") {
@@ -41,7 +41,7 @@ func TestReviewerR6FinalDrainDoesNotPublishReadiness(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, svc.IndexNode(node))
 		}
-	}}))
+	}}).Handle)))
 	err = svc.BuildIndexes(context.Background())
 	require.ErrorIs(t, err, injected)
 	require.True(t, reached)

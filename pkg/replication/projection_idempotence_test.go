@@ -283,7 +283,7 @@ func assertNOR291PublishedProjectionCount(t *testing.T, a *StorageAdapter, count
 	entries, err := a.GetWALEntries(0, 100)
 	require.NoError(t, err)
 	require.Len(t, entries, count, "streamed projection count")
-	records, err := storage.ReadWALEntriesFromDir(a.walDir)
+	records, err := storage.ReadWALEntriesFromDir(t.Context(), a.walDir)
 	require.NoError(t, err)
 	var projections int
 	for _, record := range records {

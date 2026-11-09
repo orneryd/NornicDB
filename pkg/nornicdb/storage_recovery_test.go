@@ -42,7 +42,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_AllowsWALOnlyWhenNoSnapshots(t *testing
 
 	// Invoke recovery. This will rename dataDir → dataDir.corrupted-* and rebuild.
 	badgerOpts := storage.BadgerOptions{DataDir: dataDir}
-	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, badgerOpts)
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, badgerOpts)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	t.Cleanup(func() { _ = os.RemoveAll(backupDir) })
@@ -155,7 +155,7 @@ func TestRecoverableArtifactsRequirePostRestoreSnapshot(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "wal", "wal.log"), []byte("old wal"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "native-restore.marker"), []byte("restored"), 0o600))
 	require.False(t, hasRecoverableArtifacts(dataDir))
-	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, storage.BadgerOptions{DataDir: dataDir})
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, storage.BadgerOptions{DataDir: dataDir})
 	require.ErrorContains(t, err, "refusing stale WAL recovery")
 	require.Nil(t, recovered)
 	require.Empty(t, backupDir)
@@ -171,7 +171,7 @@ func TestRecoverableArtifactsRequirePostRestoreSnapshot(t *testing.T) {
 func TestRecoverBadgerFromSnapshotAndWAL_HandlesEmptyRecoveryInputs(t *testing.T) {
 	dataDir := t.TempDir()
 	opts := storage.BadgerOptions{DataDir: dataDir}
-	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, opts)
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, opts)
 	require.NoError(t, err)
 	require.NotNil(t, recovered)
 	require.NotEmpty(t, backupDir)
@@ -197,7 +197,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_RejectsEmptyReplayOfExistingStore(t *te
 	require.NoError(t, err)
 	require.NoError(t, store.Close())
 
-	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, storage.BadgerOptions{DataDir: dataDir})
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, storage.BadgerOptions{DataDir: dataDir})
 	if recovered != nil {
 		t.Cleanup(func() { _ = recovered.Close() })
 	}
@@ -263,7 +263,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 	}, "test"))
 	require.NoError(t, wal.Close())
 
-	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, storage.BadgerOptions{DataDir: dataDir})
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, storage.BadgerOptions{DataDir: dataDir})
 	require.NoError(t, err)
 	require.NotNil(t, recovered)
 	require.NotEmpty(t, backupDir)
@@ -303,7 +303,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_ReplayFailureWritesUnavailableManifest(
 	require.NoError(t, wal.Append(storage.OperationType("invalid-test-operation"), map[string]any{"value": true}))
 	require.NoError(t, wal.Close())
 
-	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, storage.BadgerOptions{DataDir: dataDir})
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, storage.BadgerOptions{DataDir: dataDir})
 	require.Error(t, err)
 	require.Nil(t, recovered)
 	var unavailable *StoreUnavailableError
@@ -412,7 +412,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_RestoresLargeSetsInChunks(t *testing.T)
 
 			require.NoError(t, storage.SaveSnapshot(tc.buildSnapshot(), filepath.Join(snapshotDir, "snapshot-current.json")))
 
-			recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, storage.BadgerOptions{
+			recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, storage.BadgerOptions{
 				DataDir:   dataDir,
 				LowMemory: true,
 			})
@@ -433,7 +433,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_WALReplayError(t *testing.T) {
 	require.NoError(t, os.WriteFile(filePath, []byte("x"), 0644))
 
 	opts := storage.BadgerOptions{DataDir: filePath}
-	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(filePath, opts)
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), filePath, opts)
 	require.Error(t, err)
 	var unavailable *StoreUnavailableError
 	require.True(t, errors.As(err, &unavailable))
@@ -447,7 +447,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_PreserveDirRenameFailure(t *testing.T) 
 	// Missing directories are rejected before any preservation or rebuild work begins.
 	dataDir := filepath.Join(t.TempDir(), "missing-data-dir")
 	opts := storage.BadgerOptions{DataDir: dataDir}
-	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, opts)
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, opts)
 	require.Error(t, err)
 	var unavailable *StoreUnavailableError
 	require.True(t, errors.As(err, &unavailable))

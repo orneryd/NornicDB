@@ -43,7 +43,7 @@ func TestNumericWireWALIntegerEnvelopes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, wal.Checkpoint())
 	require.NoError(t, wal.Sync())
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 3)
 	for i, entry := range entries {
@@ -141,7 +141,7 @@ func TestNumericWireSnapshotIntegerMetadata(t *testing.T) {
 			if materialized {
 				path := filepath.Join(t.TempDir(), "snapshot.nds")
 				require.NoError(t, SaveSnapshot(&Snapshot{Sequence: math.MaxUint64, Nodes: []*Node{node}, Edges: []*Edge{edge}}, path))
-				loaded, err := LoadSnapshot(path)
+				loaded, err := LoadSnapshot(ctx, path)
 				require.NoError(t, err)
 				require.Equal(t, uint64(math.MaxUint64), loaded.Sequence)
 				require.Equal(t, properties, loaded.Nodes[0].Properties)
@@ -150,7 +150,7 @@ func TestNumericWireSnapshotIntegerMetadata(t *testing.T) {
 			}
 			require.NoError(t, WriteSnapshot(context.Background(), store, &raw, SnapshotOptions{Sequence: math.MaxUint64}))
 			visitor := &recoveryFieldsVisitor{}
-			metadata, err := ReadSnapshot(bytes.NewReader(raw.Bytes()), visitor)
+			metadata, err := ReadSnapshot(ctx, bytes.NewReader(raw.Bytes()), visitor)
 			require.NoError(t, err)
 			require.Equal(t, uint64(math.MaxUint64), metadata.Sequence)
 			require.Equal(t, uint64(1), metadata.NodeCount)

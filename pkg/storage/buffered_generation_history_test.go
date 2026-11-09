@@ -52,7 +52,7 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 		require.NoError(t, tx.Commit())
 		require.True(t, tx.AcknowledgedBuffered())
 	}
-	entries, err := ReadWALEntriesFromDir(w.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), w.Config().Dir)
 	require.NoError(t, err)
 	for _, entry := range entries {
 		if entry.Operation == OpBufferedCommit {

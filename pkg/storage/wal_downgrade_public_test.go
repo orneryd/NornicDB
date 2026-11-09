@@ -214,7 +214,7 @@ func walDowngradeForeignSource(t *testing.T, destination *BadgerEngine, logDir s
 		t.Fatal("foreign fixture did not use a buffered record")
 	}
 	check(journal.Close())
-	result, _, err := RecoverIntoEngine(destination, logDir, "")
+	result, _, err := RecoverIntoEngine(t.Context(), destination, logDir, "")
 	check(err)
 	if result.Applied != 1 || result.Failed != 0 {
 		t.Fatalf("foreign fixture: %s", result.Summary())

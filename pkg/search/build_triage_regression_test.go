@@ -61,9 +61,6 @@ type triageSnapshotLog struct {
 	checks, pinned atomic.Int32
 }
 
-func (h *triageSnapshotLog) Enabled(context.Context, slog.Level) bool { return true }
-func (h *triageSnapshotLog) WithAttrs([]slog.Attr) slog.Handler       { return h }
-func (h *triageSnapshotLog) WithGroup(string) slog.Handler            { return h }
 func (h *triageSnapshotLog) Handle(_ context.Context, r slog.Record) error {
 	if strings.Contains(r.Message, "Persist: saving BM25") || strings.Contains(r.Message, "starting vector pipeline warmup") {
 		h.checks.Add(1)
@@ -85,7 +82,7 @@ func TestBuildTriageSnapshotClosedBeforePersistAndWarmup(t *testing.T) {
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	h := &triageSnapshotLog{engine: engine}
-	svc.SetLogger(slog.New(h))
+	svc.SetLogger(slog.New(fixtureowner.RawLogHandler(h.Handle)))
 	// Exercise the storage scan and then the saved-index restore route.
 	for attempt := 0; attempt < 2; attempt++ {
 		h.checks.Store(0)
@@ -215,9 +212,6 @@ type triageReplayLog struct {
 	once   sync.Once
 }
 
-func (h *triageReplayLog) Enabled(context.Context, slog.Level) bool { return true }
-func (h *triageReplayLog) WithAttrs([]slog.Attr) slog.Handler       { return h }
-func (h *triageReplayLog) WithGroup(string) slog.Handler            { return h }
 func (h *triageReplayLog) Handle(_ context.Context, r slog.Record) error {
 	if strings.Contains(r.Message, h.match) {
 		h.once.Do(h.during)
@@ -234,7 +228,7 @@ func testTriageLateReplayFailure(t *testing.T, message string, before func(*Serv
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	injected := errors.New("injected late vector file I/O failure")
 	called := false
-	svc.SetLogger(slog.New(&triageReplayLog{match: message, during: func() {
+	svc.SetLogger(slog.New(fixtureowner.RawLogHandler((&triageReplayLog{match: message, during: func() {
 		called = true
 		svc.vectorFileStore.mu.Lock()
 		svc.vectorFileStore.writeRecord = func(file *os.File, id string, vec []float32) error {
@@ -253,7 +247,7 @@ func testTriageLateReplayFailure(t *testing.T, message string, before func(*Serv
 			require.NoError(t, err)
 			require.NoError(t, svc.IndexNode(node), "write should be acknowledged before replay")
 		}
-	}}))
+	}}).Handle)))
 	err = svc.BuildIndexes(context.Background())
 	require.True(t, called, "build did not reach the replay boundary")
 	require.ErrorIs(t, err, injected)

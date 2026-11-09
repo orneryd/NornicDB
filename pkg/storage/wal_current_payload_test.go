@@ -31,7 +31,7 @@ func TestWALCurrentPayloadRoundTripWithoutLegacyProjection(t *testing.T) {
 	require.NoError(t, batch.AppendNode(OpCreateNode, node))
 	require.NoError(t, batch.Commit())
 
-	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 3)
 	for _, entry := range entries {

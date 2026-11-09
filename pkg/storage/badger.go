@@ -6,7 +6,6 @@ package storage
 
 import (
 	"container/list"
-	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -1108,10 +1107,10 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to load property key dictionary: %w", err)
 	}
-	// Opening is this constructor's non-cancellable phase. No caller context
-	// is supplied by the exported API; preserve that lifetime until the fully
-	// initialized engine can be published.
-	if err := engine.initializeWALPropertyIdentity(context.Background(), engine.db, false, false); err != nil {
+	// Opening belongs to the engine lifetime, not to the request that may
+	// have initiated recovery. Use that owner throughout startup before
+	// publishing the initialized engine.
+	if err := engine.initializeWALPropertyIdentity(engine.work.Context(), engine.db, false, false); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize property dictionary identity: %w", err)
 	}
@@ -1125,7 +1124,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to initialize mvcc sequence: %w", err)
 	}
 
-	if err := engine.recoverNamespaceDrops(context.Background(), nil); err != nil {
+	if err := engine.recoverNamespaceDrops(engine.work.Context(), nil); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("recover namespace DROP: %w", err)
 	}
@@ -1178,14 +1177,14 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to load persisted schema: %w", err)
 	}
 
-	if err := engine.ensureLabelCounts(context.Background()); err != nil {
+	if err := engine.ensureLabelCounts(engine.work.Context()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize label counts: %w", err)
 	}
 
 	// Per-type edge counts (issue #638): marker-gated verify/rebuild pass
 	// over the edge-type index, same shape as the label counts above.
-	if err := engine.ensureEdgeTypeCounts(context.Background()); err != nil {
+	if err := engine.ensureEdgeTypeCounts(engine.work.Context()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize edge-type counts: %w", err)
 	}
@@ -1473,7 +1472,7 @@ func accessSchemaVersionInTxn(txn *badger.Txn, operation schemaVersionAccess, va
 }
 
 func (b *BadgerEngine) writeSchemaVersion(version int) error {
-	return b.db.updateMetadataContext(context.Background(), func(txn *badger.Txn) error {
+	return b.db.updateMetadataContext(b.work.Context(), func(txn *badger.Txn) error {
 		_, err := accessSchemaVersionInTxn(txn, storeSchemaVersion, version)
 		return err
 	})

@@ -30,7 +30,7 @@ func TestCoreWALCancelDuringAppendDoesNotLeaveRejectedReplay(t *testing.T) {
 	require.Empty(t, entries, "rejected client input is not replayable intent")
 	recovered := newTestMemoryEngine(t)
 	for _, entry := range entries {
-		require.NoError(t, ReplayWALEntry(recovered, entry))
+		require.NoError(t, ReplayWALEntry(ctx, recovered, entry))
 	}
 	_, err = recovered.GetNode(t.Context(), "test:rejected")
 	require.ErrorIs(t, err, ErrNotFound)
@@ -86,7 +86,7 @@ func TestWALClientAcceptedDecisionKeepsNativeAndReplayTogether(t *testing.T) {
 	recovered := newTestMemoryEngine(t)
 	for range 2 {
 		for _, entry := range entries {
-			require.NoError(t, ReplayWALEntry(recovered, entry))
+			require.NoError(t, ReplayWALEntry(ctx, recovered, entry))
 		}
 	}
 	node, err = recovered.GetNode(t.Context(), "test:accepted")
@@ -116,8 +116,8 @@ func TestWALClientBulkDeleteKeepsSkipMissingAndReplay(t *testing.T) {
 		_, ops, err := DecodeEntityTransaction(data.Payload)
 		require.NoError(t, err)
 		require.Len(t, ops, 1, "only an actual deletion enters the accepted snapshot")
-		require.NoError(t, ReplayWALEntry(recovered, entry))
-		require.NoError(t, ReplayWALEntry(recovered, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), recovered, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), recovered, entry))
 	}
 	for _, engine := range []*MemoryEngine{native, recovered} {
 		nodes, err := engine.NodeCount(t.Context())
@@ -141,7 +141,7 @@ func TestWALClientNamespaceInputsPreserveReturnedIDAndReplay(t *testing.T) {
 	require.EqualValues(t, 1, node.Properties["v"])
 	recovered := newTestMemoryEngine(t)
 	for _, entry := range walClientEntries(t, wal) {
-		require.NoError(t, ReplayWALEntry(recovered, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), recovered, entry))
 	}
 	node, err = recovered.GetNode(t.Context(), "tenant:local")
 	require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestWALClientNamespaceEdgeInputsAndReplay(t *testing.T) {
 	require.Equal(t, NodeID("end"), input.EndNode)
 	recovered := newTestMemoryEngine(t)
 	for _, entry := range walClientEntries(t, wal) {
-		require.NoError(t, ReplayWALEntry(recovered, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), recovered, entry))
 	}
 	for _, engine := range []*MemoryEngine{native, recovered} {
 		edge, err := engine.GetEdge(t.Context(), "tenant:edge")
@@ -199,8 +199,8 @@ func TestWALNativeBufferedUsesExistingJournalAndAcceptedLifetime(t *testing.T) {
 	require.Len(t, entries, 1)
 	require.Equal(t, OpBufferedCommit, entries[0].Operation, "no second semantic envelope or receipt")
 	recovered := newTestMemoryEngine(t)
-	require.NoError(t, ReplayWALEntry(recovered.BadgerEngine, entries[0]))
-	require.NoError(t, ReplayWALEntry(recovered.BadgerEngine, entries[0]))
+	require.NoError(t, ReplayWALEntry(ctx, recovered.BadgerEngine, entries[0]))
+	require.NoError(t, ReplayWALEntry(ctx, recovered.BadgerEngine, entries[0]))
 	for _, engine := range []Engine{native, recovered} {
 		count, err := engine.NodeCount(t.Context())
 		require.NoError(t, err)
@@ -300,8 +300,8 @@ func TestWALNativeLargeFinalJournalAndRecovery(t *testing.T) {
 			}
 
 			reopened := openLargeCommitTestEngine(t, dir)
-			require.NoError(t, ReplayWALEntry(reopened, entries[0]))
-			require.NoError(t, ReplayWALEntry(reopened, entries[0]))
+			require.NoError(t, ReplayWALEntry(t.Context(), reopened, entries[0]))
+			require.NoError(t, ReplayWALEntry(t.Context(), reopened, entries[0]))
 			count, err := reopened.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.EqualValues(t, n, count)
@@ -354,7 +354,7 @@ func TestWALNativeReceiptKeepsUnrelatedCacheWarmAndCallerIsolated(t *testing.T) 
 	require.EqualValues(t, 7, node.Properties["v"])
 	recovered := newTestMemoryEngine(t)
 	for _, entry := range walClientEntries(t, wal) {
-		require.NoError(t, ReplayWALEntry(recovered, entry))
+		require.NoError(t, ReplayWALEntry(t.Context(), recovered, entry))
 	}
 	node, err = recovered.GetNode(t.Context(), "test:owned")
 	require.NoError(t, err)
@@ -416,7 +416,7 @@ func TestWALNativeBorrowedPayloadSurvivesInterleavedEncoder(t *testing.T) {
 	entries := walClientEntries(t, wal)
 	require.Len(t, entries, 1)
 	recovered := newTestMemoryEngine(t)
-	require.NoError(t, ReplayWALEntry(recovered, entries[0]))
+	require.NoError(t, ReplayWALEntry(ctx, recovered, entries[0]))
 	for _, engine := range []Engine{native, recovered} {
 		node, err := engine.GetNode(t.Context(), "test:leased")
 		require.NoError(t, err)

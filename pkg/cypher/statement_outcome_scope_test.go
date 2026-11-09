@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +23,6 @@ type postExecutionMemoryHandler struct {
 	failed bool
 }
 
-func (h *postExecutionMemoryHandler) Enabled(context.Context, slog.Level) bool { return true }
 func (h *postExecutionMemoryHandler) Handle(ctx context.Context, record slog.Record) error {
 	if record.Message == "slow query" && !h.failed {
 		h.failed = true
@@ -35,8 +35,6 @@ func (h *postExecutionMemoryHandler) Handle(ctx context.Context, record slog.Rec
 	}
 	return nil
 }
-func (h *postExecutionMemoryHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *postExecutionMemoryHandler) WithGroup(string) slog.Handler      { return h }
 
 func TestPostCommitMemoryFailureDoesNotReportRollback(t *testing.T) {
 	resetTransactionMemory(t)
@@ -44,7 +42,7 @@ func TestPostCommitMemoryFailureDoesNotReportRollback(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	exec := NewStorageExecutor(store)
 	h := &postExecutionMemoryHandler{}
-	exec.SetLogger(slog.New(h))
+	exec.SetLogger(slog.New(fixtureowner.RawLogHandler(h.Handle)))
 	forceSlowQueryLogging(t, exec)
 	result, err := exec.Execute(t.Context(), "CREATE (:PublishedBeforeLog)", nil)
 	require.NoError(t, err)
@@ -63,14 +61,13 @@ func TestCallerCancellationPrecedesMemoryFailure(t *testing.T) {
 	defer cancel()
 	exec := newTransactionMemoryExecutor(t)
 	h := &postExecutionMemoryHandler{cancel: cancel}
-	exec.SetLogger(slog.New(h))
+	exec.SetLogger(slog.New(fixtureowner.RawLogHandler(h.Handle)))
 	forceSlowQueryLogging(t, exec)
 	_, err := exec.Execute(ctx, "UNWIND range(1, 10) AS x RETURN x", nil)
 	require.ErrorIs(t, err, context.Canceled)
 	requirePoolsEmpty(t, "nornic")
 }
 
-func (h *reentrantStatementLogHandler) Enabled(context.Context, slog.Level) bool { return true }
 func (h *reentrantStatementLogHandler) Handle(ctx context.Context, r slog.Record) error {
 	if r.Message != "slow query" {
 		return nil
@@ -86,8 +83,6 @@ func (h *reentrantStatementLogHandler) Handle(ctx context.Context, r slog.Record
 	}
 	return nil
 }
-func (h *reentrantStatementLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *reentrantStatementLogHandler) WithGroup(string) slog.Handler      { return h }
 
 // Public Execute starts a new logical statement, even when its caller retained
 // the context of another Execute. Only transparent routing continuations share
@@ -96,7 +91,7 @@ func TestExecuteIndependentOutcomeDuringCommittedLog(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	h := &reentrantStatementLogHandler{executor: exec}
-	exec.SetLogger(slog.New(h))
+	exec.SetLogger(slog.New(fixtureowner.RawLogHandler(h.Handle)))
 	forceSlowQueryLogging(t, exec)
 	result, err := exec.Execute(t.Context(), "CREATE (:IndependentOutcome)", nil)
 	require.NoError(t, err)

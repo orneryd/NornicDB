@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -104,11 +105,11 @@ func writeSnapshotCollection(writer io.Writer, snapshot *Snapshot) error {
 
 type snapshotCollectionVisitor struct{ snapshot *Snapshot }
 
-func (v snapshotCollectionVisitor) VisitNode(node *Node) error {
+func (v snapshotCollectionVisitor) VisitNode(_ context.Context, node *Node) error {
 	v.snapshot.Nodes = append(v.snapshot.Nodes, node)
 	return nil
 }
-func (v snapshotCollectionVisitor) VisitEdge(edge *Edge) error {
+func (v snapshotCollectionVisitor) VisitEdge(_ context.Context, edge *Edge) error {
 	v.snapshot.Edges = append(v.snapshot.Edges, edge)
 	return nil
 }

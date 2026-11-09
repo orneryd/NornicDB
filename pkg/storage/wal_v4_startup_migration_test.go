@@ -88,7 +88,7 @@ func TestV4StartupUpgradeRestoresHistoricalPendingNewIDs(t *testing.T) {
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "legacy:new", Labels: []string{"New"}, Properties: map[string]any{"value": "later"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), capture.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	var old []byte
@@ -168,7 +168,7 @@ func TestV4StartupConvertsHeaderlessWALFromV1Store(t *testing.T) {
 	node, err := engine.GetNode(t.Context(), "legacy:node")
 	require.NoError(t, err)
 	require.Equal(t, "kept", node.Properties["name"])
-	entries, err := ReadWALEntriesFromDir(walDir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), walDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, uint64(8), entries[0].Sequence)

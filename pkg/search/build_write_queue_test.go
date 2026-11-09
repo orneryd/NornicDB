@@ -133,9 +133,6 @@ type warmupGateLog struct {
 	once             sync.Once
 }
 
-func (h *warmupGateLog) Enabled(context.Context, slog.Level) bool { return true }
-func (h *warmupGateLog) WithAttrs([]slog.Attr) slog.Handler       { return h }
-func (h *warmupGateLog) WithGroup(string) slog.Handler            { return h }
 func (h *warmupGateLog) Handle(_ context.Context, r slog.Record) error {
 	if strings.Contains(r.Message, "cleared BM25 in-memory state") {
 		h.once.Do(func() { close(h.entered); <-h.release })
@@ -280,7 +277,7 @@ func TestBuildLiveWritesDuringWarmupSurviveTheBM25Reload(t *testing.T) {
 			gate := &warmupGateLog{entered: make(chan struct{}), release: make(chan struct{})}
 			release := sync.OnceFunc(func() { close(gate.release) })
 			t.Cleanup(release)
-			svc.SetLogger(slog.New(gate))
+			svc.SetLogger(slog.New(fixtureowner.RawLogHandler(gate.Handle)))
 
 			built := make(chan error, 1)
 			go func() { built <- svc.BuildIndexes(context.Background()) }()

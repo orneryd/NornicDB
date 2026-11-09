@@ -136,7 +136,7 @@ func TestWALReplayCreateMeetsHiddenPredecessor(t *testing.T) {
 		require.NoError(t, err)
 		data := bytes.Clone(retained)
 		putValueEncoder(entryEncoder)
-		err = ReplayWALEntry(engine, WALEntry{Operation: OpCreateNode, Data: data, Database: "test"})
+		err = ReplayWALEntry(t.Context(), engine, WALEntry{Operation: OpCreateNode, Data: data, Database: "test"})
 		require.ErrorIs(t, err, ErrAlreadyExists, "write-behind=%v", buffered)
 		stored, err := engine.GetStoredNode(t.Context(), hidden)
 		require.NoError(t, err)

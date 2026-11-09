@@ -48,7 +48,7 @@ func waitAcceptedEngineClosing(t *testing.T, base *BadgerEngine) {
 
 func requireAcceptedCloseReplay(t *testing.T, dir string) {
 	t.Helper()
-	recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
+	recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	require.Empty(t, result.Errors)

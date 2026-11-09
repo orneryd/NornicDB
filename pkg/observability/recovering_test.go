@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"log/slog"
 	"os"
 	"strings"
@@ -20,15 +21,12 @@ type panickyHandler struct {
 	mu       sync.Mutex
 }
 
-func (p *panickyHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
 func (p *panickyHandler) Handle(_ context.Context, _ slog.Record) error {
 	p.mu.Lock()
 	p.called++
 	p.mu.Unlock()
 	panic(p.panicVal)
 }
-func (p *panickyHandler) WithAttrs(_ []slog.Attr) slog.Handler { return p }
-func (p *panickyHandler) WithGroup(_ string) slog.Handler      { return p }
 
 // TestRecoveringHandler_PanicInRedactor — install a panicking inner handler;
 // assert (a) no panic propagates, (b) a single line on os.Stderr matches
@@ -42,7 +40,7 @@ func TestRecoveringHandler_PanicInRedactor(t *testing.T) {
 	t.Cleanup(func() { os.Stderr = oldStderr })
 
 	inner := &panickyHandler{panicVal: errors.New("kaboom")}
-	rec := newRecoveringHandler(inner)
+	rec := newRecoveringHandler(fixtureowner.RawLogHandler(inner.Handle))
 	logger := slog.New(rec)
 
 	require.NotPanics(t, func() {
@@ -85,7 +83,7 @@ func TestRecoveringHandler_NoPanicHappyPath(t *testing.T) {
 // recoveringHandler outermost (the invariant survives derivation).
 func TestRecoveringHandler_PreservesWith(t *testing.T) {
 	inner := &panickyHandler{panicVal: "boom"}
-	rec := newRecoveringHandler(inner)
+	rec := newRecoveringHandler(fixtureowner.RawLogHandler(inner.Handle))
 	derived := rec.WithAttrs([]slog.Attr{slog.String("k", "v")})
 	_, ok := derived.(*recoveringHandler)
 	require.True(t, ok, "WithAttrs must return *recoveringHandler so the outermost invariant holds")

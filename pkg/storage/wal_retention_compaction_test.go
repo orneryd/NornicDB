@@ -21,7 +21,7 @@ import (
 func createdNodeIDs(t *testing.T, walDir string) []string {
 	t.Helper()
 	var ids []string
-	require.NoError(t, VisitWALEntriesAfterFromDir(walDir, 0, func(entry WALEntry) error {
+	require.NoError(t, VisitWALEntriesAfterFromDir(t.Context(), walDir, 0, func(entry WALEntry) error {
 		switch entry.Operation {
 		case OpCreateNode:
 			var data WALNodeData
@@ -93,7 +93,7 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 		paths, err := filepath.Glob(filepath.Join(walEngine.snapshotDir, "snapshot-*.json"))
 		require.NoError(t, err)
 		sort.Strings(paths)
-		recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(wal.config.Dir, paths[len(paths)-1]))
+		recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), wal.config.Dir, paths[len(paths)-1]))
 		require.NoError(t, err)
 		nodes, err := recovered.AllNodes(context.Background())
 		require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 
 	t.Run("nothing sealed yet keeps nothing to remove", func(t *testing.T) {
 		_, wal := newRetentionWALEngine(t, t.TempDir(), time.Hour, 0)
-		require.NoError(t, wal.ManageSnapshot(1, WALSnapshotTruncate))
+		require.NoError(t, wal.ManageSnapshot(t.Context(), 1, WALSnapshotTruncate))
 		manifest, err := accessWALManifest(wal.config.Dir, walReadManifest, nil)
 		require.NoError(t, err)
 		require.Empty(t, manifest.Segments)
@@ -133,7 +133,7 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 		// A file where the segments directory goes.
 		require.NoError(t, os.RemoveAll(walSegmentsDir(wal.config.Dir)))
 		require.NoError(t, os.WriteFile(walSegmentsDir(wal.config.Dir), []byte("x"), 0o644))
-		require.ErrorContains(t, wal.ManageSnapshot(wal.sequence.Load(), WALSnapshotTruncate), "cannot truncate before validating WAL")
+		require.ErrorContains(t, wal.ManageSnapshot(t.Context(), wal.sequence.Load(), WALSnapshotTruncate), "cannot truncate before validating WAL")
 	})
 
 	t.Run("without retention covered entries are dropped", func(t *testing.T) {
@@ -163,11 +163,11 @@ func TestStandaloneRetentionLeavesUnsealedWALUnchanged(t *testing.T) {
 	require.NotEmpty(t, before)
 	_, manifestErrBefore := os.Stat(walManifestPath(dir))
 	require.True(t, os.IsNotExist(manifestErrBefore), "a fresh WAL publishes no segment manifest")
-	entriesBefore, err := ReadWALEntriesFromDir(dir)
+	entriesBefore, err := ReadWALEntriesFromDir(t.Context(), dir)
 	require.NoError(t, err)
 	require.Len(t, entriesBefore, 2)
 
-	require.NoError(t, wal.ManageSnapshot(wal.Sequence(), WALSnapshotRetention))
+	require.NoError(t, wal.ManageSnapshot(t.Context(), wal.Sequence(), WALSnapshotRetention))
 
 	after, err := os.ReadFile(walActivePath(dir))
 	require.NoError(t, err)
@@ -177,7 +177,7 @@ func TestStandaloneRetentionLeavesUnsealedWALUnchanged(t *testing.T) {
 	sealed, globErr := filepath.Glob(filepath.Join(walSegmentsDir(dir), "seg-*.wal"))
 	require.NoError(t, globErr)
 	require.Empty(t, sealed, "standalone retention must not rotate the active segment")
-	entriesAfter, err := ReadWALEntriesFromDir(dir)
+	entriesAfter, err := ReadWALEntriesFromDir(t.Context(), dir)
 	require.NoError(t, err)
 	require.Len(t, entriesAfter, 2)
 	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 3}))
@@ -201,7 +201,7 @@ func TestManageSnapshotRejectsUnknownModeWithoutChangingWAL(t *testing.T) {
 	before, err := os.ReadFile(walManifestPath(dir))
 	require.NoError(t, err)
 
-	err = wal.ManageSnapshot(wal.Sequence(), WALSnapshotMode(255))
+	err = wal.ManageSnapshot(t.Context(), wal.Sequence(), WALSnapshotMode(255))
 	require.ErrorContains(t, err, "invalid WAL snapshot mode")
 	after, err := os.ReadFile(walManifestPath(dir))
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestManageSnapshotReturnsClosedWhenCloseWinsBeforeLock(t *testing.T) {
 			entered, release := make(chan struct{}), make(chan struct{})
 			wal.beforeSnapshotLock = func() { close(entered); <-release }
 			result := make(chan error, 1)
-			go func() { result <- wal.ManageSnapshot(wal.Sequence(), mode) }()
+			go func() { result <- wal.ManageSnapshot(t.Context(), wal.Sequence(), mode) }()
 			select {
 			case <-entered:
 			case <-time.After(5 * time.Second):

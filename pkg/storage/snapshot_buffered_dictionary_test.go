@@ -53,7 +53,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 	require.True(t, tx.AcknowledgedBuffered())
 	require.NoError(t, source.FlushWriteBehind(context.Background()))
 	require.NoError(t, journal.Close())
-	entries, err := ReadWALEntriesFromDir(walDir)
+	entries, err := ReadWALEntriesFromDir(t.Context(), walDir)
 	require.NoError(t, err)
 	buffered := 0
 	for _, entry := range entries {
@@ -76,7 +76,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 			fresh, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = fresh.Close() })
-			result, _, err := RecoverIntoEngine(fresh, walDir, snapshotPath)
+			result, _, err := RecoverIntoEngine(t.Context(), fresh, walDir, snapshotPath)
 			require.NoError(t, err)
 			require.Zero(t, result.Failed, "%s", result.Summary())
 			got, err := fresh.GetNode(t.Context(), "binding:a")

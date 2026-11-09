@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/stretchr/testify/require"
 )
@@ -52,7 +53,7 @@ func checkEmbedderShutdownOwner(t *testing.T, state string, cacheSize int, stopF
 	s.embedderRetryInitialBackoff = time.Hour
 	s.embedderRetryMaxBackoff = time.Hour
 	warned := make(chan struct{})
-	s.log = slog.New(&failedHealthWarningHandler{warned: warned})
+	s.log = slog.New(fixtureowner.RawLogHandler((&failedHealthWarningHandler{warned: warned}).Handle))
 	e := &shutdownOwnedEmbedder{
 		countingEmbedder: countingEmbedder{dims: 4},
 		state:            state,

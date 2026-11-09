@@ -31,7 +31,7 @@ func TestBufferedWALRejectsIncompleteNumericBindingsBeforeApplyingData(t *testin
 		broken := entry
 		broken.Data = compressWALBufferedCommitPayload(payload)
 		broken.Checksum = crc32Checksum(broken.Data)
-		require.Error(t, ReplayWALEntry(f.dest, broken))
+		require.Error(t, ReplayWALEntry(t.Context(), f.dest, broken))
 		f.dest.invalidateCachesAfterRestore()
 		_, err = f.dest.GetEdge(t.Context(), newID)
 		require.ErrorIs(t, err, ErrNotFound)
@@ -62,7 +62,7 @@ func TestBufferedWALRejectsUnknownPhysicalKeyBeforeApplyingData(t *testing.T) {
 	require.NoError(t, err)
 	entry.Data = compressWALBufferedCommitPayload(payload)
 	entry.Checksum = crc32Checksum(entry.Data)
-	require.Error(t, ReplayWALEntry(f.dest, entry))
+	require.Error(t, ReplayWALEntry(t.Context(), f.dest, entry))
 	f.dest.invalidateCachesAfterRestore()
 	_, err = f.dest.GetEdge(t.Context(), newID)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -90,7 +90,7 @@ func TestBufferedWALRejectsUnknownKeyWithoutNumericFields(t *testing.T) {
 	require.NoError(t, err)
 	entry.Data = compressWALBufferedCommitPayload(payload)
 	entry.Checksum = crc32Checksum(entry.Data)
-	require.Error(t, ReplayWALEntry(f.dest, entry))
+	require.Error(t, ReplayWALEntry(t.Context(), f.dest, entry))
 	require.NoError(t, f.dest.db.View(func(tx *badger.Txn) error {
 		_, err := tx.Get(unknown)
 		require.ErrorIs(t, err, badger.ErrKeyNotFound)

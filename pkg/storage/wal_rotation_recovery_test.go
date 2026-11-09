@@ -41,7 +41,7 @@ func TestWALRotationManifestRecovery(t *testing.T) {
 			}
 			_, err = accessWALManifest(dir, walPublishManifest, manifest)
 			require.NoError(t, err)
-			entries, err := ReadWALEntriesAfter(dir, 0, WALReadDirectory)
+			entries, err := ReadWALEntriesAfter(t.Context(), dir, 0, WALReadDirectory)
 			require.NoError(t, err)
 			require.Len(t, entries, 2)
 			if !test.tail {
@@ -51,7 +51,7 @@ func TestWALRotationManifestRecovery(t *testing.T) {
 			}
 			require.Equal(t, uint64(2), entries[1].Sequence)
 			var visited []uint64
-			require.NoError(t, VisitWALEntriesAfterFromDir(dir, 0, func(e WALEntry) error { visited = append(visited, e.Sequence); return nil }))
+			require.NoError(t, VisitWALEntriesAfterFromDir(t.Context(), dir, 0, func(e WALEntry) error { visited = append(visited, e.Sequence); return nil }))
 			require.Equal(t, []uint64{1, 2}, visited)
 			wal, err = NewWAL(dir, cfg)
 			require.NoError(t, err)
@@ -61,7 +61,7 @@ func TestWALRotationManifestRecovery(t *testing.T) {
 			manifest, err = accessWALManifest(dir, walReadManifest, nil)
 			require.NoError(t, err)
 			require.Len(t, manifest.Segments, 3)
-			entries, err = ReadWALEntriesAfter(dir, 0, WALReadDirectory)
+			entries, err = ReadWALEntriesAfter(t.Context(), dir, 0, WALReadDirectory)
 			require.NoError(t, err)
 			require.Len(t, entries, 3)
 			require.Equal(t, uint64(3), entries[2].Sequence)
@@ -86,6 +86,6 @@ func TestWALRotationRejectsOverlappingUnlistedTail(t *testing.T) {
 	require.NoError(t, err)
 	name := fmt.Sprintf("seg-%020d-%020d.wal", uint64(2), uint64(3))
 	require.NoError(t, os.WriteFile(filepath.Join(walSegmentsDir(dir), name), raw, 0600))
-	_, err = ReadWALEntriesAfter(dir, 0, WALReadDirectory)
+	_, err = ReadWALEntriesAfter(t.Context(), dir, 0, WALReadDirectory)
 	require.ErrorContains(t, err, "overlaps the manifest")
 }

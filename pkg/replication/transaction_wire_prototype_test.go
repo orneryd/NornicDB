@@ -170,7 +170,7 @@ func wireDictionaryIdentity(t *testing.T, b *storage.BadgerEngine, key string) s
 	require.True(t, tx.AcknowledgedBuffered())
 	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	require.NoError(t, w.Sync())
-	entries, err := storage.ReadWALEntriesFromDir(dir)
+	entries, err := storage.ReadWALEntriesFromDir(t.Context(), dir)
 	require.NoError(t, err)
 	for _, entry := range entries {
 		if entry.PropertyEpoch == nil {

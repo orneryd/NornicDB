@@ -143,7 +143,7 @@ func (e *StorageExecutor) callDBTxlog(ctx context.Context, args []interface{}, s
 		return nil, err
 	}
 	var rows [][]interface{}
-	err = storage.VisitWALEntriesAfterFromDir(walDir, uint64(fromSeq-1), func(entry storage.WALEntry) error {
+	err = storage.VisitWALEntriesAfterFromDir(ctx, walDir, uint64(fromSeq-1), func(entry storage.WALEntry) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

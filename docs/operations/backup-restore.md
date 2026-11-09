@@ -39,7 +39,7 @@ if err != nil {
 }
 
 // Truncate WAL entries before the snapshot
-err = wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
+err = wal.ManageSnapshot(ctx, snapshot.Sequence, WALSnapshotTruncate)
 if err != nil {
     log.Fatal(err)
 }
@@ -58,7 +58,7 @@ WAL, or seals property epochs, so it is safe to call between compactions:
 
 ```go
 // Drop sealed segments the snapshot covers and retention no longer keeps
-if err := wal.ManageSnapshot(snapshot.Sequence, WALSnapshotRetention); err != nil {
+if err := wal.ManageSnapshot(ctx, snapshot.Sequence, WALSnapshotRetention); err != nil {
     log.Fatal(err)
 }
 ```

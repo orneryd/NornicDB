@@ -146,13 +146,32 @@ the source node is unchanged.
 
 ## Local validation
 
-Go callers reading individual WAL files use `storage.ReadWALEntries(path,
+Go callers reading individual WAL files use `storage.ReadWALEntries(ctx, path,
 logger)`, passing `nil` to discard diagnostics. This replaces the former
 one-argument `ReadWALEntries` and separate `ReadWALEntriesWithLogger` entry
 points; migrate callers when updating to this release. Use
-`storage.ReadWALEntriesAfter(path, sequence, storage.WALReadFile)` for one file
+`storage.ReadWALEntriesAfter(ctx, path, sequence, storage.WALReadFile)` for one file
 or `storage.WALReadDirectory` for its active WAL and retained segments; this
 replaces the separate `ReadWALEntriesAfterFromDir` operation.
+
+All WAL read and recovery Go APIs now take `context.Context` first. Migrate
+`ReadWALEntries`, `ReadWALEntriesAfter`, `ReadWALEntriesFromDir`,
+`VisitWALEntriesAfterFromDir`, `ReadWALEntriesRangeFromDir`,
+`FindWALEntriesByTxID`, `RecoverIntoEngine`, `RecoverWithTransactions`,
+`RecoverFromWAL`, `RecoverFromWALWithLogger`, `RecoverFromWALWithResult`,
+`ReplayWALEntry`, `UndoWALEntry`, and `WAL.ManageSnapshot` callers. Snapshot
+readers `ReadSnapshot` and `LoadSnapshot` also take the context first;
+`SnapshotVisitor.VisitNode` and `VisitEdge` receive it before the entity.
+The old signatures have no compatibility adapters.
+
+Pass the existing request or job context. WAL read diagnostics retain its
+values, including trace identity; this does not introduce cancellation polling
+into the WAL file reader. Replay and recovery detach request cancellation with
+`context.WithoutCancel` while retaining values, because restoring acknowledged
+data and compensation must finish. Engine startup continues to use the engine's
+existing lifetime. Visitor callbacks receive the context explicitly rather than
+retaining a context field. Existing Go consumers must rebuild. This API migration
+does not change WAL/snapshot bytes, Badger keys, entity payloads, or storage version.
 
 Recovery tests exercise exact types and metadata, redo/undo, checksums and
 truncated snapshots. Validate a backup and its matching WAL with the version

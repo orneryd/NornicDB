@@ -137,7 +137,7 @@ func TestSnapshotFrameEncoderFormatEquivalence(t *testing.T) {
 	snapshot := &Snapshot{Sequence: 12, Nodes: []*Node{n, n}, Edges: []*Edge{e, e}}
 	require.NoError(t, writeSnapshotCollection(&collection, snapshot))
 	visitor := &collectingSnapshotVisitor{}
-	metadata, err := ReadSnapshot(&collection, visitor)
+	metadata, err := ReadSnapshot(t.Context(), &collection, visitor)
 	require.NoError(t, err)
 	require.Equal(t, uint64(12), metadata.Sequence)
 	require.Len(t, visitor.nodes, 2)
