@@ -33,6 +33,11 @@ type PrivilegesStore struct {
 	mu      sync.RWMutex
 	// role -> dbName -> { Read, Write }
 	matrix map[string]map[string]DbPrivilege
+
+	// writes orders this store's mutations, their storage I/O included
+	// (recordWriteOrder); mu is held only to read or publish the cache, so
+	// a request's permission check never waits for storage.
+	writes recordWriteOrder
 }
 
 // NewPrivilegesStore creates a store that reads/writes _DbPrivilege nodes.
@@ -42,6 +47,10 @@ func NewPrivilegesStore(systemStorage storage.Engine) *PrivilegesStore {
 
 // Load reads all _DbPrivilege nodes from storage into memory.
 func (p *PrivilegesStore) Load(ctx context.Context) error {
+	if err := p.writes.lock(ctx); err != nil {
+		return err
+	}
+	defer p.writes.unlock()
 	m := make(map[string]map[string]DbPrivilege)
 	err := storage.StreamNodesWithFallback(ctx, p.storage, 1000, func(n *storage.Node) error {
 		for _, l := range n.Labels {
@@ -179,13 +188,17 @@ func (p *PrivilegesStore) Matrix() []struct {
 // exist (ErrRoleNotFound).
 func (p *PrivilegesStore) SavePrivilege(ctx context.Context, role, dbName string, read, write bool) error {
 	role = NormalizeRoleName(role)
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	if err := p.writes.lock(ctx); err != nil {
+		return err
+	}
+	defer p.writes.unlock()
 	if err := WithRoleRecords(ctx, p.storage, []string{role}, func(view storage.Engine) error {
 		return putDbPrivilege(ctx, view, role, dbName, read, write)
 	}); err != nil {
 		return err
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.matrix[role] == nil {
 		p.matrix[role] = make(map[string]DbPrivilege)
 	}
@@ -221,8 +234,10 @@ func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 	for _, e := range entries {
 		roles = append(roles, e.Role)
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	if err := p.writes.lock(ctx); err != nil {
+		return err
+	}
+	defer p.writes.unlock()
 	matrix := make(map[string]map[string]DbPrivilege)
 	err := WithRoleRecords(ctx, p.storage, roles, func(view storage.Engine) error {
 		nodes, err := view.GetNodesByLabel(ctx, dbPrivLabel)
@@ -253,7 +268,9 @@ func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 	if err != nil {
 		return err
 	}
+	p.mu.Lock()
 	p.matrix = matrix
+	p.mu.Unlock()
 	return nil
 }
 

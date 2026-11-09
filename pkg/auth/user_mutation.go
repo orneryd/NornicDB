@@ -14,44 +14,46 @@ func (a *Authenticator) UpdateRolesAndStatus(ctx context.Context, username strin
 	if roles == nil && disabled == nil {
 		return nil
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	user, exists := a.users[username]
-	if !exists {
-		return ErrUserNotFound
-	}
-	var updated *User
-	var events []AuditEvent
-	err := WithStoreTransaction(ctx, a.storage, func(view storage.Engine) error {
-		staged := &Authenticator{
-			storage: view, users: map[string]*User{username: cloneStoredUser(user)},
-			auditLog: func(event AuditEvent) { events = append(events, event) },
+	return a.writeUserRecords(ctx, func() (userRecordChange, error) {
+		user, exists := a.storedUser(username)
+		if !exists {
+			return userRecordChange{}, ErrUserNotFound
 		}
-		if roles != nil {
-			if err := staged.UpdateRoles(ctx, username, roles); err != nil {
-				return err
-			}
-		}
-		if disabled != nil {
-			var err error
-			if *disabled {
-				err = staged.ChangeUserState(ctx, username, UserDisable)
-			} else {
-				err = staged.ChangeUserState(ctx, username, UserEnable)
-			}
-			if err != nil {
-				return err
-			}
-		}
-		updated = staged.users[username]
-		return nil
+		var updated *User
+		var events []AuditEvent
+		return userRecordChange{
+			persist: func(ctx context.Context) error {
+				return WithStoreTransaction(ctx, a.storage, func(view storage.Engine) error {
+					staged := &Authenticator{
+						storage: view, users: map[string]*User{username: cloneStoredUser(user)},
+						auditLog: func(event AuditEvent) { events = append(events, event) },
+					}
+					if roles != nil {
+						if err := staged.UpdateRoles(ctx, username, roles); err != nil {
+							return err
+						}
+					}
+					if disabled != nil {
+						var err error
+						if *disabled {
+							err = staged.ChangeUserState(ctx, username, UserDisable)
+						} else {
+							err = staged.ChangeUserState(ctx, username, UserEnable)
+						}
+						if err != nil {
+							return err
+						}
+					}
+					updated = staged.users[username]
+					return nil
+				})
+			},
+			publish: func() {
+				a.users[username] = updated
+				for _, event := range events {
+					a.logAudit(event)
+				}
+			},
+		}, nil
 	})
-	if err != nil {
-		return err
-	}
-	a.users[username] = updated
-	for _, event := range events {
-		a.logAudit(event)
-	}
-	return nil
 }

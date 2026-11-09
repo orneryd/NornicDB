@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transaction began are no longer listed, so every listed change is visible to
   the same transaction's lookups; a cursor taken inside the transaction resumes
   at the later commits.
+
+- Stop MVCC history pruning from holding back new transactions, writes and
+  logins. With history retention on, a prune used to make every BEGIN, write
+  and uncached login wait for its whole walk over the history, and a login
+  waiting on storage froze every authenticated HTTP request. One open
+  transaction also stopped pruning in every database. Readers now register
+  without waiting, a reader protects only the versions it can see in its own
+  database, automatic prune cycles are bounded and resume where they stopped,
+  and a login no longer holds the authenticator lock across its storage write.
 - Require exact database identity for qualified textual element IDs in MATCH
   predicates and graph functions. Arbitrary database prefixes no longer resolve
   to local entities; raw local-ID inputs remain supported.

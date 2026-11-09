@@ -28,6 +28,11 @@ type RoleEntitlementsStore struct {
 	mu      sync.RWMutex
 	// role → list of entitlement IDs (e.g. "read", "write", "admin")
 	entitlements map[string][]string
+
+	// writes orders this store's mutations, their storage I/O included
+	// (recordWriteOrder); mu is held only to read or publish the cache, so
+	// a request's permission check never waits for storage.
+	writes recordWriteOrder
 }
 
 // NewRoleEntitlementsStore creates a store that reads/writes role entitlements to the given system storage.
@@ -37,6 +42,10 @@ func NewRoleEntitlementsStore(systemStorage storage.Engine) *RoleEntitlementsSto
 
 // Load reads all _RoleEntitlement nodes from storage into memory. Call at startup and after PUT.
 func (r *RoleEntitlementsStore) Load(ctx context.Context) error {
+	if err := r.writes.lock(ctx); err != nil {
+		return err
+	}
+	defer r.writes.unlock()
 	m := make(map[string][]string)
 	err := storage.StreamNodesWithFallback(ctx, r.storage, 1000, func(n *storage.Node) error {
 		for _, l := range n.Labels {
@@ -129,8 +138,10 @@ func (r *RoleEntitlementsStore) SetMappings(ctx context.Context, mappings map[st
 		normalized[role] = ids
 		roles = append(roles, role)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	if err := r.writes.lock(ctx); err != nil {
+		return err
+	}
+	defer r.writes.unlock()
 	if err := WithRoleRecords(ctx, r.storage, roles, func(view storage.Engine) error {
 		for role, ids := range normalized {
 			entitlementsJSON, _ := json.Marshal(ids)
@@ -150,6 +161,8 @@ func (r *RoleEntitlementsStore) SetMappings(ctx context.Context, mappings map[st
 	}); err != nil {
 		return err
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for role, ids := range normalized {
 		if len(ids) == 0 {
 			delete(r.entitlements, role)
