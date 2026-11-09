@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sync"
 	"time"
 )
 
@@ -36,8 +37,27 @@ type callerCopier interface {
 // Domain-owned Node, Edge and CallerCopy values retain their own copy contract.
 // Callers must synchronize access to a value while it is being copied.
 func CopyValue(value any, mapCopied func(source, copied map[string]any)) any {
+	if callerCopyScalar(value) {
+		return value
+	}
 	walker := callerCopyWalker{mapCopied: mapCopied}
-	return walker.value(value)
+	// A panicking copy discards its local scratch instead of reusing it.
+	copied := walker.value(value)
+	walker.release()
+	return copied
+}
+
+// Only a cleared overflow index is reused. Large copy graphs are discarded
+// rather than retaining their high-water index in an otherwise small request.
+const callerCopyPooledReferences = 1024
+
+var callerCopyOverflowPool sync.Pool
+
+func (w *callerCopyWalker) release() {
+	if w.seen != nil && len(w.seen) <= callerCopyPooledReferences {
+		clear(w.seen)
+		callerCopyOverflowPool.Put(w.seen)
+	}
 }
 
 // callerCopyInlineReferences is how many reference-bearing values one copy
@@ -104,17 +124,31 @@ func (w *callerCopyWalker) remember(key callerCopyReference, copied reflect.Valu
 		return
 	}
 	if w.seen == nil {
-		w.seen = make(map[callerCopyReference]reflect.Value, callerCopyInlineReferences)
+		if reused, ok := callerCopyOverflowPool.Get().(map[callerCopyReference]reflect.Value); ok {
+			w.seen = reused
+		} else {
+			w.seen = make(map[callerCopyReference]reflect.Value, callerCopyInlineReferences)
+		}
 	}
 	w.seen[key] = copied
 }
 
-func (w *callerCopyWalker) value(value any) any {
-	switch value := value.(type) {
+// callerCopyScalar is the immutable runtime-value policy shared by root
+// copies and recursive entries. It does not perform durable normalization.
+func callerCopyScalar(value any) bool {
+	switch value.(type) {
 	case nil, string, bool, int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64, float32, float64, time.Time, time.Duration:
-		// Immutable scalars are their own copies.
+		return true
+	}
+	return false
+}
+
+func (w *callerCopyWalker) value(value any) any {
+	if callerCopyScalar(value) {
 		return value
+	}
+	switch value := value.(type) {
 	case *Node:
 		return copyNode(value)
 	case *Edge:
@@ -231,6 +265,10 @@ func (w *callerCopyWalker) reference(value reflect.Value) reflect.Value {
 			return reflect.ValueOf(copyNode(entity))
 		case *Edge:
 			return reflect.ValueOf(copyEdge(entity))
+		case map[string]any:
+			return reflect.ValueOf(w.mapping(entity))
+		case []any:
+			return reflect.ValueOf(w.list(entity))
 		}
 	}
 	if copied, ok := copierCopy(value); ok {

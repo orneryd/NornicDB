@@ -137,12 +137,21 @@ func retainedEntry[T any](ctx context.Context, entries map[int64]*T, id int64, n
 	return nil, notFound
 }
 
-func (s *InMemoryStorage) GetNode(ctx context.Context, id int64) (*Node, error) {
-	node, err := retainedEntry(ctx, s.nodes, id, ErrNodeNotFound)
+// ownedEntry publishes a detached point read only while its caller is active.
+func ownedEntry[T any](ctx context.Context, entries map[int64]*T, id int64, notFound error) (*T, error) {
+	entry, err := retainedEntry(ctx, entries, id, notFound)
 	if err != nil {
 		return nil, err
 	}
-	return nativestorage.CopyValue(node, nil).(*Node), nil
+	owned := nativestorage.CopyValue(entry, nil).(*T)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return owned, nil
+}
+
+func (s *InMemoryStorage) GetNode(ctx context.Context, id int64) (*Node, error) {
+	return ownedEntry(ctx, s.nodes, id, ErrNodeNotFound)
 }
 
 func (s *InMemoryStorage) CreateNode(ctx context.Context, labels []string, properties map[string]interface{}) (*Node, error) {
@@ -162,12 +171,25 @@ func (s *InMemoryStorage) CreateNode(ctx context.Context, labels []string, prope
 	return nativestorage.CopyValue(node, nil).(*Node), nil
 }
 
+// mergeProperties owns update inputs and initializes an absent retained bag.
+func mergeProperties(current, updates map[string]interface{}) map[string]interface{} {
+	if len(updates) == 0 {
+		return current
+	}
+	owned := nativestorage.CopyValue(updates, nil).(map[string]interface{})
+	if current == nil {
+		return owned
+	}
+	maps.Copy(current, owned)
+	return current
+}
+
 func (s *InMemoryStorage) UpdateNode(ctx context.Context, id int64, properties map[string]interface{}) error {
 	node, err := retainedEntry(ctx, s.nodes, id, ErrNodeNotFound)
 	if err != nil {
 		return err
 	}
-	maps.Copy(node.Properties, nativestorage.CopyValue(properties, nil).(map[string]interface{}))
+	node.Properties = mergeProperties(node.Properties, properties)
 	return nil
 }
 
@@ -222,11 +244,7 @@ func (s *InMemoryStorage) RemoveLabels(ctx context.Context, id int64, labels []s
 }
 
 func (s *InMemoryStorage) GetRelationship(ctx context.Context, id int64) (*Relationship, error) {
-	rel, err := retainedEntry(ctx, s.relationships, id, ErrRelationshipNotFound)
-	if err != nil {
-		return nil, err
-	}
-	return nativestorage.CopyValue(rel, nil).(*Relationship), nil
+	return ownedEntry(ctx, s.relationships, id, ErrRelationshipNotFound)
 }
 
 func (s *InMemoryStorage) CreateRelationship(ctx context.Context, startID, endID int64, relType string, properties map[string]interface{}) (*Relationship, error) {
@@ -257,7 +275,7 @@ func (s *InMemoryStorage) UpdateRelationship(ctx context.Context, id int64, prop
 	if err != nil {
 		return err
 	}
-	maps.Copy(rel.Properties, nativestorage.CopyValue(properties, nil).(map[string]interface{}))
+	rel.Properties = mergeProperties(rel.Properties, properties)
 	return nil
 }
 
@@ -336,81 +354,122 @@ func (s *InMemoryStorage) UpdateRelationshipType(ctx context.Context, id int64, 
 	return nil
 }
 
-func (s *InMemoryStorage) GetNodeRelationships(ctx context.Context, nodeID int64, relType string, direction Direction) ([]*Relationship, error) {
+// walkRelationships visits the retained relationships incident to nodeID, in
+// stored order, skipping those that do not match relType or direction. It is the
+// one owner of relationship filtering: node existence is decided once here, the
+// caller's context is checked every bulkReadInterval relationships and again
+// before the walk returns, and a caller that stopped receives its own error
+// instead of a partial walk.
+//
+// A relationship it hands the visitor stays inside the store. A public read
+// detaches what it publishes; an internal read keeps the retained record so a
+// traversal copies only the members it returns.
+func (s *InMemoryStorage) walkRelationships(ctx context.Context, nodeID int64, relType string, direction Direction, visit func(*Relationship) error) error {
 	if _, err := retainedEntry(ctx, s.nodes, nodeID, ErrNodeNotFound); err != nil {
-		return nil, err
+		return err
 	}
 
-	rels := s.nodeRels[nodeID]
-	result := make([]*Relationship, 0)
-
-	for index, rel := range rels {
+	for index, rel := range s.nodeRels[nodeID] {
 		if index%bulkReadInterval == 0 {
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		// Filter by type
 		if relType != "" && rel.Type != relType {
 			continue
 		}
-
 		// Filter by direction
-		switch direction {
-		case DirectionOutgoing:
-			if rel.StartNode == nodeID {
-				result = append(result, nativestorage.CopyValue(rel, nil).(*Relationship))
-			}
-		case DirectionIncoming:
-			if rel.EndNode == nodeID {
-				result = append(result, nativestorage.CopyValue(rel, nil).(*Relationship))
-			}
-		case DirectionBoth:
-			result = append(result, nativestorage.CopyValue(rel, nil).(*Relationship))
+		if !relMatchesDirection(rel, nodeID, direction) {
+			continue
+		}
+		if err := visit(rel); err != nil {
+			return err
 		}
 	}
 
-	// A caller that stopped while this read filtered keeps no collection.
-	if err := ctx.Err(); err != nil {
+	// A caller that stopped while this walk filtered keeps no collection.
+	return ctx.Err()
+}
+
+// relMatchesDirection reports whether rel is incident to nodeID in the requested
+// direction. An unrecognized direction matches nothing, which is the answer a
+// relationship read has always given.
+func relMatchesDirection(rel *Relationship, nodeID int64, direction Direction) bool {
+	switch direction {
+	case DirectionOutgoing:
+		return rel.StartNode == nodeID
+	case DirectionIncoming:
+		return rel.EndNode == nodeID
+	case DirectionBoth:
+		return true
+	default:
+		return false
+	}
+}
+
+// neighborEntry is one neighbor of a walk together with the first matching
+// relationship that reached it. Both stay inside the store: a public read detaches
+// the node it publishes, and an internal traversal queues the identity and keeps
+// the relationship for a path it may return.
+type neighborEntry struct {
+	node *Node
+	rel  *Relationship
+}
+
+// neighborEntries collects the distinct neighbors of nodeID in the order the walk
+// reaches them, each with the first matching relationship. A relationship that
+// points at a node the store does not hold yields no neighbor, as it always did,
+// so the walk skips it and keeps looking.
+func (s *InMemoryStorage) neighborEntries(ctx context.Context, nodeID int64, relType string, direction Direction) ([]neighborEntry, error) {
+	entries := make([]neighborEntry, 0)
+	seen := make(map[int64]bool)
+	err := s.walkRelationships(ctx, nodeID, relType, direction, func(rel *Relationship) error {
+		neighborID := rel.EndNode
+		if rel.StartNode != nodeID {
+			neighborID = rel.StartNode
+		}
+		if seen[neighborID] {
+			return nil
+		}
+		neighbor, ok := s.nodes[neighborID]
+		if !ok {
+			return nil
+		}
+		seen[neighborID] = true
+		entries = append(entries, neighborEntry{node: neighbor, rel: rel})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func (s *InMemoryStorage) GetNodeRelationships(ctx context.Context, nodeID int64, relType string, direction Direction) ([]*Relationship, error) {
+	result := make([]*Relationship, 0)
+	err := s.walkRelationships(ctx, nodeID, relType, direction, func(rel *Relationship) error {
+		result = append(result, nativestorage.CopyValue(rel, nil).(*Relationship))
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
 func (s *InMemoryStorage) GetNodeNeighbors(ctx context.Context, nodeID int64, relType string, direction Direction) ([]*Node, error) {
-	rels, err := s.GetNodeRelationships(ctx, nodeID, relType, direction)
+	entries, err := s.neighborEntries(ctx, nodeID, relType, direction)
 	if err != nil {
 		return nil, err
 	}
 
-	neighbors := make([]*Node, 0)
-	seen := make(map[int64]bool)
-
-	for index, rel := range rels {
-		if index%bulkReadInterval == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		var neighborID int64
-		if rel.StartNode == nodeID {
-			neighborID = rel.EndNode
-		} else {
-			neighborID = rel.StartNode
-		}
-
-		if !seen[neighborID] {
-			neighbor, err := s.GetNode(ctx, neighborID)
-			if err == nil {
-				neighbors = append(neighbors, neighbor)
-				seen[neighborID] = true
-			} else if ctxErr := ctx.Err(); ctxErr != nil {
-				// The caller stopped while this read resolved neighbors.
-				return nil, ctxErr
-			}
-		}
+	neighbors := make([]*Node, 0, len(entries))
+	for _, entry := range entries {
+		neighbors = append(neighbors, nativestorage.CopyValue(entry.node, nil).(*Node))
 	}
 
+	// A caller that stopped while this read resolved neighbors keeps no collection.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -418,11 +477,16 @@ func (s *InMemoryStorage) GetNodeNeighbors(ctx context.Context, nodeID int64, re
 }
 
 func (s *InMemoryStorage) GetNodeDegree(ctx context.Context, nodeID int64, relType string, direction Direction) (int, error) {
-	rels, err := s.GetNodeRelationships(ctx, nodeID, relType, direction)
-	if err != nil {
+	// A count needs the walk and nothing else: no record, and no property
+	// payload, is materialized for a caller that asked only for a degree.
+	degree := 0
+	if err := s.walkRelationships(ctx, nodeID, relType, direction, func(*Relationship) error {
+		degree++
+		return nil
+	}); err != nil {
 		return 0, err
 	}
-	return len(rels), nil
+	return degree, nil
 }
 
 func (s *InMemoryStorage) FindShortestPath(ctx context.Context, startID, endID int64, relType string, maxHops int) (*Path, error) {
@@ -466,7 +530,7 @@ func (s *InMemoryStorage) FindShortestPath(ctx context.Context, startID, endID i
 			continue
 		}
 
-		neighbors, err := s.GetNodeNeighbors(ctx, currentID, relType, DirectionBoth)
+		entries, err := s.neighborEntries(ctx, currentID, relType, DirectionBoth)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
@@ -474,36 +538,22 @@ func (s *InMemoryStorage) FindShortestPath(ctx context.Context, startID, endID i
 			// An ordinary read failure stays a dead end for this search, as it
 			// was before the caller's lifetime decided the read.
 		}
-		for _, neighbor := range neighbors {
-			if !visited[neighbor.ID] {
-				visited[neighbor.ID] = true
-
-				// Find the relationship
-				rels, err := s.GetNodeRelationships(ctx, currentID, relType, DirectionBoth)
-				if err != nil {
-					if ctxErr := ctx.Err(); ctxErr != nil {
-						return nil, ctxErr
-					}
-				}
-				for index, rel := range rels {
-					if index%bulkReadInterval == 0 {
-						if err := ctx.Err(); err != nil {
-							return nil, err
-						}
-					}
-					if (rel.StartNode == currentID && rel.EndNode == neighbor.ID) ||
-						(rel.EndNode == currentID && rel.StartNode == neighbor.ID) {
-						parent[neighbor.ID] = &pathParent{
-							nodeID: currentID,
-							rel:    rel,
-							depth:  depth,
-						}
-						break
-					}
-				}
-
-				queue = append(queue, neighbor.ID)
+		for _, entry := range entries {
+			if visited[entry.node.ID] {
+				continue
 			}
+			visited[entry.node.ID] = true
+
+			// The entry carries the first relationship that reached this
+			// neighbor, which is the edge this search always chose among
+			// parallel ones. The path detaches it when it is returned.
+			parent[entry.node.ID] = &pathParent{
+				nodeID: currentID,
+				rel:    entry.rel,
+				depth:  depth,
+			}
+
+			queue = append(queue, entry.node.ID)
 		}
 	}
 
@@ -531,13 +581,13 @@ func (s *InMemoryStorage) FindAllPaths(ctx context.Context, startID, endID int64
 			return
 		}
 		if currentID == endID {
-			// Found a path
-			pathCopy := &Path{
+			// Found a path. The walk collected retained members, so the
+			// completed path is detached once through the shared copy owner.
+			paths = append(paths, nativestorage.CopyValue(&Path{
 				Nodes:         append([]*Node{}, path.Nodes...),
 				Relationships: append([]*Relationship{}, path.Relationships...),
 				Length:        path.Length,
-			}
-			paths = append(paths, pathCopy)
+			}, nil).(*Path))
 			return
 		}
 
@@ -547,52 +597,32 @@ func (s *InMemoryStorage) FindAllPaths(ctx context.Context, startID, endID int64
 
 		visited[currentID] = true
 
-		neighbors, err := s.GetNodeNeighbors(ctx, currentID, relType, DirectionBoth)
+		entries, err := s.neighborEntries(ctx, currentID, relType, DirectionBoth)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				stopped = ctxErr
 				return
 			}
 		}
-		for _, neighbor := range neighbors {
-			if !visited[neighbor.ID] {
-				// Find relationship
-				rels, err := s.GetNodeRelationships(ctx, currentID, relType, DirectionBoth)
-				if err != nil {
-					if ctxErr := ctx.Err(); ctxErr != nil {
-						stopped = ctxErr
-						return
-					}
-				}
-				for index, rel := range rels {
-					if index%bulkReadInterval == 0 {
-						if err := ctx.Err(); err != nil {
-							stopped = err
-							return
-						}
-					}
-					if (rel.StartNode == currentID && rel.EndNode == neighbor.ID) ||
-						(rel.EndNode == currentID && rel.StartNode == neighbor.ID) {
-
-						path.Nodes = append(path.Nodes, neighbor)
-						path.Relationships = append(path.Relationships, rel)
-						path.Length++
-
-						dfs(neighbor.ID, path, depth+1)
-
-						path.Nodes = path.Nodes[:len(path.Nodes)-1]
-						path.Relationships = path.Relationships[:len(path.Relationships)-1]
-						path.Length--
-						break
-					}
-				}
+		for _, entry := range entries {
+			if visited[entry.node.ID] {
+				continue
 			}
+			path.Nodes = append(path.Nodes, entry.node)
+			path.Relationships = append(path.Relationships, entry.rel)
+			path.Length++
+
+			dfs(entry.node.ID, path, depth+1)
+
+			path.Nodes = path.Nodes[:len(path.Nodes)-1]
+			path.Relationships = path.Relationships[:len(path.Relationships)-1]
+			path.Length--
 		}
 
 		visited[currentID] = false
 	}
 
-	start, err := s.GetNode(ctx, startID)
+	start, err := retainedEntry(ctx, s.nodes, startID, ErrNodeNotFound)
 	if err != nil {
 		return nil, err
 	}
@@ -644,16 +674,16 @@ func (s *InMemoryStorage) BFS(ctx context.Context, startID int64, relType string
 			continue
 		}
 
-		neighbors, err := s.GetNodeNeighbors(ctx, current.nodeID, relType, DirectionBoth)
+		entries, err := s.neighborEntries(ctx, current.nodeID, relType, DirectionBoth)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
 		}
-		for _, neighbor := range neighbors {
-			if !visited[neighbor.ID] {
-				visited[neighbor.ID] = true
-				queue = append(queue, nodeDepth{nodeID: neighbor.ID, depth: current.depth + 1})
+		for _, entry := range entries {
+			if !visited[entry.node.ID] {
+				visited[entry.node.ID] = true
+				queue = append(queue, nodeDepth{nodeID: entry.node.ID, depth: current.depth + 1})
 			}
 		}
 	}
@@ -695,16 +725,16 @@ func (s *InMemoryStorage) DFS(ctx context.Context, startID int64, relType string
 			return true
 		}
 
-		neighbors, err := s.GetNodeNeighbors(ctx, nodeID, relType, DirectionBoth)
+		entries, err := s.neighborEntries(ctx, nodeID, relType, DirectionBoth)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				stopped = ctxErr
 				return false
 			}
 		}
-		for _, neighbor := range neighbors {
-			if !visited[neighbor.ID] {
-				if !dfs(neighbor.ID, depth+1) {
+		for _, entry := range entries {
+			if !visited[entry.node.ID] {
+				if !dfs(entry.node.ID, depth+1) {
 					return false
 				}
 			}
@@ -746,7 +776,7 @@ func (s *InMemoryStorage) reconstructPath(ctx context.Context, startID, endID in
 		nodes = append([]*Node{node}, nodes...)
 
 		if p, ok := parent[currentID]; ok {
-			rels = append([]*Relationship{p.rel}, rels...)
+			rels = append([]*Relationship{nativestorage.CopyValue(p.rel, nil).(*Relationship)}, rels...)
 			currentID = p.nodeID
 		} else {
 			return nil, ErrPathNotFound

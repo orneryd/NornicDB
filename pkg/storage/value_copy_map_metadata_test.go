@@ -26,3 +26,21 @@ func TestValueCopyRebindsMapIdentityWithoutSharingValues(t *testing.T) {
 	var absent map[string]any
 	require.Nil(t, CopyValue(absent, nil))
 }
+
+func TestSuccessiveValueCopiesKeepIndependentOverflowGraphs(t *testing.T) {
+	source := make([]any, 12)
+	for i := range source {
+		source[i] = map[string]any{"values": []string{"original"}}
+	}
+	first := CopyValue(source, nil).([]any)
+	second := CopyValue(source, nil).([]any)
+	for _, value := range first {
+		value.(map[string]any)["values"].([]string)[0] = "changed"
+	}
+	for _, value := range second {
+		require.Equal(t, "original", value.(map[string]any)["values"].([]string)[0])
+	}
+	for _, value := range source {
+		require.Equal(t, "original", value.(map[string]any)["values"].([]string)[0])
+	}
+}

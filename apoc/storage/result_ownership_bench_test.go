@@ -56,3 +56,48 @@ func BenchmarkInMemoryStorageAllNodesReturnedValues(b *testing.B) {
 		}
 	}
 }
+
+func ownershipStar(b *testing.B) (*InMemoryStorage, int64, int64) {
+	b.Helper()
+	store := NewInMemoryStorage()
+	root, err := store.CreateNode(b.Context(), nil, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var end int64
+	for i := range 64 {
+		node, err := store.CreateNode(b.Context(), nil, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, err = store.CreateRelationship(b.Context(), root.ID, node.ID, "LINK", testfixture.NestedGraphProperties(i)); err != nil {
+			b.Fatal(err)
+		}
+		end = node.ID
+	}
+	return store, root.ID, end
+}
+
+func BenchmarkInMemoryStorageDegreeMetadata(b *testing.B) {
+	store, start, _ := ownershipStar(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		degree, err := store.GetNodeDegree(b.Context(), start, "LINK", DirectionBoth)
+		if err != nil || degree != 64 {
+			b.Fatalf("degree %d: %v", degree, err)
+		}
+	}
+}
+
+func BenchmarkInMemoryStorageShortestPathOwnership(b *testing.B) {
+	store, start, end := ownershipStar(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		path, err := store.FindShortestPath(b.Context(), start, end, "LINK", 2)
+		if err != nil || path.Length != 1 {
+			b.Fatalf("path: %v", err)
+		}
+	}
+}
