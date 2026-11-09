@@ -189,6 +189,12 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.semanticTransactionChange.Type": {class: "semantic transaction serialization kind"},
 	// QueryCypher owns the resolved mode; Fabric consumes it to claim writes.
 	"pkg/storage.remoteCypherTx.resolvedMode": {class: "resolved remote query mode"},
+	// BeginCypherTx sets, once, how often the coordinator renews the remote
+	// HTTP transaction's session (NOR-284): a lease interval, not stored state.
+	"pkg/storage.remoteCypherTx.leaseEvery": {class: "remote transaction lease renewal interval"},
+	// The composite engine's configured transaction timeout, set by its
+	// database manager (NOR-284); not entity state.
+	"pkg/storage.CompositeEngine.transactionTimeout": {class: "configuration"},
 
 	// Not entity state.
 	"pkg/storage.BadgerEngine.activeMVCCSnapshotReaders": {class: "snapshot readers"},

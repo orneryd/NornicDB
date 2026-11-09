@@ -246,7 +246,7 @@ func TestRunningStatementContextCancelsDerivedContexts(t *testing.T) {
 	require.Equal(t, "request", derived.Value(probeKey{}))
 	require.Same(t, running.tx, derived.Value(ctxKeyRunningTransaction{}))
 
-	_, found := runningTransactions.terminate(running.tx.id())
+	_, found := runningTransactions.terminate(t.Context(), running.tx.id())
 	require.True(t, found)
 	select {
 	case <-derived.Done():

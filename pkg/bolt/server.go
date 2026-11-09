@@ -2065,7 +2065,7 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 			}
 			metadata = m
 		}
-		txTimeout, beginErr := validateTransactionTimeout(metadata)
+		txTimeout, clientTimeout, beginErr := validateTransactionTimeout(metadata)
 		if beginErr != nil {
 			err = s.sendTransactionControlError(nornicerrors.WithStatus(beginErr, "Neo.ClientError.Request.Invalid", localization.ExternalDiagnostic(beginErr)))
 			break
@@ -2108,6 +2108,11 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 		// The transaction is the session's: SHOW TRANSACTIONS lists it with the
 		// session's connection and user from BEGIN on.
 		txParent = s.withSessionIdentity(txParent)
+		// A client's tx_timeout, zero included, replaces the server's
+		// transaction timeout for the transaction, as in Neo4j (NOR-284).
+		if clientTimeout {
+			txParent = cypher.WithClientTransactionTimeout(txParent)
+		}
 
 		txExec, _ := s.executor.(TransactionalExecutor)
 		s.txLifecycle.setTimeoutCleanupFailureHandler(s.failClosedTransactionCleanup)

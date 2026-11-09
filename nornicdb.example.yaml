@@ -144,8 +144,17 @@ database:
   # Transaction timeout (Go duration: "30s", "1m", "5m", or whole seconds). A
   # MERGE waits at most this long for a uniquely constrained node key that
   # another transaction holds, then fails with
-  # Neo.ClientError.Transaction.TransactionTimedOut. "0s" disables the limit.
-  # A negative or invalid value stops startup.
+  # Neo.ClientError.Transaction.TransactionTimedOut. An explicit transaction
+  # that stays idle (no statement running) this long is ended: rolled back,
+  # its keys and write admission released; its next statement or COMMIT fails
+  # with TransactionTimedOut (a statement of the other transaction type fails
+  # first with ForbiddenDueToTransactionType; over HTTP, until its transaction
+  # session expires 30s after its last request, after which a request gets
+  # TransactionNotFound). A transaction that keeps working is not ended. A
+  # Bolt client's tx_timeout (0 included) replaces this for its transaction,
+  # and HTTP transaction sessions follow it instead of a fixed 30s expiry.
+  # "0s" disables the limit (an idle HTTP transaction then stays open until
+  # its client ends it). A negative or invalid value stops startup.
   # Env: NORNICDB_TRANSACTION_TIMEOUT (overrides this key; "0s" disables), or
   # the legacy NEO4J_dbms_transaction_timeout when that is unset
   transaction_timeout: "30s"

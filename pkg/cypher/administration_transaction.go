@@ -56,8 +56,8 @@ func (e *StorageExecutor) admitTransactionStatement(ctx context.Context, query s
 	if tx == nil || !tx.active {
 		return false, nil
 	}
-	if tx.failed != nil {
-		return false, queryOnFailedTransactionError(tx.failed)
+	if err := tx.failedStatementError(); err != nil {
+		return false, err
 	}
 	kind := "Data"
 	if StatementDatabase("", query) == "system" {
@@ -119,30 +119,45 @@ func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, quer
 	if e.txContext.storageWrapper != nil && strings.EqualFold(e.txContext.storageWrapper.Namespace(), "system") {
 		return e, nil
 	}
+	// A terminated transaction is not re-routed: its statement is refused
+	// with the termination's status (withRunningStatement).
+	if e.txContext.running != nil && e.txContext.running.terminated.Load() {
+		return e, nil
+	}
 	// An administration transaction chooses the system database with its first
 	// statement. Admission forbids switching after a data statement, even one
 	// that wrote nothing. Replace only the unused initial snapshot and keep
 	// the caller's transaction metadata; all commands then share this one view.
+	// The client's handle stays the same (its SHOW/TERMINATE registration,
+	// idle timeout and failure state, NOR-284); only its storage snapshot
+	// changes.
+	tc := e.txContext
 	metadata := map[string]any(nil)
-	if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
+	if tx, ok := tc.tx.(*storage.BadgerTransaction); ok {
 		metadata = tx.GetMetadata()
 	}
-	if _, err := e.handleRollback(ctx, nil); err != nil {
+	if err, _ := e.retireTransactionStorage(ctx, nil); err != nil {
+		e.releaseTransactionContext()
 		return nil, err
 	}
-	owner := e.cloneWithStorage(system, selectedDatabaseStorage)
-	if _, err := owner.handleBegin(ctx); err != nil {
+	opener := e.cloneWithStorage(system, selectedDatabaseStorage)
+	opener.txContext = nil
+	if _, err := opener.handleBegin(ctx); err != nil {
+		e.releaseTransactionContext()
 		return nil, err
 	}
-	outside := e.storage
-	e.txContext = owner.txContext
-	e.txContext.controller = e
-	e.txContext.outsideStorage = outside
-	e.txContext.statementKind = "Administration"
-	// Transfer the already-issued native view with its controller; a replacement
+	snapshot := opener.txContext
+	tc.tx, tc.engine, tc.txID = snapshot.tx, snapshot.engine, snapshot.txID
+	tc.wal, tc.walSeqStart, tc.database = snapshot.wal, snapshot.walSeqStart, snapshot.database
+	tc.storageRolledBack = false
+	tc.statementKind = "Administration"
+	// Transfer the already-issued native view to this handle; a replacement
 	// wrapper would lose the membership that distinguishes the owner from members.
-	e.storage = owner.storage
-	tx := e.txContext.tx.(*storage.BadgerTransaction)
+	wrapper := opener.storage.(*transactionStorageWrapper)
+	wrapper.owner = tc
+	tc.storageWrapper = wrapper
+	e.storage = wrapper
+	tx := tc.tx.(*storage.BadgerTransaction)
 	if err := tx.SetMetadata(metadata); err != nil {
 		return nil, err
 	}

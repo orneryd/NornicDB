@@ -121,26 +121,28 @@ func TestValidateTransactionTimeoutBoundaries(t *testing.T) {
 		name     string
 		metadata map[string]any
 		want     time.Duration
+		wantSet  bool
 		wantErr  string
 	}{
 		{name: "absent", metadata: nil},
 		{name: "null", metadata: map[string]any{"tx_timeout": nil}},
-		{name: "zero", metadata: map[string]any{"tx_timeout": int64(0)}},
-		{name: "positive", metadata: map[string]any{"tx_timeout": int64(17)}, want: 17 * time.Millisecond},
+		{name: "zero", metadata: map[string]any{"tx_timeout": int64(0)}, wantSet: true},
+		{name: "positive", metadata: map[string]any{"tx_timeout": int64(17)}, want: 17 * time.Millisecond, wantSet: true},
 		{name: "wrong type", metadata: map[string]any{"tx_timeout": 17}, wantErr: "Expected long"},
-		{name: "negative", metadata: map[string]any{"tx_timeout": int64(-1)}},
-		{name: "overflow", metadata: map[string]any{"tx_timeout": maxMilliseconds + 1}, want: time.Duration(1<<63 - 1)},
+		{name: "negative", metadata: map[string]any{"tx_timeout": int64(-1)}, wantSet: true},
+		{name: "overflow", metadata: map[string]any{"tx_timeout": maxMilliseconds + 1}, want: time.Duration(1<<63 - 1), wantSet: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := validateTransactionTimeout(tt.metadata)
+			got, set, err := validateTransactionTimeout(tt.metadata)
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				return
 			}
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
+			require.Equal(t, tt.wantSet, set, "a client tx_timeout, zero included, replaces the server's")
 		})
 	}
 }

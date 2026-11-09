@@ -92,10 +92,24 @@ type boltKeyHolder struct {
 
 func holdBoltKeys(t *testing.T, driver neo4j.DriverWithContext, keys ...string) *boltKeyHolder {
 	t.Helper()
+	return holdBoltKeysWith(t, driver, nil, keys...)
+}
+
+// holdIdleBoltKeys is holdBoltKeys for a holder that stays idle past the
+// server's transaction timeout while others wait for its keys: its client
+// sets a timeout of its own, which replaces the server's, so the server
+// doesn't end it (NOR-284 follow-up).
+func holdIdleBoltKeys(t *testing.T, driver neo4j.DriverWithContext, keys ...string) *boltKeyHolder {
+	t.Helper()
+	return holdBoltKeysWith(t, driver, []func(*neo4j.TransactionConfig){neo4j.WithTxTimeout(time.Minute)}, keys...)
+}
+
+func holdBoltKeysWith(t *testing.T, driver neo4j.DriverWithContext, configurers []func(*neo4j.TransactionConfig), keys ...string) *boltKeyHolder {
+	t.Helper()
 	ctx := context.Background()
 	holder := &boltKeyHolder{session: driver.NewSession(ctx, neo4j.SessionConfig{})}
 	t.Cleanup(func() { _ = holder.session.Close(context.Background()) })
-	tx, err := holder.session.BeginTransaction(ctx)
+	tx, err := holder.session.BeginTransaction(ctx, configurers...)
 	require.NoError(t, err)
 	holder.tx = tx
 	for _, key := range keys {
@@ -231,7 +245,7 @@ func TestBoltMergeKeyWaitEndsAtTransactionTimeout(t *testing.T) {
 	ctx := context.Background()
 	for _, explicit := range []bool{false, true} {
 		held, free := fmt.Sprintf("held-%v", explicit), fmt.Sprintf("free-%v", explicit)
-		holder := holdBoltKeys(t, driver, held)
+		holder := holdIdleBoltKeys(t, driver, held)
 		log.reset()
 		result := awaitKeyWaiter(t, startBoltKeyWaiter(ctx, driver, explicit, "UNWIND [$free, $held] AS k MERGE (n:Doc {id: k})", map[string]any{"free": free, "held": held}), func() {
 			_ = holder.tx.Rollback(ctx)
@@ -434,7 +448,7 @@ func rawBoltRun(query string) []byte {
 func TestBoltMergeKeyTimeoutEndsTheTransactionWithoutClientCleanup(t *testing.T) {
 	driver, _ := startKeyWaitBolt(t, 200*time.Millisecond, 0)
 	ctx := context.Background()
-	holder := holdBoltKeys(t, driver, "raw-held")
+	holder := holdIdleBoltKeys(t, driver, "raw-held")
 	conn, err := net.Dial("tcp", driver.Target().Host)
 	require.NoError(t, err)
 	defer conn.Close()
@@ -470,7 +484,7 @@ func TestBoltMergeKeyWaitEndingReleasesTheTransaction(t *testing.T) {
 	ctx := context.Background()
 	for i, ending := range []string{"server timeout", "client timeout", "terminate"} {
 		key := fmt.Sprintf("ending-%d", i)
-		holder := holdBoltKeys(t, driver, key)
+		holder := holdIdleBoltKeys(t, driver, key)
 		var waiter *boltKeyHolder
 		if ending == "client timeout" {
 			waiter = &boltKeyHolder{session: driver.NewSession(ctx, neo4j.SessionConfig{})}

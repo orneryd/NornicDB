@@ -730,6 +730,9 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		// Routing will be auto-configured based on constituent aliases and access modes
 		compositeEngine := storage.NewCompositeEngine(constituents, constituentNames, accessModes)
 		compositeEngine.SetCompositeName(name)
+		// An explicit transaction on the composite ends at the same configured
+		// transaction timeout as one on any of the manager's databases.
+		compositeEngine.SetServerTransactionTimeout(storage.ServerTransactionTimeoutOf(m.inner))
 		// Note: We don't cache composite engines the same way as they're lightweight wrappers
 		return compositeEngine, nil
 	}

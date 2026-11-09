@@ -74,6 +74,41 @@ func (tx *BadgerTransaction) mergeKeyWait(namespace string) uniqueKeyLockWait {
 	return uniqueKeyLockWait{LockWaitOptions: tx.engine.lockWait, log: tx.engine.log, database: namespace}
 }
 
+// ServerTransactionTimeout is the server's transaction timeout
+// (EngineOptions.LockWait.Timeout); zero or negative means none. An explicit
+// transaction idle this long is ended by its owner (pkg/cypher, NOR-284).
+func (b *BadgerEngine) ServerTransactionTimeout() time.Duration {
+	if b == nil {
+		return 0
+	}
+	return b.lockWait.Timeout
+}
+
+// ServerTransactionTimeoutOf is the server's transaction timeout for an
+// explicit transaction opened on engine, whatever its kind: the first engine
+// that states it (the physical engine, or a composite, which carries the
+// value its database manager configured), looking through wrappers
+// (EngineUnwrapper). Zero when none states it.
+func ServerTransactionTimeoutOf(engine Engine) time.Duration {
+	seen := 0
+	for engine != nil && seen < 64 {
+		if owner, ok := engine.(interface{ ServerTransactionTimeout() time.Duration }); ok {
+			return owner.ServerTransactionTimeout()
+		}
+		unwrapper, ok := engine.(EngineUnwrapper)
+		if !ok {
+			return 0
+		}
+		inner := unwrapper.GetInnerEngine()
+		if inner == engine {
+			return 0
+		}
+		engine = inner
+		seen++
+	}
+	return 0
+}
+
 // awaitUniqueConstraintLock blocks owner, which waits for request's key, until
 // released closes (the key's eligibility changed) or the wait ends: ctx ends,
 // or the wait has lasted wait's Timeout. A wait still blocked after wait's

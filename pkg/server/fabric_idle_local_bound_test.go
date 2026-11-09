@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 	"github.com/stretchr/testify/require"
@@ -64,9 +65,14 @@ func newFabricLocalSnapshotFixture(
 	t *testing.T,
 	label string,
 	composite string,
+	transactionTimeout time.Duration,
 ) *fabricLocalSnapshotFixture {
 	t.Helper()
-	server, auth := setupTestServer(t)
+	// The transaction's end follows its configured transaction timeout (its end
+	// owner, NOR-284); the session expiry then retires the ended session.
+	server, auth := setupTestServerWithDatabaseConfig(t, func(config *nornicdb.Config) {
+		config.Database.TransactionTimeout = transactionTimeout
+	}, nil)
 	token := "Bearer " + getAuthToken(t, auth, "admin")
 	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "idleblocked"}))
 	leaf, err := server.dbManager.GetStorage("idleblocked")
@@ -105,7 +111,7 @@ func (f *fabricLocalSnapshotFixture) requestFor(ttl time.Duration) func(path, bo
 }
 
 func TestFabricHTTPIdleLocalStorageCleanupBound(t *testing.T) {
-	f := newFabricLocalSnapshotFixture(t, "IdleProbe", "idlecomp")
+	f := newFabricLocalSnapshotFixture(t, "IdleProbe", "idlecomp", 250*time.Millisecond)
 	controller := f.controller
 	setter := f.setter
 	setter.SetLifecycleController(controller)
@@ -146,8 +152,19 @@ func TestFabricHTTPIdleLocalStorageCleanupBound(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Error("unrelated BEGIN stalled behind local idle cleanup")
 	}
+	// The transaction ended at its 250 ms timeout (its end owner, NOR-284).
+	// The session is retired at its 500 ms expiry, counted from the end of the
+	// opening request, with the local rollback still blocked. Wait for that
+	// without touching the session: a request would restart its expiry.
+	txURL := strings.TrimSuffix(opened.Commit, "/commit")
+	txID := txURL[strings.LastIndex(txURL, "/")+1:]
+	owner := lifecycleTransactionOwner(t, f.server, f.token)
+	require.Eventually(t, func() bool {
+		_, open := f.server.txSessions.GetForOwner(txID, owner)
+		return !open
+	}, 30*time.Second, 10*time.Millisecond, "idle cleanup exceeded its advertised 30-second terminal bound")
 	retired := make(chan *httptest.ResponseRecorder, 1)
-	go func() { retired <- request(strings.TrimSuffix(opened.Commit, "/commit"), `{"statements":[]}`) }()
+	go func() { retired <- request(txURL, `{"statements":[]}`) }()
 	select {
 	case response := <-retired:
 		require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
@@ -164,7 +181,7 @@ func TestFabricHTTPIdleLocalStorageCleanupBound(t *testing.T) {
 }
 
 func TestFabricHTTPCommitWaitsForLocalStorageOutcome(t *testing.T) {
-	f := newFabricLocalSnapshotFixture(t, "Seed", "commitcomp")
+	f := newFabricLocalSnapshotFixture(t, "Seed", "commitcomp", time.Minute)
 	leaf := f.leaf
 	controller := f.controller
 	setter := f.setter
