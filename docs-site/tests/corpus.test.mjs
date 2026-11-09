@@ -50,7 +50,7 @@ test("additional release documentation remains present", () => {
     if (policy.sourcePath(file))
       assert.ok(fs.existsSync(path.join(root, policy.sourcePath(file))), file);
 });
-test("release-only records cannot describe the current semantic or source snapshot", () => {
+test("release records follow their integration status in the current semantic snapshot", () => {
   const provenance = JSON.parse(
     fs.readFileSync("source-provenance.json", "utf8"),
   );
@@ -67,6 +67,13 @@ test("release-only records cannot describe the current semantic or source snapsh
     fs.readFileSync(".generated/public/doc-code.json", "utf8"),
   );
   for (const doc of documents.filter((doc) => releases.has(doc.id))) {
+    if (
+      provenance.releaseContentIntegrated &&
+      !doc.id.startsWith("development/archive/")
+    ) {
+      assert.equal(doc.semantic, true, doc.id);
+      continue;
+    }
     assert.equal(doc.semantic, false, doc.id);
     assert.equal(map[doc.url], undefined, doc.id);
     const file = doc.id
@@ -102,6 +109,14 @@ test("documentation checks respect the declared PR scope", (t) => {
 test("published source graph edges resolve and code snippets match their hashes", () => {
   const graph = JSON.parse(
     fs.readFileSync(".generated/public/code-graph.json", "utf8"),
+  );
+  assert.equal(
+    graph.revision,
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+    }).trim(),
+    "current source links must use the integrated release head, not its main base",
   );
   const ids = new Set(graph.nodes.map((n) => n.id));
   assert.equal(

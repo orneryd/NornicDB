@@ -21,7 +21,7 @@ const provenance = JSON.parse(
   fs.readFileSync(path.join(site, "source-provenance.json"), "utf8"),
 );
 const releaseFiles = new Set(
-  process.env.DOCS_SOURCE_REF
+  process.env.DOCS_SOURCE_REF || provenance.releaseContentIntegrated
     ? []
     : provenance.additionalFiles
         .map(publication.sourcePath)
@@ -47,7 +47,7 @@ const revision = execFileSync(
   "git",
   process.env.DOCS_SOURCE_REF
     ? ["rev-parse", process.env.DOCS_SOURCE_REF]
-    : ["merge-base", "HEAD", "origin/main"],
+    : ["rev-parse", "HEAD"],
   { cwd: root, encoding: "utf8" },
 ).trim();
 const inventory = [],

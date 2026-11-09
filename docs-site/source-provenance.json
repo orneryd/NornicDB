@@ -1,5 +1,5 @@
 {
-  "preservedFrom": "e06b4128d111a131d3b0585d9b6a90bd8834ff2c",
+  "preservedFrom": "003ac1dedba30d98c84b7d5646c99f68ffc3832a",
   "additionalFiles": [
     "docs/api-reference/apoc-integer-values.md",
     "docs/api-reference/storage-label-counts.md",
@@ -467,7 +467,10 @@
     "docs/development/macos-provider-settings/advanced.png",
     "docs/development/macos-provider-settings/README.md",
     "docs/development/macos-provider-settings/services.png",
-    "docs/development/macos-provider-settings/setup.png"
+    "docs/development/macos-provider-settings/setup.png",
+    "docs/development/count-store-visibility.md",
+    "docs/development/verification-resources.md"
   ],
-  "excludedPerScope": []
+  "excludedPerScope": [],
+  "releaseContentIntegrated": true
 }
