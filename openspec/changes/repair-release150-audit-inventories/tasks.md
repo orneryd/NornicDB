@@ -4,9 +4,10 @@
 - [x] Reproduce numeric ownership failures, including the newer WAL scanner revision.
 - [x] Review typed auth string metadata and historical WAL envelope ownership.
 - [x] Update existing reviewed numeric records; pass convert and auth packages.
-- [ ] Review and reconcile lexical and endpoint population records.
-- [ ] Pass integrated affected packages and focused WAL migration checks.
-- [ ] Push a separate release/v1.5.0 PR and request exact-head CI.
+- [x] Review and reconcile lexical and endpoint population records.
+- [x] Pass integrated affected packages and focused WAL migration checks.
+- [x] Open and push a separate release/v1.5.0 PR (#1777).
+- [ ] Request final candidate exact-head CI.
 - [ ] Record CI and duplicate-review results without claiming pending checks passed.
 
 Scope: reviewed source manifests only; no scanner, assertion, threshold, hook,
