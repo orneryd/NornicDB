@@ -349,9 +349,12 @@ func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cyp
 
 	compositeDbs := e.dbManager.ListCompositeDatabases()
 
-	rows := make([][]interface{}, len(compositeDbs))
-	for i, db := range compositeDbs {
-		rows[i] = []interface{}{db.Name(), db.Type(), db.Status()}
+	rows := make([][]interface{}, 0, len(compositeDbs))
+	for _, db := range compositeDbs {
+		if !catalogDatabaseVisible(ctx, db.Name()) {
+			continue
+		}
+		rows = append(rows, []interface{}{db.Name(), db.Type(), db.Status()})
 	}
 
 	return &ExecuteResult{
@@ -405,14 +408,18 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 		return nil, localizedError(localization.CypherCompositeShowConstituentsNameExpected(), nil)
 	}
 
+	if !catalogDatabaseVisible(ctx, compositeName) {
+		return nil, &PermissionDeniedError{Permission: "access"}
+	}
+
 	// Get constituents
 	constituents, err := e.dbManager.GetCompositeConstituents(compositeName)
 	if err != nil {
 		return nil, localizedError(localization.CypherCompositeGetConstituentsFailed(err), err)
 	}
 
-	rows := make([][]interface{}, len(constituents))
-	for i, c := range constituents {
+	rows := make([][]interface{}, 0, len(constituents))
+	for _, c := range constituents {
 		// A tagged map carries the same manager-owned connection authority as
 		// the typed adapter. Legacy map cells retain their existing output values.
 		ref, typed := c.(multidb.ConstituentRef)
@@ -421,13 +428,23 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 				ref, typed = candidate, true
 			}
 		}
+		alias := ref.Alias
+		if !typed {
+			if m, ok := c.(map[string]interface{}); ok {
+				alias, _ = m["alias"].(string)
+			}
+		}
+		if !catalogDatabaseVisible(ctx, compositeName+"."+alias) {
+			continue
+		}
+		var row []interface{}
 		if typed {
 			var err error
 			ref, err = e.constituentDisplayView(ref)
 			if err != nil {
 				return nil, err
 			}
-			rows[i] = []interface{}{
+			row = []interface{}{
 				ref.Alias,
 				ref.DatabaseName,
 				ref.Type,
@@ -439,7 +456,7 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 			}
 		} else if m, ok := c.(map[string]interface{}); ok {
 			// Fallback for map format (if returned as map)
-			rows[i] = []interface{}{
+			row = []interface{}{
 				m["alias"],
 				m["database_name"],
 				m["type"],
@@ -451,8 +468,9 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 			}
 		} else {
 			// Unknown type - return empty row
-			rows[i] = []interface{}{"", "", "", "", "", "", "", ""}
+			row = []interface{}{"", "", "", "", "", "", "", ""}
 		}
+		rows = append(rows, row)
 	}
 
 	return &ExecuteResult{

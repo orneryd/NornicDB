@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
@@ -150,7 +151,9 @@ func TestServerStopR2LeasedSlowLogLifetime(t *testing.T) {
 		}
 		defer lease.Release()
 		response := TransactionResponse{}
-		s.runRequestStatements(r.Context(), "", nil, "nornic", []StatementRequest{{Statement: "RETURN 1 AS value"}},
+		// The common runner receives the principal established by request authentication.
+		claims := &auth.JWTClaims{Username: "admin", Sub: "admin", Roles: []string{"admin"}}
+		s.runRequestStatements(r.Context(), "", claims, "nornic", []StatementRequest{{Statement: "RETURN 1 AS value"}},
 			func(ctx context.Context, db, q string, p map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
 				result, e := lease.ExecuteInSession(ctx, q, p)
 				gate.block() // immediately before the common caller's logSlowQuery

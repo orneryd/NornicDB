@@ -200,11 +200,15 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 	fabricExecutor.SetRemoteValueCodec(fabricRemoteValueCodec)
 	fabricExecutor.SetConcurrentExecution(autoCommit && !contract.dynamic && !contract.writes && !contract.calls)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
+	fabricExecutor.SetGraphVisibility(catalogDatabaseVisible)
 	fabricExecutor.SetRemoteStatementPolicy(readRemoteStatementPolicy)
 	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
 		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
 			return err
 		}
+		return nil
+	})
+	fabricExecutor.SetGraphResolved(func(ctx context.Context, database string) error {
 		if ownershipRejected {
 			return ownedTransactionControlError()
 		}
