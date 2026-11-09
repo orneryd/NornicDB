@@ -295,7 +295,7 @@ func (m *Manager) AcquireForOwner(txID, owner string) (*Lease, bool) {
 	m.mu.RLock()
 	current := !m.work.Closing() && m.sessions[txID] == session
 	m.mu.RUnlock()
-	expired := session.expired || !m.nowFunc().Before(session.Expires)
+	expired := session.expired || !m.nowFunc().Before(session.Expires) && !endOwnerKeeps(session.Executor)
 	generation := session.expiryGeneration
 	session.mu.Unlock()
 	if !current || expired {
@@ -510,6 +510,22 @@ func (m *Manager) expireSession(session *Session, generation uint64) {
 	m.expireSessionUnderLease(session, generation)
 }
 
+// endOwnerKeeps reports whether executor's explicit transaction stays open
+// past the session's idle deadline. The session decides no client
+// transaction's end (NOR-284): the transaction's end owner does
+// (pkg/cypher transactionEnd: the configured transaction timeout, TERMINATE
+// TRANSACTIONS, or the client's own timeout), so the deadline retires
+// nothing while the transaction is open, and the client sees the end's
+// status until the session is retired at a deadline after the end. A Fabric
+// coordinator's participant is the one exception the owner names
+// (TransactionOutlivesSession): its coordinator renews the session while
+// its composite transaction lives, so a deadline reached unrenewed is the
+// lapse of that lease, and the session ends the part.
+// The caller owns the session's requestMu.
+func endOwnerKeeps(executor *cypher.StorageExecutor) bool {
+	return executor != nil && executor.TransactionOutlivesSession()
+}
+
 // The timer, admission and idle Touch paths share this retirement operation.
 // Its caller owns requestMu; an active request renews only when it completes.
 func (m *Manager) expireSessionUnderLease(session *Session, generation uint64) {
@@ -517,6 +533,16 @@ func (m *Manager) expireSessionUnderLease(session *Session, generation uint64) {
 	if session.expiryGeneration != generation {
 		session.mu.Unlock()
 		return
+	}
+	if !session.expired && endOwnerKeeps(session.Executor) {
+		m.mu.RLock()
+		current := !m.work.Closing() && m.sessions[session.ID] == session
+		m.mu.RUnlock()
+		if current {
+			m.resetExpiryTimerLocked(session)
+			session.mu.Unlock()
+			return
+		}
 	}
 	m.mu.Lock()
 	current := !m.work.Closing() && m.sessions[session.ID] == session

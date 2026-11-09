@@ -989,7 +989,15 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 
 	beginCtx := ctx
 	if c.nativeOrigin == nil {
-		beginCtx = WithTransactionControl(WithAuthToken(storage.WithCoordinatorOwnedTransaction(withoutCompositeStatement(ctx)), c.authToken))
+		// The participant is part of the client transaction whose failure
+		// rule reaches it (localShardTxExecutors): end requests on it go to
+		// that transaction's running entry (NOR-284). A single auto-commit
+		// statement's participants have none: they end with the statement.
+		var owner *runningTransaction
+		if c.base != nil && c.base.txContext != nil && c.base.txContext.active {
+			owner = c.base.txContext.running
+		}
+		beginCtx = withLocalParticipant(WithTransactionControl(WithAuthToken(storage.WithCoordinatorOwnedTransaction(withoutCompositeStatement(ctx)), c.authToken)), owner)
 	}
 	var beginErr error
 	if c.nativeOrigin != nil {

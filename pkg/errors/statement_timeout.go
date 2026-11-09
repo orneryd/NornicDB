@@ -26,6 +26,11 @@ var (
 	// ErrServerStatementTimeout ends a Bolt statement at the server's
 	// statement timeout, for a client that set no tx_timeout.
 	ErrServerStatementTimeout error = &statementDeadline{"server statement timeout exceeded", TransactionTimedOut, TransactionTimedOutMessage}
+	// ErrServerTransactionTimeout ends an explicit transaction that stayed
+	// idle for the server's transaction timeout (database.transaction_timeout,
+	// NOR-284): its later statements and COMMIT report it (a statement of the
+	// other transaction type is refused first with ForbiddenDueToTransactionType).
+	ErrServerTransactionTimeout error = &statementDeadline{"server transaction timeout exceeded", TransactionTimedOut, TransactionTimedOutMessage}
 	// ErrClientTransactionTimeout ends a Bolt statement at its client's
 	// tx_timeout.
 	ErrClientTransactionTimeout error = &statementDeadline{"client transaction timeout exceeded", TransactionTimedOutClientConfiguration, TransactionTimedOutClientConfigurationMessage}

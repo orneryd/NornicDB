@@ -25,6 +25,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
@@ -403,7 +404,15 @@ func TestServerStopR3LateRollbackOutcomes(t *testing.T) {
 	})
 	for _, explicit := range []bool{false, true} {
 		t.Run(fmt.Sprintf("remote-down/explicit=%t", explicit), func(t *testing.T) {
-			s, authenticator := setupTestServer(t)
+			// The idle variant's transaction ends at the configured transaction
+			// timeout (its end owner, NOR-284); the session expiry then retires it.
+			timeout := time.Duration(0)
+			if !explicit {
+				timeout = 75 * time.Millisecond
+			}
+			s, authenticator := setupTestServerWithDatabaseConfig(t, func(config *nornicdb.Config) {
+				config.Database.TransactionTimeout = timeout
+			}, nil)
 			gate := newStopR2Gate(t)
 			var peer *httptest.Server
 			peer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

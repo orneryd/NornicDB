@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 	"github.com/stretchr/testify/require"
 	"io"
@@ -31,7 +32,11 @@ func TestSolReview1483R3HTTPIdleRetiresSession(t *testing.T) {
 			if transport == "bolt" {
 				uri = fabricLifetimeBolt(t, remote)
 			}
-			coordinator, _ := setupTestServer(t)
+			// The transaction's end follows its configured transaction timeout (its end
+			// owner, NOR-284); the session expiry then retires the ended session.
+			coordinator, _ := setupTestServerWithDatabaseConfig(t, func(config *nornicdb.Config) {
+				config.Database.TransactionTimeout = 30 * time.Millisecond
+			}, nil)
 			require.NoError(t, coordinator.dbManager.CreateCompositeDatabase(t.Context(), "r3expired", []multidb.ConstituentRef{{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read_write", URI: uri}}))
 			manager := txsession.NewManager(60*time.Millisecond, coordinator.newExecutorForDatabase, coordinator.shutdown.work.Context())
 			session, err := manager.Open(ctx, "r3expired")

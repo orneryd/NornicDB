@@ -61,6 +61,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a zero `CreatedAt` in every named database, so creation-time decay,
   retention and ordering treated them as ancient.
 
+- End an idle explicit transaction at once when `TERMINATE TRANSACTIONS`
+  targets it, and when it has stayed idle for the configured transaction
+  timeout (`database.transaction_timeout`, 30s by default; a Bolt client's
+  `tx_timeout`, zero included, replaces it for its transaction). Its staged
+  writes are rolled back and its node keys and write admission are released
+  without any message from its client, so waiting MERGEs and schema changes
+  proceed. Its later statements, on every route (a statement on a composite
+  database's constituent included), and its COMMIT fail with
+  `Neo.ClientError.Transaction.Terminated` or
+  `Neo.ClientError.Transaction.TransactionTimedOut` until its client ends it
+  (a statement of the other transaction type, such as an administration
+  command after data statements, fails first with
+  `Neo.ClientError.Transaction.ForbiddenDueToTransactionType`, as it would in
+  any open transaction of that type); over HTTP, until its transaction session expires (30s after its last
+  request): a request after that gets `TransactionNotFound`. A refused
+  statement no longer lets a later write auto-commit, and a statement running
+  when `TERMINATE TRANSACTIONS` arrives is cancelled, a composite one
+  included. This holds for every explicit transaction: on a composite
+  database, whose parts on its constituents end with it (`TERMINATE
+  TRANSACTIONS` on the id SHOW TRANSACTIONS lists for a local part ends the
+  composite transaction), and after its first administration command. A
+  transaction that keeps running statements is not ended by the timeout. HTTP
+  and embedded-Bolt transaction sessions no longer end a client transaction on
+  their own fixed 30s expiry: they close a session only after its transaction
+  has ended, so with the timeout disabled (`0`) an idle HTTP transaction stays
+  open until its client ends it. A composite transaction's part on a remote
+  server is ended by its coordinator, not by that server's timeout: the
+  coordinator renews the part's HTTP transaction session while the composite
+  transaction lives, and the remote server ends a part whose session expires
+  unrenewed (its coordinator is gone); over Bolt, a part ends when its
+  coordinator's connection closes. Follow-up of the MERGE wait bound below
+  (NOR-284).
+
 - Bound a MERGE's wait for a uniquely constrained node key that another
   transaction holds by the configured transaction timeout
   (`database.transaction_timeout`, `NORNICDB_TRANSACTION_TIMEOUT`, 30s by

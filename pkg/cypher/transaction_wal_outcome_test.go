@@ -306,9 +306,15 @@ func TestWALTerminalTerminatedStatementCleanup(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.wal.Close())
 	exec.txContext.running.terminated.Store(true)
+	// The refused statement keeps the client's failed transaction (NOR-284):
+	// its cleanup, with the WAL failure, is the client's terminal operation's.
 	_, err = exec.Execute(ctx, "RETURN 1", nil)
-	require.ErrorIs(t, err, storage.ErrWALClosed)
 	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Transaction.Terminated", code)
+	require.NotNil(t, exec.txContext)
+	_, err = exec.Execute(ctx, "COMMIT", nil)
+	require.ErrorIs(t, err, storage.ErrWALClosed)
+	code, _ = nornicerrors.Neo4jStatus(err)
 	require.Equal(t, "Neo.ClientError.Transaction.Terminated", code)
 	require.Nil(t, exec.txContext)
 	requireWALOutcomeCount(t, store, 0)

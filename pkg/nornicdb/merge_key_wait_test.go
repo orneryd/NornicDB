@@ -32,8 +32,10 @@ func TestInMemoryDatabaseBoundsMergeKeyWaits(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	_, err = db.ExecuteCypher(t.Context(), "CREATE CONSTRAINT u_k FOR (n:U) REQUIRE n.k IS UNIQUE", nil)
 	require.NoError(t, err)
+	// The holder sets its own transaction timeout, so the server's doesn't
+	// end it while it stays idle (NOR-284 follow-up).
 	holder := cypher.NewStorageExecutor(db.GetStorage())
-	_, err = holder.Execute(t.Context(), "BEGIN", nil)
+	_, err = holder.Execute(cypher.WithClientTransactionTimeout(t.Context()), "BEGIN", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = holder.Execute(context.Background(), "ROLLBACK", nil) })
 	_, err = holder.Execute(t.Context(), "MERGE (:U {k: 1})", nil)
@@ -169,8 +171,10 @@ func TestZeroSlowQueryThresholdSilencesMergeWaitWarnings(t *testing.T) {
 			ctx := context.Background()
 			_, err = db.ExecuteCypher(ctx, "CREATE CONSTRAINT quiet_k FOR (n:Quiet) REQUIRE n.k IS UNIQUE", nil)
 			require.NoError(t, err)
+			// The holder sets its own transaction timeout, so the server's
+			// doesn't end it while it stays idle (NOR-284 follow-up).
 			holder := cypher.NewStorageExecutor(db.GetStorage())
-			_, err = holder.Execute(ctx, "BEGIN", nil)
+			_, err = holder.Execute(cypher.WithClientTransactionTimeout(ctx), "BEGIN", nil)
 			require.NoError(t, err)
 			_, err = holder.Execute(ctx, "MERGE (:Quiet {k: 1})", nil)
 			require.NoError(t, err)

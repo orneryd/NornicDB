@@ -68,6 +68,10 @@ type TransactionContext struct {
 
 	// statementKind keeps administration commands apart from data statements.
 	statementKind string
+
+	// end ends the transaction from outside its owner: TERMINATE
+	// TRANSACTIONS, the server's transaction timeout (transactionEnd).
+	end transactionEnd
 }
 
 // failTransaction records err as the active explicit transaction's failure
@@ -78,41 +82,60 @@ type TransactionContext struct {
 // with the same cause, and each remote sub-transaction is rolled back. ctx is
 // the failed statement's context, whose deadline bounds the remote rollbacks.
 func (e *StorageExecutor) failTransaction(ctx context.Context, err error) error {
-	if tx := e.txContext; err != nil && tx != nil && tx.active && tx.failed == nil {
+	if tx := e.txContext; tx != nil {
+		tx.fail(ctx, err)
+	}
+	return err
+}
+
+// fail is failTransaction's rule for the transaction tx. It also ends a
+// transaction that is already failed when err ends it (endsTransaction): an
+// idle transaction that TERMINATE TRANSACTIONS or the server's transaction
+// timeout ends after one of its statements failed still gives back its
+// storage at once (transactionEnd).
+func (tx *TransactionContext) fail(ctx context.Context, err error) {
+	if err == nil || !tx.active {
+		return
+	}
+	first := tx.failed == nil
+	ends := endsTransaction(err)
+	if !first && !ends {
+		return
+	}
+	if first {
 		// Retain the admitted display, while keeping the producer's error as
 		// the cause. Later statements and COMMIT read this display after the
 		// producer has regained control of its error value.
 		tx.failed = localization.ProjectError(err, err.Error(), nil, nil)
-		if endsTransaction(err) {
-			if storageTx, ok := tx.tx.(*storage.BadgerTransaction); ok {
-				if rollbackErr := storageTx.Rollback(); rollbackErr == nil {
-					tx.storageRolledBack = true
-					if tx.running != nil {
-						tx.running.releaseMemory()
-					}
+	}
+	if ends && !tx.storageRolledBack {
+		if storageTx, ok := tx.tx.(*storage.BadgerTransaction); ok {
+			if rollbackErr := storageTx.Rollback(); rollbackErr == nil {
+				tx.storageRolledBack = true
+				if tx.running != nil {
+					tx.running.releaseMemory()
 				}
 			}
 		}
-		// The transaction can no longer commit: the MERGE key locks it holds,
-		// itself or through a participant's sub-transaction, must not keep
-		// other transactions' MERGEs of those keys waiting until the client
-		// rolls it back. Local keys are released first: they never wait on a
-		// remote.
-		if releaser, ok := tx.tx.(interface{ ReleaseMergeKeys() }); ok {
-			releaser.ReleaseMergeKeys()
-		}
-		for _, participant := range tx.fabricLocalTxExec {
-			participant.failTransaction(ctx, err)
-		}
-		if tx.fabricRemoteExe != nil {
-			// A remote participant records its own rollback error (a
-			// deadline included); the transaction keeps reporting err.
-			rollbackCtx, cancel := remoteFailureRollbackContext(ctx)
-			_ = tx.fabricRemoteExe.RollbackParticipants(rollbackCtx)
-			cancel()
-		}
 	}
-	return err
+	// The transaction can no longer commit: the MERGE key locks it holds,
+	// itself or through a participant's sub-transaction, must not keep
+	// other transactions' MERGEs of those keys waiting until the client
+	// rolls it back. Local keys are released first: they never wait on a
+	// remote.
+	if releaser, ok := tx.tx.(interface{ ReleaseMergeKeys() }); ok {
+		releaser.ReleaseMergeKeys()
+	}
+	for _, participant := range tx.fabricLocalTxExec {
+		participant.failTransaction(ctx, err)
+	}
+	if first && tx.fabricRemoteExe != nil {
+		// A remote participant records its own rollback error (a
+		// deadline included); the transaction keeps reporting err.
+		rollbackCtx, cancel := remoteFailureRollbackContext(ctx)
+		_ = tx.fabricRemoteExe.RollbackParticipants(rollbackCtx)
+		cancel()
+	}
 }
 
 // endsTransaction reports whether err ended its transaction, as Neo4j
@@ -150,6 +173,22 @@ func (e *StorageExecutor) abortTransaction(ctx context.Context, err error) error
 	e.failTransaction(ctx, err)
 	_, cleanup := e.handleRollback(ctx, err)
 	return nornicerrors.CombineTerminalOutcomes(err, cleanup)
+}
+
+// failedStatementError refuses a statement sent to tx after one of its
+// statements failed. A terminated transaction (TERMINATE TRANSACTIONS, the
+// server's transaction timeout) is not refused here: the transaction's
+// statement gate, right after this admission and before any routing,
+// refuses a statement admission lets through with the termination's status,
+// as Neo4j's next statement of a transaction marked for termination fails,
+// and the handle stays failed until its client ends it (withRunningStatement,
+// NOR-284). A statement of the other transaction type is refused first, by
+// admission's type check, with ForbiddenDueToTransactionType.
+func (tx *TransactionContext) failedStatementError() error {
+	if tx.failed == nil || tx.running != nil && tx.running.terminated.Load() {
+		return nil
+	}
+	return queryOnFailedTransactionError(tx.failed)
 }
 
 // queryOnFailedTransactionError is the error of a statement sent to a
@@ -306,9 +345,10 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
-	// A transaction TERMINATE TRANSACTIONS ended doesn't commit (#718).
+	// A transaction TERMINATE TRANSACTIONS or the server's transaction
+	// timeout ended doesn't commit (#718, NOR-284).
 	if e.txContext.running != nil && e.txContext.running.terminated.Load() {
-		failure := transactionTerminatedError()
+		failure := e.txContext.running.terminationError()
 		_, cleanup := e.handleRollback(ctx, failure)
 		return nil, nornicerrors.CombineTerminalOutcomes(failure, cleanup)
 	}
@@ -438,6 +478,35 @@ func (e *StorageExecutor) rollbackTransactionStorage(ctx context.Context) (error
 	}
 }
 
+// retireTransactionStorage rolls back the active transaction's storage
+// snapshot and its remote participants and records the outcome in its WAL
+// bookkeeping, keeping the transaction's handle: ROLLBACK then releases the
+// handle; administration routing replaces the snapshot in the same handle
+// (routeAdministrationStatement).
+func (e *StorageExecutor) retireTransactionStorage(ctx context.Context, primary error) (error, bool) {
+	err, supported := e.rollbackTransactionStorage(ctx)
+	if !supported {
+		return err, false
+	}
+	// Remote participants roll back with their executor; their failures are
+	// this rollback's own failures, next to the native one.
+	if e.txContext.fabricRemoteExe != nil {
+		err = nornicerrors.CombineTerminalOutcomes(err, e.txContext.fabricRemoteExe.Close())
+		e.txContext.fabricRemoteExe = nil
+	}
+	bookkeeping := transactionWAL{e.txContext.wal, e.txContext.walSeqStart, e.txContext.txID, e.txContext.database}
+	// A statement's failure that ended the transaction keeps its own status;
+	// an explicit ROLLBACK's own failure takes the rollback status.
+	operation, cause := nornicerrors.TerminalRollback, err
+	if primary != nil {
+		operation, cause = nornicerrors.TerminalAbort, nornicerrors.CombineTerminalOutcomes(primary, err)
+	}
+	if _, terminalErr := bookkeeping.finish(ctx, false, 0, "rollback", cause, operation); terminalErr != nil {
+		err = terminalErr
+	}
+	return err, true
+}
+
 // commitFailureWroteNothing reports whether a failed COMMIT left nothing of
 // the transaction stored, so its outcome is known (the Bolt session keeps its
 // connection). A local transaction (BadgerTransaction.Commit) fails before
@@ -471,26 +540,9 @@ func (e *StorageExecutor) handleRollback(ctx context.Context, primary error) (*E
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
-	err, supported := e.rollbackTransactionStorage(ctx)
+	err, supported := e.retireTransactionStorage(ctx, primary)
 	if !supported {
 		return nil, err
-	}
-
-	// Remote participants roll back with their executor; their failures are
-	// this rollback's own failures, next to the native one.
-	if e.txContext.fabricRemoteExe != nil {
-		err = nornicerrors.CombineTerminalOutcomes(err, e.txContext.fabricRemoteExe.Close())
-		e.txContext.fabricRemoteExe = nil
-	}
-	bookkeeping := transactionWAL{e.txContext.wal, e.txContext.walSeqStart, e.txContext.txID, e.txContext.database}
-	// A statement's failure that ended the transaction keeps its own status;
-	// an explicit ROLLBACK's own failure takes the rollback status.
-	operation, cause := nornicerrors.TerminalRollback, err
-	if primary != nil {
-		operation, cause = nornicerrors.TerminalAbort, nornicerrors.CombineTerminalOutcomes(primary, err)
-	}
-	if _, terminalErr := bookkeeping.finish(ctx, false, 0, "rollback", cause, operation); terminalErr != nil {
-		err = terminalErr
 	}
 
 	e.releaseTransactionContext()
