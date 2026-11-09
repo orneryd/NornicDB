@@ -108,7 +108,17 @@ func scanV4MigrationWAL(path string, allowTornTail bool, visit func(WALEntry, *w
 		}
 		size := binary.LittleEndian.Uint32(header[5:])
 		if size > walMaxEntrySize {
-			return fmt.Errorf("wal: historical frame at %d exceeds maximum size", offset)
+			entry, length, err := readOversizedEmbeddingAudit(reader, size, version)
+			if err != nil {
+				return fmt.Errorf("wal: historical frame at %d: %w", offset, err)
+			}
+			entry.framingVersion = version
+			end := offset + uint64(length)
+			if err := visit(entry, nil, offset, end); err != nil {
+				return err
+			}
+			offset = end
+			continue
 		}
 		payload := make([]byte, int(size))
 		if _, err := io.ReadFull(reader, payload); err != nil {

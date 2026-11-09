@@ -13,6 +13,9 @@ import (
 // base64-encoded byte strings so every physical key remains distinguishable.
 // Invalid payloads are reported rather than returned as arbitrary text.
 func EntryPayloadJSON(entry WALEntry) (string, error) {
+	if entry.Operation == OpUpdateEmbedding && string(entry.Data) == walOversizedAuditOmission {
+		return walOversizedAuditOmission, nil
+	}
 	var value any
 	switch entry.Operation {
 	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort:

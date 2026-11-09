@@ -74,8 +74,24 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 		if version != walFormatVersionCurrent {
 			return plan, unsupportedWALVersion(version)
 		}
-		if binary.LittleEndian.Uint32(header[:]) != walMagic || size > walMaxEntrySize {
+		if binary.LittleEndian.Uint32(header[:]) != walMagic {
 			return plan, ErrWALCorrupted
+		}
+		if size > walMaxEntrySize {
+			entry, length, err := readOversizedEmbeddingAudit(reader, size, version)
+			if err != nil {
+				return plan, err
+			}
+			if entry.Sequence > plan.last {
+				plan.last = entry.Sequence
+			}
+			if visit != nil {
+				if err := visitWALEntryWithSequence(visit)(entry); err != nil {
+					return plan, err
+				}
+			}
+			plan.end += length
+			continue
 		}
 		length := int64(9 + size + 4)
 		if version >= 2 {

@@ -3436,9 +3436,9 @@ func TestFullStorageChain_Streaming(t *testing.T) {
 	})
 }
 
-func TestCloneNodeForWAL(t *testing.T) {
+func TestEmbeddingAuditNodeForWAL(t *testing.T) {
 	t.Run("nil node returns nil", func(t *testing.T) {
-		result := cloneNodeForWAL("mydb", nil)
+		result := embeddingAuditNodeForWAL("mydb", nil)
 		assert.Nil(t, result)
 	})
 
@@ -3448,13 +3448,14 @@ func TestCloneNodeForWAL(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": "Alice"},
 		}
-		result := cloneNodeForWAL("mydb", node)
+		result := embeddingAuditNodeForWAL("mydb", node)
 		require.NotNil(t, result)
 		assert.Equal(t, NodeID("node-1"), result.ID)
 		// Original should be unchanged
 		assert.Equal(t, NodeID("mydb:node-1"), node.ID)
-		// Properties should be the same reference (shallow clone)
-		assert.Equal(t, "Alice", result.Properties["name"])
+		// Audit records must not carry another copy of the document body.
+		assert.Empty(t, result.Properties)
+		assert.Equal(t, "Alice", node.Properties["name"])
 	})
 }
 
