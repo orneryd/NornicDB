@@ -247,7 +247,10 @@ func (m *MVCCLifecycleManager) loop(ctx context.Context, interval time.Duration)
 				continue
 			}
 			start := time.Now()
-			result, err := m.runCycle(ctx, storage.MVCCPruneOptions{})
+			// An automatic cycle is bounded by its runtime budget and the
+			// engine resumes the next one where it stopped, so a large
+			// history is pruned across cycles instead of in one walk.
+			result, err := m.runCycle(ctx, storage.MVCCPruneOptions{MaxRuntime: m.config.MaxRuntimePerCycle})
 			if err == nil {
 				m.metrics.RecordPruneRun(result, time.Since(start))
 			}

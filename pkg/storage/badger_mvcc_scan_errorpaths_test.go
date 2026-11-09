@@ -45,7 +45,7 @@ func TestBadgerEngine_PruneMVCCKeyspaceInTxn_UnsupportedPrefixAndCanceled(t *tes
 		if setErr := txn.Set(customKey, []byte{0x01}); setErr != nil {
 			return setErr
 		}
-		_, pruneErr := engine.pruneMVCCKeyspaceInTxn(context.Background(), txn, []byte{0x7f}, MVCCPruneOptions{MaxVersionsPerKey: 1}, false)
+		_, _, pruneErr := engine.pruneMVCCKeyspaceInTxn(context.Background(), txn, []byte{0x7f}, MVCCPruneOptions{MaxVersionsPerKey: 1}, nil, 0)
 		return pruneErr
 	})
 	require.Error(t, err)
@@ -66,7 +66,7 @@ func TestBadgerEngine_PruneMVCCKeyspaceInTxn_UnsupportedPrefixAndCanceled(t *tes
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, pruneErr := engine.pruneMVCCKeyspaceInTxn(ctx, txn, []byte{prefixMVCCNode}, MVCCPruneOptions{MaxVersionsPerKey: 1}, false)
+		_, _, pruneErr := engine.pruneMVCCKeyspaceInTxn(ctx, txn, []byte{prefixMVCCNode}, MVCCPruneOptions{MaxVersionsPerKey: 1}, nil, 0)
 		return pruneErr
 	})
 	require.ErrorIs(t, err, context.Canceled)

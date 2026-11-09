@@ -25,6 +25,11 @@ type RoleStore struct {
 	storage storage.Engine
 	mu      sync.RWMutex
 	roles   map[string]struct{} // user-defined role names (set)
+
+	// writes orders this store's mutations, their storage I/O included
+	// (recordWriteOrder); mu is held only to read or publish the cache, so
+	// a request's permission check never waits for storage.
+	writes recordWriteOrder
 }
 
 // NewRoleStore creates a store that reads/writes _Role nodes in the given system storage.
@@ -76,9 +81,14 @@ func (r *RoleStore) CreateRole(ctx context.Context, name string) error {
 	if IsBuiltinRole(name) {
 		return ErrRoleExists
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.roles[name]; exists {
+	if err := r.writes.lock(ctx); err != nil {
+		return err
+	}
+	defer r.writes.unlock()
+	r.mu.RLock()
+	_, exists := r.roles[name]
+	r.mu.RUnlock()
+	if exists {
 		return ErrRoleExists
 	}
 	nodeID := storage.NodeID(rolePrefix + name)
@@ -93,7 +103,9 @@ func (r *RoleStore) CreateRole(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	r.mu.Lock()
 	r.roles[name] = struct{}{}
+	r.mu.Unlock()
 	return nil
 }
 

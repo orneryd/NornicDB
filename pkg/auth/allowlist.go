@@ -30,6 +30,11 @@ type AllowlistStore struct {
 	mu      sync.RWMutex
 	// role → list of database names (nil or empty entry means "all databases")
 	allowlist map[string][]string
+
+	// writes orders this store's mutations, their storage I/O included
+	// (recordWriteOrder); mu is held only to read or publish the cache, so
+	// a request's permission check never waits for storage.
+	writes recordWriteOrder
 }
 
 // NewAllowlistStore creates a store that reads/writes allowlist to the given system storage.
@@ -39,6 +44,10 @@ func NewAllowlistStore(systemStorage storage.Engine) *AllowlistStore {
 
 // Load reads the full allowlist from storage into memory. Call at startup and after PUT.
 func (a *AllowlistStore) Load(ctx context.Context) error {
+	if err := a.writes.lock(ctx); err != nil {
+		return err
+	}
+	defer a.writes.unlock()
 	m := make(map[string][]string)
 	err := storage.StreamNodesWithFallback(ctx, a.storage, 1000, func(n *storage.Node) error {
 		hasLabel := false
@@ -101,8 +110,10 @@ func (a *AllowlistStore) SaveMappings(ctx context.Context, mappings map[string][
 		normalized[NormalizeRoleName(role)] = databases
 	}
 	mappings = normalized
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	if err := a.writes.lock(ctx); err != nil {
+		return err
+	}
+	defer a.writes.unlock()
 	if err := WithRoleRecords(ctx, a.storage, roles, func(view storage.Engine) error {
 		for role, databases := range mappings {
 			databasesJSON, _ := json.Marshal(databases)
@@ -122,6 +133,8 @@ func (a *AllowlistStore) SaveMappings(ctx context.Context, mappings map[string][
 	}); err != nil {
 		return err
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.allowlist == nil {
 		a.allowlist = make(map[string][]string)
 	}

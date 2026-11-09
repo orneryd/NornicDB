@@ -267,13 +267,6 @@ func normalizeMVCCHead(head MVCCHead) MVCCHead {
 	return head
 }
 
-func (b *BadgerEngine) beginMVCCSnapshotRead(version MVCCVersion) (func(), error) {
-	return b.acquireSnapshotReader(SnapshotReaderInfo{
-		SnapshotVersion: version,
-		StartTime:       time.Now(),
-	})
-}
-
 func (b *BadgerEngine) effectiveMVCCPruneOptions(opts MVCCPruneOptions) MVCCPruneOptions {
 	policy := normalizeRetentionPolicy(b.retentionPolicy)
 	effective := opts
@@ -1191,15 +1184,15 @@ func (b *BadgerEngine) readLatestEntity(ctx context.Context, id string, isEdge b
 }
 
 func (b *BadgerEngine) GetEdgeVisibleAt(ctx context.Context, id EdgeID, version MVCCVersion) (*Edge, error) {
-	return readEntityAtWithView(ctx, b, id, version, mvccEntityRead{visibility: visibleRead}, b.withView, (*BadgerEngine).getEdgeAtInTxn)
+	return readEntityAtWithView(ctx, b, id, version, mvccEntityRead{visibility: visibleRead}, nil, (*BadgerEngine).getEdgeAtInTxn)
 }
 
 func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Outgoing, "", b.withView)
+	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Outgoing, "", nil)
 }
 
 func (b *BadgerEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Incoming, "", b.withView)
+	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Incoming, "", nil)
 }
 
 func (b *BadgerEngine) BatchGetNodesLatestVisible(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
@@ -1893,77 +1886,18 @@ func bootstrapMVCCFromCurrentStateInTxn[E any, ID ~string, M mvccBootstrapKind[E
 	return nil
 }
 
-func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
-	if !b.work.Enter() {
-		return 0, ErrStorageClosed
-	}
-	defer b.work.Leave()
-	if err := b.mvccPruneMu.LockContext(ctx); err != nil {
-		return 0, err
-	}
-	defer b.mvccPruneMu.Unlock()
-	if b.ActiveReaders() > 0 {
-		return 0, nil
-	}
-	effectiveOpts := b.effectiveMVCCPruneOptions(opts)
-	var deleted int64
-	for _, kind := range []byte{prefixMVCCNode, prefixMVCCEdge, prefixMVCCOutgoingAdj, prefixMVCCIncomingAdj} {
-		prefix := []byte{kind}
-		err := b.db.View(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-			defer it.Close()
-			var previous []byte
-			for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				logical, _, err := extractMVCCLogicalKeyAndVersion(it.Item().Key())
-				if err != nil {
-					return err
-				}
-				if bytes.Equal(logical, previous) {
-					continue
-				}
-				previous = append(previous[:0], logical...)
-				backoff := 50 * time.Microsecond
-				for {
-					var keyDeleted int64
-					// Ordered after the entity's acknowledged write-behind commits:
-					// one not yet applied is drained first, so the prune reads the
-					// entity's latest head (a tombstone it would reclaim may have
-					// been written over), and none lands over it afterwards.
-					err = b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(update *badger.Txn) error {
-						var pruneErr error
-						keyDeleted, pruneErr = b.pruneMVCCKeyspaceInTxn(ctx, update, previous, effectiveOpts, false)
-						return pruneErr
-					}, b.mvccLogicalEntities(previous))
-					if !errors.Is(err, badger.ErrConflict) {
-						deleted += keyDeleted
-						break
-					}
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					case <-time.After(backoff):
-					}
-					if backoff < 2*time.Millisecond {
-						backoff *= 2
-					}
-				}
-				if err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return deleted, err
-		}
-	}
-	return deleted, nil
-}
-
-func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.Txn, prefix []byte, opts MVCCPruneOptions, activeSnapshotReaders bool) (int64, error) {
+// pruneMVCCKeyspaceInTxn is the kernel that decides which version records of
+// the logical keys under prefix go. Besides the retention rules it never
+// deletes a record that any registered reader of the key's database sees
+// (readers.keepFrom), and never reclaims a tombstoned identity while such a
+// reader exists. nil readers means no reader is registered.
+//
+// It deletes up to limit version records (no bound if limit <= 0), plus the
+// final tombstone marker of an entity it reclaims; more reports that records
+// it would delete remain. A key's deletions are always
+// its oldest records, so the floor it then writes is the oldest record left,
+// and a later call decides the rest again from what is stored then.
+func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.Txn, prefix []byte, opts MVCCPruneOptions, readers *mvccPruneReaders, limit int) (int64, bool, error) {
 	optsIter := badgerIteratorOptions()
 	optsIter.Prefix = prefix
 	it := txn.NewIterator(optsIter)
@@ -1979,6 +1913,9 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 	currentGroup := make([]versionKey, 0)
 	var currentLogical []byte
 	var deleted int64
+	more := false
+	// room reports whether this call may delete one more version record.
+	room := func() bool { return limit <= 0 || deleted < int64(limit) }
 	protectedAfter := time.Time{}
 	if opts.MinRetentionAge > 0 {
 		protectedAfter = time.Now().UTC().Add(-opts.MinRetentionAge)
@@ -2006,10 +1943,32 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 			head = MVCCHead{Version: latest.version, Tombstoned: latest.tombstoned, FloorVersion: latest.version}
 		}
 
-		if head.Tombstoned && !activeSnapshotReaders && protectedAfter.IsZero() {
+		readerKeep, hasReader := len(currentGroup), false
+		if readers != nil && readers.any {
+			records := make([]MVCCVersion, len(currentGroup))
+			for i := range currentGroup {
+				records[i] = currentGroup[i].version
+			}
+			readerKeep, hasReader = readers.keepFrom(b, currentGroup[0].logical, records, head.Version)
+		}
+
+		if head.Tombstoned && !hasReader && protectedAfter.IsZero() {
 			for _, entry := range currentGroup {
 				if entry.version.Compare(head.Version) == 0 {
 					continue
+				}
+				if !room() {
+					// The rest of this key's records go in a later call;
+					// entry is the oldest record left.
+					more = true
+					if hasExternalHead && deleted > deletedBefore {
+						b.markMVCCFloorKey(currentGroup[0].logical)
+						if err := txn.Set(mvccPruneFloorKey(currentGroup[0].logical), encodeMVCCSortVersion(entry.version)); err != nil {
+							return err
+						}
+					}
+					currentGroup = currentGroup[:0]
+					return nil
 				}
 				if err := txn.Delete(entry.full); err != nil {
 					return err
@@ -2112,6 +2071,12 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 		if retainFrom < 0 {
 			retainFrom = 0
 		}
+		if readerKeep < retainFrom {
+			// Keep every record a registered reader sees, and everything
+			// newer; older records are invisible to every reader
+			// (mvccPruneReaders.keepFrom).
+			retainFrom = readerKeep
+		}
 		floorVersion := MVCCVersion{}
 		groupDeleted := false
 		for i := 0; i < maxDeleteIndex; i++ {
@@ -2132,6 +2097,15 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 					floorVersion = currentGroup[i].version
 				}
 				continue
+			}
+			if !room() {
+				// The rest of this key's records go in a later call; this
+				// one is the oldest record left.
+				more = true
+				if floorVersion.IsZero() {
+					floorVersion = currentGroup[i].version
+				}
+				break
 			}
 			if err := txn.Delete(currentGroup[i].full); err != nil {
 				return err
@@ -2155,54 +2129,33 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 	for it.Rewind(); it.Valid(); it.Next() {
 		select {
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			return 0, false, ctx.Err()
 		default:
 		}
 		key := append([]byte(nil), it.Item().Key()...)
 		logical, version, err := extractMVCCLogicalKeyAndVersion(key)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
-		var tombstoned bool
-		if err := it.Item().Value(func(val []byte) error {
-			switch prefix[0] {
-			case prefixMVCCNode:
-				record, decodeErr := decodeMVCCNodeRecord(val)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				tombstoned = record.Tombstoned
-			case prefixMVCCEdge:
-				record, decodeErr := decodeMVCCEdgeRecord(val)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				tombstoned = record.Tombstoned
-			case prefixMVCCOutgoingAdj, prefixMVCCIncomingAdj:
-				record, decodeErr := decodeMVCCAdjacencyRecord(val)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				tombstoned = record.Tombstoned
-			default:
-				return fmt.Errorf("unsupported mvcc prune prefix: %x", prefix)
-			}
-			return nil
-		}); err != nil {
-			return 0, err
+		tombstoned, err := mvccItemTombstoned(prefix[0], it.Item())
+		if err != nil {
+			return 0, false, err
 		}
 		if currentLogical != nil && !bytes.Equal(currentLogical, logical) {
 			if err := flush(); err != nil {
-				return 0, err
+				return 0, false, err
+			}
+			if more {
+				return deleted, true, nil
 			}
 		}
 		currentLogical = logical
 		currentGroup = append(currentGroup, versionKey{logical: logical, full: key, version: version, tombstoned: tombstoned})
 	}
 	if err := flush(); err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return deleted, nil
+	return deleted, more, nil
 }
 
 func (b *BadgerEngine) loadMVCCHeadForLogicalKeyInTxn(txn *badger.Txn, logical []byte) (MVCCHead, error) {

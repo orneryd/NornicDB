@@ -43,108 +43,138 @@ func (r *RoleStore) changeRole(ctx context.Context, oldName, newName string, rem
 	if !remove && (IsBuiltinRole(newName) || newName == "") {
 		return ErrRoleExists
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	// Each store's mutations are ordered by its write lock, taken in this
+	// one order, and held across the transaction below; each store's cache
+	// lock is taken only to publish after commit, so permission checks and
+	// token checks never wait for the transaction.
 	allowlist, privileges, entitlements, users := stores.Allowlist, stores.Privileges, stores.Entitlements, stores.Users
+	orders := []*recordWriteOrder{&r.writes}
 	if allowlist != nil {
-		allowlist.mu.Lock()
-		defer allowlist.mu.Unlock()
+		orders = append(orders, &allowlist.writes)
 	}
 	if privileges != nil {
-		privileges.mu.Lock()
-		defer privileges.mu.Unlock()
+		orders = append(orders, &privileges.writes)
 	}
 	if entitlements != nil {
-		entitlements.mu.Lock()
-		defer entitlements.mu.Unlock()
+		orders = append(orders, &entitlements.writes)
 	}
-	if users != nil {
-		users.mu.Lock()
-		defer users.mu.Unlock()
+	for i, order := range orders {
+		if err := order.lock(ctx); err != nil {
+			for _, held := range orders[:i] {
+				held.unlock()
+			}
+			return err
+		}
 	}
+	defer func() {
+		for _, order := range orders {
+			order.unlock()
+		}
+	}()
 	var stagedRoles *RoleStore
 	var stagedAllowlist *AllowlistStore
 	var stagedPrivileges *PrivilegesStore
 	var stagedEntitlements *RoleEntitlementsStore
 	var stagedUsers map[string]*User
-	err := WithStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
-		stagedRoles = NewRoleStore(view)
-		if err := stagedRoles.Load(ctx); err != nil {
-			return err
-		}
-		if !stagedRoles.Exists(oldName) {
-			return ErrRoleNotFound
-		}
-		if !remove && stagedRoles.Exists(newName) {
-			return ErrRoleExists
-		}
-		if allowlist != nil && !sameSystemStore(r.storage, allowlist.storage) {
-			return storage.ErrCrossNamespaceTransaction
-		}
-		if privileges != nil && !sameSystemStore(r.storage, privileges.storage) {
-			return storage.ErrCrossNamespaceTransaction
-		}
-		if entitlements != nil && !sameSystemStore(r.storage, entitlements.storage) {
-			return storage.ErrCrossNamespaceTransaction
-		}
-		if users != nil && !sameSystemStore(r.storage, users.storage) {
-			return storage.ErrCrossNamespaceTransaction
-		}
-		records, err := roleOwnedRecords(ctx, view, oldName, newName)
-		if err != nil {
-			return err
-		}
-		stagedUsers, err = applyRoleRecords(ctx, view, records, oldName, newName, remove)
-		if err != nil {
-			return err
-		}
-		delete(stagedRoles.roles, oldName)
-		if !remove {
-			stagedRoles.roles[newName] = struct{}{}
-		}
-		if allowlist != nil {
-			stagedAllowlist = NewAllowlistStore(view)
-			if err := stagedAllowlist.Load(ctx); err != nil {
+	transaction := func(ctx context.Context) error {
+		return WithStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
+			stagedRoles = NewRoleStore(view)
+			if err := stagedRoles.Load(ctx); err != nil {
 				return err
 			}
-		}
-		if privileges != nil {
-			stagedPrivileges = NewPrivilegesStore(view)
-			if err := stagedPrivileges.Load(ctx); err != nil {
+			if !stagedRoles.Exists(oldName) {
+				return ErrRoleNotFound
+			}
+			if !remove && stagedRoles.Exists(newName) {
+				return ErrRoleExists
+			}
+			if allowlist != nil && !sameSystemStore(r.storage, allowlist.storage) {
+				return storage.ErrCrossNamespaceTransaction
+			}
+			if privileges != nil && !sameSystemStore(r.storage, privileges.storage) {
+				return storage.ErrCrossNamespaceTransaction
+			}
+			if entitlements != nil && !sameSystemStore(r.storage, entitlements.storage) {
+				return storage.ErrCrossNamespaceTransaction
+			}
+			if users != nil && !sameSystemStore(r.storage, users.storage) {
+				return storage.ErrCrossNamespaceTransaction
+			}
+			records, err := roleOwnedRecords(ctx, view, oldName, newName)
+			if err != nil {
 				return err
 			}
-		}
-		if entitlements != nil {
-			stagedEntitlements = NewRoleEntitlementsStore(view)
-			if err := stagedEntitlements.Load(ctx); err != nil {
+			stagedUsers, err = applyRoleRecords(ctx, view, records, oldName, newName, remove)
+			if err != nil {
 				return err
 			}
-		}
-		return nil
-	})
+			delete(stagedRoles.roles, oldName)
+			if !remove {
+				stagedRoles.roles[newName] = struct{}{}
+			}
+			if allowlist != nil {
+				stagedAllowlist = NewAllowlistStore(view)
+				if err := stagedAllowlist.Load(ctx); err != nil {
+					return err
+				}
+			}
+			if privileges != nil {
+				stagedPrivileges = NewPrivilegesStore(view)
+				if err := stagedPrivileges.Load(ctx); err != nil {
+					return err
+				}
+			}
+			if entitlements != nil {
+				stagedEntitlements = NewRoleEntitlementsStore(view)
+				if err := stagedEntitlements.Load(ctx); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	var err error
+	if users != nil {
+		// User records are rewritten here: the transaction runs through the
+		// one user-record owner, ordered with every other user-record write
+		// and without the Authenticator's lock, which only the user
+		// publication below takes.
+		err = users.writeUserRecords(ctx, func() (userRecordChange, error) {
+			return userRecordChange{persist: transaction, publish: func() {
+				for username, user := range stagedUsers {
+					var oldRoles []Role
+					if old := users.users[username]; old != nil {
+						oldRoles = old.Roles
+					}
+					users.users[username] = user
+					users.logAudit(AuditEvent{EventType: "role_change", Username: username, UserID: user.ID, Success: true,
+						Details: fmt.Sprintf("roles changed from %v to %v", oldRoles, user.Roles)})
+				}
+			}}, nil
+		})
+	} else {
+		err = transaction(ctx)
+	}
 	if err != nil {
 		return err
 	}
+	r.mu.Lock()
 	r.roles = stagedRoles.roles
+	r.mu.Unlock()
 	if allowlist != nil {
+		allowlist.mu.Lock()
 		allowlist.allowlist = stagedAllowlist.allowlist
+		allowlist.mu.Unlock()
 	}
 	if privileges != nil {
+		privileges.mu.Lock()
 		privileges.matrix = stagedPrivileges.matrix
+		privileges.mu.Unlock()
 	}
 	if entitlements != nil {
+		entitlements.mu.Lock()
 		entitlements.entitlements = stagedEntitlements.entitlements
-	}
-	if users != nil {
-		for username, user := range stagedUsers {
-			var oldRoles []Role
-			if old := users.users[username]; old != nil {
-				oldRoles = old.Roles
-			}
-			users.users[username] = user
-			users.logAudit(AuditEvent{EventType: "role_change", Username: username, UserID: user.ID, Success: true,
-				Details: fmt.Sprintf("roles changed from %v to %v", oldRoles, user.Roles)})
-		}
+		entitlements.mu.Unlock()
 	}
 	return nil
 }
