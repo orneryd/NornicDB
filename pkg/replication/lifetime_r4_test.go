@@ -3,6 +3,7 @@ package replication
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"log/slog"
@@ -205,15 +206,12 @@ type r4StartGate struct {
 	once             sync.Once
 }
 
-func (h *r4StartGate) Enabled(context.Context, slog.Level) bool { return true }
 func (h *r4StartGate) Handle(_ context.Context, record slog.Record) error {
 	if strings.Contains(record.Message, h.needle) {
 		h.once.Do(func() { close(h.entered); <-h.release })
 	}
 	return nil
 }
-func (h *r4StartGate) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *r4StartGate) WithGroup(string) slog.Handler      { return h }
 func TestReplicationR4StartCompletionAdmission(t *testing.T) {
 	for _, spec := range []struct {
 		mode         ReplicationMode
@@ -225,7 +223,7 @@ func TestReplicationR4StartCompletionAdmission(t *testing.T) {
 			var release sync.Once
 			unblock := func() { release.Do(func() { close(gate.release) }) }
 			t.Cleanup(unblock)
-			cfg.Logger = slog.New(gate)
+			cfg.Logger = slog.New(fixtureowner.RawLogHandler(gate.Handle))
 			owner, err := NewReplicator(cfg, NewMockStorage())
 			require.NoError(t, err)
 			owner.(interface{ SetTransport(Transport) }).SetTransport(NewMockTransport())
@@ -587,7 +585,6 @@ type r4ReadLogHandler struct {
 	observed chan struct{}
 }
 
-func (h *r4ReadLogHandler) Enabled(context.Context, slog.Level) bool { return true }
 func (h *r4ReadLogHandler) Handle(_ context.Context, record slog.Record) error {
 	if strings.Contains(record.Message, h.needle) && h.fired.CompareAndSwap(false, true) {
 		h.callback()
@@ -595,15 +592,13 @@ func (h *r4ReadLogHandler) Handle(_ context.Context, record slog.Record) error {
 	}
 	return nil
 }
-func (h *r4ReadLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *r4ReadLogHandler) WithGroup(string) slog.Handler      { return h }
 func TestReplicationR4ForeignObservationReentry(t *testing.T) {
 	for _, operation := range []string{"add voter", "remove server", "inbound vote", "apply failure", "vote granted", "vote higher term", "append higher term"} {
 		t.Run(operation, func(t *testing.T) {
 			needles := map[string]string{"add voter": "Added voter", "remove server": "Removed server", "inbound vote": "Granted vote", "apply failure": "Failed to apply entry", "vote granted": "Received vote from", "vote higher term": "Stepping down: discovered higher term", "append higher term": "Stepping down: discovered higher term"}
 			handler := &r4ReadLogHandler{needle: needles[operation], observed: make(chan struct{})}
 			cfg := r4NativeConfig(ModeRaft, "")
-			cfg.Logger = slog.New(handler)
+			cfg.Logger = slog.New(fixtureowner.RawLogHandler(handler.Handle))
 			outbound := operation == "vote granted" || operation == "vote higher term" || operation == "append higher term"
 			if outbound {
 				cfg.Raft.Peers = []PeerConfig{{ID: "peer", Addr: "127.0.0.1:17001"}}

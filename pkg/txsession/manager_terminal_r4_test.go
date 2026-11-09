@@ -17,7 +17,6 @@ import (
 
 type r4TerminalLog struct{ entered, release chan struct{} }
 
-func (*r4TerminalLog) Enabled(context.Context, slog.Level) bool { return true }
 func (h *r4TerminalLog) Handle(_ context.Context, record slog.Record) error {
 	commit := false
 	record.Attrs(func(a slog.Attr) bool {
@@ -32,8 +31,6 @@ func (h *r4TerminalLog) Handle(_ context.Context, record slog.Record) error {
 	}
 	return nil
 }
-func (h *r4TerminalLog) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *r4TerminalLog) WithGroup(string) slog.Handler      { return h }
 
 func TestManagerR4TerminalRetirement(t *testing.T) {
 	for _, operation := range []string{"delete", "canceled commit", "failed commit overlaps close"} {
@@ -74,7 +71,7 @@ func TestManagerR4TerminalRetirement(t *testing.T) {
 			var once sync.Once
 			release := func() { once.Do(func() { close(gate.release) }) }
 			defer release()
-			executor.SetLogger(slog.New(gate))
+			executor.SetLogger(slog.New(fixtureowner.RawLogHandler(gate.Handle)))
 			executor.SetSlowQueryThreshold(time.Nanosecond)
 			committed := make(chan error, 1)
 			go func() {

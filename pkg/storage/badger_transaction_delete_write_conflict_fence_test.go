@@ -24,7 +24,7 @@ func TestTransactionDeletePreservesPostValidationPeerWrite(t *testing.T) {
 		for _, target := range []string{"node", "connected_node", "relationship"} {
 			t.Run(name+"/"+target, func(t *testing.T) {
 				barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-				engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(barrier)}))
+				engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(runtimeFixtureOwner.RawLogHandler(barrier.Handle))}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = engine.Close() })
 

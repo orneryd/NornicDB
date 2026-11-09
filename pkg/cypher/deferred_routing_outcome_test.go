@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,7 +17,6 @@ type cancelDeferredFrameHandler struct {
 	seen   int
 }
 
-func (h *cancelDeferredFrameHandler) Enabled(context.Context, slog.Level) bool { return true }
 func (h *cancelDeferredFrameHandler) Handle(_ context.Context, r slog.Record) error {
 	if r.Message == "slow query" {
 		h.seen++
@@ -26,8 +26,6 @@ func (h *cancelDeferredFrameHandler) Handle(_ context.Context, r slog.Record) er
 	}
 	return nil
 }
-func (h *cancelDeferredFrameHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *cancelDeferredFrameHandler) WithGroup(string) slog.Handler      { return h }
 
 // A successful stored write remains successful through every outer dispatcher.
 // A read, rollback or still-open explicit write has no committed outcome to
@@ -103,7 +101,7 @@ func TestExecuteRoutedDeferredOutcome(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			h := &cancelDeferredFrameHandler{cancel: cancel, frame: tc.frame}
-			session.SetLogger(slog.New(h))
+			session.SetLogger(slog.New(fixtureowner.RawLogHandler(h.Handle)))
 			forceSlowQueryLogging(t, session)
 			result, err := session.Execute(ctx, tc.query, tc.params)
 			t.Logf("frames=%d canceled=%t nilResult=%t err=%v", h.seen, ctx.Err() != nil, result == nil, err)

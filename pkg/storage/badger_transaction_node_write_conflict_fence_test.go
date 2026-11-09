@@ -17,7 +17,7 @@ func TestTransactionNodeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:         t.TempDir(),
 		HighPerformance: true,
-		Logger:          slog.New(barrier),
+		Logger:          slog.New(runtimeFixtureOwner.RawLogHandler(barrier.Handle)),
 	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })

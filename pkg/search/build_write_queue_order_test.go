@@ -246,9 +246,6 @@ type finalPersistGateLog struct {
 	once             sync.Once
 }
 
-func (h *finalPersistGateLog) Enabled(context.Context, slog.Level) bool { return true }
-func (h *finalPersistGateLog) WithAttrs([]slog.Attr) slog.Handler       { return h }
-func (h *finalPersistGateLog) WithGroup(string) slog.Handler            { return h }
 func (h *finalPersistGateLog) Handle(_ context.Context, r slog.Record) error {
 	if strings.Contains(r.Message, "Persist: syncing") && buildWriteCallerOnStack("finishBuildWithFinalPersist") {
 		h.once.Do(func() { close(h.entered); <-h.release })
@@ -269,7 +266,7 @@ func TestBuildOverlappingPersistedBuildsKeepTheTail(t *testing.T) {
 	gate := &finalPersistGateLog{entered: make(chan struct{}), release: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(gate.release) })
 	t.Cleanup(func() { release(); _ = svc.Close() })
-	svc.SetLogger(slog.New(gate))
+	svc.SetLogger(slog.New(fixtureowner.RawLogHandler(gate.Handle)))
 	built := make(chan error, 2)
 	go func() { built <- svc.BuildIndexes(context.Background()) }()
 	select {

@@ -10,45 +10,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWALEntriesFromDirWithSegments(t *testing.T) {
-	cleanup := config.WithWALEnabled()
-	defer cleanup()
-
-	dir := t.TempDir()
-	cfg := &WALConfig{
-		Dir:         dir,
-		SyncMode:    "none",
-		MaxEntries:  2,
-		MaxFileSize: 0,
-	}
-
-	wal, err := NewWAL(dir, cfg)
-	require.NoError(t, err)
-
-	for i := 0; i < 5; i++ {
-		node := &Node{ID: NodeID(fmt.Sprintf("test:%d", i))}
-		_, err := wal.AppendWithDatabaseReturningSeq(OpCreateNode, WALNodeData{
-			Node: node,
-			TxID: "tx-seg",
-		}, "test")
-		require.NoError(t, err)
-	}
-
-	require.NoError(t, wal.Close())
-
-	entries, err := ReadWALEntriesFromDir(t.Context(), dir)
-	require.NoError(t, err)
-	require.Len(t, entries, 5)
-
-	for i := 1; i < len(entries); i++ {
-		if entries[i].Sequence <= entries[i-1].Sequence {
-			t.Fatalf("expected ascending sequences, got %d then %d", entries[i-1].Sequence, entries[i].Sequence)
+func TestWALDirectoryReadsRetainedSegments(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	for _, missingManifest := range []bool{false, true} {
+		name := "manifest"
+		if missingManifest {
+			name = "segment scan"
 		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			wal, err := NewWAL(dir, &WALConfig{Dir: dir, SyncMode: "none", MaxEntries: 2, MaxFileSize: 0})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = wal.Close() })
+			for i := 0; i < 5; i++ {
+				_, err := wal.AppendWithDatabaseReturningSeq(OpCreateNode, WALNodeData{Node: &Node{ID: NodeID(fmt.Sprintf("test:%d", i))}, TxID: "tx-seg"}, "test")
+				require.NoError(t, err)
+			}
+			require.NoError(t, wal.Close())
+			if missingManifest {
+				require.NoError(t, os.Remove(walManifestPath(dir)))
+			}
+			entries, err := ReadWALEntriesFromDir(t.Context(), dir)
+			require.NoError(t, err)
+			require.Len(t, entries, 5)
+			for i := 1; i < len(entries); i++ {
+				require.Greater(t, entries[i].Sequence, entries[i-1].Sequence)
+			}
+			matches, err := FindWALEntriesByTxID(t.Context(), dir, "tx-seg", 0)
+			require.NoError(t, err)
+			require.Len(t, matches, 5)
+		})
 	}
-
-	matches, err := FindWALEntriesByTxID(t.Context(), dir, "tx-seg", 0)
-	require.NoError(t, err)
-	require.Len(t, matches, 5)
 }
 
 func TestReadWALEntriesFromDir_RejectsManifestPathTraversal(t *testing.T) {
@@ -181,37 +173,6 @@ func TestWALSegmentPathHelpers(t *testing.T) {
 		_, err = resolveWALSegmentPath(dir, filepath.Join(dir, "seg-1-2.wal"))
 		require.ErrorContains(t, err, "absolute")
 	})
-}
-
-func TestReadWALEntriesFromDir_FallsBackToSegmentScan(t *testing.T) {
-	cleanup := config.WithWALEnabled()
-	defer cleanup()
-
-	dir := t.TempDir()
-	cfg := &WALConfig{
-		Dir:         dir,
-		SyncMode:    "none",
-		MaxEntries:  2,
-		MaxFileSize: 0,
-	}
-
-	wal, err := NewWAL(dir, cfg)
-	require.NoError(t, err)
-
-	for i := 0; i < 5; i++ {
-		_, err := wal.AppendWithDatabaseReturningSeq(OpCreateNode, WALNodeData{
-			Node: &Node{ID: NodeID(fmt.Sprintf("scan:%d", i))},
-			TxID: "tx-scan",
-		}, "test")
-		require.NoError(t, err)
-	}
-	require.NoError(t, wal.Close())
-
-	require.NoError(t, os.Remove(walManifestPath(dir)))
-
-	entries, err := ReadWALEntriesFromDir(t.Context(), dir)
-	require.NoError(t, err)
-	require.Len(t, entries, 5)
 }
 
 func TestWALEntryRangeAndTxIDQueries(t *testing.T) {

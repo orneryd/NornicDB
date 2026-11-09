@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,9 +18,6 @@ type maintenanceTransitionLog struct {
 	once             sync.Once
 }
 
-func (h *maintenanceTransitionLog) Enabled(context.Context, slog.Level) bool { return true }
-func (h *maintenanceTransitionLog) WithAttrs([]slog.Attr) slog.Handler       { return h }
-func (h *maintenanceTransitionLog) WithGroup(string) slog.Handler            { return h }
 func (h *maintenanceTransitionLog) Handle(_ context.Context, r slog.Record) error {
 	if strings.Contains(r.Message, "[HNSW] Building from in-memory index:") {
 		h.once.Do(func() { close(h.entered); <-h.release })
@@ -45,7 +43,7 @@ func TestHNSWMaintenanceOverlaySurvivesSharedGraphTransition(t *testing.T) {
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(h.release) }) }
 	defer release()
-	svc.SetLogger(slog.New(h))
+	svc.SetLogger(slog.New(fixtureowner.RawLogHandler(h.Handle)))
 	done := make(chan error, 1)
 	go func() { done <- svc.maybeRebuildHNSW(context.Background(), 0, 1, time.Nanosecond) }()
 	select {

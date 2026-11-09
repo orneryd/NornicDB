@@ -599,12 +599,6 @@ func TestServerStopR3RepeatedStart(t *testing.T) {
 	require.NoError(t, s.WaitStopped(ctx))
 }
 
-type stopR3LogHandler struct{ fn func(slog.Record) }
-
-func (*stopR3LogHandler) Enabled(context.Context, slog.Level) bool        { return true }
-func (h *stopR3LogHandler) Handle(_ context.Context, r slog.Record) error { h.fn(r); return nil }
-func (h *stopR3LogHandler) WithAttrs([]slog.Attr) slog.Handler            { return h }
-func (h *stopR3LogHandler) WithGroup(string) slog.Handler                 { return h }
 func TestServerStopR3FailedStart(t *testing.T) {
 	s, authenticator := setupTestServer(t)
 	reserve, err := net.Listen("tcp", "127.0.0.1:0")
@@ -617,7 +611,7 @@ func TestServerStopR3FailedStart(t *testing.T) {
 	h := heimdall.NewHandler(&heimdall.Manager{}, heimdall.Config{Enabled: true, BifrostEnabled: true}, nil, nil)
 	ready := make(chan struct{})
 	var prepared sync.Once
-	s.log = slog.New(&stopR3LogHandler{fn: func(r slog.Record) {
+	s.log = slog.New(fixtureowner.RawLogHandler(func(_ context.Context, r slog.Record) error {
 		if strings.Contains(strings.ToLower(r.Message), "http/2") || strings.Contains(strings.ToLower(r.Message), "http2") {
 			prepared.Do(func() {
 				// Hold only gRPC's startup entry. The adapter still runs the real Bifrost
@@ -627,7 +621,8 @@ func TestServerStopR3FailedStart(t *testing.T) {
 				close(ready)
 			})
 		}
-	}})
+		return nil
+	}))
 	started := make(chan error, 1)
 	go func() { started <- s.Start() }()
 	select {

@@ -24,7 +24,7 @@ func TestBuildReadinessPublishedAfterSuccessfulFinalReplay(t *testing.T) {
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	reached, published := false, false
-	svc.SetLogger(slog.New(&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
+	svc.SetLogger(slog.New(fixtureowner.RawLogHandler((&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
 		svc.SetPersistenceEnabled(true)
 		svc.vectorFileStore.mu.Lock()
 		svc.vectorFileStore.writeRecord = func(file *os.File, id string, vec []float32) error {
@@ -39,7 +39,7 @@ func TestBuildReadinessPublishedAfterSuccessfulFinalReplay(t *testing.T) {
 		_, err := engine.CreateNode(t.Context(), tail)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(tail))
-	}}))
+	}}).Handle)))
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.True(t, reached)
 	require.False(t, published, "success must not publish readiness before installing the tail")
@@ -75,7 +75,7 @@ func TestBuildReadinessWaitsForOverlappingFinalSequence(t *testing.T) {
 	openSecond := sync.OnceFunc(func() { close(engine.release) })
 	t.Cleanup(openSecond)
 	t.Cleanup(openFirst)
-	svc.SetLogger(slog.New(gate))
+	svc.SetLogger(slog.New(fixtureowner.RawLogHandler(gate.Handle)))
 	first, second := make(chan error, 1), make(chan error, 1)
 	go func() { first <- svc.BuildIndexes(context.Background()) }()
 	select {

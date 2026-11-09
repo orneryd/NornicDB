@@ -24,7 +24,6 @@ type writeConflictBarrier struct {
 	once    sync.Once
 }
 
-func (h *writeConflictBarrier) Enabled(context.Context, slog.Level) bool { return true }
 func (h *writeConflictBarrier) Handle(ctx context.Context, record slog.Record) error {
 	if record.Message != "transaction committing with metadata" {
 		return nil
@@ -46,8 +45,6 @@ func (h *writeConflictBarrier) Handle(ctx context.Context, record slog.Record) e
 	}
 	return nil
 }
-func (h *writeConflictBarrier) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *writeConflictBarrier) WithGroup(string) slog.Handler      { return h }
 
 func TestTransactionEdgeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 	for _, highPerformance := range []bool{false, true} {
@@ -63,7 +60,7 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 	for _, scenario := range []string{"peer_updates_edge", "peer_deletes_edge"} {
 		t.Run(scenario, func(t *testing.T) {
 			barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(barrier)}))
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(runtimeFixtureOwner.RawLogHandler(barrier.Handle))}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
@@ -125,7 +122,7 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 
 func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *testing.T) {
 	barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: true, Logger: slog.New(barrier)}))
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: true, Logger: slog.New(runtimeFixtureOwner.RawLogHandler(barrier.Handle))}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)

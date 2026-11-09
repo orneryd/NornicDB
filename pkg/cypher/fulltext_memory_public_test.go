@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/internal/testutil/memorypressure"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -26,15 +27,13 @@ type fulltextMemoryLogs struct {
 	records []slog.Record
 }
 
-func (*fulltextMemoryLogs) Enabled(context.Context, slog.Level) bool { return true }
 func (h *fulltextMemoryLogs) Handle(_ context.Context, record slog.Record) error {
 	h.mu.Lock()
 	h.records = append(h.records, record.Clone())
 	h.mu.Unlock()
 	return nil
 }
-func (h *fulltextMemoryLogs) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *fulltextMemoryLogs) WithGroup(string) slog.Handler      { return h }
+
 func (h *fulltextMemoryLogs) matching(text string) []slog.Record {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -57,7 +56,7 @@ func fulltextMemoryPublicFixture(t *testing.T) (*StorageExecutor, *fulltextCount
 	service := search.NewService(store, search.DefaultVectorDimensions, &options)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	logs := &fulltextMemoryLogs{}
-	service.SetLogger(slog.New(logs))
+	service.SetLogger(slog.New(fixtureowner.RawLogHandler(logs.Handle)))
 	executor := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
 	executor.SetSearchServiceResolver("fulltext_fixture", func(string) *search.Service { return service })
 	_, err := executor.Execute(ctx, "CREATE FULLTEXT INDEX link_text FOR ()-[r:LINK]-() ON EACH [r.text]", nil)

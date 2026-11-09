@@ -187,14 +187,14 @@ func TestCancelledWarmupPreservesCommittedPopulationAndRetries(t *testing.T) {
 	svc.SetFulltextProperties([]string{"text"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	svc.SetLogger(slog.New(&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
+	svc.SetLogger(slog.New(fixtureowner.RawLogHandler((&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
 		n := triageNode("nornic:acknowledged")
 		_, err := e.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 		svc.SetPersistenceEnabled(true) // keep the acknowledged write in the final drain
 		require.NoError(t, svc.IndexNode(n))
 		cancel()
-	}}))
+	}}).Handle)))
 	require.ErrorIs(t, svc.BuildIndexes(ctx), context.Canceled)
 	require.False(t, svc.IsReady())
 	svc.PersistIndexesToDisk()
@@ -249,7 +249,7 @@ func TestFailedFinalReplayPreservesCommittedPopulationArtifacts(t *testing.T) {
 	svc := newSearchPersistenceTestService(t, e, dir, true)
 	svc.SetFulltextProperties([]string{"text"})
 	injected := errors.New("final replay rejected")
-	svc.SetLogger(slog.New(&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
+	svc.SetLogger(slog.New(fixtureowner.RawLogHandler((&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
 		svc.vectorFileStore.mu.Lock()
 		svc.vectorFileStore.writeRecord = func(*os.File, string, []float32) error { return injected }
 		svc.vectorFileStore.mu.Unlock()
@@ -258,7 +258,7 @@ func TestFailedFinalReplayPreservesCommittedPopulationArtifacts(t *testing.T) {
 		_, err := e.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(n))
-	}}))
+	}}).Handle)))
 	require.ErrorIs(t, svc.BuildIndexes(context.Background()), injected)
 	svc.PersistIndexesToDisk()
 	require.Equal(t, before, populationArtifactBytes(t, dir), "final replay failure published a replacement checkpoint")

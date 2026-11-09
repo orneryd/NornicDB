@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/stretchr/testify/require"
 )
@@ -40,15 +41,12 @@ type failedHealthWarningHandler struct {
 	once   sync.Once
 }
 
-func (h *failedHealthWarningHandler) Enabled(context.Context, slog.Level) bool { return true }
 func (h *failedHealthWarningHandler) Handle(_ context.Context, r slog.Record) error {
 	if r.Level == slog.LevelWarn {
 		h.once.Do(func() { close(h.warned) })
 	}
 	return nil
 }
-func (h *failedHealthWarningHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *failedHealthWarningHandler) WithGroup(string) slog.Handler      { return h }
 
 func TestEmbedderFailedHealthClosesBeforeBackoff(t *testing.T) {
 	for _, provider := range []string{"local", "openai"} {
@@ -58,7 +56,7 @@ func TestEmbedderFailedHealthClosesBeforeBackoff(t *testing.T) {
 				s.embedderRetryInitialBackoff = time.Hour
 				s.embedderRetryMaxBackoff = time.Hour
 				warned := make(chan struct{})
-				s.log = slog.New(&failedHealthWarningHandler{warned: warned})
+				s.log = slog.New(fixtureowner.RawLogHandler((&failedHealthWarningHandler{warned: warned}).Handle))
 				e := &failedHealthOwnedEmbedder{
 					countingEmbedder: countingEmbedder{dims: 4},
 					stop:             make(chan struct{}),

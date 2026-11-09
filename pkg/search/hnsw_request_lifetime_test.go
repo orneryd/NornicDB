@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -17,9 +18,6 @@ type reviewerR4BuildLog struct {
 	calls            atomic.Int32
 }
 
-func (h *reviewerR4BuildLog) Enabled(context.Context, slog.Level) bool { return true }
-func (h *reviewerR4BuildLog) WithAttrs([]slog.Attr) slog.Handler       { return h }
-func (h *reviewerR4BuildLog) WithGroup(string) slog.Handler            { return h }
 func (h *reviewerR4BuildLog) Handle(_ context.Context, r slog.Record) error {
 	if strings.Contains(r.Message, "[HNSW]") && strings.Contains(r.Message, "Building from") {
 		if h.calls.Add(1) == 1 {
@@ -39,7 +37,7 @@ func TestReviewerR4RequestCancellationDoesNotRestartHNSW(t *testing.T) {
 	svc := NewService(engine, 3, nil)
 	svc.SetRuntimeStrategyTransitionsEnabled(false)
 	gate := &reviewerR4BuildLog{started: make(chan struct{}), release: make(chan struct{})}
-	svc.SetLogger(slog.New(gate))
+	svc.SetLogger(slog.New(fixtureowner.RawLogHandler(gate.Handle)))
 	opened := false
 	t.Cleanup(func() {
 		if !opened {

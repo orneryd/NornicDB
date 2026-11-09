@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/server"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ func openPR1655ProtocolFixture(t *testing.T, writeBehind ...bool) (*server.Serve
 	fault := &pr1655ExecuteFault{}
 	f := openProtocolServerFixture(t, protocolServerOptions{
 		writeBehind: len(writeBehind) > 0 && writeBehind[0],
-		logger:      slog.New(&pr1655ExecuteHandler{fault: fault, next: slog.DiscardHandler}),
+		logger:      slog.New(fixtureowner.RawLogHandler((&pr1655ExecuteHandler{fault: fault, next: slog.DiscardHandler}).Handle)),
 	})
 	fault.engine = f.engine
 	t.Cleanup(func() { fault.restore(t) })

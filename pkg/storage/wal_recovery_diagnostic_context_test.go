@@ -46,8 +46,6 @@ type walDiagnosticRecorder struct {
 	captured []capturedWALDiagnostic
 }
 
-func (r *walDiagnosticRecorder) Enabled(context.Context, slog.Level) bool { return true }
-
 func (r *walDiagnosticRecorder) Handle(ctx context.Context, record slog.Record) error {
 	captured := capturedWALDiagnostic{
 		ctx:   ctx,
@@ -65,24 +63,14 @@ func (r *walDiagnosticRecorder) Handle(ctx context.Context, record slog.Record) 
 	return nil
 }
 
-// WithAttrs and WithGroup return the recorder itself: the recovery owner emits
-// through LogAttrs with no pre-bound attributes or open group, so neither may
-// hide a record from the assertions.
-func (r *walDiagnosticRecorder) WithAttrs([]slog.Attr) slog.Handler { return r }
-func (r *walDiagnosticRecorder) WithGroup(string) slog.Handler      { return r }
-
-func (r *walDiagnosticRecorder) logger() *slog.Logger { return slog.New(r) }
-
-func (r *walDiagnosticRecorder) records() []capturedWALDiagnostic {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]capturedWALDiagnostic(nil), r.captured...)
+func (r *walDiagnosticRecorder) logger() *slog.Logger {
+	return slog.New(fixtureowner.RawLogHandler(r.Handle))
 }
 
 // byEventID returns every record carrying the supplied stable event_id.
 func (r *walDiagnosticRecorder) byEventID(id localization.EventID) []capturedWALDiagnostic {
 	var matched []capturedWALDiagnostic
-	for _, record := range r.records() {
+	for _, record := range fixtureowner.Snapshot(&r.mu, &r.captured) {
 		if record.attrs["event_id"] == string(id) {
 			matched = append(matched, record)
 		}
@@ -101,7 +89,7 @@ func walReadDiagnostics(t *testing.T, content []byte) (entries []WALEntry, err e
 	// Approved reader/recovery context migration: this read takes operationCtx
 	// as its first argument. The recovery diagnostics below are emitted from the
 	// same owner, so their record must carry that operation context.
-	entries, err = ReadWALEntries(operationCtx, path, recorder.logger())
+	entries, err = ReadWALEntries(operationCtx, path, slog.New(fixtureowner.RawLogHandler(recorder.Handle)))
 	return entries, err, recorder, operationCtx
 }
 
@@ -138,7 +126,7 @@ func TestWALRecoveryDiagnosticContextCarriesOperationContext(t *testing.T) {
 		entries, err, recorder, _ := walReadDiagnostics(t, valid)
 		require.NoError(t, err, "a readable WAL is not an error")
 		require.Len(t, entries, 1)
-		require.Empty(t, recorder.records(), "a complete WAL emits no recovery diagnostic")
+		require.Empty(t, fixtureowner.Snapshot(&recorder.mu, &recorder.captured), "a complete WAL emits no recovery diagnostic")
 	})
 
 	t.Run("torn tail carries the operation context", func(t *testing.T) {
@@ -190,7 +178,7 @@ func TestWALRecoveryDiagnosticContextCarriesOperationContext(t *testing.T) {
 
 		_, err, recorder, _ := walReadDiagnostics(t, unsupported)
 		require.ErrorIs(t, err, ErrWALUnsupportedVersion)
-		require.Empty(t, recorder.records(), "a refused format is an error, not a recovery diagnostic")
+		require.Empty(t, fixtureowner.Snapshot(&recorder.mu, &recorder.captured), "a refused format is an error, not a recovery diagnostic")
 	})
 }
 
@@ -202,7 +190,7 @@ func TestWALDiagnosticEmitterPreservesOperationContext(t *testing.T) {
 	recorder := &walDiagnosticRecorder{}
 	operationCtx := walDiagnosticOperationContext(t.Context())
 
-	logStorageEvent(operationCtx, recorder.logger(), slog.LevelWarn, localization.StorageWALIncompleteWriteEvent())
+	logStorageEvent(operationCtx, slog.New(fixtureowner.RawLogHandler(recorder.Handle)), slog.LevelWarn, localization.StorageWALIncompleteWriteEvent())
 
 	matched := recorder.byEventID(localization.EventStorageWALIncompleteWrite)
 	require.Len(t, matched, 1)
