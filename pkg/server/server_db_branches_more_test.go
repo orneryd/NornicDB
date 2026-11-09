@@ -30,7 +30,11 @@ func TestHandleImplicitTransaction_AdditionalPermissionAndStatusBranches(t *test
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		require.NotEmpty(t, resp.Errors)
 		require.Equal(t, "Neo.ClientError.Security.Forbidden", resp.Errors[0].Code)
-		require.Contains(t, resp.Errors[0].Message, "Write operations require write permission")
+		require.Equal(t, "Access to database 'nornic' is not allowed.", resp.Errors[0].Message)
+		require.Empty(t, resp.Results)
+		nodes, err := server.db.GetStorage().GetNodesByLabel(t.Context(), "PermCov")
+		require.NoError(t, err)
+		require.Empty(t, nodes, "an unattributed request must stop before mutation")
 	})
 
 	t.Run("mutation denied when role has no write privilege", func(t *testing.T) {
