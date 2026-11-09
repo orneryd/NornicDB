@@ -6308,8 +6308,17 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 	}
 	// The shared builder can return an already-published graph. Replay is a
 	// live mutation: validate captured sources and exclude source retirement
-	// and newer writes before touching either HNSW or GPU state.
-	lastSeq := s.replayTransitionDeltas(targetHNSW, target, vi, vfs, 0)
+	// and newer writes before touching either HNSW or GPU state. A graph that
+	// already serves holds every logged change (its construction applied the
+	// recorded ones before publication, live writes reached it after), so
+	// replaying the log into it would only re-insert them while writers wait.
+	replayHNSW := targetHNSW
+	s.hnswMu.RLock()
+	if replayHNSW != nil && replayHNSW == s.servingHNSW() {
+		replayHNSW = nil
+	}
+	s.hnswMu.RUnlock()
+	lastSeq := s.replayTransitionDeltas(replayHNSW, target, vi, vfs, 0)
 	s.applyTransitionSwapLocked(target, targetHNSW, vi, vfs)
 	// Every production delta append owns indexMu, so no later mutation can
 	// enter this interval; one replay covers the complete pre-swap log.
