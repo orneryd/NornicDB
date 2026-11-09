@@ -18,6 +18,7 @@ func TestNeo4jStatusDeadlineIsTransactionTimeout(t *testing.T) {
 	}{
 		{ErrDatabaseQueryTimeLimit, TransactionTimedOut, TransactionTimedOutMessage},
 		{ErrServerStatementTimeout, TransactionTimedOut, TransactionTimedOutMessage},
+		{ErrServerTransactionTimeout, TransactionTimedOut, TransactionTimedOutMessage},
 		{ErrClientTransactionTimeout, TransactionTimedOutClientConfiguration, TransactionTimedOutClientConfigurationMessage},
 		{fmt.Errorf("wrapped: %w", ErrDatabaseQueryTimeLimit), TransactionTimedOut, TransactionTimedOutMessage},
 	} {

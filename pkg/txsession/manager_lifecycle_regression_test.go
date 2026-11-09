@@ -197,6 +197,8 @@ func TestManagerAcquireExpiredSessionRejectsAndExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The session retires only a transaction its end owner has ended.
+	endTransactionThroughOwner(t, session)
 	expires := session.ExpiresAt()
 	manager.nowFunc = func() time.Time { return expires.Add(time.Nanosecond) }
 	if lease, ok := manager.AcquireForOwner(session.ID, ""); ok || lease != nil {

@@ -12,7 +12,13 @@ import (
 )
 
 func TestOwnerClassSessionReleaseIdleExpiry(t *testing.T) {
-	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	// The idle transaction ends at its configured transaction timeout (its
+	// end owner, NOR-284); the session expiry then retires the session.
+	engine, err := fixtureowner.TrackResult[*storage.MemoryEngine](t, storage.ErrStorageClosed)(storage.NewMemoryEngineWithOptions(storage.BadgerOptions{
+		EngineOptions: storage.EngineOptions{LockWait: storage.LockWaitOptions{Timeout: 20 * time.Millisecond}},
+	}))
+	require.NoError(t, err)
+	fixtureowner.Own(t, engine)
 	defer engine.Close()
 	var executor *cypher.StorageExecutor
 	m := NewManager(20*time.Millisecond, func(string) (*cypher.StorageExecutor, error) {

@@ -101,6 +101,32 @@ func holdHTTPKeys(t *testing.T, server *Server, token string, keys ...string) *h
 	return holder
 }
 
+// keepBusy keeps the holder's transaction working, with a statement every
+// interval, until the returned stop: an HTTP client has no transaction
+// timeout of its own, and a holder idle for the server's transaction timeout
+// is ended by it (NOR-284 follow-up), so a test of the waiter's bound keeps
+// its holder busy.
+func (h *httpKeyHolder) keepBusy(interval time.Duration) (stop func()) {
+	done, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				_ = postMerge(h.t, h.server, h.token, strings.TrimSuffix(h.commit, "/commit"), "RETURN 1", nil)
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
+	}
+}
+
 func (h *httpKeyHolder) run(query string, params map[string]any) []any {
 	return postMerge(h.t, h.server, h.token, strings.TrimSuffix(h.commit, "/commit"), query, params)
 }
@@ -223,10 +249,13 @@ func TestHTTPMergeKeyWaitEndsAtTransactionTimeout(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		held, free := fmt.Sprintf("held-%v", explicit), fmt.Sprintf("free-%v", explicit)
 		holder := holdHTTPKeys(t, server, token, held)
+		stopBusy := holder.keepBusy(timeout / 5)
 		log.reset()
 		result := awaitHTTPKeyWaiter(t, startHTTPKeyWaiter(context.Background(), t, server, token, explicit, "UNWIND [$free, $held] AS k MERGE (n:Doc {id: k})", map[string]any{"free": free, "held": held}), func() {
+			stopBusy()
 			holder.end(false)
 		})
+		stopBusy()
 		requireHTTPCode(t, result.errs, "Neo.ClientError.Transaction.TransactionTimedOut", "explicit=%v", explicit)
 		require.GreaterOrEqual(t, result.elapsed, timeout, "explicit=%v", explicit)
 		require.Less(t, result.elapsed, timeout+5*time.Second, "explicit=%v", explicit)
@@ -341,8 +370,10 @@ func TestHTTPMergeKeyDeadlockFailsOneSide(t *testing.T) {
 func TestHTTPMergeKeyTimeoutEndsTheTransactionWithoutClientCleanup(t *testing.T) {
 	server, token, _ := setupKeyWaitServer(t, 200*time.Millisecond, 0)
 	holder := holdHTTPKeys(t, server, token, "held")
+	stopBusy := holder.keepBusy(40 * time.Millisecond)
 	waiter := holdHTTPKeys(t, server, token)
 	requireHTTPCode(t, waiter.run("MERGE (n:Doc {id: 'held'})", nil), "Neo.ClientError.Transaction.TransactionTimedOut")
+	stopBusy()
 	require.Empty(t, holder.end(false))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)

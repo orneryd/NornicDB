@@ -37,8 +37,11 @@ func TestMergeKeyWaitEndsAtTransactionTimeoutOnEveryRoute(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	// The holder sets its own transaction timeout, which replaces the
+	// server's: it stays idle across every wait without being ended by the
+	// server's transaction timeout (NOR-284 follow-up, transactionEnd).
 	holder := NewStorageExecutor(store)
-	_, err = holder.Execute(ctx, "BEGIN", nil)
+	_, err = holder.Execute(WithClientTransactionTimeout(ctx), "BEGIN", nil)
 	require.NoError(t, err)
 	_, err = holder.Execute(ctx, "MERGE (w:W {k: 1}) RETURN w.k", nil)
 	require.NoError(t, err)
@@ -83,7 +86,9 @@ func TestMergeKeyWaitEndsAtTransactionTimeoutOnEveryRoute(t *testing.T) {
 
 // mergeKeyWaitExecutors returns executors on an engine whose MERGE key waits
 // end at timeout, with a UNIQUE constraint on (:U {k}): setup, and holder and
-// waiter in explicit transactions, holder holding k = 1.
+// waiter in explicit transactions, holder holding k = 1. Both transactions
+// set their own timeout, which replaces the server's, so neither is ended
+// for staying idle (transactionEnd): these tests are about the wait.
 func mergeKeyWaitExecutors(t *testing.T, timeout time.Duration) (setup, holder, waiter *StorageExecutor) {
 	t.Helper()
 	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
@@ -98,7 +103,7 @@ func mergeKeyWaitExecutors(t *testing.T, timeout time.Duration) (setup, holder, 
 	_, err = setup.Execute(t.Context(), "CREATE CONSTRAINT u_k FOR (n:U) REQUIRE n.k IS UNIQUE", nil)
 	require.NoError(t, err)
 	for _, exec := range []*StorageExecutor{holder, waiter} {
-		_, err = exec.Execute(t.Context(), "BEGIN", nil)
+		_, err = exec.Execute(WithClientTransactionTimeout(t.Context()), "BEGIN", nil)
 		require.NoError(t, err)
 		t.Cleanup(func() { _, _ = exec.Execute(context.Background(), "ROLLBACK", nil) })
 	}

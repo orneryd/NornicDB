@@ -3324,6 +3324,12 @@
       "pos": "pkg/storage/commit_buffer.go:753"
     },
     {
+      "field": "pkg/storage.CompositeEngine.transactionTimeout",
+      "class": "configuration",
+      "func": "pkg/storage.CompositeEngine.SetServerTransactionTimeout",
+      "pos": "pkg/storage/composite_engine.go:1793"
+    },
+    {
       "field": "pkg/storage.CountStoreRead.Count",
       "class": "count-store read answer (detached result value)",
       "func": "pkg/storage.BadgerEngine.readCountStoreSnapshot$1",
@@ -3858,22 +3864,28 @@
       "pos": "pkg/storage/schema_property_index_snapshot.go:257"
     },
     {
-      "field": "pkg/storage.remoteCypherTx.resolvedMode",
-      "class": "resolved remote query mode",
-      "func": "pkg/storage.remoteCypherTx.QueryCypher",
-      "pos": "pkg/storage/remote_engine.go:674"
+      "field": "pkg/storage.remoteCypherTx.leaseEvery",
+      "class": "remote transaction lease renewal interval",
+      "func": "pkg/storage.RemoteEngine.BeginCypherTx",
+      "pos": "pkg/storage/remote_engine.go:1619"
     },
     {
       "field": "pkg/storage.remoteCypherTx.resolvedMode",
       "class": "resolved remote query mode",
       "func": "pkg/storage.remoteCypherTx.QueryCypher",
-      "pos": "pkg/storage/remote_engine.go:696"
+      "pos": "pkg/storage/remote_engine.go:712"
     },
     {
       "field": "pkg/storage.remoteCypherTx.resolvedMode",
       "class": "resolved remote query mode",
       "func": "pkg/storage.remoteCypherTx.QueryCypher",
-      "pos": "pkg/storage/remote_engine.go:709"
+      "pos": "pkg/storage/remote_engine.go:734"
+    },
+    {
+      "field": "pkg/storage.remoteCypherTx.resolvedMode",
+      "class": "resolved remote query mode",
+      "func": "pkg/storage.remoteCypherTx.QueryCypher",
+      "pos": "pkg/storage/remote_engine.go:747"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",

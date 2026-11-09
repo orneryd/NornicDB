@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 	"github.com/stretchr/testify/require"
 )
@@ -95,7 +96,11 @@ func (b *lifecycleGatedBody) Close() error { return nil }
 func TestHTTPExpiryDuringRequestBodyDecodeReturnsNotFound(t *testing.T) {
 	for _, endpoint := range []string{"run", "commit"} {
 		t.Run(endpoint, func(t *testing.T) {
-			s, authenticator := setupTestServer(t)
+			// The transaction's end follows the configured transaction timeout
+			// (its end owner, NOR-284); the session expiry retires it after.
+			s, authenticator := setupTestServerWithDatabaseConfig(t, func(config *nornicdb.Config) {
+				config.Database.TransactionTimeout = 300 * time.Millisecond
+			}, nil)
 			t.Cleanup(func() { _ = s.Stop(context.Background()) })
 			s.txSessions = txsession.NewManager(300*time.Millisecond, s.newExecutorForDatabase, t.Context())
 			token := "Bearer " + getAuthToken(t, authenticator, "admin")

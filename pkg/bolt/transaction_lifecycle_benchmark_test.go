@@ -24,7 +24,7 @@ func BenchmarkTransactionLifecycleNoTimeout(b *testing.B) {
 		b.Run(benchmark.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				timeout, err := validateTransactionTimeout(benchmark.metadata)
+				timeout, _, err := validateTransactionTimeout(benchmark.metadata)
 				if err != nil {
 					b.Fatal(err)
 				}

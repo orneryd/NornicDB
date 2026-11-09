@@ -22,6 +22,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 	"github.com/stretchr/testify/require"
@@ -1891,7 +1892,11 @@ func TestHTTPExplicitTransactionEndsOnStatementError(t *testing.T) {
 
 // Idle HTTP transactions expire and roll back, as they do in Neo4j's HTTP API.
 func TestHTTPExplicitTransactionExpiresWhenIdle(t *testing.T) {
-	server, authenticator := setupTestServer(t)
+	// The transaction's end follows the configured transaction timeout (its
+	// end owner, NOR-284); the session expiry then retires the ended session.
+	server, authenticator := setupTestServerWithDatabaseConfig(t, func(config *nornicdb.Config) {
+		config.Database.TransactionTimeout = 3 * time.Second
+	}, nil)
 	server.txSessions = txsession.NewManager(3*time.Second, server.newExecutorForDatabase, t.Context())
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
 	post := func(path string, statements ...string) (int, TransactionResponse) {
@@ -1920,7 +1925,9 @@ func TestHTTPExplicitTransactionExpiresWhenIdle(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Empty(t, active.Errors)
 
-	time.Sleep(3500 * time.Millisecond)
+	// Ended at the 3 s timeout; retired by the session expiry at most one
+	// expiry interval later.
+	time.Sleep(6500 * time.Millisecond)
 	status, expired := post(txPath, "RETURN 2 AS two")
 	require.Equal(t, http.StatusNotFound, status)
 	require.Equal(t, "Neo.ClientError.Transaction.TransactionNotFound", expired.Errors[0].Code)
