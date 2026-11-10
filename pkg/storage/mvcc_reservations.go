@@ -42,20 +42,36 @@ import (
 // snapshot and prefix hold only what was published when they were taken.
 //
 // The ledger is small: a write holds its reservation for the length of its
-// own commit, and a published entry outlives it only while a cut is in
-// progress. A writer reserves one version (byTxn); the rare writer that
-// reserves more, a replay of several recovered commits or a bootstrap,
-// keeps the rest in more. The copy a cut takes (mvccCut) is nil when the
-// ledger is empty, the common case, and pooled otherwise, so neither the
-// uncontended path nor a contended BEGIN allocates for it.
+// own commit, and a published entry outlives it only until the cuts that
+// were in progress when it was published have taken their copies. Cuts are
+// numbered as they start, and a published version records how many had
+// started, so it is dropped as soon as the oldest cut in progress started
+// after it: BEGINs that keep overlapping retain only what their own windows
+// need, and a cut copies only the in-flight versions and the ones published
+// since it started. A writer reserves one version (byTxn); the rare writer
+// that reserves more, a replay of several recovered commits or a bootstrap,
+// keeps the rest in more. The copy a cut takes (mvccCut) is nil when it holds
+// nothing, the common case, and pooled otherwise, so neither the uncontended
+// path nor a contended BEGIN allocates for it.
+//
+// BenchmarkNOR213ContendedNodeUpdate (16 auto-commit writers, 2 CPUs):
+// before, the ledger kept every version published while any cut was in
+// progress and each BEGIN iterated it under the lock, which was 99% of the
+// mutex wait of contended writers.
 type mvccReservations struct {
-	mu             sync.Mutex
-	byTxn          map[*badger.Txn]mvccReservation
-	more           map[*badger.Txn][]mvccReservation
-	entries        map[string]map[uint64]struct{}
-	count          int
-	cutsInProgress int
-	retiring       []mvccReservation
+	mu    sync.Mutex
+	byTxn map[*badger.Txn]mvccReservation
+	more  map[*badger.Txn][]mvccReservation
+	// inflight are the reserved, unpublished versions; at is each one's
+	// position, so a publication removes it without a search.
+	inflight []mvccReservation
+	at       map[mvccReservation]int
+	// published are the versions published while a cut was in progress,
+	// oldest first, each with the number of cuts started by then.
+	published []publishedReservation
+	// cuts are the numbers of the cuts in progress; cutsStarted numbers them.
+	cuts        []uint64
+	cutsStarted uint64
 	// lastCutNanos is the wall clock of the latest cut; a version reserved
 	// afterwards takes at least that time.
 	lastCutNanos int64
@@ -64,6 +80,13 @@ type mvccReservations struct {
 type mvccReservation struct {
 	namespace string
 	sequence  uint64
+}
+
+// publishedReservation is a version published after cut number cut started
+// (and after every earlier one): those cuts' snapshots may not hold it.
+type publishedReservation struct {
+	mvccReservation
+	cut uint64
 }
 
 // mvccCut is a cut's copy of the ledger: the versions unpublished at the
@@ -129,22 +152,17 @@ func (r *mvccReservations) reserve(txn *badger.Txn, namespace string, state *nam
 }
 
 func (r *mvccReservations) enterLocked(txn *badger.Txn, namespace string, sequence uint64) {
-	if r.entries == nil {
-		r.entries = make(map[string]map[uint64]struct{})
-	}
-	sequences := r.entries[namespace]
-	if sequences == nil {
-		sequences = make(map[uint64]struct{})
-		r.entries[namespace] = sequences
-	}
-	if _, present := sequences[sequence]; !present {
-		sequences[sequence] = struct{}{}
-		r.count++
+	reservation := mvccReservation{namespace: namespace, sequence: sequence}
+	if _, present := r.at[reservation]; !present {
+		if r.at == nil {
+			r.at = make(map[mvccReservation]int)
+		}
+		r.at[reservation] = len(r.inflight)
+		r.inflight = append(r.inflight, reservation)
 	}
 	if txn == nil {
 		return
 	}
-	reservation := mvccReservation{namespace: namespace, sequence: sequence}
 	if r.byTxn == nil {
 		r.byTxn = make(map[*badger.Txn]mvccReservation)
 	}
@@ -186,40 +204,46 @@ func (r *mvccReservations) publishTxn(txn *badger.Txn) {
 	}
 }
 
-// retireLocked removes a published version, or holds it for the cuts in
-// progress, which still have to copy it.
+// retireLocked removes a published version from the in-flight versions, and
+// keeps it for the cuts in progress, which still have to copy it.
 func (r *mvccReservations) retireLocked(reservation mvccReservation) {
-	sequences := r.entries[reservation.namespace]
-	if sequences == nil {
+	position, present := r.at[reservation]
+	if !present {
 		return
 	}
-	if _, present := sequences[reservation.sequence]; !present {
-		return
+	last := len(r.inflight) - 1
+	if position != last {
+		moved := r.inflight[last]
+		r.inflight[position] = moved
+		r.at[moved] = position
 	}
-	if r.cutsInProgress > 0 {
-		r.retiring = append(r.retiring, reservation)
-		return
+	r.inflight[last] = mvccReservation{}
+	r.inflight = r.inflight[:last]
+	delete(r.at, reservation)
+	if len(r.cuts) > 0 {
+		r.published = append(r.published, publishedReservation{mvccReservation: reservation, cut: r.cutsStarted})
 	}
-	delete(sequences, reservation.sequence)
-	r.count--
 }
 
-// cutStarted announces a cut: from here until cutTaken, published versions
-// stay in the ledger.
-func (r *mvccReservations) cutStarted() {
+// cutStarted announces a cut and returns its number: from here until its
+// cutTaken (or cutAbandoned), the versions published stay in the ledger.
+func (r *mvccReservations) cutStarted() uint64 {
 	r.mu.Lock()
-	r.cutsInProgress++
+	r.cutsStarted++
+	cut := r.cutsStarted
+	r.cuts = append(r.cuts, cut)
 	r.mu.Unlock()
+	return cut
 }
 
-// cutTaken ends a cut announced by cutStarted: under the ledger's lock it
+// cutTaken ends the cut cutStarted numbered: under the ledger's lock it
 // takes the cut's wall clock (never earlier than the previous cut's), reads
 // the logical boundary through readBoundary at that clock and copies the
-// ledger, so no version is in the boundary without being in the copy or
-// published. The copy is nil when the ledger is empty, the common case. The
-// last cut in progress removes the versions published meanwhile. A boundary
-// read error ends the cut without a copy.
-func (r *mvccReservations) cutTaken(readBoundary func(now time.Time) (map[string]MVCCVersion, error)) (time.Time, map[string]MVCCVersion, *mvccCut, error) {
+// in-flight versions and the ones published since the cut started, so no
+// version is in the boundary without being in the copy or published before
+// the cut. The copy is nil when it holds nothing, the common case. A
+// boundary read error ends the cut without a copy.
+func (r *mvccReservations) cutTaken(cut uint64, readBoundary func(now time.Time) (map[string]MVCCVersion, error)) (time.Time, map[string]MVCCVersion, *mvccCut, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now().UTC()
@@ -230,43 +254,64 @@ func (r *mvccReservations) cutTaken(readBoundary func(now time.Time) (map[string
 	}
 	boundary, err := readBoundary(now)
 	if err != nil {
-		r.endCutLocked()
+		r.endCutLocked(cut)
 		return now, nil, nil, err
 	}
-	var cut *mvccCut
-	if r.count > 0 {
-		cut = mvccCutPool.Get().(*mvccCut)
-		for namespace, sequences := range r.entries {
-			for sequence := range sequences {
-				cut.entries = append(cut.entries, mvccReservation{namespace: namespace, sequence: sequence})
-			}
+	// published is ordered by cut number: this cut's versions are its tail.
+	since := len(r.published)
+	for since > 0 && r.published[since-1].cut >= cut {
+		since--
+	}
+	var copied *mvccCut
+	if len(r.inflight) > 0 || since < len(r.published) {
+		copied = mvccCutPool.Get().(*mvccCut)
+		copied.entries = append(copied.entries, r.inflight...)
+		for i := since; i < len(r.published); i++ {
+			copied.entries = append(copied.entries, r.published[i].mvccReservation)
 		}
 	}
-	r.endCutLocked()
-	return now, boundary, cut, nil
+	r.endCutLocked(cut)
+	return now, boundary, copied, nil
 }
 
-// cutAbandoned ends a cut announced by cutStarted that takes no copy.
-func (r *mvccReservations) cutAbandoned() {
+// cutAbandoned ends the cut cutStarted numbered without a copy.
+func (r *mvccReservations) cutAbandoned(cut uint64) {
 	r.mu.Lock()
-	r.endCutLocked()
+	r.endCutLocked(cut)
 	r.mu.Unlock()
 }
 
-func (r *mvccReservations) endCutLocked() {
-	if r.cutsInProgress > 0 {
-		r.cutsInProgress--
+// endCutLocked ends cut and drops the published versions no cut still in
+// progress needs: the ones published before the oldest of them started.
+func (r *mvccReservations) endCutLocked(cut uint64) {
+	oldest := uint64(0)
+	for i := 0; i < len(r.cuts); {
+		if r.cuts[i] == cut {
+			r.cuts[i] = r.cuts[len(r.cuts)-1]
+			r.cuts = r.cuts[:len(r.cuts)-1]
+			cut = 0
+			continue
+		}
+		if oldest == 0 || r.cuts[i] < oldest {
+			oldest = r.cuts[i]
+		}
+		i++
 	}
-	if r.cutsInProgress > 0 || len(r.retiring) == 0 {
+	if len(r.published) == 0 {
 		return
 	}
-	for _, reservation := range r.retiring {
-		if sequences := r.entries[reservation.namespace]; sequences != nil {
-			if _, present := sequences[reservation.sequence]; present {
-				delete(sequences, reservation.sequence)
-				r.count--
-			}
-		}
+	if oldest == 0 {
+		clear(r.published)
+		r.published = r.published[:0]
+		return
 	}
-	r.retiring = r.retiring[:0]
+	drop := 0
+	for drop < len(r.published) && r.published[drop].cut < oldest {
+		drop++
+	}
+	if drop > 0 {
+		kept := copy(r.published, r.published[drop:])
+		clear(r.published[kept:])
+		r.published = r.published[:kept]
+	}
 }

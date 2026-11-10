@@ -162,10 +162,15 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 		return err
 	} else {
 		c.version = version
-		// The version is published at the acknowledgement below, or
-		// abandoned if the commit fails before it, whichever ends this call.
-		defer tx.engine.mvccReservations.publishTxn(tx.badgerTx)
 	}
+	// The version is published at the acknowledgement below, or abandoned
+	// here if the commit fails before it: one ledger round trip either way.
+	acknowledged := false
+	defer func() {
+		if !acknowledged {
+			tx.engine.mvccReservations.publishTxn(tx.badgerTx)
+		}
+	}()
 	c.counterNodeMax, c.counterEdgeMax = tx.engine.idDict.flushTxnCounters(tx.badgerTx)
 	c.idEntries = tx.engine.idDict.takeTxnCommitting(tx.badgerTx)
 	// A rejected pre-WAL commit drops entries that no other transaction adopted.
@@ -256,7 +261,8 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 		tx.bufferedStagingTransferred = true
 		states := tx.engine.writeBehind.AppendCommit(c)
 		// Acknowledged: the commit's version is published to every later cut.
-		tx.engine.mvccReservations.publish(c.namespace, c.version.CommitSequence)
+		tx.engine.mvccReservations.publishTxn(tx.badgerTx)
+		acknowledged = true
 		// Claims follow logical visibility, not the later materialization of
 		// historical images. Entity/value authority remains held until return.
 		// A concurrent flusher never republishes these normal ACK-time claims.
