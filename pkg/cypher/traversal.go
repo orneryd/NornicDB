@@ -378,7 +378,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if len(seedNodes) > 0 {
 		optimizedStartNodes = seedNodes
 		usedPropertyIndex = true
-	} else if whereClause != "" && !endBound {
+	} else if !endBound && (whereClause != "" || !matches.IsChained && len(matches.StartNode.properties) > 0) {
 		// The start node's candidates come from the one node-pattern access
 		// decision (collectPipelineIndexedNodeCandidates): an id seek, or the
 		// most selective of the WHERE's and the start pattern's own indexed
@@ -411,25 +411,16 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// prune each path prefix as soon as they can be decided on it.
 	matches.pruneWhere = whereClause
 
-	// With neither end bound, the end node's candidates come from the same
-	// access decision as the start node's. The traversal starts from the end
-	// when an index answers it with fewer nodes than the start side's, or when
-	// only the end side has an index answer (NOR-160): a pattern such as
-	// (d:Doc)-[:MENTIONS]->(e:Entity {id: $id}) walks back from the one Entity
-	// instead of scanning every Doc.
+	// Only unbound, single-segment traversals choose their orientation here.
+	// Index availability alone says nothing about adjacency expansion cost.
 	if len(seedNodes) == 0 && len(endSeedNodes) == 0 && !matches.IsChained && matches.pinnedRelationship == nil {
-		endPattern := matches.EndNode
-		endConstrained := len(endPattern.properties) > 0 || endPattern.variable != "" && whereClause != "" && referencesVariable(whereClause, endPattern.variable)
-		if endConstrained && !(usedPropertyIndex && len(optimizedStartNodes) <= 1) {
-			endNodes, _, endIndexed, idxErr := e.collectPipelineIndexedNodeCandidates(ctx, endPattern, whereClause, pipelineMatchPhysicalHint{})
-			if idxErr != nil {
-				return nil, idxErr
-			}
-			if endIndexed && (!usedPropertyIndex || len(endNodes) < len(optimizedStartNodes)) {
-				// An empty answer decides the pattern: no path ends anywhere.
-				endSeedNodes = endNodes
-				optimizedStartNodes, startDecided = nil, len(endNodes) == 0
-			}
+		endNodes, selected, err := e.chooseTraversalEndSeeds(ctx, matches, optimizedStartNodes, startDecided, whereClause)
+		if err != nil {
+			return nil, err
+		}
+		if selected {
+			endSeedNodes = endNodes
+			optimizedStartNodes, startDecided = nil, len(endNodes) == 0
 		}
 	}
 
@@ -1477,6 +1468,9 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 	}
 
 	for _, startNode := range startNodes {
+		if !e.pipelineNodeMatchesPattern(ctx, startNode, match.StartNode) {
+			continue
+		}
 		if remaining == 0 {
 			break
 		}
@@ -2119,6 +2113,12 @@ func (e *StorageExecutor) findPaths(
 		nextIdentity := edge.StartIdentity()
 		if ctx.direction == "outgoing" || (ctx.direction == "both" && edge.StartIdentity() == currentNode.Identity()) {
 			nextIdentity = edge.EndIdentity()
+		}
+		// At the final permitted hop, an already-known endpoint can reject
+		// the relationship before any node hydration. Earlier hops must keep
+		// intermediates, including ones that are not the bound endpoint.
+		if ctx.endNodeID != "" && depth+1 == ctx.maxHops && storage.NodeID(nextIdentity.Key()) != ctx.endNodeID {
+			continue
 		}
 		nextNodeID, validSource := nextIdentity.NodeLookupID(e.storage)
 		if !validSource {

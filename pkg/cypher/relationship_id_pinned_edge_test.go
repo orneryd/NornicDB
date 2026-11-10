@@ -22,6 +22,22 @@ type adjacencyReadSpy struct {
 	fail    bool
 }
 
+// ReadCountStore preserves the real planning statistics while observing adjacency.
+func (s *adjacencyReadSpy) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
+	if reader, ok := s.Engine.(storage.CountStoreReadEngine); ok {
+		return reader.ReadCountStore(ctx, request)
+	}
+	return storage.CountStoreRead{}, nil
+}
+
+// Namespace keeps the observer transparent to transaction counter eligibility.
+func (s *adjacencyReadSpy) Namespace() string {
+	if scoped, ok := s.Engine.(interface{ Namespace() string }); ok {
+		return scoped.Namespace()
+	}
+	return ""
+}
+
 // GetInnerEngine preserves namespace and source identity while observing reads.
 func (s *adjacencyReadSpy) GetInnerEngine() storage.Engine { return s.Engine }
 
