@@ -29,6 +29,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 	}
 	defer tx.mu.Unlock()
 	var cancellation bulkReadCancellation
+	nowNanos := DecayScoringTime()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, false, err
 	}
@@ -41,7 +42,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 	if tx.snapshotTx == nil || tx.readTS.IsZero() || tx.engine.writeBehind != nil || len(properties) == 0 {
 		return nil, false, nil
 	}
-	key := snapshotLabelCacheKey{projectionKey: label, reveal: tx.engine.revealAll.Load()}
+	key := snapshotLabelCacheKey{projectionKey: label}
 	population := tx.snapshotEquality[key]
 	if population != nil && population.index == nil {
 		return nil, false, nil
@@ -86,8 +87,11 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 			}
 			return true
 		}
-		// The pinned scan and candidate preparation share the statement lifetime.
-		err := tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, nil, "", visibleRead, func(node *Node) error {
+		// Retain physical membership, then apply the live visibility owner at
+		// delivery. A suppressed member may become visible again without any
+		// change to the pinned data snapshot. The scan and candidate preparation
+		// share the statement lifetime.
+		err := tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, nil, "", storedRead, func(node *Node) error {
 			if cacheable {
 				bytes, ok := snapshotLabelPrefixNodeBytes(node)
 				if !ok || len(population.nodes) >= maxSnapshotNodeLabelCacheNodes || bytes > maxSnapshotLabelPrefixBytes-retainedBytes || tx.nodeHasEmbeddingSidecar(tx.snapshotTx, node.ID) {
@@ -98,7 +102,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 					retainedBytes += bytes
 				}
 			}
-			if !tx.committedNodeSupersededLocked(node.ID) && matches(node) {
+			if !tx.committedNodeSupersededLocked(node.ID) && !tx.engine.filterEntityByDecay(visibleRead, node, nowNanos) && matches(node) {
 				first = append(first, copyNode(node))
 			}
 			return nil
@@ -115,7 +119,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 				if err := cancellation.check(ctx); err != nil {
 					return nil, false, err
 				}
-				if _, deleted := tx.deletedNodes[id]; !deleted && matches(node) {
+				if _, deleted := tx.deletedNodes[id]; !deleted && !tx.engine.filterEntityByDecay(visibleRead, node, nowNanos) && matches(node) {
 					first = append(first, copyNode(node))
 				}
 			}
@@ -180,7 +184,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 		if err := cancellation.check(ctx); err != nil {
 			return nil, false, err
 		}
-		if tx.committedNodeSupersededLocked(id) {
+		if tx.committedNodeSupersededLocked(id) || tx.engine.filterEntityByDecay(visibleRead, population.nodes[id], nowNanos) {
 			continue
 		}
 		result = append(result, copyNode(population.nodes[id]))
@@ -189,7 +193,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 		if err := cancellation.check(ctx); err != nil {
 			return nil, false, err
 		}
-		if _, deleted := tx.deletedNodes[id]; !deleted {
+		if _, deleted := tx.deletedNodes[id]; !deleted && !tx.engine.filterEntityByDecay(visibleRead, tx.pendingNodes[id], nowNanos) {
 			result = append(result, copyNode(tx.pendingNodes[id]))
 		}
 	}
