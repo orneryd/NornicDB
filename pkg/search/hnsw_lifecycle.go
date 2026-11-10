@@ -279,6 +279,7 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 	s.indexMu.Unlock()
 	defer func() {
 		s.indexMu.Lock()
+		s.hnswCatchUp.end()
 		s.hnswRebuildOverlay.Reset()
 		s.hnswRebuildInFlight.Store(false)
 		s.indexMu.Unlock()
@@ -294,17 +295,16 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 	if hnswBeforeInstallHook != nil {
 		hnswBeforeInstallHook(ctx)
 	}
-	// Replay before publication: the first ANN reader must see every mutation.
-	s.pipelineMu.Lock()
+	// Catch up before publication, so the first ANN reader sees every
+	// mutation, but outside the locks: writes only record their change meanwhile
+	// (hnsw_catch_up.go). This returns holding pipelineMu and indexMu with the
+	// catch-up finished; from here on changes reach the published graph.
+	s.beginHNSWCatchUp(built)
+	if err := s.lockForHNSWPublication(ctx); err != nil {
+		return nil, err
+	}
 	defer s.pipelineMu.Unlock()
-	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if err := applyHNSWMutationSnapshot(built, s.hnswRebuildOverlay.snapshot()); err != nil {
-		return nil, err
-	}
 	// Install unless a persisted index was installed while construction ran.
 	s.hnswMu.Lock()
 	if err := ctx.Err(); err != nil {
@@ -426,6 +426,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	s.indexMu.Unlock()
 	defer func() {
 		s.indexMu.Lock()
+		s.hnswCatchUp.end()
 		s.hnswRebuildInFlight.Store(false)
 		s.hnswRebuildOverlay.Reset()
 		s.indexMu.Unlock()
@@ -446,12 +447,15 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 		return err
 	}
 
-	// Close the rebuild race under the mutation lock. Replaying the complete
-	// overlay is idempotent for vectors already observed by the store snapshot,
-	// and captures mutations that arrived while the graph was being rebuilt.
-	s.pipelineMu.Lock()
+	// Catch up with the mutations that arrived while the graph was rebuilt,
+	// as for the initial build; the old graph keeps serving meanwhile. Applying
+	// a recorded vector the store snapshot already held is idempotent. This
+	// returns holding pipelineMu and indexMu with the catch-up finished.
+	s.beginHNSWCatchUp(rebuilt)
+	if err := s.lockForHNSWPublication(ctx); err != nil {
+		return err
+	}
 	defer s.pipelineMu.Unlock()
-	s.indexMu.Lock()
 	s.hnswMu.RLock()
 	currentIsOld := s.servingHNSW() == old && ctx.Err() == nil
 	s.hnswMu.RUnlock()
@@ -459,18 +463,12 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 		s.indexMu.Unlock()
 		return nil
 	}
-	if s.hnswRebuildOverlay != nil {
-		pending := s.hnswRebuildOverlay.snapshot()
-		if err := applyHNSWMutationSnapshot(rebuilt, pending); err != nil {
-			s.indexMu.Unlock()
-			return err
-		}
-	}
 
 	// Publication owns pipelineMu before indexMu and hnswMu, matching
 	// retirement and strategy changes. The shared cache owner needs no relock.
 	s.hnswMu.Lock()
-	if s.servingHNSW() == old && ctx.Err() == nil {
+	published := s.servingHNSW() == old && ctx.Err() == nil
+	if published {
 		s.publishVectorServing(func() {
 			s.hnswIndex = rebuilt
 			s.hnswLastRebuildUnix.Store(time.Now().Unix())
@@ -481,6 +479,9 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 		s.hnswMu.Unlock()
 	}
 	s.indexMu.Unlock()
+	if published {
+		s.logPrintf("🔍 HNSW index rebuilt: vectors=%d tombstone_ratio=%.2f", rebuilt.Size(), rebuilt.TombstoneRatio())
+	}
 
 	return nil
 }

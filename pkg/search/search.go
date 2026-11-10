@@ -854,7 +854,7 @@ type Service struct {
 	vectorResidentBytes    int64
 	bm25MetadataBytes      int64
 	vectorMetadataBytes    int64
-	logger                 *slog.Logger
+	logger                 atomic.Pointer[slog.Logger]
 	localizer              *localization.Manager
 	// Primary BM25 implementation used by the live search pipeline, behind an
 	// atomic reference: MarkReadyDisabled and the index build swap in the
@@ -940,6 +940,9 @@ type Service struct {
 	// hnswRebuildOverlay records only mutations that race an active rebuild.
 	// Normal writes always update HNSW synchronously at every index size.
 	hnswRebuildOverlay *annMutationOverlay
+	// hnswCatchUp applies the recorded mutations to the constructed graph
+	// before publication, outside indexMu (hnsw_catch_up.go).
+	hnswCatchUp hnswCatchUp
 
 	// Optional GPU-accelerated brute-force embedding index.
 	// When enabled, this is used as an exact vector-search backend.
@@ -2600,18 +2603,6 @@ func (s *Service) persistHNSWBackground(hnswPath string) {
 	s.logPrintf("📇 Background persist: HNSW index saved to %s", hnswPath)
 }
 
-func applyHNSWMutationSnapshot(index *HNSWIndex, pending annMutationOverlaySnapshot) error {
-	for _, id := range pending.Tombstones {
-		index.Remove(id)
-	}
-	for id, value := range pending.Vectors {
-		if err := index.Update(id, value); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *Service) persistIVFHNSWBackground(ctx context.Context, hnswPath string) {
 	// When IVF-HNSW is the strategy, persist per-cluster HNSW and centroids (same dir as hnsw, in hnsw_ivf/).
 	if hnswPath == "" {
@@ -2947,8 +2938,13 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	if queued, err := s.readLockOrQueue(ctx, deferredIndexWrite{node: node}); queued || err != nil {
 		return err
 	}
-	defer s.buildMu.RUnlock()
-	return s.indexNodeOwned(ctx, node, nil, installPayload)
+	owed, err := func() (uint64, error) {
+		defer s.buildMu.RUnlock()
+		return s.indexNodeOwing(ctx, node, nil, installPayload)
+	}()
+	// A catching-up graph is paid after buildMu, which a build or clear waits for.
+	s.hnswCatchUp.pay(owed)
+	return err
 }
 
 // nodeInstall is how indexNodeAsLocked treats an entry of the node it cannot
@@ -2974,8 +2970,21 @@ const (
 )
 
 // indexNodeOwned is IndexNode for a caller holding buildMu (read or write).
-// current, when set, is the temporal decision made at the call.
+// current, when set, is the temporal decision made at the call. It pays a
+// catching-up graph at once; its callers are the build's queue drains, which
+// owe nothing (during a build live writes are queued, and the drains run
+// after the build's own graph is published). Live writers use
+// indexNodeOwing and pay after their locks.
 func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, current *bool, install nodeInstall) error {
+	owed, err := s.indexNodeOwing(ctx, node, current, install)
+	s.hnswCatchUp.pay(owed)
+	return err
+}
+
+// indexNodeOwing is indexNodeOwned without paying a catching-up graph: it
+// returns the changes it recorded there (hnsw_catch_up.go), which its caller
+// pays once it holds no lock another writer may wait for.
+func (s *Service) indexNodeOwing(ctx context.Context, node *storage.Node, current *bool, install nodeInstall) (uint64, error) {
 	// Per-DB master switches: when both indexes are off, IndexNode is a full
 	// no-op — the database has no search and never will until a flag flip
 	// triggers ResetSearchService. When one is off, indexNodeLocked still
@@ -2984,7 +2993,7 @@ func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, curren
 	bm25On := s.bm25Enabled.Load()
 	vecOn := s.vectorEnabled.Load()
 	if !bm25On && !vecOn {
-		return nil
+		return 0, nil
 	}
 	shouldIndex := false
 	if current != nil {
@@ -2993,12 +3002,13 @@ func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, curren
 		var err error
 		shouldIndex, err = s.shouldIndexNode(ctx, node)
 		if err != nil {
+			var owed uint64
 			if install == installStored {
 				// The committed replacement cannot keep serving the old image
 				// while its eligibility lookup waits for retry.
-				s.removeNodeOwned(node.ID)
+				owed = s.removeNodeOwing(node.ID)
 			}
-			return err
+			return owed, err
 		}
 	}
 	if !s.buildInProgress.Load() {
@@ -3012,12 +3022,14 @@ func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, curren
 	}
 
 	s.indexMu.Lock()
+	mark := s.hnswCatchUp.owedMark()
 	err := s.indexNodeAsLocked(node, false, shouldIndex, install)
+	owed := s.hnswCatchUp.owedMark() - mark
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
 	}
-	return err
+	return owed, err
 }
 
 // ErrVectorDisabled signals that the per-DB vector master switch is off
@@ -3060,14 +3072,19 @@ func (s *Service) addVectorLocked(id string, vec []float32) error {
 	return err
 }
 
-// hnswUpdateLive applies a best-effort live HNSW vector update.
+// hnswUpdateLive applies a best-effort live HNSW vector update. During a
+// build it is recorded for the graph under construction, or handed to that
+// graph's catch-up (hnsw_catch_up.go).
 func (s *Service) hnswUpdateLive(id string, embedding []float32) {
 	if s.hnswRebuildInFlight.Load() {
-		canonical, ok := s.getVectorLookup()(id)
-		if ok {
-			s.hnswRebuildOverlay.addNormalized(id, canonical)
-		} else {
-			s.hnswRebuildOverlay.Add(id, embedding)
+		// The canonical vector is an immutable normalized reference; without
+		// one, a normalized copy is recorded.
+		record, ok := s.getVectorLookup()(id)
+		if !ok {
+			record = vector.Normalize(embedding)
+		}
+		if !s.hnswCatchUp.liveUpdate(id, record) {
+			s.hnswRebuildOverlay.addNormalized(id, record)
 		}
 	}
 	s.hnswMu.RLock()
@@ -3078,9 +3095,10 @@ func (s *Service) hnswUpdateLive(id string, embedding []float32) {
 	}
 }
 
-// hnswRemoveLive applies a best-effort live HNSW vector remove.
+// hnswRemoveLive applies a best-effort live HNSW vector remove, recorded or
+// handed to a catch-up as hnswUpdateLive does an update.
 func (s *Service) hnswRemoveLive(id string) {
-	if s.hnswRebuildInFlight.Load() {
+	if s.hnswRebuildInFlight.Load() && !s.hnswCatchUp.liveRemove(id) {
 		s.hnswRebuildOverlay.Remove(id)
 	}
 	s.hnswMu.RLock()
@@ -3577,8 +3595,11 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{nodeID: string(nodeID)}); queued || err != nil {
 		return err
 	}
-	defer s.buildMu.RUnlock()
-	s.removeNodeOwned(nodeID)
+	owed := func() uint64 {
+		defer s.buildMu.RUnlock()
+		return s.removeNodeOwing(nodeID)
+	}()
+	s.hnswCatchUp.pay(owed) // after buildMu, as in IndexNode
 	return nil
 }
 
@@ -3598,6 +3619,9 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 			// A failed eligibility lookup cannot leave the build's older snapshot
 			// visible. Order withdrawal after that snapshot, without completing the
 			// reservation; transfer retry ownership after withdrawal and lock release.
+			// A catching-up graph is paid after the lane and buildMu are
+			// released; inside a build nothing is owed (live writes are queued).
+			var withdrawOwed uint64
 			withdraw := deferredIndexWrite{
 				apply: func() {
 					_ = applyReservedIndexMutation(applyMutation, func() error {
@@ -3605,7 +3629,7 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 						if s.buildWrites.generation.Load() != admission.generation {
 							return err
 						}
-						s.removeNodeOwned(applyMutation.id)
+						withdrawOwed = s.removeNodeOwing(applyMutation.id)
 						return err
 					})
 				},
@@ -3614,6 +3638,7 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 			if deferred, _ := s.readLockOrQueue(s.LifetimeContext(), withdraw); !deferred {
 				withdraw.apply()
 				s.buildMu.RUnlock()
+				s.hnswCatchUp.pay(withdrawOwed)
 				withdraw.afterBuild()
 			}
 		} else if !queued {
@@ -3621,10 +3646,18 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 		}
 		return err
 	}
+	var owed uint64
 	err := func() error {
 		defer s.buildMu.RUnlock()
-		return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(ctx, node, nil, installStored) })
+		return applyReservedIndexMutation(applyMutation, func() error {
+			var err error
+			owed, err = s.indexNodeOwing(ctx, node, nil, installStored)
+			return err
+		})
 	}()
+	// Pay a catching-up graph only now: a writer waiting for this lane (a
+	// commit's storage event) must not wait for these inserts.
+	s.hnswCatchUp.pay(owed)
 	if err != nil && withoutRefusals(err) != nil {
 		s.retryRefresh(RefreshRetry{Node: mutation}, err)
 	}
@@ -3664,15 +3697,26 @@ func (s *Service) applyReservedNodeRemoval(mutation NodeMutation) error {
 		}
 		return err
 	}
-	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(applyMutation, func() error {
-		s.removeNodeOwned(applyMutation.id)
-		return nil
-	})
+	var owed uint64
+	err := func() error {
+		defer s.buildMu.RUnlock()
+		return applyReservedIndexMutation(applyMutation, func() error {
+			owed = s.removeNodeOwing(applyMutation.id)
+			return nil
+		})
+	}()
+	s.hnswCatchUp.pay(owed) // after the lane, as in applyReservedNodeIndex
+	return err
 }
 
 // removeNodeOwned is RemoveNode for a caller holding buildMu.
 func (s *Service) removeNodeOwned(nodeID storage.NodeID) {
+	s.hnswCatchUp.pay(s.removeNodeOwing(nodeID))
+}
+
+// removeNodeOwing is removeNodeOwned without paying a catching-up graph, as
+// indexNodeOwing.
+func (s *Service) removeNodeOwing(nodeID storage.NodeID) uint64 {
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
@@ -3680,11 +3724,14 @@ func (s *Service) removeNodeOwned(nodeID storage.NodeID) {
 		}
 	}
 	s.indexMu.Lock()
+	mark := s.hnswCatchUp.owedMark()
 	s.removeNodeLocked(string(nodeID))
+	owed := s.hnswCatchUp.owedMark() - mark
 	s.indexMu.Unlock()
 	if !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
 	}
+	return owed
 }
 
 // IndexEdge adds vector-shaped relationship properties to in-memory search metadata.
@@ -3953,7 +4000,12 @@ func (s *Service) removePropertyVectorIndexOwned(propertyKey string) {
 		}
 	}
 	s.indexMu.Lock()
-	defer s.indexMu.Unlock()
+	mark := s.hnswCatchUp.owedMark()
+	defer func() {
+		owed := s.hnswCatchUp.owedMark() - mark
+		s.indexMu.Unlock()
+		s.hnswCatchUp.pay(owed)
+	}()
 	for nodeID, props := range s.nodePropVector {
 		propID, ok := props[propertyKey]
 		if !ok {
@@ -6256,8 +6308,17 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 	}
 	// The shared builder can return an already-published graph. Replay is a
 	// live mutation: validate captured sources and exclude source retirement
-	// and newer writes before touching either HNSW or GPU state.
-	lastSeq := s.replayTransitionDeltas(targetHNSW, target, vi, vfs, 0)
+	// and newer writes before touching either HNSW or GPU state. A graph that
+	// already serves holds every logged change (its construction applied the
+	// recorded ones before publication, live writes reached it after), so
+	// replaying the log into it would only re-insert them while writers wait.
+	replayHNSW := targetHNSW
+	s.hnswMu.RLock()
+	if replayHNSW != nil && replayHNSW == s.servingHNSW() {
+		replayHNSW = nil
+	}
+	s.hnswMu.RUnlock()
+	lastSeq := s.replayTransitionDeltas(replayHNSW, target, vi, vfs, 0)
 	s.applyTransitionSwapLocked(target, targetHNSW, vi, vfs)
 	// Every production delta append owns indexMu, so no later mutation can
 	// enter this interval; one replay covers the complete pre-swap log.
