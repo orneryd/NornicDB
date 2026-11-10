@@ -689,3 +689,10 @@ RETURN city
 
 **Need more examples?** → **[Complete Examples](complete-examples.md)**
 **Ready for advanced patterns?** → **[Graph Traversal](graph-traversal.md)**
+
+## External references
+
+- [Neo4j Cypher clauses](https://neo4j.com/docs/cypher-manual/current/clauses/)
+- [Neo4j Cypher cheat sheet](https://neo4j.com/docs/cypher-manual/current/cheat-sheet/)
+
+Neo4j syntax and behavior can differ from NornicDB; consult the [compatibility guide](../neo4j-migration/cypher-compatibility.md).

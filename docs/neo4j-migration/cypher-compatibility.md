@@ -716,3 +716,11 @@ native extensions. Empty query collection returns no fabricated counter row.
 **Last Updated**: November 26, 2025 (Post EXPLAIN/PROFILE implementation)
 **Status**: Production ready
 **Test Results**: 1,171 tests passing
+
+## External references
+
+- [Neo4j Cypher manual](https://neo4j.com/docs/cypher-manual/current/)
+- [Neo4j Cypher functions](https://neo4j.com/docs/cypher-manual/current/functions/)
+- [Neo4j APOC procedures and functions](https://neo4j.com/docs/apoc/current/overview/)
+
+These describe Neo4j behavior; check the NornicDB compatibility details above when migrating.

@@ -688,34 +688,13 @@ curl -X PUT http://localhost:7474/admin/databases/<db>/config \
 
 See [Per-Database Search Index Flags](../../operations/configuration.md#per-database-search-index-control).
 
-## References & Further Reading
+## External references
 
-### Memory Models
+These references describe Neo4j and general concepts. NornicDB support and behavior may differ; use the function descriptions above for NornicDB-specific details.
 
-- **Atkinson-Shiffrin Model** (1968) - Three-store memory model
-- **Ebbinghaus Forgetting Curve** (1885) - Exponential memory decay
-- **Spaced Repetition** - Optimal review timing for retention
+- [Neo4j Cypher manual](https://neo4j.com/docs/cypher-manual/current/)
+- [Neo4j Cypher functions](https://neo4j.com/docs/cypher-manual/current/functions/)
+- [Neo4j Cypher clauses](https://neo4j.com/docs/cypher-manual/current/clauses/)
+- [Cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity)
 
-### Mathematical Functions
-
-- **Khan Academy** - Trigonometry basics
-- **3Blue1Brown** - Visual math explanations (YouTube)
-- **Essence of Calculus** - Understanding exponentials and logs
-
-### Vector Similarity
-
-- **Cosine Similarity** explained: https://en.wikipedia.org/wiki/Cosine_similarity
-- **Euclidean vs Cosine** - When to use which
-
-### Neo4j Cypher Reference
-
-- Official Neo4j Cypher manual
-- Neo4j function reference
-
----
-
-**Documentation Status:**  Complete
-**Functions Documented:** 62/62 (100%)
-**Examples Provided:** 160+
-
-**Last Updated:** November 29, 2025
+Background topics used by the memory and mathematical functions include the Atkinson–Shiffrin memory model, the Ebbinghaus forgetting curve, spaced repetition, trigonometry, exponentials, and logarithms. Similarity metrics include cosine similarity and Euclidean distance.

@@ -677,3 +677,7 @@ Health checks must NOT target `/nornicdb/search` for `lazy` databases — see [L
 ---
 
 _Last updated: December 1, 2025_
+
+## External reference
+
+[Neo4j search indexes](https://neo4j.com/docs/cypher-manual/current/indexes/search-indexes/) describes Neo4j vector and full-text search. Its syntax and behavior may differ from NornicDB.
