@@ -42,6 +42,28 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 	if tx.snapshotTx == nil || tx.readTS.IsZero() || tx.engine.writeBehind != nil || len(properties) == 0 {
 		return nil, false, nil
 	}
+	pendingNodes, overlayErr := writeOwnedReadImagesLocked(ctx, tx.pendingNodes, tx.deletedNodes, &tx.entityLocks, nodeWriteLockKind, func(ctx context.Context, id NodeID) (*Node, error) {
+		return tx.engine.readNodeMetadata(ctx, id, storedRead, nodeItemQueryMetadata)
+	})
+	if overlayErr != nil {
+		return nil, false, overlayErr
+	}
+	matches := func(node *Node) bool {
+		if !hasLabel(node.Labels, label) {
+			return false
+		}
+		for property, value := range properties {
+			expected, ok := transactionEqualityKey(value)
+			if !ok {
+				continue
+			}
+			actual, ok := transactionEqualityKey(node.Properties[property])
+			if !ok || actual != expected {
+				return false
+			}
+		}
+		return true
+	}
 	key := snapshotLabelCacheKey{projectionKey: label}
 	population := tx.snapshotEquality[key]
 	if population != nil && population.index == nil {
@@ -71,22 +93,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 		if !keyable {
 			return nil, false, nil
 		}
-		matches := func(node *Node) bool {
-			if !hasLabel(node.Labels, label) {
-				return false
-			}
-			for property, value := range properties {
-				expected, ok := transactionEqualityKey(value)
-				if !ok {
-					continue
-				}
-				actual, ok := transactionEqualityKey(node.Properties[property])
-				if !ok || actual != expected {
-					return false
-				}
-			}
-			return true
-		}
+
 		// Retain physical membership, then apply the live visibility owner at
 		// delivery. A suppressed member may become visible again without any
 		// change to the pinned data snapshot. The scan and candidate preparation
@@ -115,7 +122,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 		}
 
 		if !cacheable {
-			for id, node := range tx.pendingNodes {
+			for id, node := range pendingNodes {
 				if err := cancellation.check(ctx); err != nil {
 					return nil, false, err
 				}
@@ -197,6 +204,20 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 			result = append(result, copyNode(tx.pendingNodes[id]))
 		}
 	}
+	// Refreshed no-op images are read overlays, not staged writes; the
+	// pending-value index deliberately contains only actual staged images.
+	for id, node := range pendingNodes {
+		if _, staged := tx.pendingNodes[id]; staged {
+			continue
+		}
+		if err := cancellation.check(ctx); err != nil {
+			return nil, false, err
+		}
+		if matches(node) && !tx.engine.filterEntityByDecay(visibleRead, node, nowNanos) {
+			result = append(result, copyNode(node))
+		}
+	}
+
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}

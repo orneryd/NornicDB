@@ -132,7 +132,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	if authorityErr != nil {
 		return tx.abortCommitLocked(authorityErr)
 	}
-	entityKeys, authorityErr := entityCommitKeys(ctx, nodes, edges, endpoints)
+	entityKeys, authorityErr := entityCommitKeys(ctx, entityAuthorityFootprint{nodes: nodes, edges: edges, endpoints: endpoints, nodeBodies: nodes, edgeBodies: edges})
 	if authorityErr != nil {
 		return tx.abortCommitLocked(authorityErr)
 	}

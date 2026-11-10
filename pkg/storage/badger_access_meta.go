@@ -107,7 +107,7 @@ func (b *BadgerEngine) WriteAccessMeta(ctx context.Context, request knowledgepol
 	}
 	var stages []func(*commitWriter) error
 	if request.Mode == knowledgepolicy.FlushExistingEntity {
-		write, release, err := b.beginEntityWrite(ctx, entityID, false, nil, entityWritePlan{known: writtenEntities{edges: []EdgeID{EdgeID(entityID)}}})
+		write, release, err := b.beginEntityWrite(ctx, entityID, false, nil, entityWritePlan{authority: entityMetadataAuthority, known: writtenEntities{edges: []EdgeID{EdgeID(entityID)}}})
 		if err != nil {
 			return false, err
 		}

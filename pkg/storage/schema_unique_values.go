@@ -158,7 +158,7 @@ func (k uniqueConstraintLockKey) names() (label, property string) {
 	switch k.entityKind {
 	case 1, nodeWriteLockKind:
 		return "node", k.entityID
-	case 2:
+	case 2, edgeWriteLockKind:
 		return "relationship", k.entityID
 	}
 	return k.label, k.property

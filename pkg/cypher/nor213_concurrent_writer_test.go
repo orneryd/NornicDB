@@ -67,60 +67,129 @@ func TestNOR213ExistingNodeWritersWaitAndPreserveBothUpdates(t *testing.T) {
 // that writes an existing node or relationship waits for the transaction
 // that wrote it first, then applies its own write on top of that commit. The
 // second statement starts only once the first holds the entity; the order is
-// set by the lock wait itself, not by timing.
+// set by the lock wait itself, not by timing. A UNIQUE key a statement sets
+// to the value the node already holds, and one it changes, are writes of the
+// same entity too: they wait like any other property write, and both commits
+// succeed. A claim of a value another entity already committed is the UNIQUE
+// conflict instead (TestCompetingUniqueClaimsFailAtCommit).
 func TestNOR213WritersOfOneEntityWaitOnEveryWriteForm(t *testing.T) {
 	store, setup := newMergeRaceStore(t)
 	waits := mergeKeyWaits(t)
 	ctx := context.Background()
+	// rows states a check row that does not depend on the iteration's key.
+	rows := func(values ...interface{}) func(key string) []interface{} {
+		return func(string) []interface{} { return values }
+	}
+	// A SET of a node a UNWIND matched writes that node like any other SET.
+	const unwindSet = "UNWIND $items AS item MATCH (n:Doc {id: item.id}) SET n.summary_input = item.fingerprint"
+	unwindItems := func(key, fingerprint string) map[string]interface{} {
+		return map[string]interface{}{"items": []interface{}{map[string]interface{}{"id": key, "fingerprint": fingerprint}}}
+	}
 	for _, form := range []struct {
 		hold, write, check string
-		want               []interface{}
+		// want states the row the check query returns for one iteration.
+		want func(key string) []interface{}
+		// params states the statement parameters beyond $k, the iteration's
+		// key, $f, the writer's fingerprint, and $newid, the key the
+		// iteration claims; nil when the form uses only those.
+		params func(key, fingerprint string) map[string]interface{}
 	}{
-		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) SET n.b = 2", "MATCH (n:Doc {id: $k}) RETURN n.a, n.b", []interface{}{int64(1), int64(2)}},
-		{"MATCH (n:Doc {id: $k}) SET n.c = 5", "MATCH (n:Doc {id: $k}) SET n.c = n.c + 1", "MATCH (n:Doc {id: $k}) RETURN n.c", []interface{}{int64(6)}},
-		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) SET n += {b: 2}", "MATCH (n:Doc {id: $k}) RETURN n.a, n.b", []interface{}{int64(1), int64(2)}},
-		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) SET n:Seen", "MATCH (n:Doc:Seen {id: $k}) RETURN n.a", []interface{}{int64(1)}},
-		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) REMOVE n.gone", "MATCH (n:Doc {id: $k}) RETURN n.a, n.gone", []interface{}{int64(1), nil}},
-		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) REMOVE n:Old", "MATCH (n:Doc {id: $k}) RETURN n.a, labels(n)", []interface{}{int64(1), []interface{}{"Doc"}}},
-		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) DETACH DELETE n", "MATCH (n:Doc {id: $k}) RETURN count(n)", []interface{}{int64(0)}},
-		{"MATCH (:Doc {id: $k})-[r:HAS]->() SET r.a = 1", "MATCH (:Doc {id: $k})-[r:HAS]->() SET r.b = 2", "MATCH (:Doc {id: $k})-[r:HAS]->() RETURN r.a, r.b", []interface{}{int64(1), int64(2)}},
-		{"MATCH (:Doc {id: $k})-[r:HAS]->() SET r.c = 5", "MATCH (:Doc {id: $k})-[r:HAS]->() SET r.c = r.c + 1", "MATCH (:Doc {id: $k})-[r:HAS]->() RETURN r.c", []interface{}{int64(6)}},
-		{"MATCH (:Doc {id: $k})-[r:HAS]->() SET r.a = 1", "MATCH (:Doc {id: $k})-[r:HAS]->() REMOVE r.gone", "MATCH (:Doc {id: $k})-[r:HAS]->() RETURN r.a, r.gone", []interface{}{int64(1), nil}},
-		{"MATCH (:Doc {id: $k})-[r:HAS]->() SET r.a = 1", "MATCH (:Doc {id: $k})-[r:HAS]->() DELETE r", "MATCH (:Doc {id: $k})-[r:HAS]->() RETURN count(r)", []interface{}{int64(0)}},
+		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) SET n.b = 2", "MATCH (n:Doc {id: $k}) RETURN n.a, n.b", rows(int64(1), int64(2)), nil},
+		{"MATCH (n:Doc {id: $k}) SET n.c = 5", "MATCH (n:Doc {id: $k}) SET n.c = n.c + 1", "MATCH (n:Doc {id: $k}) RETURN n.c", rows(int64(6)), nil},
+		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) SET n += {b: 2}", "MATCH (n:Doc {id: $k}) RETURN n.a, n.b", rows(int64(1), int64(2)), nil},
+		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) SET n:Seen", "MATCH (n:Doc:Seen {id: $k}) RETURN n.a", rows(int64(1)), nil},
+		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) REMOVE n.gone", "MATCH (n:Doc {id: $k}) RETURN n.a, n.gone", rows(int64(1), nil), nil},
+		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) REMOVE n:Old", "MATCH (n:Doc {id: $k}) RETURN n.a, labels(n)", rows(int64(1), []interface{}{"Doc"}), nil},
+		{"MATCH (n:Doc {id: $k}) SET n.a = 1", "MATCH (n:Doc {id: $k}) DETACH DELETE n", "MATCH (n:Doc {id: $k}) RETURN count(n)", rows(int64(0)), nil},
+		{unwindSet, unwindSet, "MATCH (n:Doc {id: $k}) RETURN n.id, n.summary_input", func(key string) []interface{} { return []interface{}{key, "write"} }, unwindItems},
+		{"MATCH (n:Doc {id: $k}) SET n.id = $k, n.summary_input = $f", "MATCH (n:Doc {id: $k}) SET n.id = $k, n.summary_input = $f", "MATCH (n:Doc {id: $k}) RETURN n.id, n.summary_input", func(key string) []interface{} { return []interface{}{key, "write"} }, nil},
+		{"MATCH (n:Doc {id: $k}) SET n.id = $newid, n.summary_input = $f", "MATCH (n:Doc {id: $k}) SET n.id = $newid, n.summary_input = $f", "MATCH (n:Doc {id: $newid}) RETURN n.id, n.summary_input", func(key string) []interface{} { return []interface{}{key + "-claimed", "write"} }, nil},
+		{"MATCH (:Doc {id: $k})-[r:HAS]->() SET r.a = 1", "MATCH (:Doc {id: $k})-[r:HAS]->() SET r.b = 2", "MATCH (:Doc {id: $k})-[r:HAS]->() RETURN r.a, r.b", rows(int64(1), int64(2)), nil},
+		{"MATCH (:Doc {id: $k})-[r:HAS]->() SET r.c = 5", "MATCH (:Doc {id: $k})-[r:HAS]->() SET r.c = r.c + 1", "MATCH (:Doc {id: $k})-[r:HAS]->() RETURN r.c", rows(int64(6)), nil},
+		{"MATCH (:Doc {id: $k})-[r:HAS]->() SET r.a = 1", "MATCH (:Doc {id: $k})-[r:HAS]->() REMOVE r.gone", "MATCH (:Doc {id: $k})-[r:HAS]->() RETURN r.a, r.gone", rows(int64(1), nil), nil},
+		{"MATCH (:Doc {id: $k})-[r:HAS]->() SET r.a = 1", "MATCH (:Doc {id: $k})-[r:HAS]->() DELETE r", "MATCH (:Doc {id: $k})-[r:HAS]->() RETURN count(r)", rows(int64(0)), nil},
 	} {
 		for _, explicit := range []bool{false, true} {
 			key := form.write + map[bool]string{false: " auto", true: " explicit"}[explicit]
-			params := map[string]interface{}{"k": key}
-			_, err := setup.Execute(ctx, "CREATE (:Doc:Old {id: $k, gone: 1, c: 0})-[:HAS {gone: 1, c: 0}]->(:Part)", params)
+			// Every statement of one iteration takes its own parameters: the
+			// key the node starts with, the writer's fingerprint and the key
+			// the iteration claims. A claimed key derived from the iteration's
+			// key cannot collide with another iteration's claim.
+			params := func(fingerprint string) map[string]interface{} {
+				statement := map[string]interface{}{"k": key, "f": fingerprint, "newid": key + "-claimed"}
+				if form.params != nil {
+					for name, value := range form.params(key, fingerprint) {
+						statement[name] = value
+					}
+				}
+				return statement
+			}
+			_, err := setup.Execute(ctx, "CREATE (:Doc:Old {id: $k, gone: 1, c: 0})-[:HAS {gone: 1, c: 0}]->(:Part)", params("hold"))
 			require.NoError(t, err)
 			drainMergeKeyWaits(waits)
 
 			first := NewStorageExecutor(store)
 			_, err = first.Execute(ctx, "BEGIN", nil)
 			require.NoError(t, err)
-			_, err = first.Execute(ctx, form.hold, params)
+			t.Cleanup(func() { _, _ = first.Execute(ctx, "ROLLBACK", nil) })
+			_, err = first.Execute(ctx, form.hold, params("hold"))
 			require.NoError(t, err, key)
 			done := make(chan error, 1)
-			go func() { done <- runMergeStatement(ctx, store, explicit, form.write, params) }()
-			var secondErr error
-			waited := false
-			select {
-			case <-waits:
-				waited = true
-			case secondErr = <-done:
-			}
-			_, err = first.Execute(ctx, "COMMIT", nil)
-			require.NoError(t, err, key)
-			if waited {
-				secondErr = <-done
-			}
+			go func() {
+				done <- runMergeStatement(ctx, store, explicit, form.write, params("write"))
+			}()
+			secondErr := awaitSecondWriterWaits(t, waits, done, func() error {
+				_, err := first.Execute(ctx, "COMMIT", nil)
+				return err
+			}, key)
 			require.NoError(t, secondErr, key)
-			require.True(t, waited, "%s: the second writer waits for the first", key)
-			result, err := setup.Execute(ctx, form.check, params)
+			result, err := setup.Execute(ctx, form.check, params("check"))
 			require.NoError(t, err, key)
-			require.Equal(t, [][]interface{}{form.want}, result.Rows, key)
+			require.Equal(t, [][]interface{}{form.want(key)}, result.Rows, key)
 		}
 	}
+}
+
+// writerScheduleBound bounds each step of a two-writer schedule, so a writer
+// that stops waiting, or stops finishing, fails its subtest instead of
+// hanging it.
+const writerScheduleBound = 20 * time.Second
+
+// awaitSecondWriterWaits orders two writers by the wait itself: it waits until
+// the second writer has started waiting for the entity (waits) or has finished
+// (done), ends the first transaction with end so the second can finish, and
+// returns the second writer's result. The second writer must wait: a writer
+// that finishes first, or that neither waits nor finishes within
+// writerScheduleBound, fails the subtest. It ends the first transaction and
+// collects the second writer before that failure, so no goroutine outlives the
+// statement it was ordered by.
+func awaitSecondWriterWaits(t *testing.T, waits <-chan struct{}, done <-chan error, end func() error, key string) error {
+	t.Helper()
+	waited, finished := false, false
+	var secondErr error
+	select {
+	case <-waits:
+		waited = true
+	case secondErr = <-done:
+		finished = true
+	case <-time.After(writerScheduleBound):
+	}
+	// The second writer cannot finish while the first transaction holds the
+	// entity, so ending that transaction comes before collecting the writer on
+	// every path, including the one that fails.
+	endErr := end()
+	if !finished {
+		select {
+		case secondErr = <-done:
+		case <-time.After(writerScheduleBound):
+			t.Fatalf("%s: the writer did not finish within %s after the first transaction ended", key, writerScheduleBound)
+		}
+	}
+	require.NoError(t, endErr, "%s: ending the first transaction", key)
+	if !waited {
+		t.Fatalf("%s: the writer neither waited for the entity nor failed within %s (writer: %v)", key, writerScheduleBound, secondErr)
+	}
+	return secondErr
 }
 
 // TestNOR213WaitingWriterFollowsARollback: the waiting writer of a node
@@ -339,6 +408,14 @@ func BenchmarkNOR213ContendedNodeUpdate(b *testing.B) {
 					mu.Unlock()
 				})
 				b.StopTimer()
+				result, err := setup.Execute(ctx, "MATCH (n:Doc) RETURN sum(n.value)", nil)
+				if err != nil {
+					b.Fatal(err)
+				}
+				want := int64(b.N) - conflicts.Load()
+				if len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0] != want {
+					b.Fatalf("acknowledged increments: want %d, got %v", want, result.Rows)
+				}
 				sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
 				if n := len(latencies); n > 0 {
 					b.ReportMetric(float64(latencies[n/2].Microseconds()), "p50-µs")

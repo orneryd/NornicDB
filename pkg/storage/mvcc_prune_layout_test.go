@@ -68,7 +68,7 @@ func TestMVCCPruneProgressEveryLayout(t *testing.T) {
 	}{{"node", prefixMVCCNode}, {"relationship", prefixMVCCEdge}, {"outgoing", prefixMVCCOutgoingAdj}, {"incoming", prefixMVCCIncomingAdj}}
 	probe := createMVCCBadgerEngine(t)
 	layouts := pruneLayouts(probe.mvccPruneChunk())
-	for _, k := range kinds {
+	for index, k := range kinds {
 		for _, name := range []string{"sparse", "costly isolated", "dense long run", "mixed", "interrupted chain"} {
 			layout := layouts[name]
 			t.Run(k.name+"/"+name, func(t *testing.T) {
@@ -157,14 +157,18 @@ func TestMVCCPruneProgressEveryLayout(t *testing.T) {
 				}
 				flushSeed()
 
-				// The largest single key's own work: a key-only scan of its
-				// records and its kernel for one step, rolled back.
+				// Calibrate the first key this cycle will decide, not a stale
+				// sample from before earlier cycles changed Badger's working set.
+				// The same 2x factor and every progress/population assertion remain.
 				opts := MVCCPruneOptions{MaxVersionsPerKey: 1}
+				calibration := opts
 				rollback := errors.New("calibration rollback")
-				var ownWork time.Duration
-				for _, id := range candidates {
+				logicalOf := func(id uint64) []byte {
 					logical, _, err := extractMVCCLogicalKeyAndVersion(key(id, MVCCVersion{CommitTimestamp: base, CommitSequence: 1}))
 					require.NoError(t, err)
+					return logical
+				}
+				ownWorkOf := func(logical []byte) time.Duration {
 					started := time.Now()
 					require.NoError(t, b.db.View(func(txn *badger.Txn) error {
 						it := txn.NewIterator(badgerPrefixIteratorOptions(logical))
@@ -173,24 +177,35 @@ func TestMVCCPruneProgressEveryLayout(t *testing.T) {
 						}
 						return nil
 					}))
-					err = b.withUpdate(ctx, updateRequest{}, func(txn *badger.Txn) error {
-						if _, _, err := b.pruneMVCCKeyspaceInTxn(ctx, txn, logical, opts, nil, b.mvccPruneChunk()); err != nil {
+					err := b.withUpdate(ctx, updateRequest{}, func(txn *badger.Txn) error {
+						if _, _, err := b.pruneMVCCKeyspaceInTxn(ctx, txn, logical, calibration, nil, b.mvccPruneChunk()); err != nil {
 							return err
 						}
 						return rollback
 					})
 					require.ErrorIs(t, err, rollback)
-					if took := time.Since(started); took > ownWork {
-						ownWork = took
-					}
+					return time.Since(started)
 				}
-				budget := max(2*ownWork, 2*time.Millisecond)
-				opts.MaxRuntime = budget
+				frontLogical := func(cursor mvccPruneCursor) []byte {
+					for _, id := range candidates {
+						logical := logicalOf(id)
+						if cursor.kind < index || (cursor.kind == index && bytes.Compare(logical, cursor.after) > 0) {
+							return logical
+						}
+					}
+					return nil
+				}
+				var ownWork, budget time.Duration
 
 				var pruned int64
 				cursor := b.mvccPruneResume
 				cycles := 0
 				for ; pruned < expected; cycles++ {
+					logical := frontLogical(cursor)
+					require.NotNil(t, logical, "a candidate remains while %d of %d records are deleted", pruned, expected)
+					ownWork = ownWorkOf(logical)
+					budget = max(2*ownWork, 2*time.Millisecond)
+					opts.MaxRuntime = budget
 					require.Less(t, cycles, 3000, "%d of %d deleted after %d cycles of %s", pruned, expected, cycles, budget)
 					n, err := b.PruneMVCCVersions(context.Background(), opts)
 					require.NoError(t, err)

@@ -42,7 +42,7 @@ func TestTransactionOverlayHTTPRoutes(t *testing.T) {
 		query(create, 64)
 		query("MATCH (n:Overlay) DETACH DELETE n RETURN count(*)", 7)
 		if explicit {
-			require.Empty(t, postMerge(t, server, token, commit, "RETURN 1", nil))
+			require.Empty(t, postCypherStatement(t.Context(), t, server, token, commit, "RETURN 1", nil))
 			endpoint = "/db/nornic/tx/commit"
 		}
 		query("MATCH (n:Overlay) RETURN count(n)", 0)

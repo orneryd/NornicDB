@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,17 +24,6 @@ var httpMergeWriteShapes = []string{
 	"MERGE (n:Doc {id: $k})",
 }
 
-// postMerge runs one statement on endpoint and returns its errors.
-func postMerge(t *testing.T, server *Server, token, endpoint, query string, params map[string]any) []any {
-	response := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{"statements": []any{map[string]any{"statement": query, "parameters": params}}}, token)
-	var result map[string]any
-	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
-		return []any{err.Error()}
-	}
-	errs, _ := result["errors"].([]any)
-	return errs
-}
-
 // openHTTPTransaction opens an explicit transaction and returns its commit
 // URL, or the response body when it didn't open.
 func openHTTPTransaction(t *testing.T, server *Server, token string) (string, []any) {
@@ -46,15 +36,15 @@ func openHTTPTransaction(t *testing.T, server *Server, token string) (string, []
 }
 
 // runHTTPMerge runs query auto-commit or in an explicit transaction.
-func runHTTPMerge(t *testing.T, server *Server, token string, explicit bool, query string, params map[string]any) []any {
+func runHTTPMerge(ctx context.Context, t *testing.T, server *Server, token string, explicit bool, query string, params map[string]any) []any {
 	if !explicit {
-		return postMerge(t, server, token, "/db/nornic/tx/commit", query, params)
+		return postCypherStatement(ctx, t, server, token, "/db/nornic/tx/commit", query, params)
 	}
 	commit, errs := openHTTPTransaction(t, server, token)
 	if errs != nil {
 		return errs
 	}
-	return postMerge(t, server, token, commit, query, params)
+	return postCypherStatement(ctx, t, server, token, commit, query, params)
 }
 
 func countHTTPDocs(t *testing.T, server *Server, key string) any {
@@ -88,9 +78,11 @@ func TestHTTPMergeWritersOfOneNodeSerialize(t *testing.T) {
 			}
 			commit, errs := openHTTPTransaction(t, server, token)
 			require.Empty(t, errs)
-			require.Empty(t, postMerge(t, server, token, strings.TrimSuffix(commit, "/commit"), query, map[string]any{"k": key, "w": 1}))
+			require.Empty(t, postCypherStatement(t.Context(), t, server, token, strings.TrimSuffix(commit, "/commit"), query, map[string]any{"k": key, "w": 1}))
 			done := make(chan []any, 1)
-			go func() { done <- runHTTPMerge(t, server, token, explicit, query, map[string]any{"k": key, "w": 2}) }()
+			go func() {
+				done <- runHTTPMerge(t.Context(), t, server, token, explicit, query, map[string]any{"k": key, "w": 2})
+			}()
 			var secondErrs []any
 			waited := false
 			select {
@@ -130,7 +122,7 @@ func TestHTTPConcurrentMergeWritersConverge(t *testing.T) {
 					go func() {
 						defer done.Done()
 						start.Wait()
-						if errs := runHTTPMerge(t, server, token, explicit, query, map[string]any{"k": key, "w": w}); len(errs) > 0 {
+						if errs := runHTTPMerge(t.Context(), t, server, token, explicit, query, map[string]any{"k": key, "w": w}); len(errs) > 0 {
 							mu.Lock()
 							failures = append(failures, fmt.Sprintf("%s explicit=%v: %v", query, explicit, errs))
 							mu.Unlock()

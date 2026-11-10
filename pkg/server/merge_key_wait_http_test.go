@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -117,7 +116,7 @@ func (h *httpKeyHolder) keepBusy(interval time.Duration) (stop func()) {
 			case <-done:
 				return
 			case <-ticker.C:
-				_ = postMerge(h.t, h.server, h.token, strings.TrimSuffix(h.commit, "/commit"), "RETURN 1", nil)
+				_ = postCypherStatement(h.t.Context(), h.t, h.server, h.token, strings.TrimSuffix(h.commit, "/commit"), "RETURN 1", nil)
 			}
 		}
 	}()
@@ -128,7 +127,7 @@ func (h *httpKeyHolder) keepBusy(interval time.Duration) (stop func()) {
 }
 
 func (h *httpKeyHolder) run(query string, params map[string]any) []any {
-	return postMerge(h.t, h.server, h.token, strings.TrimSuffix(h.commit, "/commit"), query, params)
+	return postCypherStatement(h.t.Context(), h.t, h.server, h.token, strings.TrimSuffix(h.commit, "/commit"), query, params)
 }
 
 func (h *httpKeyHolder) end(commit bool) []any {
@@ -141,7 +140,7 @@ func (h *httpKeyHolder) end(commit bool) []any {
 		errs, _ := result["errors"].([]any)
 		return errs
 	}
-	return postMerge(h.t, h.server, h.token, h.commit, "RETURN 1", nil)
+	return postCypherStatement(h.t.Context(), h.t, h.server, h.token, h.commit, "RETURN 1", nil)
 }
 
 type httpKeyWaitResult struct {
@@ -164,18 +163,7 @@ func startHTTPKeyWaiter(ctx context.Context, t *testing.T, server *Server, token
 			}
 			endpoint = commit
 		}
-		body, _ := json.Marshal(map[string]any{"statements": []any{map[string]any{"statement": query, "parameters": params}}})
-		request := httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body)).WithContext(ctx)
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("Authorization", token)
-		recorder := httptest.NewRecorder()
-		server.buildRouter().ServeHTTP(recorder, request)
-		var result map[string]any
-		if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
-			done <- httpKeyWaitResult{errs: []any{recorder.Body.String()}, elapsed: time.Since(started)}
-			return
-		}
-		errs, _ := result["errors"].([]any)
+		errs := postCypherStatement(ctx, t, server, token, endpoint, query, params)
 		done <- httpKeyWaitResult{errs: errs, elapsed: time.Since(started)}
 	}()
 	return done

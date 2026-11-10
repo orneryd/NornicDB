@@ -239,7 +239,11 @@ func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request TransactionE
 	if err != nil {
 		return nil, err
 	}
+	now := DecayScoringTime()
 	return tx.mergePendingAdjacentEdgesLocked(ctx, committed, request.Node, func(edge *Edge) bool {
+		if tx.engine.filterEntityByDecay(visibleRead, edge, now) {
+			return false
+		}
 		switch request.Kind {
 		case TransactionReadOutgoing:
 			return edge.StartNode == request.Node
@@ -374,9 +378,8 @@ func (tx *BadgerTransaction) GetNodesByLabel(ctx context.Context, label string) 
 	// here as it does for a streamed row: the committed population was read
 	// under the policy of that read, and the pending image is the
 	// transaction's own capture of an earlier one.
-	nowNanos := DecayScoringTime()
 	return tx.mergePendingNodesLocked(ctx, committed, func(node *Node) bool {
-		if node == nil || tx.engine.filterEntityByDecay(visibleRead, node, nowNanos) {
+		if node == nil {
 			return false
 		}
 		for _, nodeLabel := range node.Labels {
@@ -500,10 +503,20 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		return streamVisitUnlocked(tx, ctx, &frame, node, visit)
 	}
 
-	hasPending := len(tx.pendingNodes) > 0 || len(tx.deletedNodes) > 0
+	loadImage := tx.engine.GetStoredNode
+	if queryNodes || properties != nil {
+		loadImage = func(ctx context.Context, id NodeID) (*Node, error) {
+			return tx.engine.readNodeMetadata(ctx, id, storedRead, nodeItemQueryMetadata)
+		}
+	}
+	pendingNodes, overlayErr := writeOwnedReadImagesLocked(ctx, tx.pendingNodes, tx.deletedNodes, &tx.entityLocks, nodeWriteLockKind, loadImage)
+	if overlayErr != nil {
+		return overlayErr
+	}
+	hasPending := len(pendingNodes) > 0 || len(tx.deletedNodes) > 0
 	var seen map[NodeID]struct{}
 	if hasPending {
-		seen = make(map[NodeID]struct{}, len(tx.pendingNodes))
+		seen = make(map[NodeID]struct{}, len(pendingNodes))
 	}
 
 	// Write-behind reads are read-committed: the flusher may land a
@@ -558,7 +571,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 				seen[node.ID] = struct{}{}
 				return nil
 			}
-			if pending, exists := tx.pendingNodes[node.ID]; exists {
+			if pending, exists := pendingNodes[node.ID]; exists {
 				seen[node.ID] = struct{}{}
 				if pending != nil && slices.Contains(pending.Labels, label) {
 					return pendingRow(pending)
@@ -594,7 +607,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 				return err
 			}
 		}
-		return tx.streamPendingLabelNodesLocked(ctx, label, seen, pendingRow)
+		return tx.streamPendingLabelNodesLocked(ctx, label, seen, pendingNodes, pendingRow)
 	}
 
 	completed := make([]*Node, 0)
@@ -660,7 +673,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
 	}
 
-	return tx.streamPendingLabelNodesLocked(ctx, label, seen, pendingRow)
+	return tx.streamPendingLabelNodesLocked(ctx, label, seen, pendingNodes, pendingRow)
 }
 
 // StreamNodesWithOptions streams the transaction's view of every node (its
@@ -722,23 +735,37 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
 	}
-	readPending := func(node *Node) *Node {
-		return opts.copyResidentNode(node)
+	now := DecayScoringTime()
+	emitPending := func(node *Node) error {
+		if tx.engine.filterEntityByDecay(visibleRead, node, now) {
+			return nil
+		}
+		return invokeVisit(opts.copyResidentNode(node))
 	}
 
-	hasPending := len(tx.pendingNodes) > 0 || len(tx.deletedNodes) > 0
+	loadImage := tx.engine.GetStoredNode
+	if !opts.WithEmbeddings {
+		loadImage = func(ctx context.Context, id NodeID) (*Node, error) {
+			return tx.engine.readNodeMetadata(ctx, id, storedRead, nodeItemQueryMetadata)
+		}
+	}
+	pendingNodes, overlayErr := writeOwnedReadImagesLocked(ctx, tx.pendingNodes, tx.deletedNodes, &tx.entityLocks, nodeWriteLockKind, loadImage)
+	if overlayErr != nil {
+		return overlayErr
+	}
+	hasPending := len(pendingNodes) > 0 || len(tx.deletedNodes) > 0
 	var seen map[NodeID]struct{}
 	if hasPending {
-		seen = make(map[NodeID]struct{}, len(tx.pendingNodes))
+		seen = make(map[NodeID]struct{}, len(pendingNodes))
 	}
 	emitCommitted := func(node *Node) error {
 		if hasPending {
 			if _, deleted := tx.deletedNodes[node.ID]; deleted {
 				return nil
 			}
-			if pending, exists := tx.pendingNodes[node.ID]; exists {
+			if pending, exists := pendingNodes[node.ID]; exists {
 				seen[node.ID] = struct{}{}
-				return invokeVisit(readPending(pending))
+				return emitPending(pending)
 			}
 		}
 		return invokeVisit(node)
@@ -764,11 +791,11 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 		return err
 	}
 	// Pending and deleted nodes are disjoint: CreateNode clears a deletion.
-	for id, node := range tx.pendingNodes {
+	for id, node := range pendingNodes {
 		if _, emitted := seen[id]; emitted || !inScope(id) {
 			continue
 		}
-		if err := invokeVisit(readPending(node)); err != nil {
+		if err := emitPending(node); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}
@@ -843,15 +870,16 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 	ctx context.Context,
 	label string,
 	seen map[NodeID]struct{},
+	pendingNodes map[NodeID]*Node,
 	visit func(*Node) error,
 ) error {
-	if len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
+	if len(pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
 		return nil
 	}
 	// The pending overlay is emitted under the read's own context, so a
 	// canceled statement stops here instead of projecting the rest.
 	var cancel bulkReadCancellation
-	for id, node := range tx.pendingNodes {
+	for id, node := range pendingNodes {
 		if err := cancel.check(ctx); err != nil {
 			return err
 		}
@@ -994,7 +1022,15 @@ func mergePendingLocked[ID comparable, T any](
 }
 
 func (tx *BadgerTransaction) mergePendingNodesLocked(ctx context.Context, committed []*Node, includePending func(*Node) bool) ([]*Node, error) {
-	return mergePendingLocked(ctx, committed, tx.pendingNodes, tx.deletedNodes, includePending, func(node *Node) NodeID {
+	pending, err := writeOwnedReadImagesLocked(ctx, tx.pendingNodes, tx.deletedNodes, &tx.entityLocks, nodeWriteLockKind, tx.engine.GetStoredNode)
+	if err != nil {
+		return nil, err
+	}
+	now := DecayScoringTime()
+	visible := func(image *Node) bool {
+		return !tx.engine.filterEntityByDecay(visibleRead, image, now) && includePending(image)
+	}
+	return mergePendingLocked(ctx, committed, pending, tx.deletedNodes, visible, func(node *Node) NodeID {
 		if node == nil {
 			return ""
 		}
@@ -1003,7 +1039,15 @@ func (tx *BadgerTransaction) mergePendingNodesLocked(ctx context.Context, commit
 }
 
 func (tx *BadgerTransaction) mergePendingEdgesLocked(ctx context.Context, committed []*Edge, includePending func(*Edge) bool) ([]*Edge, error) {
-	return mergePendingLocked(ctx, committed, tx.pendingEdges, tx.deletedEdges, includePending, func(edge *Edge) EdgeID {
+	pending, err := writeOwnedReadImagesLocked(ctx, tx.pendingEdges, tx.deletedEdges, &tx.entityLocks, edgeWriteLockKind, tx.engine.GetStoredEdge)
+	if err != nil {
+		return nil, err
+	}
+	now := DecayScoringTime()
+	visible := func(image *Edge) bool {
+		return !tx.engine.filterEntityByDecay(visibleRead, image, now) && includePending(image)
+	}
+	return mergePendingLocked(ctx, committed, pending, tx.deletedEdges, visible, func(edge *Edge) EdgeID {
 		if edge == nil {
 			return ""
 		}
@@ -1432,7 +1476,7 @@ func (tx *BadgerTransaction) committedNodeSupersededLocked(id NodeID) bool {
 		return true
 	}
 	_, rewritten := tx.pendingNodes[id]
-	return rewritten
+	return rewritten || tx.readsLatestLocked(bufferedNodeEntity, string(id))
 }
 
 // committedEdgeSupersededLocked is committedNodeSupersededLocked for a
@@ -1442,7 +1486,7 @@ func (tx *BadgerTransaction) committedEdgeSupersededLocked(id EdgeID) bool {
 		return true
 	}
 	_, rewritten := tx.pendingEdges[id]
-	return rewritten
+	return rewritten || tx.readsLatestLocked(bufferedEdgeEntity, string(id))
 }
 
 // visibleNodeLabelsLocked reports whether a node exists for the transaction
