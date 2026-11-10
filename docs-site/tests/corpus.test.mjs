@@ -32,7 +32,13 @@ const policy = createContentPolicy(
 );
 const tracked = execFileSync(
   "git",
-  ["ls-tree", "-r", "--name-only", "origin/main", "docs"],
+  [
+    "ls-tree",
+    "-r",
+    "--name-only",
+    process.env.VERIFY_BASE || "origin/main",
+    "docs",
+  ],
   { cwd: root, encoding: "utf8" },
 )
   .trim()
