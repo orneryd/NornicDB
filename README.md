@@ -40,6 +40,8 @@
 
 ## Quick Start
 
+### Docker and Homebrew
+
 ```bash
 # Homebrew
 brew tap orneryd/nornicdb && brew install nornicdb && brew services start nornicdb
@@ -58,6 +60,23 @@ Open [http://localhost:7474](http://localhost:7474) for the admin UI. For an aut
 > Note: Docker on macOS does not expose Metal acceleration. The Apple Silicon image still runs, but GPU acceleration on macOS requires a native install from the [releases page](https://github.com/orneryd/NornicDB/releases) or a local build.
 
 ---
+
+### Local build
+
+Install the [build prerequisites](docs/development/setup.md), then clone, build, and start the server:
+
+```bash
+git clone https://github.com/orneryd/NornicDB.git
+cd NornicDB
+make build
+./bin/nornicdb serve
+```
+
+On Windows, run `.\bin\nornicdb.exe serve`. See [configuration](docs/operations/configuration.md) for authentication and storage settings.
+
+### macOS release installer
+
+Download the `.pkg` installer for your Mac from the [release assets](https://github.com/orneryd/NornicDB/releases): choose `arm64` for Apple Silicon or `amd64` for Intel. Open the package and follow its installer prompts. Homebrew is also available above.
 
 ## What NornicDB Is
 
