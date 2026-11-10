@@ -258,7 +258,7 @@ func TestNOR213ConcurrentIncrementsAreNotLost(t *testing.T) {
 		group.Wait()
 		close(failures)
 		for err := range failures {
-			require.NoError(t, errors.Unwrap(err), "%s: %v", query, err)
+			require.NoError(t, err, "%s", query)
 		}
 	}
 	result, err := setup.Execute(ctx, "MATCH (n:Doc {id: 'n'})-[r:HAS]->() RETURN n.c, r.c", nil)

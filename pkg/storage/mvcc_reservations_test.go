@@ -76,3 +76,33 @@ func TestOverlappingReservationCutsDoNotRetainThePublishedVersions(t *testing.T)
 	ledger.cutAbandoned(previous)
 	require.Empty(t, ledger.published)
 }
+
+// Ending a later cut must not retire the publications an earlier cut needs.
+func TestReservationCutsRetainPublicationsUntilOldestFinishes(t *testing.T) {
+	ledger := &mvccReservations{}
+	state := &namespaceMVCCState{}
+	older, newer := ledger.cutStarted(), ledger.cutStarted()
+	var txn badger.Txn
+	version, err := ledger.reserve(&txn, "test", state, time.Now(), false)
+	require.NoError(t, err)
+	ledger.publishTxn(&txn)
+	ledger.cutAbandoned(newer)
+	require.Len(t, ledger.published, 1)
+	copied := takeReservationCut(t, ledger, older)
+	require.True(t, copied.holds("test", version))
+	copied.release()
+	require.Empty(t, ledger.published)
+	require.Empty(t, ledger.cuts)
+}
+
+func TestPublicationBoundaryForSnapshotAndRetirement(t *testing.T) {
+	ledger := &mvccReservations{published: []publishedReservation{{cut: 2}, {cut: 2}, {cut: 5}, {cut: 9}}}
+	for _, test := range []struct {
+		cut  uint64
+		want int
+	}{{0, 0}, {2, 0}, {3, 2}, {5, 2}, {9, 3}, {10, 4}} {
+		require.Equal(t, test.want, ledger.publishedLowerBoundLocked(test.cut), "cut %d", test.cut)
+	}
+	ledger.published = nil
+	require.Zero(t, ledger.publishedLowerBoundLocked(1))
+}

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -258,10 +259,7 @@ func (r *mvccReservations) cutTaken(cut uint64, readBoundary func(now time.Time)
 		return now, nil, nil, err
 	}
 	// published is ordered by cut number: this cut's versions are its tail.
-	since := len(r.published)
-	for since > 0 && r.published[since-1].cut >= cut {
-		since--
-	}
+	since := r.publishedLowerBoundLocked(cut)
 	var copied *mvccCut
 	if len(r.inflight) > 0 || since < len(r.published) {
 		copied = mvccCutPool.Get().(*mvccCut)
@@ -305,13 +303,17 @@ func (r *mvccReservations) endCutLocked(cut uint64) {
 		r.published = r.published[:0]
 		return
 	}
-	drop := 0
-	for drop < len(r.published) && r.published[drop].cut < oldest {
-		drop++
-	}
+	drop := r.publishedLowerBoundLocked(oldest)
 	if drop > 0 {
 		kept := copy(r.published, r.published[drop:])
 		clear(r.published[kept:])
 		r.published = r.published[:kept]
 	}
+}
+
+// publishedLowerBoundLocked locates the retained publications at or after cut.
+// Publication appends in cut order; both snapshot copying and retirement use
+// this boundary so they agree about which cuts still need each publication.
+func (r *mvccReservations) publishedLowerBoundLocked(cut uint64) int {
+	return sort.Search(len(r.published), func(i int) bool { return r.published[i].cut >= cut })
 }

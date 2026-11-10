@@ -447,18 +447,7 @@ func (sm *SchemaManager) acquireUniqueConstraintLocks(ctx context.Context, owner
 		sm.uniqueConstraintCommitOrder = 0
 	}
 	for i := range requests {
-		lock := sm.uniqueConstraintCommitLocks[requests[i].key]
-		if lock == nil {
-			sm.uniqueConstraintCommitOrder++
-			if sm.uniqueConstraintCommitOrder == 0 {
-				panic("UNIQUE commit lock order overflow")
-			}
-			lock = uniqueConstraintLockPool.Get().(*uniqueConstraintCommitLock)
-			lock.order = sm.uniqueConstraintCommitOrder
-			sm.uniqueConstraintCommitLocks[requests[i].key] = lock
-		}
-		lock.refs++
-		requests[i].lock = lock
+		requests[i].lock = sm.referenceUniqueConstraintLockLocked(requests[i].key)
 	}
 	sm.uniqueConstraintCommitLocksMu.Unlock()
 	sort.Slice(requests, func(i, j int) bool {
@@ -479,6 +468,25 @@ func (sm *SchemaManager) acquireUniqueConstraintLocks(ctx context.Context, owner
 			recycleUniqueConstraintRequests(requestBatch, requests)
 		})
 	}, nil
+}
+
+// referenceUniqueConstraintLockLocked retains the canonical registry entry for
+// one key. Both transaction-lifetime entity locks and commit-time constraint
+// batches use this owner, so allocation, ordering and reference counts agree.
+// Caller holds uniqueConstraintCommitLocksMu and has initialized the registry.
+func (sm *SchemaManager) referenceUniqueConstraintLockLocked(key uniqueConstraintLockKey) *uniqueConstraintCommitLock {
+	lock := sm.uniqueConstraintCommitLocks[key]
+	if lock == nil {
+		sm.uniqueConstraintCommitOrder++
+		if sm.uniqueConstraintCommitOrder == 0 {
+			panic("UNIQUE commit lock order overflow")
+		}
+		lock = uniqueConstraintLockPool.Get().(*uniqueConstraintCommitLock)
+		lock.order = sm.uniqueConstraintCommitOrder
+		sm.uniqueConstraintCommitLocks[key] = lock
+	}
+	lock.refs++
+	return lock
 }
 
 // lockableUniqueConstraintKey reports whether k can key a constraint lock: its

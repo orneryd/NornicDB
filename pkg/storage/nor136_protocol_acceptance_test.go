@@ -152,21 +152,37 @@ func nor136RequireDurableOutcome(t *testing.T, f *protocolServerFixture, id stor
 	}
 }
 
+// nor136OpenSchedule is the one owner of the NOR136 schedule fixture: the
+// write-behind store is opened with its rotation delay pinned to
+// nor136ScheduleFlushInterval and the existing worker stopped, so an
+// acknowledged autocommit commit stays buffered until the schedule flushes
+// explicitly and no timer can move it. It seeds the caller's graph through the
+// fixture and returns the fixture with the writer's and the peer's public
+// clients for the route. The unflushed-peer schedule and the disjoint-peer
+// control share it; their conflicting and non-conflicting contracts stay with
+// the tests.
+func nor136OpenSchedule(t *testing.T, route string, seed ...string) (*protocolServerFixture, *pr1655PublicClient, *pr1655PublicClient) {
+	t.Helper()
+	f := openProtocolServerFixture(t, protocolServerOptions{writeBehind: true, flushInterval: nor136ScheduleFlushInterval, manualDrain: true})
+	f.seed(t, seed...)
+	return f, pr1655OpenPublicClient(t, f.server, route), pr1655OpenPublicClient(t, f.server, route)
+}
+
 // TestNOR136UnflushedPeerKeepsAcknowledgedWrites is NOR136 matrix rows 1 and 2:
 // the unflushed-peer schedule over Execute, Bolt and HTTP, for an explicit and
 // an autocommit stale writer.
+// The peer contends with the writer for the same node, so its update is only
+// acknowledged once the writer's transaction ends; the disjoint-peer control is
+// TestNOR136DisjointPeerKeepsBothAcknowledgedWrites, and both share the schedule
+// fixture owned by nor136OpenSchedule.
 func TestNOR136UnflushedPeerKeepsAcknowledgedWrites(t *testing.T) {
 	nor136Parsers(t)
 	for _, route := range nor136ProtocolRoutes() {
 		for _, producer := range []string{"explicit", "autocommit"} {
 			t.Run(fmt.Sprintf("%s/%s", route, producer), func(t *testing.T) {
-				f := openProtocolServerFixture(t, protocolServerOptions{writeBehind: true, flushInterval: nor136ScheduleFlushInterval, manualDrain: true})
-				f.seed(t, "CREATE (:Doc {id:'original', note:'seed', other:'seed'})")
+				f, writer, peer := nor136OpenSchedule(t, route, "CREATE (:Doc {id:'original', note:'seed', other:'seed'})")
 				originalID, idErr := pr1655SingleDocID(f.engine)
 				require.NoError(t, idErr)
-
-				writer := pr1655OpenPublicClient(t, f.server, route)
-				peer := pr1655OpenPublicClient(t, f.server, route)
 
 				gate := newNOR136PauseGate()
 				var writerErr error
@@ -257,17 +273,17 @@ func TestNOR136UnflushedPeerKeepsAcknowledgedWrites(t *testing.T) {
 // TestNOR136DisjointPeerKeepsBothAcknowledgedWrites is NOR136 matrix row 4: a
 // peer's acknowledged buffered write to a different node must not conflict the
 // writer and must survive alongside it.
+// Unlike the unflushed-peer schedule it shares nor136OpenSchedule with, the peer
+// never contends for the writer's node, so no lock wait or conflict is possible
+// and no acknowledged property of either node may be lost.
 func TestNOR136DisjointPeerKeepsBothAcknowledgedWrites(t *testing.T) {
 	nor136Parsers(t)
 	for _, route := range nor136ProtocolRoutes() {
 		t.Run(route, func(t *testing.T) {
-			f := openProtocolServerFixture(t, protocolServerOptions{writeBehind: true, flushInterval: nor136ScheduleFlushInterval, manualDrain: true})
-			f.seed(t,
+			f, writer, peer := nor136OpenSchedule(t, route,
 				"CREATE (:Doc {id:'original', note:'seed'})",
 				"CREATE (:Doc {id:'peer-target', other:'seed'})",
 			)
-			writer := pr1655OpenPublicClient(t, f.server, route)
-			peer := pr1655OpenPublicClient(t, f.server, route)
 
 			require.NoError(t, writer.begin())
 			_, err := writer.run(nor136WriterNote)

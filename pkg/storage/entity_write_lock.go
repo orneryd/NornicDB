@@ -295,17 +295,7 @@ func (sm *SchemaManager) acquireEntityWriteLock(ctx context.Context, owner strin
 	if len(sm.uniqueConstraintCommitLocks) == 0 {
 		sm.uniqueConstraintCommitOrder = 0
 	}
-	lock := sm.uniqueConstraintCommitLocks[key]
-	if lock == nil {
-		sm.uniqueConstraintCommitOrder++
-		if sm.uniqueConstraintCommitOrder == 0 {
-			panic("UNIQUE commit lock order overflow")
-		}
-		lock = uniqueConstraintLockPool.Get().(*uniqueConstraintCommitLock)
-		lock.order = sm.uniqueConstraintCommitOrder
-		sm.uniqueConstraintCommitLocks[key] = lock
-	}
-	lock.refs++
+	lock := sm.referenceUniqueConstraintLockLocked(key)
 	request.lock = lock
 	if lock.owner == "" && lock.readerCount() == 0 && !lock.recoveryPending {
 		// Free: taken without a second registry round trip.
