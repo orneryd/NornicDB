@@ -40,21 +40,24 @@
 
 ## Quick Start
 
-Start a local CPU instance with authentication enabled:
-
 ```bash
-export NORNICDB_PASSWORD='replace-with-a-long-random-password'
-export NORNICDB_JWT_SECRET='replace-with-at-least-32-random-characters'
+# Homebrew
+brew tap orneryd/nornicdb && brew install nornicdb && brew services start nornicdb
 
-docker run -d --name nornicdb \
-  -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 \
-  -v nornicdb-data:/data \
-  -e NORNICDB_AUTH="admin:${NORNICDB_PASSWORD}" \
-  -e NORNICDB_AUTH_JWT_SECRET="${NORNICDB_JWT_SECRET}" \
-  timothyswt/nornicdb-amd64-cpu:latest
+# arm64 / Apple Silicon
+docker run -d --name nornicdb -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data timothyswt/nornicdb-arm64-metal-bge:latest
+
+# amd64 / CPU only
+docker run -d --name nornicdb -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data timothyswt/nornicdb-amd64-cpu-bge:latest
 ```
 
-Open [http://localhost:7474](http://localhost:7474). Follow the [quick start](docs/start.md) to write and query a graph, or see [installation options](docs/getting-started/installation.md) for other platforms and GPU support.
+Open [http://localhost:7474](http://localhost:7474) for the admin UI. For an authenticated, loopback-only setup and your first query, follow the [quick start guide](docs/start.md). For NVIDIA CUDA hosts, use `timothyswt/nornicdb-amd64-cuda-bge:latest`. For Vulkan hosts, use `timothyswt/nornicdb-amd64-vulkan-bge:latest`.
+
+---
+
+> Note: Docker on macOS does not expose Metal acceleration. The Apple Silicon image still runs, but GPU acceleration on macOS requires a native install from the [releases page](https://github.com/orneryd/NornicDB/releases) or a local build.
+
+---
 
 ## What NornicDB Is
 
