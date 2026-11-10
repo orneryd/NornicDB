@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	testfixture "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 )
@@ -163,14 +164,7 @@ func TestNodeCascadeValidationWindowBlocksPeerAcknowledgement(t *testing.T) {
 	require.Contains(t, waitChain, "(*WriteBehindBuffer).commitsAfterBegin < (*BadgerTransaction).bufferedWriteConflictLocked",
 		"the window under test is the buffered conflict scan of the primary commit, got %s", waitChain)
 
-	peerWait := make(chan struct{}, 1)
-	t.Cleanup(SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case peerWait <- struct{}{}:
-		default:
-		}
-	}))
-
+	peerWait := testfixture.ObserveHookSignal(t, SetUniqueKeyLockWaitHookForTesting, 1)
 	peerDone := make(chan error, 1)
 	go func() { peerDone <- peer.CommitContext(ctx) }()
 	select {

@@ -109,7 +109,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 					retainedBytes += bytes
 				}
 			}
-			if !tx.committedNodeSupersededLocked(node.ID) && !tx.engine.filterEntityByDecay(visibleRead, node, nowNanos) && matches(node) {
+			if !tx.committedNodeSupersededLocked(node.ID) && !tx.readsLatestLocked(bufferedNodeEntity, string(node.ID)) && !tx.engine.filterEntityByDecay(visibleRead, node, nowNanos) && matches(node) {
 				first = append(first, copyNode(node))
 			}
 			return nil
@@ -191,7 +191,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 		if err := cancellation.check(ctx); err != nil {
 			return nil, false, err
 		}
-		if tx.committedNodeSupersededLocked(id) || tx.engine.filterEntityByDecay(visibleRead, population.nodes[id], nowNanos) {
+		if tx.committedNodeSupersededLocked(id) || tx.readsLatestLocked(bufferedNodeEntity, string(id)) || tx.engine.filterEntityByDecay(visibleRead, population.nodes[id], nowNanos) {
 			continue
 		}
 		result = append(result, copyNode(population.nodes[id]))

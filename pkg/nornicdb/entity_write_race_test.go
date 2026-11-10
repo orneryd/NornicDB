@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 
@@ -74,7 +75,7 @@ func (f *writeRaceFailures) addf(format string, args ...interface{}) {
 func (f *writeRaceFailures) all() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.collected...)
+	return slices.Clone(f.collected)
 }
 
 // requireEmpty fails the test with every collected failure.

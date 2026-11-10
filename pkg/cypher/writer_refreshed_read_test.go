@@ -52,15 +52,15 @@ func TestWriterNoOpRetainsRefreshedImageForCollectionReads(t *testing.T) {
 		t.Run(shape.name, func(t *testing.T) {
 			ctx := context.Background()
 			store, setup := newMergeRaceStore(t)
-			runRefreshedReadStatements(t, setup, ctx, shape.seed...)
+			executeClauseQueries(t, setup, ctx, shape.seed...)
 			writer := NewStorageExecutor(store)
 			_, err := writer.Execute(ctx, "BEGIN", nil)
 			require.NoError(t, err)
 			defer writer.Execute(ctx, "ROLLBACK", nil)
 			// Prime every population/index before the peer changes the target.
-			runRefreshedReadStatements(t, writer, ctx, shape.read...)
-			runRefreshedReadStatements(t, setup, ctx, shape.peer)
-			runRefreshedReadStatements(t, writer, ctx, shape.noop)
+			executeClauseQueries(t, writer, ctx, shape.read...)
+			executeClauseQueries(t, setup, ctx, shape.peer)
+			executeClauseQueries(t, writer, ctx, shape.noop)
 			native := writer.txContext.tx.(*storage.BadgerTransaction)
 			require.Zero(t, native.OperationCount(), "refreshing a no-op must not manufacture a write")
 			for _, query := range shape.read {
@@ -79,7 +79,7 @@ func TestWriterNoOpRetainsRefreshedImageForCollectionReads(t *testing.T) {
 func TestWriterRefreshedReadsAgreeWithPointReadsAndKeepTheSnapshotPinned(t *testing.T) {
 	ctx := context.Background()
 	store, setup := newMergeRaceStore(t)
-	runRefreshedReadStatements(t, setup, ctx,
+	executeClauseQueries(t, setup, ctx,
 		"CREATE (:Doc {id:'n', value:1, peer:1})",
 		"CREATE (:Doc {id:'peer', value:1})",
 		"CREATE (:Doc {id:'bystander', value:1, peer:1})",
@@ -111,11 +111,11 @@ func TestWriterRefreshedReadsAgreeWithPointReadsAndKeepTheSnapshotPinned(t *test
 		"MATCH (n:Doc) RETURN count(n)",
 		"MATCH (n) RETURN count(n)",
 	}
-	runRefreshedReadStatements(t, writer, ctx, warm...)
+	executeClauseQueries(t, writer, ctx, warm...)
 	require.Equal(t, [][]interface{}{{"HAS", int64(1)}, {"LINK", int64(1)}},
 		refreshedReadRows(t, writer, ctx, "MATCH ()-[r]->() RETURN type(r), r.peer ORDER BY type(r)"))
 
-	runRefreshedReadStatements(t, setup, ctx,
+	executeClauseQueries(t, setup, ctx,
 		"MATCH (n:Doc {id:'n'}) SET n.peer=2, n.fresh=7, n:New",
 		"MATCH (u:Doc {id:'peer'}) SET u.peer=9, u:Changed",
 		"MATCH (b:Doc {id:'bystander'}) SET b.peer=9",
@@ -123,7 +123,7 @@ func TestWriterRefreshedReadsAgreeWithPointReadsAndKeepTheSnapshotPinned(t *test
 		"MATCH (:Doc {id:'n'})-[r:LINK]->(:Part {id:'p2'}) SET r.peer=9",
 		"CREATE (:Doc {id:'added', peer:2, fresh:2})",
 	)
-	runRefreshedReadStatements(t, writer, ctx,
+	executeClauseQueries(t, writer, ctx,
 		"MATCH (n:Doc {id:'n'}) SET n.value=1",
 		"MATCH (:Doc {id:'n'})-[r:HAS]->(:Part {id:'p'}) SET r.value=1",
 	)
@@ -224,7 +224,7 @@ func TestWriterRefreshedReadsAgreeWithPointReadsAndKeepTheSnapshotPinned(t *test
 func TestWriterRefreshedReadsYieldToStagedWritesAndDeletes(t *testing.T) {
 	ctx := context.Background()
 	store, setup := newMergeRaceStore(t)
-	runRefreshedReadStatements(t, setup, ctx,
+	executeClauseQueries(t, setup, ctx,
 		"CREATE (:Doc {id:'n', value:1, peer:1})",
 		"CREATE (:Doc {id:'doomed', value:1, peer:1})",
 		"CREATE (:Doc {id:'peer', value:1})",
@@ -237,7 +237,7 @@ func TestWriterRefreshedReadsYieldToStagedWritesAndDeletes(t *testing.T) {
 	_, err := writer.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)
 	defer writer.Execute(ctx, "ROLLBACK", nil)
-	runRefreshedReadStatements(t, writer, ctx,
+	executeClauseQueries(t, writer, ctx,
 		"MATCH (n:Doc) RETURN n.peer",
 		"MATCH (n) RETURN n.peer",
 		"MATCH (n:Doc {peer:1}) RETURN n.id",
@@ -245,7 +245,7 @@ func TestWriterRefreshedReadsYieldToStagedWritesAndDeletes(t *testing.T) {
 		"MATCH (:Doc {id:'n'})-[r]->() RETURN r.peer",
 	)
 
-	runRefreshedReadStatements(t, setup, ctx,
+	executeClauseQueries(t, setup, ctx,
 		"MATCH (n:Doc {id:'n'}) SET n.peer=2, n.fresh=7",
 		"MATCH (n:Doc {id:'doomed'}) SET n.peer=8",
 		"MATCH (u:Doc {id:'peer'}) SET u.peer=9",
@@ -254,7 +254,7 @@ func TestWriterRefreshedReadsYieldToStagedWritesAndDeletes(t *testing.T) {
 	)
 	// No-op writes take the write locks and refresh each image; the following
 	// statements then stage changes and deletes on top of them.
-	runRefreshedReadStatements(t, writer, ctx,
+	executeClauseQueries(t, writer, ctx,
 		"MATCH (n:Doc {id:'n'}) SET n.value=1",
 		"MATCH (n:Doc {id:'doomed'}) SET n.value=1",
 		"MATCH (:Doc {id:'n'})-[r:HAS]->(:Part {id:'p'}) SET r.value=1",
@@ -287,29 +287,21 @@ func TestWriterRefreshedReadsYieldToStagedWritesAndDeletes(t *testing.T) {
 func TestWriterRefreshedReadCancellationPropagates(t *testing.T) {
 	ctx := context.Background()
 	store, setup := newMergeRaceStore(t)
-	runRefreshedReadStatements(t, setup, ctx, "CREATE (:Doc {id:'n', value:1, peer:1})")
+	executeClauseQueries(t, setup, ctx, "CREATE (:Doc {id:'n', value:1, peer:1})")
 	writer := NewStorageExecutor(store)
 	_, err := writer.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)
 	defer writer.Execute(ctx, "ROLLBACK", nil)
 	require.Equal(t, [][]interface{}{{int64(1)}},
 		refreshedReadRows(t, writer, ctx, "MATCH (n:Doc) RETURN n.peer"))
-	runRefreshedReadStatements(t, setup, ctx, "MATCH (n:Doc) SET n.peer=2")
-	runRefreshedReadStatements(t, writer, ctx, "MATCH (n:Doc) SET n.value=1")
+	executeClauseQueries(t, setup, ctx, "MATCH (n:Doc) SET n.peer=2")
+	executeClauseQueries(t, writer, ctx, "MATCH (n:Doc) SET n.value=1")
 
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	_, err = writer.Execute(canceled, "MATCH (n:Doc) RETURN n.peer", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), context.Canceled.Error())
-}
-
-func runRefreshedReadStatements(t *testing.T, exec *StorageExecutor, ctx context.Context, queries ...string) {
-	t.Helper()
-	for _, query := range queries {
-		_, err := exec.Execute(ctx, query, nil)
-		require.NoError(t, err, query)
-	}
 }
 
 func refreshedReadRows(t *testing.T, exec *StorageExecutor, ctx context.Context, query string) [][]interface{} {

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	testfixture "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -61,13 +62,7 @@ func TestHTTPMergeWritersOfOneNodeSerialize(t *testing.T) {
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
 	_, err := server.db.ExecuteCypher(t.Context(), "CREATE CONSTRAINT doc_id FOR (n:Doc) REQUIRE n.id IS UNIQUE", nil)
 	require.NoError(t, err)
-	waits := make(chan struct{}, 64)
-	t.Cleanup(storage.SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waits <- struct{}{}:
-		default:
-		}
-	}))
+	waits := testfixture.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	for _, query := range httpMergeWriteShapes[:2] {
 		for _, explicit := range []bool{false, true} {
 			key := fmt.Sprintf("%s/%v", query, explicit)

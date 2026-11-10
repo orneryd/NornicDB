@@ -161,7 +161,7 @@ func (tx *BadgerTransaction) lockEntityForWrite(ctx context.Context, kind buffer
 	}
 	if err := tx.pinNamespaceFromIDLocked(id); err != nil {
 		tx.mu.Unlock()
-		return false, nil
+		return false, err
 	}
 	if tx.ownsEntityLocked(kind, id) {
 		tx.mu.Unlock()
@@ -226,7 +226,8 @@ func (tx *BadgerTransaction) ownsEntityLocked(kind bufferedEntityKind, id string
 // commit of its namespace followed needs no read.
 func (tx *BadgerTransaction) entityCommittedAfterSnapshot(ctx context.Context, kind bufferedEntityKind, id string) (bool, error) {
 	tx.mu.Lock()
-	unchanged := tx.inflightAtBegin == nil && tx.namespace != "" && !tx.readTS.IsZero() &&
+	// Saturated sequences are no longer unique: compare the entity head below.
+	unchanged := tx.readTS.CommitSequence < maxMVCCCommitSequence && tx.inflightAtBegin == nil && tx.namespace != "" && !tx.readTS.IsZero() &&
 		tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence == tx.readTS.CommitSequence
 	tx.mu.Unlock()
 	if unchanged {

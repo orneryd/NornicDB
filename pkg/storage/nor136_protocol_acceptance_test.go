@@ -41,6 +41,7 @@ import (
 	"testing"
 	"time"
 
+	testfixture "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -216,13 +217,7 @@ func TestNOR136UnflushedPeerKeepsAcknowledgedWrites(t *testing.T) {
 				// The peer writes the node the writer still holds: it waits for
 				// the writer's transaction to end (NOR-213), so nothing of it
 				// is acknowledged or stored before then.
-				waits := make(chan struct{}, 8)
-				t.Cleanup(storage.SetUniqueKeyLockWaitHookForTesting(func() {
-					select {
-					case waits <- struct{}{}:
-					default:
-					}
-				}))
+				waits := testfixture.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 8)
 				peerDone := make(chan error, 1)
 				go func() {
 					_, err := peer.run(nor136PeerOther)

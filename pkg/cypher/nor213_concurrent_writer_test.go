@@ -74,7 +74,7 @@ func TestNOR213ExistingNodeWritersWaitAndPreserveBothUpdates(t *testing.T) {
 // conflict instead (TestCompetingUniqueClaimsFailAtCommit).
 func TestNOR213WritersOfOneEntityWaitOnEveryWriteForm(t *testing.T) {
 	store, setup := newMergeRaceStore(t)
-	waits := mergeKeyWaits(t)
+	waits := runtimeFixtureOwner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	// rows states a check row that does not depend on the iteration's key.
 	rows := func(values ...interface{}) func(key string) []interface{} {
@@ -196,7 +196,7 @@ func awaitSecondWriterWaits(t *testing.T, waits <-chan struct{}, done <-chan err
 // whose first writer rolls back writes the node as it was committed.
 func TestNOR213WaitingWriterFollowsARollback(t *testing.T) {
 	store, setup := newMergeRaceStore(t)
-	waits := mergeKeyWaits(t)
+	waits := runtimeFixtureOwner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	_, err := setup.Execute(ctx, "CREATE (:Doc {id: 'rolled', c: 0})", nil)
 	require.NoError(t, err)
@@ -224,7 +224,7 @@ func TestNOR213WaitingWriterFollowsARollback(t *testing.T) {
 // failed one ends.
 func TestNOR213WritersClosingACycleDeadlock(t *testing.T) {
 	store, setup := newMergeRaceStore(t)
-	waits := mergeKeyWaits(t)
+	waits := runtimeFixtureOwner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	_, err := setup.Execute(ctx, "CREATE (:Doc {id: 'x'}), (:Doc {id: 'y'})", nil)
 	require.NoError(t, err)
@@ -269,7 +269,7 @@ func TestNOR213WaitEndsWithItsStatementAndAtTheTransactionTimeout(t *testing.T) 
 	setup := NewStorageExecutor(store)
 	_, err = setup.Execute(ctx, "CREATE (:Doc {id: 'held'})", nil)
 	require.NoError(t, err)
-	waits := mergeKeyWaits(t)
+	waits := runtimeFixtureOwner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	holder := NewStorageExecutor(store)
 	_, err = holder.Execute(WithClientTransactionTimeout(ctx), "BEGIN", nil)
 	require.NoError(t, err)
@@ -337,7 +337,7 @@ func TestNOR213ConcurrentIncrementsAreNotLost(t *testing.T) {
 
 func BenchmarkNOR213UncontendedNodeUpdate(b *testing.B) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
@@ -365,7 +365,7 @@ func BenchmarkNOR213ContendedNodeUpdate(b *testing.B) {
 		for _, shape := range []string{"oneNode", "ownNodes"} {
 			b.Run(mode+"/"+shape, func(b *testing.B) {
 				ctx := context.Background()
-				base, err := storage.NewMemoryEngineWithOptions(storage.BadgerOptions{WriteBehind: mode == "writeBehind"})
+				base, err := runtimeFixtureOwner.TrackResult[*storage.MemoryEngine](b, storage.ErrStorageClosed)(storage.NewMemoryEngineWithOptions(storage.BadgerOptions{WriteBehind: mode == "writeBehind"}))
 				if err != nil {
 					b.Fatal(err)
 				}

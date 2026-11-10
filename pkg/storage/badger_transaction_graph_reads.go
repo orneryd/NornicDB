@@ -737,7 +737,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 	}
 	now := DecayScoringTime()
 	emitPending := func(node *Node) error {
-		if tx.engine.filterEntityByDecay(visibleRead, node, now) {
+		if tx.engine.filterEntityByDecay(opts.readVisibility(), node, now) {
 			return nil
 		}
 		return invokeVisit(opts.copyResidentNode(node))
@@ -1470,13 +1470,16 @@ func (tx *BadgerTransaction) committedConstraintNodesLocked(ctx context.Context,
 // a committed node as stored: it deletes the node, or rewrites it (its pending
 // version is what the transaction sees, and is checked as pending).
 // Constraint checks against committed data skip such nodes, so a value a
-// node gives up in the transaction is free for another (#907).
+// node gives up in the transaction is free for another (#907). A lock-only
+// read refresh does not supersede a committed claim: it stages no replacement
+// for the constraint owner to check. Snapshot read consumers separately hide
+// their stale row when the write-owned read overlay supplies its latest image.
 func (tx *BadgerTransaction) committedNodeSupersededLocked(id NodeID) bool {
 	if _, deleted := tx.deletedNodes[id]; deleted {
 		return true
 	}
 	_, rewritten := tx.pendingNodes[id]
-	return rewritten || tx.readsLatestLocked(bufferedNodeEntity, string(id))
+	return rewritten
 }
 
 // committedEdgeSupersededLocked is committedNodeSupersededLocked for a
@@ -1486,7 +1489,7 @@ func (tx *BadgerTransaction) committedEdgeSupersededLocked(id EdgeID) bool {
 		return true
 	}
 	_, rewritten := tx.pendingEdges[id]
-	return rewritten || tx.readsLatestLocked(bufferedEdgeEntity, string(id))
+	return rewritten
 }
 
 // visibleNodeLabelsLocked reports whether a node exists for the transaction

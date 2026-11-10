@@ -825,7 +825,7 @@ func TestWriteOwnedReadImagesApplyLiveVisibility(t *testing.T) {
 		"label": func() ([]*Node, error) { return f.tx.GetNodesByLabel(ctx, "Doc") },
 		"stream": func() ([]*Node, error) {
 			var rows []*Node
-			err := f.tx.StreamNodesWithOptions(ctx, StreamNodesOptions{}, func(n *Node) error { rows = append(rows, n); return nil })
+			err := f.tx.StreamNodesWithOptions(ctx, fullNodeStreamOptions(""), func(n *Node) error { rows = append(rows, n); return nil })
 			return rows, err
 		},
 	} {

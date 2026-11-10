@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -194,30 +195,9 @@ func requireNeo4jCode(t *testing.T, err error, code string, msgAndArgs ...any) {
 	require.Equal(t, code, neoErr.Code, msgAndArgs...)
 }
 
-// keyWaitSignal reports each wait for a key lock another transaction holds.
-func keyWaitSignal(t *testing.T) <-chan struct{} {
-	waits := make(chan struct{}, 64)
-	t.Cleanup(storage.SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waits <- struct{}{}:
-		default:
-		}
-	}))
-	return waits
-}
-
 func drainKeyWaits(waits <-chan struct{}) {
 	for len(waits) > 0 {
 		<-waits
-	}
-}
-
-func awaitKeyWait(t *testing.T, waits <-chan struct{}, what string) {
-	t.Helper()
-	select {
-	case <-waits:
-	case <-time.After(keyWaitStuckAfter):
-		t.Fatalf("%s never waited for the key", what)
 	}
 }
 
@@ -277,7 +257,7 @@ func TestBoltMergeKeyWaitEndsAtTransactionTimeout(t *testing.T) {
 // waiter's keys are released.
 func TestBoltMergeKeyWaitEndsWithItsStatement(t *testing.T) {
 	driver, _ := startKeyWaitBolt(t, time.Minute, 0)
-	waits := keyWaitSignal(t)
+	waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	for _, explicit := range []bool{false, true} {
 		held, free := fmt.Sprintf("deadline-held-%v", explicit), fmt.Sprintf("deadline-free-%v", explicit)
@@ -292,7 +272,7 @@ func TestBoltMergeKeyWaitEndsWithItsStatement(t *testing.T) {
 		require.NoError(t, holder.run(ctx, "MERGE (n:Doc {id: $k})", map[string]any{"k": held}))
 		drainKeyWaits(waits)
 		done := startBoltKeyWaiter(ctx, driver, explicit, "UNWIND [$free, $held] AS k MERGE (n:Doc {id: k}) RETURN 'terminate me'", map[string]any{"free": free, "held": held})
-		awaitKeyWait(t, waits, "the statement to terminate")
+		fixtureowner.WaitForBarrier(t, waits, keyWaitStuckAfter, nil, "the statement to terminate never waited for the key")
 		rows := boltRows(t, driver, "SHOW TRANSACTIONS YIELD transactionId, currentQuery WHERE currentQuery STARTS WITH 'UNWIND [$free, $held]' RETURN collect(transactionId)", nil)
 		ids := rows[0].([]any)
 		require.Len(t, ids, 1, "explicit=%v", explicit)
@@ -309,7 +289,7 @@ func TestBoltMergeKeyWaitEndsWithItsStatement(t *testing.T) {
 // matches the holder's node) or rolls back (it creates the node).
 func TestBoltMergeKeyWaitProceedsWhenTheHolderEnds(t *testing.T) {
 	driver, _ := startKeyWaitBolt(t, time.Minute, 0)
-	waits := keyWaitSignal(t)
+	waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	for _, commit := range []bool{true, false} {
 		for _, explicit := range []bool{false, true} {
@@ -317,7 +297,7 @@ func TestBoltMergeKeyWaitProceedsWhenTheHolderEnds(t *testing.T) {
 			holder := holdBoltKeys(t, driver, key)
 			drainKeyWaits(waits)
 			done := startBoltKeyWaiter(ctx, driver, explicit, "MERGE (n:Doc {id: $k}) ON MATCH SET n.matched = true ON CREATE SET n.created = true", map[string]any{"k": key})
-			awaitKeyWait(t, waits, "the waiter")
+			fixtureowner.WaitForBarrier(t, waits, keyWaitStuckAfter, nil, "the waiter never waited for the key")
 			if commit {
 				require.NoError(t, holder.tx.Commit(ctx))
 			} else {
@@ -335,7 +315,7 @@ func TestBoltMergeKeyWaitProceedsWhenTheHolderEnds(t *testing.T) {
 // released, so the other proceeds and commits both nodes.
 func TestBoltMergeKeyDeadlockFailsOneSide(t *testing.T) {
 	driver, _ := startKeyWaitBolt(t, time.Minute, 0)
-	waits := keyWaitSignal(t)
+	waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	for _, explicit := range []bool{false, true} {
 		k1, k2 := fmt.Sprintf("dl1-%v", explicit), fmt.Sprintf("dl2-%v", explicit)
@@ -351,7 +331,7 @@ func TestBoltMergeKeyDeadlockFailsOneSide(t *testing.T) {
 		} else {
 			second = startBoltKeyWaiter(ctx, driver, false, "UNWIND [$k2, $k1] AS k MERGE (n:Doc {id: k})", map[string]any{"k1": k1, "k2": k2})
 		}
-		awaitKeyWait(t, waits, "the second side")
+		fixtureowner.WaitForBarrier(t, waits, keyWaitStuckAfter, nil, "the second side never waited for the key")
 		firstErr := first.run(ctx, "MERGE (n:Doc {id: $k})", map[string]any{"k": k2})
 		var secondResult keyWaitResult
 		if firstErr != nil {
@@ -480,7 +460,7 @@ func TestBoltMergeKeyTimeoutEndsTheTransactionWithoutClientCleanup(t *testing.T)
 // unrelated schema change proceeds once the key's holder ends.
 func TestBoltMergeKeyWaitEndingReleasesTheTransaction(t *testing.T) {
 	driver, _ := startKeyWaitBolt(t, 200*time.Millisecond, 0)
-	waits := keyWaitSignal(t)
+	waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	for i, ending := range []string{"server timeout", "client timeout", "terminate"} {
 		key := fmt.Sprintf("ending-%d", i)
@@ -505,7 +485,7 @@ func TestBoltMergeKeyWaitEndingReleasesTheTransaction(t *testing.T) {
 			code = "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration"
 		case "terminate":
 			code = "Neo.ClientError.Transaction.Terminated"
-			awaitKeyWait(t, waits, "the statement to terminate")
+			fixtureowner.WaitForBarrier(t, waits, keyWaitStuckAfter, nil, "the statement to terminate never waited for the key")
 			rows := boltRows(t, driver, "SHOW TRANSACTIONS YIELD transactionId, currentQuery WHERE currentQuery STARTS WITH 'MERGE (n:Doc {id: $k}) RETURN' RETURN collect(transactionId)", nil)
 			ids := rows[0].([]any)
 			require.Len(t, ids, 1)

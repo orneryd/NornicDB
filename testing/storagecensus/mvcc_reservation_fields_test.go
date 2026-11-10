@@ -1,6 +1,7 @@
 package storagecensus
 
 import (
+	"golang.org/x/tools/go/ssa"
 	"strings"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 // fixture names each real writer and reader, and proves the census still
 // rejects a rogue writer or reader, a lookalike type and an unreviewed field.
 func TestMVCCReservationFieldsRetainExactPublicationOwners(t *testing.T) {
-	p, _ := importableFieldFixture(t, `package storage
+	p, _ := ssaFixture(t, `package storage
  type mvccReservation struct{namespace string; sequence uint64}
  type mvccReservations struct { at map[mvccReservation]int; cuts []uint64; cutsStarted uint64; lastCutNanos int64; unreviewedCuts int }
  type mvccReservationsLookalike struct { at map[mvccReservation]int; cuts []uint64; cutsStarted uint64; lastCutNanos int64 }
@@ -27,7 +28,7 @@ func TestMVCCReservationFieldsRetainExactPublicationOwners(t *testing.T) {
  func rogueRead(r *mvccReservations)(int,int,uint64,int64){return len(r.at),len(r.cuts),r.cutsStarted,r.lastCutNanos}
  func unreviewedWrite(r *mvccReservations){r.unreviewedCuts++}
  func lookalikeWrite(r *mvccReservationsLookalike){r.at[mvccReservation{}]=0;r.cuts=append(r.cuts,1);r.cutsStarted++;r.lastCutNanos++}
- `)
+ `, "pkg/storage", ssa.SanityCheckFunctions, importableFixture)
 	r := &Report{}
 	(&analysis{p: p}).checkFields(r)
 	text := strings.Join(r.Violations, "\n")

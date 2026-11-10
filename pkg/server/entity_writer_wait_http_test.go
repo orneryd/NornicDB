@@ -26,7 +26,9 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -175,7 +177,7 @@ func TestHTTPSameEntityWritersWaitAndRetainBothProperties(t *testing.T) {
 	} {
 		t.Run(engineShape.name, func(t *testing.T) {
 			server, token := nor213HTTPServer(t, engineShape.writeBehind)
-			waits := httpKeyWaitSignal(t)
+			waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 			for _, shape := range nor213HTTPShapes() {
 				key := shape.name + "-" + engineShape.name
 				params := map[string]any{"k": key}
@@ -211,7 +213,7 @@ func TestHTTPSameEntityWritersWaitAndRetainBothProperties(t *testing.T) {
 					}
 				})
 
-				awaitHTTPKeyWait(t, waits, key+": the second writer")
+				fixtureowner.WaitForBarrier(t, waits, httpKeyWaitStuckAfter, nil, key+": the second writer never waited for the key")
 				require.Empty(t, holder.end(true), "%s: the first writer commits", key)
 				result := awaitHTTPKeyWaiter(t, done, func() { _ = holder.end(false) })
 				require.Empty(t, result.errs, "%s: the second writer", key)
@@ -231,7 +233,7 @@ func TestHTTPSameEntityWriterCancellationReleasesItsWait(t *testing.T) {
 	for _, shape := range nor213HTTPShapes() {
 		t.Run(shape.name, func(t *testing.T) {
 			server, token := nor213HTTPServer(t, false)
-			waits := httpKeyWaitSignal(t)
+			waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 			key := "cancelled-" + shape.name
 			params := map[string]any{"k": key}
 			require.Empty(t, postCypherStatement(t.Context(), t, server, token, "/db/nornic/tx/commit", shape.seed, params))
@@ -259,7 +261,7 @@ func TestHTTPSameEntityWriterCancellationReleasesItsWait(t *testing.T) {
 				}
 			})
 
-			awaitHTTPKeyWait(t, waits, key+": the second writer")
+			fixtureowner.WaitForBarrier(t, waits, httpKeyWaitStuckAfter, nil, key+": the second writer never waited for the key")
 			cancel()
 			require.NotEmpty(t, awaitHTTPKeyWaiter(t, done, func() { _ = holder.end(false) }).errs,
 				"%s: a cancelled statement fails rather than committing", key)

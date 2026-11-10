@@ -108,7 +108,7 @@ func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(ctx context.Context
 		if _, gone := tx.deletedEdges[edge.ID]; gone {
 			continue
 		}
-		if tx.committedEdgeSupersededLocked(edge.ID) {
+		if tx.committedEdgeSupersededLocked(edge.ID) || tx.readsLatestLocked(bufferedEdgeEntity, string(edge.ID)) {
 			continue
 		}
 		if include(edge) {

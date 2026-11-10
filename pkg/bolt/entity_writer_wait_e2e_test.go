@@ -74,21 +74,6 @@ func nor213EntityShapes() []nor213EntityShape {
 	}
 }
 
-// nor213EntityWriteWaits signals each time a transaction starts waiting for an
-// entity or constraint-key write lock another transaction holds, so these
-// tests order the two sessions by the wait itself.
-func nor213EntityWriteWaits(t *testing.T) <-chan struct{} {
-	t.Helper()
-	waits := make(chan struct{}, 64)
-	t.Cleanup(storage.SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waits <- struct{}{}:
-		default:
-		}
-	}))
-	return waits
-}
-
 func nor213DrainEntityWriteWaits(waits <-chan struct{}) {
 	for {
 		select {
@@ -216,17 +201,6 @@ func nor213AwaitBoltStatement(t *testing.T, conn net.Conn, done <-chan error, wh
 	}
 }
 
-// nor213AwaitBoltSettled waits for the goroutine a waiting statement runs in to
-// leave, after the statement's connection was closed.
-func nor213AwaitBoltSettled(t *testing.T, settled <-chan struct{}, what string) {
-	t.Helper()
-	select {
-	case <-settled:
-	case <-time.After(nor213WireWaitLimit):
-		t.Errorf("%s did not end after its connection closed", what)
-	}
-}
-
 // nor213RequireBoltNoWriterWaits runs statement in an explicit transaction of
 // its own and requires that it takes the entity's write lock without waiting:
 // a writer queued behind an earlier session would make it wait.
@@ -264,7 +238,7 @@ func TestBoltSameEntityWritersWaitAndRetainBothProperties(t *testing.T) {
 		t.Run(engineShape.name, func(t *testing.T) {
 			store := nor213BoltStore(t, engineShape.writeBehind)
 			_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
-			waits := nor213EntityWriteWaits(t)
+			waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 			setup := openBoltTestConn(t, port)
 			for _, shape := range nor213EntityShapes() {
 				key := shape.name + "-" + engineShape.name
@@ -292,7 +266,7 @@ func TestBoltSameEntityWritersWaitAndRetainBothProperties(t *testing.T) {
 				t.Cleanup(func() {
 					_ = holder.Close()
 					_ = waiter.Close()
-					nor213AwaitBoltSettled(t, settled, key+": the second writer")
+					fixtureowner.WaitForBarrier(t, settled, nor213WireWaitLimit, nil, key+": the second writer did not end after its connection closed")
 				})
 
 				secondErr, waited := func() (error, bool) {
@@ -341,7 +315,7 @@ func TestBoltWaitingEntityWriterDisconnectHoldsNothing(t *testing.T) {
 		t.Run(engineShape.name, func(t *testing.T) {
 			store := nor213BoltStore(t, engineShape.writeBehind)
 			_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
-			waits := nor213EntityWriteWaits(t)
+			waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 			setup := openBoltTestConn(t, port)
 			for _, shape := range nor213EntityShapes() {
 				key := shape.name + "-" + engineShape.name
@@ -364,14 +338,14 @@ func TestBoltWaitingEntityWriterDisconnectHoldsNothing(t *testing.T) {
 				case <-waits:
 				case <-time.After(nor213WireWaitLimit):
 					_ = waiter.Close()
-					nor213AwaitBoltSettled(t, settled, key+": the second writer")
+					fixtureowner.WaitForBarrier(t, settled, nor213WireWaitLimit, nil, key+": the second writer did not end after its connection closed")
 					_ = holder.Close()
 					t.Fatalf("%s: the second writer never waited for the entity", key)
 				}
 				// The waiting client disappears before the holder ends.
 				_ = waiter.Close()
 				nor213BoltCommit(t, holder)
-				nor213AwaitBoltSettled(t, settled, key+": the abandoned statement")
+				fixtureowner.WaitForBarrier(t, settled, nor213WireWaitLimit, nil, key+": the abandoned statement did not end after its connection closed")
 
 				// A later writer takes the entity and commits; it would wait
 				// for a lock the abandoned session left held.
