@@ -30,36 +30,151 @@ import (
 // The function is shape-agnostic: it works for labelled and labelless
 // patterns, single-property and N-property patterns, and any property type
 // the index can key (string / int / float / bool — same set
-// `indexValueKey` accepts on insert). It deliberately does NOT
+// `indexValueKey` accepts on insert). An index on any of the pattern's labels
+// serves it, as in Neo4j: every match carries every pattern label, so one
+// label's index lists every match (NOR-414). It deliberately does NOT
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.
 func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.Context, nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool, error) {
+	seek, planned, err := e.planPatternPropertySeek(ctx, nodeInfo, store)
+	return e.collectPlannedSeek(ctx, seek, planned, err)
+}
+
+// patternPropertyRead is one candidate ID set the inline pattern-property seek
+// can read: label's arity-1 index on property under value, the property's
+// indexes on every one of labels (anyLabel, for a pattern without labels),
+// or the composite index read of the pattern's values (props) for the
+// composite's first covered properties.
+type patternPropertyRead struct {
+	label     string
+	labels    []string
+	property  string
+	value     interface{}
+	anyLabel  bool
+	composite *storage.CompositeIndex
+	props     map[string]interface{}
+	covered   int
+	full      bool
+
+	// authoritative: a read that finds nothing proves no node holds the value
+	// (#821); otherwise the read narrows nothing.
+	authoritative bool
+}
+
+// count is the length of the read's posting in the index, or
+// unknownIndexSeekEstimate when the index cannot count it.
+func (r *patternPropertyRead) count(ctx context.Context, store storage.Engine, schema *storage.SchemaManager) (int64, error) {
+	var count int
+	var indexed bool
+	var err error
+	switch {
+	case r.composite != nil:
+		var buf [4]interface{}
+		count, indexed, err = compositeIndexValueCount(ctx, store, schema, r.composite, r.compositeValues(buf[:0]), r.full)
+	case r.anyLabel:
+		total := int64(0)
+		for _, label := range r.labels {
+			count, indexed, err = propertyIndexValueCount(ctx, store, schema, label, r.property, r.value)
+			if err != nil || !indexed {
+				return unknownIndexSeekEstimate, err
+			}
+			total += int64(count)
+		}
+		return total, nil
+	default:
+		count, indexed, err = propertyIndexValueCount(ctx, store, schema, r.label, r.property, r.value)
+	}
+	if err != nil || !indexed {
+		return unknownIndexSeekEstimate, err
+	}
+	return int64(count), nil
+}
+
+// compositeValues appends the composite read's values, the pattern's values
+// for the index's covered leading properties, to out. They are built only
+// when the read is counted or made.
+func (r *patternPropertyRead) compositeValues(out []interface{}) []interface{} {
+	for _, property := range r.composite.Properties[:r.covered] {
+		out = append(out, r.props[property])
+	}
+	return out
+}
+
+// hashed reports whether the read is a composite index read: counting or
+// reading it hashes its key (storage.NewCompositeKey), which costs more than
+// a single-property count.
+func (r *patternPropertyRead) hashed() bool {
+	return r.composite != nil
+}
+
+// worthCounting reports whether a hashed read can still save more than it
+// costs against incumbent, the fewest nodes another read or seek lists: once
+// that is at most one node, the read could save at most that one node, which
+// the caller's property check handles anyway, so the read is neither counted
+// nor made. Single-property reads are always counted.
+func (r *patternPropertyRead) worthCounting(incumbent int64) bool {
+	return !r.hashed() || incumbent > 1
+}
+
+// patternPropertyReads collects the inline seek's reads: the first two in
+// place, and a list only once there is a third.
+type patternPropertyReads struct {
+	n     int
+	small [2]patternPropertyRead
+	all   []patternPropertyRead
+}
+
+func (r *patternPropertyReads) add(read patternPropertyRead) {
+	switch {
+	case r.n < len(r.small):
+		r.small[r.n] = read
+	case r.n == len(r.small):
+		r.all = append(r.all, r.small[0], r.small[1], read)
+	default:
+		r.all = append(r.all, read)
+	}
+	r.n++
+}
+
+// patternPropertyIntersectFactor bounds the inline seek's intersection: once
+// it holds candidates, a further index read is made only when its posting is
+// at most this many times longer than the candidates, since reading a long
+// posting to drop a few candidates costs more than the residual property
+// filter that drops them anyway.
+const patternPropertyIntersectFactor = 16
+
+// planPatternPropertySeek plans lookupPatternCandidatesUsingPropertyIndex's
+// seek; planned is false when no index serves an inline property.
+func (e *StorageExecutor) planPatternPropertySeek(ctx context.Context, nodeInfo nodePatternInfo, store storage.Engine) (nodeIndexSeek, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nodeIndexSeek{}, false, err
 	}
 	if len(nodeInfo.properties) == 0 {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 	schema := store.GetSchema()
 	if schema == nil {
-		return nil, false, nil
+		return nodeIndexSeek{}, false, nil
 	}
 
-	// Collect per-property candidate ID sets, one per inline equality that an
-	// index can serve. Each set narrows the result via intersection.
-	var idSets []map[storage.NodeID]struct{}
-	usedAnyIndex := false
+	// One read per inline equality that an index can serve; each narrows the
+	// result by intersection. The first read is kept in place, so the usual
+	// one-property lookup allocates no list (patternPropertyReads).
+	var reads patternPropertyReads
 
 	// Composite indexes answer a whole equality prefix in one lookup, which
 	// is far narrower than intersecting one set per property. Use the longest
 	// covered leading prefix: all index properties → LookupFull, otherwise
 	// the leading k properties → LookupPrefix. The residual nodeMatchesProps
 	// step still enforces every non-indexed predicate.
-	if len(nodeInfo.labels) > 0 {
-		indexes, err := schema.SeekableCompositeIndexesForLabel(ctx, nodeInfo.labels[0])
+	for _, label := range nodeInfo.labels {
+		if !schema.HasMultiPropertyIndexForLabel(label) {
+			continue // no composite index of two or more properties on the label
+		}
+		indexes, err := schema.SeekableCompositeIndexesForLabel(ctx, label)
 		if err != nil {
-			return nil, false, err
+			return nodeIndexSeek{}, false, err
 		}
 		for _, idx := range indexes {
 			if idx == nil || len(idx.Properties) < 2 {
@@ -91,105 +206,209 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.
 			if !authoritative {
 				continue
 			}
-			values := make([]interface{}, covered)
-			for i := 0; i < covered; i++ {
-				values[i] = nodeInfo.properties[idx.Properties[i]]
-			}
-			ids, err := compositeIndexLookup(ctx, store, schema, idx, values, covered == len(idx.Properties))
-			if err != nil {
-				return nil, false, err
-			}
-			usedAnyIndex = true
-			set := make(map[storage.NodeID]struct{}, len(ids))
-			for _, id := range ids {
-				if err := ctx.Err(); err != nil {
-					return nil, false, err
-				}
-				set[id] = struct{}{}
-			}
-			idSets = append(idSets, set)
+			reads.add(patternPropertyRead{composite: idx, props: nodeInfo.properties, covered: covered, full: covered == len(idx.Properties), authoritative: true})
 		}
 	}
 
 	for prop, val := range nodeInfo.properties {
-		var ids []storage.NodeID
-		var err error
-		probed := false
+		authoritative := propertyIndexMissIsAuthoritative(val)
 		if len(nodeInfo.labels) > 0 {
-			// Labelled: probe the (label, prop) index when one exists.
-			indexed, indexErr := schema.HasPropertyIndex(ctx, nodeInfo.labels[0], prop)
-			if indexErr != nil {
-				return nil, false, indexErr
+			// Labelled: probe a (label, prop) index on any pattern label.
+			label, indexed, err := e.patternPropertyIndexLabel(ctx, store, schema, nodeInfo.labels, prop, val)
+			if err != nil {
+				return nodeIndexSeek{}, false, err
 			}
 			if indexed {
-				ids, err = propertyIndexLookup(ctx, store, schema, nodeInfo.labels[0], prop, val)
-				probed = true
+				reads.add(patternPropertyRead{label: label, property: prop, value: storage.IndexLookupValue(val), authoritative: authoritative})
 			}
-		} else {
-			labels, labelErr := e.indexCandidateLabels(ctx, schema, nil, prop)
-			if labelErr != nil {
-				return nil, false, labelErr
+			continue
+		}
+		labels, labelErr := e.indexCandidateLabels(ctx, schema, nil, prop)
+		if labelErr != nil {
+			return nodeIndexSeek{}, false, labelErr
+		}
+		if labellessPropertyIndexUsable(ctx, store, labels...) {
+			reads.add(patternPropertyRead{labels: labels, property: prop, value: val, anyLabel: true, authoritative: authoritative})
+		}
+	}
+	if reads.n == 0 {
+		return nodeIndexSeek{}, false, nil
+	}
+	seek := nodeIndexSeek{schema: schema, store: store, patternLabels: nodeInfo.labels}
+	if reads.n <= len(reads.small) {
+		seek.inlineSmall, seek.inlineN = reads.small, reads.n
+	} else {
+		seek.inline = reads.all
+	}
+	return seek, true, nil
+}
+
+// patternPropertyIndexLabel returns the pattern label whose index on property
+// the inline seek reads for value: the only indexed one, or, when several
+// pattern labels index property, the one listing the fewest nodes under value
+// (smallestLabelPosting; the written order breaks ties and decides when no
+// count is known).
+func (e *StorageExecutor) patternPropertyIndexLabel(ctx context.Context, store storage.Engine, schema *storage.SchemaManager, labels []string, property string, value interface{}) (string, bool, error) {
+	if len(labels) == 1 {
+		indexed, err := schema.HasPropertyIndex(ctx, labels[0], property)
+		return labels[0], indexed && err == nil, err
+	}
+	var indexed []string
+	for _, label := range labels {
+		exists, err := schema.HasPropertyIndex(ctx, label, property)
+		if err != nil {
+			return "", false, err
+		}
+		if exists {
+			indexed = append(indexed, label)
+		}
+	}
+	if len(indexed) == 0 {
+		return "", false, nil
+	}
+	postings := indexSeekPostings{labels: indexed, property: property, value: value}
+	chosen, err := smallestLabelPosting(ctx, store, schema, labels, &postings)
+	if err != nil {
+		return "", false, err
+	}
+	return chosen[0], true, nil
+}
+
+// readPatternPropertySeek reads the inline seek: the reads in order of
+// posting size, intersected, each further read made only while it is short
+// enough to narrow the candidates (patternPropertyIntersectFactor), and a
+// composite read only while it is worth its key hash (worthCounting). The
+// single-property reads are counted first. The nodes are read last, once.
+//
+// A posting of several nodes is read through a set, as the release read it,
+// and so in an order that differs from one read to the next. Storage keeps a
+// bounded number of nodes cached; a read of more nodes than that, repeated in
+// the same order, never finds one still cached and decodes every node again
+// (measured: 39% more allocations on a repeated 12,000-node read inside a
+// transaction). One listed node needs no set.
+func (e *StorageExecutor) readPatternPropertySeek(ctx context.Context, seek *nodeIndexSeek) ([]*storage.Node, bool, error) {
+	store, schema, reads := seek.store, seek.schema, seek.inlineReads()
+	var countBuf [4]int64
+	var orderBuf [4]int
+	counts, order := countBuf[:0], orderBuf[:0]
+	if len(reads) > len(countBuf) {
+		counts, order = make([]int64, 0, len(reads)), make([]int, 0, len(reads))
+	}
+	counts, order = counts[:len(reads)], order[:len(reads)]
+	shortest := unknownIndexSeekEstimate
+	for pass := 0; pass < 2; pass++ {
+		for i := range reads {
+			if reads[i].hashed() != (pass == 1) {
+				continue
 			}
-			if labellessPropertyIndexUsable(ctx, store, labels...) {
-				ids, err = schema.PropertyIndexLookupAnyLabel(ctx, prop, val)
-				probed = true
+			order[i] = i
+			counts[i] = unknownIndexSeekEstimate
+			if len(reads) < 2 || (pass == 1 && !reads[i].worthCounting(shortest)) {
+				continue
 			}
+			count, err := reads[i].count(ctx, store, schema)
+			if err != nil {
+				return nil, false, err
+			}
+			counts[i] = count
+			shortest = min(shortest, count)
+		}
+	}
+	// Shortest posting first, ties in plan order (an insertion sort: a few
+	// reads, and no closure for the buffers to escape through).
+	for i := 1; i < len(order); i++ {
+		for j := i; j > 0 && counts[order[j]] < counts[order[j-1]]; j-- {
+			order[j], order[j-1] = order[j-1], order[j]
+		}
+	}
+
+	// The candidates are the first read's IDs until a second read narrows
+	// them (single); only then, or for a read across labels that can list a
+	// node twice, are they kept as a set (candidates).
+	var single []storage.NodeID
+	var candidates map[storage.NodeID]struct{}
+	made := false
+	for _, at := range order {
+		read := &reads[at]
+		size := int64(len(single) + len(candidates))
+		if made && counts[at] != unknownIndexSeekEstimate && counts[at] > size*patternPropertyIntersectFactor {
+			continue
+		}
+		if made && read.hashed() && !read.worthCounting(size) {
+			continue
+		}
+		var ids []storage.NodeID
+		var err error
+		switch {
+		case read.composite != nil:
+			var buf [4]interface{}
+			ids, err = compositeIndexLookup(ctx, store, schema, read.composite, read.compositeValues(buf[:0]), read.full)
+		case read.anyLabel:
+			ids, err = schema.PropertyIndexLookupAnyLabel(ctx, read.property, read.value)
+		default:
+			ids, err = propertyIndexLookup(ctx, store, schema, read.label, read.property, read.value)
 		}
 		if err != nil {
 			return nil, false, err
 		}
-		// Property has no covering index — record nothing for this prop.
-		// The residual `nodeMatchesProps` step still enforces it. A probe
-		// that finds nothing for a string, boolean or number means no node
-		// holds the value (#821); for other values the scan decides.
-		if ids == nil && !(probed && propertyIndexMissIsAuthoritative(val)) {
+		// A probe that finds nothing for a string, boolean or number means no
+		// node holds the value (#821); for other values the scan decides, and
+		// the residual `nodeMatchesProps` step still enforces the property.
+		if ids == nil && !read.authoritative {
 			continue
 		}
-		usedAnyIndex = true
-		set := make(map[storage.NodeID]struct{}, len(ids))
+		if !made && !read.anyLabel {
+			single, made = ids, true
+			continue
+		}
+		if candidates == nil && made {
+			candidates = make(map[storage.NodeID]struct{}, len(single))
+			for _, id := range single {
+				candidates[id] = struct{}{}
+			}
+			single = nil
+		}
+		next := make(map[storage.NodeID]struct{}, len(ids))
 		for _, id := range ids {
 			if err := ctx.Err(); err != nil {
 				return nil, false, err
 			}
-			set[id] = struct{}{}
+			if made {
+				if _, ok := candidates[id]; !ok {
+					continue
+				}
+			}
+			next[id] = struct{}{}
 		}
-		idSets = append(idSets, set)
+		candidates, made = next, true
 	}
-
-	if !usedAnyIndex || len(idSets) == 0 {
+	if !made {
 		return nil, false, nil
 	}
-
-	// Intersect across all indexed-prop sets.
-	smallest := 0
-	for i, s := range idSets {
-		if len(s) < len(idSets[smallest]) {
-			smallest = i
+	if len(single) > 1 {
+		candidates = make(map[storage.NodeID]struct{}, len(single))
+		for _, id := range single {
+			candidates[id] = struct{}{}
 		}
+		single = nil
 	}
-	out := make([]*storage.Node, 0, len(idSets[smallest]))
-	for id := range idSets[smallest] {
+
+	out := make([]*storage.Node, 0, len(single)+len(candidates))
+	for _, id := range single {
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		hit := true
-		for i, s := range idSets {
-			if i == smallest {
-				continue
-			}
-			if _, ok := s[id]; !ok {
-				hit = false
-				break
-			}
+		if n, err := e.getQueryNode(ctx, store, id); err == nil && n != nil {
+			out = append(out, n)
 		}
-		if !hit {
-			continue
+	}
+	for id := range candidates {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
 		}
-		n, err := e.getQueryNode(ctx, store, id)
-		if err != nil || n == nil {
-			continue
+		if n, err := e.getQueryNode(ctx, store, id); err == nil && n != nil {
+			out = append(out, n)
 		}
-		out = append(out, n)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, false, err

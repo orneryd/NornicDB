@@ -258,27 +258,25 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			if parseErr != nil {
 				return nil, parseErr
 			}
-			if whereClause != "" {
-				// O(1) direct ID seek path for: MATCH (v) WHERE id(v)=...
-				if nodes, ok, err := e.tryCollectNodesFromIDEquality(ctx, np, whereClause); ok || err != nil {
-					return nodes, err
+			// The seeds come from the one node-pattern access decision, as a
+			// MATCH's do: an id seek, or the most selective indexed predicate of
+			// the WHERE and the pattern (NOR-414). The candidates are then held
+			// to the whole pattern and to the WHERE, unless the seek answered the
+			// WHERE exactly.
+			if nodes, whereApplied, used, err := e.collectPipelineIndexedNodeCandidates(ctx, np, whereClause, pipelineMatchPhysicalHint{}); err != nil {
+				return nil, err
+			} else if used {
+				var where func(*storage.Node) bool
+				if whereClause != "" && !whereApplied {
+					where = e.compileNodeWhereFilter(ctx, variable, whereClause)
 				}
-				// O(k) batched ID seek path for: MATCH (v) WHERE id(v) IN $ids
-				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromIDIn(ctx, np, whereClause, params); ok || err != nil {
-						return nodes, err
+				seeds := make([]*storage.Node, 0, len(nodes))
+				for _, node := range nodes {
+					if node != nil && e.pipelineNodeMatchesPattern(ctx, node, np) && (where == nil || where(node)) {
+						seeds = append(seeds, node)
 					}
 				}
-				// Indexed IN-list path for batched correlated lookups.
-				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(ctx, np, whereClause, params); ok || err != nil {
-						return nodes, err
-					}
-				}
-				// Indexed equality path.
-				if nodes, ok, err := e.tryCollectNodesFromPropertyIndex(ctx, np, whereClause); ok || err != nil {
-					return nodes, err
-				}
+				return seeds, nil
 			}
 
 			// Label/property-only fast path.
