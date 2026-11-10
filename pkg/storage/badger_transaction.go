@@ -22,8 +22,6 @@ type snapshotLabelCacheKey struct {
 	scope         string
 	queryNodes    bool
 	projectionKey string
-	reveal        bool
-	stored        bool
 }
 
 // BadgerTransaction wraps Badger's native transaction with constraint validation.

@@ -370,8 +370,13 @@ func (tx *BadgerTransaction) GetNodesByLabel(ctx context.Context, label string) 
 	if err != nil {
 		return nil, err
 	}
+	// A merged row is a delivered row, so the live visibility layer decides it
+	// here as it does for a streamed row: the committed population was read
+	// under the policy of that read, and the pending image is the
+	// transaction's own capture of an earlier one.
+	nowNanos := DecayScoringTime()
 	return tx.mergePendingNodesLocked(ctx, committed, func(node *Node) bool {
-		if node == nil {
+		if node == nil || tx.engine.filterEntityByDecay(visibleRead, node, nowNanos) {
 			return false
 		}
 		for _, nodeLabel := range node.Labels {
@@ -516,6 +521,27 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		}
 		return node
 	}
+	// The live visibility layer settles a row when the stream delivers it, not
+	// when the population it comes from was captured. The cached population,
+	// the stopped prefix and the transaction's pending image are each a capture
+	// of an earlier read of the policy, and another session may have hidden one
+	// of their rows since. The point read of the same image takes the same live
+	// decision (readTransactionEntity), so the label stream takes it here. A
+	// stored read keeps its documented bypass: filterEntityByDecay never hides a
+	// node read as stored.
+	nowNanos := DecayScoringTime()
+	visible := func(node *Node) bool {
+		return !tx.engine.filterEntityByDecay(v, node, nowNanos)
+	}
+	// pendingRow delivers the transaction's own image of a row: settled against
+	// the live policy before projection, so the decision reads the whole pending
+	// body, and projected for the row afterwards.
+	pendingRow := func(pending *Node) error {
+		if !visible(pending) {
+			return nil
+		}
+		return invokeVisit(projectCachedNodeForRead(pending, properties, false))
+	}
 	emitCommitted := func(node *Node) error {
 		if node == nil {
 			return nil
@@ -527,33 +553,35 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		if !engineOverlaid && len(tx.snapshotNodeLabels) < maxSnapshotNodeLabelCacheNodes {
 			tx.cacheCommittedNodeLabelsLocked(node)
 		}
-		if !hasPending {
-			return invokeVisit(forCaller(node))
-		}
-		if _, deleted := tx.deletedNodes[node.ID]; deleted {
-			seen[node.ID] = struct{}{}
-			return nil
-		}
-		if pending, exists := tx.pendingNodes[node.ID]; exists {
-			seen[node.ID] = struct{}{}
-			if pending != nil && slices.Contains(pending.Labels, label) {
-				return invokeVisit(projectCachedNodeForRead(pending, properties, false))
+		if hasPending {
+			if _, deleted := tx.deletedNodes[node.ID]; deleted {
+				seen[node.ID] = struct{}{}
+				return nil
 			}
+			if pending, exists := tx.pendingNodes[node.ID]; exists {
+				seen[node.ID] = struct{}{}
+				if pending != nil && slices.Contains(pending.Labels, label) {
+					return pendingRow(pending)
+				}
+				return nil
+			}
+		}
+		if !visible(node) {
 			return nil
 		}
 		return invokeVisit(forCaller(node))
 	}
 
-	cacheKey := snapshotLabelCacheKey{scope: cacheScope, queryNodes: queryNodes, projectionKey: label, reveal: tx.engine.revealAll.Load(), stored: v == storedRead}
+	cacheKey := snapshotLabelCacheKey{scope: cacheScope, queryNodes: queryNodes, projectionKey: label}
 	cache := tx.snapshotLabelNodes
 	if properties != nil {
 		cacheKey.projectionKey = snapshotLabelProjectionKey(label, properties)
 		cache = tx.snapshotProjectedLabelNodes
 	}
-	// Label streams have already applied entity visibility. A transaction
-	// outlives each statement's REVEAL scope, so its filtered population must
-	// never answer a reveal read (or the reverse). Keep both views pinned to
-	// the same physical snapshot, but cache their populations independently.
+	// Cache physical membership, not a visibility-filtered answer. A row
+	// suppressed during capture can become visible later without changing the
+	// data snapshot. Every delivery, including replay and pending overlays,
+	// applies the live policy above; stored reads keep their existing bypass.
 	if cached, ok := cache[cacheKey]; ok && !engineOverlaid {
 		// Replaying the pinned population is a bulk read like the scan that
 		// filled it: the caller's cancellation retires it here.
@@ -566,7 +594,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 				return err
 			}
 		}
-		return tx.streamPendingLabelNodesLocked(ctx, label, seen, properties, invokeVisit)
+		return tx.streamPendingLabelNodesLocked(ctx, label, seen, pendingRow)
 	}
 
 	completed := make([]*Node, 0)
@@ -591,14 +619,14 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		return emitCommitted(node)
 	}
 	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
-		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, scope, label, tx.withSnapshotViewLocked, properties, afterNodeID, v, streamVisit, queryNodes)
+		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, scope, label, tx.withSnapshotViewLocked, properties, afterNodeID, storedRead, streamVisit, queryNodes)
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		err = tx.engine.streamNodesByLabelProjectedInScope(ctx, scope, label, properties, v, streamVisit, StreamNodesOptions{QueryNodes: queryNodes})
+		err = tx.engine.streamNodesByLabelProjectedInScope(ctx, scope, label, properties, storedRead, streamVisit, StreamNodesOptions{QueryNodes: queryNodes})
 	} else {
 		err = tx.engine.streamNodesByLabelAtSnapshotWithView(
 			ctx,
 			scope,
-			label, tx.readTS, tx.withSnapshotViewLocked, properties, v, streamVisit, queryNodes,
+			label, tx.readTS, tx.withSnapshotViewLocked, properties, storedRead, streamVisit, queryNodes,
 		)
 	}
 	if err != nil {
@@ -631,7 +659,8 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		tx.snapshotProjectedLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
 	}
-	return tx.streamPendingLabelNodesLocked(ctx, label, seen, properties, invokeVisit)
+
+	return tx.streamPendingLabelNodesLocked(ctx, label, seen, pendingRow)
 }
 
 // StreamNodesWithOptions streams the transaction's view of every node (its
@@ -814,7 +843,6 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 	ctx context.Context,
 	label string,
 	seen map[NodeID]struct{},
-	properties []string,
 	visit func(*Node) error,
 ) error {
 	if len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
@@ -833,7 +861,7 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 		if _, deleted := tx.deletedNodes[id]; deleted || node == nil || !slices.Contains(node.Labels, label) {
 			continue
 		}
-		if err := visit(projectCachedNodeForRead(node, properties, false)); err != nil {
+		if err := visit(node); err != nil {
 			return err
 		}
 	}
@@ -1104,7 +1132,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(ctx context.Context, nod
 	if tx.readTS.IsZero() {
 		return tx.getNodeFromBadgerSnapshotLocked(nodeID)
 	}
-	node, err := readEntityAtWithView(ctx, tx.engine, nodeID, tx.readTS, mvccEntityRead{vectors: vectors, visibility: v}, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeAtInTxn)
+	node, err := tx.readCommittedNodeAtSnapshotLocked(ctx, nodeID, vectors, v)
 	if err == ErrNotVisibleAtSnapshot {
 		// The head exists but isn't visible at the reader's snapshot.
 		// Treat as a hard miss — falling back to a primary-key read
