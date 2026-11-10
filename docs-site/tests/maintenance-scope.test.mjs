@@ -117,3 +117,41 @@ test("local release heads are recognized and detached heads remain strict", (t) 
   f.git("checkout", "--quiet", "--detach");
   assert.throws(() => checkMaintenanceScope(f.root, {}), /pkg\/example\.go/);
 });
+
+test("release-targeted fixes use release scope with immutable PR metadata taking precedence", (t) => {
+  const f = fixture(t);
+  f.git("update-ref", "refs/remotes/origin/release/v1.5.0", "HEAD");
+  f.git("update-ref", "refs/remotes/origin/release-not-a-branch", "HEAD");
+  f.change("pkg/example.go");
+  for (const env of [
+    { GITHUB_HEAD_REF: "fix/verification", GITHUB_BASE_REF: "release/v1.5.0" },
+    { VERIFY_BASE: "origin/release/v1.5.0" },
+    { VERIFY_BASE: "release/v1.5.0" },
+  ])
+    assert.equal(checkMaintenanceScope(f.root, env), "release");
+  for (const env of [
+    {
+      GITHUB_HEAD_REF: "docs/maintenance",
+      GITHUB_BASE_REF: "main",
+      VERIFY_BASE: "origin/release/v1.5.0",
+    },
+    { VERIFY_BASE: "origin/release-not-a-branch" },
+  ])
+    assert.throws(() => checkMaintenanceScope(f.root, env), /pkg\/example\.go/);
+});
+
+test("maintenance comparisons use the recorded verification base after upstream moves", (t) => {
+  const f = fixture(t);
+  const base = f.git("rev-parse", "HEAD");
+  f.change("pkg/example.go");
+  f.git("add", "pkg/example.go");
+  f.git("commit", "--quiet", "-m", "later upstream product change");
+  f.git("update-ref", "refs/remotes/origin/main", "HEAD");
+  f.git("checkout", "--quiet", "--detach", base);
+  f.change("docs/guide.md");
+  assert.equal(
+    checkMaintenanceScope(f.root, { VERIFY_BASE: base }),
+    "maintenance",
+  );
+  assert.throws(() => checkMaintenanceScope(f.root, {}), /pkg\/example\.go/);
+});

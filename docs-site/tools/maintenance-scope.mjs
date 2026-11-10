@@ -16,9 +16,19 @@ export function checkMaintenanceScope(root, env = process.env) {
     env.GITHUB_HEAD_REF ||
     env.GITHUB_REF_NAME ||
     git("rev-parse", "--abbrev-ref", "HEAD");
-  if (head.startsWith("release/")) return "release";
+  const base = (env.GITHUB_BASE_REF || env.VERIFY_BASE || "").replace(
+    /^origin\//,
+    "",
+  );
+  if (head.startsWith("release/") || base.startsWith("release/"))
+    return "release";
 
-  const changed = git("diff", "--name-only", "origin/main", "--")
+  const changed = git(
+    "diff",
+    "--name-only",
+    env.VERIFY_BASE || "origin/main",
+    "--",
+  )
     .split("\n")
     .filter(Boolean);
   const outside = changed.filter(
