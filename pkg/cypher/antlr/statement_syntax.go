@@ -317,8 +317,10 @@ func parseStatementSyntaxAttempt(ctx context.Context, projection *cyphertext.Sou
 	usePrediction(parser, prediction)
 	defer func() { parser.Interpreter = nil }()
 	parser.Interpreter.SetPredictionMode(mode)
+	var caseResult *caseResultPrediction
 	if mode == antlr4.PredictionModeSLL && caseResults {
-		parser.AddParseListener(&caseResultPrediction{parser: parser, mode: mode})
+		caseResult = &caseResultPrediction{parser: parser, mode: mode}
+		parser.AddParseListener(caseResult)
 	}
 	var tree antlr4.Tree
 	switch entry {
@@ -385,9 +387,6 @@ func parseStatementSyntaxAttempt(ctx context.Context, projection *cyphertext.Sou
 		message := localization.CypherANTLRParseSyntaxError(strings.Join(listener.fallbacks(), "; "), listener.errors...)
 		syntaxErr = localization.NewLocalizedError(string(message.ID), message, nil)
 	}
-	if observe != nil {
-		observe(tree)
-	}
 	data = &statementSyntaxData{identity: syntaxIdentitySequence.Add(1), source: source, view: projection, diagnostics: append([]localization.Message(nil), listener.errors...)}
 	data.bytes = inputView.boundaries
 	if listener.useError != nil {
@@ -400,6 +399,27 @@ func parseStatementSyntaxAttempt(ctx context.Context, projection *cyphertext.Sou
 	for _, token := range tokens.GetAllTokens() {
 		start, end := data.byteSpan(token.GetStart(), token.GetStop()+1)
 		data.tokens = append(data.tokens, syntaxTokenData{kind: token.GetTokenType(), channel: token.GetChannel(), start: start, end: end})
+	}
+	// The entries of the statement's contract blocks join the tree here, before
+	// the tree is handed out and before the retained syntax is built from it:
+	// both hold the same statement. The statement's parser reads them, in one
+	// prediction mode at a time.
+	if syntaxErr == nil {
+		if caseResult != nil {
+			parser.RemoveParseListener(caseResult)
+		}
+		entries, err := data.readContractBlocks(ctx, tree, parser, tokens.GetAllTokens())
+		if err != nil {
+			return nil, err
+		}
+		if len(entries) != 0 {
+			data.diagnostics = append(data.diagnostics, entries...)
+			message := localization.CypherANTLRParseSyntaxError(strings.Join(diagnosticFallbacks(entries), "; "), entries...)
+			syntaxErr = localization.NewLocalizedError(string(message.ID), message, nil)
+		}
+	}
+	if observe != nil {
+		observe(tree)
 	}
 	// Reserve the exact arena size on larger trees. Without this pass, repeated
 	// slice growth copies the retained node arena several times for long queries.

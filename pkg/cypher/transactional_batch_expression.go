@@ -54,7 +54,7 @@ func scalarAdmissionVisitor(shape *scalarExpressionSyntax) cypherantlr.SyntaxVis
 	}
 	return func(node cypherantlr.SyntaxNode) func() {
 		switch node.Rule() {
-		case cypherantlr.CypherParserRULE_existsSubquery, cypherantlr.CypherParserRULE_subqueryExist,
+		case cypherantlr.CypherParserRULE_subqueryExist,
 			cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_collectSubquery,
 			cypherantlr.CypherParserRULE_patternComprehension, cypherantlr.CypherParserRULE_relationshipsChainPattern:
 			shape.forbidden = true

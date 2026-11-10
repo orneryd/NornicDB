@@ -69,6 +69,25 @@ func (opts StreamNodesOptions) scanDecodesFilter() bool {
 	return opts.PropertyFilter != nil || len(opts.PropertyStringEquals) > 0
 }
 
+// keepsResidentNode settles the scan's property filter on a decoded node, as
+// the scan decoder settles it on a stored body: a property that must equal a
+// string is rejected when it is stored with any other value, and
+// PropertyFilter reads the node's properties. It is given all of them, where
+// the scan decoder gives it the ones the scan names: a filter that tests the
+// properties it named, as every filter Cypher builds does, decides the same
+// on both, and one that looks at which properties the map holds may not. The
+// filter reads node and keeps nothing of it.
+func (opts StreamNodesOptions) keepsResidentNode(node *Node) bool {
+	for name, required := range opts.PropertyStringEquals {
+		if value, stored := node.Properties[name]; stored {
+			if text, isString := value.(string); !isString || text != required {
+				return false
+			}
+		}
+	}
+	return opts.PropertyFilter == nil || opts.PropertyFilter(node.Properties)
+}
+
 func (opts StreamNodesOptions) copyResidentNode(node *Node) *Node {
 	return projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings)
 }

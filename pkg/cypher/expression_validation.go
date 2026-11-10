@@ -115,35 +115,54 @@ func mayBeListType(typeName string) bool {
 // iteration header: FOREACH (x IN ...) or FOR x IN .... A separate membership
 // expression inside either clause still requires a list operand.
 func coercingIterationDeclaration(ctx context.Context, text string, in int) bool {
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
+	// The header ends at its IN, so it is read backward from there: the
+	// declared name, FOREACH's parenthesis, then the keyword. Searching every
+	// FOREACH and FOR before each IN read a long statement once per IN
+	// (NOR-407).
+	nameEnd := lastLiveByte(text, in) + 1
+	if nameEnd <= 0 {
+		return false
+	}
+	nameStart := nameEnd
+	if cyphertext.IsBacktick(text[nameEnd-1]) {
+		// From inside a quoted span the last live byte is its opening quote.
+		nameStart = lastLiveByte(text, nameEnd-1)
+	} else {
+		for nameStart > 0 && cyphertext.NamePartAt(text, nameStart-1) {
+			nameStart--
+		}
+	}
+	if nameStart < 0 || nameStart >= nameEnd {
+		return false
+	}
+	boundary := defaultKeywordScanOpts().Boundary
 	for _, header := range [...]struct {
 		keyword       string
 		parenthesized bool
 	}{{"FOREACH", true}, {"FOR", false}} {
-		if !containsFold(text[:in], header.keyword) {
+		before := lastLiveByte(text, nameStart)
+		if header.parenthesized {
+			if before < 0 || text[before] != '(' {
+				continue
+			}
+			before = lastLiveByte(text, before)
+		}
+		start := before + 1 - len(header.keyword)
+		if start < 0 || !keywordAt(ctx, text, start, header.keyword, 0, len(header.keyword), boundary) {
 			continue
 		}
-		for from := 0; from < in; {
-			start := keywordIndexFrom(ctx, text, header.keyword, from, opts)
-			if start < 0 || start >= in {
-				break
+		// The forward reader owns the header's shape from its keyword.
+		declared := queryGapEnd(text, start+len(header.keyword))
+		if header.parenthesized {
+			if declared >= len(text) || text[declared] != '(' {
+				continue
 			}
-			nameStart := queryGapEnd(text, start+len(header.keyword))
-			if header.parenthesized {
-				if nameStart >= len(text) || text[nameStart] != '(' {
-					from = start + len(header.keyword)
-					continue
-				}
-				nameStart = queryGapEnd(text, nameStart+1)
+			declared = queryGapEnd(text, declared+1)
+		}
+		if declared < in {
+			if name, ok := cyphertext.ScanIdentifier(text, declared); ok && queryGapEnd(text, name.End) == in {
+				return true
 			}
-			if nameStart < in {
-				if name, ok := cyphertext.ScanIdentifier(text, nameStart); ok && queryGapEnd(text, name.End) == in {
-					return true
-				}
-			}
-			from = start + len(header.keyword)
 		}
 	}
 	return false

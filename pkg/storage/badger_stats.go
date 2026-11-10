@@ -880,8 +880,10 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	// A property filter does not disqualify the label route: the scoped label
 	// owner decodes each candidate through the scan's own decoder and settles the
 	// filter before it materializes the node (#1682), so this route keeps its
-	// label index and skips another label's bodies as well.
-	if opts.Projection == nil && opts.Label != "" && ((opts.QueryNodes && !opts.WithEmbeddings) || opts.scanDecodesFilter()) {
+	// label index and skips another label's bodies as well. Nor does a
+	// projection: the decoder decodes it, and a filtered scan of a label that
+	// returns one property reads the label's nodes, not every node in scope.
+	if opts.Label != "" && (opts.scanDecodesFilter() || (opts.Projection == nil && opts.QueryNodes && !opts.WithEmbeddings)) {
 		visit := func(node *Node) error {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -891,7 +893,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			}
 			return fn(node)
 		}
-		err := b.streamNodesByLabelProjectedInScope(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, opts)
+		err := b.streamNodesByLabelProjectedInScope(ctx, opts.Prefix, opts.Label, opts.Projection, opts.readVisibility(), visit, opts)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -964,6 +966,17 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 // transaction: the engine's current view, or a transaction's pinned physical
 // snapshot (BadgerTransaction.StreamNodesWithOptions, #824). ErrIterationStopped
 // from fn ends the scan and is not returned.
+//
+// A filtered scan that names a label reads that label's nodes when the label
+// is on less than half of the scope's nodes (labelCoversScope), and every
+// node record in scope otherwise. The label's nodes come from the one reader
+// of label index candidates (newLabelIndexReader) in this same transaction,
+// and each is read by the same reader as in the pass over every record
+// (readStreamNodeItem), so its row is the same row; no cache is read or
+// filled. A transaction's filtered scan of a label, which comes through here,
+// therefore reads the label and not every node in scope (NOR-407). With
+// decay tombstones in play the pass over every record is kept: it shows a
+// node whose label entry a tombstone hides.
 func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *badger.Txn, opts StreamNodesOptions, fn func(node *Node) error) error {
 	nowNanos := DecayScoringTime()
 	// A projected or filtered scan decodes through one scan-scoped decoder
@@ -1006,6 +1019,37 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 			return err
 		}
 		return nil
+	}
+
+	if opts.Label != "" && opts.scanDecodesFilter() && !b.checksIndexTombstones(opts.readVisibility()) {
+		// Failed count hints read the label, as the engine's label scan does.
+		covers, _, err := b.labelCoversScope(ctx, opts.Prefix, opts.Label)
+		if err != nil {
+			return err
+		}
+		if !covers {
+			labelled, err := b.newLabelIndexReader(ctx, txn, opts.Prefix, opts.Label, "", opts.readVisibility(), false)
+			if err != nil {
+				return err
+			}
+			defer labelled.Close()
+			for labelled.Next() {
+				item, err := txn.Get(nodeKey(labelled.NodeID()))
+				if errors.Is(err, badger.ErrKeyNotFound) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				if err := visit(txn, item); err != nil {
+					if err == ErrIterationStopped {
+						return nil // Normal stop
+					}
+					return err
+				}
+			}
+			return labelled.Err()
+		}
 	}
 
 	if opts.Prefix == "" {

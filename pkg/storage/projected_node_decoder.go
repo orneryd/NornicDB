@@ -120,6 +120,11 @@ func newProjectedNodeDecoder(b *BadgerEngine, txn *badger.Txn, opts StreamNodesO
 	} else if opts.QueryNodes {
 		d.hydration = nodeItemQueryMetadata
 	}
+	if txn != nil {
+		// A projection that names has_embedding reads the node's embedding
+		// metadata, whatever the scan asked to hydrate.
+		d.hydration = projectionHydration(d.hydration, d.include)
+	}
 	d.dec = msgpack.NewDecoder(&d.reader)
 	return d
 }

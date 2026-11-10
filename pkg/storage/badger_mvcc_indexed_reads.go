@@ -361,7 +361,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if !coversDecided && lookups >= labelScanPointLookups {
 				// Author: storage-format-owners lane (Codex), 1 November 2026.
 				var err error
-				covers, err = b.labelCoversScope(ctx, scope, label)
+				covers, _, err = b.labelCoversScope(ctx, scope, label)
 				if err != nil {
 					return err
 				}

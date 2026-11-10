@@ -128,6 +128,54 @@ func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node, mode nodeReadCacheM
 	b.cacheDeleteNode(node.ID, nodeCacheBodyOnly)
 }
 
+// cacheFillLabelNodes offers the cache the query images a scan of a label
+// read: those of the label's nodes the cache held no image of. ids are the
+// label's nodes.
+//
+// One image always finds room, because putNodeLocked makes it by removing
+// others, the label's own among them. So the images of a label that are
+// together more than the byte budget would only push each other out, and
+// every scan would read them again. The cache therefore admits the offered
+// images, each as cacheFillNode admits one, only when its budget holds the
+// label's query images together: the ones it holds of ids now and the
+// offered ones, counted as putNodeLocked counts them. Otherwise it admits
+// none and reports false.
+//
+// The count is of what the cache holds when it is asked. An image it has
+// evicted or invalidated is no longer counted, so a label that fits is
+// admitted again after either, and a label is refused only when its images
+// are in fact more than the budget.
+func (b *BadgerEngine) cacheFillLabelNodes(gen uint64, ids []NodeID, offered []*Node, source uint64) bool {
+	limit := b.nodeReadCacheLimit()
+	var bytes int64
+	fresh := make(map[NodeID]struct{}, len(offered))
+	for _, node := range offered {
+		fresh[node.ID] = struct{}{}
+		if bytes += estimateNodeReadCacheBytes(node); bytes > limit {
+			return false
+		}
+	}
+	b.nodeCacheMu.RLock()
+	for _, id := range ids {
+		if _, again := fresh[id]; again {
+			continue
+		}
+		if image := b.queryNodeCache[id]; image != nil {
+			if bytes += estimateNodeReadCacheBytes(image); bytes > limit {
+				break
+			}
+		}
+	}
+	b.nodeCacheMu.RUnlock()
+	if bytes > limit {
+		return false
+	}
+	for _, node := range offered {
+		b.cacheFillNode(gen, node, nodeReadCacheQuery, source)
+	}
+	return true
+}
+
 // putNodeLocked stores an already-copied body in the selected cache while the
 // caller holds nodeCacheMu. A full read may coexist with a lightweight query
 // image; a write invalidates that image before entering this owner.
@@ -206,7 +254,11 @@ func (b *BadgerEngine) resetNodeReadCachesLocked() {
 // nodeReadCacheImageLocked selects an immutable current-value image. A query
 // read never borrows hydrated chunks from a full image: its first read decodes
 // the lightweight storage image, and subsequent point/label reads reuse that
-// query image. The caller holds nodeCacheMu for reading.
+// query image. A read of the body alone (nodeReadCacheProjection: labels,
+// properties and metadata, with no vector returned) is served by either
+// image, since both hold the body: the two caches share one byte budget, and
+// the query image can be what is left of a node. The caller holds nodeCacheMu
+// for reading.
 func (b *BadgerEngine) nodeReadCacheImageLocked(id NodeID, mode nodeReadCacheMode) (*Node, bool) {
 	if mode == nodeReadCacheQuery {
 		if query, found := b.queryNodeCache[id]; found {
@@ -216,6 +268,9 @@ func (b *BadgerEngine) nodeReadCacheImageLocked(id NodeID, mode nodeReadCacheMod
 	node, found := b.nodeCache[id]
 	if found && mode == nodeReadCacheQuery && len(node.ChunkEmbeddings) > 0 {
 		return nil, false
+	}
+	if !found && mode == nodeReadCacheProjection {
+		node, found = b.queryNodeCache[id]
 	}
 	return node, found
 }

@@ -364,16 +364,16 @@
     {
       "space": "prefixMVCCMetaNamespaceSeq",
       "class": "mvcc-sequence",
-      "origin": "pkg/storage/badger.go:1424",
-      "func": "pkg/storage.BadgerEngine.persistMVCCSequence$1 pkg/storage/badger.go:1424",
+      "origin": "pkg/storage/badger.go:1428",
+      "func": "pkg/storage.BadgerEngine.persistMVCCSequence$1 pkg/storage/badger.go:1428",
       "where": "pkg/storage.BadgerEngine.persistMVCCSequence -"
     },
     {
       "space": "prefixMVCCMetaSchemaVersion",
       "class": "store-metadata",
-      "origin": "pkg/storage/badger.go:1455",
-      "func": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1455",
-      "where": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1455"
+      "origin": "pkg/storage/badger.go:1459",
+      "func": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1459",
+      "where": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1459"
     },
     {
       "space": "prefixMVCCMeta+\"accessmeta:\"",
@@ -2584,7 +2584,7 @@
       "field": "pkg/storage.BadgerEngine.adjCacheMaxNodes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1098"
+      "pos": "pkg/storage/badger.go:1102"
     },
     {
       "field": "pkg/storage.BadgerEngine.cacheHits",
@@ -2614,7 +2614,7 @@
       "field": "pkg/storage.BadgerEngine.edgeCacheMaxItems",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1096"
+      "pos": "pkg/storage/badger.go:1100"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheSources",
@@ -2626,31 +2626,31 @@
       "field": "pkg/storage.BadgerEngine.edgeCacheSources",
       "class": "read cache physical source cut",
       "func": "pkg/storage.BadgerEngine.putEdgeLocked",
-      "pos": "pkg/storage/badger_cache.go:440"
+      "pos": "pkg/storage/badger_cache.go:495"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheSources",
       "class": "read cache physical source cut",
       "func": "pkg/storage.BadgerEngine.putEdgeLocked",
-      "pos": "pkg/storage/badger_cache.go:445"
+      "pos": "pkg/storage/badger_cache.go:500"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheSources",
       "class": "read cache physical source cut",
       "func": "pkg/storage.BadgerEngine.putEdgeLocked",
-      "pos": "pkg/storage/badger_cache.go:448"
+      "pos": "pkg/storage/badger_cache.go:503"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheSources",
       "class": "read cache physical source cut",
       "func": "pkg/storage.BadgerEngine.cacheDeleteEdge",
-      "pos": "pkg/storage/badger_cache.go:475"
+      "pos": "pkg/storage/badger_cache.go:530"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheSources",
       "class": "read cache physical source cut",
       "func": "pkg/storage.BadgerEngine.cacheInvalidateEdges",
-      "pos": "pkg/storage/badger_cache.go:485"
+      "pos": "pkg/storage/badger_cache.go:540"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheSources",
@@ -2668,37 +2668,37 @@
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.putEdgeLocked",
-      "pos": "pkg/storage/badger_cache.go:439"
+      "pos": "pkg/storage/badger_cache.go:494"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.putEdgeLocked",
-      "pos": "pkg/storage/badger_cache.go:450"
+      "pos": "pkg/storage/badger_cache.go:505"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.putEdgeLocked",
-      "pos": "pkg/storage/badger_cache.go:453"
+      "pos": "pkg/storage/badger_cache.go:508"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.putEdgeLocked",
-      "pos": "pkg/storage/badger_cache.go:455"
+      "pos": "pkg/storage/badger_cache.go:510"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.cacheDeleteEdge",
-      "pos": "pkg/storage/badger_cache.go:474"
+      "pos": "pkg/storage/badger_cache.go:529"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.cacheInvalidateEdges",
-      "pos": "pkg/storage/badger_cache.go:484"
+      "pos": "pkg/storage/badger_cache.go:539"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
@@ -2728,13 +2728,13 @@
       "field": "pkg/storage.BadgerEngine.edgeTypeCacheMaxTypes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1085"
+      "pos": "pkg/storage/badger.go:1089"
     },
     {
       "field": "pkg/storage.BadgerEngine.labelFirstCacheMax",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1088"
+      "pos": "pkg/storage/badger.go:1092"
     },
     {
       "field": "pkg/storage.BadgerEngine.manualSuppressionCount",
@@ -2764,13 +2764,13 @@
       "field": "pkg/storage.BadgerEngine.mvccLegacyGlobalSeed",
       "class": "MVCC sequence",
       "func": "pkg/storage.BadgerEngine.initializeMVCCSequence",
-      "pos": "pkg/storage/badger.go:1325"
+      "pos": "pkg/storage/badger.go:1329"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
       "class": "entity-count",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1102"
+      "pos": "pkg/storage/badger.go:1106"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
@@ -2782,7 +2782,7 @@
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.addNamespaceEdgeCount",
-      "pos": "pkg/storage/badger_cache.go:721"
+      "pos": "pkg/storage/badger_cache.go:776"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
@@ -2800,7 +2800,7 @@
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
       "class": "entity-count",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1101"
+      "pos": "pkg/storage/badger.go:1105"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
@@ -2812,7 +2812,7 @@
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.addNamespaceNodeCount",
-      "pos": "pkg/storage/badger_cache.go:711"
+      "pos": "pkg/storage/badger_cache.go:766"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
@@ -2836,19 +2836,19 @@
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheBytes",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.cacheStoreNodeBody",
-      "pos": "pkg/storage/badger_cache.go:301"
+      "pos": "pkg/storage/badger_cache.go:356"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheBytes",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.removeNodeBodyCacheEntryLocked",
-      "pos": "pkg/storage/badger_cache.go:324"
+      "pos": "pkg/storage/badger_cache.go:379"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheBytes",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.removeNodeBodyCacheEntryLocked",
-      "pos": "pkg/storage/badger_cache.go:326"
+      "pos": "pkg/storage/badger_cache.go:381"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheBytes",
@@ -2860,31 +2860,31 @@
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheMaxBytes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1082"
+      "pos": "pkg/storage/badger.go:1086"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.putNodeLocked",
-      "pos": "pkg/storage/badger_cache.go:160"
+      "pos": "pkg/storage/badger_cache.go:208"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.putNodeLocked",
-      "pos": "pkg/storage/badger_cache.go:167"
+      "pos": "pkg/storage/badger_cache.go:215"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.deleteNodeReadCacheLocked",
-      "pos": "pkg/storage/badger_cache.go:195"
+      "pos": "pkg/storage/badger_cache.go:243"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.resetNodeReadCachesLocked",
-      "pos": "pkg/storage/badger_cache.go:203"
+      "pos": "pkg/storage/badger_cache.go:251"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
@@ -2896,13 +2896,13 @@
       "field": "pkg/storage.BadgerEngine.nodeCacheMaxBytes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1079"
+      "pos": "pkg/storage/badger.go:1083"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheMaxEntries",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1076"
+      "pos": "pkg/storage/badger.go:1080"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCount",
@@ -3640,109 +3640,109 @@
       "field": "pkg/storage.durableCacheState.adjacency",
       "class": "adjacency cache revocation floors",
       "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:117"
+      "pos": "pkg/storage/durable_cache_scope.go:124"
     },
     {
       "field": "pkg/storage.durableCacheState.adjacency",
       "class": "adjacency cache revocation floors",
       "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:119"
+      "pos": "pkg/storage/durable_cache_scope.go:126"
     },
     {
       "field": "pkg/storage.durableCacheState.adjacency",
       "class": "adjacency cache revocation floors",
       "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:120"
+      "pos": "pkg/storage/durable_cache_scope.go:127"
     },
     {
       "field": "pkg/storage.durableCacheState.adjacency",
       "class": "adjacency cache revocation floors",
       "func": "pkg/storage.durableCacheState.advanceFloorLocked",
-      "pos": "pkg/storage/durable_cache_scope.go:48"
+      "pos": "pkg/storage/durable_cache_scope.go:55"
     },
     {
       "field": "pkg/storage.durableCacheState.all",
       "class": "global cache revocation floor",
       "func": "pkg/storage.durableCacheState.advanceFloorLocked",
-      "pos": "pkg/storage/durable_cache_scope.go:47"
+      "pos": "pkg/storage/durable_cache_scope.go:54"
     },
     {
       "field": "pkg/storage.durableCacheState.edges",
       "class": "relationship cache revocation floors",
       "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:111"
+      "pos": "pkg/storage/durable_cache_scope.go:118"
     },
     {
       "field": "pkg/storage.durableCacheState.edges",
       "class": "relationship cache revocation floors",
       "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:113"
+      "pos": "pkg/storage/durable_cache_scope.go:120"
     },
     {
       "field": "pkg/storage.durableCacheState.edges",
       "class": "relationship cache revocation floors",
       "func": "pkg/storage.durableCacheState.advanceFloorLocked",
-      "pos": "pkg/storage/durable_cache_scope.go:48"
+      "pos": "pkg/storage/durable_cache_scope.go:55"
     },
     {
       "field": "pkg/storage.durableCacheState.labels",
       "class": "label cache revocation floors",
       "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:103"
+      "pos": "pkg/storage/durable_cache_scope.go:110"
     },
     {
       "field": "pkg/storage.durableCacheState.labels",
       "class": "label cache revocation floors",
       "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:105"
+      "pos": "pkg/storage/durable_cache_scope.go:112"
     },
     {
       "field": "pkg/storage.durableCacheState.labels",
       "class": "label cache revocation floors",
       "func": "pkg/storage.durableCacheState.advanceFloorLocked",
-      "pos": "pkg/storage/durable_cache_scope.go:48"
+      "pos": "pkg/storage/durable_cache_scope.go:55"
     },
     {
       "field": "pkg/storage.durableCacheState.latest",
       "class": "latest physical cache source cut",
       "func": "pkg/storage.BadgerEngine.issueDurableCacheScope",
-      "pos": "pkg/storage/durable_cache_scope.go:85"
+      "pos": "pkg/storage/durable_cache_scope.go:92"
+    },
+    {
+      "field": "pkg/storage.durableCacheState.nodes",
+      "class": "node cache revocation floors",
+      "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
+      "pos": "pkg/storage/durable_cache_scope.go:104"
+    },
+    {
+      "field": "pkg/storage.durableCacheState.nodes",
+      "class": "node cache revocation floors",
+      "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
+      "pos": "pkg/storage/durable_cache_scope.go:106"
     },
     {
       "field": "pkg/storage.durableCacheState.nodes",
       "class": "node cache revocation floors",
       "func": "pkg/storage.durableCacheState.advanceFloorLocked",
-      "pos": "pkg/storage/durable_cache_scope.go:48"
-    },
-    {
-      "field": "pkg/storage.durableCacheState.nodes",
-      "class": "node cache revocation floors",
-      "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:97"
-    },
-    {
-      "field": "pkg/storage.durableCacheState.nodes",
-      "class": "node cache revocation floors",
-      "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:99"
+      "pos": "pkg/storage/durable_cache_scope.go:55"
     },
     {
       "field": "pkg/storage.durableCacheState.types",
       "class": "relationship type cache revocation floors",
       "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:125"
+      "pos": "pkg/storage/durable_cache_scope.go:132"
     },
     {
       "field": "pkg/storage.durableCacheState.types",
       "class": "relationship type cache revocation floors",
       "func": "pkg/storage.BadgerEngine.issueDurableCacheScope$1",
-      "pos": "pkg/storage/durable_cache_scope.go:127"
+      "pos": "pkg/storage/durable_cache_scope.go:134"
     },
     {
       "field": "pkg/storage.durableCacheState.types",
       "class": "relationship type cache revocation floors",
       "func": "pkg/storage.durableCacheState.advanceFloorLocked",
-      "pos": "pkg/storage/durable_cache_scope.go:48"
+      "pos": "pkg/storage/durable_cache_scope.go:55"
     },
     {
       "field": "pkg/storage.edgeCardinalityCounter.count",
@@ -3941,6 +3941,18 @@
       "class": "owned read-snapshot group boundaries",
       "func": "pkg/storage.PropertyIndex.snapshotPropertyIndexLocked$1",
       "pos": "pkg/storage/schema_property_index_snapshot.go:257"
+    },
+    {
+      "field": "pkg/storage.recentLabelScan.refused",
+      "class": "read cache physical source cut",
+      "func": "pkg/storage.recentLabelScans.refuse",
+      "pos": "pkg/storage/label_scan_direct.go:114"
+    },
+    {
+      "field": "pkg/storage.recentLabelScan.source",
+      "class": "read cache physical source cut",
+      "func": "pkg/storage.recentLabelScans.keepPopulation",
+      "pos": "pkg/storage/label_scan_direct.go:168"
     },
     {
       "field": "pkg/storage.remoteCypherTx.leaseEvery",

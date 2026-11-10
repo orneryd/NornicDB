@@ -89,7 +89,7 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 				effects.expands = call.Batch == nil || body.ChildRule(cypherantlr.CypherParserRULE_returnSt).Valid()
 			}
 			depth++
-		case cypherantlr.CypherParserRULE_existsSubquery, cypherantlr.CypherParserRULE_subqueryExist,
+		case cypherantlr.CypherParserRULE_subqueryExist,
 			cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_collectSubquery:
 			depth++
 			reading, writing, creating = true, false, false

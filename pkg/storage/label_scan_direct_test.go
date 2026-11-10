@@ -57,7 +57,7 @@ func TestStreamNodesByLabelProjectedReadsRemainingNodesInOnePass(t *testing.T) {
 		scope, label string
 		covers       bool
 	}{{"test:", "Common", true}, {"test:", "Rare", false}, {"test:", "Missing", false}, {"", "Common", true}, {"", "Rare", false}} {
-		covers, err := eng.labelCoversScope(t.Context(), hint.scope, hint.label)
+		covers, _, err := eng.labelCoversScope(t.Context(), hint.scope, hint.label)
 		require.NoError(t, err)
 		require.Equal(t, hint.covers, covers)
 	}

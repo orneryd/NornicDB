@@ -60,12 +60,16 @@ shellCommand
     : COLON name shellCommandElement*
     ;
 
+// A shell command's arguments belong to the shell that runs it (:param, :use).
+// They are read as tokens between balanced delimiters; a map is a map literal.
+// As a list of expressions they put every token that starts an expression
+// after every expression of the grammar, so no operator loop could tell its
+// own operator from the next argument without reading on.
 shellCommandElement
     : mapLit
-    | expression
-    | ASSIGN
-    | GT
-    | COLON
+    | LPAREN shellCommandElement* RPAREN
+    | LBRACK shellCommandElement* RBRACK
+    | ~(LPAREN | RPAREN | LBRACK | RBRACK | LBRACE | RBRACE)
     ;
 
 transactionStatement
@@ -191,8 +195,33 @@ constraintRequirement
     | constraintBlock
     ;
 
+// A contract block holds its predicates one after another, with or without
+// ';' between them. As a list of predicates the block put an expression after
+// every expression, and every operator loop of the grammar had to read on to
+// tell its own operator from the next predicate. The block is read as
+// balanced tokens, and the statement reader then reads its entries one at a
+// time from those tokens, each as a constraintBlockEntry that ends where the
+// next one starts.
 constraintBlock
-    : LBRACE ((constraintRequirement | expression) (SEMI? (constraintRequirement | expression))* SEMI?)? RBRACE
+    : LBRACE (constraintBlock | ~(LBRACE | RBRACE))* RBRACE
+    ;
+
+// An entry is a predicate, or a contract of its own for another pattern
+// (FOR ()-[r:T]-() REQUIRE { ... }), which the contract's owner refuses. The
+// statement reader gives the rule one entry's tokens at a time, with the end
+// of input where the entry is to end.
+constraintBlockEntry
+    : (FOR (nodePattern | relationshipsChainPattern) REQUIRE constraintRequirement | constraintRequirement | expression) EOF
+    ;
+
+// Among a block's predicates a requirement comes before an expression, as it
+// did in the list of predicates: n.tags IS :: LIST<STRING> n.age > 0 is the
+// requirement and then the comparison, though the whole also reads as one
+// expression that compares with '<' and '>'. Where the longest run of tokens
+// reads as an expression, the statement reader looks for a requirement in it
+// with this rule first.
+constraintBlockRequirementEntry
+    : constraintRequirement EOF
     ;
 
 // A property type constraint's type is any value type a type predicate
@@ -205,9 +234,17 @@ regularQuery
     : singleQuery unionSt*
     ;
 
+// A query is its clauses in order, then at most one ending. Every clause is
+// chosen by the token it starts with: the parser never reads ahead to the next
+// WITH, or to the end of a CALL subquery, to learn which part a clause is in.
+// Reads may follow writes without a WITH (CREATE … MATCH … RETURN), as in
+// Neo4j 5 and 25.
+//   - WITH EMBEDDING ends a query that has written and has not projected
+//     (embeddingOptionEnds); anywhere else it is a projection named embedding.
+//   - ORDER BY may end a part that is one CALL subquery (orderEndsCallSubquery).
 singleQuery
-    : singlePartQ
-    | multiPartQ
+    : (readingStatement | updatingStatement | {!p.embeddingOptionEnds()}? withSt)*
+      ({p.embeddingOptionEnds()}? embeddingSt | returnSt | FINISH | {p.orderEndsCallSubquery()}? orderSt)?
     ;
 
 standaloneCall
@@ -215,10 +252,6 @@ standaloneCall
     ;
 
 // Subqueries
-existsSubquery
-    : EXISTS LBRACE (matchSt | subqueryBody | pattern where?) RBRACE
-    ;
-
 countSubquery
     : COUNT LBRACE (matchSt | subqueryBody | pattern where?) RBRACE
     ;
@@ -241,9 +274,10 @@ transactionBatch
       (REPORT STATUS AS statusVariable=symbol)?
     ;
 
-// Subquery body can start with WITH (to import variables) or have statements
+// Subquery body can start with WITH (to import variables) or have statements.
+// Its clauses are chosen by their first token, as in singleQuery.
 subqueryBody
-    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (embeddingSt | returnSt | FINISH)? (UNION ALL? subqueryBody)?
+    : useClause? (readingStatement | updatingStatement | withSt)* (embeddingSt | returnSt | FINISH)? (UNION ALL? subqueryBody)?
     ;
 
 returnSt
@@ -284,18 +318,6 @@ orderItem
 
 orderSt
     : ORDER BY orderItem (COMMA orderItem)*
-    ;
-
-// Reads may follow writes without a WITH (CREATE … MATCH … RETURN), as in
-// Neo4j 5 and 25. The embedding option ends the query grammatically, so a
-// nonterminal WITH EMBEDDING can only be the multiPartQ projection.
-singlePartQ
-    : readingStatement* (returnSt | FINISH | updatingStatement (readingStatement | updatingStatement)* (embeddingSt | returnSt | FINISH)?)?
-    | callSubquery orderSt?
-    ;
-
-multiPartQ
-    : ((readingStatement | updatingStatement)* withSt)+ singlePartQ
     ;
 
 matchSt
@@ -461,9 +483,9 @@ andExpression
     : notExpression (AND notExpression)*
     ;
 
+// EXISTS { … } is the atom subqueryExist: one rule reads it.
 notExpression
     : NOT* comparisonExpression
-    | NOT* existsSubquery
     ;
 
 comparisonExpression
@@ -999,6 +1021,9 @@ useGraphPrefix
     : {p.useGraphKeyword()}? ID
     | {!p.useGraphKeyword()}?
     ;
+// A complete reference is never followed by '.' or '(' (useReferenceComplete),
+// so the followers start with neither: a dotted name and an argument list are
+// then read with one token, in a USE clause and in every function call.
 useReferencePrefix
-    : useClause .* EOF
+    : useClause (~(DOT | LPAREN) .*)? EOF
     ;

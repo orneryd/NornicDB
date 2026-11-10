@@ -18,6 +18,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A labelled pattern with an unindexed property in braces that returns
+  properties, such as `MATCH (n:Label {p: $v}) RETURN n.id`, reads the
+  label's nodes again instead of every node in the database, in auto-commit
+  and in an explicit transaction.
+- `n.has_embedding` no longer reads false through a label scan for a node
+  that has stored vectors. `MATCH (n:Label) RETURN n.has_embedding`, the same
+  with `WHERE n.id IN $ids`, and a filter or a count on the flag now give
+  what a read by id gives, in auto-commit and in explicit transactions. The
+  flag is not a stored property: it is read from the node's embedding
+  metadata, which a scan that decoded only the returned properties left out.
+- A statement that looks a node up by a property once per row without an
+  index, such as a correlated `EXISTS { MATCH (:Label {id: row.id}) }`, no
+  longer reads every node of the label from the store for every row. A label
+  scan with a property filter now settles the filter on the nodes the node
+  read cache holds, and a scan that repeats on a label the cache can hold
+  keeps the nodes it reads (without their stored vectors). A scan uses a
+  cached node only while no write has reached the cache since the scan began,
+  so its rows are those of its own view of the store. A first scan is
+  unchanged. So is the scan of a label the cache cannot hold, by its entry
+  limit or by its byte budget, after the one scan that finds this out, and a
+  scan with decay visibility on. A label that fits is kept again after the
+  cache has evicted or invalidated its nodes. A read of a node without its
+  vectors is served from either copy of the node the engine caches, so
+  `db.retrieve` with a `where` filter no longer decodes its candidate nodes
+  again on every call.
+- A match that runs once per row, such as a correlated
+  `EXISTS { MATCH (a)-[:R]->(b) }`, no longer reads its pattern an extra time
+  per row to look for a relationship pinned by `id(r)` or `elementId(r)` when
+  its WHERE compares no id. A match that pins a relationship returns the same
+  rows; each id comparison of its WHERE is now read before the pin is chosen,
+  which is one more allocation per row for one comparison and more for each
+  further one.
+- Long Cypher statements no longer take seconds to read. The first run of a
+  statement of tens of kilobytes parsed it twice, the second time in the
+  grammar's slow prediction mode, and every later run reread the statement
+  once per word for two of its entry checks. The grammar now chooses each
+  clause, operator and dotted function name from the token it starts with, and
+  the per-word text lookups share one index of the statement. A 67 KB
+  statement's first run goes from 36 s to 3 s and allocates 1 GB instead of
+  16 GB; results are unchanged. The grammar rules `singlePartQ`, `multiPartQ`
+  and `existsSubquery` are gone (a query is its clauses in order;
+  `EXISTS { ... }` is the atom `subqueryExist`). A constraint contract block's
+  entries are read with the grammar after the statement, one after another,
+  and are part of the statement's parse tree as before; the blocks accepted
+  are unchanged. A malformed entry that follows a well-formed one is now
+  reported once, at the malformed entry: `REQUIRE { n.a IS :: LIST<INTEGER>
+  n.age > }` reports line 1:72, where the error was reported at the block's
+  first entry (1:40), and after an entry with a contract of its own the
+  second of two reports is the one that stays.
+  A shell command's arguments (`:param`, `:use`) are read by the grammar as
+  balanced tokens with maps as map literals: the command that runs them still
+  reads their expressions, but a syntax check of the text alone no longer
+  reports a malformed expression in them.
 - Concurrent Cypher writers of an existing node or relationship wait for the
   owning transaction, then apply their changes to its committed image instead
   of failing with Transaction.Outdated. Waits retain cancellation, timeout and

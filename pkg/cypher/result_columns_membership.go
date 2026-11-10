@@ -45,7 +45,7 @@ func (compilation *boundCompilation) promoteClauseInputs(ctx context.Context, cl
 		skip := false
 		if node.ID() != clause.source.syntax.ID() {
 			switch node.Rule() {
-			case cypherantlr.CypherParserRULE_subqueryBody, cypherantlr.CypherParserRULE_collectSubquery, cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_existsSubquery, cypherantlr.CypherParserRULE_subqueryExist,
+			case cypherantlr.CypherParserRULE_subqueryBody, cypherantlr.CypherParserRULE_collectSubquery, cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_subqueryExist,
 				cypherantlr.CypherParserRULE_orderSt, cypherantlr.CypherParserRULE_skipSt, cypherantlr.CypherParserRULE_limitSt:
 				skip = true
 			case cypherantlr.CypherParserRULE_where:
