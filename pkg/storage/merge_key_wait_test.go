@@ -174,13 +174,7 @@ func TestMergeKeyWaitOptions(t *testing.T) {
 	engine, _, _ := newMergeKeyWaitEngine(t, LockWaitOptions{Timeout: time.Minute, LogAfter: time.Minute})
 	holder := beginMergeKeyTx(t, engine)
 	require.NoError(t, holder.PrepareMergeNodeForWrite(t.Context(), []string{"U"}, mergeKeyProps(1)))
-	waits := make(chan struct{}, 1)
-	t.Cleanup(SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waits <- struct{}{}:
-		default:
-		}
-	}))
+	waits := runtimeFixtureOwner.ObserveHookSignal(t, SetUniqueKeyLockWaitHookForTesting, 1)
 	waiter := beginMergeKeyTx(t, engine)
 	defer waiter.Rollback()
 	worker := newUniqueKeyLockWorker(func() error {
@@ -209,13 +203,7 @@ func TestMergeKeyWaitTimeoutCountsFromItsStart(t *testing.T) {
 	require.NoError(t, err)
 	defer releaseSecond()
 
-	blocks := make(chan struct{}, 8)
-	t.Cleanup(SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case blocks <- struct{}{}:
-		default:
-		}
-	}))
+	blocks := runtimeFixtureOwner.ObserveHookSignal(t, SetUniqueKeyLockWaitHookForTesting, 8)
 	wait := uniqueKeyLockWait{LockWaitOptions: LockWaitOptions{Timeout: timeout, LogAfter: 100 * time.Millisecond}, log: slog.New(slog.NewJSONHandler(log, nil)), database: "test"}
 	started := time.Now()
 	worker := newUniqueKeyLockWorker(func() error {

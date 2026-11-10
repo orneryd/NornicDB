@@ -14,6 +14,7 @@ import (
 	"encoding/binary"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -162,7 +163,7 @@ func (f *loopbackDNS) aAnswerCount() int {
 func (f *loopbackDNS) aAnswerList() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.aAnswers...)
+	return slices.Clone(f.aAnswers)
 }
 
 // useLoopbackDNS points the process resolver at the fixture for the duration of

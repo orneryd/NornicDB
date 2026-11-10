@@ -39,7 +39,7 @@ func TestConstraintValueLocksDoNotReacquireEntityAuthority(t *testing.T) {
 				} else {
 					nodes = []NodeID{"test:n"}
 				}
-				authorityKeys1, keyErr := entityCommitKeys(t.Context(), nodes, edges, nil)
+				authorityKeys1, keyErr := entityCommitKeys(t.Context(), entityAuthorityFootprint{nodes: nodes, edges: edges, endpoints: nil, nodeBodies: nodes, edgeBodies: edges})
 				if keyErr != nil {
 					t.Fatal(keyErr)
 				}
@@ -168,21 +168,25 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 			// value authority is reentrant and doubles.
 			endpoint := relationship || mixed
 			preparedExpected := map[uniqueConstraintLockKey]entityAuthorityHold{
-				{entityKind: 1, entityID: "test:n"}: {exclusive: 1},
+				{entityKind: 1, entityID: "test:n"}:                 {exclusive: 1},
+				{entityKind: nodeWriteLockKind, entityID: "test:n"}: {exclusive: 1},
 			}
 			if relationship {
 				preparedExpected = map[uniqueConstraintLockKey]entityAuthorityHold{
-					{entityKind: 1, entityID: "test:a"}: {shared: 1},
-					{entityKind: 1, entityID: "test:b"}: {shared: 1},
-					{entityKind: 2, entityID: "test:e"}: {exclusive: 1},
+					{entityKind: 1, entityID: "test:a"}:                 {shared: 1},
+					{entityKind: 1, entityID: "test:b"}:                 {shared: 1},
+					{entityKind: 2, entityID: "test:e"}:                 {exclusive: 1},
+					{entityKind: edgeWriteLockKind, entityID: "test:e"}: {exclusive: 1},
 				}
 			}
 			if mixed {
 				preparedExpected = map[uniqueConstraintLockKey]entityAuthorityHold{
-					{entityKind: 1, entityID: "test:a"}: {shared: 1},
-					{entityKind: 1, entityID: "test:b"}: {shared: 1},
-					{entityKind: 1, entityID: "test:n"}: {exclusive: 1},
-					{entityKind: 2, entityID: "test:e"}: {exclusive: 1},
+					{entityKind: 1, entityID: "test:a"}:                 {shared: 1},
+					{entityKind: 1, entityID: "test:b"}:                 {shared: 1},
+					{entityKind: 1, entityID: "test:n"}:                 {exclusive: 1},
+					{entityKind: nodeWriteLockKind, entityID: "test:n"}: {exclusive: 1},
+					{entityKind: 2, entityID: "test:e"}:                 {exclusive: 1},
+					{entityKind: edgeWriteLockKind, entityID: "test:e"}: {exclusive: 1},
 				}
 			}
 			acceptedExpected := make(map[uniqueConstraintLockKey]entityAuthorityHold, len(preparedExpected))

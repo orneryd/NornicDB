@@ -197,7 +197,7 @@ const orderGateFixture = `package storage
 // an unrelated guard, a join the guard does not fix, a write on the buffered
 // path, and a predicate a loop computes again.
 func TestWriteOrderGateUsesOnlyAnImmutableCommittedBoolean(t *testing.T) {
-	p, pkg := ssaFixture(t, orderGateFixture, "pkg/storage", ssa.SanityCheckFunctions)
+	p, pkg := ssaFixture(t, orderGateFixture, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	q := &acquirer{p: p, cache: map[flowKey]*flow{}}
 	for _, tc := range []struct {
 		name    string
@@ -251,7 +251,7 @@ const booleanTestFixture = `package storage
 // are about, with the truth the tested condition takes when that value is
 // true. Neither the negation nor the comparison becomes a value of its own.
 func TestBooleanTestNormalizesNotAndBooleanLiteral(t *testing.T) {
-	_, pkg := ssaFixture(t, booleanTestFixture, "pkg/storage", ssa.SanityCheckFunctions)
+	_, pkg := ssaFixture(t, booleanTestFixture, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	fn := pkg.Func("probe")
 	flag := fn.Params[0]
 	var positives []bool

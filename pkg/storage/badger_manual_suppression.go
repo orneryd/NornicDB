@@ -154,7 +154,7 @@ func (b *BadgerEngine) SetManualSuppression(ctx context.Context, entityKind Stor
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	write, releaseWrite, err := b.beginEntityWrite(ctx, id, kind == manualSuppressionEdge, nil)
+	write, releaseWrite, err := b.beginEntityWrite(ctx, id, kind == manualSuppressionEdge, nil, entityWritePlan{authority: entityMetadataAuthority})
 	if err != nil {
 		return err
 	}
@@ -279,7 +279,7 @@ func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) error {
 			}
 		}
 		b.manualSuppressionMu.Unlock()
-		write, releaseWrite, err := b.beginEntityWrite(b.work.Context(), first[1:], first[0] == manualSuppressionEdge, inherited, entityWritePlan{batches: suppressionEndFootprints(ends)})
+		write, releaseWrite, err := b.beginEntityWrite(b.work.Context(), first[1:], first[0] == manualSuppressionEdge, inherited, entityWritePlan{authority: entityMetadataAuthority, batches: suppressionEndFootprints(ends)})
 		if err != nil {
 			b.manualSuppressionMu.Lock()
 			b.suppressionEnding = false

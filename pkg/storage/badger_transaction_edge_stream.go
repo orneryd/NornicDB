@@ -42,14 +42,19 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 	invokeVisit := func(edge *Edge) error {
 		return streamVisitUnlocked(tx, ctx, &frame, edge, visit)
 	}
+	nowNanos := DecayScoringTime()
 	matches := func(edge *Edge) bool {
-		return edge != nil && (edgeType == "" || edge.Type == edgeType)
+		return edge != nil && (edgeType == "" || edge.Type == edgeType) && !tx.engine.filterEntityByDecay(v, edge, nowNanos)
 	}
 
-	hasPending := len(tx.pendingEdges) > 0 || len(tx.deletedEdges) > 0
+	pendingEdges, overlayErr := writeOwnedReadImagesLocked(ctx, tx.pendingEdges, tx.deletedEdges, &tx.entityLocks, edgeWriteLockKind, tx.engine.GetStoredEdge)
+	if overlayErr != nil {
+		return overlayErr
+	}
+	hasPending := len(pendingEdges) > 0 || len(tx.deletedEdges) > 0
 	var seen map[EdgeID]struct{}
 	if hasPending {
-		seen = make(map[EdgeID]struct{}, len(tx.pendingEdges))
+		seen = make(map[EdgeID]struct{}, len(pendingEdges))
 	}
 	emitCommitted := func(edge *Edge) error {
 		if edge == nil {
@@ -59,7 +64,7 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 			if _, deleted := tx.deletedEdges[edge.ID]; deleted {
 				return nil
 			}
-			if pending, exists := tx.pendingEdges[edge.ID]; exists {
+			if pending, exists := pendingEdges[edge.ID]; exists {
 				seen[edge.ID] = struct{}{}
 				if matches(pending) {
 					return invokeVisit(copyEdge(pending))
@@ -90,7 +95,7 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 	// Edges this transaction created (not in the committed stream). Collect
 	// them under the lock first: the callback runs unlocked and may write.
 	var created []*Edge
-	for id, edge := range tx.pendingEdges {
+	for id, edge := range pendingEdges {
 		if _, emitted := seen[id]; emitted || !matches(edge) {
 			continue
 		}
