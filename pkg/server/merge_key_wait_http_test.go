@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -117,7 +117,7 @@ func (h *httpKeyHolder) keepBusy(interval time.Duration) (stop func()) {
 			case <-done:
 				return
 			case <-ticker.C:
-				_ = postMerge(h.t, h.server, h.token, strings.TrimSuffix(h.commit, "/commit"), "RETURN 1", nil)
+				_ = postCypherStatement(h.t.Context(), h.t, h.server, h.token, strings.TrimSuffix(h.commit, "/commit"), "RETURN 1", nil)
 			}
 		}
 	}()
@@ -128,7 +128,7 @@ func (h *httpKeyHolder) keepBusy(interval time.Duration) (stop func()) {
 }
 
 func (h *httpKeyHolder) run(query string, params map[string]any) []any {
-	return postMerge(h.t, h.server, h.token, strings.TrimSuffix(h.commit, "/commit"), query, params)
+	return postCypherStatement(h.t.Context(), h.t, h.server, h.token, strings.TrimSuffix(h.commit, "/commit"), query, params)
 }
 
 func (h *httpKeyHolder) end(commit bool) []any {
@@ -141,7 +141,7 @@ func (h *httpKeyHolder) end(commit bool) []any {
 		errs, _ := result["errors"].([]any)
 		return errs
 	}
-	return postMerge(h.t, h.server, h.token, h.commit, "RETURN 1", nil)
+	return postCypherStatement(h.t.Context(), h.t, h.server, h.token, h.commit, "RETURN 1", nil)
 }
 
 type httpKeyWaitResult struct {
@@ -164,18 +164,7 @@ func startHTTPKeyWaiter(ctx context.Context, t *testing.T, server *Server, token
 			}
 			endpoint = commit
 		}
-		body, _ := json.Marshal(map[string]any{"statements": []any{map[string]any{"statement": query, "parameters": params}}})
-		request := httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body)).WithContext(ctx)
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("Authorization", token)
-		recorder := httptest.NewRecorder()
-		server.buildRouter().ServeHTTP(recorder, request)
-		var result map[string]any
-		if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
-			done <- httpKeyWaitResult{errs: []any{recorder.Body.String()}, elapsed: time.Since(started)}
-			return
-		}
-		errs, _ := result["errors"].([]any)
+		errs := postCypherStatement(ctx, t, server, token, endpoint, query, params)
 		done <- httpKeyWaitResult{errs: errs, elapsed: time.Since(started)}
 	}()
 	return done
@@ -204,29 +193,9 @@ func requireHTTPCode(t *testing.T, errs []any, code string, msgAndArgs ...any) {
 	require.Equal(t, code, first["code"], "%v %v", errs, msgAndArgs)
 }
 
-func httpKeyWaitSignal(t *testing.T) <-chan struct{} {
-	waits := make(chan struct{}, 64)
-	t.Cleanup(storage.SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waits <- struct{}{}:
-		default:
-		}
-	}))
-	return waits
-}
-
 func drainHTTPKeyWaits(waits <-chan struct{}) {
 	for len(waits) > 0 {
 		<-waits
-	}
-}
-
-func awaitHTTPKeyWait(t *testing.T, waits <-chan struct{}, what string) {
-	t.Helper()
-	select {
-	case <-waits:
-	case <-time.After(httpKeyWaitStuckAfter):
-		t.Fatalf("%s never waited for the key", what)
 	}
 }
 
@@ -280,14 +249,14 @@ func TestHTTPMergeKeyWaitEndsAtTransactionTimeout(t *testing.T) {
 // before the server's timeout, and the waiter's keys are released.
 func TestHTTPMergeKeyWaitEndsWithItsRequest(t *testing.T) {
 	server, token, _ := setupKeyWaitServer(t, time.Minute, 0)
-	waits := httpKeyWaitSignal(t)
+	waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	for _, explicit := range []bool{false, true} {
 		held, free := fmt.Sprintf("cancel-held-%v", explicit), fmt.Sprintf("cancel-free-%v", explicit)
 		holder := holdHTTPKeys(t, server, token, held)
 		drainHTTPKeyWaits(waits)
 		ctx, cancel := context.WithCancel(context.Background())
 		done := startHTTPKeyWaiter(ctx, t, server, token, explicit, "UNWIND [$free, $held] AS k MERGE (n:Doc {id: k})", map[string]any{"free": free, "held": held})
-		awaitHTTPKeyWait(t, waits, "the request to cancel")
+		fixtureowner.WaitForBarrier(t, waits, httpKeyWaitStuckAfter, nil, "the request to cancel never waited for the key")
 		cancel()
 		awaitHTTPKeyWaiter(t, done, func() { holder.end(false) })
 		requireHTTPKeyFree(t, server, token, free)
@@ -300,14 +269,14 @@ func TestHTTPMergeKeyWaitEndsWithItsRequest(t *testing.T) {
 // (it matches the holder's node) or rolls back (it creates the node).
 func TestHTTPMergeKeyWaitProceedsWhenTheHolderEnds(t *testing.T) {
 	server, token, _ := setupKeyWaitServer(t, time.Minute, 0)
-	waits := httpKeyWaitSignal(t)
+	waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	for _, commit := range []bool{true, false} {
 		for _, explicit := range []bool{false, true} {
 			key := fmt.Sprintf("ends-%v-%v", commit, explicit)
 			holder := holdHTTPKeys(t, server, token, key)
 			drainHTTPKeyWaits(waits)
 			done := startHTTPKeyWaiter(context.Background(), t, server, token, explicit, "MERGE (n:Doc {id: $k}) ON MATCH SET n.matched = true ON CREATE SET n.created = true", map[string]any{"k": key})
-			awaitHTTPKeyWait(t, waits, "the waiter")
+			fixtureowner.WaitForBarrier(t, waits, httpKeyWaitStuckAfter, nil, "the waiter never waited for the key")
 			require.Empty(t, holder.end(commit))
 			result := awaitHTTPKeyWaiter(t, done, func() {})
 			require.Empty(t, result.errs, key)
@@ -323,7 +292,7 @@ func TestHTTPMergeKeyWaitProceedsWhenTheHolderEnds(t *testing.T) {
 // released, so the other proceeds and commits both nodes.
 func TestHTTPMergeKeyDeadlockFailsOneSide(t *testing.T) {
 	server, token, _ := setupKeyWaitServer(t, time.Minute, 0)
-	waits := httpKeyWaitSignal(t)
+	waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	for _, explicit := range []bool{false, true} {
 		k1, k2 := fmt.Sprintf("dl1-%v", explicit), fmt.Sprintf("dl2-%v", explicit)
 		first := holdHTTPKeys(t, server, token, k1)
@@ -342,7 +311,7 @@ func TestHTTPMergeKeyDeadlockFailsOneSide(t *testing.T) {
 		} else {
 			second = startHTTPKeyWaiter(context.Background(), t, server, token, false, "UNWIND [$k2, $k1] AS k MERGE (n:Doc {id: k})", map[string]any{"k1": k1, "k2": k2})
 		}
-		awaitHTTPKeyWait(t, waits, "the second side")
+		fixtureowner.WaitForBarrier(t, waits, httpKeyWaitStuckAfter, nil, "the second side never waited for the key")
 		if firstErrs := first.run("MERGE (n:Doc {id: $k})", map[string]any{"k": k2}); len(firstErrs) > 0 {
 			requireHTTPCode(t, firstErrs, "Neo.TransientError.Transaction.DeadlockDetected", "explicit=%v", explicit)
 			first.end(false)

@@ -5,26 +5,12 @@ import (
 	"errors"
 	"testing"
 
+	testfixture "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-// mergeKeyWaits records each time a transaction starts waiting for a
-// constraint key lock, so a test orders two statements by the wait itself.
-func mergeKeyWaits(t *testing.T) chan struct{} {
-	t.Helper()
-	waits := make(chan struct{}, 64)
-	restore := storage.SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waits <- struct{}{}:
-		default:
-		}
-	})
-	t.Cleanup(restore)
-	return waits
-}
-
-func drainMergeKeyWaits(waits chan struct{}) {
+func drainMergeKeyWaits(waits <-chan struct{}) {
 	for {
 		select {
 		case <-waits:
@@ -71,7 +57,7 @@ func runMergeStatement(ctx context.Context, store storage.Engine, explicit bool,
 // the first commits; the order is set by the key wait, not by timing.
 func TestMergeWritersOfOneNodeSerializeLikeNeo4j(t *testing.T) {
 	store, setup := newMergeRaceStore(t)
-	waits := mergeKeyWaits(t)
+	waits := testfixture.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	for _, query := range []string{
 		"MERGE (n:Doc {id: $k}) ON MATCH SET n.w = $w",
@@ -125,7 +111,7 @@ func TestMergeWritersOfOneNodeSerializeLikeNeo4j(t *testing.T) {
 // each other, and match it: one node, every statement succeeds.
 func TestMergeWritersWaitForTheCreatingMerge(t *testing.T) {
 	store, setup := newMergeRaceStore(t)
-	waits := mergeKeyWaits(t)
+	waits := testfixture.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	const query = "MERGE (n:Doc {id: 'new'}) ON CREATE SET n.created = $w ON MATCH SET n.matched = coalesce(n.matched, 0) + 1"
 	first := NewStorageExecutor(store)
@@ -153,7 +139,7 @@ func TestMergeWritersWaitForTheCreatingMerge(t *testing.T) {
 // creates it) matches without waiting for a transaction that writes it.
 func TestMergeReadersDoNotWaitForMergeWriters(t *testing.T) {
 	store, setup := newMergeRaceStore(t)
-	waits := mergeKeyWaits(t)
+	waits := testfixture.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	_, err := setup.Execute(ctx, "CREATE (:Doc {id: 'r', w: 0})", nil)
 	require.NoError(t, err)
@@ -198,7 +184,7 @@ func TestMergeReadersDoNotWaitForMergeWriters(t *testing.T) {
 // UNIQUE violation, and nothing is duplicated.
 func TestMergeWriterAfterWritesStaysRetryable(t *testing.T) {
 	store, setup := newMergeRaceStore(t)
-	waits := mergeKeyWaits(t)
+	waits := testfixture.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	_, err := setup.Execute(ctx, "CREATE (:Doc {id: 'seen'})", nil)
 	require.NoError(t, err)

@@ -28,18 +28,63 @@ func (tx *BadgerTransaction) pendingNodeChangedLocked(prev, node *Node) {
 	tx.pendingIndex.add(node)
 }
 
-// pendingValueMatchesLocked returns the transaction's pending nodes with
-// label whose property has valueKey (an indexValueKey). The first lookup
-// made with more than pendingIndexMinNodes pending nodes builds the index
-// from them; the first lookup of a (label, property) pair indexes that pair
-// by value. The result may be the index's own slice: callers copy it.
+// pendingIndexLocked returns the transaction's pending-node index, building
+// it from the pending nodes the first time there are more than
+// pendingIndexMinNodes of them; nil until then, while callers check the few
+// pending nodes directly. Once built, pendingNodeChangedLocked keeps it
+// current. Every pending-node read by value goes through it: the scalar
+// (pendingValueMatchesLocked) and the composite (pendingCompositeMatchesLocked)
+// lookups and their estimates.
 // Caller holds tx.mu.
-
-func (tx *BadgerTransaction) pendingValueMatchesLocked(ctx context.Context, label, property string, valueKey interface{}) ([]NodeID, error) {
+func (tx *BadgerTransaction) pendingIndexLocked(ctx context.Context) (*pendingNodeIndex, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if tx.pendingIndex == nil && len(tx.pendingNodes) <= pendingIndexMinNodes {
+	if tx.pendingIndex != nil {
+		return tx.pendingIndex, nil
+	}
+	if len(tx.pendingNodes) <= pendingIndexMinNodes {
+		return nil, nil
+	}
+	index := newPendingNodeIndex()
+	for _, node := range tx.pendingNodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		for _, nodeLabel := range node.Labels {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			ids := index.byLabel[nodeLabel]
+			if ids == nil {
+				ids = make(map[NodeID]bool)
+				index.byLabel[nodeLabel] = ids
+			}
+			ids[node.ID] = true
+		}
+	}
+	tx.pendingIndex = index
+	return index, nil
+}
+
+// trackPendingLocked has index list label's property by value: the first
+// lookup of a (label, property) pair indexes that pair.
+// Caller holds tx.mu.
+func (tx *BadgerTransaction) trackPendingLocked(ctx context.Context, index *pendingNodeIndex, label, property string) error {
+	return index.track(ctx, label, property, func(id NodeID) *Node { return tx.pendingNodes[id] })
+}
+
+// pendingValueMatchesLocked returns the transaction's pending nodes with
+// label whose property has valueKey (an indexValueKey), from the pending
+// index (pendingIndexLocked) once there is one. The result may be the index's
+// own slice: callers copy it.
+// Caller holds tx.mu.
+func (tx *BadgerTransaction) pendingValueMatchesLocked(ctx context.Context, label, property string, valueKey interface{}) ([]NodeID, error) {
+	index, err := tx.pendingIndexLocked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if index == nil {
 		var matches []NodeID
 		for id, node := range tx.pendingNodes {
 			if err := ctx.Err(); err != nil {
@@ -61,34 +106,123 @@ func (tx *BadgerTransaction) pendingValueMatchesLocked(ctx context.Context, labe
 		}
 		return matches, nil
 	}
-	index := tx.pendingIndex
-	if index == nil {
-		index = newPendingNodeIndex()
-		for _, node := range tx.pendingNodes {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			for _, nodeLabel := range node.Labels {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-				ids := index.byLabel[nodeLabel]
-				if ids == nil {
-					ids = make(map[NodeID]bool)
-					index.byLabel[nodeLabel] = ids
-				}
-				ids[node.ID] = true
-			}
-		}
-	}
-	if err := index.track(ctx, label, property, func(id NodeID) *Node { return tx.pendingNodes[id] }); err != nil {
+	if err := tx.trackPendingLocked(ctx, index, label, property); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	tx.pendingIndex = index
 	return index.byValue[pendingValueKey{label: label, property: property, value: valueKey}], nil
+}
+
+// pendingCompositeMatchesLocked is pendingValueMatchesLocked for a composite
+// index read: the transaction's pending nodes with label whose leading
+// properties equal values, appended to out, and how many. From the pending
+// index it reads only the shortest value bucket of those properties
+// (compositeBucket), as the write-behind overlay's composite read does;
+// countOnly returns that bucket's length, the most nodes the read can add,
+// without reading it.
+// Caller holds tx.mu.
+func (tx *BadgerTransaction) pendingCompositeMatchesLocked(ctx context.Context, out []NodeID, label string, properties []string, values []interface{}, countOnly bool) ([]NodeID, int, error) {
+	if len(values) == 0 || len(values) > len(properties) {
+		return out, 0, ctx.Err()
+	}
+	index, err := tx.pendingIndexLocked(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	if index == nil {
+		count := 0
+		for id, node := range tx.pendingNodes {
+			if err := ctx.Err(); err != nil {
+				return nil, 0, err
+			}
+			matched, err := compositeNodeMatches(ctx, node, label, properties, values)
+			if err != nil {
+				return nil, 0, err
+			}
+			if matched {
+				count++
+				if !countOnly {
+					out = append(out, id)
+				}
+			}
+		}
+		return out, count, ctx.Err()
+	}
+	for _, property := range properties[:len(values)] {
+		if err := tx.trackPendingLocked(ctx, index, label, property); err != nil {
+			return nil, 0, err
+		}
+	}
+	if countOnly {
+		bucket, err := index.compositeBucket(ctx, label, properties, values, nil)
+		return out, len(bucket), err
+	}
+	var small [8]interface{}
+	canonical := small[:min(len(values), len(small))]
+	if len(values) > len(small) {
+		canonical = make([]interface{}, len(values))
+	}
+	bucket, err := index.compositeBucket(ctx, label, properties, values, canonical)
+	if err != nil {
+		return nil, 0, err
+	}
+	count := 0
+	var cancellation bulkReadCancellation
+	for _, id := range bucket {
+		if err := cancellation.check(ctx); err != nil {
+			return nil, 0, err
+		}
+		matched, err := index.compositeMember(ctx, &cancellation, id, label, properties, canonical)
+		if err != nil {
+			return nil, 0, err
+		}
+		if matched {
+			count++
+			out = append(out, id)
+		}
+	}
+	return out, count, ctx.Err()
+}
+
+// PendingPropertyMatchCount is how many of this transaction's pending nodes
+// have label and property = value: the nodes MergePendingPropertyMatches adds
+// to a committed lookup, counted from the same pending index without copying
+// them. A planner adds it to the committed posting's length for an upper
+// bound of what the transaction's lookup returns.
+func (tx *BadgerTransaction) PendingPropertyMatchCount(ctx context.Context, label, property string, value interface{}) (int, error) {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return 0, err
+	}
+	defer tx.mu.Unlock()
+	if len(tx.pendingNodes) == 0 {
+		return 0, ctx.Err()
+	}
+	valueKey, ok, err := indexValueKey(ctx, value)
+	if err != nil || !ok {
+		return 0, err
+	}
+	pending, err := tx.pendingValueMatchesLocked(ctx, label, property, valueKey)
+	return len(pending), err
+}
+
+// PendingCompositeMatchCount is PendingPropertyMatchCount for a composite
+// index read: at most how many pending nodes MergePendingCompositeMatches adds
+// for values (the leading properties' values), from the same pending read
+// (pendingCompositeMatchesLocked) without listing them. Once the transaction
+// indexes its pending nodes it reads one value bucket per property, not the
+// pending nodes.
+func (tx *BadgerTransaction) PendingCompositeMatchCount(ctx context.Context, label string, properties []string, values []interface{}) (int, error) {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return 0, err
+	}
+	defer tx.mu.Unlock()
+	if len(tx.pendingNodes) == 0 {
+		return 0, ctx.Err()
+	}
+	_, count, err := tx.pendingCompositeMatchesLocked(ctx, nil, label, properties, values, true)
+	return count, err
 }
 
 // MergePendingPropertyMatches turns ids, a property-index lookup of label's
@@ -150,7 +284,7 @@ func (tx *BadgerTransaction) MergePendingPropertyMatches(ctx context.Context, id
 // MergePendingCompositeMatches is MergePendingPropertyMatches for a composite
 // index: committed IDs the transaction rewrote or deleted are dropped, and
 // pending nodes that carry label and match the leading values of the index's
-// properties (full or prefix) are added. values are raw pattern values; they
+// properties (full or prefix) are added (pendingCompositeMatchesLocked). values are raw pattern values; they
 // are canonicalized the same way IndexNode/LookupFull canonicalize, so a
 // pending node equals a committed entry exactly when it keys identically.
 func (tx *BadgerTransaction) MergePendingCompositeMatches(ctx context.Context, ids []NodeID, label string, properties []string, values []interface{}) ([]NodeID, error) {
@@ -177,19 +311,11 @@ func (tx *BadgerTransaction) MergePendingCompositeMatches(ctx context.Context, i
 		}
 		kept = append(kept, id)
 	}
-	for id, node := range tx.pendingNodes {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		matched, err := compositeNodeMatches(ctx, node, label, properties, values)
-		if err != nil {
-			return nil, err
-		}
-		if matched {
-			kept = append(kept, id)
-		}
+	if len(tx.pendingNodes) == 0 {
+		return kept, ctx.Err()
 	}
-	if err := ctx.Err(); err != nil {
+	kept, _, err := tx.pendingCompositeMatchesLocked(ctx, kept, label, properties, values, false)
+	if err != nil {
 		return nil, err
 	}
 	return kept, nil

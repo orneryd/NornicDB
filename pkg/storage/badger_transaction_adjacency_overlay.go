@@ -9,6 +9,23 @@ func (tx *BadgerTransaction) pendingAdjacencyLocked(ctx context.Context, id Node
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	images, err := writeOwnedReadImagesLocked(ctx, tx.pendingEdges, tx.deletedEdges, &tx.entityLocks, edgeWriteLockKind, tx.engine.GetStoredEdge)
+	if err != nil {
+		return nil, err
+	}
+	if len(images) != len(tx.pendingEdges) {
+		// Read-only lock refreshes must not enter the staged adjacency index.
+		// Compose their incident population for this read, using the same
+		// endpoint membership as the staged index below.
+		index := make(map[NodeID]map[EdgeID]*Edge)
+		for _, edge := range images {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			indexPendingEdge(index, edge)
+		}
+		return index[id], nil
+	}
 	if tx.pendingAdjacency == nil && len(tx.pendingEdges) == 0 {
 		return nil, nil
 	}
@@ -68,7 +85,7 @@ func (tx *BadgerTransaction) removePendingEdgeLocked(id EdgeID) {
 }
 
 func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(ctx context.Context, committed []*Edge, id NodeID, include func(*Edge) bool) ([]*Edge, error) {
-	if len(tx.pendingEdges) == 0 && len(tx.deletedEdges) == 0 {
+	if len(tx.pendingEdges) == 0 && len(tx.deletedEdges) == 0 && tx.entityLocks.latest == 0 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -91,7 +108,7 @@ func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(ctx context.Context
 		if _, gone := tx.deletedEdges[edge.ID]; gone {
 			continue
 		}
-		if _, rewritten := tx.pendingEdges[edge.ID]; rewritten {
+		if tx.committedEdgeSupersededLocked(edge.ID) || tx.readsLatestLocked(bufferedEdgeEntity, string(edge.ID)) {
 			continue
 		}
 		if include(edge) {

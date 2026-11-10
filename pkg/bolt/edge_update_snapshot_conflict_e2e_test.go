@@ -1,32 +1,20 @@
-// Bolt-level end-to-end test for the edge-update snapshot conflict
-// classification bug.
-//
-// BUG: when a peer session MERGEd the same relationship with different
-// property values and committed after an explicit transaction began, the
-// explicit transaction's MERGE ... SET failed with "not found" and surfaced
-// over the wire as Neo.ClientError.Statement.SyntaxError — a non-retryable
-// client error. Neo4j succeeds on this exact interleaving, and its only
-// sanctioned conflict failure is a transient code that every driver's
-// managed-transaction API (session.ExecuteWrite) auto-retries. The fix
-// classifies the failure as storage.ErrConflict, which maps to
-// Neo.TransientError.Transaction.Outdated, so a driver retry on a fresh
-// snapshot converges to Neo4j's observable outcome: one relationship
-// carrying the retrying writer's values.
+// A relationship writer whose BEGIN predates a peer's commit applies its
+// update under the entity write lock, without a client retry. This follows
+// the same latest-committed writer contract as the overlapping lock-wait tests.
 package bolt
 
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
-	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// TestBoltExplicitTxPeerCommittedEdgeUpdateIsTransientOutdated drives the
+// TestBoltExplicitWriterAppliesToPeerCommittedRelationship drives the
 // full wire path: handshake, HELLO, BEGIN, RUN, PULL over real Bolt
 // connections against the session-scoped explicit-transaction executor.
-func TestBoltExplicitTxPeerCommittedEdgeUpdateIsTransientOutdated(t *testing.T) {
+func TestBoltExplicitWriterAppliesToPeerCommittedRelationship(t *testing.T) {
 	baseStore := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = baseStore.Close() })
 	store := storage.NewNamespacedEngine(baseStore, "neo4j")
@@ -50,32 +38,13 @@ func TestBoltExplicitTxPeerCommittedEdgeUpdateIsTransientOutdated(t *testing.T) 
 	peer := openBoltTestConn(t, port)
 	runBoltQueryWithParams(t, peer, mergeSetPeer, nil)
 
-	// Writer runs the same MERGE ... SET with different values. The
-	// relationship lookup sees the peer's edge (latest-committed read);
-	// the property update previously failed with "not found" and
-	// surfaced as a non-retryable SyntaxError. The wire code MUST be the
-	// transient, driver-retryable Neo.TransientError.Transaction.Outdated.
-	requireNoError(t, SendRun(t, writer, mergeSetWriter, nil, nil))
-	code, message, err := AssertFailure(t, writer)
-	requireNoError(t, err)
-	t.Logf("observed failure: code=%s message=%s", code, message)
-	if code != "Neo.TransientError.Transaction.Outdated" {
-		t.Fatalf("expected Neo.TransientError.Transaction.Outdated, got code=%q message=%q", code, message)
-	}
-	if !strings.Contains(message, "changed after transaction start") {
-		t.Errorf("expected pinned conflict substring in message, got %q", message)
-	}
+	// The peer has finished: the writer takes the relationship's write lock
+	// and applies its SET to that committed image despite its older BEGIN.
+	runBoltQueryWithParams(t, writer, mergeSetWriter, nil)
+	requireNoError(t, SendCommit(t, writer))
+	requireNoError(t, ReadSuccess(t, writer))
 
-	// Retry on a fresh connection (a driver retries transient failures on
-	// a fresh transaction with a fresh snapshot) must succeed.
-	retry := openBoltTestConn(t, port)
-	requireNoError(t, SendBegin(t, retry, nil))
-	requireNoError(t, ReadSuccess(t, retry))
-	runBoltQueryWithParams(t, retry, mergeSetWriter, nil)
-	requireNoError(t, SendCommit(t, retry))
-	requireNoError(t, ReadSuccess(t, retry))
-
-	// Converged state: exactly one relationship with the retrying
+	// Converged state: exactly one relationship with the
 	// writer's value — Neo4j's observable outcome for this interleaving.
 	verify := openBoltTestConn(t, port)
 	records := runBoltQueryWithParams(t, verify,
@@ -85,10 +54,10 @@ func TestBoltExplicitTxPeerCommittedEdgeUpdateIsTransientOutdated(t *testing.T) 
 	}
 	row := records[0]
 	if count, ok := row[0].(int64); !ok || count != 1 {
-		t.Fatalf("expected exactly one REL edge after retry, got %v (row=%v)", row[0], row)
+		t.Fatalf("expected exactly one REL edge after both commits, got %v (row=%v)", row[0], row)
 	}
 	xs, ok := row[1].([]any)
 	if !ok || len(xs) != 1 || xs[0] != "x-writer" {
-		t.Fatalf("expected the retrying writer's value to win, got %v", row[1])
+		t.Fatalf("expected the writer's value to win, got %v", row[1])
 	}
 }

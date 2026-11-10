@@ -72,6 +72,20 @@ func (o *annMutationOverlay) Reset() {
 	o.mu.Unlock()
 }
 
+// take returns the recorded changes, which the caller then owns, and leaves
+// the overlay empty.
+func (o *annMutationOverlay) take() (map[string][]float32, map[string]struct{}) {
+	if o == nil {
+		return nil, nil
+	}
+	o.mu.Lock()
+	vectors, tombstones := o.vectors, o.tombstones
+	o.vectors = make(map[string][]float32)
+	o.tombstones = make(map[string]struct{})
+	o.mu.Unlock()
+	return vectors, tombstones
+}
+
 func (o *annMutationOverlay) Search(ctx context.Context, query []float32, limit int, minSimilarity float64) []Candidate {
 	if o == nil || limit <= 0 {
 		return nil

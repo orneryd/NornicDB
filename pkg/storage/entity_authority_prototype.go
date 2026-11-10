@@ -6,27 +6,60 @@ import (
 	"sync"
 )
 
+// entityAuthorityMode distinguishes entity body mutation from independently
+// live metadata. Both retain identity authority during publication; metadata
+// does not take the transaction-lifetime body key held by Cypher writers.
+type entityAuthorityMode uint8
+
+const (
+	entityBodyAuthority entityAuthorityMode = iota
+	entityMetadataAuthority
+)
+
+// entityAuthorityFootprint separates identities protected during publication
+// from the bodies actually mutated. Incident endpoints and independently live
+// metadata retain identity authority without taking a body writer's lifetime key.
+type entityAuthorityFootprint struct {
+	nodes      []NodeID
+	edges      []EdgeID
+	endpoints  []NodeID
+	nodeBodies []NodeID
+	edgeBodies []EdgeID
+}
+
 // entityCommitKeys projects the typed identity domain for the canonical
 // commit-lock registry. Endpoint and relationship identities never become labels.
-func entityCommitKeys(ctx context.Context, nodes []NodeID, edges []EdgeID, endpoints []NodeID) ([]uniqueConstraintLockKey, error) {
-	keys := make([]uniqueConstraintLockKey, 0, len(nodes)+len(edges)+len(endpoints))
-	for _, id := range nodes {
+func entityCommitKeys(ctx context.Context, footprint entityAuthorityFootprint) ([]uniqueConstraintLockKey, error) {
+	keys := make([]uniqueConstraintLockKey, 0, len(footprint.nodes)+len(footprint.edges)+len(footprint.endpoints)+len(footprint.nodeBodies)+len(footprint.edgeBodies))
+	for _, id := range footprint.nodes {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		keys = append(keys, uniqueConstraintLockKey{entityKind: 1, entityID: string(id)})
 	}
-	for _, id := range edges {
+	for _, id := range footprint.edges {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		keys = append(keys, uniqueConstraintLockKey{entityKind: 2, entityID: string(id)})
 	}
-	for _, id := range endpoints {
+	for _, id := range footprint.endpoints {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		keys = append(keys, uniqueConstraintLockKey{entityKind: 1, entityID: string(id), shared: true})
+	}
+	for _, id := range footprint.nodeBodies {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		keys = append(keys, entityWriteLockKey(bufferedNodeEntity, string(id)))
+	}
+	for _, id := range footprint.edgeBodies {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		keys = append(keys, entityWriteLockKey(bufferedEdgeEntity, string(id)))
 	}
 	return keys, nil
 }
@@ -100,15 +133,20 @@ type entityAuthorityResources struct {
 // Readers execute only after the existing lifecycle lease is owned. Static
 // batches are for suppression maintenance and may span ordered namespaces.
 type entityWritePlan struct {
-	known   writtenEntities
-	read    func() (writtenEntities, error)
-	batches map[string]writtenEntities
+	authority entityAuthorityMode
+	known     writtenEntities
+	read      func() (writtenEntities, error)
+	batches   map[string]writtenEntities
 }
 
 func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge bool, inherited *entityWriteContext, plans ...entityWritePlan) (*entityWriteContext, func(), error) {
 	// Key admission belongs to this lifecycle owner; inherited and new writes
 	// use the same footprint acquisition without a separately callable entry.
 	acquireKeys := func(admission context.Context, owner string) (func(), error) {
+		authority := entityBodyAuthority
+		if len(plans) > 0 {
+			authority = plans[0].authority
+		}
 		if len(plans) > 0 && len(plans[0].batches) > 0 {
 			batches := plans[0].batches
 			namespaces := make([]string, 0, len(batches))
@@ -124,7 +162,11 @@ func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge b
 			}
 			for _, ns := range namespaces {
 				entities := batches[ns]
-				keys, err := entityCommitKeys(admission, entities.nodes, entities.edges, nil)
+				footprint := entityAuthorityFootprint{nodes: entities.nodes, edges: entities.edges}
+				if authority == entityBodyAuthority {
+					footprint.nodeBodies, footprint.edgeBodies = entities.nodes, entities.edges
+				}
+				keys, err := entityCommitKeys(admission, footprint)
 				if err != nil {
 					releaseAll()
 					return nil, err
@@ -169,7 +211,15 @@ func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge b
 		} else {
 			nodes = append(nodes, NodeID(id))
 		}
-		keys, err := entityCommitKeys(admission, nodes, edges, nil)
+		var bodyNodes []NodeID
+		var bodyEdges []EdgeID
+		if authority == entityBodyAuthority {
+			if !isEdge {
+				bodyNodes = []NodeID{NodeID(id)}
+			}
+			bodyEdges = edges
+		}
+		keys, err := entityCommitKeys(admission, entityAuthorityFootprint{nodes: nodes, edges: edges, nodeBodies: bodyNodes, edgeBodies: bodyEdges})
 		if err != nil {
 			return nil, err
 		}

@@ -99,6 +99,20 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	// statement deleted reaches storage again: it is already gone
 	// (storage.ErrNotFound) and counts once, as in Neo4j (#827).
 	deletedEdges := make(map[storage.EdgeID]struct{}, len(edgeIDs))
+	if locker, ok := store.(storage.EntityWriteLocker); ok {
+		// Deleted entities are locked first, so a concurrent writer of one
+		// waits for this transaction and the delete follows its commit.
+		for _, edgeID := range edgeIDs {
+			if _, err := locker.LockEdgeForWrite(ctx, edgeID); err != nil {
+				return nil, true, err
+			}
+		}
+		for _, nodeID := range nodeIDs {
+			if _, err := locker.LockNodeForWrite(ctx, nodeID); err != nil {
+				return nil, true, err
+			}
+		}
+	}
 	for _, edgeID := range edgeIDs {
 		if err := store.DeleteEdge(ctx, edgeID); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
@@ -198,6 +212,16 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 			return nil, true, err
 		}
 		rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
+		// Each written entity is locked before its assignments are evaluated:
+		// a row whose entity a waited-for writer committed reads that commit.
+		for _, target := range targets {
+			if err := lockNodeForWrite(ctx, store, nodes[target]); err != nil {
+				return nil, true, err
+			}
+			if err := lockEdgeForWrite(ctx, store, rels[target]); err != nil {
+				return nil, true, err
+			}
+		}
 		evalNodes := nodes
 		if simplePropertyAssignment {
 			if node := nodes[simpleTarget]; node != nil {

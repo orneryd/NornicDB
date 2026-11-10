@@ -15,7 +15,7 @@ import (
 // instantiated generics, then VTA over CHA, then the one call-target index.
 func dispatchProgram(t *testing.T, source string) (*program, *ssa.Package) {
 	t.Helper()
-	p, pkg := ssaFixture(t, source, "pkg/storage", ssa.InstantiateGenerics|ssa.SanityCheckFunctions)
+	p, pkg := ssaFixture(t, source, "pkg/storage", ssa.InstantiateGenerics|ssa.SanityCheckFunctions, standaloneFixture)
 	p.cg = vta.CallGraph(ssautil.AllFunctions(p.ssa), cha.CallGraph(p.ssa))
 	p.indexCallTargets()
 	return p, pkg
@@ -161,7 +161,7 @@ func TestCallTargetsUnknownGraphGrantsNothing(t *testing.T) {
  type trackedRWMutex struct{}
  func (m *trackedRWMutex) Lock(){}
  func invoke(mu interface{ Lock() }){ mu.Lock() }
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	site := lockCall(t, pkg.Func("invoke"))
 	require.Empty(t, p.callTargets(site))
 	receiver, action, exclusive, fallible := (&acquirer{p: p}).mutexCallEffect(site)

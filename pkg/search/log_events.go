@@ -8,8 +8,10 @@ import (
 )
 
 func (s *Service) loggerOrDefault() *slog.Logger {
-	if s != nil && s.logger != nil {
-		return s.logger
+	if s != nil {
+		if logger := s.logger.Load(); logger != nil {
+			return logger
+		}
 	}
 	return slog.Default()
 }
@@ -48,9 +50,10 @@ func (s *Service) SetLocalizer(manager *localization.Manager) {
 	}
 }
 
-// SetLogger injects the optional structured operator logger.
+// SetLogger injects the optional structured operator logger. It may be
+// called while the service runs; later log calls use it.
 func (s *Service) SetLogger(logger *slog.Logger) {
 	if s != nil {
-		s.logger = logger
+		s.logger.Store(logger)
 	}
 }

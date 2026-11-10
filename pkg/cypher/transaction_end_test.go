@@ -85,17 +85,6 @@ type keyWaitOutcome struct {
 	elapsed time.Duration
 }
 
-func lockWaitSignal(t *testing.T) <-chan struct{} {
-	waits := make(chan struct{}, 8)
-	t.Cleanup(storage.SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waits <- struct{}{}:
-		default:
-		}
-	}))
-	return waits
-}
-
 // TestIdleTransactionEndsAtTransactionTimeout (NOR-284 follow-up of #1756):
 // an explicit transaction that stays idle for the server's transaction
 // timeout is ended at that timeout, though its client sends nothing: its
@@ -106,7 +95,7 @@ func lockWaitSignal(t *testing.T) <-chan struct{} {
 func TestIdleTransactionEndsAtTransactionTimeout(t *testing.T) {
 	const timeout = 300 * time.Millisecond
 	store := idleEndStore(t, timeout)
-	waits := lockWaitSignal(t)
+	waits := runtimeFixtureOwner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 8)
 
 	statementHolder := idleEndHolder(t, t.Context(), store, 1)
 	holder := idleEndHolder(t, t.Context(), store, 2)
@@ -177,7 +166,7 @@ func TestClientTransactionTimeoutReplacesTheServerTimeout(t *testing.T) {
 // later statements and COMMIT are refused with Terminated.
 func TestTerminateEndsAnIdleTransactionAtOnce(t *testing.T) {
 	store := idleEndStore(t, time.Minute)
-	waits := lockWaitSignal(t)
+	waits := runtimeFixtureOwner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 8)
 	for _, then := range []string{"COMMIT", "RETURN 1"} {
 		holder := idleEndHolder(t, t.Context(), store, 1)
 		waiter := startUMerge(store, 1)

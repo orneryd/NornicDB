@@ -1342,48 +1342,59 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		}
 	}
 
-	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
-	if err != nil {
+	// A WHERE that is an OR of indexed IN lists is read here, as the shortcut
+	// for batched key lookups. Its shape admits the statement to this read;
+	// which index seeds it is the one node-pattern access decision's
+	// (collectPipelineIndexedNodeCandidates, NOR-414), which may prefer the
+	// pattern's own unique lookup. Every candidate is held to the whole
+	// pattern and to the WHERE.
+	if _, orIn, err := e.planPropertyIndexInOrParam(ctx, nodePattern, whereClause, params); err != nil {
 		return nil, true, err
-	}
-	if !usedIndex {
-		// The store counters answer only the reads they describe, so this
-		// reduction also serves a plain labeled count: it counts the label's
-		// stream through the same admission and WHERE test as the rows, and
-		// never materializes them.
-		if filteredCount {
-			if result, streamed, streamErr := e.tryStreamPipelineFilteredNodeCount(ctx, nodePattern, whereClause, countColumn); streamed || streamErr != nil {
-				return result, true, streamErr
-			}
-		}
-		if !boundedSimpleProjection {
-			return nil, false, nil
-		}
-		// boundedSimpleProjection requires an empty WHERE, so no seek can
-		// have applied one here.
-		candidates, _, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, hint)
+	} else if orIn {
+		candidates, whereApplied, used, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, whereClause, pipelineMatchPhysicalHint{})
 		if err != nil {
 			return nil, true, err
 		}
-	}
-	if boundedSimpleProjection {
-		if len(candidates) > hint.earlyLimit {
-			candidates = candidates[:hint.earlyLimit]
+		if used {
+			rows := make([]pipelineRow, 0, len(candidates))
+			for _, node := range candidates {
+				if node == nil || !e.pipelineNodeMatchesPattern(ctx, node, nodePattern) {
+					continue
+				}
+				row := pipelineNodeRow(ctx, nodePattern.variable, node)
+				if whereApplied || e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(row)) {
+					rows = append(rows, row)
+				}
+			}
+			result, projected := e.pipelineApplyReturn(ctx, rows, clauses[1].text)
+			if !projected {
+				return nil, false, nil
+			}
+			return result, true, nil
 		}
-		return e.projectVisiblePipelineNodeRead(candidates, items, nodePattern.variable), true, nil
 	}
-	rows := make([]pipelineRow, 0, len(candidates))
-	for _, node := range candidates {
-		row := pipelineNodeRow(ctx, nodePattern.variable, node)
-		if whereClause == "" || e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(row)) {
-			rows = append(rows, row)
+	// The store counters answer only the reads they describe, so this
+	// reduction also serves a plain labeled count: it counts the label's
+	// stream through the same admission and WHERE test as the rows, and
+	// never materializes them. It seeds from the same access decision.
+	if filteredCount {
+		if result, streamed, streamErr := e.tryStreamPipelineFilteredNodeCount(ctx, nodePattern, whereClause, countColumn); streamed || streamErr != nil {
+			return result, true, streamErr
 		}
 	}
-	result, projected := e.pipelineApplyReturn(ctx, rows, clauses[1].text)
-	if !projected {
+	if !boundedSimpleProjection {
 		return nil, false, nil
 	}
-	return result, true, nil
+	// boundedSimpleProjection requires an empty WHERE, so no seek can
+	// have applied one here.
+	candidates, _, err := e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, hint)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(candidates) > hint.earlyLimit {
+		candidates = candidates[:hint.earlyLimit]
+	}
+	return e.projectVisiblePipelineNodeRead(candidates, items, nodePattern.variable), true, nil
 }
 
 // pipelineNodeRow is the binding row of a single-node pipeline read: the node
@@ -1478,7 +1489,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 	}
 	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
-	err = reader.StreamNodesByLabelProjected(ctx, nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
+	err = reader.StreamNodesByLabelProjected(ctx, nodeScanLabels(ctx, store, nodePattern.labels)[0], projectedProperties, func(node *storage.Node) error {
 		return countNode(node, false)
 	})
 	if err != nil {
@@ -2027,8 +2038,8 @@ func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, 
 type pipelinePrefetchedNodeCandidatesKey struct{}
 
 func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
-	if node := e.prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
-		return []*storage.Node{node}, false, nil
+	if nodes := e.prefetchedPipelineCandidates(ctx, nodePattern); nodes != nil {
+		return nodes, false, nil
 	}
 	// A property equal to null matches no node ({id: null}, nothing equals
 	// null): no index seek or label scan can find one.
@@ -2056,7 +2067,7 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 // visit returning storage.ErrIterationStopped ends the scan without error.
 func (e *StorageExecutor) visitPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, hint pipelineMatchPhysicalHint, visit func(*storage.Node) error) error {
 	// A streamed MATCH is the statement's first clause, over one row, so
-	// no batch prefetch applies to it (prefetchedPipelineCandidate).
+	// no batch prefetch applies to it (prefetchedPipelineCandidates).
 	nodes, _, used, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, "", hint)
 	if err != nil {
 		return err
@@ -2072,18 +2083,23 @@ func (e *StorageExecutor) visitPipelineInitialNodeCandidates(ctx context.Context
 	return err
 }
 
-// prefetchedPipelineCandidate is the node a batch prefetch already found for
-// a one-label, one-property pattern, or nil.
-func (e *StorageExecutor) prefetchedPipelineCandidate(ctx context.Context, nodePattern nodePatternInfo) *storage.Node {
-	prefetched, ok := ctx.Value(pipelinePrefetchedNodeCandidatesKey{}).(map[nodeBatchMatchKey]map[string]*storage.Node)
+// prefetchedPipelineCandidates are the nodes a batch prefetch already found
+// for a one-label, one-property pattern, in a list of the caller's own, or
+// nil when it found none.
+func (e *StorageExecutor) prefetchedPipelineCandidates(ctx context.Context, nodePattern nodePatternInfo) []*storage.Node {
+	prefetched, ok := ctx.Value(pipelinePrefetchedNodeCandidatesKey{}).(nodeBatchCandidates)
 	if !ok || len(nodePattern.labels) != 1 || len(nodePattern.properties) != 1 {
 		return nil
 	}
 	for property, value := range nodePattern.properties {
 		key := nodeBatchMatchKey{label: nodePattern.labels[0], prop: property}
-		if node := prefetched[key][propEqKeyBatch(value)]; node != nil && e.pipelineNodeMatchesPattern(ctx, node, nodePattern) {
-			return node
+		var nodes []*storage.Node
+		for _, node := range prefetched[key][propEqKeyBatch(value)] {
+			if node != nil && e.pipelineNodeMatchesPattern(ctx, node, nodePattern) {
+				nodes = append(nodes, node)
+			}
 		}
+		return nodes
 	}
 	return nil
 }

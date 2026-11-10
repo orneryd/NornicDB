@@ -10,17 +10,17 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-// LockWaitOptions bound and report a MERGE's wait for the lock on a UNIQUE /
-// NODE KEY key another transaction holds: concurrent MERGEs of one key queue
-// on it until the holder's transaction ends (PrepareMergeNode).
+// LockWaitOptions bound and report waits for transaction-held UNIQUE, NODE KEY
+// and entity write locks. Competing writers wait until the holding transaction
+// ends (PrepareMergeNode and EntityWriteLocker).
 type LockWaitOptions struct {
-	// Timeout is the server's transaction timeout. A MERGE that has waited
+	// Timeout is the server's transaction timeout. A writer that has waited
 	// this long for a key fails with Neo4j's TransactionTimedOut status
 	// (ErrLockWaitTimeout): its transaction has run at least that long. Zero
 	// or negative leaves the wait unbounded. The statement's own deadline
 	// and cancellation end the wait either way.
 	Timeout time.Duration
-	// LogAfter is the slow-query threshold. A MERGE still waiting after this
+	// LogAfter is the slow-query threshold. A writer still waiting after this
 	// long is logged once, at WARN, with the transaction holding the key; a
 	// wait the Timeout ends first is not. Zero or negative logs nothing.
 	LogAfter time.Duration
@@ -156,15 +156,16 @@ func (sm *SchemaManager) awaitUniqueConstraintLock(ctx context.Context, owner st
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-fired:
+			label, property := request.key.names()
 			if !report {
-				message := localization.StorageTransactionLockWaitTimedOut(request.key.label, request.key.property, wait.Timeout.String())
+				message := localization.StorageTransactionLockWaitTimedOut(label, property, wait.Timeout.String())
 				return &lockWaitTimeoutError{cause: localizedError(message, ErrLockWaitTimeout)}
 			}
 			clock.reported = true
 			sm.uniqueConstraintCommitLocksMu.Lock()
 			holder := request.lock.owner
 			sm.uniqueConstraintCommitLocksMu.Unlock()
-			event := localization.StorageLockWaitProlongedEvent(wait.database, owner, holder, request.key.label, request.key.property, time.Since(clock.since), max(wait.Timeout, 0))
+			event := localization.StorageLockWaitProlongedEvent(wait.database, owner, holder, label, property, time.Since(clock.since), max(wait.Timeout, 0))
 			logStorageEvent(ctx, wait.log, slog.LevelWarn, event)
 		}
 	}
