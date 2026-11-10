@@ -67,8 +67,8 @@
     },
     {
       "path": "api-reference/cypher-functions/README.md",
-      "sha256": "db9352f488166b629a2c8bd731a80dd27d41bb1eef8954e64bb89e1a36e987ec",
-      "bytes": 33824
+      "sha256": "9a72c1d84b4468f79a8144fe0f55d4541353d463f3bc096bba395ab259a6f04a",
+      "bytes": 34570
     },
     {
       "path": "api-reference/openapi.md",
@@ -1359,6 +1359,11 @@
       "path": "performance/write-behind-adaptive-buffer.md",
       "sha256": "373c1b194f0d3fdb3d9c403168ffcc5fd716ac49296cb174581d3da005bd888f",
       "bytes": 3970
+    },
+    {
+      "path": "project-details.md",
+      "sha256": "99240461d601ae208efe97c83bbd7328257c9502f9784a7d3a30d6bc4c698ba8",
+      "bytes": 34725
     },
     {
       "path": "property-key-dictionary.md",

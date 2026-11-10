@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 
 const operationalFiles = new Set([
   "CONTRIBUTING.md",
+  "README.md",
   ".github/workflows/docs-pages.yml",
   "scripts/verify.sh",
   "scripts/check-actions-policy.py",
