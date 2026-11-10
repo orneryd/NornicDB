@@ -386,6 +386,45 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 	// and materialize thousands of bodies it will reject.
 	var covers bool
 	coversDecided := false
+	// A filtered scan settles its filter on an image the node read cache holds
+	// of a node, as the other label reads do, and reads the node records the
+	// cache does not hold. When the scan of a label the cache can hold repeats,
+	// the query images of the nodes it reads are kept for the next scan: a
+	// statement that scans the label once per row (a correlated EXISTS over
+	// MATCH (:L {id: ...})) then reads the store once, not once per row
+	// (NOR-407). A first scan keeps the scan decoder, which spares a rejected
+	// body its decoding, and so does the scan of a label the cache cannot
+	// hold: one with more nodes than the cache has entries, or one whose
+	// images the cache refused because they outgrow its byte budget
+	// (cacheFillLabelNodes). Such images would only push each other out. The
+	// scan keeps no count of its own: the cache decides on what it holds when
+	// the images are offered, so a label that fits is kept again after the
+	// cache has evicted or invalidated its images.
+	//
+	// An image is the filtered scan's view of a node only while no write has
+	// reached the cache since the scan captured the cache's generation, before
+	// its view (cacheGeneration): the rule every read of the cache at a view
+	// follows (withCurrentReadView). A stream cannot run again as those reads
+	// do, so it asks with each image, and reads the store once a write has
+	// come. The unfiltered scan's image reads are the release's and are not
+	// changed.
+	//
+	// Such a scan also remembers the label's nodes in index order once it has
+	// walked the whole label, and the next scans read that list instead of
+	// walking the label index and counting the label again. The label index
+	// stays the one owner of label membership: the list is a copy of one walk
+	// of it, good only until a commit writes or removes an entry of the label
+	// (rememberedLabelNodes). A label whose entries decay tombstones can hide
+	// keeps the scan decoder: a tombstone is no label index write.
+	gen := b.nodeCacheGen.current()
+	var sourceTs uint64
+	var loaded []*Node
+	resident := false
+	var population, walked []NodeID
+	keepWalk, walkedAll := false, false
+	// offered is what the images this scan has read for the cache take of its
+	// byte budget.
+	var offered int64
 	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan
@@ -403,13 +442,32 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 		// collecting thousands of candidate IDs and point-reading every body
 		// defeats filter-before-materialization. Reuse the existing density
 		// decision and scanner; emit still enforces labels, overlay and visibility.
-		if options.scanDecodesFilter() {
+		population, walked, keepWalk, walkedAll = nil, nil, false, false
+		offered = 0
+		// holds says that the cache takes the images a scan reads of the label:
+		// it has not refused them (labelImagesRefused).
+		holds := options.scanDecodesFilter() && b.writeBehind == nil && !checkTombstones && !b.labelImagesRefused(scope, label)
+		if holds {
+			population = b.rememberedLabelNodes(scope, label, v, txn.ReadTs())
+		}
+		if population != nil {
+			// The label index has not changed for the label since a scan that
+			// found it sparse and within the cache walked it.
+			covers, coversDecided, resident = false, true, true
+			sourceTs, loaded = txn.ReadTs(), nil
+		} else if options.scanDecodesFilter() {
 			var err error
-			covers, err = b.labelCoversScope(ctx, scope, label)
-			if err != nil {
+			var labelled int64
+			// Failed count hints (labelled < 0) retain point lookups.
+			if covers, labelled, err = b.labelCoversScope(ctx, scope, label); err != nil {
 				return err
 			}
 			coversDecided = true
+			resident = holds && labelled >= 0 && !covers && label != "" &&
+				(b.nodeCacheMaxEntries <= 0 || labelled <= int64(b.nodeCacheMaxEntries)) &&
+				b.filteredLabelScans.repeats(scope, label)
+			keepWalk = resident
+			sourceTs, loaded = txn.ReadTs(), nil
 			if covers {
 				// Match the index owner at this snapshot: an unfinished index
 				// discovers labels from bodies; a ready visible index also hides
@@ -454,7 +512,46 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 		if options.scanDecodesFilter() {
 			filtered = newProjectedNodeDecoder(b, txn, options)
 		}
-		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
+		// readItem reads the row of a label entry. kept says that the filter
+		// has already kept the node on a cached image: a filter is settled
+		// once for a node.
+		readItem := func(nodeID NodeID, item *badger.Item, kept bool) (*Node, error) {
+			if filtered != nil && resident && !kept {
+				// The scan repeats: keep the node's query image, which holds the
+				// properties the filter reads and none of the stored vectors. A
+				// node whose image cannot be read is left to the scan decoder.
+				if image, err := b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata); err == nil {
+					// Images that together are more than the cache's whole byte
+					// budget cannot all be kept, as one such image cannot
+					// (copyNodeForReadCache): the scan reads no further one, and
+					// the cache refuses them below.
+					loaded = append(loaded, image)
+					if offered += estimateNodeReadCacheBytes(image); offered > b.nodeReadCacheLimit() {
+						resident = false
+					}
+					if !options.keepsResidentNode(image) {
+						return nil, nil
+					}
+					if queryNodes {
+						// The cache copies what it keeps (cacheFillNode), and the row
+						// is the copy a scan gets from the cached image.
+						return projectCachedNodeForRead(image, properties, false), nil
+					}
+					kept = true
+				}
+			}
+			if kept {
+				// The row the scan's options ask for, as the scan decoder
+				// hydrates a body it keeps.
+				node, err := b.readNodeItemInTxn(txn, item, nodeID, filtered.hydration)
+				if err != nil {
+					return nil, fmt.Errorf("scanning node %q: %w", nodeID, err)
+				}
+				if properties != nil {
+					node = projectCachedNodeForRead(node, properties, false)
+				}
+				return node, nil
+			}
 			if filtered != nil {
 				var node *Node
 				err := item.Value(func(val []byte) error {
@@ -475,27 +572,57 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			}
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
 		}
-		cachedNode := func(nodeID NodeID) (*Node, bool) {
-			if filtered != nil {
-				// Filtered scans read the encoded body instead of copying a full
-				// cached node, as the generic filtered scanner does. Rejected
-				// bodies avoid full materialization and sidecar reads.
-				return nil, false
-			}
+		// cachedNode is the row the node read cache gives for a label entry.
+		// For a filtered scan it reports kept when the filter kept the node on
+		// an image that is not the row: that row is then read.
+		cachedNode := func(nodeID NodeID) (node *Node, cached, kept bool) {
 			b.nodeCacheMu.RLock()
+			if filtered != nil && b.nodeCacheGen.current() != gen {
+				// A write has reached the cache since the scan captured its
+				// generation: an image may be newer than the scan's view. The
+				// scan reads the store from here on, and keeps nothing of what
+				// it reads, which the cache would refuse (cacheFillNode).
+				b.nodeCacheMu.RUnlock()
+				resident = false
+				return nil, false, false
+			}
 			mode := nodeReadCacheFull
 			if queryNodes {
 				mode = nodeReadCacheQuery
 			}
-			cached, ok := b.nodeReadCacheImageLocked(nodeID, mode)
-			b.nodeCacheMu.RUnlock()
-			if !ok || b.writeBehind != nil {
-				return nil, false
+			row, ok := b.nodeReadCacheImageLocked(nodeID, mode)
+			image := row
+			if filtered != nil && !ok {
+				// Every image of a node holds the properties the filter reads.
+				image, _ = b.nodeReadCacheImageLocked(nodeID, nodeReadCacheProjection)
 			}
-			return projectCachedNodeForRead(cached, properties, false), true
+			b.nodeCacheMu.RUnlock()
+			if b.writeBehind != nil {
+				return nil, false, false
+			}
+			if filtered == nil {
+				if !ok {
+					return nil, false, false
+				}
+				return projectCachedNodeForRead(row, properties, false), true, false
+			}
+			if image == nil {
+				return nil, false, false
+			}
+			// A rejected image costs no point read, no decode and no copy.
+			if !options.keepsResidentNode(image) {
+				return nil, true, false
+			}
+			// A kept node is read unless the cache holds the image the scan's
+			// rows are: a query image, or the full image of a scan that returns
+			// stored vectors.
+			if !ok || !(queryNodes || options.WithEmbeddings) {
+				return nil, false, true
+			}
+			return projectCachedNodeForRead(row, properties, false), true, false
 		}
 		readPoint := func(nodeID NodeID) error {
-			node, cached := cachedNode(nodeID)
+			node, cached, kept := cachedNode(nodeID)
 			if !cached {
 				item, err := txn.Get(nodeKey(nodeID))
 				if errors.Is(err, badger.ErrKeyNotFound) {
@@ -504,7 +631,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				if err != nil {
 					return err
 				}
-				node, err = readItem(nodeID, item)
+				node, err = readItem(nodeID, item, kept)
 				if err != nil {
 					return err
 				}
@@ -515,15 +642,27 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			id   NodeID
 			node *Node
 			err  error
+			kept bool
 		}
 		var pending []pendingNode
+		var cancel bulkReadCancellation
+		if population != nil {
+			for _, nodeID := range population {
+				if err := cancel.check(ctx); err != nil {
+					return err
+				}
+				if err := readPoint(nodeID); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", v, false)
 		if err != nil {
 			return err
 		}
 		defer it.Close()
 		lookups := 0
-		var cancel bulkReadCancellation
 		for it.Next() {
 			if err := cancel.check(ctx); err != nil {
 				return err
@@ -533,10 +672,13 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			if checkTombstones && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
+			if keepWalk {
+				walked = append(walked, nodeID)
+			}
 
 			if !coversDecided && lookups >= labelScanPointLookups {
 				var err error
-				covers, err = b.labelCoversScope(ctx, scope, label)
+				covers, _, err = b.labelCoversScope(ctx, scope, label)
 				if err != nil {
 					return err
 				}
@@ -557,6 +699,17 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			}
 			lookups++
 			if err := readPoint(nodeID); err != nil {
+				if keepWalk && err == ErrIterationStopped {
+					// The visitor has its rows. Finish the walk of the label
+					// index, which reads no node, for the scans that follow.
+					for it.Next() {
+						if cancel.check(ctx) != nil {
+							return err
+						}
+						walked = append(walked, it.NodeID())
+					}
+					walkedAll = it.Err() == nil
+				}
 				return err
 			}
 		}
@@ -564,22 +717,25 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			return err
 		}
 		if len(pending) == 0 {
+			walkedAll = keepWalk
 			return nil
 		}
 
 		ids := make([]NodeID, 0, len(pending))
 		positions := make(map[NodeID]int, len(pending))
 		for index, entry := range pending {
-			if node, cached := cachedNode(entry.id); cached {
+			node, cached, kept := cachedNode(entry.id)
+			if cached {
 				pending[index].node = node
 				continue
 			}
+			pending[index].kept = kept
 			ids = append(ids, entry.id)
 			positions[entry.id] = index
 		}
 		if err := readNodeRecordsInOnePass(ctx, txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
 			index := positions[nodeID]
-			pending[index].node, pending[index].err = readItem(nodeID, item)
+			pending[index].node, pending[index].err = readItem(nodeID, item, pending[index].kept)
 			// Report record errors in visit order, so an early stop does not
 			// surface corruption in a record the caller never reaches.
 			return nil
@@ -599,6 +755,18 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 		}
 		return nil
 	}, readViewOptions{scope: scope, scopeKind: readPrefixScope})
+	if walkedAll {
+		b.filteredLabelScans.keepPopulation(scope, label, v, sourceTs, walked)
+		population = walked
+	}
+	// Offer the cache what this scan read, whether or not the visitor let it
+	// run to its end: the cache decides, on what it holds of the label's nodes
+	// now, whether it keeps the images (cacheFillLabelNodes). A refusal is
+	// remembered with the view it was made at, so the label's next scans read
+	// no image while the label's nodes are what they were (labelImagesRefused).
+	if len(loaded) > 0 && population != nil && !b.cacheFillLabelNodes(gen, population, loaded, sourceTs) {
+		b.filteredLabelScans.refuse(scope, label, sourceTs)
+	}
 	if err != nil {
 		return err
 	}

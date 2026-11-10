@@ -18,6 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A statement that looks a node up by a property once per row without an
+  index, such as a correlated `EXISTS { MATCH (:Label {id: row.id}) }`, no
+  longer reads every node of the label from the store for every row. A label
+  scan with a property filter now settles the filter on the nodes the node
+  read cache holds, and a scan that repeats on a label the cache can hold
+  keeps the nodes it reads (without their stored vectors). A scan uses a
+  cached node only while no write has reached the cache since the scan began,
+  so its rows are those of its own view of the store. A first scan is
+  unchanged. So is the scan of a label the cache cannot hold, by its entry
+  limit or by its byte budget, after the one scan that finds this out, and a
+  scan with decay visibility on. A label that fits is kept again after the
+  cache has evicted or invalidated its nodes. A read of a node without its
+  vectors is served from either copy of the node the engine caches, so
+  `db.retrieve` with a `where` filter no longer decodes its candidate nodes
+  again on every call.
 - Long Cypher statements no longer take seconds to read. The first run of a
   statement of tens of kilobytes parsed it twice, the second time in the
   grammar's slow prediction mode, and every later run reread the statement
