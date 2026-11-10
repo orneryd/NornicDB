@@ -271,6 +271,10 @@ type BadgerEngine struct {
 	// Both current-value node caches share a byte budget, under nodeCacheMu.
 	nodeCacheBytes    int64
 	nodeCacheMaxBytes int64
+	// filteredLabelScans remembers the labels of the engine's last filtered
+	// query scans: a label whose scan repeats is read through the node read
+	// cache (streamNodesByLabelProjectedInScope).
+	filteredLabelScans recentLabelScans
 	// The generations order each read cache's fills against its writes
 	// (see cacheGeneration).
 	nodeCacheGen       cacheGeneration

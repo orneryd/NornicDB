@@ -214,7 +214,7 @@ const (
 	nodeReadCacheFull nodeReadCacheMode = iota
 	nodeReadCacheQuery
 	nodeReadCacheSnapshot
-	nodeReadCacheProjection // full-cache reads, never publish a partial decoded body
+	nodeReadCacheProjection // reads of the body alone: any cached image, never publish a partial decoded body
 )
 
 // getNodeByID is the shared cached node read: cache hit (copy via hitCopy),

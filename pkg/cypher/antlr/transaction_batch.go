@@ -103,7 +103,7 @@ func ReadTransactionalCalls(ctx context.Context, query string, stage SourceStage
 				current = parent
 				nesting--
 			}
-		case CypherParserRULE_existsSubquery, CypherParserRULE_subqueryExist,
+		case CypherParserRULE_subqueryExist,
 			CypherParserRULE_countSubquery, CypherParserRULE_collectSubquery:
 			nesting++
 			return func() { nesting-- }

@@ -9,14 +9,14 @@ import (
 )
 
 // grammarBodyBearingRules are the CypherParser.g4 rules that transitively
-// contain a query body: starting from query, regularQuery, singleQuery,
-// singlePartQ, multiPartQ and subqueryBody, a rule is added while one of its
-// alternatives names a rule already added.
+// contain a query body: starting from query, regularQuery, singleQuery and
+// subqueryBody, a rule is added while one of its alternatives names a rule
+// already added.
 func grammarBodyBearingRules(t *testing.T) []string {
 	t.Helper()
 	rules := parseGrammarQueryRules(queryBodyGrammar(t))
 	identifier := regexp.MustCompile(`\b([a-z]\w*)\b`)
-	bearing := map[string]bool{"query": true, "regularQuery": true, "singleQuery": true, "singlePartQ": true, "multiPartQ": true, "subqueryBody": true}
+	bearing := map[string]bool{"query": true, "regularQuery": true, "singleQuery": true, "subqueryBody": true}
 	for changed := true; changed; {
 		changed = false
 		for rule, alternatives := range rules {
@@ -109,9 +109,9 @@ var queryBodyManifest = map[string]string{
 	"useGraphArguments": "use-argument", "useReferencePrefix": "use-argument",
 	"syntaxFragment": "statement", "transactionBatch": "batch-size",
 	"script": "statement", "query": "statement", "regularQuery": "statement", "singleQuery": "statement",
-	"singlePartQ": "statement", "multiPartQ": "with", "readingStatement": "statement", "callSubquery": "statement",
+	"readingStatement": "statement", "callSubquery": "statement",
 	"subqueryBody": "finish", "unionSt": "union", "useClause": "use-body", "showCommand": "show", "showTail": "show",
-	"terminateCommand": "terminate", "existsSubquery": "exists", "subqueryExist": "exists-query",
+	"terminateCommand": "terminate", "subqueryExist": "exists-query",
 	"countSubquery": "count", "collectSubquery": "collect", "returnSt": "return", "projectionBody": "return",
 	"projectionItems": "return", "projectionItem": "return", "withSt": "with", "skipSt": "skip", "limitSt": "limit",
 	"orderItem": "order", "orderSt": "order", "matchSt": "where", "patternWhere": "where", "where": "where",
@@ -137,11 +137,12 @@ var queryBodyManifest = map[string]string{
 	"listComprehension": "list-comprehension", "filterExpression": "quantifier", "filterWith": "list-comprehension",
 	"patternComprehension": "pattern-comprehension", "relationshipsChainPattern": "pattern-comprehension",
 	"mapProjection": "map-projection", "mapProjectionItem": "map-projection",
-	"shellCommand":          "exempt: a shell command (:param, :use, …) is the client's, never an engine statement",
-	"shellCommandElement":   "exempt: a shell command's element (see shellCommand)",
-	"schemaCommand":         "exempt: CREATE/DROP INDEX and CONSTRAINT take no query body, and the semantic entry skips schema statements",
-	"constraintRequirement": "exempt: a schema constraint's requirement (see schemaCommand)",
-	"constraintBlock":       "exempt: a schema constraint's block (see schemaCommand)",
+	"shellCommand":                    "exempt: a shell command (:param, :use, …) is the client's, never an engine statement",
+	"shellCommandElement":             "exempt: a shell command's element (see shellCommand)",
+	"schemaCommand":                   "exempt: CREATE/DROP INDEX and CONSTRAINT take no query body, and the semantic entry skips schema statements",
+	"constraintRequirement":           "exempt: a schema constraint's requirement (see schemaCommand)",
+	"constraintBlockEntry":            "exempt: an entry of a schema constraint's block (see schemaCommand)",
+	"constraintBlockRequirementEntry": "exempt: a requirement read alone from a schema constraint's block (see schemaCommand)",
 }
 
 // Every clause kind the pipeline splits a body into says how it ends one.

@@ -228,6 +228,14 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.BadgerEngine.cacheMisses":               {class: "metrics"},
 	"pkg/storage.BadgerEngine.countDeltaPending":         {class: "count-delta fold scheduling"},
 	"pkg/storage.BadgerEngine.edgeCacheVersions":         {class: "read cache"},
+	// Author: NOR-407 implementation lane (Claude). The view a remembered
+	// walk of a label's index read from: a copy's source cut, compared with
+	// the label's revocation floor, not a count.
+	"pkg/storage.recentLabelScan.source": {class: "read cache physical source cut"},
+	// The view of the scan whose images of the label the node read cache
+	// refused: a source cut, compared with the label's revocation floor like
+	// the one above.
+	"pkg/storage.recentLabelScan.refused": {class: "read cache physical source cut"},
 	// Author: #1548 implementation lane (Codex). Physical source cuts and
 	// monotone revocation floors belong to cache coherence, not entity counts.
 	"pkg/storage.BadgerEngine.edgeCacheSources":                  {class: "read cache physical source cut"},

@@ -36,6 +36,13 @@ type durableCacheState struct {
 func (state *durableCacheState) nodeFloor(id NodeID) uint64 {
 	return max(state.all, state.nodes[id])
 }
+
+// labelFloor is the timestamp of the last commit that wrote a node carrying
+// label before or after the write, or of the last commit whose effects were
+// not known.
+func (state *durableCacheState) labelFloor(label string) uint64 {
+	return max(state.all, state.labels[label])
+}
 func (state *durableCacheState) edgeFloor(id EdgeID) uint64 {
 	return max(state.all, state.edges[id])
 }
