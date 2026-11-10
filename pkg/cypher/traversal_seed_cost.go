@@ -14,19 +14,13 @@ func (e *StorageExecutor) chooseTraversalEndSeeds(ctx context.Context, match *Tr
 	if len(end.properties) == 0 && (end.variable == "" || where == "" || !referencesVariable(where, end.variable)) {
 		return nil, false, nil
 	}
-	startSingleton := startDecided && len(startNodes) == 1
-	if startDecided && len(startNodes) == 0 || startSingleton && (where != "" || len(end.properties) == 0) {
+	if startDecided && len(startNodes) == 0 {
 		return nil, false, nil
 	}
 	store := e.getStorage(ctx)
 	startCost, startKnown, err := traversalSeedPopulation(ctx, store, match.StartNode, len(startNodes), startDecided)
 	if err != nil {
 		return nil, false, err
-	}
-	// A single label candidate already avoids the broad scan an end index
-	// would save. Do not materialize that index's possibly large result.
-	if !startDecided && startKnown && startCost.population <= 1 {
-		return nil, false, nil
 	}
 	endNodes, _, indexed, err := e.collectPipelineIndexedNodeCandidates(ctx, end, where, pipelineMatchPhysicalHint{})
 	if err != nil || !indexed {
@@ -35,16 +29,11 @@ func (e *StorageExecutor) chooseTraversalEndSeeds(ctx context.Context, match *Tr
 	if len(endNodes) == 0 {
 		return endNodes, true, nil
 	}
-	if startSingleton && len(endNodes) == 1 {
-		// Both inline lookups supplied an endpoint. Reuse the bound-end
-		// contract so a forward walk need not hydrate unrelated neighbors.
-		match.boundEndNodeID = storage.NodeID(endNodes[0].IdentityKey())
-		return nil, false, nil
-	}
 	endCost, endKnown, err := traversalSeedPopulation(ctx, store, end, len(endNodes), true)
 	if err != nil {
 		return nil, false, err
 	}
+	preferEnd := !startDecided || len(endNodes) < len(startNodes)
 	if startKnown && endKnown {
 		endCost, endKnown, err = traversalSeedAdjacencyWork(ctx, store, endCost, reverseDirection(match.Relationship.Direction))
 		if err != nil {
@@ -61,13 +50,16 @@ func (e *StorageExecutor) chooseTraversalEndSeeds(ctx context.Context, match *Tr
 				return nil, false, err
 			}
 			if startKnown {
-				return endNodes, endCost.work < startCost.work, nil
+				preferEnd = endCost.work < startCost.work
 			}
 		}
 	}
-	// Without usable statistics, retain the indexed-access decision; when
-	// both candidate sets are known, prefer the smaller one.
-	return endNodes, !startDecided || len(endNodes) < len(startNodes), nil
+	// Bind only after the cost comparison: a singleton can own a large
+	// adjacency, and knowing both endpoints does not make listing it cheap.
+	if !preferEnd && len(endNodes) == 1 {
+		match.boundEndNodeID = storage.NodeID(endNodes[0].IdentityKey())
+	}
+	return endNodes, preferEnd, nil
 }
 
 type traversalSeedEstimate struct {

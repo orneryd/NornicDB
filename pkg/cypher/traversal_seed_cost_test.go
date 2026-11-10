@@ -389,22 +389,75 @@ func TestTraversalSeedCostPreservesCounterAndCancellationErrors(t *testing.T) {
 	})
 }
 
+func TestTraversalSeedCostAnonymousInlineStart(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		f := newTraversalSeedCostFixture(t, traversalSeedCostPopulation{collections: 200, documents: 12, unrelatedFanout: 64})
+		rows, work := f.measure(t, "MATCH (:PDCollection {id: $k})<-[:MEMBER_OF]-(d:PDDocument {id: $d}) RETURN d.id", map[string]interface{}{"k": "missing", "d": "doc-0"})
+		require.Empty(t, rows)
+		require.Zero(t, work.entries)
+		rows, work = f.measure(t, "MATCH (:PDCollection {id: $k})<-[:MEMBER_OF]-(d:PDDocument {id: $d}) RETURN d.id", map[string]interface{}{"k": "col-0", "d": "doc-0"})
+		require.Equal(t, []string{"doc-0"}, rows)
+		require.Equal(t, 1, work.entries)
+	})
+}
+
+func TestTraversalSeedCostSelectiveDocumentBeatsSingletonCollection(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		f := newTraversalSeedCostFixture(t, traversalSeedCostPopulation{collections: 1, documents: 1000})
+		for _, query := range []string{
+			"MATCH (k:PDCollection)<-[:MEMBER_OF]-(d:PDDocument) WHERE d.id IN $ids RETURN d.id, k.archived",
+			"MATCH (k:PDCollection {id: $k})<-[:MEMBER_OF]-(d:PDDocument {id: $d}) RETURN d.id, k.archived",
+		} {
+			rows, work := f.measure(t, query, map[string]interface{}{"ids": []interface{}{"doc-0"}, "k": "col-0", "d": "doc-0"})
+			require.Equal(t, seedCostRows([]string{"doc-0"}, 1), rows)
+			if work.entries != 1 {
+				t.Errorf("%s: expected one adjacency entry, got %d", query, work.entries)
+			}
+		}
+	})
+}
+
+func TestTraversalSeedCostDefersBroadInlineStartHydration(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		f := newSeedFixture(t,
+			"CREATE INDEX doc_status FOR (n:Doc) ON (n.status)",
+			"CREATE CONSTRAINT entity_id FOR (n:Entity) REQUIRE n.id IS UNIQUE",
+		)
+		nodes := []*storage.Node{{ID: "entity", Labels: []string{"Entity"}, Properties: map[string]interface{}{"id": "target"}}}
+		for i := 0; i < 1000; i++ {
+			nodes = append(nodes, &storage.Node{ID: storage.NodeID(fmt.Sprint("doc-", i)), Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": fmt.Sprint("doc-", i), "status": "active"}})
+		}
+		require.NoError(t, f.exec.storage.BulkCreateNodes(context.Background(), nodes))
+		require.NoError(t, f.exec.storage.BulkCreateEdges(context.Background(), []*storage.Edge{{ID: "mention", StartNode: "doc-0", EndNode: "entity", Type: "MENTIONS"}}))
+		rows, reads := f.query(t, "MATCH (d:Doc {status: 'active'})-[:MENTIONS]->(e:Entity {id: $id}) RETURN d.id", map[string]interface{}{"id": "target"})
+		require.Equal(t, []string{"doc-0"}, rows)
+		require.Less(t, reads, int64(10), "planning must not hydrate every active document")
+	})
+}
+
 // BenchmarkTraversalSeedCost times the reported population (one PDCollection,
 // 351 indexed PDDocuments, 800 unrelated relationships per document), the
 // both-inline-unique-keys form, and the many-collections/tiny-end form whose
 // end seed must be kept. The read's adjacency work is recorded as
 // listings/op and entries/op so a profile run shows the plan the query took.
 func BenchmarkTraversalSeedCost(b *testing.B) {
-	for _, name := range []string{"single_collection_indexed_end", "inline_keys_both_ends", "many_collections_tiny_end"} {
+	for _, name := range []string{"single_collection_indexed_end", "inline_keys_both_ends", "many_collections_tiny_end", "single_collection_selective_end", "inline_keys_selective_end"} {
 		b.Run(name, func(b *testing.B) {
 			population := traversalSeedCostPopulation{collections: 1, documents: 351, membershipsPerDocument: 1, unrelatedFanout: 800}
 			if name == "many_collections_tiny_end" {
 				population = traversalSeedCostPopulation{collections: 200, documents: 2, membershipsPerDocument: 3, unrelatedFanout: 1}
 			}
+			if name == "single_collection_selective_end" || name == "inline_keys_selective_end" {
+				population = traversalSeedCostPopulation{collections: 1, documents: 1000, membershipsPerDocument: 1}
+			}
 			fixture := newTraversalSeedCostFixture(b, population)
 			statement, params := traversalSeedCostStatement, fixture.idParams()
 			expected := seedCostRows(fixture.documents, population.membershipsPerDocument)
-			if name == "inline_keys_both_ends" {
+			if name == "single_collection_selective_end" {
+				params = map[string]interface{}{"ids": []interface{}{"doc-0"}}
+				expected = seedCostRows([]string{"doc-0"}, 1)
+			}
+			if name == "inline_keys_both_ends" || name == "inline_keys_selective_end" {
 				statement, params = traversalSeedCostInlineStatement, map[string]interface{}{"k": "col-0", "d": "doc-7"}
 				expected = []string{fmt.Sprint("doc-7", "col-0", false)}
 			}
