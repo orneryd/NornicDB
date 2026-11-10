@@ -1,6 +1,6 @@
 // Public, write-only project token. Never put a personal API key here.
 export const projectToken = 'phc_mQqQ7UAKQMihqwUEKgoRY8mcWNbg2UKjfsLATAVJTdB7';
-const events = new Set(['$pageview', 'docs_search_results', 'docs_search_result_opened', 'docs_code_explored', 'docs_outbound_clicked']);
+const events = new Set(['$pageview', 'docs_search_results', 'docs_search_result_opened', 'docs_code_explored', 'docs_outbound_clicked', 'docs_inquiry_opened', 'docs_inquiry_submitted']);
 const fields = ['distinct_id', '$session_id', '$window_id', '$lib', '$lib_version', 'token', 'path', 'version', 'scope', 'mode', 'results', 'destination'];
 export function sanitize(event) {
   if (!event || !events.has(event.event)) return null;

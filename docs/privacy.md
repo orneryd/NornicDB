@@ -9,3 +9,9 @@ The browser SDK uses an in-memory random identifier, which resets on reload. It 
 Use **Disable usage analytics** at the bottom of the site to opt out. That preference is stored locally in your browser. Do Not Track and Global Privacy Control also disable collection. Analytics run only on the public documentation hostname; local development and tests do not send events.
 
 See [PostHog's privacy policy](https://posthog.com/privacy). Browser blockers may prevent collection, so analytics totals are an observed sample of traffic rather than a complete census.
+
+## Managed service inquiries
+
+The **Managed services** link at the bottom of the documentation navigation opens the [inquiry page](./managed-services.md). It sends your name, email, organization (if provided), and message to our own HTTPS API, which stores them in a separate NornicDB database. Only authorized inquiry administrators can view submissions. We use these details to respond to your request; ask for deletion when we contact you. Do not include credentials or confidential data.
+
+The documentation site counts form openings and successful submissions when analytics are enabled. These events contain no form fields. The private admin portal does not load analytics. Inquiry submission works when analytics are disabled.

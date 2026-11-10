@@ -29,6 +29,16 @@ test('public docs emit sanitized events and opt-out stops collection', async ({p
   await expect.poll(() => events.some(e => e.event === 'docs_search_results'), {timeout: 15000}).toBeTruthy();
   expect(JSON.stringify(events)).not.toContain('private-search-phrase');
   await page.keyboard.press('Escape');
+  await context.route('https://nornicdb.duckdns.org:4269/inquiries', route => route.fulfill({status:201, contentType:'application/json', body:'{"accepted":true}'}));
+  await page.goto('https://orneryd.github.io/NornicDB/managed-services');
+  await page.getByLabel('Name',{exact:true}).fill('private-inquiry-name');
+  await page.getByLabel('Work email').fill('private-inquiry@example.invalid');
+  await page.getByLabel('What would you like to build?').fill('private-inquiry-workload');
+  await page.getByRole('checkbox',{name:'You may contact me about this inquiry.'}).check();
+  await page.getByRole('button',{name:'Send inquiry'}).click();
+  await expect.poll(() => events.some(e => e.event === 'docs_inquiry_submitted'), {timeout:15000}).toBeTruthy();
+  expect(events.some(e => e.event === 'docs_inquiry_opened')).toBeTruthy();
+  expect(JSON.stringify(events)).not.toContain('private-inquiry');
   await page.getByRole('checkbox', {name: 'Disable usage analytics'}).check();
   events.length = 0;
   await page.reload();

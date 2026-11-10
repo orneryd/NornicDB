@@ -716,6 +716,11 @@
       "bytes": 215
     },
     {
+      "path": "managed-services.md",
+      "sha256": "247e598817e5a58b41197f9210e77b45b0cd42232f87e8f9b237a2fe22b4e414",
+      "bytes": 372
+    },
+    {
       "path": "migration-notice.md",
       "sha256": "027bdd35284384eb65902a1b1fa6570272ae8ac6430210eef85289793b87ee28",
       "bytes": 3743
@@ -1362,8 +1367,8 @@
     },
     {
       "path": "privacy.md",
-      "sha256": "dee00147d3726856a38cf5f83a95bb369fec0c658c1259176fd3aa7b8f641408",
-      "bytes": 1601
+      "sha256": "2a571958f5723d3143b996257561f7aab01f6a7caa63f958984ab30fea8711f0",
+      "bytes": 2335
     },
     {
       "path": "project-details.md",
