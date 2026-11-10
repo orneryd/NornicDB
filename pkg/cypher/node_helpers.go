@@ -77,13 +77,45 @@ func (e *StorageExecutor) queryNodeReader(store storage.Engine) storage.QueryNod
 
 // streamQueryNodes carries the query-node read contract to storage. Each
 // consumer keeps its own row admission and stopping state: a bounded
-// traversal already checks labels, visibility and its remaining limit.
+// traversal already checks labels, visibility and its remaining limit. The
+// stream reads labels[0]: callers order a pattern's labels with
+// nodeScanLabels.
 func streamQueryNodes(ctx context.Context, store storage.Engine, labels []string, visit func(*storage.Node) error) error {
 	opts := storage.StreamNodesOptions{QueryNodes: true, ApplyDecayFilter: true}
 	if len(labels) > 0 {
 		opts.Label = labels[0]
 	}
 	return store.StreamNodesWithOptions(ctx, opts, visit)
+}
+
+// nodeScanLabels orders a node pattern's labels for a label scan: the label
+// with the fewest nodes first, the others in their written order. A scan reads
+// the first label and checks the others on every node it reads, so a pattern
+// such as (n:Large:Small) reads the small label, as Neo4j starts from the
+// label with the fewest nodes (NOR-414). The sizes are the count store's
+// (countStoreRead); when one is not answered the written order is kept. A
+// pattern with fewer than two labels is returned as written, unread.
+func nodeScanLabels(ctx context.Context, store storage.Engine, labels []string) []string {
+	if len(labels) < 2 {
+		return labels
+	}
+	smallest, smallestCount := 0, int64(0)
+	for i, label := range labels {
+		count, answered, err := countStoreRead(ctx, store, storage.CountStoreReadRequest{Kind: storage.CountStoreNodesByLabel, Name: label})
+		if err != nil || !answered {
+			return labels
+		}
+		if i == 0 || count < smallestCount {
+			smallest, smallestCount = i, count
+		}
+	}
+	if smallest == 0 {
+		return labels
+	}
+	ordered := make([]string, 0, len(labels))
+	ordered = append(ordered, labels[smallest])
+	ordered = append(ordered, labels[:smallest]...)
+	return append(ordered, labels[smallest+1:]...)
 }
 
 // readsQueryNodesWithoutVectors reports whether an auto-commit statement

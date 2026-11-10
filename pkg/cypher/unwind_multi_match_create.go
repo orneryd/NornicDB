@@ -180,7 +180,9 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 			return nil, true, err
 		}
 		if !unique {
-			return nil, false, nil
+			// Not this batch: it needs one node per value. The rows still
+			// read the candidates the prefetch verified.
+			return e.executeUnwindRowsWithBatchCandidates(ctx, prefetched, unwindVar, items, restQuery)
 		}
 		ctx = context.WithValue(ctx, pipelinePrefetchedNodeCandidatesKey{}, prefetched)
 	}

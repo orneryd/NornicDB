@@ -45,6 +45,45 @@ func compositeIndexLookup(ctx context.Context, engine storage.Engine, schema *st
 	return ids, nil
 }
 
+// propertyIndexValueCount is the length of the posting propertyIndexLookup
+// reads for value, counted without copying it: the committed and pending
+// entries (SchemaManager.PropertyIndexValueCount) plus, inside a
+// transaction, the transaction's own pending nodes with the value. It is an
+// upper bound on propertyIndexLookup's result, and the estimate a planner
+// compares index seeks by. indexed is false when the lookup cannot use the
+// index for value.
+func propertyIndexValueCount(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) (int, bool, error) {
+	count, indexed, err := schema.PropertyIndexValueCount(ctx, label, property, value)
+	if err != nil || !indexed {
+		return 0, indexed, err
+	}
+	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+		pending, err := wrapper.tx.PendingPropertyMatchCount(ctx, label, property, value)
+		if err != nil {
+			return 0, false, err
+		}
+		count += pending
+	}
+	return count, true, nil
+}
+
+// compositeIndexValueCount is propertyIndexValueCount for a compositeIndexLookup
+// read.
+func compositeIndexValueCount(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager, idx *storage.CompositeIndex, values []interface{}, full bool) (int, bool, error) {
+	count, indexed, err := schema.CompositeIndexValueCount(ctx, idx, values, full)
+	if err != nil || !indexed {
+		return 0, indexed, err
+	}
+	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+		pending, err := wrapper.tx.PendingCompositeMatchCount(ctx, idx.Label, idx.Properties, values)
+		if err != nil {
+			return 0, false, err
+		}
+		count += pending
+	}
+	return count, true, nil
+}
+
 // labellessPropertyIndexUsable reports whether a pattern without a label may
 // take its candidates from the property indexes read through engine. The
 // indexes are per label, so their union for a property lists only the nodes

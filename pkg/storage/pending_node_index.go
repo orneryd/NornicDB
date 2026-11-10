@@ -324,9 +324,65 @@ func (v pendingWriteView) valueMatches(ctx context.Context, out []NodeID, label,
 	return v.appendInNamespace(ctx, out, v.valueMatchSet(label, property, valueKey))
 }
 
+// compositeBucket is where every pending composite read starts, the lookup
+// and the estimate alike, for both pending-write overlays (an AsyncEngine's
+// write-behind buffer and an explicit transaction): the shortest of the value
+// buckets of the leading properties for values. Each node that matches every
+// value is in it, so its length bounds the matches, and only it needs the
+// key check (compositeMember). canonical, when not nil, receives the values'
+// keys (len(values) of them). The bucket is nil when no pending node can
+// match: a value no index key holds, or an empty bucket. The properties must
+// be tracked (track). The slice is the index's: callers read it while the
+// index is locked and don't keep or change it.
+func (p *pendingNodeIndex) compositeBucket(ctx context.Context, label string, properties []string, values, canonical []interface{}) ([]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if p == nil || len(values) == 0 || len(values) > len(properties) {
+		return nil, nil
+	}
+	var candidates []NodeID
+	for i, value := range values {
+		key, keyed, err := indexValueKey(ctx, value)
+		if err != nil {
+			return nil, err
+		}
+		if !keyed {
+			return nil, nil
+		}
+		if canonical != nil {
+			canonical[i] = key
+		}
+		bucket := p.byValue[pendingValueKey{label: label, property: properties[i], value: key}]
+		if len(bucket) == 0 {
+			return nil, nil
+		}
+		if i == 0 || len(bucket) < len(candidates) {
+			candidates = bucket
+		}
+	}
+	return candidates, nil
+}
+
+// compositeMember reports whether pending node id holds every key of
+// canonical (compositeBucket's keys) on label's leading properties.
+func (p *pendingNodeIndex) compositeMember(ctx context.Context, cancellation *bulkReadCancellation, id NodeID, label string, properties []string, canonical []interface{}) (bool, error) {
+	for i, key := range canonical {
+		if err := cancellation.check(ctx); err != nil {
+			return false, err
+		}
+		value, exists := p.byProperty[nodePropertyKey{label: label, property: properties[i]}][id]
+		if !exists || value != key {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // compositeMatches merges namespace-scoped pending equality candidates directly
 // into the caller's owned output. It starts with the smallest requested value
-// bucket, so a common tenant plus a unique ID does not scan every pending node.
+// bucket (compositeBucket), so a common tenant plus a unique ID does not scan
+// every pending node.
 func (v pendingWriteView) compositeMatches(ctx context.Context, out []NodeID, label string, properties []string, values []interface{}) ([]NodeID, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -339,23 +395,9 @@ func (v pendingWriteView) compositeMatches(ctx context.Context, out []NodeID, la
 	if len(values) > len(small) {
 		canonical = make([]interface{}, len(values))
 	}
-	var candidates []NodeID
-	for i, value := range values {
-		key, keyed, err := indexValueKey(ctx, value)
-		if err != nil {
-			return nil, err
-		}
-		if !keyed {
-			return out, nil
-		}
-		canonical[i] = key
-		bucket := v.valueMatchSet(label, properties[i], key)
-		if len(bucket) == 0 {
-			return out, nil
-		}
-		if i == 0 || len(bucket) < len(candidates) {
-			candidates = bucket
-		}
+	candidates, err := v.index.compositeBucket(ctx, label, properties, values, canonical)
+	if err != nil {
+		return nil, err
 	}
 	var cancellation bulkReadCancellation
 	for _, id := range candidates {
@@ -365,16 +407,9 @@ func (v pendingWriteView) compositeMatches(ctx context.Context, out []NodeID, la
 		if !v.inNamespace(id) {
 			continue
 		}
-		matches := true
-		for i, key := range canonical {
-			if err := cancellation.check(ctx); err != nil {
-				return nil, err
-			}
-			value, exists := v.index.byProperty[nodePropertyKey{label: label, property: properties[i]}][id]
-			if !exists || value != key {
-				matches = false
-				break
-			}
+		matches, err := v.index.compositeMember(ctx, &cancellation, id, label, properties, canonical)
+		if err != nil {
+			return nil, err
 		}
 		if matches {
 			out = append(out, id)
@@ -384,6 +419,18 @@ func (v pendingWriteView) compositeMatches(ctx context.Context, out []NodeID, la
 		return nil, err
 	}
 	return out, nil
+}
+
+// compositeMatchBound is how many pending nodes compositeMatches can add for
+// values, at most: the length of the bucket it starts from, without reading
+// it. An estimate adds it as PropertyIndexValueCount adds valueMatchSet's
+// length.
+func (v pendingWriteView) compositeMatchBound(ctx context.Context, label string, properties []string, values []interface{}) (int, error) {
+	if v.index == nil {
+		return 0, ctx.Err()
+	}
+	candidates, err := v.index.compositeBucket(ctx, label, properties, values, nil)
+	return len(candidates), err
 }
 
 // appendInNamespace appends the ids that belong to the view's namespace to
