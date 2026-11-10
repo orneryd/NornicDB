@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `n.has_embedding` no longer reads false through a label scan for a node
+  that has stored vectors. `MATCH (n:Label) RETURN n.has_embedding`, the same
+  with `WHERE n.id IN $ids`, and a filter or a count on the flag now give
+  what a read by id gives, in auto-commit and in explicit transactions. The
+  flag is not a stored property: it is read from the node's embedding
+  metadata, which a scan that decoded only the returned properties left out.
 - A statement that looks a node up by a property once per row without an
   index, such as a correlated `EXISTS { MATCH (:Label {id: row.id}) }`, no
   longer reads every node of the label from the store for every row. A label

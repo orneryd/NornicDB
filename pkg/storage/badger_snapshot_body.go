@@ -95,14 +95,41 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 	if properties == nil {
 		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
 	}
-	if cached, ok := b.cacheLoadNodeBody(id, item.Version(), properties, access); ok {
-		return cached, nil
+	node, cached := b.cacheLoadNodeBody(id, item.Version(), properties, access)
+	if !cached {
+		err := item.Value(func(value []byte) error {
+			var err error
+			node, err = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, include)
+			return err
+		})
+		if err != nil {
+			return node, err
+		}
 	}
-	var node *Node
-	err := item.Value(func(value []byte) error {
-		var err error
-		node, err = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, include)
-		return err
-	})
-	return node, err
+	// A projection that names has_embedding gets the node's embedding metadata
+	// from this read's snapshot, as a whole-node read does, and none of the
+	// vectors. A borrowed body is the cache's own and is left as it is.
+	if node != nil && access == nodeBodyDetached && projectionHydration(nodeItemBodyOnly, include) != nodeItemBodyOnly {
+		return b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, id, false)
+	}
+	return node, nil
+}
+
+// hasEmbeddingProperty is the name a read gives a node's embedding state:
+// the has_embedding flag of its embedding metadata, else whether it has chunk
+// vectors.
+const hasEmbeddingProperty = "has_embedding"
+
+// projectionHydration is the embedding state a read of the projection include
+// settles when it was asked for hydration. has_embedding is no stored
+// property: it is read from the node's embedding metadata (Node.EmbedMeta,
+// Node.HasChunkEmbeddings), which lives with the embedding records, outside
+// the body. A read that would decode the body alone therefore settles that
+// metadata when its projection names has_embedding. Every projected read
+// asks this one rule.
+func projectionHydration(hydration nodeItemHydration, include map[string]struct{}) nodeItemHydration {
+	if _, named := include[hasEmbeddingProperty]; named && hydration == nodeItemBodyOnly {
+		return nodeItemQueryMetadata
+	}
+	return hydration
 }
