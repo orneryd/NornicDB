@@ -16,8 +16,28 @@ import (
 // start node's whole adjacency. none is true when no such relationship can
 // match (it doesn't exist, or has another type); ok is false for any other
 // shape.
+//
+// The WHERE is read first: a match runs this once per row, and a WHERE that
+// compares no id (or no WHERE at all) pins nothing whatever the pattern is,
+// so the pattern is not read for it.
 func (e *StorageExecutor) relationshipIDSeedEdge(ctx context.Context, pattern, whereClause string) (edge *storage.Edge, none, ok bool) {
+	if strings.TrimSpace(whereClause) == "" {
+		return nil, false, false
+	}
 	if viewport, active := TemporalViewportFromContext(ctx); active && viewport.Enabled() {
+		return nil, false, false
+	}
+	type idPin struct {
+		variable, id string
+		empty        bool
+	}
+	var pins []idPin
+	for _, term := range splitTopLevelAndConjuncts(ctx, whereClause) {
+		if variable, id, empty, eligible := e.idEqualityLookup(ctx, unwrapOuterParens(strings.TrimSpace(term)), "5"); eligible {
+			pins = append(pins, idPin{variable: variable, id: id, empty: empty})
+		}
+	}
+	if len(pins) == 0 {
 		return nil, false, false
 	}
 	match := e.parseTraversalPattern(ctx, pattern)
@@ -30,10 +50,9 @@ func (e *StorageExecutor) relationshipIDSeedEdge(ctx context.Context, pattern, w
 	}
 	var lookupID string
 	var empty, matched bool
-	for _, term := range splitTopLevelAndConjuncts(ctx, whereClause) {
-		variable, id, none, eligible := e.idEqualityLookup(ctx, unwrapOuterParens(strings.TrimSpace(term)), "5")
-		if eligible && variable == relationship.Variable {
-			lookupID, empty, matched = id, none, true
+	for _, pin := range pins {
+		if pin.variable == relationship.Variable {
+			lookupID, empty, matched = pin.id, pin.empty, true
 			break
 		}
 	}

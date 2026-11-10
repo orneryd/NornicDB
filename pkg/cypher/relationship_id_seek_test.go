@@ -57,3 +57,70 @@ func TestRelationshipIDSeekMatches(t *testing.T) {
 	_, _, ok = exec.relationshipIDSeedEdge(ctx, "(a)-[r]->(b)", "r.id = 7")
 	require.False(t, ok)
 }
+
+// A match asks for its relationship pin once per row, and the pin is in the
+// WHERE. Without a WHERE nothing is read for it, the pattern included; with
+// one, an id comparison pins the relationship wherever it stands among the
+// terms, and every other shape is declined as before.
+func TestRelationshipIDSeedReadsTheWhereBeforeThePattern(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "UNWIND range(0, 49) AS i CREATE (:X {id: i})-[:R {id: i}]->(:Y {id: i})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (a:X {id: 7})-[r:R]->(b) RETURN elementId(r), elementId(a)", nil)
+	require.NoError(t, err)
+	elementID, nodeElementID := result.Rows[0][0], result.Rows[0][1]
+
+	pinned := false
+	allocations := testing.AllocsPerRun(100, func() {
+		_, _, ok := exec.relationshipIDSeedEdge(ctx, "(a:X {id: 7})-[r:R]->(b:Y)", "")
+		pinned = pinned || ok
+	})
+	require.False(t, pinned)
+	require.Zero(t, allocations, "a match without a WHERE reads no pattern for a pin")
+
+	pin := fmt.Sprintf("elementId(r) = '%v'", elementID)
+	nodePin := fmt.Sprintf("elementId(a) = '%v'", nodeElementID)
+	for _, shape := range []struct {
+		pattern, where string
+		ok, none       bool
+	}{
+		{"(a)-[r]->(b)", "a.id = 7", false, false},
+		{"(a)-[r]->(b)", nodePin, false, false},
+		{"(a)-[r]->(b)", pin + " OR a.id = 7", false, false},
+		{"(a)-[r]->(b)-[s]->(c)", pin, false, false},
+		{"(a)-[r]->(b)", pin, true, false},
+		{"(a)-[r]->(b)", "(" + pin + ")", true, false},
+		{"(a)-[r]->(b)", "a.id = 7 AND " + pin, true, false},
+		{"(a)-[r]->(b)", pin + " AND b.id = 7", true, false},
+		{"(a)-[r]->(b)", nodePin + " AND " + pin, true, false},
+		{"(a)-[r:OTHER]->(b)", pin, true, true},
+		{"(a)-[r]->(b)", fmt.Sprintf("elementId(r) = '%vx'", elementID), true, true},
+		{"(a)-[r]->(b)", "elementId(r) = null", true, true},
+	} {
+		name := shape.pattern + " WHERE " + shape.where
+		edge, none, ok := exec.relationshipIDSeedEdge(ctx, shape.pattern, shape.where)
+		require.Equal(t, shape.ok, ok, name)
+		require.Equal(t, shape.none, none, name)
+		if shape.ok && !shape.none {
+			require.NotNil(t, edge, name)
+			require.EqualValues(t, 7, edge.Properties["id"], name)
+		} else {
+			require.Nil(t, edge, name)
+		}
+	}
+
+	// The same through a match that runs once per row of an earlier clause.
+	for query, want := range map[string][][]interface{}{
+		"MATCH (a:X) WITH a MATCH (a)-[r:R]->(b) WHERE elementId(r) = $e RETURN a.id, b.id":         {{int64(7), int64(7)}},
+		"MATCH (a:X) WITH a MATCH (a)-[r:R]->(b) WHERE b.id >= 0 AND elementId(r) = $e RETURN a.id": {{int64(7)}},
+		"MATCH (a:X) WITH a MATCH (a)-[r:OTHER]->(b) WHERE elementId(r) = $e RETURN count(r)":       {{int64(0)}},
+		"MATCH (a:X) WITH a MATCH (a)-[r:R]->(b) WHERE b.id = a.id RETURN count(r)":                 {{int64(50)}},
+		"MATCH (a:X) WITH a MATCH (a)-[r:R]->(b) RETURN count(r)":                                   {{int64(50)}},
+		"MATCH (a:X) WHERE EXISTS { MATCH (a)-[:R]->(:Y {id: a.id}) } RETURN count(a)":              {{int64(50)}},
+	} {
+		result, err := exec.Execute(ctx, query, map[string]interface{}{"e": elementID})
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows, query)
+	}
+}

@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vectors is served from either copy of the node the engine caches, so
   `db.retrieve` with a `where` filter no longer decodes its candidate nodes
   again on every call.
+- A match that runs once per row, such as a correlated
+  `EXISTS { MATCH (a)-[:R]->(b) }`, no longer reads its pattern an extra time
+  per row to look for a relationship pinned by `id(r)` or `elementId(r)` when
+  its WHERE compares no id. A match that pins a relationship returns the same
+  rows; each id comparison of its WHERE is now read before the pin is chosen,
+  which is one more allocation per row for one comparison and more for each
+  further one.
 - Long Cypher statements no longer take seconds to read. The first run of a
   statement of tens of kilobytes parsed it twice, the second time in the
   grammar's slow prediction mode, and every later run reread the statement
