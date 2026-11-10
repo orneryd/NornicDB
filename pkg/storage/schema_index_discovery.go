@@ -154,6 +154,20 @@ func (sm *SchemaManager) HasAnyPropertyIndexForLabel(label string) bool {
 	return sm.hasAnyCompositeIndexForLabelLocked(label)
 }
 
+// HasMultiPropertyIndexForLabel reports whether a composite index of two or
+// more properties is declared against label: the only indexes a pattern read
+// can use beyond its single-property ones.
+func (sm *SchemaManager) HasMultiPropertyIndexForLabel(label string) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	for _, idx := range sm.compositeIndexes {
+		if idx != nil && idx.Label == label && len(idx.Properties) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
 // hasAnyCompositeIndexForLabelLocked reports whether any composite index is
 // declared against label. The caller holds sm.mu.
 func (sm *SchemaManager) hasAnyCompositeIndexForLabelLocked(label string) bool {

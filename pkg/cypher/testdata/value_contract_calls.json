@@ -486,9 +486,9 @@
     "reason": "Regression or allocation probe exercises this explicitly selected contract."
   },
   {
-    "id": "match_index_seek.go:*StorageExecutor.tryCollectNodesFromPropertyIndexAnyOf:cypherEquality:1",
+    "id": "match_index_seek.go:*nodeIndexSeek.admits:cypherEquality:1",
     "file": "match_index_seek.go",
-    "caller": "*StorageExecutor.tryCollectNodesFromPropertyIndexAnyOf",
+    "caller": "*nodeIndexSeek.admits",
     "callee": "cypherEquality",
     "contract": "three-valued equality adapter",
     "line": 0,

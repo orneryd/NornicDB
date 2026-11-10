@@ -628,6 +628,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	visit func(*storage.Node) error,
 ) error {
 	store := e.getStorage(ctx)
+	// Every label scan below reads labels[0], the pattern label with the
+	// fewest nodes, and checks the others on each node (nodeScanLabels).
+	labels = nodeScanLabels(ctx, store, labels)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
 	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
 	hideSystemNodes := shouldHideSystemNodes(store)
