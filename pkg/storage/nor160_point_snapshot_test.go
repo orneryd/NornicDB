@@ -165,33 +165,80 @@ func TestNOR160BufferedBetweenReadOwnsProperties(t *testing.T) {
 	}
 }
 
-func TestNOR160LabelSnapshotPointReadsHonorLiveSuppression(t *testing.T) {
-	for _, route := range []string{"full", "projected", "query"} {
-		t.Run(route, func(t *testing.T) {
-			b := newTestMemoryEngine(t)
-			ctx := t.Context()
-			id, err := b.CreateNode(ctx, &Node{ID: "test:label-visible", Labels: []string{"Held"}, Properties: map[string]any{"n": int64(1)}})
-			require.NoError(t, err)
-			tx, err := b.BeginTransaction(ctx)
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = tx.Rollback() })
-			require.NoError(t, tx.SetNamespace("test"))
-			rows := streamTxLabel(t, tx, "Held")
-			require.Len(t, rows, 1)
-			require.Contains(t, tx.snapshotLabelNodeByID, id, "exercise the complete label snapshot cache")
-			require.NoError(t, b.SetManualSuppression(ctx, StoredEntityNodeKind, string(id), true))
-			switch route {
-			case "full":
-				_, err = tx.GetNode(ctx, id)
-			case "projected":
-				_, err = tx.GetNodeProjected(ctx, id, []string{"n"})
-			case "query":
-				_, err = tx.GetQueryNode(ctx, id)
+// One visibility matrix covers the cached point readers and every label
+// delivery shape, including populations first captured while already hidden.
+func TestTransactionLabelAndPointReadsShareLiveVisibility(t *testing.T) {
+	for _, route := range nor160LabelScanRoutes {
+		t.Run(route.name, func(t *testing.T) {
+			for _, initiallyHidden := range []bool{false, true} {
+				name := "captured_visible"
+				if initiallyHidden {
+					name = "captured_hidden"
+				}
+				t.Run(name, func(t *testing.T) {
+					b := newTestMemoryEngine(t)
+					ctx := t.Context()
+					hidden, kept := nor160LabelScanFixture(t, b)
+					if initiallyHidden {
+						require.NoError(t, b.SetManualSuppression(ctx, StoredEntityNodeKind, string(hidden), true))
+					}
+					tx, err := b.BeginTransaction(ctx)
+					require.NoError(t, err)
+					t.Cleanup(func() { _ = tx.Rollback() })
+					require.NoError(t, tx.SetNamespace("test"))
+					warm := streamTxLabel(t, tx, "Held")
+					if initiallyHidden {
+						require.Len(t, warm, 1)
+					} else {
+						require.Len(t, warm, 2)
+						require.Contains(t, tx.snapshotLabelNodeByID, hidden, "exercise the complete label snapshot cache for every point reader")
+					}
+					for _, suppressed := range []bool{true, false} {
+						require.NoError(t, b.SetManualSuppression(ctx, StoredEntityNodeKind, string(hidden), suppressed))
+						expected := []NodeID{hidden, kept}
+						if suppressed {
+							expected = []NodeID{kept}
+						}
+						require.ElementsMatch(t, expected, route.scan(t, tx, "Held"))
+						for _, point := range []string{"full", "projected", "query"} {
+							var node *Node
+							switch point {
+							case "full":
+								node, err = tx.GetNode(ctx, hidden)
+							case "projected":
+								node, err = tx.GetNodeProjected(ctx, hidden, []string{"n"})
+							case "query":
+								node, err = tx.GetQueryNode(ctx, hidden)
+							}
+							if suppressed {
+								require.ErrorIs(t, err, ErrNotFound, point)
+							} else {
+								require.NoError(t, err, point)
+								require.Equal(t, int64(1), node.Properties["n"], point)
+							}
+						}
+						physical, err := tx.GetStoredNode(ctx, hidden)
+						require.NoError(t, err)
+						require.Equal(t, int64(1), physical.Properties["n"], "physical reads intentionally bypass suppression")
+						stored, err := tx.GetStoredNodesByLabel(ctx, "Held")
+						require.NoError(t, err)
+						require.Len(t, stored, 2)
+						end := b.BeginQueryRevealScope(true)
+						require.ElementsMatch(t, []NodeID{hidden, kept}, route.scan(t, tx, "Held"))
+						end()
+						require.ElementsMatch(t, expected, route.scan(t, tx, "Held"), "ending reveal restores live visibility")
+						// Useful caches retain physical membership independently of delivery.
+						require.NotEmpty(t, tx.snapshotLabelNodes)
+						for _, nodes := range tx.snapshotLabelNodes {
+							require.Len(t, nodes, 2)
+						}
+						for _, nodes := range tx.snapshotProjectedLabelNodes {
+							require.Len(t, nodes, 2)
+						}
+					}
+					require.NoError(t, tx.Rollback())
+				})
 			}
-			require.ErrorIs(t, err, ErrNotFound, "cached visibility must not override live suppression")
-			stored, err := tx.GetStoredNode(ctx, id)
-			require.NoError(t, err)
-			require.Equal(t, int64(1), stored.Properties["n"], "physical reads intentionally bypass suppression")
 		})
 	}
 }
