@@ -3,7 +3,16 @@ import { test, expect } from '@playwright/test';
 test.use({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36' });
 
 test('public docs emit sanitized events and opt-out stops collection', async ({page, context}) => {
-  await context.addInitScript(() => Object.defineProperty(navigator, 'webdriver', {get: () => false}));
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', {get: () => false});
+    // Headless Shell also advertises HeadlessChrome through client hints.
+    // Model an ordinary visitor across both signals; keep production bot filtering enabled.
+    Object.defineProperty(navigator, 'userAgentData', {get: () => ({
+      brands: [{brand: 'Chromium', version: '142'}, {brand: 'Google Chrome', version: '142'}],
+      mobile: false,
+      platform: 'Windows',
+    })});
+  });
   const events = [];
   await context.route('https://*.posthog.com/**', async route => {
     const body = route.request().postData();
