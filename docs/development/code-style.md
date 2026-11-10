@@ -12,8 +12,8 @@ goimports -w .
 ```
 
 The repository also includes a tracked pre-commit hook at `.githooks/pre-commit`
-that automatically runs `gofmt -w -s` on staged Go files before the commit is
-created. Install it once per clone:
+that runs `gofmt -w -s` on staged Go files before the commit is
+created. Installation is optional; hooks are not push gates. If wanted, install it once per clone:
 
 ```bash
 make install-hooks

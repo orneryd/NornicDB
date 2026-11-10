@@ -1,1 +1,0 @@
-204M	/opt/homebrew/var/neo4j/data

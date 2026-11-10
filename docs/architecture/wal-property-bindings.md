@@ -36,7 +36,7 @@ controls. Their byte and sequence spans are closed: later old-writer appends
 cannot inherit them. Ordinary records are copied unchanged. Sealed files are
 converted first and the active file last. The old reader refuses unclean v4
 logs without truncating them; see the recovery instruction in
-[WAL operations](../operations/wal-compaction.md#upgrading-and-downgrading-wal-stores).
+[WAL operations](../operations/wal-compaction.md#format-upgrades-and-rollback).
 
 The same close owner seals every attached WAL, including synchronous engines:
 native restore invalidates dictionary authority regardless of write-behind mode.

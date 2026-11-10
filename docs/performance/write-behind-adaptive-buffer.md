@@ -8,23 +8,14 @@ guess.
 
 ## Durable by default
 
-Durable writes are the default. Statements commit synchronously to Badger and
-the WAL, exactly as before this feature existed.
+Write-behind is disabled by default. Persistent statements use the native WAL/Badger path; whether acknowledgement waits for synchronous persistence depends on transaction mode and sync configuration. See [durability boundaries](../operations/durability.md).
 
 ```yaml
 database:
-  async_writes_enabled: false   # default: durable synchronous commits
+  async_writes_enabled: false
 ```
 
-Enabling the buffer is an explicit throughput-for-durability trade. Each
-acknowledged commit is written to the WAL before the ACK and replayed on
-restart, so it survives a process kill; a power loss or OS crash can lose up
-to one flush interval of acknowledged-but-unflushed commits that the OS had not
-yet written to disk. Read queries are unaffected — buffered writes stay visible
-through an in-memory overlay, and `Close` / explicit `BEGIN` drain the buffer
-first. Validation,
-constraints, WAL markers and commit receipts all still run synchronously before
-an ACK.
+For buffered commits, the full recovery record is flushed to the OS before acknowledgement, allowing replay after a process kill when the kernel/file data survives. This is not per-commit file sync or a bound on power-loss exposure. An overlay makes accepted buffered state visible before background Badger application; snapshot/backup/explicit transaction boundaries drain the relevant accepted work.
 
 ## Enabling the auto-scaling buffer
 
@@ -55,17 +46,7 @@ After every successful flush the buffer measures two things:
 2. **Drain throughput** — operations per second. The generation size threshold
    becomes `throughput × delay`, clamped to `[1,000 ops, max ops]`.
 
-Because draining a generation is deterministic (size ÷ rate = time), the
-backlog stays at one interval of work: bounded memory, bounded loss window, and
-no generation is so small that per-flush fixed costs (Badger commit, count
-locks) dominate.
-
-The 1s ceiling on the delay follows the industry flush cadence: Redis AOF
-`appendfsync everysec`, MySQL InnoDB `innodb_flush_log_at_timeout=1s` and
-MongoDB's 100ms journal group-commit all flush around the 100ms–1s band. The
-default maximum generation size is **100,000 ops** (~50–200MB of unflushed
-memory, in the same band as InnoDB's 16MB redo-log buffer and RocksDB's 64MB
-write buffer), so oversized hardware can not balloon the buffer.
+Adaptive sizing controls cadence and operation count. It does not guarantee one generation of backlog, a fixed loss window, or a byte cap: payload sizes, retained generations, and slow/failing drains matter. The default maximum is 100,000 operations; use [memory accounting](../operations/memory-management.md) to budget actual retained work.
 
 ### Manual caps and warnings
 

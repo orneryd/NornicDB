@@ -146,7 +146,7 @@ Rate-limit defaults are set in code (`pkg/server`) and not currently exposed thr
 
 ## Backup & Recovery (A1.2, A1.3)
 
-See [Backup & Restore](../operations/backup-restore.md) for the canonical procedure. Backups are produced through the `/admin/backup` HTTP endpoint or by snapshotting the data directory while the server is stopped. There is no `nornicdb backup`/`nornicdb restore` CLI subcommand; restoration is performed via the embedded Go API (`db.Restore`) or by copying the backup file into the data directory at startup.
+See [Backup & Restore](../operations/backup-restore.md) for the canonical procedure. Backups are produced through the `/admin/backup` HTTP endpoint or by snapshotting the data directory while the server is stopped. There is no `nornicdb backup`/`nornicdb restore` CLI subcommand; restore native backup files through `/admin/restore` or `db.Restore(ctx, path)`. A cold full-directory archive is restored into an empty, isolated data volume; copying a native `.backup` file into a live data directory does not restore it.
 
 ### Backup Procedures
 

@@ -1,6 +1,6 @@
 # Historical NornicDB vs Neo4j Performance Benchmark
 
-> **Historical benchmark archive:** This page records v0.1.0 measurements on a 48-node / 56-relationship fixture. It is retained for provenance and does not represent the current benchmark headline. See the [current 48k-product / 48k-order Northwind comparison](../development/archive/benchmarks/database-comparison-baseline/comparison.md) for the latest Neo4j comparison, including correctness fingerprints, power, memory, and storage measurements.
+> **Historical benchmark archive:** This page records v0.1.0 measurements on a 48-node / 56-relationship fixture. It is retained for provenance and does not represent the current benchmark headline. See the [current 48k-product / 48k-order Northwind comparison](benchmarks/database-comparison/comparison.md) for the latest Neo4j comparison, including correctness fingerprints, power, memory, and storage measurements.
 
 > **Result recorded by this historical run:** NornicDB with Apple Metal GPU measured **1.6-4.9x faster** operations than Neo4j, with a **35-47% additional boost** from GPU acceleration under the configuration below.
 

@@ -4,11 +4,13 @@ Recovery records preserve node and relationship timestamps, embedding metadata,
 inline vectors, visibility flags, relationship confidence, and exact integer
 property values. Client-facing node and relationship JSON is unchanged.
 
+Current WAL framing is format 6; recovery snapshots use `NDS2` version 2. These are format identifiers, independent of the application release label and the named V4 storage-upgrade arm. Record the binary/build commit with backups. For operating policy, see [durability](durability.md), [WAL lifecycle](wal-compaction.md), and [backup/restore](backup-restore.md).
+
 ## Write-ahead logs
 
-### v1.4.4 backup and restore boundary
+### Current backup and restore boundary
 
-Starting with v1.4.4, buffered-commit WAL payloads use the typed MessagePack
+Current buffered-commit WAL payloads use the typed MessagePack
 recovery codec and may be compressed. Semantic entity transactions also use
 MessagePack. They preserve arbitrary Badger key bytes that JSON cannot represent
 losslessly. The WAL change does not change existing Badger keys or require a
@@ -16,7 +18,7 @@ separate Badger storage-version bump; it is included in the existing V4 upgrade
 arm.
 
 Before upgrading, make and verify a backup of the database and its matching WAL.
-Start v1.4.4 with `--upgrade-storage` to authorize the storage upgrade. The V4
+Start the matching current binary with `--upgrade-storage` to authorize the storage upgrade. The V4
 startup migration validates and converts supported older WAL frames, including
 retained segments, to the current framing. It replays acknowledged buffered
 writes before transforming the V4 catalog. Historical semantic transaction
@@ -52,7 +54,7 @@ archive.
 
 Relationship-search snapshots are separate files under
 `<data>/search/<database>/`, either directly in that directory or in its
-`CURRENT` generation. In v1.4.4 they use MessagePack: vector values are binary
+`CURRENT` generation. They currently use MessagePack: vector values are binary
 arrays of little-endian IEEE-754 float32 bits, and source hashes and chunk spans
 are retained. The change does not rewrite Badger keys or node and relationship
 payloads and does not add another Badger storage version.
@@ -102,7 +104,7 @@ so keep the original files and use the binary that wrote them.
 ## Snapshots
 
 Replication adapter snapshots are a separate format from the database
-snapshots described below. In v1.4.4 the adapter writes and reads MessagePack.
+snapshots described below. The current adapter writes and reads MessagePack.
 For a caller-owned replication snapshot written by an older adapter, use
 `replication.TranscodeV4ReplicationSnapshot(oldReader, newWriter)` before
 calling `RestoreSnapshot`. Write to a new file, sync and verify that file, and
@@ -179,7 +181,7 @@ that produced them before relying on them for recovery.
 
 The following historical `BenchmarkRecoveryCodecDocFixture` measurements
 compare v1.4.3 JSON and its sidecar on a small Doc fixture with nested integer
-properties, two 2D vectors, metadata, and timestamps. They are not v1.4.4
+properties, two 2D vectors, metadata, and timestamps. They are not current-runtime
 measurements or database-wide memory and throughput figures.
 
 On Apple M2 Max, Go 1.26.6, `GOMAXPROCS=2`, the Doc fixture grows from

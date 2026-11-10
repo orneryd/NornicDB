@@ -20,7 +20,9 @@ The corpus remains in `docs/`; `.generated` is disposable build output. `corpus-
 
 Before their source changes are integrated, release-only pages carry a branch-reference notice and link source files at their original release commit. They remain published and browser-searchable, but are excluded from the current semantic index and current-source cross-links.
 
-`releaseContentIntegrated` marks the retained release documentation as current once its code lands. Integrated pages participate in semantic search and source cross-links; development archives stay excluded. Current source links use the checked-out head, while tagged bundles stay pinned to their tag. The tracked corpus manifest contains file hashes rather than a self-referencing build commit.
+`releaseContentIntegrated` marks the retained release documentation as current once its code lands. Integrated pages participate in semantic search and source cross-links; retired archives are not published. Current source links use the checked-out head, while tagged bundles stay pinned to their tag. The tracked corpus manifest contains file hashes rather than a self-referencing build commit.
+
+The development contribution page is rendered and indexed from root `CONTRIBUTING.md`; its small source page is a pointer, not a second guide. Publication rules exclude retired development archives in current and tagged builds.
 
 ## Public search
 

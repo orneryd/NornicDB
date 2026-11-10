@@ -5,18 +5,25 @@ export function createContentPolicy(policy) {
     if (file.split("/").some((part) => part.startsWith(".flagged")))
       return null;
     if (removed.has(file)) return null;
-    if (policy.relocations[file]) return policy.relocations[file];
-    if (directories.some((dir) => file === dir || file.startsWith(dir + "/")))
+    let published = policy.relocations[file] || file;
+    if (!policy.relocations[file]) {
+      for (const [from, to] of Object.entries(policy.folderRelocations || {}))
+        if (file === from || file.startsWith(from + "/")) {
+          published = to + file.slice(from.length);
+          break;
+        }
+    }
+    if (
+      removed.has(published) ||
+      directories.some(
+        (dir) => published === dir || published.startsWith(dir + "/"),
+      )
+    )
       return null;
-    for (const [from, to] of Object.entries(policy.folderRelocations || {}))
-      if (file === from || file.startsWith(from + "/"))
-        return to + file.slice(from.length);
-    return file;
+    return published;
   }
   return {
     sourcePath,
     linkPath: (file) => sourcePath(policy.consolidatedInto?.[file] || file),
   };
 }
-export const isDevelopmentArchive = (relative) =>
-  relative.startsWith("development/archive/");

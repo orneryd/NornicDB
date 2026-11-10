@@ -166,54 +166,9 @@ If you are using the MCP tools (`store`, `discover`, etc.):
 
 ### High Memory Usage
 
-**Symptoms:**
-- OOM errors (exit code 137 in Docker)
-- Container restarts repeatedly
-- Slow performance
+Inspect container `OOMKilled`, exit signal, cgroup usage/events, Go heap/RSS, native model use, and query concurrency. Exit 137 alone does not prove OOM; exit 143 means SIGTERM. Follow [memory accounting and limits](memory-management.md#diagnose-before-raising-caps) before changing budgets.
 
-**Solutions:**
-
-1. **Enable Low Memory Mode (recommended):**
-   ```bash
-   # Reduces BadgerDB RAM from ~1GB to ~50MB
-   nornicdb serve --low-memory
-   
-   # Or via environment variable
-   NORNICDB_LOW_MEMORY=true nornicdb serve
-   ```
-
-   See **[Low Memory Mode Guide](low-memory-mode.md)** for details.
-
-2. **Increase GC frequency:**
-   ```bash
-   nornicdb serve --gc-percent=50
-   ```
-
-3. **Enable object pooling:**
-   ```bash
-   nornicdb serve --pool-enabled=true
-   ```
-
-4. **Docker: Increase memory limit:**
-   ```yaml
-   deploy:
-     resources:
-       limits:
-         memory: 4G
-   ```
-
-5. **Docker: Check for WAL bloat:**
-   ```bash
-   # Large WAL files can cause OOM on startup
-   du -sh /path/to/data/wal/
-   
-   # If >1GB, consider trimming it.
-   #
-   # NOTE: Deleting the WAL can lose the *very latest* mutations if the process
-   # crashed after WAL append but before the change was applied to the main store.
-   # Prefer auto-recovery (snapshot + WAL) when possible.
-   rm /path/to/data/wal/wal.log
-   ```
+Use the [low-memory profile](low-memory-mode.md) to reduce configured storage caches and [transaction caps](transaction-memory-limits.md) to reject tracked growth. Neither is a hard RSS cap. Preserve WAL and snapshots: deleting recovery files is not a memory-management operation.
 
 ## Data Integrity / Recovery
 
@@ -229,12 +184,12 @@ If you are using the MCP tools (`store`, `discover`, etc.):
 2. **Use snapshot + WAL recovery (Neo4j-style “tx log recovery”)**
 
 NornicDB maintains:
-- **Snapshots** in `<dataDir>/snapshots/` (e.g., `snapshot-YYYYMMDD-HHMMSS.json`)
-- **WAL** in `<dataDir>/wal/wal.log`
+- **Snapshots** in `<dataDir>/snapshots/` (e.g., `snapshot-YYYYMMDD-HHMMSS.<nanoseconds>.json`)
+- **WAL** in the complete `<dataDir>/wal/` directory, including sealed segments and metadata
 
-**Auto-recovery (recommended)**
+**Corruption reconstruction**
 
-Auto-recovery is **enabled by default**. You can:
+The default uses corruption heuristics. Ordinary replay and reconstruction are distinct; see [durability and recovery](durability.md#startup-and-recovery). You can:
 - **Disable**: `NORNICDB_AUTO_RECOVER_ON_CORRUPTION=false`
 - **Force an attempt** (even if the open error message doesn’t match the corruption heuristics): `NORNICDB_AUTO_RECOVER_ON_CORRUPTION=true`
 
@@ -319,7 +274,7 @@ safe recovery path is snapshot + WAL replay into a fresh store.
 **Solutions:**
 
 1. **Restart with auto-recovery:**
-   NornicDB sets `NORNICDB_AUTO_RECOVER_ON_CORRUPTION=true` by default; on an unclean shutdown the server replays WAL/snapshots and renames the corrupted directory to `<dataDir>.corrupted-<timestamp>`. See [Feature Flags](../features/feature-flags.md#auto-recover-on-corruption) for details.
+   Ordinary startup replays accepted WAL commits. A qualifying corruption/open failure can trigger snapshot/WAL reconstruction and preserve the original directory as `<dataDir>.corrupted-<timestamp>`; this does not happen on every unclean shutdown. See [Feature Flags](../features/feature-flags.md#auto-recover-on-corruption) for details.
 
 2. **Restore from backup:**
    Stop the server, replace the data directory with a backup, and start the server. Or, for embedded deployments, call `db.Restore(ctx, path)` from your application code.

@@ -5,7 +5,7 @@ and errors. These are cooperative soft limits, not a guarantee that the server
 cannot exhaust its container: allocations outside the tracked paths, native
 memory, storage and index work, and sampling delay can still consume headroom.
 
-With no limits configured, admission and transaction tracking remain off.
+Use [memory accounting and limits](memory-management.md) to choose process/container budgets. This page defines transaction accounting and transport admission. With no admission/transaction limits configured, those trackers remain off; the Go runtime target is independent.
 
 ## Settings
 
@@ -18,9 +18,7 @@ With no limits configured, admission and transaction tracking remain off.
 
 - **Units:** bytes. Use a `k`, `m`, `g` or `t` suffix for kibibytes,
   mebibytes, gibibytes or tebibytes: `512m`, `2g`. `0` means unlimited.
-- **Go GC target:** `NORNICDB_GO_MEMORY_LIMIT_BYTES` accepts an integer number of bytes and sets Go's soft runtime
-  memory target. The deprecated `NORNICDB_MEMORY_LIMIT` retains this same
-  meaning; neither setting turns on transaction or application admission.
+- **Go GC target:** see [runtime settings and units](memory-management.md#go-runtime-target). Canonical settings use integer bytes; deprecated aliases use integer MiB.
 - **Dynamic settings** apply to the statements that start after the change,
   with no restart. Set a database's own values through the per-database
   config API (`PUT /admin/databases/<db>/config` with
@@ -41,27 +39,7 @@ With no limits configured, admission and transaction tracking remain off.
   `SHOW TRANSACTIONS YIELD estimatedUsedHeapMemory` shows each running
   statement's current estimate.
 
-### Example: an 8 GiB container
-
-```yaml
-memory:
-  go_runtime_limit_bytes: "6442450944" # Go memory target, bytes
-  application_soft_max: "6g"    # opt-in sampled admission threshold
-  transaction_total_max: "4g"    # all transactions together
-  transaction_max: "1g"          # any single transaction
-```
-
-or, as environment variables:
-
-```bash
-NORNICDB_GO_MEMORY_LIMIT_BYTES=6442450944
-NORNICDB_MEMORY_APPLICATION_SOFT_MAX=6g
-NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX=4g
-NORNICDB_MEMORY_TRANSACTION_MAX=1g
-```
-
-Leave headroom: the limits cover query working memory (below), not caches,
-indexes or the idle baseline.
+For a complete budget example, use [admission and transaction caps](memory-management.md#admission-and-transaction-caps).
 
 ## What is counted
 
@@ -102,7 +80,7 @@ payload instead of retaining the whole pending WAL. It may also retain the
 record currently being decoded; a single oversized commit is applied alone.
 This batching target does not bound decoder expansion or total process memory.
 
-With no limit configured, nothing is tracked and there is no overhead.
+When the corresponding limits are disabled, admission/estimate charging is skipped. Ordinary query and storage allocations still occur.
 
 ## Application pressure and recovery
 
@@ -159,7 +137,7 @@ HTTP/1.1 requests. The adapter cannot buffer a client payload before admission.
 Bodyless h2c upgrades, prior-knowledge h2c and TLS h2 remain supported. Application
 metadata/body credit belongs to each request or HTTP/2 stream, never to an entire
 upgraded connection. See the
-[listener-to-admission audit](https://github.com/orneryd/NornicDB/blob/release/v1.4.4/openspec/changes/dynamic-memory-soft-limits/transport-admission-audit.md).
+[listener-to-admission audit](../../openspec/changes/dynamic-memory-soft-limits/transport-admission-audit.md).
 
 GraphQL GET variables in the query string also pass through request admission.
 Standalone GraphQL handlers use the same body/query/header admission helper;
@@ -177,7 +155,7 @@ the socket read before the scope ends. Policy rejection closes with code `1013` 
 `Neo.TransientError.General.MemoryPoolOutOfMemoryError`. The existing gqlgen
 payload read limit still applies independently. Policy-disabled GraphQL uses
 the unchanged default gqlgen transport. See the
-[pre-decode consumer audit](https://github.com/orneryd/NornicDB/blob/release/v1.4.4/openspec/changes/dynamic-memory-soft-limits/predecode-consumer-audit.md).
+[pre-decode consumer audit](../../openspec/changes/dynamic-memory-soft-limits/predecode-consumer-audit.md).
 
 `NORNICDB_MEMORY_APPLICATION_SOFT_MAX` (`memory.application_soft_max`) enables
 physical cgroup admission separately from the transaction estimates. Its default

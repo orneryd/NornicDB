@@ -1,14 +1,10 @@
 # Transactions
 
-**Complete guide to ACID transactions in NornicDB**
-
-Last Updated: November 2025
-
----
+Transaction ownership, visibility, conflicts, and client APIs.
 
 ## Overview
 
-NornicDB transactions provide full ACID guarantees for graph mutations:
+Transactions provide atomic graph changes and snapshot-based visibility. Persistence at acknowledgement depends on the write path and sync settings; see [durability](../operations/durability.md).
 
 - **Atomicity** — All operations in a transaction commit together or none do
 - **Operation Buffering** — Changes are invisible to other readers until commit

@@ -181,8 +181,9 @@ input:focus-visible {
   font-size: 14px;
 }
 .vp-doc table {
-  display: table;
+  display: block;
   width: 100%;
+  overflow-x: auto;
 }
 @media (max-width: 760px) {
   .explorer {
@@ -236,11 +237,15 @@ input:focus-visible {
 }
 .related-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 .related-row > button {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   text-align: left;
   color: var(--vp-c-brand-1);
   padding: 8px 0;

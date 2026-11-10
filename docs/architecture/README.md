@@ -24,7 +24,7 @@
 - Badger KV store for persistence
 - In-memory engine for testing
 - Property graph model
-- ACID transactions
+- Atomic transactions and MVCC; [persistence boundaries](../operations/durability.md) depend on sync policy
 
 ### Query Engine
 

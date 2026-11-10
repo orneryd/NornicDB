@@ -1,6 +1,6 @@
 # Configuration Guide
 
-This guide covers all configuration options for NornicDB, including the new async write settings and search similarity configuration.
+This guide covers all configuration options for NornicDB, with links to the canonical durability and memory operating guides.
 
 ## Configuration File
 
@@ -538,7 +538,7 @@ When WS is disabled:
 - Plain `GET /` (no Upgrade headers) → still returns the 200 discovery response (health checks unaffected).
 - A real WS upgrade attempt → returns `426 Upgrade Required` with body pointing at `bolt://<host>:<port>/` and increments `bolt_connections_rejected_total{reason="ws_disabled"}`.
 
-## Async Write Settings  New
+## Async Write Settings
 
 The async write engine provides write-behind caching for improved throughput. Async-eligible auto-commit writes return immediately after updating the cache and are flushed to disk asynchronously. Mutations that still need the implicit transactional path continue to execute synchronously and produce durable receipts.
 
@@ -579,7 +579,7 @@ database:
 ```yaml
 database:
   async_writes_enabled: true
-  async_flush_interval: 200ms # Larger = better throughput
+  async_flush_interval: 200ms # Initial delay; runtime adapts
   async_max_ops: 200000        # Raise for bulk inserts
 ```
 
@@ -588,7 +588,7 @@ database:
 ```yaml
 database:
   async_writes_enabled: true
-  async_flush_interval: 10ms # Smaller = more consistent
+  async_flush_interval: 10ms # Initial delay; not a consistency guarantee
   async_max_ops: 5000        # Smaller = less memory risk
 ```
 
@@ -596,56 +596,19 @@ database:
 
 ```yaml
 database:
-  async_writes_enabled: false # Disable async writes
+  strict_durability: true
+  async_writes_enabled: false
 ```
+
+See [durability boundaries](durability.md) for sync behavior and failure limits.
 
 With `async_writes_enabled: true`, do not assume every mutation becomes eventual. The setting enables the async write-behind engine and lets eligible queries use it; durable transactional mutations still return `200 OK` and include `receipt` metadata.
 
 ### Memory Management
 
-The cache size limits prevent unbounded memory growth during bulk operations:
+Use [memory accounting and limits](memory-management.md) for runtime GC targets, physical admission, transaction pools, native/model memory, and diagnostics. Use [low-memory storage](low-memory-mode.md) for Badger capacities and cache counts; [transaction memory limits](transaction-memory-limits.md) defines detailed accounting and client errors.
 
-- **Set to 0** for unlimited cache size (not recommended for production)
-- **Monitor memory usage** during bulk operations
-- **Adjust based on available RAM** and operation patterns
-
-To keep concurrent heavy queries from exhausting the process's memory, set
-Neo4j's transaction memory limits (`db.memory.transaction.max`,
-`dbms.memory.transaction.total.max`): see
-[Transaction Memory Limits](transaction-memory-limits.md).
-
-The Go runtime target and opt-in physical admission are separate settings:
-
-```yaml
-memory:
-  go_runtime_limit_bytes: "6442450944" # integer bytes; Go soft GC target
-  application_soft_max: "6g"          # sampled cgroup admission; 0 disables
-  recovery_interval_ms: 5000          # minimum spacing between reclamation starts
-  recovery_rearm_ms: 30000            # rearm without an admitted lease release
-  transaction_max: "512m"            # estimated bytes per transaction; 0 unlimited
-  transaction_total_max: "2g"         # process transaction pool; 0 unlimited
-```
-
-Only the Go target derives an automatic default from the cgroup (85%). The
-application and transaction settings default to `0`. Application admission can
-reclaim unused Go heap pages through the shared sampler after a pressure
-rejection, at most once every five seconds after admitted work releases a lease,
-or once every 30 seconds without a lease release. Configure these defaults with
-`memory.recovery_interval_ms` / `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` and
-`memory.recovery_rearm_ms` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`. Values must be
-integer milliseconds >= 1, with rearm >= interval; invalid values fail startup.
-Both settings require a restart, like the application maximum; they have no CLI flags.
-Legacy embedded `Config` values that omit both fields (zero/zero) still pass
-`Validate`; `Open` supplies the defaults. A partially omitted pair is invalid.
-Explicit zero values in YAML or environment variables are always rejected.
-It rechecks physical capacity before accepting work; see
-[application pressure and recovery](transaction-memory-limits.md#application-pressure-and-recovery).
-
-For embedded use, a successful `nornicdb.Open` publishes the configured
-process-wide transaction limits and defaults. A failed open leaves the limits
-of already-serving databases unchanged. The registry is process-wide: another
-successful open may configure its process defaults; per-database overrides
-remain separate.
+`async_max_ops: 0` selects the automatic generation cap (100,000 operations), not unlimited bytes. Explicit legacy node/edge caps fall back to their sum only when the primary cap is unset. Payload size and retained/draining generations still determine actual RAM use. The [adaptive buffer](../performance/write-behind-adaptive-buffer.md) explains scheduling; it does not establish a hard memory or loss-window limit.
 
 ## Vector Search Configuration
 
@@ -1232,8 +1195,8 @@ NornicDB validates configuration on startup and will:
 
 | Setting                       | Impact                               | Recommendation                  |
 | ----------------------------- | ------------------------------------ | ------------------------------- |
-| `async_writes_enabled: true`  | 3-10x write throughput improvement   | Enable for most workloads       |
-| `async_flush_interval: 50ms`  | Balance of consistency vs throughput | Default works well              |
+| `async_writes_enabled: true` | Buffered acknowledgement for eligible writes | Opt in only after qualifying durability and memory requirements |
+| `async_flush_interval: auto` | Delay adapts to measured drain latency | Measure workload and recovery behavior |
 | `async_max_ops: 100000`       | Memory usage vs bulk performance     | Raise only with ample RAM       |
 
 ### Search Similarity
@@ -1300,7 +1263,7 @@ search:
 ```yaml
 database:
   async_writes_enabled: true
-  async_flush_interval: 100ms # Better throughput
+  async_flush_interval: 100ms # Initial delay; measure the workload
   async_max_ops: 200000
 
 search:
@@ -1309,7 +1272,11 @@ search:
 
 ### Memory-Constrained
 
+See [memory management](memory-management.md) for process and transaction budgets.
+
 ```yaml
+storage:
+  mode: low
 database:
   async_writes_enabled: false # Disable to save memory
   # or small caps:

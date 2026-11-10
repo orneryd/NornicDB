@@ -19,6 +19,7 @@ This section is the canonical runbook set for deploying, operating, and recoveri
 - Backup and restore: [backup-restore.md](backup-restore.md)
 - Control WAL growth and recovery behavior: [wal-compaction.md](wal-compaction.md)
 - Tune durability/performance: [durability.md](durability.md)
+- Account for memory and choose caps: [memory-management.md](memory-management.md)
 - Run low-memory deployments: [low-memory-mode.md](low-memory-mode.md)
 - Scale capacity: [scaling.md](scaling.md)
 - Secure cluster communication: [cluster-security.md](cluster-security.md)

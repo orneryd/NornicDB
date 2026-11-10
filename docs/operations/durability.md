@@ -1,308 +1,97 @@
-# Durability Configuration
+# Durability and crash recovery
 
-**Configure data safety vs performance trade-offs for your workload.**
+A successful write, a visible write, a flushed WAL record, and a synced file are different boundaries. Choose the required boundary before tuning throughput.
 
-## Overview
+This guide describes persistent `nornicdb.Open` / `nornicdb serve` deployments. `Open("", cfg)` uses in-memory storage and has no restart durability. Direct `pkg/storage` callers must construct and close their own storage/WAL stack.
 
-NornicDB provides configurable durability settings that balance data safety with write performance. The default settings are optimized for most workloads, but you can enable **Strict Durability Mode** for critical data like financial transactions.
+## Choose a write policy
 
-## Quick Start
+| Policy | Configuration | Acknowledgement and failure boundary |
+| --- | --- | --- |
+| Default persistent | Async writes off; WAL `batch`, `100ms` | Transactions apply through WAL + Badger without write-behind. WAL sync is periodic, not per acknowledgement. |
+| Strict persistent | `strict_durability: true` | Forces immediate WAL sync, enables Badger `SyncWrites`, and disables write-behind even if async writes were requested. |
+| Opt-in buffered writes | Async writes on; strict off | Eligible implicit commits acknowledge before background Badger application. Buffered-commit records are flushed to the OS before acknowledgement; this is not a per-commit `fsync`. |
+| WAL `none` | `wal_sync_mode: none`; strict off | WAL sync calls flush userspace buffers without syncing the WAL file. Recent writes can be lost. |
 
-```bash
-# Default: Good balance (recommended for most workloads)
-# No configuration needed - these are the defaults
-
-# Strict: Maximum safety for financial/critical data
-NORNICDB_STRICT_DURABILITY=true
-```
-
-## Configuration Options
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NORNICDB_STRICT_DURABILITY` | `false` | Enable maximum safety mode (2-5x slower) |
-| `NORNICDB_WAL_SYNC_MODE` | `batch` | WAL sync strategy: `batch`, `immediate`, or `none` |
-| `NORNICDB_WAL_SYNC_INTERVAL` | `100ms` | Interval for batch sync mode |
-| `NORNICDB_WAL_AUTO_COMPACTION_ENABLED` | `true` | Enable automatic snapshots + WAL truncation |
-| `NORNICDB_WAL_RETENTION_MAX_SEGMENTS` | `0` | Keep at most N sealed WAL segments (0 = unlimited) |
-| `NORNICDB_WAL_RETENTION_MAX_AGE` | `0s` | Keep sealed WAL segments newer than this duration (0 = unlimited) |
-| `NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS` | `false` | Enable ledger retention defaults when unset |
-
-### Sync Modes Explained
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    DURABILITY SPECTRUM                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  FASTEST ◄─────────────────────────────────────────► SAFEST    │
-│                                                                 │
-│  "none"            "batch" (DEFAULT)         "immediate"        │
-│  (no fsync)        (100ms fsync)             (every write)      │
-│                                                                 │
-│  Performance: 10-100x          1x                 0.1-0.5x      │
-│  Data risk:   HIGH          ~100ms loss            NONE         │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-#### `batch` (Default)
-
-```bash
-NORNICDB_WAL_SYNC_MODE=batch
-NORNICDB_WAL_SYNC_INTERVAL=100ms
-```
-
-- **Behavior**: Buffers writes and fsyncs every 100ms
-- **Data Risk**: Up to 100ms of data loss on crash
-- **Performance**: Good throughput for most workloads
-- **Use Case**: General purpose, web applications, caching
-
-#### `immediate`
-
-```bash
-NORNICDB_WAL_SYNC_MODE=immediate
-# Or simply:
-NORNICDB_STRICT_DURABILITY=true
-```
-
-- **Behavior**: fsync after every write
-- **Data Risk**: **NONE** - every committed write is durable
-- **Performance**: 2-5x slower writes
-- **Use Case**: Financial data, transactions, audit logs
-
-#### `none`
-
-```bash
-NORNICDB_WAL_SYNC_MODE=none
-```
-
-- **Behavior**: No fsync - relies on OS buffer cache
-- **Data Risk**: **HIGH** - entire buffer can be lost on crash
-- **Performance**: 10-100x faster writes
-- **Use Case**: Testing, development, temporary data
-
-## WAL Retention (Ledger Use Cases)
-
-You can retain sealed WAL segments for audit/ledger workflows. This keeps a historical
-mutation log while still allowing periodic snapshots.
-
-```bash
-# Keep the most recent 24 segments and 7 days of history
-NORNICDB_WAL_RETENTION_MAX_SEGMENTS=24
-NORNICDB_WAL_RETENTION_MAX_AGE=168h
-
-# Or enable ledger defaults when unset (opt-in)
-NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS=true
-```
-
-YAML configuration:
+Strict mode is the supported configuration when writes must cross synchronous persistence boundaries. It cannot protect against failed hardware, a filesystem that does not honor sync, loss of the storage volume, or loss of encryption keys. Keep independent backups and test recovery.
 
 ```yaml
 database:
-  wal_retention_max_segments: 24
-  wal_retention_max_age: "168h"
+  strict_durability: true
+  async_writes_enabled: false
+  wal_auto_compaction_enabled: true
 ```
 
-Auto-compaction remains enabled by default (preserves existing behavior). These
-settings are **opt-in** and only control how long sealed WAL segments are retained
-after snapshots.
-
-Do not confuse WAL retention with MVCC historical retention:
-
-- WAL retention controls how long sealed log segments are kept after snapshots
-- MVCC retention controls how many historical node/edge versions remain available for snapshot reads
-
-For MVCC history tuning, see [Historical Reads & MVCC Retention](../user-guides/historical-reads-mvcc-retention.md).
-
-## Auto-Compaction Toggle
-
-If you need a strictly append-only WAL without periodic truncation, disable auto-compaction:
+Equivalent strict-mode environment setting:
 
 ```bash
-NORNICDB_WAL_AUTO_COMPACTION_ENABLED=false
+export NORNICDB_STRICT_DURABILITY=true
 ```
 
-```yaml
-database:
-  wal_auto_compaction_enabled: false
-```
+### Transaction completion
 
-With auto-compaction disabled, you must manage snapshots and WAL growth manually.
+- Explicit native transactions request a Badger sync after physical commit. The current commit tail logs a sync failure without rolling back the already committed transaction. A successful response alone does not prove that no storage error occurred; investigate `fsync failed after commit` warnings.
+- Implicit transactions can coalesce sync work. An autocommit result or receipt is not an independent guarantee that every file was synced at that moment.
+- The optional eventual query path reports HTTP `202 Accepted`, `X-NornicDB-Consistency: eventual`, and `optimistic` metadata. Other mutations can still use the transactional path when async writes are enabled. See [query consistency](configuration.md#async-write-settings).
+- Once a semantic command is accepted into a log, cancellation or a client timeout does not necessarily discard it. Application/recovery may complete after the client stops waiting. Reconcile uncertain outcomes and use application idempotency keys before retrying writes.
 
-## Strict Durability Mode
+Atomicity and MVCC visibility are separate from power-loss durability. See [Transactions](../user-guides/transactions.md).
 
-For maximum data safety, enable strict durability:
+## WAL sync settings
 
-```bash
-NORNICDB_STRICT_DURABILITY=true
-```
+| Setting | Server default | Meaning |
+| --- | --- | --- |
+| `database.strict_durability` / `NORNICDB_STRICT_DURABILITY` | `false` | Forces immediate WAL sync and disables write-behind. |
+| `database.wal_sync_mode` / `NORNICDB_WAL_SYNC_MODE` | `batch` | `batch`, `immediate`, or `none`. |
+| `database.wal_sync_interval` / `NORNICDB_WAL_SYNC_INTERVAL` | `100ms` | Duration between batch-sync attempts. |
+| `database.async_writes_enabled` / `NORNICDB_ASYNC_WRITES_ENABLED` | `false` | Enables the native buffer for eligible commits. |
+| `database.async_flush_interval` / `NORNICDB_ASYNC_FLUSH_INTERVAL` | `auto` | Initial adaptive buffer rotation delay. A positive value also overrides the batch WAL interval when async batch mode is enabled. |
 
-This automatically enables:
+Ordinary batch appends flush the userspace WAL buffer; the background sync loop performs file syncs. Async batch mode may defer ordinary append flushes until a sync tick. The buffered-commit path explicitly flushes its full recovery record before acknowledgement even with that setting.
 
-| Setting | Value | Effect |
-|---------|-------|--------|
-| WAL Sync Mode | `immediate` | fsync every write |
-| Badger SyncWrites | `true` | Sync underlying storage |
-| AsyncEngine Flush | `10ms` | More frequent cache flushes |
+Automatic native buffer rotation starts at 50 ms and adapts between 5 ms and 1 s. Its delay and the WAL sync interval are different controls. Neither is a hard upper bound on acknowledged data loss or replay latency: scheduling, I/O stalls, errors, and write-path selection matter. There is no workload-independent throughput multiplier or recovery-time guarantee.
 
-### When to Use Strict Mode
+## Persistent files
 
- **Use Strict Durability for:**
-- Financial transactions
-- Payment processing
-- Audit logging
-- Compliance-critical data (HIPAA, SOX, PCI-DSS)
-- Data that cannot be regenerated
+| Artifact | Purpose |
+| --- | --- |
+| Badger files in the data directory | Current graph, dictionaries, schemas, MVCC metadata, counts, and system records. |
+| `wal/wal.log`, `wal/segments/`, manifest and property-authority files | Recovery intent and retained mutation history. Keep the whole WAL directory together. |
+| `snapshots/snapshot-*.json` | Recovery snapshots. Current automatic snapshots are binary streaming files despite the suffix. |
+| `search/` | Search generations/checkpoints, with a readiness and rebuild lifecycle separate from graph commit completion. |
+| Replication data directory | Cluster log/state; may be outside the graph data directory. |
 
- **Don't need Strict Durability for:**
-- Caches
-- Session data
-- Search indexes
-- Analytics
-- Embeddings (regenerable)
+Current WAL frames use format **6**, typed recovery payloads, checksums, and completion markers. Larger buffered payloads can be compressed. These detect invalid/truncated records; alignment and checksums do not make arbitrary disk writes atomic or repair arbitrary corruption. See [Recovery format compatibility](recovery-format-compatibility.md) for upgrade and rollback rules.
 
-## Performance Comparison
+## Startup and recovery
 
-Benchmark results on Apple M3 Max with NVMe SSD:
+1. Startup validates WAL format before opening or migrating storage. Supported historical formats require an authorized storage upgrade; unknown future formats fail validation.
+2. With usable Badger storage, startup replays accepted semantic transactions and buffered commits before traffic. Persisted transaction identities prevent already applied commands from being applied as new writes.
+3. A valid one-use clean-shutdown marker permits reuse of temporal indexes and MVCC heads. It is consumed before service resumes. An unclean start uses conservative reconstruction.
+4. A qualifying Badger corruption/open failure can trigger reconstruction from a valid snapshot and subsequent WAL entries, or sufficient WAL-only history. This is separate from ordinary accepted-commit replay.
+5. Search services load compatible checkpoints or rebuild indexes. Graph recovery does not imply semantic search is warm.
 
-| Mode | Writes/sec | Latency (p99) | Data Safety |
-|------|------------|---------------|-------------|
-| `none` | 150,000 | 0.1ms | Low |
-| `batch` (default) | 50,000 | 2ms | Medium |
-| `immediate` | 15,000 | 10ms | High |
+`NORNICDB_AUTO_RECOVER_ON_CORRUPTION` controls the corruption-rebuild attempt. The default uses corruption heuristics; explicit `true` requests an attempt for otherwise unmatched open errors, and `false` disables it. Automatic corruption reconstruction is not used when database encryption is enabled. An unfinished recovery manifest also blocks an ordinary reopen rather than pretending recovery completed. Reconstruction preserves the original store as `<dataDir>.corrupted-<timestamp>`. Permissions, disk space, encryption configuration, and usable recovery artifacts still determine success.
 
-## Docker Configuration
+Native restore writes `native-restore.marker`. Corruption recovery must not use an older snapshot/WAL history to overwrite restored state; a newer recovery snapshot is required for that boundary. See [Backup and restore](backup-restore.md).
 
-```yaml
-# docker-compose.yml
-services:
-  nornicdb:
-    image: timothyswt/nornicdb-arm64-metal:latest
-    environment:
-      # Default mode (recommended)
-      - NORNICDB_WAL_SYNC_MODE=batch
-      - NORNICDB_WAL_SYNC_INTERVAL=100ms
-      
-      # OR: Strict mode for financial data
-      # - NORNICDB_STRICT_DURABILITY=true
-```
+## Shutdown and incidents
 
-## Programmatic Configuration
+Stop traffic, let in-flight work finish, and call `DB.Close` or allow the server a graceful termination window. Close joins database-owned work and returns its retirement outcome. Forced termination can interrupt buffering, recovery, or index persistence; large stores may need a longer orchestrator termination timeout.
 
-```go
-import "github.com/orneryd/nornicdb/pkg/storage"
+After a failed start or sync warning:
 
-// Default: batch mode (good balance)
-cfg := storage.DefaultWALConfig()
-// cfg.SyncMode = "batch"
-// cfg.BatchSyncInterval = 100ms
+1. Stop restart loops. Preserve the complete data directory, matching WAL, search files, configuration, and external replication directory.
+2. Record the binary version, error, disk space, mount type, and termination reason. Process termination and machine power failure are different failure models.
+3. Diagnose using a copy. Do not delete or truncate WAL, sealed segments, dictionaries, or snapshots to make startup succeed.
+4. Restore a verified backup to an isolated target if recovery cannot establish a valid store. Validate counts and application invariants before traffic.
 
-// Strict: immediate sync
-cfg := &storage.WALConfig{
-    Dir:      "/data/wal",
-    SyncMode: "immediate",
-}
+See [WAL lifecycle](wal-compaction.md), [memory management](memory-management.md), and [troubleshooting](troubleshooting.md#data-integrity-recovery).
 
-wal, err := storage.NewWAL("/data/wal", cfg)
-```
+## Implementation reference
 
-## Crash Recovery
-
-NornicDB includes robust crash recovery regardless of sync mode with multiple layers of corruption prevention:
-
-### WAL Record Format (v2)
-
-Each WAL entry uses an atomic binary format designed to detect any form of corruption:
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         WAL RECORD FORMAT (v2)                           │
-├──────────┬─────────┬────────┬─────────────┬────────┬──────────┬─────────┤
-│ Magic    │ Version │ Length │ Payload     │ CRC32  │ Trailer  │ Padding │
-│ "WALE"   │   2     │ uint32 │ JSON bytes  │ uint32 │ 8 bytes  │ 0-7 B   │
-│ 4 bytes  │ 1 byte  │ 4 bytes│ N bytes     │ 4 bytes│ canary   │ align   │
-└──────────┴─────────┴────────┴─────────────┴────────┴──────────┴─────────┘
-                                                          ↑          ↑
-                                              0xDEADBEEFFEEDFACE    8-byte
-                                              detects incomplete   prevents
-                                                  writes          torn headers
-```
-
-### Corruption Prevention Layers
-
-1. **Magic Header (`WALE`)**: Validates record boundaries and format detection
-2. **Version Byte**: Forward/backward compatibility between WAL versions
-3. **Length Prefix**: Detects truncated payloads from partial writes
-4. **CRC32-C Checksum**: Hardware-accelerated detection of bit flips and corruption
-5. **Trailer Canary (`0xDEADBEEFFEEDFACE`)**: Confirms complete write - if missing or wrong, the write was interrupted
-6. **8-Byte Alignment**: Prevents torn headers on sector boundaries (512B/4KB sectors)
-7. **Transaction Rollback**: Incomplete transactions are automatically rolled back on recovery
-
-### How Each Layer Protects Your Data
-
-| Failure Mode | Detection Mechanism |
-|--------------|---------------------|
-| Crash mid-header write | Partial magic or missing length |
-| Crash mid-payload write | Length mismatch or truncated read |
-| Crash after payload, before CRC | Missing CRC bytes detected |
-| Crash after CRC, before trailer | Missing trailer canary |
-| Bit flip in payload | CRC32-C mismatch |
-| Sector-aligned torn write | 8-byte alignment ensures atomic header |
-| Incomplete transaction | Missing commit marker triggers rollback |
-
-### Recovery Behavior
-
-On startup, NornicDB scans the WAL and:
-
-1.  **Commits complete entries** - All layers validated
-2.  **Skips incomplete entries** - Detected via missing trailer/CRC
-3.  **Rolls back partial transactions** - No commit marker found
-4.  **Regenerates embeddings** - Corrupted embedding entries skipped (safe to regenerate)
-
-After an orderly shutdown, NornicDB also consumes a durable, one-use clean
-shutdown marker. Because acknowledged asynchronous writes are flushed before
-that marker is recorded, temporal indexes and MVCC heads can be reused without
-scanning every node and relationship. The marker is removed before traffic is
-accepted. A crash, failed flush, failed reconstruction, or second process start
-therefore falls back to conservative index reconstruction.
-
-Multi-database storage-byte accounting is independent of recovery. Its exact
-full-corpus calculation is deferred until a configured byte limit or an
-explicit storage-size query requires it; ordinary reads and writes do not pay
-that scan after restart.
-
-The sync mode only affects **how much data** might be lost on crash:
-
-| Mode | Maximum Data Loss | Recovery Time |
-|------|-------------------|---------------|
-| `immediate` | 0 | < 1 second |
-| `batch` | ~100ms | < 1 second |
-| `none` | OS buffer (seconds) | < 1 second |
-
-## Monitoring
-
-Monitor durability metrics via Prometheus:
-
-```promql
-# WAL write latency
-histogram_quantile(0.99, rate(nornicdb_wal_write_duration_seconds_bucket[5m]))
-
-# Sync operations per second
-rate(nornicdb_wal_syncs_total[5m])
-
-# Flush errors (should be 0)
-nornicdb_async_engine_flush_errors_total
-```
-
-## See Also
-
-- [WAL Compaction](wal-compaction.md) - Automatic disk space management
-- [Backup & Restore](backup-restore.md) - Data protection strategies
-- [Monitoring](monitoring.md) - Prometheus metrics reference
-
----
-
-**Configure for your workload** → Use defaults for most cases, strict for critical data.
+- [Server storage and durability options](../../pkg/nornicdb/db.go): `resolveDurabilityOptions`, startup replay, wrappers.
+- [Native publication](../../pkg/storage/badger_transaction_publication.go): explicit sync and sync-error handling.
+- [Buffered acknowledgement](../../pkg/storage/badger_write_behind.go) and [WAL append/sync](../../pkg/storage/wal.go).
+- [Accepted commands](../../pkg/storage/wal_entity_commit.go) and [corruption recovery](../../pkg/nornicdb/storage_recovery.go).
+- [Cluster acknowledgements](../user-guides/clustering.md#write-acknowledgment): local sync and replication policies are independent. A replica or quorum is not a backup.

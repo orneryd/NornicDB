@@ -9,6 +9,8 @@ This section is the canonical source for protocol and endpoint definitions.
 - Cypher function index: [cypher-functions/README.md](cypher-functions/README.md)
 - Bolt protocol notes: [bolt-protocol.md](bolt-protocol.md)
 
+For lifecycle, configuration, executable Go examples, and transaction ownership, start with [Embedding NornicDB](../development/embedding.md). This reference defines the lower-level contracts used by that guide.
+
 ## Find by Interface
 
 ### Cypher

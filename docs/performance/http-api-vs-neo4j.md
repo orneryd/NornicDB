@@ -4,7 +4,7 @@ Last Updated: January 2026
 
 HTTP write performance comparison via REST API. Configuration: HTTP/2, JWT auth, 50,000 requests.
 
-> **Scope:** This protocol-specific report compares NornicDB measurements with separately published or estimated Neo4j HTTP figures. For the current same-hardware, same-workload comparison, use the [48k-product / 48k-order Northwind report](../development/archive/benchmarks/database-comparison-baseline/comparison.md).
+> **Scope:** This protocol-specific report compares NornicDB measurements with separately published or estimated Neo4j HTTP figures. For the current same-hardware, same-workload comparison, use the [48k-product / 48k-order Northwind report](benchmarks/database-comparison/comparison.md).
 
 ## Executive Summary
 
@@ -157,6 +157,6 @@ NornicDB achieves **sub-millisecond P99 latency** (0.22ms) for single requests, 
 
 - [NornicDB Single Request Benchmark](single-request-benchmark.md)
 - [NornicDB MaxConcurrentStreams Comparison](maxconcurrentstreams-comparison.md)
-- [Current Northwind Benchmark vs Neo4j](../development/archive/benchmarks/database-comparison-baseline/comparison.md)
+- [Current Northwind Benchmark vs Neo4j](benchmarks/database-comparison/comparison.md)
 - [Neo4j Performance Documentation](https://neo4j.com/docs/operations-manual/current/performance/)
 - [Neo4j Benchmarking Data](https://gist.github.com/jexp/b0a78c4681c8c9f8189f)

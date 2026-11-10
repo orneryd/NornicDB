@@ -81,7 +81,7 @@ export NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS=false
 ```
 
 **Notes:**
-- Retention is **opt‑in** and does not change defaults unless you set it.
+- Retention is **opt‑in**. Review the current [segment retention algorithm and limits](../operations/wal-compaction.md#retained-segments); a count setting is not a minimum retained history or a tamper-proof ledger.
 - Disabling auto‑compaction is recommended only when you have a durable WAL retention plan.
 
 ---

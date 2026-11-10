@@ -4,12 +4,15 @@
 
 ## Prerequisites
 
-- Go 1.21 or later
+- The Go toolchain in `go.mod` (currently 1.27.3)
+- Node.js 24 and npm for UI/documentation builds
 - Git
 - Make (optional, for build shortcuts)
 - Docker (optional, for containerized testing)
 - curl (for downloading models)
 - CGO-compatible compiler (for local LLM builds)
+
+For contribution and validation policy, use the [contribution guide](contributing.md). For an application using the Go library, start with [embedding](embedding.md).
 
 ## Clone Repository
 
