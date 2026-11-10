@@ -67,8 +67,8 @@
     },
     {
       "path": "api-reference/cypher-functions/README.md",
-      "sha256": "c12d0937e3097ee9125fb2ca4462953003c639bb35cfe62c73665cf1b0da3066",
-      "bytes": 33896
+      "sha256": "9a72c1d84b4468f79a8144fe0f55d4541353d463f3bc096bba395ab259a6f04a",
+      "bytes": 34570
     },
     {
       "path": "api-reference/openapi.md",
@@ -587,8 +587,8 @@
     },
     {
       "path": "features/apoc-functions.md",
-      "sha256": "3668da1f0f84eaa7eaaffe6498f2a11fadf69548902604a461435fbc9c9ad23d",
-      "bytes": 68826
+      "sha256": "a3b10981dc19ed3797ba123cad56d16c55abdba6b057cf0119355effb26bda31",
+      "bytes": 69056
     },
     {
       "path": "features/apoc-procedure-capabilities.md",
@@ -716,14 +716,19 @@
       "bytes": 215
     },
     {
+      "path": "managed-services.md",
+      "sha256": "247e598817e5a58b41197f9210e77b45b0cd42232f87e8f9b237a2fe22b4e414",
+      "bytes": 372
+    },
+    {
       "path": "migration-notice.md",
       "sha256": "027bdd35284384eb65902a1b1fa6570272ae8ac6430210eef85289793b87ee28",
       "bytes": 3743
     },
     {
       "path": "neo4j-migration/cypher-compatibility.md",
-      "sha256": "c7576992c8b3df3d530c141a85c066b766a47895414091fb5ca3599c200e6ef3",
-      "bytes": 33064
+      "sha256": "1256c9d09d18bdabd27f570d3a31746acb8022107f4cf9041075f12a4a460dd7",
+      "bytes": 33434
     },
     {
       "path": "neo4j-migration/feature-parity.md",
@@ -1361,6 +1366,16 @@
       "bytes": 3970
     },
     {
+      "path": "privacy.md",
+      "sha256": "2a571958f5723d3143b996257561f7aab01f6a7caa63f958984ab30fea8711f0",
+      "bytes": 2335
+    },
+    {
+      "path": "project-details.md",
+      "sha256": "99240461d601ae208efe97c83bbd7328257c9502f9784a7d3a30d6bc4c698ba8",
+      "bytes": 34725
+    },
+    {
       "path": "property-key-dictionary.md",
       "sha256": "9c800dfbb8d273afc5849d00d8b2f3dead090d61d5c39cea13b18c3f8cd5e341",
       "bytes": 15407
@@ -1537,8 +1552,8 @@
     },
     {
       "path": "user-guides/cypher-queries.md",
-      "sha256": "60d371eeb742ee56356f26d7120cd7adcca23ece92f2d0ba0e3df5a3251369c7",
-      "bytes": 14942
+      "sha256": "a6851e3aa83d626cf58f34fe4848f55616d70d1f390e99ebe9aa258d60153d45",
+      "bytes": 15274
     },
     {
       "path": "user-guides/cypher-rag-procedures.md",
@@ -1707,8 +1722,8 @@
     },
     {
       "path": "user-guides/vector-search.md",
-      "sha256": "1feea39e1c3a1849b923aa492de1a4f7e7f30734978fd8d488e1920cbc913bca",
-      "bytes": 25655
+      "sha256": "6014a3fc6f443ab35064b4de0eea2f696272c588b469b77adc5e8f407c33f411",
+      "bytes": 25871
     },
     {
       "path": "user-guides/visibility-suppression-deindex.md",

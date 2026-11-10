@@ -21,6 +21,7 @@ function fixture(t) {
   const files = [
     "docs/guide.md",
     "CONTRIBUTING.md",
+    "README.md",
     "docs-site/tests/example.mjs",
     ".github/workflows/docs-pages.yml",
     "scripts/verify.sh",
@@ -50,6 +51,7 @@ test("docs and explicitly scoped operations pass the real Git diff check", (t) =
   for (const file of [
     "docs/guide.md",
     "CONTRIBUTING.md",
+    "README.md",
     "docs-site/tests/example.mjs",
     ".github/workflows/docs-pages.yml",
     "scripts/verify.sh",

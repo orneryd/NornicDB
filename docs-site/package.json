@@ -26,6 +26,7 @@
     "d3-force-3d": "^3.0.6",
     "mermaid": "^12.3.0",
     "minisearch": "^7.2.0",
+    "posthog-js": "1.447.7",
     "three": "^0.187.0",
     "three-spritetext": "^1.10.0"
   }

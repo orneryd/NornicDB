@@ -66,7 +66,7 @@ export default defineConfig({
       const inline = md.renderer.rules.html_inline!,
         block = md.renderer.rules.html_block!;
       const allowed =
-        /^(?:<\/?(?:a|img|br|hr|details|summary|div|span|p|table|thead|tbody|tr|td|th|sup|sub|kbd|strong|em|code|pre|ul|li|ol)\b|<!--|<(?:CodeExplorer|SearchPage)\s*\/?>)/i;
+        /^(?:<\/?(?:a|img|br|hr|details|summary|div|span|p|table|thead|tbody|tr|td|th|sup|sub|kbd|strong|em|code|pre|ul|li|ol)\b|<!--|<(?:CodeExplorer|SearchPage|InquiryForm)\s*\/?>)/i;
       md.renderer.rules.html_inline = (tokens, i, options, env, self) =>
         allowed.test(tokens[i].content) || !/^\s*</.test(tokens[i].content)
           ? inline(tokens, i, options, env, self)
@@ -159,6 +159,8 @@ export default defineConfig({
         ["Build setup", "/development/setup"],
       ]),
       { text: "Full documentation library", link: "/library" },
+      ...(fs.existsSync(path.resolve('.generated/managed-services.md'))
+        ? [{ text: 'Managed services', link: '/managed-services' }] : []),
     ],
     socialLinks: [
       { icon: "github", link: "https://github.com/orneryd/NornicDB" },

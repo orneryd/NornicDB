@@ -1532,3 +1532,7 @@ Test your specific APOC usage when migrating, particularly:
 - File I/O operations (check security settings)
 - Custom procedures (may need to be rewritten as plugins)
 - Performance-sensitive queries (benchmark in your environment)
+
+## External reference
+
+The [Neo4j APOC procedures and functions reference](https://neo4j.com/docs/apoc/current/overview/) describes Neo4j APOC. Check the support details above before relying on the same behavior in NornicDB.

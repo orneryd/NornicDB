@@ -690,32 +690,36 @@ See [Per-Database Search Index Flags](../../operations/configuration.md#per-data
 
 ## References & Further Reading
 
+These sources describe general concepts and Neo4j. NornicDB behavior can differ; use the descriptions above for NornicDB-specific details.
+
 ### Memory Models
 
-- **Atkinson-Shiffrin Model** (1968) - Three-store memory model
-- **Ebbinghaus Forgetting Curve** (1885) - Exponential memory decay
-- **Spaced Repetition** - Optimal review timing for retention
+- [Atkinson–Shiffrin model (1968)](https://openstax.org/books/psychology/pages/8-1-how-memory-functions) — three-store memory model.
+- [Ebbinghaus forgetting curve](https://pmc.ncbi.nlm.nih.gov/articles/PMC4492928/) — exponential memory decay.
+- [Spaced repetition](https://www.neurology.org/doi/10.1212/WNL.88.16_supplement.S28.005) — review timing and retention.
 
 ### Mathematical Functions
 
-- **Khan Academy** - Trigonometry basics
-- **3Blue1Brown** - Visual math explanations (YouTube)
-- **Essence of Calculus** - Understanding exponentials and logs
+- [Khan Academy](https://www.khanacademy.org/math/trigonometry) — trigonometry basics.
+- [3Blue1Brown](https://www.3blue1brown.com/) — visual math explanations.
+- [Essence of Calculus](https://www.3blue1brown.com/topics/calculus) — understanding exponentials and logarithms.
 
 ### Vector Similarity
 
-- **Cosine Similarity** explained: https://en.wikipedia.org/wiki/Cosine_similarity
-- **Euclidean vs Cosine** - When to use which
+- [Cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity).
+- [Euclidean distance and cosine similarity](https://developers.google.com/machine-learning/clustering/dnn-clustering/supervised-similarity) — choosing a similarity measure.
 
 ### Neo4j Cypher Reference
 
-- Official Neo4j Cypher manual
-- Neo4j function reference
+- [Official Neo4j Cypher manual](https://neo4j.com/docs/cypher-manual/current/).
+- [Neo4j function reference](https://neo4j.com/docs/cypher-manual/current/functions/).
 
 ---
 
-**Documentation Status:**  Complete
+**Documentation Status:** Complete
+
 **Functions Documented:** 62/62 (100%)
+
 **Examples Provided:** 160+
 
 **Last Updated:** November 29, 2025

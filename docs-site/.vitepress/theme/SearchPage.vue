@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, watch, useId, onBeforeUnmount } from "vue";
 import { withBase } from "vitepress";
+import { track } from "./analytics.mjs";
 import { localSearch } from "./local-search";
 import { apiFetch, historical } from "./api";
 const props = defineProps({
@@ -23,6 +24,7 @@ let sequence = 0,
   noticeTimer,
   activeRequest;
 function notify(message) {
+  track("docs_search_results", {scope: type.value, mode: "fallback", results: results.value.length});
   notice.value = message;
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => (notice.value = ""), 8000);
@@ -80,6 +82,7 @@ async function search() {
         semantic = true;
         results.value = payload.results;
         mode.value = "Semantic search";
+        track("docs_search_results", {scope, mode: "semantic", results: payload.results.length});
         loading.value = false;
         notice.value = "";
       }
