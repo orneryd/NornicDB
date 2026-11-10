@@ -43,6 +43,11 @@ input:focus-visible {
   outline: 3px solid var(--vp-c-brand-1);
   outline-offset: 3px;
 }
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 0;
+}
 .diagram svg {
   max-width: 100%;
   height: auto;
@@ -409,6 +414,7 @@ input:focus-visible {
   flex: 0 0 176px;
   width: 176px;
   height: 36px;
+  margin-left: 24px;
   margin-right: 16px;
   z-index: 55;
 }
@@ -431,7 +437,7 @@ input:focus-visible {
   padding-right: 12px;
   background: var(--vp-c-bg);
   border-color: var(--vp-c-brand-1);
-  box-shadow: 0 0 0 3px var(--vp-c-brand-soft);
+  box-shadow: inset 0 0 0 1px var(--vp-c-brand-1);
   outline: 0;
 }
 .search-shortcut {
@@ -541,9 +547,12 @@ input:focus-visible {
   box-shadow: none;
 }
 @media (max-width: 767px) {
+  .VPNavBar .content { flex: 1 1 0; min-width: 0; }
   .inline-search {
-    flex-basis: 112px;
-    width: 112px;
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    margin-left: 8px;
     margin-right: 8px;
     height: 40px;
   }
@@ -593,8 +602,7 @@ input:focus-visible {
     font-size: 13px;
   }
   .inline-search {
-    flex-basis: 104px;
-    width: 104px;
+    min-width: 0;
   }
   :root .version-picker {
     padding: 0 2px;
