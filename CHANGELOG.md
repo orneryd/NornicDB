@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A labelled pattern with an unindexed property in braces that returns
+  properties, such as `MATCH (n:Label {p: $v}) RETURN n.id`, reads the
+  label's nodes again instead of every node in the database, in auto-commit
+  and in an explicit transaction.
 - `n.has_embedding` no longer reads false through a label scan for a node
   that has stored vectors. `MATCH (n:Label) RETURN n.has_embedding`, the same
   with `WHERE n.id IN $ids`, and a filter or a count on the flag now give

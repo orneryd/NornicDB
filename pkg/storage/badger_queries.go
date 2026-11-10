@@ -481,6 +481,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				}
 				physical := options
 				physical.Prefix = scope
+				physical.Label = ""               // one pass over every record; the label is tested below
 				physical.ApplyDecayFilter = false // emit owns visibility once
 				physical.StripEmbeddings = false  // the public options visitor owns stripping
 				stopped := false
