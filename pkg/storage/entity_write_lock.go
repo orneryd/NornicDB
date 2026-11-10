@@ -96,11 +96,18 @@ func (locks *entityWriteLocks) add(request uniqueConstraintLockRequest) *entityW
 	return &locks.held[len(locks.held)-1]
 }
 
+// nodeWriteLockKind is the entity kind of a node's write key: the key its
+// writers exclude each other on. Every commit that writes the node takes it
+// with the node's own key (entityCommitKeys); a statement holds only it, so
+// a transaction that has written a node does not make the commits that
+// create relationships on it, which read the node's own key, wait for it.
+const nodeWriteLockKind = 3
+
 func entityWriteLockKey(kind bufferedEntityKind, id string) uniqueConstraintLockKey {
 	if kind == bufferedEdgeEntity {
 		return uniqueConstraintLockKey{entityKind: 2, entityID: id}
 	}
-	return uniqueConstraintLockKey{entityKind: 1, entityID: id}
+	return uniqueConstraintLockKey{entityKind: nodeWriteLockKind, entityID: id}
 }
 
 // LockNodeForWrite takes node id's write lock for the transaction

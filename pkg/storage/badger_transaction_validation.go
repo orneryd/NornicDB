@@ -121,7 +121,7 @@ func (tx *BadgerTransaction) validatePreparedBodyConflictsLocked(ctx context.Con
 			default:
 				continue
 			}
-			if tx.readsLatestLocked(bufferedEntityKind(key.entityKind), key.entityID) {
+			if (key.entityKind == 1 && tx.readsLatestLocked(bufferedNodeEntity, key.entityID)) || (key.entityKind == 2 && tx.readsLatestLocked(bufferedEdgeEntity, key.entityID)) {
 				// Its body was read as last committed under the write lock
 				// this transaction has held since.
 				continue

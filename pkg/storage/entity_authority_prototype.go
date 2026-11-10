@@ -9,12 +9,16 @@ import (
 // entityCommitKeys projects the typed identity domain for the canonical
 // commit-lock registry. Endpoint and relationship identities never become labels.
 func entityCommitKeys(ctx context.Context, nodes []NodeID, edges []EdgeID, endpoints []NodeID) ([]uniqueConstraintLockKey, error) {
-	keys := make([]uniqueConstraintLockKey, 0, len(nodes)+len(edges)+len(endpoints))
+	keys := make([]uniqueConstraintLockKey, 0, 2*len(nodes)+len(edges)+len(endpoints))
 	for _, id := range nodes {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		keys = append(keys, uniqueConstraintLockKey{entityKind: 1, entityID: string(id)})
+		// A node's writers also exclude each other on its write key, which a
+		// statement holds from its write to its transaction's end
+		// (LockNodeForWrite) without holding the node against the commits
+		// that only read it as a relationship endpoint.
+		keys = append(keys, uniqueConstraintLockKey{entityKind: 1, entityID: string(id)}, uniqueConstraintLockKey{entityKind: nodeWriteLockKind, entityID: string(id)})
 	}
 	for _, id := range edges {
 		if err := ctx.Err(); err != nil {

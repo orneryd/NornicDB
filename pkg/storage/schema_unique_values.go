@@ -156,7 +156,7 @@ type uniqueConstraintLockKey struct {
 // entity key is named by its kind and ID.
 func (k uniqueConstraintLockKey) names() (label, property string) {
 	switch k.entityKind {
-	case 1:
+	case 1, nodeWriteLockKind:
 		return "node", k.entityID
 	case 2:
 		return "relationship", k.entityID
