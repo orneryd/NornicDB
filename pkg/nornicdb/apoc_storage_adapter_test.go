@@ -549,7 +549,7 @@ func TestAPOCStorageAdapter_NodeAndRelationshipCRUD(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, node.ID, storedNode.ID)
 
-	require.NoError(t, adapter.UpdateNode(t.Context(), node.ID, map[string]interface{}{"age": 30}))
+	require.NoError(t, adapter.UpdateNode(t.Context(), node.ID, apocstorage.PropertyUpdate{Set: map[string]interface{}{"age": 30}}))
 	storedNode, err = adapter.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, 30, storedNode.Properties["age"])
@@ -576,7 +576,7 @@ func TestAPOCStorageAdapter_NodeAndRelationshipCRUD(t *testing.T) {
 	require.Equal(t, node.ID, storedRel.StartNode)
 	require.Equal(t, other.ID, storedRel.EndNode)
 
-	require.NoError(t, adapter.UpdateRelationship(t.Context(), rel.ID, map[string]interface{}{"weight": 0.5}))
+	require.NoError(t, adapter.UpdateRelationship(t.Context(), rel.ID, apocstorage.PropertyUpdate{Set: map[string]interface{}{"weight": 0.5}}))
 	storedRel, err = adapter.GetRelationship(t.Context(), rel.ID)
 	require.NoError(t, err)
 	require.Equal(t, 0.5, storedRel.Properties["weight"])
@@ -597,14 +597,66 @@ func TestAPOCStorageAdapter_UpdateInitializesNilPropertyMaps(t *testing.T) {
 	adapter := NewAPOCStorageAdapter(engine)
 
 	require.NotPanics(t, func() {
-		require.NoError(t, adapter.UpdateNode(t.Context(), 1, map[string]interface{}{"name": "Alice"}))
+		require.NoError(t, adapter.UpdateNode(t.Context(), 1, apocstorage.PropertyUpdate{Set: map[string]interface{}{"name": "Alice"}}))
 	})
 	require.Equal(t, "Alice", engine.nodes["1"].Properties["name"])
 
 	require.NotPanics(t, func() {
-		require.NoError(t, adapter.UpdateRelationship(t.Context(), 1, map[string]interface{}{"weight": 1.0}))
+		require.NoError(t, adapter.UpdateRelationship(t.Context(), 1, apocstorage.PropertyUpdate{Set: map[string]interface{}{"weight": 1.0}}))
 	})
 	require.Equal(t, 1.0, engine.edges["1"].Properties["weight"])
+}
+
+func TestAPOCStorageAdapter_PropertyUpdatePatchesRetainedBag(t *testing.T) {
+	engine := newAPOCAdapterTestEngine()
+	adapter := NewAPOCStorageAdapter(engine)
+
+	node, err := adapter.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{
+		"name": "Alice",
+		"age":  int64(30),
+	})
+	require.NoError(t, err)
+	rel, err := adapter.CreateRelationship(t.Context(), node.ID, node.ID, "KNOWS", map[string]interface{}{
+		"since": int64(2020),
+		"note":  "kept",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, adapter.UpdateNode(t.Context(), node.ID, apocstorage.PropertyUpdate{
+		Remove: []string{"name"},
+		Set:    map[string]interface{}{"fullName": "Alice", "age": int64(31)},
+	}))
+	storedNode, err := adapter.GetNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]interface{}{"fullName": "Alice", "age": int64(31)}, storedNode.Properties,
+		"a node rename removes the old name, sets the new one and keeps the rest")
+
+	require.NoError(t, adapter.UpdateNode(t.Context(), node.ID, apocstorage.PropertyUpdate{
+		Remove: []string{"age"},
+	}))
+	storedNode, err = adapter.GetNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]interface{}{"fullName": "Alice"}, storedNode.Properties,
+		"a removal-only node update deletes the named property and keeps the rest")
+
+	profile := map[string]interface{}{"city": "Paris"}
+	require.NoError(t, adapter.UpdateNode(t.Context(), node.ID, apocstorage.PropertyUpdate{
+		Set: map[string]interface{}{"profile": profile},
+	}))
+	profile["city"] = "Mutated"
+	storedNode, err = adapter.GetNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]interface{}{"city": "Paris"}, storedNode.Properties["profile"],
+		"the engine retains the nested value a patch supplied, not the caller's container")
+
+	require.NoError(t, adapter.UpdateRelationship(t.Context(), rel.ID, apocstorage.PropertyUpdate{
+		Remove: []string{"since"},
+		Set:    map[string]interface{}{"started": int64(2020)},
+	}))
+	storedRel, err := adapter.GetRelationship(t.Context(), rel.ID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]interface{}{"started": int64(2020), "note": "kept"}, storedRel.Properties,
+		"a relationship rename removes the old name, sets the new one and keeps the rest")
 }
 
 func TestAPOCStorageAdapter_GraphTraversalAndPaths(t *testing.T) {
@@ -743,13 +795,13 @@ func TestAPOCStorageAdapter_ErrorMappings(t *testing.T) {
 
 	_, err := adapter.GetNode(t.Context(), 99)
 	require.ErrorIs(t, err, apocstorage.ErrNodeNotFound)
-	require.ErrorIs(t, adapter.UpdateNode(t.Context(), 99, map[string]interface{}{"x": 1}), apocstorage.ErrNodeNotFound)
+	require.ErrorIs(t, adapter.UpdateNode(t.Context(), 99, apocstorage.PropertyUpdate{Set: map[string]interface{}{"x": 1}}), apocstorage.ErrNodeNotFound)
 	require.ErrorIs(t, adapter.AddLabels(t.Context(), 99, []string{"X"}), apocstorage.ErrNodeNotFound)
 	require.ErrorIs(t, adapter.RemoveLabels(t.Context(), 99, []string{"X"}), apocstorage.ErrNodeNotFound)
 
 	_, err = adapter.GetRelationship(t.Context(), 99)
 	require.ErrorIs(t, err, apocstorage.ErrRelationshipNotFound)
-	require.ErrorIs(t, adapter.UpdateRelationship(t.Context(), 99, map[string]interface{}{"x": 1}), apocstorage.ErrRelationshipNotFound)
+	require.ErrorIs(t, adapter.UpdateRelationship(t.Context(), 99, apocstorage.PropertyUpdate{Set: map[string]interface{}{"x": 1}}), apocstorage.ErrRelationshipNotFound)
 
 	node := adapter.convertNode(&storage.Node{ID: "abc", Labels: []string{"X"}, Properties: map[string]interface{}{"k": "v"}})
 	assert.Equal(t, int64(0), node.ID)
@@ -838,10 +890,10 @@ func TestAPOCStorageAdapterPreservesNativePointFailure(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrStorageClosed)
 	_, err = adapter.GetNodeRelationships(t.Context(), 1, "", apocstorage.DirectionBoth)
 	require.ErrorIs(t, err, storage.ErrStorageClosed)
-	require.ErrorIs(t, adapter.UpdateNode(t.Context(), 1, nil), storage.ErrStorageClosed)
+	require.ErrorIs(t, adapter.UpdateNode(t.Context(), 1, apocstorage.PropertyUpdate{}), storage.ErrStorageClosed)
 	require.ErrorIs(t, adapter.AddLabels(t.Context(), 1, []string{"L"}), storage.ErrStorageClosed)
 	require.ErrorIs(t, adapter.RemoveLabels(t.Context(), 1, []string{"L"}), storage.ErrStorageClosed)
-	require.ErrorIs(t, adapter.UpdateRelationship(t.Context(), 1, nil), storage.ErrStorageClosed)
+	require.ErrorIs(t, adapter.UpdateRelationship(t.Context(), 1, apocstorage.PropertyUpdate{}), storage.ErrStorageClosed)
 }
 
 func TestAPOCStorageAdapterNativeTraversalVisitorCancellation(t *testing.T) {

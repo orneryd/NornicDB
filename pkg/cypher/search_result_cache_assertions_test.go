@@ -6,9 +6,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Publication gives the cache its own result wrapper and visible outer row
-// window (#1511). A first-execution pointer is therefore not a hit oracle.
-// Check actual lookups and retain identity assertions for successive warm hits.
+// Cache publication and delivery own separate result graphs. Verify real
+// cache lookups and equivalent values, with independent warm-hit wrappers.
 func requireOwnedResultCacheHit(t *testing.T, exec *StorageExecutor, first *ExecuteResult, run func() (*ExecuteResult, error)) *ExecuteResult {
 	t.Helper()
 	hits, misses, _, _, _ := exec.cache.Stats()
@@ -28,6 +27,8 @@ func requireOwnedResultCacheHit(t *testing.T, exec *StorageExecutor, first *Exec
 	warmHits, warmMisses, _, _, _ := exec.cache.Stats()
 	require.Equal(t, afterHits+1, warmHits)
 	require.Equal(t, afterMisses, warmMisses)
-	require.Same(t, second, third, "successive warm hits reuse the published result")
+	require.NotSame(t, second, third, "each warm hit delivers its own result")
+	require.Equal(t, second.Columns, third.Columns)
+	require.Equal(t, second.Rows, third.Rows)
 	return second
 }

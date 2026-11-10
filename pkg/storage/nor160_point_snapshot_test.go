@@ -80,7 +80,7 @@ func TestNOR160StructuralCopyPreservesCyclesWithoutSharing(t *testing.T) {
 	t.Run("map", func(t *testing.T) {
 		source := map[string]any{"n": int64(1)}
 		source["self"] = source
-		copied := ownedValueCopy(source).(map[string]any)
+		copied := CopyValue(source, nil).(map[string]any)
 		copied["self"].(map[string]any)["n"] = int64(2)
 		require.Equal(t, int64(2), copied["n"])
 		require.Equal(t, int64(1), source["n"])
@@ -88,7 +88,7 @@ func TestNOR160StructuralCopyPreservesCyclesWithoutSharing(t *testing.T) {
 	t.Run("slice", func(t *testing.T) {
 		source := make([]any, 1)
 		source[0] = source
-		copied := ownedValueCopy(source).([]any)
+		copied := CopyValue(source, nil).([]any)
 		copied[0].([]any)[0] = nil
 		require.Nil(t, copied[0])
 		require.NotNil(t, source[0])
@@ -100,7 +100,7 @@ func TestNOR160StructuralCopyPreservesCyclesWithoutSharing(t *testing.T) {
 		}
 		source := &record{N: 1}
 		source.Next = source
-		copied := ownedValueCopy(source).(*record)
+		copied := CopyValue(source, nil).(*record)
 		require.Same(t, copied, copied.Next)
 		require.NotSame(t, source, copied)
 		copied.Next.N = 2

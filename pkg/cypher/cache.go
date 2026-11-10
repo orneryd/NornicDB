@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -222,7 +221,7 @@ func (qc *QueryCache) Get(cypher string, params map[string]interface{}) (*Execut
 	qc.hits++
 	qc.mu.Unlock()
 
-	return cached.result, true
+	return cacheOwnedResult(cached.result), true
 }
 
 // Put stores a query result in the cache with the specified TTL (Time To Live).
@@ -298,16 +297,28 @@ func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *
 	qc.moveToFront(key)
 }
 
-// cacheOwnedResult gives a persistent cache its own visible outer row window.
-// The caller may still own a larger allocation, so neither its hidden row
-// headers nor the shared row contents may be cleared during publication.
+// cacheOwnedResult detaches one result graph at both cache publication and
+// delivery. The structural owner preserves value types and nested ownership;
+// map order belongs to the new map identities, not those retained by its source.
 func cacheOwnedResult(result *ExecuteResult) *ExecuteResult {
 	if result == nil {
 		return nil
 	}
-	owned := *result
-	owned.Rows = slices.Clone(result.Rows)
-	return &owned
+	var orders map[uintptr][]string
+	var mapCopied func(source, copied map[string]any)
+	if result.MapKeyOrders != nil {
+		orders = make(map[uintptr][]string, len(result.MapKeyOrders))
+		mapCopied = func(source, copied map[string]any) {
+			transferMapKeyOrder(result.MapKeyOrders, orders, source, copied)
+		}
+	}
+	// Rebind only orders for maps present in this result, instead of cloning
+	// stale source-pointer keys and retaining intermediate evaluation metadata.
+	source := *result
+	source.MapKeyOrders = nil
+	owned := storage.CopyValue(&source, mapCopied).(*ExecuteResult)
+	owned.MapKeyOrders = orders
+	return owned
 }
 
 // Invalidate clears all cached query results.
@@ -571,20 +582,13 @@ func (sc *SmartQueryCache) observeEviction(reason string) {
 
 // Get retrieves a cached result (same as QueryCache).
 func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*ExecuteResult, bool) {
-	return sc.get(resultCacheEntryKey(context.Background(), cypher, params))
-}
-
-func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
-	result, _, _, found := sc.getWithTrace(key)
+	key := resultCacheEntryKey(context.Background(), cypher, params)
+	result, _, _, found := sc.getWithTraceForEmbedding(key, 0)
 	return result, found
 }
 
-// getWithTrace returns a cached result, its hot-path trace, and whether it
-// returns nodes or relationships (entities).
-func (sc *SmartQueryCache) getWithTrace(key string) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
-	return sc.getWithTraceForEmbedding(key, 0)
-}
-
+// getWithTraceForEmbedding returns an owned cached result, its trace and entity
+// classification only when its embedding generation matches the caller's.
 func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint64) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
 	sc.mu.RLock()
 	cached, exists := sc.cache[key]
@@ -623,7 +627,7 @@ func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint6
 
 	// Plan 04-03 D-12a: cross-cutting cache_hits_total{cache="query_result"}.
 	sc.observeHit()
-	return cached.result, cached.trace, cached.entities, true
+	return cacheOwnedResult(cached.result), cached.trace, cached.entities, true
 }
 
 // PutWithLabels stores a result with associated labels for smart invalidation.

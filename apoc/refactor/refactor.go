@@ -515,18 +515,21 @@ func (f *Functions) RenameType(ctx context.Context, oldType, newType string) (in
 	return count, nil
 }
 
-// renameProperty owns the property-map transition for node and relationship
-// renames. Each caller retains its entity-specific persistence and counts only
-// successful updates. Missing keys are untouched, including nil maps; an
-// existing destination is replaced, and renaming a key to itself still counts.
-func renameProperty(properties map[string]interface{}, oldName, newName string) bool {
+// renameUpdate owns the property transition for node and relationship renames.
+// Each caller retains its entity-specific persistence and counts only successful
+// updates. The patch removes the old name and sets the new one, so the value the
+// old name carried moves with it, an existing destination is replaced, a record
+// without the old name yields no patch, nil maps included, and renaming a name
+// onto itself still counts.
+func renameUpdate(properties map[string]interface{}, oldName, newName string) (storage.PropertyUpdate, bool) {
 	value, exists := properties[oldName]
 	if !exists {
-		return false
+		return storage.PropertyUpdate{}, false
 	}
-	delete(properties, oldName)
-	properties[newName] = value
-	return true
+	return storage.PropertyUpdate{
+		Remove: []string{oldName},
+		Set:    map[string]interface{}{newName: value},
+	}, true
 }
 
 // RenameProperty renames a property on all nodes that have it.
@@ -560,9 +563,9 @@ func (f *Functions) RenameProperty(ctx context.Context, oldName, newName string)
 			return 0, operationError
 		}
 
-		if renameProperty(node.Properties, oldName, newName) {
+		if update, renamed := renameUpdate(node.Properties, oldName, newName); renamed {
 			{
-				err := f.backend.UpdateNode(ctx, node.ID, node.Properties)
+				err := f.backend.UpdateNode(ctx, node.ID, update)
 				if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
 					return 0, err
 				}
@@ -615,9 +618,9 @@ func (f *Functions) RenameRelProperty(ctx context.Context, oldName, newName stri
 			return 0, operationError
 		}
 
-		if renameProperty(rel.Properties, oldName, newName) {
+		if update, renamed := renameUpdate(rel.Properties, oldName, newName); renamed {
 			{
-				err := f.backend.UpdateRelationship(ctx, rel.ID, rel.Properties)
+				err := f.backend.UpdateRelationship(ctx, rel.ID, update)
 				if err != nil && !errors.Is(err, storage.ErrRelationshipNotFound) {
 					return 0, err
 				}
