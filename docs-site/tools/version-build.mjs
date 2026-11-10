@@ -21,7 +21,15 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nornic-docs-version-")),
   archive = path.join(temp, "source.tar");
 execFileSync(
   "git",
-  ["archive", "--format=tar", "--output=" + archive, tag, "docs", "pkg"],
+  [
+    "archive",
+    "--format=tar",
+    "--output=" + archive,
+    tag,
+    "docs",
+    "pkg",
+    "CONTRIBUTING.md",
+  ],
   { cwd: root },
 );
 execFileSync("tar", ["-xf", archive, "-C", temp]);

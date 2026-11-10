@@ -20,6 +20,7 @@ function fixture(t) {
   git("config", "user.email", "docs-scope@example.invalid");
   const files = [
     "docs/guide.md",
+    "CONTRIBUTING.md",
     "docs-site/tests/example.mjs",
     ".github/workflows/docs-pages.yml",
     "scripts/verify.sh",
@@ -48,6 +49,7 @@ test("docs and explicitly scoped operations pass the real Git diff check", (t) =
   const f = fixture(t);
   for (const file of [
     "docs/guide.md",
+    "CONTRIBUTING.md",
     "docs-site/tests/example.mjs",
     ".github/workflows/docs-pages.yml",
     "scripts/verify.sh",

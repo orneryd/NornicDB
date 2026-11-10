@@ -13,6 +13,49 @@
 2. Read the [development workflow](#development-workflow) below.
 3. Check existing [issues](https://github.com/orneryd/NornicDB/issues) and [pull requests](https://github.com/orneryd/NornicDB/pulls).
 
+## Local setup
+
+Use the Go toolchain declared in `go.mod` (currently 1.27.3), Node.js 24 for the documentation portal, npm, Git, and Make. CGO/native build paths require a supported C/C++ toolchain and their matching libraries. Docker is needed for container builds and the Neo4j differential checks; `gh` is needed for repository/release helpers.
+
+```bash
+git clone https://github.com/orneryd/NornicDB.git
+cd NornicDB
+go mod download
+npm ci --prefix ui
+npm ci --prefix docs-site
+```
+
+Build the server with `make build` (includes UI) or `make build-headless`. Native inference builds need the prerequisites described in [build setup](docs/development/setup.md); do not assume a downloaded model alone supplies the native library. Embedding a database in another application starts with the [Go embedding guide](docs/development/embedding.md).
+
+## Validate a change
+
+Run the affected checks before review and record the exact head, commands, outcomes, and skipped dependencies. Use the canonical verifier to discover the required checks:
+
+```bash
+make verify-list BASE=origin/main
+make verify BASE=origin/main
+```
+
+For documentation changes:
+
+```bash
+npm run build --prefix docs-site
+npm test --prefix docs-site
+npm run test:browser --prefix docs-site
+```
+
+The browser command builds current docs and a tagged bundle before running journeys. Local tests use installed Chrome; CI installs Playwright Chromium. Build failures and dead links must be fixed, not suppressed. The corpus checks preserve retained documentation and enforce the declared maintenance/release scope.
+
+For product changes, add a regression that demonstrates the reported problem and exercise the public package/transport path it affects. `make test` runs the complete package set and lint checks; `make verify ALL=1 BASE=<immutable-base>` also covers the release verification owners. Resource-limited machines can start with focused package checks, but a focused pass is not a full-suite pass. Do not present missing models, unavailable backends, canceled jobs, or old cached results as fresh qualification.
+
+Git hooks are optional local tooling, not repository push gates. Do not install/enable Graphify hooks to replace the trusted GitHub advisory workflow. See [testing](docs/development/testing.md) for fixtures and [coding conventions](docs/development/code-style.md) for formatting and ownership rules.
+
+## Documentation changes
+
+Edit runtime facts in their canonical guide and link to them from related pages. Verify defaults, units, precedence, lifecycle behavior, and examples against the current implementation. Keep historical measurements scoped to their workload; do not turn them into RAM, durability, or throughput guarantees.
+
+The portal renders this file as its contribution guide; do not maintain a second copy. Durability, memory, and embedding guidance lives in `docs/operations` and `docs/development`. Check both current and tagged builds after changing publication rules or navigation. Documentation-only maintenance must not modify production behavior or changelogs.
+
 ## Development workflow
 
 NornicDB follows **Git Flow**: work is integrated on `develop`, stabilized on a `release/vX.Y.Z` branch, then
@@ -32,8 +75,8 @@ fix/<topic>     ──┘                                     │ pull request (
 |---|---|---|---|
 | `feature/*`, `fix/*` | anyone with write access | push freely; target `release/vX.Y.Z` for release fixes | none |
 | `develop` | integration branch | direct integration only; pull requests targeting develop are closed (no force-push, no deletion) | manual, admin-approved |
-| `release/vX.Y.Z` | created and merged by the maintainer | pull request from `develop` (or a fix branch), on milestone `vX.Y.Z` | run `make test` locally for each PR push; no automatic CI on release pushes |
-| `main` | maintainers only | fast-forward from a finished release branch, or a scoped operational/documentation PR | local verification; manual, admin-approved GitHub checks |
+| `release/vX.Y.Z` | created and merged by the maintainer | pull request from `develop` (or a fix branch), on milestone `vX.Y.Z` | record focused/local or approved CI evidence; no automatic CI on release pushes |
+| `main` | maintainers only | release PR or scoped operational/documentation PR | local verification; manual, admin-approved GitHub checks |
 
 - **Experiment on `feature/<topic>` branches** cut from `develop`, iterate as fast as you like, and merge them into
   `develop`. Nothing runs on GitHub for these pushes or pull requests.
@@ -103,7 +146,7 @@ Through October 31, 2026 inclusive (America/Phoenix), run `make verify BASE=orig
 for every PR created. Post a result comment on the PR, not just a description: include the checked head SHA,
 base SHA, exact command, results, failures, and any skipped or unexecuted checks with reasons. Re-run after
 changes or rebases and post the updated result. Path-filtered no-op runs must be reported as such, not as a
-full-suite pass. GitHub Actions remains manual and administrator-approved.
+full-suite pass. Non-release workflow dispatches remain administrator-approved.
 
 For a maintainer-approved release batch, focused-validated fixes that merge cleanly may be integrated before
 full verification. Run one combined `make verify ALL=1 BASE=<immutable-base>` on the frozen release head,
@@ -138,7 +181,7 @@ branch.
 - Integrate product work directly into `develop`; pull requests targeting `develop` are not accepted. Target `release/vX.Y.Z` for a release fix, or `main` for the scoped maintainer operational/documentation path above.
 - Put release work on its release milestone; the maintainer maintenance path may omit one. Link the issues
   the PR fixes (`Fixes #123`).
-- For each PR push targeting a release branch, run `make test` locally on that head and report the result. For maintainer PRs to `main`, run `make verify` and report all skips.
+- Record validation for each reviewed head. Candidates may be pushed for review before a local full-suite run; use the exact-head approved CI path above when full local qualification is deferred. For maintainer PRs to `main`, run the applicable `make verify` checks and report every skip.
 
 ## Need Help?
 

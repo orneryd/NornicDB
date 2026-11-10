@@ -143,7 +143,7 @@ long correspondence bodies, and assert rows/scores/order and native read work.
 They do not certify an unavailable application suite or universal constant query
 cost: more indexed documents and more matching results still require work.
 Workload sizes, cold/warm state and allocation results are reported separately in
-`docs/development/archive/pull-requests/maintained-fulltext.md`. Full local readiness still
+the [full-text API guide](fulltext-index-api.md). Full local readiness still
 requires the final integrated `make test` result.
 
 

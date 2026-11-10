@@ -455,7 +455,7 @@ nornicdb serve --embedding-cache 0
 
 ### Async Writes (Adaptive Write-Behind Buffer)
 
-**Purpose**: Dramatically improve write throughput by acknowledging committed statements in memory and replaying them into Badger with a background flusher. The rotation delay and buffer size **auto-scale to the measured drain latency and throughput**, and persistent size/timing mismatches are reported in the logs. Durable writes are the default; enabling this trades a bounded window (up to one flush interval of unflushed commits, lost only on crash) for throughput. `StrictDurability` disables it even when enabled.
+**Purpose**: Opt in to buffered acknowledgement for eligible writes. Rotation delay and generation size adapt to measured drain behavior. This is not a fixed loss window or byte cap; strict durability disables the buffer. See [durability boundaries](../operations/durability.md) and [memory accounting](../operations/memory-management.md).
 
 See [Write-Behind Adaptive Buffer](../performance/write-behind-adaptive-buffer.md) for the full guide and measured throughput.
 

@@ -5,10 +5,7 @@ import { execFileSync } from "node:child_process";
 import { createCodeIndex } from "../.vitepress/theme/code-index.mjs";
 import { codeReferences, referencesSymbol } from "./code-references.mjs";
 import { indexRevision } from "./index-revision.mjs";
-import {
-  createContentPolicy,
-  isDevelopmentArchive,
-} from "./content-policy.mjs";
+import { createContentPolicy } from "./content-policy.mjs";
 
 const site = path.resolve(import.meta.dirname, ".."),
   root = path.resolve(site, "..");
@@ -68,7 +65,11 @@ for (const file of walk(source)) {
   const published = publication.sourcePath("docs/" + originalRelative);
   if (!published) continue;
   const relative = published.replace(/^docs\//, "");
-  const bytes = fs.readFileSync(file);
+  const sourceFile =
+    relative === "development/contributing.md"
+      ? path.join(contentRoot, "CONTRIBUTING.md")
+      : file;
+  const bytes = fs.readFileSync(sourceFile);
   inventory.push({ path: relative, sha256: sha(bytes), bytes: bytes.length });
   const dest = path.join(
     output,
@@ -84,28 +85,7 @@ for (const file of walk(source)) {
   }
   let text = bytes.toString("utf8").replace(/\r\n/g, "\n");
   const releaseReference = releaseFiles.has(relative);
-  const archived = isDevelopmentArchive(relative),
-    originalTitle = text.match(/^#\s+(.+)$/m)?.[1];
-  const archiveTitle = contentPolicy.titles[published];
-  if (archiveTitle && originalTitle !== archiveTitle) {
-    const number = originalRelative.match(/pr(\d+)/i)?.[1];
-    text = text.replace(
-      /^#\s+.+$/m,
-      "# " +
-        archiveTitle +
-        (number
-          ? "\n\nSource: [" +
-            originalTitle +
-            "](https://github.com/orneryd/NornicDB/pull/" +
-            number +
-            ")."
-          : "\n\nOriginal report: " + originalTitle + "."),
-    );
-  }
-  references.set(
-    relative,
-    releaseReference || archived ? new Set() : codeReferences(text),
-  );
+  references.set(relative, releaseReference ? new Set() : codeReferences(text));
   const title =
     text
       .match(/^#\s+(.+)$/m)?.[1]
@@ -121,18 +101,12 @@ for (const file of walk(source)) {
     title,
     url: route(relative),
     text: text.replace(/[#*`]/g, ""),
-    category: archived
-      ? "Development archive"
-      : releaseReference
-        ? "release-branch reference"
-        : relative.split("/")[0],
-    semantic: !releaseReference && !archived,
+    category: releaseReference
+      ? "release-branch reference"
+      : relative.split("/")[0],
+    semantic: !releaseReference,
   });
-  if (archived) {
-    const note =
-      "\n\n::: info Development archive\nThis report records a specific change or qualification run. Its findings describe that source snapshot, not the current API contract.\n:::\n";
-    text = text.replace(/^(# .+)$/m, "$1" + note);
-  } else if (releaseReference) {
+  if (releaseReference) {
     const note = `\n\n::: info Release branch reference\nThis page records work on release/v1.4.4 at [${provenance.preservedFrom.slice(0, 8)}](https://github.com/orneryd/NornicDB/tree/${provenance.preservedFrom}). It may describe changes not yet on main.\n:::\n`;
     if (/^# .+$/m.test(text)) text = text.replace(/^(# .+)$/m, "$1" + note);
     else text += note;
@@ -150,7 +124,7 @@ for (const file of walk(source)) {
       [pathname, query] = url.split("?"),
       resolved = pathname.startsWith("/")
         ? path.resolve(source, "." + pathname)
-        : path.resolve(path.dirname(file), pathname);
+        : path.resolve(path.dirname(sourceFile), pathname);
     if (!resolved.startsWith(source + path.sep) && resolved !== source) {
       const repoPath = path
         .relative(contentRoot, resolved)
@@ -172,51 +146,6 @@ for (const file of walk(source)) {
   });
   fs.writeFileSync(dest, text);
 }
-const archivedDocuments = documents.filter((doc) =>
-  isDevelopmentArchive(doc.id),
-);
-function archiveIndex(relative, title, intro, entries) {
-  const text =
-    "# " +
-    title +
-    "\n\n" +
-    intro +
-    "\n\n" +
-    entries.map((doc) => `- [${doc.title}](${doc.url})`).join("\n") +
-    "\n";
-  const destination = path.join(
-    output,
-    relative.replace(/(^|\/)README\.md$/, "$1index.md"),
-  );
-  fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.writeFileSync(destination, text);
-  documents.push({
-    id: relative,
-    title,
-    url: route(relative),
-    text,
-    category: "Development archive",
-    semantic: false,
-  });
-  references.set(relative, new Set());
-}
-const pullRequestRecords = archivedDocuments.filter((doc) =>
-  doc.id.startsWith("development/archive/pull-requests/"),
-);
-if (pullRequestRecords.length)
-  archiveIndex(
-    "development/archive/pull-requests/README.md",
-    "Pull request records",
-    "Implementation reviews and measured qualification results. Pull request identifiers remain in each report as provenance.",
-    pullRequestRecords,
-  );
-if (archivedDocuments.length)
-  archiveIndex(
-    "development/archive/README.md",
-    "Development archive",
-    "Historical implementation reviews, benchmark baselines, and qualification records. These records are excluded from the current semantic index.",
-    archivedDocuments,
-  );
 const graphFile = path.join(site, ".source-graph.json");
 for (const directory of new Set(
   inventory.map((f) => path.posix.dirname(f.path)),
@@ -328,7 +257,8 @@ fs.writeFileSync(
 );
 fs.writeFileSync(
   path.join(site, "corpus-manifest.json"),
-  JSON.stringify({ files: inventory, exactDuplicates: duplicates }, null, 2) + "\n",
+  JSON.stringify({ files: inventory, exactDuplicates: duplicates }, null, 2) +
+    "\n",
 );
 fs.writeFileSync(
   path.join(output, "library.md"),

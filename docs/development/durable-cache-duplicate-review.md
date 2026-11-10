@@ -18,7 +18,7 @@ have different contracts; it does not mean a performance exemption.
 9 fresh and 125 Go-cached), source unchanged. The final remote scan timed out;
 the maintainer-authorized completed inventories below remain the review guide,
 not a clean final-source analyzer result. See the
-[qualification and measured costs](archive/pull-requests/durable-cache-qualification.md).
+[current read-delivery contract](storage-read-delivery.md).
 The unchanged ARM SIMD header has an extraction limitation; its symbols were not
 analyzed, although the Mac build compiles that header.
 

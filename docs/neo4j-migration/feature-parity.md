@@ -21,7 +21,7 @@ The December 2025 audit recorded the following estimates. These percentages are 
 | Functions           |  109% | Dec 2025 measurement: 147 functions vs Neo4j's 135. Current built-in surface: `SHOW FUNCTIONS`; APOC surface: [APOC Functions](../features/apoc-functions.md)   |
 | Indexes             |  100% | B-tree, full-text, vector, composite, range                                                                                                                   |
 | Constraints         |  100% | UNIQUE, EXISTS, NODE KEY, RELATIONSHIP KEY, property type (nodes + relationships) + temporal no-overlap, domain/enum, cardinality, endpoint policy extensions |
-| Transactions        |  100% | Full ACID with BEGIN/COMMIT/ROLLBACK                                                                                                                          |
+| Transactions        |  100% | Transactions with BEGIN/COMMIT/ROLLBACK; durability depends on configured sync policy                                                                                                                          |
 | Built-in Procedures |  100% | Dec 2025 measurement: 41 procedures (34 `db._` + 7 `dbms._`). Current surface: `SHOW PROCEDURES`                                                                 |
 | APOC                |  Partial | Dec 2025 measurement: 960+. Current: [APOC Functions](../features/apoc-functions.md) and the [procedure capability audit](../features/apoc-procedure-capabilities.md); remaining gaps tracked in [#1318](https://github.com/orneryd/NornicDB/issues/1318) |
 | Protocol/Drivers    |  95%  | Bolt v4.x, all major drivers                                                                                                                                  |
@@ -97,12 +97,12 @@ All constraint DDL supports `IF NOT EXISTS` for idempotent creation. Constraints
 
 ### 6. Transactions - 100%
 
-Full ACID guarantees via BadgerDB:
+Transaction behavior through native storage; see [durability boundaries](../operations/durability.md):
 
 - **Atomicity:** All operations commit together or none
 - **Consistency:** Constraint validation before commit
 - **Isolation:** Snapshot isolation via MVCC at the storage transaction layer, including read-your-writes and write-write conflict detection at commit
-- **Durability:** WAL-based crash recovery
+- **Durability:** WAL-based recovery with configurable sync/acknowledgement boundaries
 
 Supports: BEGIN/COMMIT/ROLLBACK, implicit transactions, automatic rollback on error, transaction metadata.
 
@@ -283,7 +283,7 @@ The current same-hardware Northwind benchmark records the following results for 
 | Peak system memory used        |   33.4 GiB |    32.5 GiB |                  -2.7% |
 | Total benchmark data directory |    204 MiB |     134 MiB |                 -34.3% |
 
-See the [full Northwind comparison](../development/archive/benchmarks/database-comparison-baseline/comparison.md) for workload, hardware, correctness fingerprints, power, and storage details. Treat these as workload-specific measurements rather than universal deployment requirements.
+See the [full Northwind comparison](../performance/benchmarks/database-comparison/comparison.md) for workload, hardware, correctness fingerprints, power, and storage details. Treat these as workload-specific measurements rather than universal deployment requirements.
 
 ---
 

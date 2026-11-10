@@ -66,6 +66,9 @@ for CHANGED in Makefile.bak docs/Makefile.md .github/workflows/ci.yml.orig neste
   [[ "${CHANGED}" != docs/Makefile.md ]] || expected=docs
   expect_steps "${expected}"
 done
+for CHANGED in CONTRIBUTING.md docs/development/contributing.md; do
+  expect_steps docs
+done
 CHANGED=Makefile
 ONLY=' tests conformance '
 expect_steps 'tests conformance'

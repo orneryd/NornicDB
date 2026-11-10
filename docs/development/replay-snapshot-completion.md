@@ -168,5 +168,5 @@ no skipped candidates. Both were verified against current source despite the
 stale indexed baseline, then consolidated: UNIQUE checks share the existing
 parameterized assertion and typed extractor, and the corruption-fixture tests
 share one setup with the union of their assertions. The discovered list-error
-forwarder is retired as well. See [each disposition and its proof](archive/pull-requests/duplicate-finding-dispositions.md).
+forwarder is retired as well. See the [accepted completion tests](../../pkg/storage/accepted_completion_fence_test.go) and [snapshot completion tests](../../pkg/storage/wal_snapshot_completion_test.go).
 These are test-only consolidations; the qualified production runtime is unchanged.

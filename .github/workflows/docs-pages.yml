@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - CONTRIBUTING.md
       - docs/**
       - docs-site/**
       - .github/workflows/docs-pages.yml

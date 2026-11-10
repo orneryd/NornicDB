@@ -665,7 +665,7 @@ HTTP, Bolt, GraphQL, gRPC, Cypher procedures — gets the same behavior).
 Subsequent requests are warm. This is useful for multi-tenant deployments where
 most databases are idle at any moment.
 
-Health checks must NOT target `/nornicdb/search` for `lazy` databases — see [Low Memory Mode → Caveat: health checks](../operations/low-memory-mode.md#caveat-health-checks).
+Health checks must NOT target `/nornicdb/search` for `lazy` databases — see [Low Memory Mode → Caveat: health checks](../operations/low-memory-mode.md#defer-search-loading).
 
 ## Related Docs
 

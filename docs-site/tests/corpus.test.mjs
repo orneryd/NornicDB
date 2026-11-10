@@ -8,12 +8,12 @@ import { createContentPolicy } from "../tools/content-policy.mjs";
 import { checkMaintenanceScope } from "../tools/maintenance-scope.mjs";
 const root = path.resolve("..");
 
-test("archive directories and historical local source links have public destinations", () => {
-  for (const file of ["development/index.md", "performance/index.md"])
-    assert.match(
-      fs.readFileSync(path.join(".generated", file), "utf8"),
-      /\]\(\/development\/archive\/index\.md\)/,
-    );
+test("retired archives stay unpublished and historical source links remain public", () => {
+  const docs = JSON.parse(
+    fs.readFileSync(".generated/public/search-index.json", "utf8"),
+  );
+  assert.ok(docs.every((doc) => !doc.id.startsWith("development/archive/")));
+  assert.equal(fs.existsSync(".generated/development/archive"), false);
   const benchmark = fs.readFileSync(
     ".generated/performance/benchmarks-vs-neo4j.md",
     "utf8",
@@ -67,10 +67,7 @@ test("release records follow their integration status in the current semantic sn
     fs.readFileSync(".generated/public/doc-code.json", "utf8"),
   );
   for (const doc of documents.filter((doc) => releases.has(doc.id))) {
-    if (
-      provenance.releaseContentIntegrated &&
-      !doc.id.startsWith("development/archive/")
-    ) {
+    if (provenance.releaseContentIntegrated) {
       assert.equal(doc.semantic, true, doc.id);
       continue;
     }
@@ -81,7 +78,7 @@ test("release records follow their integration status in the current semantic sn
       .replace(/(^|\/)README\.md$/, "$1index.md");
     assert.match(
       fs.readFileSync(path.join(".generated", file), "utf8"),
-      /::: info (Release branch reference|Development archive)/,
+      /::: info Release branch reference/,
     );
   }
 });
@@ -142,4 +139,26 @@ test("published source graph edges resolve and code snippets match their hashes"
       node.hash,
     );
   }
+});
+
+test("the contribution page renders and indexes the canonical repository guide", () => {
+  const docs = JSON.parse(
+    fs.readFileSync(".generated/public/search-index.json", "utf8"),
+  );
+  const doc = docs.find((doc) => doc.id === "development/contributing.md");
+  assert.ok(doc);
+  assert.match(doc.text, /Candidates may be pushed for review/);
+  assert.match(doc.text, /go mod download/);
+  const page = fs.readFileSync(
+    ".generated/development/contributing.md",
+    "utf8",
+  );
+  assert.match(page, /\]\(\/development\/embedding\.md\)/);
+  const manifest = JSON.parse(fs.readFileSync("corpus-manifest.json", "utf8"));
+  assert.equal(
+    manifest.files.find((f) => f.path === doc.id).sha256,
+    createHash("sha256")
+      .update(fs.readFileSync("../CONTRIBUTING.md"))
+      .digest("hex"),
+  );
 });

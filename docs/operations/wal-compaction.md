@@ -1,124 +1,78 @@
-# WAL Compaction and Truncation
+# WAL snapshots, compaction, and retention
 
-**Managing Write-Ahead Log growth in NornicDB**
+The application WAL records recovery intent. Compaction persists a snapshot before removing history it covers. It does not replace a backup or select acknowledgement sync policy; see [Durability](durability.md).
 
-Last Updated: December 2025
-
----
-
-## Overview
-
-NornicDB's Write-Ahead Log (WAL) supports automatic compaction to prevent unbounded growth. Without compaction, the WAL would grow indefinitely in long-running databases, consuming disk space and slowing recovery.
-
-## Upgrading and downgrading WAL stores
-
-v1.4.4 writes typed WAL payloads that older binaries cannot be relied on to
-read. The existing V4 storage migration converts supported historical WAL
-framing without changing existing Badger keys or adding a separate storage
-version. Historical application payload bytes remain intact; new buffered writes use the
-typed payload.
-
-Before upgrading, create and verify a backup of the database and its matching
-WAL. Start with `--upgrade-storage`; the migration converts the active WAL and
-retained segments, replays acknowledged writes, and retains the original WAL in
-a protected `wal.pre-v4-<id>` directory. This copy may contain plaintext data
-and credentials. Keep it protected and retain the independent pre-upgrade
-database backup and matching WAL for rollback. Restart with the upgrade flag if
-an upgrade is interrupted. Do not mix WALs from different database backups or
-use an older binary to recover a v1.4.4 WAL. See
-[Recovery format compatibility](recovery-format-compatibility.md).
-
-**Problem Solved**: WAL grows forever until manual snapshot + delete
-**Solution**: Automatic periodic snapshots with WAL truncation
-
----
-
-## Features
-
-### 1. Automatic Compaction (Recommended)
-
-Automatic compaction is the recommended approach for production deployments. Enable it through configuration:
-
-**YAML configuration:**
+## Server configuration
 
 ```yaml
 database:
-  wal_dir: "data/wal"
-  wal_sync_mode: "batch"
-  wal_snapshot_interval: 300000     # Milliseconds; check every five minutes
-  wal_auto_compaction_enabled: true  # Enabled by default
-  wal_snapshot_dir: "data/snapshots"
+  wal_auto_compaction_enabled: true
+  wal_snapshot_interval: 300000 # integer milliseconds: five minutes
+  wal_snapshot_retention_max_count: 3
+  wal_snapshot_retention_max_age: "0s"
+  wal_retention_max_segments: 0
+  wal_retention_max_age: "0s"
 ```
 
-**Environment variables:**
+| Environment setting | Default | Effect |
+| --- | --- | --- |
+| `NORNICDB_WAL_AUTO_COMPACTION_ENABLED` | `true` | Enable periodic snapshot/compaction checks. |
+| `NORNICDB_WAL_SNAPSHOT_INTERVAL` | `300000` | Milliseconds between server checks. |
+| `NORNICDB_WAL_SNAPSHOT_RETENTION_MAX_COUNT` | Storage default: 3 | Snapshot file count. Server value 0 leaves the storage default in effect. |
+| `NORNICDB_WAL_SNAPSHOT_RETENTION_MAX_AGE` | `0s` | Snapshot age limit; 0 disables age pruning. |
+| `NORNICDB_WAL_RETENTION_MAX_SEGMENTS` | `0` | Covered sealed-segment count limit when retention is enabled. |
+| `NORNICDB_WAL_RETENTION_MAX_AGE` | `0s` | Covered sealed-segment age limit when retention is enabled. |
+| `NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS` | `false` | With both segment limits unset, opt in to 24 segments and seven days. |
 
-```bash
-export NORNICDB_WAL_SNAPSHOT_INTERVAL=300000
-export NORNICDB_WAL_AUTO_COMPACTION_ENABLED=true
-```
+The server uses `<dataDir>/wal` and `<dataDir>/snapshots`. `wal_dir`, `wal_snapshot_dir`, `wal_batch_sync_interval`, `wal_max_file_size`, and `wal_max_entries` are not server YAML knobs. Direct `storage.WALConfig` callers have additional controls: its default snapshot interval is one hour, overridden to five minutes by the server.
 
-**Behavior:**
+## Compaction boundary
 
-- WAL changes are checked at the configured interval (default: 5 minutes)
-- Idle intervals do not create snapshots, scan nodes, or append checkpoints
-- WAL truncated after each successful snapshot (unless retention is configured; see Retention Settings)
-- Failures logged but don't crash the database
-- Automatic retry on next interval
-- Old snapshots saved to the snapshot directory as `snapshot-<timestamp>.json`
+The automatic worker:
 
-### 2. Manual WAL Truncation
+1. Acquires the mutation barrier and checks that accepted native publication permits a snapshot.
+2. Skips unchanged intervals after a completed compaction.
+3. Captures the WAL sequence/checkpoint and flushes acknowledged write-behind generations into Badger.
+4. Streams entities to a temporary snapshot, syncs it, renames it, and applies platform directory-sync policy.
+5. Calls `ManageSnapshot(ctx, sequence, storage.WALSnapshotTruncate)` to retire covered history.
+6. Prunes snapshot files after successful compaction.
 
-For development or special cases, you can trigger truncation manually. Create a snapshot and then truncate the WAL to remove all entries before the snapshot point.
+The snapshot and sequence must describe the same publication cut. Snapshot creation can delay writers behind the barrier and performs I/O proportional to stored data. It is not constant-time. Automatic snapshots use binary streaming format version 2 despite their `.json` suffix.
 
-**Safety Guarantees:**
+Incomplete snapshots are not recovery points. Persistence errors prevent corresponding truncation. If truncation fails after a snapshot is saved, the snapshot can remain usable while the WAL stays larger. Invalid manifests, unsupported formats, and unreadable records are not permission to discard history.
 
-- Atomic rename (crash-safe)
-- Old WAL remains intact until truncation succeeds
-- Can retry truncation if it fails
-- Recovery works from partial truncations
+## Retained segments
 
-### 3. Disable Automatic Compaction
+Zero/zero segment limits mean compaction drops covered entries; they do not enable an unlimited ledger. Setting either enables retention. Compaction seals the active segment and preserves uncovered history. The current retention routine protects covered segments whose creation time is inside the age window, then processes the remaining covered candidates. The count branch keeps the newest configured count only when that candidate population exceeds the count; candidates at or below the count are retired. A count setting alone therefore does not guarantee retention of that many covered segments. With age protection enabled, total retained segments can exceed the count setting. Qualify the required history on the actual store rather than treating these settings as a minimum ledger guarantee.
 
 ```yaml
 database:
-  wal_auto_compaction_enabled: false
+  wal_retention_max_segments: 24
+  wal_retention_max_age: "168h"
 ```
+
+Uncovered segments remain necessary regardless of age. Retention is not a disk-byte cap. WAL retention, recovery snapshots, MVCC history, CDC, and backups have separate lifecycles.
+
+Disable periodic compaction only with a separate snapshot and disk-capacity plan:
 
 ```bash
 export NORNICDB_WAL_AUTO_COMPACTION_ENABLED=false
 ```
 
-### 4. Retention Settings (Immutable Segments)
+This stops the worker, not ordinary rotation or manually invoked maintenance.
 
-NornicDB stores WAL as immutable segments with a manifest. You can retain sealed segments
-for audit/ledger use cases.
+## Embedded maintenance
 
-**YAML configuration:**
+Use `WALEngine.EnableAutoCompaction(snapshotDir)` / `DisableAutoCompaction` on a WAL-wrapped engine. `GetSnapshotStats()` returns `(totalSnapshots int64, lastSnapshotTime time.Time)`, not a struct with disk savings.
 
-```yaml
-database:
-  wal_retention_max_segments: 24
-  wal_retention_max_age: "168h" # 7 days
-```
+`WAL.ManageSnapshot` provides:
 
-**Environment variables:**
+- `storage.WALSnapshotTruncate`: validate/truncate covered active history, or rotate/apply configured retention.
+- `storage.WALSnapshotRetention`: prune sealed, covered segments without flushing/rotating the active WAL. Sequence zero is a no-op.
 
-```bash
-export NORNICDB_WAL_RETENTION_MAX_SEGMENTS=24
-export NORNICDB_WAL_RETENTION_MAX_AGE=168h
-export NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS=true
-```
+Raw `WAL.CreateSnapshot` builds an in-memory snapshot. It neither persists it nor establishes the wrapper's publication/mutation barrier. Do not follow it with truncation on a live database without matching coordination and successful persistence. Prefer the coordinated WAL engine lifecycle.
 
-These settings retain sealed WAL segments **after snapshots**. Auto-compaction remains
-enabled by default to preserve existing behavior; retention is **opt-in**.
-
-With either setting, each compaction seals the active WAL into a segment instead of
-dropping the entries the snapshot covers. Retention then removes only covered segments past
-their age (or beyond the newest N), so `db.txlog.entries` and replication can read entries
-for the retention period. Recovery still replays only the entries after the latest snapshot.
-Without retention, compaction drops covered entries as before.
-
-### 5. Txlog Query Procedures
+## Inspect the transaction log
 
 You can query WAL entries directly via Cypher:
 
@@ -189,222 +143,16 @@ that a backup is complete; check recovery diagnostics and verify the backup.
 
 ---
 
-## How It Works
+## Operations
 
-### Compaction Process
+Monitor complete WAL/snapshot directories, successful snapshot time, free space, retention, and failed flush/sync/truncation messages. Short intervals add I/O and writer latency; long intervals retain replay work. Measure recovery on a copy instead of assuming fixed timings or percentage savings.
 
-When a compaction cycle runs, NornicDB flushes any pending writes, then creates a point-in-time snapshot of the current database state. Once the snapshot is safely persisted, the active WAL is rewritten to contain only entries that arrived after the snapshot and replaced via an atomic rename. A sealed segment with entries newer than the snapshot remains in place until a later snapshot covers the whole segment. Covered segments and their manifest are cleaned up separately.
+If disk use grows, check snapshot completion, uncovered segments, and intentional retention. Check permissions/free space before retrying. Never delete the active WAL as a memory or disk-space workaround.
 
-Truncation refuses an invalid manifest, an unsupported WAL format, or an
-unreadable record before replacing the active WAL. Investigate the reported
-error and retain the existing WAL and snapshot for recovery; a failed read is
-not treated as proof that later entries can be discarded.
+## Format upgrades and rollback
 
-### Crash Safety
+Preserve a verified pre-upgrade backup with matching WAL/search/replication state. Authorize required migrations with `--upgrade-storage`; retain protected migration copies until validation succeeds. Restore matching pre-upgrade state for rollback. See [Recovery format compatibility](recovery-format-compatibility.md).
 
-For replacement of the active WAL file:
+## Implementation reference
 
-- **Before rename**: Old WAL is intact
-- **During rename**: Atomic operation (old or new, never partial)
-- **After rename**: New WAL is complete and synced
-
-If a crash occurs:
-
-- Before rename: Old WAL used on recovery (full history)
-- After rename: New WAL used on recovery (snapshot + delta)
-
-### Recovery
-
-With auto-compaction enabled:
-
-```
-Recovery = Latest Snapshot + Post-Snapshot WAL Entries
-```
-
-Example timeline:
-
-```
-T=0:   Database starts
-T=1h:  Snapshot 1 created (100 nodes), WAL truncated
-T=2h:  Snapshot 2 created (150 nodes), WAL truncated
-T=2.5h: Crash occurs (170 nodes in database)
-
-Recovery:
-  Load Snapshot 2 (150 nodes)
-  + Replay WAL since T=2h (20 new nodes)
-  = 170 nodes recovered
-```
-
----
-
-## Performance Impact
-
-### Disk Space
-
-**Before compaction:**
-
-```
-WAL size grows unbounded:
-  After 1 day:  ~10GB
-  After 1 week: ~70GB
-  After 1 month: ~300GB
-```
-
-**After compaction (hourly):**
-
-```
-WAL size bounded by interval:
-  Maximum size: ~500MB (1 hour of writes)
-  Average size: ~250MB
-  Disk savings: 99%+
-```
-
-### Recovery Time
-
-**Before compaction:**
-
-```
-Recovery time = O(total history)
-  1 day:  ~30 seconds
-  1 week: ~3 minutes
-  1 month: ~15 minutes
-```
-
-**After compaction:**
-
-```
-Recovery time = Snapshot load + O(interval writes)
-  Load snapshot: ~2 seconds
-  Replay WAL:    ~1 second
-  Total:         ~3 seconds (constant!)
-```
-
-### Runtime Overhead
-
-- **Snapshot creation**: ~2-5ms per 1000 nodes (async, doesn't block writes)
-- **WAL truncation**: ~10-50ms (happens every hour, negligible amortized cost)
-- **Total overhead**: <0.001% of runtime
-
----
-
-## Configuration
-
-### WAL Settings
-
-| Setting | Default | Description |
-|---|---|---|
-| `wal_dir` | `data/wal` | WAL directory |
-| `wal_sync_mode` | `batch` | Sync mode: `immediate`, `batch`, or `none` |
-| `wal_batch_sync_interval` | `100ms` | Batch sync frequency |
-| `wal_max_file_size` | `100MB` | File rotation trigger (bytes) |
-| `wal_max_entries` | `100000` | File rotation trigger (count) |
-| `wal_snapshot_interval` | `300000` | Milliseconds between WAL change checks |
-| `wal_auto_compaction_enabled` | `true` | Enable/disable auto-compaction |
-
-### Tuning Snapshot Interval
-
-**Aggressive (every 15 minutes):**
-
-- Minimal WAL size
-- Faster recovery
-- More snapshot overhead
-- Good for: High-write, limited disk space
-
-**Moderate (every hour — default):**
-
-- Balanced disk usage
-- Good recovery time
-- Low overhead
-- Good for: Most use cases
-
-**Conservative (every 6 hours):**
-
-- Larger WAL size
-- Slower recovery
-- Minimal overhead
-- Good for: Low-write, plenty of disk space
-
----
-
-## Monitoring
-
-NornicDB exposes compaction metrics that you can use to monitor WAL health:
-
-- **Total snapshots created** — number of successful compaction cycles since startup
-- **Last snapshot time** — timestamp of the most recent snapshot
-- **WAL entry count** — current number of entries in the active WAL
-- **WAL bytes written** — total bytes in the active WAL
-
-These metrics are available through the server's diagnostics and can be monitored via the admin UI or log output.
-
----
-
-## Troubleshooting
-
-### Issue: WAL still growing despite auto-compaction
-
-**Check:**
-
-1. Verify auto-compaction is enabled in your configuration (`wal_auto_compaction_enabled: true`)
-
-2. Check snapshot directory for recent files:
-
-   ```bash
-   ls -lh data/snapshots/
-   # Should see snapshot-<timestamp>.json files
-   ```
-
-3. Check WAL size:
-   ```bash
-   ls -lh data/wal/wal.log
-   ```
-
-### Issue: Truncation errors
-
-**Symptom**: Logs show "failed to truncate WAL"
-
-**Causes:**
-
-- Disk full
-- Permission issues
-- WAL file locked by another process
-
-**Solution:**
-
-```bash
-# Check disk space
-df -h
-
-# Check permissions
-ls -l data/wal/
-chmod 644 data/wal/wal.log
-
-# Check for locks
-lsof | grep wal.log
-```
-
-### Issue: Slow recovery after crash
-
-**Check snapshot age:**
-
-```bash
-ls -lt data/snapshots/ | head -1
-```
-
-If snapshot is old, auto-compaction may not be running. Verify your configuration and check server logs for compaction errors.
-
----
-
-## Best Practices
-
-1. **Always enable auto-compaction in production** — this is the default and should not be disabled unless you have a specific reason.
-
-2. **Monitor snapshot creation** — check server logs or metrics to confirm snapshots are being created at the expected interval.
-
-3. **Rotate old snapshots** to avoid filling disk with historical snapshots:
-
-   ```bash
-   find data/snapshots -name "snapshot-*.json" -mtime +7 -delete
-   ```
-
-4. **Test recovery regularly** — periodically verify that your latest snapshot can be loaded and that the WAL replays correctly.
+[Coordinated compaction](../../pkg/storage/wal_engine.go), [configuration/retention](../../pkg/storage/wal.go), [streaming publication](../../pkg/storage/snapshot_stream.go), and [temporary-file handling](../../pkg/storage/snapshot_temp.go).

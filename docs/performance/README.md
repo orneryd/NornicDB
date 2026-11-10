@@ -23,7 +23,3 @@ Report directories use stable topic names. Build identifiers, versions, and date
 - [HTTP optimization](http-optimization-options.md)
 - [Profiling with pprof](pprof-quick-guide.md)
 - [Single-request measurements](single-request-benchmark.md)
-
-## Development records
-
-[Earlier benchmark baselines and PR-specific qualification records](../development/archive/) are kept with the development material.

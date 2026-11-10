@@ -280,8 +280,7 @@ and WAL callers use the immutable prepared source directly, avoiding the public
 and cascading-deletion IDs as well as after-images; changing a returned image
 cannot mutate the accepted commit. The semantic transaction wire is unchanged.
 
-The [paired UNIQUE commit measurements](archive/pull-requests/unique-claims.md)
-record the workload, correctness boundary and allocation effects of these checks.
+See the [transaction contract](../user-guides/transactions.md) for conflict and uniqueness behavior.
 
 ### Context-bearing authority and drains
 

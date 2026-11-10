@@ -8,10 +8,17 @@ const rules = JSON.parse(fs.readFileSync("content-policy.json", "utf8")),
   policy = createContentPolicy(rules);
 test("only explicitly approved obsolete documentation is removed", () => {
   assert.equal(policy.sourcePath("docs/.flagged-internal.md"), null);
+  for (const target of Object.values(rules.relocations).filter((p) =>
+    p.startsWith("docs/development/archive/"),
+  ))
+    assert.equal(policy.sourcePath(target), null);
+  for (const [original, target] of Object.entries(rules.relocations))
+    if (target.startsWith("docs/development/archive/"))
+      assert.equal(policy.sourcePath(original), null);
   for (const file of rules.removed) {
     assert.match(
       file,
-      /^docs\/(?:plans\/|performance\/(?:vector-ann|testdata\/|release144-verification-convergence\.md))/,
+      /^docs\/(?:plans\/|development\/archive\/|performance\/(?:vector-ann|testdata\/|release144-verification-convergence\.md))/,
     );
     assert.equal(policy.sourcePath(file), null, file);
     assert.equal(fs.existsSync("../" + file), false, file);

@@ -19,7 +19,7 @@ PUSH_WORKFLOWS = {
     "cd-llama-cuda.yml": {"branches": ["main"], "paths": ["docker/Dockerfile.llama-cuda"]},
     "docs-pages.yml": {
         "branches": ["main"],
-        "paths": ["docs/**", "docs-site/**", ".github/workflows/docs-pages.yml"],
+        "paths": ["CONTRIBUTING.md", "docs/**", "docs-site/**", ".github/workflows/docs-pages.yml"],
     },
 }
 
@@ -143,7 +143,7 @@ def self_test():
         assert not violations(name, {**base, "on": {"push": push}})
     # Docs publishing publishes on main pushes only; the portal paths follow the
     # VitePress docs-site, and every runner keeps the administrator gate.
-    docs_push = {"branches": ["main"], "paths": ["docs/**", "docs-site/**", ".github/workflows/docs-pages.yml"]}
+    docs_push = {"branches": ["main"], "paths": ["CONTRIBUTING.md", "docs/**", "docs-site/**", ".github/workflows/docs-pages.yml"]}
     docs = {**base, "on": {"push": docs_push, "workflow_dispatch": None}}
     assert not violations("docs-pages.yml", docs)
     assert violations("docs-pages.yml", {**docs, "on": {"pull_request": {"branches": ["main"]}, "push": docs_push}})
