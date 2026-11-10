@@ -778,7 +778,7 @@ func TestTxReads_MergePendingNodesLocked(t *testing.T) {
 	pendingIncluded := &Node{ID: "test:carol", Labels: []string{"Person"}, Properties: map[string]any{"name": "Carol"}}
 	pendingExcluded := &Node{ID: "test:draft", Labels: []string{"Draft"}, Properties: map[string]any{"name": "Draft"}}
 
-	tx := &BadgerTransaction{
+	tx := &BadgerTransaction{engine: newTestMemoryEngine(t).BadgerEngine,
 		Status: TxStatusActive,
 		pendingNodes: map[NodeID]*Node{
 			pendingReplacement.ID: pendingReplacement,
@@ -822,7 +822,7 @@ func TestTxReads_MergePendingEdgesLocked(t *testing.T) {
 	pendingIncluded := &Edge{ID: "test:e3", StartNode: "test:bob", EndNode: "test:dave", Type: "KNOWS", Properties: map[string]any{"since": int64(2025)}}
 	pendingExcluded := &Edge{ID: "test:e4", StartNode: "test:bob", EndNode: "test:dave", Type: "FOLLOWS", Properties: map[string]any{"since": int64(2026)}}
 
-	tx := &BadgerTransaction{
+	tx := &BadgerTransaction{engine: newTestMemoryEngine(t).BadgerEngine,
 		Status: TxStatusActive,
 		pendingEdges: map[EdgeID]*Edge{
 			pendingReplacement.ID: pendingReplacement,
@@ -867,7 +867,7 @@ func benchmarkTxReadsMergePendingNodes(b *testing.B, pendingNodes func() map[Nod
 	if pendingNodes != nil {
 		overlay = pendingNodes()
 	}
-	tx := &BadgerTransaction{Status: TxStatusActive, pendingNodes: overlay}
+	tx := &BadgerTransaction{engine: newTestMemoryEngine(b).BadgerEngine, Status: TxStatusActive, pendingNodes: overlay}
 	include := func(node *Node) bool { return node != nil && len(node.Labels) > 0 && node.Labels[0] == "Person" }
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -913,7 +913,7 @@ func BenchmarkTxReads_MergePendingEdgesLocked_WithOverlay(b *testing.B) {
 		id := EdgeID("test:e" + strconv.Itoa(i))
 		pending[id] = &Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "KNOWS"}
 	}
-	tx := &BadgerTransaction{Status: TxStatusActive, pendingEdges: pending}
+	tx := &BadgerTransaction{engine: newTestMemoryEngine(b).BadgerEngine, Status: TxStatusActive, pendingEdges: pending}
 	include := func(edge *Edge) bool { return edge != nil && edge.Type == "KNOWS" }
 	b.ReportAllocs()
 	b.ResetTimer()

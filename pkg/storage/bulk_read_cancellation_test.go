@@ -511,6 +511,7 @@ func TestBulkReadCancellationOverlayCaptureKernelRetires(t *testing.T) {
 // staged writes become one population.
 func TestBulkReadCancellationTransactionMergeKernelRetires(t *testing.T) {
 	tx := &BadgerTransaction{
+		engine:       newTestMemoryEngine(t).BadgerEngine,
 		Status:       TxStatusActive,
 		pendingNodes: make(map[NodeID]*Node, 4),
 		pendingEdges: make(map[EdgeID]*Edge, 1),
