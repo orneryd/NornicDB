@@ -633,9 +633,12 @@ func (f *Functions) Subgraph(ctx context.Context, startNode *Node, depth int) (m
 	currentDepth := 0
 
 	// The supplied start node stays the caller's: the cache retains its own copy.
+	// The copy runs outside the cache mutex because a supported value-copy
+	// callback may read cache statistics.
+	startCopy := nativestorage.CopyValue(startNode, nil).(*Node)
 	f.cache.mu.Lock()
-	defer f.cache.mu.Unlock()
-	f.cache.nodes[startNode.ID] = nativestorage.CopyValue(startNode, nil).(*Node)
+	f.cache.nodes[startCopy.ID] = startCopy
+	f.cache.mu.Unlock()
 	nodesLoaded++
 
 	for len(queue) > 0 && currentDepth < depth {
@@ -652,6 +655,8 @@ func (f *Functions) Subgraph(ctx context.Context, startNode *Node, depth int) (m
 			current := queue[0]
 			queue = queue[1:]
 
+			// Every backend read stays outside the cache mutex: the backend and
+			// its own value-copy callbacks may read cache statistics.
 			neighbors, err := f.backend.GetNodeNeighbors(ctx, current.ID, "", storage.DirectionBoth)
 			if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
 				return nil, err
@@ -661,6 +666,9 @@ func (f *Functions) Subgraph(ctx context.Context, startNode *Node, depth int) (m
 			}
 
 			if err == nil {
+				// Newly reached neighbors are decided from this job's own visited
+				// set, then published from the returned slice as one batch.
+				publish := neighbors[:0]
 				for _, neighbor := range neighbors {
 					if ctx.Err() != nil {
 						break
@@ -669,9 +677,16 @@ func (f *Functions) Subgraph(ctx context.Context, startNode *Node, depth int) (m
 					if !visited[neighbor.ID] {
 						visited[neighbor.ID] = true
 						queue = append(queue, neighbor)
-						f.cache.nodes[neighbor.ID] = neighbor
+						publish = append(publish, neighbor)
 						nodesLoaded++
 					}
+				}
+				if len(publish) > 0 {
+					f.cache.mu.Lock()
+					for _, node := range publish {
+						f.cache.nodes[node.ID] = node
+					}
+					f.cache.mu.Unlock()
 				}
 			}
 
@@ -685,6 +700,9 @@ func (f *Functions) Subgraph(ctx context.Context, startNode *Node, depth int) (m
 			}
 
 			if err == nil {
+				// Whether a relationship is new to the cache is cache state, so the
+				// membership check and its count share one short publication scope.
+				f.cache.mu.Lock()
 				for _, rel := range rels {
 					if ctx.Err() != nil {
 						break
@@ -695,6 +713,7 @@ func (f *Functions) Subgraph(ctx context.Context, startNode *Node, depth int) (m
 						relsLoaded++
 					}
 				}
+				f.cache.mu.Unlock()
 			}
 		}
 		currentDepth++
@@ -721,13 +740,25 @@ func (f *Functions) Subgraph(ctx context.Context, startNode *Node, depth int) (m
 func (f *Functions) Path(nodes []*Node, rels []*Relationship) map[string]interface{} {
 	start := time.Now()
 
-	// The supplied values stay the caller's: the cache retains its own copy.
-	f.cache.mu.Lock()
-	for _, node := range nodes {
-		f.cache.nodes[node.ID] = nativestorage.CopyValue(node, nil).(*Node)
+	// The supplied values stay the caller's: the cache retains its own copy. The
+	// copies run outside the cache mutex because a supported value-copy callback
+	// may read cache statistics.
+	ownedNodes := make([]*Node, len(nodes))
+	for i, node := range nodes {
+		ownedNodes[i] = nativestorage.CopyValue(node, nil).(*Node)
 	}
-	for _, rel := range rels {
-		f.cache.relationships[rel.ID] = nativestorage.CopyValue(rel, nil).(*Relationship)
+	ownedRelationships := make([]*Relationship, len(rels))
+	for i, rel := range rels {
+		ownedRelationships[i] = nativestorage.CopyValue(rel, nil).(*Relationship)
+	}
+
+	// One short publication scope over the finished copies.
+	f.cache.mu.Lock()
+	for _, node := range ownedNodes {
+		f.cache.nodes[node.ID] = node
+	}
+	for _, rel := range ownedRelationships {
+		f.cache.relationships[rel.ID] = rel
 	}
 	f.cache.mu.Unlock()
 
@@ -938,9 +969,6 @@ func (f *Functions) Progress(ctx context.Context) (map[string]interface{}, error
 		return nil, operationError
 	}
 
-	f.cache.mu.RLock()
-	defer f.cache.mu.RUnlock()
-
 	// Get totals from storage
 	allNodes, storageError11 := f.backend.AllNodes(ctx)
 	if storageError11 != nil {
@@ -961,8 +989,11 @@ func (f *Functions) Progress(ctx context.Context) (map[string]interface{}, error
 	totalNodes := len(allNodes)
 	totalRels := len(allRels)
 
+	// Snapshot cache counters only after external storage/copy callbacks finish.
+	f.cache.mu.RLock()
 	cachedNodes := len(f.cache.nodes)
 	cachedRels := len(f.cache.relationships)
+	f.cache.mu.RUnlock()
 
 	percentage := 0.0
 	if totalNodes+totalRels > 0 {

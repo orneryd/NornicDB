@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Isolate APOC graph/warmup and Cypher query-cache results from retained state:
   embedded callers can change returned containers without changing later reads.
+  Live streamed node/relationship property lists no longer change subsequent
+  rows when a consumer mutates an earlier row, with decay enabled or disabled.
   APOC Go property updates now use `PropertyUpdate{Set, Remove}` so explicit
   renames remove the old key while preserving unrelated properties. Go callers
   and plugins must rebuild; stored formats are unchanged. See the

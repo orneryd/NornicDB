@@ -426,7 +426,7 @@ func TestStatementPropertyViewMemoIsReleasedAtEveryPublishedRow(t *testing.T) {
 		"the statement view is a detached projection, never the stored map")
 	require.Same(t, view, scoped.queryVisibleValue(source), "the view is reused inside the statement before publication")
 
-	published := scoped.publishQueryRow([]interface{}{source})
+	published, _ := scoped.publishQueryRow([]interface{}{source})
 	require.Len(t, views.nodes, 0, "publication releases the node view")
 	require.Len(t, views.nodeBodies, 0, "publication releases the detached body snapshot")
 	require.Len(t, views.edges, 0)

@@ -16,9 +16,9 @@ func TestAPOCPropertyUpdatesPersistThroughNativeBackends(t *testing.T) {
 			if backend == "memory" {
 				base = fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			} else {
-				engine, err := storage.NewBadgerEngineInMemory()
+				engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 				require.NoError(t, err)
-				base = fixtureowner.Own(t, fixtureowner.Track(t, engine, storage.ErrStorageClosed))
+				base = fixtureowner.Own(t, engine)
 			}
 			native := storage.NewNamespacedEngine(base, "apoc_property_ownership")
 			_, err := native.CreateNode(t.Context(), &storage.Node{

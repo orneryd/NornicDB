@@ -86,18 +86,18 @@ func (v *statementPropertyViews) node(source *storage.Node) *storage.Node {
 		return cached
 	}
 	// Include source, detached scoring body, projected map and map/key overhead.
-	bytes := int64(512+len(source.ID)) + 3*util.EstimateValueBytes(source.Properties) + util.EstimateValueBytes(source.Labels) + util.EstimateValueBytes(source.EmbedMeta)
+	bytes := int64(512+len(source.ID)) + 3*util.EstimateValueBytes(source.Properties) + 2*util.EstimateValueBytes(source.Labels) + 2*util.EstimateValueBytes(source.EmbedMeta)
 	for name, vector := range source.NamedEmbeddings {
-		bytes += int64(64 + len(name) + 4*cap(vector))
+		bytes += 2 * int64(64+len(name)+4*cap(vector))
 	}
 	for _, vector := range source.ChunkEmbeddings {
-		bytes += int64(24 + 4*cap(vector))
+		bytes += 2 * int64(24+4*cap(vector))
 	}
 	cache := v.reserve(bytes)
 	if !cache {
 		out := *source
 		out.Properties = v.projection.NodeProperties(source)
-		return &out
+		return storage.CopyNode(&out)
 	}
 	if v.nodes == nil {
 		v.nodes = make(map[*storage.Node]*storage.Node)
@@ -111,14 +111,18 @@ func (v *statementPropertyViews) node(source *storage.Node) *storage.Node {
 	if !ok || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !slices.Equal(source.Labels, body.source.Labels) || !reflect.DeepEqual(source.Properties, body.source.Properties) {
 		snapshot := storage.CopyNode(&storage.Node{ID: source.ID, Labels: source.Labels, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
 		snapshot.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: source.RuntimeMetadata().Database})
-		body = nodePropertyViewBody{snapshot, v.projection.NodeProperties(source)}
+		body = nodePropertyViewBody{snapshot, v.projection.NodeProperties(snapshot)}
 		v.nodeBodies[identity] = body
 	}
-	out := *source
-	out.Properties = body.properties
-	v.nodes[source] = &out
-	v.nodes[&out] = &out
-	return &out
+	// The body snapshot already owns properties and labels. Reuse those copies;
+	// detach the remaining mutable node fields through the native copy owner.
+	image := *source
+	image.Properties, image.Labels = nil, nil
+	out := storage.CopyNode(&image)
+	out.Properties, out.Labels = body.properties, body.source.Labels
+	v.nodes[source] = out
+	v.nodes[out] = out
+	return out
 }
 
 func (v *statementPropertyViews) edge(source *storage.Edge) *storage.Edge {
@@ -134,7 +138,7 @@ func (v *statementPropertyViews) edge(source *storage.Edge) *storage.Edge {
 	if !v.reserve(bytes) {
 		out := *source
 		out.Properties = v.projection.EdgeProperties(source)
-		return &out
+		return storage.CopyEdge(&out)
 	}
 	if v.edges == nil {
 		v.edges = make(map[*storage.Edge]*storage.Edge)
@@ -144,7 +148,7 @@ func (v *statementPropertyViews) edge(source *storage.Edge) *storage.Edge {
 	body, ok := v.edgeBodies[identity]
 	if !ok || source.Type != body.source.Type || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !reflect.DeepEqual(source.Properties, body.source.Properties) {
 		snapshot := storage.CopyEdge(&storage.Edge{ID: source.ID, Database: source.Database, Type: source.Type, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
-		body = edgePropertyViewBody{snapshot, v.projection.EdgeProperties(source)}
+		body = edgePropertyViewBody{snapshot, v.projection.EdgeProperties(snapshot)}
 		v.edgeBodies[identity] = body
 	}
 	out := *source

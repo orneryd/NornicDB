@@ -51,10 +51,13 @@ WAL records, or the storage version, and needs no database migration.
 
 ## Verification and costs
 
-The ownership regressions exercise public getters, warmup, cached execution and
-explicit property writes. The statement-local view audit is bounded to its
-named public consumer/lifecycle cases; it does not claim arbitrary plugin
-behavior was exhaustively proved. See [workload measurements](../performance/retained-result-ownership.md)
+The ownership regressions exercise public getters, warmup, cached execution,
+explicit property writes and live streamed rows. Statement-local projections now
+use their already-owned scoring snapshot, so a returned property list cannot
+mutate the producer's later reads. Streams without those detached views copy
+through the same structural value owner, rebinding literal-map metadata and
+checking cancellation before publication. The named node/relationship and
+budget-path controls do not claim exhaustive arbitrary plugin qualification. See [workload measurements](../performance/retained-result-ownership.md)
 for copy and traversal cost controls. Final merge readiness is recorded on the
 PR from the exact integrated candidate's tests and CI, not inferred from these
 examples.

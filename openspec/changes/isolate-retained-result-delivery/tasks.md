@@ -24,9 +24,11 @@ collection census or speculative mutation API. No duplicate-checker changes.
 - Original release bea145d51 fails the APOC point/warmup and public cached
   Execute mutation regressions. The integrated candidate passes affected
   storage/warmup packages with race detection and the expanded Cypher checks.
-- NOR-310: nine cache-disabled public consumer/lifecycle probes do not reproduce
-  a distinct statement-local mutation leak; no production view copies added.
-  This is bounded route evidence, not an exhaustive claim about arbitrary code.
+- NOR-310: the initial scalar probes did not reproduce a separate leak. Extended
+  legal property-list probes do reproduce both node/relationship continuation
+  mutation with result caching disabled. Projection now uses its owned scoring
+  snapshot; no-memo streams detach at delivery, retaining map metadata and
+  cancellation. Both decay modes and the over-budget view path are covered.
 - [x] Fix absent property-map updates without changing partial-update semantics.
 - [x] Reject publication when point-read copying observes caller cancellation.
 - [x] Degree and shortest-path walks copy only payloads returned to callers.
@@ -48,3 +50,16 @@ collection census or speculative mutation API. No duplicate-checker changes.
 - [x] Review regenerated census artifacts: only caller-copy progress source
   position changed, from property_copy.go:92 to :123. No rules or classifications
   changed. Fresh current-artifact and ordered-write census checks pass.
+
+- [x] Correct the warmup Path/Subgraph/Progress callback lock scopes exposed by
+  final review. Keep incremental subgraph progress and short publication locks.
+- [x] Correct the CI fixture-lifetime constructor registration, retaining the
+  unchanged blocking ownership guard and native adapter assertions.
+- [x] Correct live streamed row ownership, reuse one map-order transfer owner,
+  and reject cancellation during row copying. Existing stream cancellation
+  fixture now buffers under a live context before canceling; assertions remain.
+- [x] Record final publication benchmark/profile results: default memo allocation
+  counts unchanged; unsafe plain-stream aliasing replaced with per-row owned
+  images, with cost documented. Reuse single-column output buffers saves
+  8,800 B and 400 allocations per 100-row operation versus first correct copy.
+- [ ] Complete new-head make-test CI after integrated continuation fixes.

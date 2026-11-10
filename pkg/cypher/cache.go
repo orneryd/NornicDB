@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
-	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -311,9 +309,7 @@ func cacheOwnedResult(result *ExecuteResult) *ExecuteResult {
 	if result.MapKeyOrders != nil {
 		orders = make(map[uintptr][]string, len(result.MapKeyOrders))
 		mapCopied = func(source, copied map[string]any) {
-			if keys, found := result.MapKeyOrders[uintptr(reflect.ValueOf(source).UnsafePointer())]; found {
-				orders[uintptr(reflect.ValueOf(copied).UnsafePointer())] = slices.Clone(keys)
-			}
+			transferMapKeyOrder(result.MapKeyOrders, orders, source, copied)
 		}
 	}
 	// Rebind only orders for maps present in this result, instead of cloning
