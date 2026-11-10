@@ -14,13 +14,13 @@ fields use `NumberMap` and `NumberList`, keeping values beyond 2^53 exact.
 string representation. Nested typed recovery views select `ProjectedInput`
 explicitly; client buffers and streams enter as raw JSON.
 
-The format remains JSON. Ordinary backspace and formfeed may be written as
-`\u0008` and `\u000c` rather than `\b` and `\f`; both old and new readers see the
-same values. This cosmetic spelling change does not require a storage-version
-migration. Existing valid opaque RawMessage bytes are retained before enclosing
-serialization, and custom marshalers run once. New surrogate values extend the
-admitted domain; this does not promise exact decoding of that new domain by
-older readers that replaced such units.
+The format remains JSON. The shared string writer emits ordinary backspace and
+formfeed as `\b` and `\f`, matching historical `apoc.convert.toJson` and APOC.
+Readers continue to accept `\u0008` and `\u000c` with the same values; no
+storage-version migration is required. Existing valid opaque RawMessage bytes
+are retained before enclosing serialization, and custom marshalers run once.
+New surrogate values extend the admitted domain; this does not promise exact
+decoding of that new domain by older readers that replaced such units.
 
 Integrated consumers are the transaction HTTP request/response and remote HTTP
 value paths, APOC JSON conversion, native catalog/schema metadata and WAL/recovery

@@ -8,6 +8,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestApocConvertToJSONShortControlEscapes(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "tojson"))
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name, query string
+		params      map[string]interface{}
+		want        string
+	}{
+		{"literal", `RETURN apoc.convert.toJson('a\bb\fc') AS v`, nil, `"a\bb\fc"`},
+		{"literal backslashes", `RETURN apoc.convert.toJson('a\\bb\\fc') AS v`, nil, `"a\\bb\\fc"`},
+		{
+			"nested keys and values",
+			`RETURN apoc.convert.toJson($value) AS v`,
+			map[string]interface{}{"value": map[string]interface{}{"\b\f": []interface{}{"a\bb\fc", float64(1), int64(9007199254740993), nil}}},
+			`{"\b\f":["a\bb\fc",1.0,9007199254740993,null]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := exec.Execute(ctx, tc.query, tc.params)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{tc.want}}, result.Rows)
+		})
+	}
+}
+
 // apoc.convert.toJson writes <, > and & as themselves, as APOC (Jackson)
 // does, so JSON text built in Cypher matches other writers' byte for byte: in
 // a statement, after UNWIND, and in the expression evaluator.

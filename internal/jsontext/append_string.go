@@ -21,6 +21,10 @@ func AppendString(buf []byte, s string) []byte {
 			switch c {
 			case '"', '\\':
 				buf = append(buf, '\\', c)
+			case '\b':
+				buf = append(buf, '\\', 'b')
+			case '\f':
+				buf = append(buf, '\\', 'f')
 			case '\n':
 				buf = append(buf, '\\', 'n')
 			case '\r':
