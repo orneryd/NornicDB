@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 
 // Registered functions interpose real peer commits between MATCH's observation
 // and mutation staging, without production test hooks or timing races.
-func TestPR1655ExecuteObservedVanishedMutation(t *testing.T) {
+func TestObservedTargetDeletedBeforeMutationReturnsConflict(t *testing.T) {
 	for _, wb := range []bool{false, true} {
 		for _, explicit := range []bool{false, true} {
 			for _, tc := range []struct {
@@ -104,7 +105,19 @@ func TestPR1655ExecuteObservedVanishedMutation(t *testing.T) {
 						}
 						return nil, false
 					})
-					query := "WITH audit.create() AS seed CREATE (:Marker {id:'writer'}) WITH seed " + tc.match + " " + tc.mutation
+					mutation := tc.mutation
+					if !strings.HasPrefix(mutation, "WITH ") {
+						target := "n"
+						if tc.edge {
+							target = "r"
+						}
+						erase := "audit.erase(" + target + ")"
+						// SET/REMOVE now owns the body before evaluating its RHS.
+						// Interpose in WITH instead, after observation but before
+						// that lock, so the peer deletion can actually commit.
+						mutation = "WITH " + target + ", " + erase + " AS erased " + strings.ReplaceAll(mutation, erase, "erased")
+					}
+					query := "WITH audit.create() AS seed CREATE (:Marker {id:'writer'}) WITH seed " + tc.match + " " + mutation
 					_, err = writer.Execute(ctx, query, nil)
 					require.Equal(t, 1, created)
 					require.Equal(t, 1, deleted, "the target was actually read before peer deletion")
@@ -132,7 +145,7 @@ func TestPR1655ExecuteObservedVanishedMutation(t *testing.T) {
 // The live write-behind view can expose committed targets created after BEGIN.
 // Read them through the actual statement transaction, then delete them before
 // staging. A beginning-of-transaction presence snapshot cannot prove this read.
-func TestPR1655ExecuteNewlyObservedTargetDisappears(t *testing.T) {
+func TestNewlyObservedTargetDeletedBeforeMutationReturnsConflict(t *testing.T) {
 	for _, edge := range []bool{false, true} {
 		for _, explicit := range []bool{false, true} {
 			t.Run(fmt.Sprintf("edge=%v/explicit=%v", edge, explicit), func(t *testing.T) {
@@ -196,7 +209,7 @@ func TestPR1655ExecuteNewlyObservedTargetDisappears(t *testing.T) {
 					}
 					return nil, false
 				})
-				_, err = writer.Execute(ctx, "WITH audit.observe() AS entity CREATE (:Marker) WITH entity SET entity.value = audit.erase(entity)", nil)
+				_, err = writer.Execute(ctx, "WITH audit.observe() AS entity CREATE (:Marker) WITH entity, audit.erase(entity) AS erased SET entity.value = erased", nil)
 				require.Equal(t, 1, observed)
 				require.Equal(t, 1, deleted)
 				require.ErrorIs(t, err, storage.ErrConflict, "the actual post-BEGIN observation must reach storage")

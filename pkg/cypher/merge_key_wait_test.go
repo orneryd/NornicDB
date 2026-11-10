@@ -147,13 +147,7 @@ func TestMergeKeyTimeoutEndsTheExplicitTransaction(t *testing.T) {
 func TestMergeKeyWaitBudgetIgnoresTransactionAge(t *testing.T) {
 	_, holder, waiter := mergeKeyWaitExecutors(t, 400*time.Millisecond)
 	time.Sleep(500 * time.Millisecond)
-	waits := make(chan struct{}, 1)
-	t.Cleanup(storage.SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waits <- struct{}{}:
-		default:
-		}
-	}))
+	waits := runtimeFixtureOwner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 1)
 	done := make(chan error, 1)
 	go func() {
 		_, err := waiter.Execute(t.Context(), "MERGE (:U {k: 1})", nil)

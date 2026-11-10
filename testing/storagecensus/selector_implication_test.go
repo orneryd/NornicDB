@@ -34,7 +34,7 @@ func callTo(t *testing.T, fn *ssa.Function, name string) *ssa.Call {
 func TestSelectorImpliesDecidesOnlyKnownComparisons(t *testing.T) {
 	_, pkg := ssaFixture(t, `package storage
  func probe(first, second int){}
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	first, second := pkg.Func("probe").Params[0], pkg.Func("probe").Params[1]
 	for _, tc := range []struct {
 		name           string
@@ -71,7 +71,7 @@ func TestSelectorImpliesDecidesOnlyKnownComparisons(t *testing.T) {
 func TestConditionKnownKeepsSelectorDecisions(t *testing.T) {
 	_, pkg := ssaFixture(t, `package storage
  func compare(kind, other int)bool{return kind==1}
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	fn := pkg.Func("compare")
 	var value ssa.Value
 	for _, block := range fn.Blocks {
@@ -124,7 +124,7 @@ const selectorFixture = `package storage
 // ambiguous, and a known selector prunes a return only when the shared
 // implication decides it.
 func TestMutexFieldPrunesOnlyDecidedReturns(t *testing.T) {
-	p, pkg := ssaFixture(t, selectorFixture, "pkg/storage", ssa.SanityCheckFunctions)
+	p, pkg := ssaFixture(t, selectorFixture, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	q := &acquirer{p: p}
 	fn := pkg.Func("probe")
 	choose := callTo(t, fn, "choose")

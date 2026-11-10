@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,12 +76,12 @@ func TestBoltIdleHolderEndsAtTransactionTimeout(t *testing.T) {
 // the holder's COMMIT is refused with Terminated.
 func TestBoltTerminateEndsAnIdleHolderAtOnce(t *testing.T) {
 	driver, _ := startKeyWaitBolt(t, 5*time.Second, 0)
-	waits := keyWaitSignal(t)
+	waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	holder := holdBoltKeys(t, driver, "terminated")
 	drainKeyWaits(waits)
 	done := startBoltKeyWaiter(ctx, driver, false, "MERGE (n:Doc {id: $k})", map[string]any{"k": "terminated"})
-	awaitKeyWait(t, waits, "the waiter")
+	fixtureowner.WaitForBarrier(t, waits, keyWaitStuckAfter, nil, "the waiter never waited for the key")
 	id := idleBoltHolderID(t, driver)
 	require.Equal(t, []any{"Transaction terminated."}, boltRows(t, driver, fmt.Sprintf("TERMINATE TRANSACTIONS '%s' YIELD message RETURN message", id), nil))
 	terminated := time.Now()
@@ -96,12 +98,12 @@ func TestBoltTerminateEndsAnIdleHolderAtOnce(t *testing.T) {
 // refused with TransactionTimedOutClientConfiguration.
 func TestBoltClientTimeoutEndsAnIdleHolder(t *testing.T) {
 	driver, _ := startKeyWaitBolt(t, time.Minute, 0)
-	waits := keyWaitSignal(t)
+	waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	holder := holdBoltKeysWith(t, driver, []func(*neo4j.TransactionConfig){neo4j.WithTxTimeout(500 * time.Millisecond)}, "client-timeout")
 	drainKeyWaits(waits)
 	done := startBoltKeyWaiter(ctx, driver, false, "MERGE (n:Doc {id: $k})", map[string]any{"k": "client-timeout"})
-	awaitKeyWait(t, waits, "the waiter")
+	fixtureowner.WaitForBarrier(t, waits, keyWaitStuckAfter, nil, "the waiter never waited for the key")
 	result := awaitKeyWaiter(t, done, func() { _ = holder.tx.Rollback(ctx) })
 	require.NoError(t, result.err)
 	require.Less(t, result.elapsed, 2*time.Second)

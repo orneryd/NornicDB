@@ -26,7 +26,7 @@ func TestTypeGuardRequiresConcreteWriterContext(t *testing.T) {
  func unknown(w writer){kernel(w)}
  func mixed(choose bool){var w writer=&stagedKV{};if choose{w=&nativeKV{}};kernel(w)}
  func similar(){kernel(&lookalike{})}
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Pkg == pkg {
 			p.funcs = append(p.funcs, fn)
@@ -129,7 +129,7 @@ func TestTypeGuardRequiresActualBranchDependence(t *testing.T) {
  func before(w writer){rawWrite();if _,s:=w.(*stagedKV);s{return}}
  func joined(w writer){if _,s:=w.(*stagedKV);!s{_ = 7};rawWrite()}
  func loop(w writer,again bool){for again{if _,s:=w.(*stagedKV);s{continue};rawWrite();break}}
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	for _, tc := range []struct {
 		name string
 		want int

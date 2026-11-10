@@ -55,13 +55,13 @@ func TestHTTPWALTerminalCommittedOutcomeIsNotRetriable(t *testing.T) {
 				if explicit {
 					commit, opened := openHTTPTransaction(t, s, token)
 					require.Empty(t, opened)
-					require.Empty(t, postMerge(t, s, token, strings.TrimSuffix(commit, "/commit"), query, nil))
+					require.Empty(t, postCypherStatement(t.Context(), t, s, token, strings.TrimSuffix(commit, "/commit"), query, nil))
 					response := makeRequest(t, s, http.MethodPost, commit, map[string]any{"statements": []any{}}, token)
 					var committed map[string]any
 					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &committed))
 					errs, _ = committed["errors"].([]any)
 				} else {
-					errs = postMerge(t, s, token, "/db/nornic/tx/commit", query, nil)
+					errs = postCypherStatement(t.Context(), t, s, token, "/db/nornic/tx/commit", query, nil)
 				}
 				require.NotEmpty(t, errs, "the post-commit action failed")
 				first, _ := errs[0].(map[string]any)

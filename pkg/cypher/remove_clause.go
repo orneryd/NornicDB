@@ -99,6 +99,12 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 				if entity == nil {
 					continue
 				}
+				if !removals.observed(entity) {
+					if err := lockNodeForWrite(ctx, store, entity); err != nil {
+						restoreSetEntities(removals.states)
+						return err
+					}
+				}
 				node, state := removals.mutableNode(row, item.variable, entity)
 				if err := e.removeFromNode(rowCtx, store, node, item, nodes, rels, result.Stats); err != nil {
 					restoreSetEntities(removals.states)
@@ -114,6 +120,12 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 				}
 				if len(item.labels) > 0 {
 					return labelTargetTypeError("Relationship")
+				}
+				if !removals.observed(entity) {
+					if err := lockEdgeForWrite(ctx, store, entity); err != nil {
+						restoreSetEntities(removals.states)
+						return err
+					}
 				}
 				relationship, state := removals.mutableEdge(row, item.variable, entity)
 				if err := e.removeProperty(rowCtx, relationship.Properties, item, nodes, rels, result.Stats); err != nil {
@@ -152,6 +164,21 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 // map and labels are also the failure rollback fields.
 type removeObservations struct {
 	states []setEntityState
+}
+
+// observed reports whether the row's REMOVE already captured entity (a node
+// or a relationship): it is locked, and read as last committed, before that.
+func (removals *removeObservations) observed(entity interface{}) bool {
+	for index := range removals.states {
+		state := &removals.states[index]
+		if node, ok := entity.(*storage.Node); ok && state.node == node {
+			return true
+		}
+		if relationship, ok := entity.(*storage.Edge); ok && state.relationship == relationship {
+			return true
+		}
+	}
+	return false
 }
 
 // mutableNode captures the row's existing entity once before REMOVE changes

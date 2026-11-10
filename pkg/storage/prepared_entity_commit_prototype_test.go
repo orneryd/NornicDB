@@ -131,14 +131,7 @@ func TestPreparedEntityRetainsAuthorityAgainstOrdinaryDirectUpdate(t *testing.T)
 	prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "logical-1"})
 	require.NoError(t, err)
 	defer prepared.Abort()
-	waiting := make(chan struct{}, 1)
-	restore := SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waiting <- struct{}{}:
-		default:
-		}
-	})
-	defer restore()
+	waiting := fixtureowner.ObserveHookSignal(t, SetUniqueKeyLockWaitHookForTesting, 1)
 	done := make(chan error, 1)
 	go func() {
 		done <- b.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"value": "concurrent"}}})

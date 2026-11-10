@@ -229,7 +229,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			tx.preparedEntityCommit = prepared
 			prepared.retainAuthority = func(admission context.Context) (func(), error) {
 				keyContext := admission
-				entityKeys, err := entityCommitKeys(keyContext, nodes, edges, endpoints)
+				entityKeys, err := entityCommitKeys(keyContext, entityAuthorityFootprint{nodes: nodes, edges: edges, endpoints: endpoints, nodeBodies: nodes, edgeBodies: edges})
 				if err != nil {
 					return nil, err
 				}

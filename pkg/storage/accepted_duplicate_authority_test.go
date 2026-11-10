@@ -29,14 +29,7 @@ func TestAcceptedDuplicateReplayReleasesBothPreparedAuthorities(t *testing.T) {
 	var unblock sync.Once
 	var workers sync.WaitGroup
 	t.Cleanup(func() { held.Abort(); unblock.Do(func() { close(release) }); workers.Wait() })
-	waiting := make(chan struct{}, 8)
-	restore := SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waiting <- struct{}{}:
-		default:
-		}
-	})
-	t.Cleanup(restore)
+	waiting := fixtureowner.ObserveHookSignal(t, SetUniqueKeyLockWaitHookForTesting, 8)
 	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "duplicate-replay", Operations: []Operation{{Type: OpUpdateNode, Node: &Node{ID: "test:n", Properties: map[string]any{"v": "accepted"}}}}})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

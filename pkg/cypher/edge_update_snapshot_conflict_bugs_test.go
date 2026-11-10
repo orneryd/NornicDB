@@ -10,10 +10,13 @@
 // Neo.ClientError.Statement.SyntaxError. Neo4j succeeds on this exact
 // interleaving (MERGE blocks on the relationship lock, re-reads, and
 // applies the SET), and its only sanctioned conflict failure is a transient
-// error that drivers auto-retry. The fix classifies the snapshot-invisible
-// but live edge as storage.ErrConflict, which maps to
+// error that drivers auto-retry. The first fix classified the
+// snapshot-invisible but live edge as storage.ErrConflict, which maps to
 // Neo.TransientError.Transaction.Outdated so managed transactions
-// (session.ExecuteWrite) retry on a fresh snapshot and converge.
+// (session.ExecuteWrite) retry on a fresh snapshot and converge. A write
+// that reaches storage without the relationship's write lock still fails
+// that way; a Cypher SET now takes the lock and succeeds as in Neo4j
+// (NOR-213).
 package cypher
 
 import (
@@ -78,123 +81,24 @@ func requireSingleEdgeWithX(t *testing.T, exec *StorageExecutor, wantX string) {
 	require.ElementsMatch(t, []interface{}{wantX}, res.Rows[0][1])
 }
 
-// TestBug_UnwindMergeChainPeerCommittedEdgeUpdateIsRetryableConflict is the
-// batched reproduction:
+// peerCommittedEdgeSchedule is the one owner of the peer-commit schedule the
+// three tests below share:
 //
-//  1. T1 opens an explicit transaction (snapshot pinned at BEGIN).
-//  2. A peer autocommit statement MERGEs the same relationship with
-//     DIFFERENT property values and commits after T1's begin.
-//  3. T1 runs the identical UNWIND MERGE chain: the relationship lookup
-//     (latest-committed read) finds the peer's edge, the SET values differ,
-//     and store.UpdateEdge previously failed with "not found" because the
-//     edge is invisible at T1's snapshot.
+//  1. the endpoints are seeded and the writer's explicit transaction begins,
+//     pinning its snapshot at BEGIN;
+//  2. a peer autocommit statement runs the same relationship statement with
+//     peerParams and commits after that begin;
+//  3. the writer runs the identical statement with writerParams: the
+//     relationship lookup (latest-committed read) finds the peer's edge, whose
+//     store.UpdateEdge target is invisible at the writer's snapshot. Since
+//     NOR-213 the SET takes the relationship's write lock and is applied to
+//     the peer's commit, so the statement and its commit succeed as in Neo4j.
 //
-// The failure must be storage.ErrConflict (retryable), and a retry on a
-// fresh snapshot must converge to exactly one edge carrying the retrying
-// writer's values — Neo4j's observable outcome for this interleaving.
-func TestBug_UnwindMergeChainPeerCommittedEdgeUpdateIsRetryableConflict(t *testing.T) {
-	engine := edgeConflictTestEngine(t)
-	writerExec := NewStorageExecutor(engine)
-	peerExec := NewStorageExecutor(engine)
-	ctx := context.Background()
-
-	seedRelEndpoints(t, writerExec)
-
-	_, err := writerExec.Execute(ctx, "BEGIN", nil)
-	require.NoError(t, err)
-	rolledBack := false
-	defer func() {
-		if !rolledBack {
-			_, _ = writerExec.Execute(ctx, "ROLLBACK", nil)
-		}
-	}()
-
-	// Peer commits the same relationship after T1's begin.
-	_, err = peerExec.Execute(ctx, unwindMergeRelCypher, unwindMergeRelRows("x-peer", "y-peer"))
-	require.NoError(t, err)
-
-	// T1 runs the same statement with different SET values.
-	_, err = writerExec.Execute(ctx, unwindMergeRelCypher, unwindMergeRelRows("x-writer", "y-writer"))
-	require.Error(t, err, "peer commit during open tx must surface a write-write conflict")
-	t.Logf("observed error: %v", err)
-	require.ErrorIs(t, err, storage.ErrConflict,
-		"peer-committed edge update must be a retryable conflict, got: %v", err)
-	require.NotErrorIs(t, err, storage.ErrNotFound)
-	_, rbErr := writerExec.Execute(ctx, "ROLLBACK", nil)
-	rolledBack = true
-	require.NoError(t, rbErr)
-
-	// Retry on a fresh snapshot (what a driver's managed transaction does
-	// on a TransientError) must merge onto the peer's edge and win.
-	_, err = writerExec.Execute(ctx, "BEGIN", nil)
-	require.NoError(t, err)
-	rolledBack = false
-	_, err = writerExec.Execute(ctx, unwindMergeRelCypher, unwindMergeRelRows("x-writer", "y-writer"))
-	require.NoError(t, err, "retry with a fresh snapshot must merge onto the peer edge")
-	_, err = writerExec.Execute(ctx, "COMMIT", nil)
-	rolledBack = true
-	require.NoError(t, err)
-
-	requireSingleEdgeWithX(t, writerExec, "x-writer")
-}
-
-// TestBug_PlainMergeSetPeerCommittedEdgeUpdateIsRetryableConflict is the
-// non-batched variant: a plain MERGE ... SET on a single relationship hits
-// the same latest-committed-lookup / snapshot-update divergence.
-func TestBug_PlainMergeSetPeerCommittedEdgeUpdateIsRetryableConflict(t *testing.T) {
-	engine := edgeConflictTestEngine(t)
-	writerExec := NewStorageExecutor(engine)
-	peerExec := NewStorageExecutor(engine)
-	ctx := context.Background()
-
-	seedRelEndpoints(t, writerExec)
-
-	const plainMergeSet = `MATCH (a:A {key: 'a1'})
-MATCH (b:B {key: 'b1'})
-MERGE (a)-[rel:REL]->(b)
-SET rel.x = $x`
-
-	_, err := writerExec.Execute(ctx, "BEGIN", nil)
-	require.NoError(t, err)
-	rolledBack := false
-	defer func() {
-		if !rolledBack {
-			_, _ = writerExec.Execute(ctx, "ROLLBACK", nil)
-		}
-	}()
-
-	_, err = peerExec.Execute(ctx, plainMergeSet, map[string]interface{}{"x": "x-peer"})
-	require.NoError(t, err)
-
-	_, err = writerExec.Execute(ctx, plainMergeSet, map[string]interface{}{"x": "x-writer"})
-	require.Error(t, err, "peer commit during open tx must surface a write-write conflict")
-	t.Logf("observed error: %v", err)
-	require.ErrorIs(t, err, storage.ErrConflict,
-		"peer-committed edge update must be a retryable conflict, got: %v", err)
-	require.NotErrorIs(t, err, storage.ErrNotFound)
-	_, rbErr := writerExec.Execute(ctx, "ROLLBACK", nil)
-	rolledBack = true
-	require.NoError(t, rbErr)
-
-	// Retry on a fresh snapshot converges to one edge with the writer's value.
-	_, err = writerExec.Execute(ctx, "BEGIN", nil)
-	require.NoError(t, err)
-	rolledBack = false
-	_, err = writerExec.Execute(ctx, plainMergeSet, map[string]interface{}{"x": "x-writer"})
-	require.NoError(t, err, "retry with a fresh snapshot must merge onto the peer edge")
-	_, err = writerExec.Execute(ctx, "COMMIT", nil)
-	rolledBack = true
-	require.NoError(t, err)
-
-	requireSingleEdgeWithX(t, writerExec, "x-writer")
-}
-
-// TestBug_UnwindMergeChainPeerCommitIdenticalSetValuesIsSilentNoOp is the
-// success-path control: when the racing writers stamp IDENTICAL property
-// values, the assignment diff reports no change, UpdateEdge is never called,
-// and the statement succeeds. The conflict reclassification must not change
-// this path.
-func TestBug_UnwindMergeChainPeerCommitIdenticalSetValuesIsSilentNoOp(t *testing.T) {
+// writerMessage describes the writer statement's failure. The returned
+// executor is positioned after the writer's commit, so the caller owns the
+// outcome assertion for its own SET values.
+func peerCommittedEdgeSchedule(t *testing.T, statement string, peerParams, writerParams map[string]interface{}, writerMessage string) *StorageExecutor {
+	t.Helper()
 	engine := edgeConflictTestEngine(t)
 	writerExec := NewStorageExecutor(engine)
 	peerExec := NewStorageExecutor(engine)
@@ -211,14 +115,66 @@ func TestBug_UnwindMergeChainPeerCommitIdenticalSetValuesIsSilentNoOp(t *testing
 		}
 	}()
 
-	_, err = peerExec.Execute(ctx, unwindMergeRelCypher, unwindMergeRelRows("x-same", "y-same"))
+	// Peer commits the same relationship after the writer's begin.
+	_, err = peerExec.Execute(ctx, statement, peerParams)
 	require.NoError(t, err)
 
-	_, err = writerExec.Execute(ctx, unwindMergeRelCypher, unwindMergeRelRows("x-same", "y-same"))
-	require.NoError(t, err, "identical SET values must not attempt an update")
+	_, err = writerExec.Execute(ctx, statement, writerParams)
+	require.NoError(t, err, writerMessage)
 	_, err = writerExec.Execute(ctx, "COMMIT", nil)
 	committed = true
 	require.NoError(t, err)
+
+	return writerExec
+}
+
+// TestBug_UnwindMergeChainPeerCommittedEdgeUpdateAppliesOnPeerCommit is the
+// batched reproduction: the writer runs the UNWIND MERGE chain while a peer
+// has already committed the same relationship with DIFFERENT property values.
+// Before, the statement failed hard with "not found" and was then classified
+// as a retryable storage.ErrConflict. Since NOR-213 the SET locks the
+// relationship and applies its values on top of the peer's commit, so the
+// statement and its commit succeed with exactly one edge carrying the
+// writer's values: Neo4j's observable outcome for this interleaving.
+func TestBug_UnwindMergeChainPeerCommittedEdgeUpdateAppliesOnPeerCommit(t *testing.T) {
+	writerExec := peerCommittedEdgeSchedule(t,
+		unwindMergeRelCypher,
+		unwindMergeRelRows("x-peer", "y-peer"),
+		unwindMergeRelRows("x-writer", "y-writer"),
+		"the SET is applied to the peer's committed relationship")
+
+	requireSingleEdgeWithX(t, writerExec, "x-writer")
+}
+
+// TestBug_PlainMergeSetPeerCommittedEdgeUpdateAppliesOnPeerCommit is the
+// non-batched variant: a plain MERGE ... SET on a single relationship hits
+// the same latest-committed-lookup / snapshot-update divergence.
+func TestBug_PlainMergeSetPeerCommittedEdgeUpdateAppliesOnPeerCommit(t *testing.T) {
+	const plainMergeSet = `MATCH (a:A {key: 'a1'})
+MATCH (b:B {key: 'b1'})
+MERGE (a)-[rel:REL]->(b)
+SET rel.x = $x`
+
+	writerExec := peerCommittedEdgeSchedule(t,
+		plainMergeSet,
+		map[string]interface{}{"x": "x-peer"},
+		map[string]interface{}{"x": "x-writer"},
+		"the SET is applied to the peer's committed relationship")
+
+	requireSingleEdgeWithX(t, writerExec, "x-writer")
+}
+
+// TestBug_UnwindMergeChainPeerCommitIdenticalSetValuesIsSilentNoOp is the
+// success-path control: when the racing writers stamp IDENTICAL property
+// values, the assignment diff reports no change, UpdateEdge is never called,
+// and the statement succeeds. The conflict reclassification must not change
+// this path.
+func TestBug_UnwindMergeChainPeerCommitIdenticalSetValuesIsSilentNoOp(t *testing.T) {
+	writerExec := peerCommittedEdgeSchedule(t,
+		unwindMergeRelCypher,
+		unwindMergeRelRows("x-same", "y-same"),
+		unwindMergeRelRows("x-same", "y-same"),
+		"identical SET values must not attempt an update")
 
 	requireSingleEdgeWithX(t, writerExec, "x-same")
 }

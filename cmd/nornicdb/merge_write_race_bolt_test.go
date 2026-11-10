@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	testfixture "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -99,13 +100,7 @@ func boltRows(t *testing.T, driver neo4j.DriverWithContext, query string, params
 // orders them.
 func TestBoltMergeWritersOfOneNodeSerialize(t *testing.T) {
 	driver := startMergeRaceBolt(t, false)
-	waits := make(chan struct{}, 64)
-	t.Cleanup(storage.SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waits <- struct{}{}:
-		default:
-		}
-	}))
+	waits := testfixture.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	ctx := context.Background()
 	for _, query := range boltMergeWriteShapes[:2] {
 		for _, explicit := range []bool{false, true} {

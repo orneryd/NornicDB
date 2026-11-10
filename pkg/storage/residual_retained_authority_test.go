@@ -34,13 +34,7 @@ func TestResidualRetainedAuthorityAdmission(t *testing.T) {
 	releasePeer, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), "peer", keys)
 	require.NoError(t, err)
 	t.Cleanup(releasePeer)
-	waited := make(chan struct{}, 1)
-	t.Cleanup(SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waited <- struct{}{}:
-		default:
-		}
-	}))
+	waited := fixtureowner.ObserveHookSignal(t, SetUniqueKeyLockWaitHookForTesting, 1)
 	done := make(chan error, 1)
 	go func() {
 		release, err := prepared.RetainAcceptedAuthority(ctx)

@@ -30,7 +30,7 @@ func TestErrorPropagationRequiresExactNonescapingReturn(t *testing.T) {
  func filteredOtherError()error{defer release();other:=source();err:=source();if other!=nil{if err!=sentinel{return err}};body();return nil}
  func filteredJoin(choice bool)error{defer release();err:=source();if choice{if err==nil{return nil}};if err!=sentinel{return err};body();return nil}
  func filteredSwallowed()error{defer release();err:=source();if err!=nil{if err!=sentinel{return nil}};body();return nil}
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	for _, tc := range []struct {
 		name string
 		want bool

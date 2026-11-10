@@ -121,6 +121,11 @@ func (tx *BadgerTransaction) validatePreparedBodyConflictsLocked(ctx context.Con
 			default:
 				continue
 			}
+			if (key.entityKind == 1 && tx.readsLatestLocked(bufferedNodeEntity, key.entityID)) || (key.entityKind == 2 && tx.readsLatestLocked(bufferedEdgeEntity, key.entityID)) {
+				// Its body was read as last committed under the write lock
+				// this transaction has held since.
+				continue
+			}
 			item, err := view.Get(body)
 			if err == badger.ErrKeyNotFound {
 				continue
@@ -194,6 +199,11 @@ func (tx *BadgerTransaction) checkNodeCreateConflict(ctx context.Context, nodeID
 }
 
 func (tx *BadgerTransaction) checkNodeWriteConflict(ctx context.Context, nodeID NodeID) error {
+	if tx.readsLatestLocked(bufferedNodeEntity, string(nodeID)) {
+		// Written on its latest committed image under its write lock, which no
+		// peer has held since: nothing committed can be newer.
+		return nil
+	}
 	head, err := tx.engine.GetNodeCurrentHead(ctx, nodeID)
 	if err == ErrNotFound {
 		return nil
@@ -362,6 +372,9 @@ operations:
 }
 
 func (tx *BadgerTransaction) checkEdgeWriteConflict(ctx context.Context, edgeID EdgeID, requiresPredecessor bool) error {
+	if tx.readsLatestLocked(bufferedEdgeEntity, string(edgeID)) {
+		return nil
+	}
 	head, err := tx.engine.GetEdgeCurrentHead(ctx, edgeID)
 	if err == ErrNotFound {
 		return nil

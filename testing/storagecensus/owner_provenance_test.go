@@ -66,7 +66,7 @@ func TestBodyOwnershipRequiresEveryEffectPath(t *testing.T) {
  func owned(b *BadgerEngine){b.evaluateSuppressionInTxn()}
  func mixed(b *BadgerEngine){b.evaluateSuppressionInTxn();b.bypass()}
  func lookalike(b *BadgerEngine){b.evaluateSuppressionInTxnLookalike()}
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	a := &analysis{p: p, bodyMarks: map[ssa.Instruction]bool{}, bodyChains: map[ssa.Instruction]map[string][]string{}}
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Pkg != pkg {
@@ -100,7 +100,7 @@ func TestPublicationTimestampHasExactOwner(t *testing.T) {
  func owner(s *publicationStage,pub *commitPublication){s.register(3,pub)}
  func rogue(pub *commitPublication){pub.ts=7}
  func lookalike(pub *commitPublicationLookalike){pub.ts=7}
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Pkg == pkg {
 			p.funcs = append(p.funcs, fn)
@@ -130,7 +130,7 @@ func TestReviewCensusBranchEveryGatedInstruction(t *testing.T) {
  func(b *BadgerEngine)filterEntityByDecay()bool{return true}
  func deciding(b *BadgerEngine){if b.filterEntityByDecay(){b.evaluateSuppressionInTxn();b.bypass()}}
  func mixed(b *BadgerEngine,hidden bool){if hidden {b.evaluateSuppressionInTxn();b.bypass()}}
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	a := &analysis{p: p, bodyMarks: map[ssa.Instruction]bool{}, bodyChains: map[ssa.Instruction]map[string][]string{}}
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Pkg != pkg {
