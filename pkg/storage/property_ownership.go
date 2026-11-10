@@ -19,7 +19,7 @@ type OwnedPropertyValue interface {
 }
 
 // ownedEntries copies src entries into dst, taking ownership of every value
-// through ownedValueCopy (property_copy.go, the generic copy owner). A nil dst
+// through CopyValue (property_copy.go, the generic copy owner). A nil dst
 // is allocated with room for src, so callers that return an independent image
 // always get a non-nil map, while callers that must keep an absent map absent
 // check the nil before the call.
@@ -28,7 +28,7 @@ func ownedEntries(dst, src map[string]any) map[string]any {
 		dst = make(map[string]any, len(src))
 	}
 	for key, value := range src {
-		dst[key] = ownedValueCopy(value)
+		dst[key] = CopyValue(value, nil)
 	}
 	return dst
 }

@@ -77,7 +77,7 @@ func TestResidualCompiledPopulation(t *testing.T) {
 		cacheNames[name] = true
 	}
 	propertyNames := map[string]bool{}
-	for _, name := range []string{"copyNode", "copyNodeWithoutEmbeddings", "copyNodeForCaller", "copyEdge", "CopyNode", "CopyEdge", "ownRetainedValue", "ownRetainedMap", "ownedValueCopy", "ownedEntries", "canonicalPropertyList", "StoragePropertyValue", "ReadNumber", "NumericFloat64", "ReadList"} {
+	for _, name := range []string{"copyNode", "copyNodeWithoutEmbeddings", "copyNodeForCaller", "copyEdge", "CopyNode", "CopyEdge", "ownRetainedValue", "ownRetainedMap", "CopyValue", "ownedEntries", "canonicalPropertyList", "StoragePropertyValue", "ReadNumber", "NumericFloat64", "ReadList"} {
 		propertyNames[name] = true
 	}
 	admissionNames := map[string]bool{}

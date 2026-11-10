@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"reflect"
+	"slices"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -105,6 +106,20 @@ func (failure *expressionFailure) recordMapKeyOrder(value map[string]interface{}
 		failure.mapKeyOrders = make(map[uintptr][]string)
 	}
 	failure.mapKeyOrders[uintptr(reflect.ValueOf(value).UnsafePointer())] = keys
+}
+
+// transferMapKeyOrder rebinds one observed map's order to its owned copy.
+// Source and destination may be the same statement metadata map.
+func transferMapKeyOrder(sourceOrders, targetOrders map[uintptr][]string, source, copied map[string]interface{}) {
+	if keys, found := sourceOrders[uintptr(reflect.ValueOf(source).UnsafePointer())]; found {
+		targetOrders[uintptr(reflect.ValueOf(copied).UnsafePointer())] = slices.Clone(keys)
+	}
+}
+
+func (failure *expressionFailure) copyMapKeyOrder(source, copied map[string]interface{}) {
+	failure.mu.Lock()
+	defer failure.mu.Unlock()
+	transferMapKeyOrder(failure.mapKeyOrders, failure.mapKeyOrders, source, copied)
 }
 
 func snapshotMapKeyOrders(ctx context.Context) map[uintptr][]string {

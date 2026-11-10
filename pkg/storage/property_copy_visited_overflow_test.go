@@ -34,7 +34,7 @@ func TestCallerCopyVisitedOverflowPreservesAliasesAndCycles(t *testing.T) {
 		require.NotNil(t, probe.seen, "control must exceed the inline capacity and spill")
 		require.Equal(t, len(probe.inline), probe.count)
 
-		copied := ownedValueCopy(root).(map[string]any)
+		copied := CopyValue(root, nil).(map[string]any)
 		copiedChildren := copied["children"].([]any)
 		require.Len(t, copiedChildren, len(children))
 		require.NotEqual(t, reflect.ValueOf(children).Pointer(), reflect.ValueOf(copiedChildren).Pointer())
@@ -79,7 +79,7 @@ func TestCallerCopyVisitedOverflowPreservesAliasesAndCycles(t *testing.T) {
 		_ = probe.value(head)
 		require.NotNil(t, probe.seen, "control must exceed the inline capacity and spill")
 
-		copied := ownedValueCopy(head).(*link)
+		copied := CopyValue(head, nil).(*link)
 		require.NotSame(t, head, copied)
 		last := copied
 		for i := 0; i < callerCopyInlineReferences+2; i++ {

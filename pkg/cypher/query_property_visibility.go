@@ -179,15 +179,17 @@ func (e *StorageExecutor) queryEntityProperties(value interface{}) map[string]in
 
 // publishQueryRow is the public row boundary for both materialized results
 // and ResultStream.emit. Projection detaches graph values before a consumer
-// can observe them; the expression memo has no ownership beyond that row.
-func (e *StorageExecutor) publishQueryRow(row []interface{}) []interface{} {
+// can observe them; the expression memo has no ownership beyond that row. The
+// boolean reports whether those views isolated the published graph; a live
+// stream must detach other projections before handing them to its consumer.
+func (e *StorageExecutor) publishQueryRow(row []interface{}) ([]interface{}, bool) {
 	if e.statementPropertyViews != nil {
 		defer e.statementPropertyViews.releaseRow()
 	}
 	if !e.queryPropertyDecayEnabled() {
-		return row
+		return row, false
 	}
-	return e.projectVisibleQueryValue(row).([]interface{})
+	return e.projectVisibleQueryValue(row).([]interface{}), e.statementPropertyViews != nil
 }
 
 func (e *StorageExecutor) projectQueryResultProperties(result *ExecuteResult) {
@@ -196,7 +198,7 @@ func (e *StorageExecutor) projectQueryResultProperties(result *ExecuteResult) {
 		return
 	}
 	for i, row := range result.Rows {
-		result.Rows[i] = e.publishQueryRow(row)
+		result.Rows[i], _ = e.publishQueryRow(row)
 	}
 }
 

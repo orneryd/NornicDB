@@ -609,7 +609,7 @@ func (r *recordingAPOCStorage) CreateNode(context.Context, []string, map[string]
 	return &apocstorage.Node{}, nil
 }
 
-func (r *recordingAPOCStorage) UpdateNode(context.Context, int64, map[string]interface{}) error {
+func (r *recordingAPOCStorage) UpdateNode(context.Context, int64, apocstorage.PropertyUpdate) error {
 	return nil
 }
 
@@ -629,7 +629,7 @@ func (r *recordingAPOCStorage) CreateRelationship(context.Context, int64, int64,
 	return &apocstorage.Relationship{}, nil
 }
 
-func (r *recordingAPOCStorage) UpdateRelationship(context.Context, int64, map[string]interface{}) error {
+func (r *recordingAPOCStorage) UpdateRelationship(context.Context, int64, apocstorage.PropertyUpdate) error {
 	return nil
 }
 

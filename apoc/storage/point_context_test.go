@@ -98,7 +98,7 @@ func (f *apocStorageFixture) pointMutations() []pointOperation {
 			return f.store.CreateNode(ctx, []string{"Person"}, map[string]interface{}{"name": "created"})
 		}},
 		{"UpdateNode", func(ctx context.Context) (interface{}, error) {
-			return nil, f.store.UpdateNode(ctx, f.a, map[string]interface{}{"age": int64(1)})
+			return nil, f.store.UpdateNode(ctx, f.a, PropertyUpdate{Set: map[string]interface{}{"age": int64(1)}})
 		}},
 		{"DeleteNode", func(ctx context.Context) (interface{}, error) {
 			return nil, f.store.DeleteNode(ctx, f.isolated)
@@ -116,7 +116,7 @@ func (f *apocStorageFixture) pointMutations() []pointOperation {
 			return f.store.CreateRelationship(ctx, f.a, f.isolated, "KNOWS", map[string]interface{}{})
 		}},
 		{"UpdateRelationship", func(ctx context.Context) (interface{}, error) {
-			return nil, f.store.UpdateRelationship(ctx, f.firstLink, map[string]interface{}{"weight": 0.5})
+			return nil, f.store.UpdateRelationship(ctx, f.firstLink, PropertyUpdate{Set: map[string]interface{}{"weight": 0.5}})
 		}},
 		{"DeleteRelationship", func(ctx context.Context) (interface{}, error) {
 			return nil, f.store.DeleteRelationship(ctx, f.firstLink)
