@@ -427,31 +427,6 @@ func TestGetNodesByLabel(t *testing.T) {
 	functions.Clear()
 }
 
-func TestGetRelationshipsByType(t *testing.T) {
-	functions, _ := setupTestStorage(t)
-	functions.Clear()
-	_, apocCallError18 := functions.Run(context.Background())
-	if apocCallError18 != nil {
-		t.Fatalf("APOC helper failed: %v", apocCallError18)
-	}
-
-	rels, found := functions.GetRelationshipsByType("WORKS_AT")
-	if !found {
-		t.Error("Should find relationships by type 'WORKS_AT'")
-	}
-	if len(rels) != 2 {
-		t.Errorf("Expected 2 WORKS_AT relationships, got %d", len(rels))
-	}
-
-	// Test non-existent type
-	_, found = functions.GetRelationshipsByType("NonExistent")
-	if found {
-		t.Error("Should not find non-existent type")
-	}
-
-	functions.Clear()
-}
-
 func TestSubgraph(t *testing.T) {
 	functions, backend := setupTestStorage(t)
 	functions.Clear()

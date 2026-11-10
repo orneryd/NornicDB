@@ -2,6 +2,8 @@ package cypher
 
 import (
 	"context"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // ResultStream lets a caller consume the rows of an auto-commit read as the
@@ -152,9 +154,36 @@ func (s *ResultStream) begin(columns []string) {
 // statement must stop: ctx was cancelled while the stream waited for the
 // consumer.
 func (s *ResultStream) emit(ctx context.Context, owner *StorageExecutor, row []interface{}) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	// Every stream producer crosses the same visibility/lifetime boundary as
 	// a materialized result, before rows enter any consumer-owned buffer.
-	row = owner.publishQueryRow(row)
+	var isolated bool
+	row, isolated = owner.publishQueryRow(row)
+	if !isolated {
+		// Without the detached statement views, entities can still belong to
+		// the active producer's bindings. Each delivered row owns its graph.
+		var mapCopied func(source, copied map[string]interface{})
+		if failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure); ok && failure != nil {
+			failure.mu.Lock()
+			ordered := len(failure.mapKeyOrders) != 0
+			failure.mu.Unlock()
+			if ordered {
+				mapCopied = failure.copyMapKeyOrder
+			}
+		}
+		// The producer already owns the outer row. A single column has no
+		// cross-cell aliases, so retain that buffer and detach its value only.
+		if len(row) == 1 {
+			row[0] = storage.CopyValue(row[0], mapCopied)
+		} else if len(row) > 1 {
+			row = storage.CopyValue(row, mapCopied).([]interface{})
+		}
+	}
+	if ctx.Err() != nil {
+		return false
+	}
 	if !s.started {
 		s.buffered = append(s.buffered, row)
 		if len(s.buffered) > s.threshold {

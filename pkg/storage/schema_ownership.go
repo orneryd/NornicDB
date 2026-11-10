@@ -14,7 +14,7 @@ func cloneConstraint(c Constraint) Constraint {
 	if c.AllowedValues != nil {
 		values := make([]any, len(c.AllowedValues))
 		for i, value := range c.AllowedValues {
-			values[i] = ownedValueCopy(value)
+			values[i] = CopyValue(value, nil)
 		}
 		c.AllowedValues = values
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sync"
 	"time"
 )
 
@@ -19,15 +20,44 @@ type callerCopier interface {
 	CallerCopy() any
 }
 
-// ownedValueCopy returns a caller-owned copy of one storage value. It is the
+// CopyValue returns an independent caller-owned copy of a value. It is the
 // generic copy owner: durable property normalization is a different contract and
 // belongs to ownRetainedValue (property_ownership.go). Concrete types,
 // pointer, map, slice and array shapes and Go scalar widths are preserved, nil
 // containers stay nil, and a caller-declared type that owns a copy protocol is
 // asked once, after which its own copy is used as is.
-func ownedValueCopy(value any) any {
-	walker := callerCopyWalker{}
-	return walker.value(value)
+//
+// Result holders can use this same owner at their retention and delivery
+// boundaries without durable serialization or type normalization. For example:
+//
+//	owned := storage.CopyValue(map[string]any{"tags": []string{"graph"}}, nil).(map[string]any)
+//
+// mapCopied, when non-nil, observes plain string-keyed maps copied by the
+// structural walk, allowing a result owner to rebind map-identity metadata.
+// Domain-owned Node, Edge and CallerCopy values retain their own copy contract.
+// Callers must synchronize access to a value while it is being copied.
+func CopyValue(value any, mapCopied func(source, copied map[string]any)) any {
+	if callerCopyScalar(value) {
+		return value
+	}
+	walker := callerCopyWalker{mapCopied: mapCopied}
+	// A panicking copy discards its local scratch instead of reusing it.
+	copied := walker.value(value)
+	walker.release()
+	return copied
+}
+
+// Only a cleared overflow index is reused. Large copy graphs are discarded
+// rather than retaining their high-water index in an otherwise small request.
+const callerCopyPooledReferences = 1024
+
+var callerCopyOverflowPool sync.Pool
+
+func (w *callerCopyWalker) release() {
+	if w.seen != nil && len(w.seen) <= callerCopyPooledReferences {
+		clear(w.seen)
+		callerCopyOverflowPool.Put(w.seen)
+	}
 }
 
 // callerCopyInlineReferences is how many reference-bearing values one copy
@@ -49,9 +79,10 @@ type callerCopyTracked struct {
 // created only when a graph outgrows them. The state never outlives the call, so
 // no copy shares visited state with another.
 type callerCopyWalker struct {
-	inline [callerCopyInlineReferences]callerCopyTracked
-	count  int
-	seen   map[callerCopyReference]reflect.Value
+	mapCopied func(source, copied map[string]any)
+	inline    [callerCopyInlineReferences]callerCopyTracked
+	count     int
+	seen      map[callerCopyReference]reflect.Value
 }
 
 // callerCopyReference identifies one reference-bearing source. The length keeps
@@ -93,17 +124,31 @@ func (w *callerCopyWalker) remember(key callerCopyReference, copied reflect.Valu
 		return
 	}
 	if w.seen == nil {
-		w.seen = make(map[callerCopyReference]reflect.Value, callerCopyInlineReferences)
+		if reused, ok := callerCopyOverflowPool.Get().(map[callerCopyReference]reflect.Value); ok {
+			w.seen = reused
+		} else {
+			w.seen = make(map[callerCopyReference]reflect.Value, callerCopyInlineReferences)
+		}
 	}
 	w.seen[key] = copied
 }
 
-func (w *callerCopyWalker) value(value any) any {
-	switch value := value.(type) {
+// callerCopyScalar is the immutable runtime-value policy shared by root
+// copies and recursive entries. It does not perform durable normalization.
+func callerCopyScalar(value any) bool {
+	switch value.(type) {
 	case nil, string, bool, int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64, float32, float64, time.Time, time.Duration:
-		// Immutable scalars are their own copies.
+		return true
+	}
+	return false
+}
+
+func (w *callerCopyWalker) value(value any) any {
+	if callerCopyScalar(value) {
 		return value
+	}
+	switch value := value.(type) {
 	case *Node:
 		return copyNode(value)
 	case *Edge:
@@ -149,6 +194,9 @@ func (w *callerCopyWalker) mapping(m map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(m))
 	w.remember(key, reflect.ValueOf(out))
+	if w.mapCopied != nil {
+		w.mapCopied(m, out)
+	}
 	for key, item := range m {
 		out[key] = w.value(item)
 	}
@@ -217,6 +265,10 @@ func (w *callerCopyWalker) reference(value reflect.Value) reflect.Value {
 			return reflect.ValueOf(copyNode(entity))
 		case *Edge:
 			return reflect.ValueOf(copyEdge(entity))
+		case map[string]any:
+			return reflect.ValueOf(w.mapping(entity))
+		case []any:
+			return reflect.ValueOf(w.list(entity))
 		}
 	}
 	if copied, ok := copierCopy(value); ok {
@@ -255,6 +307,11 @@ func (w *callerCopyWalker) reference(value reflect.Value) reflect.Value {
 		}
 		out := reflect.MakeMapWithSize(value.Type(), value.Len())
 		w.remember(key, out)
+		if w.mapCopied != nil {
+			if source, ok := value.Interface().(map[string]any); ok {
+				w.mapCopied(source, out.Interface().(map[string]any))
+			}
+		}
 		for it := value.MapRange(); it.Next(); {
 			out.SetMapIndex(w.reference(it.Key()), w.reference(it.Value()))
 		}

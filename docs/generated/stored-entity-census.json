@@ -3556,7 +3556,7 @@
       "field": "pkg/storage.callerCopyWalker.count",
       "class": "caller-copy traversal progress",
       "func": "pkg/storage.callerCopyWalker.remember",
-      "pos": "pkg/storage/property_copy.go:92"
+      "pos": "pkg/storage/property_copy.go:123"
     },
     {
       "field": "pkg/storage.commitPublication.ts",

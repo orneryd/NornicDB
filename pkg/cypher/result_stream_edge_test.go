@@ -16,11 +16,11 @@ func TestResultStreamStopsOnCancelledContext(t *testing.T) {
 	stream := NewResultStream(0, nil)
 	require.Equal(t, 1, stream.threshold)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
 	owner := NewStorageExecutor(newTestMemoryEngine(t))
 	require.True(t, stream.emit(ctx, owner, []interface{}{1}))
 	require.True(t, stream.emit(ctx, owner, []interface{}{2}))
 	require.True(t, stream.streamed())
+	cancel()
 	require.False(t, stream.emit(ctx, owner, []interface{}{3}), "waiting for demand")
 	stream.want = 1
 	require.False(t, stream.emit(ctx, owner, []interface{}{4}), "waiting to hand over a batch")

@@ -58,7 +58,7 @@ func (a *APOCStorageAdapter) CreateNode(ctx context.Context, labels []string, pr
 }
 
 // UpdateNode updates the properties of an existing node.
-func (a *APOCStorageAdapter) UpdateNode(ctx context.Context, id int64, properties map[string]interface{}) error {
+func (a *APOCStorageAdapter) UpdateNode(ctx context.Context, id int64, properties apocstorage.PropertyUpdate) error {
 	nodeID := storage.NodeID(strconv.FormatInt(id, 10))
 	node, err := a.engine.GetNode(ctx, nodeID)
 	if err != nil {
@@ -69,10 +69,7 @@ func (a *APOCStorageAdapter) UpdateNode(ctx context.Context, id int64, propertie
 	}
 	before := *node
 	before.Properties = maps.Clone(node.Properties)
-	if node.Properties == nil {
-		node.Properties = make(map[string]interface{})
-	}
-	maps.Copy(node.Properties, properties)
+	node.Properties = properties.ApplyTo(node.Properties)
 	return a.engine.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node})
 }
 
@@ -162,7 +159,7 @@ func (a *APOCStorageAdapter) CreateRelationship(ctx context.Context, startID, en
 }
 
 // UpdateRelationship updates the properties of an existing relationship.
-func (a *APOCStorageAdapter) UpdateRelationship(ctx context.Context, id int64, properties map[string]interface{}) error {
+func (a *APOCStorageAdapter) UpdateRelationship(ctx context.Context, id int64, properties apocstorage.PropertyUpdate) error {
 	edgeID := storage.EdgeID(strconv.FormatInt(id, 10))
 	edge, err := a.engine.GetEdge(ctx, edgeID)
 	if err != nil {
@@ -173,10 +170,7 @@ func (a *APOCStorageAdapter) UpdateRelationship(ctx context.Context, id int64, p
 	}
 	before := *edge
 	before.Properties = maps.Clone(edge.Properties)
-	if edge.Properties == nil {
-		edge.Properties = make(map[string]interface{})
-	}
-	maps.Copy(edge.Properties, properties)
+	edge.Properties = properties.ApplyTo(edge.Properties)
 	return a.engine.UpdateEdge(ctx, storage.EdgeUpdateRequest{Before: &before, After: edge})
 }
 
