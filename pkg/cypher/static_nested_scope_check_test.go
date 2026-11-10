@@ -88,8 +88,19 @@ func TestStaticTypeCheckOfNestedLocalScopesStillRejects(t *testing.T) {
 // (a captured statement whose last WITH folds its candidates through eight
 // nested head([...]) levels) in fresh explicit transactions. Each
 // transaction gets a new executor, which validates the statement again; that
-// validation must cost about what the statement's evaluation costs, not
-// several times more (NOR-150: 2.2 s against 0.11 s on a reused executor).
+// validation must stay the work it is: about 2.7 allocations per byte of the
+// statement. When every enclosing scope typed the nested scopes again
+// (NOR-150: 2.2 s against 0.11 s on a reused executor), it was 4.5 per byte
+// for this statement, and more with every level.
+//
+// The bound is on the validation's own allocations, a new executor's read
+// less a reused executor's, and not on its time against the reused read's.
+// A time bound (new under six times reused) held while the reused read took
+// about 250 ms and the validation about 220 ms. The validation still takes
+// about 215 ms, but the reused read now takes about 43 ms (NOR-407), so the
+// ratio sat at that bound and the test failed in most runs though nothing
+// about validation had changed. Allocations are the same on every run, and
+// they do not move when the read itself gets faster.
 func TestExplicitTransactionNestedReduceMatcherCost(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "library")
 	ctx := context.Background()
@@ -134,5 +145,14 @@ func TestExplicitTransactionNestedReduceMatcherCost(t *testing.T) {
 	warm := median(func() *StorageExecutor { return reused })
 	fresh := median(func() *StorageExecutor { return NewStorageExecutor(store) })
 	t.Logf("explicit transaction read: reused executor %v, new executor %v", warm, fresh)
-	require.Less(t, fresh, 6*warm, "a new transaction's validation dominates the read")
+
+	allocations := func(next func() *StorageExecutor) float64 {
+		return testing.AllocsPerRun(3, func() { read(next()) })
+	}
+	reusedAllocations := allocations(func() *StorageExecutor { return reused })
+	newAllocations := allocations(func() *StorageExecutor { return NewStorageExecutor(store) })
+	validation := (newAllocations - reusedAllocations) / float64(len(query))
+	t.Logf("allocations per read: reused executor %.0f, new executor %.0f; a new executor's validation %.2f per statement byte",
+		reusedAllocations, newAllocations, validation)
+	require.Less(t, validation, 3.5, "a new transaction's validation does more work than the statement's size accounts for")
 }
