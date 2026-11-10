@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch, nextTick } from "vue";
 import { withBase } from "vitepress";
 import ForceNeighborhood from "./ForceNeighborhood.vue";
+import { track } from "./analytics.mjs";
 import { apiFetch } from "./api";
 const props = defineProps({
   initialSymbol: String,
@@ -53,6 +54,7 @@ const calls = computed(() =>
 );
 let selection = 0;
 async function select(node) {
+  track("docs_code_explored");
   const sequence = ++selection;
   const previous = trail.value.findIndex((item) => item.id === node.id);
   if (previous >= 0) trail.value = trail.value.slice(0, previous + 1);

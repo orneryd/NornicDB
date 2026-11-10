@@ -1361,6 +1361,11 @@
       "bytes": 3970
     },
     {
+      "path": "privacy.md",
+      "sha256": "dee00147d3726856a38cf5f83a95bb369fec0c658c1259176fd3aa7b8f641408",
+      "bytes": 1601
+    },
+    {
       "path": "project-details.md",
       "sha256": "99240461d601ae208efe97c83bbd7328257c9502f9784a7d3a30d6bc4c698ba8",
       "bytes": 34725

@@ -1,4 +1,5 @@
 <script setup>
+import Analytics from "./Analytics.vue";
 import DefaultTheme from "vitepress/theme";
 import SearchPage from "./SearchPage.vue";
 import VersionPicker from "./VersionPicker.vue";
@@ -24,7 +25,7 @@ const related = computed(
 </script>
 <template>
   <DefaultTheme.Layout
-    ><template #nav-bar-content-before><SearchDialog /></template
+    ><template #layout-bottom><Analytics /></template><template #nav-bar-content-before><SearchDialog /></template
     ><template #nav-bar-content-after><VersionPicker /></template
     ><template #doc-after
       ><aside v-if="related.length" class="related">

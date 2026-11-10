@@ -78,3 +78,12 @@ The interface follows NN/g's [progressive disclosure](https://www.nngroup.com/ar
 The checks cover file preservation, inventory coverage, graph edge integrity, link/rendering errors, default dark mode, search fallback, source navigation, keyboard use, mobile overflow, and tagged source provenance. Screenshots in `review-screenshots/` document the reviewed build.
 
 The browser API client exposes only search and related-public-reference operations. OAuth, session tokens, model access, database credentials, and arbitrary queries are not part of this portal iteration.
+# Analytics
+
+The public site uses PostHog project `724362` (US Cloud). The write-only project token is configured in `.vitepress/theme/analytics.mjs`; no personal API key or database credential is bundled. Collection is limited to `orneryd.github.io`, so localhost previews and CI do not pollute production analytics.
+
+Open the [NornicDB OSS dashboard](https://us.posthog.com/project/724362/dashboard/2329195) for daily pageviews, top documentation paths, version usage, semantic/fallback search result events, average result counts, search-result opens, code exploration, and outbound destination categories. These are usage counts, not verified installs, GitHub stars, revenue, or managed-service inquiries. Search events currently cover semantic responses with results and fallback notices; they are not a count of every keystroke or every local-only search.
+
+The footer provides a persistent opt-out and links to the [analytics privacy notice](../docs/privacy.md). Do Not Track and Global Privacy Control disable collection. The SDK uses memory persistence, no person profiles, and no recording, autocapture, automatic exceptions, or remote feature configuration. Its event property allowlist removes raw URLs, query parameters, referrers, and form values. Review the allowlist and privacy notice together before collecting additional data.
+
+Run `npx playwright test browser-tests/analytics.spec.mjs` after building. The test serves the local build under the public hostname and intercepts PostHog requests, checking real SDK payloads without sending test events to the project. The simulated browser disables automation identification only inside that test; production bot filtering remains enabled.
