@@ -10,10 +10,13 @@
 // Neo.ClientError.Statement.SyntaxError. Neo4j succeeds on this exact
 // interleaving (MERGE blocks on the relationship lock, re-reads, and
 // applies the SET), and its only sanctioned conflict failure is a transient
-// error that drivers auto-retry. The fix classifies the snapshot-invisible
-// but live edge as storage.ErrConflict, which maps to
+// error that drivers auto-retry. The first fix classified the
+// snapshot-invisible but live edge as storage.ErrConflict, which maps to
 // Neo.TransientError.Transaction.Outdated so managed transactions
-// (session.ExecuteWrite) retry on a fresh snapshot and converge.
+// (session.ExecuteWrite) retry on a fresh snapshot and converge. A write
+// that reaches storage without the relationship's write lock still fails
+// that way; a Cypher SET now takes the lock and succeeds as in Neo4j
+// (NOR-213).
 package cypher
 
 import (
@@ -89,10 +92,11 @@ func requireSingleEdgeWithX(t *testing.T, exec *StorageExecutor, wantX string) {
 //     and store.UpdateEdge previously failed with "not found" because the
 //     edge is invisible at T1's snapshot.
 //
-// The failure must be storage.ErrConflict (retryable), and a retry on a
-// fresh snapshot must converge to exactly one edge carrying the retrying
-// writer's values — Neo4j's observable outcome for this interleaving.
-func TestBug_UnwindMergeChainPeerCommittedEdgeUpdateIsRetryableConflict(t *testing.T) {
+// It was then classified as a retryable storage.ErrConflict. Since NOR-213
+// the SET locks the relationship and is applied to the peer's commit, so the
+// statement and its commit succeed with exactly one edge carrying the
+// writer's values: Neo4j's observable outcome for this interleaving.
+func TestBug_UnwindMergeChainPeerCommittedEdgeUpdateAppliesOnPeerCommit(t *testing.T) {
 	engine := edgeConflictTestEngine(t)
 	writerExec := NewStorageExecutor(engine)
 	peerExec := NewStorageExecutor(engine)
@@ -113,24 +117,11 @@ func TestBug_UnwindMergeChainPeerCommittedEdgeUpdateIsRetryableConflict(t *testi
 	_, err = peerExec.Execute(ctx, unwindMergeRelCypher, unwindMergeRelRows("x-peer", "y-peer"))
 	require.NoError(t, err)
 
-	// T1 runs the same statement with different SET values.
+	// T1 runs the same statement with different SET values. Its SET takes
+	// the relationship's write lock, finds the peer's commit and applies its
+	// values on top of it (NOR-213), as Neo4j does.
 	_, err = writerExec.Execute(ctx, unwindMergeRelCypher, unwindMergeRelRows("x-writer", "y-writer"))
-	require.Error(t, err, "peer commit during open tx must surface a write-write conflict")
-	t.Logf("observed error: %v", err)
-	require.ErrorIs(t, err, storage.ErrConflict,
-		"peer-committed edge update must be a retryable conflict, got: %v", err)
-	require.NotErrorIs(t, err, storage.ErrNotFound)
-	_, rbErr := writerExec.Execute(ctx, "ROLLBACK", nil)
-	rolledBack = true
-	require.NoError(t, rbErr)
-
-	// Retry on a fresh snapshot (what a driver's managed transaction does
-	// on a TransientError) must merge onto the peer's edge and win.
-	_, err = writerExec.Execute(ctx, "BEGIN", nil)
-	require.NoError(t, err)
-	rolledBack = false
-	_, err = writerExec.Execute(ctx, unwindMergeRelCypher, unwindMergeRelRows("x-writer", "y-writer"))
-	require.NoError(t, err, "retry with a fresh snapshot must merge onto the peer edge")
+	require.NoError(t, err, "the SET is applied to the peer's committed relationship")
 	_, err = writerExec.Execute(ctx, "COMMIT", nil)
 	rolledBack = true
 	require.NoError(t, err)
@@ -138,10 +129,10 @@ func TestBug_UnwindMergeChainPeerCommittedEdgeUpdateIsRetryableConflict(t *testi
 	requireSingleEdgeWithX(t, writerExec, "x-writer")
 }
 
-// TestBug_PlainMergeSetPeerCommittedEdgeUpdateIsRetryableConflict is the
+// TestBug_PlainMergeSetPeerCommittedEdgeUpdateAppliesOnPeerCommit is the
 // non-batched variant: a plain MERGE ... SET on a single relationship hits
 // the same latest-committed-lookup / snapshot-update divergence.
-func TestBug_PlainMergeSetPeerCommittedEdgeUpdateIsRetryableConflict(t *testing.T) {
+func TestBug_PlainMergeSetPeerCommittedEdgeUpdateAppliesOnPeerCommit(t *testing.T) {
 	engine := edgeConflictTestEngine(t)
 	writerExec := NewStorageExecutor(engine)
 	peerExec := NewStorageExecutor(engine)
@@ -167,21 +158,7 @@ SET rel.x = $x`
 	require.NoError(t, err)
 
 	_, err = writerExec.Execute(ctx, plainMergeSet, map[string]interface{}{"x": "x-writer"})
-	require.Error(t, err, "peer commit during open tx must surface a write-write conflict")
-	t.Logf("observed error: %v", err)
-	require.ErrorIs(t, err, storage.ErrConflict,
-		"peer-committed edge update must be a retryable conflict, got: %v", err)
-	require.NotErrorIs(t, err, storage.ErrNotFound)
-	_, rbErr := writerExec.Execute(ctx, "ROLLBACK", nil)
-	rolledBack = true
-	require.NoError(t, rbErr)
-
-	// Retry on a fresh snapshot converges to one edge with the writer's value.
-	_, err = writerExec.Execute(ctx, "BEGIN", nil)
-	require.NoError(t, err)
-	rolledBack = false
-	_, err = writerExec.Execute(ctx, plainMergeSet, map[string]interface{}{"x": "x-writer"})
-	require.NoError(t, err, "retry with a fresh snapshot must merge onto the peer edge")
+	require.NoError(t, err, "the SET is applied to the peer's committed relationship")
 	_, err = writerExec.Execute(ctx, "COMMIT", nil)
 	rolledBack = true
 	require.NoError(t, err)

@@ -14,12 +14,13 @@ package storage_test
 // reproduction):
 //
 //  1. writer A stages SET n.note='loser' and is paused before its final commit;
-//  2. peer B's autocommit SET n.other='peer' is acknowledged and is still
-//     sitting in the write-behind buffer (never flushed, never rotated);
-//  3. A resumes and commits.
+//  2. peer B's autocommit SET n.other='peer' of the same node waits for A's
+//     write lock (NOR-213); before, it was acknowledged into the write-behind
+//     buffer here and A's commit was rejected as stale;
+//  3. A resumes and commits; B resumes on A's commit, which a buffered
+//     autocommit A leaves unflushed, and is acknowledged on top of it.
 //
-// The only acceptable outcomes are (a) both acknowledged updates survive, or
-// (b) A is rejected with a retryable conflict. An acknowledged outcome whose
+// Both acknowledged updates survive the flush. An acknowledged outcome whose
 // update the flush then drops is the defect.
 //
 // Scheduling is explicit, not wall-clock: the explicit writer is paused by
@@ -42,7 +43,6 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
-	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -197,17 +197,30 @@ func TestNOR136UnflushedPeerKeepsAcknowledgedWrites(t *testing.T) {
 					t.Fatalf("unknown producer %q", producer)
 				}
 
-				// The peer's autocommit update is acknowledged while the
-				// writer is still uncommitted.
-				_, err := peer.run(nor136PeerOther)
-				require.NoError(t, err, "the peer's autocommit update must be acknowledged")
-				// Genuinely unflushed: the peer's body is not in the store yet, and the
-				// acknowledged read path serves it from the write-behind overlay.
+				// The peer writes the node the writer still holds: it waits for
+				// the writer's transaction to end (NOR-213), so nothing of it
+				// is acknowledged or stored before then.
+				waits := make(chan struct{}, 8)
+				t.Cleanup(storage.SetUniqueKeyLockWaitHookForTesting(func() {
+					select {
+					case waits <- struct{}{}:
+					default:
+					}
+				}))
+				peerDone := make(chan error, 1)
+				go func() {
+					_, err := peer.run(nor136PeerOther)
+					peerDone <- err
+				}()
+				select {
+				case <-waits:
+				case err := <-peerDone:
+					t.Fatalf("the peer did not wait for the uncommitted writer: %v", err)
+				case <-time.After(30 * time.Second):
+					t.Fatal("the peer never reached the writer's lock")
+				}
 				require.Equal(t, "seed", storage.ReadPhysicalNodeForTest(t, f.engine, originalID).Properties["other"],
-					"the peer's acknowledgement was already flushed: the schedule was not established")
-				_, unflushed := nor136ReadOriginal(t, peer)
-				require.Equal(t, "peer", unflushed,
-					"the peer's acknowledged update must be served from the unflushed write-behind overlay")
+					"the waiting peer's update was stored before the writer ended")
 
 				switch producer {
 				case "explicit":
@@ -216,13 +229,13 @@ func TestNOR136UnflushedPeerKeepsAcknowledgedWrites(t *testing.T) {
 					close(gate.resume)
 					writerErr = <-writerDone
 				}
-				if writerErr != nil {
-					require.Equal(t, nornicerrors.TransientOutdated, pr1655PublicStatus(writerErr),
-						"a rejected stale writer must report a retryable conflict, got %v", writerErr)
-					t.Logf("NOR136 %s/%s: stale writer rejected with %s: %v", route, producer, pr1655PublicStatus(writerErr), writerErr)
-				} else {
-					t.Logf("NOR136 %s/%s: stale writer acknowledged; both acknowledged updates must survive", route, producer)
-				}
+				require.NoError(t, writerErr, "the writer holds the node: its commit is not a conflict")
+				// The peer resumes on the writer's commit, still unflushed for
+				// the buffered autocommit writer, and writes on top of it.
+				require.NoError(t, <-peerDone, "the peer's autocommit update must be acknowledged")
+				_, unflushed := nor136ReadOriginal(t, peer)
+				require.Equal(t, "peer", unflushed,
+					"the peer's acknowledged update must be served by the acknowledged read path")
 
 				// Both acceptable outcomes are checked on the durable state, so
 				// an acknowledged write may never be dropped by the flush.

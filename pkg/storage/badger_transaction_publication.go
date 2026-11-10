@@ -69,6 +69,13 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// publication; shared otherwise, so Close waits for the commit and a
 	// commit that arrives after Close finished fails here without touching
 	// Badger.
+	if tx.schemaRuntime != nil {
+		// A schema commit takes the engine's write barrier exclusively. A data
+		// commit that waits for one of this transaction's entity write locks
+		// holds the barrier shared, so the locks are released first; their
+		// entities are validated at the snapshot again.
+		tx.releaseEntityWriteLocksLocked()
+	}
 	if tx.commitReleaseWrite != nil && tx.schemaRuntime != nil {
 		// A read-only MERGE may precede DDL; release its key admission before
 		// acquiring the schema-exclusive lifecycle lease. Schema snapshot validation

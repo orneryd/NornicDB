@@ -54,7 +54,7 @@ func (tx *BadgerTransaction) GetNodeProjected(ctx context.Context, nodeID NodeID
 // read: the same write-behind overlay, snapshot caches and MVCC resolution,
 // but decoding only the requested properties and never hydrating embeddings.
 func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context, nodeID NodeID, properties []string) (*Node, error) {
-	if tx.engine != nil && tx.engine.writeBehind != nil {
+	if tx.engine != nil && (tx.engine.writeBehind != nil || tx.readsLatestLocked(bufferedNodeEntity, string(nodeID))) {
 		return tx.engine.GetNodeProjected(ctx, nodeID, properties)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
@@ -1107,8 +1107,10 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(ctx context.Context, nod
 		return nil, err
 	}
 	// Write-behind overlay: buffered-but-unflushed writes are committed and
-	// visible to every later transaction, ahead of any snapshot read.
-	if tx.engine != nil && tx.engine.writeBehind != nil {
+	// visible to every later transaction, ahead of any snapshot read. A node
+	// whose write lock the transaction took after a later commit is read as
+	// last committed too (readsLatestLocked).
+	if tx.engine != nil && (tx.engine.writeBehind != nil || tx.readsLatestLocked(bufferedNodeEntity, string(nodeID))) {
 		if vectors {
 			return tx.engine.getNode(ctx, nodeID, v)
 		}
@@ -1257,8 +1259,9 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(ctx context.Context, edgeID 
 // visibility layer when v applies it.
 func (tx *BadgerTransaction) getCommittedEdgeReadLocked(ctx context.Context, edgeID EdgeID, v readVisibility) (*Edge, error) {
 	// Write-behind overlay: buffered-but-unflushed writes are committed and
-	// visible to every later transaction, ahead of any snapshot read.
-	if tx.engine != nil && tx.engine.writeBehind != nil {
+	// visible to every later transaction, ahead of any snapshot read; so is
+	// a relationship read as last committed under its write lock.
+	if tx.engine != nil && (tx.engine.writeBehind != nil || tx.readsLatestLocked(bufferedEdgeEntity, string(edgeID))) {
 		return tx.engine.getEdge(ctx, edgeID, v)
 	}
 	if tx.readTS.IsZero() {
@@ -1335,7 +1338,7 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(ctx context.Context
 	// Updating it is therefore not a write-write conflict — it is the same
 	// latest-committed state the update read from (monster retest part 1,
 	// "SET on a buffered relationship fails with a conflict").
-	if tx.engine != nil && tx.engine.writeBehind != nil {
+	if tx.engine != nil && (tx.engine.writeBehind != nil || tx.readsLatestLocked(bufferedEdgeEntity, string(edgeID))) {
 		return tx.engine.getEdge(ctx, edgeID, storedRead)
 	}
 	if tx.readTS.IsZero() {

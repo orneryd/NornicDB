@@ -152,6 +152,18 @@ type uniqueConstraintLockKey struct {
 	value    interface{}
 }
 
+// names are what a wait for the key reports as its label and property: an
+// entity key is named by its kind and ID.
+func (k uniqueConstraintLockKey) names() (label, property string) {
+	switch k.entityKind {
+	case 1:
+		return "node", k.entityID
+	case 2:
+		return "relationship", k.entityID
+	}
+	return k.label, k.property
+}
+
 // uniqueConstraintCommitLock is one canonical constraint or entity key's
 // authority. Exclusive owners serialize entity mutation and constrained values;
 // relationship endpoint readers share the same identity and exclude writers.
@@ -610,7 +622,8 @@ func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner 
 		if sm.uniqueConstraintLockWaitClosesCycleLocked(owner, lock, request.shared) {
 			clearWait()
 			sm.uniqueConstraintCommitLocksMu.Unlock()
-			return localizedError(localization.StorageTransactionDeadlockDetected(request.key.label, request.key.property), ErrDeadlock)
+			label, property := request.key.names()
+			return localizedError(localization.StorageTransactionDeadlockDetected(label, property), ErrDeadlock)
 		}
 		if lock.released == nil {
 			lock.released = make(chan struct{})
@@ -680,34 +693,45 @@ func (sm *SchemaManager) releaseUniqueConstraintLocks(owner string, held, unacqu
 	sm.uniqueConstraintCommitLocksMu.Lock()
 	defer sm.uniqueConstraintCommitLocksMu.Unlock()
 	for i := len(held) - 1; i >= 0; i-- {
-		request := held[i]
-		lock := request.lock
-		changed := false
-		if request.shared {
-			changed = lock.removeReader(owner)
-		} else if lock.owner == owner && lock.holds > 0 {
-			lock.holds--
-			if lock.holds == 0 {
-				lock.owner = ""
-				changed = true
-			}
-		}
-		if lock.owner == "" && lock.readerCount() == 0 {
-			lock.recoveryPending = false
-		}
-		if changed {
-			signalUniqueConstraintLock(lock)
-		}
+		sm.releaseUniqueConstraintHoldLocked(owner, held[i])
 	}
 	for _, requests := range [2][]uniqueConstraintLockRequest{held, unacquired} {
 		for _, request := range requests {
-			request.lock.refs--
-			if request.lock.refs == 0 && sm.uniqueConstraintCommitLocks[request.key] == request.lock {
-				delete(sm.uniqueConstraintCommitLocks, request.key)
-				*request.lock = uniqueConstraintCommitLock{}
-				uniqueConstraintLockPool.Put(request.lock)
-			}
+			sm.dropUniqueConstraintLockReferenceLocked(request)
 		}
+	}
+}
+
+// releaseUniqueConstraintHoldLocked releases owner's hold on request's key
+// and wakes its waiters when the key became available to them.
+func (sm *SchemaManager) releaseUniqueConstraintHoldLocked(owner string, request uniqueConstraintLockRequest) {
+	lock := request.lock
+	changed := false
+	if request.shared {
+		changed = lock.removeReader(owner)
+	} else if lock.owner == owner && lock.holds > 0 {
+		lock.holds--
+		if lock.holds == 0 {
+			lock.owner = ""
+			changed = true
+		}
+	}
+	if lock.owner == "" && lock.readerCount() == 0 {
+		lock.recoveryPending = false
+	}
+	if changed {
+		signalUniqueConstraintLock(lock)
+	}
+}
+
+// dropUniqueConstraintLockReferenceLocked drops request's registry reference
+// and evicts the entry its last holder or waiter left.
+func (sm *SchemaManager) dropUniqueConstraintLockReferenceLocked(request uniqueConstraintLockRequest) {
+	request.lock.refs--
+	if request.lock.refs == 0 && sm.uniqueConstraintCommitLocks[request.key] == request.lock {
+		delete(sm.uniqueConstraintCommitLocks, request.key)
+		*request.lock = uniqueConstraintCommitLock{}
+		uniqueConstraintLockPool.Put(request.lock)
 	}
 }
 

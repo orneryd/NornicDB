@@ -156,15 +156,16 @@ func (sm *SchemaManager) awaitUniqueConstraintLock(ctx context.Context, owner st
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-fired:
+			label, property := request.key.names()
 			if !report {
-				message := localization.StorageTransactionLockWaitTimedOut(request.key.label, request.key.property, wait.Timeout.String())
+				message := localization.StorageTransactionLockWaitTimedOut(label, property, wait.Timeout.String())
 				return &lockWaitTimeoutError{cause: localizedError(message, ErrLockWaitTimeout)}
 			}
 			clock.reported = true
 			sm.uniqueConstraintCommitLocksMu.Lock()
 			holder := request.lock.owner
 			sm.uniqueConstraintCommitLocksMu.Unlock()
-			event := localization.StorageLockWaitProlongedEvent(wait.database, owner, holder, request.key.label, request.key.property, time.Since(clock.since), max(wait.Timeout, 0))
+			event := localization.StorageLockWaitProlongedEvent(wait.database, owner, holder, label, property, time.Since(clock.since), max(wait.Timeout, 0))
 			logStorageEvent(ctx, wait.log, slog.LevelWarn, event)
 		}
 	}
