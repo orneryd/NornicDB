@@ -206,7 +206,11 @@ func (b *BadgerEngine) resetNodeReadCachesLocked() {
 // nodeReadCacheImageLocked selects an immutable current-value image. A query
 // read never borrows hydrated chunks from a full image: its first read decodes
 // the lightweight storage image, and subsequent point/label reads reuse that
-// query image. The caller holds nodeCacheMu for reading.
+// query image. A read of the body alone (nodeReadCacheProjection: labels,
+// properties and metadata, with no vector returned) is served by either
+// image, since both hold the body: the two caches share one byte budget, and
+// the query image can be what is left of a node. The caller holds nodeCacheMu
+// for reading.
 func (b *BadgerEngine) nodeReadCacheImageLocked(id NodeID, mode nodeReadCacheMode) (*Node, bool) {
 	if mode == nodeReadCacheQuery {
 		if query, found := b.queryNodeCache[id]; found {
@@ -216,6 +220,9 @@ func (b *BadgerEngine) nodeReadCacheImageLocked(id NodeID, mode nodeReadCacheMod
 	node, found := b.nodeCache[id]
 	if found && mode == nodeReadCacheQuery && len(node.ChunkEmbeddings) > 0 {
 		return nil, false
+	}
+	if !found && mode == nodeReadCacheProjection {
+		node, found = b.queryNodeCache[id]
 	}
 	return node, found
 }

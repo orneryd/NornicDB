@@ -1037,6 +1037,18 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 	if embeddings {
 		copyForRead = copyNode
 	}
+	// A read with stored vectors is served by a node's full image alone; a read
+	// without them by either image the cache holds of the node, so a node whose
+	// full image the caches' shared budget gave up is not decoded again on
+	// every call (NOR-407). The caller of cachedImage holds nodeCacheMu.
+	cacheMode := nodeReadCacheProjection
+	if embeddings {
+		cacheMode = nodeReadCacheFull
+	}
+	cachedImage := func(id NodeID) *Node {
+		node, _ := b.nodeReadCacheImageLocked(id, cacheMode)
+		return node
+	}
 	now := DecayScoringTime()
 	// Author: storage-format-owners lane (Codex), 1 November 2026.
 	// One bounded poll follows the batch through selection and caller copying.
@@ -1061,7 +1073,7 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 				node = state.node
 			}
 			if node == nil {
-				node = b.nodeCache[id]
+				node = cachedImage(id)
 			}
 			if node == nil {
 				return false, nil
@@ -1111,7 +1123,7 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 			node := state.node
 			if !state.found && current {
 				b.nodeCacheMu.RLock()
-				node = b.nodeCache[id]
+				node = cachedImage(id)
 				b.nodeCacheMu.RUnlock()
 			}
 			if !state.found && node == nil {
@@ -1122,16 +1134,23 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 				if err != nil {
 					return err
 				}
-				hydrate := nodeItemBodyOnly
+				// A read keeps the image it decodes for the next one: the full
+				// image, or for a read without vectors the query image, which
+				// holds none of the separately stored ones. A node whose
+				// embedding metadata cannot be read is still read without it,
+				// and is not kept.
+				hydrate := nodeItemQueryMetadata
 				if embeddings {
 					hydrate = nodeItemFullEmbeddings
 				}
 				node, err = b.readNodeItemInTxn(txn, item, id, hydrate)
+				if err == nil {
+					loaded = append(loaded, node)
+				} else if !embeddings {
+					node, err = b.readNodeItemInTxn(txn, item, id, nodeItemBodyOnly)
+				}
 				if err != nil {
 					return err
-				}
-				if embeddings {
-					loaded = append(loaded, node)
 				}
 			}
 			if !b.filterEntityByDecay(visibleRead, node, now) {
@@ -1154,8 +1173,12 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	fill := nodeReadCacheQuery
+	if embeddings {
+		fill = nodeReadCacheFull
+	}
 	for _, node := range loaded {
-		b.cacheFillNode(gen, node, nodeReadCacheFull, sourceTs)
+		b.cacheFillNode(gen, node, fill, sourceTs)
 	}
 	return result, nil
 }
