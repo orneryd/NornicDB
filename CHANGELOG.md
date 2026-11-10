@@ -18,7 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Explicit-transaction label and equality reads now apply live suppression consistently with point reads while preserving the pinned data population (NOR-160).
+- Explicit-transaction label and equality reads apply live suppression consistently
+  with point reads while preserving the pinned data population. Native indexed
+  transaction reads reuse their actual pinned snapshot, reducing repeated history
+  registration, allocations and read cost (NOR-160).
 
 - Isolate APOC graph/warmup and Cypher query-cache results from retained state:
   embedded callers can change returned containers without changing later reads.

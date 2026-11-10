@@ -1132,7 +1132,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(ctx context.Context, nod
 	if tx.readTS.IsZero() {
 		return tx.getNodeFromBadgerSnapshotLocked(nodeID)
 	}
-	node, err := readEntityAtWithView(ctx, tx.engine, nodeID, tx.readTS, mvccEntityRead{vectors: vectors, visibility: v}, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeAtInTxn)
+	node, err := tx.readCommittedNodeAtSnapshotLocked(ctx, nodeID, vectors, v)
 	if err == ErrNotVisibleAtSnapshot {
 		// The head exists but isn't visible at the reader's snapshot.
 		// Treat as a hard miss — falling back to a primary-key read

@@ -3,6 +3,7 @@ package cypher
 import (
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"strconv"
 	"testing"
 )
 
@@ -63,7 +64,8 @@ func BenchmarkIndexedTransactionRead(b *testing.B) {
 								if len(got.Rows) != size {
 									b.Fatalf("rows=%d want %d", len(got.Rows), size)
 								}
-								var total int64
+								// Check the full set: a count and sum can miss duplicate/missing pairs.
+								var seen [375]uint64 // stack storage for the maximum 24,000-node fixture
 								for _, row := range got.Rows {
 									node, ok := row[0].(*storage.Node)
 									if !ok {
@@ -72,10 +74,23 @@ func BenchmarkIndexedTransactionRead(b *testing.B) {
 									if node.Properties["document_id"] != "target" {
 										b.Fatal("foreign document")
 									}
-									total += node.Properties["value"].(int64)
-								}
-								if total != int64(size*(size+1)/2) {
-									b.Fatalf("sum=%d", total)
+									value, ok := node.Properties["value"].(int64)
+									if !ok || value < 1 || value > int64(size) {
+										b.Fatalf("unexpected value: %v", node.Properties["value"])
+									}
+									key, ok := node.Properties["id"].(string)
+									if !ok {
+										b.Fatalf("id type %T", node.Properties["id"])
+									}
+									parsed, err := strconv.ParseInt(key, 10, 64)
+									if err != nil || parsed != value {
+										b.Fatalf("id=%q value=%d", key, value)
+									}
+									word, bit := (value-1)/64, uint((value-1)%64)
+									if seen[word]&(uint64(1)<<bit) != 0 {
+										b.Fatalf("duplicate value %d", value)
+									}
+									seen[word] |= uint64(1) << bit
 								}
 							}
 						}
