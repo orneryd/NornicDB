@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	testfixture "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -84,13 +85,7 @@ func TestZeroTransactionTimeoutLeavesMergeWaitsUnbounded(t *testing.T) {
 		require.NoError(t, err)
 		_, err = holder.Execute(ctx, "MERGE (:Zero {k: 1})", nil)
 		require.NoError(t, err)
-		waits := make(chan struct{}, 1)
-		restore := storage.SetUniqueKeyLockWaitHookForTesting(func() {
-			select {
-			case waits <- struct{}{}:
-			default:
-			}
-		})
+		waits := testfixture.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 1)
 		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		done := make(chan error, 1)
 		go func() {
@@ -108,7 +103,6 @@ func TestZeroTransactionTimeoutLeavesMergeWaitsUnbounded(t *testing.T) {
 		require.NoError(t, <-done, "dataDir=%q: NORNICDB_TRANSACTION_TIMEOUT=0 must leave the wait unbounded (resolved timeout %v)", dataDir, cfg.Database.TransactionTimeout)
 		require.Zero(t, cfg.Database.TransactionTimeout)
 		cancel()
-		restore()
 		require.NoError(t, db.Close())
 	}
 }

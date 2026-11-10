@@ -14,7 +14,7 @@ func TestBranchConditionDoubleNotAndWholeStoreGuard(t *testing.T) {
  func typed(w writer)bool{_,ok:=w.(*stagedKV);return !!ok}
  func rawWrite(){}
  func whole(w writer){if _,staged:=w.(*stagedKV);!staged{rawWrite()}}
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	for _, name := range []string{"integer", "typed"} {
 		fn := pkg.Func(name)
 		found := false

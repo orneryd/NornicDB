@@ -35,16 +35,16 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(ctx context.Context, preserve
 	// logical boundary is read and the ledger copied in one step
 	// (mvccReservations). The old footprint is validated against the old cut
 	// afterwards; the new copy replaces the old one only when it passes.
-	tx.engine.mvccReservations.cutStarted()
+	cut := tx.engine.mvccReservations.cutStarted()
 	snapshotTx, badgerReadTs, beginPresence, err := tx.engine.beginTransactionSnapshot(ctx, tx.badgerDB)
 	if err != nil {
-		tx.engine.mvccReservations.cutAbandoned()
+		tx.engine.mvccReservations.cutAbandoned(cut)
 		return err
 	}
 	// Pin the next view before validating the old footprint. A publication
 	// after validation then remains newer than the next view and is checked
 	// again at commit; no interval can silently erase a write conflict.
-	_, beginSnapshot, inflightAtBegin, err := tx.engine.mvccReservations.cutTaken(func(now time.Time) (map[string]MVCCVersion, error) {
+	_, beginSnapshot, inflightAtBegin, err := tx.engine.mvccReservations.cutTaken(cut, func(now time.Time) (map[string]MVCCVersion, error) {
 		return tx.engine.snapshotNamespaceVersionsAt(ctx, now)
 	})
 	if err != nil {

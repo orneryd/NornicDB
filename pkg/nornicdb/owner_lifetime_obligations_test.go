@@ -4,17 +4,9 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
-
-func requireDone(t *testing.T, done <-chan struct{}, what string) {
-	t.Helper()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("%s did not end with its owner", what)
-	}
-}
 
 // Before Open sets buildCtx, the DB's background work runs under the DB
 // owner itself, so stopping the owner ends it (no substituted Background).
@@ -24,7 +16,7 @@ func TestLifetimeContextFallsBackToDBOwner(t *testing.T) {
 	require.NoError(t, ctx.Err())
 	db.work.CloseAdmission()
 	db.work.Cancel()
-	requireDone(t, ctx.Done(), "the DB lifetime context")
+	fixtureowner.WaitForBarrier(t, ctx.Done(), 5*time.Second, nil, "the DB lifetime context did not end with its owner")
 }
 
 // Every embed worker generation is rooted at the worker's own owner: the
@@ -37,14 +29,14 @@ func TestEmbedWorkerGenerationsEndWithWorkerOwner(t *testing.T) {
 		require.NoError(t, gen.Context().Err())
 		w.work.CloseAdmission()
 		w.work.Cancel()
-		requireDone(t, gen.Context().Done(), "the constructed worker generation")
-		requireDone(t, w.ctx.Done(), "the worker context")
+		fixtureowner.WaitForBarrier(t, gen.Context().Done(), 5*time.Second, nil, "the constructed worker generation did not end with its owner")
+		fixtureowner.WaitForBarrier(t, w.ctx.Done(), 5*time.Second, nil, "the worker context did not end with its owner")
 	})
 	t.Run("lazy", func(t *testing.T) {
 		w := &EmbedWorker{}
 		gen := w.generation()
 		w.work.CloseAdmission()
 		w.work.Cancel()
-		requireDone(t, gen.Context().Done(), "the lazy worker generation")
+		fixtureowner.WaitForBarrier(t, gen.Context().Done(), 5*time.Second, nil, "the lazy worker generation did not end with its owner")
 	})
 }

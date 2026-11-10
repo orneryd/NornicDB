@@ -47,6 +47,11 @@ type BadgerTransaction struct {
 	// first write (SetWriteAdmission); nil once it admitted, or without one.
 	writeAdmission func() error
 
+	// entityLocks are the write locks of the existing nodes and
+	// relationships the transaction's statements write, held until it ends
+	// (LockNodeForWrite, NOR-213).
+	entityLocks entityWriteLocks
+
 	// changeCapture holds the database's change log while a capturing
 	// commit runs (change_capture.go, #937).
 	changeCapture *txChangeCapture
@@ -322,13 +327,13 @@ func (b *BadgerEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction
 	// the cut takes its wall clock, reads the boundary and copies the ledger,
 	// so the copy holds every version unpublished at the snapshot and every
 	// later version compares newer (mvccReservations).
-	b.mvccReservations.cutStarted()
+	cut := b.mvccReservations.cutStarted()
 	snapshotTx, badgerReadTs, beginPresence, err := b.beginTransactionSnapshot(ctx, badgerDB)
 	if err != nil {
-		b.mvccReservations.cutAbandoned()
+		b.mvccReservations.cutAbandoned(cut)
 		return nil, err
 	}
-	startTime, beginSnapshot, inflightAtBegin, err := b.mvccReservations.cutTaken(func(now time.Time) (map[string]MVCCVersion, error) {
+	startTime, beginSnapshot, inflightAtBegin, err := b.mvccReservations.cutTaken(cut, func(now time.Time) (map[string]MVCCVersion, error) {
 		return b.snapshotNamespaceVersionsAt(ctx, now)
 	})
 	if err != nil {
@@ -468,6 +473,7 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	// After a commit's publication to the constraint cache, so a MERGE
 	// waiting for a key finds the committed node.
 	tx.releaseMergeAdmissionLocked()
+	tx.releaseEntityWriteLocksLocked()
 	tx.releaseWriteBarrierLocked()
 	tx.clearSnapshotCachesLocked()
 	tx.pendingAdjacency = nil
@@ -1530,6 +1536,18 @@ func (tx *BadgerTransaction) DeleteGraphNode(ctx context.Context, nodeID NodeID,
 // before its Badger commit would be overwritten or deleted, and both
 // transactions would commit. A missing key still enrolls the read.
 func (tx *BadgerTransaction) enrollCommittedWriteLocked(key []byte, kind string) error {
+	if tx.entityLocks.latest != 0 {
+		// An entity read as last committed under its write lock was committed
+		// after this transaction's Badger snapshot; the lock, held through the
+		// commit, keeps a peer from writing its key instead.
+		entity := bufferedNodeEntity
+		if kind == "edge" {
+			entity = bufferedEdgeEntity
+		}
+		if tx.readsLatestLocked(entity, string(key[1:])) {
+			return nil
+		}
+	}
 	if _, err := tx.badgerTx.Get(key); err != nil && err != badger.ErrKeyNotFound {
 		return fmt.Errorf("tracking %s write conflict: %w", kind, err)
 	}
@@ -2358,6 +2376,9 @@ func (tx *BadgerTransaction) PrepareMergeKey(ctx context.Context, label, propert
 // wait until the client rolls it back.
 func (tx *BadgerTransaction) ReleaseMergeKeys() {
 	drainReleaseCallbacks(&tx.mu, &tx.mergeKeyReleases)
+	tx.mu.Lock()
+	tx.releaseEntityWriteLocksLocked()
+	tx.mu.Unlock()
 }
 
 // catchUpToNode readies the transaction for a MERGE that will look up node

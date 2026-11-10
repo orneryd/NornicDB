@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent Cypher writers of an existing node or relationship wait for the
+  owning transaction, then apply their changes to its committed image instead
+  of failing with Transaction.Outdated. Waits retain cancellation, timeout and
+  deadlock handling, and overlapping BEGINs no longer retain every published
+  MVCC reservation (NOR-213).
+
 - Explicit-transaction label and equality reads apply live suppression consistently
   with point reads while preserving the pinned data population. Native indexed
   transaction reads reuse their actual pinned snapshot, reducing repeated history

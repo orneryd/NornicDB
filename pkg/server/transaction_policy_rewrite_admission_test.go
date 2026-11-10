@@ -1,16 +1,18 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-func TestTransactionPolicyRewriteRejectsBeforeAcceptanceAndNextCleanupSucceeds(t *testing.T) {
+func TestTransactionPolicyRewriteOrdersWithDeleteAndPreservesAccounting(t *testing.T) {
 	for _, route := range []string{"http-explicit", "bolt-explicit"} {
 		for _, buffered := range []bool{false, true} {
 			for _, isEdge := range []bool{false, true} {
@@ -40,10 +42,30 @@ func TestTransactionPolicyRewriteRejectsBeforeAcceptanceAndNextCleanupSucceeds(t
 					require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "STALE", Properties: map[string]any{"payload": "original"}, CreatedAt: old, UpdatedAt: old}))
 					before, beforeNodes, beforeEdges := h.server.dbManager.GetStorageSize(t.Context(), "nornic")
 					var rewrites int
+					type rewriteResult struct {
+						changed bool
+						err     error
+					}
+					rewritten := make(chan rewriteResult, 1)
+					waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 1)
+					rewriteCtx, cancelRewrite := context.WithTimeout(t.Context(), 20*time.Second)
+					defer cancelRewrite()
 					h.beforeCommit = func() {
 						id := "nornic:a"
 						if isEdge {
 							id = "nornic:r"
+						}
+						if !isEdge {
+							// DELETE holds this node's body lock until commit. The policy
+							// rewrite must queue, not run synchronously in a before-commit
+							// hook that prevents its own lock owner from completing.
+							rewrites++
+							go func() {
+								changed, err := base.EnqueueDeindexIfSuppressed(rewriteCtx, id, false)
+								rewritten <- rewriteResult{changed, err}
+							}()
+							fixtureowner.WaitForBarrier(t, waits, 10*time.Second, cancelRewrite, "the node policy rewrite never waited for DELETE")
+							return
 						}
 						changed, err := base.EnqueueDeindexIfSuppressed(t.Context(), id, isEdge)
 						require.NoError(t, err)
@@ -53,6 +75,29 @@ func TestTransactionPolicyRewriteRejectsBeforeAcceptanceAndNextCleanupSucceeds(t
 					query := "MATCH (n) WHERE reveal(n) IS NOT NULL DETACH DELETE n"
 					outcome := h.run(t, query)
 					require.Equal(t, 1, rewrites)
+					if !isEdge {
+						require.Empty(t, outcome.code, outcome.message)
+						require.Equal(t, 2, outcome.nodesDeleted)
+						require.Equal(t, 1, outcome.relationshipsDeleted)
+						select {
+						case result := <-rewritten:
+							require.NoError(t, result.err)
+							require.False(t, result.changed, "the queued policy job cannot recreate a deleted body")
+						case <-time.After(10 * time.Second):
+							t.Fatal("policy job did not finish after DELETE committed")
+						}
+						nodes, err := store.NodeCount(t.Context())
+						require.NoError(t, err)
+						require.Zero(t, nodes)
+						edges, err := store.EdgeCount(t.Context())
+						require.NoError(t, err)
+						require.Zero(t, edges)
+						total, nodeBytes, edgeBytes := h.server.dbManager.GetStorageSize(t.Context(), "nornic")
+						require.Zero(t, total)
+						require.Zero(t, nodeBytes)
+						require.Zero(t, edgeBytes)
+						return
+					}
 					require.Equal(t, "Neo.TransientError.Transaction.Outdated", outcome.code, outcome.message)
 					require.Contains(t, outcome.message, "changed after transaction start")
 					h.beforeCommit = nil

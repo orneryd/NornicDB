@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	testfixture "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,14 +17,7 @@ func TestPrepareMergeNodeForWriteSerializesWritersOfOneNode(t *testing.T) {
 	engine, _ := newMergeKeyTestEngine(t)
 	ctx := context.Background()
 	nodeID := createKeyNode(t, engine, "w1", 1)
-	waits := make(chan struct{}, 8)
-	restore := SetUniqueKeyLockWaitHookForTesting(func() {
-		select {
-		case waits <- struct{}{}:
-		default:
-		}
-	})
-	defer restore()
+	waits := testfixture.ObserveHookSignal(t, SetUniqueKeyLockWaitHookForTesting, 8)
 	key := map[string]interface{}{"k": int64(1)}
 
 	first := beginMergeKeyTx(t, engine)

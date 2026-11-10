@@ -14,7 +14,7 @@ func TestBranchConditionKeepsPredicateKinds(t *testing.T) {
  type writer interface{write()};type stagedKV struct{};func(*stagedKV)write(){}
  func integer(n int)bool{return !(n<3)}
  func typed(w writer)bool{_,ok:=w.(*stagedKV);return !ok}
- `, "pkg/storage", ssa.SanityCheckFunctions)
+ `, "pkg/storage", ssa.SanityCheckFunctions, standaloneFixture)
 	result := func(name string) ssa.Value {
 		fn := pkg.Func(name)
 		for _, b := range fn.Blocks {

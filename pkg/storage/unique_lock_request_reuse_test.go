@@ -65,7 +65,7 @@ func TestUniqueLockRequestReuseLargeRelationshipBatch(t *testing.T) {
 		edges[i] = EdgeID(fmt.Sprintf("db:edge-%d", i))
 		endpoints = append(endpoints, NodeID(fmt.Sprintf("db:node-%d", i)), "db:shared")
 	}
-	keys, keyErr := entityCommitKeys(t.Context(), nil, edges, endpoints)
+	keys, keyErr := entityCommitKeys(t.Context(), entityAuthorityFootprint{nodes: nil, edges: edges, endpoints: endpoints, nodeBodies: nil, edgeBodies: edges})
 	if keyErr != nil {
 		t.Fatal(keyErr)
 	}
@@ -82,7 +82,7 @@ func TestUniqueLockRequestReuseLargeRelationshipBatch(t *testing.T) {
 	first()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	authorityKeys2, keyErr := entityCommitKeys(t.Context(), []NodeID{"db:shared"}, nil, nil)
+	authorityKeys2, keyErr := entityCommitKeys(t.Context(), entityAuthorityFootprint{nodes: []NodeID{"db:shared"}, edges: nil, endpoints: nil, nodeBodies: []NodeID{"db:shared"}, edgeBodies: nil})
 	if keyErr != nil {
 		t.Fatal(keyErr)
 	}

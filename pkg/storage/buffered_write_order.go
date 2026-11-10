@@ -575,7 +575,11 @@ func (tx *BadgerTransaction) bufferedWriteConflictLocked(ctx context.Context) er
 			op := &tx.operations[i]
 			switch op.Type {
 			case OpCreateNode, OpUpdateNode, OpDeleteNode, OpUpdateEmbedding:
-				nodes[op.NodeID] = struct{}{}
+				// A node written on its latest committed image under its write
+				// lock follows every acknowledged write of it.
+				if !tx.readsLatestLocked(bufferedNodeEntity, string(op.NodeID)) {
+					nodes[op.NodeID] = struct{}{}
+				}
 				for _, id := range op.DeletedEdgeIDs {
 					if err := cancel.check(ctx); err != nil {
 						return err
@@ -583,11 +587,13 @@ func (tx *BadgerTransaction) bufferedWriteConflictLocked(ctx context.Context) er
 					edges[id] = struct{}{}
 				}
 			case OpCreateEdge, OpUpdateEdge:
-				if _, deleted := tx.deletedEdges[op.EdgeID]; !deleted {
+				if _, deleted := tx.deletedEdges[op.EdgeID]; !deleted && !tx.readsLatestLocked(bufferedEdgeEntity, string(op.EdgeID)) {
 					edges[op.EdgeID] = struct{}{}
 				}
 			case OpDeleteEdge:
-				edges[op.EdgeID] = struct{}{}
+				if !tx.readsLatestLocked(bufferedEdgeEntity, string(op.EdgeID)) {
+					edges[op.EdgeID] = struct{}{}
+				}
 			}
 		}
 		return ctx.Err()

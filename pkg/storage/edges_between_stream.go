@@ -267,11 +267,15 @@ func (tx *BadgerTransaction) MatchEdgesBetween(ctx context.Context, startID, end
 	if err := tx.pinNamespaceFromIDLocked(string(endID)); err != nil {
 		return nil, err
 	}
+	pendingEdges, err := writeOwnedReadImagesLocked(ctx, tx.pendingEdges, tx.deletedEdges, &tx.entityLocks, edgeWriteLockKind, tx.engine.GetStoredEdge)
+	if err != nil {
+		return nil, err
+	}
 	matched, err := tx.engine.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, func(edge *Edge) bool {
 		if _, deleted := tx.deletedEdges[edge.ID]; deleted {
 			return false
 		}
-		if _, pending := tx.pendingEdges[edge.ID]; pending {
+		if _, pending := pendingEdges[edge.ID]; pending {
 			return false
 		}
 		return match(edge)
@@ -279,8 +283,9 @@ func (tx *BadgerTransaction) MatchEdgesBetween(ctx context.Context, startID, end
 	if err != nil {
 		return nil, err
 	}
-	for _, edge := range tx.pendingEdges {
-		if edge == nil || edge.StartNode != startID || edge.EndNode != endID || edge.Type != edgeType {
+	now := DecayScoringTime()
+	for _, edge := range pendingEdges {
+		if edge == nil || edge.StartNode != startID || edge.EndNode != endID || edge.Type != edgeType || tx.engine.filterEntityByDecay(visibleRead, edge, now) {
 			continue
 		}
 		if match((QueryResultProjection{}).Edge(edge, properties)) {

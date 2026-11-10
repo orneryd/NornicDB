@@ -14,12 +14,13 @@ package storage_test
 // reproduction):
 //
 //  1. writer A stages SET n.note='loser' and is paused before its final commit;
-//  2. peer B's autocommit SET n.other='peer' is acknowledged and is still
-//     sitting in the write-behind buffer (never flushed, never rotated);
-//  3. A resumes and commits.
+//  2. peer B's autocommit SET n.other='peer' of the same node waits for A's
+//     write lock (NOR-213); before, it was acknowledged into the write-behind
+//     buffer here and A's commit was rejected as stale;
+//  3. A resumes and commits; B resumes on A's commit, which a buffered
+//     autocommit A leaves unflushed, and is acknowledged on top of it.
 //
-// The only acceptable outcomes are (a) both acknowledged updates survive, or
-// (b) A is rejected with a retryable conflict. An acknowledged outcome whose
+// Both acknowledged updates survive the flush. An acknowledged outcome whose
 // update the flush then drops is the defect.
 //
 // Scheduling is explicit, not wall-clock: the explicit writer is paused by
@@ -40,9 +41,9 @@ import (
 	"testing"
 	"time"
 
+	testfixture "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
-	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -152,21 +153,37 @@ func nor136RequireDurableOutcome(t *testing.T, f *protocolServerFixture, id stor
 	}
 }
 
+// nor136OpenSchedule is the one owner of the NOR136 schedule fixture: the
+// write-behind store is opened with its rotation delay pinned to
+// nor136ScheduleFlushInterval and the existing worker stopped, so an
+// acknowledged autocommit commit stays buffered until the schedule flushes
+// explicitly and no timer can move it. It seeds the caller's graph through the
+// fixture and returns the fixture with the writer's and the peer's public
+// clients for the route. The unflushed-peer schedule and the disjoint-peer
+// control share it; their conflicting and non-conflicting contracts stay with
+// the tests.
+func nor136OpenSchedule(t *testing.T, route string, seed ...string) (*protocolServerFixture, *pr1655PublicClient, *pr1655PublicClient) {
+	t.Helper()
+	f := openProtocolServerFixture(t, protocolServerOptions{writeBehind: true, flushInterval: nor136ScheduleFlushInterval, manualDrain: true})
+	f.seed(t, seed...)
+	return f, pr1655OpenPublicClient(t, f.server, route), pr1655OpenPublicClient(t, f.server, route)
+}
+
 // TestNOR136UnflushedPeerKeepsAcknowledgedWrites is NOR136 matrix rows 1 and 2:
 // the unflushed-peer schedule over Execute, Bolt and HTTP, for an explicit and
 // an autocommit stale writer.
+// The peer contends with the writer for the same node, so its update is only
+// acknowledged once the writer's transaction ends; the disjoint-peer control is
+// TestNOR136DisjointPeerKeepsBothAcknowledgedWrites, and both share the schedule
+// fixture owned by nor136OpenSchedule.
 func TestNOR136UnflushedPeerKeepsAcknowledgedWrites(t *testing.T) {
 	nor136Parsers(t)
 	for _, route := range nor136ProtocolRoutes() {
 		for _, producer := range []string{"explicit", "autocommit"} {
 			t.Run(fmt.Sprintf("%s/%s", route, producer), func(t *testing.T) {
-				f := openProtocolServerFixture(t, protocolServerOptions{writeBehind: true, flushInterval: nor136ScheduleFlushInterval, manualDrain: true})
-				f.seed(t, "CREATE (:Doc {id:'original', note:'seed', other:'seed'})")
+				f, writer, peer := nor136OpenSchedule(t, route, "CREATE (:Doc {id:'original', note:'seed', other:'seed'})")
 				originalID, idErr := pr1655SingleDocID(f.engine)
 				require.NoError(t, idErr)
-
-				writer := pr1655OpenPublicClient(t, f.server, route)
-				peer := pr1655OpenPublicClient(t, f.server, route)
 
 				gate := newNOR136PauseGate()
 				var writerErr error
@@ -197,17 +214,24 @@ func TestNOR136UnflushedPeerKeepsAcknowledgedWrites(t *testing.T) {
 					t.Fatalf("unknown producer %q", producer)
 				}
 
-				// The peer's autocommit update is acknowledged while the
-				// writer is still uncommitted.
-				_, err := peer.run(nor136PeerOther)
-				require.NoError(t, err, "the peer's autocommit update must be acknowledged")
-				// Genuinely unflushed: the peer's body is not in the store yet, and the
-				// acknowledged read path serves it from the write-behind overlay.
+				// The peer writes the node the writer still holds: it waits for
+				// the writer's transaction to end (NOR-213), so nothing of it
+				// is acknowledged or stored before then.
+				waits := testfixture.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 8)
+				peerDone := make(chan error, 1)
+				go func() {
+					_, err := peer.run(nor136PeerOther)
+					peerDone <- err
+				}()
+				select {
+				case <-waits:
+				case err := <-peerDone:
+					t.Fatalf("the peer did not wait for the uncommitted writer: %v", err)
+				case <-time.After(30 * time.Second):
+					t.Fatal("the peer never reached the writer's lock")
+				}
 				require.Equal(t, "seed", storage.ReadPhysicalNodeForTest(t, f.engine, originalID).Properties["other"],
-					"the peer's acknowledgement was already flushed: the schedule was not established")
-				_, unflushed := nor136ReadOriginal(t, peer)
-				require.Equal(t, "peer", unflushed,
-					"the peer's acknowledged update must be served from the unflushed write-behind overlay")
+					"the waiting peer's update was stored before the writer ended")
 
 				switch producer {
 				case "explicit":
@@ -216,13 +240,13 @@ func TestNOR136UnflushedPeerKeepsAcknowledgedWrites(t *testing.T) {
 					close(gate.resume)
 					writerErr = <-writerDone
 				}
-				if writerErr != nil {
-					require.Equal(t, nornicerrors.TransientOutdated, pr1655PublicStatus(writerErr),
-						"a rejected stale writer must report a retryable conflict, got %v", writerErr)
-					t.Logf("NOR136 %s/%s: stale writer rejected with %s: %v", route, producer, pr1655PublicStatus(writerErr), writerErr)
-				} else {
-					t.Logf("NOR136 %s/%s: stale writer acknowledged; both acknowledged updates must survive", route, producer)
-				}
+				require.NoError(t, writerErr, "the writer holds the node: its commit is not a conflict")
+				// The peer resumes on the writer's commit, still unflushed for
+				// the buffered autocommit writer, and writes on top of it.
+				require.NoError(t, <-peerDone, "the peer's autocommit update must be acknowledged")
+				_, unflushed := nor136ReadOriginal(t, peer)
+				require.Equal(t, "peer", unflushed,
+					"the peer's acknowledged update must be served by the acknowledged read path")
 
 				// Both acceptable outcomes are checked on the durable state, so
 				// an acknowledged write may never be dropped by the flush.
@@ -244,17 +268,17 @@ func TestNOR136UnflushedPeerKeepsAcknowledgedWrites(t *testing.T) {
 // TestNOR136DisjointPeerKeepsBothAcknowledgedWrites is NOR136 matrix row 4: a
 // peer's acknowledged buffered write to a different node must not conflict the
 // writer and must survive alongside it.
+// Unlike the unflushed-peer schedule it shares nor136OpenSchedule with, the peer
+// never contends for the writer's node, so no lock wait or conflict is possible
+// and no acknowledged property of either node may be lost.
 func TestNOR136DisjointPeerKeepsBothAcknowledgedWrites(t *testing.T) {
 	nor136Parsers(t)
 	for _, route := range nor136ProtocolRoutes() {
 		t.Run(route, func(t *testing.T) {
-			f := openProtocolServerFixture(t, protocolServerOptions{writeBehind: true, flushInterval: nor136ScheduleFlushInterval, manualDrain: true})
-			f.seed(t,
+			f, writer, peer := nor136OpenSchedule(t, route,
 				"CREATE (:Doc {id:'original', note:'seed'})",
 				"CREATE (:Doc {id:'peer-target', other:'seed'})",
 			)
-			writer := pr1655OpenPublicClient(t, f.server, route)
-			peer := pr1655OpenPublicClient(t, f.server, route)
 
 			require.NoError(t, writer.begin())
 			_, err := writer.run(nor136WriterNote)

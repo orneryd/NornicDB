@@ -257,6 +257,8 @@ var storageMutatorClassification = map[string]string{
 	"BadgerTransaction.PrepareMergeKey":                 "reserves a MERGE key in the transaction; no entity state",
 	"BadgerTransaction.PrepareMergeNode":                "admits MERGE constraint tuples and may advance the snapshot; entity writes are published by CreateNode/UpdateGraphNode at Commit",
 	"BadgerTransaction.PrepareMergeNodeForWrite":        "admits MERGE write keys and may land previously published buffered commits; new entity writes are published by its Commit",
+	"BadgerTransaction.LockNodeForWrite":                "takes a node's write lock and reads its committed image; the write is published by UpdateGraphNode/DeleteGraphNode at Commit",
+	"BadgerTransaction.LockEdgeForWrite":                "takes a relationship's write lock and reads its committed image; the write is published by UpdateEdge/DeleteEdge at Commit",
 	"BadgerEngine.Close":                                "deletes the stored suppressions of entities deleted before it (endSuppressions); no entity state",
 	"BadgerEngine.Restore":                              "replaces the whole store offline; DB.Restore owns the reset of search (restartSearchAfterRestore)",
 	"BadgerEngine.RunOnStartMigrations":                 "manual entry rejects pre-V4 stores before any migration writes; opening runs the ordered migration before search exists, and search builds from the migrated snapshot",

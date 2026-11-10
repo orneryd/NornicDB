@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,11 +59,11 @@ func TestHTTPIdleHolderEndsAtTransactionTimeout(t *testing.T) {
 // Terminated.
 func TestHTTPTerminateEndsAnIdleHolderAtOnce(t *testing.T) {
 	server, token, _ := setupKeyWaitServer(t, 5*time.Second, 0)
-	waits := httpKeyWaitSignal(t)
+	waits := fixtureowner.ObserveHookSignal(t, storage.SetUniqueKeyLockWaitHookForTesting, 64)
 	holder := holdHTTPKeys(t, server, token, "terminated")
 	drainHTTPKeyWaits(waits)
 	done := startHTTPKeyWaiter(context.Background(), t, server, token, false, "MERGE (n:Doc {id: $k})", map[string]any{"k": "terminated"})
-	awaitHTTPKeyWait(t, waits, "the waiter")
+	fixtureowner.WaitForBarrier(t, waits, httpKeyWaitStuckAfter, nil, "the waiter never waited for the key")
 	rows, err := server.db.ExecuteCypher(t.Context(), "SHOW TRANSACTIONS YIELD transactionId, currentQuery WHERE currentQuery = '' RETURN transactionId", nil)
 	require.NoError(t, err)
 	require.Len(t, rows.Rows, 1)

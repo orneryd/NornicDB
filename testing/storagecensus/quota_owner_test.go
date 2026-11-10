@@ -21,7 +21,7 @@ func TestSharedQuotaFieldsRetainExactWriters(t *testing.T) {
  func rogue(i *DatabaseInfo,r *reservedUsage){i.nodeSize++;i.usageNodes++;i.otherSize++;r.nodes++;alias:=i.pending;alias["rogue"]=*r}
  type DatabaseInfoLookalike struct{nodeSize int64}
  func lookalike(i *DatabaseInfoLookalike){i.nodeSize++}
- `, "pkg/multidb", ssa.SanityCheckFunctions)
+ `, "pkg/multidb", ssa.SanityCheckFunctions, standaloneFixture)
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
 		if fn.Pkg == pkg {
 			p.funcs = append(p.funcs, fn)

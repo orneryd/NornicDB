@@ -36,6 +36,7 @@ import (
 	"time"
 	"unsafe"
 
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -293,15 +294,6 @@ func nor20ExecuteAsync(exec *StorageExecutor, ctx context.Context, query string)
 	return outcome
 }
 
-func nor20AwaitEntered(t *testing.T, entered <-chan struct{}, what string) {
-	t.Helper()
-	select {
-	case <-entered:
-	case <-time.After(nor20WaitLimit):
-		t.Fatalf("%s never started", what)
-	}
-}
-
 func nor20AwaitOutcome(t *testing.T, outcome <-chan nor20Outcome) nor20Outcome {
 	t.Helper()
 	select {
@@ -363,7 +355,7 @@ func nor20CandidateScanCase(t *testing.T) {
 		}
 	})
 
-	nor20AwaitEntered(t, reader.entered, "the materialized label scan")
+	runtimeFixtureOwner.WaitForBarrier(t, reader.entered, nor20WaitLimit, nil, "the materialized label scan never started")
 	cancel()
 	reader.summon()
 
@@ -409,7 +401,7 @@ func nor20ProbeCase(t *testing.T, query, site string) {
 		}
 	})
 
-	nor20AwaitEntered(t, probe.entered, site)
+	runtimeFixtureOwner.WaitForBarrier(t, probe.entered, nor20WaitLimit, nil, site+" never started")
 	cancel()
 	probe.summon()
 
