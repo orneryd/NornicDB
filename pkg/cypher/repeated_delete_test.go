@@ -131,13 +131,10 @@ func TestComponentDeleteSkipsAlreadyGoneButFailsOtherStorageErrors(t *testing.T)
 	require.Empty(t, edges)
 }
 
-// The public native pair for the relationship DELETE: the statement's own
-// delete commits through the implicit transaction, and a delete the
-// transaction's snapshot still sees after a peer removed the relationship is
-// refused at commit with the storage conflict error - the transaction-level
-// refusal, not a per-relationship statement error. Nothing of the refused
-// transaction reaches the store.
-func TestPublicDeleteCommitsAndRefusesSnapshotConflict(t *testing.T) {
+// Public DELETE commits normally, but a peer's post-BEGIN deletion is
+// rejected when the stale writer acquires body ownership. COMMIT must then
+// refuse the failed transaction, including unrelated earlier staged writes.
+func TestPublicDeleteRejectsPeerDeletionBeforeStaging(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "delete_public")
 	writer := NewStorageExecutor(store)
@@ -166,18 +163,23 @@ func TestPublicDeleteCommitsAndRefusesSnapshotConflict(t *testing.T) {
 		}
 	}()
 
+	_, err = writer.Execute(ctx, "CREATE (:Marker {id:'uncommitted'})", nil)
+	require.NoError(t, err)
+
 	_, err = peer.Execute(ctx, "MATCH ()-[r:R]->() DELETE r", nil)
 	require.NoError(t, err)
 
-	deleted, err = writer.Execute(ctx, "MATCH ()-[r:R]->() DELETE r", nil)
-	require.NoError(t, err, "the writer's snapshot still sees the relationship")
-	require.Equal(t, 1, deleted.Stats.RelationshipsDeleted)
+	_, err = writer.Execute(ctx, "MATCH ()-[r:R]->() DELETE r", nil)
+	require.ErrorIs(t, err, storage.ErrConflict, "body ownership rejects a peer-deleted relationship before staging")
+	require.Contains(t, err.Error(), "changed after transaction start")
 
 	_, err = writer.Execute(ctx, "COMMIT", nil)
 	rolledBack = true
-	require.Error(t, err, "the peer's committed delete must refuse this transaction")
-	require.ErrorIs(t, err, storage.ErrConflict)
-	require.Contains(t, err.Error(), "changed after transaction start")
+	require.Error(t, err, "the failed transaction cannot commit its earlier marker")
+	require.Contains(t, statusText(err), "Neo.ClientError.Transaction.TransactionMarkedAsFailed")
+	markers, err := store.GetNodesByLabel(ctx, "Marker")
+	require.NoError(t, err)
+	require.Empty(t, markers, "the failed transaction publishes no partial writes")
 
 	edges, err = store.AllEdges(ctx)
 	require.NoError(t, err)
