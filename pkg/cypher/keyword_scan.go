@@ -545,6 +545,13 @@ func labelWildcardAt(s string, i int) bool {
 
 func lastLiveByte(text string, position int) int {
 	end := min(max(position, 0), len(text))
+	// A long statement is read once for all of its positions (liveTextIndex);
+	// a short prefix is read here.
+	if end >= liveTextIndexMinimum && len(text) <= liveTextIndexMaximum {
+		if index := liveTextIndexFor(text); index != nil {
+			return int(index.last[end])
+		}
+	}
 	// Without quotes or comment introducers, a reverse whitespace scan has
 	// the same result as walking the whole prefix to track lexical state.
 	if strings.IndexAny(text[:end], "'\"`/") < 0 {
@@ -553,27 +560,15 @@ func lastLiveByte(text string, position int) int {
 		}
 		return end - 1
 	}
-	last := -1
-	for index := 0; index < position && index < len(text); {
-		if end := cyphertext.CommentEnd(text, index); end >= 0 {
-			index = end
-			continue
+	live := -1
+	for index := 0; index < end; {
+		next, inside, after := liveStep(text, index, live)
+		if next > end {
+			return inside
 		}
-		if cyphertext.IsQuote(text[index]) {
-			end, closed := cyphertext.ScanQuotedText(text, index)
-			last = index
-			if closed && end <= position {
-				last = end - 1
-			}
-			index = end
-			continue
-		}
-		if !cyphertext.IsWhitespaceAt(text, index) {
-			last = index
-		}
-		index++
+		index, live = next, after
 	}
-	return last
+	return live
 }
 
 // isExpressionBoundaryWord reports whether word is a keyword after which an
@@ -681,21 +676,7 @@ func keywordIndexFrom(ctx context.Context, s, keyword string, from int, opts key
 			continue
 		}
 
-		if !keywordBoundaryOK(s, i, opts.Boundary, keywordBefore) {
-			continue
-		}
-
-		endPos, ok := keywordMatchAt(s, i, keyword, ks, ke)
-		if !ok {
-			continue
-		}
-		if !keywordBoundaryOK(s, endPos, opts.Boundary, keywordAfter) {
-			continue
-		}
-		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
-			continue
-		}
-		if clauseKeywordUsedAsName(ctx, s, i, endPos, keyword) {
+		if !keywordAt(ctx, s, i, keyword, ks, ke, opts.Boundary) {
 			continue
 		}
 		if ctx.Err() != nil {
@@ -705,6 +686,27 @@ func keywordIndexFrom(ctx context.Context, s, keyword string, from int, opts key
 	}
 
 	return -1
+}
+
+// keywordAt reports whether the keyword (keyword[ks:ke]) stands at s[i] as
+// keywordIndexFrom accepts it there: between its boundaries, not WITH as an
+// operator and not a name spelled like the keyword. i is live statement text
+// outside the nesting the caller's options skip.
+func keywordAt(ctx context.Context, s string, i int, keyword string, ks, ke int, boundary keywordBoundaryMode) bool {
+	if !keywordBoundaryOK(s, i, boundary, keywordBefore) {
+		return false
+	}
+	endPos, ok := keywordMatchAt(s, i, keyword, ks, ke)
+	if !ok {
+		return false
+	}
+	if !keywordBoundaryOK(s, endPos, boundary, keywordAfter) {
+		return false
+	}
+	if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
+		return false
+	}
+	return !clauseKeywordUsedAsName(ctx, s, i, endPos, keyword)
 }
 
 func cachedKeywordIndexFromDefault(ctx context.Context, s, keyword string, from int) int {

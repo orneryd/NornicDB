@@ -100,6 +100,12 @@ type CypherParserListener interface {
 	// EnterConstraintBlock is called when entering the constraintBlock production.
 	EnterConstraintBlock(c *ConstraintBlockContext)
 
+	// EnterConstraintBlockEntry is called when entering the constraintBlockEntry production.
+	EnterConstraintBlockEntry(c *ConstraintBlockEntryContext)
+
+	// EnterConstraintBlockRequirementEntry is called when entering the constraintBlockRequirementEntry production.
+	EnterConstraintBlockRequirementEntry(c *ConstraintBlockRequirementEntryContext)
+
 	// EnterPropertyTypeName is called when entering the propertyTypeName production.
 	EnterPropertyTypeName(c *PropertyTypeNameContext)
 
@@ -111,9 +117,6 @@ type CypherParserListener interface {
 
 	// EnterStandaloneCall is called when entering the standaloneCall production.
 	EnterStandaloneCall(c *StandaloneCallContext)
-
-	// EnterExistsSubquery is called when entering the existsSubquery production.
-	EnterExistsSubquery(c *ExistsSubqueryContext)
 
 	// EnterCountSubquery is called when entering the countSubquery production.
 	EnterCountSubquery(c *CountSubqueryContext)
@@ -159,12 +162,6 @@ type CypherParserListener interface {
 
 	// EnterOrderSt is called when entering the orderSt production.
 	EnterOrderSt(c *OrderStContext)
-
-	// EnterSinglePartQ is called when entering the singlePartQ production.
-	EnterSinglePartQ(c *SinglePartQContext)
-
-	// EnterMultiPartQ is called when entering the multiPartQ production.
-	EnterMultiPartQ(c *MultiPartQContext)
 
 	// EnterMatchSt is called when entering the matchSt production.
 	EnterMatchSt(c *MatchStContext)
@@ -583,6 +580,12 @@ type CypherParserListener interface {
 	// ExitConstraintBlock is called when exiting the constraintBlock production.
 	ExitConstraintBlock(c *ConstraintBlockContext)
 
+	// ExitConstraintBlockEntry is called when exiting the constraintBlockEntry production.
+	ExitConstraintBlockEntry(c *ConstraintBlockEntryContext)
+
+	// ExitConstraintBlockRequirementEntry is called when exiting the constraintBlockRequirementEntry production.
+	ExitConstraintBlockRequirementEntry(c *ConstraintBlockRequirementEntryContext)
+
 	// ExitPropertyTypeName is called when exiting the propertyTypeName production.
 	ExitPropertyTypeName(c *PropertyTypeNameContext)
 
@@ -594,9 +597,6 @@ type CypherParserListener interface {
 
 	// ExitStandaloneCall is called when exiting the standaloneCall production.
 	ExitStandaloneCall(c *StandaloneCallContext)
-
-	// ExitExistsSubquery is called when exiting the existsSubquery production.
-	ExitExistsSubquery(c *ExistsSubqueryContext)
 
 	// ExitCountSubquery is called when exiting the countSubquery production.
 	ExitCountSubquery(c *CountSubqueryContext)
@@ -642,12 +642,6 @@ type CypherParserListener interface {
 
 	// ExitOrderSt is called when exiting the orderSt production.
 	ExitOrderSt(c *OrderStContext)
-
-	// ExitSinglePartQ is called when exiting the singlePartQ production.
-	ExitSinglePartQ(c *SinglePartQContext)
-
-	// ExitMultiPartQ is called when exiting the multiPartQ production.
-	ExitMultiPartQ(c *MultiPartQContext)
 
 	// ExitMatchSt is called when exiting the matchSt production.
 	ExitMatchSt(c *MatchStContext)

@@ -109,6 +109,12 @@ func (e *parseErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingS
 			if context.GetRuleIndex() == CypherParserRULE_useClause {
 				if token, ok := offendingSymbol.(antlr.Token); ok && e.useError == nil {
 					e.useError = &UseReferenceError{Offset: token.GetStart()}
+					if previous := parser.GetTokenStream().LT(-1); previous != nil && previous.GetTokenType() == CypherParserDOT {
+						// The name part after a '.' is missing: whatever stands
+						// there instead is where the reference stops.
+						e.useError.NamePart = true
+						break
+					}
 					if token.GetTokenType() == CypherParserFLOAT && strings.HasPrefix(token.GetText(), ".") {
 						e.useError.NamePart = true
 						e.useError.Offset = token.GetStart() + 1
@@ -121,16 +127,15 @@ func (e *parseErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingS
 						e.useError.Function = true
 						e.useError.Offset = parser.GetTokenStream().GetTokenSource().GetInputStream().Size()
 					}
-
-					if previous := parser.GetTokenStream().LT(-1); previous != nil {
-						e.useError.NamePart = e.useError.NamePart || previous.GetTokenType() == CypherParserDOT
-					}
 				}
 				break
 			}
 			if context.GetRuleIndex() == CypherParserRULE_useGraphArguments {
-				if token, ok := offendingSymbol.(antlr.Token); ok {
-					e.useError = &UseReferenceError{Offset: token.GetStart(), Function: true}
+				// An argument list that does not read is reported for the
+				// whole list, at the statement's end, like a reference that
+				// stops before its '('.
+				if e.useError == nil {
+					e.useError = &UseReferenceError{Offset: parser.GetTokenStream().GetTokenSource().GetInputStream().Size(), Function: true}
 				}
 				break
 			}

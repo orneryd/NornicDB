@@ -40,6 +40,16 @@ func readCallSubqueryScope(ctx context.Context, source string, from int) callSub
 	}
 	if first.Rule() == cypherantlr.CypherParserRULE_callSubquery {
 		scope := scopeClauseFromSyntax(first)
+		if invalidScope && scope.scoped {
+			// The grammar knows a subquery from the token after CALL, so a
+			// malformed import scope still leaves a subquery node behind.
+			// What error recovery made of that clause is not the clause:
+			// when its own scope is the malformed one, the rejection is kept
+			// without scope facts.
+			if _, err := callScopeClauseVariables(ctx, scope.text); scope.invalid || err != nil {
+				return callSubqueryScopeClause{invalid: true}
+			}
+		}
 		scope.invalid = invalidScope
 		return scope
 	}
