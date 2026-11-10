@@ -486,7 +486,7 @@
         "github.com/orneryd/nornicdb/pkg/localization.storageValidationMessage": "990e006cdab070bd32672fc600fc66523cbc03ff3cffccfe48fdfc34109a9b98",
         "github.com/orneryd/nornicdb/pkg/math/libm.Float64frombits": "24f405596402e464051c8ad40a4db07d999ea97c63c8fc036aa8dc90edeea498"
       },
-      "Closure": "6ac9bfa846c37e1c0b61c59db8d857e4d4dcd93c76b07d47f709c71cb51e7fb5",
+      "Closure": "0a77c0b9d168c8682e32aff05ba733f9a94936fee0b8d0289c455ce13028ce7c",
       "Modules": null,
       "Callers": {
         "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort": [
