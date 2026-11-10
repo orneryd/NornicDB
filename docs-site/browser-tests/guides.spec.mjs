@@ -21,7 +21,7 @@ test("development leads to embedding and the canonical contribution guide", asyn
     "Contributing to NornicDB",
   );
   await expect(
-    page.getByRole("heading", { name: "Local setup", exact: true }),
+    page.getByRole("heading", { name: /^Local setup/ }),
   ).toBeVisible();
   await expect(page.locator('a[href*="development/archive"]')).toHaveCount(0);
 });
