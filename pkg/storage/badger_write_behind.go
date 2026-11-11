@@ -49,8 +49,15 @@ func bufferedMemoryError(cause error) error {
 // before the replayable WAL boundary. The physical cgroup sample remains the
 // final pressure check; this deliberately overestimates shared references.
 func estimateBufferedCommitBytes(c *bufferedCommit) int64 {
-	bytes := int64(256 + len(c.namespace) + len(c.txID) + 256*len(c.ops))
-	for _, op := range c.ops {
+	return estimateBufferedPayloadBytes(c.namespace, c.txID, c.ops, c.writes, c.deletes, c.idEntries, c.propKeyDrain, len(c.labelDeltas), len(c.edgeTypeDeltas), len(c.edgeTypeLabelDeltas))
+}
+
+// estimateBufferedPayloadBytes is estimateBufferedCommitBytes over the parts
+// of a buffered commit it reads, so admission can forecast a commit from its
+// staged state before the buffered commit exists (NOR-412).
+func estimateBufferedPayloadBytes(namespace, txID string, ops []Operation, writes map[string][]byte, deletes map[string]bool, idEntries *txnCounterState, propKeyDrain propKeyTxnDrain, labelDeltas, edgeTypeDeltas, edgeTypeLabelDeltas int) int64 {
+	bytes := int64(256 + len(namespace) + len(txID) + 256*len(ops))
+	for _, op := range ops {
 		bytes += estimateAffectedFactsBytes(op.DeletedEdgeFacts)
 		bytes += int64(len(op.NodeID) + len(op.EdgeID) + 16*len(op.DeletedEdgeIDs))
 		for _, node := range [2]*Node{op.Node, op.OldNode} {
@@ -60,28 +67,28 @@ func estimateBufferedCommitBytes(c *bufferedCommit) int64 {
 			bytes += estimateRetainedEdgeBytes(edge)
 		}
 	}
-	for key, value := range c.writes {
+	for key, value := range writes {
 		bytes += int64(64 + len(key) + len(value))
 	}
-	for key := range c.deletes {
+	for key := range deletes {
 		bytes += int64(48 + len(key))
 	}
-	if c.idEntries != nil {
-		bytes += 64 + int64(16*(len(c.idEntries.nodes)+len(c.idEntries.edges)))
-		for _, id := range c.idEntries.nodes {
+	if idEntries != nil {
+		bytes += 64 + int64(16*(len(idEntries.nodes)+len(idEntries.edges)))
+		for _, id := range idEntries.nodes {
 			bytes += int64(len(id))
 		}
-		for _, id := range c.idEntries.edges {
+		for _, id := range idEntries.edges {
 			bytes += int64(len(id))
 		}
 	}
-	for namespace := range c.propKeyDrain.counters {
+	for namespace := range propKeyDrain.counters {
 		bytes += int64(32 + len(namespace))
 	}
-	for _, entry := range c.propKeyDrain.pending {
+	for _, entry := range propKeyDrain.pending {
 		bytes += int64(48 + len(entry.namespace) + len(entry.name))
 	}
-	bytes += int64(64*len(c.labelDeltas) + 64*len(c.edgeTypeDeltas) + 80*len(c.edgeTypeLabelDeltas))
+	bytes += int64(64*labelDeltas + 64*edgeTypeDeltas + 80*edgeTypeLabelDeltas)
 	return bytes
 }
 
@@ -105,7 +112,16 @@ func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
 // transaction as committed without writing to Badger. The caller has already
 // run every validation phase (constraints, snapshot isolation, connected
 // deletes) and holds the engine write barrier.
-func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Context) error {
+//
+// admitted reports that admission chose the route (bufferedForecastFitsLocked,
+// NOR-412); journaled that the commit's semantic record is already in the
+// journal. For such a commit a buffered record over the buffer's limit is
+// left out instead of refusing the commit: the journal holds the commit's
+// semantic record, which the recovery at open applies. The buffered record's
+// append flushes the journal out of the process (AppendBufferedCommit); a
+// commit that leaves the record out calls the journal's flush itself
+// (flushAppended).
+func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Context, admitted, journaled bool) error {
 	// The commit is acknowledged under its entities' write-order stripes, so
 	// a write of the same entities that commits to Badger itself
 	// (orderAfterBufferedCommits) falls wholly before or after it. They are
@@ -227,7 +243,8 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 	}
 
 	forecast := estimateBufferedCommitBytes(&c)
-	if forecast > maxBufferedWALPayloadBytes {
+	omitRecord := admitted && journaled && forecast > maxBufferedWALPayloadBytes
+	if forecast > maxBufferedWALPayloadBytes && !omitRecord {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return fmt.Errorf("wal: buffered commit exceeds decoded payload limit: %w", badger.ErrTxnTooBig)
 	}
@@ -249,11 +266,24 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 	// synchronous path's contract.
 	if err := DecidePublication(preparationContext, func() error {
 		if tx.engine.bufferedCommitWAL != nil {
-			c.walIDs = tx.engine.idDict
-			err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c, tx.engine.propKeyDict)
-			c.walIDs = nil
-			if err != nil {
-				return err
+			recorded := false
+			if !omitRecord {
+				c.walIDs = tx.engine.idDict
+				err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c, tx.engine.propKeyDict)
+				c.walIDs = nil
+				if err != nil && !(admitted && journaled && errors.Is(err, errBufferedPayloadTooLarge)) {
+					return err
+				}
+				recorded = err == nil
+			}
+			// The commit's semantic record is the only record of it in the
+			// journal. It is flushed out of this process here, before the
+			// acknowledgement, as the buffered record's forced flush does for a
+			// commit that has one. A failed flush is returned as a failed append is.
+			if !recorded {
+				if err := tx.engine.bufferedCommitWAL.flushAppended(); err != nil {
+					return err
+				}
 			}
 		}
 

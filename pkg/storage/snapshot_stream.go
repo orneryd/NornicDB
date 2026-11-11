@@ -48,6 +48,13 @@ type SnapshotVisitor interface {
 
 // WriteSnapshot writes lossless NDS2 v2 entity frames using streaming enumeration.
 // Its existing lightweight route does not fetch separately stored embeddings.
+//
+// A record may be as large as the frame format carries
+// (materializedSnapshotRecordSize), the limit the recovery readers read with
+// (the callers of readSnapshot in wal.go and wal_recovery_stream.go). The
+// snapshot automatic compaction takes is written with this default (NOR-412).
+// options.MaxRecordBytes can only lower that, for a caller that wants a
+// bounded export.
 func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options SnapshotOptions) error {
 	_, ok := ResolveStreamingEngine(engine)
 	if !ok {
@@ -55,10 +62,10 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	}
 	maxRecordBytes := options.MaxRecordBytes
 	if maxRecordBytes == 0 {
-		maxRecordBytes = defaultSnapshotRecordSize
+		maxRecordBytes = materializedSnapshotRecordSize
 	}
-	if maxRecordBytes < 0 || maxRecordBytes > defaultSnapshotRecordSize {
-		return fmt.Errorf("snapshot max record bytes must be between 0 and %d", defaultSnapshotRecordSize)
+	if maxRecordBytes < 0 || maxRecordBytes > materializedSnapshotRecordSize {
+		return fmt.Errorf("snapshot max record bytes must be between 0 and %d", materializedSnapshotRecordSize)
 	}
 
 	if err := checkNativeSnapshotPublication(engine); err != nil {
@@ -138,9 +145,11 @@ func IsStreamingSnapshot(path string) (bool, error) {
 
 // ReadSnapshot visits entities from NDS2 v1 JSON or v2 typed frames.
 // Unsupported versions fail before visiting entities. The non-nil ctx is
-// passed unchanged to every visitor callback.
+// passed unchanged to every visitor callback. It reads records up to the
+// limit WriteSnapshot writes with (materializedSnapshotRecordSize); a record
+// longer than 16 MiB is read progressively (readSnapshotFrameWithLimit).
 func ReadSnapshot(ctx context.Context, reader io.Reader, visitor SnapshotVisitor) (SnapshotMetadata, error) {
-	return readSnapshot(ctx, reader, visitor, nil, defaultSnapshotRecordSize)
+	return readSnapshot(ctx, reader, visitor, nil, materializedSnapshotRecordSize)
 }
 
 func readSnapshot(ctx context.Context, reader io.Reader, visitor SnapshotVisitor, collection *Snapshot, maxRecordBytes int64) (SnapshotMetadata, error) {

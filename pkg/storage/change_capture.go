@@ -396,14 +396,29 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 	if capture == nil {
 		return nil
 	}
+	return tx.changeEventsLocked(ctx, operations, capture.commitSeq, capture.mode, commitTime,
+		func(read func(*badger.Txn) error) error { return w.write(ctx, read) },
+		func(key, value []byte) error {
+			capture.wrote = true
+			return w.write(ctx, func(txn *badger.Txn) error { return txn.Set(key, value) })
+		})
+}
+
+// changeEventsLocked builds a commit's change events for operations as the
+// change log's commit commitSeq in mode, reads a cascaded relationship's
+// stored record through view, and hands each event's key and encoded value
+// to emit. The commit writes them (writeChangeEventsLocked, in the mode
+// beginChangeCaptureLocked read); commit admission measures them before the
+// journal in the mode it reads then (storeValueLimitErrorLocked, NOR-412).
+func (tx *BadgerTransaction) changeEventsLocked(ctx context.Context, operations []Operation, commitSeq uint64, mode ChangeCaptureMode, commitTime time.Time, view func(func(*badger.Txn) error) error, emit func(key, value []byte) error) error {
 	b := tx.engine
 	states, err := newCommitStates(ctx, operations)
 	if err != nil {
 		return err
 	}
 	base := ChangeEvent{
-		CommitSeq: capture.commitSeq, StartTime: tx.StartTime.UnixNano(), CommitTime: commitTime.UnixNano(),
-		Mode: capture.mode, TxMetadata: copyChangeMetadata(tx.Metadata),
+		CommitSeq: commitSeq, StartTime: tx.StartTime.UnixNano(), CommitTime: commitTime.UnixNano(),
+		Mode: mode, TxMetadata: copyChangeMetadata(tx.Metadata),
 	}
 	seq := uint32(0)
 	write := func(event ChangeEvent) error {
@@ -416,9 +431,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 		if err != nil {
 			return fmt.Errorf("encoding change event: %w", err)
 		}
-		key := changeEventKey(tx.namespace, event.CommitSeq, event.Seq)
-		capture.wrote = true
-		return w.write(ctx, func(txn *badger.Txn) error { return txn.Set(key, value) })
+		return emit(changeEventKey(tx.namespace, event.CommitSeq, event.Seq), value)
 	}
 	labels := newChangeEndpointLabels(b, states)
 	keys := changeKeys{schema: b.GetSchemaForNamespace(tx.namespace)}
@@ -484,7 +497,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 						continue
 					}
 					var edge *Edge
-					err := w.write(ctx, func(txn *badger.Txn) error {
+					err := view(func(txn *badger.Txn) error {
 						var loadErr error
 						edge, loadErr = b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
 						if loadErr == ErrNotFound {

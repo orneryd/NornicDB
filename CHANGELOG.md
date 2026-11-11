@@ -18,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A single-node server commits a transaction whose journal record is larger
+  than one 16 MiB write-ahead-log frame: the record is written across several
+  frames, up to 4 GiB of data per record. Before, such a commit was refused
+  with `wal: entry exceeds maximum WAL frame size of 16777216 bytes`: one
+  property change on a node with 1,800 chunk vectors of 2,048 dimensions, one
+  statement over 2,000 nodes with a vector each, or a create of 10,000 nodes
+  of 2 KB. For a commit whose record needs more than one frame, a value larger
+  than the store holds in one value (its value-log file size: 256 MiB with
+  the default storage profile, 32 MiB with the low-memory one) is refused at
+  commit with that limit in the error. The snapshot that automatic compaction
+  takes now records a node or relationship whose snapshot record is over
+  16 MiB. A cluster member keeps the one-frame limit. A server built without
+  this change refuses a journal that holds a multi-frame record
+  (`unsupported WAL version 7`).
 - Collection/document traversals consider candidate and adjacency work before
   reversing onto an indexed endpoint. Inline start keys participate without
   a `WHERE` clause, and known final endpoints avoid unrelated node hydration.

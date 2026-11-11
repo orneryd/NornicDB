@@ -60,6 +60,9 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 	reader := bufio.NewReader(source)
 	var header [9]byte
 	var record []byte
+	// Frames are copied verbatim; the check visitor sees one logical entry
+	// per spanned record.
+	var spanned walRecordAssembler
 	// Scan headers and checksums, never decode physical bodies or name maps.
 	for {
 		_, err := io.ReadFull(reader, header[:])
@@ -71,7 +74,7 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 		}
 		version := header[4]
 		size := binary.LittleEndian.Uint32(header[5:])
-		if version != walFormatVersionCurrent {
+		if !walFrameVersionReadable(version) {
 			return plan, unsupportedWALVersion(version)
 		}
 		if binary.LittleEndian.Uint32(header[:]) != walMagic {
@@ -132,8 +135,14 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 			plan.controls = append(plan.controls, walPropertyEpochSealControl{plan.end, length, frame, entry.Timestamp})
 		}
 		if visit != nil {
-			if err := visitWALEntryWithSequence(visit)(entry); err != nil {
+			logical, complete, err := spanned.add(entry, version)
+			if err != nil {
 				return plan, err
+			}
+			if complete {
+				if err := visitWALEntryWithSequence(visit)(logical); err != nil {
+					return plan, err
+				}
 			}
 		}
 		plan.end += length
