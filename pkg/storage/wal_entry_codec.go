@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
 
 	"github.com/orneryd/nornicdb/internal/jsontext"
 )
@@ -32,33 +33,20 @@ const (
 func processWALEntryPayload(mode walPayloadMode, buf *bytes.Buffer, entry *WALEntry, payload []byte, version uint8) ([]byte, error) {
 	switch mode {
 	case walPayloadEncode:
-		header := WALEntry{
-			Sequence:      entry.Sequence,
-			Timestamp:     entry.Timestamp,
-			Operation:     entry.Operation,
-			Checksum:      entry.Checksum,
-			Database:      entry.Database,
-			PropertyEpoch: entry.PropertyEpoch,
-		}
-		jsonBytes, err := marshalJSONCompact(buf, &header)
+		encoded, err := encodeWALEntryPayload(buf, entry)
 		if err != nil {
-			return nil, &walRecordRejection{cause: fmt.Errorf("wal: failed to serialize entry header: %w", err)}
+			return nil, err
 		}
-		// Never acknowledge a record recovery would be unable to read.
-		if len(jsonBytes) > int(walMaxEntrySize)-8 || len(entry.Data) > int(walMaxEntrySize)-8-len(jsonBytes) {
+		// Never acknowledge a frame recovery would be unable to read. A larger
+		// logical record is written in parts (encodeWALEntryFrames).
+		if len(encoded) > int(walMaxEntrySize) {
 			return nil, &walRecordRejection{cause: fmt.Errorf("wal: entry exceeds maximum WAL frame size of %d bytes", walMaxEntrySize)}
 		}
-		encoded := make([]byte, 4+len(jsonBytes)+4+len(entry.Data))
-		binary.LittleEndian.PutUint32(encoded[0:4], uint32(len(jsonBytes)))
-		copy(encoded[4:], jsonBytes)
-		dataOff := 4 + len(jsonBytes)
-		binary.LittleEndian.PutUint32(encoded[dataOff:dataOff+4], uint32(len(entry.Data)))
-		copy(encoded[dataOff+4:], entry.Data)
 		return encoded, nil
 
 	case walPayloadDecode:
 		*entry = WALEntry{}
-		if version != walFormatVersionCurrent {
+		if !walFrameVersionReadable(version) {
 			return nil, unsupportedWALVersion(version)
 		}
 		if len(payload) < 8 {
@@ -85,4 +73,36 @@ func processWALEntryPayload(mode walPayloadMode, buf *bytes.Buffer, entry *WALEn
 	default:
 		return nil, fmt.Errorf("wal: unknown entry payload mode %d", mode)
 	}
+}
+
+// encodeWALEntryPayload encodes one logical entry payload of any size. Frame
+// writers bound it: one frame up to walMaxEntrySize, parts beyond it.
+func encodeWALEntryPayload(buf *bytes.Buffer, entry *WALEntry) ([]byte, error) {
+	header := WALEntry{
+		Sequence:      entry.Sequence,
+		Timestamp:     entry.Timestamp,
+		Operation:     entry.Operation,
+		Checksum:      entry.Checksum,
+		Database:      entry.Database,
+		PropertyEpoch: entry.PropertyEpoch,
+	}
+	jsonBytes, err := marshalJSONCompact(buf, &header)
+	if err != nil {
+		return nil, &walRecordRejection{cause: fmt.Errorf("wal: failed to serialize entry header: %w", err)}
+	}
+	if len(jsonBytes) > int(walMaxEntrySize)-8 {
+		return nil, &walRecordRejection{cause: fmt.Errorf("wal: entry exceeds maximum WAL frame size of %d bytes", walMaxEntrySize)}
+	}
+	// The record format stores the data length in 32 bits: the ceiling of
+	// one logical record, however many frames it spans.
+	if uint64(len(entry.Data)) > math.MaxUint32 {
+		return nil, &walRecordRejection{cause: fmt.Errorf("wal: journal record data of %d bytes exceeds the record format's limit of %d bytes", len(entry.Data), uint64(math.MaxUint32))}
+	}
+	encoded := make([]byte, 4+len(jsonBytes)+4+len(entry.Data))
+	binary.LittleEndian.PutUint32(encoded[0:4], uint32(len(jsonBytes)))
+	copy(encoded[4:], jsonBytes)
+	dataOff := 4 + len(jsonBytes)
+	binary.LittleEndian.PutUint32(encoded[dataOff:dataOff+4], uint32(len(entry.Data)))
+	copy(encoded[dataOff+4:], entry.Data)
+	return encoded, nil
 }

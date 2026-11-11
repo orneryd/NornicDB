@@ -21,6 +21,9 @@ func (r *RaftReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command
 	if cmd == nil || cmd.accepted == nil {
 		return nil, storage.ErrInvalidData
 	}
+	if err := admitReplicatedCommand(r.storage, cmd); err != nil {
+		return nil, err
+	}
 	r.mu.RLock()
 	err := r.acceptedAdmissionErrorLocked(0)
 	term := r.currentTerm

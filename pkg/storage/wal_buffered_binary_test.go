@@ -165,17 +165,20 @@ func TestBufferedWALRejectsOversizedTypedPayloadBeforeAppend(t *testing.T) {
 	require.Empty(t, entries)
 }
 
-// A record that fits the decoded-payload limit can still exceed the outer
-// frame limit. It must be rejected before an ACK, not written unreadably.
-func TestBufferedWALRejectsUnreadableOversizedFrameBeforeAppend(t *testing.T) {
+// A record that fits the decoded-payload limit but exceeds one WAL frame is
+// written as one spanned record (NOR-412) and reads back as one logical
+// record. A larger decoded payload stays refused (the test above).
+func TestBufferedWALWritesRecordLargerThanOneFrame(t *testing.T) {
 	b, wal, commit := bindingCostFixture(t, 1)
 	value := make([]byte, int(walMaxEntrySize)+4096)
 	_, err := rand.New(rand.NewSource(42)).Read(value)
 	require.NoError(t, err)
 	commit.writes[string([]byte{prefixNode})+"incompressible"] = value
 	err = wal.AppendBufferedCommit(commit, b.propKeyDict)
-	require.ErrorContains(t, err, "exceeds maximum WAL frame size")
+	require.NoError(t, err)
 	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
 	require.NoError(t, err)
-	require.Empty(t, entries)
+	require.Len(t, entries, 1)
+	require.Equal(t, OpBufferedCommit, entries[0].Operation)
+	require.Greater(t, len(entries[0].Data), int(walMaxEntrySize))
 }

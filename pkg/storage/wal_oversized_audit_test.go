@@ -66,8 +66,17 @@ func TestOversizedEmbeddingAuditKeepsTailSequenceAndWriteBound(t *testing.T) {
 	headerLen := int64(binary.LittleEndian.Uint32(raw[payload:]))
 	dataLenOff := payload + 4 + headerLen
 	dataLen := int64(binary.LittleEndian.Uint32(raw[dataLenOff:]))
+	// A new write larger than one frame is written as frames within the
+	// bound (a spanned record) and reads back as one logical record.
 	err = w.AppendWithDatabase(OpUpdateEmbedding, json.RawMessage(raw[dataLenOff+4:dataLenOff+4+dataLen]), "test")
-	require.ErrorContains(t, err, "exceeds maximum WAL frame size", "new writes must still obey the original bound")
+	require.NoError(t, err)
+	require.NoError(t, w.Sync())
+	entries, err = ReadWALEntriesFromDir(t.Context(), dir)
+	require.NoError(t, err)
+	last := entries[len(entries)-1]
+	require.Equal(t, OpUpdateEmbedding, last.Operation)
+	require.EqualValues(t, 4, last.Sequence)
+	require.Greater(t, len(last.Data), int(walMaxEntrySize))
 }
 
 func TestOversizedEmbeddingAuditRejectsCorruptAndSemanticFrames(t *testing.T) {
@@ -240,7 +249,7 @@ func TestOversizedEmbeddingAuditReaders(t *testing.T) {
 				for i := 0; i < 2; i++ {
 					off += alignUp(9 + int64(binary.LittleEndian.Uint32(raw[off+5:])) + 4 + 8)
 				}
-				raw[off+4] = walFormatVersionCurrent + 1
+				raw[off+4] = walFormatVersionSpanned + 1
 				require.NoError(t, os.WriteFile(file, raw, 0600))
 				require.ErrorIs(t, ValidateWALFormat(dir, WALValidateCurrent), ErrWALUnsupportedVersion, "format checks must reach the suffix")
 			default:

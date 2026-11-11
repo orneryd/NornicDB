@@ -168,14 +168,18 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 
 		// Serialize entry into the v3 raw-Data payload (reduces allocs vs
 		// json.Marshal and avoids the base64 tax on Data).
-		entryBytes, err := processWALEntryPayload(walPayloadEncode, entryBuf, &entry, nil, 0)
+		frames, err := b.wal.encodeRecordFrames(entryBuf, &entry)
 		if err != nil {
 			return 0, 0, fmt.Errorf("wal batch: failed to serialize entry seq %d: %w", seq, err)
 		}
 
-		alignedRecordLen, err := writeAtomicRecord(b.wal.writer, entryBytes, walFormatVersionCurrent)
-		if err != nil {
-			return 0, 0, fmt.Errorf("wal batch: failed to write entry seq %d: %w", seq, err)
+		var alignedRecordLen int64
+		for _, frame := range frames {
+			n, err := writeAtomicRecord(b.wal.writer, frame.payload, frame.version)
+			if err != nil {
+				return 0, 0, fmt.Errorf("wal batch: failed to write entry seq %d: %w", seq, err)
+			}
+			alignedRecordLen += n
 		}
 
 		b.wal.entries.Add(1)

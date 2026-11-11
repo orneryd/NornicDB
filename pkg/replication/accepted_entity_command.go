@@ -86,6 +86,9 @@ func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storag
 	return receipt, nil
 }
 func (r *StandaloneReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
+	if err := admitReplicatedCommand(r.storage, cmd); err != nil {
+		return nil, err
+	}
 	return submitAcceptedByApply(ctx, cmd, settle, func() error {
 		r.mu.RLock()
 		defer r.mu.RUnlock()
@@ -93,6 +96,9 @@ func (r *StandaloneReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *C
 	}, &r.work, r.applyEnrolled, 0)
 }
 func (r *HAStandbyReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
+	if err := admitReplicatedCommand(r.storage, cmd); err != nil {
+		return nil, err
+	}
 	apply := r.Apply
 	if r.config.HAStandby.SyncMode == SyncQuorum {
 		deadline, bounded := ctx.Deadline()

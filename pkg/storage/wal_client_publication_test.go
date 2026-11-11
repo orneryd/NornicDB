@@ -426,7 +426,10 @@ func TestWALNativeBorrowedPayloadSurvivesInterleavedEncoder(t *testing.T) {
 	}
 }
 
-func TestWALNativeOversizedRecordRejectionDoesNotFence(t *testing.T) {
+// A transaction whose journal record is larger than one WAL frame commits
+// (NOR-412): the record is written as one spanned record, reads back as one
+// logical entry and leaves the wrapper healthy.
+func TestWALNativeRecordLargerThanOneFrameCommits(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	native := openLargeCommitTestEngine(t, t.TempDir())
 	wal, err := NewWAL(t.TempDir(), nil)
@@ -438,16 +441,21 @@ func TestWALNativeOversizedRecordRejectionDoesNotFence(t *testing.T) {
 	for i := range nodes {
 		nodes[i] = &Node{ID: NodeID(fmt.Sprintf("test:frame-%d", i)), Properties: map[string]any{"payload": payload}}
 	}
-	err = wrapped.BulkCreateNodes(t.Context(), nodes)
-	require.ErrorContains(t, err, "exceeds maximum WAL frame size")
-	require.Empty(t, walClientEntries(t, wal))
-	var accepted *AcceptedCommitError
-	require.False(t, errors.As(err, &accepted), "a known encoder/frame rejection has no replayable record")
+	require.NoError(t, wrapped.BulkCreateNodes(t.Context(), nodes))
+	var commits int
+	for _, entry := range walClientEntries(t, wal) {
+		if entry.Operation == OpEntityCommit {
+			commits++
+			require.Greater(t, len(entry.Data), int(walMaxEntrySize), "one logical record larger than one frame")
+		}
+		require.NotEqual(t, OpRecordPart, entry.Operation, "readers see only the logical record")
+	}
+	require.Equal(t, 1, commits)
 	require.Nil(t, native.db.oracle.failure())
 	count, err := native.NodeCount(t.Context())
 	require.NoError(t, err)
-	require.Zero(t, count)
-	_, err = wrapped.CreateNode(t.Context(), &Node{ID: "test:healthy-after-frame-rejection"})
+	require.EqualValues(t, len(nodes), count)
+	_, err = wrapped.CreateNode(t.Context(), &Node{ID: "test:healthy-after-large-record"})
 	require.NoError(t, err)
 }
 
@@ -468,7 +476,9 @@ func TestWALPureEncoderRejectionRetainsCauseAndHealthyRetry(t *testing.T) {
 	require.Len(t, walClientEntries(t, wal), 1)
 }
 
-func TestWALPreparedOversizedRecordRejectsWithoutAcceptedOwner(t *testing.T) {
+// A prepared transaction whose record is larger than one frame is accepted,
+// journaled once as a spanned record and applied (NOR-412).
+func TestWALPreparedRecordLargerThanOneFrameIsAccepted(t *testing.T) {
 	native, wal, wrapped := newWALClientFixture(t, nil)
 	operations := make([]Operation, 512)
 	payload := strings.Repeat("x", 32<<10)
@@ -478,19 +488,19 @@ func TestWALPreparedOversizedRecordRejectsWithoutAcceptedOwner(t *testing.T) {
 	prepared, _, err := PrepareEntityChanges(t.Context(), native, "test", operations, CommitModeDirect)
 	require.NoError(t, err)
 	require.NotNil(t, prepared)
-	defer prepared.Abort()
 	receipt, err := wrapped.SubmitEntityCommit(t.Context(), prepared, nil)
-	require.ErrorContains(t, err, "exceeds maximum WAL frame size")
-	require.Nil(t, receipt)
-	var rejected *walRecordRejection
-	require.ErrorAs(t, err, &rejected)
-	require.Empty(t, walClientEntries(t, wal))
-	prepared.Abort()
+	require.NoError(t, err)
+	require.NoError(t, receipt.Wait(t.Context()))
+	entries := walClientEntries(t, wal)
+	require.Len(t, entries, 1)
+	require.Equal(t, OpEntityCommit, entries[0].Operation)
+	require.Greater(t, len(entries[0].Data), int(walMaxEntrySize))
+	count, err := native.NodeCount(t.Context())
+	require.NoError(t, err)
+	require.EqualValues(t, len(operations), count)
 	pending := 0
 	wrapped.pendingEntityCommits.Range(func(_, _ any) bool { pending++; return true })
 	require.Zero(t, pending)
-	require.True(t, wrapped.mutationMu.TryLock(), "definite rejection releases existing wrapper admission")
-	wrapped.mutationMu.Unlock()
-	_, err = wrapped.CreateNode(t.Context(), &Node{ID: "test:after-prepared-frame-rejection"})
+	_, err = wrapped.CreateNode(t.Context(), &Node{ID: "test:after-prepared-large-record"})
 	require.NoError(t, err)
 }

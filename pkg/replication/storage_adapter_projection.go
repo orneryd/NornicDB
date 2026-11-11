@@ -36,7 +36,7 @@ func (a *StorageAdapter) appendProjectionLocked(record replicationWALRecord, ide
 			return position, nil
 		}
 	}
-	position, err := a.wal.AppendReturningSeq(storage.OperationType("replication_command"), record)
+	position, err := a.wal.AppendReturningSeq(replicationWALOperation, record)
 	if err != nil {
 		return 0, localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
 	}
@@ -48,6 +48,22 @@ func (a *StorageAdapter) appendProjectionLocked(record replicationWALRecord, ide
 	}
 	a.appendToMemWAL(position, record, record.Command)
 	return position, nil
+}
+
+// replicationWALOperation is the operation of every replication journal entry.
+const replicationWALOperation = storage.OperationType("replication_command")
+
+// admitReplicatedCommand lets the replication journal decide, before cmd is
+// queued, logged or applied anywhere, whether it would hold cmd's entry: the
+// journal's own encoder checks the exact record ApplyCommand appends
+// (NOR-412). The journal keeps every entry in one frame, so a cluster commits
+// exactly the transactions whose journal entry it can record.
+func (a *StorageAdapter) admitReplicatedCommand(cmd *Command) error {
+	record := replicationWALRecord{Timestamp: cmd.Timestamp.UnixNano(), Command: cmd}
+	if err := a.wal.CheckOneFrameRecord(replicationWALOperation, record, ""); err != nil {
+		return fmt.Errorf("%w: the replication journal cannot hold its entry: %w", ErrTransactionTooLargeToReplicate, err)
+	}
+	return nil
 }
 
 func decodeProjectionRecord(entry storage.WALEntry) (replicationWALRecord, error) {

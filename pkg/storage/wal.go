@@ -296,6 +296,13 @@ type WALConfig struct {
 	// otherwise dominate ingest CPU.
 	DeferAppendFlush bool
 
+	// SingleFrameRecords keeps every record in one frame: a record larger
+	// than one frame (walMaxEntrySize) is refused instead of spanning
+	// several (NOR-412). The replication journal sets it, so it holds exactly
+	// the records it held before records could span frames, and its peers
+	// receive entries of that size.
+	SingleFrameRecords bool
+
 	// BatchSyncInterval for "batch" sync mode
 	BatchSyncInterval time.Duration
 
@@ -656,14 +663,15 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 		return 0, err
 	}
 
-	entryBytes, err := processWALEntryPayload(walPayloadEncode, entryBuf, &entry, nil, 0)
+	frames, err := w.encodeRecordFrames(entryBuf, &entry)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
 	}
 
-	// Write atomically: full record in one Write when using bufio so the last record
+	// Write atomically: each frame in one Write when using bufio so the last record
 	// is never split across a buffer flush (avoids partial-write on recovery after close).
-	alignedRecordLen, err := writeAtomicRecordBufio(w.writer, entryBytes, walFormatVersionCurrent)
+	// A spanned record's parts are all written under this hold of w.mu.
+	alignedRecordLen, err := writeWALEntryFrames(w.writer, frames)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
@@ -816,12 +824,12 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 		w.mu.Unlock()
 		return 0, err
 	}
-	entryBytes, err := processWALEntryPayload(walPayloadEncode, entryBuf, &entry, nil, 0)
+	frames, err := w.encodeRecordFrames(entryBuf, &entry)
 	if err != nil {
 		w.mu.Unlock()
 		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
 	}
-	alignedRecordLen, err := writeAtomicRecordBufio(w.writer, entryBytes, walFormatVersionCurrent)
+	alignedRecordLen, err := writeWALEntryFrames(w.writer, frames)
 	if err != nil {
 		w.mu.Unlock()
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
@@ -1168,6 +1176,13 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 	reader := bufio.NewReader(file)
 	headerBuf := make([]byte, 9)
 	var lastGoodSeq uint64
+	// Spanned records count once, as the logical record their parts form.
+	var spanned walRecordAssembler
+	defer func() {
+		if spanned.open() {
+			report.Errors = append(report.Errors, fmt.Sprintf("incomplete spanned record at seq %d at end of file (never acknowledged)", spanned.seq))
+		}
+	}()
 
 	for {
 		n, err := io.ReadFull(reader, headerBuf)
@@ -1194,7 +1209,7 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 		}
 
 		version := headerBuf[4]
-		if version != walFormatVersionCurrent {
+		if !walFrameVersionReadable(version) {
 			return nil, unsupportedWALVersion(version)
 		}
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
@@ -1289,6 +1304,19 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 			continue
 		}
 
+		if storedCRC == computedCRC {
+			logical, complete, spanErr := spanned.add(entry, version)
+			if spanErr != nil {
+				report.Healthy = false
+				report.CorruptedEntries++
+				report.Errors = append(report.Errors, spanErr.Error())
+				continue
+			}
+			if !complete {
+				continue
+			}
+			entry = logical
+		}
 		report.TotalEntries++
 		if storedCRC == computedCRC {
 			report.ValidEntries++
@@ -1692,15 +1720,15 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 			return fmt.Errorf("wal: retain property epoch: %w", err)
 		}
 		bytesWritten += headerBytes
-		// Serialize entry
-		entryBytes, err := processWALEntryPayload(walPayloadEncode, entryBuf, &entry, nil, 0)
+		// Serialize entry: a retained spanned record is rewritten in parts.
+		frames, err := w.encodeRecordFrames(entryBuf, &entry)
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
 			w.reopenWAL()
 			return fmt.Errorf("wal: failed to serialize entry seq %d: %w", entry.Sequence, err)
 		}
-		alignedRecordLen, err := writeAtomicRecordBufio(tmpWriter, entryBytes, walFormatVersionCurrent)
+		alignedRecordLen, err := writeWALEntryFrames(tmpWriter, frames)
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
@@ -1959,6 +1987,9 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 	var partialWriteDetected bool
 	var lastGoodSeq uint64
 	var offset uint64
+	// One logical entry per spanned record; an incomplete group (a crash
+	// before its last part) was never acknowledged and is not delivered.
+	var spanned walRecordAssembler
 
 	reader := bufio.NewReader(file)
 	headerBuf := make([]byte, 9) // magic(4) + version(1) + length(4)
@@ -1990,7 +2021,7 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 
 		// Read version (for future compatibility)
 		version := headerBuf[4]
-		if version != walFormatVersionCurrent {
+		if !walFrameVersionReadable(version) {
 			return unsupportedWALVersion(version)
 		}
 
@@ -2119,6 +2150,15 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 			return fmt.Errorf("%w: data checksum mismatch at seq %d",
 				ErrWALChecksumFailed, entry.Sequence)
 		}
+		logical, complete, spanErr := spanned.add(entry, version)
+		if spanErr != nil {
+			return spanErr
+		}
+		if !complete {
+			continue
+		}
+		entry = logical
+		entry.recordEnd = offset
 
 		if err := visit(entry); err != nil {
 			return err
@@ -2126,6 +2166,11 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 		lastGoodSeq = entry.Sequence
 	}
 
+	// A spanned record whose last part was never written is an incomplete
+	// write like a torn frame: never acknowledged, never delivered.
+	if spanned.open() || spanned.dropped > 0 {
+		partialWriteDetected = true
+	}
 	if partialWriteDetected {
 		logStorageEvent(ctx, logger, slog.LevelWarn, localization.StorageWALIncompleteWriteEvent())
 	}
@@ -2183,6 +2228,7 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 	})
 	reader := bufio.NewReader(file)
 	headerBuf := make([]byte, 9)
+	var spanned walRecordAssembler
 
 	for {
 		n, err := io.ReadFull(reader, headerBuf)
@@ -2202,7 +2248,7 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 		}
 
 		version := headerBuf[4]
-		if version != walFormatVersionCurrent {
+		if !walFrameVersionReadable(version) {
 			return entries, unsupportedWALVersion(version)
 		}
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
@@ -2268,6 +2314,25 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 		}
 
 		entry.recordEnd = offset
+		if version == walFormatVersionSpanned || entry.Operation == OpRecordPart {
+			// Best effort: a damaged part loses its whole record, never a prefix.
+			if !outerValid || !trailerValid || entry.Checksum != crc32Checksum(entry.Data) {
+				spanned.drop()
+				continue
+			}
+			logical, complete, spanErr := spanned.add(entry, version)
+			if spanErr != nil {
+				spanned.drop()
+				continue
+			}
+			if !complete {
+				continue
+			}
+			entry = logical
+			entry.recordEnd = offset
+		} else {
+			spanned.drop()
+		}
 		if isWALPropertyEpoch(entry) && (!outerValid || !trailerValid || entry.Checksum != crc32Checksum(entry.Data)) {
 			return entries, fmt.Errorf("%w: invalid retained property epoch", ErrWALCorrupted)
 		}

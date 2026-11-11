@@ -117,6 +117,10 @@ func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAda
 	walConfig.Dir = walDir
 	walConfig.SyncMode = "batch" // Batch sync for performance
 	walConfig.BatchSyncInterval = 100 * time.Millisecond
+	// The journal is shipped to peers entry by entry, in batches the
+	// transport carries as one message: it keeps every entry in one frame,
+	// as before records could span frames (NOR-412).
+	walConfig.SingleFrameRecords = true
 
 	wal, err := storage.NewWAL(walDir, walConfig)
 	if err != nil {
