@@ -35,6 +35,10 @@ type BadgerTransaction struct {
 	// Author: NOR-288 lane (Codex), 2026-10-26. Accepted log application is
 	// already validated input, not a new transaction admission decision.
 	acceptedApplication bool
+	// capture is the commit's change-capture decision (changeCaptureLocked):
+	// made once, then used by its store-limit check, its application and every
+	// retry of that application (NOR-412).
+	capture changeCaptureDecision
 	// endpointsDecided records a prepared commit's one buffered-aware endpoint
 	// check, taken before its durable decision; publication does not repeat it.
 	endpointsDecided               bool

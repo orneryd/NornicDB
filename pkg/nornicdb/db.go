@@ -47,6 +47,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/encryption"
+	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/inference"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -155,16 +156,12 @@ func DefaultConfig() *Config {
 // Thread Safety:
 //
 //	All methods are thread-safe and can be called concurrently.
-type replicationWALPreparation struct {
-	dir          string
-	mode         string
-	allowUpgrade bool
-}
-
 type DB struct {
 	config *Config
-	// The replication WAL is checked before opening the primary store.
-	preparedReplicationWAL replicationWALPreparation
+	// cluster is the cluster configuration Open resolved for this database,
+	// before any storage opened. Open sets it once, and maybeEnableReplication
+	// starts replication from it.
+	cluster *clusterStartup
 	// The boot selection is shared by the native upgrade and the catalog;
 	// server construction must not independently resolve a different key.
 	remoteCredentialKey       string
@@ -633,9 +630,11 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	if err := nornicConfig.ValidateMemoryRecoveryTimings(intervalMS, rearmMS); err != nil {
 		return nil, err
 	}
-	mode := os.Getenv("NORNICDB_CLUSTER_MODE")
-	preparedWAL := replicationWALPreparation{dir: replicationWALDirectory(dataDir, mode), mode: mode, allowUpgrade: config.Database.AllowStorageUpgrade}
-	if err := prepareReplicationWAL(preparedWAL.dir, preparedWAL.allowUpgrade, preparedWAL.mode); err != nil {
+	// The cluster configuration is read here, before any storage opens. This
+	// one result prepares the replication WAL, selects the journal record
+	// policy and starts replication; Open does not read it again.
+	cluster := resolveClusterStartup(dataDir)
+	if err := prepareReplicationWAL(cluster.replicationWALDir, config.Database.AllowStorageUpgrade, string(cluster.mode)); err != nil {
 		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 	}
 	config.Database.DataDir = dataDir
@@ -671,8 +670,8 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	}
 
 	db := &DB{
-		config:                 config,
-		preparedReplicationWAL: preparedWAL,
+		config:  config,
+		cluster: &cluster,
 	}
 	db.remoteCredentialKey, db.remoteCredentialKeySource = config.RemoteCredentialEncryptionKey()
 	// Every construction failure enters the same retirement owner as Close.
@@ -700,6 +699,9 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		// Configure BadgerDB based on memory mode
 		// HighPerformance uses ~1GB RAM, LowMemory uses ~50MB
 		badgerOpts, walConfig := resolveDurabilityOptions(dataDir, config)
+		// The WAL writes under the record policy of this server's cluster mode
+		// (NOR-412).
+		walConfig.RecordPolicy = cluster.walRecordPolicy()
 		catalogUpgrade, err := multidb.NewCatalogUpgradeV4("system", db.remoteCredentialKey)
 		if err != nil {
 			return nil, err
@@ -1585,6 +1587,45 @@ func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOpt
 	return badgerOptions, walConfig
 }
 
+// clusterStartup is the cluster configuration one Open runs with. Open reads
+// it from the environment before any storage is opened (resolveClusterStartup).
+type clusterStartup struct {
+	// mode is NORNICDB_CLUSTER_MODE; unset or empty is standalone.
+	mode replication.ReplicationMode
+	// replicationWALDir is the separate replication log's directory, or
+	// empty when this server has none.
+	replicationWALDir string
+	// replication is the loaded replication configuration of a cluster
+	// member, with this startup's mode and directory. It is nil for a
+	// standalone server.
+	replication *replication.Config
+}
+
+// resolveClusterStartup reads the cluster configuration of the server opening
+// dataDir. An unknown mode is not standalone: it gets a cluster member's
+// settings (the standard record policy and a replication configuration).
+func resolveClusterStartup(dataDir string) clusterStartup {
+	startup := clusterStartup{mode: replication.ReplicationMode(envutil.Get("NORNICDB_CLUSTER_MODE", string(replication.ModeStandalone)))}
+	startup.replicationWALDir = replicationWALDirectory(dataDir, string(startup.mode))
+	if startup.mode != replication.ModeStandalone {
+		startup.replication = replication.LoadFromEnv()
+		startup.replication.Mode = startup.mode
+		startup.replication.DataDir = filepath.Dir(startup.replicationWALDir)
+	}
+	return startup
+}
+
+// walRecordPolicy is the one place production code selects the large journal
+// record policy (NOR-412): a standalone server gets it, and every other mode
+// keeps the standard policy, under which a record that does not fit one
+// frame is refused.
+func (c clusterStartup) walRecordPolicy() storage.WALRecordPolicy {
+	if c.mode == replication.ModeStandalone {
+		return storage.WALRecordsLarge
+	}
+	return storage.WALRecordsStandard
+}
+
 func replicationWALDirectory(dataDir, mode string) string {
 	replicationDir := os.Getenv("NORNICDB_CLUSTER_DATA_DIR")
 	if replicationDir == "" {
@@ -1617,25 +1658,25 @@ func prepareReplicationWAL(dir string, allowUpgrade bool, mode string) error {
 }
 
 func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error) {
-	mode := os.Getenv("NORNICDB_CLUSTER_MODE")
-	dataDir, allowUpgrade := "", false
-	if db.config != nil {
-		dataDir, allowUpgrade = db.config.Database.DataDir, db.config.Database.AllowStorageUpgrade
-	}
-	replicationWALDir := replicationWALDirectory(dataDir, mode)
-	preparation := replicationWALPreparation{dir: replicationWALDir, mode: mode, allowUpgrade: allowUpgrade}
-	if db.preparedReplicationWAL != preparation {
-		if err := prepareReplicationWAL(replicationWALDir, allowUpgrade, mode); err != nil {
+	cluster := db.cluster
+	if cluster == nil {
+		// A DB that Open did not build has resolved nothing yet: it reads the
+		// cluster configuration and prepares the replication WAL here.
+		dataDir, allowUpgrade := "", false
+		if db.config != nil {
+			dataDir, allowUpgrade = db.config.Database.DataDir, db.config.Database.AllowStorageUpgrade
+		}
+		resolved := resolveClusterStartup(dataDir)
+		if err := prepareReplicationWAL(resolved.replicationWALDir, allowUpgrade, string(resolved.mode)); err != nil {
 			return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 		}
-		db.preparedReplicationWAL = preparation
+		cluster = &resolved
 	}
-	if mode == "" || mode == string(replication.ModeStandalone) {
+	// A standalone server keeps base as it is.
+	if cluster.replication == nil {
 		return base, nil
 	}
-	replCfg := replication.LoadFromEnv()
-	replCfg.DataDir = filepath.Dir(replicationWALDir)
-	runtime, err := replication.StartRuntime(context.Background(), base, replCfg)
+	runtime, err := replication.StartRuntime(context.Background(), base, cluster.replication)
 	if err != nil {
 		return nil, err
 	}

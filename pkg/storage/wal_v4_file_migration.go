@@ -93,7 +93,7 @@ func scanV4MigrationWAL(path string, allowTornTail bool, visit func(WALEntry, *w
 		if err != nil {
 			magicBytes := min(n, 4)
 			validPrefix := bytes.Equal(header[:magicBytes], []byte("WALE")[:magicBytes])
-			knownVersion := n < 5 || header[4] >= 1 && header[4] <= walFormatVersionCurrent
+			knownVersion := n < 5 || header[4] >= 1 && header[4] <= walFormatVersionSpanned
 			if allowTornTail && err == io.ErrUnexpectedEOF && validPrefix && knownVersion {
 				return nil
 			}
@@ -103,7 +103,7 @@ func scanV4MigrationWAL(path string, allowTornTail bool, visit func(WALEntry, *w
 			return fmt.Errorf("wal: historical frame at %d: %w", offset, ErrWALCorrupted)
 		}
 		version := header[4]
-		if version < 1 || version > walFormatVersionCurrent {
+		if version < 1 || version > walFormatVersionSpanned {
 			return unsupportedWALVersion(version)
 		}
 		size := binary.LittleEndian.Uint32(header[5:])
@@ -326,7 +326,12 @@ func upgradeWALFileV4(source, destination string, allowTornTail bool, transform 
 				return err
 			}
 		}
-		length, err := writeAtomicRecordBufio(writer, payload, walFormatVersionCurrent)
+		// Spanned parts are current framing: they keep their own version.
+		frameVersion := walFormatVersionCurrent
+		if entry.framingVersion == walFormatVersionSpanned {
+			frameVersion = walFormatVersionSpanned
+		}
+		length, err := writeAtomicRecordBufio(writer, payload, frameVersion)
 		if err != nil {
 			return err
 		}

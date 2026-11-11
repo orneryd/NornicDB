@@ -150,12 +150,16 @@ func TestWriteSnapshotRequiresStreamingEngine(t *testing.T) {
 }
 
 func TestWriteSnapshotRejectsUnreadableRecordLimit(t *testing.T) {
+	// WriteSnapshot refuses a record limit above the frame format's 32-bit length
+	// and a negative one, and accepts one above 16 MiB (NOR-412).
+	for _, limit := range []int64{materializedSnapshotRecordSize + 1, -1} {
+		var output bytes.Buffer
+		err := WriteSnapshot(context.Background(), newTestMemoryEngine(t), &output, SnapshotOptions{MaxRecordBytes: limit})
+		require.ErrorContains(t, err, "snapshot max record bytes")
+		require.Empty(t, output.Bytes())
+	}
 	var output bytes.Buffer
-	err := WriteSnapshot(context.Background(), newTestMemoryEngine(t), &output, SnapshotOptions{
-		MaxRecordBytes: defaultSnapshotRecordSize + 1,
-	})
-	require.ErrorContains(t, err, "snapshot max record bytes")
-	require.Empty(t, output.Bytes())
+	require.NoError(t, WriteSnapshot(context.Background(), newTestMemoryEngine(t), &output, SnapshotOptions{MaxRecordBytes: defaultSnapshotRecordSize + 1}))
 }
 
 func TestWriteSnapshotPropagatesStreamingFailures(t *testing.T) {

@@ -218,9 +218,25 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		return tx.abortCommitLocked(err)
 	}
 
+	// The commit's capture mode is decided once, here, before its route and
+	// before the journal holds it; its store-limit check and its application
+	// use this decision (changeCaptureLocked, NOR-412).
+	captureMode, err := tx.changeCaptureLocked(ctx)
+	if err != nil {
+		return tx.abortCommitLocked(err)
+	}
 	bufferedCommit := tx.engine.writeBehindEnabled() && tx.commitMode == CommitModeImplicit && tx.schemaRuntime == nil &&
 		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
-		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff)
+		(tx.namespace == "" || captureMode == ChangeCaptureOff)
+
+	// Admission (NOR-412, commit_admission.go): where the journal writes
+	// records larger than one frame, the write buffer's limit chooses the
+	// route here, before the prepared handoff journals the commit and before
+	// the route's ordering below depends on the route.
+	admitted := tx.engine.journalsLargeRecords()
+	if admitted && bufferedCommit {
+		bufferedCommit = tx.bufferedForecastFitsLocked()
+	}
 
 	// A commit the buffer does not take writes Badger itself: it is ordered
 	// after the commits acknowledged before it (orderAfterBufferedCommits), and
@@ -308,7 +324,9 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// A database that captures changes commits through Badger: its change
 	// events are written in the same commit as the data (#937).
 	if bufferedCommit {
-		return tx.commitBufferedLocked(ctx)
+		// A prepared commit's record is journaled by the handoff above; an
+		// accepted application's was journaled before it began.
+		return tx.commitBufferedLocked(ctx, admitted, prepare != nil || tx.acceptedApplication)
 	}
 
 	physicalOperations := tx.physicalOperationsLocked()

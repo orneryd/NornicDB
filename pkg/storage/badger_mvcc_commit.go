@@ -43,6 +43,17 @@ func (b *BadgerEngine) archiveEdgeBodyInTxn(txn kvWriter, id EdgeID, body *Edge,
 // archived (staged writes included). The node and edge archivers are this
 // one implementation.
 func archiveMVCCBodyInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn kvWriter, id string, body R, atVersion MVCCVersion, encode func(R, bool) ([]byte, error)) error {
+	if measure, ok := txn.(*storeValueMeasure); ok {
+		// Commit admission measures the record instead of writing it
+		// (measureSupersededHistory): it encodes body with the same encoder
+		// and skips the two checks below, whether history is needed and
+		// whether the version is already archived.
+		encoded, err := encode(body, false)
+		if err != nil {
+			return err
+		}
+		return measure.Set(nil, encoded)
+	}
 	if !b.mustArchiveForHistory() {
 		return nil
 	}
@@ -140,8 +151,8 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 			}
 			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
-				if old := states.nodes[op.Node.ID].before; retainsHistory && old != nil {
-					err = heads.archiveNodeUpdate(txn, op.Node.ID, old, states.nodes[op.Node.ID].after, version)
+				if retainsHistory {
+					err = heads.archiveSuperseded(txn, txn, op, states, version)
 				}
 				if err == nil {
 					err = heads.writeNode(txn, op.Node.ID, version, false)
@@ -151,8 +162,8 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 		case OpDeleteNode:
 			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
-				if old := states.nodes[op.NodeID].before; retainsHistory && old != nil {
-					err = heads.archiveNode(txn, op.NodeID, old)
+				if retainsHistory {
+					err = heads.archiveSuperseded(txn, txn, op, states, version)
 				}
 				// Tombstone marker (tiny, no body) preserves delete semantics.
 				if err == nil {
@@ -179,7 +190,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 					// Only existing edges have a predecessor to archive. Their
 					// stored records are unchanged until buffered writes flush.
 					if err == nil && retainsHistory && !fresh {
-						err = heads.archiveEdge(txn, edgeID, edge)
+						err = heads.archiveEdge(txn, txn, edgeID, edge)
 					} else if err == ErrNotFound {
 						err = nil
 					}
@@ -224,8 +235,8 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 				if op.OldEdge != nil && (op.OldEdge.StartNode != op.Edge.StartNode || op.OldEdge.EndNode != op.Edge.EndNode) {
 					err = b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, op.Edge, version)
 				}
-				if old := states.edges[op.Edge.ID].before; err == nil && retainsHistory && old != nil {
-					err = heads.archiveEdgeUpdate(txn, op.Edge.ID, old, states.edges[op.Edge.ID].after, version)
+				if err == nil && retainsHistory {
+					err = heads.archiveSuperseded(txn, txn, op, states, version)
 				}
 				if err == nil {
 					err = heads.writeEdge(txn, op.Edge.ID, version, false)
@@ -239,8 +250,8 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 				if op.OldEdge != nil {
 					err = b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, nil, version)
 				}
-				if old := states.edges[op.EdgeID].before; err == nil && retainsHistory && old != nil {
-					err = heads.archiveEdge(txn, op.EdgeID, old)
+				if err == nil && retainsHistory {
+					err = heads.archiveSuperseded(txn, txn, op, states, version)
 				}
 				// Tombstone marker preserves delete semantics.
 				if err == nil {
@@ -393,11 +404,96 @@ type commitMVCCHeadResult struct {
 type commitMVCCHeads struct {
 	b      *BadgerEngine
 	staged bool
-	nodes  map[NodeID]commitMVCCHeadResult
-	edges  map[EdgeID]commitMVCCHeadResult
+	// measuring is set by commit admission (measureSupersededHistory): node and
+	// edge then return a zero head without reading the store, and
+	// archiveAtLiveHead archives at a zero head as at a live one.
+	measuring bool
+	nodes     map[NodeID]commitMVCCHeadResult
+	edges     map[EdgeID]commitMVCCHeadResult
+}
+
+// archiveSuperseded writes to to the history record of the version that
+// operation op supersedes, when it supersedes one: the committed predecessor
+// (states) of an update or of a delete, as an update record or as a complete
+// record. The commit writer calls it for each operation's own record, with
+// the batch of the commit as to (materializeMVCCCommitWithHeads); commit
+// admission calls it before the journal with a writer that measures the
+// record (measureSupersededHistory, NOR-412). The relationships a node delete
+// removes are archived by separate calls to archiveEdge in both. txn reads
+// the head of the entity.
+func (h commitMVCCHeads) archiveSuperseded(txn *badger.Txn, to kvWriter, op *Operation, states commitStates, version MVCCVersion) error {
+	switch op.Type {
+	case OpUpdateNode:
+		if op.Node == nil {
+			return nil
+		}
+		if pair := states.nodes[op.Node.ID]; pair.before != nil {
+			return h.archiveNodeUpdate(txn, to, op.Node.ID, pair.before, pair.after, version)
+		}
+	case OpDeleteNode:
+		if old := states.nodes[op.NodeID].before; old != nil {
+			return h.archiveNode(txn, to, op.NodeID, old)
+		}
+	case OpUpdateEdge:
+		if op.Edge == nil {
+			return nil
+		}
+		if pair := states.edges[op.Edge.ID]; pair.before != nil {
+			return h.archiveEdgeUpdate(txn, to, op.Edge.ID, pair.before, pair.after, version)
+		}
+	case OpDeleteEdge:
+		if old := states.edges[op.EdgeID].before; old != nil {
+			return h.archiveEdge(txn, to, op.EdgeID, old)
+		}
+	}
+	return nil
+}
+
+// measureSupersededHistory gives measure the history records the commit of
+// operations can write: for each operation the record archiveSuperseded
+// selects, and for each stored relationship a node delete removes its
+// complete record. It measures them whether or not the commit writer will
+// write them: the writer leaves a record out when history is not needed
+// (mustArchiveForHistory), when the entity's head is missing or tombstoned,
+// or when the version is already archived; the measurement applies none of
+// these (NOR-412).
+func (b *BadgerEngine) measureSupersededHistory(ctx context.Context, txn *badger.Txn, measure *storeValueMeasure, operations []Operation, states commitStates) error {
+	heads := commitMVCCHeads{b: b, measuring: true}
+	// The commit's version is not known yet: the zero version stands in. An update record encodes it, so the written record's size can differ from the measured one.
+	var version MVCCVersion
+	for i := range operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		op := &operations[i]
+		if err := heads.archiveSuperseded(txn, measure, op, states, version); err != nil {
+			return err
+		}
+		if op.Type != OpDeleteNode {
+			continue
+		}
+		for _, edgeID := range op.DeletedEdgeIDs {
+			// A relationship this commit created has no stored record, and
+			// the writer archives none for it.
+			edge, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
+			if err == ErrNotFound {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if err := heads.archiveEdge(txn, measure, edgeID, edge); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (h commitMVCCHeads) node(txn *badger.Txn, id NodeID) (MVCCHead, error) {
+	if h.measuring {
+		return MVCCHead{}, nil
+	}
 	if h.staged {
 		if found, ok := h.nodes[id]; ok {
 			return found.head, found.err
@@ -411,6 +507,9 @@ func (h commitMVCCHeads) node(txn *badger.Txn, id NodeID) (MVCCHead, error) {
 	return h.b.loadNodeMVCCHead(id)
 }
 func (h commitMVCCHeads) edge(txn *badger.Txn, id EdgeID) (MVCCHead, error) {
+	if h.measuring {
+		return MVCCHead{}, nil
+	}
 	if h.staged {
 		if found, ok := h.edges[id]; ok {
 			return found.head, found.err
@@ -423,21 +522,21 @@ func (h commitMVCCHeads) edge(txn *badger.Txn, id EdgeID) (MVCCHead, error) {
 	}
 	return h.b.loadEdgeMVCCHead(id)
 }
-func (h commitMVCCHeads) archiveNode(txn *badger.Txn, id NodeID, body *Node) error {
+func (h commitMVCCHeads) archiveNode(txn *badger.Txn, to kvWriter, id NodeID, body *Node) error {
 	head, err := h.node(txn, id)
-	return archiveAtLiveHead(head, err, func(v MVCCVersion) error { return h.b.archiveNodeBodyInTxn(txn, id, body, v) })
+	return archiveAtLiveHead(head, err, func(v MVCCVersion) error { return h.b.archiveNodeBodyInTxn(to, id, body, v) })
 }
-func (h commitMVCCHeads) archiveEdge(txn *badger.Txn, id EdgeID, body *Edge) error {
+func (h commitMVCCHeads) archiveEdge(txn *badger.Txn, to kvWriter, id EdgeID, body *Edge) error {
 	head, err := h.edge(txn, id)
-	return archiveAtLiveHead(head, err, func(v MVCCVersion) error { return h.b.archiveEdgeBodyInTxn(txn, id, body, v) })
+	return archiveAtLiveHead(head, err, func(v MVCCVersion) error { return h.b.archiveEdgeBodyInTxn(to, id, body, v) })
 }
-func (h commitMVCCHeads) archiveNodeUpdate(txn *badger.Txn, id NodeID, old, next *Node, version MVCCVersion) error {
+func (h commitMVCCHeads) archiveNodeUpdate(txn *badger.Txn, to kvWriter, id NodeID, old, next *Node, version MVCCVersion) error {
 	head, err := h.node(txn, id)
-	return archiveAtLiveHead(head, err, func(v MVCCVersion) error { return h.b.archiveNodeUpdateBodyInTxn(txn, id, old, next, v, version) })
+	return archiveAtLiveHead(head, err, func(v MVCCVersion) error { return h.b.archiveNodeUpdateBodyInTxn(to, id, old, next, v, version) })
 }
-func (h commitMVCCHeads) archiveEdgeUpdate(txn *badger.Txn, id EdgeID, old, next *Edge, version MVCCVersion) error {
+func (h commitMVCCHeads) archiveEdgeUpdate(txn *badger.Txn, to kvWriter, id EdgeID, old, next *Edge, version MVCCVersion) error {
 	head, err := h.edge(txn, id)
-	return archiveAtLiveHead(head, err, func(v MVCCVersion) error { return h.b.archiveEdgeUpdateBodyInTxn(txn, id, old, next, v, version) })
+	return archiveAtLiveHead(head, err, func(v MVCCVersion) error { return h.b.archiveEdgeUpdateBodyInTxn(to, id, old, next, v, version) })
 }
 func (h commitMVCCHeads) writeNode(txn *badger.Txn, id NodeID, version MVCCVersion, deleted bool) error {
 	if !h.staged {
