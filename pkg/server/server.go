@@ -86,7 +86,7 @@
 //	  POST /auth/token                - Get JWT token
 //	  POST /auth/logout               - Logout
 //	  GET  /auth/me                   - Current user info
-//	  POST /auth/api-token            - Generate API token (admin)
+//	  POST /auth/api-token            - Generate personal API token (authenticated user)
 //	  GET  /auth/oauth/redirect       - OAuth redirect
 //	  GET  /auth/oauth/callback        - OAuth callback
 //	  GET  /auth/users                 - List users (admin)

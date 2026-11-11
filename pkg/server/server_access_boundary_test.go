@@ -402,9 +402,9 @@ func TestHandleGenerateAPIToken(t *testing.T) {
 		assert.Equal(t, "not authenticated", payload["message"])
 	})
 
-	// The admin requirement is the route guard's (withAuth with
-	// auth.PermAdmin): TestAPITokenNeedsTheAdminEntitlement goes through the
-	// router; the handler itself makes no second decision.
+	// Authentication is the route guard's decision. The personal-token route
+	// is exercised by TestAPITokensPreserveTheAuthenticatedUsersPermissions;
+	// the handler uses only the authenticated identity.
 
 	t.Run("validates request body and expiry", func(t *testing.T) {
 		adminClaims := &auth.JWTClaims{

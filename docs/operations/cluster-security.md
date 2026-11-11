@@ -74,7 +74,7 @@ NORNICDB_AUTH=admin/your-strong-password
 
 #### Step 3: Generate Cluster Tokens
 
-Cluster tokens are generated through the embedded Go API. There is no dedicated HTTP route for cluster-token generation; for general API tokens see `POST /auth/api-token` (admin permission required), but inter-node tokens are scoped via `pkg/auth.Authenticator.GenerateClusterToken`:
+Cluster tokens are generated through the embedded Go API. There is no dedicated HTTP route for cluster-token generation; for general API tokens see `POST /auth/api-token` (authenticated users mint tokens for their own identity), but inter-node tokens are scoped via `pkg/auth.Authenticator.GenerateClusterToken`:
 
 ```go
 // Token never expires (default)

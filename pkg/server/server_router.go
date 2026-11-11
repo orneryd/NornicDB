@@ -142,10 +142,10 @@ func (s *Server) registerAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/logout", s.handleLogout)
 
 	s.registerRouteTable(mux, []routeSpec{
-		{"/auth/me", auth.PermRead, s.handleMe},
-		{"/auth/password", auth.PermRead, s.handleChangePassword},     // Users can change their own password
-		{"/auth/profile", auth.PermRead, s.handleUpdateProfile},       // Users can update their own profile
-		{"/auth/api-token", auth.PermAdmin, s.handleGenerateAPIToken}, // Admin only - generate API tokens
+		{"/auth/me", "", s.handleMe},
+		{"/auth/password", auth.PermRead, s.handleChangePassword}, // Users can change their own password
+		{"/auth/profile", auth.PermRead, s.handleUpdateProfile},   // Users can update their own profile
+		{"/auth/api-token", "", s.handleGenerateAPIToken},         // Authenticated users mint tokens for their own identity
 	})
 
 	// OAuth endpoints
