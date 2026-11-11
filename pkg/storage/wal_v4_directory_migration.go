@@ -20,9 +20,15 @@ const v4WALBackupSuffix = ".before-v4-v6"
 // WALV4UpgradeOptions selects an optional application payload conversion.
 // Transform is invoked only for records using an older frame and must return
 // the complete replacement payload without modifying its input.
+//
+// OneFrameRecords keeps the converted journal to one-frame records: an old
+// record over one frame is refused before anything changes. The replication
+// journal sets it, as its transport carries one-frame records only. A store
+// journal leaves it unset and carries such a record whole (NOR-412).
 type WALV4UpgradeOptions struct {
-	Transform    func(version uint8, operation OperationType, payload []byte) ([]byte, error)
-	afterPublish func(string) error
+	Transform       func(version uint8, operation OperationType, payload []byte) ([]byte, error)
+	OneFrameRecords bool
+	afterPublish    func(string) error
 }
 
 // backupV4WALDirectory publishes a durable, immutable copy before any source
@@ -173,7 +179,7 @@ func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 	} else if !errors.Is(err, ErrWALUnsupportedVersion) {
 		return false, err
 	}
-	if err := ValidateWALFormat(dir, WALValidateV4Upgrade); err != nil {
+	if err := validateWALFormat(dir, WALValidateV4Upgrade, !options.OneFrameRecords); err != nil {
 		return false, err
 	}
 	backup := dir + v4WALBackupSuffix
@@ -335,13 +341,13 @@ func walV5OrLaterOnly(dir string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if err := scanV4MigrationWAL(path, false, visit); err != nil {
+		if err := scanV4MigrationWAL(path, false, true, visit); err != nil {
 			return false, err
 		}
 	}
 	active := walActivePath(dir)
 	if _, err := os.Stat(active); err == nil {
-		if err := scanV4MigrationWAL(active, true, visit); err != nil {
+		if err := scanV4MigrationWAL(active, true, true, visit); err != nil {
 			return false, err
 		}
 	} else if !os.IsNotExist(err) {

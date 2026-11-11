@@ -30,8 +30,15 @@ const (
 
 // ValidateWALFormat checks the active file and retained segments without
 // repairing or rewriting them. Upgrade validation also checks checksums and
-// historical property-authority boundaries before the storage is opened.
+// historical property-authority boundaries before the storage is opened. It
+// validates a store journal: an old record over one frame is admitted whole.
 func ValidateWALFormat(dir string, mode WALFormatValidation) error {
+	return validateWALFormat(dir, mode, true)
+}
+
+// validateWALFormat is ValidateWALFormat for a journal that carries records
+// over one frame (carryOversized) or does not (the replication journal).
+func validateWALFormat(dir string, mode WALFormatValidation, carryOversized bool) error {
 	if mode != WALValidateCurrent && mode != WALValidateV4Upgrade {
 		return fmt.Errorf("wal: unknown validation mode %d", mode)
 	}
@@ -45,7 +52,7 @@ func ValidateWALFormat(dir string, mode WALFormatValidation) error {
 			return err
 		}
 		if mode == WALValidateV4Upgrade {
-			if _, err := planV4WALMigration(path, false); err != nil {
+			if _, err := planV4WALMigration(path, false, carryOversized); err != nil {
 				return err
 			}
 		} else if err := validateWALFileVersion(path, false); err != nil {
@@ -59,7 +66,7 @@ func ValidateWALFormat(dir string, mode WALFormatValidation) error {
 		} else if err != nil {
 			return err
 		}
-		_, err := planV4WALMigration(active, true)
+		_, err := planV4WALMigration(active, true, carryOversized)
 		return err
 	}
 	return validateWALFileVersion(active, true)

@@ -1648,7 +1648,9 @@ func prepareReplicationWAL(dir string, allowUpgrade bool, mode string) error {
 		return nil
 	}
 	if allowUpgrade {
-		_, err := storage.UpgradeWALV4(dir, storage.WALV4UpgradeOptions{Transform: replication.TranscodeV4WALPayload})
+		// Replication carries one-frame commands only: an old command over
+		// one frame is refused, as before (NOR-412).
+		_, err := storage.UpgradeWALV4(dir, storage.WALV4UpgradeOptions{Transform: replication.TranscodeV4WALPayload, OneFrameRecords: true})
 		return err
 	}
 	if mode != "" && mode != string(replication.ModeStandalone) {
