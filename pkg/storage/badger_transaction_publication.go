@@ -196,6 +196,13 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	if err := tx.materializeDeferredEdgesLocked(ctx); err != nil {
 		return tx.abortCommitLocked(err)
 	}
+	// The positional counts are derived here, once, under the entity and
+	// endpoint authority held above and before count admission, the buffer
+	// hand-over or any physical batch (NOR-213).
+	relabelled, err := tx.derivePositionalCountDeltasLocked(ctx)
+	if err != nil {
+		return tx.abortCommitLocked(err)
+	}
 
 	// A coherent usage cut may already have replayed ACKs this transaction
 	// logically observed before begin. Reuse the existing rebase owner before
@@ -232,6 +239,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		if err != nil {
 			return tx.abortCommitLocked(err)
 		}
+		entities.relabelled = relabelled
 		drained, err := tx.engine.orderAfterBufferedCommits(ctx, &order, entities)
 		if err != nil {
 			return tx.abortCommitLocked(err)

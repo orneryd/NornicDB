@@ -226,7 +226,9 @@ type BadgerTransaction struct {
 	// set and applied right after commit.
 	pendingEdgeTypeCountDeltas map[namespaceEdgeType]int64
 	// pendingEdgeTypeLabelCountDeltas is the positional (label, type) tier of
-	// the same counters, backing the one-labeled-endpoint count shapes.
+	// the same counters, backing the one-labeled-endpoint count shapes. The
+	// commit fills it, once (derivePositionalCountDeltasLocked); statements
+	// never do.
 	pendingEdgeTypeLabelCountDeltas map[edgeTypeLabelDelta]int64
 	// When true, skip per-operation constraint checks and validate at commit only.
 	deferConstraintValidation bool
@@ -1131,13 +1133,9 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		}
 	}
 	tx.bufferAdjustNodeLabelCounts(tx.namespace, oldNode.Labels, node.Labels)
-
-	// Positional (label, type) counters follow the node's relabel: its
-	// tx-visible incident edges move between label buckets (issue #638).
-	added, removed := nodeLabelChangeDeltas(oldNode.Labels, node.Labels)
-	if err := tx.bufferNodeLabelChangeEdgeTypeDeltasLocked(ctx, node.ID, added, removed); err != nil {
-		return err
-	}
+	// The positional (label, type) counters of the node's relationships follow
+	// its labels at commit (derivePositionalCountDeltasLocked), from the
+	// relationships stored at it then.
 
 	// Track for read-your-writes
 	nodeCopy := copyNode(node)
@@ -1287,9 +1285,10 @@ func (tx *BadgerTransaction) scanCommittedEmbeddingKeysLocked(nodeID NodeID, vis
 //
 // It is the transaction's one reader of a node's relationships for integrity
 // work: a node delete's cascade (executeNodeDeletion), a non-DETACH delete's
-// commit check (resolveConnectedDeletesLocked), the positional counts a
-// relabel adjusts (incidentEdgeTypesTxLocked) and the DELETE checks above the
-// transaction (IncidentEdges). So it reads storage, not the visibility layer:
+// commit check (resolveConnectedDeletesLocked) and the DELETE checks above the
+// transaction (IncidentEdges); its stored kernel (storedIncidentEdgesLocked)
+// also gives the commit the relationships stored at a node it relabels. So it
+// reads storage, not the visibility layer:
 // a relationship that on-demand suppression or knowledge-policy decay hides
 // from reads still connects its endpoints, and a delete that skipped it left
 // it dangling. Bodies come from the stored records, as the engine's own
@@ -1336,9 +1335,10 @@ func (tx *BadgerTransaction) incidentEdgesLocked(ctx context.Context, nodeID Nod
 	// owner as engine adjacency. Overlay selection and committed IDs must
 	// not straddle replay/retirement. Transaction-local rewrites and deletes
 	// still take precedence over that captured stored view.
-	if tx.engine.writeBehind != nil {
-		// Integrity preparation follows the selected staging or commit phase lifetime.
-		outgoing, incoming, err := readAdjacency(ctx, tx.engine, adjacencyBoth, nodeID, "", nil, storedRead)
+	// So does a node whose write lock the transaction holds after a later
+	// commit (NOR-213): a delete removes its relationships from this read.
+	if tx.engine.writeBehind != nil || tx.readsLockedAdjacencyLatestLocked(nodeID) {
+		outgoing, incoming, err := tx.storedIncidentEdgesLocked(ctx, nodeID)
 		if err != nil {
 			return nil, err
 		}
@@ -1410,12 +1410,23 @@ func (tx *BadgerTransaction) incidentEdgesLocked(ctx context.Context, nodeID Nod
 	return edges, err
 }
 
+// storedIncidentEdgesLocked returns the relationships stored at nodeID now,
+// outgoing and incoming, from one read of the engine's current stored
+// adjacency: committed and acknowledged buffered relationships, hidden ones
+// included, without this transaction's own changes and not at its snapshot.
+// Integrity preparation follows the selected staging or commit phase
+// lifetime. Caller holds tx.mu.
+func (tx *BadgerTransaction) storedIncidentEdgesLocked(ctx context.Context, nodeID NodeID) (outgoing, incoming []*Edge, err error) {
+	return readAdjacency(ctx, tx.engine, adjacencyBoth, nodeID, "", nil, storedRead)
+}
+
 // bufferRemoveEdgeBookkeepingBuffered buffers an edge's primary-key and index
 // deletions, marks it deleted, removes it from the pending set, and adjusts the
-// per-type and positional (label, type) counters, for each relationship a
-// node delete cascades (incidentEdgesLocked): committed, buffered or staged
-// (#741) alike.
-func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(ctx context.Context, edge *Edge, deletedNodeID NodeID, deletedNodeLabels []string) error {
+// per-type counter, for each relationship a node delete cascades
+// (incidentEdgesLocked): committed, buffered or staged (#741) alike. The
+// delete's operation records the relationship (its DeletedEdgeFacts) for the
+// positional counters, which the commit derives.
+func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge) {
 	tx.bufferDelete(edgeKey(edge.ID))
 	if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
 		tx.bufferDelete(outKey)
@@ -1432,26 +1443,6 @@ func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(ctx context.Con
 	tx.removePendingEdgeLocked(edge.ID)
 
 	tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, -1)
-
-	// Positional (label, type) counters: the deleted node's labels for its
-	// side, the peer's tx-visible labels for the other.
-	startLabels := deletedNodeLabels
-	endLabels := deletedNodeLabels
-	if edge.StartNode == deletedNodeID && edge.EndNode != deletedNodeID {
-		peer, err := tx.nodeLabelsTxVisibleLocked(ctx, edge.EndNode)
-		if err != nil {
-			return err
-		}
-		endLabels = peer
-	} else if edge.EndNode == deletedNodeID && edge.StartNode != deletedNodeID {
-		peer, err := tx.nodeLabelsTxVisibleLocked(ctx, edge.StartNode)
-		if err != nil {
-			return err
-		}
-		startLabels = peer
-	}
-	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, startLabels, endLabels, -1)
-	return nil
 }
 
 // DeleteGraphNode stages node deletion using the selected relationship policy.
@@ -1677,9 +1668,8 @@ func (tx *BadgerTransaction) bulkCreateEdges(ctx context.Context, edges []*Edge,
 	}
 	resolve := tx.visibleNodeLabelsLocked
 	var batch map[EdgeID]struct{}
-	var singleLabels [1][2][]string
 	var singleNoOp [1]bool
-	labels, noOps := singleLabels[:], singleNoOp[:]
+	noOps := singleNoOp[:]
 	if len(edges) > 1 {
 		endpoints := make(map[NodeID]endpoint, util.SafePreallocProduct(len(edges), 2))
 		resolve = func(ctx context.Context, id NodeID) ([]string, bool, error) {
@@ -1694,15 +1684,13 @@ func (tx *BadgerTransaction) bulkCreateEdges(ctx context.Context, edges []*Edge,
 			return labels, visible, nil
 		}
 		batch = make(map[EdgeID]struct{}, len(edges))
-		labels = make([][2][]string, len(edges))
 		noOps = make([]bool, len(edges))
 	}
 	for i, edge := range edges {
-		startLabels, endLabels, noOp, err := tx.validateNewEdgeLocked(ctx, edge, resolve, batch, minted)
+		noOp, err := tx.validateNewEdgeLocked(ctx, edge, resolve, batch, minted)
 		if err != nil {
 			return err
 		}
-		labels[i] = [2][]string{startLabels, endLabels}
 		noOps[i] = noOp
 		if batch != nil {
 			batch[edge.ID] = struct{}{}
@@ -1713,7 +1701,7 @@ func (tx *BadgerTransaction) bulkCreateEdges(ctx context.Context, edges []*Edge,
 			tx.stageHiddenEdgeCreateLocked(edge)
 			continue
 		}
-		if err := tx.bufferNewEdgeLocked(edge, labels[i][0], labels[i][1], minted); err != nil {
+		if err := tx.bufferNewEdgeLocked(edge, minted); err != nil {
 			return err
 		}
 	}
@@ -1721,76 +1709,76 @@ func (tx *BadgerTransaction) bulkCreateEdges(ctx context.Context, edges []*Edge,
 }
 
 // validateNewEdgeLocked checks that edge can be created in the transaction
-// and returns its endpoints' labels and whether it is a hidden-relationship
-// no-op candidate: it is not nil and has an ID, its
+// and returns whether it is a hidden-relationship no-op candidate: it is not
+// nil and has an ID, its
 // namespace pins, both endpoints are visible (endpoint; ErrNotFound
 // otherwise), and no pending edge, edge earlier in the same batch or
 // committed edge has its ID (ErrAlreadyExists). Storage is read for every ID
 // but a minted one (CreateMintedEdge): stable imports may use UUID-shaped IDs
 // too, so an ID's shape proves nothing.
-func (tx *BadgerTransaction) validateNewEdgeLocked(ctx context.Context, edge *Edge, endpoint func(context.Context, NodeID) ([]string, bool, error), batch map[EdgeID]struct{}, minted bool) (startLabels, endLabels []string, noOp bool, err error) {
+func (tx *BadgerTransaction) validateNewEdgeLocked(ctx context.Context, edge *Edge, endpoint func(context.Context, NodeID) ([]string, bool, error), batch map[EdgeID]struct{}, minted bool) (noOp bool, err error) {
 	// A nil edge is invalid data and an empty ID an invalid ID, as in the
 	// engines' CreateEdge.
 	if edge == nil {
-		return nil, nil, false, ErrInvalidData
+		return false, ErrInvalidData
 	}
 	if edge.ID == "" {
-		return nil, nil, false, ErrInvalidID
+		return false, ErrInvalidID
 	}
 	if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
-		return nil, nil, false, err
+		return false, err
 	}
 	if _, exists := tx.pendingEdges[edge.ID]; exists {
-		return nil, nil, false, ErrAlreadyExists
+		return false, ErrAlreadyExists
 	}
 	if _, exists := batch[edge.ID]; exists {
-		return nil, nil, false, ErrAlreadyExists
+		return false, ErrAlreadyExists
 	}
 	if _, deleted := tx.deletedEdges[edge.ID]; deleted || minted {
-		startLabels, visible, err := endpoint(ctx, edge.StartNode)
+		_, visible, err := endpoint(ctx, edge.StartNode)
 		if err != nil {
-			return nil, nil, false, err
+			return false, err
 		}
 		if !visible {
-			return nil, nil, false, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.StartNode)))
+			return false, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.StartNode)))
 		}
-		endLabels, visible, err := endpoint(ctx, edge.EndNode)
+		_, visible, err = endpoint(ctx, edge.EndNode)
 		if err != nil {
-			return nil, nil, false, err
+			return false, err
 		}
 		if !visible {
-			return nil, nil, false, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.EndNode)))
+			return false, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.EndNode)))
 		}
-		return startLabels, endLabels, false, nil
+		return false, nil
 	}
 	existing, err := tx.getCommittedEdgeLocked(ctx, edge.ID)
 	if err == nil {
 		if !tx.engine.filterEntityByDecay(visibleRead, existing, DecayScoringTime()) {
-			return nil, nil, false, ErrAlreadyExists
+			return false, ErrAlreadyExists
 		}
 		// A MERGE may add ON CREATE SET properties after CreateEdge. Defer
 		// semantic identity to the commit owner, which sees that final staged
 		// image. Until then this is a transaction-visible candidate only.
-		return nil, nil, true, nil
+		return true, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
-		return nil, nil, false, fmt.Errorf("checking edge existence: %w", err)
+		return false, fmt.Errorf("checking edge existence: %w", err)
 	}
-	startLabels, visible, err := endpoint(ctx, edge.StartNode)
+	_, visible, err := endpoint(ctx, edge.StartNode)
 	if err != nil {
-		return nil, nil, false, err
+		return false, err
 	}
 	if !visible {
-		return nil, nil, false, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.StartNode)))
+		return false, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.StartNode)))
 	}
-	endLabels, visible, err = endpoint(ctx, edge.EndNode)
+	_, visible, err = endpoint(ctx, edge.EndNode)
 	if err != nil {
-		return nil, nil, false, err
+		return false, err
 	}
 	if !visible {
-		return nil, nil, false, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.EndNode)))
+		return false, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.EndNode)))
 	}
-	return startLabels, endLabels, false, nil
+	return false, nil
 }
 
 // stageHiddenEdgeCreateLocked stores a hidden-ID CREATE candidate outside the
@@ -1851,10 +1839,10 @@ func sameEdgeIdentity(before, current *Edge) bool {
 }
 
 // bufferNewEdgeLocked buffers a validated new edge: its record, its
-// outgoing, incoming, type and edge-between index entries, the positional
-// counters for its endpoints' labels (as validateNewEdgeLocked returned
-// them), the read-your-writes copy and the create operation.
-func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLabels []string, minted bool) error {
+// outgoing, incoming, type and edge-between index entries, its per-type
+// counter, the read-your-writes copy and the create operation, from which the
+// commit derives its positional counters.
+func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, minted bool) error {
 	if !tx.acceptedApplication {
 		initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
 	}
@@ -1871,8 +1859,6 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 	}
 	// Derived per-type counter follows the index entry (issue #638).
 	tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, 1)
-	// Positional (label, type) counters follow the endpoints' tx-visible labels.
-	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, startLabels, endLabels, 1)
 
 	// Track for read-your-writes
 	edgeCopy := copyEdge(edge)
@@ -2048,9 +2034,7 @@ func (tx *BadgerTransaction) UpdateEdge(ctx context.Context, updateRequest EdgeU
 	// Track for read-your-writes.
 	edgeCopy := copyEdge(edge)
 	tx.setPendingEdgeLocked(edgeCopy)
-	if err := tx.bufferEdgeReplacementCountDeltasLocked(ctx, oldEdge, edge); err != nil {
-		return err
-	}
+	tx.bufferEdgeReplacementCountDeltasLocked(oldEdge, edge)
 
 	tx.operations = append(tx.operations, Operation{
 		Type:      OpUpdateEdge,
@@ -2063,43 +2047,15 @@ func (tx *BadgerTransaction) UpdateEdge(ctx context.Context, updateRequest EdgeU
 	return nil
 }
 
-// bufferEdgeReplacementCountDeltasLocked owns typed and positional counter
-// changes for an UPDATE that changes the stored relationship image.
-// An unchanged type and endpoints contribute no delta.
-func (tx *BadgerTransaction) bufferEdgeReplacementCountDeltasLocked(ctx context.Context, oldEdge, edge *Edge) error {
+// bufferEdgeReplacementCountDeltasLocked owns the typed counter change for an
+// UPDATE that changes the stored relationship's type. An unchanged type
+// contributes no delta. The update's operation keeps the old and new images,
+// from which the commit derives the positional counters.
+func (tx *BadgerTransaction) bufferEdgeReplacementCountDeltasLocked(oldEdge, edge *Edge) {
 	if oldEdge.Type != edge.Type {
 		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), oldEdge.Type, -1)
 		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, 1)
 	}
-	// Positional (label, type) counters move with type or endpoint changes.
-	if oldEdge.Type != edge.Type || oldEdge.StartNode != edge.StartNode || oldEdge.EndNode != edge.EndNode {
-		oldStartLabels, err := tx.nodeLabelsTxVisibleLocked(ctx, oldEdge.StartNode)
-		if err != nil {
-			return fmt.Errorf("old start labels: %w", err)
-		}
-		oldEndLabels, err := tx.nodeLabelsTxVisibleLocked(ctx, oldEdge.EndNode)
-		if err != nil {
-			return fmt.Errorf("old end labels: %w", err)
-		}
-		tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), oldEdge.Type, oldStartLabels, oldEndLabels, -1)
-		newStartLabels := oldStartLabels
-		newEndLabels := oldEndLabels
-		if oldEdge.StartNode != edge.StartNode {
-			newStartLabels, err = tx.nodeLabelsTxVisibleLocked(ctx, edge.StartNode)
-			if err != nil {
-				return fmt.Errorf("new start labels: %w", err)
-			}
-		}
-		if oldEdge.EndNode != edge.EndNode {
-			newEndLabels, err = tx.nodeLabelsTxVisibleLocked(ctx, edge.EndNode)
-			if err != nil {
-				return fmt.Errorf("new end labels: %w", err)
-			}
-		}
-		tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, newStartLabels, newEndLabels, 1)
-	}
-
-	return nil
 }
 
 // DeleteEdge deletes an edge from the transaction.
@@ -2177,19 +2133,8 @@ func (tx *BadgerTransaction) DeleteEdge(ctx context.Context, edgeID EdgeID) erro
 	tx.deletedEdges[edgeID] = struct{}{}
 
 	// Derived per-type counter follows the index entry removal (issue #638).
+	// The commit derives the positional counters from the delete's operation.
 	tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edgeID), edge.Type, -1)
-
-	// Positional (label, type) counters follow the endpoints' tx-visible
-	// labels read before the edge is removed.
-	startLabels, err := tx.nodeLabelsTxVisibleLocked(ctx, edge.StartNode)
-	if err != nil {
-		return fmt.Errorf("start labels: %w", err)
-	}
-	endLabels, err := tx.nodeLabelsTxVisibleLocked(ctx, edge.EndNode)
-	if err != nil {
-		return fmt.Errorf("end labels: %w", err)
-	}
-	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edgeID), edge.Type, startLabels, endLabels, -1)
 
 	tx.operations = append(tx.operations, Operation{
 		Type:      OpDeleteEdge,

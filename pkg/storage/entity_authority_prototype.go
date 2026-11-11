@@ -109,6 +109,12 @@ func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked(ctx context.Contex
 		if op.Edge != nil {
 			endpoints = append(endpoints, op.Edge.StartNode, op.Edge.EndNode)
 		}
+		// A node delete records the relationships it removes only as facts:
+		// their surviving other ends hold the positional counts the commit
+		// derives (derivePositionalCountDeltasLocked).
+		for _, fact := range op.DeletedEdgeFacts {
+			endpoints = append(endpoints, fact.StartNode, fact.EndNode)
+		}
 	}
 	return nodes, edges, endpoints, nil
 }

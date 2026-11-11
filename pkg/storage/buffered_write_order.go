@@ -18,11 +18,14 @@ import (
 // writtenEntities are the entities one write touches, as the write-behind
 // order compares them with the buffer (orderAfterBufferedCommits): nodes it
 // writes or that its relationships connect, nodes it deletes with their
-// relationships, and relationships it writes or deletes.
+// relationships, relationships it writes or deletes, and nodes whose stored
+// relationships it reads to move their counts to new labels
+// (derivePositionalCountDeltasLocked).
 type writtenEntities struct {
 	nodes        []NodeID
 	deletedNodes []NodeID
 	edges        []EdgeID
+	relabelled   []NodeID
 }
 
 func (e *writtenEntities) node(id NodeID) {
@@ -174,7 +177,8 @@ func deliveringToListeners() {
 }
 
 // holdsEntities reports whether a generation not yet applied holds a body or
-// deletion of one of e's entities, or a relationship of a node e deletes.
+// deletion of one of e's entities, or a relationship of a node e deletes or
+// relabels.
 func (w *WriteBehindBuffer) holdsEntities(ctx context.Context, e writtenEntities) (bool, error) {
 	// The read epoch is odd while any generation is unapplied. Under the
 	// caller's exclusive stripes no commit of e's entities is appended in
@@ -198,15 +202,17 @@ func (w *WriteBehindBuffer) holdsEntities(ctx context.Context, e writtenEntities
 			}
 		}
 	}
-	for _, id := range e.deletedNodes {
-		for _, outgoing := range [...]bool{true, false} {
-			// Hold preparation uses the ordering phase lifetime.
-			live, touched, _, err := w.edgeAdjacencyOverlayLocked(ctx, id, outgoing)
-			if err != nil {
-				return false, err
-			}
-			if len(live) > 0 || len(touched) > 0 {
-				return true, nil
+	for _, ids := range [...][]NodeID{e.deletedNodes, e.relabelled} {
+		for _, id := range ids {
+			for _, outgoing := range [...]bool{true, false} {
+				// Hold preparation uses the ordering phase lifetime.
+				live, touched, _, err := w.edgeAdjacencyOverlayLocked(ctx, id, outgoing)
+				if err != nil {
+					return false, err
+				}
+				if len(live) > 0 || len(touched) > 0 {
+					return true, nil
+				}
 			}
 		}
 	}

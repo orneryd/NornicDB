@@ -88,7 +88,16 @@ func (tx *BadgerTransaction) PendingCountStoreDelta(ctx context.Context, request
 			}
 		}
 	default:
-		if len(tx.pendingLabelCountDeltas) > 0 || len(tx.pendingEdgeTypeCountDeltas) > 0 || len(tx.pendingEdgeTypeLabelCountDeltas) > 0 {
+		if len(tx.pendingLabelCountDeltas) > 0 || len(tx.pendingEdgeTypeCountDeltas) > 0 {
+			return CountStoreRead{}, true, nil
+		}
+		// The positional counts are derived only at commit, from the
+		// transaction's changes: any change that can move one counts rows.
+		pending, err := tx.positionalChangesPendingLocked(ctx)
+		if err != nil {
+			return CountStoreRead{}, false, err
+		}
+		if pending {
 			return CountStoreRead{}, true, nil
 		}
 	}

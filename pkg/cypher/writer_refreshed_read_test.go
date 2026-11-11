@@ -75,7 +75,8 @@ func TestWriterNoOpRetainsRefreshedImageForCollectionReads(t *testing.T) {
 // the remaining public read routes (full label and all-node streams, property
 // filters, counts, equality-cache MERGEs, type/all/adjacency/between edge
 // reads) and proves that only the entities the writer locked advance while
-// unrelated committed entities stay at the transaction's snapshot.
+// unrelated committed entities stay at the transaction's snapshot. A locked
+// node's relationships are read as last committed (NOR-213).
 func TestWriterRefreshedReadsAgreeWithPointReadsAndKeepTheSnapshotPinned(t *testing.T) {
 	ctx := context.Background()
 	store, setup := newMergeRaceStore(t)
@@ -198,11 +199,15 @@ func TestWriterRefreshedReadsAgreeWithPointReadsAndKeepTheSnapshotPinned(t *test
 	})
 
 	t.Run("relationship collections and adjacency", func(t *testing.T) {
-		require.Equal(t, [][]interface{}{{"HAS", int64(2)}, {"LINK", int64(1)}},
+		// An untyped pattern expands from every node, the locked n included,
+		// and n's relationships are read as last committed (NOR-213).
+		require.Equal(t, [][]interface{}{{"HAS", int64(2)}, {"LINK", int64(9)}},
 			refreshedReadRows(t, writer, ctx, "MATCH ()-[r]->() RETURN type(r), r.peer ORDER BY type(r)"))
 		require.Equal(t, [][]interface{}{{int64(2)}},
 			refreshedReadRows(t, writer, ctx, "MATCH ()-[r:HAS]->() RETURN r.peer"))
-		require.Equal(t, [][]interface{}{{"HAS", int64(2)}, {"LINK", int64(1)}},
+		// The writer holds n's write lock, so n's relationships are read as
+		// last committed, the unlocked LINK included (NOR-213).
+		require.Equal(t, [][]interface{}{{"HAS", int64(2)}, {"LINK", int64(9)}},
 			refreshedReadRows(t, writer, ctx, "MATCH (:Doc {id:'n'})-[r]->() RETURN type(r), r.peer ORDER BY type(r)"))
 		require.Equal(t, [][]interface{}{{int64(2)}},
 			refreshedReadRows(t, writer, ctx, "MATCH (:Part {id:'p'})<-[r]-(:Doc) RETURN r.peer"))
