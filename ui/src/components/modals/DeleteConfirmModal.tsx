@@ -4,6 +4,7 @@
  */
 
 import { Trash2 } from "lucide-react";
+import {Modal} from '../common/Modal';
 
 interface DeleteConfirmModalProps {
   isOpen: boolean;
@@ -23,8 +24,7 @@ export function DeleteConfirmModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-norse-deep border border-norse-rune rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+    <Modal isOpen={isOpen} onClose={onCancel} title="Delete selected nodes">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 bg-red-500/20 rounded-lg">
             <Trash2 className="w-6 h-6 text-red-400" />
@@ -57,6 +57,7 @@ export function DeleteConfirmModal({
           <button
             type="button"
             onClick={onCancel}
+            data-autofocus
             disabled={deleting}
             className="px-4 py-2 rounded-lg text-norse-silver hover:text-white hover:bg-norse-rune transition-all disabled:opacity-50"
           >
@@ -73,8 +74,7 @@ export function DeleteConfirmModal({
               : `Yes, Delete ${nodeCount} Node${nodeCount !== 1 ? "s" : ""}`}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

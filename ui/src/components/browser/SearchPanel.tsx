@@ -4,6 +4,7 @@
  */
 
 import { Search } from "lucide-react";
+import {useId} from 'react';
 import { NodeCard } from "../common/NodeCard";
 import { SelectionToolbar } from "../common/SelectionToolbar";
 import type { SearchResult } from "../../utils/api";
@@ -56,6 +57,7 @@ export function SearchPanel({
   onCollapseSimilar,
   deleting = false,
 }: SearchPanelProps) {
+  const inputId=useId();
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onExecute();
@@ -76,6 +78,8 @@ export function SearchPanel({
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-norse-fog" />
           <input
+            id={inputId}
+            aria-label="Search terms"
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}

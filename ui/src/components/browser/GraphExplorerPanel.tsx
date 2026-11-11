@@ -1,3 +1,7 @@
+import { QueryGraphScene } from "./QueryGraphScene";
+import { Disclosure } from "../common/Disclosure";
+import { Button } from "../common/Button";
+import { useViewState } from "../../utils/useUrlState";
 /* eslint-disable jsx-a11y/prefer-tag-over-role */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -10,10 +14,7 @@ import {
   type GraphPropertyFilter,
   type SearchResult,
 } from "../../utils/api";
-import {
-  FilterChipList,
-  PropertyFilterList,
-} from "../graphFilterControls";
+import { FilterChipList, PropertyFilterList } from "../graphFilterControls";
 import { getNodePreview } from "../../utils/nodeUtils";
 
 interface GraphExplorerPanelProps {
@@ -21,18 +22,12 @@ interface GraphExplorerPanelProps {
   selectedNode: SearchResult | null;
   selectedRelationship: GraphEdgePayload | null;
   rootNodeId: string | null;
-  onRootNodeChange: (nodeId: string) => void;
+  queryGraph: GraphNeighborhoodResponse;
+  onRootNodeChange: (nodeId: string | null) => void;
   onNodeSelect: (node: GraphNodePayload) => void;
   onRelationshipSelect: (edge: GraphEdgePayload) => void;
 }
 
-interface NodePosition {
-  x: number;
-  y: number;
-}
-
-const VIEW_WIDTH = 960;
-const VIEW_HEIGHT = 680;
 const DEFAULT_LIMIT = 200;
 
 interface GraphExplorerFilters {
@@ -57,179 +52,57 @@ function getGraphNodeLabel(node: GraphNodePayload): string {
   return getNodePreview(node.properties);
 }
 
-function buildInitialPositions(
-  graph: GraphNeighborhoodResponse,
-  rootNodeId: string,
-): Record<string, NodePosition> {
-  const positions: Record<string, NodePosition> = {};
-  const adjacency = new Map<string, Set<string>>();
-
-  for (const node of graph.nodes) {
-    adjacency.set(node.id, new Set<string>());
-  }
-  for (const edge of graph.edges) {
-    if (!adjacency.has(edge.source)) {
-      adjacency.set(edge.source, new Set<string>());
-    }
-    if (!adjacency.has(edge.target)) {
-      adjacency.set(edge.target, new Set<string>());
-    }
-    adjacency.get(edge.source)?.add(edge.target);
-    adjacency.get(edge.target)?.add(edge.source);
-  }
-
-  const levels = new Map<string, number>();
-  if (adjacency.has(rootNodeId)) {
-    const queue: string[] = [rootNodeId];
-    levels.set(rootNodeId, 0);
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (!current) {
-        continue;
-      }
-      const currentLevel = levels.get(current) ?? 0;
-      for (const neighbor of adjacency.get(current) ?? []) {
-        if (!levels.has(neighbor)) {
-          levels.set(neighbor, currentLevel + 1);
-          queue.push(neighbor);
-        }
-      }
-    }
-  }
-
-  const grouped = new Map<number, GraphNodePayload[]>();
-  const disconnected: GraphNodePayload[] = [];
-  for (const node of graph.nodes) {
-    const level = levels.get(node.id);
-    if (level === undefined) {
-      disconnected.push(node);
-      continue;
-    }
-    const bucket = grouped.get(level) ?? [];
-    bucket.push(node);
-    grouped.set(level, bucket);
-  }
-
-  positions[rootNodeId] = { x: VIEW_WIDTH / 2, y: VIEW_HEIGHT / 2 };
-  const sortedLevels = Array.from(grouped.keys()).sort((a, b) => a - b);
-  for (const level of sortedLevels) {
-    if (level === 0) {
-      continue;
-    }
-    const nodes = (grouped.get(level) ?? []).sort((a, b) =>
-      a.id.localeCompare(b.id),
-    );
-    const radius = 120 + (level - 1) * 120;
-    const step = (Math.PI * 2) / Math.max(nodes.length, 1);
-    nodes.forEach((node, index) => {
-      const angle = -Math.PI / 2 + index * step;
-      positions[node.id] = {
-        x: VIEW_WIDTH / 2 + Math.cos(angle) * radius,
-        y: VIEW_HEIGHT / 2 + Math.sin(angle) * radius,
-      };
-    });
-  }
-
-  if (disconnected.length > 0) {
-    const y = VIEW_HEIGHT - 70;
-    const step = VIEW_WIDTH / (disconnected.length + 1);
-    disconnected
-      .sort((a, b) => a.id.localeCompare(b.id))
-      .forEach((node, index) => {
-        positions[node.id] = { x: step * (index + 1), y };
-      });
-  }
-
-  return positions;
-}
-
 export function GraphExplorerPanel({
   selectedDatabase,
   selectedNode,
   selectedRelationship,
   rootNodeId,
+  queryGraph,
   onRootNodeChange,
   onNodeSelect,
   onRelationshipSelect,
 }: GraphExplorerPanelProps) {
-  const [depth, setDepth] = useState(3);
-  const [graph, setGraph] = useState<GraphNeighborhoodResponse | null>(null);
+  const [depth, setDepth] = useViewState("graph.depth", 3);
+  const [neighborhood, setGraph] = useState<GraphNeighborhoodResponse | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Filter entries are add/remove lists; the neighborhood request reads the
   // current lists through filtersRef so adding a chip does not auto-reload
-  // (the apply button drives the fetch). All lists persist in localStorage.
-  const EXPLORER_FILTERS_STORAGE_KEY = "nornicdb.explorer.filters.v1";
-  interface StoredExplorerFilters {
-    includeLabels?: string[];
-    includeEdgeTypes?: string[];
-    includeNames?: string[];
-    includeProps?: GraphPropertyFilter[];
-    excludeLabels?: string[];
-    excludeEdgeTypes?: string[];
-    excludeNames?: string[];
-    excludeProps?: GraphPropertyFilter[];
-  }
-  const initialFilters = useMemo<StoredExplorerFilters>(() => {
-    try {
-      const raw = localStorage.getItem(EXPLORER_FILTERS_STORAGE_KEY);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw) as StoredExplorerFilters;
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch {
-      return {};
-    }
-  }, []);
-  const [includeLabels, setIncludeLabels] = useState<string[]>(
-    initialFilters.includeLabels ?? [],
+  // (the apply button drives the fetch). All lists persist in the URL.
+  const [includeLabels, setIncludeLabels] = useViewState<string[]>(
+    "graph.includeLabels",
+    [],
   );
-  const [includeEdgeTypes, setIncludeEdgeTypes] = useState<string[]>(
-    initialFilters.includeEdgeTypes ?? [],
+  const [includeEdgeTypes, setIncludeEdgeTypes] = useViewState<string[]>(
+    "graph.includeEdgeTypes",
+    [],
   );
-  const [includeNames, setIncludeNames] = useState<string[]>(
-    initialFilters.includeNames ?? [],
+  const [includeNames, setIncludeNames] = useViewState<string[]>(
+    "graph.includeNames",
+    [],
   );
-  const [includeProps, setIncludeProps] = useState<GraphPropertyFilter[]>(
-    initialFilters.includeProps ?? [],
+  const [includeProps, setIncludeProps] = useViewState<GraphPropertyFilter[]>(
+    "graph.includeProps",
+    [],
   );
-  const [excludeLabels, setExcludeLabels] = useState<string[]>(
-    initialFilters.excludeLabels ?? [],
+  const [excludeLabels, setExcludeLabels] = useViewState<string[]>(
+    "graph.excludeLabels",
+    [],
   );
-  const [excludeEdgeTypes, setExcludeEdgeTypes] = useState<string[]>(
-    initialFilters.excludeEdgeTypes ?? [],
+  const [excludeEdgeTypes, setExcludeEdgeTypes] = useViewState<string[]>(
+    "graph.excludeEdgeTypes",
+    [],
   );
-  const [excludeNames, setExcludeNames] = useState<string[]>(
-    initialFilters.excludeNames ?? [],
+  const [excludeNames, setExcludeNames] = useViewState<string[]>(
+    "graph.excludeNames",
+    [],
   );
-  const [excludeProps, setExcludeProps] = useState<GraphPropertyFilter[]>(
-    initialFilters.excludeProps ?? [],
+  const [excludeProps, setExcludeProps] = useViewState<GraphPropertyFilter[]>(
+    "graph.excludeProps",
+    [],
   );
-  const filtersKey = JSON.stringify([
-    includeLabels,
-    includeEdgeTypes,
-    includeNames,
-    includeProps,
-    excludeLabels,
-    excludeEdgeTypes,
-    excludeNames,
-    excludeProps,
-  ]);
-  useEffect(() => {
-    localStorage.setItem(
-      EXPLORER_FILTERS_STORAGE_KEY,
-      JSON.stringify({
-        includeLabels,
-        includeEdgeTypes,
-        includeNames,
-        includeProps,
-        excludeLabels,
-        excludeEdgeTypes,
-        excludeNames,
-        excludeProps,
-      }),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersKey]);
   const filtersRef = useRef<GraphExplorerFilters>({
     includeLabels,
     includeEdgeTypes,
@@ -250,17 +123,28 @@ export function GraphExplorerPanel({
     excludeNames,
     excludeProps,
   };
-  const [activeComponent, setActiveComponent] = useState<number | null>(null);
-  const [positions, setPositions] = useState<Record<string, NodePosition>>({});
-  const [dragging, setDragging] = useState<{
-    nodeId: string;
-    offsetX: number;
-    offsetY: number;
-  } | null>(null);
-  const svgRef = useRef<SVGSVGElement | null>(null);
-
-  const effectiveRootNodeId = rootNodeId ?? selectedNode?.node.id ?? null;
-
+  const [activeComponent, setActiveComponent] = useViewState<number | null>(
+    "graph.component",
+    null,
+  );
+  const effectiveRootNodeId =
+    rootNodeId ??
+    (queryGraph.nodes.length ? null : (selectedNode?.node.id ?? null));
+  const graph = effectiveRootNodeId
+    ? neighborhood
+    : queryGraph.nodes.length
+      ? queryGraph
+      : null;
+  const [find, setFind] = useViewState("graph.find", "");
+  const request = useRef(0);
+  const [edgeId] = useViewState("graph.edge", "");
+  const selectEdge = useRef(onRelationshipSelect);
+  selectEdge.current = onRelationshipSelect;
+  useEffect(() => {
+    if (!edgeId) return;
+    const edge = graph?.edges.find((edge) => edge.id === edgeId);
+    if (edge) selectEdge.current(edge);
+  }, [edgeId, graph]);
   const nodesById = useMemo(() => {
     const map = new Map<string, GraphNodePayload>();
     for (const node of graph?.nodes ?? []) {
@@ -274,11 +158,29 @@ export function GraphExplorerPanel({
       return null;
     }
     return new Set(
-      (graph.components?.[activeComponent]?.nodes ?? []).map(
-        (node) => node.id,
-      ),
+      (graph.components?.[activeComponent]?.nodes ?? []).map((node) => node.id),
     );
   }, [activeComponent, graph]);
+
+  const visibleNodes = useMemo(
+    () =>
+      activeComponentNodeIds
+        ? (graph?.nodes.filter((node) => activeComponentNodeIds.has(node.id)) ??
+          [])
+        : (graph?.nodes ?? []),
+    [graph, activeComponentNodeIds],
+  );
+  const visibleEdges = useMemo(
+    () =>
+      activeComponentNodeIds
+        ? (graph?.edges.filter(
+            (edge) =>
+              activeComponentNodeIds.has(edge.source) &&
+              activeComponentNodeIds.has(edge.target),
+          ) ?? [])
+        : (graph?.edges ?? []),
+    [graph, activeComponentNodeIds],
+  );
 
   const loadNeighborhood = useCallback(async () => {
     if (!effectiveRootNodeId) {
@@ -287,6 +189,7 @@ export function GraphExplorerPanel({
       return;
     }
 
+    const id = ++request.current;
     setLoading(true);
     setError(null);
     try {
@@ -305,10 +208,9 @@ export function GraphExplorerPanel({
         excludeLabels: filters.excludeLabels,
         excludeRelationshipTypes: filters.excludeEdgeTypes,
       });
-      setGraph(response);
-      setPositions(buildInitialPositions(response, effectiveRootNodeId));
-      setActiveComponent(null);
+      if (id === request.current) setGraph(response);
     } catch (err) {
+      if (id !== request.current) return;
       setGraph(null);
       setError(
         err instanceof Error
@@ -316,93 +218,21 @@ export function GraphExplorerPanel({
           : "Failed to load neighborhood graph",
       );
     } finally {
-      setLoading(false);
+      if (id === request.current) setLoading(false);
     }
   }, [depth, effectiveRootNodeId, selectedDatabase]);
 
   useEffect(() => {
     if (!effectiveRootNodeId) {
       setGraph(null);
-      setPositions({});
       setError(null);
       return;
     }
     void loadNeighborhood();
-  }, [effectiveRootNodeId, loadNeighborhood]);
-
-  useEffect(() => {
-    if (!dragging) {
-      return;
-    }
-
-    const toSvgPoint = (event: MouseEvent) => {
-      const svg = svgRef.current;
-      if (!svg) {
-        return null;
-      }
-      const rect = svg.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) {
-        return null;
-      }
-      return {
-        x: ((event.clientX - rect.left) / rect.width) * VIEW_WIDTH,
-        y: ((event.clientY - rect.top) / rect.height) * VIEW_HEIGHT,
-      };
-    };
-
-    const handleMove = (event: MouseEvent) => {
-      const point = toSvgPoint(event);
-      if (!point) {
-        return;
-      }
-      setPositions((prev) => ({
-        ...prev,
-        [dragging.nodeId]: {
-          x: Math.max(
-            40,
-            Math.min(VIEW_WIDTH - 40, point.x - dragging.offsetX),
-          ),
-          y: Math.max(
-            40,
-            Math.min(VIEW_HEIGHT - 40, point.y - dragging.offsetY),
-          ),
-        },
-      }));
-    };
-
-    const handleUp = () => setDragging(null);
-
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
     return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
+      request.current++;
     };
-  }, [dragging]);
-
-  const handleNodeMouseDown = (
-    event: React.MouseEvent<Element>,
-    nodeId: string,
-  ) => {
-    const svg = svgRef.current;
-    if (!svg) {
-      return;
-    }
-    const rect = svg.getBoundingClientRect();
-    const current = positions[nodeId];
-    if (!current || rect.width === 0 || rect.height === 0) {
-      return;
-    }
-    const point = {
-      x: ((event.clientX - rect.left) / rect.width) * VIEW_WIDTH,
-      y: ((event.clientY - rect.top) / rect.height) * VIEW_HEIGHT,
-    };
-    setDragging({
-      nodeId,
-      offsetX: point.x - current.x,
-      offsetY: point.y - current.y,
-    });
-  };
+  }, [effectiveRootNodeId, loadNeighborhood]);
 
   const selectedNodeId = selectedNode?.node.id ?? null;
   const selectedRelationshipId = selectedRelationship?.id ?? null;
@@ -411,10 +241,10 @@ export function GraphExplorerPanel({
     <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-sm font-medium text-white">Neighborhood Graph</h2>
+          <h2 className="text-sm font-medium text-white">Graph explorer</h2>
           <p className="text-xs text-norse-silver mt-1">
-            Explore connected nodes and click any node or relationship to
-            reflect it in details.
+            Inspect query results in 3D or expand a selected node’s
+            neighborhood.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -445,24 +275,28 @@ export function GraphExplorerPanel({
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </button>
-          {selectedNodeId &&
-            effectiveRootNodeId &&
-            selectedNodeId !== effectiveRootNodeId && (
-              <button
-                type="button"
-                onClick={() => onRootNodeChange(selectedNodeId)}
-                className="px-3 py-1.5 text-sm bg-nornic-primary text-white rounded hover:bg-nornic-secondary"
-              >
-                Use Selected Node As Root
-              </button>
-            )}
+          {queryGraph.nodes.length > 0 && effectiveRootNodeId && (
+            <Button variant="secondary" onClick={() => onRootNodeChange(null)}>
+              Back to query graph
+            </Button>
+          )}
+          {selectedNodeId && selectedNodeId !== effectiveRootNodeId && (
+            <button
+              type="button"
+              onClick={() => onRootNodeChange(selectedNodeId)}
+              className="px-3 py-1.5 text-sm bg-nornic-primary text-white rounded hover:bg-nornic-secondary"
+            >
+              Explore selected node’s neighbors
+            </button>
+          )}
         </div>
       </div>
 
-      <details className="rounded-lg border border-norse-rune bg-norse-shadow/30 px-3 py-2">
-        <summary className="cursor-pointer select-none text-xs text-norse-silver/80 hover:text-white">
-          filters (labels · edge types · names · properties)
-        </summary>
+      <Disclosure
+        compact
+        id="graph-filters"
+        title="Neighborhood filters: labels, relationships, names and properties"
+      >
         <div className="mt-2 space-y-2">
           <FilterChipList
             label="include labels"
@@ -543,7 +377,7 @@ export function GraphExplorerPanel({
           <button
             type="button"
             onClick={() => void loadNeighborhood()}
-            disabled={loading}
+            disabled={loading || !effectiveRootNodeId}
             className="rounded bg-sky-500/90 hover:bg-sky-400 text-slate-950 text-xs font-semibold px-3 py-1 disabled:opacity-40"
           >
             apply filters
@@ -560,41 +394,40 @@ export function GraphExplorerPanel({
               setExcludeNames([]);
               setExcludeProps([]);
             }}
-            disabled={loading}
+            disabled={loading || !effectiveRootNodeId}
             className="rounded border border-norse-rune bg-norse-stone px-3 py-1 text-xs text-norse-silver/80 hover:bg-norse-rune disabled:opacity-40"
           >
             reset
           </button>
         </div>
         <div className="mt-1.5 text-[10px] text-norse-silver/50 font-mono leading-snug">
-          names match the symbol name exactly · properties match key +
-          optional value, optionally scoped to a label or edge type —
-          exclusions may split the graph into disconnected components
+          names match the symbol name exactly · properties match key + optional
+          value, optionally scoped to a label or edge type — exclusions may
+          split the graph into disconnected components
         </div>
-      </details>
+      </Disclosure>
 
-      {!effectiveRootNodeId && (
+      {!effectiveRootNodeId && !graph && (
         <div className="flex-1 flex items-center justify-center rounded-xl border border-dashed border-norse-rune bg-norse-shadow/30 p-6 text-center text-norse-silver">
           <div>
             <p>
-              Select a node from search, then click this tab to view
-              neighborhood.
+              Run a query returning nodes or relationships, or select a search
+              result to explore its neighborhood.
             </p>
             <p className="text-sm text-norse-fog mt-2">
-              The graph explorer is additive and uses the existing node details
-              panel on the right.
+              Your query results stay available when you switch tabs.
             </p>
           </div>
         </div>
       )}
 
-      {effectiveRootNodeId && error && (
+      {error && (
         <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
           <p className="text-sm text-red-400">{error}</p>
         </div>
       )}
 
-      {effectiveRootNodeId && !error && (
+      {(effectiveRootNodeId || graph) && !error && (
         <div className="flex-1 min-h-0 rounded-xl border border-norse-rune bg-norse-shadow/30 overflow-hidden">
           {loading && !graph ? (
             <div className="h-full flex items-center justify-center text-norse-silver gap-2">
@@ -607,18 +440,19 @@ export function GraphExplorerPanel({
                 <span>
                   Root:{" "}
                   <span className="text-white font-mono">
-                    {effectiveRootNodeId}
+                    {effectiveRootNodeId ?? "Query results"}
                   </span>
                 </span>
                 <span className="flex items-center gap-2">
                   <span>
-                    {graph.meta.node_count} nodes, {graph.meta.edge_count} edges
+                    {graph.nodes.length} nodes, {graph.edges.length} edges
                     {(graph.components?.length ?? 0) > 1 &&
                       ` · ${graph.components?.length} components`}
-                    {graph.meta.truncated ? " (truncated)" : ""}
+                    {graph.meta.truncated ? " (limited to 200 nodes)" : ""}
                   </span>
                   {(graph.components?.length ?? 0) > 1 && (
                     <select
+                      aria-label="Connected component"
                       value={activeComponent ?? "all"}
                       onChange={(event) =>
                         setActiveComponent(
@@ -632,158 +466,103 @@ export function GraphExplorerPanel({
                       <option value="all">all components</option>
                       {graph.components?.map((component, index) => (
                         <option key={index} value={index}>
-                          component {index + 1} ({component.meta.node_count} nodes)
+                          component {index + 1} ({component.meta.node_count}{" "}
+                          nodes)
                         </option>
                       ))}
                     </select>
                   )}
                 </span>
               </div>
-              <div className="flex-1 min-h-0">
-                <svg
-                  ref={svgRef}
-                  viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
-                  aria-label="Graph neighborhood explorer"
-                  className="w-full h-full bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.04),_transparent_45%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0))]"
-                >
-                  <title>Graph neighborhood explorer</title>
-                  <g>
-                    {graph.edges.map((edge) => {
-                      const source = positions[edge.source];
-                      const target = positions[edge.target];
-                      if (!source || !target) {
-                        return null;
-                      }
-                      const midX = (source.x + target.x) / 2;
-                      const midY = (source.y + target.y) / 2;
-                      const isSelected = edge.id === selectedRelationshipId;
-                      const isDimmed =
-                        activeComponentNodeIds != null &&
-                        (!activeComponentNodeIds.has(edge.source) ||
-                          !activeComponentNodeIds.has(edge.target));
-                      return (
-                        <g key={edge.id} opacity={isDimmed ? 0.12 : 1}>
-                          <line
-                            x1={source.x}
-                            y1={source.y}
-                            x2={target.x}
-                            y2={target.y}
-                            stroke={
-                              isSelected
-                                ? "#f6c177"
-                                : "rgba(148, 163, 184, 0.55)"
-                            }
-                            strokeWidth={isSelected ? 3 : 1.75}
-                          />
-                          <line
-                            x1={source.x}
-                            y1={source.y}
-                            x2={target.x}
-                            y2={target.y}
-                            stroke="transparent"
-                            strokeWidth={14}
-                          />
-                          <foreignObject
-                            x={midX - 44}
-                            y={midY - 18}
-                            width={88}
-                            height={24}
-                          >
+              <QueryGraphScene
+                nodes={visibleNodes}
+                edges={visibleEdges}
+                selectedId={selectedNodeId}
+                selectedEdgeId={selectedRelationshipId}
+                rootId={effectiveRootNodeId}
+                onNodeSelect={onNodeSelect}
+                onEdgeSelect={onRelationshipSelect}
+              />
+              <Disclosure
+                compact
+                id="graph-browser"
+                title="Nodes and relationships (keyboard access)"
+              >
+                <label className="block text-sm text-norse-silver">
+                  Find in this graph
+                  <input
+                    className="block w-full mt-1 p-2 rounded border border-norse-rune bg-norse-stone text-white"
+                    value={find}
+                    onChange={(event) => setFind(event.target.value)}
+                  />
+                </label>
+                <div className="grid md:grid-cols-2 gap-4 mt-3">
+                  <section aria-label="Graph nodes">
+                    <h3 className="text-sm font-semibold text-white">Nodes</h3>
+                    <ul className="max-h-56 overflow-auto">
+                      {graph.nodes
+                        .filter(
+                          (node) =>
+                            (!activeComponentNodeIds ||
+                              activeComponentNodeIds.has(node.id)) &&
+                            `${getGraphNodeLabel(node)} ${node.labels.join(" ")}`
+                              .toLowerCase()
+                              .includes(find.toLowerCase()),
+                        )
+                        .map((node) => (
+                          <li key={node.id}>
                             <button
                               type="button"
-                              aria-label={`Select relationship ${edge.type}`}
+                              className="w-full text-left p-2 rounded text-norse-silver hover:bg-norse-rune"
+                              aria-pressed={node.id === selectedNodeId}
+                              onClick={() => onNodeSelect(node)}
+                            >
+                              {getGraphNodeLabel(node)}{" "}
+                              <span className="text-xs">
+                                ({node.labels.join(", ")})
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                    </ul>
+                  </section>
+                  <section aria-label="Graph relationships">
+                    <h3 className="text-sm font-semibold text-white">
+                      Relationships
+                    </h3>
+                    <ul className="max-h-56 overflow-auto">
+                      {graph.edges
+                        .filter(
+                          (edge) =>
+                            (!activeComponentNodeIds ||
+                              (activeComponentNodeIds.has(edge.source) &&
+                                activeComponentNodeIds.has(edge.target))) &&
+                            edge.type
+                              .toLowerCase()
+                              .includes(find.toLowerCase()),
+                        )
+                        .map((edge) => (
+                          <li key={edge.id}>
+                            <button
+                              type="button"
+                              className="w-full text-left p-2 rounded text-norse-silver hover:bg-norse-rune"
+                              aria-pressed={edge.id === selectedRelationshipId}
                               onClick={() => onRelationshipSelect(edge)}
-                              className="w-full h-full bg-transparent border-0 cursor-pointer"
-                            />
-                          </foreignObject>
-                          <text
-                            x={midX}
-                            y={midY - 6}
-                            textAnchor="middle"
-                            className="fill-norse-silver text-[11px] pointer-events-none select-none"
-                          >
-                            {edge.type}
-                          </text>
-                        </g>
-                      );
-                    })}
-                  </g>
-
-                  <g>
-                    {graph.nodes.map((node) => {
-                      const position = positions[node.id];
-                      if (!position) {
-                        return null;
-                      }
-                      const isRoot = node.id === effectiveRootNodeId;
-                      const isSelected = node.id === selectedNodeId;
-                      const isDimmed =
-                        activeComponentNodeIds != null &&
-                        !activeComponentNodeIds.has(node.id);
-                      const label = getGraphNodeLabel(node);
-                      return (
-                        <g
-                          key={node.id}
-                          transform={`translate(${position.x}, ${position.y})`}
-                          opacity={isDimmed ? 0.12 : 1}
-                          className="cursor-pointer"
-                        >
-                          <circle
-                            r={isRoot ? 24 : 20}
-                            fill={
-                              isRoot
-                                ? "#60a5fa"
-                                : isSelected
-                                  ? "#34d399"
-                                  : "#1f2937"
-                            }
-                            stroke={
-                              isSelected
-                                ? "#bbf7d0"
-                                : isRoot
-                                  ? "#bfdbfe"
-                                  : "#64748b"
-                            }
-                            strokeWidth={isSelected || isRoot ? 3 : 2}
-                          />
-                          <text
-                            y={5}
-                            textAnchor="middle"
-                            className="fill-white text-[11px] font-medium pointer-events-none select-none"
-                          >
-                            {node.labels[0] ?? "Node"}
-                          </text>
-                          <foreignObject
-                            x={-76}
-                            y={28}
-                            width={152}
-                            height={52}
-                            className="pointer-events-none"
-                          >
-                            <div className="text-center text-[11px] leading-4 text-norse-silver break-words px-1">
-                              {label}
-                            </div>
-                          </foreignObject>
-                          <foreignObject x={-28} y={-28} width={56} height={56}>
-                            <button
-                              type="button"
-                              aria-label={`Select node ${label}`}
-                              onMouseDown={(event) =>
-                                handleNodeMouseDown(event, node.id)
-                              }
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                onNodeSelect(node);
-                              }}
-                              className="w-full h-full rounded-full bg-transparent border-0 cursor-pointer"
-                            />
-                          </foreignObject>
-                        </g>
-                      );
-                    })}
-                  </g>
-                </svg>
-              </div>
+                            >
+                              {nodesById.has(edge.source)
+                                ? getGraphNodeLabel(nodesById.get(edge.source)!)
+                                : edge.source}{" "}
+                              → {edge.type} →{" "}
+                              {nodesById.has(edge.target)
+                                ? getGraphNodeLabel(nodesById.get(edge.target)!)
+                                : edge.target}
+                            </button>
+                          </li>
+                        ))}
+                    </ul>
+                  </section>
+                </div>
+              </Disclosure>
             </div>
           ) : (
             <div className="h-full flex items-center justify-center text-norse-silver">

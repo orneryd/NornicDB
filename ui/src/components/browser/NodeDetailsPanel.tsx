@@ -3,7 +3,7 @@
  * Extracted from Browser.tsx for reusability
  */
 
-import { useState } from "react";
+import {useLocation, useNavigate} from 'react-router-dom';
 import {
   X,
   Sparkles,
@@ -48,10 +48,10 @@ export function NodeDetailsPanel({
   onUpdateProperties,
   onRefresh,
 }: NodeDetailsPanelProps) {
-  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
-  const [editingProperties, setEditingProperties] = useState<
-    Record<string, unknown>
-  >({});
+  const location=useLocation();
+  const navigate=useNavigate();
+  const editingNodeId=location.pathname.replace(/\/$/,'').endsWith('/edit') ? selectedNode?.node.id ?? null : null;
+  const setEditingNodeId=(id:string|null)=>navigate({pathname:location.pathname.replace(/\/edit\/?$/,'').replace(/\/$/,'')+(id ? '/edit' : ''),search:location.search});
 
   if (!selectedNode && !selectedRelationship) {
     return (
@@ -74,6 +74,7 @@ export function NodeDetailsPanel({
           <h2 className="font-medium text-white">Relationship Details</h2>
           <button
             type="button"
+            aria-label="Close details"
             onClick={onClose}
             className="p-1 hover:bg-norse-rune rounded transition-colors"
           >
@@ -199,6 +200,7 @@ export function NodeDetailsPanel({
           </button>
           <button
             type="button"
+            aria-label="Close details"
             onClick={onClose}
             className="p-1 hover:bg-norse-rune rounded transition-colors"
           >
@@ -354,7 +356,6 @@ export function NodeDetailsPanel({
                 type="button"
                 onClick={() => {
                   setEditingNodeId(selectedNode.node.id);
-                  setEditingProperties({ ...selectedNode.node.properties });
                 }}
                 className="flex items-center gap-1 px-2 py-1 text-xs bg-nornic-primary/20 hover:bg-nornic-primary/30 text-nornic-primary rounded"
               >
@@ -366,7 +367,7 @@ export function NodeDetailsPanel({
 
           {editingNodeId === selectedNode.node.id ? (
             <PropertyEditor
-              properties={editingProperties}
+              properties={selectedNode.node.properties} key={selectedNode.node.id}
               onSave={async (updatedProps) => {
                 const result = await onUpdateProperties(
                   selectedNode.node.id,
@@ -374,7 +375,6 @@ export function NodeDetailsPanel({
                 );
                 if (result.success) {
                   setEditingNodeId(null);
-                  setEditingProperties({});
                   onRefresh();
                 } else {
                   alert(`Failed to update: ${result.error}`);
@@ -382,7 +382,6 @@ export function NodeDetailsPanel({
               }}
               onCancel={() => {
                 setEditingNodeId(null);
-                setEditingProperties({});
               }}
             />
           ) : (

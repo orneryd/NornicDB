@@ -2,7 +2,7 @@
  * Modal - Reusable modal component
  */
 
-import { useId } from "react";
+import { useId, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 
 interface ModalProps {
@@ -23,8 +23,16 @@ export function Modal({
   className = "",
 }: ModalProps) {
   const titleId = useId();
-
-  if (!isOpen) return null;
+  const dialog = useRef<HTMLDialogElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(()=>{
+    const element=dialog.current;
+    if(!element)return;
+    if(isOpen && !element.open){element.showModal();element.querySelector<HTMLElement>('[data-autofocus]')?.focus();}
+    if(!isOpen && element.open)element.close();
+    return ()=>{if(element.open)element.close()};
+  },[isOpen]);
 
   const sizeClasses = {
     sm: "max-w-sm",
@@ -34,24 +42,12 @@ export function Modal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
+    <dialog
+      ref={dialog}
+      onCancel={event=>{event.preventDefault();onCloseRef.current()}}
+      className="bg-transparent text-white p-0 max-w-none max-h-[90vh] backdrop:bg-black/60 backdrop:backdrop-blur-sm"
       aria-labelledby={title ? titleId : undefined}
     >
-      {/* Backdrop */}
-      <button
-        type="button"
-        className="absolute inset-0"
-        onClick={onClose}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            onClose();
-          }
-        }}
-        aria-label="Close modal"
-      />
       {/* Modal Content */}
       <div
         className={`relative bg-norse-deep border border-norse-rune rounded-xl p-6 ${sizeClasses[size]} mx-4 shadow-2xl w-full ${className}`}
@@ -72,7 +68,7 @@ export function Modal({
         )}
         {children}
       </div>
-    </div>
+    </dialog>
   );
 }
 

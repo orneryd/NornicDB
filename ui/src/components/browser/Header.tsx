@@ -5,50 +5,28 @@
 
 import { useEffect, useState } from "react";
 import {
-  Network,
-  HardDrive,
-  Clock,
   Activity,
-  Zap,
-  Loader2,
   MessageCircle,
-  Shield,
-  Database,
   LogOut,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 import { useAppStore } from "../../store/appStore";
 import { api } from "../../utils/api";
 import type { DatabaseStats } from "../../utils/api";
 import { BASE_PATH, joinBasePath } from "../../utils/basePath";
+import {useViewState} from '../../utils/useUrlState';
 
 interface HeaderProps {
   stats: DatabaseStats | null;
   connected: boolean;
-  embedData: {
-    stats: { running: boolean; processed: number; failed: number } | null;
-    totalEmbeddings: number;
-    pendingNodes: number;
-    enabled: boolean;
-  };
-  embedTriggering: boolean;
-  embedMessage: string | null;
-  onRegenerateClick: () => void;
   onAIChatClick: () => void;
-  onSecurityClick: () => void;
 }
 
 export function Header({
   stats,
   connected,
-  embedData,
-  embedTriggering,
-  embedMessage,
-  onRegenerateClick,
   onAIChatClick,
-  onSecurityClick,
 }: HeaderProps) {
-  const navigate = useNavigate();
+  const [showServer,setShowServer] = useViewState('server',false);
   const logout = useAppStore((state) => state.logout);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [logoutError, setLogoutError] = useState(false);
@@ -69,22 +47,6 @@ export function Header({
       setLoggingOut(false);
     }
   };
-  const totalNodes = stats?.database?.nodes ?? 0;
-  const pendingNodes = Math.max(0, embedData.pendingNodes ?? 0);
-  const queueCompletePct =
-    totalNodes > 0
-      ? Math.max(
-          0,
-          Math.min(100, ((totalNodes - pendingNodes) / totalNodes) * 100),
-        )
-      : 100;
-
-  const formatUptime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    return `${hours}h ${mins}m`;
-  };
-
   return (
     <header className="bg-norse-shadow border-b border-norse-rune px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -176,68 +138,6 @@ export function Header({
 
         {/* Connection Status */}
         <div className="flex min-w-0 flex-1 basis-[42rem] flex-wrap items-center justify-end gap-2">
-          {stats?.database && (
-            <>
-              <div className="flex shrink-0 items-center gap-2 whitespace-nowrap text-sm">
-                <Network className="w-4 h-4 text-norse-silver" />
-                <span className="text-norse-silver">
-                  {stats.database.nodes?.toLocaleString() ?? "?"} nodes
-                </span>
-              </div>
-              <div className="flex shrink-0 items-center gap-2 whitespace-nowrap text-sm">
-                <HardDrive className="w-4 h-4 text-norse-silver" />
-                <span className="text-norse-silver">
-                  {stats.database.edges?.toLocaleString() ?? "?"} edges
-                </span>
-              </div>
-              <div className="flex shrink-0 items-center gap-2 whitespace-nowrap text-sm">
-                <Clock className="w-4 h-4 text-norse-silver" />
-                <span className="text-norse-silver">
-                  {formatUptime(stats.server?.uptime_seconds ?? 0)}
-                </span>
-              </div>
-            </>
-          )}
-          <button
-            type="button"
-            onClick={onRegenerateClick}
-            className="flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 border border-red-500/30"
-            title="Warning: This will clear and regenerate ALL embeddings"
-          >
-            <Zap className="w-4 h-4" />
-            <span>Regenerate all Embeddings</span>
-          </button>
-          {/* Embed Button */}
-          <button
-            type="button"
-            disabled={embedTriggering}
-            className={`flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-              embedData.stats?.running
-                ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                : "bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
-            }`}
-            title={`Total embeddings: ${embedData.totalEmbeddings}${
-              embedData.stats
-                ? `, Session: ${embedData.stats.processed} processed, ${embedData.stats.failed} failed`
-                : ""
-            }, Queue: ${queueCompletePct.toFixed(1)}% complete (${pendingNodes.toLocaleString()} pending / ${totalNodes.toLocaleString()} total nodes)`}
-          >
-            {embedTriggering || embedData.stats?.running ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Zap className="w-4 h-4" />
-            )}
-            <span>
-              {embedData.stats?.running ? "Embedding..." : "Embeddings"}
-            </span>
-            <span className="text-xs text-valhalla-gold">
-              ({embedData.totalEmbeddings.toLocaleString()})
-            </span>
-            <span className="text-xs text-norse-silver">
-              {queueCompletePct.toFixed(1)}% queue
-            </span>
-          </button>
-
           <button
             type="button"
             onClick={onAIChatClick}
@@ -246,26 +146,6 @@ export function Header({
           >
             <MessageCircle className="w-4 h-4" />
             <span>AI Assistant</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => navigate("/databases")}
-            className="flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
-            title="Manage Databases"
-          >
-            <Database className="w-4 h-4" />
-            <span>Databases</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onSecurityClick}
-            className="flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
-            title="Security & API Tokens"
-          >
-            <Shield className="w-4 h-4" />
-            <span>Security</span>
           </button>
 
           {authEnabled && (
@@ -301,14 +181,16 @@ export function Header({
               {connected ? "Connected" : "Disconnected"}
             </span>
           </div>
+          <details open={showServer} onToggle={event=>{if(event.currentTarget.open!==showServer)setShowServer(event.currentTarget.open)}} className="text-sm text-norse-silver">
+            <summary className="cursor-pointer">Server status</summary>
+            <dl className="p-3 border border-norse-rune rounded-lg">
+              <dt>Server-reported nodes</dt><dd>{stats?.database?.nodes?.toLocaleString() ?? 'Unavailable'}</dd>
+              <dt>Server-reported edges</dt><dd>{stats?.database?.edges?.toLocaleString() ?? 'Unavailable'}</dd>
+              <dt>Uptime</dt><dd>{stats?.server ? `${Math.floor(stats.server.uptime_seconds/3600)}h ${Math.floor(stats.server.uptime_seconds%3600/60)}m` : 'Unavailable'}</dd>
+            </dl>
+          </details>
         </div>
       </div>
-      {/* Embed Message Toast */}
-      {embedMessage && (
-        <div className="absolute top-16 right-4 bg-norse-shadow border border-norse-rune rounded-lg px-4 py-2 text-sm text-norse-silver shadow-lg">
-          {embedMessage}
-        </div>
-      )}
       {logoutError && (
         <div role="alert" className="absolute top-16 right-4 bg-norse-shadow border border-red-500 rounded-lg px-4 py-2 text-sm text-red-400 shadow-lg">
           Sign out failed. Please try again.

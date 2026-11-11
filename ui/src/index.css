@@ -1,6 +1,21 @@
 @import "tailwindcss";
 @import "@ornery/ui-grid-react/styles";
 
+.application-shell { display: flex; min-height: 100vh; }
+.app-navigation { width: 12rem; flex-shrink: 0; padding: .5rem; border-right: 1px solid #2a3247; background: #141824; position: sticky; top: 0; max-height: 100vh; overflow-y: auto; }
+.skip-workspace { position: absolute; left: -10000px; }
+.skip-workspace:focus { position: fixed; left: 1rem; top: 1rem; z-index: 100; padding: .75rem; background: #141824; color: white; }
+.navigation-toggle { display: none; }
+.bg-nornic-primary.text-white { color: #0a0e1a; }
+:where(button,a,summary):focus-visible { outline: 2px solid #10b981; outline-offset: 2px; }
+@media(max-width: 767px) {
+  .application-shell { flex-direction: column; }
+  .app-navigation { position: relative; width: 100%; max-height: none; display: flex; flex-wrap: wrap; gap: .25rem; border-right: 0; border-bottom: 1px solid #2a3247; }
+  .app-navigation section { flex: 1 1 9rem; }
+  .app-navigation details { width:100%; }
+  .navigation-toggle { display:list-item; }
+}
+
 @config "../tailwind.config.js";
 
 .nornic-grid {
@@ -34,6 +49,9 @@
   --ui-grid-cell-editor-focus-outline: 2px solid rgba(16, 185, 129, 0.2);
   --ui-grid-expandable-row-background: rgba(16, 185, 129, 0.04);
   --ui-grid-empty-state-min-height: 10rem;
+  --ui-grid-row-error-color: #fca5a5;
+  --ui-grid-row-dirty-color: #fcd34d;
+  --ui-grid-row-saving-color: #a5d8fc;
 }
 
 .nornic-grid > ui-grid-element {
@@ -144,3 +162,6 @@ body {
 .status-connected {
   animation: pulse-glow 2s ease-in-out infinite;
 }
+
+
+:where(input,select,textarea):focus-visible { outline: 2px solid #10b981; outline-offset: 0; }

@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useId, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { UiGrid } from '@ornery/ui-grid-react';
+import { useState, useEffect, useCallback, useId, useMemo, useRef, createContext, useContext } from 'react';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { StatefulGrid as UiGrid } from "../components/common/StatefulGrid";
 import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord, UiGridApi } from '@ornery/ui-grid-core';
 import { PageLayout } from '../components/common/PageLayout';
 import { PageHeader } from '../components/common/PageHeader';
@@ -20,8 +20,122 @@ interface User {
   auth_method?: string;
 }
 
+type RowSaveStatus={state:'saving'|'saved'|'error';message?:string;changes:Partial<User>};
+const UserGridContext=createContext<{
+ availableRoles:string[];rowStatus:Record<string,RowSaveStatus>;editingUsername?:string;usersGridApi:UiGridApi|null;
+ handleUpdateUser:(user:User,changes:Partial<User>)=>Promise<void>;handleDeleteUser:(username:string)=>Promise<void>;
+ discardChanges:(username:string)=>void;finishEditing:()=>void;
+}|null>(null);
+function UserCell({ctx}:{ctx:GridCellTemplateContext}) {
+    const value=useContext(UserGridContext);
+    if(!value)throw Error('User cell requires its grid context');
+    const {availableRoles,rowStatus,editingUsername,usersGridApi,handleUpdateUser,handleDeleteUser,discardChanges,finishEditing}=value;
+    const row = ctx.row as GridRecord & User;
+    const save = rowStatus[row.username];
+    const saveIndicator=<div role={save?.state === 'error' ? 'alert' : 'status'} className={save?.state === 'error' ? 'text-red-400 text-xs' : 'text-norse-silver text-xs'}>
+      {save?.state === 'saving' ? 'Saving…' : save?.state === 'saved' ? 'Saved' : save?.state === 'error' ? <>{save.message} <button type="button" onClick={()=>void handleUpdateUser(row,save.changes).catch(()=>{})} className="underline">Retry saving {row.username}</button><button type="button" onClick={()=>discardChanges(row.username)} className="block underline">Discard changes for {row.username}</button></> : null}
+    </div>;
+
+    if (ctx.column.name === 'roles') {
+      if(editingUsername!==row.username) return <div className="flex flex-wrap gap-1 py-1">{row.roles.map(role=><span key={role} className="rounded bg-norse-rune px-2 py-1 text-xs text-norse-silver">{role}</span>)}</div>;
+      return (
+        <div className="flex flex-wrap gap-3 py-1" onClick={(e) => e.stopPropagation()}>
+          {availableRoles.map((role) => {
+            const checked = row.roles.includes(role);
+            const disableRemoval = checked && row.roles.length === 1;
+            return (
+              <label key={role} className="inline-flex items-center gap-2 text-xs text-norse-silver">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={disableRemoval || save?.state === 'saving'}
+                  aria-label={`${role} role for ${row.username}`}
+                  onChange={() => {
+                    const nextRoles = checked
+                      ? row.roles.filter((entry) => entry !== role)
+                      : [...row.roles, role];
+                    if (nextRoles.length > 0) {
+                      void handleUpdateUser(row, { roles: nextRoles }).catch(()=>{});
+                    }
+                  }}
+                  className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary"
+                />
+                <span className="capitalize">{role}</span>
+              </label>
+            );
+          })}
+        </div>
+      );
+    }
+
+    if (ctx.column.name === 'status') {
+      return (
+        <div className="py-1" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            aria-label={`${row.disabled ? 'Enable' : 'Disable'} ${row.username}`}
+            disabled={save?.state === 'saving'}
+            onClick={() => void handleUpdateUser(row, { disabled: !row.disabled }).catch(()=>{})}
+            className={`px-2 py-1 rounded text-xs ${row.disabled ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}
+          >
+            {row.disabled ? 'Disabled' : 'Active'}
+          </button>
+        </div>
+      );
+    }
+
+    if (ctx.column.name === 'actions') {
+      return (
+        <div className="flex flex-col gap-1 py-1" onClick={(e) => e.stopPropagation()}><div className="flex gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={save?.state==='saving'}
+            onClick={() => editingUsername===row.username?finishEditing():usersGridApi?.edit.beginCellEdit(String(row.__gridId), 'email')}
+            icon={Edit}
+          >
+            {editingUsername===row.username?'Done':'Edit'}
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => handleDeleteUser(row.username)}
+            icon={Trash2}
+          >
+            Delete
+          </Button>
+          </div>{saveIndicator}</div>
+      );
+    }
+
+    if (ctx.column.name === 'username') {
+      return <div className={`font-medium py-1 ${save?.state==='error'?'text-red-300 border-l-2 border-red-400 pl-2':'text-white'}`}>{String(ctx.value ?? '')}{save?.state==='error' && <span aria-label={`Unsaved changes for ${row.username}`} className="block text-xs font-normal">Unsaved changes</span>}</div>;
+    }
+
+    if (ctx.column.name === 'last_login') {
+      return (
+        <div className="text-sm text-norse-fog py-1">
+          {row.last_login ? new Date(row.last_login).toLocaleString() : 'Never'}
+        </div>
+      );
+    }
+
+    if (ctx.column.name === 'email') {
+      return (
+        <div className="text-norse-silver py-1">{String(ctx.value || '—')}</div>
+      );
+    }
+
+    return null;
+  }
+
+const renderUserCell=(ctx:GridCellTemplateContext)=><UserCell ctx={ctx}/>;
+const userCellRenderers={username:renderUserCell,roles:renderUserCell,status:renderUserCell,last_login:renderUserCell,actions:renderUserCell};
+
 export function AdminUsers() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const route = useParams();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -32,9 +146,12 @@ export function AdminUsers() {
   const createEmailId = useId();
   const createRolesId = useId();
   const [usersGridApi, setUsersGridApi] = useState<UiGridApi | null>(null);
+  const pendingChanges=useRef(new Map<string,Partial<User>>());
 
   // Create user state
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  const showCreateForm = location.pathname.replace(/\/$/,'').endsWith('/new');
+  const setShowCreateForm = (open:boolean) => navigate({pathname:open ? '/security/admin/new' : '/security/admin',search:location.search});
+  const [rowStatus, setRowStatus] = useState<Record<string, {state: 'saving'|'saved'|'error'; message?:string; changes:Partial<User>}>>({});
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newEmail, setNewEmail] = useState('');
@@ -137,10 +254,11 @@ export function AdminUsers() {
     }
   };
 
-  const handleUpdateUser = useCallback(async (user: User, overrides: Partial<User>) => {
+  const persistUserUpdate = useCallback(async (user: User, overrides: Partial<User>) => {
     setError('');
+    setRowStatus(previous=>({...previous,[user.username]:{state:'saving',changes:overrides}}));
     try {
-      const response = await fetch(joinBasePath(BASE_PATH, `/auth/users/${user.username}`), {
+      const response = await fetch(joinBasePath(BASE_PATH, `/auth/users/${encodeURIComponent(user.username)}`), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -158,12 +276,50 @@ export function AdminUsers() {
         throw new Error(data.message || 'Failed to update user');
       }
 
-      await loadUsers();
+      setUsers(previous=>previous.map(entry=>entry.username===user.username ? {...entry,...overrides} : entry));
+      setRowStatus(previous=>({...previous,[user.username]:{state:'saved',changes:overrides}}));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update user');
-      await loadUsers();
+      const message = err instanceof Error ? err.message : 'Failed to update user';
+      setRowStatus(previous=>({...previous,[user.username]:{state:'error',message,changes:overrides}}));
+      throw err;
     }
   }, [loadUsers]);
+  const handleUpdateUser=useCallback((user:User,changes:Partial<User>)=>{
+    const row=usersGridApi?.core.getVisibleRows().find(entry=>entry.entity.username===user.username);
+    if(!row)return Promise.reject(Error('This user is not available in the current grid.'));
+    pendingChanges.current.set(user.username,{...pendingChanges.current.get(user.username),...changes});
+    usersGridApi?.rowEdit.setRowsDirty([row.entity]);
+    return Promise.resolve();
+  },[usersGridApi]);
+  const discardChanges=useCallback((username:string)=>{
+    pendingChanges.current.delete(username);
+    setRowStatus(previous=>{const next={...previous};delete next[username];return next});
+  },[]);
+  useEffect(()=>{
+    if(!usersGridApi)return;
+    return usersGridApi.rowEdit.on.saveRow(row=>{
+      const user=row as GridRecord & User;
+      const changes=pendingChanges.current.get(user.username);
+      if(!changes)return;
+      const promise=persistUserUpdate(user,changes);
+      usersGridApi.rowEdit.setSavePromise(row,promise);
+      void promise.then(()=>pendingChanges.current.delete(user.username)).catch(()=>{});
+    });
+  },[usersGridApi,persistUserUpdate]);
+
+  useEffect(()=>{
+    if(!usersGridApi || loading || !route.username)return;
+    const user=users.find(entry=>entry.username===route.username);
+    if(!user){setError(`User ${route.username} was not found.`);return;}
+    usersGridApi.edit.beginCellEdit(route.username,'email');
+  },[usersGridApi,loading,route.username]);
+
+  useEffect(()=>{
+    if(!usersGridApi)return;
+    const begin=usersGridApi.edit.on.beginCellEdit(row=>navigate({pathname:`/security/admin/${encodeURIComponent(String(row.username))}/edit`,search:location.search}));
+    const cancel=usersGridApi.edit.on.cancelCellEdit(()=>navigate({pathname:'/security/admin',search:location.search}));
+    return ()=>{begin();cancel()};
+  },[usersGridApi,navigate,location.search]);
 
   const handleDeleteUser = async (username: string) => {
     if (!confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
@@ -197,21 +353,26 @@ export function AdminUsers() {
 
   const usersGridData = useMemo<GridRecord[]>(() => users.map((user) => ({
     ...user,
+    ...rowStatus[user.username]?.changes,
+    __saving:rowStatus[user.username]?.state==='saving',
     __gridId: user.username,
-  })), [users]);
+  })), [users,rowStatus]);
 
   const userColumns = useMemo<GridColumnDef[]>(() => [
     {
       name: 'username',
       displayName: 'Username',
       field: 'username',
-      width: 'minmax(10rem, 1.1fr)',
+      pinnedLeft: true,
+      enableCellEdit: false,
+      width: '180px',
     },
     {
       name: 'email',
       displayName: 'Email',
       field: 'email',
       enableCellEdit: true,
+      cellEditableCondition:({row})=>!row.__saving,
       width: 'minmax(14rem, 1.4fr)',
     },
     {
@@ -237,6 +398,7 @@ export function AdminUsers() {
     },
     {
       name: 'actions',
+      pinnedRight: true,
       displayName: 'Actions',
       width: '180px',
       enableSorting: false,
@@ -252,8 +414,8 @@ export function AdminUsers() {
     enableSorting: true,
     enableFiltering: true,
     enableCellEdit: true,
-    enableCellEditOnFocus: true,
-    viewportHeight: 560,
+    enableCellEditOnFocus: false,
+    rowEditWaitInterval: 1,
     emptyMessage: 'No users found',
   }), [userColumns, usersGridData]);
 
@@ -279,108 +441,11 @@ export function AdminUsers() {
         return;
       }
 
-      void handleUpdateUser(user, { email: nextEmail || undefined });
+      const save = handleUpdateUser(user, { email: nextEmail });
+      void save.catch(()=>{});
     });
   }, [handleUpdateUser, users, usersGridApi]);
 
-  const renderUserCell = (ctx: GridCellTemplateContext) => {
-    const row = ctx.row as GridRecord & User;
-
-    if (ctx.column.name === 'roles') {
-      return (
-        <div className="flex flex-wrap gap-3 py-1" onClick={(e) => e.stopPropagation()}>
-          {availableRoles.map((role) => {
-            const checked = row.roles.includes(role);
-            const disableRemoval = checked && row.roles.length === 1;
-            return (
-              <label key={role} className="inline-flex items-center gap-2 text-xs text-norse-silver">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={disableRemoval}
-                  onChange={() => {
-                    const nextRoles = checked
-                      ? row.roles.filter((entry) => entry !== role)
-                      : [...row.roles, role];
-                    if (nextRoles.length > 0) {
-                      void handleUpdateUser(row, { roles: nextRoles });
-                    }
-                  }}
-                  className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary"
-                />
-                <span className="capitalize">{role}</span>
-              </label>
-            );
-          })}
-        </div>
-      );
-    }
-
-    if (ctx.column.name === 'status') {
-      return (
-        <div className="py-1" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            onClick={() => void handleUpdateUser(row, { disabled: !row.disabled })}
-            className={`px-2 py-1 rounded text-xs ${row.disabled ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}
-          >
-            {row.disabled ? 'Disabled' : 'Active'}
-          </button>
-        </div>
-      );
-    }
-
-    if (ctx.column.name === 'actions') {
-      return (
-        <div className="flex gap-2 py-1" onClick={(e) => e.stopPropagation()}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => usersGridApi?.edit.beginCellEdit(String(row.__gridId), 'email')}
-            icon={Edit}
-          >
-            Edit
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => handleDeleteUser(row.username)}
-            icon={Trash2}
-          >
-            Delete
-          </Button>
-        </div>
-      );
-    }
-
-    if (ctx.column.name === 'username') {
-      return <div className="font-medium text-white py-1">{String(ctx.value ?? '')}</div>;
-    }
-
-    if (ctx.column.name === 'last_login') {
-      return (
-        <div className="text-sm text-norse-fog py-1">
-          {row.last_login ? new Date(row.last_login).toLocaleString() : 'Never'}
-        </div>
-      );
-    }
-
-    if (ctx.column.name === 'email') {
-      return (
-        <div className="text-norse-silver py-1">{String(ctx.value || '—')}</div>
-      );
-    }
-
-    return null;
-  };
-
-  const userCellRenderers = useMemo(() => ({
-    username: renderUserCell,
-    roles: renderUserCell,
-    status: renderUserCell,
-    last_login: renderUserCell,
-    actions: renderUserCell,
-  }), [renderUserCell]);
   if (!isAdmin) {
     return null;
   }
@@ -482,11 +547,13 @@ export function AdminUsers() {
         {/* Users Table */}
         <div className="bg-norse-shadow border border-norse-rune rounded-lg overflow-hidden">
           <div className="nornic-grid p-4">
-            <UiGrid
+            <UserGridContext.Provider value={{availableRoles,rowStatus,editingUsername:route.username,usersGridApi,handleUpdateUser,handleDeleteUser,discardChanges,finishEditing:()=>{usersGridApi?.edit.endCellEdit();navigate({pathname:'/security/admin',search:location.search})}}}>
+            <UiGrid height={Math.min(560,Math.max(220,usersGridData.length*72+140))}
               options={userGridOptions}
               onRegisterApi={setUsersGridApi}
               cellRenderers={userCellRenderers}
             />
+            </UserGridContext.Provider>
           </div>
         </div>
       </main>

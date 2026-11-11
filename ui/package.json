@@ -6,12 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "playwright test",
+    "inventory": "node tools/inventory-controls.mjs"
   },
   "dependencies": {
-    "@ornery/ui-grid-core": "^5.0.2",
-    "@ornery/ui-grid-react": "^5.0.2",
-    "@ornery/ui-grid-vanilla": "^5.0.2",
+    "@ornery/ui-grid-core": "^5.0.3",
+    "@ornery/ui-grid-react": "^5.0.3",
+    "@ornery/ui-grid-vanilla": "^5.0.3",
     "3d-force-graph": "^1.80.1",
     "d3-force-3d": "^3.0.6",
     "lucide-react": "^1.48.0",
@@ -25,6 +28,8 @@
     "zustand": "^5.0.16"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.65.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { UiGrid } from "@ornery/ui-grid-react";
+import { StatefulGrid as UiGrid } from "../common/StatefulGrid";
 import type {
   GridCellTemplateContext,
   GridColumnDef,
@@ -46,8 +46,12 @@ export function QueryResultsTable({
   if (!cypherResult || !cypherResult.results[0]) {
     return null;
   }
+  return <ResultsGrid cypherResult={cypherResult} selectedNodeIds={selectedNodeIds} onNodeSelect={onNodeSelect} onSelectionChange={onSelectionChange} />;
+}
 
-  const result = cypherResult.results[0];
+function ResultsGrid({cypherResult, selectedNodeIds,onNodeSelect,onSelectionChange}: QueryResultsTableProps) {
+
+  const result = cypherResult!.results[0];
 
   const [gridApi, setGridApi] = useState<UiGridApi | null>(null);
   const isSyncingSelectionRef = useRef(false);
@@ -121,6 +125,8 @@ export function QueryResultsTable({
       rowIdentity: (row) => String(row.__gridId),
       enableSorting: true,
       enableFiltering: false,
+      enableExpandable: true,
+      expandableRowHeight: 220,
       enableCellEdit: false,
       enableRowSelection: true,
       enableRowHeaderSelection: true,
@@ -128,7 +134,6 @@ export function QueryResultsTable({
       enableSelectAll: true,
       enableSelectionBatchEvent: true,
       isRowSelectable: (row) => Boolean(row.entity.__nodeId),
-      viewportHeight: 520,
       emptyMessage: "No rows returned",
     }),
     [columnDefs, gridData],
@@ -238,7 +243,7 @@ export function QueryResultsTable({
     if (value && typeof value === "object") {
       return (
         <div className="font-mono text-xs py-1">
-          <ExpandableCell data={value} />
+          <ExpandableCell data={value} stateKey={`${String(ctx.row.__gridId)}.${ctx.column.name}`} />
         </div>
       );
     }
@@ -271,13 +276,14 @@ export function QueryResultsTable({
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="flex-1 overflow-hidden nornic-grid">
-        <UiGrid
+        <UiGrid height={520}
           options={gridOptions}
+          expandableRowRenderer={({row})=><div className="p-4 overflow-auto max-h-52" aria-label="Result details"><dl>{(result.columns ?? []).map(column=><div key={column} className="mb-2"><dt className="text-norse-silver text-xs">{column}</dt><dd className="text-white font-mono text-xs whitespace-pre-wrap break-words">{JSON.stringify(row[column],null,2)}</dd></div>)}</dl></div>}
           cellRenderers={cellRenderers}
           onRegisterApi={setGridApi}
         />
       </div>
-      <p className="text-xs text-norse-silver mt-2 px-2">
+      <p role="status" className="text-xs text-norse-silver mt-2 px-2">
         {result.data.length} row(s) returned
       </p>
     </div>

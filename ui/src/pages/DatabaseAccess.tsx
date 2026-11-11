@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useId, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UiGrid } from '@ornery/ui-grid-react';
+import { StatefulGrid as UiGrid } from "../components/common/StatefulGrid";
 import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord } from '@ornery/ui-grid-core';
 import { PageLayout } from '../components/common/PageLayout';
 import { PageHeader } from '../components/common/PageHeader';
@@ -361,7 +361,6 @@ export function DatabaseAccess() {
     rowIdentity: (row) => String(row.__gridId),
     enableSorting: true,
     enableFiltering: true,
-    viewportHeight: 420,
     emptyMessage: 'No roles found',
   }), [accessColumnDefs, accessGridData]);
 
@@ -393,7 +392,6 @@ export function DatabaseAccess() {
     rowIdentity: (row) => String(row.__gridId),
     enableSorting: true,
     enableFiltering: true,
-    viewportHeight: 420,
     emptyMessage: 'No entitlements found',
   }), [entitlementColumnDefs, entitlementGridData]);
 
@@ -435,6 +433,7 @@ export function DatabaseAccess() {
       <div className="flex items-center justify-center py-1" onClick={(e) => e.stopPropagation()}>
         <input
           type="checkbox"
+          aria-label={`Allow ${role} to access ${db}`}
           checked={checked}
           disabled={isAdminSystemOrDefault}
           onChange={() => {
@@ -467,6 +466,7 @@ export function DatabaseAccess() {
         <input
           type="checkbox"
           checked={getEntitlementsForRole(role).includes(ctx.column.name)}
+          aria-label={`Grant ${ctx.column.displayName ?? ctx.column.name} to ${role}`}
           disabled={adminEntitlementsReadOnly}
           onChange={() => toggleEntitlementForRole(role, ctx.column.name)}
           className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary disabled:opacity-70"
@@ -530,7 +530,7 @@ export function DatabaseAccess() {
             Access by role
           </h2>
           <div className="nornic-grid p-4">
-            <UiGrid options={accessGridOptions} cellRenderers={accessCellRenderers} />
+            <UiGrid height={420} options={accessGridOptions} cellRenderers={accessCellRenderers} />
           </div>
         </div>
 
@@ -557,7 +557,7 @@ export function DatabaseAccess() {
               Assign global permissions to each role. These control API access (read, write, admin, user management, etc.).
             </p>
             <div className="nornic-grid p-4">
-              <UiGrid options={entitlementGridOptions} cellRenderers={entitlementCellRenderers} />
+              <UiGrid height={420} options={entitlementGridOptions} cellRenderers={entitlementCellRenderers} />
             </div>
           </div>
         )}

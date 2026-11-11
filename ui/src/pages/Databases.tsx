@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { UiGrid } from "@ornery/ui-grid-react";
+import { useNavigate, useLocation, useParams } from "react-router-dom";
+import { StatefulGrid as UiGrid } from "../components/common/StatefulGrid";
 import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord, UiGridApi } from "@ornery/ui-grid-core";
 import { Activity, Database, Info, Plus, Settings, Trash2 } from "lucide-react";
 import { api } from "../utils/api";
@@ -15,13 +15,22 @@ import { BASE_PATH, joinBasePath } from "../utils/basePath";
 
 export function Databases() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const route = useParams();
+  const resourcePath = (name?:string, edit=false) => ({pathname:name ? `/databases/${encodeURIComponent(name)}${edit ? '/edit' : ''}` : '/databases',search:location.search});
+  const showCreateModal = location.pathname.replace(/\/$/,'').endsWith('/new');
+  const setShowCreateModal = (open:boolean) => navigate({pathname:open ? '/databases/new' : '/databases',search:location.search});
+  const showDetailsModal = Boolean(route.database) && !location.pathname.replace(/\/$/,'').endsWith('/edit');
+  const setShowDetailsModal = (open:boolean) => {if(!open)navigate(resourcePath())};
+  const configDbName = location.pathname.replace(/\/$/,'').endsWith('/edit') ? route.database ?? null : null;
+  const setConfigDbName = (name:string|null) => navigate(resourcePath(name ?? undefined,Boolean(name)));
+
   const [databases, setDatabases] = useState<DatabaseInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
   // Create database state
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
@@ -35,13 +44,11 @@ export function Databases() {
   const [selectedDatabase, setSelectedDatabase] = useState<DatabaseInfo | null>(
     null,
   );
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
 
   // Admin check (for showing config cog)
   const [isAdmin, setIsAdmin] = useState(false);
 
   // Database config modal (admin only)
-  const [configDbName, setConfigDbName] = useState<string | null>(null);
   const [configKeys, setConfigKeys] = useState<
     Array<{ key: string; type: string; category: string }>
   >([]);
@@ -152,20 +159,16 @@ export function Databases() {
     }
   };
 
-  const handleViewDetails = async (db: DatabaseInfo) => {
-    try {
-      const info = await api.getDatabaseInfo(db.name);
-      setSelectedDatabase(info);
-      setShowDetailsModal(true);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load database details",
-      );
-    }
-  };
+  const handleViewDetails = (db:DatabaseInfo) => navigate(resourcePath(db.name));
+  useEffect(()=>{
+    if(!route.database || configDbName)return;
+    let current=true;
+    setSelectedDatabase(null);
+    api.getDatabaseInfo(route.database).then(info=>{if(current)setSelectedDatabase(info)}).catch(error=>{if(current)setError(error.message)});
+    return ()=>{current=false};
+  },[route.database,configDbName]);
 
   const handleOpenConfig = useCallback(async (dbName: string) => {
-    setConfigDbName(dbName);
     setConfigError("");
     setConfigLoading(true);
     try {
@@ -196,6 +199,8 @@ export function Databases() {
       setConfigLoading(false);
     }
   }, []);
+
+  useEffect(()=>{if(configDbName)void handleOpenConfig(configDbName);},[configDbName,handleOpenConfig]);
 
   const handleConfigSave = async () => {
     if (!configDbName) return;
@@ -547,13 +552,14 @@ export function Databases() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleOpenConfig(db.name)}
+                            onClick={() => setConfigDbName(db.name)}
                             icon={Settings}
                           >
                             <span className="sr-only">Configure</span>
                           </Button>
                         </div>
                       )}
+                      {!isComposite&&<Button variant="ghost" size="sm" onClick={()=>navigate(`/schema/${encodeURIComponent(db.name)}`)}>Schema</Button>}
                       <div title="View details">
                         <Button
                           variant="ghost"

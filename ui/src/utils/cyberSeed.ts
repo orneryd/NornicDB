@@ -5,7 +5,7 @@
 // Comms links are seeded by initial proximity (within COMMS_RANGE); the
 // tick loop will rewire them as drones move.
 //
-// The seed populates the DB once on first load; from there the UI pushes
+// Explicit demo setup seeds a new disposable database; the simulation then pushes
 // per-tick deltas and the oracle reads back via cypher.
 
 export type DroneRole = "scout" | "relay" | "interceptor" | "carrier";

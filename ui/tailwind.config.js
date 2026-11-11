@@ -12,7 +12,7 @@ export default {
           'shadow': '#141824',
           'stone': '#1e2433',
           'rune': '#2a3247',
-          'fog': '#3d4659',
+          'fog': '#929bad',
           'silver': '#9ca3af',
         },
         'valhalla': {

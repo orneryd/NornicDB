@@ -1,4 +1,6 @@
+import {DemoGate} from '../components/common/DemoSeed';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {useViewState} from '../utils/useUrlState';
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
 import { api, type CypherResponse } from "../utils/api";
@@ -23,7 +25,6 @@ import {
 //    ORACLE_EVERY_N ticks). Each query writes its result into a small
 //    OracleSnapshot piece of state that drives the dashboard side panel.
 
-const CYBER_DB = "c_cyber_demo";
 // 50ms = 20Hz. Backend cypher round-trip is ~2ms even with the 3 per-tick
 // writes parallelized, leaving ~48ms slack — plenty of headroom for the
 // browser's render frame too. Crank lower if the dashboard ever feels jerky.
@@ -34,29 +35,8 @@ const ORACLE_EVERY_N = 5;
 // Re-render the tick counter at most every Nth tick. Decouples HUD repaint
 // cost from the simulation rate so 20Hz ticks don't trigger 20Hz React.
 const HUD_REFRESH_EVERY_N = 5;
-const SEED_BATCH = 200;
 const MAX_EVENT_LOG = 60;
 
-const CYPHER_INDEX = `CREATE INDEX drone_id_idx IF NOT EXISTS FOR (n:Drone) ON (n.droneId)`;
-
-const CYPHER_SEED_DRONES = `UNWIND $rows AS row
-MERGE (n:Drone {droneId: row.droneId})
-SET n.callsign = row.callsign,
-    n.squad = row.squad,
-    n.role = row.role,
-    n.x = row.x,
-    n.y = row.y,
-    n.z = row.z,
-    n.battery = row.battery,
-    n.status = row.status`;
-
-const CYPHER_SEED_LINKS = `UNWIND $rows AS row
-MATCH (a:Drone {droneId: row.fromId})
-MATCH (b:Drone {droneId: row.toId})
-CREATE (a)-[:COMMS {distance: row.distance}]->(b)`;
-
-// Tick-time updates: position + battery + status. Idempotent; the
-// simulator hands a row per drone that actually changed this tick.
 const CYPHER_TICK_DRONES = `UNWIND $rows AS row
 MATCH (n:Drone {droneId: row.droneId})
 SET n.x = row.x, n.y = row.y, n.z = row.z,
@@ -105,13 +85,7 @@ RETURN
   sum(CASE WHEN n.status = 'lost' THEN 1 ELSE 0 END) AS lost,
   avg(n.battery) AS avgBattery`;
 
-type Phase =
-  | "checking"
-  | "creating"
-  | "seeding"
-  | "running"
-  | "paused"
-  | "error";
+
 
 interface OracleSnapshot {
   tick: number;
@@ -160,13 +134,7 @@ function rowsFromCypher(resp: CypherResponse): Record<string, unknown>[] {
   });
 }
 
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    out.push(arr.slice(i, i + size));
-  }
-  return out;
-}
+
 
 function nowMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -178,7 +146,9 @@ function statusColor(status: string, squad: number): string {
   return SQUAD_COLORS[squad % SQUAD_COLORS.length];
 }
 
-export function Cyber() {
+export function Cyber(){return <DemoGate kind="fleet">{database=><CyberScene database={database}/>}</DemoGate>;}
+function CyberScene({database}:{database:string}){
+ const CYBER_DB=database;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<CyberForceGraph | null>(null);
   const simRef = useRef<CyberSimulator | null>(null);
@@ -193,94 +163,15 @@ export function Cyber() {
   const tickRef = useRef(0);
 
   const [fleet] = useState<CyberFleet>(() => generateFleet({ seed: 0xcafef00d }));
-  const [phase, setPhase] = useState<Phase>("checking");
-  const [statusLine, setStatusLine] = useState("Probing system catalog for c_cyber_demo...");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [seedReady, setSeedReady] = useState(false);
+
+  const [statusLine, setStatusLine] = useState("Simulation ready.");
+  const seedReady=true;
   const [tickCount, setTickCount] = useState(0);
   const [oracle, setOracle] = useState<OracleSnapshot | null>(null);
   const [eventLog, setEventLog] = useState<TickEvent[]>([]);
-  const [running, setRunning] = useState(true);
+  const [running, setRunning] = useViewState('running', false);
 
-  // --- Database lifecycle ----------------------------------------------
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const ensureDatabase = async (): Promise<void> => {
-      setPhase("checking");
-      setStatusLine(`Probing system catalog for ${CYBER_DB}...`);
-      const dbList = await api.listDatabaseNames();
-      if (cancelled) return;
-
-      if (!dbList.includes(CYBER_DB)) {
-        setPhase("creating");
-        setStatusLine(`Forging database '${CYBER_DB}'...`);
-        await api.createDatabase(CYBER_DB);
-        if (cancelled) return;
-
-        setStatusLine("Provisioning Drone index...");
-        await api.executeCypherOnDatabase(CYBER_DB, CYPHER_INDEX);
-        if (cancelled) return;
-
-        setPhase("seeding");
-        const droneRows = fleet.drones.map((d) => ({
-          droneId: d.id,
-          callsign: d.callsign,
-          squad: d.squad,
-          role: d.role,
-          x: d.x,
-          y: d.y,
-          z: d.z,
-          battery: d.battery,
-          status: d.status,
-        }));
-        for (const batch of chunk(droneRows, SEED_BATCH)) {
-          if (cancelled) return;
-          setStatusLine(`Seeding drones (${batch.length})...`);
-          await api.executeCypherOnDatabase(CYBER_DB, CYPHER_SEED_DRONES, {
-            rows: batch,
-          });
-        }
-
-        const linkRows = fleet.links.map((l) => ({
-          fromId: l.source,
-          toId: l.target,
-          distance: l.distance,
-        }));
-        for (const batch of chunk(linkRows, SEED_BATCH)) {
-          if (cancelled) return;
-          setStatusLine(`Linking comms (${batch.length})...`);
-          await api.executeCypherOnDatabase(CYBER_DB, CYPHER_SEED_LINKS, {
-            rows: batch,
-          });
-        }
-      } else {
-        setStatusLine(`Database '${CYBER_DB}' detected; reusing.`);
-      }
-    };
-
-    (async () => {
-      try {
-        await ensureDatabase();
-        if (cancelled) return;
-        simRef.current = new CyberSimulator(fleet, defaultSimulationConfig);
-        setSeedReady(true);
-        setPhase("running");
-        setStatusLine("Simulation running.");
-      } catch (err) {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : String(err);
-        setErrorMessage(message);
-        setPhase("error");
-        setStatusLine(`Failed: ${message}`);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [fleet]);
+  useEffect(()=>{simRef.current=new CyberSimulator(fleet,defaultSimulationConfig);},[fleet]);
 
   // --- 3D graph init (once) --------------------------------------------
 
@@ -541,12 +432,11 @@ export function Cyber() {
   const totalLinks = fleet.links.length;
 
   const phaseLabel = useMemo(() => {
-    if (phase === "running" && !running) return "paused";
-    return phase;
-  }, [phase, running]);
+    return running ? "running" : "paused";
+  }, [running]);
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#04060c] text-norse-silver font-display">
+    <div className="relative w-full h-screen overflow-hidden bg-[#04060c] text-norse-silver font-display">
       <div ref={containerRef} className="absolute inset-0" />
 
       {/* Title strip */}
@@ -662,11 +552,9 @@ export function Cyber() {
       <div className="absolute bottom-4 left-4 right-4 z-10 flex items-center gap-4 rounded-lg border border-norse-rune bg-norse-shadow/80 backdrop-blur px-4 py-3">
         <div
           className={`w-2.5 h-2.5 rounded-full ${
-            phase === "running" && running
+            running
               ? "bg-nornic-primary status-connected"
-              : phase === "error"
-                ? "bg-red-500"
-                : "bg-frost-glacier animate-pulse"
+              : "bg-frost-glacier animate-pulse"
           }`}
         />
         <div className="flex-1 min-w-0">
@@ -687,18 +575,7 @@ export function Cyber() {
         </button>
       </div>
 
-      {errorMessage && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70">
-          <div className="max-w-lg rounded-lg border border-red-500/40 bg-norse-shadow p-6">
-            <div className="text-red-400 text-sm uppercase tracking-[0.2em]">
-              Cyber demo failed
-            </div>
-            <div className="mt-2 text-white font-mono text-sm break-words">
-              {errorMessage}
-            </div>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }

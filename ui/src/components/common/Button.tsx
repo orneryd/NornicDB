@@ -3,8 +3,9 @@
  */
 
 import type { LucideIcon } from "lucide-react";
+import type {ButtonHTMLAttributes} from 'react';
 
-interface ButtonProps {
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   type?: "button" | "submit" | "reset";
   variant?: "primary" | "secondary" | "danger" | "success" | "ghost";
   size?: "sm" | "md" | "lg";
@@ -26,14 +27,15 @@ export function Button({
   onClick,
   children,
   className = "",
+  ...attributes
 }: ButtonProps) {
   const baseClasses = "inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-norse-shadow disabled:opacity-50 disabled:cursor-not-allowed";
   
   const variantClasses = {
-    primary: "bg-nornic-primary text-white hover:bg-nornic-secondary focus:ring-nornic-primary",
+    primary: "bg-nornic-primary text-norse-night hover:bg-nornic-secondary focus:ring-nornic-primary",
     secondary: "bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune focus:ring-nornic-primary",
     danger: "bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 border border-red-500/30 focus:ring-red-500",
-    success: "bg-green-600 text-white hover:bg-green-700 focus:ring-green-500",
+    success: "bg-green-700 text-white hover:bg-green-800 focus:ring-green-500",
     ghost: "bg-transparent hover:bg-norse-rune text-norse-silver hover:text-white focus:ring-nornic-primary",
   };
 
@@ -45,6 +47,7 @@ export function Button({
 
   return (
     <button
+      {...attributes}
       type={type}
       onClick={onClick}
       disabled={disabled || loading}

@@ -1,21 +1,15 @@
+import {DemoGate} from '../components/common/DemoSeed';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {useViewState} from '../utils/useUrlState';
+import {Disclosure} from '../components/common/Disclosure';
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
 import { api, type CypherResponse } from "../utils/api";
 import { generateGalaxy, type DemoGalaxy } from "../utils/demoSeed";
 
-const DEMO_DB = "d3_demo";
-const SEED_BATCH = 400;
 const MAX_LATENCY_HISTORY = 24;
 
-type Phase =
-  | "checking"
-  | "creating"
-  | "seeding"
-  | "indexing"
-  | "ready"
-  | "traversing"
-  | "error";
+type Phase = "ready" | "traversing" | "error";
 
 interface LatencySample {
   label: string;
@@ -69,26 +63,6 @@ interface PathInfo {
 //   - 7.3h Bulk-Seed (UnwindMultiMatchCreateBatch)        seed edges
 //   - shortestPath((a)-[:T*]-(b))                         unbounded shortest path
 //                                                         (pkg/cypher/shortest_path.go)
-const CYPHER_CREATE_INDEX = `CREATE INDEX star_id_idx IF NOT EXISTS FOR (n:Star) ON (n.starId)`;
-
-const CYPHER_SEED_STARS = `UNWIND $rows AS row
-MERGE (n:Star {starId: row.starId})
-SET n.name = row.name,
-    n.sector = row.sector,
-    n.hue = row.hue,
-    n.mass = row.mass,
-    n.x = row.x,
-    n.y = row.y,
-    n.z = row.z`;
-
-const CYPHER_SEED_EDGES = `UNWIND $rows AS row
-MATCH (a:Star {starId: row.fromId})
-MATCH (b:Star {starId: row.toId})
-CREATE (a)-[:HYPERLANE {distance: row.distance}]->(b)`;
-
-// Unbounded shortest-path traversal — dedicated executor in
-// pkg/cypher/shortest_path.go. Undirected to traverse across the seeded
-// forward+reverse hyperlanes regardless of stored direction.
 const CYPHER_SHORTEST_PATH = `MATCH (start:Star {starId: $startId}), (end:Star {starId: $endId})
 MATCH p = shortestPath((start)-[:HYPERLANE*]-(end))
 RETURN [n IN nodes(p) | n.starId] AS pathIds, length(p) AS hops
@@ -111,13 +85,7 @@ function rowsFromCypher(resp: CypherResponse): ParsedRow[] {
   });
 }
 
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    out.push(arr.slice(i, i + size));
-  }
-  return out;
-}
+
 
 function nowMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -134,24 +102,23 @@ const NORMAL_LINK_COLOR = "rgba(125,211,252,0.55)";
 const NORMAL_LINK_WIDTH = 0.7;
 const HIGHLIGHT_LINK_WIDTH = 1.4;
 
-export function Demo() {
+export function Demo() {return <DemoGate kind="galaxy">{database=><DemoScene database={database}/>}</DemoGate>;}
+function DemoScene({database}:{database:string}) {
+ const DEMO_DB=database;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<DemoForceGraph | null>(null);
 
   const [galaxy] = useState<DemoGalaxy>(() => generateGalaxy(0xfeed_d3));
 
-  const [phase, setPhase] = useState<Phase>("checking");
+  const [phase, setPhase] = useState<Phase>("ready");
   const [statusLine, setStatusLine] = useState("Connecting to NornicDB...");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [seededCount, setSeededCount] = useState(0);
-  const [seedTotal, setSeedTotal] = useState(0);
   const [latency, setLatency] = useState<LatencySample[]>([]);
   const [pathInfo, setPathInfo] = useState<PathInfo | null>(null);
-  const [selection, setSelection] = useState<{
+  const [selection, setSelection] = useViewState<{
     fromId: string | null;
     toId: string | null;
-  }>({ fromId: null, toId: null });
-  const [seedReady, setSeedReady] = useState(false);
+  }>('route', { fromId: null, toId: null });
+  const seedReady=true;
 
   const recordTraversalLatency = useCallback(
     (label: string, ms: number, hops: number) => {
@@ -182,97 +149,6 @@ export function Demo() {
       });
     }
     return m;
-  }, [galaxy]);
-
-  // --- Seed lifecycle ----------------------------------------------------
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const ensureDatabase = async (): Promise<void> => {
-      setPhase("checking");
-      setStatusLine("Probing system catalog for d3_demo...");
-
-      const dbList = await api.listDatabaseNames();
-      if (cancelled) return;
-
-      if (!dbList.includes(DEMO_DB)) {
-        setPhase("creating");
-        setStatusLine(`Forging database '${DEMO_DB}'...`);
-        await api.createDatabase(DEMO_DB);
-        if (cancelled) return;
-
-        setPhase("indexing");
-        setStatusLine("Provisioning Star index...");
-        await api.executeCypherOnDatabase(DEMO_DB, CYPHER_CREATE_INDEX);
-        if (cancelled) return;
-
-        setPhase("seeding");
-        const starRows = galaxy.stars.map((s) => ({
-          starId: s.id,
-          name: s.name,
-          sector: s.sector,
-          hue: s.hue,
-          mass: s.mass,
-          x: s.x,
-          y: s.y,
-          z: s.z,
-        }));
-        const edgeRows = galaxy.edges.map((e) => ({
-          fromId: e.source,
-          toId: e.target,
-          distance: e.distance,
-        }));
-        const total = starRows.length + edgeRows.length;
-        setSeedTotal(total);
-        setSeededCount(0);
-
-        let written = 0;
-        for (const batch of chunk(starRows, SEED_BATCH)) {
-          if (cancelled) return;
-          setStatusLine(
-            `Seeding stars (${written}/${total})... UnwindSimpleMergeBatch`,
-          );
-          await api.executeCypherOnDatabase(DEMO_DB, CYPHER_SEED_STARS, {
-            rows: batch,
-          });
-          written += batch.length;
-          setSeededCount(written);
-        }
-
-        for (const batch of chunk(edgeRows, SEED_BATCH)) {
-          if (cancelled) return;
-          setStatusLine(
-            `Linking hyperlanes (${written}/${total})... UnwindMultiMatchCreateBatch`,
-          );
-          await api.executeCypherOnDatabase(DEMO_DB, CYPHER_SEED_EDGES, {
-            rows: batch,
-          });
-          written += batch.length;
-          setSeededCount(written);
-        }
-      } else {
-        setStatusLine(`Database '${DEMO_DB}' detected; reusing.`);
-      }
-    };
-
-    (async () => {
-      try {
-        await ensureDatabase();
-        if (cancelled) return;
-        setSeedReady(true);
-      } catch (err) {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : String(err);
-        setErrorMessage(message);
-        setPhase("error");
-        setStatusLine(`Failed: ${message}`);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [galaxy]);
 
   // --- Traversal --------------------------------------------------------
@@ -593,7 +469,7 @@ export function Demo() {
   })();
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#04060c] text-norse-silver font-display">
+    <div className="relative w-full h-screen overflow-hidden bg-[#04060c] text-norse-silver font-display">
       <div ref={containerRef} className="absolute inset-0" />
 
       {/* Title strip */}
@@ -682,6 +558,14 @@ export function Demo() {
         <div className="mt-3 pt-3 border-t border-norse-rune/60 text-[11px] text-purple-200/80 font-mono leading-snug">
           {selectionHint}
         </div>
+        <Disclosure id="route-endpoints" title="Choose route endpoints" className="mt-3">
+          {(['fromId','toId'] as const).map((key,index)=><label key={key} className="block text-xs text-norse-silver mb-2">{index===0?'Start star':'Destination star'}
+            <select value={selection[key] ?? ''} disabled={!seedReady} onChange={event=>setSelection(previous=>({...previous,[key]:event.target.value||null}))} className="block w-full mt-1 rounded border border-norse-rune bg-norse-night p-2 text-white">
+              <option value="">Choose a star</option>
+              {galaxy.stars.map(star=><option key={star.id} value={star.id}>{star.name}</option>)}
+            </select>
+          </label>)}
+        </Disclosure>
       </div>
 
       {/* Status / progress bar (bottom) */}
@@ -697,10 +581,6 @@ export function Demo() {
         />
         <div className="flex-1 min-w-0">
           <div className="text-xs uppercase tracking-[0.2em] text-norse-silver/60">
-            {phase === "checking" && "checking"}
-            {phase === "creating" && "creating database"}
-            {phase === "indexing" && "indexing"}
-            {phase === "seeding" && "seeding"}
             {phase === "traversing" && "traversing"}
             {phase === "ready" && "ready"}
             {phase === "error" && "error"}
@@ -708,16 +588,7 @@ export function Demo() {
           <div className="text-sm text-white truncate font-mono">
             {statusLine}
           </div>
-          {phase === "seeding" && seedTotal > 0 && (
-            <div className="mt-1 h-1 w-full bg-norse-rune rounded">
-              <div
-                className="h-1 bg-nornic-primary rounded transition-all"
-                style={{
-                  width: `${Math.min(100, (seededCount / seedTotal) * 100)}%`,
-                }}
-              />
-            </div>
-          )}
+
         </div>
         {pathInfo && (
           <div className="text-right hidden sm:block">
@@ -731,18 +602,7 @@ export function Demo() {
         )}
       </div>
 
-      {errorMessage && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70">
-          <div className="max-w-lg rounded-lg border border-red-500/40 bg-norse-shadow p-6">
-            <div className="text-red-400 text-sm uppercase tracking-[0.2em]">
-              Demo failed
-            </div>
-            <div className="mt-2 text-white font-mono text-sm break-words">
-              {errorMessage}
-            </div>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }

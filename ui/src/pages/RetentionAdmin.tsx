@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { UiGrid } from "@ornery/ui-grid-react";
+import {useUrlState} from "../utils/useUrlState";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { StatefulGrid as UiGrid } from "../components/common/StatefulGrid";
 import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord } from "@ornery/ui-grid-core";
 import {
   AlertTriangle,
@@ -221,6 +222,17 @@ function canProcessErasure(request: RetentionErasureRequest): boolean {
 
 export function RetentionAdmin() {
   const navigate = useNavigate();
+  const route = useParams();
+  const location = useLocation();
+  const suffix=location.pathname.replace(/\/$/,'');
+  const policyModalOpen=suffix.endsWith('/policies/new') || Boolean(route.policyId);
+  const policyModalMode: 'create'|'edit'=route.policyId ? 'edit' : 'create';
+  const setPolicyModalOpen=(open:boolean)=>navigate({pathname:open ? '/security/retention/policies/new' : '/security/retention',search:location.search});
+  const holdModalOpen=suffix.endsWith('/holds/new');
+  const setHoldModalOpen=(open:boolean)=>navigate({pathname:open ? '/security/retention/holds/new' : '/security/retention',search:location.search});
+  const erasureModalOpen=suffix.endsWith('/erasures/new');
+  const setErasureModalOpen=(open:boolean)=>navigate({pathname:open ? '/security/retention/erasures/new' : '/security/retention',search:location.search});
+
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -232,20 +244,25 @@ export function RetentionAdmin() {
   const [holds, setHolds] = useState<RetentionLegalHold[]>([]);
   const [erasures, setErasures] = useState<RetentionErasureRequest[]>([]);
 
-  const [policyModalOpen, setPolicyModalOpen] = useState(false);
   const [policySaving, setPolicySaving] = useState(false);
-  const [policyModalMode, setPolicyModalMode] = useState<"create" | "edit">("create");
   const [policyForm, setPolicyForm] = useState<PolicyFormState>(emptyPolicyForm());
 
-  const [holdModalOpen, setHoldModalOpen] = useState(false);
   const [holdSaving, setHoldSaving] = useState(false);
   const [holdForm, setHoldForm] = useState<HoldFormState>(emptyHoldForm());
 
-  const [erasureModalOpen, setErasureModalOpen] = useState(false);
   const [erasureSaving, setErasureSaving] = useState(false);
   const [erasureForm, setErasureForm] = useState<ErasureFormState>(emptyErasureForm());
 
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const {params,patch}=useUrlState();
+  const action=params.get('confirm'),target=params.get('target');
+  const pendingAction:PendingAction|null=useMemo(()=>{
+    if(action==='load-defaults'||action==='run-sweep')return {kind:action};
+    if(action==='delete-policy'){const policy=policies.find(p=>p.id===target);return policy?{kind:action,policy}:null;}
+    if(action==='release-hold'){const hold=holds.find(h=>h.id===target);return hold?{kind:action,hold}:null;}
+    if(action==='process-erasure'){const request=erasures.find(r=>r.id===target);return request?{kind:action,request}:null;}
+    return null;
+  },[action,target,policies,holds,erasures]);
+  const setPendingAction=useCallback((next:PendingAction|null)=>patch({confirm:next?.kind??null,target:next&&'policy'in next?next.policy.id:next&&'hold'in next?next.hold.id:next&&'request'in next?next.request.id:null}),[patch]);
   const [actionLoading, setActionLoading] = useState(false);
 
   const activePolicyCount = useMemo(
@@ -324,7 +341,6 @@ export function RetentionAdmin() {
       rowIdentity: (row) => String(row.__gridId),
       enableSorting: true,
       enableFiltering: true,
-      viewportHeight: 480,
       emptyMessage: "No retention policies loaded. Add one manually or load the built-in defaults.",
     }),
     [policyColumnDefs, policyGridData],
@@ -400,16 +416,20 @@ export function RetentionAdmin() {
   }, [loadRetention]);
 
   const openCreatePolicy = () => {
-    setPolicyModalMode("create");
     setPolicyForm(emptyPolicyForm());
     setPolicyModalOpen(true);
   };
 
   const openEditPolicy = (policy: RetentionPolicy) => {
-    setPolicyModalMode("edit");
-    setPolicyForm(policyToForm(policy));
-    setPolicyModalOpen(true);
+    navigate({pathname:`/security/retention/policies/${encodeURIComponent(policy.id)}/edit`,search:location.search});
   };
+
+  useEffect(()=>{
+    if(!route.policyId)return;
+    const policy=policies.find(entry=>entry.id===route.policyId);
+    if(policy)setPolicyForm(policyToForm(policy));
+    else if(!loading)setError(`Retention policy ${route.policyId} was not found.`);
+  },[route.policyId,policies,loading]);
 
   const updatePolicyInline = useCallback(
     async (policy: RetentionPolicy, patch: Partial<RetentionPolicy>) => {
@@ -448,6 +468,7 @@ export function RetentionAdmin() {
         <div className="py-1" onClick={(e) => e.stopPropagation()}>
           <select
             value={row.category}
+            aria-label={`Category for ${row.name}`}
             onChange={(e) =>
               void updatePolicyInline(row, {
                 category: e.target.value as RetentionCategory,
@@ -756,7 +777,7 @@ export function RetentionAdmin() {
                 Retention control plane
               </h2>
               <p className="text-sm text-norse-silver max-w-3xl">
-                Configure category-based retention the way operators expect from a Neo4j-style admin surface: policy catalog, legal holds, erasure queue, and manual sweep controls in one place.
+                Manage retention policies, legal holds, erasure requests and manual sweeps.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -843,7 +864,7 @@ export function RetentionAdmin() {
                 </div>
 
                 <div className="nornic-grid border border-norse-rune rounded-lg p-4">
-                  <UiGrid options={policyGridOptions} cellRenderers={policyCellRenderers} />
+                  <UiGrid height={480} options={policyGridOptions} cellRenderers={policyCellRenderers} />
                 </div>
               </div>
 
@@ -854,7 +875,7 @@ export function RetentionAdmin() {
                     Category guide
                   </h2>
                   <p className="text-sm text-norse-silver mt-1">
-                    Categories are the control surface this UI exposes, which maps cleanly to the retention manager and matches the way operators reason about policy domains.
+                    Choose a category when creating a policy or legal hold.
                   </p>
                 </div>
                 <div className="space-y-3">
@@ -1049,7 +1070,7 @@ export function RetentionAdmin() {
                   ["POST", "/admin/retention/sweep", "Run a manual sweep."],
                 ].map(([method, path, description]) => (
                   <div
-                    key={path}
+                    key={`${method} ${path}`}
                     className="rounded-lg bg-norse-stone/50 border border-norse-rune p-4"
                   >
                     <div className="flex flex-wrap items-center gap-2 mb-2">
