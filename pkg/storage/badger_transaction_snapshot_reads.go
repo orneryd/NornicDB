@@ -81,7 +81,11 @@ func (tx *BadgerTransaction) committedNodeLabelsLocked(ctx context.Context, iden
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if tx.engine.writeBehind != nil {
+	// A node the transaction reads as last committed (under its lock, or as
+	// the other end of a locked node's last committed relationship read)
+	// keeps its last committed labels here too: relationship creates and
+	// deletes maintain the stored positional counts from them (NOR-213).
+	if tx.engine.writeBehind != nil || tx.readsNodeLastCommittedLocked(identifier) {
 		node, err := tx.engine.getNodeProjected(ctx, identifier, []string{}, storedRead)
 		if err != nil {
 			return nil, err
@@ -376,16 +380,24 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(ctx context.Context
 	// Write-behind reads are read-committed: the flusher may land a buffered
 	// commit after the pinned snapshot, and buffered-but-unflushed edges are
 	// invisible to the pinned view. Read the latest overlaid engine view
-	// instead (PR #1043 read-overlay parity).
-	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
+	// instead (PR #1043 read-overlay parity). So does a node whose write lock
+	// the transaction holds (NOR-213).
+	locked := tx.readsLockedAdjacencyLatestLocked(nodeID)
+	if tx.readTS.IsZero() || tx.engine.writeBehind != nil || locked {
+		var edges []*Edge
+		var err error
 		switch direction {
 		case Outgoing:
-			return tx.engine.GetOutgoingEdges(ctx, nodeID)
+			edges, err = tx.engine.GetOutgoingEdges(ctx, nodeID)
 		case Incoming:
-			return tx.engine.GetIncomingEdges(ctx, nodeID)
+			edges, err = tx.engine.GetIncomingEdges(ctx, nodeID)
 		default:
 			return nil, ErrInvalidData
 		}
+		if err == nil && locked {
+			tx.recordLatestEndpointsLocked(nodeID, edges)
+		}
+		return edges, err
 	}
 	if tx.snapshotDeregister != nil {
 		return tx.readCachedSnapshotAdjacentEdgesLocked(ctx, nodeID, direction, false)
@@ -502,10 +514,11 @@ func (tx *BadgerTransaction) edgeHeaders(ctx context.Context, nodeID NodeID, dir
 	if tx.readTS.IsZero() || tx.snapshotDeregister == nil || tx.engine.visibilityFiltered() {
 		return nil, false, nil
 	}
-	if tx.engine.writeBehind != nil {
+	if locked := tx.readsLockedAdjacencyLatestLocked(nodeID); tx.engine.writeBehind != nil || locked {
 		// Read-committed: buffered edges are invisible to the pinned snapshot,
 		// so answer from the engine's overlaid header read instead
-		// (PR #1043 read-overlay parity).
+		// (PR #1043 read-overlay parity). So does a node whose write lock the
+		// transaction holds (NOR-213).
 		var committed []*Edge
 		var err error
 		if direction == Outgoing {
@@ -515,6 +528,9 @@ func (tx *BadgerTransaction) edgeHeaders(ctx context.Context, nodeID NodeID, dir
 		}
 		if err != nil {
 			return nil, true, err
+		}
+		if locked {
+			tx.recordLatestEndpointsLocked(nodeID, committed)
 		}
 		edges, mergeErr := tx.mergePendingEdgesLocked(ctx, committed, func(edge *Edge) bool {
 			if direction == Outgoing {

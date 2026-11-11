@@ -1336,7 +1336,10 @@ func (tx *BadgerTransaction) incidentEdgesLocked(ctx context.Context, nodeID Nod
 	// owner as engine adjacency. Overlay selection and committed IDs must
 	// not straddle replay/retirement. Transaction-local rewrites and deletes
 	// still take precedence over that captured stored view.
-	if tx.engine.writeBehind != nil {
+	// So does a node whose write lock the transaction holds after a later
+	// commit (NOR-213): a label change maintains the positional counts of its
+	// relationships, and a delete removes them, from this read.
+	if tx.engine.writeBehind != nil || tx.readsLockedAdjacencyLatestLocked(nodeID) {
 		// Integrity preparation follows the selected staging or commit phase lifetime.
 		outgoing, incoming, err := readAdjacency(ctx, tx.engine, adjacencyBoth, nodeID, "", nil, storedRead)
 		if err != nil {
