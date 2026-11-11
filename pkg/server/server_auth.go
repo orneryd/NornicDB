@@ -86,8 +86,8 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGenerateAPIToken generates a stateless API token for MCP servers.
-// Only a principal with the admin entitlement reaches it: its route's guard
-// (withAuth with auth.PermAdmin, the one entitlement check) decides that.
+// Its route requires authentication, not an administrative entitlement.
+// Identity and roles come exclusively from the authenticated claims.
 // The tokens inherit the user's roles and are not stored - they are
 // validated by signature on each request.
 func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) {

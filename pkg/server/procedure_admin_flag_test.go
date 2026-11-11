@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -43,22 +44,38 @@ func TestAdminProceduresFollowTheirAdminFlagOverHTTP(t *testing.T) {
 	}
 }
 
-// An API token needs the admin entitlement, whatever the role holding it is
-// called: a custom role with the admin entitlement may create one, a reader
-// may not. The route's guard is the one decision (the handler makes none),
-// so the reader is refused with the guard's answer and gets no token.
-func TestAPITokenNeedsTheAdminEntitlement(t *testing.T) {
+// Personal tokens preserve the authenticated identity and never confer admin.
+func TestAPITokensPreserveTheAuthenticatedUsersPermissions(t *testing.T) {
 	ctx := context.Background()
 	server, users := setupTestServer(t)
-	require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
-	require.NoError(t, server.roleEntitlementsStore.Set(ctx, "ops", []string{"read", "admin"}))
-	_, err := users.CreateUser(context.Background(), "opsuser", "password123", []auth.Role{"ops"})
+	require.NoError(t, server.roleStore.CreateRole(ctx, "token-only"))
+	require.NoError(t, server.roleEntitlementsStore.Set(ctx, "token-only", []string{}))
+	_, err := users.CreateUser(ctx, "tokenuser", "password123", []auth.Role{"token-only"})
 	require.NoError(t, err)
-	response := makeRequest(t, server, "POST", "/auth/api-token", map[string]any{"subject": "svc"}, "Bearer "+getAuthToken(t, users, "opsuser"))
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	require.Contains(t, response.Body.String(), "token\"")
-	response = makeRequest(t, server, "POST", "/auth/api-token", map[string]any{"subject": "svc"}, "Bearer "+getAuthToken(t, users, "reader"))
-	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
-	require.Contains(t, response.Body.String(), "Neo.ClientError.Security.Forbidden")
-	require.NotContains(t, response.Body.String(), "token\"")
+	for _, username := range []string{"reader", "tokenuser", "admin"} {
+		t.Run(username, func(t *testing.T) {
+			originalToken := getAuthToken(t, users, username)
+			originalClaims, err := users.ValidateToken(originalToken)
+			require.NoError(t, err)
+			response := makeRequest(t, server, http.MethodPost, "/auth/api-token", map[string]any{"subject": "admin", "expires_in": "1d", "username": "admin", "roles": []string{"admin"}}, "Bearer "+originalToken)
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var body struct {
+				Token string `json:"token"`
+			}
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			claims, err := users.ValidateToken(body.Token)
+			require.NoError(t, err)
+			require.Equal(t, username, claims.Username)
+			require.Equal(t, originalClaims.Sub, claims.Sub)
+			require.ElementsMatch(t, originalClaims.Roles, claims.Roles)
+			require.Equal(t, http.StatusOK, makeRequest(t, server, http.MethodGet, "/auth/me", nil, "Bearer "+body.Token).Code)
+			if username != "admin" {
+				require.Equal(t, http.StatusForbidden, makeRequest(t, server, http.MethodPost, "/admin/backup", map[string]any{"path": "must-not-be-created"}, "Bearer "+body.Token).Code)
+			}
+			if username == "tokenuser" {
+				require.Equal(t, http.StatusForbidden, makeRequest(t, server, http.MethodGet, "/status", nil, "Bearer "+body.Token).Code)
+			}
+		})
+	}
+	require.Equal(t, http.StatusUnauthorized, makeRequest(t, server, http.MethodPost, "/auth/api-token", map[string]any{"subject": "test"}, "").Code)
 }

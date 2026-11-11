@@ -19,7 +19,7 @@ The server exposes the full list at **GET /auth/entitlements** (requires read pe
 | **write** | Write | Write data: Cypher CREATE/DELETE/SET/MERGE (when ResolvedAccess.Write for that DB), `/nornicdb/embed/trigger`, `/nornicdb/embed/retry-failures`, `/nornicdb/search/rebuild`, Bifrost/GraphQL mutations, MCP write. |
 | **create** | Create | Create operations (resource creation where distinguished from write). |
 | **delete** | Delete | Delete operations: e.g. `/gdpr/delete`. |
-| **admin** | Admin | Admin-only: `/auth/api-token`, `/auth/roles`, `/auth/roles/*`, `/auth/access/databases`, `/auth/access/privileges`, `/auth/entitlements` (read-only list), `/nornicdb/embed/clear`, `/admin/*` (stats, config, backup, GPU), Qdrant snapshots. Implies full system control. |
+| **admin** | Admin | Admin-only: `/auth/roles`, `/auth/roles/*`, `/auth/access/databases`, `/auth/access/privileges`, `/auth/entitlements` (read-only list), `/nornicdb/embed/clear`, `/admin/*` (stats, config, backup, GPU), Qdrant snapshots. Implies full system control. |
 | **schema** | Schema | Schema operations: Bolt INDEX/CONSTRAINT Cypher. Required for creating/dropping indexes and constraints. |
 | **user_manage** | User management | User management: `/auth/users`, `/auth/users/*` (list, create, update, delete users). Distinct from admin (roles/DB access). |
 
@@ -59,3 +59,5 @@ These apply **per database** and are configured via:
 
 - [Per-Database RBAC & Lockout Recovery](per-database-rbac.md) – Allowlist, privileges, and recovery
 - [Design: Per-Database RBAC](per-database-rbac.md) – Design and alignment with Neo4j
+
+Personal identity endpoints `GET /auth/me` and `POST /auth/api-token` require authentication, without an administrative or data-read entitlement. Personal API tokens inherit the authenticated identity and roles; request fields cannot assign a different user or additional roles. Database and administrative operations still enforce their own permissions.
