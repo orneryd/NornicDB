@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,22 +136,25 @@ func BenchmarkTransactionNodeUpdateWithoutVectors(b *testing.B) {
 // with the buffer drained between updates so the predecessor comes from
 // storage. It extends the update owner's bounded allocation reference
 // (BenchmarkTransactionNodeUpdateWithoutVectors) to separately stored
-// embeddings in a small and a large payload. The operation covers the whole
+// embeddings in a small and a large payload, and of a node whose text is too
+// large to keep its vectors inline. The operation covers the whole
 // public update (staging, validation, publication and flushing). Compare
 // revisions with identical fixtures; this does not isolate validation latency.
 func BenchmarkTransactionNodeUpdateSeparateEmbeddings(b *testing.B) {
 	for _, fixture := range []struct {
 		name   string
 		chunks [][]float32
+		text   string
 	}{
-		{name: "small", chunks: [][]float32{make([]float32, 8)}},
-		{name: "large", chunks: [][]float32{makeStoredChunkVector(0.25), makeStoredChunkVector(0.5)}},
+		{name: "small", chunks: [][]float32{make([]float32, 8)}, text: "same"},
+		{name: "large", chunks: [][]float32{makeStoredChunkVector(0.25), makeStoredChunkVector(0.5)}, text: "same"},
+		{name: "large text", chunks: [][]float32{make([]float32, 8)}, text: strings.Repeat("large text ", 6000)},
 	} {
 		b.Run(fixture.name, func(b *testing.B) {
 			ctx := context.Background()
 			engine := newWriteBehindTestEngine(b, time.Hour, writeBehindTestOptions{manualDrain: true})
 			engine.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
-			node := &Node{ID: "test:bench-preimage", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same", "n": int64(0)}}
+			node := &Node{ID: "test:bench-preimage", Labels: []string{"Doc"}, Properties: map[string]any{"text": fixture.text, "n": int64(0)}}
 			if _, err := engine.CreateNode(ctx, node); err != nil {
 				b.Fatal(err)
 			}
@@ -177,7 +181,7 @@ func BenchmarkTransactionNodeUpdateSeparateEmbeddings(b *testing.B) {
 				if err := tx.SetNamespace("test"); err != nil {
 					b.Fatal(err)
 				}
-				after := &Node{ID: node.ID, Labels: []string{"Doc"}, Properties: map[string]any{"text": "same", "n": int64(i + 1)}}
+				after := &Node{ID: node.ID, Labels: []string{"Doc"}, Properties: map[string]any{"text": fixture.text, "n": int64(i + 1)}}
 				if err := tx.UpdateGraphNode(ctx, NodeUpdateRequest{After: after, Policy: ClientNodeEdits}); err != nil {
 					b.Fatal(err)
 				}

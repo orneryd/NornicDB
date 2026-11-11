@@ -66,11 +66,18 @@ func (tx *BadgerTransaction) codecEdgeImageLocked(edge *Edge) (*Edge, error) {
 // a full stored read hydrates from outside the body: vectors the codec stored
 // apart, or a managed embedding whose sidecar the body omits
 // (reconcileManagedEmbeddingsLocked). It takes them from source, the node the
-// body was encoded for; the codec's persisted embedding metadata stays.
+// body was encoded for. The codec's persisted embedding metadata stays, unless
+// it is only the zero chunk count the codec gives a large body encoded without
+// embedding state: the sidecar then holds source's metadata, and a stored read
+// returns that.
 func keepSourceEmbeddings(image, source *Node) {
 	switch {
 	case image.RuntimeMetadata().EmbeddingsStoredSeparately:
 		image.ChunkEmbeddings = source.ChunkEmbeddings
+		if _, counted := image.EmbedMeta["chunk_count"]; counted && len(image.EmbedMeta) == 1 && chunkCountFromMeta(image.EmbedMeta) == 0 &&
+			(len(source.ChunkEmbeddings) > 0 || len(source.EmbedMeta) > 0) {
+			image.EmbedMeta = source.EmbedMeta
+		}
 		{
 			metadata := image.RuntimeMetadata()
 			metadata.EmbeddingsStoredSeparately = false
