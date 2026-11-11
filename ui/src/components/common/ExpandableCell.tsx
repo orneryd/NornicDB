@@ -3,15 +3,16 @@
  * Extracted from Browser.tsx for reusability
  */
 
-import { useState } from "react";
+import {useViewState} from '../../utils/useUrlState';
 import { ChevronRight, ChevronDown } from "lucide-react";
 
 interface ExpandableCellProps {
   data: unknown;
+  stateKey: string;
 }
 
-export function ExpandableCell({ data }: ExpandableCellProps) {
-  const [expanded, setExpanded] = useState(false);
+export function ExpandableCell({ data, stateKey }: ExpandableCellProps) {
+  const [expanded, setExpanded] = useViewState(`cell.${stateKey}`, false);
 
   if (data === null) return <span className="json-null">null</span>;
   if (data === undefined) return <span className="text-norse-fog">-</span>;

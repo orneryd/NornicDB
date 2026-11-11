@@ -1,3 +1,4 @@
+import { Disclosure } from "../components/common/Disclosure";
 import { useState, useEffect, useId } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageLayout } from "../components/common/PageLayout";
@@ -41,7 +42,7 @@ export function Security() {
   );
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"token" | "config" | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
@@ -113,11 +114,35 @@ export function Security() {
     }
   };
 
-  const copyToClipboard = () => {
-    if (generatedToken) {
-      navigator.clipboard.writeText(generatedToken.token);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const mcpUrl = new URL(
+    joinBasePath(BASE_PATH, "/mcp"),
+    window.location.origin,
+  ).href;
+  const mcpConfig = JSON.stringify(
+    {
+      mcpServers: {
+        nornicdb: {
+          type: "http",
+          url: mcpUrl,
+          headers: {
+            Authorization: `Bearer ${generatedToken?.token ?? "<YOUR_API_TOKEN>"}`,
+          },
+        },
+      },
+    },
+    null,
+    2,
+  );
+  const copyToClipboard = async (kind: "token" | "config") => {
+    if (!generatedToken) return;
+    try {
+      await navigator.clipboard.writeText(
+        kind === "token" ? generatedToken.token : mcpConfig,
+      );
+      setCopied(kind);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      setError("Unable to copy. Select and copy the value manually.");
     }
   };
 
@@ -211,11 +236,7 @@ export function Security() {
 
         {/* Profile Update Section */}
         {userInfo && userInfo.auth_method !== "oauth" && (
-          <div className="bg-norse-shadow border border-norse-rune rounded-lg p-6 mb-8">
-            <h2 className="text-lg font-semibold text-white mb-4">
-              Profile Settings
-            </h2>
-
+          <Disclosure id="profile" title="Profile Settings" className="mb-6">
             <div className="space-y-4">
               <FormInput
                 id={emailId}
@@ -286,16 +307,12 @@ export function Security() {
                 <Alert type="success" message="Profile updated successfully!" />
               )}
             </div>
-          </div>
+          </Disclosure>
         )}
 
         {/* Password Change Section */}
         {userInfo && userInfo.auth_method !== "oauth" && (
-          <div className="bg-norse-shadow border border-norse-rune rounded-lg p-6 mb-8">
-            <h2 className="text-lg font-semibold text-white mb-4">
-              Change Password
-            </h2>
-
+          <Disclosure id="password" title="Change Password" className="mb-6">
             <div className="space-y-4">
               <FormInput
                 id={oldPasswordId}
@@ -398,7 +415,7 @@ export function Security() {
                 />
               )}
             </div>
-          </div>
+          </Disclosure>
         )}
 
         {/* Info Banner */}
@@ -409,8 +426,41 @@ export function Security() {
           className="mb-8"
         />
 
-        {/* Token Generator - Admin Only */}
-        {isAdmin && (
+        <Disclosure id="mcp-setup" title="Connect an MCP client">
+          <ol className="list-decimal pl-5 space-y-2 text-sm text-norse-silver">
+            <li>
+              Generate a personal token below and save it securely. It has the
+              same permissions as your account.
+            </li>
+            <li>
+              In your client, add a remote MCP server using HTTP transport.
+            </li>
+            <li>
+              Set the server URL to{" "}
+              <code className="break-all text-white">{mcpUrl}</code> and the
+              Authorization header to <code>Bearer &lt;your token&gt;</code>.
+            </li>
+            <li>
+              Connect and list tools. Read-only accounts can use read tools;
+              writes still require database write permission.
+            </li>
+          </ol>
+          <p className="mt-3 text-sm text-norse-silver">
+            Client settings differ. After generating a token, you can copy an
+            HTTP configuration example. See the{" "}
+            <a
+              className="underline text-nornic-primary"
+              href="https://modelcontextprotocol.io/docs/develop/connect-remote-servers"
+              target="_blank"
+              rel="noreferrer"
+            >
+              MCP connection guide
+            </a>
+            .
+          </p>
+        </Disclosure>
+        {/* Personal token generation is available to every authenticated role. */}
+        {
           <div className="bg-norse-shadow border border-norse-rune rounded-lg p-6 mb-8">
             <h2 className="text-lg font-semibold text-white mb-4">
               Generate API Token
@@ -486,14 +536,14 @@ export function Security() {
               {error && <Alert type="error" message={error} />}
             </div>
           </div>
-        )}
+        }
 
         {/* Generated Token Display */}
         {generatedToken && (
           <div className="bg-norse-shadow border border-norse-rune rounded-lg p-6 mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-green-400">
-                ✓ Token Generated
+                Token generated
               </h2>
               <span className="text-xs text-norse-fog">
                 {generatedToken.expires_at
@@ -508,12 +558,12 @@ export function Security() {
                   {generatedToken.token}
                 </code>
                 <Button
-                  variant={copied ? "success" : "secondary"}
+                  variant={copied === "token" ? "success" : "secondary"}
                   size="sm"
-                  onClick={copyToClipboard}
-                  icon={copied ? Check : Copy}
+                  onClick={() => void copyToClipboard("token")}
+                  icon={copied === "token" ? Check : Copy}
                 >
-                  {copied ? "Copied!" : "Copy"}
+                  {copied === "token" ? "Copied" : "Copy"}
                 </Button>
               </div>
             </div>
@@ -533,32 +583,26 @@ export function Security() {
               </div>
             </div>
 
-            {/* Usage Example */}
             <div className="mt-4 pt-4 border-t border-norse-rune">
-              <h3 className="text-sm font-semibold text-norse-silver mb-2">
-                Usage Example (Claude Desktop / MCP Config)
+              <h3 className="text-sm font-semibold text-white mb-2">
+                HTTP MCP client configuration
               </h3>
-              <pre className="bg-norse-stone rounded p-3 text-xs overflow-x-auto break-words whitespace-pre-wrap">
-                <code className="text-norse-silver">{`{
-  "mcpServers": {
-    "nornicdb": {
-      "url": "http://127.0.0.1:7474/mcp",
-      "name": "Knowledge Graph TODO MCP Server",
-      "description": "MCP server for TODO tracking with Graph-RAG memory system",
-      "headers": {
-        "Authorization": "Bearer ${generatedToken.token.substring(0, 40)}..."
-      }
-    }
-  }
-}`}</code>
-              </pre>
-              <p className="text-xs text-norse-fog mt-2">
-                For Claude Desktop: Add this to your{" "}
-                <code className="text-norse-silver">
-                  ~/Library/Application
-                  Support/Claude/claude_desktop_config.json
-                </code>
+              <p className="text-xs text-norse-silver mb-2">
+                This example contains your full token. Save it only in your
+                client’s private configuration.
               </p>
+              <pre className="bg-norse-stone rounded p-3 text-xs overflow-auto">
+                <code className="text-norse-silver">{mcpConfig}</code>
+              </pre>
+              <Button
+                variant="secondary"
+                className="mt-3"
+                onClick={() => void copyToClipboard("config")}
+              >
+                {copied === "config"
+                  ? "Configuration copied"
+                  : "Copy MCP configuration"}
+              </Button>
             </div>
           </div>
         )}
@@ -566,7 +610,7 @@ export function Security() {
         {/* Security Tips */}
         <div className="bg-norse-shadow border border-norse-rune rounded-lg p-6">
           <h2 className="text-lg font-semibold text-white mb-4">
-            🔐 Security Best Practices
+            Token storage and rotation
           </h2>
           <ul className="space-y-2 text-sm text-norse-silver">
             <li className="flex gap-2">

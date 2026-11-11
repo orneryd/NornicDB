@@ -6,11 +6,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { UiGrid } from "@ornery/ui-grid-react";
-import {
-  buildGridPipeline,
-  registerRustWasmGridEngine,
-} from "@ornery/ui-grid-core";
+import { StatefulGrid as UiGrid } from "../common/StatefulGrid";
 import type {
   GridCellTemplateContext,
   GridColumnDef,
@@ -88,10 +84,6 @@ const gridLabels = {
   validateError: "Invalid policy value",
   validateRequired: "A value is required",
 };
-
-// ui-grid 5 has no per-grid WASM opt-out. Register its TypeScript pipeline
-// before mounting so the vanilla adapter does not attempt WASM initialization.
-registerRustWasmGridEngine({ buildPipeline: buildGridPipeline });
 
 function editorSelectClass(): string {
   return "w-full min-w-24 rounded border border-norse-rune bg-norse-stone px-2 py-1 text-xs text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary";
@@ -936,7 +928,7 @@ export function KnowledgePolicyEditorGrids({
               style={{ height: gridHeight(bundleRows.length) }}
               aria-busy={saving}
             >
-              <UiGrid
+              <UiGrid height={gridHeight(bundleRows.length)}
                 options={bundleOptions}
                 onRegisterApi={setBundleApi}
                 cellRenderers={bundleRenderers}
@@ -967,7 +959,7 @@ export function KnowledgePolicyEditorGrids({
               style={{ height: gridHeight(bindingRows.length) }}
               aria-busy={saving}
             >
-              <UiGrid options={bindingOptions} onRegisterApi={setBindingApi} />
+              <UiGrid height={gridHeight(bindingRows.length)} options={bindingOptions} onRegisterApi={setBindingApi} />
             </div>
           </section>
         )}
@@ -994,7 +986,7 @@ export function KnowledgePolicyEditorGrids({
               style={{ height: gridHeight(promotionPolicyRows.length) }}
               aria-busy={saving}
             >
-              <UiGrid
+              <UiGrid height={gridHeight(promotionPolicyRows.length)}
                 options={promotionPolicyOptions}
                 onRegisterApi={setPromotionPolicyApi}
                 cellRenderers={promotionPolicyRenderers}
@@ -1025,7 +1017,7 @@ export function KnowledgePolicyEditorGrids({
               style={{ height: gridHeight(promotionProfileRows.length) }}
               aria-busy={saving}
             >
-              <UiGrid
+              <UiGrid height={gridHeight(promotionProfileRows.length)}
                 options={promotionProfileOptions}
                 onRegisterApi={setPromotionProfileApi}
                 cellRenderers={promotionProfileRenderers}

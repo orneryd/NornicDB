@@ -9,6 +9,8 @@ import {
 } from "react-router-dom";
 import { Login } from "./pages/Login";
 import { Browser } from "./pages/Browser";
+import {Schema} from "./pages/Schema";
+import {Backups} from "./pages/Backups";
 import { Security } from "./pages/Security";
 import { AdminUsers } from "./pages/AdminUsers";
 import { DatabaseAccess } from "./pages/DatabaseAccess";
@@ -16,8 +18,13 @@ import { Databases } from "./pages/Databases";
 import { LifecycleAdmin } from "./pages/LifecycleAdmin";
 import { KnowledgePoliciesAdmin } from "./pages/KnowledgePoliciesAdmin";
 import { RetentionAdmin } from "./pages/RetentionAdmin";
+import {PivotDemo} from './pages/PivotDemo';
+import {Demos} from './pages/Demos';
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { BASE_PATH } from "./utils/basePath";
+import { AppNavigation } from "./components/common/AppNavigation";
+import {UrlStateProvider} from './utils/useUrlState';
+import {DemoSeedProvider} from './components/common/DemoSeed';
 
 // /demo pulls in three.js + 3d-force-graph; lazy so the main bundle stays lean.
 const Demo = lazy(() => import("./pages/Demo").then((m) => ({ default: m.Demo })));
@@ -51,9 +58,40 @@ function TrailingSlashCanonicalizer() {
 function App() {
   return (
     <BrowserRouter basename={basename}>
+      <UrlStateProvider>
+      <DemoSeedProvider>
       <TrailingSlashCanonicalizer />
+      <div className="application-shell">
+      <AppNavigation />
+      <div id="workspace" className="min-w-0 flex-1" tabIndex={-1}>
+      <Suspense fallback={<p role="status" className="p-6 text-norse-silver">Loading demo…</p>}>
       <Routes>
+        <Route path="/demos" element={<Demos />} />
+        <Route path="/demos/pivot" element={<ProtectedRoute><PivotDemo /></ProtectedRoute>} />
+        <Route path="/demos/pivot/:demoDatabase" element={<ProtectedRoute><PivotDemo /></ProtectedRoute>} />
+        <Route path="/demos/galaxy/:demoDatabase?" element={<Demo />} />
+        <Route path="/demos/fleet/:demoDatabase?" element={<Cyber />} />
         <Route path="/login" element={<Login />} />
+        <Route
+          path="/embeddings"
+          element={<ProtectedRoute><Browser maintenance /></ProtectedRoute>}
+        />
+        <Route path="/schema" element={<ProtectedRoute><Schema/></ProtectedRoute>}/>
+        <Route path="/schema/:database" element={<ProtectedRoute><Schema/></ProtectedRoute>}/>
+        <Route path="/schema/:database/:schemaKind/:definition" element={<ProtectedRoute><Schema/></ProtectedRoute>}/>
+        <Route path="/backups" element={<ProtectedRoute><Backups/></ProtectedRoute>}/>
+        <Route path="/workspace/:database" element={<ProtectedRoute><Browser /></ProtectedRoute>} />
+        <Route path="/workspace/:database/nodes/:nodeId" element={<ProtectedRoute><Browser /></ProtectedRoute>} />
+        <Route path="/workspace/:database/nodes/:nodeId/edit" element={<ProtectedRoute><Browser /></ProtectedRoute>} />
+        <Route path="/security/admin/new" element={<ProtectedRoute><AdminUsers /></ProtectedRoute>} />
+        <Route path="/security/admin/:username/edit" element={<ProtectedRoute><AdminUsers /></ProtectedRoute>} />
+        <Route path="/databases/new" element={<ProtectedRoute><Databases /></ProtectedRoute>} />
+        <Route path="/databases/:database" element={<ProtectedRoute><Databases /></ProtectedRoute>} />
+        <Route path="/databases/:database/edit" element={<ProtectedRoute><Databases /></ProtectedRoute>} />
+        <Route path="/security/retention/policies/new" element={<ProtectedRoute><RetentionAdmin /></ProtectedRoute>} />
+        <Route path="/security/retention/policies/:policyId/edit" element={<ProtectedRoute><RetentionAdmin /></ProtectedRoute>} />
+        <Route path="/security/retention/holds/new" element={<ProtectedRoute><RetentionAdmin /></ProtectedRoute>} />
+        <Route path="/security/retention/erasures/new" element={<ProtectedRoute><RetentionAdmin /></ProtectedRoute>} />
         <Route
           path="/demo"
           element={
@@ -162,6 +200,11 @@ function App() {
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
+      </div>
+      </div>
+      </DemoSeedProvider>
+      </UrlStateProvider>
     </BrowserRouter>
   );
 }

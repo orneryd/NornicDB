@@ -9,3 +9,5 @@ dist/assets/*
 !dist/assets/placeholder.txt
 .DS_Store
 *.local
+test-results/
+playwright-report/

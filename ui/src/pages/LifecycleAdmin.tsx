@@ -1,6 +1,7 @@
+import {useViewState} from '../utils/useUrlState';
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { UiGrid } from "@ornery/ui-grid-react";
+import { StatefulGrid as UiGrid } from "../components/common/StatefulGrid";
 import type { GridColumnDef, GridOptions, GridRecord } from "@ornery/ui-grid-core";
 import {
   Activity,
@@ -99,21 +100,21 @@ function pressureTone(band?: string): string {
 
 export function LifecycleAdmin() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [databases, setDatabases] = useState<DatabaseInfo[]>([]);
-  const [selectedDb, setSelectedDb] = useState("");
+  const [selectedDb, setSelectedDb] = useViewState('db', "");
   const [status, setStatus] = useState<MVCCLifecycleStatus | null>(null);
   const [debtKeys, setDebtKeys] = useState<MVCCLifecycleDebtKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [scheduleInput, setScheduleInput] = useState("30s");
-  const [debtLimit, setDebtLimit] = useState("25");
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
-    null,
-  );
+  const [scheduleInput, setScheduleInput] = useViewState('interval', '30s');
+  const [debtLimit, setDebtLimit] = useViewState('debtLimit', "25");
+  const [confirmKind,setConfirmKind]=useViewState<ActionKind|null>('confirm',null);
+  const pendingAction=confirmKind ? describeAction(confirmKind) : null;
+  const setPendingAction=(action:PendingAction|null)=>setConfirmKind(action?.kind ?? null);
   const [actionLoading, setActionLoading] = useState<ActionKind | null>(null);
 
   const supportedDatabases = useMemo(
@@ -176,7 +177,6 @@ export function LifecycleAdmin() {
       rowIdentity: (row) => String(row.__gridId),
       enableSorting: true,
       enableFiltering: true,
-      viewportHeight: 360,
       emptyMessage: "No lifecycle debt keys reported for this database.",
     }),
     [debtColumnDefs, debtGridData],
@@ -217,7 +217,6 @@ export function LifecycleAdmin() {
       rowIdentity: (row) => String(row.__gridId),
       enableSorting: true,
       enableFiltering: true,
-      viewportHeight: 320,
       emptyMessage: "No active snapshot readers are currently registered.",
     }),
     [readerColumnDefs, readerGridData],
@@ -274,7 +273,6 @@ export function LifecycleAdmin() {
       setLoading(false);
       return;
     }
-    setSearchParams({ db: selectedDb }, { replace: true });
     setLoading(true);
     setError("");
     loadLifecycleState(selectedDb, false)
@@ -286,7 +284,7 @@ export function LifecycleAdmin() {
       .finally(() => {
         setLoading(false);
       });
-  }, [loadLifecycleState, selectedDb, setSearchParams]);
+  }, [loadLifecycleState, selectedDb]);
 
   const refreshLifecycleState = useCallback(
     async (preserveScheduleInput: boolean) => {
@@ -308,42 +306,37 @@ export function LifecycleAdmin() {
     [loadLifecycleState, selectedDb],
   );
 
-  const openAction = (kind: ActionKind) => {
-    if (!selectedDb) return;
-    setSuccess("");
+  function describeAction(kind:ActionKind):PendingAction|null {
     switch (kind) {
       case "pause":
-        setPendingAction({
+        return {
           kind,
           title: `Pause automatic lifecycle for ${selectedDb}?`,
           description:
             "Automatic background MVCC maintenance will stop running until you explicitly resume it. Manual prune runs will still be available.",
           confirmLabel: "Pause lifecycle",
           variant: "danger",
-        });
-        break;
+        };
       case "resume":
-        setPendingAction({
+        return {
           kind,
           title: `Resume automatic lifecycle for ${selectedDb}?`,
           description:
             "Automatic lifecycle scheduling will resume using the current runtime interval.",
           confirmLabel: "Resume lifecycle",
           variant: "success",
-        });
-        break;
+        };
       case "prune":
-        setPendingAction({
+        return {
           kind,
           title: `Run prune now on ${selectedDb}?`,
           description:
             "This starts an immediate MVCC prune cycle. Use it when the database is in a safe maintenance window.",
           confirmLabel: "Run prune now",
           variant: "danger",
-        });
-        break;
+        };
       case "schedule":
-        setPendingAction({
+        return {
           kind,
           title:
             scheduleInput.trim() === "0s"
@@ -358,10 +351,12 @@ export function LifecycleAdmin() {
               ? "Enable manual-only mode"
               : "Apply schedule",
           variant: scheduleInput.trim() === "0s" ? "danger" : "primary",
-        });
-        break;
+        };
     }
-  };
+    return null;
+  }
+
+  const openAction=(kind:ActionKind)=>{if(selectedDb){setSuccess("");setConfirmKind(kind)}};
 
   const executePendingAction = async () => {
     if (!pendingAction || !selectedDb) return;
@@ -818,7 +813,7 @@ export function LifecycleAdmin() {
                   </div>
                 </div>
                 <div className="nornic-grid border border-norse-rune rounded-lg p-4">
-                  <UiGrid options={debtGridOptions} />
+                  <UiGrid height={360} options={debtGridOptions} />
                 </div>
               </div>
 
@@ -901,7 +896,7 @@ export function LifecycleAdmin() {
                   </p>
                 </div>
                 <div className="nornic-grid border border-norse-rune rounded-lg p-4">
-                  <UiGrid options={readerGridOptions} />
+                  <UiGrid height={320} options={readerGridOptions} />
                 </div>
               </div>
 
@@ -990,6 +985,7 @@ export function LifecycleAdmin() {
               type="button"
               variant="secondary"
               onClick={() => setPendingAction(null)}
+              data-autofocus
               disabled={actionLoading !== null}
             >
               Cancel

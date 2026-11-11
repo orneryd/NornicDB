@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { api } from '../utils/api';
 
 interface ProtectedRouteProps {
@@ -7,6 +7,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
+  const location=useLocation();
   const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
 
   useEffect(() => {
@@ -37,7 +38,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   }
 
   if (authState === 'unauthenticated') {
-    return <Navigate to="/login" replace />;
+    return <Navigate to={`/login?returnTo=${encodeURIComponent(location.pathname+location.search+location.hash)}`} replace />;
   }
 
   return <>{children}</>;

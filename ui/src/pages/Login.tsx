@@ -1,5 +1,5 @@
 import { useState, useEffect, useId, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Lock, User } from 'lucide-react';
 import { api, type AuthConfig } from '../utils/api';
 import { PageLayout } from '../components/common/PageLayout';
@@ -9,6 +9,9 @@ import { Alert } from '../components/common/Alert';
 
 export function Login() {
   const navigate = useNavigate();
+  const [params]=useSearchParams();
+  const requested=params.get('returnTo') || '/';
+  const destination=requested.startsWith('/') && !requested.startsWith('//') && !requested.includes('\\') && !requested.startsWith('/login') ? requested : '/';
   const usernameId = useId();
   const passwordId = useId();
   const [username, setUsername] = useState('');
@@ -22,20 +25,20 @@ export function Login() {
     api.getAuthConfig().then(config => {
       if (!config.securityEnabled) {
         // Auth disabled - go straight to browser
-        navigate('/', { replace: true });
+        navigate(destination, { replace: true });
         return;
       }
       
       // Check if already authenticated
       api.checkAuth().then(result => {
         if (result.authenticated) {
-          navigate('/', { replace: true });
+          navigate(destination, { replace: true });
         } else {
           setAuthConfig(config);
         }
       });
     });
-  }, [navigate]);
+  }, [navigate,destination]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -45,7 +48,7 @@ export function Login() {
     const result = await api.login(username, password);
     
     if (result.success) {
-      navigate('/', { replace: true });
+      navigate(destination, { replace: true });
     } else {
       setError(result.error || 'Login failed');
     }

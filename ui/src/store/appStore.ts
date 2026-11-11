@@ -3,6 +3,8 @@ import { api } from '../utils/api';
 import type { DatabaseStats, SearchResult, CypherResponse } from '../utils/api';
 import { splitCypherStatements } from '../utils/cypherStatements';
 
+let workspaceGeneration=0;
+
 // Similar results for inline expansion
 interface SimilarExpansion {
   nodeId: string;
@@ -127,7 +129,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  setSelectedDatabase: (db) => set({ selectedDatabase: db }),
+  setSelectedDatabase: (db) => {
+    if(get().selectedDatabase===db)return;
+    workspaceGeneration++;
+    set({selectedDatabase:db,cypherResult:null,cypherResults:[],queryError:null,queryLoading:false,searchResults:[],searchError:null,searchLoading:false,selectedNode:null,selectedNodeIds:new Set(),expandedSimilar:null});
+  },
 
   fetchDatabases: async () => {
     try {
@@ -142,13 +148,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCypherQuery: (query) => set({ cypherQuery: query }),
 
   executeCypher: async (options) => {
+    const generation=workspaceGeneration;
+    const publish=(value:Partial<AppState>|((state:AppState)=>Partial<AppState>))=>{if(generation===workspaceGeneration)set(value)};
     const { cypherQuery, queryHistory, selectedDatabase } = get();
     if (!cypherQuery.trim()) return;
     const continueOnError = Boolean(options?.continueOnError);
 
     const statements = splitCypherStatements(cypherQuery);
     if (statements.length === 0) {
-      set({ queryLoading: false, queryError: 'No executable statements found' });
+      publish({ queryLoading: false, queryError: 'No executable statements found' });
       return;
     }
 
@@ -157,14 +165,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       status: 'pending' as const,
     }));
 
-    set({ queryLoading: true, queryError: null, cypherResults: initialResults });
+    publish({ queryLoading: true, queryError: null, cypherResults: initialResults });
     try {
       let firstResult: CypherResponse | null = null;
       const errors: string[] = [];
 
       for (let i = 0; i < statements.length; i++) {
         const statement = statements[i];
-        set((state) => {
+        publish((state) => {
           const next = [...state.cypherResults];
           next[i] = { ...next[i], status: 'running' };
           return { cypherResults: next };
@@ -177,7 +185,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
           const responseErrors = result.errors?.map((e) => e.message).join('\n') || '';
           if (responseErrors) {
-            set((state) => {
+            publish((state) => {
               const next = [...state.cypherResults];
               next[i] = { ...next[i], status: 'error', durationMs, error: responseErrors, result };
               return { cypherResults: next };
@@ -192,7 +200,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           if (!firstResult) {
             firstResult = result;
           }
-          set((state) => {
+          publish((state) => {
             const next = [...state.cypherResults];
             next[i] = { ...next[i], status: 'success', durationMs, result };
             return { cypherResults: next };
@@ -200,7 +208,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         } catch (err) {
           const durationMs = Math.round(performance.now() - started);
           const message = err instanceof Error ? err.message : 'Query failed';
-          set((state) => {
+          publish((state) => {
             const next = [...state.cypherResults];
             next[i] = { ...next[i], status: 'error', durationMs, error: message };
             return { cypherResults: next };
@@ -218,14 +226,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? queryHistory
         : [cypherQuery, ...queryHistory.slice(0, 19)];
 
-      set({
+      publish({
         cypherResult: firstResult,
         queryLoading: false,
         queryError: errors.length > 0 ? errors.join('\n') : null,
         queryHistory: newHistory,
       });
     } catch (err) {
-      set({
+      publish({
         queryError: err instanceof Error ? err.message : 'Query failed',
         queryLoading: false,
       });
@@ -236,13 +244,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSearchQuery: (query) => set({ searchQuery: query }),
 
   executeSearch: async () => {
+    const generation=workspaceGeneration;
+    const publish=(value:Partial<AppState>|((state:AppState)=>Partial<AppState>))=>{if(generation===workspaceGeneration)set(value)};
     const { searchQuery, selectedDatabase } = get();
     if (!searchQuery.trim()) {
-      set({ searchResults: [], searchError: null });
+      publish({ searchResults: [], searchError: null });
       return;
     }
 
-    set({ searchLoading: true, searchError: null });
+    publish({ searchLoading: true, searchError: null });
     try {
       const results = await api.search(
         searchQuery,
@@ -250,9 +260,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         undefined,
         selectedDatabase ?? undefined
       );
-      set({ searchResults: results, searchLoading: false, searchError: null });
+      publish({ searchResults: results, searchLoading: false, searchError: null });
     } catch (err) {
-      set({
+      publish({
         searchResults: [],
         searchLoading: false,
         searchError: err instanceof Error ? err.message : 'Search failed',
@@ -287,9 +297,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         6,
         selectedDatabase ?? undefined
       );
-      set({ expandedSimilar: { nodeId, results, loading: false } });
+      if(get().selectedDatabase===selectedDatabase && get().expandedSimilar?.nodeId===nodeId)set({ expandedSimilar: { nodeId, results, loading: false } });
     } catch {
-      set({ expandedSimilar: null });
+      if(get().selectedDatabase===selectedDatabase && get().expandedSimilar?.nodeId===nodeId)set({ expandedSimilar: null });
     }
   },
 

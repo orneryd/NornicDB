@@ -1,3 +1,6 @@
+import {KnowledgePolicyGuide} from "../components/knowledge/KnowledgePolicyGuide";
+import {Disclosure} from "../components/common/Disclosure";
+import {useViewState} from '../utils/useUrlState';
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -106,14 +109,12 @@ function TargetCell({
 
 export function KnowledgePoliciesAdmin() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
 
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [databases, setDatabases] = useState<DatabaseInfo[]>([]);
-  const [selectedDb, setSelectedDb] = useState("");
-  const [activeTab, setActiveTab] = useState<TabId>(
-    (searchParams.get("tab") as TabId) || "overview",
-  );
+  const [selectedDb, setSelectedDb] = useViewState('db', "");
+  const [activeTab, setActiveTab] = useViewState<TabId>('tab', 'overview');
 
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -132,9 +133,9 @@ export function KnowledgePoliciesAdmin() {
     useState<KPDeindexStatusResponse | null>(null);
 
   // Resolve tab state
-  const [resolveEntityId, setResolveEntityId] = useState("");
-  const [resolveLabels, setResolveLabels] = useState("");
-  const [resolveEdgeType, setResolveEdgeType] = useState("");
+  const [resolveEntityId, setResolveEntityId] = useViewState("resolve.id","");
+  const [resolveLabels, setResolveLabels] = useViewState("resolve.labels","");
+  const [resolveEdgeType, setResolveEdgeType] = useViewState("resolve.type","");
   const [resolving, setResolving] = useState(false);
   const [resolveResult, setResolveResult] = useState<ScoringResolution | null>(
     null,
@@ -171,6 +172,7 @@ export function KnowledgePoliciesAdmin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const currentDb=useRef(selectedDb);currentDb.current=selectedDb;
   const loadData = useCallback(async (dbName: string) => {
     const db = dbName || undefined;
     const [profilesData, policiesData, deindexData] = await Promise.all([
@@ -178,6 +180,7 @@ export function KnowledgePoliciesAdmin() {
       api.getKnowledgePolicyPolicies(db),
       api.getDeindexStatus(db),
     ]);
+    if(currentDb.current!==dbName)return;
     setProfiles(profilesData);
     setPolicies(policiesData);
     setDeindexStatus(deindexData);
@@ -188,10 +191,8 @@ export function KnowledgePoliciesAdmin() {
       setLoading(false);
       return;
     }
-    const params: Record<string, string> = { db: selectedDb };
-    if (activeTab !== "overview") params.tab = activeTab;
-    setSearchParams(params, { replace: true });
     setLoading(true);
+    setProfiles(null);setPolicies(null);setDeindexStatus(null);
     setError("");
     loadData(selectedDb)
       .catch((err) => {
@@ -201,14 +202,11 @@ export function KnowledgePoliciesAdmin() {
             : "Failed to load knowledge policy data",
         );
       })
-      .finally(() => setLoading(false));
-  }, [selectedDb, loadData, setSearchParams, activeTab]);
+      .finally(() => {if(currentDb.current===selectedDb)setLoading(false)});
+  }, [selectedDb, loadData]);
 
   const handleTabChange = (tab: TabId) => {
     setActiveTab(tab);
-    const params: Record<string, string> = { db: selectedDb };
-    if (tab !== "overview") params.tab = tab;
-    setSearchParams(params, { replace: true });
   };
 
   const handleRefresh = async () => {
@@ -355,12 +353,10 @@ export function KnowledgePoliciesAdmin() {
             <div className="space-y-2">
               <h2 className="text-lg font-semibold text-white flex items-center gap-2">
                 <Shield className="w-5 h-5 text-nornic-accent" />
-                Knowledge Policy Control Plane
+                Knowledge policies
               </h2>
               <p className="text-sm text-norse-silver max-w-3xl">
-                Inspect decay profiles, promotion policies, score resolution,
-                and deindex queue status for the knowledge-layer scoring
-                subsystem.
+                Choose how graph entities retain relevance, respond to activity and remain visible in search.
               </p>
             </div>
             <div className="w-full lg:w-72">
@@ -371,6 +367,7 @@ export function KnowledgePoliciesAdmin() {
                 Target database
               </label>
               <select
+                disabled={saving||refreshing}
                 id="kp-db"
                 value={selectedDb}
                 onChange={(e) => setSelectedDb(e.target.value)}
@@ -387,6 +384,10 @@ export function KnowledgePoliciesAdmin() {
         </section>
 
         {/* Tab nav */}
+        {selectedDb&&<KnowledgePolicyGuide key={selectedDb} database={selectedDb} profiles={profiles} saving={saving} onApply={handleAlterPolicy}/>}
+        {activeTab==='promotion-policies'&&<Disclosure id="kp-promotion-help" title="How promotion changes a score"><p className="text-sm text-norse-silver">Promotion rules apply a profile when their WHEN condition matches activity or entity properties. A multiplier above 1 boosts a decayed score; below 1 dampens it. The promotion floor and cap bound that result, then the decay floor applies.</p><p className="text-sm text-norse-silver mt-2">For example, multiplying 0.3 by 2 gives 0.6 before floors and caps. Multiplying by 0.5 gives 0.15. Use Resolve to inspect the effective result. Edit profile parameters and complete APPLY conditions below.</p></Disclosure>}
+        {activeTab==='resolve'&&<p className="text-sm text-norse-silver">Resolve is read-only. Use an entity ID to inspect its effective policy and score, or labels/a relationship type to inspect matching rules. This does not apply a policy.</p>}
+        {activeTab==='deindex-status'&&<p className="text-sm text-norse-silver">Suppressed entities can be removed from search indexes while their stored data remains. This queue reports index work; it is not a deletion queue.</p>}
         <div className="flex max-w-full gap-1 overflow-x-auto border-b border-norse-rune">
           {TABS.map((tab) => (
             <button

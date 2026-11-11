@@ -199,6 +199,7 @@ export function PropertyEditor({
             <div className="flex items-center gap-2 mb-2">
               <input
                 type="text"
+                aria-label={`Property name for ${prop.key}`}
                 value={prop.key}
                 onChange={(e) =>
                   updateProperty(prop.key, e.target.value, prop.value, prop.type)
@@ -207,6 +208,7 @@ export function PropertyEditor({
                 placeholder="Property key"
               />
               <select
+                aria-label={`Type for ${prop.key}`}
                 value={prop.type}
                 onChange={(e) =>
                   updateProperty(
@@ -225,13 +227,15 @@ export function PropertyEditor({
               </select>
               <button
                 type="button"
+                aria-label={`Remove property ${prop.key}`}
                 onClick={() => removeProperty(prop.key)}
                 className="p-1 hover:bg-red-500/20 rounded"
               >
                 <X className="w-4 h-4 text-red-400" />
               </button>
             </div>
-            <textarea
+            {prop.type === 'boolean' ? <select aria-label={`Value for ${prop.key}`} value={prop.value} onChange={e=>updateProperty(prop.key,prop.key,e.target.value,prop.type)} className="w-full px-2 py-1 bg-norse-shadow border border-norse-rune rounded text-sm text-white"><option value="true">True</option><option value="false">False</option></select> : prop.type === 'number' ? <input aria-label={`Value for ${prop.key}`} type="number" step="any" value={prop.value} onChange={e=>updateProperty(prop.key,prop.key,e.target.value,prop.type)} className="w-full px-2 py-1 bg-norse-shadow border border-norse-rune rounded text-sm text-white" /> : <textarea
+              aria-label={`Value for ${prop.key}`}
               value={prop.value}
               onChange={(e) =>
                 updateProperty(prop.key, prop.key, e.target.value, prop.type)
@@ -239,7 +243,7 @@ export function PropertyEditor({
               className="w-full px-2 py-1 bg-norse-shadow border border-norse-rune rounded text-sm text-white font-mono"
               rows={prop.type === "json" ? 4 : 1}
               placeholder={`Enter ${prop.type} value`}
-            />
+            />}
           </div>
         ))}
       </div>

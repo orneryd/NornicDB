@@ -63,6 +63,7 @@ export function Alert({
 
   return (
     <div
+      role={type === 'error' ? 'alert' : 'status'}
       className={`${config.bg} ${config.border} border rounded-lg p-3 ${className}`}
     >
       <div className="flex items-start gap-3">
@@ -76,6 +77,7 @@ export function Alert({
         {dismissible && (
           <button
             type="button"
+            aria-label="Dismiss notification"
             onClick={handleDismiss}
             className={`${config.text} hover:opacity-70 transition-opacity flex-shrink-0`}
           >

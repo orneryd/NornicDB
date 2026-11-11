@@ -1,0 +1,1667 @@
+[
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 36,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 36,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 48,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 74,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 90,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 99,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 470,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 489,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 497,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 507,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 520,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 535,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/AdminUsers.tsx",
+    "line": 551,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/pages/Backups.tsx",
+    "line": 76,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/Backups.tsx",
+    "line": 90,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Backups.tsx",
+    "line": 112,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Backups.tsx",
+    "line": 128,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/pages/Backups.tsx",
+    "line": 153,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/Backups.tsx",
+    "line": 172,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Backups.tsx",
+    "line": 180,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Backups.tsx",
+    "line": 188,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Browser.tsx",
+    "line": 304,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/Browser.tsx",
+    "line": 309,
+    "tag": "details"
+  },
+  {
+    "file": "src/pages/Browser.tsx",
+    "line": 312,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Browser.tsx",
+    "line": 333,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/Browser.tsx",
+    "line": 355,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Browser.tsx",
+    "line": 368,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Browser.tsx",
+    "line": 381,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Cyber.tsx",
+    "line": 568,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 434,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 466,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 501,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 533,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 545,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 560,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 572,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 579,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 615,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 623,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 644,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 650,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 657,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/DatabaseAccess.tsx",
+    "line": 660,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 350,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 364,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 415,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 422,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 453,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 535,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 552,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 562,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 564,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 580,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 693,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 701,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 726,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 741,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 756,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 769,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 777,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 788,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 811,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 819,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Databases.tsx",
+    "line": 831,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/Demo.tsx",
+    "line": 561,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/pages/Demo.tsx",
+    "line": 563,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1702,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1723,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1738,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1750,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1763,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1773,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1783,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1791,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1891,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1899,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1926,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1958,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 1986,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2006,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2043,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2055,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2069,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2079,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2118,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2129,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2150,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2183,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2252,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2268,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2315,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2330,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Graphify.tsx",
+    "line": 2370,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/KnowledgePoliciesAdmin.tsx",
+    "line": 311,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/KnowledgePoliciesAdmin.tsx",
+    "line": 369,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/KnowledgePoliciesAdmin.tsx",
+    "line": 388,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/pages/KnowledgePoliciesAdmin.tsx",
+    "line": 393,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/KnowledgePoliciesAdmin.tsx",
+    "line": 651,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/KnowledgePoliciesAdmin.tsx",
+    "line": 658,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/KnowledgePoliciesAdmin.tsx",
+    "line": 665,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/KnowledgePoliciesAdmin.tsx",
+    "line": 675,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/KnowledgePoliciesAdmin.tsx",
+    "line": 687,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 424,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 474,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 594,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 603,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 614,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 623,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 631,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 639,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 807,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 816,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 899,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 971,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 984,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/LifecycleAdmin.tsx",
+    "line": 993,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Login.tsx",
+    "line": 89,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Login.tsx",
+    "line": 99,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Login.tsx",
+    "line": 112,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/PivotDemo.tsx",
+    "line": 321,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/PivotDemo.tsx",
+    "line": 334,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/PivotDemo.tsx",
+    "line": 349,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/PivotDemo.tsx",
+    "line": 366,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/PivotDemo.tsx",
+    "line": 391,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/PivotDemo.tsx",
+    "line": 397,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/PivotDemo.tsx",
+    "line": 408,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/PivotDemo.tsx",
+    "line": 454,
+    "tag": "StatefulGrid"
+  },
+  {
+    "file": "src/pages/PivotDemo.tsx",
+    "line": 479,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 469,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 492,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 511,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 519,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 742,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 784,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 791,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 861,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 867,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 910,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 954,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 981,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1028,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1093,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1102,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1110,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1124,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1142,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1155,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1166,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1180,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1193,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1201,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1216,
+    "tag": "textarea"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1229,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1232,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1239,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1248,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1255,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1264,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1275,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1286,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1300,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1324,
+    "tag": "textarea"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1336,
+    "tag": "input"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1345,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1348,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1355,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1362,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1369,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1378,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1381,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1388,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1400,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/RetentionAdmin.tsx",
+    "line": 1403,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 180,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 199,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 205,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 211,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 218,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 223,
+    "tag": "StatefulGrid"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 227,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 246,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 288,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 308,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 316,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 325,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 331,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 341,
+    "tag": "select"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 363,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 370,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 376,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 389,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Schema.tsx",
+    "line": 396,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 167,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 173,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 179,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 185,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 191,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 239,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 241,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 250,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 315,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 317,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 325,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 333,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 341,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 429,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 470,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 497,
+    "tag": "button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 516,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 526,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 560,
+    "tag": "Button"
+  },
+  {
+    "file": "src/pages/Security.tsx",
+    "line": 597,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 253,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 269,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 279,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 284,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 295,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 377,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 385,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 454,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 486,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 493,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 514,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/GraphExplorerPanel.tsx",
+    "line": 546,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/Header.tsx",
+    "line": 141,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/Header.tsx",
+    "line": 152,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/Header.tsx",
+    "line": 184,
+    "tag": "details"
+  },
+  {
+    "file": "src/components/browser/NodeDetailsPanel.tsx",
+    "line": 75,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/NodeDetailsPanel.tsx",
+    "line": 183,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/NodeDetailsPanel.tsx",
+    "line": 201,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/NodeDetailsPanel.tsx",
+    "line": 355,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/NodeDetailsPanel.tsx",
+    "line": 430,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/NodeDetailsPanel.tsx",
+    "line": 452,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/QueryAutocomplete.tsx",
+    "line": 236,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/QueryGraphScene.tsx",
+    "line": 386,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/browser/QueryGraphScene.tsx",
+    "line": 389,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/browser/QueryGraphScene.tsx",
+    "line": 396,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/browser/QueryGraphScene.tsx",
+    "line": 399,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/browser/QueryGraphScene.tsx",
+    "line": 407,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/browser/QueryGraphScene.tsx",
+    "line": 437,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/components/browser/QueryGraphScene.tsx",
+    "line": 439,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/browser/QueryGraphScene.tsx",
+    "line": 445,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/browser/QueryGraphScene.tsx",
+    "line": 451,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/browser/QueryGraphScene.tsx",
+    "line": 454,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/browser/QueryPanel.tsx",
+    "line": 103,
+    "tag": "textarea"
+  },
+  {
+    "file": "src/components/browser/QueryPanel.tsx",
+    "line": 113,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/QueryPanel.tsx",
+    "line": 123,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/QueryPanel.tsx",
+    "line": 161,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/QueryPanel.tsx",
+    "line": 176,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/QueryPanel.tsx",
+    "line": 185,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/browser/QueryResultsTable.tsx",
+    "line": 227,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/QueryResultsTable.tsx",
+    "line": 279,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/components/browser/SearchPanel.tsx",
+    "line": 80,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/browser/SearchPanel.tsx",
+    "line": 90,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/browser/SearchPanel.tsx",
+    "line": 124,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/common/Alert.tsx",
+    "line": 78,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/AppNavigation.tsx",
+    "line": 55,
+    "tag": "details"
+  },
+  {
+    "file": "src/components/common/Button.tsx",
+    "line": 49,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/DemoSeed.tsx",
+    "line": 241,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/common/DemoSeed.tsx",
+    "line": 248,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/common/Disclosure.tsx",
+    "line": 22,
+    "tag": "details"
+  },
+  {
+    "file": "src/components/common/ExpandableCell.tsx",
+    "line": 52,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/ExpandableCell.tsx",
+    "line": 72,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/FormInput.tsx",
+    "line": 70,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/common/Modal.tsx",
+    "line": 59,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/NodeCard.tsx",
+    "line": 50,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/common/NodeCard.tsx",
+    "line": 60,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/NodeCard.tsx",
+    "line": 96,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/NodeCard.tsx",
+    "line": 116,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/PageHeader.tsx",
+    "line": 29,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 200,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 210,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 228,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 237,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 237,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 237,
+    "tag": "textarea"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 254,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 267,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 281,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 289,
+    "tag": "textarea"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 306,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/PropertyEditor.tsx",
+    "line": 315,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/SelectionToolbar.tsx",
+    "line": 28,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/SelectionToolbar.tsx",
+    "line": 37,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/common/StatefulGrid.tsx",
+    "line": 70,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/components/demos/PivotDetails.tsx",
+    "line": 128,
+    "tag": "StatefulGrid"
+  },
+  {
+    "file": "src/components/graphFilterControls.tsx",
+    "line": 14,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/graphFilterControls.tsx",
+    "line": 61,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/graphFilterControls.tsx",
+    "line": 75,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/graphFilterControls.tsx",
+    "line": 146,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/graphFilterControls.tsx",
+    "line": 161,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/graphFilterControls.tsx",
+    "line": 176,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/graphFilterControls.tsx",
+    "line": 185,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyEditorGrids.tsx",
+    "line": 105,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyEditorGrids.tsx",
+    "line": 132,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyEditorGrids.tsx",
+    "line": 155,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyEditorGrids.tsx",
+    "line": 931,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyEditorGrids.tsx",
+    "line": 962,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyEditorGrids.tsx",
+    "line": 989,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyEditorGrids.tsx",
+    "line": 1020,
+    "tag": "UiGrid"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 195,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 196,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 226,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 259,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 276,
+    "tag": "input"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 301,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 319,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 337,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 346,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 361,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 383,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 391,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 406,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 426,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 438,
+    "tag": "select"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 450,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 460,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 484,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 487,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 498,
+    "tag": "FormInput"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 527,
+    "tag": "Disclosure"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 543,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/knowledge/KnowledgePolicyGuide.tsx",
+    "line": 550,
+    "tag": "Button"
+  },
+  {
+    "file": "src/components/modals/DeleteConfirmModal.tsx",
+    "line": 27,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/components/modals/DeleteConfirmModal.tsx",
+    "line": 57,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/modals/DeleteConfirmModal.tsx",
+    "line": 66,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/modals/RegenerateConfirmModal.tsx",
+    "line": 27,
+    "tag": "Modal"
+  },
+  {
+    "file": "src/components/modals/RegenerateConfirmModal.tsx",
+    "line": 51,
+    "tag": "button"
+  },
+  {
+    "file": "src/components/modals/RegenerateConfirmModal.tsx",
+    "line": 60,
+    "tag": "button"
+  },
+  {
+    "file": "Bifrost/Bifrost.tsx",
+    "line": 109,
+    "tag": "button"
+  },
+  {
+    "file": "Bifrost/Bifrost.tsx",
+    "line": 532,
+    "tag": "button"
+  },
+  {
+    "file": "Bifrost/Bifrost.tsx",
+    "line": 601,
+    "tag": "textarea"
+  },
+  {
+    "file": "Bifrost/Bifrost.tsx",
+    "line": 611,
+    "tag": "button"
+  }
+]

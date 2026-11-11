@@ -1,9 +1,10 @@
+import {useViewState} from '../../utils/useUrlState';
 /**
  * QueryPanel - Cypher query editor and results
  * Extracted from Browser.tsx for reusability
  */
 
-import { useState, useRef } from "react";
+import { useRef,useId } from "react";
 import { Play, History } from "lucide-react";
 import { QueryResultsTable } from "./QueryResultsTable";
 import { SelectionToolbar } from "../common/SelectionToolbar";
@@ -66,9 +67,10 @@ export function QueryPanel({
   onDeleteClick,
   deleting = false,
 }: QueryPanelProps) {
-  const [showHistory, setShowHistory] = useState(false);
-  const [autocompleteEnabled, setAutocompleteEnabled] = useState(true);
-  const [continueOnError, setContinueOnError] = useState(false);
+  const editorId=useId();
+  const [showHistory, setShowHistory] = useViewState('history', false);
+  const [autocompleteEnabled, setAutocompleteEnabled] = useViewState('autocomplete', true);
+  const [continueOnError, setContinueOnError] = useViewState('continueOnError', false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const runningIndex = cypherResults.findIndex((r) => r.status === "running");
   const completedCount = cypherResults.filter((r) => r.status === "success" || r.status === "error").length;
@@ -96,8 +98,10 @@ export function QueryPanel({
   return (
     <div className="flex-1 flex flex-col p-4 gap-4">
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-        <div className="relative pb-32">
+        <label htmlFor={editorId} className="text-sm text-norse-silver">Cypher query</label>
+        <div className="relative">
           <textarea
+            id={editorId}
             ref={textareaRef}
             value={cypherQuery}
             onChange={(e) => setCypherQuery(e.target.value)}
@@ -109,6 +113,8 @@ export function QueryPanel({
             <button
               type="button"
               onClick={() => setShowHistory(!showHistory)}
+              aria-expanded={showHistory}
+              aria-label="Query history"
               className="p-1.5 rounded hover:bg-norse-rune transition-colors"
               title="Query History"
             >
@@ -117,6 +123,7 @@ export function QueryPanel({
             <button
               type="button"
               onClick={() => setAutocompleteEnabled(!autocompleteEnabled)}
+              aria-pressed={autocompleteEnabled}
               className={`p-1.5 rounded transition-colors ${
                 autocompleteEnabled
                   ? "bg-nornic-primary/20 hover:bg-nornic-primary/30"
@@ -147,6 +154,7 @@ export function QueryPanel({
           />
         </div>
 
+        {showHistory && queryHistory.length===0 && <p role="status" className="text-sm text-norse-silver">No queries in this session yet.</p>}
         {showHistory && queryHistory.length > 0 && (
           <div className="bg-norse-stone border border-norse-rune rounded-lg p-2 max-h-40 overflow-y-auto">
             {queryHistory.map((q) => (

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {useViewState} from '../utils/useUrlState';
+import { useCallback, useEffect, useRef, useState } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import { forceCollide, forceLink, forceX, forceY, forceZ } from "d3-force-3d";
 import { ChevronDown, ChevronUp, Grip, PanelRightClose, PanelRightOpen } from "lucide-react";
@@ -449,74 +450,41 @@ export function Graphify() {
   const searchTimerRef = useRef<number | null>(null);
 
   const [databases, setDatabases] = useState<string[]>([]);
-  const [database, setDatabase] = useState<string>("");
-  const [customRoot, setCustomRoot] = useState<{ id: string; label: string } | null>(null);
+  const [database, setDatabase] = useViewState<string>('database', "");
+  const [loaded,setLoaded]=useViewState('loaded',false);
+  const [selectedId,setSelectedId]=useViewState<string|null>('node',null);
+  const lastLoadSignatureRef=useRef<string|null>(null);
+  const [customRoot, setCustomRoot] = useViewState<{ id: string; label: string } | null>('root',null);
   // Mirror of customRoot for stale-closure-free reads inside
   // loadFromDatabase: handlers update it synchronously before scheduling the
   // reload, so the fetch always sees the root that was just chosen.
-  const customRootRef = useRef<{ id: string; label: string } | null>(null);
-  const [depth, setDepth] = useState<number>(DEFAULT_DEPTH);
-  const [showTests, setShowTests] = useState(false);
-  const [colorBy, setColorBy] = useState<"kind" | "community">("kind");
-  const [groupByCommunity, setGroupByCommunity] = useState(true);
+  const customRootRef = useRef<{ id: string; label: string } | null>(customRoot);
+  customRootRef.current=customRoot;
+  const [depth, setDepth] = useViewState<number>('depth', DEFAULT_DEPTH);
+  const [showTests, setShowTests] = useViewState('tests', false);
+  const [colorBy, setColorBy] = useViewState<"kind" | "community">('color', "kind");
+  const [groupByCommunity, setGroupByCommunity] = useViewState('group', true);
   const [communityLegend, setCommunityLegend] = useState<Array<{ id: string; name: string; size: number }>>([]);
   const colorByRef = useRef<"kind" | "community">("kind");
   const groupByCommunityRef = useRef(true);
-  const [controlsVisible, setControlsVisible] = useState(true);
+  const [controlsVisible, setControlsVisible] = useViewState('controls', true);
   // Filter entries are managed as add/remove lists in the filter panel;
   // applying them reloads the graph with the lists sent to the
   // neighborhood endpoint. All lists persist in localStorage so settings
   // survive reloads and restarts.
-  const FILTERS_STORAGE_KEY = "nornicdb.graphify.filters.v1";
-  interface StoredGraphifyFilters {
-    includeLabels?: string[];
-    includeEdgeTypes?: string[];
-    includeNames?: string[];
-    includeProps?: GraphPropertyFilter[];
-    excludeLabels?: string[];
-    excludeEdgeTypes?: string[];
-    excludeNames?: string[];
-    excludeProps?: GraphPropertyFilter[];
-  }
-  const initialFilters = useMemo<StoredGraphifyFilters>(() => {
-    try {
-      const raw = localStorage.getItem(FILTERS_STORAGE_KEY);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw) as StoredGraphifyFilters;
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch {
-      return {};
-    }
-  }, []);
-  const [includeLabels, setIncludeLabels] = useState<string[]>(
-    initialFilters.includeLabels ?? [],
-  );
-  const [includeEdgeTypes, setIncludeEdgeTypes] = useState<string[]>(
-    initialFilters.includeEdgeTypes ?? [...CALL_RELATION_TYPES],
-  );
-  const [includeNames, setIncludeNames] = useState<string[]>(
-    initialFilters.includeNames ?? [],
-  );
-  const [includeProps, setIncludeProps] = useState<GraphPropertyFilter[]>(
-    initialFilters.includeProps ?? [],
-  );
-  const [excludeLabels, setExcludeLabels] = useState<string[]>(
-    initialFilters.excludeLabels ?? [],
-  );
-  const [excludeEdgeTypes, setExcludeEdgeTypes] = useState<string[]>(
-    initialFilters.excludeEdgeTypes ?? [],
-  );
-  const [excludeNames, setExcludeNames] = useState<string[]>(
-    initialFilters.excludeNames ?? [],
-  );
-  const [excludeProps, setExcludeProps] = useState<GraphPropertyFilter[]>(
-    initialFilters.excludeProps ?? [],
-  );
+  const [includeLabels, setIncludeLabels] = useViewState<string[]>('graphify.includeLabels', []);
+  const [includeEdgeTypes, setIncludeEdgeTypes] = useViewState<string[]>('graphify.includeEdgeTypes', [...CALL_RELATION_TYPES]);
+  const [includeNames, setIncludeNames] = useViewState<string[]>('graphify.includeNames', []);
+  const [includeProps, setIncludeProps] = useViewState<GraphPropertyFilter[]>('graphify.includeProps', []);
+  const [excludeLabels, setExcludeLabels] = useViewState<string[]>('graphify.excludeLabels', []);
+  const [excludeEdgeTypes, setExcludeEdgeTypes] = useViewState<string[]>('graphify.excludeEdgeTypes', []);
+  const [excludeNames, setExcludeNames] = useViewState<string[]>('graphify.excludeNames', []);
+  const [excludeProps, setExcludeProps] = useViewState<GraphPropertyFilter[]>('graphify.excludeProps', []);
   // Disconnected subgraphs reported by the endpoint after exclusion
   // filters; selecting one dims the rest of the scene.
   const [components, setComponents] = useState<GraphNeighborhoodResponse[]>([]);
-  const [activeComponent, setActiveComponent] = useState<number | null>(null);
-  const [componentsVisible, setComponentsVisible] = useState(false);
+  const [activeComponent, setActiveComponent] = useViewState<number | null>('component', null);
+  const [componentsVisible, setComponentsVisible] = useViewState('components', false);
   const [source, setSource] = useState<LoadSource | null>(null);
   const [status, setStatus] = useState<string>(
     "select a database and load the graphify tree",
@@ -529,7 +497,7 @@ export function Graphify() {
   const [bodyLoading, setBodyLoading] = useState(false);
   const [bodySource, setBodySource] = useState<"artifact" | "db" | null>(null);
   const [neighbors, setNeighbors] = useState<Neighbor[]>([]);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useViewState('q', "");
   const [searchResults, setSearchResults] = useState<Array<{ id: string; label: string; sourceFile?: string; score?: number }>>([]);
   const [similarLoading, setSimilarLoading] = useState(false);
   const [similarCount, setSimilarCount] = useState<number | null>(null);
@@ -539,7 +507,7 @@ export function Graphify() {
     width: 384,
     height: 480,
   }, window.innerWidth, window.innerHeight));
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useViewState('upload', false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadDbName, setUploadDbName] = useState("");
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -580,6 +548,7 @@ export function Graphify() {
         const names = await api.listDatabaseNames();
         if (cancelled) return;
         setDatabases(names);
+        if(database)return;
         if (names.includes("nornicdbcode")) {
           setDatabase("nornicdbcode");
         } else if (names.includes("graphify")) {
@@ -603,20 +572,6 @@ export function Graphify() {
       cancelled = true;
     };
   }, []);
-
-  // Reload the tree when the test-file filter flips (skip the initial
-  // render; the Load tree button drives the first fetch).
-  const showTestsFirstRenderRef = useRef(true);
-  useEffect(() => {
-    if (showTestsFirstRenderRef.current) {
-      showTestsFirstRenderRef.current = false;
-      return;
-    }
-    if (database && !loading) {
-      void loadFromDatabase();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showTests]);
 
   // Recolor in place when the color mode flips.
   useEffect(() => {
@@ -647,36 +602,6 @@ export function Graphify() {
     excludeNames,
     excludeProps,
   ]);
-  const filtersFirstRenderRef = useRef(true);
-  useEffect(() => {
-    if (filtersFirstRenderRef.current) {
-      filtersFirstRenderRef.current = false;
-      return;
-    }
-    if (database && !loading) {
-      void loadFromDatabase();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersKey]);
-
-  // Persist every filter change so settings survive reloads and restarts.
-  useEffect(() => {
-    localStorage.setItem(
-      FILTERS_STORAGE_KEY,
-      JSON.stringify({
-        includeLabels,
-        includeEdgeTypes,
-        includeNames,
-        includeProps,
-        excludeLabels,
-        excludeEdgeTypes,
-        excludeNames,
-        excludeProps,
-      }),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersKey]);
-
   // --- Graph init (once) ---------------------------------------------------
 
   useEffect(() => {
@@ -783,6 +708,7 @@ export function Graphify() {
       if (!node) return;
       selectedIdRef.current = id;
       setSelected(node);
+      setSelectedId(id);
       applySelectionVisuals(id);
 
       const fg = graphRef.current;
@@ -986,6 +912,8 @@ export function Graphify() {
 
   const loadFromDatabase = useCallback(async (dbNameOverride?: string) => {
     const dbName = dbNameOverride ?? database;
+    lastLoadSignatureRef.current=JSON.stringify([dbName,customRootRef.current,depth,showTests,filtersKey]);
+    setLoaded(true);
     if (!dbName) return;
     setLoading(true);
     setError(null);
@@ -1179,7 +1107,7 @@ export function Graphify() {
       setActiveComponent(null);
       // Auto-select the root (or the newly chosen re-root symbol) so its
       // details pane opens immediately after every (re)load.
-      const focusId = customRootRef.current?.id ?? rootId;
+      const focusId = selectedId ?? customRootRef.current?.id ?? rootId;
       const focusNode = nodeByIdRef.current.get(focusId);
       if (focusNode) {
         selectedIdRef.current = focusId;
@@ -1219,6 +1147,14 @@ export function Graphify() {
     excludeNames,
     excludeProps,
   ]);
+
+  const loadRef=useRef(loadFromDatabase);loadRef.current=loadFromDatabase;
+  const loadSignature=JSON.stringify([database,customRoot,depth,showTests,filtersKey]);
+  useEffect(()=>{if(loaded && database && lastLoadSignatureRef.current!==loadSignature)void loadRef.current();},[loaded,database,loadSignature]);
+  useEffect(()=>{
+    if(selectedId && nodeByIdRef.current.has(selectedId))void selectNode(selectedId,false);
+    else if(!selectedId){setSelected(null);applySelectionVisuals(null);}
+  },[selectedId,source,selectNode,applySelectionVisuals]);
 
   const ingestArtifact = useCallback(async () => {
     if (!uploadFile) return;
@@ -1720,7 +1656,7 @@ export function Graphify() {
   }, []);
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#04060c] text-norse-silver font-display">
+    <div className="relative w-full h-screen overflow-hidden bg-[#04060c] text-norse-silver font-display">
       <div ref={containerRef} className="absolute inset-0" />
 
       {/* Title strip */}
@@ -1786,6 +1722,7 @@ export function Graphify() {
         <div className="mt-3 flex items-center gap-2">
           <select
             value={database}
+            aria-label="Code graph database"
             onChange={(e) => setDatabase(e.target.value)}
             className="flex-1 rounded border border-norse-rune bg-norse-night px-2 py-1.5 text-xs text-norse-silver focus:outline-none focus:border-sky-400"
           >
@@ -2315,6 +2252,7 @@ export function Graphify() {
             <button
               onClick={() => {
                 selectedIdRef.current = null;
+                setSelectedId(null);
                 setSelected(null);
                 setBody(null);
                 setBodySource(null);

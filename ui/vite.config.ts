@@ -98,6 +98,12 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5174,
       proxy: {
+        "^/status$": {target: proxyTarget, changeOrigin:true},
+        "^/$": {
+          target:proxyTarget,
+          changeOrigin:true,
+          bypass(req) { if(req.headers.accept?.includes('text/html')) return '/index.html'; },
+        },
         // Proxy API requests to NornicDB server
         "/api": {
           target: proxyTarget,
@@ -112,7 +118,8 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: true,
         },
-        "/nornicdb": {
+        "^/mcp(?:/|$)": { target:proxyTarget,changeOrigin:true },
+        "^/nornicdb(?:/|$)": {
           target: proxyTarget,
           changeOrigin: true,
         },
