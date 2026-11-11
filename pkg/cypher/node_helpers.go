@@ -462,3 +462,22 @@ func (e *StorageExecutor) extractLabels(pattern string) []string {
 	_, labels, _ := parseNodeHead(head)
 	return labels
 }
+
+// admitTraversalStartNodes applies complete pattern admission once, before
+// either traversal executor runs. Preserve the candidate slice when all pass;
+// a rejected candidate requires a separate slice because seeds may be shared.
+func (e *StorageExecutor) admitTraversalStartNodes(ctx context.Context, pattern nodePatternInfo, nodes []*storage.Node) []*storage.Node {
+	for i, node := range nodes {
+		if e.pipelineNodeMatchesPattern(ctx, node, pattern) {
+			continue
+		}
+		admitted := append([]*storage.Node(nil), nodes[:i]...)
+		for _, rest := range nodes[i+1:] {
+			if e.pipelineNodeMatchesPattern(ctx, rest, pattern) {
+				admitted = append(admitted, rest)
+			}
+		}
+		return admitted
+	}
+	return nodes
+}
