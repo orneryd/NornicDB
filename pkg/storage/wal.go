@@ -2380,9 +2380,8 @@ func ReplayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 // the derived counts its physical replay did not transport.
 func replayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 	switch entry.Operation {
-	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
-		// Control records do not change graph state. Embedding audit records
-		// are regenerable, not semantic replay instructions.
+	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort:
+		// Control records do not change graph state.
 		return nil
 	}
 	{
@@ -2444,6 +2443,9 @@ func replayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
 		return namespacedEngine.UpdateNode(ctx, NodeUpdateRequest{After: data.Node})
+
+	case OpUpdateEmbedding:
+		return replayEmbeddingOutcome(ctx, namespacedEngine, entry)
 
 	case OpDeleteNode:
 		var data WALDeleteData

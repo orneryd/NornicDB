@@ -24,6 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relationship uniqueness indexes preserve distinct escaped UTF-16 property names, preventing a duplicate value from bypassing its constraint in a native transaction. Existing stored data and storage formats are unchanged.
 
+- A store rebuilt at start from its latest snapshot and the journal
+  (automatic recovery, after the store fails to open with an error that
+  looks like corruption) now replays the journal's embedding records. At
+  each record that names a node, the rebuild removes the node's managed
+  vectors and embedding metadata restored so far and keeps its named
+  vectors; a later journaled update that carries the node's vectors restores
+  them. On a journaled store, "regenerate embeddings" and the embedding
+  clear now write one such record, without vectors, for each node they
+  clear. Before, the clear wrote nothing to the journal and a rebuild
+  ignored the record, so a node whose vectors were stored inside its record,
+  as a `WITH EMBEDDING` statement stores them, came back with the vectors it
+  had before the regeneration. If the journal refuses a node's record, the
+  clear stops at that node and returns the error with the number of nodes
+  cleared: the HTTP clear answers 500, the GraphQL
+  `triggerEmbedding(regenerate: true)` mutation returns the error, and the
+  regenerate route logs a failed clear or a skipped regeneration and returns
+  before its wake of the embedding worker. Not fixed: when an ordinary
+  update of the same node is journaled between the clear's record and its
+  write of the node, a rebuild restores that node's old vectors.
+
 - Collection/document traversals consider candidate and adjacency work before
   reversing onto an indexed endpoint. Inline start keys participate without
   a `WHERE` clause, and known final endpoints avoid unrelated node hydration.
