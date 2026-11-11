@@ -90,25 +90,39 @@ func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionD
 func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64, lastGoodSeq uint64, reason string, ok bool, err error) {
 	offset := int64(0)
 	lastGoodSeq = 0
+	// A spanned record is acknowledged only after its last part. A cut while
+	// its group is open removes the whole group, so no part of an
+	// unacknowledged record remains in front of later appends.
+	var spanned walRecordAssembler
+	var groupStart int64
+	cut := func(at int64, why string) (int64, uint64, string, bool, error) {
+		if spanned.open() {
+			at = groupStart
+		}
+		return at, lastGoodSeq, why, false, nil
+	}
 
 	for {
 		if offset == fileSize {
+			if spanned.open() {
+				return cut(offset, "incomplete_spanned_record")
+			}
 			return 0, lastGoodSeq, "", true, nil
 		}
 		if offset > fileSize {
 			// Should be impossible, but be safe.
-			return offset, lastGoodSeq, "inconsistent_size", false, nil
+			return cut(offset, "inconsistent_size")
 		}
 
 		// Need at least a full header to start a record.
 		if fileSize-offset < 9 {
-			return offset, lastGoodSeq, "incomplete_tail", false, nil
+			return cut(offset, "incomplete_tail")
 		}
 
 		header := make([]byte, 9)
 		if _, err := file.ReadAt(header, offset); err != nil {
 			if err == io.EOF {
-				return offset, lastGoodSeq, "incomplete_tail", false, nil
+				return cut(offset, "incomplete_tail")
 			}
 			return 0, 0, "", false, fmt.Errorf("wal: startup repair read header failed: %w", err)
 		}
@@ -116,11 +130,11 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 		magic := binary.LittleEndian.Uint32(header[0:4])
 		if magic != walMagic {
 			// Treat as corrupted tail: truncate from this boundary.
-			return offset, lastGoodSeq, "invalid_magic", false, nil
+			return cut(offset, "invalid_magic")
 		}
 
 		version := header[4]
-		if version != walFormatVersionCurrent {
+		if !walFrameVersionReadable(version) {
 			// A newer format is not evidence of a torn write. Never destroy data
 			// merely because this binary cannot read it.
 			return 0, lastGoodSeq, "", false, unsupportedWALVersion(version)
@@ -134,13 +148,13 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 				offset += length
 				continue
 			}
-			return offset, lastGoodSeq, "invalid_payload_size", false, nil
+			return cut(offset, "invalid_payload_size")
 		}
 
 		// Ensure record fits in file (payload + crc at minimum).
 		minRecordLen := int64(9) + int64(payloadLen) + int64(4)
 		if fileSize-offset < minRecordLen {
-			return offset, lastGoodSeq, "incomplete_tail", false, nil
+			return cut(offset, "incomplete_tail")
 		}
 
 		// Read payload.
@@ -148,7 +162,7 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 		payloadOff := offset + 9
 		if _, err := file.ReadAt(payload, payloadOff); err != nil {
 			if err == io.EOF {
-				return offset, lastGoodSeq, "incomplete_tail", false, nil
+				return cut(offset, "incomplete_tail")
 			}
 			return 0, 0, "", false, fmt.Errorf("wal: startup repair read payload failed: %w", err)
 		}
@@ -158,14 +172,14 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 		crcOff := payloadOff + int64(payloadLen)
 		if _, err := file.ReadAt(crcBuf, crcOff); err != nil {
 			if err == io.EOF {
-				return offset, lastGoodSeq, "incomplete_tail", false, nil
+				return cut(offset, "incomplete_tail")
 			}
 			return 0, 0, "", false, fmt.Errorf("wal: startup repair read crc failed: %w", err)
 		}
 		storedCRC := binary.LittleEndian.Uint32(crcBuf)
 		computedCRC := crc32Checksum(payload)
 		if storedCRC != computedCRC {
-			return offset, lastGoodSeq, "crc_mismatch", false, nil
+			return cut(offset, "crc_mismatch")
 		}
 
 		// Version 2+: verify trailer and padding.
@@ -173,26 +187,26 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 		if version >= 2 {
 			// Trailer must be present.
 			if fileSize-offset < recordLen+8 {
-				return offset, lastGoodSeq, "incomplete_tail", false, nil
+				return cut(offset, "incomplete_tail")
 			}
 
 			trailerBuf := make([]byte, 8)
 			trailerOff := crcOff + 4
 			if _, err := file.ReadAt(trailerBuf, trailerOff); err != nil {
 				if err == io.EOF {
-					return offset, lastGoodSeq, "incomplete_tail", false, nil
+					return cut(offset, "incomplete_tail")
 				}
 				return 0, 0, "", false, fmt.Errorf("wal: startup repair read trailer failed: %w", err)
 			}
 			if binary.LittleEndian.Uint64(trailerBuf) != walTrailer {
-				return offset, lastGoodSeq, "invalid_trailer", false, nil
+				return cut(offset, "invalid_trailer")
 			}
 
 			// Account for trailer + padding alignment.
 			rawRecordLen := recordLen + 8
 			alignedRecordLen := alignUp(rawRecordLen)
 			if fileSize-offset < alignedRecordLen {
-				return offset, lastGoodSeq, "incomplete_tail", false, nil
+				return cut(offset, "incomplete_tail")
 			}
 			recordLen = alignedRecordLen
 		}
@@ -201,14 +215,23 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 		entry, err := WALEntry{}, error(nil)
 		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
 		if err != nil {
-			return offset, lastGoodSeq, "invalid_json", false, nil
+			return cut(offset, "invalid_json")
 		}
 		// Verify inner data checksum (defense-in-depth).
 		if entry.Checksum != crc32Checksum(entry.Data) {
-			return offset, lastGoodSeq, "data_checksum_mismatch", false, nil
+			return cut(offset, "data_checksum_mismatch")
 		}
 
-		lastGoodSeq = entry.Sequence
+		if version == walFormatVersionSpanned && len(entry.Data) >= walSpannedPartHeaderLen && binary.LittleEndian.Uint32(entry.Data[0:4]) == 0 {
+			groupStart = offset
+		}
+		logical, complete, spanErr := spanned.add(entry, version)
+		if spanErr != nil {
+			return cut(offset, "invalid_spanned_record")
+		}
+		if complete {
+			lastGoodSeq = logical.Sequence
+		}
 		offset += recordLen
 	}
 }
@@ -239,7 +262,7 @@ func truncateWALFile(walPath string, truncateOffset int64, lastGoodSeq uint64, r
 		LastGoodSeq:    lastGoodSeq,
 		RecoveryAction: "truncate_incomplete_tail",
 	}
-	if reason != "" && reason != "incomplete_tail" {
+	if reason != "" && reason != "incomplete_tail" && reason != "incomplete_spanned_record" {
 		diag.RecoveryAction = "truncate_corrupt_tail"
 		diag.Operation = reason
 	}

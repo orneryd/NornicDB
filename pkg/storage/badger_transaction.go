@@ -1069,15 +1069,21 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		}
 	}
 
-	var suppliedNewVectors bool
+	var suppliedNewVectors, managedKept bool
 	body := node
 	var err error
 	if !committedImage {
-		body, suppliedNewVectors, err = tx.reconcileManagedEmbeddingsLocked(oldNode, node)
-		if err != nil {
-			return err
-		}
+		body, suppliedNewVectors, managedKept, err = tx.reconcileManagedEmbeddingsLocked(oldNode, node)
+	} else if updateRequest.retained != 0 {
+		// A journal record omitted the vectors this update kept (NOR-412).
+		body, managedKept, err = tx.restoreRetainedVectorsLocked(oldNode, node, updateRequest.retained, updateRequest.retainedIDs)
 	}
+	if err != nil {
+		return err
+	}
+	// A kept managed set is not an authoritative replacement: its stored
+	// range stays as it is, exactly as the original commit left it.
+	replacesVectors := committedImage && !managedKept
 
 	// Buffer updated node write
 	nodeBytes, embeddingsSeparate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), body)
@@ -1086,7 +1092,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 	}
 	_, dropped := tx.droppedEmbeddings[node.ID]
 	invalidated := dropped && len(node.ChunkEmbeddings) == 0 && node.EmbedMeta == nil
-	if committedImage || suppliedNewVectors || (embeddingsSeparate && body == node) || invalidated {
+	if replacesVectors || suppliedNewVectors || (embeddingsSeparate && body == node) || invalidated {
 		if invalidated && !committedImage && !suppliedNewVectors {
 			// The normal reconciliation owner already cleared committed keys.
 			tx.clearPendingNodeEmbeddingRangeLocked(node.ID)
@@ -1161,6 +1167,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		NodeID:             node.ID,
 		Node:               nodeCopy,
 		OldNode:            oldNode,
+		retainedVectors:    tx.engine.nodeVectorRetention(oldNode, node, managedKept),
 		nodeObservedBefore: updateRequest.Before,
 	})
 
@@ -1181,8 +1188,10 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 //
 // Embeddings the caller set on node itself (different vectors) are kept as
 // written. The second result reports that replacement so staging can remove
-// obsolete chunk keys without comparing the same vectors a second time.
-func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Node) (*Node, bool, error) {
+// obsolete chunk keys without comparing the same vectors a second time. The
+// third reports that oldNode's embeddings were kept, which the journal record
+// omits (NOR-412).
+func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Node) (*Node, bool, bool, error) {
 	if len(oldNode.ChunkEmbeddings) == 0 && oldNode.EmbedMeta == nil {
 		// Embeddings this transaction already invalidated, carried back by a
 		// copy of the node read before (REMOVE n:Embedded, n.text SET n.x =
@@ -1191,36 +1200,21 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 			node.ChunkEmbeddings = nil
 			node.EmbedMeta = nil
 		}
-		return node, false, nil
+		return node, false, false, nil
 	}
 	if len(node.ChunkEmbeddings) > 0 && !sameChunkEmbeddings(node.ChunkEmbeddings, oldNode.ChunkEmbeddings) {
-		return node, true, nil
+		return node, true, false, nil
 	}
 	meta, sidecar, err := tx.retainedSidecarMetadataLocked(oldNode)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	if canCarryManagedEmbeddings(tx.engine, oldNode, node) {
-		node.ChunkEmbeddings = oldNode.ChunkEmbeddings
-		node.EmbedMeta = oldNode.EmbedMeta
-		if !sidecar {
-			return node, false, nil
+		body, err := tx.keepManagedEmbeddingsLocked(oldNode, node, meta, sidecar)
+		if err != nil {
+			return nil, false, false, err
 		}
-		// An unrelated user mutation advances the body version without
-		// changing the embedded source. Publish the retained sidecar's new
-		// freshness stamp atomically with that body, including repeated writes.
-		if !oldNode.UpdatedAt.Equal(node.UpdatedAt) {
-			meta[embeddingContentUpdatedAtKey] = node.UpdatedAt.UTC().Format(time.RFC3339Nano)
-			data, err := encodeValue(meta)
-			if err != nil {
-				return nil, false, err
-			}
-			tx.bufferSet(embeddingMetaKey(node.ID), data)
-		}
-		body := *node
-		body.ChunkEmbeddings = nil
-		body.EmbedMeta = nil
-		return &body, false, nil
+		return body, false, true, nil
 	}
 	if tx.droppedEmbeddings == nil {
 		tx.droppedEmbeddings = make(map[NodeID]*Node)
@@ -1232,9 +1226,9 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 		tx.bufferDelete(key)
 		return nil
 	}); err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
-	return node, false, nil
+	return node, false, false, nil
 }
 
 // carriesDroppedEmbeddings reports whether node carries the embeddings an

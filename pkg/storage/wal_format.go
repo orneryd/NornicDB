@@ -97,7 +97,7 @@ func validateWALFileVersion(path string, optional bool) error {
 			}
 			return nil // a damaged current tail is handled by the repair owner
 		}
-		if n >= 5 && header[4] != walFormatVersionCurrent {
+		if n >= 5 && !walFrameVersionReadable(header[4]) {
 			return fmt.Errorf("%s: %w", path, unsupportedWALVersion(header[4]))
 		}
 		if n < len(header) {
