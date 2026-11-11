@@ -193,10 +193,18 @@ curl http://localhost:7474/status | jq .embeddings
 ### Trigger Regeneration
 
 ```bash
-# Regenerate all embeddings
-curl -X POST http://localhost:7474/nornicdb/embed/trigger?regenerate=true \
+# Regenerate managed embeddings in one database
+curl -X POST 'http://localhost:7474/nornicdb/embed/trigger?regenerate=true&database=mydb' \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+The optional `database` parameter limits clearing to a concrete database and
+its vector index. Other databases retain their embeddings and the shared
+worker keeps running. The request requires database read/write access and
+administrator permission. Unknown databases return 404; composite databases
+must be targeted through a constituent. The 202 response includes the selected
+database. Regeneration runs asynchronously; worker statistics remain server-wide.
+Omitting `database` preserves the legacy regeneration behavior.
 
 ### Recover Terminal Failures
 
