@@ -8,13 +8,31 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// EntityTransactionVersion identifies the current semantic transaction format.
+// EntityTransactionVersion identifies the newest semantic transaction format.
 // Version 3 stores MessagePack timestamps, preserving unset and Unix epoch as
 // distinct values without the range limit of version 2's Unix nanoseconds.
 // Author: NOR-303 lane (Codex), 2026-10-29; codec change allocated by the user.
-const EntityTransactionVersion uint16 = 3
+//
+// Version 5 is version 3 plus node updates that omit the vectors they kept
+// unchanged (NOR-412): the update names the omitted images in RetainedVectors
+// and identifies each by its content, and replay restores an image from the
+// stored predecessor only when the predecessor's has that identity. A writer
+// stamps the lowest version that carries its record's meaning: a record that
+// omits nothing stays byte-identical to version 3, and a record that omits
+// kept vectors is version 5, which an older reader refuses instead of
+// installing an image without vectors.
+//
+// Version 4 named the omitted images without identifying them. Only builds of
+// this change before it was merged wrote it. It is still read, and no longer
+// written: replay cannot check what such an update kept, so it restores
+// nothing for it (restoreRetainedVectorsLocked).
+const EntityTransactionVersion uint16 = 5
 
-const semanticTransactionUnixNanoVersion uint16 = 2
+const (
+	semanticTransactionUnixNanoVersion     uint16 = 2
+	semanticTransactionTimeVersion         uint16 = 3
+	semanticTransactionUnidentifiedVersion uint16 = 4
+)
 
 // A pointer encoder avoids reflection boxing the two time.Time values in each
 // entity. EncodeTime keeps exactly the same v3 timestamp bytes and range.
@@ -146,6 +164,46 @@ type semanticTransactionWire[T int64 | semanticTransactionTimestamp] struct {
 	Changes     []semanticTransactionChange[T]
 }
 
+// The version-5 wire shape is the version-3 shape plus, on a node, the vector
+// images an update kept from its predecessor and therefore omits (NOR-412):
+// RetainedVectors names them, and RetainedManaged and RetainedNamed hold the
+// identity of each (vectorImageID). The fields are absent when empty. Only a
+// record that omits vectors is encoded from these types, so a record that
+// omits nothing is encoded from the version-3 types above, at their cost and
+// with their exact bytes. Every version decodes into these types: an older
+// record simply has none of the fields, and a version-4 record has only
+// RetainedVectors.
+type semanticTransactionMarkedNode[T int64 | semanticTransactionTimestamp] struct {
+	ID                   string
+	Labels               []string
+	Properties           semanticPropertyValues
+	NamedEmbeddings      map[string][]float32
+	ChunkEmbeddings      [][]float32
+	CreatedAtUnixNs      T
+	UpdatedAtUnixNs      T
+	EmbedMeta            semanticMetadataValues
+	VisibilitySuppressed bool
+	RetainedVectors      vectorRetention `msgpack:",omitempty"`
+	RetainedManaged      []byte          `msgpack:",omitempty"`
+	RetainedNamed        []byte          `msgpack:",omitempty"`
+}
+
+type semanticTransactionMarkedChange[T int64 | semanticTransactionTimestamp] struct {
+	Type   EntityCommandKind
+	Node   *semanticTransactionMarkedNode[T]
+	Edge   *semanticTransactionEdge[T]
+	NodeID string
+	EdgeID string
+}
+
+type semanticTransactionMarkedWire[T int64 | semanticTransactionTimestamp] struct {
+	Mode        EntityCommitMode
+	Version     uint16
+	Namespace   string
+	LogicalTxID string
+	Changes     []semanticTransactionMarkedChange[T]
+}
+
 // EntityTransactionRequest selects raw decoded operations or one immutable
 // prepared transaction. Prepared must be used alone; combining both sources
 // is rejected instead of silently choosing metadata or images from one of them.
@@ -252,6 +310,8 @@ func (encoder *valueEncoder) entityTransaction(request EntityTransactionRequest)
 	}
 	nodes, edges, changes := scratch.nodes, scratch.edges, scratch.changes
 	nextNode, nextEdge := 0, 0
+	// Set when an update kept vectors: its record is then version 5.
+	retainsVectors := false
 	for i, op := range ops {
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
@@ -266,6 +326,7 @@ func (encoder *valueEncoder) entityTransaction(request EntityTransactionRequest)
 				EmbedMeta: semanticMetadataValues{semanticPropertyValues{values: n.EmbedMeta}}, VisibilitySuppressed: n.RuntimeMetadata().VisibilitySuppressed,
 			}
 			changes[i].Node = &nodes[nextNode]
+			retainsVectors = retainsVectors || op.Type == OpUpdateNode && op.retainedVectors != 0
 			nextNode++
 			changes[i].Type = EntityCreateNode
 			if op.Type == OpUpdateNode {
@@ -295,8 +356,73 @@ func (encoder *valueEncoder) entityTransaction(request EntityTransactionRequest)
 			changes[i] = semanticTransactionChange[semanticTransactionTimestamp]{Type: EntityDeleteEdge, EdgeID: string(op.EdgeID)}
 		}
 	}
-	scratch.wire = semanticTransactionWire[semanticTransactionTimestamp]{Mode: mode, Version: EntityTransactionVersion, Namespace: namespace, LogicalTxID: logicalID, Changes: changes}
+	scratch.wire = semanticTransactionWire[semanticTransactionTimestamp]{Mode: mode, Version: semanticTransactionTimeVersion, Namespace: namespace, LogicalTxID: logicalID, Changes: changes}
+	if retainsVectors {
+		return encoder.markedEntityTransaction(&scratch.wire, ops)
+	}
 	return encoder.encode(&scratch.wire, rawMessagePackFraming)
+}
+
+// markedEntityTransaction encodes wire, the version-3 image of ops, as a
+// version-5 record: each node update that kept vectors leaves those images
+// out, names them in RetainedVectors and identifies each from the very image
+// it leaves out, because they are the predecessor's and the record carries
+// only the change (NOR-412). Every other change is carried as it is. An image
+// that is not there to identify (an operation decoded from a record that
+// already omitted it) cannot be claimed again and is refused.
+func (encoder *valueEncoder) markedEntityTransaction(wire *semanticTransactionWire[semanticTransactionTimestamp], ops []Operation) ([]byte, error) {
+	nodes := make([]semanticTransactionMarkedNode[semanticTransactionTimestamp], 0, len(ops))
+	changes := make([]semanticTransactionMarkedChange[semanticTransactionTimestamp], len(ops))
+	// Room for both identities of every change, so the record's byte fields
+	// point into one array that never moves.
+	identities := make([]byte, 0, 2*len(vectorImageID{})*len(ops))
+	for i, change := range wire.Changes {
+		changes[i] = semanticTransactionMarkedChange[semanticTransactionTimestamp]{Type: change.Type, Edge: change.Edge, NodeID: change.NodeID, EdgeID: change.EdgeID}
+		n := change.Node
+		if n == nil {
+			continue
+		}
+		image := semanticTransactionMarkedNode[semanticTransactionTimestamp]{
+			ID: n.ID, Labels: n.Labels, Properties: n.Properties,
+			NamedEmbeddings: n.NamedEmbeddings, ChunkEmbeddings: n.ChunkEmbeddings,
+			CreatedAtUnixNs: n.CreatedAtUnixNs, UpdatedAtUnixNs: n.UpdatedAtUnixNs,
+			EmbedMeta: n.EmbedMeta, VisibilitySuppressed: n.VisibilitySuppressed,
+		}
+		if retained := ops[i].retainedVectors; ops[i].Type == OpUpdateNode && retained != 0 {
+			if retained&^allVectorRetention != 0 {
+				return nil, ErrInvalidData
+			}
+			kept := ops[i].Node
+			if retained&retainedManagedEmbeddings != 0 {
+				if len(kept.ChunkEmbeddings) == 0 && len(kept.EmbedMeta) == 0 {
+					return nil, ErrInvalidData
+				}
+				id, ok := managedVectorImageID(kept)
+				if !ok {
+					return nil, ErrInvalidData
+				}
+				identities = append(identities, id[:]...)
+				image.RetainedManaged = identities[len(identities)-len(id):]
+				image.ChunkEmbeddings = nil
+				image.EmbedMeta = semanticMetadataValues{}
+			}
+			if retained&retainedNamedEmbeddings != 0 {
+				if len(kept.NamedEmbeddings) == 0 {
+					return nil, ErrInvalidData
+				}
+				id := namedVectorImageID(kept.NamedEmbeddings)
+				identities = append(identities, id[:]...)
+				image.RetainedNamed = identities[len(identities)-len(id):]
+				image.NamedEmbeddings = nil
+			}
+			image.RetainedVectors = retained
+		}
+		// nodes never grows past its capacity, so the pointers stay valid.
+		nodes = append(nodes, image)
+		changes[i].Node = &nodes[len(nodes)-1]
+	}
+	marked := semanticTransactionMarkedWire[semanticTransactionTimestamp]{Mode: wire.Mode, Version: EntityTransactionVersion, Namespace: wire.Namespace, LogicalTxID: wire.LogicalTxID, Changes: changes}
+	return encoder.encode(&marked, rawMessagePackFraming)
 }
 
 // DecodeEntityTransaction validates and restores one semantic transaction.
@@ -332,7 +458,7 @@ func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operatio
 					}
 					return time.Unix(0, nanos)
 				})
-			case EntityTransactionVersion:
+			case semanticTransactionTimeVersion, semanticTransactionUnidentifiedVersion, EntityTransactionVersion:
 				return decodeSemanticTransaction(data, version, func(at semanticTransactionTimestamp) time.Time { return time.Time(at) })
 			default:
 				return envelope, nil, ErrInvalidData
@@ -346,7 +472,7 @@ func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operatio
 }
 
 func decodeSemanticTransaction[T int64 | semanticTransactionTimestamp](data []byte, version uint16, timestamp func(T) time.Time) (EntityTransactionEnvelope, []Operation, error) {
-	var wire semanticTransactionWire[T]
+	var wire semanticTransactionMarkedWire[T]
 	var envelope EntityTransactionEnvelope
 	reader := bytes.NewReader(data)
 	if err := msgpack.NewDecoder(reader).Decode(&wire); err != nil {
@@ -364,6 +490,9 @@ func decodeSemanticTransaction[T int64 | semanticTransactionTimestamp](data []by
 		return ok && ns == wire.Namespace
 	}
 	ops := make([]Operation, len(wire.Changes))
+	// The identities of what each marked update kept, one entry per change,
+	// allocated for the first update that carries any.
+	var ids []retainedVectorIDs
 	for i, change := range wire.Changes {
 		switch change.Type {
 		case EntityCreateNode, EntityUpdateNode:
@@ -371,6 +500,9 @@ func decodeSemanticTransaction[T int64 | semanticTransactionTimestamp](data []by
 				return envelope, nil, ErrCrossNamespaceTransaction
 			}
 			n := change.Node
+			if !validRetainedVectors(version, change.Type, n) {
+				return envelope, nil, ErrInvalidData
+			}
 			node := &Node{ID: NodeID(n.ID), Labels: n.Labels, Properties: n.Properties.values, NamedEmbeddings: n.NamedEmbeddings, ChunkEmbeddings: n.ChunkEmbeddings, EmbedMeta: n.EmbedMeta.values}
 			node.SetRuntimeMetadata(NodeRuntimeMetadata{VisibilitySuppressed: n.VisibilitySuppressed})
 			node.CreatedAt = timestamp(n.CreatedAtUnixNs)
@@ -379,7 +511,14 @@ func decodeSemanticTransaction[T int64 | semanticTransactionTimestamp](data []by
 			if change.Type == EntityUpdateNode {
 				kind = OpUpdateNode
 			}
-			ops[i] = Operation{Type: kind, NodeID: node.ID, Node: node}
+			ops[i] = Operation{Type: kind, NodeID: node.ID, Node: node, retainedVectors: n.RetainedVectors}
+			if len(n.RetainedManaged) != 0 || len(n.RetainedNamed) != 0 {
+				if ids == nil {
+					ids = make([]retainedVectorIDs, len(wire.Changes))
+				}
+				copy(ids[i].managed[:], n.RetainedManaged)
+				copy(ids[i].named[:], n.RetainedNamed)
+			}
 		case EntityCreateEdge, EntityUpdateEdge:
 			if change.Edge == nil || !sameNamespace(change.Edge.ID) || !sameNamespace(change.Edge.StartNode) || !sameNamespace(change.Edge.EndNode) {
 				return envelope, nil, ErrCrossNamespaceTransaction
@@ -407,5 +546,34 @@ func decodeSemanticTransaction[T int64 | semanticTransactionTimestamp](data []by
 			return envelope, nil, ErrInvalidData
 		}
 	}
+	envelope.retainedVectorIDs = ids
 	return envelope, ops, nil
+}
+
+// validRetainedVectors accepts a retention mark only where its writer can
+// produce it: a node update of version 4 or later with known bits whose
+// omitted images are in fact absent. A version-5 update identifies exactly the
+// images its mark names; a version-4 update identifies none. Anything else is
+// malformed, never silently reinterpreted.
+func validRetainedVectors[T int64 | semanticTransactionTimestamp](version uint16, kind EntityCommandKind, n *semanticTransactionMarkedNode[T]) bool {
+	retained := n.RetainedVectors
+	identity := func(group vectorRetention) int {
+		if version < EntityTransactionVersion || retained&group == 0 {
+			return 0
+		}
+		return len(vectorImageID{})
+	}
+	if len(n.RetainedManaged) != identity(retainedManagedEmbeddings) || len(n.RetainedNamed) != identity(retainedNamedEmbeddings) {
+		return false
+	}
+	if retained == 0 {
+		return true
+	}
+	if version < semanticTransactionUnidentifiedVersion || kind != EntityUpdateNode || retained&^allVectorRetention != 0 {
+		return false
+	}
+	if retained&retainedManagedEmbeddings != 0 && (len(n.ChunkEmbeddings) > 0 || n.EmbedMeta.values != nil) {
+		return false
+	}
+	return retained&retainedNamedEmbeddings == 0 || len(n.NamedEmbeddings) == 0
 }

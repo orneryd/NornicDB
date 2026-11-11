@@ -364,16 +364,16 @@
     {
       "space": "prefixMVCCMetaNamespaceSeq",
       "class": "mvcc-sequence",
-      "origin": "pkg/storage/badger.go:1428",
-      "func": "pkg/storage.BadgerEngine.persistMVCCSequence$1 pkg/storage/badger.go:1428",
+      "origin": "pkg/storage/badger.go:1434",
+      "func": "pkg/storage.BadgerEngine.persistMVCCSequence$1 pkg/storage/badger.go:1434",
       "where": "pkg/storage.BadgerEngine.persistMVCCSequence -"
     },
     {
       "space": "prefixMVCCMetaSchemaVersion",
       "class": "store-metadata",
-      "origin": "pkg/storage/badger.go:1459",
-      "func": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1459",
-      "where": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1459"
+      "origin": "pkg/storage/badger.go:1465",
+      "func": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1465",
+      "where": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1465"
     },
     {
       "space": "prefixMVCCMeta+\"accessmeta:\"",
@@ -2275,9 +2275,9 @@
     {
       "space": "prefixMVCCMeta+\"wal-property-clean\"",
       "class": "store-metadata",
-      "origin": "pkg/storage/wal_property_epoch_close.go:354",
-      "func": "pkg/storage.BadgerEngine.finishPropertyWALOnClose$2 pkg/storage/wal_property_epoch_close.go:354",
-      "where": "pkg/storage.BadgerEngine.finishPropertyWALOnClose$2 pkg/storage/wal_property_epoch_close.go:354"
+      "origin": "pkg/storage/wal_property_epoch_close.go:363",
+      "func": "pkg/storage.BadgerEngine.finishPropertyWALOnClose$2 pkg/storage/wal_property_epoch_close.go:363",
+      "where": "pkg/storage.BadgerEngine.finishPropertyWALOnClose$2 pkg/storage/wal_property_epoch_close.go:363"
     },
     {
       "space": "prefixMVCCMeta+\"wal-property-identity\"",
@@ -2584,7 +2584,7 @@
       "field": "pkg/storage.BadgerEngine.adjCacheMaxNodes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1102"
+      "pos": "pkg/storage/badger.go:1107"
     },
     {
       "field": "pkg/storage.BadgerEngine.cacheHits",
@@ -2614,7 +2614,7 @@
       "field": "pkg/storage.BadgerEngine.edgeCacheMaxItems",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1100"
+      "pos": "pkg/storage/badger.go:1105"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheSources",
@@ -2728,13 +2728,13 @@
       "field": "pkg/storage.BadgerEngine.edgeTypeCacheMaxTypes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1089"
+      "pos": "pkg/storage/badger.go:1094"
     },
     {
       "field": "pkg/storage.BadgerEngine.labelFirstCacheMax",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1092"
+      "pos": "pkg/storage/badger.go:1097"
     },
     {
       "field": "pkg/storage.BadgerEngine.manualSuppressionCount",
@@ -2764,13 +2764,13 @@
       "field": "pkg/storage.BadgerEngine.mvccLegacyGlobalSeed",
       "class": "MVCC sequence",
       "func": "pkg/storage.BadgerEngine.initializeMVCCSequence",
-      "pos": "pkg/storage/badger.go:1329"
+      "pos": "pkg/storage/badger.go:1335"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
       "class": "entity-count",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1106"
+      "pos": "pkg/storage/badger.go:1111"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
@@ -2800,7 +2800,7 @@
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
       "class": "entity-count",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1105"
+      "pos": "pkg/storage/badger.go:1110"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
@@ -2860,7 +2860,7 @@
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheMaxBytes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1086"
+      "pos": "pkg/storage/badger.go:1091"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheBytes",
@@ -2896,13 +2896,13 @@
       "field": "pkg/storage.BadgerEngine.nodeCacheMaxBytes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1083"
+      "pos": "pkg/storage/badger.go:1088"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheMaxEntries",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1080"
+      "pos": "pkg/storage/badger.go:1085"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCount",
@@ -2959,10 +2959,16 @@
       "pos": "pkg/storage/migration_v3_to_v4.go:107"
     },
     {
+      "field": "pkg/storage.BadgerEngine.walRecordPolicy",
+      "class": "configuration",
+      "func": "pkg/storage.NewBadgerEngineWithOptions",
+      "pos": "pkg/storage/badger.go:1117"
+    },
+    {
       "field": "pkg/storage.BadgerTransaction.badgerReadTs",
       "class": "transaction snapshot",
       "func": "pkg/storage.BadgerTransaction.rebaseBadgerAfterDrainLocked",
-      "pos": "pkg/storage/badger_transaction.go:2463"
+      "pos": "pkg/storage/badger_transaction.go:2457"
     },
     {
       "field": "pkg/storage.BadgerTransaction.badgerReadTs",
@@ -2980,7 +2986,7 @@
       "field": "pkg/storage.BadgerTransaction.commitMode",
       "class": "transaction producer durability and ACK policy",
       "func": "pkg/storage.BeginEntityTransaction",
-      "pos": "pkg/storage/accepted_entity_envelope.go:136"
+      "pos": "pkg/storage/accepted_entity_envelope.go:141"
     },
     {
       "field": "pkg/storage.BadgerTransaction.commitMode",
@@ -4654,25 +4660,25 @@
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.valueEncoder.entityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:270"
+      "pos": "pkg/storage/semantic_transaction_wire.go:331"
     },
     {
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.valueEncoder.entityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:272"
+      "pos": "pkg/storage/semantic_transaction_wire.go:333"
     },
     {
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.valueEncoder.entityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:288"
+      "pos": "pkg/storage/semantic_transaction_wire.go:349"
     },
     {
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.valueEncoder.entityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:290"
+      "pos": "pkg/storage/semantic_transaction_wire.go:351"
     },
     {
       "field": "pkg/storage.snapshotFrameWriter.scratch",
@@ -4685,6 +4691,72 @@
       "class": "constraint lock request scratch",
       "func": "pkg/storage.SchemaManager.acquireUniqueConstraintLocks",
       "pos": "pkg/storage/schema_unique_values.go:430"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.count",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.add",
+      "pos": "pkg/storage/wal_spanned_record.go:145"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.count",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.reset",
+      "pos": "pkg/storage/wal_spanned_record.go:187"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.dropped",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.drop",
+      "pos": "pkg/storage/wal_spanned_record.go:181"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.next",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.add",
+      "pos": "pkg/storage/wal_spanned_record.go:145"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.next",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.add",
+      "pos": "pkg/storage/wal_spanned_record.go:154"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.next",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.reset",
+      "pos": "pkg/storage/wal_spanned_record.go:187"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.payload",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.add",
+      "pos": "pkg/storage/wal_spanned_record.go:148"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.payload",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.add",
+      "pos": "pkg/storage/wal_spanned_record.go:153"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.payload",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.reset",
+      "pos": "pkg/storage/wal_spanned_record.go:187"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.seq",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.add",
+      "pos": "pkg/storage/wal_spanned_record.go:145"
+    },
+    {
+      "field": "pkg/storage.walRecordAssembler.seq",
+      "class": "WAL spanned-record read scratch",
+      "func": "pkg/storage.walRecordAssembler.reset",
+      "pos": "pkg/storage/wal_spanned_record.go:187"
     }
   ],
   "decisions": [

@@ -807,6 +807,11 @@ type EngineOptions struct {
 	// another transaction holds. The zero value waits until the key is
 	// released, the wait would close a deadlock, or the statement ends.
 	LockWait LockWaitOptions
+	// WALRecordPolicy is how this engine journals the changes it commits
+	// (NOR-412). The zero value, WALRecordsStandard, journals every node
+	// update with the node's whole image. The engine keeps the value it is
+	// constructed with. Set the same value on the WALConfig of its WAL.
+	WALRecordPolicy WALRecordPolicy
 }
 
 func normalizeRetentionPolicy(policy RetentionPolicy) RetentionPolicy {

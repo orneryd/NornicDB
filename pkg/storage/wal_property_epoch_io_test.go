@@ -218,7 +218,7 @@ func TestWALPropertyEpochFutureFramingRefusedWithoutMutation(t *testing.T) {
 	payload, err := processWALEntryPayload(walPayloadEncode, &current, &WALEntry{Sequence: 1, Operation: OpCreateNode, Data: []byte(`{}`), Checksum: crc32Checksum([]byte(`{}`))}, nil, 0)
 	require.NoError(t, err)
 	lead, _ := buildAtomicRecord(payload, walFormatVersionCurrent)
-	future, _ := buildAtomicRecord([]byte(`{"future":"record"}`), walFormatVersionCurrent+1)
+	future, _ := buildAtomicRecord([]byte(`{"future":"record"}`), walFormatVersionSpanned+1)
 	raw := append(lead, future...)
 	dir := t.TempDir()
 	path := walActivePath(dir)

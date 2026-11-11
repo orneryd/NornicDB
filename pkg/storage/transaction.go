@@ -113,6 +113,7 @@ type Operation struct {
 	skipMissingDelete  bool
 	embeddingOutcome   bool
 	nodeImagePolicy    EntityImagePolicy
+	retainedVectors    vectorRetention
 	nodeObservedBefore *Node
 }
 

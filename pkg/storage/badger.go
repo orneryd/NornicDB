@@ -497,6 +497,11 @@ type BadgerEngine struct {
 	// lockWait bounds and reports MERGE key waits (EngineOptions.LockWait).
 	lockWait LockWaitOptions
 
+	// walRecordPolicy is EngineOptions.WALRecordPolicy as the engine was
+	// constructed with it: whether the records it journals leave out the
+	// vectors a node update kept (NOR-412).
+	walRecordPolicy WALRecordPolicy
+
 	// Plan 04-04-06: pre-bound storage observers cached at AttachMetrics
 	// time (MET-25). Hot-path observation funnels through these — zero
 	// WithLabelValues lookup per Get/Put/Delete/Scan call. Nil-safe: when
@@ -1109,6 +1114,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	engine.idDict = newIDDictionary()
 	engine.idDict.setFreelistTTL(opts.EngineOptions.IDFreelistTTL)
 	engine.lockWait = opts.EngineOptions.LockWait
+	engine.walRecordPolicy = opts.EngineOptions.WALRecordPolicy
 	if err := engine.idDict.loadFromBadger(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to load id dictionary: %w", err)
