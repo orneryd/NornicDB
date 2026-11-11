@@ -376,6 +376,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// help an earlier same-key publisher without waiting for that goroutine.
 	operations := tx.operations
 	cw.entityOperations, cw.entityLogicalID, cw.entityMode = physicalOperations, logicalID, tx.commitMode
+	cw.entityKeptVectors = tx.keptVectors
 	engine, namespace := tx.engine, tx.namespace
 	if len(operations) > 0 || tx.knowledgeSchemaDirty {
 		schema := engine.GetSchemaForNamespace(namespace)

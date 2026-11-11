@@ -79,7 +79,9 @@ func TestSemanticTransactionTimestampVersionIsExplicit(t *testing.T) {
 	require.NoError(t, err)
 	var wire map[string]msgpack.RawMessage
 	require.NoError(t, msgpack.Unmarshal(payload, &wire))
-	for _, version := range []uint16{1, 2, 4} {
+	// Versions 4 to 6 share version 3's timestamps (they add retained-vector
+	// marks, NOR-412); the next unknown version must still be refused.
+	for _, version := range []uint16{1, 2, storage.EntityTransactionVersion + 1} {
 		wire["Version"], err = msgpack.Marshal(version)
 		require.NoError(t, err)
 		changed, err := msgpack.Marshal(wire)

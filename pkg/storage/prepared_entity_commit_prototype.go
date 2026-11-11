@@ -35,9 +35,13 @@ type PreparedEntityCommit struct {
 	namespace, logicalID string
 	operations           []Operation
 	changes              []StoredEntityChange
-	decide               chan bool
-	finished             chan error
-	once                 sync.Once
+	// keptVectors is the staging transaction's record of the vector images
+	// its marked updates kept (BadgerTransaction.keptVectors), which the
+	// journal record's encoder writes (NOR-412).
+	keptVectors map[NodeID]keptVectorImages
+	decide      chan bool
+	finished    chan error
+	once        sync.Once
 }
 
 func (p *PreparedEntityCommit) Namespace() string { return p.namespace }
@@ -118,6 +122,9 @@ var errPreparedEntityDiscarded = errors.New("prepared entity commit discarded")
 type EntityCommitRequest struct {
 	LogicalID  string
 	Operations []Operation
+	// retainedVectorIDs is the decoded record's identity of what each
+	// operation kept (EntityTransactionEnvelope.retainedVectorIDs).
+	retainedVectorIDs []retainedVectorIDs
 }
 
 // PrepareEntityCommit observes the logical receipt once, stages new entity work,
@@ -176,12 +183,17 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		done <- nil
 		return &PreparedEntityCommit{engine: engine, mode: mode, namespace: namespace, logicalID: logicalID, decide: make(chan bool, 1), finished: done, terminal: CommitOutcome{State: CommitApplied}}, nil
 	}
-	for _, op := range request.Operations {
+	for i, op := range request.Operations {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		var kept *retainedVectorIDs
+		if op.retainedVectors != 0 && i < len(request.retainedVectorIDs) {
+			kept = &request.retainedVectorIDs[i]
+		}
 		if err := ApplyEntityChange(ctx, tx, op, func(ctx context.Context, updateRequest NodeUpdateRequest) error {
 			updateRequest.Policy = StoredNodeImages
+			updateRequest.retainedIDs = kept
 			return tx.UpdateGraphNode(ctx, updateRequest)
 		}, func(ctx context.Context, id NodeID) error { return tx.DeleteGraphNode(ctx, id, CascadeEdges) }); err != nil {
 			return nil, err
@@ -225,7 +237,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 				return err
 			}
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
-			prepared = &PreparedEntityCommit{engine: tx.engine, authorityOwner: tx.ID, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
+			prepared = &PreparedEntityCommit{engine: tx.engine, authorityOwner: tx.ID, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, keptVectors: tx.keptVectors, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
 			prepared.retainAuthority = func(admission context.Context) (func(), error) {
 				keyContext := admission

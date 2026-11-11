@@ -27,6 +27,11 @@ type EntityTransactionEnvelope struct {
 	Version     uint16
 	Namespace   string
 	LogicalTxID string
+	// retainedVectorIDs identifies, per decoded operation, the vector images
+	// a node update kept and its record therefore omits (NOR-412). It is nil
+	// when the record identifies none: staging then restores nothing for an
+	// operation that carries a retention mark.
+	retainedVectorIDs []retainedVectorIDs
 }
 
 type entityWriter interface {
@@ -255,8 +260,9 @@ func prepareAcceptedEntityApplication(ctx context.Context, engine Engine, envelo
 		return nil, nil, err
 	}
 	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{
-		LogicalID:  envelope.LogicalTxID,
-		Operations: ops,
+		LogicalID:         envelope.LogicalTxID,
+		Operations:        ops,
+		retainedVectorIDs: envelope.retainedVectorIDs,
 	})
 	if err != nil {
 		return nil, nil, err

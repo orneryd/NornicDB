@@ -21,6 +21,9 @@ type writeBehindTestOptions struct {
 	manualDrain  bool
 	lowMemory    bool
 	memoryPolicy *memory.Policy
+	// records is the journal record policy of the engine and its WAL; the
+	// zero value is the default every engine and WAL opens with.
+	records WALRecordPolicy
 	// finalOutcome checks the terminal Close result for fixtures that
 	// deliberately prevent a clean final drain. Ordinary fixtures stay checked.
 	finalOutcome func(testing.TB, error)
@@ -44,6 +47,7 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 		WriteBehind:         !opts.synchronous,
 		WriteBehindInterval: interval,
 		MemoryPolicy:        opts.memoryPolicy,
+		EngineOptions:       EngineOptions{WALRecordPolicy: opts.records},
 	}))
 	if engine != nil {
 		if opts.finalOutcome == nil {
@@ -61,6 +65,7 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 		walCfg := DefaultWALConfig()
 		walCfg.Dir = filepath.Join(opts.dataDir, "wal")
 		walCfg.BatchSyncInterval = time.Hour
+		walCfg.RecordPolicy = opts.records
 		wal, err := NewWAL(walCfg.Dir, walCfg)
 		if wal != nil {
 			if opts.finalOutcome == nil {

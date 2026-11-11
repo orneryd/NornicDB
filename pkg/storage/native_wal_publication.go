@@ -36,7 +36,7 @@ func (cw *commitWriter) prepareNativeWAL() (*valueEncoder, error) {
 	cw.configureStoredEntityPublication(logicalID, false)
 	mode := cw.entityMode
 	encoder := getValueEncoder()
-	payload, err := encoder.entityTransaction(EntityTransactionRequest{Namespace: namespace, LogicalID: logicalID, Operations: operations, Mode: mode})
+	payload, err := encoder.entityTransaction(EntityTransactionRequest{Namespace: namespace, LogicalID: logicalID, Operations: operations, Mode: mode, keptVectors: cw.entityKeptVectors})
 	if err != nil {
 		return encoder, err
 	}

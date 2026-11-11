@@ -29,6 +29,7 @@ import (
 type commitWriter struct {
 	ctx                   context.Context
 	entityOperations      []Operation
+	entityKeptVectors     map[NodeID]keptVectorImages // BadgerTransaction.keptVectors (NOR-412)
 	entityLogicalID       string
 	entityMode            EntityCommitMode
 	entityJournalAccepted bool

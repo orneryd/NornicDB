@@ -142,7 +142,7 @@ func TestWALPropertyEpochSealingRejectsDamagedFrames(t *testing.T) {
 			case "size":
 				binary.LittleEndian.PutUint32(raw[5:9], walMaxEntrySize+1)
 			case "version":
-				raw[4] = walFormatVersionPropertyEpoch + 1
+				raw[4] = walFormatVersionSpanned + 1
 			case "payload":
 				raw = raw[:12]
 			case "crc":

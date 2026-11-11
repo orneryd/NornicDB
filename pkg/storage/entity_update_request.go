@@ -10,6 +10,13 @@ type NodeUpdateRequest struct {
 	Before *Node
 	After  *Node
 	Policy EntityImagePolicy
+	// retained names the vectors a decoded journal record omitted because
+	// the update kept them, and retainedIDs identifies them; StoredNodeImages
+	// staging restores them from the stored predecessor when it holds those
+	// very images (restoreRetainedVectorsLocked). retainedIDs is nil when the
+	// record identifies nothing. Client edits set neither.
+	retained    vectorRetention
+	retainedIDs *retainedVectorIDs
 }
 
 // EdgeUpdateRequest carries a relationship mutation. Before is the immutable
@@ -23,7 +30,7 @@ type EdgeUpdateRequest struct {
 // Operation projects client mutation input for a managed coordinator. Native
 // staging captures its own committed preimage before publication or encoding.
 func (request NodeUpdateRequest) Operation() Operation {
-	return Operation{Type: OpUpdateNode, Node: request.After, OldNode: request.Before, nodeImagePolicy: request.Policy}
+	return Operation{Type: OpUpdateNode, Node: request.After, OldNode: request.Before, nodeImagePolicy: request.Policy, retainedVectors: request.retained}
 }
 
 // Operation projects relationship mutation input for a managed coordinator.
@@ -34,7 +41,7 @@ func (request EdgeUpdateRequest) Operation() Operation {
 // NodeUpdate reads client mutation input from an operation. Accepted semantic
 // replay explicitly selects StoredNodeImages at its staging boundary instead.
 func (operation Operation) NodeUpdate() NodeUpdateRequest {
-	return NodeUpdateRequest{Before: operation.OldNode, After: operation.Node, Policy: operation.nodeImagePolicy}
+	return NodeUpdateRequest{Before: operation.OldNode, After: operation.Node, Policy: operation.nodeImagePolicy, retained: operation.retainedVectors}
 }
 
 // EdgeUpdate reads relationship mutation input from an operation.
