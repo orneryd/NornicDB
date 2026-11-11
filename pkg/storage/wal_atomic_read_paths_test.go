@@ -93,7 +93,7 @@ func TestReadAtomicWALEntries_DetectsVersionLengthAndDataChecksumErrors(t *testi
 		path := filepath.Join(t.TempDir(), "wal.log")
 		data := []byte(`{"node":{"id":"n1"}}`)
 		payload := mustWalEntryPayload(t, 1, OpCreateNode, data, crc32Checksum(data))
-		rec := buildAtomicRecordRaw(payload, walFormatVersionCurrent+1, crc32Checksum(payload), walTrailer, true)
+		rec := buildAtomicRecordRaw(payload, walFormatVersionSpanned+1, crc32Checksum(payload), walTrailer, true)
 		require.NoError(t, os.WriteFile(path, rec, 0644))
 
 		_, err := ReadWALEntries(t.Context(), path, nil)

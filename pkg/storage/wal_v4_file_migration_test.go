@@ -213,7 +213,7 @@ func TestV4UpgradeRefusesCorruptOrUnknownWALWithoutReplacingIt(t *testing.T) {
 			case "bad-trailer":
 				raw[len(raw)-8] ^= 1
 			case "future":
-				raw[4] = walFormatVersionCurrent + 1
+				raw[4] = walFormatVersionSpanned + 1
 			}
 			require.NoError(t, os.WriteFile(source, raw, 0600))
 			require.Error(t, upgradeWALFileV4(source, dest, false, nil))

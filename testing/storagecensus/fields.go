@@ -199,6 +199,18 @@ var fieldClasses = map[string]fieldRow{
 	// write owns this per-stream header/CRC scratch; it holds framing bytes,
 	// not stored entities, entity counts, quota or publication state.
 	"pkg/storage.snapshotFrameWriter.scratch": {class: "snapshot frame serialization scratch"},
+	// Author: NOR-412 implementation agent (Claude Fable 5.2), 11 November
+	// 2026. A WAL reader owns one walRecordAssembler per scan: the sequence,
+	// part count, next part and payload of the spanned record it is joining,
+	// and how many unfinished records it dropped. They hold journal framing
+	// read back from a file, not stored entities, entity counts, quota or
+	// publication state; each field has its own row so new state on the type
+	// still needs a census decision.
+	"pkg/storage.walRecordAssembler.seq":     {class: "WAL spanned-record read scratch"},
+	"pkg/storage.walRecordAssembler.count":   {class: "WAL spanned-record read scratch"},
+	"pkg/storage.walRecordAssembler.next":    {class: "WAL spanned-record read scratch"},
+	"pkg/storage.walRecordAssembler.payload": {class: "WAL spanned-record read scratch"},
+	"pkg/storage.walRecordAssembler.dropped": {class: "WAL spanned-record read scratch"},
 	// These are temporary representations: WAL inspection collects display
 	// bytes, and constraint acquisition clears and reuses its request map.
 	"pkg/storage.bufferedWALDisplayPayload.Deletes": {class: "WAL inspection serialization scratch"},
