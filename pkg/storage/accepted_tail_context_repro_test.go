@@ -23,7 +23,7 @@ func TestAcceptedPositionalTailRetainsCommittedCounts(t *testing.T) {
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "tail:e", StartNode: "tail:a", EndNode: "tail:b", Type: "LINK"}))
-			require.NotEmpty(t, tx.pendingEdgeTypeLabelCountDeltas)
+			requirePositionalChangesPending(t, tx)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			decisions := 0

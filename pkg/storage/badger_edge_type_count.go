@@ -950,8 +950,9 @@ type edgeTypeLabelDelta struct {
 }
 
 // bufferAdjustEdgeTypeLabelCount stages a positional (label, type) counter
-// delta on the transaction. Applied after the user-data commit, so
-// independent edge writes never conflict on the counter keys.
+// delta on the transaction. The commit derives them all, once
+// (derivePositionalCountDeltasLocked); they are applied after the user-data
+// commit, so independent edge writes never conflict on the counter keys.
 func (tx *BadgerTransaction) bufferAdjustEdgeTypeLabelCount(sub byte, namespace, label, edgeType string, delta int64) {
 	if delta == 0 || namespace == "" || label == "" || edgeType == "" {
 		return
@@ -966,95 +967,6 @@ func (tx *BadgerTransaction) bufferAdjustEdgeTypeLabelCount(sub byte, namespace,
 	if tx.pendingEdgeTypeLabelCountDeltas[key] == 0 {
 		delete(tx.pendingEdgeTypeLabelCountDeltas, key)
 	}
-}
-
-// bufferEdgePositionalLabelDeltas buffers one edge's positional label
-// contributions with the given sign.
-func (tx *BadgerTransaction) bufferEdgePositionalLabelDeltas(namespace, edgeType string, startLabels, endLabels []string, sign int64) {
-	if sign == 0 || edgeType == "" {
-		return
-	}
-	for _, key := range edgePositionalLabelDeltaKeys(namespace, edgeType, startLabels) {
-		tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeStartLabelCount, key.namespace, key.label, key.edgeType, sign)
-	}
-	for _, key := range edgePositionalLabelDeltaKeys(namespace, edgeType, endLabels) {
-		tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeEndLabelCount, key.namespace, key.label, key.edgeType, sign)
-	}
-}
-
-// nodeLabelsTxVisibleLocked returns a node's labels as this transaction
-// sees them: the pending overlay wins, then committed state, read from
-// storage (getCommittedNodeLocked), so a node the visibility layer hides
-// keeps its positional counts in step. The caller must hold tx.mu.
-func (tx *BadgerTransaction) nodeLabelsTxVisibleLocked(ctx context.Context, id NodeID) ([]string, error) {
-	if node, ok := tx.pendingNodes[id]; ok {
-		return node.Labels, nil
-	}
-	labels, err := tx.committedNodeLabelsLocked(ctx, id)
-	if err == ErrNotFound {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return labels, nil
-}
-
-// incidentEdgeTypesTxLocked counts the edge types reachable through one
-// adjacency direction of a node as the transaction sees storage
-// (incidentEdgesLocked): the positional counters count every stored
-// relationship, hidden ones too. The caller must hold tx.mu.
-func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(ctx context.Context, nodeID NodeID, outgoing bool) (map[string]int64, error) {
-	edges, err := tx.incidentEdgesLocked(ctx, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	types := make(map[string]int64)
-	for _, edge := range edges {
-		if outgoing && edge.StartNode != nodeID || !outgoing && edge.EndNode != nodeID {
-			continue
-		}
-		if t := edge.Type; t != "" {
-			types[t]++
-		}
-	}
-	return types, nil
-}
-
-// bufferNodeLabelChangeEdgeTypeDeltasLocked buffers the positional
-// (label, type) deltas a node's relabel implies across its tx-visible
-// incident edges. The caller must hold tx.mu.
-func (tx *BadgerTransaction) bufferNodeLabelChangeEdgeTypeDeltasLocked(ctx context.Context, nodeID NodeID, added, removed []string) error {
-	addedUnique := uniqueLabels(added)
-	removedUnique := uniqueLabels(removed)
-	if len(addedUnique) == 0 && len(removedUnique) == 0 {
-		return nil
-	}
-	outTypes, err := tx.incidentEdgeTypesTxLocked(ctx, nodeID, true)
-	if err != nil {
-		return err
-	}
-	inTypes, err := tx.incidentEdgeTypesTxLocked(ctx, nodeID, false)
-	if err != nil {
-		return err
-	}
-	for edgeType, multiplicity := range outTypes {
-		for _, label := range addedUnique {
-			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeStartLabelCount, tx.namespace, label, edgeType, multiplicity)
-		}
-		for _, label := range removedUnique {
-			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeStartLabelCount, tx.namespace, label, edgeType, -multiplicity)
-		}
-	}
-	for edgeType, multiplicity := range inTypes {
-		for _, label := range addedUnique {
-			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeEndLabelCount, tx.namespace, label, edgeType, multiplicity)
-		}
-		for _, label := range removedUnique {
-			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeEndLabelCount, tx.namespace, label, edgeType, -multiplicity)
-		}
-	}
-	return nil
 }
 
 // applyEdgeTypeLabelCountDeltasLocked persists transaction-local positional

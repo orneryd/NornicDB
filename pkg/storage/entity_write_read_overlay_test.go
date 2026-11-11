@@ -484,7 +484,14 @@ func TestWriteOwnedReadImagesComposeLatestCommittedCollections(t *testing.T) {
 		outgoing, err := f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: refreshedDocID})
 		require.NoError(t, err)
 		require.Equal(t, []string{"test:doomed-edge", "test:edge", "test:link", "test:own-edge"}, edgeIDs(outgoing))
-		requireEdgePeers(t, outgoing, allEdgePeers, "outgoing adjacency")
+		// The transaction holds doc's write lock, so doc's relationships are
+		// read as last committed, the unlocked ones included (NOR-213).
+		requireEdgePeers(t, outgoing, map[EdgeID]interface{}{
+			refreshedEdgeID:       int64(2),
+			refreshedOwnEdgeID:    int64(2),
+			refreshedLinkID:       int64(9),
+			refreshedDoomedEdgeID: int64(8),
+		}, "outgoing adjacency of the locked node")
 
 		incoming, err := f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadIncoming, Node: refreshedPartID})
 		require.NoError(t, err)
@@ -502,7 +509,14 @@ func TestWriteOwnedReadImagesComposeLatestCommittedCollections(t *testing.T) {
 
 		storedOutgoing, err := f.tx.GetStoredOutgoingEdges(ctx, refreshedDocID)
 		require.NoError(t, err)
-		requireEdgePeers(t, storedOutgoing, allEdgePeers, "stored outgoing adjacency")
+		// The stored incidence read of the locked doc is current too, so it
+		// agrees with the outgoing adjacency above (NOR-213).
+		requireEdgePeers(t, storedOutgoing, map[EdgeID]interface{}{
+			refreshedEdgeID:       int64(2),
+			refreshedOwnEdgeID:    int64(2),
+			refreshedLinkID:       int64(9),
+			refreshedDoomedEdgeID: int64(8),
+		}, "stored outgoing adjacency of the locked node")
 		storedIncoming, err := f.tx.GetStoredIncomingEdges(ctx, refreshedPartID)
 		require.NoError(t, err)
 		requireEdgePeers(t, storedIncoming, map[EdgeID]interface{}{
@@ -544,9 +558,14 @@ func TestWriteOwnedReadImagesComposeLatestCommittedCollections(t *testing.T) {
 		stored, err := f.tx.GetStoredEdge(ctx, refreshedEdgeID)
 		require.NoError(t, err)
 		require.Equal(t, int64(2), stored.Properties["peer"])
-		pinned, err := f.tx.GetEdge(ctx, refreshedLinkID)
+		// doc is locked, so its relationships are read as last committed, and
+		// a relationship that read returned is the same entity to a later
+		// point read (NOR-213); unlocked nodes stay pinned (bystander above).
+		_, err = f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: refreshedDocID})
 		require.NoError(t, err)
-		require.Equal(t, int64(1), pinned.Properties["peer"], "an unlocked edge commit stays outside the snapshot")
+		returned, err := f.tx.GetEdge(ctx, refreshedLinkID)
+		require.NoError(t, err)
+		require.Equal(t, int64(9), returned.Properties["peer"], "a relationship the locked node's read returned is read as last committed")
 	})
 
 	t.Run("caller mutation cannot change a later read", func(t *testing.T) {
@@ -682,7 +701,7 @@ func TestWriteOwnedReadImagesYieldToOwnStagedWritesAndDeletes(t *testing.T) {
 	requireEdgePeers(t, outgoing, map[EdgeID]interface{}{
 		refreshedEdgeID:    int64(2),
 		refreshedOwnEdgeID: int64(4),
-		refreshedLinkID:    int64(1),
+		refreshedLinkID:    int64(9), // doc is locked: its relationships are read as last committed (NOR-213)
 	}, "outgoing adjacency with a staged delete")
 
 	_, err = f.tx.GetEdge(ctx, refreshedDoomedEdgeID)

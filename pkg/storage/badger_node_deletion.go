@@ -87,7 +87,7 @@ func (b *BadgerEngine) executeNodeDeletion(ctx context.Context, w kvWriter, id N
 			return r, err
 		}
 		if isStaged {
-			err = tx.bufferRemoveEdgeBookkeepingBuffered(ctx, edge, id, r.node.Labels)
+			tx.bufferRemoveEdgeBookkeepingBuffered(edge)
 		} else {
 			err = b.deleteEdgeInTxn(raw, edge.ID)
 			if errors.Is(err, ErrNotFound) {

@@ -20,7 +20,7 @@ func TestAcceptedPreparedCountAdmissionKeepsDetachedCompletion(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:phase-edge", StartNode: "test:phase-a", EndNode: "test:phase-b", Type: "LINK"}))
-	require.NotEmpty(t, tx.pendingEdgeTypeLabelCountDeltas)
+	requirePositionalChangesPending(t, tx)
 	caller, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	prepared, err := tx.PrepareEntityCommit(caller, EntityCommitRequest{LogicalID: tx.ID})

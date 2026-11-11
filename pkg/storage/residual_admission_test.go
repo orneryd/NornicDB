@@ -31,7 +31,7 @@ func TestResidualCommitAdmissionCancellation(t *testing.T) {
 			var target sync.Locker
 			if route == "count" {
 				require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:wait-e", StartNode: "test:a", EndNode: "test:b", Type: "WAIT"}))
-				require.NotEmpty(t, tx.pendingEdgeTypeLabelCountDeltas)
+				requirePositionalChangesPending(t, tx)
 				target = &b.edgeTypeCountWriteMu
 			} else {
 				var properties map[string]any
