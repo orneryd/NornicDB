@@ -1575,6 +1575,19 @@ func (ew *EmbedWorker) wasRecentlyProcessed(nodeID storage.NodeID) bool {
 	return false
 }
 
+// forgetDatabaseRecentEmbeddings allows explicitly cleared nodes to run again
+// without resetting workers or another database's recently-processed state.
+func (ew *EmbedWorker) forgetDatabaseRecentEmbeddings(database string) {
+	ew.mu.Lock()
+	defer ew.mu.Unlock()
+	for id := range ew.recentlyProcessed {
+		if strings.HasPrefix(id, database+":") {
+			delete(ew.recentlyProcessed, id)
+			delete(ew.loggedSkip, id)
+		}
+	}
+}
+
 // findNodeWithoutEmbedding finds a single node that needs embedding.
 // Uses efficient streaming iteration if available, falls back to AllNodes.
 func (ew *EmbedWorker) findNodeWithoutEmbedding(ctx context.Context) (*storage.Node, error) {

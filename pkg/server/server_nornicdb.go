@@ -52,8 +52,31 @@ func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
 // handleEmbedTrigger triggers the embedding worker to process nodes without embeddings.
 // Query params:
 //   - regenerate=true: Clear all existing embeddings first, then regenerate (async)
+//   - database=<name>: Restrict clearing to this database; omit for legacy behavior.
 func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead, auth.PermWrite) {
+	database := r.URL.Query().Get("database")
+	regenerate := r.URL.Query().Get("regenerate") == "true"
+	// Waking the shared worker still visits every database. Only regeneration
+	// has a database-scoped mutation; a database parameter cannot narrow wake access.
+	if !regenerate {
+		database = ""
+	}
+	var scopedStorage storage.Engine
+	if database != "" {
+		if !s.authorizeDatabaseOperation(w, r, database, auth.PermRead, auth.PermWrite) {
+			return
+		}
+		if s.dbManager.IsCompositeDatabase(database) {
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported", "Embedding regeneration requires a concrete database; select a constituent database.")
+			return
+		}
+		var err error
+		scopedStorage, err = s.dbManager.GetStorage(database)
+		if err != nil {
+			s.writeDatabaseNotFound(w, r, http.StatusNotFound, ErrNotFound, database)
+			return
+		}
+	} else if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead, auth.PermWrite) {
 		return
 	}
 
@@ -69,8 +92,6 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if regenerate=true to clear existing embeddings first
-	regenerate := r.URL.Query().Get("regenerate") == "true"
-
 	if regenerate {
 		// Regenerating clears embeddings, which /nornicdb/embed/clear reserves for admins;
 		// the route only requires write (enough to wake the worker), so check here.
@@ -87,6 +108,9 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 			"regenerate": true,
 			"message":    s.localizedText(w, r, localization.EmbeddingRegenerationStarted()),
 		}
+		if database != "" {
+			response["database"] = database
+		}
 		httpresponse.WritePropertyJSON(w, http.StatusAccepted, response)
 
 		// Start background clearing and regeneration.
@@ -102,12 +126,20 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbedRegenerationStartingEvent())
 
 			// First, reset the embed worker to stop any in-progress work and clear its state
-			if err := s.db.ResetEmbedWorker(); err != nil {
-				s.logEvent(context.Background(), slog.LevelWarn, localization.ServerEmbedWorkerResetFailedEvent(err))
+			if scopedStorage == nil {
+				if err := s.db.ResetEmbedWorker(); err != nil {
+					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerEmbedWorkerResetFailedEvent(err))
+				}
 			}
 
 			// Now clear all embeddings
-			cleared, err := s.db.ClearAllEmbeddings()
+			var cleared int
+			var err error
+			if scopedStorage != nil {
+				cleared, err = s.db.ClearDatabaseEmbeddings(database, scopedStorage)
+			} else {
+				cleared, err = s.db.ClearAllEmbeddings()
+			}
 			if err != nil {
 				if errors.Is(err, nornicdb.ErrClosed) || strings.Contains(strings.ToLower(err.Error()), "closed") {
 					s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbedRegenerationSkippedDBClosingEvent())

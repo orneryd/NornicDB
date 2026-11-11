@@ -2329,9 +2329,33 @@ func (db *DB) ResetEmbedWorker() error {
 // This is useful for re-embedding with a new model or fixing corrupted embeddings.
 // It clears both the node embeddings in storage AND the search index.
 func (db *DB) ClearAllEmbeddings() (int, error) {
+	return db.clearEmbeddings(db.defaultDatabaseName(), db.storage)
+}
+
+// ClearDatabaseEmbeddings clears managed embeddings and the vector index only
+// in the supplied database namespace. It does not reset the shared worker.
+func (db *DB) ClearDatabaseEmbeddings(database string, engine storage.Engine) (int, error) {
+	namespace, ok := engine.(*storage.NamespacedEngine)
+	if !ok || database == "" || namespace.Namespace() != database {
+		return 0, fmt.Errorf("embedding regeneration requires matching database-scoped storage")
+	}
+	count, err := db.clearEmbeddings(database, engine)
+	if err != nil {
+		return count, err
+	}
+	db.mu.RLock()
+	queue := db.embedQueue
+	db.mu.RUnlock()
+	if queue != nil {
+		queue.forgetDatabaseRecentEmbeddings(database)
+	}
+	return count, nil
+}
+
+func (db *DB) clearEmbeddings(database string, scopedStorage storage.Engine) (int, error) {
 	// First, clear the search service's vector index
 	// This ensures EmbeddingCount() returns 0 immediately
-	if svc, _ := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {
+	if svc, _ := db.GetOrCreateSearchService(database, scopedStorage); svc != nil {
 		if err := svc.ClearVectorIndex(); err != nil {
 			return 0, err
 		}
@@ -2339,7 +2363,7 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 
 	// Unwrap storage layers to find the BadgerEngine
 	// The storage chain is: WALEngine -> BadgerEngine
-	engine := db.storage
+	engine := scopedStorage
 	idPrefix := ""
 
 	// Unwrap NamespacedEngine first (DB instances are scoped to a single database namespace)
