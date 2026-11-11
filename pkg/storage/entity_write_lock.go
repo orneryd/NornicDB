@@ -61,6 +61,12 @@ type entityWriteLocks struct {
 	index  map[uniqueConstraintLockKey]int
 	schema *SchemaManager
 	latest int
+	// endpoints and edges are the other ends and the relationships a read of
+	// a locked node returned as last committed; the transaction reads them as
+	// last committed too (readsNodeLastCommittedLocked,
+	// readsEdgeLastCommittedLocked; NOR-213).
+	endpoints map[NodeID]struct{}
+	edges     map[EdgeID]struct{}
 }
 
 const entityWriteLockIndexAfter = 8
