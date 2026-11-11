@@ -25,8 +25,10 @@ func historicalHeaderlessChecksum(data []byte) uint32 {
 // scanV4MigrationWAL accepts historical framing only at the one-time storage
 // migration boundary. Normal WAL readers continue to accept current frames.
 // The callback gets each record's original byte range and, for a control,
-// its decoded property epoch.
-func scanV4MigrationWAL(path string, allowTornTail bool, visit func(WALEntry, *walPropertyEpochFrame, uint64, uint64) error) error {
+// its decoded property epoch. carryOversized admits a complete version-3
+// record over one frame whole (a store journal); without it such a record is
+// refused, as before (the replication journal).
+func scanV4MigrationWAL(path string, allowTornTail, carryOversized bool, visit func(WALEntry, *walPropertyEpochFrame, uint64, uint64) error) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -108,7 +110,7 @@ func scanV4MigrationWAL(path string, allowTornTail bool, visit func(WALEntry, *w
 		}
 		size := binary.LittleEndian.Uint32(header[5:])
 		if size > walMaxEntrySize {
-			entry, length, err := readOversizedEmbeddingAudit(reader, size, version)
+			entry, length, err := readOversizedFrame(reader, size, version, carryOversized)
 			if err != nil {
 				return fmt.Errorf("wal: historical frame at %d: %w", offset, err)
 			}
@@ -199,11 +201,62 @@ func scanV4MigrationWAL(path string, allowTornTail bool, visit func(WALEntry, *w
 	}
 }
 
+// v4UpgradeRecords is how the V4 upgrade converts the records of one journal:
+// the journal's record policy and its payload transform. Validation and
+// conversion take the same value and convert each record other than a property-epoch
+// control with the same convert, so whether it is converted, spans frames or is refused
+// is decided by the record encoder under that policy, in validation and again in conversion
+// (NOR-412). nil is a store journal without a payload transform.
+type v4UpgradeRecords struct {
+	policy    WALRecordPolicy
+	transform func(uint8, OperationType, []byte) ([]byte, error)
+}
+
+// carries reports whether the journal takes records over one frame. The
+// scanner then reads a complete version-3 frame over one frame whole; without
+// it such a frame is refused as it is read.
+func (r *v4UpgradeRecords) carries() bool {
+	return r == nil || r.policy == WALRecordsLarge
+}
+
+// convert returns the entry converted to current framing and the frames it is
+// written as. The record encoder decides from the converted record whether it
+// fits one frame; under the standard policy a record that does not is refused
+// with the encoder's frame error, under the large policy it spans frames.
+func (r *v4UpgradeRecords) convert(buf *bytes.Buffer, entry WALEntry) (WALEntry, walRecordFrames, error) {
+	if entry.Operation == OpEntityCommit && entry.framingVersion < walFormatVersionCurrent {
+		converted, err := convertV4SemanticWALRecord(entry)
+		if err != nil {
+			return entry, walRecordFrames{}, fmt.Errorf("wal: convert historical entity commit %d: %w", entry.Sequence, err)
+		}
+		entry = converted
+	}
+	if r != nil && r.transform != nil && entry.framingVersion < walFormatVersionCurrent {
+		converted, err := r.transform(entry.framingVersion, entry.Operation, entry.Data)
+		if err != nil {
+			return entry, walRecordFrames{}, fmt.Errorf("wal: convert historical payload %d: %w", entry.Sequence, err)
+		}
+		entry.Data = converted
+		entry.Checksum = crc32Checksum(converted)
+	}
+	record, err := encodeWALRecord(buf, &entry, r.carries())
+	return entry, record, err
+}
+
 // planV4WALMigration validates every historical record and its authority
-// boundaries without changing the file, returning the offsets to remap.
-func planV4WALMigration(source string, allowTornTail bool) (map[uint64]bool, error) {
+// boundaries without changing the file, returning the offsets to remap. With
+// decide it also converts each record other than a property-epoch control as the
+// upgrade will (records.convert) and discards the result; when the conversion gives the
+// same bytes again, a record it would refuse is refused here, before anything is written.
+func planV4WALMigration(source string, allowTornTail bool, records *v4UpgradeRecords, decide bool) (map[uint64]bool, error) {
 	targets := make(map[uint64]bool)
-	if err := scanV4MigrationWAL(source, allowTornTail, func(entry WALEntry, epoch *walPropertyEpochFrame, _, _ uint64) error {
+	var buf bytes.Buffer
+	if err := scanV4MigrationWAL(source, allowTornTail, records.carries(), func(entry WALEntry, epoch *walPropertyEpochFrame, start, _ uint64) error {
+		if decide && epoch == nil {
+			if _, _, err := records.convert(&buf, entry); err != nil {
+				return fmt.Errorf("wal: historical frame at %d: %w", start, err)
+			}
+		}
 		if entry.Operation == OpBufferedCommit {
 			data, err := decodeBufferedWALRecord(entry)
 			if err != nil {
@@ -241,7 +294,7 @@ func planV4WALMigration(source string, allowTornTail bool) (map[uint64]bool, err
 			remaining[target] = true
 		}
 		delete(remaining, 0)
-		if err := scanV4MigrationWAL(source, allowTornTail, func(_ WALEntry, _ *walPropertyEpochFrame, start, end uint64) error {
+		if err := scanV4MigrationWAL(source, allowTornTail, records.carries(), func(_ WALEntry, _ *walPropertyEpochFrame, start, end uint64) error {
 			delete(remaining, start)
 			delete(remaining, end)
 			return nil
@@ -265,9 +318,11 @@ type v4WALControlRewrite struct {
 
 // upgradeWALFileV4 writes one fully validated current-frame file beside its
 // untouched source. Callers must publish the staged file only after every WAL
-// file has been validated and the originals durably backed up.
-func upgradeWALFileV4(source, destination string, allowTornTail bool, transform func(uint8, OperationType, []byte) ([]byte, error)) (resultErr error) {
-	targets, err := planV4WALMigration(source, allowTornTail)
+// file has been validated and the originals durably backed up. Each record other than a
+// property-epoch control is converted by records.convert, which validation already ran
+// for it (UpgradeWALV4), under the same journal policy; a control is encoded only here.
+func upgradeWALFileV4(source, destination string, allowTornTail bool, records *v4UpgradeRecords) (resultErr error) {
+	targets, err := planV4WALMigration(source, allowTornTail, records, false)
 	if err != nil {
 		return err
 	}
@@ -290,38 +345,23 @@ func upgradeWALFileV4(source, destination string, allowTornTail bool, transform 
 	var offset int64
 	var controls []v4WALControlRewrite
 	var buf bytes.Buffer
-	if err := scanV4MigrationWAL(source, allowTornTail, func(entry WALEntry, epoch *walPropertyEpochFrame, start, end uint64) error {
+	if err := scanV4MigrationWAL(source, allowTornTail, records.carries(), func(entry WALEntry, epoch *walPropertyEpochFrame, start, end uint64) error {
 		if targets[start] {
 			mapped[start] = uint64(offset)
 		}
-		var payload []byte
+		var record walRecordFrames
 		var control *v4WALControlRewrite
 		if epoch != nil {
 			frame := *epoch
 			frame.Through, frame.Last = fmt.Sprintf("%016x", frame.through), fmt.Sprintf("%016x", frame.last)
-			payload, err = encodeWALPropertyEpochFrame(frame, entry.Sequence, entry.Timestamp)
+			record.single, err = encodeWALPropertyEpochFrame(frame, entry.Sequence, entry.Timestamp)
 			if err != nil {
 				return err
 			}
 			control = &v4WALControlRewrite{offset: offset, through: frame.through, entry: entry, frame: frame}
 		} else {
-			if entry.Operation == OpEntityCommit && entry.framingVersion < walFormatVersionCurrent {
-				converted, convertErr := convertV4SemanticWALRecord(entry)
-				if convertErr != nil {
-					return fmt.Errorf("wal: convert historical entity commit %d: %w", entry.Sequence, convertErr)
-				}
-				entry = converted
-			}
-			if transform != nil && entry.framingVersion < walFormatVersionCurrent {
-				converted, transformErr := transform(entry.framingVersion, entry.Operation, entry.Data)
-				if transformErr != nil {
-					return fmt.Errorf("wal: convert historical payload %d: %w", entry.Sequence, transformErr)
-				}
-				entry.Data = converted
-				entry.Checksum = crc32Checksum(converted)
-			}
 			var err error
-			payload, err = processWALEntryPayload(walPayloadEncode, &buf, &entry, nil, 0)
+			entry, record, err = records.convert(&buf, entry)
 			if err != nil {
 				return err
 			}
@@ -331,7 +371,13 @@ func upgradeWALFileV4(source, destination string, allowTornTail bool, transform 
 		if entry.framingVersion == walFormatVersionSpanned {
 			frameVersion = walFormatVersionSpanned
 		}
-		length, err := writeAtomicRecordBufio(writer, payload, frameVersion)
+		var length int64
+		var err error
+		if record.parts != nil {
+			length, err = record.write(writer, writeAtomicRecordBufio)
+		} else {
+			length, err = writeAtomicRecordBufio(writer, record.single, frameVersion)
+		}
 		if err != nil {
 			return err
 		}
