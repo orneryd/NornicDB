@@ -2962,7 +2962,7 @@
       "field": "pkg/storage.BadgerTransaction.badgerReadTs",
       "class": "transaction snapshot",
       "func": "pkg/storage.BadgerTransaction.rebaseBadgerAfterDrainLocked",
-      "pos": "pkg/storage/badger_transaction.go:2463"
+      "pos": "pkg/storage/badger_transaction.go:2457"
     },
     {
       "field": "pkg/storage.BadgerTransaction.badgerReadTs",
@@ -4654,25 +4654,25 @@
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.valueEncoder.entityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:270"
+      "pos": "pkg/storage/semantic_transaction_wire.go:302"
     },
     {
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.valueEncoder.entityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:272"
+      "pos": "pkg/storage/semantic_transaction_wire.go:304"
     },
     {
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.valueEncoder.entityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:288"
+      "pos": "pkg/storage/semantic_transaction_wire.go:320"
     },
     {
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.valueEncoder.entityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:290"
+      "pos": "pkg/storage/semantic_transaction_wire.go:322"
     },
     {
       "field": "pkg/storage.snapshotFrameWriter.scratch",
