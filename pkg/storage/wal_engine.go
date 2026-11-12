@@ -3,6 +3,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -39,8 +40,9 @@ func (w *WALEngine) logger() *slog.Logger {
 //     pending operations; the participant retains sole publication authority.
 //   - Database routing: WALEngine supports multi-database usage by recording the
 //     database/namespace in each WAL entry and by normalizing IDs when needed.
-//   - Embedding updates: embedding-only updates are logged using OpUpdateEmbedding
-//     which is safe to skip during recovery because embeddings are regenerable.
+//   - Embedding updates: embedding-only updates are logged using OpUpdateEmbedding,
+//     which names the node but not its new embedding. Replay leaves the node
+//     without managed embeddings, so it is embedded again.
 //   - Auto-compaction: optional periodic snapshots + WAL truncation to prevent
 //     unbounded WAL growth.
 type WALEngine struct {
@@ -564,10 +566,11 @@ func embeddingAuditNodeForWAL(dbName string, node *Node) *Node {
 	if node == nil {
 		return nil
 	}
-	// OpUpdateEmbedding is audit-only: recovery never consumes a node image.
-	// Copy only fixed scalar outcome fields so vectors, body and chunk texts
-	// cannot make either an embedding save or its failure marker exceed the
-	// reader/writer frame limit. Keep the node-shaped payload for db.txlog.
+	// OpUpdateEmbedding names the node whose managed embedding changed; replay
+	// uses only its ID (replayEmbeddingOutcome). Copy only fixed scalar
+	// outcome fields so vectors, body and chunk texts cannot make either an
+	// embedding save or its failure marker exceed the reader/writer frame
+	// limit. Keep the node-shaped payload for db.txlog.
 	dimensions := 0
 	if len(node.ChunkEmbeddings) > 0 {
 		dimensions = len(node.ChunkEmbeddings[0])
@@ -618,10 +621,78 @@ func (w *WALEngine) persistEmbeddingOutcome(ctx context.Context, node *Node) err
 			return action()
 		})
 	})
-	// OpUpdateEmbedding remains an audit-only record ignored by ReplayWALEntry.
 	// The native owner supplies the actual outcome; no semantic receipt or
 	// recovery-pending promise is synthesized for an embedding attempt.
 	return sidecar.UpdateNodeEmbeddingSidecar(publication, node)
+}
+
+// replayEmbeddingOutcome replays an OpUpdateEmbedding record. The record says
+// that the node's managed embedding (chunk vectors and their metadata) was
+// replaced at this point, by the embedding worker, an embedding reset or
+// "regenerate embeddings", without carrying the new one. Whatever managed
+// embedding replay restored for the node before it is therefore older than
+// the node's, so it is removed and the node is left to be embedded again. A
+// later record that carries the node's vectors restores them. Named vectors
+// are not managed and stay.
+func replayEmbeddingOutcome(ctx context.Context, engine Engine, entry WALEntry) error {
+	if string(entry.Data) == walOversizedAuditOmission {
+		return nil // a historical audit that does not name its node
+	}
+	var data WALNodeData
+	if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
+		return fmt.Errorf("wal: failed to unmarshal embedding update: %w", err)
+	}
+	if data.Node == nil {
+		return fmt.Errorf("wal: embedding update without a node: %w", ErrInvalidData)
+	}
+	// A stored read: a node the visibility layer hides is replaced too, as
+	// "regenerate embeddings" clears hidden nodes.
+	node, err := GetStoredNode(ctx, engine, data.Node.ID)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(node.ChunkEmbeddings) == 0 && len(node.EmbedMeta) == 0 {
+		return nil
+	}
+	node = CopyNode(node)
+	node.ChunkEmbeddings = nil
+	node.EmbedMeta = nil
+	return engine.UpdateNode(ctx, NodeUpdateRequest{After: node, Policy: StoredNodeImages})
+}
+
+// ClearAllEmbeddingsForPrefix removes the managed embeddings of every node
+// whose ID starts with idPrefix (all nodes when empty), as the wrapped
+// engine's ClearAllEmbeddingsForPrefix does, and journals each node's removal
+// with the OpUpdateEmbedding record of an embedding reset. Without that
+// record a rebuild from an earlier snapshot would restore the removed vectors
+// as current.
+func (w *WALEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error) {
+	clearer, ok := w.engine.(interface {
+		clearEmbeddingsForPrefix(string, func(NodeID, func() error) error) (int, error)
+	})
+	if !ok {
+		return 0, fmt.Errorf("storage engine %T does not support clearing embeddings", w.engine)
+	}
+	return clearer.clearEmbeddingsForPrefix(idPrefix, func(id NodeID, clear func() error) error {
+		// Held across the record and the removal, as for an embedding
+		// save, so a snapshot holds both or neither.
+		if err := w.mutationMu.RLockContext(context.Background()); err != nil {
+			return err
+		}
+		defer w.mutationMu.RUnlock()
+		if config.IsWALEnabled() {
+			node := &Node{ID: id}
+			dbName := w.databaseFromNode(node)
+			reset := embeddingAuditNodeForWAL(dbName, node)
+			if err := w.wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: reset}, dbName); err != nil {
+				return fmt.Errorf("wal: failed to log update_embedding: %w", err)
+			}
+		}
+		return clear()
+	})
 }
 
 // StreamParkedEmbeddingFailures forwards the sidecar failure scan to the

@@ -2374,9 +2374,9 @@ func (db *DB) clearEmbeddings(database string, scopedStorage storage.Engine) (in
 		engine = namespacedEngine.GetInnerEngine()
 	}
 
-	// Unwrap WALEngine if present
+	// The journal wrapper records each node it clears.
 	if walEngine, ok := engine.(*storage.WALEngine); ok {
-		engine = walEngine.GetInnerEngine()
+		return walEngine.ClearAllEmbeddingsForPrefix(idPrefix)
 	}
 
 	// Now check if we have a BadgerEngine

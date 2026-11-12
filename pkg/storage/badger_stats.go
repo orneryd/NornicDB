@@ -1319,6 +1319,15 @@ func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
 // never reported as a clean one. Concurrent disappearance is a read failure,
 // not a completed reset.
 func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error) {
+	return b.clearEmbeddingsForPrefix(idPrefix, nil)
+}
+
+// clearEmbeddingsForPrefix is ClearAllEmbeddingsForPrefix. journal, when set,
+// is called with each selected node's ID and the transaction that clears it;
+// the journal wrapper records the removal there
+// (WALEngine.ClearAllEmbeddingsForPrefix). An error from journal stops the
+// reset like a failed read or write of the node.
+func (b *BadgerEngine) clearEmbeddingsForPrefix(idPrefix string, journal func(id NodeID, clear func() error) error) (int, error) {
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
@@ -1376,15 +1385,24 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 	cleared := 0
 	ctx := context.Background()
 	for _, id := range nodeIDs {
-		_, err := b.inMutationTransaction(ctx, string(id), true, func(tx *BadgerTransaction) error {
-			node, err := tx.GetStoredNode(ctx, id)
-			if err != nil {
-				return err
-			}
-			before := *node
-			node.ChunkEmbeddings = nil
-			return tx.UpdateGraphNode(ctx, NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages})
-		})
+		clear := func() error {
+			_, err := b.inMutationTransaction(ctx, string(id), true, func(tx *BadgerTransaction) error {
+				node, err := tx.GetStoredNode(ctx, id)
+				if err != nil {
+					return err
+				}
+				before := *node
+				node.ChunkEmbeddings = nil
+				return tx.UpdateGraphNode(ctx, NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages})
+			})
+			return err
+		}
+		var err error
+		if journal != nil {
+			err = journal(id, clear)
+		} else {
+			err = clear()
+		}
 		if err != nil {
 			return cleared, fmt.Errorf("clear embeddings: node %q after clearing %d of %d nodes: %w", id, cleared, len(nodeIDs), err)
 		}
