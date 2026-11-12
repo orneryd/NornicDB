@@ -173,6 +173,17 @@ type BadgerTransaction struct {
 	// read before the invalidation doesn't store them again. Nil until the
 	// first invalidation.
 	droppedEmbeddings map[NodeID]*Node
+	// chunkDecodes is the chunk-decode memo (embeddingChunkDecodes) of the
+	// update-target reads that read the pinned snapshot and of the commit's
+	// stored-entity captures: a chunk value one of them decoded and the memo
+	// still keeps is not decoded again for byte-identical stored bytes.
+	// Released at close.
+	chunkDecodes embeddingChunkDecodes
+	// readingWriteTarget is set while UpdateGraphNode reads its target's
+	// committed predecessor. Of the transaction's own reads, only that read
+	// uses chunkDecodes, and only when it reads the pinned snapshot
+	// (readPinnedSnapshotNodeLocked) with vectors.
+	readingWriteTarget bool
 	// connectedDeletes are nodes a non-DETACH DELETE deleted while
 	// relationships still connected them (DeleteGraphNode with RejectConnected), with their
 	// state before: deleted for scans and lookups by label, still the
@@ -482,6 +493,7 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	tx.releaseEntityWriteLocksLocked()
 	tx.releaseWriteBarrierLocked()
 	tx.clearSnapshotCachesLocked()
+	tx.chunkDecodes.release()
 	tx.pendingAdjacency = nil
 	if tx.bufferedStagingTransferred {
 		// The write-behind buffer owns the staged state; the transaction is
@@ -822,6 +834,11 @@ func (tx *BadgerTransaction) bufferDeleteEdgeBetweenIndexes(edge *Edge) {
 // commit writer w (see Commit). Each key is its own unit, so the buffered
 // writes may span any number of Badger batches.
 func (tx *BadgerTransaction) flushBufferedWrites(ctx context.Context, w *batchWriter) error {
+	if tx.commitW != nil {
+		// The writer's publication capture decodes chunk values through
+		// this transaction's memo (embeddingChunkDecodes).
+		tx.commitW.chunkDecodes = &tx.chunkDecodes
+	}
 	// Apply deletes first (in case a key is both written and deleted, delete wins)
 	for keyStr := range tx.pendingDeletes {
 		if err := ctx.Err(); err != nil {
@@ -1028,11 +1045,13 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		createOpIdx = tx.pendingCreateNodeOperationIndexLocked(node.ID)
 	} else {
 		var err error
+		tx.readingWriteTarget = true
 		if committedImage {
 			oldNode, err = tx.getCommittedNodeReadLocked(ctx, node.ID, true, storedRead)
 		} else {
 			oldNode, err = tx.getCommittedNodeLocked(ctx, node.ID)
 		}
+		tx.readingWriteTarget = false
 		if err == ErrNotFound {
 			if updateRequest.Before != nil {
 				return localizedError(localization.StorageTransactionNodeChanged(string(node.ID)), ErrConflict)

@@ -268,7 +268,7 @@ func (tx *BadgerTransaction) validateMutationPreimagesLocked(ctx context.Context
 				if err == nil {
 					if validateBody {
 						// Preimage equality needs all properties and labels, not vectors.
-						current, err = tx.engine.readNodeItemInTxn(view, item, id, nodeItemBodyOnly)
+						current, err = tx.engine.readNodeItemInTxn(view, item, id, nodeItemBodyOnly, false, nil)
 					} else {
 						current, err = tx.engine.readProjectedNodeItemInTxn(view, item, id, properties, include, nodeBodyBorrowed)
 					}

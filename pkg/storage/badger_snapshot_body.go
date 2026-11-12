@@ -22,13 +22,14 @@ const (
 // readNodeItemInTxn reuses only a body with this record's physical version.
 // Worker embedding state is hydrated from the same transaction, independently
 // of the body cache: sidecar writes do not change the node record's version.
-func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration) (*Node, error) {
-	return b.readNodeItemInTxnWithEmbeddingAbsence(txn, item, id, hydrate, false)
-}
-
+//
 // embeddingRecordsAbsent is established by the scan's own snapshot, never by
 // a current-value cache. Legacy body flags still use normal hydration.
-func (b *BadgerEngine) readNodeItemInTxnWithEmbeddingAbsence(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration, embeddingRecordsAbsent bool) (*Node, error) {
+//
+// decodes, a transaction's chunk-decode memo or nil, goes to the hydration's
+// record reader (embeddingRecordReader.decodes). Only a full-embedding
+// hydration decodes chunk vectors.
+func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration, embeddingRecordsAbsent bool, decodes *embeddingChunkDecodes) (*Node, error) {
 	node, hit := b.cacheLoadNodeBody(id, item.Version(), nil, nodeBodyDetached)
 	if !hit {
 		err := item.Value(func(value []byte) error {
@@ -49,7 +50,7 @@ func (b *BadgerEngine) readNodeItemInTxnWithEmbeddingAbsence(txn *badger.Txn, it
 	case nodeItemBodyOnly:
 	case nodeItemQueryMetadata, nodeItemFullEmbeddings:
 		if !embeddingRecordsAbsent || node.RuntimeMetadata().EmbeddingsStoredSeparately {
-			node, err = b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, id, hydrate == nodeItemFullEmbeddings)
+			node, err = b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn, decodes: decodes}, node, id, hydrate == nodeItemFullEmbeddings)
 			if err != nil {
 				return nil, err
 			}
@@ -93,7 +94,7 @@ func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge,
 // label and MVCC projection readers. A nil projection retains full hydration.
 func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess) (*Node, error) {
 	if properties == nil {
-		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
+		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, false, nil)
 	}
 	node, cached := b.cacheLoadNodeBody(id, item.Version(), properties, access)
 	if !cached {

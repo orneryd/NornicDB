@@ -352,7 +352,7 @@ func (b *BadgerEngine) getNodeSnapshotForRead(ctx context.Context, id NodeID, fo
 		copyImage = nil
 	}
 	return b.getNodeByID(ctx, id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
+		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, false, nil)
 	}, copyImage, mode)
 }
 
@@ -376,7 +376,7 @@ func (b *BadgerEngine) readNodeMetadata(ctx context.Context, id NodeID, v readVi
 		copyImage, cache = copyNodeWithoutEmbeddings, nodeReadCacheProjection
 	}
 	return b.getNodeByID(ctx, id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-		return b.readNodeItemInTxn(txn, item, id, hydration)
+		return b.readNodeItemInTxn(txn, item, id, hydration, false, nil)
 	}, copyImage, cache)
 }
 

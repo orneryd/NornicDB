@@ -73,8 +73,15 @@ func (tx *BadgerTransaction) readsPinnedSnapshotBodyLocked() bool {
 // readsPinnedSnapshotBodyLocked must hold.
 func (tx *BadgerTransaction) readPinnedSnapshotNodeLocked(ctx context.Context, nodeID NodeID, vectors bool, v readVisibility) (*Node, error) {
 	hydration := nodeItemQueryMetadata
+	var decodes *embeddingChunkDecodes
 	if vectors {
 		hydration = nodeItemFullEmbeddings
+		// A write target's chunks may be read again by its commit's
+		// stored-entity captures, which decode through the same memo
+		// (embeddingChunkDecodes).
+		if tx.readingWriteTarget {
+			decodes = &tx.chunkDecodes
+		}
 	}
 	var node *Node
 	err := tx.withSnapshotViewLocked(func(snapshot *badger.Txn) error {
@@ -85,7 +92,7 @@ func (tx *BadgerTransaction) readPinnedSnapshotNodeLocked(ctx context.Context, n
 		if getErr != nil {
 			return getErr
 		}
-		decoded, readErr := tx.engine.readNodeItemInTxn(snapshot, item, nodeID, hydration)
+		decoded, readErr := tx.engine.readNodeItemInTxn(snapshot, item, nodeID, hydration, false, decodes)
 		if readErr != nil {
 			return readErr
 		}
