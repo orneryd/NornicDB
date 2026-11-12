@@ -58,6 +58,8 @@ func RegisterHeimdallProvider(name string, factory func(Config) (Generator, erro
 //   - openai: Use OpenAI (or compatible) chat API; requires NORNICDB_HEIMDALL_API_KEY.
 //   - orca: Use OrcaRouter's OpenAI-compatible API; defaults to orcarouter/auto
 //     and requires NORNICDB_HEIMDALL_API_KEY.
+//   - uberllm: Use UberLLM's OpenAI-compatible API (https://api.uberllm.dev);
+//     defaults to openai/gpt-4o-mini and requires NORNICDB_HEIMDALL_API_KEY.
 //   - ollama: Use Ollama /api/chat; NORNICDB_HEIMDALL_API_URL defaults to http://localhost:11434.
 //   - vllm: Use vLLM's OpenAI-compatible API; NORNICDB_HEIMDALL_API_URL defaults to http://localhost:8000.
 //   - litellm: Use a LiteLLM proxy (OpenAI-compatible gateway to 100+ providers);

@@ -1000,14 +1000,14 @@ Watch logs for:
 
 ## Heimdall AI Assistant
 
-Heimdall is the cognitive guardian and AI chat assistant. It supports **local** (GGUF BYOM), **ollama**, **openai**, **orca**, **vllm**, and **litellm** chat providers.
+Heimdall is the cognitive guardian and AI chat assistant. It supports **local** (GGUF BYOM), **ollama**, **openai**, **orca**, **uberllm**, **vllm**, and **litellm** chat providers.
 
 | Variable                     | Default     | Description                                                                                                                                                  |
 | ---------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `NORNICDB_HEIMDALL_ENABLED`  | `false`     | Enable the AI assistant                                                                                                                                      |
-| `NORNICDB_HEIMDALL_PROVIDER` | `local`     | Backend: `local`, `ollama`, `openai`, `orca`, `vllm`, or `litellm`                                                                                           |
-| `NORNICDB_HEIMDALL_API_URL`  | (see below) | Provider base URL. OrcaRouter defaults to `https://api.orcarouter.ai`; see provider docs for all defaults.                                                   |
-| `NORNICDB_HEIMDALL_API_KEY`  | (empty)     | Required for OpenAI and Orca; optional LiteLLM master/virtual key or vLLM key                                                                                |
+| `NORNICDB_HEIMDALL_PROVIDER` | `local`     | Backend: `local`, `ollama`, `openai`, `orca`, `uberllm`, `vllm`, or `litellm`                                                                                |
+| `NORNICDB_HEIMDALL_API_URL`  | (see below) | Provider base URL. OrcaRouter defaults to `https://api.orcarouter.ai`, UberLLM to `https://api.uberllm.dev`; see provider docs for all defaults.              |
+| `NORNICDB_HEIMDALL_API_KEY`  | (empty)     | Required for OpenAI, Orca and UberLLM; optional LiteLLM master/virtual key or vLLM key                                                                       |
 | `NORNICDB_HEIMDALL_MODEL`    | (varies)    | Local GGUF name, Ollama/OpenAI/vLLM model name, or required LiteLLM `model_name` alias                                                                       |
 
 **Advanced llama.cpp context features** (local provider only, most models work with defaults):

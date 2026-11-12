@@ -990,7 +990,7 @@ type FeatureFlagsConfig struct {
 	// Environment: NORNICDB_HEIMDALL_MODEL (default: qwen2.5-1.5b-instruct-q4_k_m)
 	HeimdallModel string
 
-	// Heimdall provider: "local" (GGUF), "ollama", "openai", "orca", "vllm", or "litellm"
+	// Heimdall provider: "local" (GGUF), "ollama", "openai", "orca", "uberllm", "vllm", or "litellm"
 	// Environment: NORNICDB_HEIMDALL_PROVIDER (default: local)
 	HeimdallProvider string
 

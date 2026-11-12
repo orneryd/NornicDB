@@ -96,9 +96,9 @@ For local GGUF instead of OpenAI, use `NORNICDB_HEIMDALL_PROVIDER=local` (or omi
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `NORNICDB_HEIMDALL_ENABLED` | `false` | Enable/disable the AI assistant |
-| `NORNICDB_HEIMDALL_PROVIDER` | `local` | Backend: `local` (GGUF), `ollama`, `openai`, `orca`, `vllm`, or `litellm` |
-| `NORNICDB_HEIMDALL_API_URL` | (see below) | Provider API base URL. Defaults: Ollama `http://localhost:11434`, OpenAI `https://api.openai.com`, OrcaRouter `https://api.orcarouter.ai`, vLLM `http://localhost:8000`, LiteLLM `http://localhost:4000` |
-| `NORNICDB_HEIMDALL_API_KEY` | (empty) | Required for OpenAI and Orca; optional LiteLLM master or virtual key; optional for vLLM |
+| `NORNICDB_HEIMDALL_PROVIDER` | `local` | Backend: `local` (GGUF), `ollama`, `openai`, `orca`, `uberllm`, `vllm`, or `litellm` |
+| `NORNICDB_HEIMDALL_API_URL` | (see below) | Provider API base URL. Defaults: Ollama `http://localhost:11434`, OpenAI `https://api.openai.com`, OrcaRouter `https://api.orcarouter.ai`, UberLLM `https://api.uberllm.dev`, vLLM `http://localhost:8000`, LiteLLM `http://localhost:4000` |
+| `NORNICDB_HEIMDALL_API_KEY` | (empty) | Required for OpenAI, Orca and UberLLM; optional LiteLLM master or virtual key; optional for vLLM |
 | `NORNICDB_HEIMDALL_MODEL` | (varies) | Local GGUF name (default `qwen3-0.6b-instruct`), Ollama/OpenAI/vLLM model name, or LiteLLM proxy model alias |
 | `NORNICDB_MODELS_DIR` | `/app/models` | Directory containing GGUF models (local only) |
 | `NORNICDB_HEIMDALL_GPU_LAYERS` | `-1` | GPU layers (-1 = auto, local only) |
@@ -109,9 +109,9 @@ For local GGUF instead of OpenAI, use `NORNICDB_HEIMDALL_PROVIDER=local` (or omi
 
 For detailed information about context handling and token budgets, see [Heimdall Context & Tokens](./heimdall-context.md). For **Qwen3 0.6B instruct**, defaults use temperature 0.5, top_p 0.8, top_k 20 and explicit "do not repeat" instructions in the system prompt to avoid repeated lines. When using **Ollama or OpenAI**, you can safely increase token budgets (e.g. 32K or 128K context); that guide includes example env values.
 
-### Providers: local / Ollama / OpenAI / OrcaRouter / vLLM / LiteLLM
+### Providers: local / Ollama / OpenAI / OrcaRouter / UberLLM / vLLM / LiteLLM
 
-Heimdall supports local GGUF inference and five remote chat providers:
+Heimdall supports local GGUF inference and six remote chat providers:
 
 | Provider | Description | API URL default | API key |
 |----------|-------------|-----------------|---------|
@@ -119,6 +119,7 @@ Heimdall supports local GGUF inference and five remote chat providers:
 | **ollama** | Use Ollama’s `/api/chat`; no API key. | `http://localhost:11434` | Not used |
 | **openai** | Use OpenAI (or compatible) chat completions API. | `https://api.openai.com` | **Required** |
 | **orca** | Use OrcaRouter's OpenAI-compatible chat completions API. | `https://api.orcarouter.ai` | **Required** |
+| **uberllm** | Use UberLLM's OpenAI-compatible chat completions API (`vendor/model` ids from one key). | `https://api.uberllm.dev` | **Required** |
 | **vllm** | Use vLLM's OpenAI-compatible chat completions API. | `http://localhost:8000` | Optional |
 | **litellm** | Use a LiteLLM proxy model alias through its OpenAI-compatible API. | `http://localhost:4000` | Optional master or virtual key |
 
@@ -128,6 +129,7 @@ Heimdall supports local GGUF inference and five remote chat providers:
 - **ollama**: `NORNICDB_HEIMDALL_PROVIDER=ollama`, optional `NORNICDB_HEIMDALL_API_URL` (default `http://localhost:11434`), optional `NORNICDB_HEIMDALL_MODEL` (e.g. `llama3.2`).
 - **openai**: `NORNICDB_HEIMDALL_PROVIDER=openai`, `NORNICDB_HEIMDALL_API_KEY` (required), optional `NORNICDB_HEIMDALL_API_URL` and `NORNICDB_HEIMDALL_MODEL` (default `gpt-4o-mini`).
 - **orca**: `NORNICDB_HEIMDALL_PROVIDER=orca`, `NORNICDB_HEIMDALL_API_KEY` (required), optional `NORNICDB_HEIMDALL_API_URL` and `NORNICDB_HEIMDALL_MODEL` (default `orcarouter/auto`).
+- **uberllm**: `NORNICDB_HEIMDALL_PROVIDER=uberllm`, `NORNICDB_HEIMDALL_API_KEY` (required, from [uberllm.dev](https://uberllm.dev/signup)), optional `NORNICDB_HEIMDALL_API_URL` (default `https://api.uberllm.dev`; a trailing `/v1` is accepted) and `NORNICDB_HEIMDALL_MODEL` (default `openai/gpt-4o-mini`; any chat id from `GET https://api.uberllm.dev/v1/models`, e.g. `deepseek/deepseek-v4.1-flash`).
 - **vllm**: `NORNICDB_HEIMDALL_PROVIDER=vllm`, `NORNICDB_HEIMDALL_MODEL` (required), optional `NORNICDB_HEIMDALL_API_URL` (default `http://localhost:8000`) and `NORNICDB_HEIMDALL_API_KEY`.
 - **litellm**: `NORNICDB_HEIMDALL_PROVIDER=litellm`, `NORNICDB_HEIMDALL_MODEL` (required - the user-facing `model_name` alias served by your proxy, e.g. `gpt-4o` or `team-chat`), optional `NORNICDB_HEIMDALL_API_URL` (proxy root URL without `/v1`, default `http://localhost:4000`) and `NORNICDB_HEIMDALL_API_KEY` (the proxy master/virtual key; omit for a proxy without auth). Routes chat through a [LiteLLM](https://docs.litellm.ai/docs/proxy/quick_start) gateway using its OpenAI-compatible `/v1/chat/completions` endpoint.
 
@@ -168,6 +170,13 @@ heimdall:
   enabled: true
   provider: orca
   api_key: "your-orca-key"
+
+# UberLLM
+heimdall:
+  enabled: true
+  provider: uberllm
+  api_key: "ull_..."
+  model: deepseek/deepseek-v4.1-flash # Omit for openai/gpt-4o-mini
 ```
 
 ### OpenAI with larger context (defaults + 128K)
