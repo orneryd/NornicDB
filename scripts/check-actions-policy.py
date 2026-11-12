@@ -40,7 +40,7 @@ def violations(name, workflow):
         authorize = jobs.get("authorize", {})
         guarded = (jobs.get("prepare", {}).get("if") == guard and jobs.get("prepare", {}).get("needs") == "authorize"
                    and authorize.get("if") == "${{ github.event_name == 'workflow_dispatch' }}"
-                   and authorize.get("environment") == GATE)
+                   and authorize.get("environment") == "admin-approved-actions")
         dependents = (all(jobs.get(name, {}).get("needs") == "prepare" for name in ("build", "tests", "lint"))
                       and set(jobs.get("checks", {}).get("needs", [])) == {"prepare", "build", "lint"}
                       and jobs.get("checks", {}).get("if") == "${{ !cancelled() && needs.prepare.result == 'success' }}")
@@ -143,6 +143,17 @@ def self_test():
     assert violations("ci.yml", {**base, "on": {"push": {"branches": ["develop"]}}})
     assert violations("release-verification.yml", {**base, "on": {"push": {"branches": ["**"]}}})
     assert violations("release-verification.yml", {**base, "on": {"push": {"tags": ["*"]}}})
+    # Manual release verification retains an explicit administrator gate.
+    import copy
+    release = yaml.safe_load((ROOT / ".github/workflows/release-verification.yml").read_text())
+    assert not violations("release-verification.yml", release)
+    for field in ("environment", "if"):
+        bad = copy.deepcopy(release)
+        bad["jobs"]["authorize"].pop(field)
+        assert violations("release-verification.yml", bad)
+    bad = copy.deepcopy(release)
+    bad["jobs"]["prepare"].pop("needs")
+    assert violations("release-verification.yml", bad)
     for name, push in PUSH_WORKFLOWS.items():
         assert not violations(name, {**base, "on": {"push": push}})
     # Docs publishing publishes on main pushes only; the portal paths follow the
