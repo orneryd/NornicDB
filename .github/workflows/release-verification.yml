@@ -3,6 +3,16 @@ name: Release verification
 # A same-repository release-to-main PR automatically runs full verification.
 # The base-repository workflow is trusted; forked or non-release heads are excluded.
 on:
+  workflow_dispatch:
+    inputs:
+      head:
+        description: Full commit SHA to verify
+        required: true
+        type: string
+      base:
+        description: Full ancestor commit SHA used as the verification baseline
+        required: true
+        type: string
   pull_request_target:
     branches:
       - main
@@ -16,35 +26,46 @@ permissions:
 
 # A new event for this PR supersedes its previous verification run.
 concurrency:
-  group: release-verification-pr-${{ github.event.pull_request.number }}
+  group: release-verification-${{ github.event.pull_request.number || inputs.head }}
   cancel-in-progress: true
 
 jobs:
+  authorize:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    environment: admin-approved-actions
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Manual release verification authorized"
   prepare:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}
+    needs: authorize
+    if: ${{ always() && ((github.event_name == 'workflow_dispatch' && needs.authorize.result == 'success') || (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/'))) }}
     runs-on: ubuntu-latest
     outputs:
+      head: ${{ steps.revisions.outputs.head }}
       base: ${{ steps.revisions.outputs.base }}
       matrix: ${{ steps.groups.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ inputs.head || github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Record exact PR revisions
         id: revisions
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_HEAD: ${{ inputs.head || github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ inputs.base || github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$(git rev-parse HEAD)" == "$EXPECTED_HEAD" ]]
           git cat-file -e "${BASE_SHA}^{commit}"
           git merge-base --is-ancestor "$BASE_SHA" HEAD || {
             echo "The main PR base is not an ancestor of the release head; sync main and request verification again." >&2
             exit 1
           }
+          echo "head=$EXPECTED_HEAD" >> "$GITHUB_OUTPUT"
           echo "base=$BASE_SHA" >> "$GITHUB_OUTPUT"
       - name: Discover all existing coverage groups
         id: groups
@@ -59,7 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.prepare.outputs.head }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v7
@@ -93,7 +114,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.prepare.outputs.head }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v7
@@ -142,7 +163,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.prepare.outputs.head }}
           fetch-depth: 0
           persist-credentials: false
       - run: make lint-slog lint-cardinality
@@ -161,7 +182,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.prepare.outputs.head }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v7
@@ -202,7 +223,7 @@ jobs:
   verify:
     name: Release verification (required)
     needs: [prepare, build, tests, lint, checks]
-    if: ${{ always() && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every verification job
