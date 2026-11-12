@@ -140,8 +140,8 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 	b.wal.mu.Lock()
 	defer b.wal.mu.Unlock()
 
-	// Assign sequence numbers and write all entries using atomic format
-	var totalBytes int64
+	// Assign sequence numbers and write all entries using atomic format,
+	// through the WAL's one record order (encodeNextRecordLocked).
 	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
 	defer walJSONBufPool.Put(entryBuf)
 
@@ -151,45 +151,29 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 		if err := b.wal.prepareUnboundWALRecordLocked(pending.Operation); err != nil {
 			return 0, 0, err
 		}
-		// Assign sequence number NOW, at commit time
-		seq := b.wal.sequence.Add(1)
+
+		// Number the entry NOW, at commit time, and serialize it into the v3
+		// raw-Data payload (reduces allocs vs json.Marshal and avoids the
+		// base64 tax on Data).
+		entry, record, err := b.wal.encodeNextRecordLocked(entryBuf, pending.Operation, pending.Data, pending.Checksum, pending.Timestamp, "")
+		seq := entry.Sequence
+		if err != nil {
+			return 0, 0, fmt.Errorf("wal batch: failed to serialize entry seq %d: %w", seq, err)
+		}
 		if firstSeq == 0 {
 			firstSeq = seq
 		}
 		lastSeq = seq
 
-		entry := WALEntry{
-			Sequence:  seq,
-			Timestamp: pending.Timestamp,
-			Operation: pending.Operation,
-			Data:      pending.Data,
-			Checksum:  pending.Checksum,
-		}
-
-		// Serialize entry into the v3 raw-Data payload (reduces allocs vs
-		// json.Marshal and avoids the base64 tax on Data).
-		record, err := b.wal.encodeNewRecord(entryBuf, &entry)
-		if err != nil {
-			return 0, 0, fmt.Errorf("wal batch: failed to serialize entry seq %d: %w", seq, err)
-		}
-
-		alignedRecordLen, err := record.write(b.wal.writer, writeAtomicRecord)
-		if err != nil {
+		if err := b.wal.appendRecordLocked(&entry, record, writeAtomicRecord); err != nil {
 			return 0, 0, fmt.Errorf("wal batch: failed to write entry seq %d: %w", seq, err)
 		}
-
-		b.wal.entries.Add(1)
-		b.wal.totalWrites.Add(1)
-		totalBytes += alignedRecordLen
 	}
 
 	// Single sync at the end
 	if err := b.wal.syncLocked(); err != nil {
 		return 0, 0, fmt.Errorf("wal batch: sync failed: %w", err)
 	}
-
-	b.wal.bytes.Add(totalBytes)
-	b.wal.lastEntryTime.Store(time.Now().UnixNano())
 
 	// Clear batch
 	clear(b.pending)
