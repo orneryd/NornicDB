@@ -178,6 +178,9 @@ func TestNodeCascadeValidationWindowBlocksPeerAcknowledgement(t *testing.T) {
 	// NOR-213 added endpoint stability to the footprint, so the peer's shared
 	// endpoint request first meets the primary's exclusive deleted-node key.
 	// Do not require it to bypass that earlier authority to wait on the edge.
+	// The peer has still asked for the edge's authority: a commit references
+	// every key it needs before it waits on the first, so its request for the
+	// relationship is outstanding beside the primary's hold.
 	schema := engine.GetSchemaForNamespace("test")
 	schema.uniqueConstraintCommitLocksMu.Lock()
 	relationshipLock := schema.uniqueConstraintCommitLocks[uniqueConstraintLockKey{entityKind: 2, entityID: "test:r2"}]
@@ -187,13 +190,14 @@ func TestNodeCascadeValidationWindowBlocksPeerAcknowledgement(t *testing.T) {
 		nodeHolder = nodeLock.owner
 	}
 	waiter := schema.uniqueConstraintLockWaits[peer.ID]
-	holder := ""
+	holder, relationshipRequests := "", 0
 	if relationshipLock != nil {
-		holder = relationshipLock.owner
+		holder, relationshipRequests = relationshipLock.owner, relationshipLock.refs
 	}
 	schema.uniqueConstraintCommitLocksMu.Unlock()
 	require.NotNil(t, relationshipLock, "the cascaded relationship has entity authority")
 	require.Equal(t, primary.ID, holder, "the primary cascade commit holds the relationship's entity authority")
+	require.Equal(t, 2, relationshipRequests, "the peer's request for the relationship's entity authority is outstanding beside the primary's hold")
 	require.NotNil(t, nodeLock, "the primary's deleted node has identity authority")
 	require.Equal(t, primary.ID, nodeHolder, "the primary holds the endpoint identity the peer must stabilize")
 	require.Same(t, nodeLock, waiter, "the peer waits on the earlier endpoint authority inside the validation window")
