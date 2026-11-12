@@ -125,3 +125,20 @@ a database dropped and created again under the same name, is invalid.
 | A malformed or foreign identifier, or one older than `db.cdc.earliest()` | `Neo.ClientError.ChangeDataCapture.InvalidIdentifier` |
 | An identifier past `db.cdc.current()` | `Neo.TransientError.ChangeDataCapture.FutureIdentifier` |
 | An invalid selector | `Neo.ClientError.Statement.ArgumentError` |
+
+### Earliest marker and retention
+
+`db.cdc.earliest()` returns an opaque, database-bound start marker. Passing that
+marker to `db.cdc.query` starts at the earliest change retained by the query's
+read view, even if pruning advanced after obtaining the marker. It does not pin
+old events or turn the feed into a historical backup. Resume incremental
+consumption with the last returned event ID; ordinary event and current-position
+IDs can expire when their transaction falls outside retention.
+
+This matches the observed Neo4j 5.26.30 Enterprise behavior: with 128 KiB log
+rotation and `keep_none` retention, a query paused after `earliest()` continued
+successfully after rotation/checkpoint pruning. The same earliest marker read
+successively retained transaction pairs, while a normal event ID from a removed
+log returned `Neo.ClientError.ChangeDataCapture.InvalidIdentifier` in five
+successive controls. The comparison used a disposable database and an HTTP
+`LOAD CSV` barrier; it does not claim all Enterprise CDC semantics are qualified.

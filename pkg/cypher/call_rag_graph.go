@@ -42,13 +42,15 @@ func (e *StorageExecutor) runGraphSearchRequest(ctx context.Context, procedure s
 }
 
 // graphSearchEntity is one graph search result's kind and entities: a node,
-// or a relationship with its start and end nodes (null when not visible).
+// or a relationship with its start and end nodes (null when not visible). Its
+// endpoints are read through the statement's admitted point read, as the row
+// node is materialized for the statement it belongs to.
 func (e *StorageExecutor) graphSearchEntity(ctx context.Context, result *search.SearchResult) (kind string, node, relationship, start, end interface{}) {
 	if result.Relationship == nil {
 		return "node", result.MaterializedNode(storage.DatabaseOf(e.storage)), nil, nil, nil
 	}
 	endpoint := func(id storage.NodeID) interface{} {
-		if found, err := e.storage.GetNode(ctx, id); err == nil && found != nil {
+		if found, err := e.getQueryNode(ctx, e.storage, id); err == nil && found != nil {
 			return found
 		}
 		return nil

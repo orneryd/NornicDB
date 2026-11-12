@@ -116,12 +116,20 @@ type procedureScanStreamBoundary struct {
 }
 
 func (boundary *procedureScanStreamBoundary) StreamNodes(ctx context.Context, visit func(*storage.Node) error) error {
-	return boundary.NamespacedEngine.StreamNodes(ctx, func(node *storage.Node) error {
+	return boundary.NamespacedEngine.StreamNodes(ctx, boundary.nodeVisitor(ctx, visit))
+}
+
+func (boundary *procedureScanStreamBoundary) StreamNodesWithOptions(ctx context.Context, options storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	return boundary.NamespacedEngine.StreamNodesWithOptions(ctx, options, boundary.nodeVisitor(ctx, visit))
+}
+
+func (boundary *procedureScanStreamBoundary) nodeVisitor(ctx context.Context, visit func(*storage.Node) error) func(*storage.Node) error {
+	return func(node *storage.Node) error {
 		if err := boundary.accept(ctx, &boundary.acceptedNodes); err != nil {
 			return err
 		}
 		return visit(node)
-	})
+	}
 }
 
 func (boundary *procedureScanStreamBoundary) StreamEdges(ctx context.Context, visit func(*storage.Edge) error) error {

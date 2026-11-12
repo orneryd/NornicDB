@@ -65,6 +65,11 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 		returnItems = append(returnItems, returnItem{expr: "1", alias: anonymousBinding})
 	}
 
+	// Streaming callers supply their invocation's memo. A materialized
+	// single-row read has no repeated estimates to remove.
+	if hint.statistics == nil && len(rows) > 1 {
+		hint.statistics = &traversalSeedStatistics{}
+	}
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
@@ -76,7 +81,9 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 		physicalWhere, residualWhere := pipelineTraversalPredicates(ctx, materializedWhere, row, variables)
 		rowHint := hint
 		if physicalWhere != materializedWhere || pipelinePatternJoinsOuterBinding(row, variables) {
-			rowHint = pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}
+			// This row cannot use the pushed-down work, but it still reads the
+			// invocation's statistics.
+			rowHint = pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, statistics: hint.statistics}
 		}
 		var result *ExecuteResult
 		var handled bool
@@ -119,7 +126,7 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 					pinnedRelationship = edge
 				}
 			}
-			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pinnedRelationship, pathVariable, rowHint.readTail, rowHint.earlyLimit)
+			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pinnedRelationship, pathVariable, rowHint)
 			if err != nil {
 				return nil, true, err
 			}

@@ -268,3 +268,43 @@ func TestRelationshipUniqueNaNUsesScanFallback(t *testing.T) {
 	}
 	require.Equal(t, int64(2), scans.Load())
 }
+
+// Distinct WTF-8 property names are part of the exact UTF-16 identifier
+// contract. A runtime index key must not normalize them into one cache slot.
+func TestRelationshipUniqueIndexSeparatesSurrogatePropertyNames(t *testing.T) {
+	first, second := "\xed\xa0\x80", "\xed\xb0\x80"
+	engine := relationshipUniqueCommitFixture(t, 0, false)
+	schema := engine.GetSchemaForNamespace("test")
+	for i, property := range []string{first, second} {
+		require.NoError(t, schema.AddConstraint(Constraint{Name: fmt.Sprintf("surrogate_%d", i), Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "T", Properties: []string{property}}))
+	}
+	create := func(id EdgeID, a, b string) error {
+		tx, err := engine.BeginTransaction(t.Context())
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err := tx.CreateEdge(t.Context(), &Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]interface{}{first: a, second: b}}); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	require.NoError(t, create("test:first", "a", "x"))
+	var violation *ConstraintViolationError
+	require.ErrorAs(t, create("test:duplicate", "b", "x"), &violation, "the second property must have its own uniqueness index")
+	_, err := engine.GetEdge(t.Context(), "test:duplicate")
+	require.ErrorIs(t, err, ErrNotFound, "a rejected duplicate must not be published")
+	require.NoError(t, create("test:distinct", "b", "y"))
+	require.ErrorAs(t, create("test:duplicate_first", "a", "z"), &violation)
+}
+
+func TestRelationshipPropertyKeyPreservesExactIdentity(t *testing.T) {
+	sets := [][]string{{"\xed\xa0\x80"}, {"\xed\xb0\x80"}, {"\ufffd\ufffd\ufffd"}, {"a", "b"}, {"a,b"}, {"a\x00b"}, {"a", "", "b"}, {""}}
+	seen := make(map[string][]string, len(sets))
+	for _, properties := range sets {
+		key := relationshipPropertyKey(properties)
+		require.NotContains(t, seen, key, "distinct ordered property names must remain distinct")
+		require.Equal(t, key, relationshipPropertyKey(append([]string(nil), properties...)))
+		seen[key] = properties
+	}
+}

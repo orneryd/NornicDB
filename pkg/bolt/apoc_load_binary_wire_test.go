@@ -63,7 +63,7 @@ var boltLoadBinaryNames = []string{"apoc.load.binary", "apoc.load.stream"}
 // lookup is restored by the test's cleanup.
 func withBundledLoadBinaryHandler(t *testing.T) {
 	t.Helper()
-	handler, err := registry.Compile(apocload.Binary)
+	handler, err := registry.Compile(apocload.Binary, registry.CanonicalReads)
 	require.NoError(t, err)
 	previous := cypher.PluginFunctionLookup
 	cypher.PluginFunctionLookup = func(name string) (*cypher.PluginFunctionHandler, bool) {

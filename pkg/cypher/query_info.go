@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -91,9 +92,8 @@ type QueryInfo struct {
 type queryStatementEffect struct {
 	generation uint64
 	effect     statementEffect
-	// callSubqueriesOnly: every CALL of the statement is a CALL subquery run in
-	// line (callSubqueriesOnly).
-	callSubqueriesOnly bool
+	nodeImages ProcedureNodeImages
+	functions  cypherantlr.StatementEffects // Retained sites; plugin binding remains live.
 }
 
 // ClauseType represents the type of a Cypher clause
@@ -233,11 +233,8 @@ func (info *QueryInfo) refreshStatementEffect(ctx context.Context, text string) 
 		// An unresolvable procedure keeps its effect unknown, which stays a
 		// write here: no optimization may treat it as read-only.
 		effect.effect = contract.effect()
-		// Only a read-only statement with CALL consults the answer, so only it
-		// reads the subqueries and scans for plugin functions
-		// (readsQueryNodesWithoutVectors).
-		effect.callSubqueriesOnly = info.HasCall && effect.effect == statementEffectRead && !contract.calls &&
-			!callSubqueryRunsSeparately(ctx, text) && !callsNativeFunction(ctx, text)
+		effect.nodeImages = contract.nodeImages
+		effect.functions = contract.functions
 	} else if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
@@ -265,19 +262,6 @@ func (info *QueryInfo) Writes() bool {
 func (info *QueryInfo) runtimeEffect() bool {
 	effect := info.effect.Load()
 	return effect != nil && effect.effect == statementEffectRuntime
-}
-
-// callSubqueriesOnly reports that every CALL of the statement is a CALL
-// subquery the statement's own executor runs in line: no procedure call
-// anywhere (built-in or not, nested ones included), no subquery IN
-// TRANSACTIONS or with USE in its body, which runs on another executor,
-// and no plugin function outside the bundled APOC library, which is native
-// code that may read the stored vectors of a node it is given
-// (readsQueryNodesWithoutVectors). An analysis whose effect was never read
-// doesn't qualify.
-func (info *QueryInfo) callSubqueriesOnly() bool {
-	effect := info.effect.Load()
-	return effect != nil && effect.callSubqueriesOnly
 }
 
 // readResult reports the row-returning, non-schema shape of an analysis. It

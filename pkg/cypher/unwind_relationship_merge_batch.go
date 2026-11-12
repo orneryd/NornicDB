@@ -638,7 +638,7 @@ func lookupRelationshipBatchExistingEdge(
 	if _, scanned := scannedPairs[pairKey]; scanned {
 		return nil, nil
 	}
-	edges, err := store.GetEdgesBetween(ctx, startID, endID)
+	edges, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: startID, Other: endID})
 	if err != nil {
 		return nil, localizedError(localization.CypherMergeGetEdgesBetweenFailed(string(startID), string(endID), err), err)
 	}

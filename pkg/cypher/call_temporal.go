@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -17,6 +18,28 @@ import (
 // ========================================
 // Temporal Helper Procedures
 // ========================================
+
+// The reads the temporal procedures perform, and the record PROFILE keeps of
+// each. A read is recorded where it handed its population over, before the
+// procedure filters that population by key value or validity interval: the one
+// row a procedure admits is not the population it read.
+const (
+	// profileKindNodeByLabelVisibleAtScan names a snapshot-visible label read:
+	// the nodes of one label as they were at the statement's system time and
+	// sequence. It is a different request from profileKindNodeByLabelScan (the
+	// label's current nodes), so a statement reading the historical view names
+	// that request instead of claiming the current one it did not make. Rows is
+	// the label population the snapshot returned, before key/interval
+	// filtering.
+	profileKindNodeByLabelVisibleAtScan = "NodeByLabelVisibleAtScan"
+	// profileKindTemporalNodeAsOfSeek names the one temporal index lookup
+	// db.temporal.asOf performs for a label, key property and key value as of
+	// one instant. Rows is 1 when the lookup returned the version covering that
+	// instant and 0 when it returned none; Hits is the one request, whether or
+	// not it found a version. The label read a lookup that found nothing falls
+	// back to is a separate request and is recorded as its own.
+	profileKindTemporalNodeAsOfSeek = "TemporalNodeAsOfSeek"
+)
 
 // callDbTemporalAssertNoOverlap implements db.temporal.assertNoOverlap
 // Syntax:
@@ -132,7 +155,15 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 	}
 
 	if temporalLookup, ok := e.storage.(storage.TemporalLookupEngine); ok && !hasSnapshot {
+		// The lookup is one point request whatever it answers: the version that
+		// covers asOf, or nothing, when the caller's engine has no temporal
+		// index for the request and the label read below answers it instead.
+		var seek *queryprofile.ReadCounter
+		if queryprofile.FromContext(ctx) != nil {
+			seek = queryprofile.Access(ctx, profileKindTemporalNodeAsOfSeek, label+"("+keyProp+")")
+		}
 		node, err := temporalLookup.GetTemporalNodeAsOf(ctx, label, keyProp, keyValue, validFromProp, validToProp, asOf)
+		queryprofile.EntityReadResult(seek, node, err)
 		if err != nil {
 			return nil, localizedError(localization.CypherSpecializedCallsTemporalLookupFailed(label, err), err)
 		}
@@ -252,12 +283,29 @@ func coerceUint64Arg(val interface{}, name string) (uint64, error) {
 	return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
 }
 
+// temporalNodesByLabel reads the label population both temporal procedures
+// filter. It is the one owner of those reads, so it is the one owner of their
+// records: the current nodes of the label, or, for a statement that names a
+// system time and sequence, the nodes the snapshot view held then. A record
+// holds the population the read returned, before the caller narrows it by key
+// value and validity interval, and an empty population the read did return is
+// recorded as an observed zero rather than as no measurement.
 func temporalNodesByLabel(ctx context.Context, engine storage.Engine, label string, version storage.MVCCVersion, hasSnapshot bool) ([]*storage.Node, error) {
 	if !hasSnapshot {
-		return engine.GetNodesByLabel(ctx, label)
+		nodes, err := engine.GetNodesByLabel(ctx, label)
+		if err != nil {
+			return nodes, err
+		}
+		queryprofile.EntityPopulation(ctx, profileKindNodeByLabelScan, label, nodes)
+		return nodes, nil
 	}
 	if provider, ok := engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(ctx, label, version)
+		nodes, err := provider.GetNodesByLabelVisibleAt(ctx, label, version)
+		if err != nil {
+			return nodes, err
+		}
+		queryprofile.EntityPopulation(ctx, profileKindNodeByLabelVisibleAtScan, label, nodes)
+		return nodes, nil
 	}
 	return nil, storage.ErrNotImplemented
 }

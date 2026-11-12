@@ -422,19 +422,19 @@ func TestTransaction_UpdateEdge(t *testing.T) {
 		t.Error("Engine should store updated edge after commit")
 	}
 
-	outgoingOld, _ := engine.GetOutgoingEdges(context.Background(), node1.ID)
+	outgoingOld, _ := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: node1.ID})
 	if len(outgoingOld) != 0 {
 		t.Error("Old outgoing index should be cleared")
 	}
-	outgoingNew, _ := engine.GetOutgoingEdges(context.Background(), node2.ID)
+	outgoingNew, _ := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: node2.ID})
 	if len(outgoingNew) != 1 || outgoingNew[0].ID != edgeID {
 		t.Error("New outgoing index should include updated edge")
 	}
-	incomingOld, _ := engine.GetIncomingEdges(context.Background(), node2.ID)
+	incomingOld, _ := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: node2.ID})
 	if len(incomingOld) != 0 {
 		t.Error("Old incoming index should be cleared")
 	}
-	incomingNew, _ := engine.GetIncomingEdges(context.Background(), node3.ID)
+	incomingNew, _ := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: node3.ID})
 	if len(incomingNew) != 1 || incomingNew[0].ID != edgeID {
 		t.Error("New incoming index should include updated edge")
 	}

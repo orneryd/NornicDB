@@ -15,27 +15,21 @@ type countingHeaderEngine struct {
 	decline       bool
 }
 
-func (e *countingHeaderEngine) OutgoingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
-	e.headers++
-	if e.decline {
-		return nil, false, nil
+// ReadAdjacentEdges counts how the traversal answers the request: a header
+// listing from the entries, or a record listing when this engine cannot list
+// the request's relationships as headers.
+func (e *countingHeaderEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Headers {
+		if e.decline {
+			e.full++
+			request.Headers = false
+		} else {
+			e.headers++
+		}
+		return e.NamespacedEngine.ReadAdjacentEdges(ctx, request)
 	}
-	return e.NamespacedEngine.OutgoingEdgeHeaders(ctx, id)
-}
-
-func (e *countingHeaderEngine) IncomingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
-	e.headers++
-	return e.NamespacedEngine.IncomingEdgeHeaders(ctx, id)
-}
-
-func (e *countingHeaderEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	e.full++
-	return e.NamespacedEngine.GetOutgoingEdges(ctx, id)
-}
-
-func (e *countingHeaderEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	e.full++
-	return e.NamespacedEngine.GetIncomingEdges(ctx, id)
+	return e.NamespacedEngine.ReadAdjacentEdges(ctx, request)
 }
 
 func TestTraversalRelationshipsNeedOnlyHeaders(t *testing.T) {
@@ -54,8 +48,8 @@ func TestTraversalRelationshipsNeedOnlyHeaders(t *testing.T) {
 }
 
 // A traversal over anonymous relationships lists them as headers and gives
-// the same answers; a named relationship is read in full, as is one storage
-// declines to list as headers.
+// the same answers; a named relationship is read in full, as is one whose
+// listing this storage answers from the records.
 func TestTraversalListsAnonymousRelationshipsAsHeaders(t *testing.T) {
 	ctx := context.Background()
 	store := &countingHeaderEngine{NamespacedEngine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")}
@@ -115,21 +109,22 @@ func TestTransactionTraversalListsRelationshipHeaders(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(2), int64(2)}, {int64(3), int64(1)}}, in.Rows)
 }
 
-// The transaction wrapper passes a declined or failed listing through, and
-// strips its namespace only from answered headers.
-func TestTransactionWrapperUserEdgeHeaders(t *testing.T) {
+// An adjacent-edge read leaves the transaction wrapper in the caller's ID
+// space: its error is preserved, a nil listing stays nil, and each record's
+// namespace is stripped.
+func TestTransactionWrapperAdjacentReadProjection(t *testing.T) {
 	w := &transactionStorageWrapper{namespace: "test", separator: ":"}
-	edges, answered, err := w.userEdgeHeaders(t.Context(), nil, false, nil)
+	edges, err := projectTransactionRead(t.Context(), w, []*storage.Edge(nil), nil, readOwnAdjacency)
 	require.NoError(t, err)
-	require.False(t, answered)
 	require.Nil(t, edges)
-	_, answered, err = w.userEdgeHeaders(t.Context(), nil, true, storage.ErrNotFound)
+	_, err = projectTransactionRead(t.Context(), w, []*storage.Edge(nil), storage.ErrNotFound, readOwnAdjacency)
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	require.True(t, answered)
-	edges, _, _ = w.userEdgeHeaders(t.Context(), []*storage.Edge{{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K"}}, true, nil)
+	edges, err = projectTransactionRead(t.Context(), w, []*storage.Edge{{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K"}}, nil, readOwnAdjacency)
+	require.NoError(t, err)
 	require.Equal(t, storage.EdgeID("e"), edges[0].ID)
 	require.Equal(t, storage.NodeID("a"), edges[0].StartNode)
 	root := &transactionStorageWrapper{}
-	edges, _, _ = root.userEdgeHeaders(t.Context(), []*storage.Edge{{ID: "e"}}, true, nil)
+	edges, err = projectTransactionRead(t.Context(), root, []*storage.Edge{{ID: "e"}}, nil, readOwnAdjacency)
+	require.NoError(t, err)
 	require.Equal(t, storage.EdgeID("e"), edges[0].ID)
 }

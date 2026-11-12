@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 
@@ -71,6 +72,22 @@ func requireFulltextIndex(indexName string, declared bool) error {
 	return localizedError(localization.CypherSpecializedCallsFulltextIndexNotFound(indexName), nil)
 }
 
+// readFulltextIndex is the shared schema acquisition for fulltext queries and
+// their synchronous retention checks. Every actual lookup reports its returned
+// definition (or absence) and one logical request, without a second lookup.
+func readFulltextIndexDefinition(ctx context.Context, schema *storage.SchemaManager, name string) (*storage.FulltextIndex, bool) {
+	if schema == nil {
+		return nil, false
+	}
+	index, exists := schema.GetFulltextIndex(name)
+	var rows int64
+	if exists {
+		rows = 1
+	}
+	queryprofile.Access(ctx, "FulltextIndexByNameSeek", name).Add(rows, 1)
+	return index, exists
+}
+
 func (e *StorageExecutor) callDbIndexFulltextQueryNodes(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: columnNames(nodeScoreColumns),
@@ -88,12 +105,9 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(ctx context.Context, arg
 	var targetLabels []string
 	var targetProperties []string
 
-	schema := e.storage.GetSchema()
-	if schema != nil {
-		if ftIdx, exists := schema.GetFulltextIndex(indexName); exists {
-			targetLabels = ftIdx.Labels
-			targetProperties = ftIdx.Properties
-		}
+	if ftIdx, exists := readFulltextIndexDefinition(ctx, e.storage.GetSchema(), indexName); exists {
+		targetLabels = ftIdx.Labels
+		targetProperties = ftIdx.Properties
 	}
 
 	if err := requireFulltextIndex(indexName, len(targetProperties) > 0); err != nil {
@@ -115,7 +129,6 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(ctx context.Context, arg
 		if err := e.fulltextUnrankedRows(ctx, indexName, targetLabels, targetProperties, false, wildcard, presence, opts, result); err != nil {
 			return nil, err
 		}
-		applyFulltextOptions(result, opts)
 		return result, nil
 	}
 	hits, err := e.fulltextHits(ctx, indexName, query, targetLabels, targetProperties, false, opts)
@@ -254,36 +267,29 @@ func fulltextOptionToInt(v interface{}) (int, bool) {
 	return valueconvert.ToInt(v, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat|valueconvert.IntegerStrings|valueconvert.IntegerTrimStrings)
 }
 
-func applyFulltextOptions(result *ExecuteResult, opts fulltextQueryOptions) {
-	if result == nil || len(result.Rows) == 0 {
-		return
-	}
-	if opts.skip > 0 {
-		if opts.skip >= len(result.Rows) {
-			result.Rows = [][]interface{}{}
-			return
-		}
-		result.Rows = result.Rows[opts.skip:]
-	}
-	if opts.limit >= 0 && opts.limit < len(result.Rows) {
-		result.Rows = result.Rows[:opts.limit]
-	}
+// fulltextRowPage owns the accepted row window for either entity kind.
+// Keep its mutable position with its output so stream callbacks capture one
+// page rather than separate options, result and position pointers.
+type fulltextRowPage struct {
+	result *ExecuteResult
+	opts   fulltextQueryOptions
+	seen   int
 }
 
-func appendFulltextOptionedRow(result *ExecuteResult, opts fulltextQueryOptions, seen *int, row []interface{}) bool {
-	if result == nil || seen == nil {
+func (page *fulltextRowPage) append(row []interface{}) bool {
+	if page.result == nil {
 		return false
 	}
-	current := *seen
-	*seen = current + 1
-	if current < opts.skip {
+	current := page.seen
+	page.seen++
+	if current < page.opts.skip {
 		return false
 	}
-	if opts.limit >= 0 && len(result.Rows) >= opts.limit {
+	if page.opts.limit >= 0 && len(page.result.Rows) >= page.opts.limit {
 		return true
 	}
-	result.Rows = append(result.Rows, row)
-	return opts.limit >= 0 && len(result.Rows) >= opts.limit
+	page.result.Rows = append(page.result.Rows, row)
+	return page.opts.limit >= 0 && len(page.result.Rows) >= page.opts.limit
 }
 
 // isFulltextWildcard reports whether the query should be treated as

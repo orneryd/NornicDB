@@ -57,7 +57,7 @@ func TestFulltextMaintainedPublicVocabularyRetirement(t *testing.T) {
 						}
 						expectedEngine = &fulltextCapturedEngine{Engine: store.NamespacedEngine, rows: rows}
 					}
-					expected := fulltextReleaseOracle(t, expectedEngine, "hotel")
+					expected := fulltextReleaseOracle(t, expectedEngine, "hotel", []string{"Source"}, []string{"text", "title"})
 					result, err := exec.Execute(ctx, query, nil)
 					require.NoError(t, err)
 					require.Equal(t, expected, result.Rows)

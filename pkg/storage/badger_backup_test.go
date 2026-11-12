@@ -143,7 +143,7 @@ func TestBadgerEngine_RestoreNativeStream(t *testing.T) {
 	node, err := target.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	require.Equal(t, "source", node.Properties["name"])
-	edges, err := target.GetOutgoingEdges(context.Background(), nodeID)
+	edges, err := target.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: nodeID})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 }

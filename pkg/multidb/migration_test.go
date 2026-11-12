@@ -260,13 +260,13 @@ func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
 	assert.Equal(t, "CONNECTS", retrieved.Type)
 
 	// Verify we can traverse from node1
-	outgoing, err := store.GetOutgoingEdges(context.Background(), storage.NodeID("node-1"))
+	outgoing, err := store.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: storage.NodeID("node-1")})
 	require.NoError(t, err)
 	assert.Len(t, outgoing, 1)
 	assert.Equal(t, storage.EdgeID("edge-1"), outgoing[0].ID)
 
 	// Verify we can traverse to node2
-	incoming, err := store.GetIncomingEdges(context.Background(), storage.NodeID("node-2"))
+	incoming, err := store.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: storage.NodeID("node-2")})
 	require.NoError(t, err)
 	assert.Len(t, incoming, 1)
 	assert.Equal(t, storage.EdgeID("edge-1"), incoming[0].ID)

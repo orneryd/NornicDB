@@ -22,26 +22,26 @@ func TestBadgerTransaction_ReadEdgeAndAdjacency_ErrorPaths(t *testing.T) {
 	require.NoError(t, err)
 
 	// pinNamespaceFromIDLocked failure through public read methods.
-	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "unprefixed"})
+	_, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Node: "unprefixed"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ID must be prefixed with namespace")
 
-	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "also-unprefixed"})
+	_, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "also-unprefixed"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ID must be prefixed with namespace")
 
-	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:a", Other: "missingprefix"})
+	_, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:a", Other: "missingprefix"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ID must be prefixed with namespace")
 
 	require.NoError(t, tx.Rollback())
 
 	// ensureOperationAllowedLocked early-return path for closed tx.
-	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
+	_, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.ErrorIs(t, err, ErrTransactionClosed)
-	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:b"})
+	_, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:b"})
 	require.ErrorIs(t, err, ErrTransactionClosed)
-	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:a", Other: "test:b"})
+	_, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:a", Other: "test:b"})
 	require.ErrorIs(t, err, ErrTransactionClosed)
 }
 

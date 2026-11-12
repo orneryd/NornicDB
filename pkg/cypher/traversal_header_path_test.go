@@ -15,24 +15,13 @@ type edgePathCountingEngine struct {
 	headerReads, fullReads int
 }
 
-func (e *edgePathCountingEngine) OutgoingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
-	e.headerReads++
-	return e.NamespacedEngine.OutgoingEdgeHeaders(ctx, id)
-}
-
-func (e *edgePathCountingEngine) IncomingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
-	e.headerReads++
-	return e.NamespacedEngine.IncomingEdgeHeaders(ctx, id)
-}
-
-func (e *edgePathCountingEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	e.fullReads++
-	return e.NamespacedEngine.GetOutgoingEdges(ctx, id)
-}
-
-func (e *edgePathCountingEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	e.fullReads++
-	return e.NamespacedEngine.GetIncomingEdges(ctx, id)
+func (e *edgePathCountingEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Headers {
+		e.headerReads++
+	} else {
+		e.fullReads++
+	}
+	return e.NamespacedEngine.ReadAdjacentEdges(ctx, request)
 }
 
 // A typed chained traversal lists adjacency headers and filters by type before

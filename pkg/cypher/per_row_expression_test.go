@@ -185,7 +185,7 @@ func TestRowValueProgramAdapterConsistency(t *testing.T) {
 			want, wantOK, wantErr := exec.evaluateRowValue(t.Context(), expr, row)
 			rowValueProgramsDisabled.Store(false)
 			compiler := rowValueCompiler{}
-			root, _ := compiler.compile(t.Context(), expr)
+			root, _ := compiler.compile(t.Context(), expressionPart(expr))
 			got, gotOK, gotErr := root.eval(t.Context(), exec, row, nil)
 			if gotOK != wantOK || !sameRowValue(got, want) || (gotErr == nil) != (wantErr == nil) || gotErr != nil && gotErr.Error() != wantErr.Error() {
 				t.Errorf("%s (row %d): program %#v, %v, %v; text %#v, %v, %v", expr, index, got, gotOK, gotErr, want, wantOK, wantErr)
@@ -207,13 +207,13 @@ func TestRowValueProgramsCompileIssueForms(t *testing.T) {
 		"allReduce(acc = 0, k IN $keys | acc + size(k), acc < 10000)",
 	} {
 		compiler := rowValueCompiler{}
-		root, _ := compiler.compile(t.Context(), expr)
+		root, _ := compiler.compile(t.Context(), expressionPart(expr))
 		if text := firstRowTextNode(root); text != "" {
 			t.Fatalf("%s: %q is read from the text", expr, text)
 		}
 	}
 	compiler := rowValueCompiler{}
-	root, _ := compiler.compile(t.Context(), "any(k IN $keys WHERE k = startNode(r).id + '|' + r.kind)")
+	root, _ := compiler.compile(t.Context(), expressionPart("any(k IN $keys WHERE k = startNode(r).id + '|' + r.kind)"))
 	quantifier := rowValueShape(rowValueShape(root).(*rowBoundNode).inner).(*rowQuantifierNode)
 	if quantifier.loop.slots != 1 {
 		t.Fatalf("memo slots %d, want the key once", quantifier.loop.slots)
@@ -438,7 +438,7 @@ func testRowValueProgramListAllocations(t *testing.T, exec *StorageExecutor, sto
 		}
 		return list
 	}
-	root, _ := (&rowValueCompiler{}).compile(t.Context(), expr)
+	root, _ := (&rowValueCompiler{}).compile(t.Context(), expressionPart(expr))
 	shortRow := map[string]interface{}{"r": edge, "$keys": keys(20)}
 	longRow := map[string]interface{}{"r": edge, "$keys": keys(200)}
 	evaluate := func(row map[string]interface{}) {

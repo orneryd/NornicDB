@@ -10,7 +10,7 @@ import (
 )
 
 func mustCallableForTest(function interface{}) *registry.Callable {
-	handler, err := registry.Compile(function)
+	handler, err := registry.Compile(function, registry.AdmissionObservation(function))
 	if err != nil {
 		panic(err)
 	}
@@ -40,7 +40,7 @@ func callPluginHandler(function interface{}, args []interface{}) (interface{}, e
 }
 
 func callTestPluginHandlerContext(ctx context.Context, function interface{}, args []interface{}) (interface{}, error) {
-	handler, err := registry.Compile(function)
+	handler, err := registry.Compile(function, registry.AdmissionObservation(function))
 	if err != nil {
 		return nil, err
 	}

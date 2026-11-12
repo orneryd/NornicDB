@@ -8,12 +8,27 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/apoc/registry"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 )
 
 var pluginContextType = reflect.TypeOf((*context.Context)(nil)).Elem()
 
 // invokeTypedPlugin applies the query value domain and binds the caller's
 // context. Argument conversion and execution belong to the checked callable.
+//
+// The opaque-callback report belongs to this adapter because it runs at the
+// handler's invocation boundary. Whether the implementation ran comes from
+// that boundary's phase receipt (registry.InvocationStarted), never from
+// matching an error value: a declaration the query cannot express (no
+// invocable signature, a lifecycle value it cannot emit) and a call the
+// boundary rejects before entering the implementation (argument policy,
+// argument count, argument binding) are never reported, so the built-in
+// function that answers instead is not charged with an unobserved read. An
+// implementation that ran is reported once, including when it returns another
+// call's rejection or panics into the existing recovery. The report uses the
+// policy the callable was admitted with - a canonical implementation never
+// appears as an opaque callback, and a custom one does as soon as it actually
+// runs.
 func invokeTypedPlugin(ctx context.Context, handler *PluginFunctionHandler, args []interface{}) (interface{}, error) {
 	if handler.Signature() == nil {
 		return nil, errUnsupportedPluginSignature
@@ -34,7 +49,23 @@ func invokeTypedPlugin(ctx context.Context, handler *PluginFunctionHandler, args
 	if offset == 1 {
 		prefix = []reflect.Value{reflect.ValueOf(ctx)}
 	}
-	return handler.CallWithPolicy(args, prefix, registry.CypherArguments)
+	opaque := handler.ReadObservation() == registry.OpaqueReads
+	returned := false
+	defer func() {
+		// A call that panicked at the boundary still entered the
+		// implementation, so one report is made before the panic reaches the
+		// existing recovery. The panic itself is neither recovered nor changed
+		// here.
+		if !returned && opaque {
+			queryprofile.Callback(ctx, "native function callback", "")
+		}
+	}()
+	value, err := handler.CallWithPolicy(args, prefix, registry.CypherArguments)
+	returned = true
+	if opaque && registry.InvocationStarted(err) {
+		queryprofile.Callback(ctx, "native function callback", "")
+	}
+	return value, err
 }
 
 // Context-taking plugin calls need the row evaluator to retain the statement's

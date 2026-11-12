@@ -57,7 +57,7 @@ func TestRowValueProgramCompilesTemporalConstructors(t *testing.T) {
 		{"date(1, 2, 3)", "date", "1, 2, 3", []string{"1", "2", "3", "1, 2, 3"}},
 	} {
 		compiler := rowValueCompiler{}
-		root, info := compiler.compile(t.Context(), tc.expr)
+		root, info := compiler.compile(t.Context(), expressionPart(tc.expr))
 		node := rowTemporalConstructorNode(root)
 		require.NotNil(t, node, tc.expr)
 		require.Equal(t, tc.function, node.function, tc.expr)
@@ -75,7 +75,7 @@ func TestRowValueProgramCompilesTemporalConstructors(t *testing.T) {
 		"toLower('x')",
 	} {
 		compiler := rowValueCompiler{}
-		root, _ := compiler.compile(t.Context(), expr)
+		root, _ := compiler.compile(t.Context(), expressionPart(expr))
 		require.Nil(t, rowTemporalConstructorNode(root), expr)
 		require.Equal(t, expr, firstRowTextNode(root), expr)
 	}
@@ -85,11 +85,11 @@ func TestRowValueProgramCompilesTemporalConstructors(t *testing.T) {
 // read the statement's clock, so it is evaluated for every element.
 func TestRowValueProgramKeepsTemporalConstructorsUnhoisted(t *testing.T) {
 	compiler := rowValueCompiler{}
-	root, _ := compiler.compile(t.Context(), "[k IN [1, 2] | datetime(n.datetime)]")
+	root, _ := compiler.compile(t.Context(), expressionPart("[k IN [1, 2] | datetime(n.datetime)]"))
 	comprehension, ok := rowValueShape(rowValueShape(root).(*rowBoundNode).inner).(*rowComprehensionNode)
 	require.True(t, ok)
 	require.NotNil(t, rowTemporalConstructorNode(comprehension.projection))
-	root, _ = compiler.compile(t.Context(), "[k IN [1, 2] | datetime()]")
+	root, _ = compiler.compile(t.Context(), expressionPart("[k IN [1, 2] | datetime()]"))
 	comprehension, ok = rowValueShape(rowValueShape(root).(*rowBoundNode).inner).(*rowComprehensionNode)
 	require.True(t, ok)
 	_, memoized := rowValueShape(comprehension.projection).(*rowMemoNode)
@@ -168,7 +168,7 @@ func TestRowTemporalConstructorProgramAdapterConsistency(t *testing.T) {
 	defer rowValueProgramsDisabled.Store(false)
 	for _, expr := range rowTemporalConstructorCorpus {
 		compiler := rowValueCompiler{}
-		root, _ := compiler.compile(t.Context(), expr)
+		root, _ := compiler.compile(t.Context(), expressionPart(expr))
 		for index, row := range rows {
 			rowValueProgramsDisabled.Store(true)
 			want, wantOK, wantErr := exec.evaluateRowValue(t.Context(), expr, row)
@@ -249,7 +249,7 @@ func TestRowTemporalConstructorStatementClock(t *testing.T) {
 		want, handled := temporalClockValue(tc.kind, instant, "")
 		require.True(t, handled, tc.expr)
 		compiler := rowValueCompiler{}
-		root, _ := compiler.compile(t.Context(), tc.expr)
+		root, _ := compiler.compile(t.Context(), expressionPart(tc.expr))
 		got, resolved, err := root.eval(operation, exec, row, nil)
 		require.NoError(t, err, tc.expr)
 		require.True(t, resolved, tc.expr)
@@ -264,7 +264,7 @@ func TestRowTemporalConstructorStatementClock(t *testing.T) {
 	// The same compiled node re-reads the clock: an instant it kept would not
 	// follow the statement's clock.
 	compiler := rowValueCompiler{}
-	root, _ := compiler.compile(t.Context(), "datetime()")
+	root, _ := compiler.compile(t.Context(), expressionPart("datetime()"))
 	first, _, err := root.eval(operation, exec, row, nil)
 	require.NoError(t, err)
 	current = instant.Add(time.Hour)

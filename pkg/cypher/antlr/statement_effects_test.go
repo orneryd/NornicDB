@@ -53,3 +53,23 @@ func TestReadOnlyEffectsUseLiveCallbacksAndRetainedScope(t *testing.T) {
 	require.Equal(t, []string{"CALL retained.read()"}, scopes)
 	require.False(t, effects.RemoteReadOnly(), "local callback must never alter remote conservative proof")
 }
+
+func TestStatementEffectsRetainOrderedFunctionSites(t *testing.T) {
+	const source = "RETURN trim(BOTH 'x' FROM outer(inner('x'))), 'ignored.call()', [x IN [1] | nested(x)]"
+	for _, dialect := range []bool{false, true} {
+		syntax, err := ParseSyntax(t.Context(), source, StatementEntry, dialect, RawSource)
+		require.NoError(t, err)
+		effects := syntax.Effects()
+		require.Equal(t, 3, effects.FunctionCount())
+		last := -1
+		for index, name := range []string{"outer", "inner", "nested"} {
+			site := effects.Function(index)
+			require.Equal(t, name, site.ChildRule(CypherParserRULE_invocationName).QualifiedName())
+			start, end := site.Span()
+			require.Greater(t, start, last, "range lookup depends on grammar traversal's source order")
+			require.Equal(t, source[start:end], site.Code())
+			last = start
+		}
+	}
+	require.Zero(t, (StatementEffects{}).FunctionCount())
+}

@@ -123,12 +123,13 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	}
 
 	type withProjection struct {
-		expr          string
-		alias         string
-		aggregate     bool
-		aggregateName string
-		aggregateExpr string
-		distinct      bool
+		expr            string
+		alias           string
+		aggregate       bool
+		aggregateName   string
+		aggregateExpr   string
+		distinct        bool
+		expressionStart int
 	}
 	projections := make([]withProjection, 0, len(retained.projections))
 	projectionAliases := make([]string, 0, len(retained.projections))
@@ -148,14 +149,17 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		if item.isAggr && (index < explicitStart || explicit[index-explicitStart].as < 0) {
 			return nil, false
 		}
-		projections = append(projections, withProjection{item.expr, item.alias, item.isAggr, item.aggregateName, item.aggregateExpr, item.distinct})
+		projections = append(projections, withProjection{item.expr, item.alias, item.isAggr, item.aggregateName, item.aggregateExpr, item.distinct, item.expressionStart})
 		projectionAliases = append(projectionAliases, item.alias)
 		hasAggregate = hasAggregate || item.isAggr
 	}
 	if hasAggregate {
 		aggregates := make([]returnProjection, len(projections))
 		for index, projection := range projections {
-			aggregates[index] = returnProjection{expr: projection.expr, alias: projection.alias, isAggr: projection.aggregate}
+			// The item's retained expression origin travels with the
+			// aggregation, as it does on the row plan below: an aggregating
+			// projection reports a program at the occurrence that was written.
+			aggregates[index] = returnProjection{expr: projection.expr, alias: projection.alias, isAggr: projection.aggregate, expressionStart: projection.expressionStart}
 		}
 		groups, ok := e.pipelineAggregateGroups(ctx, source, aggregates, rowsValidated)
 		if !ok {
@@ -187,7 +191,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 				}
 			}
 			for index, projection := range projections {
-				value, ok := group.value(ctx, e, index)
+				value, ok := group.value(ctx, e, index, projection.expressionStart)
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
 					return nil, false
@@ -238,7 +242,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	}
 	rowPlan := pipelineRowWith{where: postWithWhere, imports: pipelineImports(ctx)}
 	for _, projection := range projections {
-		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias})
+		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{expression: projection.expr, alias: projection.alias, expressionStart: projection.expressionStart})
 	}
 	rowPlan.retainRows, rowPlan.skipValidation = true, true
 	if needsOrderScopes {
@@ -708,7 +712,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 		if inner == "" {
 			return []interface{}{}, true
 		}
-		if _, _, _, _, comprehension := parseListComprehension(inner); !comprehension {
+		if _, _, _, _, comprehension := parseListComprehension(inner, nil); !comprehension {
 			result := make([]interface{}, 0)
 			for _, item := range splitTopLevelComma(inner) {
 				value, ok := e.evaluatePipelineAggregateExpressionWithContext(ctx, rows, item)
@@ -885,7 +889,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 			}
 			outRow := make([]interface{}, 0, len(projs))
 			for index, projection := range projs {
-				value, ok := group.value(ctx, e, index)
+				value, ok := group.value(ctx, e, index, projection.expressionStart)
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
 					return nil, false
@@ -961,7 +965,16 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		}
 		projected := make(pipelineRow, len(projs))
 		for _, p := range projs {
+			// A PROFILE statement binds the item's retained expression origin
+			// for this row; any other statement binds nothing.
+			saved, bound := rowExpressionOriginBinding{}, false
+			if profileRuntimeFromContext(ctx) != nil {
+				saved, bound = bindRowExpressionOrigin(row, p.expressionStart)
+			}
 			val, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
+			if bound {
+				restoreRowExpressionOrigin(row, saved)
+			}
 			if !ok {
 				pipelineItemUnevaluable(ctx, p.expr)
 				return nil, false
@@ -1107,12 +1120,14 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	named := &ExecuteResult{Columns: append([]string(nil), plan.columns...)}
 
 	stream.begin(named.Columns)
+	collector := profileRuntimeFromContext(ctx)
 	stopped := false
 	projected, completed := e.pipelineProjectPlainReturn(ctx, plan.projections, rows, source, nil, func(values []interface{}) bool {
 		if !stream.emit(ctx, e, values) {
 			stopped = true
 			return false
 		}
+		profileRuntimeClauseOutputRows(ctx, collector, 1)
 		return true
 	})
 	failure := validationErr

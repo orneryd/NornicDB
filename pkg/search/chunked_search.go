@@ -134,6 +134,22 @@ func searchQueryChunks(
 	return searchSeveralQueryChunks(ctx, query, chunks, opts, embedQuery, searchQuery, errorPolicy)
 }
 
+// chunkSearchOptions is the options one chunk of a query is searched with.
+// Limit is that chunk's candidate window, which a continuation sets to at least
+// the depth it requested. A ranked continuation reranks the fused order of its
+// chunks itself, once, after that fusion, so a chunk's own search must not
+// rerank: its list is the fusion's input and the producer's memo is keyed by
+// the original query, not by this chunk's text.
+func chunkSearchOptions(opts *SearchOptions, candidates int) SearchOptions {
+	chunkOpts := *opts
+	if opts.continuation {
+		candidates = max(candidates, opts.Limit)
+		chunkOpts.RerankEnabled = false
+	}
+	chunkOpts.Limit = candidates
+	return chunkOpts
+}
+
 // searchSingleQueryChunk searches a query of one chunk as the query itself.
 func searchSingleQueryChunk(
 	ctx context.Context,
@@ -143,6 +159,7 @@ func searchSingleQueryChunk(
 	searchQuery SearchQueryFunc,
 	errorPolicy ChunkedSearchErrorPolicy,
 ) (*SearchResponse, error) {
+	chunkOpts := chunkSearchOptions(opts, opts.Limit)
 	embedding, err := embedQuery(ctx, query)
 	if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalEmbeddingError, err); fatal != nil {
 		return nil, fatal
@@ -155,7 +172,7 @@ func searchSingleQueryChunk(
 		fallbackReason = SearchFallbackQueryEmbeddingUnavailable
 	}
 	if err == nil && len(embedding) > 0 {
-		response, searchErr := searchQuery(ctx, query, embedding, opts)
+		response, searchErr := searchQuery(ctx, query, embedding, &chunkOpts)
 		if searchErr == nil && response != nil {
 			// The public completion boundary checks cancellation on success.
 			return response, nil
@@ -168,7 +185,7 @@ func searchSingleQueryChunk(
 			fallbackReason = SearchFallbackHybridSearchFailed
 		}
 	}
-	response, searchErr := searchQuery(ctx, query, nil, opts)
+	response, searchErr := searchQuery(ctx, query, nil, &chunkOpts)
 	return withSearchFallback(response, fallbackReason), searchErr
 }
 
@@ -197,13 +214,9 @@ func searchSeveralQueryChunks(
 		vectorSimilarity float64
 	}
 
-	chunkOpts := *opts
-	chunkOpts.Limit = chunkCandidateLimit(opts.Limit)
-	if opts.continuation {
-		// Continued queries deepen every chunk, rather than repeatedly searching
-		// the same one-shot top-100 prefix.
-		chunkOpts.Limit = max(chunkOpts.Limit, opts.Limit)
-	}
+	// Continued queries deepen every chunk, rather than repeatedly searching
+	// the same one-shot top-100 prefix, and never rerank a chunk's own list.
+	chunkOpts := chunkSearchOptions(opts, chunkCandidateLimit(opts.Limit))
 	exhausted := true
 	var (
 		fusedIndexes     map[string]int
@@ -219,7 +232,9 @@ func searchSeveralQueryChunks(
 	// canonical outcome owner rather than a rerank consumer. Its explicit
 	// contract is: outer-RRF owns aggregate order, rerank is applied when any
 	// participating chunk applied it, and any participating fallback remains
-	// visible with the first reported reason.
+	// visible with the first reported reason. A ranked continuation's chunks
+	// never rerank themselves; its producer reranks this fused order once, in
+	// TopK-sized windows keyed by the original query.
 	for _, chunk := range chunks {
 		embedding, err := embedQuery(ctx, chunk)
 		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalEmbeddingError, err); fatal != nil {
@@ -329,6 +344,7 @@ func searchSeveralQueryChunks(
 		SearchMethod:           "chunked_rrf_hybrid",
 		rerankApplied:          rerankApplied,
 		rerankOrderOwned:       rerankOrderOwned,
+		fusedOrder:             true,
 		FallbackTriggered:      false,
 		FallbackReason:         fallbackReason,
 	}

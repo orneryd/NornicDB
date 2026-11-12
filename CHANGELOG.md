@@ -16,7 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing and fails the search with it, marked `search.ErrFilterEvaluation`:
   no vector, full-text or query-chunk fallback replaces it.
 
+- Go search integrations now install `CrossEncoder` through `Service.SetReranker`.
+  The separate `SetCrossEncoder` entry point is retired; provider changes invalidate
+  search and Cypher result caches through the canonical installation owner.
+
 ### Fixed
+
+- Relationship uniqueness indexes preserve distinct escaped UTF-16 property names, preventing a duplicate value from bypassing its constraint in a native transaction. Existing stored data and storage formats are unchanged.
 
 - Collection/document traversals consider candidate and adjacency work before
   reversing onto an indexed endpoint. Inline start keys participate without

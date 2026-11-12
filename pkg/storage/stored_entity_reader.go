@@ -20,8 +20,11 @@ import (
 type StoredEntityReader interface {
 	GetStoredNode(ctx context.Context, id NodeID) (*Node, error)
 	GetStoredEdge(ctx context.Context, id EdgeID) (*Edge, error)
-	GetStoredOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
-	GetStoredIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
+	// ReadStoredAdjacentEdges answers one adjacent-edge request over the
+	// physically stored relationships, the ones a read-time visibility filter
+	// hides included. The request's types and header detail apply as they do
+	// to ReadAdjacentEdges.
+	ReadStoredAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error)
 	GetStoredNodesByLabel(ctx context.Context, label string) ([]*Node, error)
 	StreamStoredNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*Node) error) error
 	// StreamStoredEdgesByType visits edgeType's relationships; an empty
@@ -87,20 +90,14 @@ func GetStoredNodesByLabel(ctx context.Context, engine Engine, label string) ([]
 	return engine.GetNodesByLabel(ctx, label)
 }
 
-// GetStoredOutgoingEdges is GetStoredNode for a node's outgoing relationships.
-func GetStoredOutgoingEdges(ctx context.Context, engine Engine, nodeID NodeID) ([]*Edge, error) {
+// ReadStoredAdjacentEdges is GetStoredNode for a node's adjacent relationships:
+// the stored ones when engine can read hidden entities (StoredReader), else
+// those its current adjacent-edge read returns.
+func ReadStoredAdjacentEdges(ctx context.Context, engine Engine, request AdjacentEdgeRead) ([]*Edge, error) {
 	if reader, ok := StoredReader(engine); ok {
-		return reader.GetStoredOutgoingEdges(ctx, nodeID)
+		return reader.ReadStoredAdjacentEdges(ctx, request)
 	}
-	return engine.GetOutgoingEdges(ctx, nodeID)
-}
-
-// GetStoredIncomingEdges is GetStoredNode for a node's incoming relationships.
-func GetStoredIncomingEdges(ctx context.Context, engine Engine, nodeID NodeID) ([]*Edge, error) {
-	if reader, ok := StoredReader(engine); ok {
-		return reader.GetStoredIncomingEdges(ctx, nodeID)
-	}
-	return engine.GetIncomingEdges(ctx, nodeID)
+	return engine.ReadAdjacentEdges(ctx, request)
 }
 
 // StreamStoredEdgesByType visits edgeType's relationships for integrity work
@@ -196,14 +193,10 @@ func (w *WALEngine) GetStoredEdge(ctx context.Context, id EdgeID) (*Edge, error)
 	return GetStoredEdge(ctx, w.engine, id)
 }
 
-// GetStoredOutgoingEdges forwards to the inner engine (StoredEntityReader).
-func (w *WALEngine) GetStoredOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	return GetStoredOutgoingEdges(ctx, w.engine, nodeID)
-}
-
-// GetStoredIncomingEdges forwards to the inner engine (StoredEntityReader).
-func (w *WALEngine) GetStoredIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	return GetStoredIncomingEdges(ctx, w.engine, nodeID)
+// ReadStoredAdjacentEdges forwards to the inner engine
+// (StoredEntityReader).
+func (w *WALEngine) ReadStoredAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	return ReadStoredAdjacentEdges(ctx, w.engine, request)
 }
 
 // GetStoredNodesByLabel forwards to the inner engine (StoredEntityReader).
@@ -320,24 +313,10 @@ func (n *NamespacedEngine) GetStoredEdge(ctx context.Context, id EdgeID) (*Edge,
 	return materializedRead(func() (*Edge, error) { return GetStoredEdge(ctx, n.inner, n.PrefixEdgeID(id)) }, func(value *Edge) *Edge { return n.toUserEdge(value) }, false)
 }
 
-// GetStoredOutgoingEdges is GetOutgoingEdges' stored read
+// ReadStoredAdjacentEdges is ReadAdjacentEdges' stored read
 // (StoredEntityReader).
-func (n *NamespacedEngine) GetStoredOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	edges, err := GetStoredOutgoingEdges(ctx, n.inner, n.PrefixNodeID(nodeID))
-	if err != nil {
-		return nil, err
-	}
-	return n.toUserEdgesInNamespace(ctx, edges, true, false)
-}
-
-// GetStoredIncomingEdges is GetIncomingEdges' stored read
-// (StoredEntityReader).
-func (n *NamespacedEngine) GetStoredIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	edges, err := GetStoredIncomingEdges(ctx, n.inner, n.PrefixNodeID(nodeID))
-	if err != nil {
-		return nil, err
-	}
-	return n.toUserEdgesInNamespace(ctx, edges, true, false)
+func (n *NamespacedEngine) ReadStoredAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	return readAdjacentEdges(ctx, n, request, nil, storedRead)
 }
 
 // GetStoredNodesByLabel is GetNodesByLabel's stored read

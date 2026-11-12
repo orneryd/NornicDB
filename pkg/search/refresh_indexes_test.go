@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
@@ -167,4 +168,58 @@ func TestRefreshIndexes_NilServiceStopsAfterPrepare(t *testing.T) {
 	scope := &refreshIndexesRecorder{}
 	require.NoError(t, RefreshIndexes(context.Background(), scope, RefreshRequest{Node: "a"}))
 	require.Len(t, fixtureowner.Snapshot(&scope.mu, &scope.requests), 1)
+}
+
+// A committed refresh must outlive the request, but must stop with its service.
+type refreshShutdownReader struct {
+	storage.Engine
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *refreshShutdownReader) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	if id != "blocked" {
+		return r.Engine.GetNode(ctx, id)
+	}
+	r.once.Do(func() { close(r.entered) })
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-r.release:
+		return r.Engine.GetNode(ctx, id)
+	}
+}
+func TestRefreshIndexesPostCommitStopsOnServiceShutdown(t *testing.T) {
+	store := &refreshShutdownReader{Engine: newRefreshIndexesStore(t), entered: make(chan struct{}), release: make(chan struct{})}
+	service := NewService(store, 3, nil)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	result := make(chan error, 1)
+	done := make(chan struct{})
+	var release sync.Once
+	go func() {
+		defer close(done)
+		result <- RefreshIndexes(service.LifetimeContext(), &refreshIndexesRecorder{svc: service}, RefreshRequest{Node: "blocked", PostCommit: true, PostCommitService: service})
+	}()
+	t.Cleanup(func() { release.Do(func() { close(store.release) }); awaitEvent(t, "refresh reader cleanup", done) })
+	awaitEvent(t, "committed refresh entered storage", store.entered)
+	service.BeginShutdown()
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(catchUpPrompt):
+		t.Fatal("committed refresh ignored its service shutdown")
+	}
+}
+
+func TestRefreshIndexesPostCommitCompletesAfterCallerCancellation(t *testing.T) {
+	store := newRefreshIndexesStore(t)
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "accepted", Properties: map[string]interface{}{"content": "accepted refresh"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+	require.NoError(t, err)
+	service := NewService(store, 2, nil)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.NoError(t, RefreshIndexes(ctx, &refreshIndexesRecorder{svc: service}, RefreshRequest{Node: "accepted", PostCommit: true, PostCommitService: service}))
+	require.Equal(t, 1, service.vectorIndex.Count(), "caller cancellation cannot retract committed publication")
 }

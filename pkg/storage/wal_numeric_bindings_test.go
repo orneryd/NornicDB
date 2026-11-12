@@ -39,7 +39,7 @@ func TestBufferedWALRejectsIncompleteNumericBindingsBeforeApplyingData(t *testin
 		require.NoError(t, err)
 		require.Equal(t, f.holderNode, prior.StartNode)
 		require.Equal(t, f.holderEnd, prior.EndNode)
-		out, err := f.dest.GetOutgoingEdges(context.Background(), f.holderNode)
+		out, err := f.dest.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: f.holderNode})
 		require.NoError(t, err)
 		require.Equal(t, []EdgeID{priorID}, testEdgeIDs(out))
 	}

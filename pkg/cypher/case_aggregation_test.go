@@ -312,7 +312,7 @@ func TestParseCaseExpressionUTF8(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ce, err := parseCaseExpression(tt.expr)
+			ce, err := parseCaseExpression(tt.expr, nil)
 			require.NoError(t, err)
 			require.Len(t, ce.whenClauses, 1)
 			assert.Equal(t, tt.expectedCondition, ce.whenClauses[0].condition, "condition mismatch")

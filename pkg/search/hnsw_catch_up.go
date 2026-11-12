@@ -194,7 +194,20 @@ func applyCatchUpChange(target *HNSWIndex, id string, value []float32) error {
 		target.Remove(id)
 		return nil
 	}
-	return target.Update(id, value)
+	if err := target.Update(id, value); err != nil {
+		return err
+	}
+	// The queue owns immutable normalized canonical records. Insertion used
+	// its ordinary temporary normalized image while linking; retain this
+	// existing record afterwards, not a second dimensions-sized float array.
+	// Per-key in-flight ownership prevents a newer replay of id until this
+	// step completes. Close may have retired this discarded graph meanwhile.
+	target.mu.Lock()
+	if coordinates := target.construction; coordinates != nil {
+		coordinates.applied[id] = value
+	}
+	target.mu.Unlock()
+	return nil
 }
 
 // step takes one pending change and applies it outside mu. It reports false

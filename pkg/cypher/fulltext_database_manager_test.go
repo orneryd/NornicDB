@@ -30,6 +30,11 @@ func (v *fulltextManagerCountingView) AllNodes(ctx context.Context) ([]*storage.
 	return v.Engine.AllNodes(ctx)
 }
 
+func (v *fulltextManagerCountingView) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	v.scans.Add(1)
+	return v.Engine.StreamNodesWithOptions(ctx, opts, visit)
+}
+
 func (v *fulltextManagerCountingView) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	v.scans.Add(1)
 	return v.Engine.AllEdges(ctx)

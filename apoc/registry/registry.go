@@ -38,15 +38,20 @@ func NewFunctionRegistry() *FunctionRegistry {
 
 // Register registers a function with the global registry.
 //
+// observation is the read-observation policy the implementation is admitted
+// under. A custom implementation passes OpaqueReads; AdmissionObservation
+// carries the policy of an already admitted Callable unchanged.
+//
 // Example:
 //
-//	Register("apoc.coll.sum", "coll", coll.Sum, "Sum numeric values", []string{"apoc.coll.sum([1,2,3]) => 6"})
-func Register(name, category string, fn interface{}, description string, examples []string) error {
-	return globalRegistry.RegisterFunction(name, category, fn, description, examples)
+//	Register("apoc.coll.sum", "coll", coll.Sum, registry.CanonicalReads, "Sum numeric values", []string{"apoc.coll.sum([1,2,3]) => 6"})
+func Register(name, category string, fn interface{}, observation ReadObservation, description string, examples []string) error {
+	return globalRegistry.RegisterFunction(name, category, fn, observation, description, examples)
 }
 
-// RegisterFunction registers a function in the registry.
-func (r *FunctionRegistry) RegisterFunction(name, category string, fn interface{}, description string, examples []string) error {
+// RegisterFunction registers a function in the registry under the declared
+// read-observation policy.
+func (r *FunctionRegistry) RegisterFunction(name, category string, fn interface{}, observation ReadObservation, description string, examples []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -55,7 +60,7 @@ func (r *FunctionRegistry) RegisterFunction(name, category string, fn interface{
 	}
 
 	// Create type-safe handler
-	handler, err := Compile(fn)
+	handler, err := Compile(fn, observation)
 	if err != nil {
 		return fmt.Errorf("failed to create handler for %s: %w", name, err)
 	}

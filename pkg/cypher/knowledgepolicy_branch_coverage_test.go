@@ -25,12 +25,12 @@ func TestPolicySchemaLookupAndClosedTransaction(t *testing.T) {
 	_, _, err = wrongNamespace.knowledgePolicyContext("")
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
-	for _, procedure := range []func() (*ExecuteResult, error){
+	for _, procedure := range []func(context.Context) (*ExecuteResult, error){
 		executor.callNornicDbKnowledgePolicyInfo,
 		executor.callNornicDbKnowledgePolicyProfiles,
 		executor.callNornicDbKnowledgePolicyPolicies,
 	} {
-		_, err := procedure()
+		_, err := procedure(context.Background())
 		require.Error(t, err, "closed transaction introspection must not silently fall back to committed schema")
 	}
 }
@@ -178,7 +178,7 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 	ctx := context.Background()
 
 	unsupported := NewStorageExecutor(&knowledgePolicyOpaqueEngine{Engine: exec.storage})
-	res, err := unsupported.callNornicDbKnowledgePolicyDeindexStatus()
+	res, err := unsupported.callNornicDbKnowledgePolicyDeindexStatus(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"pending_count", "supported", "message", "workItemId", "targetId", "targetScope", "enqueuedAt", "status"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -208,12 +208,12 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE PROMOTION POLICY fact_promote FOR (n:Fact) APPLY { ON ACCESS { SET n.accessCount = n.accessCount + 1 } }`)
 	require.NoError(t, err)
 
-	profiles, err := exec.callNornicDbKnowledgePolicyProfiles()
+	profiles, err := exec.callNornicDbKnowledgePolicyProfiles(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"kind", "Name", "HalfLifeSeconds", "VisibilityThreshold", "ScoreFloor", "Function", "Scope", "DecayEnabled", "ScoreFrom", "ScoreFromProperty", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "ProfileRef", "NoDecay", "Order", "Apply"}, profiles.Columns)
 	require.Len(t, profiles.Rows, 2)
 
-	policies, err := exec.callNornicDbKnowledgePolicyPolicies()
+	policies, err := exec.callNornicDbKnowledgePolicyPolicies(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"kind", "Name", "Scope", "Multiplier", "ScoreFloor", "ScoreCap", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "Apply"}, policies.Columns)
 	require.Len(t, policies.Rows, 2)

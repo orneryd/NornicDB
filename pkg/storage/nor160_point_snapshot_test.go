@@ -129,7 +129,7 @@ func TestNOR160BufferedBetweenReadOwnsProperties(t *testing.T) {
 			var err error
 			switch route {
 			case "between-list":
-				edges, err = b.GetEdgesBetween(ctx, "test:a", "test:b")
+				edges, err = b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:a", Other: "test:b"})
 			case "between-one":
 				var edge *Edge
 				edge, err = b.GetEdgeBetween(ctx, "test:a", "test:b", "COHELD")
@@ -137,13 +137,9 @@ func TestNOR160BufferedBetweenReadOwnsProperties(t *testing.T) {
 					edges = []*Edge{edge}
 				}
 			case "outgoing-header":
-				var answered bool
-				edges, answered, err = b.OutgoingEdgeHeaders(ctx, "test:a")
-				require.True(t, answered)
+				edges, err = b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 			case "incoming-header":
-				var answered bool
-				edges, answered, err = b.IncomingEdgeHeaders(ctx, "test:b")
-				require.True(t, answered)
+				edges, err = b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:b", Headers: true})
 			}
 			require.NoError(t, err)
 			require.Len(t, edges, 1)

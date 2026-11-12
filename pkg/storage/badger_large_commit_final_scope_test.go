@@ -223,7 +223,7 @@ func warmFinalScopeCaches(t *testing.T, b *BadgerEngine, nodes int) ([]NodeID, [
 		if i == 0 {
 			continue
 		}
-		out, err := b.GetOutgoingEdges(context.Background(), finalScopeNodeID(i-1))
+		out, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: finalScopeNodeID(i - 1)})
 		require.NoError(t, err)
 		require.Len(t, out, 1, "the chain fixture must have one outgoing relationship per node")
 	}
@@ -252,7 +252,7 @@ func warmFinalScopeUnrelated(t *testing.T, b *BadgerEngine) {
 		_, err := b.GetNode(context.Background(), id)
 		require.NoError(t, err)
 	}
-	_, err := b.GetOutgoingEdges(context.Background(), finalScopeKeepA())
+	_, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: finalScopeKeepA()})
 	require.NoError(t, err)
 	keep, err := b.GetEdgesByType(context.Background(), finalScopeKeepType)
 	require.NoError(t, err)
@@ -516,7 +516,7 @@ func TestLargeCommitDelayedPreimageFillsCannotReinstallStaleImages(t *testing.T)
 	require.NoError(t, err)
 	_, err = b.GetStoredEdge(ctx, "test:fs-ab")
 	require.NoError(t, err)
-	out, err := b.GetOutgoingEdges(ctx, "test:fs-a")
+	out, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: "test:fs-a"})
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	typeRows, err := b.GetEdgesByType(ctx, finalScopeEdgeType)
@@ -594,7 +594,7 @@ func TestLargeCommitDelayedPreimageFillsCannotReinstallStaleImages(t *testing.T)
 	require.EqualValues(t, 2, moved.Properties["p"])
 	require.Equal(t, "test:fs-c", string(moved.StartNode))
 	require.Equal(t, "FSTYPE2", moved.Type)
-	fromA, err := b.GetOutgoingEdges(ctx, "test:fs-a")
+	fromA, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: "test:fs-a"})
 	require.NoError(t, err)
 	require.Empty(t, fromA, "the moved relationship must no longer be listed under its old start node")
 	oldType, err := b.GetEdgesByType(ctx, finalScopeEdgeType)

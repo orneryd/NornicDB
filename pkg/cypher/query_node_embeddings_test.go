@@ -193,8 +193,8 @@ type queryNodeReadSpy = storagefault.QueryNodeReadSpy
 // statement that cannot write reads the nodes it binds (id seek, traversal,
 // relationship endpoint) without their stored vectors, as a transaction does,
 // and answers the same rows; n.has_embedding answers from the metadata. A
-// read-only CALL subquery doesn't change that (NOR-413). A statement with a
-// procedure call, which may write outside a transaction, reads full nodes.
+// read-only CALL subquery doesn't change that (NOR-413). A bundled metadata-only procedure retains the same policy; native consumers
+// with full-image requirements are qualified separately.
 func TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage(t *testing.T) {
 	g := newLargeEmbeddingGraph(t, 4)
 	spy := storagefault.NewQueryNodeReadSpy(g.store)
@@ -225,13 +225,13 @@ func TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage(t *testing.T) {
 			require.Equal(t, inTx.Rows, run(t, query).Rows, "auto-commit answers as a transaction does")
 		})
 	}
-	t.Run("procedure call reads full nodes", func(t *testing.T) {
+	t.Run("metadata procedure keeps vectors stored", func(t *testing.T) {
 		spy.Full.Store(0)
 		spy.Query.Store(0)
 		result := run(t, "MATCH (:Hub)-[:HAS]->(n:Doc {k: 3}) CALL db.labels() YIELD label RETURN n.title, n.has_embedding LIMIT 1")
 		require.Equal(t, [][]interface{}{{"doc 3", true}}, result.Rows)
-		require.Zero(t, spy.Query.Load())
-		require.Positive(t, spy.Full.Load())
+		require.Positive(t, spy.Query.Load(), "the declared metadata procedure keeps query-node reads")
+		require.Zero(t, spy.Full.Load(), "a metadata procedure must not hydrate unused chunks")
 	})
 }
 

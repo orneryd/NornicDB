@@ -20,7 +20,7 @@ func TestEvaluateFunctionRegistryAndValidation(t *testing.T) {
 				t.Fatalf("expected panic for empty name")
 			}
 		}()
-		Register(" ", func(_ context.Context, _ Context, _ []string) (interface{}, error) { return nil, nil })
+		Register(" ", func(_ context.Context, _ Context, _ []string) (interface{}, error) { return nil, nil }, OpaqueReads)
 	})
 
 	t.Run("register panics for nil function", func(t *testing.T) {
@@ -29,7 +29,7 @@ func TestEvaluateFunctionRegistryAndValidation(t *testing.T) {
 				t.Fatalf("expected panic for nil fn")
 			}
 		}()
-		Register("custom_nil", nil)
+		Register("custom_nil", nil, OpaqueReads)
 	})
 
 	Register("custom_add", func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
@@ -39,7 +39,7 @@ func TestEvaluateFunctionRegistryAndValidation(t *testing.T) {
 		a, _ := ctx.Eval(args[0])
 		b, _ := ctx.Eval(args[1])
 		return a.(int) + b.(int), nil
-	})
+	}, OpaqueReads)
 
 	ctx := Context{Eval: func(expr string) (interface{}, error) {
 		switch expr {
@@ -69,7 +69,7 @@ func TestEvaluateFunctionRegistryAndValidation(t *testing.T) {
 	Register("custom_now", func(workCtx context.Context, ctx Context, _ []string) (interface{}, error) {
 		calledNow = true
 		return ctx.Now().Unix(), nil
-	})
+	}, OpaqueReads)
 	if _, found, err := EvaluateFunction(context.Background(), "custom_now", nil, ctx); !found || err != nil || !calledNow {
 		t.Fatalf("expected default Now to be injected")
 	}

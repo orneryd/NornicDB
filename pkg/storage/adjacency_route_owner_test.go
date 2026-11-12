@@ -14,9 +14,9 @@ type adjacencyOverrideDecorator struct {
 	rows  []*Edge
 }
 
-func (d *adjacencyOverrideDecorator) GetAdjacentEdges(ctx context.Context, _ NodeID) ([]*Edge, []*Edge, error) {
+func (d *adjacencyOverrideDecorator) ReadAdjacentEdges(ctx context.Context, _ AdjacentEdgeRead) ([]*Edge, error) {
 	d.calls++
-	return d.rows, d.rows, nil
+	return d.rows, nil
 }
 
 type adjacencyDirectionalFailure struct {
@@ -26,13 +26,18 @@ type adjacencyDirectionalFailure struct {
 	failure error
 }
 
-func (d *adjacencyDirectionalFailure) GetOutgoingEdges(ctx context.Context, _ NodeID) ([]*Edge, error) {
+func (d *adjacencyDirectionalFailure) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	if request.Direction == AdjacentBoth {
+		return readBothAdjacentEdges(ctx, request, func(direction AdjacentEdgeRead) ([]*Edge, error) {
+			return d.ReadAdjacentEdges(ctx, direction)
+		})
+	}
+	if request.Direction == AdjacentIncoming {
+		d.calls = append(d.calls, "in")
+		return d.rows, d.failure
+	}
 	d.calls = append(d.calls, "out")
 	return d.rows, nil
-}
-func (d *adjacencyDirectionalFailure) GetIncomingEdges(ctx context.Context, _ NodeID) ([]*Edge, error) {
-	d.calls = append(d.calls, "in")
-	return d.rows, d.failure
 }
 
 func TestAdjacencyDispatcherPreservesActualDecoratorAndErrorPolicy(t *testing.T) {
@@ -40,12 +45,12 @@ func TestAdjacencyDispatcherPreservesActualDecoratorAndErrorPolicy(t *testing.T)
 	b.writeBehind.Close()
 	rows := []*Edge{{ID: "test:r", StartNode: "test:hub", EndNode: "test:a"}}
 	decorated := &adjacencyOverrideDecorator{BadgerEngine: b, rows: rows}
-	out, in, err := NewNamespacedEngine(decorated, "test").GetAdjacentEdges(context.Background(), "hub")
+	both, err := NewNamespacedEngine(decorated, "test").ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "hub"})
 	require.NoError(t, err)
 	require.Equal(t, 1, decorated.calls)
-	require.Equal(t, EdgeID("r"), out[0].ID)
-	require.Equal(t, EdgeID("r"), in[0].ID)
-	require.NotSame(t, rows[0], out[0])
+	require.Len(t, both, 1)
+	require.Equal(t, EdgeID("r"), both[0].ID)
+	require.NotSame(t, rows[0], both[0])
 	require.Equal(t, EdgeID("test:r"), rows[0].ID)
 	failure := errors.New("incoming read failed")
 	for _, namespaced := range []bool{false, true} {
@@ -54,16 +59,10 @@ func TestAdjacencyDispatcherPreservesActualDecoratorAndErrorPolicy(t *testing.T)
 		if namespaced {
 			engine = NewNamespacedEngine(d, "test")
 		}
-		out, in, err = readAdjacency(context.Background(), engine, adjacencyBoth, "hub", "", nil, visibleRead)
+		edges, err := readAdjacentEdges(context.Background(), engine, AdjacentEdgeRead{Direction: AdjacentBoth, Node: "hub"}, nil, visibleRead)
 		require.ErrorIs(t, err, failure)
 		require.Equal(t, []string{"out", "in"}, d.calls)
-		if namespaced {
-			require.Nil(t, out)
-			require.Nil(t, in)
-		} else {
-			require.Equal(t, rows, out)
-			require.Equal(t, rows, in)
-		}
+		require.Nil(t, edges)
 	}
 }
 
@@ -88,7 +87,7 @@ func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T)
 		return n
 	}
 
-	reader, err := b.captureAdjacencyReader(context.Background(), "test:hub", true, true, visibleRead)
+	reader, err := b.captureAdjacencyReader(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"}, visibleRead)
 	require.NoError(t, err)
 	require.NotNil(t, reader.view)
 	defer reader.view.Close()
@@ -107,12 +106,12 @@ func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T)
 	require.Equal(t, 1, activeReads())
 	reader.view.Close()
 	require.Zero(t, activeReads())
-	current, err := b.GetIncomingEdges(context.Background(), "test:hub")
+	current, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:hub"})
 	require.NoError(t, err)
 	require.Equal(t, int64(2), current[0].Properties["v"])
-	_, _, err = b.GetAdjacentEdges(context.Background(), "test:hub")
+	_, err = b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"})
 	require.NoError(t, err)
-	cached, err := b.captureAdjacencyReader(context.Background(), "test:hub", true, true, visibleRead)
+	cached, err := b.captureAdjacencyReader(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"}, visibleRead)
 	require.NoError(t, err)
 	require.Nil(t, cached.view)
 	require.Zero(t, activeReads())
@@ -128,8 +127,8 @@ func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:in"), in[0].ID)
 
-	out, in, err = readAdjacency(context.Background(), b, adjacencyIncoming, "test:hub", "", nil, visibleRead)
+	edges, err := readAdjacentEdges(context.Background(), b, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:hub"}, nil, visibleRead)
 	require.NoError(t, err)
-	require.Nil(t, out)
-	require.Equal(t, EdgeID("test:in"), in[0].ID)
+	require.Len(t, edges, 1)
+	require.Equal(t, EdgeID("test:in"), edges[0].ID)
 }

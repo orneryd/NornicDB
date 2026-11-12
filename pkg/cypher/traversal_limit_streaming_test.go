@@ -60,7 +60,7 @@ func TestTraversalLimitStopsStreamingStartNodes(t *testing.T) {
 	txProbe := &projectedTraversalCountingEngine{Engine: txStore}
 	txResult, err := NewStorageExecutor(txProbe).executeMatchWithRelationshipsWithPathSeeded(
 		context.Background(), "(a:Person)-[:KNOWS]->(b:Person)", "",
-		[]returnItem{{expr: "a.name"}, {expr: "b.name"}}, nil, nil, nil, "", nil, 2,
+		[]returnItem{{expr: "a.name"}, {expr: "b.name"}}, nil, nil, nil, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: 2},
 	)
 	require.NoError(t, err)
 	require.Len(t, txResult.Rows, 2)

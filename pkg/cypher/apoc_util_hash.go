@@ -16,7 +16,7 @@ func init() {
 		"apoc.util.sha1":   util.SHA1,
 		"apoc.util.sha256": util.SHA256,
 	} {
-		cypherfn.Register(name, apocUtilHash(name, digest))
+		cypherfn.Register(name, apocUtilHash(name, digest), cypherfn.CanonicalReads)
 	}
 }
 

@@ -418,7 +418,9 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 
 	// Author: Codex NOR-184 lane. Admission errors and Functions() errors must
 	// survive plugin loading, just like errors from each published handler.
-	provider, err := registry.Compile(funcsMethod.Interface())
+	// A plugin's own reflection surface is a custom implementation: it reads
+	// whatever the plugin reads, which this owner cannot establish.
+	provider, err := registry.Compile(funcsMethod.Interface(), registry.OpaqueReads)
 	if err != nil {
 		return nil, fmt.Errorf("Functions() invalid return: %w", err)
 	}
@@ -462,7 +464,9 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 			fullName = fmt.Sprintf("apoc.%s.%s", pluginName, funcName)
 		}
 
-		checked, err := registry.Compile(handler)
+		// A published value that is already an admitted Callable keeps the policy
+		// it was admitted with; a raw plugin function stays opaque.
+		checked, err := registry.Compile(handler, registry.AdmissionObservation(handler))
 		if err != nil {
 			return nil, fmt.Errorf("function %s: %w", fullName, err)
 		}

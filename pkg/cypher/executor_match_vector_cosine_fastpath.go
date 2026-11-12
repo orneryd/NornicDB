@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strconv"
@@ -133,7 +134,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, e.vectorIndexOnline)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, e.vectorIndexOnline)
 	if !hasIndex {
 		return nil, false
 	}
@@ -387,7 +388,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	if !projectionOK {
 		projectedProps = nil
 	}
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, e.vectorIndexOnline)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, e.vectorIndexOnline)
 	var nodeScores []vectorNodeScore
 	if needsExactCandidates {
 		if preWhereClause != "" && preWhereNotNullProp == "" {
@@ -588,7 +589,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, e.vectorIndexOnline)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, e.vectorIndexOnline)
 	if !hasIndex {
 		return nil, false
 	}
@@ -741,7 +742,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, e.vectorIndexOnline)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, e.vectorIndexOnline)
 	if !hasIndex {
 		return nil, false
 	}
@@ -1058,8 +1059,15 @@ var vectorQueryReads = [...]vectorQueryRead{vectorReadWarm, vectorReadPassive}
 //     schema cannot expose a partial startup population; storage answers
 //     until startup succeeds.
 func (e *StorageExecutor) vectorIndexServiceAnswers(ctx context.Context, svc *search.Service, index string, target search.VectorIndexTarget, dims int, read vectorQueryRead) (bool, error) {
-	if svc == nil || (index != "" && !e.vectorIndexOnline(index)) {
+	if svc == nil {
 		return false, nil
+	}
+	if index != "" {
+		// Gate the service this caller resolved, not a second resolver result.
+		state, _ := readVectorIndexState(ctx, svc, index)
+		if state != search.VectorIndexOnline {
+			return false, nil
+		}
 	}
 	if svc.VectorIndexDimensions() != dims {
 		return false, nil
@@ -1105,6 +1113,11 @@ func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label 
 	if err != nil {
 		return nil, false
 	}
+	kind, detail := queryprofile.KindAllNodesScan, ""
+	if label != "" {
+		kind, detail = queryprofile.KindNodeByLabelScan, label
+	}
+	queryprofile.EntityPopulation(ctx, kind, detail, nodes)
 	out := make([]vectorNodeScore, 0, util.SafePreallocCap(len(nodes)))
 	for _, node := range nodes {
 		select {
@@ -1403,14 +1416,14 @@ func parseFastPathLimit(ctx context.Context, limitPart string) (int, bool) {
 // (of the relationship type) that may answer a MATCH: answers, when set, is
 // whether an index may answer now (StorageExecutor.vectorIndexOnline). With
 // none, the MATCH reads storage.
-func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType, answers func(name string) bool) (string, bool) {
+func findCosineVectorIndexName(ctx context.Context, schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType, answers func(context.Context, string) bool) (string, bool) {
 	if schema == nil {
 		return "", false
 	}
 	if entityType == "" {
 		entityType = storage.ConstraintEntityNode
 	}
-	indexes := schema.GetIndexes()
+	indexes := readSchemaIndexCatalog(ctx, schema)
 	matches := make([]string, 0, 2)
 	for _, raw := range indexes {
 		idx, ok := raw.(map[string]interface{})
@@ -1445,7 +1458,7 @@ func findCosineVectorIndexName(schema *storage.SchemaManager, label string, prop
 			continue
 		}
 
-		if name, ok := idx["name"].(string); ok && strings.TrimSpace(name) != "" && (answers == nil || answers(name)) {
+		if name, ok := idx["name"].(string); ok && strings.TrimSpace(name) != "" && (answers == nil || answers(ctx, name)) {
 			matches = append(matches, name)
 		}
 	}

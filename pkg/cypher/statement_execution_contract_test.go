@@ -123,15 +123,27 @@ func TestStatementExecutionClauseContracts(t *testing.T) {
 // USE [GRAPH] g is read by the USE grammar owner; the statement grammar has no
 // optional GRAPH keyword. A statement's write, transaction and procedure
 // contract, and the permissions derived from it, do not depend on its graph
-// references, so every USE spelling yields the contract of the statement.
+// references, so every USE spelling yields the contract of the statement. The
+// retained grammar effects carry the parse identity, source and offsets they
+// were read from, so the two spellings are compared by the effect, callable and
+// scope facts they expose, with every retained site re-anchored to its own
+// statement source and only the inserted reference bytes removed.
 func TestStatementExecutionContractReadsEveryUseSpelling(t *testing.T) {
 	for _, body := range []string{
 		"CREATE (:Contract)", "MATCH (n) DETACH DELETE n", "CALL { CREATE (:Contract) RETURN 1 AS x } RETURN x",
 		"CALL { USE GRAPH g.one CREATE (:Contract) RETURN 1 AS x } RETURN x", "MATCH (n) RETURN n",
+		// Non-zero scalar invocation sites: the retained callable facts, not only
+		// the effect flags, must survive a graph-reference spelling.
+		"MATCH (n) RETURN abs(n.v) AS x", "RETURN toLower('CONTRACT') AS x",
+		"CALL { USE GRAPH g.one RETURN abs(-1) AS x } RETURN x",
 	} {
 		want, err := readStatementExecutionContract(t.Context(), body)
 		require.NoError(t, err, body)
-		for _, use := range []string{"USE g ", "USE GRAPH g ", "USE GRAPH limit ", "USE GRAPH `call` ", "USE graph "} {
+		for _, use := range []string{
+			"USE g ", "USE GRAPH g ", "USE GRAPH limit ", "USE GRAPH `call` ", "USE graph ",
+			// A reference whose own arguments carry a scalar invocation.
+			"USE graph.byName(toLower('cmp.a')) ", "USE GRAPH graph.byName(toLower('cmp.a')) ",
+		} {
 			query := use + body
 			got, err := readStatementExecutionContract(t.Context(), query)
 			require.NoError(t, err, query)
@@ -139,12 +151,245 @@ func TestStatementExecutionContractReadsEveryUseSpelling(t *testing.T) {
 			// Effects/permissions are graph-independent; the new private routing
 			// fact separately records a grammar USE for static atomic statements.
 			expected.selectsDatabase = expected.transaction && !expected.dynamic
-			require.Equal(t, expected, got, query)
+			wantFacts, err := statementContractFactsOf(t.Context(), body, expected)
+			require.NoError(t, err, body)
+			gotFacts, err := statementContractFactsOf(t.Context(), query, got)
+			require.NoError(t, err, query)
+			reference := statementGraphReference{text: use, insertions: []int{0}}
+			require.NoError(t, compareStatementContractFacts(t.Context(), wantFacts, gotFacts, reference), query)
 			require.Equal(t, want.writes, QueryPermissionRequirements(t.Context(), query, RawSource).Write, query)
 		}
 	}
 	_, err := readStatementExecutionContract(t.Context(), "USE GRAPH g MATCH (n RETURN n")
 	require.Error(t, err)
+}
+
+// A USE spelling inserts its reference ahead of a statement body, so
+// re-anchoring a scope removes exactly those inserted bytes. The same text
+// inside a string literal, a comment or a pre-existing nested USE clause belongs
+// to the body: it stays part of the compared scope, and a change to it is still
+// a difference.
+func TestStatementExecutionContractComparisonOwnsOnlyInsertedBytes(t *testing.T) {
+	const use = "USE g "
+	read := func(source string) statementContractFacts {
+		t.Helper()
+		contract, err := readStatementExecutionContract(t.Context(), source)
+		require.NoError(t, err, source)
+		facts, err := statementContractFactsOf(t.Context(), source, contract)
+		require.NoError(t, err, source)
+		return facts
+	}
+	for _, control := range []struct {
+		name, body, changed string
+	}{
+		{"string literal", "RETURN 'USE g ' AS x", "RETURN 'USE g X' AS x"},
+		{"block comment", "RETURN /* USE g */ 1 AS x", "RETURN /* USE gX */ 1 AS x"},
+		{"line comment", "RETURN // USE g \n1 AS x", "RETURN // USE gX \n1 AS x"},
+		{"nested pre-existing use", "CALL { USE g RETURN abs(-1) AS x } RETURN x", "CALL { USE gX RETURN abs(-1) AS x } RETURN x"},
+	} {
+		t.Run(control.name, func(t *testing.T) {
+			want := read(control.body)
+			got := read(use + control.body)
+			reference := statementGraphReference{text: use, insertions: []int{0}}
+			require.NoError(t, compareStatementContractFacts(t.Context(), want, got, reference), "body text that spells the reference must survive the spelling")
+			// The retained scope still carries the body's own bytes; only the
+			// inserted window is removed before comparison.
+			require.NotEmpty(t, want.effects.executableScopes)
+			require.NotEmpty(t, got.effects.executableScopes)
+			require.Contains(t, got.effects.executableScopes[0].text, want.effects.executableScopes[0].text)
+			// A change to those body bytes is still a difference: nothing the
+			// anchoring removes can mask it on either side.
+			require.Error(t, compareStatementContractFacts(t.Context(), want, read(use+control.changed), reference))
+			require.Error(t, compareStatementContractFacts(t.Context(), read(control.changed), got, reference))
+		})
+	}
+	// A spelling cannot claim a window it did not insert: the declared bytes are
+	// checked against the composed statement, so an unnoticed shift is an error.
+	want := read("RETURN 1 AS x")
+	got := read(use + "RETURN 1 AS x")
+	require.Error(t, compareStatementContractFacts(t.Context(), want, got, statementGraphReference{text: use, insertions: []int{len("USE g RETURN 1 AS x")}}))
+}
+
+// The USE spelling test is only as strong as this comparison: a fact the comparator
+// skipped would let a changed effect, routing, image or callable pass unnoticed.
+// Each control changes one semantic fact of an otherwise matching pair, and the
+// comparison must reject every one of them.
+func TestStatementExecutionContractComparisonRejectsChangedFacts(t *testing.T) {
+	const body = "CALL db.ping() RETURN abs(-1) AS x"
+	const use = "USE GRAPH graph.byName(toLower('cmp.a')) "
+	query := use + body
+	read := func(source string) (statementExecutionContract, statementContractFacts) {
+		t.Helper()
+		contract, err := readStatementExecutionContract(t.Context(), source)
+		require.NoError(t, err, source)
+		facts, err := statementContractFactsOf(t.Context(), source, contract)
+		require.NoError(t, err, source)
+		return contract, facts
+	}
+	contract, want := read(body)
+	// A read procedure keeps the statement single-route, so the USE spelling adds
+	// no database selection and both contracts must agree without adjustment.
+	require.False(t, contract.transaction, "control statement must stay single-route")
+	useContract, got := read(query)
+	reference := statementGraphReference{text: use, insertions: []int{0}}
+	require.NoError(t, compareStatementContractFacts(t.Context(), want, got, reference), "unmutated USE spelling must match its body")
+	require.True(t, want.calls, "control statement must call a procedure")
+	require.NotEmpty(t, want.effects.calls)
+	require.NotEmpty(t, want.effects.executableCalls)
+	require.NotEmpty(t, want.effects.executableScopes)
+	bodyFunctions, referenceFunctions := splitFunctionFacts(got.effects.functions)
+	require.NotEmpty(t, bodyFunctions, "control statement must retain a body scalar invocation")
+	require.NotEmpty(t, referenceFunctions, "control reference must retain its argument invocation")
+	for _, mutation := range []struct {
+		name   string
+		mutate func(*statementContractFacts) bool
+	}{
+		{"writes", func(f *statementContractFacts) bool { f.writes = !f.writes; return true }},
+		{"transaction", func(f *statementContractFacts) bool { f.transaction = !f.transaction; return true }},
+		{"calls", func(f *statementContractFacts) bool { f.calls = !f.calls; return true }},
+		{"dynamic", func(f *statementContractFacts) bool { f.dynamic = !f.dynamic; return true }},
+		{"unknown procedure", func(f *statementContractFacts) bool { f.unknownProcedure = !f.unknownProcedure; return true }},
+		{"node images", func(f *statementContractFacts) bool {
+			if f.nodeImages == FullNodeImages {
+				f.nodeImages = MetadataNodeImages
+			} else {
+				f.nodeImages = FullNodeImages
+			}
+			return true
+		}},
+		{"selects database", func(f *statementContractFacts) bool { f.selectsDatabase = !f.selectsDatabase; return true }},
+		{"state change", func(f *statementContractFacts) bool { f.stateChange = !f.stateChange; return true }},
+		{"effect", func(f *statementContractFacts) bool {
+			if f.effect == statementEffectRead {
+				f.effect = statementEffectWrite
+			} else {
+				f.effect = statementEffectRead
+			}
+			return true
+		}},
+		{"grammar writes", func(f *statementContractFacts) bool { f.effects.writes = !f.effects.writes; return true }},
+		{"grammar read only", func(f *statementContractFacts) bool { f.effects.readOnly = !f.effects.readOnly; return true }},
+		{"grammar remote read only", func(f *statementContractFacts) bool {
+			f.effects.remoteReadOnly = !f.effects.remoteReadOnly
+			return true
+		}},
+		{"executable queries", func(f *statementContractFacts) bool {
+			f.effects.allowsExecutableQueries = !f.effects.allowsExecutableQueries
+			return true
+		}},
+		{"executable scope text", func(f *statementContractFacts) bool {
+			if len(f.effects.executableScopes) == 0 {
+				return false
+			}
+			f.effects.executableScopes[0].text += " "
+			return true
+		}},
+		{"executable scope window", func(f *statementContractFacts) bool {
+			if len(f.effects.executableScopes) == 0 {
+				return false
+			}
+			f.effects.executableScopes[0].start += 1
+			return true
+		}},
+		{"executable scope count", func(f *statementContractFacts) bool {
+			if len(f.effects.executableScopes) == 0 {
+				return false
+			}
+			f.effects.executableScopes = f.effects.executableScopes[:len(f.effects.executableScopes)-1]
+			return true
+		}},
+		{"executable call name", func(f *statementContractFacts) bool {
+			if len(f.effects.executableCalls) == 0 {
+				return false
+			}
+			f.effects.executableCalls[0].name = "db.other"
+			return true
+		}},
+		{"executable call text", func(f *statementContractFacts) bool {
+			if len(f.effects.executableCalls) == 0 {
+				return false
+			}
+			f.effects.executableCalls[0].text += " "
+			return true
+		}},
+		{"procedure call text", func(f *statementContractFacts) bool {
+			if len(f.effects.calls) == 0 {
+				return false
+			}
+			f.effects.calls[0].text += " "
+			return true
+		}},
+		{"body function name", func(f *statementContractFacts) bool {
+			for index := range f.effects.functions {
+				if !f.effects.functions[index].graphReference {
+					f.effects.functions[index].name = "absx"
+					return true
+				}
+			}
+			return false
+		}},
+		{"body function arguments", func(f *statementContractFacts) bool {
+			for index := range f.effects.functions {
+				if !f.effects.functions[index].graphReference {
+					f.effects.functions[index].text = "abs(-2)"
+					return true
+				}
+			}
+			return false
+		}},
+		{"missing body function", func(f *statementContractFacts) bool {
+			retained := make([]statementFunctionFact, 0, len(f.effects.functions))
+			removed := false
+			for _, fact := range f.effects.functions {
+				if !removed && !fact.graphReference {
+					removed = true
+					continue
+				}
+				retained = append(retained, fact)
+			}
+			f.effects.functions = retained
+			return removed
+		}},
+		{"reference function name", func(f *statementContractFacts) bool {
+			for index := range f.effects.functions {
+				if f.effects.functions[index].graphReference {
+					f.effects.functions[index].name = "toOther"
+					f.effects.functions[index].text = "toOther('cmp.a')"
+					return true
+				}
+			}
+			return false
+		}},
+		{"reference function arguments", func(f *statementContractFacts) bool {
+			for index := range f.effects.functions {
+				if f.effects.functions[index].graphReference {
+					f.effects.functions[index].text = "toLower('cmp.b')"
+					return true
+				}
+			}
+			return false
+		}},
+		{"missing reference function", func(f *statementContractFacts) bool {
+			retained := make([]statementFunctionFact, 0, len(f.effects.functions))
+			removed := false
+			for _, fact := range f.effects.functions {
+				if !removed && fact.graphReference {
+					removed = true
+					continue
+				}
+				retained = append(retained, fact)
+			}
+			f.effects.functions = retained
+			return removed
+		}},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			mutated, err := statementContractFactsOf(t.Context(), query, useContract)
+			require.NoError(t, err)
+			require.True(t, mutation.mutate(&mutated), "control must change a compared fact")
+			require.Error(t, compareStatementContractFacts(t.Context(), want, mutated, reference))
+		})
+	}
 }
 
 // The entire production package is scanned. A new function, typed alias or

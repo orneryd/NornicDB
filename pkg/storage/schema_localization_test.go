@@ -21,7 +21,7 @@ func (e *schemaLocalizationPredicateErrorEngine) GetNodesByLabel(ctx context.Con
 	return []*Node{{ID: "test:n1", Labels: []string{"Person"}}}, nil
 }
 
-func (e *schemaLocalizationPredicateErrorEngine) GetOutgoingEdges(ctx context.Context, _ NodeID) ([]*Edge, error) {
+func (e *schemaLocalizationPredicateErrorEngine) ReadAdjacentEdges(ctx context.Context, _ AdjacentEdgeRead) ([]*Edge, error) {
 	return nil, ErrConflict
 }
 

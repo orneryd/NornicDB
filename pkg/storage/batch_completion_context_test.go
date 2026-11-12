@@ -62,7 +62,7 @@ func TestLargeCommitRepairOwnsCompletionAfterRequestCancellation(t *testing.T) {
 			base, err := engine.GetNode(t.Context(), "test:repair-base")
 			require.NoError(t, err)
 			require.Equal(t, int64(1), base.Properties["v"])
-			edges, err := engine.GetOutgoingEdges(context.Background(), largeCommitNodeID(0))
+			edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: largeCommitNodeID(0)})
 			require.NoError(t, err)
 			require.Empty(t, edges)
 			requireNoLargeCommitIntent(t, engine)

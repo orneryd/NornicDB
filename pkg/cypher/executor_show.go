@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -22,7 +23,7 @@ import (
 
 // ===== SHOW Commands (Neo4j compatibility) =====
 
-func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowSettings(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
 	upper := upperASCII(query)
 	prefix := "SHOW SETTINGS"
@@ -48,6 +49,7 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 	definitions := dbconfig.Settings()
 	snapshot := SettingsSnapshot{}
 	if e.settingsResolver != nil {
+		queryprofile.Callback(ctx, "settings resolver", "")
 		snapshot = e.settingsResolver()
 	}
 	sort.Slice(definitions, func(i, j int) bool { return definitions[i].Name < definitions[j].Name })
@@ -193,7 +195,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 
 			state, populationPercent, failureMessage := "ONLINE", 100.0, ""
 			if idxType == "VECTOR" {
-				state, populationPercent, failureMessage = e.vectorIndexShowState(name)
+				state, populationPercent, failureMessage = e.vectorIndexShowState(ctx, name)
 			}
 			// NornicDB doesn't track index reads: lastRead, readCount and
 			// trackedSince are null, as Neo4j reports untracked reads.
@@ -270,8 +272,8 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 			constraint *storage.Constraint
 			typed      *storage.PropertyTypeConstraint
 		}
-		constraints := schema.GetAllConstraints()
-		typed := schema.GetAllPropertyTypeConstraints()
+		constraints := readSchemaConstraintCatalog(ctx, schema)
+		typed := readSchemaPropertyTypeConstraintCatalog(ctx, schema)
 		all := make([]listed, 0, len(constraints)+len(typed))
 		for index := range constraints {
 			all = append(all, listed{name: constraints[index].Name, constraint: &constraints[index]})

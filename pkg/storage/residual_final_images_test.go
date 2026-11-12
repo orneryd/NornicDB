@@ -77,15 +77,27 @@ func TestResidualFinalCacheImages(t *testing.T) {
 						return
 					}
 					for name, read := range map[string]func() ([]*Edge, error){
-						"out-old":     func() ([]*Edge, error) { return b.GetOutgoingEdges(context.Background(), "test:a") },
-						"out-new":     func() ([]*Edge, error) { return b.GetOutgoingEdges(context.Background(), "test:b") },
-						"in-old":      func() ([]*Edge, error) { return b.GetIncomingEdges(context.Background(), "test:b") },
-						"in-new":      func() ([]*Edge, error) { return b.GetIncomingEdges(context.Background(), "test:middle") },
-						"between-old": func() ([]*Edge, error) { return b.GetEdgesBetween(context.Background(), "test:a", "test:b") },
-						"between-new": func() ([]*Edge, error) { return b.GetEdgesBetween(context.Background(), "test:b", "test:middle") },
-						"type-old":    func() ([]*Edge, error) { return b.GetEdgesByType(context.Background(), "T") },
-						"type-new":    func() ([]*Edge, error) { return b.GetEdgesByType(context.Background(), "FINAL") },
-						"all":         func() ([]*Edge, error) { return b.AllEdges(context.Background()) },
+						"out-old": func() ([]*Edge, error) {
+							return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
+						},
+						"out-new": func() ([]*Edge, error) {
+							return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:b"})
+						},
+						"in-old": func() ([]*Edge, error) {
+							return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:b"})
+						},
+						"in-new": func() ([]*Edge, error) {
+							return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:middle"})
+						},
+						"between-old": func() ([]*Edge, error) {
+							return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:a", Other: "test:b"})
+						},
+						"between-new": func() ([]*Edge, error) {
+							return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:b", Other: "test:middle"})
+						},
+						"type-old": func() ([]*Edge, error) { return b.GetEdgesByType(context.Background(), "T") },
+						"type-new": func() ([]*Edge, error) { return b.GetEdgesByType(context.Background(), "FINAL") },
+						"all":      func() ([]*Edge, error) { return b.AllEdges(context.Background()) },
 					} {
 						found, readErr := read()
 						if readErr != nil {
@@ -166,7 +178,7 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			_, err = b.GetStoredNode(t.Context(), "test:keep-a")
 			require.NoError(t, err)
-			_, err = b.GetOutgoingEdges(context.Background(), "test:keep-a")
+			_, err = b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:keep-a"})
 			require.NoError(t, err)
 			_, err = b.GetEdgesByType(context.Background(), "KEEP")
 			require.NoError(t, err)

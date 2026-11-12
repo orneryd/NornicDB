@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"sort"
 	"strings"
 
@@ -140,7 +141,12 @@ func (s *Service) VectorQueryNodesWithOptions(ctx context.Context, queryEmbeddin
 // vectorQueryNodes shares vector semantics across the two public contracts.
 // Cypher's established scalar fast path can use live indexed vectors during
 // warming; optioned reads (Qdrant) require the configured population to finish.
-func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, opts *SearchOptions, requireReady bool) ([]VectorQueryHit, error) {
+func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, opts *SearchOptions, requireReady bool) (hits []VectorQueryHit, err error) {
+	// This record is one logical index query and its returned candidates; it
+	// never claims those candidates are visited ANN entries or storage reads.
+	if counter := queryprofile.Access(ctx, "NodeVectorIndexQuery", spec.IndexName); counter != nil {
+		defer func() { counter.Add(int64(len(hits)), 1) }()
+	}
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
@@ -203,7 +209,10 @@ func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32
 // VectorQueryRelationships executes a Cypher-style relationship vector query using
 // in-memory relationship-vector metadata. This avoids scanning storage.AllEdges()
 // on every fact-search call.
-func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding []float32, spec RelationshipVectorQuerySpec) ([]RelationshipVectorQueryHit, error) {
+func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding []float32, spec RelationshipVectorQuerySpec) (hits []RelationshipVectorQueryHit, err error) {
+	if counter := queryprofile.Access(ctx, "RelationshipVectorIndexQuery", spec.IndexName); counter != nil {
+		defer func() { counter.Add(int64(len(hits)), 1) }()
+	}
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
@@ -347,6 +356,9 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 
 	var postProcessErr error
 	seenOrphans := make(map[string]bool)
+	// The named wrapper owns this logical query and final-hit counter. Its
+	// subordinate adaptive passes must not add generic retrieval counters; a
+	// nested search from Where still resolves its own counter normally.
 	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, queryEmbedding, resolved, nil, func(candidates []indexResult) ([]indexResult, error) {
 		if postProcessErr != nil {
 			return nil, nil
@@ -365,7 +377,7 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 		// Filtering here, inside the widening loop, lets a selective Where
 		// widen the search until it has the top K it admits.
 		return s.filterByTypeAndProperties(ctx, processed, resolved, seenOrphans)
-	})
+	}, nil)
 	if err != nil {
 		if errors.Is(err, ErrDimensionMismatch) {
 			return nil, nil
@@ -767,7 +779,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(candidate.id))
+			node, err := s.readNodeImage(ctx, storage.NodeID(candidate.id), metadataNodeImage)
 			if err != nil {
 				continue
 			}
@@ -818,11 +830,16 @@ func (s *Service) exactStoredNodeScores(ctx context.Context, prepared cypherVect
 	s.mu.RUnlock()
 	s.indexMu.RUnlock()
 	out := make([]vectorQueryScoredNode, 0, min(len(metadata), spec.Limit))
+	var counter *queryprofile.ReadCounter
+	if len(metadata) > 0 {
+		counter = queryprofile.Access(ctx, queryprofile.KindNodeByIDSeek, "")
+	}
 	for id, admitted := range metadata {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		node, err := s.engine.GetNode(ctx, storage.NodeID(id))
+		queryprofile.EntityReadResult(counter, node, err)
 		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}

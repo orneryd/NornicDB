@@ -53,14 +53,13 @@ func beginPinnedAdjacencyReader(t *testing.T, engine *MemoryEngine, wantBefore i
 func lockedAdjacencyReads(t *testing.T, tx *BadgerTransaction) map[string][]string {
 	t.Helper()
 	ctx := t.Context()
-	out, err := tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: lockedAdjacencyNode})
+	out, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Node: lockedAdjacencyNode})
 	require.NoError(t, err)
-	headers, answered, err := tx.OutgoingEdgeHeaders(ctx, lockedAdjacencyNode)
+	headers, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Node: lockedAdjacencyNode, Headers: true})
 	require.NoError(t, err)
-	require.True(t, answered)
-	between, err := tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: lockedAdjacencyNode, Other: lockedAdjacencyOther})
+	between, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: lockedAdjacencyNode, Other: lockedAdjacencyOther})
 	require.NoError(t, err)
-	incoming, err := tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadIncoming, Node: lockedAdjacencyOther})
+	incoming, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: lockedAdjacencyOther})
 	require.NoError(t, err)
 	return map[string][]string{
 		"outgoing":       sortedEdgeIDs(out),

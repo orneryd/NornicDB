@@ -209,30 +209,75 @@ func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {
 }
 
 func TestBadgerStats_ClearAllEmbeddingsPrefixAdditionalBranches(t *testing.T) {
-	engine := newTestEngine(t)
+	// A node record the reset cannot attribute to its key is not a record it may
+	// pass over. It reports ErrInvalidData with the offending ID instead of
+	// claiming a clean namespace, and it writes nothing: the healthy node keeps
+	// its vectors because the whole scan finishes before any node is cleared.
+	cases := []struct {
+		name        string
+		seed        func(t *testing.T, engine *BadgerEngine, txn *badger.Txn)
+		wantInError []string
+	}{
+		{
+			name: "bare node prefix key",
+			seed: func(t *testing.T, _ *BadgerEngine, txn *badger.Txn) {
+				require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
+			},
+			wantInError: []string{"has no ID"},
+		},
+		{
+			name: "body with empty ID",
+			seed: func(t *testing.T, engine *BadgerEngine, txn *badger.Txn) {
+				// A decodable body whose ID names no node cannot be cleared
+				// through the record that holds it.
+				emptyIDNode := &Node{ID: "", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{9}}}
+				enc, _, err := engine.encodeNodeInTxn(txn, "tenant", emptyIDNode)
+				require.NoError(t, err)
+				require.NoError(t, txn.Set(nodeKey("tenant:empty-id-record"), enc))
+			},
+			wantInError: []string{"tenant:empty-id-record", "decodes as"},
+		},
+		{
+			name: "body belongs to another key",
+			seed: func(t *testing.T, engine *BadgerEngine, txn *badger.Txn) {
+				// Writing this body back would install one node's image over
+				// another node's vectors.
+				otherIDNode := &Node{ID: "tenant:other-record", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{9}}}
+				enc, _, err := engine.encodeNodeInTxn(txn, "tenant", otherIDNode)
+				require.NoError(t, err)
+				require.NoError(t, txn.Set(nodeKey("tenant:mismatched-record"), enc))
+			},
+			wantInError: []string{"tenant:mismatched-record", "tenant:other-record"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTestEngine(t)
+			engine.SetEmbeddingsEnabled(true)
 
-	// Valid node that should be cleared.
-	_, err := engine.CreateNode(t.Context(), &Node{
-		ID:              "tenant:good",
-		Labels:          []string{"Doc"},
-		ChunkEmbeddings: [][]float32{{1, 2, 3}},
-	})
-	require.NoError(t, err)
+			// Valid node that should be cleared once the scan is clean.
+			_, err := engine.CreateNode(t.Context(), &Node{
+				ID:              "tenant:good",
+				Labels:          []string{"Doc"},
+				ChunkEmbeddings: [][]float32{{1, 2, 3}},
+			})
+			require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
-		// len(key)<=1 branch.
-		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+				tc.seed(t, engine, txn)
+				return nil
+			}))
 
-		// Decode-success entry with empty Node.ID and embeddings:
-		// append empty ID to nodeIDs, then GetNode("") fails and hits skip branch.
-		emptyIDNode := &Node{ID: "", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{9}}}
-		enc, _, err := engine.encodeNodeInTxn(txn, "tenant", emptyIDNode)
-		require.NoError(t, err)
-		require.NoError(t, txn.Set(nodeKey("tenant:empty-id-record"), enc))
-		return nil
-	}))
+			cleared, err := engine.ClearAllEmbeddingsForPrefix("")
+			require.ErrorIs(t, err, ErrInvalidData)
+			for _, want := range tc.wantInError {
+				require.ErrorContains(t, err, want)
+			}
+			require.Zero(t, cleared, "a scan that cannot attribute every in-scope body clears nothing")
 
-	cleared, err := engine.ClearAllEmbeddingsForPrefix("tenant:")
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, cleared, 1)
+			stored, readErr := engine.GetStoredNode(t.Context(), "tenant:good")
+			require.NoError(t, readErr)
+			require.Len(t, stored.ChunkEmbeddings, 1, "the healthy node keeps its vectors when the scan fails")
+		})
+	}
 }

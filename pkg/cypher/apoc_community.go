@@ -60,7 +60,8 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 //
 // Each adjacency read, relationship and output entry checks ctx, so a
 // cancelled call stops reading adjacency and returns ctx's error instead of a
-// partition.
+// partition. A failed adjacency read is returned as the call's error, not read
+// as an empty incidence.
 func (e *StorageExecutor) computeLouvain(ctx context.Context, nodes []*storage.Node, weightProp string) (map[storage.NodeID]int, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -88,7 +89,10 @@ func (e *StorageExecutor) computeLouvain(ctx context.Context, nodes []*storage.N
 		// Enumerate physical relationships once. Undirected expansion and
 		// degree/weight accounting belong to louvain.RunUndirected;
 		// outgoing+incoming incidence lists repeat a physical self-loop.
-		edges, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
+		edges, err := e.storage.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: node.ID})
+		if err != nil {
+			return nil, err
+		}
 		relationships = append(relationships, edges...)
 	}
 	run, err := louvain.RunUndirected(ctx, len(unique), len(relationships), func(i int) (int, int, float64, bool) {

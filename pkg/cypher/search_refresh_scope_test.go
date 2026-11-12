@@ -36,7 +36,7 @@ func TestCypherRefreshAfterCommitResolvesServiceOnce(t *testing.T) {
 	})
 	var tx transactionStorageWrapper
 	tx.deferSearchRefresh("node", "edge")
-	executor.refreshSearchAfterCommit(&tx)
+	executor.refreshSearchAfterCommit(t.Context(), &tx)
 	require.Equal(t, 1, calls, "the committed batch must use its captured service")
 }
 
@@ -51,9 +51,9 @@ func TestCypherRefreshDefersTransactionMutations(t *testing.T) {
 	executor.SetSearchService(&search.Service{})
 	var notifications []string
 	executor.onNodeMutated = func(id string) { notifications = append(notifications, id) }
-	executor.notifyNodeMutated("node")
-	executor.notifyNodeMutated("node")
-	executor.notifyEdgeMutated("edge")
+	executor.notifyNodeMutated(t.Context(), "node")
+	executor.notifyNodeMutated(t.Context(), "node")
+	executor.notifyEdgeMutated(t.Context(), "edge")
 
 	nodes, edges := tx.takeSearchRefreshes()
 	require.Equal(t, map[storage.NodeID]struct{}{"node": {}}, nodes)
@@ -95,7 +95,7 @@ func TestCypherTransactionRefreshFollowsCommitOrRollback(t *testing.T) {
 				return
 			}
 			require.NoError(t, transaction.Commit())
-			executor.refreshSearchAfterCommit(wrapped)
+			executor.refreshSearchAfterCommit(t.Context(), wrapped)
 			require.Zero(t, consumerHits(t, service, "beforeword"))
 			require.Equal(t, 1, consumerHits(t, service, "afterword"))
 		})

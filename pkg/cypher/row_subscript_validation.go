@@ -237,6 +237,15 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		for start > 0 && isRowReceiverIdentifierAt(expression, start-1) {
 			start--
 		}
+		// A dotted name left of the subscript continues a postfix chain of
+		// its own when a group closes before the dot (pages[i].ends[0],
+		// l[0].a[0], f(x).y[0], {a: 1}.a[0]): the receiver starts where that
+		// chain's primary does. The dot stands where the subscript's
+		// preceding expression ends, so the group's closing delimiter is the
+		// token this reader itself classifies next.
+		if start > 0 && isPropertyDotAt(expression, start) && strings.ContainsRune(")]}", rune(expression[start-1])) {
+			return rowSubscriptReceiverStart(expression, start)
+		}
 		return start
 	}
 }

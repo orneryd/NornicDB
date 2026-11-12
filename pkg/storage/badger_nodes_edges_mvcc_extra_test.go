@@ -588,9 +588,9 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 			return nil
 		}))
 
-		_, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "", MVCCVersion{})
+		_, err := engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: ""}, MVCCVersion{})
 		require.ErrorIs(t, err, ErrInvalidID)
-		_, err = engine.GetIncomingEdgesVisibleAt(context.Background(), "", MVCCVersion{})
+		_, err = engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: ""}, MVCCVersion{})
 		require.ErrorIs(t, err, ErrInvalidID)
 	})
 
@@ -613,9 +613,9 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 			return txn.Set(append(append([]byte{}, inPrefix...), []byte("bad")...), []byte{0})
 		}))
 
-		_, err = engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:bad-out", maxMVCCVersion())
+		_, err = engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:bad-out"}, maxMVCCVersion())
 		require.ErrorContains(t, err, "invalid mvcc adjacency key length")
-		_, err = engine.GetIncomingEdgesVisibleAt(context.Background(), "test:bad-in", maxMVCCVersion())
+		_, err = engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:bad-in"}, maxMVCCVersion())
 		require.ErrorContains(t, err, "invalid mvcc adjacency key length")
 	})
 
@@ -655,10 +655,10 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 			return engine.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyIncoming, txn, "test:ghost", "test:e2", head2.Version, false)
 		}))
 
-		outgoing, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:ghost", maxMVCCVersion())
+		outgoing, err := engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:ghost"}, maxMVCCVersion())
 		require.NoError(t, err)
 		require.Empty(t, outgoing)
-		incoming, err := engine.GetIncomingEdgesVisibleAt(context.Background(), "test:ghost", maxMVCCVersion())
+		incoming, err := engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:ghost"}, maxMVCCVersion())
 		require.NoError(t, err)
 		require.Empty(t, incoming)
 

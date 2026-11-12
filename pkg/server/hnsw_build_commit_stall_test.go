@@ -27,6 +27,7 @@ import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/stretchr/testify/require"
 )
 
@@ -344,8 +345,73 @@ func (s *stallStore) requireServes(ids []string) {
 	s.t.Helper()
 	for _, id := range ids {
 		result := s.exec(stallNearest, map[string]any{"v": s.want[id]})
+		if !stallServed(result.Rows, id) {
+			s.diagnoseFirstMiss(id)
+		}
 		require.True(s.t, stallServed(result.Rows, id), "the vector index does not find %s by its current vector (rows %v)", id, result.Rows)
 	}
+}
+
+// diagnoseFirstMiss captures the canonical index answer before any settling
+// or repeated ANN query. It never replaces the original failed assertion.
+func (s *stallStore) diagnoseFirstMiss(id string) {
+	s.t.Helper()
+	started := time.Now()
+	service, err := s.db.GetOrCreateSearchService("nornic", s.db.GetStorage())
+	if err != nil {
+		s.t.Logf("first-miss service lookup failed: %v", err)
+		return
+	}
+	query := make([]float32, len(s.want[id]))
+	for i, v := range s.want[id] {
+		query[i] = float32(v)
+	}
+	exact, exactErr := service.VectorQueryNodes(s.t.Context(), query, search.VectorQuerySpec{
+		IndexName: "doc_embedding", Label: "Doc", Property: "embedding", Similarity: "cosine", Limit: 100, Exact: true,
+	})
+	exactAt := time.Since(started)
+	direct, directErr := service.VectorQueryNodes(s.t.Context(), query, search.VectorQuerySpec{
+		IndexName: "doc_embedding", Label: "Doc", Property: "embedding", Similarity: "cosine", Limit: 100,
+	})
+	directAt := time.Since(started)
+	nodes, readErr := s.db.GetStorage().GetNodesByLabel(s.t.Context(), "Doc")
+	if readErr != nil {
+		s.t.Logf("first-miss stored read failed: %v (exact err %v)", readErr, exactErr)
+		return
+	}
+	for _, node := range nodes {
+		if node.Properties["id"] != id {
+			continue
+		}
+		raw, encodeErr := json.Marshal(node.Properties["embedding"])
+		var stored []float64
+		decodeErr := json.Unmarshal(raw, &stored)
+		difference := math.Inf(1)
+		if len(stored) == len(s.want[id]) {
+			difference = 0
+			for i, value := range stored {
+				difference = max(difference, math.Abs(value-s.want[id][i]))
+			}
+		}
+		found, score := false, float64(0)
+		for _, hit := range exact {
+			if hit.ID == string(node.ID) {
+				found, score = true, hit.Score
+			}
+		}
+
+		directFound, directScore := false, float64(0)
+		for _, hit := range direct {
+			if hit.ID == string(node.ID) {
+				directFound, directScore = true, hit.Score
+			}
+		}
+		state := s.db.GetDatabaseSearchStatus("nornic")
+		s.t.Logf("first-miss id=%s stored_id=%s durable_max_difference=%g durable_dimensions=%d encode_err=%v decode_err=%v exact_found=%v exact_score=%g exact_err=%v exact_elapsed=%v direct_found=%v direct_score=%g direct_err=%v direct_elapsed=%v ready=%v building=%v phase=%s",
+			id, node.ID, difference, len(stored), encodeErr, decodeErr, found, score, exactErr, exactAt, directFound, directScore, directErr, directAt, state.Ready, state.Building, state.Phase)
+		return
+	}
+	s.t.Logf("first-miss id=%s absent from durable label population; exact_err=%v", id, exactErr)
 }
 
 // stallNearest returns the 100 nodes nearest to $v: each row is a node's id

@@ -194,7 +194,10 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 					for _, reject := range []bool{false, true} {
 						t.Run(fmt.Sprintf("%s/dynamicWrite=%v/fabric=%v/explicit=%v/failure=%v", origin.Name, dynamicWrite, composite, explicit, reject), func(t *testing.T) {
 							alias := fmt.Sprintf("u5matrix.contract%d", index)
-							writes := origin.Mode == ProcedureModeWrite || origin.ExecutesStatements && dynamicWrite
+							writeAdmission := origin.Mode == ProcedureModeWrite || origin.ExecutesStatements && dynamicWrite
+							// WRITE admission must own a transaction even when its
+							// dynamic body only reads. Persistence follows the body.
+							mutatesGraph := writeAdmission && (!origin.ExecutesStatements || dynamicWrite)
 							invoked, transactional := false, false
 							call, spec := admissionMatrixContract(index, origin)
 							runAdmissionMatrixCase(t, composite, explicit, reject, failure, admissionMatrixCase{
@@ -212,7 +215,7 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 									cleanupAdmissionProcedure(t, alias)
 									require.NoError(t, RegisterUserProcedure(spec, func(ctx context.Context, nested *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 										defer func() {
-											if composite && !writes {
+											if composite && !writeAdmission {
 												owner, ok := fabric.FabricTransactionFromContext(ctx)
 												require.True(t, ok)
 												require.Empty(t, owner.WriteShard(), "a genuine READ contract must claim no writer")
@@ -231,7 +234,7 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 												return batch.Execute(batchCtx, "CREATE (:"+admissionMatrixLabel+") RETURN 1 AS value", nil)
 											})
 										}
-										if writes {
+										if writeAdmission {
 											return nested.Execute(ctx, "CREATE (:"+admissionMatrixLabel+") RETURN 1 AS value", nil)
 										}
 										return &ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{int64(1)}}}, nil
@@ -243,11 +246,11 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 										return
 									}
 									require.True(t, invoked, "the contract handler must actually run")
-									require.Equal(t, composite || explicit || writes || origin.ExecutesStatements, transactional, "composite procedure work owns storage without necessarily claiming a writer")
+									require.Equal(t, composite || explicit || writeAdmission || origin.ExecutesStatements, transactional, "composite procedure work owns storage without necessarily claiming a writer")
 								},
 								scopeRejected: origin.OwnsTransactions && composite,
 								wantNodes: func() int {
-									if writes && (!reject || origin.OwnsTransactions && !explicit) {
+									if mutatesGraph && (!reject || origin.OwnsTransactions && !explicit) {
 										return 1
 									}
 									return 0

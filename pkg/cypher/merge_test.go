@@ -1488,7 +1488,7 @@ func TestComponentExecuteCompoundMatchMerge_StaleLabelLookupSurfacesConstraintVi
 
 	fn, err := store.GetFirstNodeByLabel(t.Context(), "Function")
 	require.NoError(t, err)
-	edges, err := store.GetEdgesBetween(ctx, fn.ID, params[0].ID)
+	edges, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: fn.ID, Other: params[0].ID})
 	require.NoError(t, err)
 	require.Empty(t, edges)
 }

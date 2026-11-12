@@ -109,21 +109,28 @@ func TestCoverageLiftPureBranchHelpers(t *testing.T) {
 		})
 	}
 
-	result := &ExecuteResult{Rows: [][]interface{}{{"a"}, {"b"}, {"c"}}}
-	applyFulltextOptions(result, fulltextQueryOptions{skip: 1, limit: 1})
+	result := &ExecuteResult{}
+	page := fulltextRowPage{result: result, opts: fulltextQueryOptions{skip: 1, limit: 1}}
+	for _, value := range []string{"a", "b", "c"} {
+		if page.append([]interface{}{value}) {
+			break
+		}
+	}
 	require.Equal(t, [][]interface{}{{"b"}}, result.Rows)
-	result = &ExecuteResult{Rows: [][]interface{}{{"a"}, {"b"}}}
-	applyFulltextOptions(result, fulltextQueryOptions{skip: 2, limit: -1})
-	assert.Empty(t, result.Rows)
-	applyFulltextOptions(nil, fulltextQueryOptions{skip: 1, limit: 1})
-
-	seen := 0
 	result = &ExecuteResult{}
-	assert.False(t, appendFulltextOptionedRow(result, fulltextQueryOptions{skip: 1, limit: 1}, &seen, []interface{}{"skip"}))
-	assert.True(t, appendFulltextOptionedRow(result, fulltextQueryOptions{skip: 1, limit: 1}, &seen, []interface{}{"keep"}))
+	page = fulltextRowPage{result: result, opts: fulltextQueryOptions{skip: 2, limit: -1}}
+	for _, value := range []string{"a", "b"} {
+		assert.False(t, page.append([]interface{}{value}))
+	}
+	assert.Empty(t, result.Rows)
+
+	result = &ExecuteResult{}
+	page = fulltextRowPage{result: result, opts: fulltextQueryOptions{skip: 1, limit: 1}}
+	assert.False(t, page.append([]interface{}{"skip"}))
+	assert.True(t, page.append([]interface{}{"keep"}))
 	assert.Equal(t, [][]interface{}{{"keep"}}, result.Rows)
-	assert.False(t, appendFulltextOptionedRow(nil, fulltextQueryOptions{}, &seen, []interface{}{"ignored"}))
-	assert.False(t, appendFulltextOptionedRow(result, fulltextQueryOptions{}, nil, []interface{}{"ignored"}))
+	page = fulltextRowPage{}
+	assert.False(t, page.append([]interface{}{"ignored"}))
 
 	assert.True(t, containsVariableLengthPathPattern("MATCH (a)-[*]->(b) RETURN b"))
 	assert.True(t, containsVariableLengthPathPattern("MATCH (a)-[*1..3]->(b) RETURN b"))

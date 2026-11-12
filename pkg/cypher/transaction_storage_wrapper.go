@@ -7,10 +7,51 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+// profileKindNodeIndexSeek names a property-index read a PROFILE statement
+// actually performed: the plan operator that claims an index seek.
+const profileKindNodeIndexSeek = "NodeIndexSeek"
+
+// The mutation-request kinds name the native staging request a statement
+// actually issued: one create, update or delete of a node or a relationship.
+// A request is not a physical write - the transaction stages the entity and
+// the commit decides what reaches storage - so each call is one request (one
+// hit), and it contributed one acknowledged row only when the transaction
+// returned no error. A cascade stays one node-deletion request: the
+// relationships the transaction deletes with their node are not requests of
+// their own.
+const (
+	profileKindNodeCreateRequest              = "NodeCreateRequest"
+	profileKindNodeUpdateRequest              = "NodeUpdateRequest"
+	profileKindNodeDeleteRequest              = "NodeDeleteRequest"
+	profileKindRelationshipCreateRequest      = "RelationshipCreateRequest"
+	profileKindRelationshipCreateBatchRequest = "RelationshipCreateBatchRequest"
+	profileKindRelationshipUpdateRequest      = "RelationshipUpdateRequest"
+	profileKindRelationshipDeleteRequest      = "RelationshipDeleteRequest"
+)
+
+// profileKindRelationshipBetweenSeek names the relationships-between-two-nodes
+// read a relationship MERGE performs to decide whether its pattern already
+// exists: the between-endpoints read of its identity lookup, not a traversal
+// expansion. One record holds every relationship the read returned.
+const profileKindRelationshipBetweenSeek = "RelationshipBetweenSeek"
+
+// profileRelationshipBetweenRead records the relationships one
+// between-endpoints read returned: each relationship the read handed over is
+// one entity read and one row, and a read that failed returned none. The read
+// is the acquisition itself, so a MERGE row the identity cache answers from
+// memory reports nothing for it - it performed no read.
+func profileRelationshipBetweenRead(ctx context.Context, edges []*storage.Edge, err error) {
+	if err != nil {
+		return
+	}
+	queryprofile.EntityPopulation(ctx, profileKindRelationshipBetweenSeek, "", edges)
+}
 
 // propertyIndexLookup is the one lookup of label's property = value in a
 // property index, as engine sees it. The index describes committed state, so
@@ -25,7 +66,18 @@ func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *sto
 		return nil, err
 	}
 	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
-		return wrapper.tx.MergePendingPropertyMatches(ctx, ids, label, property, value)
+		ids, err = wrapper.tx.MergePendingPropertyMatches(ctx, ids, label, property, value)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// A PROFILE statement counts the entries this lookup returned and the one
+	// lookup that returned them, after the transaction's own pending writes are
+	// merged in. The nodes those entries name are read afterwards by the point
+	// reader, which counts them itself; a seek the planner rejected or only
+	// estimated reaches no lookup and counts nothing.
+	if profileRuntimeFromContext(ctx) != nil {
+		queryprofile.Access(ctx, profileKindNodeIndexSeek, label+"("+property+")").Add(int64(len(ids)), 1+int64(len(ids)))
 	}
 	return ids, nil
 }
@@ -40,7 +92,15 @@ func compositeIndexLookup(ctx context.Context, engine storage.Engine, schema *st
 		return nil, err
 	}
 	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
-		return wrapper.tx.MergePendingCompositeMatches(ctx, ids, idx.Label, idx.Properties, values)
+		ids, err = wrapper.tx.MergePendingCompositeMatches(ctx, ids, idx.Label, idx.Properties, values)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// The composite counterpart of propertyIndexLookup's count: the entries the
+	// index returned and the one lookup, named by the index that answered it.
+	if profileRuntimeFromContext(ctx) != nil {
+		queryprofile.Access(ctx, profileKindNodeIndexSeek, idx.Label+"("+strings.Join(idx.Properties, ",")+")").Add(int64(len(ids)), 1+int64(len(ids)))
 	}
 	return ids, nil
 }
@@ -308,17 +368,17 @@ func (w *transactionStorageWrapper) UpdateNode(ctx context.Context, updateReques
 	if err := w.GetSchema().RegisterTokens(ctx, node.Labels, nil); err != nil {
 		return err
 	}
-	if w.namespace == "" {
-		err := w.tx.UpdateGraphNode(ctx, updateRequest)
-		if err == nil {
-			w.markMutatedNodeID(node.ID)
-		}
-		return err
+	if w.namespace != "" {
+		namespaced := storage.CopyNode(node)
+		namespaced.ID = w.prefixNodeID(node.ID)
+		updateRequest.After = namespaced
 	}
-	namespaced := storage.CopyNode(node)
-	namespaced.ID = w.prefixNodeID(node.ID)
-	updateRequest.After = namespaced
+	// The one native node-update request this statement made, acknowledged by
+	// the transaction's own return. A SET route that skips persistence reaches
+	// no request here, so it reports none.
+	counter := queryprofile.Access(ctx, profileKindNodeUpdateRequest, "")
 	err := w.tx.UpdateGraphNode(ctx, updateRequest)
+	queryprofile.RequestResult(counter, err)
 	if err == nil {
 		w.markMutatedNodeID(node.ID)
 	}
@@ -326,12 +386,17 @@ func (w *transactionStorageWrapper) UpdateNode(ctx context.Context, updateReques
 }
 
 func (w *transactionStorageWrapper) DeleteNode(ctx context.Context, id storage.NodeID) error {
-	return w.tx.DeleteGraphNode(ctx, w.prefixNodeID(id), storage.CascadeEdges)
+	return w.DeleteGraphNode(ctx, id, storage.CascadeEdges)
 }
 
 // DeleteGraphNode applies a transactional deletion policy in this namespace.
+// It is the one owner of the node-deletion request: the relationships a
+// cascade deletes with their node stay part of that one request.
 func (w *transactionStorageWrapper) DeleteGraphNode(ctx context.Context, id storage.NodeID, mode storage.NodeDeletionMode) error {
-	return w.tx.DeleteGraphNode(ctx, w.prefixNodeID(id), mode)
+	counter := queryprofile.Access(ctx, profileKindNodeDeleteRequest, "")
+	err := w.tx.DeleteGraphNode(ctx, w.prefixNodeID(id), mode)
+	queryprofile.RequestResult(counter, err)
+	return err
 }
 
 // IncidentEdges is BadgerTransaction.IncidentEdges for this wrapper's
@@ -363,8 +428,12 @@ func (w *transactionStorageWrapper) EdgeCreateWasNoOp(id storage.EdgeID) bool {
 	return w.tx.EdgeCreateWasNoOp(w.prefixEdgeID(id))
 }
 
+// DeleteEdge is the one owner of the relationship-deletion request.
 func (w *transactionStorageWrapper) DeleteEdge(ctx context.Context, id storage.EdgeID) error {
-	return w.tx.DeleteEdge(ctx, w.prefixEdgeID(id))
+	counter := queryprofile.Access(ctx, profileKindRelationshipDeleteRequest, "")
+	err := w.tx.DeleteEdge(ctx, w.prefixEdgeID(id))
+	queryprofile.RequestResult(counter, err)
+	return err
 }
 
 // Read operations - transaction supports GetNode, forward others to underlying
@@ -432,11 +501,17 @@ func (w *transactionStorageWrapper) UpdateEdge(ctx context.Context, updateReques
 	if err := w.GetSchema().RegisterTokens(ctx, nil, []string{edge.Type}); err != nil {
 		return err
 	}
-	if w.namespace == "" {
-		return w.tx.UpdateEdge(ctx, updateRequest)
+	request := updateRequest
+	if w.namespace != "" {
+		w.initNamespacePrefix()
+		request = updateRequest.InScope(w.namespacePrefix)
 	}
-	w.initNamespacePrefix()
-	return w.tx.UpdateEdge(ctx, updateRequest.InScope(w.namespacePrefix))
+	// The one native relationship-update request this statement made; a SET
+	// route that skips persistence reaches no request and reports none.
+	counter := queryprofile.Access(ctx, profileKindRelationshipUpdateRequest, "")
+	err := w.tx.UpdateEdge(ctx, request)
+	queryprofile.RequestResult(counter, err)
+	return err
 }
 
 func (w *transactionStorageWrapper) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
@@ -610,43 +685,16 @@ func (w *transactionStorageWrapper) ForEachNodeIDByLabel(ctx context.Context, la
 	return nil
 }
 
-func (w *transactionStorageWrapper) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	return w.adjacencyEdges(ctx, adjacencyRead{kind: storage.TransactionReadOutgoing, node: nodeID})
+// ReadAdjacentEdges answers one adjacent-edge request from the transaction's
+// live, pending-inclusive view in its namespace.
+func (w *transactionStorageWrapper) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	return w.adjacentEdges(ctx, request, false)
 }
 
-// OutgoingEdgeHeaders lists the transaction's relationship headers in its
-// namespace.
-func (w *transactionStorageWrapper) OutgoingEdgeHeaders(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
-	edges, answered, err := w.tx.OutgoingEdgeHeaders(ctx, w.prefixNodeID(nodeID))
-	return w.userEdgeHeaders(ctx, edges, answered, err)
-}
-
-// IncomingEdgeHeaders lists the transaction's relationship headers in its
-// namespace.
-func (w *transactionStorageWrapper) IncomingEdgeHeaders(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
-	edges, answered, err := w.tx.IncomingEdgeHeaders(ctx, w.prefixNodeID(nodeID))
-	return w.userEdgeHeaders(ctx, edges, answered, err)
-}
-
-// userEdgeHeaders keeps the header read's answered/error contract around the
-// wrapper's read exit under the same caller lifetime.
-func (w *transactionStorageWrapper) userEdgeHeaders(ctx context.Context, edges []*storage.Edge, answered bool, err error) ([]*storage.Edge, bool, error) {
-	if err != nil || !answered {
-		return edges, answered, err
-	}
-	projected, err := projectTransactionRead(ctx, w, edges, nil, readOwnAdjacency)
-	if err != nil {
-		return nil, true, err
-	}
-	return projected, true, nil
-}
-
-func (w *transactionStorageWrapper) GetIncomingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	return w.adjacencyEdges(ctx, adjacencyRead{kind: storage.TransactionReadIncoming, node: nodeID})
-}
-
-func (w *transactionStorageWrapper) GetEdgesBetween(ctx context.Context, startID, endID storage.NodeID) ([]*storage.Edge, error) {
-	return w.adjacencyEdges(ctx, adjacencyRead{kind: storage.TransactionReadBetween, node: startID, other: endID})
+// ReadStoredAdjacentEdges answers the same request over the transaction's
+// physically stored relationships.
+func (w *transactionStorageWrapper) ReadStoredAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	return w.adjacentEdges(ctx, request, true)
 }
 
 // MatchEdgesBetween matches the transaction's edges of one type between two
@@ -654,7 +702,9 @@ func (w *transactionStorageWrapper) GetEdgesBetween(ctx context.Context, startID
 // (storage.EdgesBetweenMatcher).
 func (w *transactionStorageWrapper) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match)
+		edges, err := w.tx.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match)
+		profileRelationshipBetweenRead(ctx, edges, err)
+		return edges, err
 	}
 	var candidate storage.Edge
 	edges, err := w.tx.MatchEdgesBetween(ctx, w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType, properties, func(edge *storage.Edge) bool {
@@ -664,7 +714,9 @@ func (w *transactionStorageWrapper) MatchEdgesBetween(ctx context.Context, start
 		return match(&candidate)
 	})
 	// Matching and projection share the caller lifetime.
-	return projectTransactionRead(ctx, w, edges, err, readOwnAdjacency)
+	edges, err = projectTransactionRead(ctx, w, edges, err, readOwnAdjacency)
+	profileRelationshipBetweenRead(ctx, edges, err)
+	return edges, err
 }
 
 func (w *transactionStorageWrapper) GetEdgeBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string) (*storage.Edge, error) {
@@ -683,20 +735,34 @@ func (w *transactionStorageWrapper) GetEdgesByType(ctx context.Context, edgeType
 	return projectTransactionRead(ctx, w, edges, err, readScanned)
 }
 
-func (w *transactionStorageWrapper) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	return w.visibleAtEdges(ctx, visibleAtEdgeRequest{kind: visibleAtOutgoing, node: nodeID, version: version})
+// LookupEdgesByPropertyEquality answers a relationship-property equality match
+// from the relationship equality index, with this transaction's own pending
+// relationship writes merged in (BadgerTransaction.LookupEdgesByPropertyEquality).
+// handled is false when the index cannot answer it, and the caller scans instead.
+func (w *transactionStorageWrapper) LookupEdgesByPropertyEquality(ctx context.Context, relationshipType string, properties []string, values []interface{}) ([]*storage.Edge, bool, error) {
+	edges, handled, err := w.tx.LookupEdgesByPropertyEquality(ctx, relationshipType, properties, values)
+	if err != nil || !handled {
+		return nil, handled, err
+	}
+	// The index answers with the engine's namespaced IDs, so the transaction
+	// read projection that filters and converts a scanned read applies here.
+	converted, err := projectTransactionRead(ctx, w, edges, nil, readScanned)
+	if err != nil {
+		return nil, false, err
+	}
+	return converted, true, nil
 }
 
-func (w *transactionStorageWrapper) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	return w.visibleAtEdges(ctx, visibleAtEdgeRequest{kind: visibleAtIncoming, node: nodeID, version: version})
+// ReadAdjacentEdgesVisibleAt answers one snapshot-visible adjacent-edge request
+// in the transaction's namespace.
+func (w *transactionStorageWrapper) ReadAdjacentEdgesVisibleAt(ctx context.Context, request storage.AdjacentEdgeRead, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	return w.visibleAtEdges(ctx, request, version)
 }
 
+// GetEdgesByTypeVisibleAt answers the snapshot-visible relationship-type
+// population read.
 func (w *transactionStorageWrapper) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	return w.visibleAtEdges(ctx, visibleAtEdgeRequest{kind: visibleAtType, label: edgeType, version: version})
-}
-
-func (w *transactionStorageWrapper) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	return w.visibleAtEdges(ctx, visibleAtEdgeRequest{kind: visibleAtBetween, node: startID, other: endID, version: version})
+	return w.visibleAtTypeEdges(ctx, edgeType, version)
 }
 
 func (w *transactionStorageWrapper) AllNodes(ctx context.Context) ([]*storage.Node, error) {
@@ -740,6 +806,10 @@ func (w *transactionStorageWrapper) BulkCreateMintedNodes(ctx context.Context, n
 
 func (w *transactionStorageWrapper) createNodes(ctx context.Context, nodes []*storage.Node, minted bool) (storage.NodeID, error) {
 	var logicalID storage.NodeID
+	// This batch's create requests: the transaction stages one node per call,
+	// so a batch is one request per node and the counter is resolved once here
+	// for every call of the loop.
+	counter := queryprofile.Access(ctx, profileKindNodeCreateRequest, "")
 	create := w.tx.CreateNode
 	if minted {
 		create = w.tx.CreateMintedNode
@@ -757,6 +827,7 @@ func (w *transactionStorageWrapper) createNodes(ctx context.Context, nodes []*st
 			body.ID = w.prefixNodeID(node.ID)
 		}
 		id, err := create(ctx, body)
+		queryprofile.RequestResult(counter, err)
 		if err != nil {
 			return "", err
 		}
@@ -802,6 +873,13 @@ func (w *transactionStorageWrapper) createEdges(ctx context.Context, edges []*st
 			namespaced[i] = cp
 		}
 	}
+	// One native staging call carries this call's batch, whether it is a
+	// single relationship or a batch the transaction stages in one pass.
+	kind := profileKindRelationshipCreateRequest
+	if len(namespaced) != 1 {
+		kind = profileKindRelationshipCreateBatchRequest
+	}
+	counter := queryprofile.Access(ctx, kind, "")
 	var err error
 	switch {
 	case len(namespaced) == 1 && minted:
@@ -813,6 +891,7 @@ func (w *transactionStorageWrapper) createEdges(ctx context.Context, edges []*st
 	default:
 		err = w.tx.BulkCreateEdges(ctx, namespaced)
 	}
+	queryprofile.RequestResult(counter, err)
 	if err != nil || w.namespace == "" {
 		return err
 	}
@@ -826,7 +905,8 @@ func (w *transactionStorageWrapper) createEdges(ctx context.Context, edges []*st
 
 func (w *transactionStorageWrapper) BulkDeleteNodes(ctx context.Context, ids []storage.NodeID) error {
 	for _, id := range ids {
-		if err := w.tx.DeleteGraphNode(ctx, w.prefixNodeID(id), storage.CascadeEdges); err != nil {
+		// Each deletion is its own node-deletion request.
+		if err := w.DeleteGraphNode(ctx, id, storage.CascadeEdges); err != nil {
 			return err
 		}
 	}
@@ -838,7 +918,10 @@ func (w *transactionStorageWrapper) BulkDeleteNodes(ctx context.Context, ids []s
 // already deleted included (#827).
 func (w *transactionStorageWrapper) BulkDeleteEdges(ctx context.Context, ids []storage.EdgeID) error {
 	for _, id := range ids {
-		if err := w.tx.DeleteEdge(ctx, w.prefixEdgeID(id)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		// Each deletion is its own relationship-deletion request; an ID the
+		// transaction already deleted reports its own failed request and is
+		// skipped, as before.
+		if err := w.DeleteEdge(ctx, id); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
 	}

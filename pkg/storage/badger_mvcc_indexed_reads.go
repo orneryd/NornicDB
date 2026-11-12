@@ -455,20 +455,6 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType str
 	return edges, nil
 }
 
-func (b *BadgerEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
-	if err := b.pendingReadConflict(readNodePairScope, "", []NodeID{endID, startID}, ctx); err != nil {
-		return nil, err
-	}
-
-	if startID == "" || endID == "" {
-		return nil, ErrInvalidID
-	}
-	// The shared MVCC adjacency owner selects this pair before retaining
-	// output, rather than scanning and materializing unrelated graph edges.
-	// Latest reads keep their current between index and acknowledged overlay.
-	return b.readAdjacentEdgesAtWithView(ctx, startID, version, Outgoing, endID, nil)
-}
-
 // yieldLatestVisible is the one owner of the latest-visible enumeration
 // algorithm the MVCCEnumerationEngine node and edge callers present: load the
 // population under the caller's own lifetime, then hand every record to yield.

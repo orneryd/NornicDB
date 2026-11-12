@@ -140,12 +140,11 @@ func TestWALEngine_AdjacentAndLabelCountFallbacks(t *testing.T) {
 	require.NoError(t, err)
 
 	w := NewWALEngine(base, nil)
-	out, in, err := w.GetAdjacentEdges(context.Background(), "tenant:n1")
+	both, err := w.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "tenant:n1"})
 	require.NoError(t, err)
-	require.Len(t, out, 1)
-	require.Equal(t, EdgeID("tenant:out"), out[0].ID)
-	require.Len(t, in, 1)
-	require.Equal(t, EdgeID("tenant:in"), in[0].ID)
+	require.Len(t, both, 2)
+	require.Equal(t, EdgeID("tenant:out"), both[0].ID)
+	require.Equal(t, EdgeID("tenant:in"), both[1].ID)
 
 	count, err := w.NodeCountByLabel(t.Context(), "Person")
 	require.NoError(t, err)
@@ -197,18 +196,18 @@ func TestWALEngine_OptionalDelegateAndErrorBranches(t *testing.T) {
 		adjIn:                  []*Edge{{ID: "tenant:direct-in", StartNode: "tenant:n3", EndNode: "tenant:n1", Type: "R"}},
 	}
 	w := NewWALEngine(direct, nil)
-	out, in, err := w.GetAdjacentEdges(context.Background(), "tenant:n1")
+	directBoth, err := w.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "tenant:n1"})
 	require.NoError(t, err)
-	require.Equal(t, EdgeID("tenant:direct-out"), out[0].ID)
-	require.Equal(t, EdgeID("tenant:direct-in"), in[0].ID)
+	require.Len(t, directBoth, 2)
+	require.Equal(t, EdgeID("tenant:direct-out"), directBoth[0].ID)
+	require.Equal(t, EdgeID("tenant:direct-in"), directBoth[1].ID)
 
 	fallbackErr := errors.New("incoming failed")
 	fallback := &adjacentFallbackEngine{Engine: newTestMemoryEngine(t), inErr: fallbackErr}
 	w = NewWALEngine(fallback, nil)
-	out, in, err = w.GetAdjacentEdges(context.Background(), "tenant:n1")
+	failedBoth, err := w.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "tenant:n1"})
 	require.ErrorIs(t, err, fallbackErr)
-	require.Nil(t, out)
-	require.Nil(t, in)
+	require.Nil(t, failedBoth)
 
 	lookup := &walStatsLookupEngine{
 		Engine:         newTestMemoryEngine(t),

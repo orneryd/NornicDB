@@ -19,7 +19,7 @@ func BenchmarkSemanticValidationUncached(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				exec.semanticValidationCache = newSemanticValidationCache(1)
-				exec.matchSemanticValidationCache = newSemanticValidationCache(1)
+				exec.matchSemanticValidationCache = newBoundedCache[string, nativeFunctionInputs](1, boundedCacheStringShardIndex)
 				exec.mergeSemanticValidationCache = newSemanticValidationCache(1)
 				if err := exec.validateStatementTypes(context.Background(), statement); err != nil {
 					b.Fatal(err)

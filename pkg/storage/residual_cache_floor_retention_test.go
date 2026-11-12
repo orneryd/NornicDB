@@ -24,7 +24,7 @@ func TestResidualCacheFloorRetention(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:floor-peer-edge", StartNode: "test:floor-peer", EndNode: "test:floor-peer-end", Type: "KEEP"}))
-	_, err = b.GetEdgesBetween(context.Background(), "test:floor-peer", "test:floor-peer-end")
+	_, err = b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:floor-peer", Other: "test:floor-peer-end"})
 	require.NoError(t, err)
 	b.edgeCacheMu.RLock()
 	peerEdge := b.edgeCache["test:floor-peer-edge"]
@@ -59,7 +59,7 @@ func TestResidualCacheFloorRetention(t *testing.T) {
 	after := b.nodeCache["test:floor-peer"]
 	b.nodeCacheMu.RUnlock()
 	require.Same(t, peer, after, "retiring floor metadata must preserve an unrelated warm body")
-	edges, err := b.GetOutgoingEdges(context.Background(), "test:floor-peer")
+	edges, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:floor-peer"})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	b.edgeCacheMu.RLock()
@@ -86,7 +86,7 @@ func TestResidualClosedCacheProvenance(t *testing.T) {
 	require.NoError(t, b.Close())
 	b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
-	_, err = b.GetOutgoingEdges(context.Background(), "test:close-a")
+	_, err = b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:close-a"})
 	require.NoError(t, err)
 	require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:close-a", Properties: map[string]any{"v": int64(2)}}}))
 	require.NotEmpty(t, b.edgeCacheSources)

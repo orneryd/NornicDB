@@ -7,15 +7,21 @@ import (
 
 // undirectedIncidentEdges returns each incident relationship once. Storage
 // correctly exposes a self-relationship as both incoming and outgoing, but an
-// undirected Cypher expansion has only one orientation for that relationship.
-// The caller's context reaches the storage read, so a cancelled traversal
-// stops instead of waiting for an unaffected read.
-func undirectedIncidentEdges(ctx context.Context, store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	outgoing, incoming, err := incidentEdgeListsContext(ctx, store, nodeID, "both")
+// undirected Cypher expansion has only one orientation for that relationship:
+// the both-direction adjacent-edge request reports it once. The request selects
+// the pattern's types and detail; the caller's context reaches the storage
+// read, so a cancelled traversal stops instead of waiting for an unaffected
+// read.
+func undirectedIncidentEdges(ctx context.Context, store storage.Engine, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	request.Direction = storage.AdjacentBoth
+	edges, err := store.ReadAdjacentEdges(ctx, request)
 	if err != nil {
 		return nil, err
 	}
-	return combineIncidentEdges(ctx, nodeID, outgoing, incoming)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return edges, nil
 }
 
 func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, incoming []*storage.Edge) ([]*storage.Edge, error) {
@@ -42,43 +48,49 @@ func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, 
 }
 
 // incidentEdgeListsContext is the single storage reader for selected paths.
-// Directed reads avoid loading the other direction; both directions use one
-// adjacency call when supported. Cancellation and read errors reach the caller.
-func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
+// A directed read avoids loading the other direction; both directions use one
+// adjacent-edge request and are split by endpoint, so a self-relationship stays
+// in both lists as storage's own directional reads report it. Cancellation and
+// read errors reach the caller.
+func incidentEdgeListsContext(ctx context.Context, store storage.Engine, request storage.AdjacentEdgeRead, direction string) ([]*storage.Edge, []*storage.Edge, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
 	if direction == "outgoing" {
-		edges, err := store.GetOutgoingEdges(ctx, nodeID)
+		request.Direction = storage.AdjacentOutgoing
+		edges, err := store.ReadAdjacentEdges(ctx, request)
 		if err == nil {
 			err = ctx.Err()
 		}
 		return edges, nil, err
 	}
 	if direction == "incoming" {
-		edges, err := store.GetIncomingEdges(ctx, nodeID)
+		request.Direction = storage.AdjacentIncoming
+		edges, err := store.ReadAdjacentEdges(ctx, request)
 		if err == nil {
 			err = ctx.Err()
 		}
 		return nil, edges, err
 	}
-	if adjacent, ok := store.(storage.AdjacentEdgesEngine); ok {
-		out, in, err := adjacent.GetAdjacentEdges(ctx, nodeID)
-		if err == nil {
-			err = ctx.Err()
-		}
-		return out, in, err
-	}
-	outgoing, err := store.GetOutgoingEdges(ctx, nodeID)
+	request.Direction = storage.AdjacentBoth
+	edges, err := store.ReadAdjacentEdges(ctx, request)
 	if err != nil {
 		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	incoming, err := store.GetIncomingEdges(ctx, nodeID)
-	if err != nil {
-		return nil, nil, err
+	var outgoing, incoming []*storage.Edge
+	for _, edge := range edges {
+		if edge == nil {
+			continue
+		}
+		if edge.StartNode == request.Node {
+			outgoing = append(outgoing, edge)
+		}
+		if edge.EndNode == request.Node {
+			incoming = append(incoming, edge)
+		}
 	}
-	return outgoing, incoming, ctx.Err()
+	return outgoing, incoming, nil
 }

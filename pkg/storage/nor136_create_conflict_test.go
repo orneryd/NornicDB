@@ -225,21 +225,21 @@ func TestNOR136ExplicitIDCreateConflictWithBufferedPeerEdge(t *testing.T) {
 		require.NoError(t, err)
 		require.EqualValues(t, 1, endLabeled, "exactly one LINK relationship ends at a Doc node")
 
-		out, err := engine.GetStoredOutgoingEdges(ctx, "test:node-a")
+		out, err := engine.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Node: "test:node-a"})
 		require.NoError(t, err)
 		require.Len(t, out, 1, "the acknowledged edge must be adjacent to its start node")
 		require.Equal(t, edgeID, out[0].ID)
 
-		in, err := engine.GetStoredIncomingEdges(ctx, "test:node-b")
+		in, err := engine.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:node-b"})
 		require.NoError(t, err)
 		require.Len(t, in, 1, "the acknowledged edge must be adjacent to its end node")
 		require.Equal(t, edgeID, in[0].ID)
 
-		out, err = engine.GetStoredOutgoingEdges(ctx, "test:node-c")
+		out, err = engine.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Node: "test:node-c"})
 		require.NoError(t, err)
 		require.Empty(t, out, "the rejected create must not publish adjacency for its start node")
 
-		in, err = engine.GetStoredIncomingEdges(ctx, "test:node-d")
+		in, err = engine.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:node-d"})
 		require.NoError(t, err)
 		require.Empty(t, in, "the rejected create must not publish adjacency for its end node")
 

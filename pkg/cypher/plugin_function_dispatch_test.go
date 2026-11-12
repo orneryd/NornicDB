@@ -17,10 +17,13 @@ import (
 func withPluginFunctions(t testing.TB, functions map[string]interface{}) {
 	t.Helper()
 	previous := PluginFunctionLookup
-	// Admission belongs to fixture setup, never to the measured query path.
+	// Admission belongs to fixture setup, never to the measured query path. An
+	// already admitted callable keeps the read-observation policy it was
+	// admitted with; a raw fixture function is a custom implementation, so it
+	// is admitted as opaque.
 	checked := make(map[string]*registry.Callable, len(functions))
 	for name, function := range functions {
-		handler, err := registry.Compile(function)
+		handler, err := registry.Compile(function, registry.AdmissionObservation(function))
 		require.NoError(t, err, name)
 		checked[name] = handler
 	}

@@ -144,87 +144,89 @@ func fulltextWorkQuery(relationships bool) string {
 }
 
 func TestFulltextAcquisitionWork(t *testing.T) {
-	const count = 32
-	for _, buffered := range []bool{false, true} {
-		for _, shape := range []string{"native_namespace", "wal_forward", "traced_forward", "transient"} {
-			t.Run(fmt.Sprintf("%s/buffered=%t", shape, buffered), func(t *testing.T) {
-				ctx := context.Background()
-				_, store := fulltextWorkFixture(t, count, buffered)
-				probe := &fulltextWorkProbe{NamespacedEngine: store}
-				var engine storage.Engine = probe
-				if shape == "traced_forward" {
-					engine = storage.NewTracedEngine(probe)
-				}
-				if shape == "wal_forward" {
-					wal, err := storage.NewWAL(t.TempDir(), nil)
-					require.NoError(t, err)
-					wrapped := storage.NewWALEngine(probe, wal)
-					t.Cleanup(func() { require.NoError(t, wrapped.Close()) })
-					engine = wrapped
-				}
-				exec := NewStorageExecutor(engine, QueryCachePolicy{MaxEntries: 0})
-				if shape == "transient" {
-					exec.SetSearchServiceResolver("acquisition", func(string) *search.Service { return nil })
-				}
-				for _, relationships := range []bool{false, true} {
-					for _, q := range []string{"*", "*:*", "text:*"} {
-						for _, skip := range []int64{0, 1} {
-							for call := 0; call < 3; call++ {
-								probe.reset()
-								got, err := exec.Execute(ctx, fulltextWorkQuery(relationships), map[string]any{"q": q, "opts": map[string]any{"limit": int64(1), "skip": skip}})
-								formatted := probe.formatted.Load()
-								t.Logf("WORK relationships=%t mode=%q skip=%d call=%d nodes=%d edges=%d stops=%d formats=%d", relationships, q, skip, call, probe.nodes.Load(), probe.edges.Load(), probe.stops.Load(), formatted)
-								require.NoError(t, err)
-								require.Len(t, got.Rows, 1)
-								prefix := "n"
-								if relationships {
-									prefix = "e"
-								}
-								require.Equal(t, fmt.Sprintf("%s%05d", prefix, 2+skip), got.Rows[0][0])
-								assert.Zero(t, formatted, "unranked acquisition built scoring fields")
-								if relationships {
-									want := int64(3) + skip
-									assert.Equal(t, want, probe.edges.Load(), "reader crossed the release prefix on repeated call %d", call)
-									assert.Equal(t, int64(1), probe.stops.Load(), "stop did not reach native reader")
-								} else {
-									assert.Equal(t, int64(count), probe.nodes.Load(), "the node read was incorrectly truncated")
+	forEachParser(t, func(t *testing.T) {
+		const count = 32
+		for _, buffered := range []bool{false, true} {
+			for _, shape := range []string{"native_namespace", "wal_forward", "traced_forward", "transient"} {
+				t.Run(fmt.Sprintf("%s/buffered=%t", shape, buffered), func(t *testing.T) {
+					ctx := context.Background()
+					_, store := fulltextWorkFixture(t, count, buffered)
+					probe := &fulltextWorkProbe{NamespacedEngine: store}
+					var engine storage.Engine = probe
+					if shape == "traced_forward" {
+						engine = storage.NewTracedEngine(probe)
+					}
+					if shape == "wal_forward" {
+						wal, err := storage.NewWAL(t.TempDir(), nil)
+						require.NoError(t, err)
+						wrapped := storage.NewWALEngine(probe, wal)
+						t.Cleanup(func() { require.NoError(t, wrapped.Close()) })
+						engine = wrapped
+					}
+					exec := NewStorageExecutor(engine, QueryCachePolicy{MaxEntries: 0})
+					if shape == "transient" {
+						exec.SetSearchServiceResolver("acquisition", func(string) *search.Service { return nil })
+					}
+					for _, relationships := range []bool{false, true} {
+						for _, q := range []string{"*", "*:*", "text:*"} {
+							for _, skip := range []int64{0, 1} {
+								for call := 0; call < 3; call++ {
+									probe.reset()
+									got, err := exec.Execute(ctx, fulltextWorkQuery(relationships), map[string]any{"q": q, "opts": map[string]any{"limit": int64(1), "skip": skip}})
+									formatted := probe.formatted.Load()
+									t.Logf("WORK relationships=%t mode=%q skip=%d call=%d nodes=%d edges=%d stops=%d formats=%d", relationships, q, skip, call, probe.nodes.Load(), probe.edges.Load(), probe.stops.Load(), formatted)
+									require.NoError(t, err)
+									require.Len(t, got.Rows, 1)
+									prefix := "n"
+									if relationships {
+										prefix = "e"
+									}
+									require.Equal(t, fmt.Sprintf("%s%05d", prefix, 2+skip), got.Rows[0][0])
+									assert.Zero(t, formatted, "unranked acquisition built scoring fields")
+									if relationships {
+										want := int64(3) + skip
+										assert.Equal(t, want, probe.edges.Load(), "reader crossed the release prefix on repeated call %d", call)
+										assert.Equal(t, int64(1), probe.stops.Load(), "stop did not reach native reader")
+									} else {
+										assert.Equal(t, int64(3)+skip, probe.nodes.Load(), "node reader crossed the fulfilled window on repeated call %d", call)
+									}
 								}
 							}
 						}
-					}
-					probe.reset()
-					complete, err := exec.Execute(ctx, fulltextWorkQuery(relationships), map[string]any{"q": "text:*", "opts": map[string]any{}})
-					require.NoError(t, err)
-					require.Len(t, complete.Rows, count-2, "ordered prefix was admitted as complete")
-					assert.Zero(t, probe.formatted.Load(), "complete unranked traversal built scoring fields")
-					assert.Equal(t, int64(count), probe.nodes.Load()+probe.edges.Load())
-					// A prefix must not be admitted as a complete corpus. Also retain
-					// the complete-statistics demand. Undeclared properties must never be
-					// formatted into indexed fields.
-					probe.reset()
-					got, err := exec.Execute(ctx, fulltextWorkQuery(relationships), map[string]any{"q": "hotel", "opts": map[string]any{}})
-					require.NoError(t, err)
-					require.Len(t, got.Rows, count-2)
-					require.Zero(t, probe.formatted.Load(), "undeclared work_meter must not be formatted into the index")
-					for _, q := range []string{"(unbalanced", "   "} {
 						probe.reset()
-						_, err := exec.Execute(ctx, fulltextWorkQuery(relationships), map[string]any{"q": q, "opts": map[string]any{}})
-						if q == "(unbalanced" {
-							require.Error(t, err)
-						} else {
-							require.NoError(t, err)
+						complete, err := exec.Execute(ctx, fulltextWorkQuery(relationships), map[string]any{"q": "text:*", "opts": map[string]any{}})
+						require.NoError(t, err)
+						require.Len(t, complete.Rows, count-2, "ordered prefix was admitted as complete")
+						assert.Zero(t, probe.formatted.Load(), "complete unranked traversal built scoring fields")
+						assert.Equal(t, int64(count), probe.nodes.Load()+probe.edges.Load())
+						// A prefix must not be admitted as a complete corpus. Also retain
+						// the complete-statistics demand. Undeclared properties must never be
+						// formatted into indexed fields.
+						probe.reset()
+						got, err := exec.Execute(ctx, fulltextWorkQuery(relationships), map[string]any{"q": "hotel", "opts": map[string]any{}})
+						require.NoError(t, err)
+						require.Len(t, got.Rows, count-2)
+						require.Zero(t, probe.formatted.Load(), "undeclared work_meter must not be formatted into the index")
+						for _, q := range []string{"(unbalanced", "   "} {
+							probe.reset()
+							_, err := exec.Execute(ctx, fulltextWorkQuery(relationships), map[string]any{"q": q, "opts": map[string]any{}})
+							if q == "(unbalanced" {
+								require.Error(t, err)
+							} else {
+								require.NoError(t, err)
+							}
+							assert.Zero(t, probe.formatted.Load(), "construction ran before parser gate")
+							require.Zero(t, probe.nodes.Load()+probe.edges.Load(), "a read ran before the parser gate")
 						}
-						assert.Zero(t, probe.formatted.Load(), "construction ran before parser gate")
-						require.Zero(t, probe.nodes.Load()+probe.edges.Load(), "a read ran before the parser gate")
+						probe.readErr = errors.New("work acquisition failed")
+						probe.reset()
+						_, err = exec.Execute(ctx, fulltextWorkQuery(relationships), map[string]any{"q": "hotel", "opts": map[string]any{}})
+						require.ErrorContains(t, err, "work acquisition failed")
+						assert.Zero(t, probe.formatted.Load(), "construction ran before read completed")
+						probe.readErr = nil
 					}
-					probe.readErr = errors.New("work acquisition failed")
-					probe.reset()
-					_, err = exec.Execute(ctx, fulltextWorkQuery(relationships), map[string]any{"q": "hotel", "opts": map[string]any{}})
-					require.ErrorContains(t, err, "work acquisition failed")
-					assert.Zero(t, probe.formatted.Load(), "construction ran before read completed")
-					probe.readErr = nil
-				}
-			})
+				})
+			}
 		}
-	}
+	})
 }

@@ -7,10 +7,14 @@ import (
 
 type rerankMemoContextKey struct{}
 
+// rerankMemo is one ranked continuation's retained rerank work: the provider
+// decision for each candidate it submitted, and the windows those candidates
+// were admitted in.
 type rerankMemo struct {
 	mu        sync.RWMutex
 	results   map[rerankMemoKey]rerankMemoEntry
 	nextOrder map[string]uint64
+	windows   map[string][][]string
 }
 
 type rerankMemoKey struct {
@@ -23,6 +27,7 @@ type rerankMemoEntry struct {
 	crossScore    float64
 	finalScore    float64
 	filtered      bool
+	failed        bool
 	providerOrder uint64
 	returned      bool
 }
@@ -31,6 +36,7 @@ func newRerankMemo() *rerankMemo {
 	return &rerankMemo{
 		results:   make(map[rerankMemoKey]rerankMemoEntry),
 		nextOrder: make(map[string]uint64),
+		windows:   make(map[string][][]string),
 	}
 }
 
@@ -79,6 +85,54 @@ func (m *rerankMemo) put(query string, candidate RerankCandidate, result RerankR
 	}
 	m.results[key] = entry
 	return entry
+}
+
+// putUnranked retains a candidate's provider decision when the provider gave no
+// result for it: a valid subset response omitted it, or the batch that held it
+// failed. The decision is retained once per query, so a deeper pull rebuilds it
+// instead of submitting the candidate - or its failed batch - again.
+func (m *rerankMemo) putUnranked(query string, candidate RerankCandidate, failed bool) rerankMemoEntry {
+	entry := rerankMemoEntry{id: candidate.ID, failed: failed}
+	if m == nil {
+		return entry
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := rerankMemoKey{query: query, id: candidate.ID}
+	if existing, ok := m.results[key]; ok {
+		return existing
+	}
+	m.results[key] = entry
+	return entry
+}
+
+// acceptedWindows returns the candidate batches already admitted for query, in
+// admission order. Each batch is a copy the caller owns.
+func (m *rerankMemo) acceptedWindows(query string) [][]string {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	accepted := m.windows[query]
+	windows := make([][]string, len(accepted))
+	for index := range accepted {
+		windows[index] = append([]string(nil), accepted[index]...)
+	}
+	return windows
+}
+
+// acceptWindow records the candidates one provider batch was built from. A
+// batch is recorded when its candidates are first admitted, so a deeper pull
+// rebuilds that exact membership instead of re-forming a window over a longer
+// prefix.
+func (m *rerankMemo) acceptWindow(query string, ids []string) {
+	if m == nil || len(ids) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.windows[query] = append(m.windows[query], append([]string(nil), ids...))
 }
 
 // bind recreates the provider result for the current candidate pool. Memo

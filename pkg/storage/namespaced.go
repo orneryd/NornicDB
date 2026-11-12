@@ -392,60 +392,11 @@ func (n *NamespacedEngine) ForEachNodeIDByLabel(ctx context.Context, label strin
 	})
 }
 
-func (n *NamespacedEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	out, _, err := readAdjacency(ctx, n, adjacencyOutgoing, nodeID, "", nil, visibleRead)
-	return out, err
-}
-
-// OutgoingEdgeHeaders forwards with the namespace applied, as
-// GetOutgoingEdges does.
-func (n *NamespacedEngine) OutgoingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
-	return n.edgeHeaders(ctx, nodeID, true)
-}
-
-// IncomingEdgeHeaders is the incoming-side OutgoingEdgeHeaders.
-func (n *NamespacedEngine) IncomingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
-	return n.edgeHeaders(ctx, nodeID, false)
-}
-
-func (n *NamespacedEngine) edgeHeaders(ctx context.Context, nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
-	reader, ok := n.inner.(EdgeHeaderReader)
-	if !ok {
-		return nil, false, nil
-	}
-	var edges []*Edge
-	var answered bool
-	var err error
-	if outgoing {
-		edges, answered, err = reader.OutgoingEdgeHeaders(ctx, n.PrefixNodeID(nodeID))
-	} else {
-		edges, answered, err = reader.IncomingEdgeHeaders(ctx, n.PrefixNodeID(nodeID))
-	}
-	if !answered || err != nil {
-		return nil, answered, err
-	}
-	userEdges, err := n.toUserEdgesInNamespace(ctx, edges, false, true)
-	if err != nil {
-		return nil, true, err
-	}
-	return userEdges, true, nil
-}
-
-func (n *NamespacedEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	_, in, err := readAdjacency(ctx, n, adjacencyIncoming, nodeID, "", nil, visibleRead)
-	return in, err
-}
-
-// GetAdjacentEdges fetches both directions through a single inner call when
-// the inner engine supports the AdjacentEdgesEngine capability. ID
-// translation and namespace filtering mirror the per-direction methods.
-func (n *NamespacedEngine) GetAdjacentEdges(ctx context.Context, nodeID NodeID) ([]*Edge, []*Edge, error) {
-	return readAdjacency(ctx, n, adjacencyBoth, nodeID, "", nil, visibleRead)
-}
-
-func (n *NamespacedEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
-	out, _, err := readAdjacency(ctx, n, adjacencyBetween, startID, endID, nil, visibleRead)
-	return out, err
+// ReadAdjacentEdges answers one adjacent-edge request in this namespace: the
+// request's IDs are qualified once, the inner engine reads, and the result is
+// projected back into the caller's ID space.
+func (n *NamespacedEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	return readAdjacentEdges(ctx, n, request, nil, visibleRead)
 }
 
 func (n *NamespacedEngine) GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error) {
@@ -473,6 +424,26 @@ func (n *NamespacedEngine) GetEdgesByType(ctx context.Context, edgeType string) 
 	return n.toUserEdgesInNamespace(ctx, edges, false, false)
 }
 
+// LookupEdgesByPropertyEquality answers a relationship-property equality match
+// within the namespace from the relationship equality index its constraint owns
+// (RelationshipPropertyEqualityLookup). IDs carry the namespace prefix inside
+// the engine and are the user's IDs outside it, as every other namespaced read.
+func (n *NamespacedEngine) LookupEdgesByPropertyEquality(ctx context.Context, relationshipType string, properties []string, values []interface{}) ([]*Edge, bool, error) {
+	provider, ok := relationshipPropertyEqualityLookupUnder(n.inner)
+	if !ok {
+		return nil, false, nil
+	}
+	edges, handled, err := provider.LookupEdgesByPropertyEqualityInNamespace(ctx, n.namespace, relationshipType, properties, values)
+	if err != nil || !handled {
+		return nil, handled, err
+	}
+	converted, err := n.toUserEdgesInNamespace(ctx, edges, true, true)
+	if err != nil {
+		return nil, false, err
+	}
+	return converted, true, nil
+}
+
 // GetNodesByLabelVisibleAt resolves snapshot-visible label queries within the namespace.
 func (n *NamespacedEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
 	nodes, err := getNodesByLabelVisibleAtInScope(ctx, n.inner, n.nodeScope(), label, version)
@@ -482,16 +453,10 @@ func (n *NamespacedEngine) GetNodesByLabelVisibleAt(ctx context.Context, label s
 	return n.toUserNodesInNamespace(ctx, nodes, false)
 }
 
-// GetOutgoingEdgesVisibleAt resolves snapshot-visible outgoing adjacency queries within the namespace.
-func (n *NamespacedEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	out, _, err := readAdjacency(ctx, n, adjacencyOutgoing, nodeID, "", &version, visibleRead)
-	return out, err
-}
-
-// GetIncomingEdgesVisibleAt resolves snapshot-visible incoming adjacency queries within the namespace.
-func (n *NamespacedEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	_, in, err := readAdjacency(ctx, n, adjacencyIncoming, nodeID, "", &version, visibleRead)
-	return in, err
+// ReadAdjacentEdgesVisibleAt resolves one snapshot-visible adjacent-edge
+// request within the namespace.
+func (n *NamespacedEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, request AdjacentEdgeRead, version MVCCVersion) ([]*Edge, error) {
+	return readAdjacentEdges(ctx, n, request, &version, visibleRead)
 }
 
 // GetEdgesByTypeVisibleAt resolves snapshot-visible edge-type queries within the namespace.
@@ -505,12 +470,6 @@ func (n *NamespacedEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType
 		return nil, err
 	}
 	return n.toUserEdgesInNamespace(ctx, edges, false, false)
-}
-
-// GetEdgesBetweenVisibleAt resolves snapshot-visible topology queries within the namespace.
-func (n *NamespacedEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
-	out, _, err := readAdjacency(ctx, n, adjacencyBetween, startID, endID, &version, visibleRead)
-	return out, err
 }
 
 func (n *NamespacedEngine) AllNodes(ctx context.Context) ([]*Node, error) {

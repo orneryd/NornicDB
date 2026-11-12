@@ -8,6 +8,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValueCopyPreservesNilAndEmptyListCells(t *testing.T) {
+	source := []any{nil, []any(nil), []any{}, [][]any(nil), [][]any{}}
+	copied := CopyValue(source, nil).([]any)
+	require.Len(t, copied, len(source))
+	require.Nil(t, copied[0])
+	require.True(t, copied[1] != nil, "a typed nil list must not become a nil interface")
+	require.IsType(t, []any(nil), copied[1])
+	require.Nil(t, copied[1].([]any))
+	require.IsType(t, []any{}, copied[2])
+	require.NotNil(t, copied[2].([]any))
+	require.Empty(t, copied[2].([]any))
+	require.True(t, copied[3] != nil, "a typed nil matrix must not become a nil interface")
+	require.IsType(t, [][]any(nil), copied[3])
+	require.Nil(t, copied[3].([][]any))
+	require.IsType(t, [][]any{}, copied[4])
+	require.NotNil(t, copied[4].([][]any))
+	require.Empty(t, copied[4].([][]any))
+}
+
 func TestValueCopyRebindsMapIdentityWithoutSharingValues(t *testing.T) {
 	nested := testfixture.NestedGraphProperties(1)
 	source := map[string]any{"first": nested, "second": nested}

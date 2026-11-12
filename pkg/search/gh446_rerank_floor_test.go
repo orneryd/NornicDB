@@ -49,7 +49,7 @@ func gh446ServiceRecallFixture(t testing.TB) (*VectorSearchPipeline, *SearchOpti
 func TestGh446_ServiceRecallWithUnequalCentroidNorms(t *testing.T) {
 	pipeline, options := gh446ServiceRecallFixture(t)
 	service := &Service{lifecycleCtx: t.Context()}
-	results, stats, err := service.adaptiveVectorSearch(context.Background(), pipeline, []float32{1, 0}, options, nil, nil)
+	results, stats, err := service.adaptiveVectorSearch(context.Background(), pipeline, []float32{1, 0}, options, nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 10)
 	require.Equal(t, 32, stats.rawCandidates)
@@ -77,7 +77,7 @@ func BenchmarkGh446_ServiceRecall(b *testing.B) {
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
 				var err error
-				results, _, err = service.adaptiveVectorSearch(context.Background(), pipeline, query, options, nil, nil)
+				results, _, err = service.adaptiveVectorSearch(context.Background(), pipeline, query, options, nil, nil, nil)
 				if err != nil {
 					b.Fatal(err)
 				}

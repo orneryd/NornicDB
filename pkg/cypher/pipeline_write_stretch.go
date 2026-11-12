@@ -223,7 +223,7 @@ func addStretchMapKeys(text string, tokens *stretchTokens) {
 	// The pattern effect visitor supplies CST Code with comments removed.
 	_ = forEachMapEntry(text[:end+1], mapCodeText, func(key, _ string) {
 		tokens.add(&tokens.keys, key)
-	})
+	}, nil)
 }
 
 // addStretchSetWrites projects the existing mutation item reader onto writes.

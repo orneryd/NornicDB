@@ -41,25 +41,45 @@ func readEntityAtWithView[I ~string, T Node | Edge, P any](ctx context.Context, 
 	return entity, err
 }
 
-// readAdjacentEdgesAtWithView owns the two directional MVCC traversals. Pinned
+// readAdjacentEdgesAtWithView owns the pinned adjacent-edge traversal. Pinned
 // transactions already use their registered cached reader before reaching this
 // fallback, while public/fallback requests register for this complete view.
-func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, nodeID NodeID, version MVCCVersion, direction EdgeDirection, other NodeID, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
+//
+// A relationship's adjacency entry carries only its tombstone bit, so a typed
+// request first validates the current header against the relationship's head
+// version inside this same view and uses it only while it is in effect at the
+// read version; a stale header leaves the relationship to its snapshot record.
+func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, request AdjacentEdgeRead, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := b.pendingNamespaceConflict(namespaceForNodeID(nodeID)); err != nil {
+	if request.Headers && b.visibilityFiltered() {
+		// The visible-at record owner must retain the properties its policy
+		// reads, including when a caller only needs the returned headers.
+		request.Headers = false
+	}
+	if request.Direction == AdjacentBoth {
+		return readBothAdjacentEdges(ctx, request, func(direction AdjacentEdgeRead) ([]*Edge, error) {
+			return b.readAdjacentEdgesAtWithView(ctx, direction, version, view)
+		})
+	}
+	if err := request.validate(); err != nil {
 		return nil, err
 	}
-	if nodeID == "" {
-		return nil, ErrInvalidID
+	if request.Direction == AdjacentBetween {
+		if err := b.pendingReadConflict(readNodePairScope, "", []NodeID{request.Other, request.Node}, ctx); err != nil {
+			return nil, err
+		}
+	}
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(request.Node)); err != nil {
+		return nil, err
 	}
 	var prefix []byte
-	switch direction {
-	case Outgoing:
-		prefix = b.mvccOutgoingAdjacencyPrefixString(nodeID)
-	case Incoming:
-		prefix = b.mvccIncomingAdjacencyPrefixString(nodeID)
+	switch request.Direction {
+	case AdjacentOutgoing, AdjacentBetween:
+		prefix = b.mvccOutgoingAdjacencyPrefixString(request.Node)
+	case AdjacentIncoming:
+		prefix = b.mvccIncomingAdjacencyPrefixString(request.Node)
 	default:
 		return nil, ErrInvalidData
 	}
@@ -74,10 +94,27 @@ func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, nodeID N
 		if err != nil {
 			return err
 		}
+		var headers map[EdgeID]*Edge
+		var decided map[EdgeID]struct{}
+		if request.Headers || len(request.Types) > 0 {
+			headers, decided, err = b.adjacentSnapshotHeadersInTxn(ctx, txn, request, version)
+			if err != nil {
+				return err
+			}
+		}
 		var cancel bulkReadCancellation
 		for _, id := range ids {
 			if err := cancel.check(ctx); err != nil {
 				return err
+			}
+			if _, excluded := decided[id]; excluded {
+				continue
+			}
+			if request.Headers {
+				if header := headers[id]; header != nil {
+					edges = append(edges, header)
+					continue
+				}
 			}
 			edge, e := b.getEdgeAtInTxn(txn, id, version, mvccEntityRead{visibility: visibleRead})
 			if e == ErrNotFound || e == ErrNotVisibleAtSnapshot {
@@ -86,13 +123,10 @@ func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, nodeID N
 			if e != nil {
 				return e
 			}
-			if edge == nil {
+			if edge == nil || !request.admits(edge) {
 				continue
 			}
-			if direction == Outgoing && edge.StartNode == nodeID && (other == "" || edge.EndNode == other) ||
-				direction == Incoming && edge.EndNode == nodeID && (other == "" || edge.StartNode == other) {
-				edges = append(edges, edge)
-			}
+			edges = append(edges, request.header(edge))
 		}
 		return nil
 	})

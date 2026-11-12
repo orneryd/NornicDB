@@ -307,7 +307,7 @@
   ],
   "pkg/cypher/explain.go": [
     "containsVariableLengthPathPattern",
-    "extractFirstNodeLabelFromQuery",
+    "explainNodePattern",
     "isAllDigits",
     "parseProcedureNameToken"
   ],

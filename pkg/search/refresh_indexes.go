@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -48,15 +49,22 @@ func RefreshIndexes[Scope RefreshScope](ctx context.Context, scope Scope, reques
 		return nil
 	}
 	// PostCommit is accepted publication, independent of the completed request.
+	prepareCtx := ctx
 	if request.PostCommit {
-		ctx = context.WithoutCancel(ctx)
+		prepareCtx = context.WithoutCancel(ctx)
 	}
-	svc, deferred, err := scope.PrepareSearchRefresh(ctx, request)
+	svc, deferred, err := scope.PrepareSearchRefresh(prepareCtx, request)
 	if err != nil {
 		return err
 	}
 	if deferred || svc == nil {
 		return nil
+	}
+	if request.PostCommit {
+		// Acceptance outlives the request, but the actual service remains the
+		// cancellation owner. Resolve attribution from the original scope:
+		// WithoutCancel.Value boxes its context on each metadata lookup.
+		ctx = queryprofile.OnLifetime(svc.LifetimeContext(), ctx)
 	}
 	var nodeErr error
 	if request.Node != "" {

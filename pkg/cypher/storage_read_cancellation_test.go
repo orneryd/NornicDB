@@ -17,12 +17,15 @@ type d09CancelAtAdjacency struct {
 	cancelLabel     bool
 }
 
-func (e *d09CancelAtAdjacency) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+func (e *d09CancelAtAdjacency) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction != storage.AdjacentOutgoing {
+		return e.Engine.ReadAdjacentEdges(ctx, request)
+	}
 	e.calls++
 	if e.cancel != nil && !e.cancelLabel {
 		e.cancel()
 	}
-	edges, err := e.Engine.GetOutgoingEdges(ctx, id)
+	edges, err := e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 	if e.cancel != nil && !e.cancelLabel {
 		e.afterCancelRows += len(edges)
 	}

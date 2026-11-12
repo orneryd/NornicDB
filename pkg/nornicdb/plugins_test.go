@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/apoc/registry"
 	"github.com/orneryd/nornicdb/internal/pluginbuild"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
@@ -633,6 +634,40 @@ var Plugin TestPlugin
 }
 
 func TestExtractFunctions(t *testing.T) {
+	t.Run("preserves admitted policies and leaves raw functions opaque", func(t *testing.T) {
+		implementation := func(value int64) int64 { return value + 1 }
+		canonical, err := registry.Compile(implementation, registry.CanonicalReads)
+		require.NoError(t, err)
+		opaque, err := registry.Compile(implementation, registry.OpaqueReads)
+		require.NoError(t, err)
+		plugin := &mockFunctionPlugin{functions: map[string]interface{}{
+			"raw":        implementation,
+			"canonical":  canonical,
+			"opaque":     opaque,
+			"descriptor": struct{ Handler *registry.Callable }{Handler: canonical},
+		}}
+		functions, err := extractFunctions(reflectValueOf(plugin), "observed")
+		require.NoError(t, err)
+		require.Len(t, functions, 4)
+		for _, function := range functions {
+			switch function.Name {
+			case "apoc.observed.canonical", "apoc.observed.descriptor":
+				require.Same(t, canonical, function.Handler, "transport preserves implementation/policy identity")
+				require.Equal(t, registry.CanonicalReads, function.Handler.ReadObservation())
+			case "apoc.observed.opaque":
+				require.Same(t, opaque, function.Handler)
+				require.Equal(t, registry.OpaqueReads, function.Handler.ReadObservation())
+			case "apoc.observed.raw":
+				require.Equal(t, registry.OpaqueReads, function.Handler.ReadObservation())
+			default:
+				t.Fatalf("unexpected admitted function: %s", function.Name)
+			}
+			value, err := function.Handler.Call([]interface{}{int64(4)})
+			require.NoError(t, err)
+			require.Equal(t, int64(5), value)
+		}
+	})
+
 	t.Run("extracts functions from plugin", func(t *testing.T) {
 		plugin := &mockFunctionPlugin{
 			name:    "testplugin",

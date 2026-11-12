@@ -219,7 +219,7 @@ This shortcut is not available on `db.rerank` or `db.infer`, both of which requi
 | `vectorWeight` / `bm25Weight`     | `db.retrieve` request                        | Relative contribution of each retrieval branch                                  |
 | `minRRFScore`                     | `db.retrieve` request                        | Drops fused results below this score; use `0` to retain deep single-branch hits |
 | `fallbackEnabled`                 | `db.retrieve` request                        | Allows or forbids fallback after empty hybrid retrieval                         |
-| `rerankTopK`                      | `db.retrieve` / `db.rretrieve` / `db.rerank` | Pool size sent to the cross-encoder                                             |
+| `rerankTopK`                      | `db.retrieve` / `db.rretrieve` / `db.rerank` | Pool size sent to the cross-encoder in one request; `db.rerank` and one search also cap their returned rows at it, while `db.rretrieve` reranks successive pools of its fused order (one stable pool per admitted batch of rows) |
 | `rerankMinScore`                  | same                                         | Floor on `final_score` after rerank                                             |
 | `temperature` / `top_p` / `top_k` | `db.infer`                                   | Sampling controls; lower = more deterministic                                   |
 | `max_tokens`                      | `db.infer`                                   | Length cap                                                                      |

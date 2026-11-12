@@ -52,8 +52,7 @@ func atomicHeader(version uint8, payloadLen uint32) []byte {
 
 // TestAtomicWALWriteFormat verifies the atomic write format structure.
 func TestAtomicWALWriteFormat(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 	dir := t.TempDir()
 
 	cfg := &WALConfig{
@@ -229,8 +228,7 @@ func TestReadWALEntriesForTruncation_Formats(t *testing.T) {
 // TestAtomicWALMultipleEntries verifies the current writer and reader with
 // both previously covered batch sizes and every sequence number.
 func TestAtomicWALMultipleEntries(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 	for _, tc := range []struct {
 		name  string
 		count int
@@ -262,8 +260,7 @@ func TestAtomicWALMultipleEntries(t *testing.T) {
 // magic, header, payload, CRC and trailer cases, an invalid trailer,
 // and a bad complete CRC.
 func TestAtomicWALDetectsIncompleteOrCorruptFrames(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 	payload := func(t *testing.T) []byte {
 		data := mustMarshalRaw(WALNodeData{Node: &Node{ID: "n2"}})
 		return currentWALPayload(t, WALEntry{
@@ -391,8 +388,7 @@ func TestLegacyJSONFormatRejected(t *testing.T) {
 // an unsupported format instead of being parsed.
 func TestFormatAutoDetection(t *testing.T) {
 	t.Run("atomic format", func(t *testing.T) {
-		config.EnableWAL()
-		defer config.DisableWAL()
+		defer config.WithWALEnabled()()
 		dir := t.TempDir()
 		cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
 		wal, _ := NewWAL(dir, cfg)
@@ -450,8 +446,7 @@ func TestFormatAutoDetection(t *testing.T) {
 
 // TestAtomicWALFullRecovery tests complete write-crash-recover cycle.
 func TestAtomicWALFullRecovery(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 	dir := t.TempDir()
 
 	// Phase 1: Write data
@@ -500,8 +495,7 @@ func TestAtomicWALFullRecovery(t *testing.T) {
 
 // TestAtomicWALRecoveryWithPartialWrite tests recovery after simulated crash.
 func TestAtomicWALRecoveryWithPartialWrite(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 	dir := t.TempDir()
 	walPath := filepath.Join(dir, "wal.log")
 
@@ -567,8 +561,7 @@ func containsSubstr(s, sub string) bool {
 
 // TestAtomicWALTrailerPresent verifies the trailer canary is written.
 func TestAtomicWALTrailerPresent(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 	dir := t.TempDir()
 
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -608,8 +601,7 @@ func TestAtomicWALTrailerPresent(t *testing.T) {
 
 // TestAtomicWALAlignment verifies records are 8-byte aligned.
 func TestAtomicWALAlignment(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 	dir := t.TempDir()
 
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -641,8 +633,7 @@ func TestAtomicWALAlignment(t *testing.T) {
 
 // TestAtomicWALBatchWriterTrailer verifies batch writes include trailer.
 func TestAtomicWALBatchWriterTrailer(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 	dir := t.TempDir()
 
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}

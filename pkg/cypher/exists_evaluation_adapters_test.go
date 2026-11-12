@@ -30,7 +30,7 @@ func TestExistsSubqueryEvaluationOwnerLegacyAdapter(t *testing.T) {
 func TestExistsSubqueryEvaluationOwnerCompiledContextAndErrors(t *testing.T) {
 	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "exists_compiled"))
 	expression := "COLLECT { RETURN 1 / 0 AS invalid }"
-	root, _ := (&rowValueCompiler{}).compile(t.Context(), expression)
+	root, _ := (&rowValueCompiler{}).compile(t.Context(), expressionPart(expression))
 	row := map[string]any{}
 	want, wantOK, wantErr := e.evaluateRowValueText(t.Context(), expression, row)
 	value, resolved, err := root.eval(t.Context(), e, row, nil)

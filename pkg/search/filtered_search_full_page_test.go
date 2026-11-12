@@ -190,13 +190,13 @@ func TestCompletingAPageStopsWhenCancelled(t *testing.T) {
 	pipeline := NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancelling := func([]indexResult) ([]indexResult, error) { cancel(); return nil, nil }
-	_, _, err := svc.completeVectorSearch(ctx, pipeline, []float32{1, 0}, opts, 50, cancelling, vectorOverfetchStats{})
+	_, _, err := svc.completeVectorSearch(ctx, pipeline, []float32{1, 0}, opts, 50, cancelling, vectorOverfetchStats{}, nil)
 	require.ErrorIs(t, err, context.Canceled)
-	_, _, err = svc.completeVectorSearch(ctx, pipeline, []float32{1, 0}, opts, 50, cancelling, vectorOverfetchStats{})
+	_, _, err = svc.completeVectorSearch(ctx, pipeline, []float32{1, 0}, opts, 50, cancelling, vectorOverfetchStats{}, nil)
 	require.ErrorIs(t, err, context.Canceled, "cancelled before scoring")
 
 	ctx, cancel = context.WithCancel(context.Background())
 	cancelling = func([]indexResult) ([]indexResult, error) { cancel(); return nil, nil }
-	_, _, err = svc.completeBM25Search(ctx, svc.fulltext().Search, "alpha", 1250, 50, 50, cancelling, vectorOverfetchStats{})
+	_, _, err = svc.completeBM25Search(ctx, svc.fulltext().Search, "alpha", 1250, 50, 50, cancelling, vectorOverfetchStats{}, nil)
 	require.ErrorIs(t, err, context.Canceled)
 }

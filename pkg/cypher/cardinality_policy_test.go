@@ -105,39 +105,46 @@ func TestCardinalityConstraint_DDL(t *testing.T) {
 }
 
 func TestCardinalityConstraint_CreationValidation(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
+	for _, tc := range []struct {
+		name, query, wantError string
+	}{
+		{"creation succeeds when within limit", `CREATE CONSTRAINT card_ok FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 3`, ""},
+		{"creation fails when existing edges exceed limit", `CREATE CONSTRAINT card_fail FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2`, "exceeding max count"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseStore := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
 
-	// Create nodes and edges.
-	_, err := exec.Execute(ctx, `CREATE (p:Person {name: 'Alice'})`, nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, `CREATE (c:Company {name: 'Acme'})`, nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, `CREATE (c2:Company {name: 'Beta'})`, nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, `CREATE (c3:Company {name: 'Gamma'})`, nil)
-	require.NoError(t, err)
+			// Create nodes and edges.
+			_, err := exec.Execute(ctx, `CREATE (p:Person {name: 'Alice'})`, nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, `CREATE (c:Company {name: 'Acme'})`, nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, `CREATE (c2:Company {name: 'Beta'})`, nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, `CREATE (c3:Company {name: 'Gamma'})`, nil)
+			require.NoError(t, err)
 
-	// Create 3 outgoing WORKS_AT edges from Alice.
-	_, err = exec.Execute(ctx, `MATCH (p:Person {name: 'Alice'}), (c:Company {name: 'Acme'}) CREATE (p)-[:WORKS_AT]->(c)`, nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, `MATCH (p:Person {name: 'Alice'}), (c:Company {name: 'Beta'}) CREATE (p)-[:WORKS_AT]->(c)`, nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, `MATCH (p:Person {name: 'Alice'}), (c:Company {name: 'Gamma'}) CREATE (p)-[:WORKS_AT]->(c)`, nil)
-	require.NoError(t, err)
+			// Create 3 outgoing WORKS_AT edges from Alice.
+			_, err = exec.Execute(ctx, `MATCH (p:Person {name: 'Alice'}), (c:Company {name: 'Acme'}) CREATE (p)-[:WORKS_AT]->(c)`, nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, `MATCH (p:Person {name: 'Alice'}), (c:Company {name: 'Beta'}) CREATE (p)-[:WORKS_AT]->(c)`, nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, `MATCH (p:Person {name: 'Alice'}), (c:Company {name: 'Gamma'}) CREATE (p)-[:WORKS_AT]->(c)`, nil)
+			require.NoError(t, err)
 
-	t.Run("creation succeeds when within limit", func(t *testing.T) {
-		_, err := exec.Execute(ctx, `CREATE CONSTRAINT card_ok FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 3`, nil)
-		require.NoError(t, err)
-	})
-
-	t.Run("creation fails when existing edges exceed limit", func(t *testing.T) {
-		_, err := exec.Execute(ctx, `CREATE CONSTRAINT card_fail FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2`, nil)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "exceeding max count")
-	})
+			_, err = exec.Execute(ctx, tc.query, nil)
+			if tc.wantError == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.wantError)
+				constraints := store.GetSchema().GetAllConstraints()
+				require.Empty(t, constraints, "rejected creation must not publish a constraint")
+			}
+		})
+	}
 }
 
 func TestCardinalityConstraint_Enforcement(t *testing.T) {

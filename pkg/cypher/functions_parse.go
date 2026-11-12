@@ -15,6 +15,10 @@ const (
 type functionCallFacts struct {
 	name  string
 	inner string
+	// argumentStart is where the argument list's first token starts in the
+	// source the call was read from, for a caller that reports the source
+	// occurrence of an expression inside the argument.
+	argumentStart int
 }
 
 // inspectFunctionCall owns standalone call shape and matching delimiters.
@@ -53,6 +57,7 @@ func inspectFunctionCall(source string, purpose functionCallPurpose, expectedNam
 	if facts != nil {
 		facts.name = name
 		facts.inner = source[open+1 : close]
+		facts.argumentStart = open + 1 + leadingExpressionSpace(facts.inner)
 	}
 	return true
 }

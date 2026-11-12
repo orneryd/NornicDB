@@ -226,7 +226,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				}
 			}
 			branchOrdinal := 0
-			runBranch := func(query string) (*ExecuteResult, error) {
+			runBranch := func(runCtx context.Context, query string) (*ExecuteResult, error) {
 				branchClauses := clauses
 				if isUnion {
 					if branchOrdinal >= len(importBody.branches) {
@@ -266,7 +266,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 
 				branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
 
-				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
+				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{}, nil)
 				if execErr == nil {
 					execErr = getExpressionFailure(runCtx)
 				}
@@ -287,7 +287,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			if isUnion {
 				inner, execErr = runExec.executeUnion(runCtx, branchText, unionAll, runBranch)
 			} else {
-				inner, execErr = runBranch(branchText)
+				inner, execErr = runBranch(runCtx, branchText)
 			}
 			memory.releaseSince(rowMark)
 			if memory != nil && execErr == nil && hasReturn && inner != nil {

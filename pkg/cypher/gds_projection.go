@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -72,10 +73,13 @@ func gdsCatalogKey(database, name string) string {
 }
 
 // lookupGraphProjection is database's projection called name, or GDS's
-// error for a graph the catalog doesn't hold.
-func lookupGraphProjection(database, name string) (*GraphProjection, error) {
+// error for a graph the catalog doesn't hold. It is the one owner of a
+// projection catalog lookup: every caller's lookup is one request, recorded
+// with the projection the catalog returned, whether or not the caller goes on
+// to use the answer.
+func lookupGraphProjection(ctx context.Context, database, name string) (*GraphProjection, error) {
 	projectionsMu.RLock()
-	projection, exists := graphProjections[gdsCatalogKey(database, name)]
+	projection, exists := readGraphProjectionLocked(ctx, gdsCatalogKey(database, name), name)
 	projectionsMu.RUnlock()
 	if !exists {
 		return nil, localizedError(localization.CypherGraphProceduresGraphNotFound(name, database), nil)
@@ -83,13 +87,23 @@ func lookupGraphProjection(database, name string) (*GraphProjection, error) {
 	return projection, nil
 }
 
-// graphProjection is this database's projection called name.
-func (e *StorageExecutor) graphProjection(name string) (*GraphProjection, error) {
-	return lookupGraphProjection(e.databaseName(), name)
+// readGraphProjectionLocked owns the map read and its actual result count.
+// Its caller holds either catalog lock, preserving atomic project admission and
+// multi-name drop preflight without recursively acquiring the lock.
+func readGraphProjectionLocked(ctx context.Context, key, name string) (*GraphProjection, bool) {
+	projection, exists := graphProjections[key]
+	found := int64(0)
+	if exists {
+		found = 1
+	}
+	queryprofile.Access(ctx, profileKindGraphCatalogSeek, name).Add(found, 1)
+	return projection, exists
 }
 
-// databaseProjections is database's projections, by name.
-func databaseProjections(database string) []*GraphProjection {
+// databaseProjections is database's projections, by name: one acquisition of
+// database's catalog, recorded with the projections it listed, which the
+// caller's own name filter then narrows.
+func databaseProjections(ctx context.Context, database string) []*GraphProjection {
 	projectionsMu.RLock()
 	defer projectionsMu.RUnlock()
 	var projections []*GraphProjection
@@ -98,6 +112,7 @@ func databaseProjections(database string) []*GraphProjection {
 			projections = append(projections, projection)
 		}
 	}
+	queryprofile.Access(ctx, profileKindGraphProjectionCatalog, database).Add(int64(len(projections)), 1)
 	sort.Slice(projections, func(i, j int) bool { return projections[i].Name < projections[j].Name })
 	return projections
 }
@@ -183,7 +198,7 @@ func (e *StorageExecutor) callGdsGraphProject(ctx context.Context, args []interf
 	}
 	key := gdsCatalogKey(projection.Database, graphName)
 	projectionsMu.Lock()
-	if _, exists := graphProjections[key]; exists {
+	if _, exists := readGraphProjectionLocked(ctx, key, graphName); exists {
 		projectionsMu.Unlock()
 		return nil, localizedError(localization.CypherGraphProceduresGraphAlreadyExists(graphName), nil)
 	}
@@ -478,7 +493,7 @@ func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string,
 	labelsSeen := make(map[string]bool)
 	nodePropertySeen := make(map[string]bool)
 	nodePropertyType := make(map[string]string) // one builder per projected key, shared across labels
-	err := storage.StreamNodesWithFallback(ctx, e.storage, storage.StreamChunkSize, func(node *storage.Node) error {
+	err := storage.StreamNodesWithFallback(ctx, e.storage, storage.StreamChunkSize, queryprofile.EntityVisitor(ctx, profileKindAllNodesScan, "", func(node *storage.Node) error {
 		for _, label := range node.Labels {
 			labelsSeen[label] = true
 		}
@@ -515,7 +530,7 @@ func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string,
 			projection.NodeLabels[id] = labels
 		}
 		return nil
-	})
+	}))
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
@@ -561,7 +576,7 @@ func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string,
 	// with validateRelationships, those with an end outside the projection),
 	// so memory follows the projection, not the store.
 	var edges []*storage.Edge
-	err = storage.StreamEdgesWithFallback(ctx, e.storage, storage.StreamChunkSize, func(edge *storage.Edge) error {
+	err = storage.StreamEdgesWithFallback(ctx, e.storage, storage.StreamChunkSize, queryprofile.EntityVisitor(ctx, profileKindAllRelationshipsScan, "", func(edge *storage.Edge) error {
 		typesSeen[edge.Type] = true
 		if !gdsTypeProjected(relSpecs, edge.Type) {
 			return nil
@@ -572,7 +587,7 @@ func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string,
 			edges = append(edges, edge)
 		}
 		return nil
-	})
+	}))
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
@@ -931,15 +946,16 @@ func appendUnique(values []string, value string) []string {
 
 // callGdsGraphList implements CALL gds.graph.list([graphName]) as GDS does
 // (#1161): this database's projections, or the one named, with GDS's
-// columns.
-func (e *StorageExecutor) callGdsGraphList(args []interface{}) (*ExecuteResult, error) {
+// columns. The name filter narrows the catalog's own rows, so a PROFILE
+// statement reports the population the catalog acquisition listed.
+func (e *StorageExecutor) callGdsGraphList(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	name, err := optionalProcedureString("gds.graph.list", args, 0, "graphName", "")
 	if err != nil {
 		return nil, err
 	}
 	columns := columnNames(gdsGraphListColumns)
 	rows := make([][]any, 0)
-	for _, projection := range databaseProjections(e.databaseName()) {
+	for _, projection := range databaseProjections(ctx, e.databaseName()) {
 		if name != "" && projection.Name != name {
 			continue
 		}
@@ -1007,7 +1023,7 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 	defer projectionsMu.Unlock()
 	if failIfMissing {
 		for _, name := range names {
-			if _, exists := graphProjections[gdsCatalogKey(database, name)]; !exists {
+			if _, exists := readGraphProjectionLocked(ctx, gdsCatalogKey(database, name), name); !exists {
 				return nil, localizedError(localization.CypherGraphProceduresGraphNotFound(name, database), nil)
 			}
 		}
@@ -1016,7 +1032,7 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 	rows := make([][]any, 0, len(names))
 	for _, name := range names {
 		key := gdsCatalogKey(database, name)
-		projection, exists := graphProjections[key]
+		projection, exists := readGraphProjectionLocked(ctx, key, name)
 		if !exists {
 			continue
 		}
@@ -1031,14 +1047,15 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 	return &ExecuteResult{Columns: columns, Rows: rows}, nil
 }
 
-// callGdsGraphExists implements CALL gds.graph.exists(graphName) (#1161).
-func (e *StorageExecutor) callGdsGraphExists(args []interface{}) (*ExecuteResult, error) {
+// callGdsGraphExists implements CALL gds.graph.exists(graphName) (#1161):
+// the one catalog lookup reports its population through its owner.
+func (e *StorageExecutor) callGdsGraphExists(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	name, err := requiredProcedureString("gds.graph.exists", args, 0, "graphName")
 	if err != nil {
 		return nil, err
 	}
-	_, missing := e.graphProjection(name)
-	return &ExecuteResult{Columns: columnNames(gdsGraphExistsColumns), Rows: [][]any{{name, missing == nil}}}, nil
+	_, lookupErr := lookupGraphProjection(ctx, e.databaseName(), name)
+	return &ExecuteResult{Columns: columnNames(gdsGraphExistsColumns), Rows: [][]any{{name, lookupErr == nil}}}, nil
 }
 
 // gdsConfig is a GDS configuration map, read as GDS reads it: keys match

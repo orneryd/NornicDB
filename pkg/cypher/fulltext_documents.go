@@ -37,7 +37,7 @@ func (e *StorageExecutor) withFulltextDocuments(ctx context.Context, indexName s
 		defer svc.Close()
 	}
 	if ordered {
-		scope := search.FulltextDocumentScope{Relationships: relationships, Ordered: true}
+		scope := search.FulltextDocumentScope{QueryNodes: e.queryNodeReader(ctx, e.storage) != nil, Relationships: relationships, Ordered: true}
 		return svc.ReadFulltextDocuments(ctx, e.storage, scope, nil, read)
 	}
 	// Decay and REVEAL can change the visible corpus without a graph write.
@@ -59,11 +59,8 @@ func (e *StorageExecutor) withFulltextDocuments(ctx context.Context, indexName s
 		if fulltextIndexNeedsNoDeclaration(index) {
 			return true
 		}
-		if schema := e.storage.GetSchema(); schema != nil {
-			_, exists := schema.GetFulltextIndex(index)
-			return exists
-		}
-		return false
+		_, exists := readFulltextIndexDefinition(ctx, e.storage.GetSchema(), index)
+		return exists
 	}
 	candidate := func(node *storage.Node, edge *storage.Edge) bool { return fulltextIndexMember(node, edge, labels) }
 	build := func(node *storage.Node, edge *storage.Edge) *search.FulltextDocument {
@@ -74,9 +71,9 @@ func (e *StorageExecutor) withFulltextDocuments(ctx context.Context, indexName s
 		if doc == nil {
 			return nil
 		}
-		return &search.FulltextDocument{Text: doc.contentLower, Tokens: doc.contentTokenN, Value: doc, RetainedBytes: doc.retainedSize}
+		return &search.FulltextDocument{Text: doc.contentLower, Tokens: doc.contentTokenN, Value: doc, MatchFields: doc.properties, RetainedBytes: doc.retainedSize}
 	}
-	scope := search.FulltextDocumentScope{Name: name, Definition: string(definition), Relationships: relationships, Fresh: fresh, Retain: retain, Candidate: candidate, EntityRows: true}
+	scope := search.FulltextDocumentScope{QueryNodes: e.queryNodeReader(ctx, e.storage) != nil, NodeLabels: labels, Name: name, Definition: string(definition), Relationships: relationships, Fresh: fresh, Retain: retain, Candidate: candidate, EntityRows: true}
 	return svc.ReadFulltextDocuments(ctx, e.storage, scope, build, read)
 }
 
@@ -93,7 +90,10 @@ func fulltextIndexMember(node *storage.Node, edge *storage.Edge, labels []string
 // fulltextUnrankedRows evaluates the original raw-row predicates during
 // acquisition. Only accepted output rows are constructed, in release order.
 func (e *StorageExecutor) fulltextUnrankedRows(ctx context.Context, indexName string, labels, properties []string, relationships, wildcard bool, property string, opts fulltextQueryOptions, result *ExecuteResult) error {
-	seen := 0
+	if opts.limit == 0 {
+		return nil
+	}
+	page := fulltextRowPage{result: result, opts: opts}
 	return e.withFulltextDocuments(ctx, indexName, labels, properties, relationships, true, func(readCtx context.Context, source search.FulltextDocuments) error {
 		if relationships {
 			// VisitEdges checks readCtx before each relationship, as VisitNodes does.
@@ -110,7 +110,7 @@ func (e *StorageExecutor) fulltextUnrankedRows(ctx context.Context, indexName st
 				if !matched {
 					return nil
 				}
-				if appendFulltextOptionedRow(result, opts, &seen, []any{e.procedureRelationship(edge), float64(1)}) {
+				if page.append([]any{e.procedureRelationship(edge), float64(1)}) {
 					return storage.ErrIterationStopped
 				}
 				return nil
@@ -127,7 +127,9 @@ func (e *StorageExecutor) fulltextUnrankedRows(ctx context.Context, indexName st
 				matched = nodeHasNonEmptyProperty(node, property)
 			}
 			if matched {
-				result.Rows = append(result.Rows, []any{node, float64(1)})
+				if page.append([]any{node, float64(1)}) {
+					return storage.ErrIterationStopped
+				}
 			}
 			return nil
 		})
@@ -145,14 +147,14 @@ func (e *StorageExecutor) fulltextHits(ctx context.Context, indexName, query str
 	var hits []fulltextHit
 	err = e.withFulltextDocuments(ctx, indexName, labels, properties, relationships, false, func(readCtx context.Context, corpus search.FulltextDocuments) error {
 		hits = nil
-		// One counting pass answers the whole term set, and the evaluator keeps
-		// the existing per-term document frequencies it looks up.
+		// The service supplies exact complete-corpus body frequencies; candidate
+		// selection never substitutes final-match counts for those score inputs.
 		frequencies, err := corpus.BodyDocumentFrequencies(readCtx, parsed.PrimaryTerms())
 		if err != nil {
 			return err
 		}
 		evalCtx := &ftEvalCtx{DefaultFields: properties, avgDocLen: corpus.AverageLength(), totalDocs: corpus.Count(), docFreq: frequencies}
-		if err := corpus.Each(readCtx, func(id string, document *search.FulltextDocument) error {
+		if err := search.ReadFulltextCandidates(readCtx, corpus, parsed.root, fulltextLiteralReader{}, func(id string, document *search.FulltextDocument) error {
 			matched, score := parsed.Match(evalCtx, document.Value.(*ftDoc))
 			if !matched {
 				return nil

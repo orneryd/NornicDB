@@ -90,3 +90,25 @@ func TestCallerCopyVisitedOverflowPreservesAliasesAndCycles(t *testing.T) {
 		require.Equal(t, 1, head.Next.Index, "the copied chain is not shared with the input")
 	})
 }
+
+// Matrix copies preserve aliases and cycles across rows, not just their values.
+func TestCallerCopyMatrixPreservesGraphIdentity(t *testing.T) {
+	shared := []any{"before", map[string]any{"v": int64(1)}}
+	rows := [][]any{shared, shared, nil, make([]any, 0)}
+	shared[0] = rows
+	copied := CopyValue(rows, nil).([][]any)
+	copied[0][1].(map[string]any)["v"] = int64(2)
+	if shared[1].(map[string]any)["v"] != int64(1) {
+		t.Fatal("copied row changed source")
+	}
+	if copied[1][1].(map[string]any)["v"] != int64(2) {
+		t.Fatal("shared row identity was lost")
+	}
+	copied[0][0].([][]any)[0][1].(map[string]any)["v"] = int64(3)
+	if copied[1][1].(map[string]any)["v"] != int64(3) {
+		t.Fatal("matrix cycle did not resolve inside copied graph")
+	}
+	if copied[2] != nil || copied[3] == nil {
+		t.Fatal("nil and empty row shapes changed")
+	}
+}

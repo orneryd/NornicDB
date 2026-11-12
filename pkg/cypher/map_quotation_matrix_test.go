@@ -81,7 +81,7 @@ func TestMapQuotationConsumers(t *testing.T) {
 							var plan []pipelinePropertyExpression
 							plan, err = parsePropertyExpressions(tc.text)
 							if err == nil {
-								got, err = e.materializePropertyExpressions(ctx, plan, nil, true, false)
+								got, err = e.materializePropertyExpressions(ctx, plan, nil, true, false, nil)
 							}
 						case "pattern-template":
 							plan, matched := e.pipelinePropertyExpressions(tc.text)
@@ -99,7 +99,7 @@ func TestMapQuotationConsumers(t *testing.T) {
 							require.True(t, resolved)
 						case "compiled":
 							compiler := rowValueCompiler{}
-							root, _ := compiler.compile(ctx, tc.text)
+							root, _ := compiler.compile(ctx, expressionPart(tc.text))
 							var resolved bool
 							got, resolved, err = root.eval(t.Context(), e, nil, nil)
 							require.True(t, resolved)

@@ -80,7 +80,7 @@ func BenchmarkBoundSearchPrefixLargeGraph(b *testing.B) {
 // instance once per row on a small graph.
 func BenchmarkBoundHandlerPerRowSmallGraph(b *testing.B) {
 	backend := apocBenchmarkBackend(b, 10)
-	handler, err := registry.Compile(apocsearch.New(backend).Prefix)
+	handler, err := registry.Compile(apocsearch.New(backend).Prefix, registry.OpaqueReads)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func BenchmarkBoundHandlerPerRowSmallGraph(b *testing.B) {
 // per row on a large graph.
 func BenchmarkBoundHandlerPerRowLargeGraph(b *testing.B) {
 	backend := apocBenchmarkBackend(b, 20000)
-	handler, err := registry.Compile(apocsearch.New(backend).Prefix)
+	handler, err := registry.Compile(apocsearch.New(backend).Prefix, registry.OpaqueReads)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func BenchmarkIndependentInstanceAdmission(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := registry.Compile(apocrel.New(backend).StartNode); err != nil {
+		if _, err := registry.Compile(apocrel.New(backend).StartNode, registry.OpaqueReads); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -138,7 +138,7 @@ func BenchmarkIndependentInstanceAdmission(b *testing.B) {
 func BenchmarkIndependentInstancePerRow(b *testing.B) {
 	backend := apocBenchmarkBackend(b, 10)
 	relationship := &apocstorage.Relationship{ID: 1, StartNode: 1, EndNode: 2, Type: "KNOWS"}
-	handler, err := registry.Compile(apocrel.New(backend).StartNode)
+	handler, err := registry.Compile(apocrel.New(backend).StartNode, registry.OpaqueReads)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func BenchmarkIndependentInstancePerRow(b *testing.B) {
 // free helper of the same shape, admitted and invoked the same way.
 func BenchmarkFreeHelperPerRow(b *testing.B) {
 	relationship := &apocstorage.Relationship{ID: 1, StartNode: 1, EndNode: 2, Type: "KNOWS"}
-	handler, err := registry.Compile(apocrel.ID)
+	handler, err := registry.Compile(apocrel.ID, registry.CanonicalReads)
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -60,6 +60,7 @@ func (p *VectorSearchPipeline) searchExactWithEvidence(ctx context.Context, quer
 		if err := work.check(); err != nil {
 			return nil, candidateEvidence{}, err
 		}
+		observeVectorProvider(ctx, generator, "vector candidate generator")
 		page, err := generator.searchExactCandidates(ctx, query, depth, candidatePrefilter(minimum, len(query)))
 		if err != nil {
 			return nil, candidateEvidence{}, localizedError(localization.SearchCandidateGenerationFailed(err), err)

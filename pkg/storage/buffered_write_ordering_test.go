@@ -221,7 +221,7 @@ func TestSynchronousDeleteRemovesBufferedRelationships(t *testing.T) {
 				t.Helper()
 				_, err := b.GetStoredEdge(t.Context(), "test:s")
 				require.ErrorIs(t, err, ErrNotFound, stage)
-				incoming, err := b.GetStoredIncomingEdges(context.Background(), "test:b")
+				incoming, err := b.ReadStoredAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:b"})
 				require.NoError(t, err, stage)
 				require.Empty(t, incoming, stage)
 				count, err := b.EdgeCount(t.Context())

@@ -83,7 +83,7 @@ func TestCorrelatedPipelineImportedIdentifierShortcutParity(t *testing.T) {
 						// These direct callers supply clause text before the public
 						// quoted-variable rewrite. Preserve the general path's existing
 						// name/scope behavior and compare dispatch against it verbatim.
-						general, handled, err := exec.runPipelineClauseRows(runCtx, []pipelineRow{bindings}, map[string]struct{}{name: {}}, clauses, clauses, nil)
+						general, handled, err := exec.runPipelineClauseRows(runCtx, []pipelineRow{bindings}, map[string]struct{}{name: {}}, clauses, clauses, nil, nil)
 						require.NoError(t, err)
 						require.True(t, handled)
 						require.NotEmpty(t, general.Rows)

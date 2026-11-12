@@ -696,14 +696,14 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	require.NoError(t, err)
 
 	// Invalid pattern branch for executeMatchWithRelationshipsWithPathSeeded.
-	_, err = exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "this is not a pattern", "", []returnItem{{expr: "a", alias: "a"}}, nil, nil, nil, "", nil, -1)
+	_, err = exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "this is not a pattern", "", []returnItem{{expr: "a", alias: "a"}}, nil, nil, nil, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 	require.Error(t, err)
 
 	// Valid traversal branch.
 	r, err := exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "(a:A)-[r:KNOWS]->(b:B)", "", []returnItem{
 		{expr: "a.name", alias: "aName"},
 		{expr: "b.name", alias: "bName"},
-	}, nil, nil, nil, "", nil, -1)
+	}, nil, nil, nil, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 	require.NoError(t, err)
 	require.NotEmpty(t, r.Rows)
 
@@ -1015,14 +1015,14 @@ func TestCypherHelpers_DatabaseNameAndRemoveNodeFromSearch(t *testing.T) {
 	assert.Equal(t, "nornic", execNoNS.databaseName())
 
 	// removeNodeFromSearch should early-return on empty id / nil search.
-	execNoNS.removeNodeFromSearch("")
-	execNoNS.removeNodeFromSearch("plain-id")
+	execNoNS.removeNodeFromSearch(t.Context(), "")
+	execNoNS.removeNodeFromSearch(t.Context(), "plain-id")
 
 	// With search service configured, prefixed IDs should be unprefixed before removal.
 	svc := search.NewService(base, search.DefaultVectorDimensions, nil)
 	execNoNS.SetSearchService(svc)
-	execNoNS.removeNodeFromSearch("tenant_cov:node-1")
-	execNoNS.removeNodeFromSearch("node-2")
+	execNoNS.removeNodeFromSearch(t.Context(), "tenant_cov:node-1")
+	execNoNS.removeNodeFromSearch(t.Context(), "node-2")
 }
 
 func TestCypherHelpers_VectorRegistryRegisterUnregister(t *testing.T) {
@@ -2828,19 +2828,6 @@ func TestCypherHelpers_ExplainInferenceAndCostHelpers(t *testing.T) {
 			{OperatorType: "CustomOperator", EstimatedRows: 4},
 		},
 	}
-	hits := exec.estimateDBHits(plan)
-	require.Equal(t, int64(16), hits)
-	assert.Equal(t, int64(16), plan.DBHits)
-
-	res := &ExecuteResult{
-		Rows: [][]interface{}{{1}, {2}},
-	}
-	exec.updatePlanWithStats(plan, res)
-	assert.Equal(t, int64(2), plan.ActualRows)
-	require.Len(t, plan.Children, 2)
-	assert.Equal(t, int64(2), plan.Children[0].ActualRows)
-	// Nil-plan branch should be a no-op.
-	exec.updatePlanWithStats(nil, res)
 
 	attached := exec.attachPlanMetadata(&ExecuteResult{}, &ExecutionPlan{Mode: ModeExplain, Root: plan})
 	require.NotNil(t, attached.Metadata["planString"])

@@ -43,10 +43,6 @@ var (
 	_ RelationshipEndpointChecker    = (*WALEngine)(nil)
 	_ RelationshipEndpointChecker    = (*NamespacedEngine)(nil)
 	_ RelationshipEndpointChecker    = (*MemoryEngine)(nil)
-	_ EdgeHeaderReader               = (*BadgerEngine)(nil)
-	_ EdgeHeaderReader               = (*WALEngine)(nil)
-	_ EdgeHeaderReader               = (*NamespacedEngine)(nil)
-	_ EdgeHeaderReader               = (*MemoryEngine)(nil)
 	_ NodeIterator                   = (*BadgerEngine)(nil)
 	_ NodeIterator                   = (*WALEngine)(nil)
 	_ NodeIterator                   = (*NamespacedEngine)(nil)
@@ -168,22 +164,6 @@ var (
 // overlay.
 func (w *WALEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
 	return relationshipEndpointVisibility(w.engine, id)
-}
-
-// OutgoingEdgeHeaders forwards to the underlying engine; WAL adds no overlay.
-func (w *WALEngine) OutgoingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
-	if reader, ok := w.engine.(EdgeHeaderReader); ok {
-		return reader.OutgoingEdgeHeaders(ctx, nodeID)
-	}
-	return nil, false, nil
-}
-
-// IncomingEdgeHeaders forwards to the underlying engine; WAL adds no overlay.
-func (w *WALEngine) IncomingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
-	if reader, ok := w.engine.(EdgeHeaderReader); ok {
-		return reader.IncomingEdgeHeaders(ctx, nodeID)
-	}
-	return nil, false, nil
 }
 
 // GetNodeProjected forwards the projected read to the underlying engine. WAL

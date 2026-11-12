@@ -1189,7 +1189,7 @@ func (s *Server) collectLatestInducedSubgraph(ctx context.Context, engine storag
 		resolvedSet[storage.NodeID(id)] = struct{}{}
 	}
 	for _, startID := range resolvedIDs {
-		edges, err := engine.GetOutgoingEdges(ctx, storage.NodeID(startID))
+		edges, err := engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: storage.NodeID(startID)})
 		if err != nil {
 			return collection, err
 		}
@@ -1400,7 +1400,7 @@ func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storag
 	var incoming []*storage.Edge
 	if direction != "in" {
 		var err error
-		outgoing, err = engine.GetOutgoingEdges(ctx, nodeID)
+		outgoing, err = engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: nodeID})
 		if err != nil {
 			return nil, err
 		}
@@ -1412,7 +1412,7 @@ func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storag
 		default:
 		}
 		var err error
-		incoming, err = engine.GetIncomingEdges(ctx, nodeID)
+		incoming, err = engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: nodeID})
 		if err != nil {
 			return nil, err
 		}

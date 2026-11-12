@@ -22,7 +22,7 @@
 // Root-Cause: parseSimpleIndexedEquality (match_index_seek.go) rejects every
 // clause containing a top-level AND/OR/<>, so a conjunctive predicate never
 // reaches tryCollectNodesFromPropertyIndex. The compound helpers added for
-// id-equality (tryCollectNodesFromIDEqualityCompound) and IN-list
+// id-equality (resolveIDEqualityCompoundCandidates) and IN-list
 // (tryCollectNodesFromPropertyIndexInCompound) conjuncts have no
 // plain-equality equivalent, and neither the single-clause chain (match.go)
 // nor the WITH path (match_with.go) wires one in.
@@ -184,15 +184,17 @@ RETURN n.uid AS uid`,
 		wrapped.GetNodesByLabelCalls())
 }
 
-// TestTryCollectNodesFromPropertyIndexEqualityCompound directly unit-tests
-// the new helper's branches: empty clause, whole-clause simple equality,
-// AND-conjunct param and literal forms, first-indexed-conjunct wins,
-// no-indexed-conjunct, missing index, and the empty-seed-set case.
+// TestAddPropertyIndexEqualityCompoundSeeks directly unit-tests the seek
+// planner the canonical candidate dispatch calls for an equality conjunct:
+// empty clause, whole-clause simple equality, AND-conjunct param and literal
+// forms, first-indexed-conjunct selection, no-indexed-conjunct, missing index,
+// and the empty-seek-set case. Each case plans its seeks through that planner
+// and reads the selected one through the canonical resolver and read.
 // Direct calls are used — rather than routing everything through
 // exec.Execute — because the param-taking equality branches resolve $param
 // references from context, which the ctx-injection helper reproduces
 // exactly as Execute wires it.
-func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
+func TestAddPropertyIndexEqualityCompoundSeeks(t *testing.T) {
 	exec, _ := newCountingExecutor(t)
 	seedEqualityConjunctPopulation(t, exec, 2, 10)
 
@@ -200,7 +202,9 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 	pattern := nodePatternInfo{labels: []string{"FnProbe"}, variable: "n"}
 
 	t.Run("empty clause", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, pattern, "")
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexEqualityCompoundSeeks(ctx, pattern, "", &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, ctx, &seeks)
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)
@@ -208,8 +212,10 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("simple equality still seeds", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-0000"})
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern, "n.repo_id = $repo_id")
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexEqualityCompoundSeeks(
+			pctx, pattern, "n.repo_id = $repo_id", &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, pctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 10)
@@ -217,18 +223,24 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("AND-conjunct param equality seeds", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-0001", "generation_id": "gen-2"})
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexEqualityCompoundSeeks(
 			pctx, pattern,
-			"n.repo_id = $repo_id AND n.evidence_source = 'projector/canonical' AND n.generation_id <> $generation_id")
+			"n.repo_id = $repo_id AND n.evidence_source = 'projector/canonical' AND n.generation_id <> $generation_id",
+			&seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, pctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 10)
 	})
 
 	t.Run("AND-conjunct literal equality seeds", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexEqualityCompoundSeeks(
 			ctx, pattern,
-			"n.evidence_source = 'projector/canonical' AND n.generation_id <> 'gen-2' AND n.repo_id = 'repo-0000'")
+			"n.evidence_source = 'projector/canonical' AND n.generation_id <> 'gen-2' AND n.repo_id = 'repo-0000'",
+			&seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, ctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used, "literal equality conjunct on an indexed property must seed")
 		require.Len(t, nodes, 10)
@@ -236,17 +248,21 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("non-indexed equality conjunct is skipped", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-0000"})
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexEqualityCompoundSeeks(
 			pctx, pattern,
-			"n.uid = 'fn-0000-0000' AND n.repo_id = $repo_id")
+			"n.uid = 'fn-0000-0000' AND n.repo_id = $repo_id", &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, pctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used, "second conjunct on an indexed property must seed")
 		require.Len(t, nodes, 10)
 	})
 
 	t.Run("empty conjunct term is skipped", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			ctx, pattern, "() AND n.repo_id = 'repo-0000'")
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexEqualityCompoundSeeks(
+			ctx, pattern, "() AND n.repo_id = 'repo-0000'", &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, ctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 10)
@@ -254,8 +270,10 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("no indexed conjunct falls back", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"generation_id": "gen-2"})
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern, "n.generation_id <> $generation_id AND n.uid <> 'x'")
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexEqualityCompoundSeeks(
+			pctx, pattern, "n.generation_id <> $generation_id AND n.uid <> 'x'", &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, pctx, &seeks)
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)
@@ -263,8 +281,10 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("no match still reports used", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-no-such"})
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern, "n.repo_id = $repo_id AND n.generation_id <> 'gen-2'")
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexEqualityCompoundSeeks(
+			pctx, pattern, "n.repo_id = $repo_id AND n.generation_id <> 'gen-2'", &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, pctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Empty(t, nodes)

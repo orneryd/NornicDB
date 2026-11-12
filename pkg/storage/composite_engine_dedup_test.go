@@ -105,15 +105,15 @@ func TestCompositeEngine_ReadsPreserveEqualIDsAcrossDatabases(t *testing.T) {
 			return edgeIDs(values), err
 		}},
 		{name: "TestCompositeEngine_Deduplication_GetOutgoingEdges", edgeRead: true, read: func(ctx context.Context, c *CompositeEngine) ([]string, error) {
-			values, err := c.GetOutgoingEdges(ctx, node1)
+			values, err := c.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: node1})
 			return edgeIDs(values), err
 		}},
 		{name: "TestCompositeEngine_Deduplication_GetIncomingEdges", edgeRead: true, read: func(ctx context.Context, c *CompositeEngine) ([]string, error) {
-			values, err := c.GetIncomingEdges(ctx, node2)
+			values, err := c.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: node2})
 			return edgeIDs(values), err
 		}},
 		{name: "TestCompositeEngine_Deduplication_GetEdgesBetween", edgeRead: true, read: func(ctx context.Context, c *CompositeEngine) ([]string, error) {
-			values, err := c.GetEdgesBetween(ctx, node1, node2)
+			values, err := c.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: node1, Other: node2})
 			return edgeIDs(values), err
 		}},
 	} {

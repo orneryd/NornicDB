@@ -31,7 +31,7 @@ func (e *StorageExecutor) pipelinePropertyExpressions(props string) ([]pipelineP
 // evaluatePipelineProperties evaluates pattern predicates for a row without
 // dropping null-valued equality constraints. Failed evaluation returns an error.
 func (e *StorageExecutor) evaluatePipelineProperties(ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow) (map[string]interface{}, error) {
-	return e.materializePropertyExpressions(ctx, expressions, row, true, false)
+	return e.materializePropertyExpressions(ctx, expressions, row, true, false, nil)
 }
 
 type pipelineNodeMatchTemplate struct {

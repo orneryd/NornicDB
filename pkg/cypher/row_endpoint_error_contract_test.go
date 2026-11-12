@@ -117,7 +117,7 @@ func TestRowEndpointOperationCancellationWithMetadata(t *testing.T) {
 				var value any
 				var resolved bool
 				if compiled {
-					root, _ := (&rowValueCompiler{}).compile(t.Context(), expression)
+					root, _ := (&rowValueCompiler{}).compile(t.Context(), expressionPart(expression))
 					value, resolved, err = root.eval(operation, e, values, nil)
 				} else {
 					value, resolved, err = e.evaluateRowValueText(operation, expression, values)

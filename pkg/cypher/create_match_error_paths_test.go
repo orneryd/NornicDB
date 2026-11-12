@@ -51,15 +51,39 @@ func (e *createMatchErrEngine) AllNodes(ctx context.Context) ([]*storage.Node, e
 	})
 }
 
-func (e *createMatchErrEngine) GetOutgoingEdges(ctx context.Context, startID storage.NodeID) ([]*storage.Edge, error) {
+func (e *createMatchErrEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		return fixtureowner.ReadWithFailure(ctx, e.edgesBetweenErr, func(ctx context.Context) ([]*storage.Edge, error) {
+			return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node})
+		})
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	return fixtureowner.ReadWithFailure(ctx, e.edgesBetweenErr, func(ctx context.Context) ([]*storage.Edge, error) {
-		return e.Engine.GetOutgoingEdges(ctx, startID)
+		return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 	})
 }
 
 func (e *createMatchErrEngine) GetIncomingEdges(ctx context.Context, endID storage.NodeID) ([]*storage.Edge, error) {
 	return fixtureowner.ReadWithFailure(ctx, e.edgesBetweenErr, func(ctx context.Context) ([]*storage.Edge, error) {
-		return e.Engine.GetIncomingEdges(ctx, endID)
+		return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: endID})
 	})
 }
 
@@ -206,7 +230,7 @@ func TestComponentMatchCreateSurfacesRelationshipCheckReadFailure(t *testing.T) 
 	_, err = NewStorageExecutor(failing).executeRequiredPipeline(ctx, query)
 	require.ErrorIs(t, err, outErr)
 	require.Zero(t, failing.writes, "the failed statement reached no write clause")
-	edges, err := store.GetOutgoingEdges(ctx, "a1")
+	edges, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: "a1"})
 	require.NoError(t, err)
 	require.Empty(t, edges, "the failed statement wrote no relationship")
 
@@ -215,7 +239,7 @@ func TestComponentMatchCreateSurfacesRelationshipCheckReadFailure(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 	require.Positive(t, healthy.writes)
-	edges, err = store.GetOutgoingEdges(ctx, "a1")
+	edges, err = store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: "a1"})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 }

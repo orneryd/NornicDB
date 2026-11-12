@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -141,7 +142,10 @@ func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record 
 		before.Labels = slices.Clone(existing.Labels)
 		existing.Labels = ensureLabel(existing.Labels, procedureCatalogLabel)
 		existing.Properties = props
-		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: existing}); err != nil {
+		counter := procedureCatalogMutationCounter(ctx, store, profileKindNodeUpdateRequest)
+		err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: existing})
+		queryprofile.RequestResult(counter, err)
+		if err != nil {
 			return localizedError(localization.CypherProceduresUpdateCatalogFailed(err), err)
 		}
 	} else {
@@ -150,7 +154,10 @@ func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record 
 			Labels:     []string{procedureCatalogLabel},
 			Properties: props,
 		}
-		if _, err := store.CreateNode(ctx, node); err != nil {
+		counter := procedureCatalogMutationCounter(ctx, store, profileKindNodeCreateRequest)
+		_, err := store.CreateNode(ctx, node)
+		queryprofile.RequestResult(counter, err)
+		if err != nil {
 			return localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
 		}
 	}
@@ -186,7 +193,10 @@ func (e *StorageExecutor) dropPersistedProcedure(ctx context.Context, name strin
 	if existing == nil {
 		return localizedError(localization.CypherProceduresDropFailed(name, storage.ErrNotFound), storage.ErrNotFound)
 	}
-	if err := store.DeleteNode(ctx, existing.ID); err != nil {
+	counter := procedureCatalogMutationCounter(ctx, store, profileKindNodeDeleteRequest)
+	err = store.DeleteNode(ctx, existing.ID)
+	queryprofile.RequestResult(counter, err)
+	if err != nil {
 		return localizedError(localization.CypherProceduresDropFailed(name, err), err)
 	}
 	// Keep implementation simple and deterministic: refresh user registry from persisted catalog.
@@ -315,7 +325,7 @@ func ensureLabel(labels []string, label string) []string {
 }
 
 func (e *StorageExecutor) loadPersistedProcedures(ctx context.Context) error {
-	nodes, err := e.storage.GetNodesByLabel(ctx, procedureCatalogLabel)
+	nodes, err := readProcedureCatalogNodes(ctx, e.storage)
 	if err != nil {
 		return localizedError(localization.CypherProceduresCatalogReadFailed(err), nerrors.ErrProcedureCatalogReadFailed)
 	}

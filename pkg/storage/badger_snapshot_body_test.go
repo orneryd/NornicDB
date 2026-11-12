@@ -14,7 +14,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	_, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
-	_, err = b.GetOutgoingEdges(context.Background(), "test:a")
+	_, err = b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.NoError(t, err)
 	edgeGen := b.edgeCacheGen.current()
 	view, err := b.captureReadView(t.Context(), nil)
@@ -33,7 +33,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	current, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(4), current.Properties["v"])
-	edges, err := b.GetOutgoingEdges(context.Background(), "test:a")
+	edges, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.NoError(t, err)
 	require.Equal(t, int64(4), edges[0].Properties["v"])
 
@@ -46,7 +46,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), edge.Properties["v"])
 	// The older read must not refill the current unversioned cache with old data.
-	edges, err = b.GetOutgoingEdges(context.Background(), "test:a")
+	edges, err = b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.NoError(t, err)
 	require.Equal(t, int64(4), edges[0].Properties["v"])
 }

@@ -78,7 +78,9 @@ func TestTryCollectNodesFromPropertyIndexNotNullPaths(t *testing.T) {
 	require.EqualValues(t, 14, nodes[0].Properties["score"])
 	require.EqualValues(t, 12, nodes[1].Properties["score"])
 
-	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexNotNull(ctx, nodePatternInfo{variable: "n", labels: []string{"Item"}}, "n.score IS NOT NULL")
+	item := nodePatternInfo{variable: "n", labels: []string{"Item"}}
+	ids, used, err := exec.resolvePropertyIndexNotNullCandidates(ctx, item, "n.score IS NOT NULL")
+	nodes, ok, err = readResolvedCandidateNodes(exec, ctx, item, nodeCandidateIndexedProperty, ids, used, err)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, nodes, 3)

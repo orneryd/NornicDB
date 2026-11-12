@@ -5,10 +5,14 @@ import (
 	"errors"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"io"
+	"os"
 	"sort"
 	"unsafe"
 
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/security"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // vectorFileReadLease is an immutable snapshot used by HNSW construction.
@@ -19,6 +23,8 @@ type vectorFileReadLease struct {
 	dimensions  int
 	idToOrdinal map[string]int64
 	data        []byte
+	reader      *security.RootedFile
+	readBytes   int64
 	unmap       func() error
 	closeOnce   lifecycle.OnceCompletion
 }
@@ -33,7 +39,21 @@ func (v *VectorFileStore) beginReadLease() (*vectorFileReadLease, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	lease, err := v.newMappedReadLeaseLocked()
-	if err != nil {
+	if errors.Is(err, errVectorFileUnmapped) {
+		// Preserve ReadAt operation when mapping is unavailable, but pin the
+		// same file and ordinal table rather than looking up current IDs.
+		// Updates append rows and compaction replaces the file, so this owned
+		// handle keeps the immutable generation until the lease closes.
+		file, openErr := security.OpenRootedFile(v.vecPath, os.O_RDONLY, 0)
+		if openErr != nil {
+			return nil, openErr
+		}
+		info, statErr := file.Stat()
+		if statErr != nil {
+			return nil, errors.Join(statErr, file.Close())
+		}
+		lease = &vectorFileReadLease{dimensions: v.dimensions, reader: file, readBytes: info.Size()}
+	} else if err != nil {
 		return nil, err
 	}
 	ordinals := make(map[string]int64, len(v.idToOrdinal))
@@ -73,6 +93,10 @@ func (l *vectorFileReadLease) Close() error {
 		if l.unmap != nil {
 			err = l.unmap()
 		}
+		if l.reader != nil {
+			err = errors.Join(err, l.reader.Close())
+			l.reader = nil
+		}
 		l.data = nil
 		return err
 	})
@@ -83,7 +107,17 @@ func (l *vectorFileReadLease) Lookup(id string) ([]float32, bool) {
 	if !ok || ordinal < 0 || l.dimensions <= 0 {
 		return nil, false
 	}
-	vectorBytes := l.dimensions * 4
+	vectorBytes, valid := util.SafeIntProduct(l.dimensions, 4)
+	if !valid || vectorBytes == 0 {
+		return nil, false
+	}
+	if l.reader != nil {
+		if ordinal >= (l.readBytes-vecHeaderSize)/int64(vectorBytes) {
+			return nil, false
+		}
+		value, err := readVectorFileRow(l.reader, l.dimensions, vecHeaderSize+ordinal*int64(vectorBytes))
+		return value, err == nil
+	}
 	offset := vecHeaderSize + int(ordinal)*vectorBytes
 	if offset < vecHeaderSize || offset+vectorBytes > len(l.data) {
 		return nil, false
@@ -94,11 +128,7 @@ func (l *vectorFileReadLease) Lookup(id string) ([]float32, bool) {
 	}
 	// Mapped platforms supported by NornicDB are little-endian today. Keep a
 	// correct fallback for future ports without changing the on-disk format.
-	vector := make([]float32, l.dimensions)
-	for index := range vector {
-		vector[index] = math.Float32frombits(binary.LittleEndian.Uint32(bytes[index*4:]))
-	}
-	return vector, true
+	return decodeVectorFileRow(bytes, l.dimensions), true
 }
 
 func (l *vectorFileReadLease) IterateChunked(chunkSize int, fn func(ids []string, vectors [][]float32) error) error {
@@ -141,3 +171,26 @@ var nativeLittleEndian = func() bool {
 	value := uint16(1)
 	return *(*byte)(unsafe.Pointer(&value)) == 1
 }()
+
+// readVectorFileRow owns the copied fixed-stride read used when mapped
+// coordinates are unavailable and for checkpoint reads. Callers validate the
+// ordinal against their own live or frozen table.
+func readVectorFileRow(file io.ReaderAt, dimensions int, offset int64) ([]float32, error) {
+	length, ok := util.SafeIntProduct(dimensions, 4)
+	if !ok || length <= 0 {
+		return nil, fmt.Errorf("invalid vector dimensions: %d", dimensions)
+	}
+	bytes := make([]byte, length)
+	if _, err := file.ReadAt(bytes, offset); err != nil {
+		return nil, err
+	}
+	return decodeVectorFileRow(bytes, dimensions), nil
+}
+
+func decodeVectorFileRow(bytes []byte, dimensions int) []float32 {
+	vector := make([]float32, dimensions)
+	for index := range vector {
+		vector[index] = math.Float32frombits(binary.LittleEndian.Uint32(bytes[index*4:]))
+	}
+	return vector
+}

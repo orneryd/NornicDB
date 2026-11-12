@@ -6,6 +6,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"sort"
 
 	"strings"
@@ -204,15 +205,34 @@ func compositeLookupValues(idx *storage.CompositeIndex, props map[string]interfa
 	return values
 }
 
+// mergeCandidatePopulation reads the node population a MERGE compares its
+// pattern against when no index answers for it - the smallest written label's
+// nodes, or every node for a pattern without labels - and reports it before the
+// residual pattern matching narrows it. The record is the canonical scan it is,
+// under the same kind and label the clause scanner reports, so a MERGE that
+// admitted one node of five reports the five it read.
+func mergeCandidatePopulation(ctx context.Context, store storage.Engine, labels []string) ([]*storage.Node, error) {
+	kind, detail := profileKindAllNodesScan, ""
+	var (
+		candidates []*storage.Node
+		err        error
+	)
+	if len(labels) > 0 {
+		kind, detail = profileKindNodeByLabelScan, nodeScanLabels(ctx, store, labels)[0]
+		candidates, err = store.GetNodesByLabel(ctx, detail)
+	} else {
+		candidates, err = store.AllNodes(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	queryprofile.EntityPopulation(ctx, kind, detail, candidates)
+	return candidates, nil
+}
+
 func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
 	if len(props) == 0 {
-		var candidates []*storage.Node
-		var err error
-		if len(labels) > 0 {
-			candidates, err = store.GetNodesByLabel(ctx, nodeScanLabels(ctx, store, labels)[0])
-		} else {
-			candidates, err = store.AllNodes(ctx)
-		}
+		candidates, err := mergeCandidatePopulation(ctx, store, labels)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +244,7 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 		return nil, nil
 	}
 	if len(labels) == 0 {
-		candidates, err := store.AllNodes(ctx)
+		candidates, err := mergeCandidatePopulation(ctx, store, labels)
 		if err != nil {
 			return nil, err
 		}
@@ -349,7 +369,7 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 
 	// The release scanned the first written label; any pattern label lists
 	// every match, so the one with the fewest nodes is scanned (NOR-414).
-	nodes, err := store.GetNodesByLabel(ctx, nodeScanLabels(ctx, store, labels)[0])
+	nodes, err := mergeCandidatePopulation(ctx, store, labels)
 	if err != nil {
 		return nil, err
 	}
@@ -406,7 +426,10 @@ func (e *StorageExecutor) findMergeNodesScanned(ctx context.Context, store stora
 				return nil, false, err
 			}
 		}
-		candidates, complete, lookupErr := lookup.LookupNodesByEquality(ctx, nodeScanLabels(ctx, store, labels)[0], props)
+		// The read's population is the pattern label's own: the same label the
+		// scan below would read.
+		label := nodeScanLabels(ctx, store, labels)[0]
+		candidates, complete, lookupErr := lookup.LookupNodesByEquality(ctx, label, props)
 		if lookupErr != nil {
 			return nil, false, lookupErr
 		}
@@ -418,6 +441,10 @@ func (e *StorageExecutor) findMergeNodesScanned(ctx context.Context, store stora
 				}
 			}
 			e.markMergeScanFallbackUsed()
+			// This equality lookup returned candidates, not the whole label.
+			// Count the delivered population before the language predicate;
+			// do not describe the selective lookup as a label scan.
+			queryprofile.EntityPopulation(ctx, "NodeEqualityLookup", label, candidates)
 			for _, candidate := range candidates {
 				if mergeNodeMatches(candidate, labels, props) {
 					matches = append(matches, candidate)
@@ -426,15 +453,10 @@ func (e *StorageExecutor) findMergeNodesScanned(ctx context.Context, store stora
 			return matches, true, nil
 		}
 	}
-	var candidates []*storage.Node
 	if len(labels) > 0 && len(props) > 0 {
 		e.markMergeScanFallbackUsed()
 	}
-	if len(labels) > 0 {
-		candidates, err = store.GetNodesByLabel(ctx, nodeScanLabels(ctx, store, labels)[0])
-	} else {
-		candidates, err = store.AllNodes(ctx)
-	}
+	candidates, err := mergeCandidatePopulation(ctx, store, labels)
 	if err != nil {
 		return nil, false, err
 	}

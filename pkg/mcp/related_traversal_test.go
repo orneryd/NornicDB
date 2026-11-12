@@ -29,9 +29,36 @@ type mcpRelatedProbeEngine struct {
 	inErr    error
 }
 
-func (e *mcpRelatedProbeEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	e.outgoing = append(e.outgoing, string(nodeID))
-	rows, err := e.Engine.GetOutgoingEdges(ctx, nodeID)
+func (e *mcpRelatedProbeEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		e.incoming = append(e.incoming, string(request.Node))
+		rows, err := e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node})
+		if e.inErr != nil {
+			return rows, e.inErr
+		}
+		return rows, err
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
+	e.outgoing = append(e.outgoing, string(request.Node))
+	rows, err := e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 	if e.outErr != nil {
 		return rows, e.outErr
 	}
@@ -40,7 +67,7 @@ func (e *mcpRelatedProbeEngine) GetOutgoingEdges(ctx context.Context, nodeID sto
 
 func (e *mcpRelatedProbeEngine) GetIncomingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	e.incoming = append(e.incoming, string(nodeID))
-	rows, err := e.Engine.GetIncomingEdges(ctx, nodeID)
+	rows, err := e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: nodeID})
 	if e.inErr != nil {
 		return rows, e.inErr
 	}

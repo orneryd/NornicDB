@@ -194,7 +194,7 @@ func TestGDSProjectionReviewFixes(t *testing.T) {
 // doesn't catch first, a failing argument, and a Float node property.
 func TestGDSCatalogArgumentBranches(t *testing.T) {
 	exec, run := newGDSGraph(t)
-	_, err := exec.callGdsGraphList([]interface{}{int64(5)})
+	_, err := exec.callGdsGraphList(context.Background(), []interface{}{int64(5)})
 	require.ErrorContains(t, err, "graphName")
 	_, err = exec.callGdsGraphDrop(context.Background(), []interface{}{"g", "x"})
 	require.ErrorContains(t, err, "failIfMissing")
@@ -302,7 +302,7 @@ func TestGDSProjectionReadsRelationshipsInIDOrder(t *testing.T) {
 			_, err := exec.Execute(context.Background(), query, nil)
 			require.NoError(t, err, query)
 		}
-		projection, err := exec.graphProjection("g")
+		projection, err := lookupGraphProjection(t.Context(), storageDatabaseName(exec.storage), "g")
 		require.NoError(t, err)
 		require.Len(t, projection.Relationships, 1)
 		result, err := exec.Execute(context.Background(), "MATCH ()-[r:R]->() RETURN id(r) AS id, r.w ORDER BY id LIMIT 1", nil)

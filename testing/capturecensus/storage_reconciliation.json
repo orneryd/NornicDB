@@ -11,32 +11,33 @@
       "proof": {
         "present": true,
         "file": "pkg/cypher/executor.go",
-        "sourceSHA256": "7c40a5e5575b314f4b557c41e68a1d35328e66fc9b8c44e32f6aaaa41ba5cc97",
+        "sourceSHA256": "b3244788a6b1ce03778cf44296a383ca7dee47b2a6a0c21240ba293df5baadfe",
         "directCalls": [
           "e.refreshSearch",
           "storage.EdgeID"
         ]
       },
-      "reason": "No fresh context creation remains in this exact function; its current callers and replacement lifetime paths remain subject to the normal census."
+      "reason": "Exact retained function receives and forwards its caller context without creating a fresh context. Refresh reads independently use the captured service lifetime; this tombstone accepts no replacement path, which remains subject to the normal compiled census."
     },
     "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).notifyNodeMutated": {
       "proof": {
         "present": true,
         "file": "pkg/cypher/executor.go",
-        "sourceSHA256": "52bbf50114b16788498fe86074df9f6b8d7caa3f8b221bfc5b8a4e86a2c1c5b6",
+        "sourceSHA256": "1bf6f603a28ea6909740f6afeef75c59ffd12485b508ef0f7b28fae28cf6df0d",
         "directCalls": [
           "e.refreshSearch",
           "storage.NodeID",
+          "queryprofile.Callback",
           "e.onNodeMutated"
         ]
       },
-      "reason": "No fresh context creation remains in this exact function; its current callers and replacement lifetime paths remain subject to the normal census."
+      "reason": "Exact retained function receives and forwards its caller context without creating a fresh context. Refresh reads independently use the captured service lifetime; this tombstone accepts no replacement path, which remains subject to the normal compiled census."
     },
     "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).refreshSearchAfterCommit": {
       "proof": {
         "present": true,
         "file": "pkg/cypher/executor.go",
-        "sourceSHA256": "13f41d84563ae9019dd70da242a52676f2fcb585d0a84cfb30ef0f3796f28679",
+        "sourceSHA256": "3a875357875466755600e459425d698bc814e6f374cf42f71c577d9ef01baffb",
         "directCalls": [
           "tx.takeSearchRefreshes",
           "e.search",
@@ -44,20 +45,20 @@
           "e.refreshSearch"
         ]
       },
-      "reason": "No fresh context creation remains in this exact function; its current callers and replacement lifetime paths remain subject to the normal census."
+      "reason": "Exact retained function receives and forwards its caller context without creating a fresh context. Refresh reads independently use the captured service lifetime; this tombstone accepts no replacement path, which remains subject to the normal compiled census."
     },
     "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).removeNodeFromSearch": {
       "proof": {
         "present": true,
         "file": "pkg/cypher/executor.go",
-        "sourceSHA256": "14893feaf1683bb970130dc5f93ebfdab666b4065da8e17adc2ce07c68db1c05",
+        "sourceSHA256": "5d05037b0cbd381db45d4668d8ec57997865f3d4d120a174f391eafb88b928a0",
         "directCalls": [
           "storage.ParseDatabasePrefix",
           "e.refreshSearch",
           "storage.NodeID"
         ]
       },
-      "reason": "No fresh context creation remains in this exact function; its current callers and replacement lifetime paths remain subject to the normal census."
+      "reason": "Exact retained function receives and forwards its caller context without creating a fresh context. Refresh reads independently use the captured service lifetime; this tombstone accepts no replacement path, which remains subject to the normal compiled census."
     },
     "(*github.com/orneryd/nornicdb/pkg/multidb.DatabaseManager).calculateStorageSizeFromEngine": {
       "proof": {
@@ -414,7 +415,9 @@
         "b.EnqueueDeindexIfSuppressed",
         "string"
       ],
-      "freshContextCalls": ["context.Background"]
+      "freshContextCalls": [
+        "context.Background"
+      ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).drainCommitNotifications": {
       "present": true,
@@ -447,7 +450,7 @@
     "(*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).holdsEntities": {
       "present": true,
       "file": "pkg/storage/buffered_write_order.go",
-      "sourceSHA256": "4dba6a2fd8890c079396d8118b0a213efef0c8a2ec62315afd5b037b72a037b2",
+      "sourceSHA256": "3f43aa90a0414316f9e49139b53d30ada9e6e7b2bcde19589878e469609148fc",
       "directCalls": [
         "w.readEpoch.Load",
         "w.mu.RLockContext",

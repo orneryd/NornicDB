@@ -269,7 +269,8 @@ func (sm *SchemaManager) GetConstraintContractsForTarget(ctx context.Context, en
 // can still reject. An IF NOT EXISTS match costs the name check alone: it
 // exports, clones, persists and replaces nothing.
 func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract, compiledConstraints []Constraint, compiledTypes []PropertyTypeConstraint, ifNotExists bool) error {
-	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	ctx := context.Background() // this context-free mutation owns accepted completion
+	lease, admitErr := sm.beginSchemaMutation(ctx)
 	if admitErr != nil {
 		return admitErr
 	}
@@ -291,7 +292,7 @@ func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract
 	rollback := sm.stageConstraintContractBundle(compiledConstraints, compiledTypes)
 
 	for _, compiled := range compiledConstraints {
-		if _, err := sm.addConstraintLocked(compiled, false); err != nil {
+		if _, err := sm.addConstraintLocked(ctx, compiled, false); err != nil {
 			rollback()
 			return err
 		}
@@ -431,8 +432,7 @@ func validateConstraintContractForEdgeEngine(ctx context.Context, engine Engine,
 // transaction provide it, so the evaluator logic is written once and the two
 // call paths cannot drift apart.
 type constraintGraphView interface {
-	OutgoingEdges(ctx context.Context, id NodeID) ([]*Edge, error)
-	IncomingEdges(ctx context.Context, id NodeID) ([]*Edge, error)
+	AdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error)
 	Node(ctx context.Context, id NodeID) (*Node, error)
 }
 
@@ -440,11 +440,8 @@ type engineConstraintView struct{ engine Engine }
 
 // Constraint integrity reads use their evaluator's phase lifetime. Native
 // context-free management explicitly supplies Background at its boundary.
-func (v engineConstraintView) OutgoingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
-	return GetStoredOutgoingEdges(ctx, v.engine, id)
-}
-func (v engineConstraintView) IncomingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
-	return GetStoredIncomingEdges(ctx, v.engine, id)
+func (v engineConstraintView) AdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	return ReadStoredAdjacentEdges(ctx, v.engine, request)
 }
 
 // Generic Engine point readers read under the constraint check's own context.
@@ -455,11 +452,8 @@ func (v engineConstraintView) Node(ctx context.Context, id NodeID) (*Node, error
 
 type txConstraintView struct{ tx *BadgerTransaction }
 
-func (v txConstraintView) OutgoingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
-	return v.tx.currentDirectedEdgesLocked(ctx, id, adjacencyOutgoing)
-}
-func (v txConstraintView) IncomingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
-	return v.tx.currentDirectedEdgesLocked(ctx, id, adjacencyIncoming)
+func (v txConstraintView) AdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	return v.tx.currentDirectedEdgesLocked(ctx, request)
 }
 func (v txConstraintView) Node(ctx context.Context, id NodeID) (*Node, error) {
 	return v.tx.currentNodeLocked(ctx, id)
@@ -1241,13 +1235,11 @@ func countMatchingPatternEdgesEngine(ctx context.Context, engine Engine, node *N
 }
 
 func countMatchingPatternEdges(ctx context.Context, view constraintGraphView, node *Node, pattern contractPattern) (int, error) {
-	var edges []*Edge
-	var err error
+	request := AdjacentEdgeRead{Node: node.ID, Types: []string{pattern.RelationType}}
 	if pattern.Direction == "INCOMING" {
-		edges, err = view.IncomingEdges(ctx, node.ID)
-	} else {
-		edges, err = view.OutgoingEdges(ctx, node.ID)
+		request.Direction = AdjacentIncoming
 	}
+	edges, err := view.AdjacentEdges(ctx, request)
 	if err != nil {
 		return 0, err
 	}
@@ -1557,22 +1549,13 @@ func (tx *BadgerTransaction) currentEdgeLocked(ctx context.Context, edgeID EdgeI
 // currentDirectedEdgesLocked reads the write-integrity view through the same
 // pending-adjacency owner used by transaction reads. The phase owner supplies
 // request preparation or detached accepted completion.
-// The caller holds tx.mu and selects outgoing or incoming adjacency.
-func (tx *BadgerTransaction) currentDirectedEdgesLocked(ctx context.Context, nodeID NodeID, direction adjacencyRead) ([]*Edge, error) {
-	out, in, err := readAdjacency(ctx, tx.engine, direction, nodeID, "", nil, storedRead)
+// The caller holds tx.mu; the request selects the adjacency.
+func (tx *BadgerTransaction) currentDirectedEdgesLocked(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	committed, err := readAdjacentEdges(ctx, tx.engine, request, nil, storedRead)
 	if err != nil {
 		return nil, err
 	}
-	committed := out
-	if direction == adjacencyIncoming {
-		committed = in
-	}
-	return tx.mergePendingAdjacentEdgesLocked(ctx, committed, nodeID, func(edge *Edge) bool {
-		if direction == adjacencyOutgoing {
-			return edge.StartNode == nodeID
-		}
-		return edge.EndNode == nodeID
-	})
+	return tx.mergePendingAdjacentEdgesLocked(ctx, committed, request, request.admits)
 }
 
 func constraintContractNamespaceForNode(node *Node) (string, bool) {
@@ -1600,33 +1583,5 @@ func constraintContractNamespaceForEdge(edge *Edge) (string, bool) {
 }
 
 func (tx *BadgerTransaction) currentAdjacentEdgesLocked(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	outgoing, err := tx.currentDirectedEdgesLocked(ctx, nodeID, adjacencyOutgoing)
-	if err != nil {
-		return nil, err
-	}
-	incoming, err := tx.currentDirectedEdgesLocked(ctx, nodeID, adjacencyIncoming)
-	if err != nil {
-		return nil, err
-	}
-	edges := make(map[EdgeID]*Edge)
-	for _, edge := range outgoing {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		edges[edge.ID] = edge
-	}
-	for _, edge := range incoming {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		edges[edge.ID] = edge
-	}
-	result := make([]*Edge, 0, len(edges))
-	for _, edge := range edges {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		result = append(result, edge)
-	}
-	return result, nil
+	return tx.currentDirectedEdgesLocked(ctx, AdjacentEdgeRead{Direction: AdjacentBoth, Node: nodeID})
 }

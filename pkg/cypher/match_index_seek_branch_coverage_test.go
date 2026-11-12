@@ -102,7 +102,7 @@ func TestTryEvaluateConstantBooleanConjunct(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
+func TestPlanPropertyIndexOrEqualityBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "cov_seek")
 	exec := NewStorageExecutor(store)
@@ -126,32 +126,21 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nodes, handled, err := exec.tryCollectNodesFromPropertyIndexOrEquality(
-		ctx,
-		nodePatternInfo{variable: "n", labels: []string{"Person"}},
-		"n.name = 'Alice' OR n.code = 'X2'",
-		nil,
-	)
+	pattern := nodePatternInfo{variable: "n", labels: []string{"Person"}}
+	seek, planned, err := exec.planPropertyIndexOrEquality(ctx, pattern, "n.name = 'Alice' OR n.code = 'X2'")
+	nodes, handled, err := planCandidateSeekNodes(exec, ctx, seek, planned, err)
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Len(t, nodes, 2)
 
-	nodes, handled, err = exec.tryCollectNodesFromPropertyIndexOrEquality(
-		ctx,
-		nodePatternInfo{variable: "n", labels: []string{"Person"}},
-		"n.name = 'Alice'",
-		nil,
-	)
+	seek, planned, err = exec.planPropertyIndexOrEquality(ctx, pattern, "n.name = 'Alice'")
+	nodes, handled, err = planCandidateSeekNodes(exec, ctx, seek, planned, err)
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, nodes)
 
-	nodes, handled, err = exec.tryCollectNodesFromPropertyIndexOrEquality(
-		ctx,
-		nodePatternInfo{variable: "n", labels: []string{"Person"}},
-		"n.name > 'Alice' OR n.code = 'X2'",
-		nil,
-	)
+	seek, planned, err = exec.planPropertyIndexOrEquality(ctx, pattern, "n.name > 'Alice' OR n.code = 'X2'")
+	nodes, handled, err = planCandidateSeekNodes(exec, ctx, seek, planned, err)
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, nodes)

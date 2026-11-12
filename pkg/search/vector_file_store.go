@@ -340,24 +340,13 @@ func (v *VectorFileStore) vectorLocked(id string) ([]float32, bool, bool) {
 	if !ok || ordinal < 0 || ordinal >= v.nextOrdinal || v.closed || v.file == nil {
 		return nil, false, false
 	}
-	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
-	if !ok {
-		return nil, false, false
-	}
 	if v.queryReadMap != nil {
 		if stored, ok := v.queryReadMap.Lookup(id); ok {
 			return stored, true, true
 		}
 	}
-	buf := make([]byte, vectorBytes)
-	if _, err := v.file.ReadAt(buf, v.vectorOffset(ordinal)); err != nil {
-		return nil, false, false
-	}
-	vec := make([]float32, v.dimensions)
-	for i := 0; i < v.dimensions; i++ {
-		vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[i*4:]))
-	}
-	return vec, false, true
+	vec, err := readVectorFileRow(v.file, v.dimensions, v.vectorOffset(ordinal))
+	return vec, false, err == nil
 }
 
 // scoreCandidatesDot scores candidate IDs directly from the vector file without
@@ -1003,19 +992,7 @@ func (v *VectorFileStore) readVectorAtLocked(ordinal int64) ([]float32, error) {
 	if ordinal < 0 || ordinal >= v.nextOrdinal {
 		return nil, fmt.Errorf("vector ordinal %d is outside %d slots", ordinal, v.nextOrdinal)
 	}
-	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
-	if !ok {
-		return nil, fmt.Errorf("vector dimensions overflow payload length: %d", v.dimensions)
-	}
-	buf := make([]byte, vectorBytes)
-	if _, err := v.file.ReadAt(buf, v.vectorOffset(ordinal)); err != nil {
-		return nil, err
-	}
-	vec := make([]float32, v.dimensions)
-	for i := 0; i < v.dimensions; i++ {
-		vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[i*4:]))
-	}
-	return vec, nil
+	return readVectorFileRow(v.file, v.dimensions, v.vectorOffset(ordinal))
 }
 
 func writeVectorRecord(f *os.File, id string, vec []float32) error {

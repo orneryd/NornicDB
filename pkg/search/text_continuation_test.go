@@ -976,130 +976,6 @@ func TestSearchTextContinuationRankedStopsAtDeclaredCandidateBudget(t *testing.T
 	require.Equal(t, []int{1, 2, 4, 8, 16, 32, 64, 128}, requestedLimits)
 }
 
-func TestSearchTextContinuationRerankTopKCapsRankedResults(t *testing.T) {
-	for _, mode := range []SearchContinuationMode{SearchContinuationRanked, SearchContinuationRankedThenID} {
-		t.Run(string(mode), func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
-			service := NewService(engine, 2, nil)
-			t.Cleanup(func() { require.NoError(t, service.Close()) })
-			for _, doc := range []struct {
-				id      storage.NodeID
-				content string
-				vector  []float32
-			}{
-				{id: "doc-a", content: "library transcript alpha", vector: []float32{1, 0}},
-				{id: "doc-b", content: "library transcript beta", vector: []float32{0.8, 0.2}},
-				{id: "doc-c", content: "library transcript gamma", vector: []float32{0.6, 0.4}},
-			} {
-				_, err := engine.CreateNode(t.Context(), &storage.Node{
-					ID: doc.id, Labels: []string{"Document"}, Properties: map[string]any{"content": doc.content},
-				})
-				require.NoError(t, err)
-				require.NoError(t, service.vectorIndex.Add(string(doc.id), doc.vector))
-			}
-			service.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(service.vectorIndex), NewCPUExactScorer(service.vectorIndex))
-			service.SetReranker(&testReranker{enabled: true})
-
-			options := DefaultSearchOptions()
-			options.Limit = 10
-			options.RerankEnabled = true
-			options.RerankTopK = 2
-			request := SearchContinuationRequest{Owner: "alice", Database: "nornic", Mode: mode, N: 1}
-			if mode == SearchContinuationRankedThenID {
-				request.N = 10
-			}
-			page, err := service.SearchTextContinuation(
-				context.Background(), "library transcript", options, request,
-				nil,
-				func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil },
-				service.Search,
-				ChunkedSearchErrorPolicy{},
-			)
-			require.NoError(t, err)
-			require.True(t, page.RankedPoolExhausted)
-			require.Equal(t, "rrf_hybrid+rerank", page.SearchMethod)
-
-			if mode == SearchContinuationRanked {
-				require.Len(t, page.Results, 1)
-				require.True(t, page.HasMore)
-				request.QID = page.QID
-				request.N = 10
-				page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
-				require.NoError(t, err)
-				require.Len(t, page.Results, 1)
-				require.False(t, page.HasMore)
-				require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
-				require.True(t, page.RankedPoolExhausted)
-				return
-			}
-
-			require.Len(t, page.Results, 3)
-			require.Equal(t, 2, page.RankedCount)
-			require.NotNil(t, page.EligibleCount)
-			require.Equal(t, 3, *page.EligibleCount)
-			require.Equal(t, []string{SearchContinuationRankedPhase, SearchContinuationRankedPhase, SearchContinuationCatalogPhase}, []string{
-				page.Results[0].Phase, page.Results[1].Phase, page.Results[2].Phase,
-			})
-			require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
-			require.False(t, page.HasMore)
-		})
-	}
-}
-
-func TestSearchTextContinuationRerankCapsRankedPoolAtTopK(t *testing.T) {
-	embed := func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil }
-	for _, mode := range []SearchContinuationMode{SearchContinuationRanked, SearchContinuationRankedThenID} {
-		t.Run(string(mode), func(t *testing.T) {
-			service := newHybridRerankBudgetService(t, 30)
-			options := DefaultSearchOptions()
-			options.Limit = 1
-			options.RerankEnabled = true
-			options.RerankTopK = 10
-			options.MaxCandidateLimit = 64
-
-			request := SearchContinuationRequest{Owner: "alice", Database: "nornic", Mode: mode, N: 5}
-			if mode == SearchContinuationRankedThenID {
-				request.N = 12
-			}
-			page, err := service.SearchTextContinuation(
-				context.Background(), "library transcript", options, request,
-				nil, embed, service.Search, ChunkedSearchErrorPolicy{},
-			)
-			require.NoError(t, err)
-			require.Equal(t, "rrf_hybrid+rerank", page.SearchMethod)
-
-			seen := map[string]struct{}{}
-			for {
-				for _, result := range page.Results {
-					seen[result.ID] = struct{}{}
-				}
-				if !page.HasMore {
-					break
-				}
-				request.QID = page.QID
-				request.N = 10
-				page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
-				require.NoError(t, err)
-			}
-			wantSeen := 10
-			if mode == SearchContinuationRankedThenID {
-				wantSeen = 30
-			}
-			require.Len(t, seen, wantSeen)
-			require.False(t, page.HasMore)
-			require.True(t, page.RankedPoolExhausted)
-			if mode == SearchContinuationRankedThenID {
-				require.Equal(t, 10, page.RankedCount)
-				require.NotNil(t, page.EligibleCount)
-				require.Equal(t, 30, *page.EligibleCount)
-				require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
-			} else {
-				require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
-			}
-		})
-	}
-}
-
 func TestSearchTextContinuationRerankMemoMatchesFreshMovedHybridPool(t *testing.T) {
 	engine := newNamespacedEngine(t)
 	service := NewService(engine, 2, nil)
@@ -1182,8 +1058,12 @@ func TestSearchTextContinuationRerankMemoMatchesFreshMovedHybridPool(t *testing.
 				collected = append(collected, page.Results...)
 			}
 
+			// The first admitted window is the depth-15 fused prefix, so the
+			// ranked page matches a fresh rerank of that depth. A deeper pool
+			// can move a candidate (doc-b above doc-a at depth 30), but a
+			// window first admitted at depth 15 keeps its membership and order:
+			// re-windowing it would submit the candidate again.
 			freshOptions := *options
-			freshOptions.Limit = 30
 			fresh, err := service.Search(context.Background(), "needle", []float32{1, 0}, &freshOptions)
 			require.NoError(t, err)
 			require.Equal(t, fresh.SearchMethod, page.SearchMethod)

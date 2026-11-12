@@ -624,6 +624,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		if err != nil {
 			return nil, err
 		}
+		if err := e.resolveStatementNodeImages(ctx, info, cypher); err != nil {
+			return nil, err
+		}
 		// Plan 04-03 Site 3 (fabric branch): isFabric=true → op_type="fabric"
 		// per RISK-1 corrected classifier. Observation pre-execute so the
 		// counter reflects intent regardless of execution outcome (errors
@@ -918,6 +921,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// and caches it for repeated queries, avoiding redundant string parsing
 	info, err := e.analyzer.Analyze(ctx, cypher)
 	if err != nil {
+		return nil, err
+	}
+	if err := e.resolveStatementNodeImages(ctx, info, cypher); err != nil {
 		return nil, err
 	}
 	ctx, finishMode, modeErr := e.observeResolvedStatementMode(ctx, cypher)

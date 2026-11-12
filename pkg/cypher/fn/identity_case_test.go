@@ -11,7 +11,7 @@ import (
 func TestIdentityFunctionNamesPreserveCodeUnits(t *testing.T) {
 	units := []string{"\xed\xa0\x80", "\xed\xa0\x81", "\xed\xb0\x80", "\ufffd", `\ud800`, "😀"}
 	mu.Lock()
-	previous := map[string]Func{}
+	previous := map[string]registration{}
 	present := map[string]bool{}
 	for _, unit := range units {
 		for _, key := range []string{"identity_units." + unit, strings.ToLower("identity_units." + unit)} {
@@ -34,7 +34,7 @@ func TestIdentityFunctionNamesPreserveCodeUnits(t *testing.T) {
 	})
 	for index, unit := range units {
 		want := int64(index + 1)
-		Register("identity_units."+unit, func(_ context.Context, _ Context, _ []string) (interface{}, error) { return want, nil })
+		Register("identity_units."+unit, func(_ context.Context, _ Context, _ []string) (interface{}, error) { return want, nil }, OpaqueReads)
 	}
 	ctx := Context{Eval: func(string) (interface{}, error) { return nil, nil }, Now: time.Now}
 	for index, unit := range units {

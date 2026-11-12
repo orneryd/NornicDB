@@ -46,7 +46,7 @@ func TestEntityRecreatedAfterRolledBackCreateSurvivesReopen(t *testing.T) {
 	edge, err := engine.GetEdge(t.Context(), "test:merge-x")
 	require.NoError(t, err)
 	require.Equal(t, "new", edge.Properties["id"])
-	outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
+	outgoing, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, EdgeID("test:merge-x"), outgoing[0].ID)

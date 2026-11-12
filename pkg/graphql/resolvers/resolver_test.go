@@ -1077,15 +1077,18 @@ func TestGraphQLMutationAdditionalCoverage(t *testing.T) {
 	})
 
 	t.Run("trigger embedding and run decay paths", func(t *testing.T) {
+		// The fixture opens without auto-embed, so both calls must surface the
+		// unavailable worker instead of a status for work that was never queued.
+		// Stage-specific assertions live in
+		// mutation_trigger_embedding_error_test.go.
 		status, err := mr.mutationTriggerEmbedding(ctx, nil)
-		require.NoError(t, err)
-		require.NotNil(t, status)
-		assert.GreaterOrEqual(t, status.Total, 0)
+		require.ErrorContains(t, err, "failed to trigger embedding: ")
+		require.Nil(t, status)
 
 		regen := true
 		status, err = mr.mutationTriggerEmbedding(ctx, &regen)
-		require.NoError(t, err)
-		require.NotNil(t, status)
+		require.ErrorContains(t, err, "failed to reset embedding worker: ")
+		require.Nil(t, status)
 
 		decay, err := mr.mutationRunDecay(ctx)
 		require.NoError(t, err)

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -362,7 +363,7 @@ func TestBuiltInProcedureSignatureMetadataDefaults(t *testing.T) {
 			replaceProcedureRegistryForTest(t, registry)
 			registerProcedure(ProcedureSpec{Name: "custom.defaults", Signature: signature, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 2}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 				return &ExecuteResult{}, nil
-			})
+			}, cypherfn.OpaqueReads)
 			specs := registry.ListBuiltIns()
 			require.Len(t, specs, 1)
 			require.Equal(t, []ProcedureParam{

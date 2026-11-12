@@ -192,14 +192,37 @@ func (e *retainedWhereCancellingEngine) read() {
 	}
 }
 
-func (e *retainedWhereCancellingEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+func (e *retainedWhereCancellingEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		e.read()
+		return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node})
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	e.read()
-	return e.Engine.GetOutgoingEdges(ctx, id)
+	return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 }
 
 func (e *retainedWhereCancellingEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	e.read()
-	return e.Engine.GetIncomingEdges(ctx, id)
+	return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: id})
 }
 
 // Cancelling a continuation page while its where traverses stops the page with

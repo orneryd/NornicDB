@@ -11,7 +11,7 @@ func TestGDSImportNumericListDefault(t *testing.T) {
 	result, err := run("CALL gds.graph.project('defaults',{N:{properties:{v:{defaultValue:[0,0]}}}},'*')")
 	t.Logf("result=%+v error=%v", result, err)
 	require.NoError(t, err)
-	projection, err := lookupGraphProjection("reviewdefault", "defaults")
+	projection, err := lookupGraphProjection(t.Context(), "reviewdefault", "defaults")
 	require.NoError(t, err)
 	require.Equal(t, []int64{1, 2}, projection.NodeProperties["a"]["v"])
 	require.Equal(t, []int64{0, 0}, projection.NodeProperties["b"]["v"])
@@ -23,7 +23,7 @@ func TestGDSNativeImportLongArrayValidation(t *testing.T) {
 	result, err := run("CALL gds.graph.project('nativelossy',{N:{properties:'v'}},'*')")
 	t.Logf("result=%+v error=%v", result, err)
 	if err == nil {
-		p, _ := lookupGraphProjection("reviewnativelossy", "nativelossy")
+		p, _ := lookupGraphProjection(t.Context(), "reviewnativelossy", "nativelossy")
 		t.Logf("stored=%+v", p.NodeProperties)
 	}
 	require.Error(t, err)

@@ -128,7 +128,7 @@ type Prediction struct {
 //
 // Parameters:
 //   - ctx: Context for cancellation
-//   - engine: Storage engine implementing GetOutgoingEdges
+//   - engine: Storage engine implementing ReadAdjacentEdges
 //   - undirected: If true, treats edges as bidirectional
 //
 // Example:

@@ -24,6 +24,13 @@ type returnProjection struct {
 	aggregateExpr                  string
 	distinct                       bool
 	definitionStart, definitionEnd int
+	// expressionStart is where the item's evaluation expression starts in the
+	// clause's own text, or -1 when the plan was built without the statement's
+	// retained syntax. A PROFILE statement binds it as the row's expression
+	// origin, so a program an expression starts is reported at the occurrence
+	// that was written; the alias definition span is a different position and
+	// is not used for it.
+	expressionStart int
 }
 
 // returnProjectionPlan is a RETURN clause parsed for pipelineApplyReturn:
@@ -178,7 +185,7 @@ func (plan *returnProjectionPlan) addProjection(expr, alias string) {
 		aggregateExpr = expr
 	}
 	plan.hasAggregate = plan.hasAggregate || isAggr
-	plan.projections = append(plan.projections, returnProjection{expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct})
+	plan.projections = append(plan.projections, returnProjection{expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct, expressionStart: -1})
 	plan.columns = append(plan.columns, alias)
 }
 

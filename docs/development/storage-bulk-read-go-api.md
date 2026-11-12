@@ -7,8 +7,8 @@ a mock with the old signature may silently stop implementing an optional interfa
 
 | Contract | Affected operations |
 | --- | --- |
-| `storage.Engine` | `GetNodesByLabel`, `GetOutgoingEdges`, `GetIncomingEdges`, `GetEdgesBetween`, `GetEdgesByType`, `AllNodes`, `AllEdges`, `BatchGetNodes` |
-| Adjacency and projected reads | `GetAdjacentEdges`, batch reads without embeddings, projected label/prefix streams, prefix streams without embeddings |
+| `storage.Engine` | `GetNodesByLabel`, `ReadAdjacentEdges`, `GetEdgesByType`, `AllNodes`, `AllEdges`, `BatchGetNodes` |
+| Adjacency and projected reads | `ReadAdjacentEdges` in every direction (`AdjacentEdgeRead`), batch reads without embeddings, projected label/prefix streams, prefix streams without embeddings |
 | Latest-visible enumeration | `BatchGetNodesLatestVisible` and `IterateLatestVisibleNodes` |
 | Scoped and MVCC reads | Context-first bulk label/type/adjacency reads, including their namespace and snapshot variants |
 | Stored entity readers | Stored bulk label/adjacency reads and label/type streams, including scoped variants |
@@ -23,7 +23,7 @@ configured operation timeout; an earlier caller deadline or cancellation wins.
 
 ```go
 func outgoing(ctx context.Context, engine storage.Engine, id storage.NodeID) ([]*storage.Edge, error) {
-    edges, err := engine.GetOutgoingEdges(ctx, id)
+    edges, err := engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: id})
     if err != nil {
         return nil, err
     }
@@ -91,3 +91,16 @@ Candidate population and IVF-HNSW searches forward the same operation context
 through their serving-view callbacks. Local and LLM rerankers also require a
 non-nil context; they no longer replace nil with a background context. Admission,
 model scoring and inference retain the caller's values and cancellation.
+
+## Adjacent-edge request migration
+
+Directional and header-only reads now share `storage.AdjacentEdgeRead`. Use `ReadAdjacentEdges(ctx, request)` on an engine and `tx.ReadEdges(ctx, request)` on a native transaction. `Direction` selects `AdjacentOutgoing`, `AdjacentIncoming`, `AdjacentBoth` or `AdjacentBetween`; `Types` selects a type union and `Other` supplies the other endpoint for a between request. Empty `Types` means all types. `Headers: true` permits omitting relationship properties; consumers that need properties must request full records. Visibility decisions may still require full records for a header request.
+
+```go
+edges, err := engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{
+    Node: id, Direction: storage.AdjacentOutgoing,
+    Types: []string{"MEMBER_OF"}, Headers: true,
+})
+```
+
+Stored/integrity readers use `ReadStoredAdjacentEdges`; versioned readers use `ReadAdjacentEdgesVisibleAt` with the existing version argument. This replaces the old outgoing/incoming/header entry points, their capability interfaces and directional enum. Go consumers/plugins must migrate and rebuild; no forwarding aliases remain. Transaction between requests and write-behind retain their existing view semantics. Badger keys, persisted records, WAL and storage version are unchanged.

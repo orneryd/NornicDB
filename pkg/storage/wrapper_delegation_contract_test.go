@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -164,19 +165,23 @@ func (s *delegationSpyEngine) GetNodesByLabelVisibleAtInScope(ctx context.Contex
 	return s.MemoryEngine.GetNodesByLabelVisibleAtInScope(ctx, scope, label, version)
 }
 
-func (s *delegationSpyEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	s.record("GetOutgoingEdges")
-	return s.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
+// adjacencyDirectionLabel names the direction of one recorded adjacent-edge
+// request, so the delegation checks still observe which read point a wrapper
+// reached.
+func adjacencyDirectionLabel(direction AdjacentEdgeDirection) string {
+	switch direction {
+	case AdjacentIncoming:
+		return "incoming"
+	case AdjacentBetween:
+		return "between"
+	default:
+		return "outgoing"
+	}
 }
 
-func (s *delegationSpyEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	s.record("GetIncomingEdges")
-	return s.MemoryEngine.GetIncomingEdges(ctx, nodeID)
-}
-
-func (s *delegationSpyEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
-	s.record("GetEdgesBetween")
-	return s.MemoryEngine.GetEdgesBetween(ctx, startID, endID)
+func (s *delegationSpyEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	s.record("ReadAdjacentEdges/" + adjacencyDirectionLabel(request.Direction))
+	return s.MemoryEngine.ReadAdjacentEdges(ctx, request)
 }
 
 func (s *delegationSpyEngine) GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error) {
@@ -419,24 +424,14 @@ func (s *delegationSpyEngine) GetNodesByLabelVisibleAt(ctx context.Context, labe
 	return s.MemoryEngine.GetNodesByLabelVisibleAt(ctx, label, version)
 }
 
-func (s *delegationSpyEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	s.record("GetOutgoingEdgesVisibleAt")
-	return s.MemoryEngine.GetOutgoingEdgesVisibleAt(ctx, nodeID, version)
-}
-
-func (s *delegationSpyEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	s.record("GetIncomingEdgesVisibleAt")
-	return s.MemoryEngine.GetIncomingEdgesVisibleAt(ctx, nodeID, version)
+func (s *delegationSpyEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, request AdjacentEdgeRead, version MVCCVersion) ([]*Edge, error) {
+	s.record("ReadAdjacentEdgesVisibleAt/" + adjacencyDirectionLabel(request.Direction))
+	return s.MemoryEngine.ReadAdjacentEdgesVisibleAt(ctx, request, version)
 }
 
 func (s *delegationSpyEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error) {
 	s.record("GetEdgesByTypeVisibleAt")
 	return s.MemoryEngine.GetEdgesByTypeVisibleAt(ctx, edgeType, version)
-}
-
-func (s *delegationSpyEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
-	s.record("GetEdgesBetweenVisibleAt")
-	return s.MemoryEngine.GetEdgesBetweenVisibleAt(ctx, startID, endID, version)
 }
 
 func (s *delegationSpyEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
@@ -533,6 +528,14 @@ func (s *delegationSpyEngine) GetInnerEngine() Engine {
 
 func newWrapperDelegationStack(t *testing.T, name string, spy *delegationSpyEngine) delegationContractEngine {
 	t.Helper()
+	// This contract asserts the unjournaled route: with WAL journaling enabled
+	// the wrapper owns the native mutation through the entity commit route and
+	// deliberately does not call the inner engine's method, so the delegation
+	// assertions below only describe unjournaled mode. Select that mode here
+	// instead of inheriting whatever a previously run test left in the global
+	// WAL flag; the journaling-owned route is controlled separately by
+	// TestWALEngine, which enables WAL and asserts the appended entry.
+	t.Cleanup(config.WithWALDisabled())
 	switch name {
 	case "badger":
 		return spy
@@ -606,12 +609,12 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			check("GetNodesByLabel", err)
 			_, err = engine.GetFirstNodeByLabel(t.Context(), "Person")
 			check("GetFirstNodeByLabel", err)
-			_, err = engine.GetOutgoingEdges(ctx, id("n1"))
-			check("GetOutgoingEdges", err)
-			_, err = engine.GetIncomingEdges(ctx, id("n2"))
-			check("GetIncomingEdges", err)
-			_, err = engine.GetEdgesBetween(ctx, id("n1"), id("n2"))
-			check("GetEdgesBetween", err)
+			_, err = engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: id("n1")})
+			check("ReadAdjacentEdges/outgoing", err)
+			_, err = engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: id("n2")})
+			check("ReadAdjacentEdges/incoming", err)
+			_, err = engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: id("n1"), Other: id("n2")})
+			check("ReadAdjacentEdges/between", err)
 			matched, err := engine.MatchEdgesBetween(context.Background(), id("n1"), id("n2"), "KNOWS", []string{}, func(*Edge) bool { return true })
 			check("MatchEdgesBetween", err)
 			require.Lenf(t, matched, 1, "%s.MatchEdgesBetween must find the seeded edge", stack)
@@ -840,14 +843,14 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			check("GetEdgeVisibleAt", err)
 			_, err = engine.GetNodesByLabelVisibleAt(ctx, "Person", version)
 			check("GetNodesByLabelVisibleAt", err)
-			_, err = engine.GetOutgoingEdgesVisibleAt(ctx, id("n1"), version)
-			check("GetOutgoingEdgesVisibleAt", err)
-			_, err = engine.GetIncomingEdgesVisibleAt(ctx, id("n2"), version)
-			check("GetIncomingEdgesVisibleAt", err)
+			_, err = engine.ReadAdjacentEdgesVisibleAt(ctx, AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: id("n1")}, version)
+			check("ReadAdjacentEdgesVisibleAt/outgoing", err)
+			_, err = engine.ReadAdjacentEdgesVisibleAt(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: id("n2")}, version)
+			check("ReadAdjacentEdgesVisibleAt/incoming", err)
 			_, err = engine.GetEdgesByTypeVisibleAt(ctx, "KNOWS", version)
 			check("GetEdgesByTypeVisibleAt", err)
-			_, err = engine.GetEdgesBetweenVisibleAt(ctx, id("n1"), id("n2"), version)
-			check("GetEdgesBetweenVisibleAt", err)
+			_, err = engine.ReadAdjacentEdgesVisibleAt(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: id("n1"), Other: id("n2")}, version)
+			check("ReadAdjacentEdgesVisibleAt/between", err)
 			_, err = engine.GetNodeCurrentHead(context.Background(), id("n1"))
 			check("GetNodeCurrentHead", err)
 			_, err = engine.GetEdgeCurrentHead(context.Background(), eid("e1"))

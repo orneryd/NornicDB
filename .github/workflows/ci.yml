@@ -73,7 +73,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: ui/package-lock.json
 
@@ -135,7 +135,7 @@ jobs:
       - run: go mod download
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - name: Build UI assets
@@ -217,7 +217,7 @@ jobs:
       - run: go mod download
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - name: Build UI assets

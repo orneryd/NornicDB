@@ -306,16 +306,9 @@ func (t *sizeTrackingEngine) GetNodesByLabelVisibleAt(ctx context.Context, label
 	return nil, storage.ErrNotImplemented
 }
 
-func (t *sizeTrackingEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+func (t *sizeTrackingEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, request storage.AdjacentEdgeRead, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetOutgoingEdgesVisibleAt(ctx, nodeID, version)
-	}
-	return nil, storage.ErrNotImplemented
-}
-
-func (t *sizeTrackingEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetIncomingEdgesVisibleAt(ctx, nodeID, version)
+		return provider.ReadAdjacentEdgesVisibleAt(ctx, request, version)
 	}
 	return nil, storage.ErrNotImplemented
 }
@@ -331,13 +324,6 @@ func (t *sizeTrackingEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeTy
 // engine (storage.EdgesBetweenMatcher).
 func (t *sizeTrackingEngine) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
 	return storage.MatchEdgesBetween(ctx, t.Engine, startID, endID, edgeType, properties, match)
-}
-
-func (t *sizeTrackingEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetEdgesBetweenVisibleAt(ctx, startID, endID, version)
-	}
-	return nil, storage.ErrNotImplemented
 }
 
 func (t *sizeTrackingEngine) GetNodeCurrentHead(ctx context.Context, id storage.NodeID) (storage.MVCCHead, error) {

@@ -6,10 +6,18 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// readAlgorithmGraph is the call contract and relationship reader shared by the
-// six whole-graph APOC extension algorithms. Existing (nodes, config) calls keep
-// their configuration; (nodes, types, config) adds the documented type filter.
-// Omitted/null types and ["*"] select all types; [] selects no relationships.
+// readAlgorithmGraph is the call contract and relationship-type selection shared
+// by the six whole-graph APOC extension algorithms. Existing (nodes, config)
+// calls keep their configuration; (nodes, types, config) adds the documented
+// type filter. Omitted/null types and ["*"] select all types; [] selects no
+// relationships.
+//
+// The reads these algorithms perform are reported by the identity graph reader
+// they go through, which owns their record: the node population the call runs
+// over, and every adjacency request's entries where that read hands them over,
+// before this call's type selection narrows them. A call that selects types
+// therefore filters at this boundary, and a call that selects every type keeps
+// the graph it was given and allocates no reader.
 func (e *StorageExecutor) readAlgorithmGraph(ctx context.Context, procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, map[string]interface{}, error) {
 	var config map[string]interface{}
 	var types map[string]struct{}
@@ -51,21 +59,33 @@ func (e *StorageExecutor) readAlgorithmGraph(ctx context.Context, procedure stri
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// A call that selects relationship types filters at this read boundary; an
+	// every-type call reads the graph it was given. Neither reports the read:
+	// the identity graph reader both of them read through owns that record.
 	if types == nil {
 		return graph, nodes, config, nil
 	}
 	return graph.cloneWithStorage(&algorithmRelationshipReader{Engine: graph.storage, types: types}), nodes, config, nil
 }
 
-// Filter each adjacency read at the shared storage boundary, keeping direction,
-// multiplicity and relationship properties for the consuming algorithm. Never
-// mutate a storage-owned slice or retain a graph-sized cross-read identity set.
+// algorithmRelationshipReader is the whole-graph algorithms' relationship-type
+// selection boundary. It keeps the relationship types the call supplies, and
+// keeps direction, multiplicity and relationship properties for the consuming
+// algorithm. The population of each request is reported by the identity graph
+// reader this one wraps, before the selection below narrows it, so one request
+// is one record. It never mutates a storage-owned slice or retains a
+// graph-sized cross-read identity set.
 type algorithmRelationshipReader struct {
 	storage.Engine
 	types map[string]struct{}
 }
 
-func (r *algorithmRelationshipReader) selectEdges(edges []*storage.Edge, err error) ([]*storage.Edge, error) {
+// ReadAdjacentEdges reads one adjacency request and keeps the relationships of
+// the types the call selected. The read is the wrapped reader's, so the entries
+// it returned were reported there, before this selection rejected the others;
+// a selection that keeps no type keeps no relationship.
+func (r *algorithmRelationshipReader) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	edges, err := r.Engine.ReadAdjacentEdges(ctx, request)
 	if err != nil {
 		return nil, err
 	}
@@ -76,14 +96,6 @@ func (r *algorithmRelationshipReader) selectEdges(edges []*storage.Edge, err err
 		}
 	}
 	return selected, nil
-}
-
-func (r *algorithmRelationshipReader) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return r.selectEdges(r.Engine.GetOutgoingEdges(ctx, id))
-}
-
-func (r *algorithmRelationshipReader) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return r.selectEdges(r.Engine.GetIncomingEdges(ctx, id))
 }
 
 // SubscribeEvents preserves storage event delivery through the relationship

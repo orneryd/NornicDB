@@ -145,7 +145,7 @@ func TestTransactionStorageWrapper_BulkOps_AndCounts(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, firstByLabel)
 
-	edgesBetween, err := w.GetEdgesBetween(context.Background(), "test:r1", "test:r2")
+	edgesBetween, err := w.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: "test:r1", Other: "test:r2"})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(edgesBetween), 1)
 
@@ -233,10 +233,10 @@ func TestTransactionStorageWrapper_BulkDeleteEdges_WithNamespaceInvalidatesPrelo
 	byType, err := ns.GetEdgesByType(context.Background(), "RELATES_TO")
 	require.NoError(t, err)
 	require.Len(t, byType, 1)
-	outgoingA, err := ns.GetOutgoingEdges(context.Background(), "a")
+	outgoingA, err := ns.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "a"})
 	require.NoError(t, err)
 	require.Len(t, outgoingA, 1)
-	outgoingEP, err := ns.GetOutgoingEdges(context.Background(), "ep")
+	outgoingEP, err := ns.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "ep"})
 	require.NoError(t, err)
 	require.Len(t, outgoingEP, 1)
 
@@ -249,10 +249,10 @@ func TestTransactionStorageWrapper_BulkDeleteEdges_WithNamespaceInvalidatesPrelo
 	byType, err = ns.GetEdgesByType(context.Background(), "RELATES_TO")
 	require.NoError(t, err)
 	require.Empty(t, byType)
-	outgoingA, err = ns.GetOutgoingEdges(context.Background(), "a")
+	outgoingA, err = ns.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "a"})
 	require.NoError(t, err)
 	require.Empty(t, outgoingA)
-	outgoingEP, err = ns.GetOutgoingEdges(context.Background(), "ep")
+	outgoingEP, err = ns.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "ep"})
 	require.NoError(t, err)
 	require.Empty(t, outgoingEP)
 }

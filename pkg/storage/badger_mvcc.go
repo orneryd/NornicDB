@@ -1187,12 +1187,10 @@ func (b *BadgerEngine) GetEdgeVisibleAt(ctx context.Context, id EdgeID, version 
 	return readEntityAtWithView(ctx, b, id, version, mvccEntityRead{visibility: visibleRead}, nil, (*BadgerEngine).getEdgeAtInTxn)
 }
 
-func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Outgoing, "", nil)
-}
-
-func (b *BadgerEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Incoming, "", nil)
+// ReadAdjacentEdgesVisibleAt answers one adjacent-edge request at the exact
+// requested version.
+func (b *BadgerEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, request AdjacentEdgeRead, version MVCCVersion) ([]*Edge, error) {
+	return b.readAdjacentEdgesAtWithView(ctx, request, version, nil)
 }
 
 func (b *BadgerEngine) BatchGetNodesLatestVisible(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {

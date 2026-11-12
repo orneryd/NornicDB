@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"slices"
@@ -611,6 +612,15 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	return collected, nil
 }
 
+// profileKindNodeByLabelScan and profileKindAllNodesScan name the node scan a
+// PROFILE statement actually performed: the plan operators that claim a scan.
+// A scan reads each entity it hands on once, whichever storage primitive
+// answered it.
+const (
+	profileKindNodeByLabelScan = queryprofile.KindNodeByLabelScan
+	profileKindAllNodesScan    = queryprofile.KindAllNodesScan
+)
+
 // visitNodesWithStreamingProjection is collectNodesWithStreamingProjection
 // appending each node to *collected, or handing it to visit when visit is
 // set, as the scan reads it, in the same order. visit returning
@@ -639,14 +649,33 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	if strings.TrimSpace(whereClause) != "" {
 		whereFilter = e.compileNodeWhereFilter(ctx, whereVariable, whereClause)
 	}
+	// A PROFILE statement counts the entities this scan reads here: one entity
+	// read and one row each, before the residual label, property, WHERE,
+	// visibility and viewport decisions, so the record says what the scan read
+	// rather than what it admitted: the label scan of five nodes that this
+	// clause admits one of has read five. A read that narrows the population
+	// with a pushed-down property equality or a projection can reject an entity
+	// before this visitor sees it, and then the rows are only the entities the
+	// storage admitted; the record never claims an entity it did not receive.
+	kind, detail := profileKindAllNodesScan, ""
+	if len(labels) > 0 {
+		kind, detail = profileKindNodeByLabelScan, labels[0]
+	}
+	scanCounter := queryprofile.Access(ctx, kind, detail)
 	collect := func(node *storage.Node) error {
+		if node == nil {
+			return nil
+		}
+		// One entity read, counted before the residual label, property, WHERE,
+		// visibility and viewport decisions below.
+		scanCounter.Add(1, 1)
 		// The scan honors the same caller context, so a canceled statement ends
 		// in the storage loop; the check here stops before the row work of a
 		// node the iterator already read.
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if node == nil || (hideSystemNodes && isSystemNode(node)) {
+		if hideSystemNodes && isSystemNode(node) {
 			return nil
 		}
 		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
@@ -699,7 +728,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// label body and its sidecar state are read together, once, including in
 	// pinned transactions. Stores may ignore the label hint; collect retains
 	// every residual label and property check.
-	queryReader := e.queryNodeReader(store)
+	queryReader := e.queryNodeReader(ctx, store)
 	if projection == nil && queryReader != nil && len(labels) > 0 {
 		err := streamQueryNodes(ctx, store, labels, collect)
 		if err == storage.ErrIterationStopped {
@@ -785,6 +814,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		if err != nil {
 			return err
 		}
+		scanCounter.Add(int64(len(ids)), int64(len(ids)))
 		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
 		for _, id := range ids {
 			node, getErr := e.getQueryNode(ctx, store, id)
@@ -854,6 +884,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// Filter out system nodes (labels starting with _)
 	filteredNodes := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
+		// The store listed these entities in one read; each is one entity read
+		// here, before the residual label and visibility decisions below.
+		scanCounter.Add(1, 1)
 		if err := ctx.Err(); err != nil {
 			return err
 		}

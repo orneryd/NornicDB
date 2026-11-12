@@ -1,6 +1,8 @@
 package apoc
 
 import (
+	"github.com/orneryd/nornicdb/apoc/registry"
+	"reflect"
 	"testing"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
@@ -45,4 +47,51 @@ func TestPluginFunctionNames(t *testing.T) {
 	require.False(t, IsBuiltInFunction("apoc.text.camelCase"))
 	require.Contains(t, BuiltInFunctionNames(), "apoc.map.removekeys")
 	require.Len(t, BuiltInFunctionNames(), 52)
+}
+
+// Capture effective admission, not source declaration annotations. This does
+// not invoke exporters, loaders or other handlers to infer their behavior.
+func TestPluginExportReadObservationInventory(t *testing.T) {
+	require.NoError(t, Initialize(storage.NewInMemoryStorage(), nil))
+	errorType := reflect.TypeOf((*error)(nil)).Elem()
+	counts := make(map[string]int)
+	names := PluginFunctionNames()
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		require.False(t, seen[name], "effective export names must be unique")
+		seen[name] = true
+		info, ok := GetInfo(name)
+		require.True(t, ok, name)
+		require.NotNil(t, info.Handler, name)
+		signature := info.Handler.Signature()
+		require.NotNil(t, signature, name)
+		policy := info.Handler.ReadObservation()
+		require.True(t, policy.Valid(), name)
+		domain := "value"
+		errors := 0
+		for output := 0; output < signature.NumOut(); output++ {
+			if signature.Out(output).Implements(errorType) {
+				errors++
+			}
+		}
+		switch {
+		case errors > 0:
+			domain = "checked-error"
+		case signature.NumOut() > 1:
+			domain = "metadata-only-tuple"
+			require.Equal(t, registry.OpaqueReads, policy, "tuple descriptors cannot inherit declaration trust: %s", name)
+		case signature.NumOut() == 0:
+			domain = "void"
+		case signature.Out(0).Kind() == reflect.Func:
+			domain = "capability-result"
+		}
+		observation := "opaque"
+		if policy == registry.CanonicalReads {
+			observation = "canonical"
+		}
+		counts[observation+"/"+domain]++
+		t.Logf("export=%s symbol=%s observation=%s result_domain=%s signature=%s", name, info.Handler.Symbol(), observation, domain, signature)
+	}
+	require.NotEmpty(t, names)
+	t.Logf("effective export admission totals: exports=%d groups=%v", len(names), counts)
 }

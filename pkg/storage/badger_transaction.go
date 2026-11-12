@@ -1286,8 +1286,8 @@ func (tx *BadgerTransaction) scanCommittedEmbeddingKeysLocked(nodeID NodeID, vis
 // It is the transaction's one reader of a node's relationships for integrity
 // work: a node delete's cascade (executeNodeDeletion), a non-DETACH delete's
 // commit check (resolveConnectedDeletesLocked) and the DELETE checks above the
-// transaction (IncidentEdges); its stored kernel (storedIncidentEdgesLocked)
-// also gives the commit the relationships stored at a node it relabels. So it
+// transaction (IncidentEdges). The shared adjacent-edge reader also gives the
+// commit the relationships stored at a node it relabels. So it
 // reads storage, not the visibility layer:
 // a relationship that on-demand suppression or knowledge-policy decay hides
 // from reads still connects its endpoints, and a delete that skipped it left
@@ -1335,21 +1335,19 @@ func (tx *BadgerTransaction) incidentEdgesLocked(ctx context.Context, nodeID Nod
 	// owner as engine adjacency. Overlay selection and committed IDs must
 	// not straddle replay/retirement. Transaction-local rewrites and deletes
 	// still take precedence over that captured stored view.
-	// So does a node whose write lock the transaction holds after a later
-	// commit (NOR-213): a delete removes its relationships from this read.
+	// A node whose write lock is held reads committed incidence after a
+	// later commit as well (NOR-213), including during delete preparation.
 	if tx.engine.writeBehind != nil || tx.readsLockedAdjacencyLatestLocked(nodeID) {
-		outgoing, incoming, err := tx.storedIncidentEdgesLocked(ctx, nodeID)
+		incident, err := readAdjacentEdges(ctx, tx.engine, AdjacentEdgeRead{Direction: AdjacentBoth, Node: nodeID}, nil, storedRead)
 		if err != nil {
 			return nil, err
 		}
-		for _, adjacent := range [...][]*Edge{outgoing, incoming} {
-			for _, edge := range adjacent {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-				if !skip(edge.ID) {
-					include(copyEdge(edge))
-				}
+		for _, edge := range incident {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if !skip(edge.ID) {
+				include(copyEdge(edge))
 			}
 		}
 		return edges, nil
@@ -1408,16 +1406,6 @@ func (tx *BadgerTransaction) incidentEdgesLocked(ctx context.Context, nodeID Nod
 		return committed(view, tx.badgerTx)
 	})
 	return edges, err
-}
-
-// storedIncidentEdgesLocked returns the relationships stored at nodeID now,
-// outgoing and incoming, from one read of the engine's current stored
-// adjacency: committed and acknowledged buffered relationships, hidden ones
-// included, without this transaction's own changes and not at its snapshot.
-// Integrity preparation follows the selected staging or commit phase
-// lifetime. Caller holds tx.mu.
-func (tx *BadgerTransaction) storedIncidentEdgesLocked(ctx context.Context, nodeID NodeID) (outgoing, incoming []*Edge, err error) {
-	return readAdjacency(ctx, tx.engine, adjacencyBoth, nodeID, "", nil, storedRead)
 }
 
 // bufferRemoveEdgeBookkeepingBuffered buffers an edge's primary-key and index

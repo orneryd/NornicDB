@@ -61,17 +61,30 @@ func TestCompositeRefusalsFailTheirStatement(t *testing.T) {
 			params := map[string]interface{}{"run": run}
 			params["iterate"] = "UNWIND ['" + run + "'] AS r RETURN r"
 			params["index"] = "refusal_" + name
+			one, err := fixture.mgr.GetStorage("one")
+			require.NoError(t, err)
+			two, err := fixture.mgr.GetStorage("two")
+			require.NoError(t, err)
+			beforeOne, beforeTwo := one.GetSchema().GetIndexes(), two.GetSchema().GetIndexes()
 			query := "USE comp CALL { USE comp.two CREATE (:AcAtom {run: $run}) RETURN 1 AS z } CALL { WITH z USE comp.one " + fragment + " } RETURN w, z"
-			_, err := fixture.exec.Execute(ctx, query, params)
+			_, err = fixture.exec.Execute(ctx, query, params)
 			if strings.HasPrefix(name, "periodic_") {
 				// #1565 rejects independent batches before invocation: their
 				// commits cannot belong to the composite rollback owner.
 				require.ErrorContains(t, err, "unsupported query type in transaction")
+			} else if name == "schema_command" {
+				// A data procedure rejects DDL before it could acquire another
+				// writer. Preserve that earlier refusal, not a later conflict.
+				var denied *PermissionDeniedError
+				require.ErrorAs(t, err, &denied)
+				require.Equal(t, "schema", denied.Permission)
 			} else {
 				require.ErrorContains(t, err, "Writing to more than one database per transaction is not allowed")
 			}
 			require.Equal(t, int64(0), fixture.writes(t, "comp.one", run))
 			require.Equal(t, int64(0), fixture.writes(t, "comp.two", run))
+			require.ElementsMatch(t, beforeOne, one.GetSchema().GetIndexes(), "a refused statement publishes no schema in its selected database")
+			require.ElementsMatch(t, beforeTwo, two.GetSchema().GetIndexes(), "a refused statement publishes no schema in its first writer")
 		})
 	}
 }

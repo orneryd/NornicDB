@@ -84,14 +84,14 @@ func (tx *BadgerTransaction) removePendingEdgeLocked(id EdgeID) {
 	delete(tx.pendingEdges, id)
 }
 
-func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(ctx context.Context, committed []*Edge, id NodeID, include func(*Edge) bool) ([]*Edge, error) {
+func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(ctx context.Context, committed []*Edge, request AdjacentEdgeRead, include func(*Edge) bool) ([]*Edge, error) {
 	if len(tx.pendingEdges) == 0 && len(tx.deletedEdges) == 0 && tx.entityLocks.latest == 0 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		return committed, nil
 	}
-	pending, err := tx.pendingAdjacencyLocked(ctx, id)
+	pending, err := tx.pendingAdjacencyLocked(ctx, request.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(ctx context.Context
 			return nil, err
 		}
 		if _, gone := tx.deletedEdges[edge.ID]; !gone && include(edge) {
-			result = append(result, copyEdge(edge))
+			result = append(result, request.header(copyEdge(edge)))
 		}
 	}
 	return result, nil

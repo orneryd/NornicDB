@@ -92,7 +92,11 @@ func (e *StorageExecutor) evaluateRowGraphFunction(ctx context.Context, function
 	if inherited := rowStatementContext(values); inherited != nil {
 		metadataCtx = inherited
 	}
+	origin := rowExpressionOrigin(values)
 	fnCtx := e.registryFunctionContext(metadataCtx, func(expression string) (interface{}, error) {
+		if saved, bound := bindBorrowedExpressionOrigin(values, argument, expression, origin); bound {
+			defer restoreRowExpressionOrigin(values, saved)
+		}
 		value, resolved, err := e.evaluateRowValue(statementCtx, expression, values)
 		if err != nil {
 			panic(rowFunctionArgumentFailure{err})

@@ -479,7 +479,7 @@ func TestBadgerEngine_UpdateEdge(t *testing.T) {
 		require.NoError(t, err)
 
 		// Check indexes updated
-		outgoing, err := engine.GetOutgoingEdges(context.Background(), n1.ID)
+		outgoing, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: n1.ID})
 		require.NoError(t, err)
 
 		found := false
@@ -527,13 +527,13 @@ func TestBadgerEngine_DeleteEdge(t *testing.T) {
 		err := engine.CreateEdge(t.Context(), edge)
 		require.NoError(t, err)
 
-		outgoing, _ := engine.GetOutgoingEdges(context.Background(), NodeID(prefixTestID("n1")))
+		outgoing, _ := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: NodeID(prefixTestID("n1"))})
 		initialCount := len(outgoing)
 
 		err = engine.DeleteEdge(t.Context(), EdgeID(prefixTestID("e2")))
 		require.NoError(t, err)
 
-		outgoing, _ = engine.GetOutgoingEdges(context.Background(), NodeID(prefixTestID("n1")))
+		outgoing, _ = engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: NodeID(prefixTestID("n1"))})
 		assert.Len(t, outgoing, initialCount-1)
 	})
 
@@ -693,24 +693,24 @@ func TestBadgerEngine_AllNodes(t *testing.T) {
 	assert.Len(t, nodes, 10)
 }
 
-func TestBadgerEngine_GetOutgoingEdges(t *testing.T) {
+func TestBadgerEngine_ReadAdjacentEdgesOutgoing(t *testing.T) {
 	// Create a graph: n1 -> n2, n1 -> n3, n2 -> n3
 	runDirectionalEdgeCases(t, []*Edge{
 		testEdge("e1", "n1", "n2", "A"),
 		testEdge("e2", "n1", "n3", "B"),
 		testEdge("e3", "n2", "n3", "C"),
-	}, (*BadgerEngine).GetOutgoingEdges, []directionalEdgeCase{
+	}, AdjacentOutgoing, []directionalEdgeCase{
 		{name: "returns outgoing edges", node: "n1", want: 2},
 		{name: "returns one edge", node: "n2", want: 1},
 		{name: "returns empty for leaf node", node: "n3", want: 0},
 	})
 }
 
-func TestBadgerEngine_GetIncomingEdges(t *testing.T) {
+func TestBadgerEngine_ReadAdjacentEdgesIncoming(t *testing.T) {
 	runDirectionalEdgeCases(t, []*Edge{
 		testEdge("e1", "n1", "n3", "A"),
 		testEdge("e2", "n2", "n3", "B"),
-	}, (*BadgerEngine).GetIncomingEdges, []directionalEdgeCase{
+	}, AdjacentIncoming, []directionalEdgeCase{
 		{name: "returns incoming edges", node: "n3", want: 2},
 		{name: "returns empty for root node", node: "n1", want: 0},
 	})
@@ -727,10 +727,10 @@ type directionalEdgeCase struct {
 
 // runDirectionalEdgeCases creates n1..n3 plus exactly the edges the caller
 // declares (the outgoing case seeds three, the incoming case two), then runs
-// each case's own read and count assertion. read is the engine method under
-// test, so the two directions share this fixture without sharing their edge
+// each case's own read and count assertion. direction is the read under test,
+// so the two directions share this fixture without sharing their edge
 // population or their expected counts.
-func runDirectionalEdgeCases(t *testing.T, edges []*Edge, read func(*BadgerEngine, context.Context, NodeID) ([]*Edge, error), cases []directionalEdgeCase) {
+func runDirectionalEdgeCases(t *testing.T, edges []*Edge, direction AdjacentEdgeDirection, cases []directionalEdgeCase) {
 	t.Helper()
 	engine := createTestBadgerEngine(t)
 	for _, id := range []string{"n1", "n2", "n3"} {
@@ -742,7 +742,7 @@ func runDirectionalEdgeCases(t *testing.T, edges []*Edge, read func(*BadgerEngin
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := read(engine, context.Background(), NodeID(prefixTestID(tc.node)))
+			got, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: direction, Node: NodeID(prefixTestID(tc.node))})
 			require.NoError(t, err)
 			assert.Len(t, got, tc.want)
 		})
@@ -763,13 +763,13 @@ func TestBadgerEngine_GetEdgesBetween(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(t.Context(), testEdge("e2", n1.ID, n2.ID, "B")))
 
 	t.Run("returns all edges between nodes", func(t *testing.T) {
-		edges, err := engine.GetEdgesBetween(context.Background(), n1.ID, n2.ID)
+		edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: n1.ID, Other: n2.ID})
 		require.NoError(t, err)
 		assert.Len(t, edges, 2)
 	})
 
 	t.Run("returns empty for no connection", func(t *testing.T) {
-		edges, err := engine.GetEdgesBetween(context.Background(), n2.ID, n1.ID)
+		edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: n2.ID, Other: n1.ID})
 		require.NoError(t, err)
 		assert.Len(t, edges, 0)
 	})
@@ -893,7 +893,7 @@ func TestBadgerEngine_GetEdgesBetweenKeepsSameTypeSetWithHead(t *testing.T) {
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n2.ID, "KNOWS", first.ID, true)
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n2.ID, "KNOWS", second.ID, true)
 	requireEdgeBetweenHeadEntry(t, engine, n1.ID, n2.ID, "KNOWS", second.ID, true)
-	edges, err := engine.GetEdgesBetween(context.Background(), n1.ID, n2.ID)
+	edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: n1.ID, Other: n2.ID})
 	require.NoError(t, err)
 	require.Len(t, edges, 2)
 	edge, err := engine.GetEdgeBetween(t.Context(), n1.ID, n2.ID, "KNOWS")
@@ -928,7 +928,7 @@ func TestBadgerEngine_GetEdgesBetweenSelfHealIsBounded(t *testing.T) {
 		}))
 	}
 
-	edges, err := engine.GetEdgesBetween(context.Background(), n1.ID, n2.ID)
+	edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: n1.ID, Other: n2.ID})
 	require.NoError(t, err)
 	require.Len(t, edges, edgeCount)
 	assert.Equal(t, edgeBetweenSelfHealMaxEdges, countEdgeBetweenSetEntries(t, engine, n1.ID, n2.ID))
@@ -1340,7 +1340,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		assert.Len(t, nodes, 5)
 
 		// Verify edge indexes work
-		incoming, err := engine2.GetIncomingEdges(context.Background(), NodeID(prefixTestID("target")))
+		incoming, err := engine2.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: NodeID(prefixTestID("target"))})
 		require.NoError(t, err)
 		assert.Len(t, incoming, 3)
 	})

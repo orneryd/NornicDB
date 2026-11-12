@@ -35,6 +35,30 @@ type caseExpression struct {
 	elseResult     string           // ELSE result (optional)
 }
 
+// caseSourcePositions is an optional observation product of the canonical
+// CASE reader. Ordinary parsed CASE values keep their existing layout; a
+// profiled evaluation retains positions only for the parts that reader found.
+// Positions address the trimmed expression, not an alias or rewritten body.
+type caseSourcePositions struct {
+	test, otherwise int
+	conditions      []int
+	results         []int
+}
+
+func (p *caseSourcePositions) start(part caseValuePart, index int) int {
+	switch part {
+	case caseTest:
+		return p.test
+	case caseWhen:
+		return p.conditions[index]
+	case caseResult:
+		return p.results[index]
+	case caseElse:
+		return p.otherwise
+	}
+	panic("invalid CASE part")
+}
+
 // isCaseExpression checks if an expression is a CASE expression.
 func isCaseExpression(expr string) bool {
 	trimmed := strings.TrimSpace(expr)
@@ -80,7 +104,7 @@ func leadingCaseExpressionEnd(expr string) int {
 
 // parseCaseExpression parses a CASE expression into its components.
 // Supports both searched and simple CASE expressions.
-func parseCaseExpression(expr string) (*caseExpression, error) {
+func parseCaseExpression(expr string, positions *caseSourcePositions) (*caseExpression, error) {
 	expr = strings.TrimSpace(expr)
 	upper := upperASCII(expr)
 
@@ -121,6 +145,9 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 		// Simple CASE: CASE expression WHEN value THEN result ...
 		ce.isSimple = true
 		ce.testExpression = beforeFirstWhen
+		if positions != nil {
+			positions.test = contentStart + leadingExpressionSpace(content[:firstWhenIdx])
+		}
 	}
 
 	for cursor := firstWhenIdx; cursor < len(content); {
@@ -152,12 +179,20 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 			clause.condition = condition
 		}
 		ce.whenClauses = append(ce.whenClauses, clause)
+		if positions != nil {
+			positions.conditions = append(positions.conditions, contentStart+conditionStart+leadingExpressionSpace(content[conditionStart:thenIndex]))
+			positions.results = append(positions.results, contentStart+resultStart+leadingExpressionSpace(content[resultStart:resultEnd]))
+		}
 
 		if next == len(content) {
 			break
 		}
 		if next == nextElse {
 			ce.elseResult = strings.TrimSpace(content[nextElse+len("ELSE"):])
+			if positions != nil {
+				start := nextElse + len("ELSE")
+				positions.otherwise = contentStart + start + leadingExpressionSpace(content[start:])
+			}
 			break
 		}
 		cursor = nextWhen
@@ -672,7 +707,7 @@ func caseVariableScopeOpensAt(expr string, open int) bool {
 
 // evaluateCaseExpression evaluates a CASE expression and returns the result.
 func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
-	parsed, err := parseCaseExpression(expr)
+	parsed, err := parseCaseExpression(expr, nil)
 	if err != nil {
 		return nil
 	}

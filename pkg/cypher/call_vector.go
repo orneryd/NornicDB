@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -61,11 +62,23 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 		// the search service don't make its name queryable, and managed
 		// embeddings the service hasn't loaded yet, or holds in another
 		// dimension, still do.
-		managed, err := e.storageHasManagedNodeEmbeddings(ctx)
+		managed, err := storageHasManagedNodeEmbeddings(ctx, e.storage)
 		if err != nil {
 			return nil, err
 		}
 		if !managed {
+			// A transaction's older snapshot may predate the managed population.
+			// Confirm existence against committed storage, but return no hits:
+			// querying the newer service would violate this snapshot's visibility.
+			if snapshot, ok := e.storage.(*transactionStorageWrapper); ok {
+				current, err := storageHasManagedNodeEmbeddings(ctx, snapshot.underlying)
+				if err != nil {
+					return nil, err
+				}
+				if current {
+					return result, nil
+				}
+			}
 			return nil, noSuchVectorIndexError(indexName)
 		}
 	}
@@ -101,7 +114,14 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 		if !ok {
 			return nil, localizedError(localization.CypherSpecializedCallsVectorQueryFailed(), nil)
 		}
+		metadataRows := e.queryNodeReader(ctx, e.storage) != nil
 		for _, hit := range nodeScores {
+			// Scoring owns this detached image from its original read view.
+			// Project that same image for rows; never reread a newer snapshot.
+			if metadataRows && hit.node != nil {
+				hit.node.NamedEmbeddings = nil
+				hit.node.ChunkEmbeddings = nil
+			}
 			result.Rows = append(result.Rows, []interface{}{hit.node, hit.score})
 		}
 		return result, nil
@@ -127,7 +147,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 
 	seenOrphans := make(map[string]bool)
 	for _, hit := range hits {
-		node, err := e.storage.GetNode(ctx, storage.NodeID(hit.ID))
+		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(hit.ID))
 		if err != nil || node == nil {
 			if err != nil && errors.Is(err, storage.ErrNotFound) && svc != nil {
 				if !seenOrphans[hit.ID] {
@@ -153,9 +173,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 // storageHasManagedNodeEmbeddings reports whether any stored node has a named
 // embedding or a managed chunk: the data a vector query naming no vector
 // index reads.
-func (e *StorageExecutor) storageHasManagedNodeEmbeddings(ctx context.Context) (bool, error) {
+func storageHasManagedNodeEmbeddings(ctx context.Context, store storage.Engine) (bool, error) {
 	stop := errors.New("managed vector found")
-	err := e.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
+	err := store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, queryprofile.EntityVisitor(ctx, queryprofile.KindAllNodesScan, "", func(node *storage.Node) error {
 		for _, vector := range node.NamedEmbeddings {
 			if len(vector) > 0 {
 				return stop
@@ -167,7 +187,7 @@ func (e *StorageExecutor) storageHasManagedNodeEmbeddings(ctx context.Context) (
 			}
 		}
 		return nil
-	})
+	}))
 	if err != nil && !errors.Is(err, stop) {
 		return false, err
 	}

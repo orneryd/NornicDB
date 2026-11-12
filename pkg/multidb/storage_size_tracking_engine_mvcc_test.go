@@ -34,20 +34,18 @@ func (m *mvccDelegatingEngine) GetNodesByLabelVisibleAt(ctx context.Context, lab
 	return []*storage.Node{{ID: storage.NodeID("n:" + label)}}, nil
 }
 
-func (m *mvccDelegatingEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
-	return []*storage.Edge{{ID: storage.EdgeID("out:" + string(nodeID)), StartNode: nodeID}}, nil
-}
-
-func (m *mvccDelegatingEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
-	return []*storage.Edge{{ID: storage.EdgeID("in:" + string(nodeID)), EndNode: nodeID}}, nil
+func (m *mvccDelegatingEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, request storage.AdjacentEdgeRead, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentBetween {
+		return []*storage.Edge{{ID: storage.EdgeID(string(request.Node) + "->" + string(request.Other)), StartNode: request.Node, EndNode: request.Other}}, nil
+	}
+	if request.Direction == storage.AdjacentIncoming {
+		return []*storage.Edge{{ID: storage.EdgeID("in:" + string(request.Node)), EndNode: request.Node}}, nil
+	}
+	return []*storage.Edge{{ID: storage.EdgeID("out:" + string(request.Node)), StartNode: request.Node}}, nil
 }
 
 func (m *mvccDelegatingEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, _ storage.MVCCVersion) ([]*storage.Edge, error) {
 	return []*storage.Edge{{ID: storage.EdgeID("e:" + edgeType)}}, nil
-}
-
-func (m *mvccDelegatingEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
-	return []*storage.Edge{{ID: storage.EdgeID(startID + "->" + endID), StartNode: startID, EndNode: endID}}, nil
 }
 
 func (m *mvccDelegatingEngine) GetNodeCurrentHead(ctx context.Context, id storage.NodeID) (storage.MVCCHead, error) {
@@ -100,16 +98,16 @@ func TestSizeTrackingEngine_MVCCDelegation(t *testing.T) {
 				require.Equal(t, storage.NodeID("n:Person"), nodesAt[0].ID)
 			}
 		}},
-		{name: "GetOutgoingEdgesVisibleAt", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
-			outgoingAt, err := tracker.GetOutgoingEdgesVisibleAt(context.Background(), "n1", version)
+		{name: "ReadAdjacentEdgesVisibleAt/outgoing", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
+			outgoingAt, err := tracker.ReadAdjacentEdgesVisibleAt(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: "n1"}, version)
 			if accept(err) {
 				require.Len(t, outgoingAt, 1)
 				require.Equal(t, storage.EdgeID("out:n1"), outgoingAt[0].ID)
 				require.Equal(t, storage.NodeID("n1"), outgoingAt[0].StartNode)
 			}
 		}},
-		{name: "GetIncomingEdgesVisibleAt", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
-			incomingAt, err := tracker.GetIncomingEdgesVisibleAt(context.Background(), "n1", version)
+		{name: "ReadAdjacentEdgesVisibleAt/incoming", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
+			incomingAt, err := tracker.ReadAdjacentEdgesVisibleAt(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "n1"}, version)
 			if accept(err) {
 				require.Len(t, incomingAt, 1)
 				require.Equal(t, storage.EdgeID("in:n1"), incomingAt[0].ID)
@@ -123,8 +121,8 @@ func TestSizeTrackingEngine_MVCCDelegation(t *testing.T) {
 				require.Equal(t, storage.EdgeID("e:KNOWS"), edgesByType[0].ID)
 			}
 		}},
-		{name: "GetEdgesBetweenVisibleAt", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
-			edgesBetween, err := tracker.GetEdgesBetweenVisibleAt(context.Background(), "a", "b", version)
+		{name: "ReadAdjacentEdgesVisibleAt/between", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
+			edgesBetween, err := tracker.ReadAdjacentEdgesVisibleAt(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: "a", Other: "b"}, version)
 			if accept(err) {
 				require.Len(t, edgesBetween, 1)
 				require.Equal(t, storage.EdgeID("a->b"), edgesBetween[0].ID)

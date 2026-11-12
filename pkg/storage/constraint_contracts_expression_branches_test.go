@@ -14,18 +14,15 @@ type constraintExprEngine struct {
 	getNodeFn  func(NodeID) (*Node, error)
 }
 
-func (e *constraintExprEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	if e.outgoingFn != nil {
-		return e.outgoingFn(nodeID)
+func (e *constraintExprEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	if request.Direction == AdjacentIncoming {
+		if e.incomingFn != nil {
+			return e.incomingFn(request.Node)
+		}
+	} else if e.outgoingFn != nil {
+		return e.outgoingFn(request.Node)
 	}
-	return e.Engine.GetOutgoingEdges(ctx, nodeID)
-}
-
-func (e *constraintExprEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	if e.incomingFn != nil {
-		return e.incomingFn(nodeID)
-	}
-	return e.Engine.GetIncomingEdges(ctx, nodeID)
+	return e.Engine.ReadAdjacentEdges(ctx, request)
 }
 
 func (e *constraintExprEngine) GetNode(ctx context.Context, id NodeID) (*Node, error) {

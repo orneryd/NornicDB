@@ -82,10 +82,10 @@ func TestPropertyDispatchArgumentFailureBoundary(t *testing.T) {
 	cypherfn.Register("property_dispatch_discard_error", func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 		_, _ = ctx.Eval(args[0])
 		return "discarded", nil
-	})
+	}, cypherfn.OpaqueReads)
 	cypherfn.Register("property_dispatch_panic", func(_ context.Context, _ cypherfn.Context, _ []string) (interface{}, error) {
 		panic("registry defect")
-	})
+	}, cypherfn.OpaqueReads)
 	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "dispatch_failure"))
 	for _, tc := range []struct {
 		argument string

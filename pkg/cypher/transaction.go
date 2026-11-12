@@ -411,7 +411,7 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 			txExec := e.cloneWithStorage(wrapper)
 			txExec.promoteNodeLookupCacheTo(e)
 			completionErr := wrapper.completeCommitActions(admittedCtx)
-			txExec.refreshSearchAfterCommit(wrapper)
+			txExec.refreshSearchAfterCommit(ctx, wrapper)
 			return completionErr
 		}
 	}

@@ -365,9 +365,6 @@ func (e *StorageExecutor) executeCreateConstraintProperty(ctx context.Context, d
 		if decl.isRelationship {
 			constraint.EntityType = storage.ConstraintEntityRelationship
 		}
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
-		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
 			return nil, err
 		}
@@ -391,6 +388,13 @@ func (e *StorageExecutor) executeCreateConstraintProperty(ctx context.Context, d
 		if decl.isRelationship {
 			ptc.EntityType = storage.ConstraintEntityRelationship
 			opts.EntityType = storage.ConstraintEntityRelationship
+		}
+		needed, err := e.storage.GetSchema().PropertyTypeConstraintCreationRequired(ctx, ptc, ifNotExists)
+		if err != nil {
+			return nil, err
+		}
+		if !needed {
+			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 		}
 		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(ctx, e.storage, ptc); err != nil {
 			return nil, err
@@ -425,9 +429,6 @@ func (e *StorageExecutor) executeCreateConstraintProperty(ctx context.Context, d
 		if decl.isRelationship {
 			constraint.EntityType = storage.ConstraintEntityRelationship
 		}
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
-		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
 			return nil, err
 		}
@@ -452,9 +453,6 @@ func (e *StorageExecutor) executeCreateConstraintProperty(ctx context.Context, d
 			Type:       storage.ConstraintNodeKey,
 			Label:      decl.label,
 			Properties: decl.requirement.properties,
-		}
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
 		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
 			return nil, err
@@ -485,9 +483,6 @@ func (e *StorageExecutor) executeCreateConstraintProperty(ctx context.Context, d
 		}
 		if decl.isRelationship {
 			constraint.EntityType = storage.ConstraintEntityRelationship
-		}
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
 		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
 			return nil, err
@@ -528,9 +523,6 @@ func (e *StorageExecutor) executeCreateConstraintProperty(ctx context.Context, d
 			Label:      decl.label,
 			Properties: properties,
 		}
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
-		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
 			return nil, err
 		}
@@ -559,9 +551,6 @@ func (e *StorageExecutor) executeUniquePropertyConstraint(ctx context.Context, d
 		if constraint.Name == "" {
 			constraint.Name = fmt.Sprintf("constraint_%s_%s_unique", decl.label, decl.requirement.property)
 		}
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
-		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
 			return nil, err
 		}
@@ -570,14 +559,7 @@ func (e *StorageExecutor) executeUniquePropertyConstraint(ctx context.Context, d
 	if constraint.Name == "" {
 		constraint.Name = fmt.Sprintf("constraint_%s_%s", decl.label, decl.requirement.property)
 	}
-	if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-		return nil, err
-	}
-	schema := e.storage.GetSchema()
 	if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
-		return nil, err
-	}
-	if err := storage.RefreshUniqueConstraintValuesForEngine(ctx, e.storage, schema); err != nil {
 		return nil, err
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -612,9 +594,6 @@ func (e *StorageExecutor) executeCompositeUniqueConstraint(ctx context.Context, 
 	}
 	if constraint.Name == "" {
 		constraint.Name = fmt.Sprintf("constraint_%s_%s_unique", decl.label, strings.Join(decl.requirement.properties, "_"))
-	}
-	if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-		return nil, err
 	}
 	if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
 		return nil, err

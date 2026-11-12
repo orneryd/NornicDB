@@ -17,14 +17,14 @@ import (
 // statement.
 
 func init() {
-	cypherfn.Register("coll.distinct", fnCollDistinct)
-	cypherfn.Register("coll.flatten", fnCollFlatten)
-	cypherfn.Register("coll.indexof", fnCollIndexOf)
-	cypherfn.Register("coll.insert", fnCollInsert)
-	cypherfn.Register("coll.max", fnCollExtreme("coll.max", 1))
-	cypherfn.Register("coll.min", fnCollExtreme("coll.min", -1))
-	cypherfn.Register("coll.remove", fnCollRemove)
-	cypherfn.Register("coll.sort", fnCollSort)
+	cypherfn.Register("coll.distinct", fnCollDistinct, cypherfn.CanonicalReads)
+	cypherfn.Register("coll.flatten", fnCollFlatten, cypherfn.CanonicalReads)
+	cypherfn.Register("coll.indexof", fnCollIndexOf, cypherfn.CanonicalReads)
+	cypherfn.Register("coll.insert", fnCollInsert, cypherfn.CanonicalReads)
+	cypherfn.Register("coll.max", fnCollExtreme("coll.max", 1), cypherfn.CanonicalReads)
+	cypherfn.Register("coll.min", fnCollExtreme("coll.min", -1), cypherfn.CanonicalReads)
+	cypherfn.Register("coll.remove", fnCollRemove, cypherfn.CanonicalReads)
+	cypherfn.Register("coll.sort", fnCollSort, cypherfn.CanonicalReads)
 }
 
 // collArguments evaluates a coll.* call's arguments: the list first, then

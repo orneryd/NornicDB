@@ -15,6 +15,17 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// singleRowAggregateInput is an aggregate call's input expression when one row
+// is evaluated against it: the call's argument without its DISTINCT modifier,
+// which qualifies the aggregate's input rather than forming an expression of
+// its own (parsePipelineAggregate owns that call split).
+func singleRowAggregateInput(expr string) string {
+	if _, input, _, ok := parsePipelineAggregate(expr); ok {
+		return input
+	}
+	return extractFuncInner(expr)
+}
+
 func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
@@ -394,31 +405,31 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// sum(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "sum") {
-		inner := extractFuncArgs(expr, "sum")
+		inner := singleRowAggregateInput(expr)
 		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// avg(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "avg") {
-		inner := extractFuncArgs(expr, "avg")
+		inner := singleRowAggregateInput(expr)
 		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// min(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "min") {
-		inner := extractFuncArgs(expr, "min")
+		inner := singleRowAggregateInput(expr)
 		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// max(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "max") {
-		inner := extractFuncArgs(expr, "max")
+		inner := singleRowAggregateInput(expr)
 		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// collect(expr) - in single row context, returns single-element list
 	if matchFuncStartAndSuffix(expr, "collect") {
-		inner := extractFuncArgs(expr, "collect")
+		inner := singleRowAggregateInput(expr)
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if val == nil {
 			return []interface{}{}

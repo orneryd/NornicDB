@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A transaction lists relationship headers as GetOutgoingEdges /
-// GetIncomingEdges list relationships at its snapshot: adjacency values give
+// A transaction lists relationship headers as ReadEdges lists relationships at
+// its snapshot: adjacency values give
 // the type and other end, a peer's later change doesn't show, the
 // transaction's own writes and deletes are merged, and an entry without a
 // value or a head newer than the read version reads the record.
@@ -45,20 +45,18 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 
 	same := func(nodeID NodeID) {
 		t.Helper()
-		headers, answered, err := tx.OutgoingEdgeHeaders(context.Background(), nodeID)
+		headers, err := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: nodeID, Headers: true})
 		require.NoError(t, err)
-		require.True(t, answered)
-		full, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: nodeID})
+		full, err := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Node: nodeID})
 		require.NoError(t, err)
 		require.Equal(t, headerSummary(full), headerSummary(headers), nodeID)
-		headers, answered, err = tx.IncomingEdgeHeaders(context.Background(), nodeID)
+		headers, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: nodeID, Headers: true})
 		require.NoError(t, err)
-		require.True(t, answered)
-		full, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: nodeID})
+		full, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: nodeID})
 		require.NoError(t, err)
 		require.Equal(t, headerSummary(full), headerSummary(headers), nodeID)
 	}
-	headers, _, err := tx.OutgoingEdgeHeaders(context.Background(), "test:a")
+	headers, err := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e1:K:test:a->test:b", "test:e3:K:test:a->test:d", "test:e5:L:test:a->test:b"}, headerSummary(headers))
 	for _, header := range headers {
@@ -66,8 +64,8 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 			require.Nil(t, header.Properties, "e1 comes from its adjacency value")
 		}
 	}
-	// The second listing uses the cached adjacency and, after GetOutgoingEdges,
-	// the cached records.
+	// The second listing uses the cached adjacency and, after the full read, the
+	// cached records.
 	same("test:a")
 	same("test:a")
 	same("test:b")
@@ -90,28 +88,29 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 	defer func() { _ = tx2.Rollback() }()
 	require.NoError(t, tx2.SetNamespace("test"))
 	tx2.readTS = e4Head.Version
-	headers, answered, err := tx2.OutgoingEdgeHeaders(context.Background(), "test:b")
+	headers, err = tx2.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:b", Headers: true})
 	require.NoError(t, err)
-	require.True(t, answered)
 	require.Len(t, headers, 1)
 	require.Equal(t, int64(1), headers[0].Properties["w"], "the record at the read version")
 	tx.readTS = readTS
 
-	// Decay filtering and a missing read version decline; a finished
-	// transaction errors.
+	// Decay filtering makes the records decide visibility, a zero read version
+	// answers from the current engine view, and a finished transaction errors.
 	eng.SetDecayEnabled(true)
-	_, answered, err = tx.OutgoingEdgeHeaders(context.Background(), "test:a")
+	decayedHeaders, err := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 	require.NoError(t, err)
-	require.False(t, answered)
+	decayedFull, err := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a"})
+	require.NoError(t, err)
+	require.Equal(t, headerSummary(decayedFull), headerSummary(decayedHeaders))
 	eng.SetDecayEnabled(false)
 	tx.readTS = MVCCVersion{}
-	_, answered, err = tx.OutgoingEdgeHeaders(context.Background(), "test:a")
+	current, err := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 	require.NoError(t, err)
-	require.False(t, answered)
+	require.NotEmpty(t, current)
 	tx.readTS = readTS
-	_, _, err = tx.OutgoingEdgeHeaders(context.Background(), "other:a")
+	_, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "other:a", Headers: true})
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
-	_, _, err = tx.IncomingEdgeHeaders(context.Background(), "test:a")
+	_, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:a", Headers: true})
 	require.Error(t, err)
 }

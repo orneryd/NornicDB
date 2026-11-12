@@ -49,11 +49,39 @@ func (s *subqueryLookupFailureEngine) StreamNodesWithOptions(ctx context.Context
 func (s *subqueryLookupFailureEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	return singleShotLookup(s, ctx, s.operation == "node" && label == "Source", func(ctx context.Context) ([]*storage.Node, error) { return s.Engine.GetNodesByLabel(ctx, label) })
 }
-func (s *subqueryLookupFailureEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return singleShotLookup(s, ctx, s.operation == "outgoing", func(ctx context.Context) ([]*storage.Edge, error) { return s.Engine.GetOutgoingEdges(ctx, id) })
+func (s *subqueryLookupFailureEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		return singleShotLookup(s, ctx, s.operation == "incoming", func(ctx context.Context) ([]*storage.Edge, error) {
+			return s.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node})
+		})
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := s.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := s.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
+	return singleShotLookup(s, ctx, s.operation == "outgoing", func(ctx context.Context) ([]*storage.Edge, error) {
+		return s.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
+	})
 }
 func (s *subqueryLookupFailureEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return singleShotLookup(s, ctx, s.operation == "incoming", func(ctx context.Context) ([]*storage.Edge, error) { return s.Engine.GetIncomingEdges(ctx, id) })
+	return singleShotLookup(s, ctx, s.operation == "incoming", func(ctx context.Context) ([]*storage.Edge, error) {
+		return s.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: id})
+	})
 }
 
 func TestSubqueryLookupErrorsFailStatement(t *testing.T) {

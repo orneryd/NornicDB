@@ -41,7 +41,7 @@ func (registrationPlugin) Initialize(apocstorage.Storage) error { return nil }
 func (registrationPlugin) Cleanup() error                       { return nil }
 func (p registrationPlugin) Register(r *registry.FunctionRegistry) error {
 	for _, entry := range Exports {
-		if err := r.RegisterFunction(p.name+"."+entry.Name, p.name, entry.Function, "", nil); err != nil {
+		if err := r.RegisterFunction(p.name+"."+entry.Name, p.name, entry.Function, registry.CanonicalReads, "", nil); err != nil {
 			return err
 		}
 	}
@@ -52,7 +52,7 @@ func (p registrationPlugin) Register(r *registry.FunctionRegistry) error {
 // through the same checked owner. Legacy baseline adapters live only in the
 // frozen red overlays, never beside the current callable implementation.
 func DescriptorCall(handler interface{}, args []interface{}) (interface{}, error) {
-	callable, err := registry.Compile(handler)
+	callable, err := registry.Compile(handler, registry.AdmissionObservation(handler))
 	if err != nil {
 		return nil, err
 	}
@@ -90,11 +90,11 @@ func Consumers(scope string) ([]Consumer, func() error, error) {
 			return nil, nil, fmt.Errorf("missing %s", rootName)
 		}
 		name := "nor184_" + scope + "_" + entry.Name
-		if err := instance.RegisterFunction(name, "nor184", entry.Function, "", nil); err != nil {
+		if err := instance.RegisterFunction(name, "nor184", entry.Function, registry.CanonicalReads, "", nil); err != nil {
 			_ = cleanup()
 			return nil, nil, err
 		}
-		if err := registry.Register(name, "nor184", entry.Function, "", nil); err != nil {
+		if err := registry.Register(name, "nor184", entry.Function, registry.CanonicalReads, "", nil); err != nil {
 			_ = cleanup()
 			return nil, nil, err
 		}

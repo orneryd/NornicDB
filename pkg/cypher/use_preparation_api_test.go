@@ -284,16 +284,16 @@ func TestUsePreparationFabricPlanCacheRetriesCanceledNameRecognition(t *testing.
 func TestUsePreparationRowProgramDoesNotCacheCanceledCompilation(t *testing.T) {
 	name := fmt.Sprintf("use_preparation_program_probe_%d", usePreparationProbeID.Add(1))
 	query := "CASE WHEN " + name + " > 0 THEN " + name + " ELSE 7 END"
-	require.Nil(t, rowValueProgramFor(t.Context(), query))
+	require.Nil(t, rowValueProgramFor(t.Context(), query, nil))
 	parent, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	ctx := &usePreparationCancelContext{Context: parent, cancel: cancel, owner: ".keywordIndexFrom"}
-	require.Nil(t, rowValueProgramFor(ctx, query))
+	require.Nil(t, rowValueProgramFor(ctx, query, nil))
 	require.True(t, ctx.reached)
 	program, present := rowValuePrograms.get(query)
 	require.True(t, present)
 	require.Same(t, rowValueSeen, program)
-	healthy := rowValueProgramFor(t.Context(), query)
+	healthy := rowValueProgramFor(t.Context(), query, nil)
 	require.NotNil(t, healthy)
 	require.NotSame(t, rowValueSeen, healthy)
 	result, ok, err := healthy.root.eval(t.Context(), &StorageExecutor{}, map[string]interface{}{name: int64(3)}, nil)

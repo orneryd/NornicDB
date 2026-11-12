@@ -19,11 +19,11 @@ import (
 // with Cypher's equality (1 is 1.0) and order with its orderability (null
 // last), as ORDER BY does. They are NornicDB extensions under Cypher 5.
 func init() {
-	cypherfn.Register("string.indexof", fnStringIndexOf)
-	cypherfn.Register("string.join", fnStringJoin)
-	cypherfn.Register("string.regexreplace", fnStringRegexReplace)
-	cypherfn.Register("cardinality", fnCardinality)
-	cypherfn.Register("property_exists", fnPropertyExists)
+	cypherfn.Register("string.indexof", fnStringIndexOf, cypherfn.CanonicalReads)
+	cypherfn.Register("string.join", fnStringJoin, cypherfn.CanonicalReads)
+	cypherfn.Register("string.regexreplace", fnStringRegexReplace, cypherfn.CanonicalReads)
+	cypherfn.Register("cardinality", fnCardinality, cypherfn.CanonicalReads)
+	cypherfn.Register("property_exists", fnPropertyExists, cypherfn.CanonicalReads)
 }
 
 // stringArguments evaluates a string function's arguments: null is true when

@@ -357,7 +357,7 @@ func edgeTypeIndexPrefix(edgeType string) []byte {
 //
 //	[type 0x00-terminated][edgeNumID 8B]
 //
-// The key order lets GetEdgesBetween scan by (start, end) and lets
+// The key order lets a between adjacent-edge request scan by (start, end) and lets
 // GetEdgeBetween narrow further by type without scanning every outgoing
 // edge from the start node.
 func edgeBetweenIndexKey(startNumID, endNumID uint64, edgeType string, edgeNumID uint64) []byte {
@@ -372,7 +372,8 @@ func edgeBetweenIndexKey(startNumID, endNumID uint64, edgeType string, edgeNumID
 
 // edgeBetweenHeadKey stores the fastest typed lookup for one edge between nodes.
 //
-// The set index remains the source for GetEdgesBetween and for multiple edges
+// The set index remains the source for a between adjacent-edge request and for
+// multiple edges
 // of the same type. The head is a compatibility-friendly accelerator: if it is
 // absent or stale, reads can fall back to the set or legacy outgoing scan and
 // repopulate it. Uses numeric IDs for the same reason edgeBetweenIndexKey does.

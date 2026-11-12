@@ -15,21 +15,14 @@ func (tx *BadgerTransaction) GetStoredEdge(ctx context.Context, id EdgeID) (*Edg
 	return readTransactionEntity(ctx, tx, id, (*BadgerTransaction).edgeReadState, cloneTransactionEdge, loadTransactionEdge, storedRead)
 }
 
-// GetStoredOutgoingEdges returns the transaction's physical outgoing edges.
-func (tx *BadgerTransaction) GetStoredOutgoingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
-	return tx.getStoredAdjacentEdges(ctx, id, Outgoing)
-}
-
-// GetStoredIncomingEdges returns the transaction's physical incoming edges.
-func (tx *BadgerTransaction) GetStoredIncomingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
-	return tx.getStoredAdjacentEdges(ctx, id, Incoming)
-}
-
-// getStoredAdjacentEdges selects one direction of the stored incidence read.
-// The caller's context reaches the native incidence read, so a canceled request
-// stops that enumeration rather than only this filtering afterwards.
-func (tx *BadgerTransaction) getStoredAdjacentEdges(ctx context.Context, id NodeID, direction EdgeDirection) ([]*Edge, error) {
-	edges, err := tx.IncidentEdges(ctx, id)
+// ReadStoredAdjacentEdges answers one adjacent-edge request over the
+// transaction's physically stored incidence: hidden bodies included, the
+// request's direction, endpoints and types selecting the relationships.
+func (tx *BadgerTransaction) ReadStoredAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	if err := request.validate(); err != nil {
+		return nil, err
+	}
+	edges, err := tx.IncidentEdges(ctx, request.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -39,9 +32,10 @@ func (tx *BadgerTransaction) getStoredAdjacentEdges(ctx context.Context, id Node
 		if err := cancel.check(ctx); err != nil {
 			return nil, err
 		}
-		if (direction == Outgoing && edge.StartNode == id) || (direction == Incoming && edge.EndNode == id) {
-			result = append(result, edge)
+		if !request.admits(edge) {
+			continue
 		}
+		result = append(result, request.header(edge))
 	}
 	return result, nil
 }

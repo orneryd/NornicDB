@@ -359,11 +359,11 @@ func TestCardinalityRoutesAgree(t *testing.T) {
 // materialization costs; production code does not use it.
 func stagedCardinalityViaCurrentAdjacency(tx *BadgerTransaction, edge *Edge, c Constraint, namespace string) error {
 	counter := newEdgeCardinalityCounter(c, edge, namespace, edge.ID)
-	direction := adjacencyOutgoing
+	direction := AdjacentOutgoing
 	if c.Direction != "OUTGOING" {
-		direction = adjacencyIncoming
+		direction = AdjacentIncoming
 	}
-	images, err := tx.currentDirectedEdgesLocked(context.Background(), counter.anchor, direction)
+	images, err := tx.currentDirectedEdgesLocked(context.Background(), AdjacentEdgeRead{Direction: direction, Node: counter.anchor})
 	if err != nil {
 		return err
 	}

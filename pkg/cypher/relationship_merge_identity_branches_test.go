@@ -13,7 +13,7 @@ type relationshipMergeCreateEngine struct {
 	storage.Engine
 	createEdge      func(*storage.Edge) error
 	getEdge         func(storage.EdgeID) (*storage.Edge, error)
-	getEdgeBetween  func(storage.NodeID, storage.NodeID, string) *storage.Edge
+	requests        []storage.AdjacentEdgeRead
 	getEdgesBetween func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error)
 }
 
@@ -25,15 +25,7 @@ func (e *relationshipMergeCreateEngine) GetEdge(ctx context.Context, id storage.
 	return e.getEdge(id)
 }
 
-func (e *relationshipMergeCreateEngine) GetEdgeBetween(ctx context.Context,
-	startID storage.NodeID,
-	endID storage.NodeID,
-	relType string,
-) (*storage.Edge, error) {
-	return e.getEdgeBetween(startID, endID, relType), nil
-}
-
-// MatchEdgesBetween matches the fake's pair content (its GetEdgesBetween)
+// MatchEdgesBetween matches the fake's pair content
 // by type and pattern, as storage.MatchEdgesBetween does.
 func (e *relationshipMergeCreateEngine) MatchEdgesBetween(ctx context.Context,
 	startID storage.NodeID,
@@ -55,11 +47,12 @@ func (e *relationshipMergeCreateEngine) MatchEdgesBetween(ctx context.Context,
 	return matched, nil
 }
 
-func (e *relationshipMergeCreateEngine) GetEdgesBetween(ctx context.Context,
-	startID storage.NodeID,
-	endID storage.NodeID,
-) ([]*storage.Edge, error) {
-	return e.getEdgesBetween(startID, endID)
+func (e *relationshipMergeCreateEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	e.requests = append(e.requests, request)
+	if request.Direction != storage.AdjacentBetween || request.Headers || len(request.Types) != 0 {
+		return nil, errors.New("unexpected relationship merge adjacency request")
+	}
+	return e.getEdgesBetween(request.Node, request.Other)
 }
 
 func TestCreateRelationshipForMergeBareRetriesIDCollisions(t *testing.T) {
@@ -74,7 +67,6 @@ func TestCreateRelationshipForMergeBareRetriesIDCollisions(t *testing.T) {
 			}
 			return nil
 		},
-		getEdgeBetween:  func(storage.NodeID, storage.NodeID, string) *storage.Edge { return nil },
 		getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) { return nil, nil },
 		getEdge:         unexpectedRelationshipMergeEdgeRead(t),
 	}
@@ -92,9 +84,6 @@ func TestCreateRelationshipForMergeBareReturnsExistingAndErrors(t *testing.T) {
 	t.Run("existing", func(t *testing.T) {
 		store := &relationshipMergeCreateEngine{
 			createEdge: func(*storage.Edge) error { return storage.ErrAlreadyExists },
-			getEdgeBetween: func(storage.NodeID, storage.NodeID, string) *storage.Edge {
-				return existing
-			},
 			getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
 				return []*storage.Edge{existing}, nil
 			},
@@ -110,7 +99,6 @@ func TestCreateRelationshipForMergeBareReturnsExistingAndErrors(t *testing.T) {
 		wantErr := errors.New("create failed")
 		store := &relationshipMergeCreateEngine{
 			createEdge:      func(*storage.Edge) error { return wantErr },
-			getEdgeBetween:  func(storage.NodeID, storage.NodeID, string) *storage.Edge { return nil },
 			getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) { return nil, nil },
 			getEdge:         unexpectedRelationshipMergeEdgeRead(t),
 		}
@@ -123,7 +111,6 @@ func TestCreateRelationshipForMergeBareReturnsExistingAndErrors(t *testing.T) {
 	t.Run("collision limit", func(t *testing.T) {
 		store := &relationshipMergeCreateEngine{
 			createEdge:      func(*storage.Edge) error { return storage.ErrAlreadyExists },
-			getEdgeBetween:  func(storage.NodeID, storage.NodeID, string) *storage.Edge { return nil },
 			getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) { return nil, nil },
 			getEdge:         unexpectedRelationshipMergeEdgeRead(t),
 		}
@@ -148,7 +135,6 @@ func TestCreateRelationshipForMergePropertyRaceReturnsWinner(t *testing.T) {
 			}
 			return existing, nil
 		},
-		getEdgeBetween: unexpectedRelationshipMergePointLookup(t),
 		getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
 			return nil, nil
 		},
@@ -171,7 +157,6 @@ func TestCreateRelationshipForMergeHiddenIdentityConflictIsPermanent(t *testing.
 		getEdge: func(storage.EdgeID) (*storage.Edge, error) {
 			return nil, storage.ErrNotFound
 		},
-		getEdgeBetween: unexpectedRelationshipMergePointLookup(t),
 		getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
 			return nil, nil
 		},
@@ -214,7 +199,6 @@ func TestCreateRelationshipForMergePropertyPropagatesLookupErrors(t *testing.T) 
 			getEdge: func(storage.EdgeID) (*storage.Edge, error) {
 				return nil, storage.ErrNotFound
 			},
-			getEdgeBetween: unexpectedRelationshipMergePointLookup(t),
 			getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
 				return nil, wantErr
 			},
@@ -271,6 +255,7 @@ func TestSelectRelationshipMergeCreateIDBranches(t *testing.T) {
 		got, err := selectRelationshipMergeCreateID(context.Background(), store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
 		require.Nil(t, got)
 		require.ErrorIs(t, err, wantErr)
+		require.Equal(t, []storage.AdjacentEdgeRead{{Direction: storage.AdjacentBetween, Node: "source", Other: "target"}}, store.requests)
 	})
 
 	t.Run("selects free ordinal", func(t *testing.T) {
@@ -345,7 +330,6 @@ func relationshipMergeSelectEngine(
 	return &relationshipMergeCreateEngine{
 		createEdge:      func(*storage.Edge) error { t.Fatal("unexpected create"); return nil },
 		getEdge:         getEdge,
-		getEdgeBetween:  unexpectedRelationshipMergePointLookup(t),
 		getEdgesBetween: getEdgesBetween,
 	}
 }
@@ -365,16 +349,6 @@ func unexpectedRelationshipMergeEdgeRead(t *testing.T) func(storage.EdgeID) (*st
 	return func(storage.EdgeID) (*storage.Edge, error) {
 		t.Fatal("unexpected edge read")
 		return nil, nil
-	}
-}
-
-func unexpectedRelationshipMergePointLookup(
-	t *testing.T,
-) func(storage.NodeID, storage.NodeID, string) *storage.Edge {
-	t.Helper()
-	return func(storage.NodeID, storage.NodeID, string) *storage.Edge {
-		t.Fatal("unexpected point lookup")
-		return nil
 	}
 }
 

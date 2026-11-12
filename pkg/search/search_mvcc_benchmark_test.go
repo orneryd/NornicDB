@@ -100,15 +100,21 @@ func buildMVCCSearchFixture(tb testing.TB, nodeCount, historyDepth, dimensions i
 
 	if forceHNSW {
 		_, vi, vfs := svc.snapshotStrategyInputs()
-		hnswIndex, err := svc.buildHNSWForTransition(ctx, dimensions, vi, vfs)
+		config := svc.hnswConfig()
+		hnswIndex, _, err := svc.buildHNSWSnapshot(ctx, dimensions, config, vi, vfs, svc.hnswBuildLexicalSeedHints(svc.fulltext(), config.M))
 		if err != nil {
 			tb.Fatal(err)
 		}
 		svc.pipelineMu.Lock()
 		svc.indexMu.Lock()
+		coordinates := hnswIndex.construction
+		coordinates.publish(svc.getVectorLookup())
 		svc.applyTransitionSwapLocked(strategyModeHNSW, hnswIndex, vi, vfs)
 		svc.indexMu.Unlock()
 		svc.pipelineMu.Unlock()
+		if err := coordinates.Close(); err != nil {
+			tb.Fatal(err)
+		}
 		if svc.currentPipelineStrategy() != strategyModeHNSW {
 			tb.Fatalf("expected HNSW strategy, got %s", svc.currentPipelineStrategy())
 		}

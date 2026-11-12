@@ -98,6 +98,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"hash/fnv"
 	"log/slog"
 	"os"
@@ -295,6 +296,12 @@ type SearchResponse struct {
 	rerankExcluded      map[string]struct{}
 	rerankApplied       bool
 	rerankOrderOwned    bool
+	// fusedOrder marks Results as a fusion's order: a hybrid search's inner
+	// RRF, or the chunked owner's outer RRF of its chunks. A ranked
+	// continuation reranks a fused selection after that fusion; a retrieval
+	// fallback (vector- or keyword-only) keeps its own order and is not
+	// reranked.
+	fusedOrder bool
 }
 
 // updateResults transforms this caller-owned response without changing order.
@@ -435,7 +442,8 @@ type SearchOptions struct {
 	// property, a negation or a pattern from the node; nil admits every node. It
 	// is applied with Types and Filters to the candidates, before the top-K cut.
 	// A search with a Where isn't cached: what it admits can depend on more than
-	// the options.
+	// the options. Each Search invocation evaluates a candidate once across
+	// retrieval branches and widening rounds; subsequent requests reevaluate.
 	//
 	// ctx is the search that asks: for a continuation page, that page's
 	// request, not the one that started the search, so cancelling the page
@@ -1444,6 +1452,14 @@ func (s *Service) EnsureWarm(ctx context.Context) error {
 	case <-done:
 		return nil
 	default:
+	}
+	// This caller joins shared host-installed work with an independent lifetime.
+	// Its reads cannot be attributed to this request; do not pretend the caller
+	// invoked the shared callback or invent the background job's access count.
+	if observer := queryprofile.FromContext(ctx); observer != nil {
+		if fn, _ := s.warmFunc.Load().(WarmFunc); fn != nil {
+			observer.UnobservedRead(ctx, "shared background search warmup", "")
+		}
 	}
 	// Each first reader enrolls one joiner as service work. The first to run
 	// executes the trigger; the others join that same completion.
@@ -3191,7 +3207,13 @@ func (s *Service) shouldIndexNode(ctx context.Context, node *storage.Node) (bool
 	if !ok {
 		return true, nil
 	}
-	return provider.IsCurrentTemporalNode(ctx, node, time.Now().UTC())
+	current, err := provider.IsCurrentTemporalNode(ctx, node, time.Now().UTC())
+	var decisions int64
+	if err == nil {
+		decisions = 1
+	}
+	queryprofile.Access(ctx, queryprofile.KindTemporalEligibilityRequest, "").Add(decisions, 1)
+	return current, err
 }
 
 // indexNodeLocked does the work of IndexNode. Caller must hold s.indexMu.
@@ -5158,6 +5180,12 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		opts = &defaults
 	}
 
+	if opts.Where != nil {
+		// Each invocation owns a fresh decision set, even when its caller
+		// reuses options/context or invokes another search from a predicate.
+		ctx = context.WithValue(ctx, filterVerdictKey{}, &filterVerdicts{})
+	}
+
 	// Set resolved value back for downstream use
 	opts.MinSimilarity = s.resolveMinSimilarity(opts)
 
@@ -5298,7 +5326,7 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	retrieveBM25 := func() bm25RetrievalResult {
 		bm25Start := time.Now()
 		results, stats, err := s.adaptiveBM25Search(ctx, fulltextIndex, query, opts, func(results []indexResult) ([]indexResult, error) {
-			results = s.filterDecayedCandidates(results)
+			results = s.filterDecayedCandidates(ctx, results)
 			if opts.filtersCandidates() {
 				return s.filterByTypeAndProperties(ctx, results, opts, bm25SeenOrphans)
 			}
@@ -5339,12 +5367,12 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	seenOrphans := make(map[string]bool)
 	if pipelineErr == nil {
 		vectorResults, vectorStats, pipelineErr = s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, lexicalEntryIDsFromResults(bm25Result.results), func(results []indexResult) ([]indexResult, error) {
-			results = s.filterDecayedCandidates(results)
+			results = s.filterDecayedCandidates(ctx, results)
 			if opts.filtersCandidates() {
 				return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 			}
 			return results, nil
-		})
+		}, queryprofile.Access(ctx, profileKindNodeVectorCandidates, ""))
 	}
 	vectorMs := int(time.Since(vectorStart).Milliseconds())
 
@@ -5450,6 +5478,7 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		rerankApplied:          strings.HasSuffix(searchMethod, "+rerank"),
 		rerankExcluded:         rerankExcluded,
 		rerankOrderOwned:       opts.RerankEnabled,
+		fusedOrder:             true,
 		FallbackTriggered:      fallback != SearchFallbackNone,
 		FallbackReason:         fallback,
 		Message:                message,
@@ -5517,7 +5546,7 @@ func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float3
 			return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
 		return results, nil
-	})
+	}, queryprofile.Access(ctx, profileKindNodeVectorCandidates, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -5649,6 +5678,7 @@ func (s *Service) adaptiveVectorSearch(
 	opts *SearchOptions,
 	lexicalEntryIDs []string,
 	postProcess func([]indexResult) ([]indexResult, error),
+	observation *queryprofile.ReadCounter,
 ) ([]indexResult, vectorOverfetchStats, error) {
 	if opts == nil {
 		defaults := defaultSearchOptionsValue()
@@ -5671,6 +5701,7 @@ func (s *Service) adaptiveVectorSearch(
 			return nil, stats, err
 		}
 		scored, evidence, err := pipeline.searchWithEvidence(ctx, embedding, requestLimit, opts.GetMinSimilarity(0.5), lexicalEntryIDs)
+		recordIndexCandidates(observation, len(scored), err)
 		if err != nil {
 			return nil, stats, err
 		}
@@ -5717,7 +5748,7 @@ func (s *Service) adaptiveVectorSearch(
 			if postProcess == nil || explicitCandidateCap(opts) {
 				return results, stats, nil
 			}
-			return s.completeVectorSearch(ctx, pipeline, embedding, opts, config.target, postProcess, stats)
+			return s.completeVectorSearch(ctx, pipeline, embedding, opts, config.target, postProcess, stats, observation)
 		}
 		requestLimit = nextCandidateLimit(requestLimit, config.growthFactor, config.maxLimit)
 		stats.retries++
@@ -5762,6 +5793,7 @@ func (s *Service) completeVectorSearch(
 	target int,
 	postProcess func([]indexResult) ([]indexResult, error),
 	stats vectorOverfetchStats,
+	observation *queryprofile.ReadCounter,
 ) ([]indexResult, vectorOverfetchStats, error) {
 	work := newSearchBatch(ctx)
 	var candidates []Candidate
@@ -5831,6 +5863,7 @@ func (s *Service) completeVectorSearch(
 		pipeline = NewVectorSearchPipeline(pipeline.candidateGen, s.resolveVectorExactScorer(vectors, fileStore))
 	}
 	scored, err := pipeline.scoreAllNodes(ctx, embedding, candidates, opts.GetMinSimilarity(0.5))
+	recordIndexCandidates(observation, len(scored), err)
 	if err != nil {
 		return nil, stats, err
 	}
@@ -5889,6 +5922,7 @@ func (s *Service) adaptiveBM25Search(
 	if index == nil {
 		return nil, vectorOverfetchStats{exhausted: true}, nil
 	}
+	observation := queryprofile.Access(ctx, profileKindNodeFulltextCandidates, "")
 	search := index.Search
 	if opts != nil && len(opts.Types) > 0 {
 		allowed := s.indexedTypeAdmitter(opts.Types)
@@ -5913,6 +5947,7 @@ func (s *Service) adaptiveBM25Search(
 			return nil, stats, err
 		}
 		rawResults := search(query, requestLimit)
+		recordIndexCandidates(observation, len(rawResults), nil)
 		stats.rawCandidates = len(rawResults)
 		// BM25 enumerates an exact ranked prefix before metadata filtering.
 		stats.exhausted = len(rawResults) < requestLimit
@@ -5931,7 +5966,7 @@ func (s *Service) adaptiveBM25Search(
 			if !config.adaptive || postProcess == nil || explicitCandidateCap(opts) {
 				return results, stats, nil
 			}
-			return s.completeBM25Search(ctx, search, query, index.Count(), config.target, requestLimit, filter, stats)
+			return s.completeBM25Search(ctx, search, query, index.Count(), config.target, requestLimit, filter, stats, observation)
 		}
 		requestLimit = nextCandidateLimit(requestLimit, config.growthFactor, config.maxLimit)
 		stats.retries++
@@ -5958,8 +5993,10 @@ func (s *Service) completeBM25Search(
 	documents, target, batch int,
 	filter func([]indexResult) ([]indexResult, error),
 	stats vectorOverfetchStats,
+	observation *queryprofile.ReadCounter,
 ) ([]indexResult, vectorOverfetchStats, error) {
 	all := search(query, max(documents, 1))
+	recordIndexCandidates(observation, len(all), nil)
 	stats.rawCandidates = len(all)
 	stats.retries++
 	results := make([]indexResult, 0, target)
@@ -6440,15 +6477,6 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 	return true
 }
 
-func (s *Service) buildHNSWForTransition(ctx context.Context, dimensions int, vi *VectorIndex, vfs *VectorFileStore) (*HNSWIndex, error) {
-	config := s.hnswConfig()
-	s.mu.RLock()
-	fulltext := s.fulltext()
-	s.mu.RUnlock()
-	built, _, err := s.buildHNSWSnapshot(ctx, dimensions, config, vi, vfs, s.hnswBuildLexicalSeedHints(fulltext, config.M))
-	return built, err
-}
-
 func hnswPairSliceIterator(pairs []hnswBuildPair) hnswBuildIterator {
 	return func(batchSize int, fn func([]hnswBuildPair) error) error {
 		if batchSize <= 0 {
@@ -6915,40 +6943,6 @@ func envDurationSec(key string, fallbackSec int) time.Duration {
 	return time.Duration(sec) * time.Second
 }
 
-func (s *Service) getNodeWithoutEmbeddings(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
-	if reader, ok := s.engine.(storage.NodeWithoutEmbeddingsReader); ok {
-		return reader.GetNodeWithoutEmbeddings(ctx, id)
-	}
-	return s.engine.GetNode(ctx, id)
-}
-
-func (s *Service) batchGetNodesWithoutEmbeddings(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
-	if len(ids) == 0 {
-		return map[storage.NodeID]*storage.Node{}, nil
-	}
-	if reader, ok := s.engine.(storage.BatchNodeWithoutEmbeddingsReader); ok {
-		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ctx, ids)
-		if err == nil {
-			return nodes, nil
-		}
-		if !errors.Is(err, storage.ErrNotImplemented) {
-			return nil, err
-		}
-	}
-	nodes := make(map[storage.NodeID]*storage.Node, len(ids))
-	for _, id := range ids {
-		node, err := s.getNodeWithoutEmbeddings(ctx, id)
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				continue
-			}
-			return nil, err
-		}
-		nodes[id] = node
-	}
-	return nodes, nil
-}
-
 func (s *Service) supportsBatchNodesWithoutEmbeddings() bool {
 	reader, ok := s.engine.(storage.BatchNodeWithoutEmbeddingsReader)
 	if !ok {
@@ -6973,7 +6967,7 @@ func (s *Service) filterCandidatesByType(ctx context.Context, candidates []Searc
 
 	filtered := make([]SearchCandidate, 0, len(candidates))
 	for _, cand := range candidates {
-		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(cand.ID))
+		node, err := s.readNodeImage(ctx, storage.NodeID(cand.ID), metadataNodeImage)
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, cand.ID, err, seenOrphans) {
 				continue
@@ -7266,55 +7260,22 @@ func (s *Service) applyMMR(ctx context.Context, results []rrfResult, queryEmbedd
 //   - Stage 1 (fast): Bi-encoder retrieval (vector + BM25 with RRF)
 //   - Stage 2 (accurate): Optional reranking of top candidates (LLM or cross-encoder)
 //
-// Reranking is slower than Stage 1, so it should be used on a bounded TopK.
+// Reranking is slower than Stage 1, so a single search reranks its bounded
+// TopK prefix and is capped there. A ranked continuation does not rerank here:
+// its own producer reranks the fused order it retrieved after the chunked
+// owner's fusion, where TopK bounds one provider window instead of the ranked
+// population.
 //
-// The returned outcome is the only authority for result order, the TopK
-// output cap, whether rerank applied, and any fallback. This consumer only
-// maps the canonical result back to the RRF representation; it does not
-// filter, truncate or complete it.
+// The returned outcome is the only authority for result order, whether rerank
+// applied, and any fallback. This consumer only maps the canonical result back
+// to the RRF representation; it does not filter, truncate or complete it.
 func (s *Service) applyStage2Rerank(ctx context.Context, query string, results []rrfResult, opts *SearchOptions, seenOrphans map[string]bool, reranker Reranker) ([]rrfResult, rerankOutcome) {
-	// Top-K bounds both provider work and the canonical output population.
+	// Top-K bounds both provider work and this one-shot outcome's population.
 	topK := effectiveRerankTopK(opts)
 	if topK > len(results) {
 		topK = len(results)
 	}
-	rerankInput := results
-	memo := rerankMemoFromContext(ctx)
-
-	// Build the complete candidate identity/order once. Content is needed only
-	// for the provider prefix and only when continuation memoization has no raw
-	// provider outcome for that candidate.
-	candidates := make([]RerankCandidate, 0, len(rerankInput))
-	newCandidates := 0
-	maxDocumentChars := effectiveRerankMaxChars(opts)
-	for index, r := range rerankInput {
-		candidate := RerankCandidate{ID: r.ID, Score: r.RRFScore}
-		if index >= topK {
-			candidates = append(candidates, candidate)
-			continue
-		}
-		if _, ok := memo.get(query, r.ID); ok {
-			candidates = append(candidates, candidate)
-			continue
-		}
-		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(r.ID))
-		if err != nil {
-			_ = s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans)
-			candidates = append(candidates, candidate)
-			continue
-		}
-		if node == nil {
-			candidates = append(candidates, candidate)
-			continue
-		}
-
-		candidate.Content = s.rerankCandidateContent(ctx, node, r, query, maxDocumentChars)
-		if candidate.Content != "" {
-			newCandidates++
-		}
-		candidates = append(candidates, candidate)
-	}
-
+	candidates, newCandidates, _ := s.stage2RerankCandidates(ctx, query, results, 0, topK, opts, seenOrphans)
 	if newCandidates > 0 && reranker != nil && reranker.Enabled() {
 		// Log before reranking
 		s.logPrintf("🔄 Reranking %d new candidates (query_len=%d reranker=%s)...", newCandidates, len(query), reranker.Name())
@@ -7324,27 +7285,12 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 		providerLimit: topK,
 		resultLimit:   opts.Limit,
 		minScore:      opts.RerankMinScore,
-		memo:          memo,
+		memo:          rerankMemoFromContext(ctx),
 	})
 	if outcome.Method == rerankMethodApplied {
 		s.logPrintf("✅ Reranking complete: %d results in %v (%s)", len(outcome.Results), time.Since(start), reranker.Name())
 	}
-
-	rerankedResults := make([]rrfResult, 0, len(outcome.Results))
-	for _, r := range outcome.Results {
-		// The owner validated and rebound OriginalRank to this exact candidate
-		// pool, so the mapping needs neither an identity map nor a second lookup.
-		original := rerankInput[r.OriginalRank-1]
-		rerankedResults = append(rerankedResults, rrfResult{
-			ID:            r.ID,
-			MatchID:       original.MatchID,
-			RRFScore:      r.FinalScore,
-			VectorRank:    original.VectorRank,
-			BM25Rank:      original.BM25Rank,
-			OriginalScore: original.OriginalScore,
-		})
-	}
-	return rerankedResults, outcome
+	return stage2RerankResults(results, outcome), outcome
 }
 
 func effectiveRerankTopK(opts *SearchOptions) int {
@@ -7354,23 +7300,14 @@ func effectiveRerankTopK(opts *SearchOptions) int {
 	return opts.RerankTopK
 }
 
-// SetCrossEncoder configures the Stage-2 reranker to use the cross-encoder implementation.
+// SetReranker configures the Stage-2 reranker and invalidates cached search
+// results when the provider changes. CrossEncoder implements Reranker:
 //
-// Example:
-//
-//	svc := search.NewService(engine, search.DefaultVectorDimensions, nil)
-//	svc.SetCrossEncoder(search.NewCrossEncoder(&search.CrossEncoderConfig{
-//		Enabled: true,
-//		APIURL:  "http://localhost:8081/rerank",
-//		Model:   "cross-encoder/ms-marco-MiniLM-L-6-v2",
+//	svc.SetReranker(search.NewCrossEncoder(&search.CrossEncoderConfig{
+//	    Enabled: true, APIURL: "http://localhost:8081/rerank",
+//	    Model: "cross-encoder/ms-marco-MiniLM-L-6-v2",
 //	}))
-func (s *Service) SetCrossEncoder(ce *CrossEncoder) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reranker = ce
-}
-
-// SetReranker configures the Stage-2 reranker.
+//
 // Uses a quick read-lock check to avoid write-lock contention when the value hasn't changed.
 // This prevents deadlock when multiple goroutines call getOrCreateSearchService concurrently.
 func (s *Service) SetReranker(r Reranker) {
@@ -7378,12 +7315,17 @@ func (s *Service) SetReranker(r Reranker) {
 	current := s.reranker
 	s.mu.RUnlock()
 	// Skip write lock if value is already set to the same pointer (common case: nil -> nil or same instance).
-	if current == r {
-		return
+	if current == nil || reflect.TypeOf(current).Comparable() {
+		if current == r {
+			return
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reranker = r
+	// Cache keys in the service and Cypher both include IndexRevision.
+	// Publish this after the provider so old in-flight reads retain old keys.
+	s.indexChanged()
 }
 
 // RerankerName returns the configured Stage-2 reranker name, or an empty string.
@@ -7483,7 +7425,7 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 			return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
 		return results, nil
-	})
+	}, queryprofile.Access(ctx, profileKindNodeVectorCandidates, ""))
 	if searchErr != nil {
 		return nil, searchErr
 	}
@@ -8025,7 +7967,7 @@ func (s *Service) filterByProperties(ctx context.Context, results []indexResult,
 	}
 	var filtered []indexResult
 	for _, r := range results {
-		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(r.ID))
+		node, err := s.readNodeImage(ctx, storage.NodeID(r.ID), metadataNodeImage)
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
 				continue
@@ -8130,7 +8072,7 @@ func (s *Service) filterByType(ctx context.Context, results []indexResult, types
 
 	var filtered []indexResult
 	for _, r := range results {
-		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(r.ID))
+		node, err := s.readNodeImage(ctx, storage.NodeID(r.ID), metadataNodeImage)
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
 				continue

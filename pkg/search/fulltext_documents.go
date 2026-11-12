@@ -24,6 +24,10 @@ type FulltextDocument struct {
 	Text   string
 	Tokens int
 	Value  any
+	// MatchFields aliases the immutable normalized field view used by the dialect.
+	// Literal exclusion includes these fields as well as Text; exact matching and
+	// scoring remain the dialect's responsibility. No copied field map is needed.
+	MatchFields map[string]string
 	// RetainedBytes forecasts the dialect field representation, including Text.
 	// Zero uses the body plus a document header for generic consumers.
 	RetainedBytes int64
@@ -38,9 +42,14 @@ type FulltextDocumentBuilder func(*storage.Node, *storage.Edge) *FulltextDocumen
 // tells the service which named schema projections still exist.
 type FulltextDocumentScope struct {
 	Name, Definition string
-	Relationships    bool
-	Fresh            bool
-	Ordered          bool
+	// NodeLabels limits population to the union of these label indexes.
+	// Membership remains the dialect builder's responsibility.
+	NodeLabels []string
+	// QueryNodes returns row metadata without decoding stored chunk vectors.
+	QueryNodes    bool
+	Relationships bool
+	Fresh         bool
+	Ordered       bool
 	// EntityRows asks for request-scoped output images, independently of the
 	// retained scoring representation. Images never survive the request lease.
 	EntityRows bool
@@ -56,6 +65,8 @@ type fulltextDocumentView struct {
 	engine        storage.Engine
 	definition    string
 	relationships bool
+	queryNodes    bool
+	nodeLabels    []string
 	build         FulltextDocumentBuilder
 	rows          []*FulltextDocument
 	documents     map[string]*FulltextDocument
@@ -63,6 +74,7 @@ type fulltextDocumentView struct {
 	// document counts, so its size is one query's unique terms. Any document
 	// replacement or reset drops it.
 	frequencies   []fulltextFrequency
+	literals      *fulltextLiteralIndex
 	tokens        int64
 	bodyBytes     int64
 	retiredWeight int64
@@ -142,10 +154,10 @@ type fulltextFrequency struct {
 
 // BodyDocumentFrequencies counts the scoring documents whose body literally
 // contains each requested term, exactly as the release's strings.Contains
-// predicate does. Every unique term is counted in one pass over the bodies,
-// with one cancellation check per document, so a term shorter than any index
-// unit keeps that predicate's meaning, the empty term included. A failure
-// returns no counts at all.
+// predicate does. Retained literal signatures narrow possible bodies before
+// that exact check; small/request-local corpora use one shared counting pass.
+// Short and empty terms retain the same predicate. Every visited document and
+// posting block observes cancellation. A failure returns no counts at all.
 //
 // The view keeps the most recent term set's counts, bounded by one query's
 // unique terms, and reuses them only for exactly that term set. The returned
@@ -178,16 +190,31 @@ func (d FulltextDocuments) BodyDocumentFrequencies(ctx context.Context, terms []
 			return counts, nil
 		}
 	}
-	if err := untilCancelled(ctx, d.view.scoringDocuments(), func(_ string, document *FulltextDocument) error {
+	if d.view.temporary() || len(d.view.documents) < 128 {
+		if err := untilCancelled(ctx, d.view.scoringDocuments(), func(_ string, document *FulltextDocument) error {
+			for _, term := range requested {
+				if strings.Contains(document.Text, term) {
+					counts[term]++
+				}
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	} else {
 		for _, term := range requested {
-			if strings.Contains(document.Text, term) {
-				counts[term]++
+			selector := FulltextLiteralSelector{Op: FulltextLiteral, Text: term}
+			if err := ReadFulltextCandidates(ctx, d, selector, FulltextLiteralTree{}, func(_ string, document *FulltextDocument) error {
+				if strings.Contains(document.Text, term) {
+					counts[term]++
+				}
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
-		return nil
-	}); err != nil {
-		return nil, err
 	}
+
 	// Retain the counts only with a view this service keeps, and clone the terms
 	// so that set never keeps a larger query buffer alive.
 	if !d.view.temporary() {
@@ -225,6 +252,11 @@ func (v *fulltextDocumentView) documentCount() int {
 func (v *fulltextDocumentView) replace(ctx context.Context, id string, doc *FulltextDocument) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if v.literals != nil {
+		if err := v.literals.replace(ctx, id, doc, nil); err != nil {
+			return err
+		}
 	}
 	// Every replacement changes the corpus, so any retained term set described
 	// the previous corpus and is not these documents' counts.
@@ -403,9 +435,9 @@ func (s *Service) ReadFulltextDocuments(ctx context.Context, engine storage.Engi
 	// Ordered consumers own a traversal, not complete corpus statistics. Their
 	// stop must reach acquisition on every call, including fresh/buffered views.
 	if scope.Ordered {
-		return deliverFulltextDocuments(ctx, read, FulltextDocuments{acquisition: fulltextAcquisition{engine: engine, relationships: scope.Relationships}})
+		return deliverFulltextDocuments(ctx, read, FulltextDocuments{acquisition: fulltextAcquisition{engine: engine, relationships: scope.Relationships, queryNodes: scope.QueryNodes, nodeLabels: scope.NodeLabels}})
 	}
-	acquisition := fulltextAcquisition{engine: engine, relationships: scope.Relationships}
+	acquisition := fulltextAcquisition{engine: engine, relationships: scope.Relationships, queryNodes: scope.QueryNodes, nodeLabels: scope.NodeLabels}
 	provider, versioned := engine.(graphMutationVersionProvider)
 	if scope.Fresh || !versioned || !storage.SameEventView(engine, s.engine) {
 		return readFulltextOriginal(ctx, &acquisition, scope, build, read)
@@ -487,7 +519,7 @@ func (s *Service) ReadFulltextDocuments(ctx context.Context, engine storage.Engi
 		return readFulltextOriginal(ctx, &acquisition, scope, build, read)
 	}
 	view := projection.view
-	if view == nil || !storage.SameEventView(view.engine, engine) || view.definition != scope.Definition || view.relationships != scope.Relationships {
+	if view == nil || !storage.SameEventView(view.engine, engine) || view.definition != scope.Definition || view.relationships != scope.Relationships || view.queryNodes != scope.QueryNodes || !slices.Equal(view.nodeLabels, scope.NodeLabels) {
 		view = newFulltextDocumentView(scope.Definition, scope.Relationships, build)
 		view.engine = engine
 		projection.view = view
@@ -495,6 +527,8 @@ func (s *Service) ReadFulltextDocuments(ctx context.Context, engine storage.Engi
 	settled := storage.EventNotificationsSettled(engine)
 	graph, graphOK := provider.GraphMutationVersion()
 
+	view.queryNodes = scope.QueryNodes
+	view.nodeLabels = slices.Clone(scope.NodeLabels)
 	view.captureImages = scope.EntityRows
 	defer func() { view.images = nil }()
 	o.changes.Lock()
@@ -587,6 +621,8 @@ func (s *Service) ReadFulltextDocuments(ctx context.Context, engine storage.Engi
 
 func readFulltextOriginal(ctx context.Context, acquisition *fulltextAcquisition, scope FulltextDocumentScope, build FulltextDocumentBuilder, read func(context.Context, FulltextDocuments) error) error {
 	view := newFulltextDocumentView(scope.Definition, scope.Relationships, build)
+	view.queryNodes = scope.QueryNodes
+	view.nodeLabels = slices.Clone(scope.NodeLabels)
 	view.captureImages = scope.EntityRows
 	return view.bringUp(ctx, acquisition, fulltextBringUp{populate: true, local: true}, func() error {
 		return deliverFulltextDocuments(ctx, read, FulltextDocuments{view: view})
@@ -707,6 +743,7 @@ func (v *fulltextDocumentView) resetDocuments(capacity int, retained bool) {
 		v.documents = make(map[string]*FulltextDocument, capacity)
 	}
 	v.frequencies = nil
+	v.literals = nil
 	v.tokens, v.bodyBytes, v.retiredWeight = 0, 0, 0
 	v.retainedBytes = 0
 }

@@ -1,10 +1,7 @@
 package bolt
 
-// NOR-413 over Bolt: an auto-commit read statement whose only CALLs are
-// read-only CALL subqueries reads its row nodes without their stored chunk
-// vectors, and one with a procedure call reads them in full, as on the release
-// head; statements that read vectors answer as in an explicit transaction, and
-// writing CALLs keep the stored vectors.
+// Metadata consumers over Bolt avoid unused stored vectors, while native
+// consumers retain complete node images and writes preserve stored vectors.
 
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -16,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/apoc/registry"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -95,8 +93,22 @@ func nor413BoltRun(t *testing.T, driver neo4j.DriverWithContext, explicit bool, 
 // TestNOR413BoltAutoCommitCallReadsUseQueryNodes: through Bolt, auto-commit
 // reads with a read-only CALL subquery point-read their row nodes without
 // vectors, never with them, as the same read without CALL. With a READ
-// procedure they are read in full, as on the release head.
+// procedure declaring metadata inputs the same policy applies; a native
+// vector-reading function instead receives the complete image.
 func TestNOR413BoltAutoCommitCallReadsUseQueryNodes(t *testing.T) {
+	handler, err := registry.Compile(func(node *storage.Node) int { return len(node.ChunkEmbeddings) }, registry.OpaqueReads)
+	require.NoError(t, err)
+	previous := cypher.PluginFunctionLookup
+	t.Cleanup(func() { cypher.PluginFunctionLookup = previous })
+	cypher.PluginFunctionLookup = func(name string) (*cypher.PluginFunctionHandler, bool) {
+		if name == "images.vectorCount" {
+			return handler, true
+		}
+		if previous != nil {
+			return previous(name)
+		}
+		return nil, false
+	}
 	_, store := newNOR413BoltGraph(t)
 	spy := storagefault.NewQueryNodeReadSpy(store)
 	_, port := startBoltIntegrationServer(t, spy, boltIntegrationAutocommit)
@@ -104,15 +116,17 @@ func TestNOR413BoltAutoCommitCallReadsUseQueryNodes(t *testing.T) {
 	for _, tc := range []struct {
 		query      string
 		vectorFree bool
+		want       string
 	}{
-		{"MATCH (:Hub)-[:HAS]->(d:Doc {k: 3}) RETURN d.title, d.has_embedding", true},
-		{"MATCH (h:Hub) CALL { WITH h MATCH (h)-[:HAS]->(d:Doc {k: 3}) RETURN d } RETURN d.title, d.has_embedding", true},
-		{"MATCH (:Hub)-[:HAS]->(d:Doc {k: 3}) CALL db.labels() YIELD label WHERE label = 'Doc' RETURN d.title, d.has_embedding", false},
+		{"MATCH (:Hub)-[:HAS]->(d:Doc {k: 3}) RETURN d.title, d.has_embedding", true, `["doc 3",true]`},
+		{"MATCH (h:Hub) CALL { WITH h MATCH (h)-[:HAS]->(d:Doc {k: 3}) RETURN d } RETURN d.title, d.has_embedding", true, `["doc 3",true]`},
+		{"MATCH (:Hub)-[:HAS]->(d:Doc {k: 3}) CALL db.labels() YIELD label WHERE label = 'Doc' RETURN d.title, d.has_embedding", true, `["doc 3",true]`},
+		{"MATCH (:Hub)-[:HAS]->(d:Doc {k: 3}) RETURN d.title, d.has_embedding, images.vectorCount(d)", false, `["doc 3",true,1]`},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			spy.Full.Store(0)
 			spy.Query.Store(0)
-			require.Equal(t, []string{`["doc 3",true]`}, nor413BoltRun(t, driver, false, tc.query, nil))
+			require.Equal(t, []string{tc.want}, nor413BoltRun(t, driver, false, tc.query, nil))
 			if tc.vectorFree {
 				require.Positive(t, spy.Query.Load(), "row nodes are read without vectors")
 				require.Zero(t, spy.Full.Load(), "no row node is read with its vectors")

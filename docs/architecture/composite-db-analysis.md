@@ -38,7 +38,7 @@ The sections below describe composite database management, query routing, and sc
 ### 4. Result Deduplication
 -  Node deduplication by ID in all query methods
 -  Edge deduplication by ID in all query methods
--  Applied to: GetNodesByLabel, GetEdgesByType, AllNodes, AllEdges, GetOutgoingEdges, GetIncomingEdges, GetEdgesBetween
+-  Applied to: GetNodesByLabel, GetEdgesByType, AllNodes, AllEdges, ReadAdjacentEdges
 
 ### 5. Edge Case Handling
 -  Empty composite databases (no constituents)

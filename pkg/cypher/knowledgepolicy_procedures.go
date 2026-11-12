@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -45,7 +46,79 @@ func (e *StorageExecutor) knowledgePolicyContext(database string) (storage.Engin
 	return engine, schema, err
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult, error) {
+// The policy catalogs kp.info, kp.profiles and kp.policies acquire, the point
+// reads kp.resolve performs and the queue scan kp.deindexStatus makes. Each
+// record is one request the procedure actually made: Rows is the population that
+// request returned - never the rows the statement builds from it, never a count
+// taken from another read's output - and Hits is the one request.
+const (
+	// profileKindKnowledgePolicyDecayProfileCatalog is one acquisition of the
+	// schema's decay profile catalog. The schema owner answers with its bundle
+	// family and its binding family from one read, so the record is one request
+	// whose rows are the entries both families returned.
+	profileKindKnowledgePolicyDecayProfileCatalog = "KnowledgePolicyDecayProfileCatalog"
+	// profileKindKnowledgePolicyPromotionProfileCatalog is one acquisition of
+	// the schema's promotion profile catalog: Rows is the profile entries it
+	// returned.
+	profileKindKnowledgePolicyPromotionProfileCatalog = "KnowledgePolicyPromotionProfileCatalog"
+	// profileKindKnowledgePolicyPromotionPolicyCatalog is one acquisition of the
+	// schema's promotion policy catalog. The schema owner keeps its policies apart
+	// from the profiles they select, so the request is its own record.
+	profileKindKnowledgePolicyPromotionPolicyCatalog = "KnowledgePolicyPromotionPolicyCatalog"
+	// profileKindKnowledgePolicyAccessMetaPoint is the point read of one entity's
+	// stored access metadata: the attempt is one request, and Rows is the entry
+	// when the store held one.
+	profileKindKnowledgePolicyAccessMetaPoint = "KnowledgePolicyAccessMetaPoint"
+	// profileKindKnowledgePolicyPendingDeindexScan is one scan of the stored
+	// deindex work queue: Rows is the pending work items the scan returned, not
+	// the rows this procedure lists them as and not the entries of the other
+	// states the scan walked.
+	profileKindKnowledgePolicyPendingDeindexScan = "KnowledgePolicyPendingDeindexScan"
+)
+
+// readKnowledgePolicyDecayProfiles records one acquisition of the schema's decay
+// profile catalog before the caller projects or counts any of it. An empty
+// catalog still represents the one request the procedure made.
+func readKnowledgePolicyDecayProfiles(ctx context.Context, schema *storage.SchemaManager) ([]knowledgepolicy.DecayProfileBundle, []knowledgepolicy.DecayProfileBinding) {
+	bundles, bindings := schema.ShowDecayProfiles()
+	queryprofile.Access(ctx, profileKindKnowledgePolicyDecayProfileCatalog, "").Add(int64(len(bundles)+len(bindings)), 1)
+	return bundles, bindings
+}
+
+// readKnowledgePolicyPromotionProfiles records one acquisition of the schema's
+// promotion profile catalog before the caller projects or counts it.
+func readKnowledgePolicyPromotionProfiles(ctx context.Context, schema *storage.SchemaManager) []knowledgepolicy.PromotionProfileDef {
+	profiles := schema.ShowPromotionProfiles()
+	queryprofile.Access(ctx, profileKindKnowledgePolicyPromotionProfileCatalog, "").Add(int64(len(profiles)), 1)
+	return profiles
+}
+
+// readKnowledgePolicyPromotionPolicies records one acquisition of the schema's
+// promotion policy catalog before the caller projects or counts it.
+func readKnowledgePolicyPromotionPolicies(ctx context.Context, schema *storage.SchemaManager) []knowledgepolicy.PromotionPolicyDef {
+	policies := schema.ShowPromotionPolicies()
+	queryprofile.Access(ctx, profileKindKnowledgePolicyPromotionPolicyCatalog, "").Add(int64(len(policies)), 1)
+	return policies
+}
+
+// readKnowledgePolicyNode is kp.resolve's point node read: it reports the one
+// request where the read happens, so a node the store does not hold is an
+// observed zero rather than no observation.
+func (e *StorageExecutor) readKnowledgePolicyNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := e.storage.GetNode(ctx, id)
+	queryprofile.EntityReadResult(queryprofile.Access(ctx, profileKindNodeByIdSeek, ""), node, err)
+	return node, err
+}
+
+// readKnowledgePolicyEdge is kp.resolve's point relationship read, reported as
+// its node read is.
+func (e *StorageExecutor) readKnowledgePolicyEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
+	edge, err := e.storage.GetEdge(ctx, id)
+	queryprofile.EntityReadResult(queryprofile.Access(ctx, queryprofile.KindRelationshipByIDSeek, ""), edge, err)
+	return edge, err
+}
+
+func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles(ctx context.Context) (*ExecuteResult, error) {
 	_, schema, err := e.knowledgePolicyContext("")
 	if err != nil {
 		return nil, err
@@ -54,7 +127,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult,
 		return nil, localizedError(localization.CypherKnowledgePolicySchemaManagerUnavailable(), nil)
 	}
 
-	bundles, bindings := schema.ShowDecayProfiles()
+	bundles, bindings := readKnowledgePolicyDecayProfiles(ctx, schema)
 	rows := make([][]interface{}, 0, len(bundles)+len(bindings))
 	for _, bundle := range bundles {
 		rows = append(rows, []interface{}{
@@ -113,7 +186,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult,
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies(ctx context.Context) (*ExecuteResult, error) {
 	_, schema, err := e.knowledgePolicyContext("")
 	if err != nil {
 		return nil, err
@@ -122,8 +195,8 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies() (*ExecuteResult,
 		return nil, localizedError(localization.CypherKnowledgePolicySchemaManagerUnavailable(), nil)
 	}
 
-	profiles := schema.ShowPromotionProfiles()
-	policies := schema.ShowPromotionPolicies()
+	profiles := readKnowledgePolicyPromotionProfiles(ctx, schema)
+	policies := readKnowledgePolicyPromotionPolicies(ctx, schema)
 	rows := make([][]interface{}, 0, len(profiles)+len(policies))
 	for _, profile := range profiles {
 		rows = append(rows, []interface{}{
@@ -310,20 +383,20 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(ctx context.Context
 				return nil, localizedError(localization.CypherKnowledgePolicyEntityNotFound(entityID), nil)
 			}
 		}
-		if node, nodeErr := e.storage.GetNode(ctx, storage.NodeID(lookupID)); entityKind != knowledgePolicyEntityEdge && nodeErr == nil && node != nil {
+		if node, nodeErr := e.readKnowledgePolicyNode(ctx, storage.NodeID(lookupID)); entityKind != knowledgePolicyEntityEdge && nodeErr == nil && node != nil {
 			createdNanos := node.CreatedAt.UnixNano()
 			versionNanos := createdNanos
 			if !node.UpdatedAt.IsZero() {
 				versionNanos = node.UpdatedAt.UnixNano()
 			}
-			resolution = scorer.ScoreNode(entityID, node.Labels, loadAccessMeta(e.storage, lookupID), createdNanos, versionNanos, nowNanos)
-		} else if edge, edgeErr := e.storage.GetEdge(ctx, storage.EdgeID(lookupID)); entityKind != knowledgePolicyEntityNode && edgeErr == nil && edge != nil {
+			resolution = scorer.ScoreNode(entityID, node.Labels, loadAccessMeta(ctx, e.storage, lookupID), createdNanos, versionNanos, nowNanos)
+		} else if edge, edgeErr := e.readKnowledgePolicyEdge(ctx, storage.EdgeID(lookupID)); entityKind != knowledgePolicyEntityNode && edgeErr == nil && edge != nil {
 			createdNanos := edge.CreatedAt.UnixNano()
 			versionNanos := createdNanos
 			if !edge.UpdatedAt.IsZero() {
 				versionNanos = edge.UpdatedAt.UnixNano()
 			}
-			resolution = scorer.ScoreEdge(entityID, edge.Type, loadAccessMeta(e.storage, lookupID), createdNanos, versionNanos, nowNanos)
+			resolution = scorer.ScoreEdge(entityID, edge.Type, loadAccessMeta(ctx, e.storage, lookupID), createdNanos, versionNanos, nowNanos)
 		} else {
 			return nil, localizedError(localization.CypherKnowledgePolicyEntityNotFound(entityID), nil)
 		}
@@ -357,10 +430,12 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(ctx context.Context
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyDeindexStatus() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbKnowledgePolicyDeindexStatus(ctx context.Context) (*ExecuteResult, error) {
 	columns := columnNames(kpDeindexStatusColumns)
 	be := unwrapBadgerEngine(e.storage)
 	if be == nil {
+		// An engine that exposes no queue is no acquisition: this answer
+		// reads no stored work item, so it reports none.
 		return &ExecuteResult{
 			Columns: columns,
 			Rows:    [][]interface{}{{0, false, localization.CypherKnowledgePolicyDeindexBadgerRequired().Fallback, "", "", "", nil, ""}},
@@ -371,6 +446,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyDeindexStatus() (*ExecuteRe
 	if err != nil {
 		return nil, err
 	}
+	queryprofile.Access(ctx, profileKindKnowledgePolicyPendingDeindexScan, "").Add(int64(len(items)), 1)
 	if len(items) == 0 {
 		return &ExecuteResult{
 			Columns: columns,
@@ -417,12 +493,17 @@ func splitCSVLabels(labelsCSV string) []string {
 	return labels
 }
 
-func loadAccessMeta(eng storage.Engine, entityID string) *knowledgepolicy.AccessMetaEntry {
+// loadAccessMeta reads one entity's stored access metadata for policy consumers.
+// The point read is reported where it happens, so a store that holds no entry
+// is an observed zero rather than no observation.
+func loadAccessMeta(ctx context.Context, eng storage.Engine, entityID string) *knowledgepolicy.AccessMetaEntry {
 	be := unwrapBadgerEngine(eng)
 	if be == nil {
 		return nil
 	}
+	counter := queryprofile.Access(ctx, profileKindKnowledgePolicyAccessMetaPoint, "")
 	result, err := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: storage.QualifiedEntityID(eng, entityID)})
+	queryprofile.EntityReadResult(counter, result.Entry, err)
 	if err != nil {
 		return nil
 	}

@@ -22,7 +22,7 @@ func TestRowSubqueryAdapterStatementContract(t *testing.T) {
 		"COLLECT { RETURN 1 / 0 AS invalid }",
 	} {
 		t.Run(expression, func(t *testing.T) {
-			root, _ := (&rowValueCompiler{}).compile(t.Context(), expression)
+			root, _ := (&rowValueCompiler{}).compile(t.Context(), expressionPart(expression))
 			for _, bound := range []bool{false, true} {
 				t.Run(fmt.Sprint(bound), func(t *testing.T) {
 					for _, key := range []string{"first", "second", "first"} {
@@ -76,7 +76,7 @@ func TestRowSubqueryAdapterBodyErrorIdentity(t *testing.T) {
 	}
 	e := NewStorageExecutor(store)
 	expression := "COLLECT { MATCH (q:Q) RETURN q }"
-	root, _ := (&rowValueCompiler{}).compile(t.Context(), expression)
+	root, _ := (&rowValueCompiler{}).compile(t.Context(), expressionPart(expression))
 	for _, compiled := range []bool{false, true} {
 		statement := context.WithValue(t.Context(), rowSubqueryRequestKey{}, "request value")
 		ctx, cancel := context.WithCancel(statement)

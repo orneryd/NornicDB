@@ -193,18 +193,11 @@ func (w *WALEngine) GetNodesByLabelVisibleAt(ctx context.Context, label string, 
 	return nil, ErrNotImplemented
 }
 
-// GetOutgoingEdgesVisibleAt delegates snapshot-visible outgoing adjacency queries when supported.
-func (w *WALEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+// ReadAdjacentEdgesVisibleAt delegates one snapshot-visible adjacent-edge
+// request when the wrapped engine can answer it.
+func (w *WALEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, request AdjacentEdgeRead, version MVCCVersion) ([]*Edge, error) {
 	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetOutgoingEdgesVisibleAt(ctx, nodeID, version)
-	}
-	return nil, ErrNotImplemented
-}
-
-// GetIncomingEdgesVisibleAt delegates snapshot-visible incoming adjacency queries when supported.
-func (w *WALEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetIncomingEdgesVisibleAt(ctx, nodeID, version)
+		return provider.ReadAdjacentEdgesVisibleAt(ctx, request, version)
 	}
 	return nil, ErrNotImplemented
 }
@@ -213,14 +206,6 @@ func (w *WALEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID
 func (w *WALEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error) {
 	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
 		return provider.GetEdgesByTypeVisibleAt(ctx, edgeType, version)
-	}
-	return nil, ErrNotImplemented
-}
-
-// GetEdgesBetweenVisibleAt delegates snapshot-visible topology queries when supported.
-func (w *WALEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
-	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetEdgesBetweenVisibleAt(ctx, startID, endID, version)
 	}
 	return nil, ErrNotImplemented
 }
@@ -761,38 +746,10 @@ func (w *WALEngine) BatchGetNodesWithoutEmbeddingsSupported() bool {
 	return batchNodeWithoutEmbeddingsSupported(w.engine)
 }
 
-// GetOutgoingEdges delegates to underlying engine.
-func (w *WALEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	return w.engine.GetOutgoingEdges(ctx, nodeID)
-}
-
-// GetIncomingEdges delegates to underlying engine.
-func (w *WALEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	return w.engine.GetIncomingEdges(ctx, nodeID)
-}
-
-// GetAdjacentEdges delegates to the inner engine when it implements the
-// optional AdjacentEdgesEngine capability. WAL writes are never reflected
-// in reads (it only logs), so a forwarded call sees the same data as the
-// pair of single-direction methods.
-func (w *WALEngine) GetAdjacentEdges(ctx context.Context, nodeID NodeID) ([]*Edge, []*Edge, error) {
-	if inner, ok := w.engine.(AdjacentEdgesEngine); ok {
-		return inner.GetAdjacentEdges(ctx, nodeID)
-	}
-	out, err := w.engine.GetOutgoingEdges(ctx, nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	in, err := w.engine.GetIncomingEdges(ctx, nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return out, in, nil
-}
-
-// GetEdgesBetween delegates to underlying engine.
-func (w *WALEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
-	return w.engine.GetEdgesBetween(ctx, startID, endID)
+// ReadAdjacentEdges delegates to the underlying engine. WAL writes are never
+// reflected in reads (it only logs), so a forwarded request sees the same data.
+func (w *WALEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	return w.engine.ReadAdjacentEdges(ctx, request)
 }
 
 // GetEdgeBetween delegates to underlying engine.

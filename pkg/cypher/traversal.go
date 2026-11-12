@@ -7,6 +7,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"sort"
 	"strconv"
 	"strings"
@@ -124,44 +125,74 @@ func traversalEndpointsNeedOnlyLabels(match *TraversalMatch) bool {
 // traversalRelationshipsNeedOnlyHeaders reports whether a traversal needs
 // its relationships only for their ID, type and endpoints: the relationship
 // is anonymous with no property map and no path variable exposes it. The
-// traversal then lists them through storage.EdgeHeaderReader, which can
-// answer without reading the relationship records.
+// traversal then asks the storage read for headers only, so it can answer
+// without reading the relationship records.
 func traversalRelationshipsNeedOnlyHeaders(match *TraversalMatch) bool {
 	return !match.IsChained && match.PathVariable == "" && (match.Relationship.Variable == "" || match.UnusedPropertyVariables[match.Relationship.Variable]) && len(match.Relationship.Properties) == 0
 }
 
-// traversalEdges lists the relationships a traversal step expands from node
-// in direction ("outgoing" or "incoming"): headers when the statement needs
-// no relationship properties and storage can list them, full relationships
-// otherwise.
+// profileKindExpand names the relationship expansion a PROFILE statement
+// actually performed: the plan operator that claims it.
+const profileKindExpand = "Expand"
+
+// adjacencyDirectionName names the direction an adjacency request selected, as
+// the profile record spells it.
+func adjacencyDirectionName(direction storage.AdjacentEdgeDirection) string {
+	switch direction {
+	case storage.AdjacentIncoming:
+		return "incoming"
+	case storage.AdjacentBoth:
+		return "both"
+	case storage.AdjacentBetween:
+		return "between"
+	}
+	return "outgoing"
+}
+
+// recordAdjacentPopulation reports the entries one adjacency read handed over,
+// as the Expand the statement performed: each entry is one entity read, and the
+// record keeps the direction the request selected and the relationship types it
+// asked the reader for. It is the one recorder for both a traversal step's
+// typed read and the identity graph reader the algorithms and path expanders
+// read through, so one physical read is reported once - where the reader hands
+// the entries over, before it projects identities or a consumer applies its own
+// type selection. Resolving the observer and formatting the detail happen only
+// while the statement is profiled, so an ordinary statement pays one observer
+// lookup and allocates nothing.
+func recordAdjacentPopulation(ctx context.Context, request storage.AdjacentEdgeRead, edges []*storage.Edge) {
+	if queryprofile.FromContext(ctx) == nil {
+		return
+	}
+	detail := adjacencyDirectionName(request.Direction)
+	if len(request.Types) > 0 {
+		detail += ":" + strings.Join(request.Types, "|")
+	}
+	queryprofile.Access(ctx, profileKindExpand, detail).Add(int64(len(edges)), int64(len(edges)))
+}
+
+// traversalEdges lists the relationships a traversal step expands from node in
+// direction ("outgoing" or "incoming"). The pattern's types select them at the
+// storage read, so a step lists only the relationships its type can match, and
+// headers are requested when the statement needs no relationship properties.
 func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.NodeID, outgoing bool) []*storage.Edge {
-	if reader, ok := e.storage.(storage.EdgeHeaderReader); ok && ctx.relationshipsNeedOnlyHeaders {
-		var edges []*storage.Edge
-		var answered bool
-		var err error
-		if outgoing {
-			edges, answered, err = reader.OutgoingEdgeHeaders(ctx.cancelCtx, nodeID)
-		} else {
-			edges, answered, err = reader.IncomingEdgeHeaders(ctx.cancelCtx, nodeID)
-		}
-		if err != nil {
-			recordExpressionFailure(ctx.cancelCtx, err)
-			return nil
-		}
-		if answered {
-			return edges
-		}
+	request := storage.AdjacentEdgeRead{
+		Node:    nodeID,
+		Types:   ctx.relTypes,
+		Headers: ctx.relationshipsNeedOnlyHeaders,
 	}
-	var edges []*storage.Edge
-	var err error
-	if outgoing {
-		edges, err = e.storage.GetOutgoingEdges(ctx.cancelCtx, nodeID)
-	} else {
-		edges, err = e.storage.GetIncomingEdges(ctx.cancelCtx, nodeID)
+	if !outgoing {
+		request.Direction = storage.AdjacentIncoming
 	}
+	edges, err := e.storage.ReadAdjacentEdges(ctx.cancelCtx, request)
 	if err != nil {
 		recordExpressionFailure(ctx.cancelCtx, err)
+		return edges
 	}
+	// A PROFILE statement counts the relationships this typed read returned:
+	// each entry is one entity read, and the record keeps the direction and the
+	// types the read selected. A read that failed returned no entry and the
+	// statement fails with it.
+	recordAdjacentPopulation(ctx.cancelCtx, request, edges)
 	return edges
 }
 
@@ -282,7 +313,10 @@ func readRelationshipPattern(ctx context.Context, pattern string, properties pat
 // caller's own id / elementId lookup supplies it, is the one relationship the
 // pattern may walk: the traversal then starts from that relationship's own
 // endpoints and lists no adjacency.
-func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, relationship *storage.Edge, pathVariable string, readTail []string, earlyLimit int) (*ExecuteResult, error) {
+// hint carries the pipeline's downstream row requirements: the read-only tail
+// used for property projection, the early limit, and the enclosing MATCH
+// invocation's statistics memo, which the seed estimates reuse.
+func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, relationship *storage.Edge, pathVariable string, hint pipelineMatchPhysicalHint) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -315,26 +349,26 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// so a named labelled endpoint can load by ID + labels only (#1110). The
 	// pipeline supplies the read-only clauses after this MATCH (readTail);
 	// direct callers supply the RETURN items themselves.
-	if readTail != nil {
-		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(matches, whereClause, readTail)
+	if hint.readTail != nil {
+		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(matches, whereClause, hint.readTail)
 		if !matches.IsChained && matches.PathVariable == "" {
-			matches.endpointProperties = traversalSourceProperties(matches.EndNode, whereClause, readTail, "")
+			matches.endpointProperties = traversalSourceProperties(matches.EndNode, whereClause, hint.readTail, "")
 		}
 	} else {
 		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariables(matches, returnItems, whereClause)
 	}
-	if earlyLimit == 0 {
+	if hint.earlyLimit == 0 {
 		return result, nil
 	}
 	repeatedEndpoint := matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable
-	if earlyLimit > 0 && whereClause == "" && !repeatedEndpoint {
-		matches.TraversalLimit = earlyLimit
+	if hint.earlyLimit > 0 && whereClause == "" && !repeatedEndpoint {
+		matches.TraversalLimit = hint.earlyLimit
 	}
 
 	// A plain relationship count is answered from the counters when they can
 	// (relationshipCountFromStore decides), instead of materializing paths.
 	if whereClause == "" && pathVariable == "" && len(returnItems) == 1 {
-		if count, ok, err := e.relationshipCountFromStore(ctx, matches, returnItems[0]); ok {
+		if count, ok, err := e.relationshipCountFromStore(ctx, matches, returnItems[0]); ok.available() {
 			if err != nil {
 				return nil, err
 			}
@@ -342,6 +376,24 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				return nil, err
 			}
 			return result, nil
+		}
+	}
+
+	// Relationship inline equality values a declared relationship constraint
+	// indexes select the pattern's relationship from the relationship equality
+	// index, before any type scan. The pin below then keeps the relationship's
+	// type, direction, inline properties, endpoint admission and the WHERE with
+	// their existing owners, and no indexed relationship means no match at all.
+	if relationship == nil && !matches.IsChained {
+		selected, none, pinned, err := e.relationshipPropertySeedEdge(ctx, matches)
+		if err != nil {
+			return nil, err
+		}
+		if pinned {
+			if none {
+				return result, nil
+			}
+			relationship = selected
 		}
 	}
 
@@ -431,7 +483,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// Only unbound, single-segment traversals choose their orientation here.
 	// Index availability alone says nothing about adjacency expansion cost.
 	if len(seedNodes) == 0 && len(endSeedNodes) == 0 && !matches.IsChained && matches.pinnedRelationship == nil {
-		endNodes, selected, err := e.chooseTraversalEndSeeds(ctx, matches, optimizedStartNodes, startDecided, whereClause)
+		endNodes, selected, err := e.chooseTraversalEndSeeds(ctx, matches, optimizedStartNodes, startDecided, whereClause, hint.statistics)
 		if err != nil {
 			return nil, err
 		}
@@ -517,7 +569,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	}
 
 	// Build result rows (non-aggregation)
-	if err := collector.appendPathRows(e, ctx, paths, matches, returnItems, earlyLimit); err != nil {
+	if err := collector.appendPathRows(e, ctx, paths, matches, returnItems, hint.earlyLimit); err != nil {
 		return nil, err
 	}
 
@@ -647,7 +699,7 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 			if err := ctx.Err(); err != nil {
 				return nil, true, err
 			}
-			part, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, []*storage.Node{seed}, nil, nil, pathVariable, nil, -1)
+			part, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, []*storage.Node{seed}, nil, nil, pathVariable, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 			if err != nil {
 				return nil, true, err
 			}
@@ -662,7 +714,7 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 		}
 		if result == nil {
 			// Preserve the existing empty-index behavior and result columns.
-			result, err = e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, nil, pathVariable, nil, -1)
+			result, err = e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, nil, pathVariable, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 			if err != nil {
 				return nil, true, err
 			}
@@ -806,8 +858,10 @@ func referencesTraversalVariable(expr string, variable string) bool {
 // the bound value afterward (O(|E|)), it reverses the pattern, traverses from
 // each known endpoint (O(degree)), flips each path back and applies the WHERE
 // clause. seeded reports whether this path ran; when it did, the returned
-// paths are final even if empty. The caller is responsible for having checked
-// the end node's own labels and inline properties.
+// paths are final even if empty. Each end seed is admitted by its own pattern
+// when the reversed walk starts (traverseFromNode), so the labels, inline
+// properties and node visibility the end pattern requires are the ones a
+// start-side scan applies, including for a seed an index seek returned.
 func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *TraversalMatch, startSeedNodes, endSeedNodes []*storage.Node, whereClause string) (paths []PathResult, seeded bool) {
 	if len(startSeedNodes) > 0 || len(endSeedNodes) == 0 || matches.IsChained {
 		return nil, false
@@ -1412,7 +1466,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 	store := e.getStorage(ctx)
 	labels := nodeScanLabels(ctx, store, match.StartNode.labels)
 	var stream func(func(*storage.Node) error) error
-	if e.queryNodeReader(store) != nil {
+	if e.queryNodeReader(ctx, store) != nil {
 		stream = func(visit func(*storage.Node) error) error {
 			return streamQueryNodes(ctx, store, labels, visit)
 		}
@@ -1895,31 +1949,19 @@ func pathResultsReuseRelationship(left, right PathResult) bool {
 	return false
 }
 
-// traverseFromNode traverses from a specific node rather than finding start nodes by label
+// traverseFromNode traverses from a specific node rather than finding start nodes by label.
+// A walk may start only from a node its own pattern admits as a row, whichever
+// route bound it: a node bound by an earlier clause, an indexed end seed whose
+// walk runs reversed, or a chain segment's start. pipelineNodeMatchesPattern is
+// that one acceptance test (every required label, the inline properties and the
+// query's own node visibility), so a walk from a known node keeps exactly the
+// admission a start-side scan applies instead of a second, partial copy of it.
+// The reversed walk of an end-seeded pattern admits the original end node here,
+// which is why an indexed end seed cannot become a row the end pattern itself
+// would reject.
 func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch) []PathResult {
-	// Verify the start node matches the expected pattern (labels and properties)
-	if len(match.StartNode.labels) > 0 {
-		found := false
-		for _, label := range startNode.Labels {
-			for _, requiredLabel := range match.StartNode.labels {
-				if label == requiredLabel {
-					found = true
-					break
-				}
-			}
-			if found {
-				break
-			}
-		}
-		if !found {
-			return nil
-		}
-	}
-
-	if len(match.StartNode.properties) > 0 {
-		if !e.nodeMatchesProps(startNode, match.StartNode.properties) {
-			return nil
-		}
+	if !e.pipelineNodeMatchesPattern(traversalCtx, startNode, match.StartNode) {
+		return nil
 	}
 
 	ctx := e.newTraversalContext(traversalCtx, startNode, &match.Relationship)
@@ -2068,11 +2110,13 @@ func (e *StorageExecutor) findPaths(
 			edges = e.traversalEdges(ctx, lookupID, false)
 		case "both":
 			var err error
-			edges, err = undirectedIncidentEdges(ctx.cancelCtx, e.storage, lookupID)
+			request := storage.AdjacentEdgeRead{Direction: storage.AdjacentBoth, Node: lookupID, Types: ctx.relTypes, Headers: ctx.relationshipsNeedOnlyHeaders}
+			edges, err = undirectedIncidentEdges(ctx.cancelCtx, e.storage, request)
 			if err != nil {
 				recordExpressionFailure(ctx.cancelCtx, err)
 				return results
 			}
+			recordAdjacentPopulation(ctx.cancelCtx, request, edges)
 		}
 	}
 

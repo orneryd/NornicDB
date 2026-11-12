@@ -1168,45 +1168,74 @@ func (r *RemoteEngine) GetFirstNodeByLabel(ctx context.Context, label string) (*
 	return queryRemoteEntities(r, ctx, stmt, nil, valueToNode, firstRemoteEntity[Node])
 }
 
-func (r *RemoteEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+// ReadAdjacentEdges answers one adjacent-edge request against the remote graph.
+// A type set becomes the statement's relationship type expression; a header
+// request is answered from the relationships the statement returned.
+func (r *RemoteEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	if err := request.validate(); err != nil {
+		return nil, err
+	}
+	if request.Direction == AdjacentBoth {
+		return readBothAdjacentEdges(ctx, request, func(direction AdjacentEdgeRead) ([]*Edge, error) {
+			return r.ReadAdjacentEdges(ctx, direction)
+		})
+	}
 	ctx, cancel, err := remoteCallContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer cancel()
-	return queryRemoteEntities(r, ctx, "MATCH (n)-[r]->() WHERE n.id = $id RETURN r", map[string]interface{}{"id": string(nodeID)}, valueToEdge, allRemoteEntities[Edge])
+	if request.Direction == AdjacentBetween {
+		return r.readEdgesBetween(ctx, request.Node, request.Other, request.Types, false)
+	}
+	statement := "MATCH (n)-[r" + remoteRelationshipTypes(request.Types) + "]->() WHERE n.id = $id RETURN r"
+	if request.Direction == AdjacentIncoming {
+		statement = "MATCH ()-[r" + remoteRelationshipTypes(request.Types) + "]->(n) WHERE n.id = $id RETURN r"
+	}
+	edges, err := queryRemoteEntities(r, ctx, statement, map[string]interface{}{"id": string(request.Node)}, valueToEdge, allRemoteEntities[Edge])
+	if err != nil {
+		return nil, err
+	}
+	return remoteRequestedDetail(request, edges), nil
 }
 
-func (r *RemoteEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	ctx, cancel, err := remoteCallContext(ctx)
-	if err != nil {
-		return nil, err
+// remoteRelationshipTypes renders a request's type set as a Cypher
+// relationship type expression: "" for every type, ":A" or ":A|B" otherwise.
+func remoteRelationshipTypes(types []string) string {
+	if len(types) == 0 {
+		return ""
 	}
-	defer cancel()
-	return queryRemoteEntities(r, ctx, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN r", map[string]interface{}{"id": string(nodeID)}, valueToEdge, allRemoteEntities[Edge])
+	parts := make([]string, 0, len(types))
+	for _, edgeType := range types {
+		parts = append(parts, cyphertext.PrintIdentifier(edgeType, nil, cyphertext.RawSource))
+	}
+	return ":" + strings.Join(parts, "|")
+}
+
+// remoteRequestedDetail projects relationships the remote statement returned
+// into the detail the request asks for.
+func remoteRequestedDetail(request AdjacentEdgeRead, edges []*Edge) []*Edge {
+	if !request.Headers {
+		return edges
+	}
+	for index, edge := range edges {
+		edges[index] = request.header(edge)
+	}
+	return edges
 }
 
 // readEdgesBetween owns endpoint binding and the two Engine lookup contracts.
-// A type selects the typed first-edge query; nil selects every connecting edge.
-// The caller supplies the bounded context so this shared read derives no second
-// timeout and each entry point issues one statement on one owned deadline.
-func (r *RemoteEngine) readEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType *string) ([]*Edge, error) {
-	relationship, limit := "r", ""
-	if edgeType != nil {
-		relationship += ":" + cyphertext.PrintIdentifier(*edgeType, nil, cyphertext.RawSource)
+// A type set selects the typed statement; an empty set selects every connecting
+// edge. The caller supplies the bounded context so this shared read derives no
+// second timeout and each entry point issues one statement on one owned
+// deadline.
+func (r *RemoteEngine) readEdgesBetween(ctx context.Context, startID, endID NodeID, types []string, firstOnly bool) ([]*Edge, error) {
+	relationship, limit := "r"+remoteRelationshipTypes(types), ""
+	if firstOnly {
 		limit = " LIMIT 1"
 	}
 	statement := "MATCH (a)-[" + relationship + "]->(b) WHERE a.id = $start AND b.id = $end RETURN r" + limit
 	return queryRemoteEntities(r, ctx, statement, map[string]interface{}{"start": string(startID), "end": string(endID)}, valueToEdge, allRemoteEntities[Edge])
-}
-
-func (r *RemoteEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
-	ctx, cancel, err := remoteCallContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer cancel()
-	return r.readEdgesBetween(ctx, startID, endID, nil)
 }
 
 func (r *RemoteEngine) GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error) {
@@ -1215,7 +1244,7 @@ func (r *RemoteEngine) GetEdgeBetween(ctx context.Context, startID, endID NodeID
 		return nil, err
 	}
 	defer cancel()
-	edges, err := r.readEdgesBetween(ctx, startID, endID, &edgeType)
+	edges, err := r.readEdgesBetween(ctx, startID, endID, []string{edgeType}, true)
 	if err != nil {
 		// Preserve caller cancellation even though this Engine lookup retains
 		// its historical optional-result contract for other query failures.

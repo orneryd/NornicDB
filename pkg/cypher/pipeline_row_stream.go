@@ -3,12 +3,23 @@ package cypher
 import (
 	"context"
 	"iter"
+	"slices"
 	"strings"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-type pipelineRowProjection struct{ expression, alias string }
+// pipelineRowProjection is one projection item of a row plan: its expression,
+// its output name, and where its expression starts in the clause's own text
+// (-1 when the plan has no retained item syntax). A PROFILE statement binds
+// expressionStart as the row's expression origin, so a program the expression
+// starts is reported at the occurrence that was written.
+type pipelineRowProjection struct {
+	expression      string
+	alias           string
+	expressionStart int
+}
 type pipelineRowWith struct {
 	clause, where string
 	star          bool
@@ -75,10 +86,21 @@ func compilePipelineRowWith(ctx context.Context, clause pipelineClause, withoutW
 	if plan.star {
 		items = items[1:]
 	}
+	// The item's own expression origin is read in the clause's coordinates; a
+	// clause without retained syntax has none.
+	clauseStart := 0
+	if clause.syntax.Valid() {
+		clauseStart, _ = clause.syntax.Span()
+	}
 	for _, item := range items {
 		raw := ""
+		expressionStart := -1
 		if item.syntax.Valid() {
 			raw = strings.TrimSpace(item.syntax.Text())
+			if expression := item.syntax.ChildRule(cypherantlr.CypherParserRULE_expression); expression.Valid() {
+				start, _ := expression.Span()
+				expressionStart = start - clauseStart
+			}
 		}
 		if raw == "" || raw == "{}" {
 			continue
@@ -86,7 +108,7 @@ func compilePipelineRowWith(ctx context.Context, clause pipelineClause, withoutW
 		if item.expression == "" || pipelineExpressionContainsAggregate(item.expression) {
 			return pipelineRowWith{}, false
 		}
-		plan.projections = append(plan.projections, pipelineRowProjection{item.expression, item.alias})
+		plan.projections = append(plan.projections, pipelineRowProjection{expression: item.expression, alias: item.alias, expressionStart: expressionStart})
 	}
 	if len(plan.projections) == 0 && (!plan.star || len(items) > 0) {
 		return pipelineRowWith{}, false
@@ -113,10 +135,22 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 	call := inspectFunctionCall(strings.TrimSpace(expression), qualifiedFunctionCall, "", &callFacts2)
 	function, arguments := callFacts2.name, callFacts2.inner
 	if call && strings.EqualFold(function, "range") {
-		parts := e.splitFunctionArgs(arguments)
-		values := make([]interface{}, len(parts))
-		for index, part := range parts {
+		origin := rowExpressionOrigin(row)
+		var parts rowValuePartList
+		if origin.had {
+			var buffer [8]expressionFragment
+			parts.spans = appendExpressionParts(buffer[:0], arguments, false)
+		} else {
+			parts.texts = e.splitFunctionArgs(arguments)
+		}
+		values := make([]interface{}, parts.count())
+		for index := range values {
+			part, start := parts.at(index)
+			saved, bound := advanceRowExpressionOrigin(row, callFacts2.argumentStart+start, origin)
 			value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(part), row)
+			if bound {
+				restoreRowExpressionOrigin(row, saved)
+			}
 			if !resolved {
 				pipelineItemUnevaluable(ctx, part)
 				return nil, false
@@ -183,7 +217,7 @@ func (e *StorageExecutor) validatePipelineProjectionExpressions(ctx context.Cont
 }
 
 func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) ([]pipelineRow, int, bool) {
-	source, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses)
+	source, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses, nil)
 	if !ok {
 		return nil, 0, false
 	}
@@ -193,8 +227,18 @@ func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []
 
 func (e *StorageExecutor) pipelineProjectReturnRow(ctx context.Context, projections []returnProjection, row pipelineRow) ([]interface{}, bool) {
 	values := make([]interface{}, len(projections))
+	profiling := profileRuntimeFromContext(ctx) != nil
 	for index, projection := range projections {
+		// A PROFILE statement binds the item's retained expression origin for
+		// this row; any other statement binds nothing and allocates nothing.
+		saved, bound := rowExpressionOriginBinding{}, false
+		if profiling {
+			saved, bound = bindRowExpressionOrigin(row, projection.expressionStart)
+		}
 		value, evaluated := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
+		if bound {
+			restoreRowExpressionOrigin(row, saved)
+		}
 		if !evaluated {
 			pipelineItemUnevaluable(ctx, projection.expr)
 			return nil, false
@@ -571,7 +615,16 @@ func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipel
 			for _, projection := range plan.projections {
 				value, found := row[projection.expression]
 				if !found {
+					// A PROFILE statement binds the item's retained expression
+					// origin for this row; any other statement binds nothing.
+					saved, bound := rowExpressionOriginBinding{}, false
+					if profileRuntimeFromContext(ctx) != nil {
+						saved, bound = bindRowExpressionOrigin(row, projection.expressionStart)
+					}
 					value, found = e.evaluateRowExpressionWithContext(ctx, projection.expression, row)
+					if bound {
+						restoreRowExpressionOrigin(row, saved)
+					}
 				}
 				if !found {
 					pipelineItemUnevaluable(ctx, projection.expression)
@@ -662,7 +715,12 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 	}, true
 }
 
-func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) (pipelineRowSource, int, bool) {
+// pipelineUnwindSource is the one owner of an UNWIND clause's values. prepared
+// is the statement's own evaluation of this clause's expression, given only
+// where the statement prepared its leading UNWIND; it is read once for the
+// input row it belongs to and released. Without one, every input row
+// evaluates the expression itself, as before.
+func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipelineRow, clauses []pipelineClause, prepared []interface{}) (pipelineRowSource, int, bool) {
 	iteration, ok := iterationClauseFor(clauses[0])
 	if err := ctx.Err(); err != nil {
 		recordExpressionFailure(ctx, err)
@@ -687,9 +745,25 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 	}
 	source := pipelineRowSource(func(yield func(pipelineRow) bool) bool {
 		for _, input := range rows {
-			values, ok := e.pipelineUnwindValues(ctx, expression, input)
-			if !ok {
-				return false
+			// Prepared values are the same expression's evaluation, so they
+			// stream as they came; claiming them releases the reference.
+			var values iter.Seq[interface{}]
+			if prepared != nil {
+				values = slices.Values(prepared)
+				prepared = nil
+			} else {
+				var evaluated bool
+				saved, bound := rowExpressionOriginBinding{}, false
+				if profileRuntimeFromContext(ctx) != nil {
+					saved, bound = bindRowExpressionOrigin(input, iteration.expressionStart)
+				}
+				values, evaluated = e.pipelineUnwindValues(ctx, expression, input)
+				if bound {
+					restoreRowExpressionOrigin(input, saved)
+				}
+				if !evaluated {
+					return false
+				}
 			}
 			child := make(pipelineRow, len(input)+1)
 			for name, value := range input {

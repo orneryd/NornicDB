@@ -2,35 +2,11 @@ package embed
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 )
 
-// forProviderBatches owns request partitioning. We use UTF-8 bytes as an upper
-// bound on text tokens, capped at the model's per-input limit: an input beyond
-// that limit is either truncated or rejected by the provider as before.
-// A zero limit means the provider documents no aggregate bound.
-func forProviderBatches(ctx context.Context, count, maxInputs, maxTokens int, tokens func(int) int, send func(int, int) error) error {
-	for start := 0; start < count; {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		end, total := start, 0
-		for end < count && (maxInputs == 0 || end-start < maxInputs) {
-			n := tokens(end)
-			if end > start && maxTokens > 0 && total+n > maxTokens {
-				break
-			}
-			total += n
-			end++
-		}
-		if err := send(start, end); err != nil {
-			return fmt.Errorf("embedding inputs %d..%d: %w", start, end-1, err)
-		}
-		start = end
-	}
-	return nil
-}
+// Provider request partitioning is owned by internal/providerbatch so the
+// embedding and rerank providers share one implementation.
 
 // mergeProviderBatch reuses a complete response and allocates an aggregate
 // destination only when multiple requests must be combined.

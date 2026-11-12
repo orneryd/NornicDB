@@ -128,14 +128,14 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 		{"create", func(tx *BadgerTransaction) error {
 			return tx.CreateEdge(t.Context(), &Edge{ID: "test:ca", StartNode: "test:c", EndNode: "test:a", Type: "LINK"})
 		}, func(t *testing.T, b *BadgerEngine) {
-			edges, err := b.GetEdgesBetween(context.Background(), "test:c", "test:a")
+			edges, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:c", Other: "test:a"})
 			require.NoError(t, err)
 			require.Len(t, edges, 1)
 		}},
 		{"delete", func(tx *BadgerTransaction) error {
 			return tx.DeleteEdge(t.Context(), "test:ab")
 		}, func(t *testing.T, b *BadgerEngine) {
-			edges, err := b.GetEdgesBetween(context.Background(), "test:a", "test:b")
+			edges, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:a", Other: "test:b"})
 			require.NoError(t, err)
 			require.Empty(t, edges)
 		}},

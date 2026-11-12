@@ -274,18 +274,28 @@ func (s *Service) graphRerankContent(ctx context.Context, result *SearchResult, 
 	if id == "" {
 		id = storage.NodeID(result.ID)
 	}
-	if node, err := s.getNodeWithoutEmbeddings(ctx, id); err == nil && node != nil {
-		matched := rrfResult{ID: string(id)}
-		if match != nil && match.Kind == SearchMatchChunk {
-			if len(managedChunkTexts(s.hitEmbedMeta(ctx, node))) > match.Chunk {
-				matched.MatchID = nodeChunkVectorKey(string(id), match.Chunk)
-			} else if passage := graphPassage(node.Properties, match, maxChars); passage != "" {
-				return passage
-			}
-		}
-		return s.rerankCandidateContent(ctx, node, matched, query, maxChars)
+	if node, err := s.readNodeImage(ctx, id, metadataNodeImage); err == nil && node != nil {
+		return s.nodeRerankContent(ctx, result, node, id, query, maxChars)
 	}
 	return boundedPrefix(s.extractSearchableText(graphCandidateTextNode(result)), maxChars)
+}
+
+// nodeRerankContent is a node hit's rerank text, read from the node the caller
+// already resolved and centred on the chunk its search matched best: a window
+// around the matched chunk and its neighbours, or, without the chunk texts
+// kept, around the chunk's place in the properties. The budget counts
+// characters, not bytes.
+func (s *Service) nodeRerankContent(ctx context.Context, result *SearchResult, node *storage.Node, id storage.NodeID, query string, maxChars int) string {
+	match := graphBestMatch(result)
+	matched := rrfResult{ID: string(id)}
+	if match != nil && match.Kind == SearchMatchChunk {
+		if len(managedChunkTexts(s.hitEmbedMeta(ctx, node))) > match.Chunk {
+			matched.MatchID = nodeChunkVectorKey(string(id), match.Chunk)
+		} else if passage := graphPassage(node.Properties, match, maxChars); passage != "" {
+			return passage
+		}
+	}
+	return s.rerankCandidateContent(ctx, node, matched, query, maxChars)
 }
 
 // graphBestMatch is the match a candidate's rerank passage is centred on:

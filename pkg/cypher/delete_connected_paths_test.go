@@ -38,21 +38,15 @@ func TestForeachDeleteOfConnectedNode(t *testing.T) {
 
 var errAdjacencyRead = errors.New("adjacency read failed")
 
-// adjacencyFailingEngine is a store whose relationship lookups fail (all, or
-// only the incoming ones) and that defers connected-node deletes.
+// adjacencyFailingEngine fails the typed incident-relationship request and
+// defers connected-node deletes.
 type adjacencyFailingEngine struct {
 	storage.Engine
-	incomingOnly bool
+	requests *[]storage.AdjacentEdgeRead
 }
 
-func (f adjacencyFailingEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	if f.incomingOnly {
-		return nil, nil
-	}
-	return nil, errAdjacencyRead
-}
-
-func (f adjacencyFailingEngine) GetIncomingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
+func (f adjacencyFailingEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	*f.requests = append(*f.requests, request)
 	return nil, errAdjacencyRead
 }
 
@@ -63,14 +57,15 @@ func (f adjacencyFailingEngine) DeleteGraphNode(ctx context.Context, _ storage.N
 // A failed relationship lookup fails the connected-node check and the DELETE.
 func TestConnectedDeleteTargetsLookupErrors(t *testing.T) {
 	base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	for _, incomingOnly := range []bool{false, true} {
-		store := adjacencyFailingEngine{Engine: base, incomingOnly: incomingOnly}
-		_, err := connectedDeleteTargets(context.Background(), store, []storage.NodeID{"n"}, nil)
-		require.ErrorIs(t, err, errAdjacencyRead)
-	}
-
-	exec := NewStorageExecutor(adjacencyFailingEngine{Engine: base})
-	node := &storage.Node{ID: "n", Labels: []string{"D"}}
-	_, _, err := exec.pipelineApplyDelete(context.Background(), []pipelineRow{{"n": node}}, map[string]struct{}{"n": {}}, "DELETE n")
+	var requests []storage.AdjacentEdgeRead
+	store := adjacencyFailingEngine{Engine: base, requests: &requests}
+	_, err := connectedDeleteTargets(t.Context(), store, []storage.NodeID{"n"}, nil)
 	require.ErrorIs(t, err, errAdjacencyRead)
+	require.Equal(t, []storage.AdjacentEdgeRead{{Node: "n", Direction: storage.AdjacentBoth}}, requests)
+
+	exec := NewStorageExecutor(store)
+	node := &storage.Node{ID: "n", Labels: []string{"D"}}
+	_, _, err = exec.pipelineApplyDelete(context.Background(), []pipelineRow{{"n": node}}, map[string]struct{}{"n": {}}, "DELETE n")
+	require.ErrorIs(t, err, errAdjacencyRead)
+	require.Equal(t, []storage.AdjacentEdgeRead{{Node: "n", Direction: storage.AdjacentBoth}, {Node: "n", Direction: storage.AdjacentBoth}}, requests)
 }

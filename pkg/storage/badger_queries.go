@@ -1406,24 +1406,76 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 	return result, nil
 }
 
-// GetOutgoingEdges returns all edges where the given node is the source.
-func (b *BadgerEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	out, _, err := readAdjacency(ctx, b, adjacencyOutgoing, nodeID, "", nil, visibleRead)
-	return out, err
+// ReadAdjacentEdges answers one adjacent-edge request from the engine's
+// current view: the node's relationships in the requested direction, of the
+// requested types, as full relationships or as headers, whichever the request
+// asks for.
+//
+// On a hot path the per-node adjacency cache short-circuits the Badger
+// iterator entirely; a miss falls back to a single view transaction for every
+// direction the request lists. An entry of another type is rejected from the
+// adjacency value before its relationship is read or allocated.
+func (b *BadgerEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	return b.readAdjacentEdges(ctx, request, visibleRead)
 }
 
-// GetStoredOutgoingEdges includes hidden bodies through the shared read view.
-func (b *BadgerEngine) GetStoredOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	out, _, err := readAdjacency(ctx, b, adjacencyOutgoing, nodeID, "", nil, storedRead)
-	return out, err
+// ReadStoredAdjacentEdges is ReadAdjacentEdges over the physically stored
+// relationships, the hidden bodies an integrity read needs included
+// (StoredEntityReader).
+func (b *BadgerEngine) ReadStoredAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	return b.readAdjacentEdges(ctx, request, storedRead)
 }
 
-// GetAdjacentEdges fetches both outgoing and incoming edges for nodeID. On a
-// hot path the per-node adjacency cache short-circuits the Badger iterator
-// entirely, falling back to a single view transaction when either direction
-// misses.
-func (b *BadgerEngine) GetAdjacentEdges(ctx context.Context, nodeID NodeID) ([]*Edge, []*Edge, error) {
-	return readAdjacency(ctx, b, adjacencyBoth, nodeID, "", nil, visibleRead)
+// readAdjacentEdges is the engine's one adjacency kernel: it answers a between
+// request from the between index and every other direction from the native
+// adjacency capture.
+func (b *BadgerEngine) readAdjacentEdges(ctx context.Context, request AdjacentEdgeRead, v readVisibility) ([]*Edge, error) {
+	if err := request.validate(); err != nil {
+		return nil, err
+	}
+	if request.Direction == AdjacentBetween {
+		return b.readAdjacentEdgesBetween(ctx, request, v)
+	}
+	if request.Headers {
+		// A header request is answered from the adjacency values; a read-time
+		// visibility filter or an overlay state the values cannot describe
+		// falls through to the full read, whose records decide visibility and
+		// whose relationships are a valid answer to a header request.
+		if edges, answered, err := b.readAdjacentEdgeHeaders(ctx, request, v); err != nil || answered {
+			return edges, err
+		}
+		// The values cannot list the request faithfully, so the record read decides
+		// and its relationships are the answer to the header request.
+		request.Headers = false
+	}
+	reader, err := b.captureAdjacencyReader(ctx, request, v)
+	if err != nil {
+		return nil, err
+	}
+	if reader.view != nil {
+		defer reader.view.Close()
+		if observe := adjacencyReadCaptureObserver.Load(); observe != nil {
+			(*observe)(b)
+		}
+	}
+	// The request's direction selects the side it lists: a one-direction read
+	// returns that side, and a both-direction read combines the outgoing
+	// relationships with the incoming ones exactly once.
+	first, err := reader.read(ctx, request.Direction != AdjacentIncoming)
+	if err != nil {
+		return nil, err
+	}
+	if request.Direction != AdjacentBoth {
+		return first, nil
+	}
+	incoming, err := reader.read(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	if reader.view != nil {
+		reader.view.Close()
+	}
+	return combineAdjacentEdgeHalves(ctx, request.Node, first, incoming)
 }
 
 // materializeAdjEdges resolves a list of EdgeIDs to live *Edge bodies by
@@ -1505,7 +1557,13 @@ func (b *BadgerEngine) materializeAdjEdges(ctx context.Context, ids []EdgeID, v 
 // revisit a small set of edges thousands of times per request) into
 // memory-bound work after the first encounter. edgeGen is the edge cache's
 // generation captured before txn was opened (cacheGeneration).
-func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte, nowNanos int64, edgeGen uint64, v readVisibility) ([]*Edge, []EdgeID, error) {
+//
+// types is the request's type set. An entry whose value names another type is
+// rejected before its relationship is read, so the unrelated part of a node's
+// adjacency costs one value comparison and no allocation. ids stays the node's
+// whole adjacency: it is the cache value every direction and type set reads
+// through.
+func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte, nowNanos int64, edgeGen uint64, v readVisibility, types []string) ([]*Edge, []EdgeID, error) {
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 
@@ -1522,6 +1580,17 @@ func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte,
 		}
 		ids = append(ids, edgeID)
 
+		if len(types) > 0 {
+			rejected := false
+			_ = it.Item().Value(func(value []byte) error {
+				matched, known := adjacencyEntryTypeMatches(value, types)
+				rejected = known && !matched
+				return nil
+			})
+			if rejected {
+				continue
+			}
+		}
 		edge, err := b.readIndexedEdgeInTxn(txn, edgeID, edgeGen)
 		if err != nil {
 			return nil, nil, err
@@ -1529,151 +1598,221 @@ func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte,
 		if edge == nil || b.filterEntityByDecay(v, edge, nowNanos) {
 			continue
 		}
+		if len(types) > 0 && !adjacentTypesAdmit(types, edge.Type) {
+			continue
+		}
 		edges = append(edges, edge)
 	}
 	return edges, ids, nil
 }
 
-// OutgoingEdgeHeaders implements EdgeHeaderReader from the outgoing adjacency
-// entries' values, each a copy of the relationship record's compact header
-// (adjacencyValueFromRecord). An entry without one, such as one written
-// before the values existed, is answered from the relationship record.
-func (b *BadgerEngine) OutgoingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
-	return b.edgeHeaders(ctx, nodeID, true)
-}
-
-// IncomingEdgeHeaders is the incoming-side OutgoingEdgeHeaders.
-func (b *BadgerEngine) IncomingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
-	return b.edgeHeaders(ctx, nodeID, false)
-}
-
-func (b *BadgerEngine) edgeHeaders(ctx context.Context, nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
+// readAdjacentEdgeHeaders answers a header request from the adjacency entries'
+// values, each a copy of the relationship record's compact header
+// (adjacencyValueFromRecord). answered is false when the request must be
+// answered from relationship records instead: a between read, a read-time
+// visibility filter, or an engine state in which the values cannot list the
+// node's relationships faithfully. An entry of another type is rejected from
+// its value alone, so an unrelated relationship is neither decoded nor
+// hydrated.
+func (b *BadgerEngine) readAdjacentEdgeHeaders(ctx context.Context, request AdjacentEdgeRead, v readVisibility) ([]*Edge, bool, error) {
 	// ctx is the caller's read context: it owns admission and the read capture,
 	// so a canceled traversal never answers with a header set.
 	if err := ctx.Err(); err != nil {
 		return nil, true, err
 	}
-	if err := b.pendingNamespaceConflict(namespaceForNodeID(nodeID)); err != nil {
+	if request.Direction == AdjacentBetween {
+		return nil, false, nil
+	}
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(request.Node)); err != nil {
 		return nil, true, err
 	}
-
-	if nodeID == "" {
+	if request.Node == "" {
 		return nil, true, ErrInvalidID
 	}
 	if b.visibilityFiltered() {
 		return nil, false, nil
 	}
-	if b.writeBehind != nil {
-		// Fold the write-behind overlay into the header list so a node's
-		// unnamed-relationship expansion sees acknowledged-but-unflushed edges
-		// (PR #1043 read-overlay parity; monster retest part 1).
-		var live []*Edge
-		var suppressed map[EdgeID]struct{}
-		var nodeDeleted bool
-		var captureErr error
-		view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) {
-			// Header reads keep their existing public API (no caller context):
-			// context.Background is the true lifetime at this context-free
-			// boundary.
-			pendingAdjacency, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: outgoing})
-			if err != nil {
-				captureErr = err
-				return
-			}
-			live, suppressed, nodeDeleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
-		}, readViewOptions{scope: namespaceForNodeID(nodeID)})
+	outgoingRequest, incomingRequest := request.halves()
+	wantOut := request.Direction != AdjacentIncoming
+	wantIn := request.Direction != AdjacentOutgoing
+	if b.writeBehind == nil {
+		// A one-direction request lists that side; a both-direction request
+		// lists the outgoing relationships and then the incoming ones.
+		if request.Direction != AdjacentBoth {
+			read, err := b.adjacentEdgeHeadersCommitted(ctx, request)
+			return read, true, err
+		}
+		outgoing, err := b.adjacentEdgeHeadersCommitted(ctx, outgoingRequest)
 		if err != nil {
 			return nil, true, err
 		}
-		if captureErr != nil {
-			view.Close()
-			return nil, true, captureErr
+		incoming, err := b.adjacentEdgeHeadersCommitted(ctx, incomingRequest)
+		if err != nil {
+			return nil, true, err
 		}
-		defer view.Close()
-		if nodeDeleted {
-			return nil, true, nil
+		combined, err := combineAdjacentEdgeHalves(ctx, request.Node, outgoing, incoming)
+		return combined, true, err
+	}
+
+	// Fold the write-behind overlay into the header list so a node's
+	// unnamed-relationship expansion sees acknowledged-but-unflushed edges
+	// (PR #1043 read-overlay parity; monster retest part 1).
+	type adjacencyOverlay struct {
+		live       []*Edge
+		suppressed map[EdgeID]struct{}
+		deleted    bool
+	}
+	var outOverlay, inOverlay adjacencyOverlay
+	var captureErr error
+	view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) {
+		if wantOut {
+			pendingAdjacency, readErr := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedAdjacency, source: request.Node, outgoing: true})
+			if readErr != nil {
+				captureErr = readErr
+				return
+			}
+			outOverlay = adjacencyOverlay{live: pendingAdjacency.edges, suppressed: pendingAdjacency.suppressed, deleted: pendingAdjacency.sourceDeleted}
 		}
-		committed, answered, err := b.edgeHeadersCommitted(ctx, nodeID, outgoing, view.withView)
-		if err != nil || !answered {
-			return committed, answered, err
+		if wantIn {
+			pendingAdjacency, readErr := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedAdjacency, source: request.Node, outgoing: false})
+			if readErr != nil {
+				captureErr = readErr
+				return
+			}
+			inOverlay = adjacencyOverlay{live: pendingAdjacency.edges, suppressed: pendingAdjacency.suppressed, deleted: pendingAdjacency.sourceDeleted}
 		}
-		if len(suppressed) > 0 {
+	}, readViewOptions{scope: namespaceForNodeID(request.Node)})
+	if err != nil {
+		return nil, true, err
+	}
+	if captureErr != nil {
+		view.Close()
+		return nil, true, captureErr
+	}
+	defer view.Close()
+	read := func(directionRequest AdjacentEdgeRead, overlay adjacencyOverlay, wanted bool) ([]*Edge, error) {
+		if !wanted || overlay.deleted {
+			return nil, nil
+		}
+		committed, err := b.adjacentEdgeHeadersCommitted(ctx, directionRequest, view.withView)
+		if err != nil {
+			return nil, err
+		}
+		if len(overlay.suppressed) > 0 {
 			filtered := committed[:0]
-			for _, e := range committed {
-				if _, dead := suppressed[e.ID]; dead {
+			for _, edge := range committed {
+				if _, hidden := overlay.suppressed[edge.ID]; hidden {
 					continue
 				}
-				filtered = append(filtered, e)
+				filtered = append(filtered, edge)
 			}
 			committed = filtered
 		}
-		for _, e := range live {
-			header := *e
-			// This capability promises ID/type/endpoints, not properties.
-			// Do not let a header expose the overlay's retained property map.
-			header.Properties = nil
-			committed = append(committed, &header)
+		for _, edge := range overlay.live {
+			if !directionRequest.admits(edge) {
+				continue
+			}
+			// This request promises ID/type/endpoints, not properties. Do not
+			// let a header expose the overlay's retained property map.
+			committed = append(committed, directionRequest.header(edge))
 		}
-		return committed, true, nil
+		return committed, nil
 	}
-	return b.edgeHeadersCommitted(ctx, nodeID, outgoing)
+	firstRequest, firstOverlay, firstWanted := outgoingRequest, outOverlay, wantOut
+	if request.Direction == AdjacentIncoming {
+		firstRequest, firstOverlay, firstWanted = incomingRequest, inOverlay, wantIn
+	}
+	first, err := read(firstRequest, firstOverlay, firstWanted)
+	if err != nil {
+		return nil, true, err
+	}
+	if request.Direction != AdjacentBoth {
+		return first, true, nil
+	}
+	incoming, err := read(incomingRequest, inOverlay, wantIn)
+	if err != nil {
+		return nil, true, err
+	}
+	combined, err := combineAdjacentEdgeHalves(ctx, request.Node, first, incoming)
+	return combined, true, err
 }
 
-func (b *BadgerEngine) edgeHeadersCommitted(ctx context.Context, nodeID NodeID, outgoing bool, views ...func(context.Context, func(*badger.Txn) error) error) ([]*Edge, bool, error) {
-	if nodeID == "" {
-		return nil, true, ErrInvalidID
+// adjacentEdgeHeadersCommitted reads the request's adjacency entries through
+// the supplied view, or a fresh one, and returns the relationships their
+// values describe.
+func (b *BadgerEngine) adjacentEdgeHeadersCommitted(ctx context.Context, request AdjacentEdgeRead, views ...func(context.Context, func(*badger.Txn) error) error) ([]*Edge, error) {
+	edgeGen := b.edgeCacheGen.current()
+	var edges []*Edge
+	read := func(txn *badger.Txn) error {
+		var err error
+		edges, err = b.readAdjacentEdgeHeadersInTxn(ctx, txn, request, request.Direction != AdjacentIncoming, edgeGen)
+		return err
 	}
-	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if len(views) > 0 {
+		runErr := views[0](ctx, read)
+		return edges, runErr
+	}
+	runErr := b.withView(read)
+	return edges, runErr
+}
+
+func (b *BadgerEngine) readAdjacentEdgeHeadersInTxn(ctx context.Context, txn *badger.Txn, request AdjacentEdgeRead, outgoing bool, edgeGen uint64) ([]*Edge, error) {
+	nodeNum, ok := b.idDict.lookupNodeNumID(request.Node)
 	if !ok {
-		return nil, true, nil
+		return nil, nil
 	}
 	prefix := incomingIndexPrefix(nodeNum)
 	if outgoing {
 		prefix = outgoingIndexPrefix(nodeNum)
 	}
 	var edges []*Edge
-	edgeGen := b.edgeCacheGen.current()
-	read := func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			edgeNum, ok := extractEdgeNumIDFromOutgoingKey(item.Key())
-			if !ok {
-				continue
-			}
-			edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
-			if !ok {
-				continue
-			}
-			// A value that can't be read is treated as absent: the record
-			// answers instead.
-			var header *Edge
+	var cancel bulkReadCancellation
+	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	defer it.Close()
+	for it.Rewind(); it.Valid(); it.Next() {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
+		item := it.Item()
+		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(item.Key())
+		if !ok {
+			continue
+		}
+		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+		if !ok {
+			continue
+		}
+		if len(request.Types) > 0 {
+			decided := false
 			_ = item.Value(func(value []byte) error {
-				header = b.decodeAdjacencyHeader(edgeID, value)
+				matched, known := adjacencyEntryTypeMatches(value, request.Types)
+				decided = known && !matched
 				return nil
 			})
-			if header != nil {
-				edges = append(edges, header)
+			if decided {
 				continue
 			}
-			edge, err := b.readIndexedEdgeInTxn(txn, edgeID, edgeGen)
-			if err != nil {
-				return err
-			}
-			if edge != nil {
-				edges = append(edges, edge)
-			}
 		}
-		return nil
+		// A value that can't be read is treated as absent: the record
+		// answers instead.
+		var header *Edge
+		_ = item.Value(func(value []byte) error {
+			header = b.decodeAdjacencyHeader(edgeID, value)
+			return nil
+		})
+		if header != nil {
+			edges = append(edges, header)
+			continue
+		}
+		edge, err := b.readIndexedEdgeInTxn(txn, edgeID, edgeGen)
+		if err != nil {
+			return nil, err
+		}
+		if edge != nil && adjacentTypesAdmit(request.Types, edge.Type) {
+			edges = append(edges, request.header(edge))
+		}
 	}
-	var err error
-	if len(views) > 0 {
-		err = views[0](ctx, read)
-	} else {
-		err = b.withView(read)
-	}
-	return edges, true, err
+	return edges, nil
 }
 
 // decodeAdjacencyHeader returns the relationship, without properties, that an
@@ -1695,24 +1834,29 @@ func (b *BadgerEngine) decodeAdjacencyHeader(edgeID EdgeID, value []byte) *Edge 
 	return edge
 }
 
-// adjacencyHeadersInTxn reads nodeID's adjacency entries in direction from
-// txn and returns the relationships their values describe
-// (decodeAdjacencyHeader), keyed by ID. Entries without a usable value, or
-// naming a relationship the dictionary doesn't know, are left out for the
-// caller to read.
-func (b *BadgerEngine) adjacencyHeadersInTxn(txn *badger.Txn, nodeID NodeID, direction EdgeDirection) map[EdgeID]*Edge {
-	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+// adjacentSnapshotHeadersInTxn lists nodeID's adjacency entries in direction
+// from txn as a pinned read may use them. An entry's header is usable only when
+// the relationship's MVCC head in that same view is live and not newer than the
+// read version, so a later write cannot have changed the relationship's type,
+// endpoints or existence since it. decided reports that the current header was
+// usable, which makes its type the relationship's type at the read version —
+// including when that type is not one the request lists.
+func (b *BadgerEngine) adjacentSnapshotHeadersInTxn(ctx context.Context, txn *badger.Txn, request AdjacentEdgeRead, version MVCCVersion) (headers map[EdgeID]*Edge, decided map[EdgeID]struct{}, err error) {
+	nodeNum, ok := b.idDict.lookupNodeNumID(request.Node)
 	if !ok {
-		return nil
+		return nil, nil, nil
 	}
-	prefix := outgoingIndexPrefix(nodeNum)
-	if direction == Incoming {
-		prefix = incomingIndexPrefix(nodeNum)
+	prefix := incomingIndexPrefix(nodeNum)
+	if request.Direction != AdjacentIncoming {
+		prefix = outgoingIndexPrefix(nodeNum)
 	}
-	headers := make(map[EdgeID]*Edge)
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
+	var cancellation bulkReadCancellation
 	for it.Rewind(); it.Valid(); it.Next() {
+		if err := cancellation.check(ctx); err != nil {
+			return nil, nil, err
+		}
 		item := it.Item()
 		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(item.Key())
 		if !ok {
@@ -1722,16 +1866,44 @@ func (b *BadgerEngine) adjacencyHeadersInTxn(txn *badger.Txn, nodeID NodeID, dir
 		if !ok {
 			continue
 		}
+		head, err := b.loadEdgeMVCCHeadInTxn(txn, edgeID)
+		if err != nil || head.Tombstoned || version.Compare(head.Version) < 0 {
+			continue
+		}
+
+		matched, known := false, false
+		_ = item.Value(func(value []byte) error {
+			matched, known = adjacencyEntryTypeMatches(value, request.Types)
+			return nil
+		})
+		if len(request.Types) > 0 && known && !matched {
+			if decided == nil {
+				decided = make(map[EdgeID]struct{})
+			}
+			decided[edgeID] = struct{}{}
+			continue
+		}
 		var header *Edge
 		_ = item.Value(func(value []byte) error {
 			header = b.decodeAdjacencyHeader(edgeID, value)
 			return nil
 		})
-		if header != nil {
-			headers[edgeID] = header
+		if header == nil {
+			continue
 		}
+		if len(request.Types) > 0 && !adjacentTypesAdmit(request.Types, header.Type) {
+			if decided == nil {
+				decided = make(map[EdgeID]struct{})
+			}
+			decided[edgeID] = struct{}{}
+			continue
+		}
+		if headers == nil {
+			headers = make(map[EdgeID]*Edge)
+		}
+		headers[edgeID] = header
 	}
-	return headers
+	return headers, decided, ctx.Err()
 }
 
 // readIndexedEdgeInTxn returns the relationship an adjacency entry names: the
@@ -1764,20 +1936,13 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 	return edge, nil
 }
 
-// GetIncomingEdges returns all edges where the given node is the target.
-func (b *BadgerEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	_, in, err := readAdjacency(ctx, b, adjacencyIncoming, nodeID, "", nil, visibleRead)
-	return in, err
-}
-
-// GetStoredIncomingEdges includes hidden bodies through the shared read view.
-func (b *BadgerEngine) GetStoredIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	_, in, err := readAdjacency(ctx, b, adjacencyIncoming, nodeID, "", nil, storedRead)
-	return in, err
-}
-
-// GetEdgesBetween returns all edges between two nodes.
-func (b *BadgerEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
+// readAdjacentEdgesBetween answers a between request: the relationships
+// directed from the request's node to its Other. One requested type selects the
+// between index's typed rows directly; a type set filters the pair's
+// relationships afterwards. A stored read (hidden bodies included) reads the
+// stored outgoing adjacency, because the between index serves the visible view.
+func (b *BadgerEngine) readAdjacentEdgesBetween(ctx context.Context, request AdjacentEdgeRead, v readVisibility) ([]*Edge, error) {
+	startID, endID := request.Node, request.Other
 	if err := b.pendingReadConflict(readNodePairScope, "", []NodeID{startID, endID}, ctx); err != nil {
 		return nil, err
 	}
@@ -1786,6 +1951,20 @@ func (b *BadgerEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeI
 		return nil, ErrInvalidID
 	}
 
+	if v != visibleRead {
+		outgoing := request
+		outgoing.Direction = AdjacentOutgoing
+		edges, err := b.readAdjacentEdges(ctx, outgoing, v)
+		if err != nil {
+			return nil, err
+		}
+		return filterAdjacentBetween(ctx, request, edges)
+	}
+
+	edgeType := ""
+	if len(request.Types) == 1 {
+		edgeType = request.Types[0]
+	}
 	var result []*Edge
 	if b.writeBehind != nil {
 		// A buffered endpoint delete hides all committed between rows; a
@@ -1815,35 +1994,61 @@ func (b *BadgerEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeI
 		if sourceDeleted || targetDeleted {
 			return nil, nil
 		}
-		committed, err := b.committedEdgesBetween(ctx, startID, endID, "", view.withView)
+		committed, err := b.committedEdgesBetween(ctx, startID, endID, edgeType, view.withView)
 		if err != nil {
 			return nil, err
 		}
 		var cancel bulkReadCancellation
-		if len(suppressed) > 0 {
-			for _, e := range committed {
-				if err := cancel.check(ctx); err != nil {
-					return nil, err
-				}
-				if _, dead := suppressed[e.ID]; dead {
-					continue
-				}
-				result = append(result, e)
-			}
-		} else {
-			result = committed
-		}
-		for _, e := range live {
+		for _, edge := range committed {
 			if err := cancel.check(ctx); err != nil {
 				return nil, err
 			}
+			if _, dead := suppressed[edge.ID]; dead {
+				continue
+			}
+			if !adjacentTypesAdmit(request.Types, edge.Type) {
+				continue
+			}
+			result = append(result, request.header(edge))
+		}
+		for _, edge := range live {
+			if err := cancel.check(ctx); err != nil {
+				return nil, err
+			}
+			if !adjacentTypesAdmit(request.Types, edge.Type) {
+				continue
+			}
 			// The overlay retains e until replay. Detach its properties as well
 			// as its header before a mutable caller can observe the result.
-			result = append(result, copyEdge(e))
+			result = append(result, request.header(copyEdge(edge)))
 		}
 		return result, nil
 	}
-	return b.committedEdgesBetween(ctx, startID, endID, "")
+	committed, err := b.committedEdgesBetween(ctx, startID, endID, edgeType)
+	if err != nil {
+		return nil, err
+	}
+	return filterAdjacentBetween(ctx, request, committed)
+}
+
+// filterAdjacentBetween keeps the pair's relationships the request lists, in
+// the detail it asks for.
+func filterAdjacentBetween(ctx context.Context, request AdjacentEdgeRead, edges []*Edge) ([]*Edge, error) {
+	if len(request.Types) == 0 && !request.Headers {
+		return edges, nil
+	}
+	var cancel bulkReadCancellation
+	filtered := edges[:0]
+	for _, edge := range edges {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
+		if !adjacentTypesAdmit(request.Types, edge.Type) {
+			continue
+		}
+		filtered = append(filtered, request.header(edge))
+	}
+	return filtered, nil
 }
 
 // committedEdgesBetween is the committed between-index read, set index first

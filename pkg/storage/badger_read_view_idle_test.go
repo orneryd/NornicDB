@@ -132,12 +132,19 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 			_, idle := b.writeBehind.idleReadEpoch("test")
 			require.True(t, idle)
 			for _, read := range []func() ([]*Edge, error){
-				func() ([]*Edge, error) { return b.GetOutgoingEdges(context.Background(), "test:a") },
-				func() ([]*Edge, error) { return b.GetIncomingEdges(context.Background(), "test:b") },
 				func() ([]*Edge, error) {
-					out, in, err := readAdjacency(context.Background(), b, adjacencyBoth, "test:a", "", nil, visibleRead)
+					return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
+				},
+				func() ([]*Edge, error) {
+					return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:b"})
+				},
+				func() ([]*Edge, error) {
+					in, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:a"})
+					if err != nil {
+						return nil, err
+					}
 					require.Empty(t, in)
-					return out, err
+					return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a"})
 				},
 			} {
 				b.adjCacheStore(b.adjCacheGen.current(), "test:a", []EdgeID{edge.ID}, b.db.oracle.published.Load(), true)

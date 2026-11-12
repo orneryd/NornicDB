@@ -433,6 +433,10 @@ func TestAnalyzeNodeScan(t *testing.T) {
 
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "CREATE INDEX idx_person_name_analyze FOR (n:Person) ON (n.name)", nil)
+	require.NoError(t, err)
 
 	tests := []struct {
 		name         string
@@ -450,15 +454,26 @@ func TestAnalyzeNodeScan(t *testing.T) {
 			expectedType: "NodeByLabelScan",
 		},
 		{
-			name:         "NodeIndexSeek for label with property",
+			name:         "NodeIndexSeek for indexed pattern property",
 			query:        "MATCH (n:Person {name: 'Alice'}) RETURN n",
 			expectedType: "NodeIndexSeek",
+		},
+		{
+			name:         "NodeIndexSeek for indexed WHERE equality",
+			query:        "MATCH (n:Person) WHERE n.name = 'Alice' RETURN n",
+			expectedType: "NodeIndexSeek",
+		},
+		{
+			name:         "NodeByLabelScan for unindexed pattern property",
+			query:        "MATCH (n:Person {age: 30}) RETURN n",
+			expectedType: "NodeByLabelScan",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			op := exec.analyzeNodeScan(tt.query)
+			op, err := exec.analyzeNodeScan(ctx, tt.query)
+			require.NoError(t, err)
 			require.Equal(t, tt.expectedType, op.OperatorType)
 		})
 	}
@@ -492,7 +507,7 @@ func TestTruncate(t *testing.T) {
 	assert.Equal(t, "MATCH...", truncateQuery("MATCH (n) RETURN n", 5))
 }
 
-func TestExplainHelpers_InferColumnsAndDBHitsBranches(t *testing.T) {
+func TestExplainHelpersInferColumns(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
@@ -509,22 +524,9 @@ func TestExplainHelpers_InferColumnsAndDBHitsBranches(t *testing.T) {
 	cols = exec.StatementColumns("MATCH (n) RETURN n.name AS name, n.age")
 	require.Equal(t, []string{"name", "n.age"}, cols)
 
-	// estimateDBHits operator-type switch coverage.
-	plan := &PlanOperator{
-		OperatorType:  "AllNodesScan",
-		EstimatedRows: 5,
-		Children: []*PlanOperator{
-			{OperatorType: "NodeIndexSeek", EstimatedRows: 4},
-			{OperatorType: "Filter", EstimatedRows: 3},
-			{OperatorType: "ShortestPath", EstimatedRows: 2},
-		},
-	}
-	hits := exec.estimateDBHits(plan)
-	require.Greater(t, hits, int64(0))
-	require.Equal(t, hits, plan.DBHits)
 }
 
-func TestExplainHelpers_InferColumnsAndDBHits_MoreBranches(t *testing.T) {
+func TestExplainHelpersInferYieldAliases(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
 	// YIELD items without RETURN should infer yielded column names.
@@ -535,21 +537,4 @@ func TestExplainHelpers_InferColumnsAndDBHits_MoreBranches(t *testing.T) {
 	cols = exec.StatementColumns("CALL db.info() YIELD name AS dbName, version AS ver")
 	require.Equal(t, []string{"dbName", "ver"}, cols)
 
-	// Nil plan branch.
-	assert.Equal(t, int64(0), exec.estimateDBHits(nil))
-
-	// Cover remaining operator-specific cost branches and recursive summation.
-	plan := &PlanOperator{
-		OperatorType:  "NodeByLabelScan",
-		EstimatedRows: 3,
-		Children: []*PlanOperator{
-			{OperatorType: "AllNodesScan", EstimatedRows: 2},
-			{OperatorType: "Expand", EstimatedRows: 4},
-			{OperatorType: "Custom", EstimatedRows: 5},
-		},
-	}
-	hits := exec.estimateDBHits(plan)
-	// 3*2 + 2*2 + 4*3 + 5 = 27
-	require.Equal(t, int64(27), hits)
-	require.Equal(t, int64(27), plan.DBHits)
 }

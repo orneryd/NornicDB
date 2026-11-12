@@ -199,18 +199,18 @@ func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config 
 	if err := validateHNSWVectorSource(vi, vfs); err != nil {
 		return nil, hnswBuildStats{}, err
 	}
-	var lookup VectorLookup
+	coordinates := &hnswConstructionCoordinates{}
 	var iterator hnswBuildIterator
 	var total int
 	if vfs != nil && (vi == nil || vfs.Count() > 0) {
 		total = vfs.Count()
 		s.logPrintf("[HNSW] Building from file store: %d vectors", total)
-		lookup, iterator = vfs.GetVector, hnswVectorFileStoreIterator(vfs, hints)
 		lease, err := vfs.beginReadLease()
-		if err == nil {
-			defer lease.Close()
-			lookup, iterator = lease.Lookup, hnswVectorReadLeaseIterator(lease, hints)
+		if err != nil {
+			return nil, hnswBuildStats{}, err
 		}
+		coordinates.baseline, coordinates.release = lease.Lookup, lease.Close
+		iterator = hnswVectorReadLeaseIterator(lease, hints)
 	} else {
 		pairs := hnswOrderedVectorIndexPairs(vi, hints)
 		// Keep lookup and iteration on the same immutable source. A live
@@ -220,20 +220,25 @@ func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config 
 		for _, pair := range pairs {
 			vectors[pair.id] = pair.vec
 		}
-		lookup = func(id string) ([]float32, bool) {
+		coordinates.baseline = func(id string) ([]float32, bool) {
 			vec, ok := vectors[id]
 			return vec, ok
 		}
 		total, iterator = len(pairs), hnswPairSliceIterator(pairs)
 		s.logPrintf("[HNSW] Building from in-memory index: %d vectors", total)
 	}
-	built, stats, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, lookup, total, iterator, nil)
+	built, stats, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, coordinates.lookup, total, iterator, nil)
 	if err == nil {
 		// Encode while file coordinates are still protected by the construction lease.
 		err = built.SetQuantization(ctx, config.Quantization)
 	}
 	if built != nil {
-		built.SetVectorLookup(s.getVectorLookup())
+		built.mu.Lock()
+		built.construction, coordinates.graph = coordinates, built
+		built.mu.Unlock()
+	}
+	if err != nil {
+		s.recordLifetimeOutcome("HNSW construction coordinates", coordinates.Close())
 	}
 	return built, stats, err
 }
@@ -289,9 +294,8 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 	if err != nil {
 		return nil, err
 	}
-	// Construction may use immutable memory views. Published graphs resolve
-	// through the current owning store, including later memory-to-disk moves.
-	built.SetVectorLookup(s.getVectorLookup())
+	coordinates := built.construction
+	defer func() { s.recordLifetimeOutcome("HNSW construction coordinates", coordinates.Close()) }()
 	if hnswBeforeInstallHook != nil {
 		hnswBeforeInstallHook(ctx)
 	}
@@ -305,6 +309,8 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 	}
 	defer s.pipelineMu.Unlock()
 	defer s.indexMu.Unlock()
+	// No catch-up insert remains, and canonical writes are excluded by indexMu.
+	coordinates.publish(s.getVectorLookup())
 	// Install unless a persisted index was installed while construction ran.
 	s.hnswMu.Lock()
 	if err := ctx.Err(); err != nil {
@@ -442,7 +448,8 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	if err != nil {
 		return err
 	}
-	rebuilt.SetVectorLookup(s.getVectorLookup())
+	coordinates := rebuilt.construction
+	defer func() { s.recordLifetimeOutcome("HNSW construction coordinates", coordinates.Close()) }()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -464,6 +471,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 		return nil
 	}
 
+	coordinates.publish(s.getVectorLookup())
 	// Publication owns pipelineMu before indexMu and hnswMu, matching
 	// retirement and strategy changes. The shared cache owner needs no relock.
 	s.hnswMu.Lock()

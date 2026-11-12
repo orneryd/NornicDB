@@ -25,8 +25,8 @@
 //	predicate is not an inline property, so it never reaches that fast
 //	path. The higher-level caller,
 //	executeMatchWithRelationshipsWithPath (traversal.go), *does* have a
-//	WHERE-clause start-node pruning chain (tryCollectNodesFromIDEqualityCompound,
-//	tryCollectNodesFromPropertyIndex, tryCollectNodesFromPropertyIndexNotNull,
+//	WHERE-clause start-node pruning chain (resolveIDEqualityCompoundCandidates,
+//	tryCollectNodesFromPropertyIndex, resolvePropertyIndexNotNullCandidates,
 //	tryCollectNodesFromStartPropertyScan) — but that chain never calls the
 //	IN-list index-seek helpers (tryCollectNodesFromPropertyIndexIn /
 //	tryCollectNodesFromPropertyIndexInLiteral) that match_index_seek.go
@@ -230,16 +230,18 @@ func BenchmarkInListAnchoredRelMatch(b *testing.B) {
 	}
 }
 
-// TestTryCollectNodesFromPropertyIndexInCompound directly unit-tests the new
-// helper's branches (empty clause, simple param/literal forms, AND-conjunct
-// param/literal forms, empty-conjunct skip, and the no-match fallback).
+// TestAddPropertyIndexInCompoundSeeks directly unit-tests the seek planner the
+// canonical candidate dispatch calls for an IN-list conjunct: empty clause,
+// simple param/literal forms, AND-conjunct param/literal forms, empty-conjunct
+// skip, and the no-match fallback. Each case plans its seeks through that
+// planner and reads the selected one through the canonical resolver and read.
 // Direct calls are used — rather than routing everything through
 // exec.Execute — because the real entry points (executeMatch/executeDelete)
 // always substitute `$param` references into literal text before reaching
-// this helper, so the param-taking branches (added for parity with
-// tryCollectNodesFromIDEqualityCompound and future callers that might not
+// this planner, so the param-taking branches (added for parity with
+// resolveIDEqualityCompoundCandidates and future callers that might not
 // pre-substitute) are otherwise unreachable from an integration test.
-func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
+func TestAddPropertyIndexInCompoundSeeks(t *testing.T) {
 	exec, _ := newCountingExecutor(t)
 	ctx := context.Background()
 	_, err := exec.Execute(ctx,
@@ -252,56 +254,70 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	nodePattern := nodePatternInfo{variable: "s", labels: []string{"CloudResource"}}
 
 	t.Run("empty clause", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, "   ", nil)
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexInCompoundSeeks(ctx, nodePattern, "   ", nil, &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, ctx, &seeks)
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)
 	})
 
 	t.Run("simple param form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"s.uid IN $u", map[string]interface{}{"u": []interface{}{"a1", "a2"}})
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexInCompoundSeeks(ctx, nodePattern,
+			"s.uid IN $u", map[string]interface{}{"u": []interface{}{"a1", "a2"}}, &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, ctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 2)
 	})
 
 	t.Run("simple literal form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"s.uid IN ['a1', 'a3']", nil)
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexInCompoundSeeks(ctx, nodePattern,
+			"s.uid IN ['a1', 'a3']", nil, &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, ctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 2)
 	})
 
 	t.Run("AND-conjunct param form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexInCompoundSeeks(ctx, nodePattern,
 			"s.uid IN $u AND rel.evidence_source = $e",
-			map[string]interface{}{"u": []interface{}{"a1"}, "e": "reducer"})
+			map[string]interface{}{"u": []interface{}{"a1"}, "e": "reducer"}, &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, ctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 1)
 	})
 
 	t.Run("AND-conjunct literal form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"rel.evidence_source = 'reducer' AND s.uid IN ['a2', 'a3']", nil)
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexInCompoundSeeks(ctx, nodePattern,
+			"rel.evidence_source = 'reducer' AND s.uid IN ['a2', 'a3']", nil, &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, ctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 2)
 	})
 
 	t.Run("empty conjunct term is skipped", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"() AND s.uid IN ['a1']", nil)
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexInCompoundSeeks(ctx, nodePattern,
+			"() AND s.uid IN ['a1']", nil, &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, ctx, &seeks)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 1)
 	})
 
 	t.Run("no recognized IN-list conjunct falls back", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"s.uid = 'a1' AND rel.evidence_source = 'reducer'", nil)
+		var seeks nodeIndexSeekSet
+		require.NoError(t, exec.addPropertyIndexInCompoundSeeks(ctx, nodePattern,
+			"s.uid = 'a1' AND rel.evidence_source = 'reducer'", nil, &seeks))
+		nodes, used, err := readRankedCandidateSeekNodes(exec, ctx, &seeks)
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)

@@ -62,7 +62,7 @@ func TestStoredAdjacencyReadObservesCancellationAtHeldReadAdmission(t *testing.T
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	healthy, err := tx.GetStoredOutgoingEdges(t.Context(), hub)
+	healthy, err := tx.ReadStoredAdjacentEdges(t.Context(), AdjacentEdgeRead{Node: hub})
 	require.NoError(t, err)
 	require.Len(t, healthy, 2)
 
@@ -89,7 +89,7 @@ func TestStoredAdjacencyReadObservesCancellationAtHeldReadAdmission(t *testing.T
 	joined := make(chan struct{})
 	go func() {
 		defer close(joined)
-		edges, err := tx.GetStoredOutgoingEdges(ctx, hub)
+		edges, err := tx.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Node: hub})
 		done <- outcome{edges: edges, err: err}
 	}()
 	t.Cleanup(func() {
@@ -120,7 +120,7 @@ func TestStoredAdjacencyReadObservesCancellationAtHeldReadAdmission(t *testing.T
 	require.ErrorIs(t, out.err, context.Canceled)
 	require.Nil(t, out.edges, "a canceled read publishes no partial relationship list")
 
-	healthy, err = tx.GetStoredOutgoingEdges(t.Context(), hub)
+	healthy, err = tx.ReadStoredAdjacentEdges(t.Context(), AdjacentEdgeRead{Node: hub})
 	require.NoError(t, err, "the canceled read leaves the transaction healthy")
 	require.Len(t, healthy, 2)
 }

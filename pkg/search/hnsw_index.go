@@ -131,6 +131,7 @@ type HNSWIndex struct {
 	// When set, vectors are resolved by ID at search/build time instead of from h.vectors.
 	// vecOff will be -1 for nodes that use the lookup (saves one full vector copy in RAM).
 	vectorLookup VectorLookup
+	construction *hnswConstructionCoordinates
 
 	entryPoint    uint32
 	hasEntryPoint bool
@@ -347,6 +348,16 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 			return errHNSWIndexFull
 		}
 		h.vecOff = append(h.vecOff, vecOff32)
+	}
+
+	// A construction graph navigates its own replayed generation. Keep the
+	// already allocated normalized insertion image until publication; the
+	// canonical store may be concurrently removing/replacing another key.
+	if coordinates := h.construction; coordinates != nil {
+		if coordinates.applied == nil {
+			coordinates.applied = make(map[string][]float32)
+		}
+		coordinates.applied[id] = normalized
 	}
 
 	level16, ok := util.SafeIntToUint16(level)
@@ -1383,7 +1394,11 @@ func (h *HNSWIndex) removeLocked(internalID uint32) {
 	}
 
 	if validHNSWIndex(internalID, len(h.internalToID)) {
-		delete(h.idToInternal, h.internalToID[internalID])
+		id := h.internalToID[internalID]
+		delete(h.idToInternal, id)
+		if coordinates := h.construction; coordinates != nil {
+			delete(coordinates.applied, id)
+		}
 	}
 
 	// If index becomes empty, clear entry point.

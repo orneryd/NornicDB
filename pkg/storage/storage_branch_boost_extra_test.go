@@ -14,15 +14,7 @@ type asyncErrQueryEngine struct {
 	err error
 }
 
-func (e *asyncErrQueryEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
-	return nil, e.err
-}
-
-func (e *asyncErrQueryEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	return nil, e.err
-}
-
-func (e *asyncErrQueryEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+func (e *asyncErrQueryEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
 	return nil, e.err
 }
 

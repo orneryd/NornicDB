@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -533,6 +534,12 @@ func GraphAccessTarget(manager GraphDatabaseResolver, graph string, canAccess fu
 // the physical target needs the statement's data permissions. An empty name
 // selects the request's execution database from the context.
 func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, database, query string) error {
+	// A data procedure runs supplied text with data-statement authority even
+	// for an administrator. Resolve this at the same boundary as the actual
+	// normalized statement, so USE and version/mode prefixes cannot bypass it.
+	if allowed, nested := ctx.Value(procedureSchemaAccessKey{}).(bool); nested && !allowed && isSchemaPermissionQuery(ctx, query) {
+		return &PermissionDeniedError{Permission: "schema"}
+	}
 	authorization, hasAuthorization := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
 	selectionOnly := false
 	if database != "" {
@@ -731,18 +738,19 @@ func contextPermissions(ctx context.Context) func(permission string) bool {
 // caller), the signed-in user's roles, resolved as HTTP and Bolt resolve an
 // entitlement (auth.PermissionsForRoles, auth.EntitlementsAllow) with no
 // stored entitlements, which the executor doesn't have, so the built-in
-// roles' defaults decide. It is nil when the statement has neither a resolver
+// roles' defaults decide. The second result marks an injected resolver, not
+// the reviewed local role decision. The check is nil when the statement has neither a resolver
 // nor a signed-in user: the executor authorizes nothing for that caller.
-func principalPermissions(ctx context.Context) func(permission string) bool {
+func principalPermissions(ctx context.Context) (func(permission string) bool, bool) {
 	if allows := contextPermissions(ctx); allows != nil {
-		return allows
+		return allows, true
 	}
 	user, signedIn := authenticatedUserFromContext(ctx)
 	if !signedIn {
-		return nil
+		return nil, false
 	}
 	entitlements := auth.PermissionsForRoles(user.Roles, nil)
-	return func(permission string) bool { return auth.EntitlementsAllow(entitlements, permission) }
+	return func(permission string) bool { return auth.EntitlementsAllow(entitlements, permission) }, false
 }
 
 // MissingPermission is the entitlement decision used by statement execution
@@ -818,7 +826,11 @@ func (p PrincipalAccess) Allows(graph, permission string) bool {
 // statement runs.
 func authorizeDatabase(ctx context.Context, database, permission string) error {
 	authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
-	if !ok || authorization.resolver(database, permission) {
+	if !ok {
+		return nil
+	}
+	queryprofile.Callback(ctx, "permission resolver", "")
+	if authorization.resolver(database, permission) {
 		return nil
 	}
 	return &PermissionDeniedError{Permission: permission}

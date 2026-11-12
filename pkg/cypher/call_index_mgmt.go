@@ -3,6 +3,7 @@ package cypher
 // Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -21,7 +22,7 @@ func (e *StorageExecutor) callDbAwaitIndexes() (*ExecuteResult, error) {
 // order: a null timeout fails the call (ProcedureCallFailed) before the
 // index is looked up, and a null name is looked up as 'null'
 // (IndexNotFound), as Neo4j 5.26.30 does.
-func (e *StorageExecutor) callNamedIndexManagement(procedure string, arguments []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callNamedIndexManagement(ctx context.Context, procedure string, arguments []interface{}) (*ExecuteResult, error) {
 	if len(arguments) == 0 {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidNumberOfArguments", "an index name is required")
 	}
@@ -35,7 +36,7 @@ func (e *StorageExecutor) callNamedIndexManagement(procedure string, arguments [
 	if !valid {
 		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "the index name must be a STRING")
 	}
-	for _, entry := range e.storage.GetSchema().GetIndexes() {
+	for _, entry := range readSchemaIndexCatalog(ctx, e.storage.GetSchema()) {
 		if index, ok := entry.(map[string]interface{}); ok && index["name"] == name {
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 		}

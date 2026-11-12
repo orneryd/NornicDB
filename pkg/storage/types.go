@@ -353,7 +353,7 @@ type Edge struct {
 // The interface provides standard graph database operations:
 //   - CRUD for nodes and edges
 //   - Label-based queries
-//   - Graph traversal (outgoing/incoming edges)
+//   - Graph traversal (adjacent-edge reads in any direction)
 //   - Bulk operations for import/export
 //   - Statistics
 //
@@ -382,7 +382,7 @@ type Edge struct {
 //	// emit "Found N people" via the configured logger
 //
 //	// Traversal
-//	outgoing, _ := engine.GetOutgoingEdges("n1")
+//	outgoing, _ := engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: "n1"})
 //	for _, edge := range outgoing {
 //		// emit "<start> -> <end> [<type>]" via the configured logger
 //		_ = edge
@@ -408,9 +408,13 @@ type Engine interface {
 	// Query operations
 	GetNodesByLabel(ctx context.Context, label string) ([]*Node, error)
 	GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) // Optimized for LIMIT 1
-	GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
-	GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
-	GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error)
+	// ReadAdjacentEdges lists the relationships one request selects: the
+	// node's relationships in the requested direction (or between it and
+	// Other), of the requested types, as full relationships or as headers
+	// (AdjacentEdgeRead). It is the one adjacent-edge read of the engine
+	// contract; whole-population reads (AllEdges, GetEdgesByType) are
+	// different operations and stay separate.
+	ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error)
 	GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error)
 	GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) // Fast lookup by edge type
 	AllNodes(ctx context.Context) ([]*Node, error)
@@ -513,20 +517,6 @@ type NamespaceLabelStatsProvider interface {
 	NodeCountByLabelInNamespace(ctx context.Context, namespace, label string) (int64, error)
 }
 
-// AdjacentEdgesEngine is an optional extension interface for fetching both
-// directions of edges incident to a node in a single underlying transaction.
-//
-// BFS-style traversals (shortestPath, variable-length MATCH) historically
-// called GetOutgoingEdges + GetIncomingEdges per frontier node, opening two
-// fresh Badger view transactions for each. With ~500-1000 frontier nodes per
-// shortestPath request, that adds 1000-2000 transaction opens — the dominant
-// per-request fixed cost the profile flagged. Engines that can fold both
-// directions into a single view should implement this; callers fall back to
-// the pair of single-direction calls when an engine doesn't.
-type AdjacentEdgesEngine interface {
-	GetAdjacentEdges(ctx context.Context, nodeID NodeID) (outgoing, incoming []*Edge, err error)
-}
-
 // ProjectedNodeReader is an optional extension interface for reading a node
 // while decoding only a caller-specified subset of user properties.
 //
@@ -547,18 +537,6 @@ type ProjectedNodeReader interface {
 // existing: a node with relationships can't be deleted without them.
 type RelationshipEndpointChecker interface {
 	RelationshipEndpointVisible(id NodeID) (visible, answered bool)
-}
-
-// EdgeHeaderReader is an optional extension interface for traversals that need
-// a node's relationships only for their ID, type and endpoints. The edges it
-// returns carry those fields; Properties may be absent, so a caller that
-// needs a relationship's properties reads it with GetEdge. answered is false
-// when the engine can't list them without reading the records (a read-time
-// filter such as decay can hide a relationship); the caller then uses
-// GetOutgoingEdges / GetIncomingEdges.
-type EdgeHeaderReader interface {
-	OutgoingEdgeHeaders(ctx context.Context, nodeID NodeID) (edges []*Edge, answered bool, err error)
-	IncomingEdgeHeaders(ctx context.Context, nodeID NodeID) (edges []*Edge, answered bool, err error)
 }
 
 // NodeWithoutEmbeddingsReader is an optional extension interface for read paths
@@ -853,10 +831,13 @@ type MVCCVisibilityEngine interface {
 // MVCC history instead of only the current materialized indexes.
 type MVCCIndexedVisibilityEngine interface {
 	GetNodesByLabelVisibleAt(ctx context.Context, label string, version MVCCVersion) ([]*Node, error)
-	GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error)
-	GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error)
+	// ReadAdjacentEdgesVisibleAt answers one adjacent-edge request at the exact
+	// requested version. A pinned adjacency entry carries only its tombstone
+	// bit, so a typed request validates the current header against the
+	// relationship's head version and resolves the historical relationship
+	// when that header is stale.
+	ReadAdjacentEdgesVisibleAt(ctx context.Context, request AdjacentEdgeRead, version MVCCVersion) ([]*Edge, error)
 	GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error)
-	GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error)
 }
 
 // MVCCHeadEngine is an optional extension interface for persisted head lookups

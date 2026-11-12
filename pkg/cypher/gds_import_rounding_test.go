@@ -20,7 +20,7 @@ func TestGDSNativeImportRoundsWhereGDSConverts(t *testing.T) {
 		require.NoError(t, e.storage.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "R", Properties: map[string]interface{}{"w": int64(9007199254740993)}}))
 		_, err := run("CALL gds.graph.project('native',{N:{properties:'v'}},{R:{properties:'w'}},{readConcurrency:1})")
 		require.NoError(t, err)
-		projection, err := lookupGraphProjection("nativerounding", "native")
+		projection, err := lookupGraphProjection(t.Context(), "nativerounding", "native")
 		require.NoError(t, err)
 		want := []float64{9007199254740992.0, 1.5}
 		if values[0] == 1.5 {

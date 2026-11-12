@@ -343,14 +343,23 @@ func (r *mutationResolver) mutationTriggerEmbedding(ctx context.Context, regener
 		return nil, err
 	}
 
-	// Clear and regenerate if requested
+	// Clear and regenerate if requested. Regeneration is staged: clear the
+	// stored embeddings, reset the worker, then trigger it. A failed stage
+	// leaves the later stages unstarted and is reported instead of returning
+	// a success status for work that did not run.
 	if regen {
-		_, _ = r.DB.ClearAllEmbeddings()
-		_ = r.DB.ResetEmbedWorker()
+		if _, err := r.DB.ClearAllEmbeddings(); err != nil {
+			return nil, fmt.Errorf("failed to clear existing embeddings: %w", err)
+		}
+		if err := r.DB.ResetEmbedWorker(); err != nil {
+			return nil, fmt.Errorf("failed to reset embedding worker: %w", err)
+		}
 	}
 
 	// Trigger embedding
-	_, _ = r.DB.EmbedExisting(ctx)
+	if _, err := r.DB.EmbedExisting(ctx); err != nil {
+		return nil, fmt.Errorf("failed to trigger embedding: %w", err)
+	}
 
 	// Get stats
 	stats := r.DB.EmbedQueueStats()

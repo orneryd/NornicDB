@@ -106,8 +106,7 @@ func TestUndoWithoutBeforeImage(t *testing.T) {
 
 // TestTxBoundaryMarkers verifies transaction markers are written and read.
 func TestTxBoundaryMarkers(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 
@@ -309,8 +308,7 @@ func TestWALTransactionRecoveryOutcomes(t *testing.T) {
 }
 
 func TestRecoverWithTransactions_ErrorAccountingPaths(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -625,8 +623,7 @@ func TestReplayAndUndoWALEntry_ErrorBranches(t *testing.T) {
 }
 
 func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("invalid snapshot returns load error", func(t *testing.T) {
 		requireRecoveryStoresClosed(t)

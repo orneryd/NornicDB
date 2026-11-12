@@ -12,6 +12,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -21,6 +22,26 @@ import (
 // db.cdc.query read the change events storage writes in the commit of every
 // change of a database whose txLogEnrichment is DIFF or FULL, and give them
 // in Neo4j's change event format.
+
+// The change data the CDC procedures read, and the record PROFILE keeps of
+// each. Which feed a statement reads (its transaction's snapshot or the engine's
+// latest committed state), the database's capture mode and its identity are
+// metadata: choosing a feed reads no change, so it records nothing. The two
+// reads that are data are the feed's retained bounds, which all three
+// procedures request, and the change events db.cdc.query iterates.
+const (
+	// profileKindChangeCaptureBounds names one acquisition of the feed's
+	// retained bounds: the first and last commit sequence the database still
+	// captures. Rows is the one bounds response the request returned, never the
+	// sequence numbers it holds and never an event count, and Hits the one
+	// request, whether or not the feed holds an event.
+	profileKindChangeCaptureBounds = "ChangeCaptureBounds"
+	// profileKindChangeEventScan names the change events the feed handed
+	// db.cdc.query: every event of every page it returned, counted where the
+	// feed returned it, before the statement's selectors and limit narrow the
+	// rows it publishes.
+	profileKindChangeEventScan = "ChangeEventScan"
+)
 
 // capturesChanges reports whether the executor's database captures changes.
 func (e *StorageExecutor) capturesChanges() bool {
@@ -101,8 +122,16 @@ func (e *StorageExecutor) databaseChangeTag(database string) uint64 {
 
 // changeBounds returns the positions just before a database's earliest
 // retained change and just after its last committed one, as feed sees them.
-func changeBounds(capture storage.ChangeFeed, database string) (earliest, current changePosition, err error) {
+func changeBounds(ctx context.Context, capture storage.ChangeFeed, database string) (earliest, current changePosition, err error) {
 	first, last, err := capture.ChangeBounds(database)
+	// The request's own outcome is the record: the feed answered with its
+	// bounds, or the request failed and returned none, and either way this was
+	// the one request.
+	var returned int64
+	if err == nil {
+		returned = 1
+	}
+	queryprofile.Access(ctx, profileKindChangeCaptureBounds, database).Add(returned, 1)
 	if err != nil {
 		return changePosition{}, changePosition{}, localizedStatusError("Neo.DatabaseError.ChangeDataCapture.ScanFailure", "ScanFailure",
 			localization.CypherSpecializedCallsCDCScanFailed(err))
@@ -123,25 +152,25 @@ func (e *StorageExecutor) callDbCdcCurrent(ctx context.Context) (*ExecuteResult,
 	if err != nil {
 		return nil, err
 	}
-	_, current, err := changeBounds(capture, database)
+	_, current, err := changeBounds(ctx, capture, database)
 	if err != nil {
 		return nil, err
 	}
 	return &ExecuteResult{Columns: columnNames(cdcPositionColumns), Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), current)}}}, nil
 }
 
-// callDbCdcEarliest is db.cdc.earliest(): the identifier just before the
-// earliest retained change.
+// callDbCdcEarliest returns a database-bound start-of-retained-feed marker.
+// Neo4j keeps this marker usable across pruning; ordinary event/current
+// positions still expire. query resolves the marker against its own read view.
 func (e *StorageExecutor) callDbCdcEarliest(ctx context.Context) (*ExecuteResult, error) {
 	capture, database, err := e.changeCapture(ctx)
 	if err != nil {
 		return nil, err
 	}
-	earliest, _, err := changeBounds(capture, database)
-	if err != nil {
+	if _, _, err := changeBounds(ctx, capture, database); err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: columnNames(cdcPositionColumns), Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), earliest)}}}, nil
+	return &ExecuteResult{Columns: columnNames(cdcPositionColumns), Rows: [][]interface{}{{encodeChangeID(e.databaseChangeTag(database), changePosition{})}}}, nil
 }
 
 // callDbCdcQuery is db.cdc.query(from = "", selectors = [], limit = null):
@@ -176,7 +205,7 @@ func (e *StorageExecutor) callDbCdcQuery(ctx context.Context, args []interface{}
 	if hasLimit && limit < 0 {
 		return nil, localizedError(localization.CypherSpecializedCallsTxlogArgumentType("limit", "a non-negative INTEGER", neo4jProvidedValue(args[2])), nil)
 	}
-	earliest, current, err := changeBounds(capture, database)
+	earliest, current, err := changeBounds(ctx, capture, database)
 	if err != nil {
 		return nil, err
 	}
@@ -185,6 +214,11 @@ func (e *StorageExecutor) callDbCdcQuery(ctx context.Context, args []interface{}
 	if id, _ := fromArg.(string); id != "" {
 		if from, err = decodeChangeID(tag, id); err != nil {
 			return nil, err
+		}
+		if from == (changePosition{}) {
+			// Resolve earliest now: retention may have advanced since the
+			// preceding earliest() call, even within this statement.
+			from = earliest
 		}
 		if from.before(earliest) {
 			return nil, localizedStatusError("Neo.ClientError.ChangeDataCapture.InvalidIdentifier", "InvalidIdentifier",
@@ -200,6 +234,10 @@ func (e *StorageExecutor) callDbCdcQuery(ctx context.Context, args []interface{}
 		databaseID, _ = provider.DatabaseIdentity(database)
 	}
 	result := &ExecuteResult{Columns: columnNames(dbCdcQueryColumns), Rows: [][]interface{}{}}
+	// Every page adds to the one record of the events this statement read. The
+	// counter is resolved before the first page, so a query that lists no event
+	// reports the population it read as an observed zero.
+	scanned := queryprofile.Access(ctx, profileKindChangeEventScan, database)
 	// Events are read a page at a time, so a large backlog isn't decoded at
 	// once, until the limit is reached or the events end.
 	const page = 1000
@@ -209,6 +247,7 @@ func (e *StorageExecutor) callDbCdcQuery(ctx context.Context, args []interface{}
 			return nil, localizedStatusError("Neo.DatabaseError.ChangeDataCapture.ScanFailure", "ScanFailure",
 				localization.CypherSpecializedCallsCDCScanFailed(err))
 		}
+		scanned.Add(int64(len(events)), int64(len(events)))
 		for index := range events {
 			event := &events[index]
 			if !matchesAnyChangeSelector(selectors, database, event) {

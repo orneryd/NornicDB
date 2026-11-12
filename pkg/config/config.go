@@ -53,6 +53,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
@@ -64,14 +65,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// deprecatedMemoryWarningLocalization holds the process-wide renderer for
+// startup deprecation warnings. The embedded catalogs are immutable, so they are
+// loaded once instead of on every configuration load: LoadFromEnv runs per
+// executor construction, and rebuilding the bundle there allocated tens of
+// megabytes per transaction for installations that still set the deprecated
+// NORNICDB_MEMORY_LIMIT (NOR-410).
+var (
+	deprecatedMemoryWarningLocalizationOnce sync.Once
+	deprecatedMemoryWarningLocalization     *localization.Manager
+	deprecatedMemoryWarningLocalizationErr  error
+)
+
+// deprecatedMemoryWarningManager returns the shared warning renderer built from
+// the embedded catalogs.
+func deprecatedMemoryWarningManager() (*localization.Manager, error) {
+	deprecatedMemoryWarningLocalizationOnce.Do(func() {
+		deprecatedMemoryWarningLocalization, deprecatedMemoryWarningLocalizationErr = localization.NewManager(nil, nil)
+	})
+	return deprecatedMemoryWarningLocalization, deprecatedMemoryWarningLocalizationErr
+}
+
 // warnDeprecatedMemorySetting renders startup warnings in the configured
 // process language before a server localizer has been attached to the config.
 func warnDeprecatedMemorySetting(language string, message localization.Message) {
 	preferences, err := localization.ResolveProcessPreferences(language)
 	if err == nil {
-		manager, managerErr := localization.NewManager(preferences.Preferences, nil)
+		manager, managerErr := deprecatedMemoryWarningManager()
 		if managerErr == nil {
-			if rendered, _, renderErr := manager.Render(context.Background(), localization.MessageRequest(message)); renderErr == nil {
+			ctx := localization.WithPreferences(context.Background(), preferences.Preferences...)
+			if rendered, _, renderErr := manager.Render(ctx, localization.MessageRequest(message)); renderErr == nil {
 				slog.Warn(rendered)
 				return
 			}

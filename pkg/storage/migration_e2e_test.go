@@ -170,7 +170,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		// bob → carol → doc-42 → cite-target. The chain is structured
 		// to exercise both directed multi-hop traversal and a diamond
 		// (alice→bob→carol and alice→carol both reach carol). Without
-		// the v1→v2 secondary-index rebuild, GetOutgoingEdges returns
+		// the v1→v2 secondary-index rebuild, ReadAdjacentEdges returns
 		// nothing and these multi-hop walks collapse to the root node
 		// only — that's the regression this graph guards against.
 		{
@@ -550,8 +550,8 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		"team-beta:cite-target": {},
 	}
 	for nodeID, want := range outgoingExpect {
-		got, err := eng.GetOutgoingEdges(context.Background(), nodeID)
-		require.NoError(t, err, "GetOutgoingEdges(%q)", nodeID)
+		got, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: nodeID})
+		require.NoError(t, err, "ReadAdjacentEdges(outgoing, %q)", nodeID)
 		require.Equal(t, want, extractIDs(got), "outgoing edges for %q", nodeID)
 	}
 
@@ -574,8 +574,8 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		"team-alpha:dave":       {},
 	}
 	for nodeID, want := range incomingExpect {
-		got, err := eng.GetIncomingEdges(context.Background(), nodeID)
-		require.NoError(t, err, "GetIncomingEdges(%q)", nodeID)
+		got, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: nodeID})
+		require.NoError(t, err, "ReadAdjacentEdges(incoming, %q)", nodeID)
 		require.Equal(t, want, extractIDs(got), "incoming edges for %q", nodeID)
 	}
 
@@ -599,7 +599,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		{"team-beta:cite-target", "team-alpha:alice", []string{}}, // unconnected
 	}
 	for _, tc := range betweenCases {
-		got, err := eng.GetEdgesBetween(context.Background(), tc.start, tc.end)
+		got, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: tc.start, Other: tc.end})
 		require.NoError(t, err, "GetEdgesBetween(%q, %q)", tc.start, tc.end)
 		require.Equal(t, tc.wantIDs, extractIDs(got),
 			"edges-between %q→%q", tc.start, tc.end)
@@ -711,8 +711,8 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		for hop := 0; hop < depth; hop++ {
 			var next []NodeID
 			for _, n := range frontier {
-				out, err := eng.GetOutgoingEdges(context.Background(), n)
-				require.NoError(t, err, "BFS GetOutgoingEdges(%q)", n)
+				out, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: n})
+				require.NoError(t, err, "BFS ReadAdjacentEdges(outgoing, %q)", n)
 				for _, e := range out {
 					if _, ok := visited[e.EndNode]; ok {
 						continue
@@ -772,8 +772,8 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 		for hop := 0; hop < depth; hop++ {
 			var next []NodeID
 			for _, n := range frontier {
-				in, err := eng.GetIncomingEdges(context.Background(), n)
-				require.NoError(t, err, "BFS GetIncomingEdges(%q)", n)
+				in, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: n})
+				require.NoError(t, err, "BFS ReadAdjacentEdges(incoming, %q)", n)
 				for _, e := range in {
 					if _, ok := visited[e.StartNode]; ok {
 						continue
@@ -1023,7 +1023,7 @@ func TestMigrationE2E_MVCCAsOfReadsSurvive(t *testing.T) {
 
 	// Latest edge resolves via the rewritten v2 primary body. Latest
 	// hop also exercises the rebuilt outgoing/incoming/edge-type
-	// indexes — without those, GetEdgesByType/GetOutgoingEdges fail
+	// indexes — without those, GetEdgesByType/ReadAdjacentEdges fail
 	// silently, but GetEdgeLatestVisible reads the primary key and
 	// would still work; this is just a sanity check.
 	edgeLatest, err := eng.GetEdgeLatestVisible(t.Context(), edgeID)

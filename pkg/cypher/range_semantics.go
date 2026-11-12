@@ -93,7 +93,15 @@ func (e *StorageExecutor) validateRangeCalls(ctx context.Context, expression str
 		parts := e.splitFunctionArgs(argumentText)
 		arguments := make([]interface{}, len(parts))
 		for index, part := range parts {
-			value, resolved, err := e.evaluateRowValue(ctx, strings.TrimSpace(part), row)
+			argument := strings.TrimSpace(part)
+			// Preparation cannot execute an aggregate or statement-owned call:
+			// its value belongs to the real row/group, as in size() validation.
+			// The runtime range owner validates those values when evaluated.
+			if containsAggregateFunc(argument) || needsRowStatementContext(ctx, argument) {
+				arguments = nil
+				break
+			}
+			value, resolved, err := e.evaluateRowValue(ctx, argument, row)
 			if err != nil {
 				return err
 			}

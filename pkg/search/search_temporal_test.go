@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -619,4 +620,45 @@ func TestFailedTemporalAdmissionWithdrawsBuildSnapshotUntilRetry(t *testing.T) {
 			require.True(t, mutation.mutation.retire())
 		})
 	}
+}
+
+func TestTemporalEligibilityObservationRecordsActualDecisionAttempts(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		current bool
+		err     error
+	}{
+		{"current", true, nil}, {"historical", false, nil}, {"failed", false, errors.New("temporal reader failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := &temporalDecisionTestEngine{Engine: runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), decide: func(context.Context, *storage.Node) (bool, error) { return tc.current, tc.err }}
+			svc := NewService(engine, 3, nil)
+			t.Cleanup(func() { require.NoError(t, svc.Close()) })
+			var reads runtimeFixtureOwner.QueryReadObserver
+			got, err := svc.shouldIndexNode(queryprofile.WithObserver(t.Context(), &reads), &storage.Node{ID: "n"})
+			require.Equal(t, tc.current, got)
+			require.ErrorIs(t, err, tc.err)
+			rows, hits, recorded := reads.Reads("TemporalEligibilityRequest", "")
+			require.True(t, recorded)
+			require.EqualValues(t, 1, hits)
+			if tc.err == nil {
+				require.EqualValues(t, 1, rows)
+			} else {
+				require.Zero(t, rows)
+			}
+		})
+	}
+	t.Run("no decision", func(t *testing.T) {
+		svc := NewService(struct{ storage.Engine }{runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}, 3, nil)
+		t.Cleanup(func() { require.NoError(t, svc.Close()) })
+		var reads runtimeFixtureOwner.QueryReadObserver
+		ctx := queryprofile.WithObserver(t.Context(), &reads)
+		current, err := svc.shouldIndexNode(ctx, &storage.Node{ID: "n"})
+		require.NoError(t, err)
+		require.True(t, current)
+		current, err = svc.shouldIndexNode(ctx, nil)
+		require.NoError(t, err)
+		require.False(t, current)
+		require.Empty(t, reads.RecordedKinds())
+	})
 }

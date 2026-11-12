@@ -330,7 +330,8 @@ func iterationSourceVariable(clause, variable string) string {
 // validateDeletedEntityReads: a SET's assigned values, dynamic keys and
 // dynamic label expressions (its targets are writes, and Neo4j lets SET
 // write to a deleted entity), nothing for a DELETE or REMOVE (their
-// targets), the whole clause otherwise.
+// targets), a FOREACH's iteration list (its body runs per item, so the body's
+// reads are validated by runPipelineClauseRows where each item runs them), the whole clause otherwise.
 func deletedEntityReadText(clause pipelineClause) string {
 	switch clause.kind {
 	case pipelineClauseDelete, pipelineClauseRemove:
@@ -361,6 +362,14 @@ func deletedEntityReadText(clause pipelineClause) string {
 			}
 		}
 		return values.String()
+	case pipelineClauseForeach:
+		// An empty list runs no body, so only the list expression, which every
+		// row evaluates, is a read here (runPipelineClauseRows).
+		body := queryBodyFromSyntax(clause.syntax)
+		if body.foreach == nil {
+			return clause.text
+		}
+		return body.foreach.listExpression
 	}
 	return clause.text
 }

@@ -26,15 +26,34 @@ func (e *directionalReadFaultEngine) readEdges(ctx context.Context, id storage.N
 		return nil, fault
 	}
 	if incoming {
-		return e.Engine.GetIncomingEdges(ctx, id)
+		return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: id})
 	}
-	return e.Engine.GetOutgoingEdges(ctx, id)
+	return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: id})
 }
-func (e *directionalReadFaultEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.readEdges(ctx, id, false)
-}
-func (e *directionalReadFaultEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.readEdges(ctx, id, true)
+func (e *directionalReadFaultEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		return e.readEdges(ctx, request.Node, true)
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
+	return e.readEdges(ctx, request.Node, false)
 }
 
 func TestCallTailHelperParsersAndPredicates(t *testing.T) {

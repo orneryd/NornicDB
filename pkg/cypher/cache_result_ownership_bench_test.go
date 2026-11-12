@@ -15,11 +15,12 @@ import (
 // an already-computed entry key and hot-path trace, and its hit returns them.
 const nor307BenchmarkRowCount = 100
 
-func nor307BenchmarkResult(shape string) *ExecuteResult {
-	rows := make([][]any, nor307BenchmarkRowCount)
+func nor307BenchmarkResult(shape string, count int) *ExecuteResult {
+	rows := make([][]any, count)
+	entities := shape == "entities" || shape == "vectors"
 	for i := range rows {
 		name := "name-" + strconv.Itoa(i)
-		if shape == "entities" {
+		if entities {
 			rows[i] = []any{
 				name,
 				&storage.Node{
@@ -28,11 +29,19 @@ func nor307BenchmarkResult(shape string) *ExecuteResult {
 					Properties: map[string]any{"name": name, "seq": int64(i), "tags": []any{"a", "b"}},
 				},
 			}
+			if shape == "vectors" {
+				node := rows[i][1].(*storage.Node)
+				node.ChunkEmbeddings = make([][]float32, 128)
+				for chunk := range node.ChunkEmbeddings {
+					node.ChunkEmbeddings[chunk] = make([]float32, 1024)
+					node.ChunkEmbeddings[chunk][i%1024] = float32(chunk + 1)
+				}
+			}
 			continue
 		}
 		rows[i] = []any{name, []any{int64(i), int64(i + 1), int64(i + 2)}}
 	}
-	if shape == "entities" {
+	if entities {
 		return &ExecuteResult{Columns: []string{"name", "node"}, Rows: rows}
 	}
 	return &ExecuteResult{Columns: []string{"name", "items"}, Rows: rows}
@@ -51,9 +60,21 @@ func BenchmarkNOR307QueryResultCache(b *testing.B) {
 	)
 	labels := []string{"Nor307"}
 
-	for _, shape := range []string{"scalars", "entities"} {
-		result := nor307BenchmarkResult(shape)
-		b.Run(shape, func(b *testing.B) {
+	// Keep the original 100-row names for historical comparison and add the
+	// report's large-list/25-hit scales. Vectors are an explicit payload
+	// control: mutable vectors requested by a caller still require ownership.
+	for _, workload := range []struct {
+		name, shape string
+		rows        int
+	}{
+		{"scalars", "scalars", 100},
+		{"entities", "entities", 100},
+		{"list-21748", "scalars", 21748},
+		{"metadata-25", "entities", 25},
+		{"vectors-25", "vectors", 25},
+	} {
+		result := nor307BenchmarkResult(workload.shape, workload.rows)
+		b.Run(workload.name, func(b *testing.B) {
 			b.Run("query-cache/put", func(b *testing.B) {
 				cache := NewQueryCache(nor307BenchmarkRowCount)
 				b.ReportAllocs()

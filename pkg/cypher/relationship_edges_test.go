@@ -35,24 +35,24 @@ func TestUndirectedIncidentEdges(t *testing.T) {
 		return out
 	}
 	adjacent := &adjacencyReadSpy{Engine: store}
-	edges, err := undirectedIncidentEdges(context.Background(), adjacent, "a")
+	edges, err := undirectedIncidentEdges(context.Background(), adjacent, storage.AdjacentEdgeRead{Node: "a"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"aa", "ab", "ba"}, ids(edges))
 	require.Equal(t, 1, adjacent.calls)
-	edges, err = undirectedIncidentEdges(context.Background(), &directionalReadFaultEngine{Engine: store}, "a")
+	edges, err = undirectedIncidentEdges(context.Background(), &directionalReadFaultEngine{Engine: store}, storage.AdjacentEdgeRead{Node: "a"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"aa", "ab", "ba"}, ids(edges))
 
 	adjacent.fail = true
-	_, err = undirectedIncidentEdges(context.Background(), adjacent, "a")
+	_, err = undirectedIncidentEdges(context.Background(), adjacent, storage.AdjacentEdgeRead{Node: "a"})
 	require.ErrorIs(t, err, errEdgeRead)
 	for _, failing := range []*directionalReadFaultEngine{{Engine: store, outgoingErr: errEdgeRead}, {Engine: store, incomingErr: errEdgeRead}} {
-		_, err = undirectedIncidentEdges(context.Background(), failing, "a")
+		_, err = undirectedIncidentEdges(context.Background(), failing, storage.AdjacentEdgeRead{Node: "a"})
 		require.ErrorIs(t, err, errEdgeRead)
 	}
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = undirectedIncidentEdges(cancelled, &adjacencyReadSpy{Engine: store}, "a")
+	_, err = undirectedIncidentEdges(cancelled, &adjacencyReadSpy{Engine: store}, storage.AdjacentEdgeRead{Node: "a"})
 	require.ErrorIs(t, err, context.Canceled)
 }

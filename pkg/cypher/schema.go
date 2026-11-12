@@ -245,9 +245,6 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			MaxCount:   parsed.maxCount,
 			Direction:  parsed.direction,
 		}
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
-		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
 			return nil, err
 		}
@@ -273,9 +270,6 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			SourceLabel: parsed.sourceLabel,
 			TargetLabel: parsed.targetLabel,
 			PolicyMode:  parsed.policyMode,
-		}
-		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, err
 		}
 		if err := e.addSchemaConstraint(ctx, constraint, ifNotExists); err != nil {
 			return nil, err
@@ -361,12 +355,12 @@ func (e *StorageExecutor) dropIndexByName(ctx context.Context, name string, ifEx
 	var droppedVectorIndex *storage.VectorIndex
 	var population *search.VectorIndexPopulation
 	if schema := e.storage.GetSchema(); schema != nil {
-		if vi, ok := schema.GetVectorIndex(name); ok && vi != nil {
+		if vi, ok := readVectorIndexDefinition(ctx, schema, name); ok && vi != nil {
 			copyVI := *vi
 			droppedVectorIndex = &copyVI
 			// The index's population record (FAILED, or one still running)
 			// ends with the index, once its drop commits.
-			population = e.search().VectorIndexPopulationOf(name)
+			population = readVectorIndexPopulation(ctx, e.search(), name)
 		}
 	}
 
@@ -1181,6 +1175,16 @@ func (e *StorageExecutor) parseCreateConstraintPolicyDDL(ctx context.Context, cy
 // index would make seeks drop rows.
 func (e *StorageExecutor) addSchemaConstraint(ctx context.Context, constraint storage.Constraint, ifNotExists bool) error {
 	schema := e.storage.GetSchema()
+	needed, err := schema.ConstraintCreationRequired(ctx, constraint, ifNotExists)
+	if err != nil {
+		return err
+	}
+	if !needed {
+		return nil
+	}
+	if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
+		return err
+	}
 	_, existed := schema.ConstraintPropertyIndex(constraint.Name)
 	registered := schema.HasConstraintNamed(constraint.Name)
 	if err := schema.AddConstraint(constraint, ifNotExists); err != nil {
@@ -1194,6 +1198,19 @@ func (e *StorageExecutor) addSchemaConstraint(ctx context.Context, constraint st
 			return err
 		}
 	}
+	// A relationship constraint's equality index is not a schema property index:
+	// its postings are relationship IDs, so the storage owner fills it from the
+	// stored relationships of the type here, as a node constraint's owned index is
+	// filled below. A match after the declaration is then an exact-value lookup
+	// instead of a scan of every relationship of the type. A fill that fails drops
+	// the constraint again, since lookups trust the index to hold every value.
+	if constraint.EffectiveEntityType() == storage.ConstraintEntityRelationship {
+		if err := storage.PrepareRelationshipPropertyEqualityIndexForEngine(ctx, e.storage, constraint); err != nil {
+			_ = schema.DropConstraint(constraint.Name)
+			return err
+		}
+		return nil
+	}
 	index, owned := schema.ConstraintPropertyIndex(constraint.Name)
 	if existed || !owned {
 		return nil
@@ -1201,6 +1218,9 @@ func (e *StorageExecutor) addSchemaConstraint(ctx context.Context, constraint st
 	if err := e.backfillCompositeIndex(ctx, index.Name, index.Label, index.Properties); err != nil {
 		_ = schema.DropConstraint(constraint.Name)
 		return err
+	}
+	if constraint.Type == storage.ConstraintUnique && constraint.EntityType != storage.ConstraintEntityRelationship && len(constraint.Properties) == 1 {
+		return storage.RefreshUniqueConstraintValuesForEngine(ctx, e.storage, schema)
 	}
 	return nil
 }

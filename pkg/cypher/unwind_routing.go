@@ -4,10 +4,10 @@ import (
 	"context"
 	"maps"
 	"strings"
+	"sync/atomic"
 	"unicode"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 type topLevelUnwindPlan struct {
@@ -57,7 +57,20 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 			return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindParameterNotFound(plan.parameterName), nil)
 		}
 	} else {
-		list = e.evaluateExpressionWithContext(ctx, listExpr, map[string]*storage.Node{}, map[string]*storage.Edge{})
+		// The same checked row owner evaluates both prepared and ordinary
+		// iteration values; unresolved expressions must not become empty lists.
+		row := entityRow(ctx, nil, nil)
+		if profileRuntimeFromContext(ctx) != nil {
+			if row == nil {
+				row = make(pipelineRow)
+			}
+			bindRowExpressionOrigin(row, product.expressionStart)
+		}
+		var err error
+		list, err = e.checkedPropertyExpression(ctx, listExpr, row)
+		if err != nil {
+			return topLevelUnwindPlan{}, err
+		}
 	}
 
 	// The one UNWIND coercion (#693): null is no rows, a list its elements,
@@ -118,6 +131,10 @@ func (e *StorageExecutor) rewriteUnwindCorrelations(ctx context.Context, plan to
 // executeUnwindCorrelationRewrite runs one proven set-based rewrite with the
 // UNWIND items bound as its IN-list parameter.
 func (e *StorageExecutor) executeUnwindCorrelationRewrite(ctx context.Context, plan topLevelUnwindPlan, rewritten string) (*ExecuteResult, error) {
+	// PROFILE: the rewrite runs the body as one set-based statement; the items
+	// the leading UNWIND produced are still its own rows, and the rewritten
+	// statement's clauses are reported under it.
+	ctx = profileUnwindRouteOperator(ctx, len(plan.items))
 	params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
 	for key, value := range getParamsFromContext(ctx) {
 		params[key] = value
@@ -126,13 +143,55 @@ func (e *StorageExecutor) executeUnwindCorrelationRewrite(ctx context.Context, p
 	return e.executeRequiredPipeline(withQueryParams(ctx, params), rewritten)
 }
 
+// unwindProfileRouteKey is the context slot holding this statement's leading
+// UNWIND report from the routing owner to the body pipelines that run it. A
+// statement nobody profiles never sets it.
+type unwindProfileRouteKey struct{}
+
+// unwindProfileRoute is one statement's leading UNWIND report: the clause text
+// the routes report, and whether the collector already holds its record.
+// reported is written by profileUnwindRouteOperator alone.
+type unwindProfileRoute struct {
+	source   string
+	reported atomic.Bool
+}
+
+// withUnwindProfileRoute returns ctx carrying this statement's leading UNWIND
+// report, or ctx itself when the statement has no collector.
+func withUnwindProfileRoute(ctx context.Context, source string) context.Context {
+	if profileRuntimeFromContext(ctx) == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, unwindProfileRouteKey{}, &unwindProfileRoute{source: source})
+}
+
+// profileUnwindRouteOperator reports the statement's leading UNWIND operator to
+// the PROFILE collector and returns the context its body runs under, so the
+// body's clauses are reported as its children. The rows are the items the UNWIND
+// actually produced, reported once per statement: a body a route attempts and
+// then declines, and a compound route's several stages, all run the same
+// leading operator instead of adding its rows again.
+func profileUnwindRouteOperator(ctx context.Context, rows int) context.Context {
+	route, _ := ctx.Value(unwindProfileRouteKey{}).(*unwindProfileRoute)
+	if route == nil || route.reported.Swap(true) {
+		return ctx
+	}
+	ctx, record := profileRuntimeInvocation(ctx, profileClauseOperator(pipelineClauseUnwind), route.source, 0)
+	record.invocationRows(rows)
+	return ctx
+}
+
 // executeUnwindBatchOperator chooses an optimized physical operator without
 // changing clause semantics. Unsupported shapes return handled=false and are
 // executed by the same pipeline's general row operators.
-func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan topLevelUnwindPlan, source string) (*ExecuteResult, bool, error) {
 	if plan.remainder == "" {
 		return nil, false, nil
 	}
+	// PROFILE: the routes below run the leading UNWIND's rows themselves, so
+	// they report the operator the statement wrote. Without a collector the
+	// context is unchanged.
+	ctx = withUnwindProfileRoute(ctx, source)
 	upperRest := upperASCII(strings.TrimSpace(plan.remainder))
 	matchMutation := (strings.HasPrefix(upperRest, "MATCH") || strings.HasPrefix(upperRest, "OPTIONAL MATCH")) &&
 		(findKeywordIndexInContext(ctx, plan.remainder, "MERGE") >= 0 || findKeywordIndexInContext(ctx, plan.remainder, "CREATE") >= 0 || findKeywordIndexInContext(ctx, plan.remainder, "SET") >= 0)
@@ -220,6 +279,10 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 		return nil, false, nil
 	}
 	originalClauses := clauses
+	// PROFILE: the statement's leading UNWIND is not one of the remainder's
+	// clauses, so this route reports the rows the operator produced and the
+	// body it runs below is reported under it.
+	ctx = profileUnwindRouteOperator(ctx, len(items))
 	if independent, _ := ctx.Value(pipelineIndependentCreateBatchKey{}).(bool); independent {
 		var patterns []string
 		for _, clause := range clauses {
@@ -253,7 +316,7 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 		row[variable] = item
 		rows = append(rows, row)
 	}
-	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, originalClauses, nil)
+	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, originalClauses, nil, nil)
 	if failure := getExpressionFailure(ctx); failure != nil && err == nil {
 		return nil, true, failure
 	}

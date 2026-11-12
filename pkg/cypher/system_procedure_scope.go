@@ -56,15 +56,7 @@ func (systemGraphView) GetFirstNodeByLabel(ctx context.Context, _ string) (*stor
 	return nil, storage.ErrNotFound
 }
 
-func (systemGraphView) GetOutgoingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
-	return nil, nil
-}
-
-func (systemGraphView) GetIncomingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
-	return nil, nil
-}
-
-func (systemGraphView) GetEdgesBetween(ctx context.Context, _, _ storage.NodeID) ([]*storage.Edge, error) {
+func (systemGraphView) ReadAdjacentEdges(ctx context.Context, _ storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
 	return nil, nil
 }
 

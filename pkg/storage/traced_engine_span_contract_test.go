@@ -97,10 +97,14 @@ func TestTracedEngine_SpanContract(t *testing.T) {
 					Properties: map[string]any{"k": "v2"},
 				}})
 			}},
-		{"GetOutgoingEdges", want{"nornicdb.storage.GetOutgoingEdges", "edge"},
-			func(te *TracedEngine) { _, _ = te.GetOutgoingEdges(context.Background(), "trace:n1") }},
-		{"GetIncomingEdges", want{"nornicdb.storage.GetIncomingEdges", "edge"},
-			func(te *TracedEngine) { _, _ = te.GetIncomingEdges(context.Background(), "trace:n2") }},
+		{"ReadAdjacentEdges/outgoing", want{"nornicdb.storage.ReadAdjacentEdges", "edge"},
+			func(te *TracedEngine) {
+				_, _ = te.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "trace:n1"})
+			}},
+		{"ReadAdjacentEdges/incoming", want{"nornicdb.storage.ReadAdjacentEdges", "edge"},
+			func(te *TracedEngine) {
+				_, _ = te.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "trace:n2"})
+			}},
 		{"GetEdgesByType", want{"nornicdb.storage.GetEdgesByType", "edge"},
 			func(te *TracedEngine) { _, _ = te.GetEdgesByType(context.Background(), "REL") }},
 		{"AllEdges", want{"nornicdb.storage.AllEdges", "edge"},

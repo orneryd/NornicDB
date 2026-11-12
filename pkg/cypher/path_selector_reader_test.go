@@ -13,13 +13,36 @@ type observedIncidentEngine struct {
 	outgoing, incoming int
 }
 
-func (e *observedIncidentEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+func (e *observedIncidentEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		e.incoming++
+		return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node})
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	e.outgoing++
-	return e.Engine.GetOutgoingEdges(ctx, id)
+	return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 }
 func (e *observedIncidentEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	e.incoming++
-	return e.Engine.GetIncomingEdges(ctx, id)
+	return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: id})
 }
 func TestIncidentReaderCancellationWork(t *testing.T) {
 	executor, ctx := newShortestSelectorExecutor(t)
@@ -31,7 +54,7 @@ func TestIncidentReaderCancellationWork(t *testing.T) {
 			reader := &observedIncidentEngine{Engine: executor.storage}
 			atOut, atIn := 0, 0
 			canceled := fixtureowner.NewCheckpointContext(budget, func() { atOut, atIn = reader.outgoing, reader.incoming })
-			_, _, err := incidentEdgeListsContext(canceled, reader, source.ID, direction)
+			_, _, err := incidentEdgeListsContext(canceled, reader, storage.AdjacentEdgeRead{Node: source.ID}, direction)
 			if canceled.Context.Err() != nil {
 				require.ErrorIs(t, err, context.Canceled)
 				require.Equal(t, atOut, reader.outgoing)
@@ -43,7 +66,7 @@ func TestIncidentReaderCancellationWork(t *testing.T) {
 			adjacent := &adjacencyReadSpy{Engine: reader}
 			atCalls := 0
 			canceled = fixtureowner.NewCheckpointContext(budget, func() { atCalls = adjacent.calls })
-			_, _, err = incidentEdgeListsContext(canceled, adjacent, source.ID, direction)
+			_, _, err = incidentEdgeListsContext(canceled, adjacent, storage.AdjacentEdgeRead{Node: source.ID}, direction)
 			if canceled.Context.Err() != nil {
 				require.ErrorIs(t, err, context.Canceled)
 				require.Equal(t, atCalls, adjacent.calls)

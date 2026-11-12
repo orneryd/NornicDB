@@ -463,7 +463,7 @@ func (checker staticOperatorChecker) derive(ctx context.Context, expression stri
 	if startsWithKeywordFold(expression, "CASE") {
 		end := leadingCaseExpressionEnd(expression)
 		if isCaseExpression(expression) && end == len(expression) {
-			if parsed, err := parseCaseExpression(expression); err == nil {
+			if parsed, err := parseCaseExpression(expression, nil); err == nil {
 				return checker.checkCase(ctx, parsed)
 			}
 			return staticOperand{}, nil
@@ -1224,7 +1224,7 @@ func (checker staticOperatorChecker) checkAtom(ctx context.Context, expression s
 		return checker.checkPatternComprehension(ctx, pattern, projection)
 	}
 	if inner, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
-		if variable, list, predicate, projection, comprehension := parseListComprehension(inner); comprehension {
+		if variable, list, predicate, projection, comprehension := parseListComprehension(inner, nil); comprehension {
 			return checker.checkListComprehension(ctx, variable, list, predicate, projection)
 		}
 		var elements []staticOperand

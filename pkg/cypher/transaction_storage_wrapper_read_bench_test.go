@@ -104,7 +104,7 @@ func BenchmarkTransactionWrapperAdjacency(b *testing.B) {
 		b.Run(fmt.Sprintf("%d", size), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				got, err := wrapper.GetOutgoingEdges(context.Background(), "x")
+				got, err := wrapper.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "x"})
 				if err != nil || len(got) != size {
 					b.Fatalf("edges=%d err=%v, want %d", len(got), err, size)
 				}

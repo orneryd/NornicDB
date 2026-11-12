@@ -58,6 +58,12 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 		}
 	}
 	plan.modifiers = strings.Join(modifiers, " ")
+	// An item's expression origin is read in the clause's own coordinates, so
+	// it is the same for every statement whose clause text is this one.
+	clauseStart := 0
+	if clause.Valid() {
+		clauseStart, _ = clause.Span()
+	}
 	if !body.ChildRule(cypherantlr.CypherParserRULE_projectionItems).Valid() {
 		return plan
 	}
@@ -86,6 +92,8 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 			definition = expression
 		}
 		projection.definitionStart, projection.definitionEnd = definition.Span()
+		expressionStart, _ := expression.Span()
+		projection.expressionStart = expressionStart - clauseStart
 		if plan.star {
 			plan.starItems = append(plan.starItems, item.Code())
 			plan.starProjections = append(plan.starProjections, *projection)

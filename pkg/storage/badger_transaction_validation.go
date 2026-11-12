@@ -1351,11 +1351,11 @@ func (tx *BadgerTransaction) checkEdgeCardinality(ctx context.Context, edge *Edg
 	// Count committed edges from the engine on the read's lifetime (ctx).
 	var committedEdges []*Edge
 	var err error
-	if c.Direction == "OUTGOING" {
-		committedEdges, err = tx.engine.GetStoredOutgoingEdges(ctx, counter.anchor)
-	} else {
-		committedEdges, err = tx.engine.GetStoredIncomingEdges(ctx, counter.anchor)
+	adjacency := AdjacentEdgeRead{Node: counter.anchor}
+	if c.Direction != "OUTGOING" {
+		adjacency.Direction = AdjacentIncoming
 	}
+	committedEdges, err = tx.engine.ReadStoredAdjacentEdges(ctx, adjacency)
 	if err != nil {
 		return err
 	}
@@ -1465,11 +1465,11 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(ctx context.Context
 	for _, isOutgoing := range []bool{true, false} {
 		var edges []*Edge
 		var err error
-		if isOutgoing {
-			edges, err = tx.engine.GetStoredOutgoingEdges(ctx, node.ID)
-		} else {
-			edges, err = tx.engine.GetStoredIncomingEdges(ctx, node.ID)
+		adjacency := AdjacentEdgeRead{Node: node.ID}
+		if !isOutgoing {
+			adjacency.Direction = AdjacentIncoming
 		}
+		edges, err = tx.engine.ReadStoredAdjacentEdges(ctx, adjacency)
 		if err != nil {
 			return err
 		}

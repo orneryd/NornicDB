@@ -57,6 +57,9 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	endpoints := e.newRelationshipEndpointReader(store)
 	return func(yield func(pipelineRow) bool) bool {
 		valid := true
+		// Only a runtime seeded continuation needs these planning estimates.
+		// Reuse them across this iterator's rows, never across invocations.
+		seededHint := hint
 		endpointValues := &endpointPropertyCache{}
 		current := make(pipelineRow)
 		completed := input(func(row pipelineRow) bool {
@@ -69,7 +72,10 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 			}
 			plan := planPipelineTraversalScan(shape, where, row)
 			if plan.access == traversalSeededAccess {
-				rows, _, err := e.pipelineApplySeededTraversalMatch(ctx, []pipelineRow{row}, clause, hint)
+				if seededHint.statistics == nil {
+					seededHint.statistics = &traversalSeedStatistics{}
+				}
+				rows, _, err := e.pipelineApplySeededTraversalMatch(ctx, []pipelineRow{row}, clause, seededHint)
 				if err != nil {
 					recordExpressionFailure(ctx, err)
 					valid = false

@@ -375,8 +375,7 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 
 // TestWALEntryIntegrity verifies full round-trip integrity.
 func TestWALEntryIntegrity(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 

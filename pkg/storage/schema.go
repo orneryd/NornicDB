@@ -243,10 +243,10 @@ func NewSchemaManager() *SchemaManager {
 
 // addConstraintLocked admits c (admitConstraintLocked) and applies it when
 // admitted; added is false for an IF NOT EXISTS that finds it present.
-func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate bool) (added bool, err error) {
-	added, err = sm.admitConstraintLocked(c, silentOnDuplicate)
+func (sm *SchemaManager) addConstraintLocked(ctx context.Context, c Constraint, silentOnDuplicate bool) (added bool, err error) {
+	added, err = sm.admitConstraintLocked(ctx, c, silentOnDuplicate)
 	if added {
-		sm.applyConstraintLocked(c)
+		sm.applyConstraintLocked(ctx, c)
 	}
 	return added, err
 }
@@ -254,7 +254,7 @@ func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate boo
 // admitConstraintLocked checks c against the schema without changing it:
 // an error for a conflict, false for an equivalent constraint under IF NOT
 // EXISTS, true when c is to be added.
-func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate bool) (bool, error) {
+func (sm *SchemaManager) admitConstraintLocked(ctx context.Context, c Constraint, silentOnDuplicate bool) (bool, error) {
 	if _, exists := sm.constraintContracts[c.Name]; exists {
 		return false, newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(c.Name))
 	}
@@ -311,9 +311,9 @@ func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate b
 	// The constraint's index can't duplicate an index of its own, even under
 	// IF NOT EXISTS: they are different schema rules (#884).
 	if constraintPropertyIndexKey(c) != "" {
-		// Admission already holds the schema write lock: the index scan belongs
-		// to that mutation's lifetime, not to a request that can walk away.
-		idx, exists, err := sm.arity1PropertyIndexLocked(context.Background(), c.Label, c.Properties[0])
+		// The caller owns the phase: request preflight remains cancellable;
+		// accepted schema publication supplies its completion context.
+		idx, exists, err := sm.arity1PropertyIndexLocked(ctx, c.Label, c.Properties[0])
 		if err != nil {
 			return false, err
 		}
@@ -327,7 +327,7 @@ func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate b
 
 // applyConstraintLocked adds c, which admitConstraintLocked admitted, with
 // its owned index and unique-value tracking.
-func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
+func (sm *SchemaManager) applyConstraintLocked(ctx context.Context, c Constraint) {
 	c = cloneConstraint(c)
 	// An index-backed constraint owns an index of its own name, for nodes and
 	// relationships alike, as in Neo4j.
@@ -357,10 +357,9 @@ func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 		}
 	}
 
-	// A native DDL mutation holds the schema write lock and has no caller
-	// context, so its own equality-index discovery runs on that mutation's
-	// lifetime and cannot cancel mid-way.
-	if err := sm.addConstraintPropertyIndexLocked(context.Background(), c); err != nil {
+	// The admitted mutation supplies its completion lifetime; this private
+	// owner preserves it through equality-index discovery.
+	if err := sm.addConstraintPropertyIndexLocked(ctx, c); err != nil {
 		panic(fmt.Sprintf("storage: non-cancellable DDL constraint-index discovery failed: %v", err))
 	}
 
@@ -722,7 +721,8 @@ type RangeIndex struct {
 // Pass ifNotExists=true for IF NOT EXISTS semantics (duplicate is no-op).
 func (sm *SchemaManager) AddUniqueConstraint(name, label, property string, ifNotExists ...bool) error {
 	defer sm.trackPendingPairs()
-	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	ctx := context.Background() // this context-free mutation owns accepted completion
+	lease, admitErr := sm.beginSchemaMutation(ctx)
 	if admitErr != nil {
 		return admitErr
 	}
@@ -736,9 +736,9 @@ func (sm *SchemaManager) AddUniqueConstraint(name, label, property string, ifNot
 		Type:       ConstraintUnique,
 	}
 	return sm.addSchemaRuleLocked(
-		func() (bool, error) { return sm.admitConstraintLocked(constraint, silent) },
+		func() (bool, error) { return sm.admitConstraintLocked(ctx, constraint, silent) },
 		sm.stageConstraintFamilies,
-		func() { sm.applyConstraintLocked(constraint) },
+		func() { sm.applyConstraintLocked(ctx, constraint) },
 	)
 }
 
@@ -843,6 +843,18 @@ func (sm *SchemaManager) AddPropertyTypeConstraint(name, label, property string,
 		sm.stagePropertyTypeConstraintFamily,
 		func() { sm.propertyTypeConstraints[ptc.Name] = ptc },
 	)
+}
+
+// PropertyTypeConstraintCreationRequired applies the property-type admission
+// policy before stored-data validation. AddPropertyTypeConstraint rechecks the
+// policy while publishing; this read does not reserve a schema name.
+func (sm *SchemaManager) PropertyTypeConstraintCreationRequired(ctx context.Context, c PropertyTypeConstraint, ifNotExists bool) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.admitPropertyTypeConstraintLocked(c, ifNotExists)
 }
 
 // addPropertyTypeConstraintValueLocked admits ptc and adds it when admitted.
@@ -1668,6 +1680,19 @@ func allowedValuesEqual(a, b []interface{}) bool {
 	return true
 }
 
+// ConstraintCreationRequired checks the canonical constraint admission policy
+// before a caller performs stored-data validation. False with no error means
+// an IF NOT EXISTS no-op. This is a preflight, not a reservation: AddConstraint
+// checks admission again when publishing the schema mutation.
+func (sm *SchemaManager) ConstraintCreationRequired(ctx context.Context, c Constraint, ifNotExists bool) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.admitConstraintLocked(ctx, c, ifNotExists)
+}
+
 // AddConstraint adds a constraint to the schema.
 // Stores constraint in both the constraints map and uniqueConstraints (for backward compatibility).
 //
@@ -1680,7 +1705,8 @@ func allowedValuesEqual(a, b []interface{}) bool {
 // Pass ifNotExists=true when the DDL includes IF NOT EXISTS; duplicate-schema is then a no-op.
 func (sm *SchemaManager) AddConstraint(c Constraint, ifNotExists ...bool) error {
 	defer sm.trackPendingPairs()
-	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	ctx := context.Background() // this context-free mutation owns accepted completion
+	lease, admitErr := sm.beginSchemaMutation(ctx)
 	if admitErr != nil {
 		return admitErr
 	}
@@ -1688,9 +1714,9 @@ func (sm *SchemaManager) AddConstraint(c Constraint, ifNotExists ...bool) error 
 
 	silentOnDuplicate := len(ifNotExists) > 0 && ifNotExists[0]
 	return sm.addSchemaRuleLocked(
-		func() (bool, error) { return sm.admitConstraintLocked(c, silentOnDuplicate) },
+		func() (bool, error) { return sm.admitConstraintLocked(ctx, c, silentOnDuplicate) },
 		sm.stageConstraintFamilies,
-		func() { sm.applyConstraintLocked(c) },
+		func() { sm.applyConstraintLocked(ctx, c) },
 	)
 }
 

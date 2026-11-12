@@ -89,9 +89,7 @@ func typeGuardsAt(fn *ssa.Function, at ssa.Instruction) []typeGuard {
 		// starts another iteration, so it cannot establish this one's fact.
 		sides := [2]bool{}
 		for i, succ := range block.Succs {
-			if !succ.Dominates(block) {
-				sides[i] = reachable(succ)[at.Block()]
-			}
+			sides[i] = reachable(block, succ)[at.Block()]
 		}
 		yes, no := sides[0], sides[1]
 		if yes == no {

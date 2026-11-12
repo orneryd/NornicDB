@@ -9,6 +9,7 @@ const (
 	pipelineDispatchHandled
 	pipelineDispatchParseRejected
 	pipelineDispatchFailed
+	pipelineDispatchHandledObserved
 )
 
 type pipelineDispatchOutcome struct {
@@ -38,5 +39,17 @@ func (outcome pipelineDispatchOutcome) terminal() bool {
 }
 
 func (outcome pipelineDispatchOutcome) handled() bool {
-	return outcome.state == pipelineDispatchHandled
+	return outcome.state == pipelineDispatchHandled || outcome.state == pipelineDispatchHandledObserved
+}
+
+// newCountReductionOutcome constructs the fused scalar result and records only
+// the provenance whose complete execution metrics are owned by the reducer.
+func newCountReductionOutcome(count int64, column string, reduction countReductionKind) pipelineDispatchOutcome {
+	state := pipelineDispatchHandled
+	if reduction.fullyObserved() {
+		state = pipelineDispatchHandledObserved
+	}
+	return pipelineDispatchOutcome{state: state, result: &ExecuteResult{
+		Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{},
+	}}
 }

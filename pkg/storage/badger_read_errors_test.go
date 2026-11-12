@@ -68,16 +68,22 @@ func TestBadgerNodeReadsRejectCorruption(t *testing.T) {
 
 func TestBadgerEdgeReadsRejectCorruption(t *testing.T) {
 	reads := map[string]func(*BadgerEngine) error{
-		"all":      func(b *BadgerEngine) error { _, err := b.AllEdges(context.Background()); return err },
-		"type":     func(b *BadgerEngine) error { _, err := b.GetEdgesByType(context.Background(), "R"); return err },
-		"outgoing": func(b *BadgerEngine) error { _, err := b.GetOutgoingEdges(context.Background(), "test:a"); return err },
-		"incoming": func(b *BadgerEngine) error { _, err := b.GetIncomingEdges(context.Background(), "test:z"); return err },
+		"all":  func(b *BadgerEngine) error { _, err := b.AllEdges(context.Background()); return err },
+		"type": func(b *BadgerEngine) error { _, err := b.GetEdgesByType(context.Background(), "R"); return err },
+		"outgoing": func(b *BadgerEngine) error {
+			_, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
+			return err
+		},
+		"incoming": func(b *BadgerEngine) error {
+			_, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:z"})
+			return err
+		},
 		"adjacent": func(b *BadgerEngine) error {
-			_, _, err := b.GetAdjacentEdges(context.Background(), "test:a")
+			_, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:a"})
 			return err
 		},
 		"between": func(b *BadgerEngine) error {
-			_, err := b.GetEdgesBetween(context.Background(), "test:a", "test:z")
+			_, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:a", Other: "test:z"})
 			return err
 		},
 		"legacy between": func(b *BadgerEngine) error {
@@ -107,9 +113,9 @@ func TestBadgerEdgeReadsRejectCorruption(t *testing.T) {
 					}
 					require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:z", Type: "R", Properties: map[string]any{"x": int64(1)}}))
 					if warm {
-						_, _, err := b.GetAdjacentEdges(context.Background(), "test:a")
+						_, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:a"})
 						require.NoError(t, err)
-						_, err = b.GetIncomingEdges(context.Background(), "test:z")
+						_, err = b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:z"})
 						require.NoError(t, err)
 					}
 					require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {

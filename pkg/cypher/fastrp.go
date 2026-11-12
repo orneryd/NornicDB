@@ -30,6 +30,7 @@ package cypher
 // Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
 
 import (
+	"context"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	mathrand "math/rand"
@@ -91,8 +92,8 @@ var fastRPConfigKeys = []string{
 }
 
 // callGdsFastRPStream implements CALL gds.fastRP.stream(graphName, config)
-func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResult, error) {
-	embeddings, _, err := e.runGdsFastRP("gds.fastRP.stream", args)
+func (e *StorageExecutor) callGdsFastRPStream(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	embeddings, _, err := e.runGdsFastRP(ctx, "gds.fastRP.stream", args)
 	if err != nil {
 		return nil, err
 	}
@@ -106,9 +107,9 @@ func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResul
 // callGdsFastRPStats implements CALL gds.fastRP.stats(graphName, config): it
 // runs FastRP and reports, as GDS does, the node count, the time taken and
 // the configuration (#1191).
-func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsFastRPStats(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	started := time.Now()
-	embeddings, config, err := e.runGdsFastRP("gds.fastRP.stats", args)
+	embeddings, config, err := e.runGdsFastRP(ctx, "gds.fastRP.stats", args)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +121,7 @@ func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult
 
 // runGdsFastRP reads a gds.fastRP call's graph and configuration and computes
 // the embeddings.
-func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}) ([]fastRPEmbedding, FastRPConfig, error) {
+func (e *StorageExecutor) runGdsFastRP(ctx context.Context, procedure string, args []interface{}) ([]fastRPEmbedding, FastRPConfig, error) {
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
 		return nil, FastRPConfig{}, err
@@ -133,7 +134,7 @@ func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}) ([]
 	if err != nil {
 		return nil, FastRPConfig{}, err
 	}
-	projection, err := e.graphProjection(graphName)
+	projection, err := lookupGraphProjection(ctx, e.databaseName(), graphName)
 	if err != nil {
 		return nil, FastRPConfig{}, err
 	}

@@ -191,25 +191,25 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 					}
 					movedCount, err := engine.EdgeCountByType(context.Background(), "MOVED")
 					require.Zero(t, mustCount(t, movedCount, err), stage+": rejected type has no count")
-					outgoingA, err := engine.GetStoredOutgoingEdges(context.Background(), "test:a")
+					outgoingA, err := engine.ReadStoredAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 					require.NoError(t, err)
 					for _, edge := range outgoingA {
 						require.NotNil(t, edge)
 					}
 					require.Equal(t, []string{"test:identical"}, sortedEdgeIDStrings(outgoingA), stage+": old outgoing adjacency")
-					incomingB, err := engine.GetStoredIncomingEdges(context.Background(), "test:b")
+					incomingB, err := engine.ReadStoredAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:b"})
 					require.NoError(t, err)
 					for _, edge := range incomingB {
 						require.NotNil(t, edge)
 					}
 					require.Equal(t, []string{"test:identical"}, sortedEdgeIDStrings(incomingB), stage+": old incoming adjacency")
-					outgoingC, err := engine.GetStoredOutgoingEdges(context.Background(), "test:c")
+					outgoingC, err := engine.ReadStoredAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:c"})
 					require.NoError(t, err)
 					for _, edge := range outgoingC {
 						require.NotNil(t, edge)
 					}
 					require.Equal(t, []string{"test:different"}, sortedEdgeIDStrings(outgoingC), stage+": rejected outgoing adjacency")
-					incomingD, err := engine.GetStoredIncomingEdges(context.Background(), "test:d")
+					incomingD, err := engine.ReadStoredAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:d"})
 					require.NoError(t, err)
 					for _, edge := range incomingD {
 						require.NotNil(t, edge)
@@ -308,7 +308,7 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 			require.True(t, tx.EdgeCreateWasNoOp(candidate.ID))
 			_, err = tx.GetEdge(t.Context(), candidate.ID)
 			require.ErrorIs(t, err, ErrNotFound, "the hidden-only candidate must not enter the visible point-read overlay")
-			between, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadBetween, Node: candidate.StartNode, Other: candidate.EndNode})
+			between, err := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: candidate.StartNode, Other: candidate.EndNode})
 			require.NoError(t, err)
 			require.Empty(t, between, "the hidden-only candidate must not enter relationship matching")
 			candidate.Properties["payload"] = "stored"

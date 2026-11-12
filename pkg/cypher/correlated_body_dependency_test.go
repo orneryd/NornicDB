@@ -46,15 +46,15 @@ func TestCorrelatedBodyDependencyDifferential(t *testing.T) {
 			if shape.name == "unwind-count" {
 				plan, err := exec.prepareTopLevelUnwind(runCtx, base)
 				require.NoError(t, err)
-				_, batch, err := exec.executeUnwindBatchOperator(runCtx, plan)
+				_, batch, err := exec.executeUnwindBatchOperator(runCtx, plan, "")
 				require.NoError(t, err)
 				require.True(t, batch, base)
 			} else {
-				_, node, nodeErr := exec.tryExecutePipelineSimpleNodeReadPlan(runCtx, clauses, params)
-				_, relationship, relErr := exec.tryExecutePipelineSimpleRelationshipCountPlan(runCtx, clauses, params)
-				require.NoError(t, nodeErr)
-				require.NoError(t, relErr)
-				require.True(t, node || relationship, base)
+				node := exec.tryExecutePipelineSimpleNodeReadPlan(runCtx, clauses, params)
+				relationship := exec.tryExecutePipelineSimpleRelationshipCountPlan(runCtx, clauses, params)
+				require.NoError(t, node.err)
+				require.NoError(t, relationship.err)
+				require.True(t, node.handled() || relationship.handled(), base)
 			}
 			variants := []string{
 				base,
@@ -89,7 +89,7 @@ func TestCorrelatedBodyDependencyDifferential(t *testing.T) {
 							row := pipelineRow{"a": value}
 							bindParameterRow(runCtx, row)
 							generalCtx := withExpressionFailureSlot(runCtx)
-							general, handled, generalErr := exec.runPipelineClauseRows(generalCtx, []pipelineRow{row}, map[string]struct{}{"a": {}}, clauses, clauses, nil)
+							general, handled, generalErr := exec.runPipelineClauseRows(generalCtx, []pipelineRow{row}, map[string]struct{}{"a": {}}, clauses, clauses, nil, nil)
 							if failure := getExpressionFailure(generalCtx); failure != nil && generalErr == nil {
 								generalErr = failure
 							}

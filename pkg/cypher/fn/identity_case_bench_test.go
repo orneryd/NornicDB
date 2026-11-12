@@ -10,7 +10,7 @@ import (
 func BenchmarkIdentityFunctionPublicLookup(b *testing.B) {
 	names := []string{"identity_case.region", "identity_case.ärea"}
 	mu.Lock()
-	previous := map[string]Func{}
+	previous := map[string]registration{}
 	present := map[string]bool{}
 	for _, name := range names {
 		key := strings.ToLower(name)
@@ -29,7 +29,7 @@ func BenchmarkIdentityFunctionPublicLookup(b *testing.B) {
 		}
 	})
 	for _, name := range names {
-		Register(name, func(_ context.Context, _ Context, _ []string) (interface{}, error) { return int64(7), nil })
+		Register(name, func(_ context.Context, _ Context, _ []string) (interface{}, error) { return int64(7), nil }, OpaqueReads)
 	}
 	ctx := Context{Eval: func(string) (interface{}, error) { return nil, nil }, Now: time.Now}
 	for _, name := range []string{"identity_case.region", "IDENTITY_CASE.REGION", "identity_case.ärea", "IDENTITY_CASE.ÄREA"} {

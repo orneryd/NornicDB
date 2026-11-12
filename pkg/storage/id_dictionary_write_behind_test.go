@@ -67,7 +67,7 @@ func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
 	nodes, err := engine.GetNodesByLabel(context.Background(), "L")
 	require.NoError(t, err)
 	require.Len(t, nodes, 20)
-	edges, err := engine.GetOutgoingEdges(context.Background(), "test:n0")
+	edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:n0"})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 }

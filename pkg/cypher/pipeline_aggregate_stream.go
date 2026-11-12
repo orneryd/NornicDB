@@ -59,6 +59,10 @@ func pipelineRowsSource(rows []pipelineRow) pipelineRowSource {
 type pipelineAggregateProjection struct {
 	expression string
 	states     []pipelineAggregateState
+	// grouping is what this projection's grouping expression evaluated to
+	// for the row the group was formed on: a group reports the key it was
+	// formed by instead of evaluating that expression again over first.
+	grouping interface{}
 }
 
 type pipelineAggregateGroup struct {
@@ -107,13 +111,22 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			validationExpressions = append(validationExpressions, projection.expr)
 		}
 	}
-	newGroup := func(row pipelineRow) *pipelineAggregateGroup {
+	// newGroup starts a group on row from the grouping values its tuple was
+	// formed from: the group keeps those, so projecting it never evaluates a
+	// grouping key a second time.
+	newGroup := func(row pipelineRow, keys []interface{}) *pipelineAggregateGroup {
 		group := &pipelineAggregateGroup{first: make(pipelineRow, len(row)), projections: make([]pipelineAggregateProjection, len(templates))}
 		for name, value := range row {
 			group.first[name] = value
 		}
+		captured := 0
 		for index, template := range templates {
 			group.projections[index] = pipelineAggregateProjection{expression: template.expression, states: append([]pipelineAggregateState(nil), template.states...)}
+			if projections[index].isAggr {
+				continue
+			}
+			group.projections[index].grouping = keys[captured]
+			captured++
 		}
 		return group
 	}
@@ -124,6 +137,9 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 	// row was valid, and the memory its new groups take (#1343).
 	run := pipelineAggregateRun{valid: true, memory: memoryAccount{scope: memory}, rows: rowEstimator{known: memory.knownLists()}}
 	defer run.memory.close()
+	// A PROFILE statement binds each grouping item's retained expression
+	// origin for the row it evaluates; any other statement binds nothing.
+	profiling := profileRuntimeFromContext(ctx) != nil
 	completed := source(func(row pipelineRow) bool {
 		if err := ctx.Err(); err != nil {
 			recordExpressionFailure(ctx, err)
@@ -141,7 +157,14 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 				if projection.isAggr {
 					continue
 				}
+				saved, bound := rowExpressionOriginBinding{}, false
+				if profiling {
+					saved, bound = bindRowExpressionOrigin(row, projection.expressionStart)
+				}
 				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
+				if bound {
+					restoreRowExpressionOrigin(row, saved)
+				}
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
 					run.valid = false
@@ -152,11 +175,15 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		}
 		position, exists := grouping.addTupleByContract(values, cypherEquivalenceContract)
 		if !exists {
-			if run.memory.growTuple(values, run.rows.bytes(row)+int64(len(templates))*aggregateStateBytes) != nil {
-				run.valid = false
-				return false
+			// Without a configured budget, growTuple discards its inputs.
+			// Avoid evaluating an imported row's entire list/map graph first.
+			if run.memory.scope != nil {
+				if run.memory.growTuple(values, run.rows.bytes(row)+int64(len(templates))*aggregateStateBytes) != nil {
+					run.valid = false
+					return false
+				}
 			}
-			ordered = append(ordered, newGroup(row))
+			ordered = append(ordered, newGroup(row, values))
 		}
 		group := ordered[position]
 		for index := range group.projections {
@@ -173,7 +200,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		return nil, false
 	}
 	if len(ordered) == 0 && allAggregates {
-		ordered = append(ordered, newGroup(nil))
+		ordered = append(ordered, newGroup(nil, nil))
 	}
 	return ordered, true
 }
@@ -378,14 +405,13 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 				node, _ := partial.first[pattern.variable].(*storage.Node)
 				ordinal = ordinal*len(pattern.nodes) + positions[index][node]
 			}
+			// A partial group already holds the grouping values it was formed
+			// on: merging reads those instead of evaluating a partition's keys a
+			// second time.
 			var parts []interface{}
-			for _, projection := range plan.projections {
+			for index, projection := range plan.projections {
 				if !projection.isAggr {
-					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, partial.first)
-					if !ok {
-						return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian grouping expression")
-					}
-					parts = append(parts, value)
+					parts = append(parts, partial.projections[index].grouping)
 				}
 			}
 			position, exists := groups.addTupleByContract(parts, cypherEquivalenceContract)
@@ -400,6 +426,11 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			if ordinal < merged.ordinal {
 				merged.ordinal = ordinal
 				group.first = partial.first
+				// The keys a group reports are its retained first row's captured
+				// grouping values, and that row just changed.
+				for index := range group.projections {
+					group.projections[index].grouping = partial.projections[index].grouping
+				}
 			}
 			for index := range group.projections {
 				for stateIndex := range group.projections[index].states {
@@ -419,23 +450,39 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 	return result, true, nil
 }
 
-func (group *pipelineAggregateGroup) value(ctx context.Context, executor *StorageExecutor, index int) (interface{}, bool) {
+func (group *pipelineAggregateGroup) value(ctx context.Context, executor *StorageExecutor, index, expressionStart int) (interface{}, bool) {
 	projection := &group.projections[index]
+	// A grouping key's value is the evaluation the group was formed on: it
+	// travels with the group, so projecting a group never runs the same
+	// expression over first again.
 	if len(projection.states) == 0 {
-		return executor.evaluateRowExpressionWithContext(ctx, projection.expression, group.first)
+		return projection.grouping, true
 	}
-	values := make(pipelineRow, len(group.first)+len(projection.states))
-	for name, value := range group.first {
-		values[name] = value
-	}
-	for offset := range projection.states {
-		value, ok := projection.states[offset].result(ctx, executor)
-		if !ok {
-			return nil, false
+	values := group.first
+	if len(projection.states) != 0 {
+		values = make(pipelineRow, len(group.first)+len(projection.states))
+		for name, value := range group.first {
+			values[name] = value
 		}
-		values[traversalAggPlaceholder(offset)] = value
+		for offset := range projection.states {
+			value, ok := projection.states[offset].result(ctx, executor)
+			if !ok {
+				return nil, false
+			}
+			values[traversalAggPlaceholder(offset)] = value
+		}
 	}
-	return executor.evaluateRowExpressionWithContext(ctx, projection.expression, values)
+	// A PROFILE statement binds the item's retained expression origin for
+	// the group's evaluation; any other statement binds nothing.
+	saved, bound := rowExpressionOriginBinding{}, false
+	if profileRuntimeFromContext(ctx) != nil {
+		saved, bound = bindRowExpressionOrigin(values, expressionStart)
+	}
+	value, ok := executor.evaluateRowExpressionWithContext(ctx, projection.expression, values)
+	if bound {
+		restoreRowExpressionOrigin(values, saved)
+	}
+	return value, ok
 }
 
 type pipelineAggregateState struct {

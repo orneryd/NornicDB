@@ -148,11 +148,11 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 			return nil, true, err
 		}
 		stats.NodesDeleted++
-		e.removeNodeFromSearch(string(nodeID))
+		e.removeNodeFromSearch(ctx, string(nodeID))
 	}
 	// Incident relationships of detached nodes were deleted with them.
 	for edgeID := range deletedEdges {
-		e.notifyEdgeMutated(string(edgeID))
+		e.notifyEdgeMutated(ctx, string(edgeID))
 	}
 	deleted := contextslot.Get[deletedEntities](ctx)
 	if deleted == nil {
@@ -424,23 +424,33 @@ func (e *StorageExecutor) tryExecutePipelineCreatePlan(ctx context.Context, clau
 		initial[name] = value
 	}
 	bindParameterRow(ctx, initial)
-	rows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{initial}, clauses[:end])
+	createCtx, createRecord := profileRuntimeInvocation(ctx, profileClauseOperator(pipelineClauseCreate), clauses[0].text, 0)
+	rows, result, _, err := e.pipelineApplyCreateClauses(createCtx, []pipelineRow{initial}, clauses[:end])
 	if err != nil {
 		return nil, true, err
 	}
+	// PROFILE: this route fuses the leading CREATE clauses into one operator
+	// and runs them itself, so the clause row pipeline never reported them. The
+	// operator keeps the stretch's first source clause as its identity and the
+	// rows it handed on; the fused clauses have no record of their own.
+	createRecord.invocationRows(len(rows))
 	for index := end; index < len(clauses); index++ {
 		if clauses[index].kind == pipelineClauseSet {
-			stats, _, err := e.pipelineApplySet(ctx, rows, clauses[index].text)
+			setCtx, setRecord := profileRuntimeInvocation(ctx, profileClauseOperator(pipelineClauseSet), clauses[index].text, index)
+			stats, _, err := e.pipelineApplySet(setCtx, rows, clauses[index].text)
 			if err != nil {
 				return nil, true, err
 			}
+			setRecord.invocationRows(len(rows))
 			addQueryStats(result.Stats, stats)
 			continue
 		}
-		projected, err := e.projectMergeReturn(ctx, rows, originalClauses[index].text)
+		projectionCtx, projectionRecord := profileRuntimeInvocation(ctx, profileClauseOperator(pipelineClauseReturn), originalClauses[index].text, index)
+		projected, err := e.projectMergeReturn(projectionCtx, rows, originalClauses[index].text)
 		if err != nil {
 			return nil, true, err
 		}
+		projectionRecord.invocationRows(len(projected.Rows))
 		result.Columns, result.Rows = projected.Columns, projected.Rows
 	}
 	return result, true, nil
@@ -949,7 +959,7 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 			for name := range child {
 				scope[name] = struct{}{}
 			}
-			result, handled, err := e.runPipelineClauseRows(ctx, []pipelineRow{child}, scope, update.updates, update.updates, nil)
+			result, handled, err := e.runPipelineClauseRows(ctx, []pipelineRow{child}, scope, update.updates, update.updates, nil, nil)
 			if err != nil {
 				return nil, err
 			}

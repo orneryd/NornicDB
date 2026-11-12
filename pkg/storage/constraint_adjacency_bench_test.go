@@ -38,7 +38,7 @@ func BenchmarkConstraintCurrentAdjacency(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				edges, err := tx.currentDirectedEdgesLocked(b.Context(), "test:hub", adjacencyOutgoing)
+				edges, err := tx.currentDirectedEdgesLocked(b.Context(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:hub"})
 				if err != nil || len(edges) != size {
 					b.Fatalf("edges=%d err=%v", len(edges), err)
 				}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -468,6 +469,7 @@ func (b *BadgerEngine) currentTemporalNodeByScanInNamespace(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+	queryprofile.EntityPopulation(ctx, queryprofile.KindNodeByLabelScan, constraint.Label, nodes)
 	var best *Node
 	var bestStart time.Time
 	for _, candidate := range nodes {

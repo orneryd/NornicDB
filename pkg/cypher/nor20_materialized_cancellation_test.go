@@ -202,7 +202,7 @@ func nor20InstallProbe(t *testing.T, probe *nor20Probe) {
 			return nil, fmt.Errorf("%s() has no active probe", nor20ProbeFunction)
 		}
 		return active.call(value), nil
-	})
+	}, cypherfn.OpaqueReads)
 	// The unknown-function check reads the catalog's names; the probe is one
 	// for this test, and only for this test.
 	builtInCypherFunctions[nor20ProbeFunction] = struct{}{}

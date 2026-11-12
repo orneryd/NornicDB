@@ -65,6 +65,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(ctx context.Context, expressi
 	if !projection {
 		return nil, false, false, nil
 	}
+	origin := rowExpressionOrigin(values)
 	base, resolved, err := e.evaluateRowValue(ctx, variable, values)
 	if err != nil {
 		return nil, true, false, err
@@ -116,7 +117,12 @@ func (e *StorageExecutor) evaluateRowMapProjection(ctx context.Context, expressi
 			separator := findTopLevelMapKeyValueSeparator(item)
 			if separator > 0 {
 				name := normalizePropertyKey(strings.TrimSpace(item[:separator]))
-				value, ok, err := e.evaluateRowValue(ctx, strings.TrimSpace(item[separator+1:]), values)
+				valueText := strings.TrimSpace(item[separator+1:])
+				saved, bound := bindBorrowedExpressionOrigin(values, expression, valueText, origin)
+				value, ok, err := e.evaluateRowValue(ctx, valueText, values)
+				if bound {
+					restoreRowExpressionOrigin(values, saved)
+				}
 				if err != nil {
 					return nil, true, false, err
 				}

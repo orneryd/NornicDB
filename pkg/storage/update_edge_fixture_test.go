@@ -98,7 +98,9 @@ func assertUpdatedEdgeIndex[Key ~string](t *testing.T, engine *BadgerEngine, kin
 	if kind == updatedEndpointIndex {
 		value = Key(stored.EndNode)
 		messages = [3]string{"stored edge must carry the new end node", "new end node must have the incoming edge", "original end node must lose the incoming edge"}
-		read = func(key Key) ([]*Edge, error) { return engine.GetIncomingEdges(context.Background(), NodeID(key)) }
+		read = func(key Key) ([]*Edge, error) {
+			return engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: NodeID(key)})
+		}
 	}
 	assert.Equal(t, after, value, messages[0])
 	current, err := read(after)

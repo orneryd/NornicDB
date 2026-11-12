@@ -76,9 +76,9 @@ Native validation settings use
 one setting preserves the other; stored-inclusive create identity checks remain
 required. The two former boolean setter entry points have been retired.
 
-Native adjacency reads use `tx.ReadEdges(storage.TransactionEdgeRead{Kind:
-storage.TransactionReadOutgoing, Node: id})`, the corresponding incoming kind, or
-`TransactionReadBetween` with `Node` and `Other`. Directional snapshot and
+Native adjacency reads use `tx.ReadEdges(storage.AdjacentEdgeRead{Node: id})`,
+`Direction: storage.AdjacentIncoming`, or `Direction: storage.AdjacentBetween`
+with `Node` and `Other`. Directional snapshot and
 write-behind semantics, the dedicated between-node path, namespace checks and
 pending overlays are preserved. Engine capability adapters retain their existing
 typed outgoing/incoming/between contracts and call this native owner.

@@ -52,13 +52,25 @@ only those stops at the first row whose `phase` is `catalog`.
 participating retrieval branches establish exhaustion without truncating their
 candidate prefixes. A short approximate, filtered, or fused result does not
 establish exhaustion. `ranked_limit` still selects a fixed ranked prefix; it
-does not prove that further ranked candidates do not exist. When a producer
-reaches an explicit candidate budget, such as a Stage-2 rerank top-K boundary,
-the stream ends with `completion: "candidate_pool_exhausted"` and
-`ranked_pool_exhausted: false`. Rerank producers declare that boundary only
-after the requested retrieval depth reaches the configured top-K and the
-pre-rerank candidate list still contains more rows. A shallow `limit` below the
-top-K can continue deepening inside the same rerank budget.
+does not prove that further ranked candidates do not exist.
+
+A Stage-2 `rerankTopK` is not a candidate budget for a ranked continuation. It
+bounds one provider window: the continuation reranks its fused order after the
+chunk fusion and keeps the provider's order inside each window, so results
+beyond the first `rerankTopK` candidates stay reachable. A window is the batch
+its candidates were first admitted in, so its membership, order and scores stay
+the same for every deeper pull: a later pull admits newly retrieved rows as new
+windows instead of re-forming an accepted one over a longer prefix. A window
+reports its complete eligible population; `rerankMinScore` excludes rows inside
+every window and excluded rows do not consume page slots, so returned counts
+and `total` describe the rows above the threshold. Each candidate is submitted
+to the provider once per query while the stream lives, and retained decisions -
+ranked, filtered, omitted by a valid subset, or in a failed batch - are rebuilt
+without provider input. Completion therefore still comes from retrieval
+exhaustion, `max_results`, `ranked_limit`, or an explicit engine or adapter
+candidate budget. For a multi-chunk query the chunks are searched without their
+own rerank, the chunk lists are fused, and that fused order is what the
+continuation reranks once, keyed by the original query.
 
 When `ranked` mode reaches the natural end of an exact producer without a
 candidate-budget boundary, the terminal page reports

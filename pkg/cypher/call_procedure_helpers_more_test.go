@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -64,11 +65,11 @@ func TestCallDbHelpers_ProceduresAndCounts(t *testing.T) {
 	require.Equal(t, []string{"relationshipType"}, relTypes.Columns)
 	require.NotEmpty(t, relTypes.Rows)
 
-	indexes, err := exec.callDbIndexes()
+	indexes, err := exec.callDbIndexes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name", "type", "labelsOrTypes", "properties", "state"}, indexes.Columns)
 
-	constraints, err := exec.callDbConstraints()
+	constraints, err := exec.callDbConstraints(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name", "type", "labelsOrTypes", "properties", "propertyType"}, constraints.Columns)
 	require.NotEmpty(t, constraints.Rows)
@@ -101,16 +102,55 @@ func TestCallDbHelpers_ErrorAndNilSchemaBranches(t *testing.T) {
 	execNodesErr := NewStorageExecutor(&allNodesErrEngine{MemoryEngine: newTestMemoryEngine(t), err: nodesErr})
 	_, err := execNodesErr.callDbLabels(context.Background())
 	require.ErrorIs(t, err, nodesErr)
-	require.Equal(t, 0, execNodesErr.countLabels(context.Background()))
+	// nornicdb.stats reads the same label population, so the call fails with
+	// that population error instead of reporting zero labels.
+	_, err = execNodesErr.callNornicDbStats(context.Background())
+	require.ErrorIs(t, err, nodesErr)
 
 	execEdgesErr := NewStorageExecutor(&allEdgesErrEngine{MemoryEngine: newTestMemoryEngine(t), err: edgesErr})
 	_, err = execEdgesErr.callDbRelationshipTypes(context.Background())
 	require.ErrorIs(t, err, edgesErr)
-	require.Equal(t, 0, execEdgesErr.countRelTypes(context.Background()))
+	// The relationship type population fails the same statistics call.
+	_, err = execEdgesErr.callNornicDbStats(context.Background())
+	require.ErrorIs(t, err, edgesErr)
 
 	execNilSchema := NewStorageExecutor(&callNilSchemaEngine{MemoryEngine: newTestMemoryEngine(t)})
-	res, err := execNilSchema.callDbConstraints()
+	res, err := execNilSchema.callDbConstraints(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"name", "type", "labelsOrTypes", "properties", "propertyType"}, res.Columns)
 	require.Empty(t, res.Rows)
+}
+
+// TestCallDbPropertyKeysReportsScanFailure is the public regression for the two
+// population scans db.propertyKeys used to discard: each scan's own failure is
+// the call's failure, instead of the call answering from the half of the graph
+// the other scan returned.
+func TestCallDbPropertyKeysReportsScanFailure(t *testing.T) {
+	nodesErr := errors.New("all nodes failed")
+	edgesErr := errors.New("all edges failed")
+	for _, testCase := range []struct {
+		name  string
+		inner storage.Engine
+		cause error
+	}{
+		{"node population", &allNodesErrEngine{MemoryEngine: newTestMemoryEngine(t), err: nodesErr}, nodesErr},
+		{"edge population", &allEdgesErrEngine{MemoryEngine: newTestMemoryEngine(t), err: edgesErr}, edgesErr},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(testCase.inner, "property_keys_failure"))
+			_, err := exec.Execute(t.Context(), "CALL db.propertyKeys()", nil)
+			require.ErrorContains(t, err, testCase.cause.Error(), "the scan's own error reaches the caller")
+			code, _ := nornicerrors.Neo4jStatus(err)
+			require.Equal(t, "Neo.ClientError.Procedure.ProcedureCallFailed", code)
+		})
+	}
+
+	// Control: with both populations readable, the same call lists the keys of
+	// both of them.
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "property_keys_populations"))
+	_, err := exec.Execute(t.Context(), "CREATE (:Keyed {fromNode: 1})-[:HAS]->(:Keyed)", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(t.Context(), "CALL db.propertyKeys() YIELD propertyKey RETURN propertyKey", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"fromNode"}}, result.Rows)
 }

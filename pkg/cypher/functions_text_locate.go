@@ -12,7 +12,7 @@ import (
 // text.locate, a NornicDB extension: where a quoted passage stands in a text,
 // for a reader that cites facts as a line and a quote.
 func init() {
-	cypherfn.Register("text.locate", fnTextLocate)
+	cypherfn.Register("text.locate", fnTextLocate, cypherfn.CanonicalReads)
 }
 
 // textLocateTolerance is how many lines from the cited line an occurrence
