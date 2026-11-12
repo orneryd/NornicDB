@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes can be rebuilt from the journal instead of leaving only transaction
   begin/commit markers. Existing WAL and storage formats are unchanged.
 
+- Two or more concurrent journal writers (client transactions, write-behind
+  commits, the embedding worker, checkpoints) no longer write records out of
+  sequence order. Each record now takes its sequence number under the journal
+  lock that orders the writes. Before, a roll-over between two records written
+  out of order could seal a segment that overlapped the previous one: the
+  journal refused it ("unlisted segment ... overlaps the manifest"), every
+  later append failed with "file already closed", and the store did not
+  reopen. Records the batch writer commits now count toward the active
+  segment, so a segment's name covers them. The journal format is unchanged.
+
 - Relationship uniqueness indexes preserve distinct escaped UTF-16 property names, preventing a duplicate value from bypassing its constraint in a native transaction. Existing stored data and storage formats are unchanged.
 
 - A store rebuilt at start from its latest snapshot and the journal
