@@ -43,11 +43,36 @@ func (pq *priorityQueue) Pop() interface{} {
 	return item
 }
 
+// readGraphAdjacency reads the relationships attached to one node in both
+// directions: the outgoing relationships it starts and the incoming ones it
+// ends. It is the one read owner of the undirected adjacency the path
+// algorithms and the path expander follow: getNodeEdges concatenates the two
+// halves and apocSteps selects among them, so one request is one read and no
+// caller repeats the pair.
+//
+// A read that failed is the statement's failure, recorded on the statement's
+// failure owner that the public route returns: these callers feed algorithms
+// whose result cannot express a read error, so a swallowed failure would report
+// a partial graph as the graph. The entries storage handed over before a
+// failure stay what the remaining work sees.
+func (e *StorageExecutor) readGraphAdjacency(ctx context.Context, nodeID storage.NodeID) (outgoing, incoming []*storage.Edge) {
+	outgoing, err := e.storage.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: nodeID})
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil, nil
+	}
+	incoming, err = e.storage.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: nodeID})
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return outgoing, nil
+	}
+	return outgoing, incoming
+}
+
 // getNodeEdges returns all edges for a node.
 func (e *StorageExecutor) getNodeEdges(ctx context.Context, nodeID storage.NodeID) []*storage.Edge {
+	outgoing, incoming := e.readGraphAdjacency(ctx, nodeID)
 	var result []*storage.Edge
-	outgoing, _ := e.storage.GetOutgoingEdges(ctx, nodeID)
-	incoming, _ := e.storage.GetIncomingEdges(ctx, nodeID)
 	result = append(result, outgoing...)
 	result = append(result, incoming...)
 	return result
@@ -338,7 +363,8 @@ func (w *algorithmWork) charge() error {
 // adjacency scan, in every iteration and every pipelineMaterializedCancelCheck
 // units of a sweep (a score initialized, an adjacency entry, a reset score, a
 // dangling share or a target), so a canceled read retires the remaining rank
-// instead of finishing the pass.
+// instead of finishing the pass. A failed adjacency read is returned as the
+// call's error, not ranked as an empty incidence.
 func (e *StorageExecutor) computePageRank(ctx context.Context, nodes []*storage.Node, damping float64, iterations int) (map[storage.NodeID]float64, error) {
 	if len(nodes) == 0 {
 		return map[storage.NodeID]float64{}, nil
@@ -358,7 +384,10 @@ func (e *StorageExecutor) computePageRank(ctx context.Context, nodes []*storage.
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		edges, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
+		edges, err := e.storage.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: node.ID})
+		if err != nil {
+			return nil, err
+		}
 		for _, edge := range edges {
 			if err := work.charge(); err != nil {
 				return nil, err
@@ -427,7 +456,8 @@ func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []in
 // adjacency read and every pipelineMaterializedCancelCheck units of a sweep (an
 // incident entry, a source's initialized maps, a delta, a stacked node, a
 // predecessor or a normalized score), so a canceled read retires the remaining
-// rankings instead of finishing the pass.
+// rankings instead of finishing the pass. A failed adjacency read is returned
+// as the call's error, not ranked as an empty incidence.
 func (e *StorageExecutor) computeBetweenness(ctx context.Context, nodes []*storage.Node) (map[storage.NodeID]float64, error) {
 	work := algorithmWorkFor(ctx)
 	scores := make(map[storage.NodeID]float64)
@@ -463,7 +493,10 @@ func (e *StorageExecutor) computeBetweenness(ctx context.Context, nodes []*stora
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			edges, _ := e.storage.GetOutgoingEdges(ctx, v)
+			edges, err := e.storage.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: v})
+			if err != nil {
+				return nil, err
+			}
 			for _, edge := range edges {
 				if err := work.charge(); err != nil {
 					return nil, err
@@ -639,11 +672,11 @@ func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			outgoing, err := store.GetOutgoingEdges(ctx, nodeID)
+			outgoing, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: nodeID})
 			if err != nil {
 				return nil, err
 			}
-			incoming, err := store.GetIncomingEdges(ctx, nodeID)
+			incoming, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: nodeID})
 			if err != nil {
 				return nil, err
 			}
@@ -811,6 +844,11 @@ func renumberInNodeOrder(ctx context.Context, nodes []*storage.Node, communities
 // first argument: a LIST<NODE> (APOC's form: MATCH (n:L) WITH collect(n) AS
 // nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
 // one), or none, null, an empty string or an empty list for every node.
+//
+// The reads themselves are reported by the identity graph reader they go
+// through, which owns the population each one returned; this owner only orders
+// the nodes the algorithm runs over. A LIST<NODE> is the caller's own values:
+// the clause that produced them read them, so no second read happens for them.
 func (e *StorageExecutor) algorithmNodes(ctx context.Context, procedure string, args []interface{}) ([]*storage.Node, error) {
 	value := procedureArgument(args, 0)
 	typeError := func() error {
@@ -853,10 +891,11 @@ func (e *StorageExecutor) algorithmNodes(ctx context.Context, procedure string, 
 	}
 }
 
-// nodesInIDOrder sorts the nodes an algorithm reads from storage by ID, so
-// the same graph gives the same order on every engine (#1183); a node list
-// the caller passes keeps its order. It sorts a copy: storage may share the
-// slice it returns.
+// allNodesInIDOrder reads every node an algorithm runs over and sorts it by
+// ID, so the same graph gives the same order on every engine (#1183); a node
+// list the caller passes keeps its order. It sorts a copy: storage may share
+// the slice it returns. The scan's population is reported by the identity graph
+// reader that performs it, where the read hands the nodes over.
 func allNodesInIDOrder(ctx context.Context, engine storage.Engine) ([]*storage.Node, error) {
 	nodes, err := engine.AllNodes(ctx)
 	if err != nil {

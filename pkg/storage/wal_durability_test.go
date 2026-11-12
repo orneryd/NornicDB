@@ -135,8 +135,7 @@ func TestSaveSnapshotPropagatesDirectorySyncFailure(t *testing.T) {
 
 // TestBatchSequenceAssignedAtCommit verifies sequences are assigned at commit time.
 func TestBatchSequenceAssignedAtCommit(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 
@@ -192,8 +191,7 @@ func TestBatchSequenceAssignedAtCommit(t *testing.T) {
 
 // TestBatchMixedWithNonBatchOrdering verifies proper ordering of mixed operations.
 func TestBatchMixedWithNonBatchOrdering(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 
@@ -259,8 +257,7 @@ func TestBatchMixedWithNonBatchOrdering(t *testing.T) {
 
 // TestBatchRollbackClearsEntries verifies rollback clears pending entries.
 func TestBatchRollbackClearsEntries(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 
@@ -330,8 +327,7 @@ func TestBatchEmptyCommit(t *testing.T) {
 
 // TestWALFullDurabilityPath tests full write-commit-recover path.
 func TestWALFullDurabilityPath(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 

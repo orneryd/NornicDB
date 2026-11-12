@@ -77,22 +77,22 @@ func TestRelationshipCountFromStoreDeclines(t *testing.T) {
 	} {
 		_, ok, err := exec.relationshipCountFromStore(ctx, exec.parseTraversalPattern(ctx, pattern), returnItem{expr: "count(r)"})
 		require.NoError(t, err, pattern)
-		require.False(t, ok, pattern)
+		require.False(t, ok.available(), pattern)
 	}
 	matches := exec.parseTraversalPattern(ctx, "()-[r:Friend]->()")
 	for _, expr := range []string{"count(DISTINCT r)", "count(r) + 1", "sum(r)", "count(x)"} {
 		_, ok, _ := exec.relationshipCountFromStore(ctx, matches, returnItem{expr: expr})
-		require.False(t, ok, expr)
+		require.False(t, ok.available(), expr)
 	}
 	_, ok, _ := exec.relationshipCountFromStore(ctx, nil, returnItem{expr: "count(*)"})
-	require.False(t, ok)
+	require.False(t, ok.available())
 	for _, node := range []nodePatternInfo{{variable: "n"}, {variable: "n", labels: []string{"A", "B"}}, {variable: "n", labels: []string{"A"}, properties: map[string]interface{}{"id": 1}}} {
 		_, ok, _ := exec.nodeCountFromStore(ctx, node, returnItem{expr: "count(n)"})
-		require.False(t, ok)
+		require.False(t, ok.available())
 	}
 	count, ok, err := exec.nodeCountFromStore(ctx, nodePatternInfo{variable: "n", labels: []string{"User"}}, returnItem{expr: "count(*)"})
 	require.NoError(t, err)
-	require.True(t, ok)
+	require.True(t, ok.available())
 	require.Equal(t, int64(3), count)
 }
 
@@ -108,16 +108,16 @@ func TestCountFromStoreNotUnderDecayOrViewport(t *testing.T) {
 	decayed := NewStorageExecutor(decayFilteringEngine{Engine: store})
 	matches := decayed.parseTraversalPattern(ctx, "()-[r:Friend]->()")
 	_, ok, _ := decayed.relationshipCountFromStore(ctx, matches, returnItem{expr: "count(r)"})
-	require.False(t, ok)
+	require.False(t, ok.available())
 	_, ok, _ = decayed.nodeCountFromStore(ctx, nodePatternInfo{variable: "n", labels: []string{"User"}}, returnItem{expr: "count(n)"})
-	require.False(t, ok)
+	require.False(t, ok.available())
 
 	plain := NewStorageExecutor(store)
 	viewport := WithTemporalViewport(ctx, AsOfTemporalViewport(time.Now()))
 	_, ok, _ = plain.relationshipCountFromStore(viewport, plain.parseTraversalPattern(ctx, "()-[r:Friend]->()"), returnItem{expr: "count(r)"})
-	require.False(t, ok)
+	require.False(t, ok.available())
 	_, ok, _ = plain.nodeCountFromStore(viewport, nodePatternInfo{variable: "n", labels: []string{"User"}}, returnItem{expr: "count(n)"})
-	require.False(t, ok)
+	require.False(t, ok.available())
 }
 
 // Inside an explicit transaction that has written, every count sees its
@@ -214,16 +214,22 @@ func TestCountFromStoreErrorsAndDuplicates(t *testing.T) {
 	failing := NewStorageExecutor(failingCountEngine{Engine: store})
 	for _, pattern := range []string{"(:User)-[r:Friend]->()", "()-[r:Friend]->(:User)", "()-[r]-()", "()-[r:Friend]-()"} {
 		_, ok, err := failing.relationshipCountFromStore(ctx, failing.parseTraversalPattern(ctx, pattern), returnItem{expr: "count(r)"})
-		require.True(t, ok, pattern)
+		require.True(t, ok.available(), pattern)
 		require.ErrorIs(t, err, errCountStore, pattern)
 	}
 	_, err = failing.Execute(ctx, "MATCH (n:User) RETURN count(n)", nil)
 	require.ErrorIs(t, err, errCountStore)
 	nils := NewStorageExecutor(failingCountEngine{Engine: store, nilEdges: true})
 	for _, pattern := range []string{"()-[r]-()", "()-[r:Friend]-()"} {
-		count, ok, err := nils.relationshipCountFromStore(ctx, nils.parseTraversalPattern(ctx, pattern), returnItem{expr: "count(r)"})
+		collector := newProfileRuntimeCollector()
+		profileCtx := withProfileRuntimeCollector(ctx, collector)
+		count, ok, err := nils.relationshipCountFromStore(profileCtx, nils.parseTraversalPattern(profileCtx, pattern), returnItem{expr: "count(r)"})
 		require.NoError(t, err)
-		require.True(t, ok)
+		require.True(t, ok.available())
 		require.Zero(t, count, pattern)
+		accesses := collector.accessObservation()
+		require.Len(t, accesses, 1, pattern)
+		require.Zero(t, accesses[0].Rows, "nil entries are not entities: %s", pattern)
+		require.Zero(t, accesses[0].Hits, pattern)
 	}
 }

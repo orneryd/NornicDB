@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"slices"
 	"sync"
 	"time"
@@ -273,7 +274,9 @@ func (s *Service) populateVectorIndex(ctx context.Context, target VectorIndexTar
 
 func (s *Service) populateNodeVectors(ctx context.Context, target VectorIndexTarget, dims int) error {
 	nodes := storedIdentities[storage.NodeID, *storage.Node]{
-		kind: "node", read: s.engine.GetNode, refresh: s.RefreshNode, registry: &s.nodeMutations,
+		kind: "node", read: func(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+			return s.readNodeImage(ctx, id, fullNodeImage)
+		}, refresh: s.RefreshNode, registry: &s.nodeMutations,
 		settled: func(ctx context.Context, node *storage.Node) (bool, error) {
 			if !slices.Contains(node.Labels, target.Label) {
 				return true, nil
@@ -291,7 +294,7 @@ func (s *Service) populateNodeVectors(ctx context.Context, target VectorIndexTar
 	var differing []storage.NodeID
 	err := s.streamIndexNodes(ctx, target, func(node *storage.Node) error {
 		if s.indexReadNeedsWholeNode(node, target, dims) {
-			whole, err := s.engine.GetNode(ctx, node.ID)
+			whole, err := s.readNodeImage(ctx, node.ID, fullNodeImage)
 			if errors.Is(err, storage.ErrNotFound) {
 				return nil // deleted since the stream read it
 			}
@@ -322,16 +325,14 @@ func (s *Service) populateNodeVectors(ctx context.Context, target VectorIndexTar
 func (s *Service) streamIndexNodes(ctx context.Context, target VectorIndexTarget, visit func(*storage.Node) error) error {
 	if projected, ok := s.engine.(storage.ProjectedLabelNodeReader); ok {
 		properties := []string{target.Property}
-		if schema := s.engine.GetSchema(); schema != nil {
-			for _, constraint := range schema.GetAllConstraints() {
-				if constraint.Type == storage.ConstraintTemporal {
-					properties = append(properties, constraint.Properties...)
-				}
+		for _, constraint := range s.schemaConstraints(ctx) {
+			if constraint.Type == storage.ConstraintTemporal {
+				properties = append(properties, constraint.Properties...)
 			}
 		}
-		return projected.StreamNodesByLabelProjected(ctx, target.Label, properties, visit)
+		return projected.StreamNodesByLabelProjected(ctx, target.Label, properties, queryprofile.EntityVisitor(ctx, queryprofile.KindNodeByLabelScan, target.Label, visit))
 	}
-	return s.engine.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Label: target.Label, WithEmbeddings: true}, visit)
+	return s.engine.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Label: target.Label, WithEmbeddings: true}, queryprofile.EntityVisitor(ctx, queryprofile.KindNodeByLabelScan, target.Label, visit))
 }
 
 // indexReadNeedsWholeNode reports whether the index's read of node, as
@@ -495,11 +496,12 @@ func refreshPending[ID ~string](s *Service, registry *mutationRegistry[ID], id I
 
 func (s *Service) populateRelationshipVectors(ctx context.Context, target VectorIndexTarget, dims int) error {
 	edges, err := s.engine.GetEdgesByType(ctx, target.Label)
+	queryprofile.EntityPopulation(ctx, queryprofile.KindRelationshipByTypeScan, target.Label, edges)
 	if err != nil {
 		return err
 	}
 	relationships := storedIdentities[storage.EdgeID, *storage.Edge]{
-		kind: "relationship", read: s.engine.GetEdge, refresh: s.RefreshEdge, registry: &s.edgeMutations,
+		kind: "relationship", read: s.readEdgeImage, refresh: s.RefreshEdge, registry: &s.edgeMutations,
 		settled: func(_ context.Context, edge *storage.Edge) (bool, error) {
 			return edge.Type != target.Label || s.servesEdgeVector(edge, target, dims), nil
 		},

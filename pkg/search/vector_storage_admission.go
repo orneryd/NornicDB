@@ -69,11 +69,9 @@ func (s *Service) vectorSourcePolicy() string {
 // selection can change with time without a commit; such views are rebuilt by
 // their ordinary reader rather than assigned a durable static certificate.
 func (s *Service) vectorSourceStamp(ctx context.Context, view storage.ReadSnapshotView) (string, error) {
-	if schema := s.engine.GetSchema(); schema != nil {
-		for _, constraint := range schema.GetAllConstraints() {
-			if constraint.Type == storage.ConstraintTemporal {
-				return "", nil
-			}
+	for _, constraint := range s.schemaConstraints(ctx) {
+		if constraint.Type == storage.ConstraintTemporal {
+			return "", nil
 		}
 	}
 	source := any(s.engine)

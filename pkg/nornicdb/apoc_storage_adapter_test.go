@@ -285,34 +285,29 @@ func (e *apocAdapterTestEngine) GetFirstNodeByLabel(ctx context.Context, label s
 	return nodes[0], nil
 }
 
-func (e *apocAdapterTestEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *apocAdapterTestEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
 	if ctxError := ctx.Err(); ctxError != nil {
 		return nil, ctxError
 	}
 
-	return collectEdges(e.edges, func(edge *storage.Edge) bool {
-		return edge.StartNode == nodeID
-	}), nil
-}
-
-func (e *apocAdapterTestEngine) GetIncomingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	if ctxError := ctx.Err(); ctxError != nil {
-		return nil, ctxError
+	switch request.Direction {
+	case storage.AdjacentIncoming:
+		return collectEdges(e.edges, func(edge *storage.Edge) bool {
+			return edge.EndNode == request.Node
+		}), nil
+	case storage.AdjacentBetween:
+		return collectEdges(e.edges, func(edge *storage.Edge) bool {
+			return edge.StartNode == request.Node && edge.EndNode == request.Other
+		}), nil
+	case storage.AdjacentBoth:
+		return collectEdges(e.edges, func(edge *storage.Edge) bool {
+			return edge.StartNode == request.Node || edge.EndNode == request.Node
+		}), nil
+	default:
+		return collectEdges(e.edges, func(edge *storage.Edge) bool {
+			return edge.StartNode == request.Node
+		}), nil
 	}
-
-	return collectEdges(e.edges, func(edge *storage.Edge) bool {
-		return edge.EndNode == nodeID
-	}), nil
-}
-
-func (e *apocAdapterTestEngine) GetEdgesBetween(ctx context.Context, startID, endID storage.NodeID) ([]*storage.Edge, error) {
-	if ctxError := ctx.Err(); ctxError != nil {
-		return nil, ctxError
-	}
-
-	return collectEdges(e.edges, func(edge *storage.Edge) bool {
-		return edge.StartNode == startID && edge.EndNode == endID
-	}), nil
 }
 
 func (e *apocAdapterTestEngine) GetEdgeBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string) (*storage.Edge, error) {
@@ -367,7 +362,7 @@ func (e *apocAdapterTestEngine) GetInDegree(ctx context.Context, nodeID storage.
 		return 0, ctxError
 	}
 
-	edges, err := e.GetIncomingEdges(ctx, nodeID)
+	edges, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: nodeID})
 	return len(edges), err
 }
 
@@ -376,7 +371,7 @@ func (e *apocAdapterTestEngine) GetOutDegree(ctx context.Context, nodeID storage
 		return 0, ctxError
 	}
 
-	edges, err := e.GetOutgoingEdges(ctx, nodeID)
+	edges, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: nodeID})
 	return len(edges), err
 }
 

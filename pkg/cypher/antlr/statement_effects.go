@@ -8,6 +8,7 @@ type StatementEffects struct{ data *statementSyntaxData }
 type statementEffectsData struct {
 	writes            bool
 	calls             []statementCallData
+	functions         []int
 	remoteReadOnly    bool
 	readOnly          bool
 	executableQueries []int
@@ -51,6 +52,21 @@ func (effects StatementEffects) CallCount() int {
 // Call returns an immutable invocation at index, in grammar traversal order.
 func (effects StatementEffects) Call(index int) StatementCall {
 	return StatementCall{effects.data, effects.data.effects.calls[index]}
+}
+
+// FunctionCount returns the number of named scalar invocations. Special forms
+// such as TRIM ... FROM have no invocation name and cannot resolve a plugin;
+// named calls nested in their arguments are still retained.
+func (effects StatementEffects) FunctionCount() int {
+	if effects.data == nil {
+		return 0
+	}
+	return len(effects.data.effects.functions)
+}
+
+// Function returns the retained scalar invocation at index, without reparsing.
+func (effects StatementEffects) Function(index int) SyntaxNode {
+	return SyntaxNode{syntaxView[syntaxNode]{effects.data, effects.data.effects.functions[index]}}
 }
 
 // ReadOnly reports whether every executable scope is structurally read-only
@@ -127,6 +143,10 @@ func (syntax StatementSyntax) collectEffects() statementEffectsData {
 			if explained == 0 {
 				remoteEffect = true
 				nonReadEffect = true
+			}
+		case CypherParserRULE_functionInvocation:
+			if node.ChildRule(CypherParserRULE_invocationName).Valid() {
+				result.functions = append(result.functions, node.id)
 			}
 		case CypherParserRULE_queryCallSt, CypherParserRULE_standaloneCall:
 			result.calls = append(result.calls, statementCallData{node: node.id, name: node.ChildRule(CypherParserRULE_invocationName).QualifiedName(), executes: explained == 0})

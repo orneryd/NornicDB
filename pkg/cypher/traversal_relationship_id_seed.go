@@ -73,7 +73,8 @@ func (e *StorageExecutor) relationshipIDSeedEdge(ctx context.Context, pattern, w
 }
 
 // relationshipIDSeedEndpointNodes is the start nodes of a traversal whose
-// relationship is pinned (relationshipIDSeedEdge): that relationship's endpoint
+// relationship is pinned (relationshipIDSeedEdge, relationshipPropertySeedEdge):
+// that relationship's endpoint
 // in the pattern's direction (outgoing: its start, incoming: its end,
 // undirected: both), read directly instead of starting from every node. The
 // traversal trusts its seeds: each must match the pattern's start node labels

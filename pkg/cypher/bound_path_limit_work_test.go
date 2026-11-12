@@ -15,14 +15,38 @@ type boundedPathWorkEngine struct {
 	reads int
 }
 
-func (s *boundedPathWorkEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+func (s *boundedPathWorkEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		s.reads++
+		edges, err := s.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node})
+		return stableBoundPathEdges(edges), err
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := s.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := s.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	s.reads++
-	edges, err := s.Engine.GetOutgoingEdges(ctx, id)
+	edges, err := s.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 	return stableBoundPathEdges(edges), err
 }
 func (s *boundedPathWorkEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	s.reads++
-	edges, err := s.Engine.GetIncomingEdges(ctx, id)
+	edges, err := s.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: id})
 	return stableBoundPathEdges(edges), err
 }
 func stableBoundPathEdges(edges []*storage.Edge) []*storage.Edge {

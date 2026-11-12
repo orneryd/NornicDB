@@ -41,7 +41,7 @@ func TestNOR160TransactionEdgeNamespaceDeliveryIsIndependent(t *testing.T) {
 				got, err = w.GetEdge(ctx, "e")
 			case "adjacency":
 				var edges []*storage.Edge
-				edges, err = w.GetOutgoingEdges(ctx, "a")
+				edges, err = w.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: "a"})
 				require.NoError(t, err)
 				require.Len(t, edges, 1)
 				got = edges[0]
@@ -49,13 +49,13 @@ func TestNOR160TransactionEdgeNamespaceDeliveryIsIndependent(t *testing.T) {
 				var edges []*storage.Edge
 				switch route {
 				case "incoming":
-					edges, err = w.GetIncomingEdges(ctx, "b")
+					edges, err = w.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "b"})
 				case "between-list":
-					edges, err = w.GetEdgesBetween(ctx, "a", "b")
+					edges, err = w.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: "a", Other: "b"})
 				case "stored-outgoing":
-					edges, err = w.GetStoredOutgoingEdges(ctx, "a")
+					edges, err = w.ReadStoredAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: "a"})
 				case "stored-incoming":
-					edges, err = w.GetStoredIncomingEdges(ctx, "b")
+					edges, err = w.ReadStoredAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "b"})
 				case "type":
 					edges, err = w.GetEdgesByType(ctx, "COHELD")
 				case "all":
@@ -63,13 +63,9 @@ func TestNOR160TransactionEdgeNamespaceDeliveryIsIndependent(t *testing.T) {
 				case "matched":
 					edges, err = w.MatchEdgesBetween(ctx, "a", "b", "COHELD", []string{"v"}, func(*storage.Edge) bool { return true })
 				case "outgoing-header":
-					var answered bool
-					edges, answered, err = w.OutgoingEdgeHeaders(ctx, "a")
-					require.True(t, answered)
+					edges, err = w.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: "a", Headers: true})
 				case "incoming-header":
-					var answered bool
-					edges, answered, err = w.IncomingEdgeHeaders(ctx, "b")
-					require.True(t, answered)
+					edges, err = w.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "b", Headers: true})
 				}
 				require.NoError(t, err)
 				require.Len(t, edges, 1)

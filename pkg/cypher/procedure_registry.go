@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
 	"golang.org/x/text/language"
@@ -24,6 +25,29 @@ const (
 	ProcedureModeSchema ProcedureMode = "SCHEMA"
 	ProcedureModeAdmin  ProcedureMode = "ADMIN"
 	ProcedureModeDBMS   ProcedureMode = "DBMS"
+)
+
+// ProcedureNodeImages declares which image a procedure call supplies for the
+// node objects in its arguments. It describes what the handler reads; it is not
+// a runtime switch, because the statement that calls the procedure owns how a
+// node image is materialized.
+type ProcedureNodeImages uint8
+
+const (
+	// FullNodeImages is the native full node contract, and the zero value: a
+	// node argument carries its complete image, embedding vector payloads
+	// included. Every registration keeps this image unless it declares
+	// otherwise, so an existing RegisterUser, RegisterBuiltIn or plugin
+	// registration needs no change.
+	FullNodeImages ProcedureNodeImages = iota
+	// MetadataNodeImages declares that the handler reads a node argument's
+	// identity, labels, Cypher properties and embedding metadata, but never the embedding
+	// vector payloads a node object holds outside those properties
+	// (storage.Node.ChunkEmbeddings and storage.Node.NamedEmbeddings). For
+	// example, a procedure that walks the graph from a node it is given
+	// declares the metadata image; one that reads or returns those vectors
+	// keeps FullNodeImages.
+	MetadataNodeImages
 )
 
 // ProcedureParam defines one procedure argument in canonical metadata.
@@ -86,6 +110,14 @@ type ProcedureSpec struct {
 	// transactions retain shipped folding; Fabric-managed scopes reject it
 	// before invocation because their rollback cannot undo committed batches.
 	OwnsTransactions bool
+	// NodeImages declares the image a call supplies for the node objects in
+	// its arguments. The zero value, FullNodeImages, is the native full
+	// contract, so no existing registration changes. Declare
+	// MetadataNodeImages only for a handler that reads a node argument's
+	// identity, labels, Cypher properties and embedding metadata, but never the embedding vector
+	// payloads a node object holds outside those properties
+	// (storage.Node.ChunkEmbeddings and storage.Node.NamedEmbeddings).
+	NodeImages ProcedureNodeImages
 }
 
 // writes reports whether a call of the procedure changes the database: its
@@ -102,10 +134,16 @@ type ProcedureMetadataRenderer interface {
 // ProcedureHandler executes a registered procedure.
 type ProcedureHandler func(ctx context.Context, exec *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error)
 
+// registeredProcedure is one resolved registration: its canonical contract,
+// the handler, and the read-observation policy the registration declared for
+// that handler's database access. A resolution by name carries only the policy
+// its own registration stored, so a name, a replacement or an alias never lends
+// observation trust to a handler that did not declare it.
 type registeredProcedure struct {
 	Spec    ProcedureSpec
 	Handler ProcedureHandler
 	User    bool
+	reads   cypherfn.ReadObservation
 }
 
 // ProcedureRegistry resolves each built-in or user procedure by its exact
@@ -128,7 +166,19 @@ func NewProcedureRegistry() *ProcedureRegistry {
 	}
 }
 
+// RegisterBuiltIn registers a built-in procedure through the public API. The
+// handler's read-observation policy is opaque: the public entry point carries
+// no source review, so it never opts a handler in, not even for the name of a
+// reviewed built-in it replaces. A reviewed package-private registration opts
+// in through registerBuiltIn.
 func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler ProcedureHandler) error {
+	return r.registerBuiltIn(spec, handler, cypherfn.OpaqueReads)
+}
+
+// registerBuiltIn is the registration owner every built-in registration
+// converges on: it validates the spec and stores the handler together with the
+// read-observation policy the registration declared for it, under one lock.
+func (r *ProcedureRegistry) registerBuiltIn(spec ProcedureSpec, handler ProcedureHandler, reads cypherfn.ReadObservation) error {
 	if err := validateProcedureSpec(spec); err != nil {
 		return err
 	}
@@ -138,11 +188,14 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	key := spec.Name
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
+	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler, reads: reads}
 	r.generation.Add(1)
 	return nil
 }
 
+// RegisterUser registers a user-defined or plugin procedure through the public
+// API. The handler's read-observation policy is opaque, whatever name the
+// registration takes, including the name of a reviewed built-in.
 func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHandler) error {
 	if err := validateProcedureSpec(spec); err != nil {
 		return err
@@ -158,7 +211,7 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	key := spec.Name
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
+	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true, reads: cypherfn.OpaqueReads}
 	r.userFold[lowerASCII(spec.Name)] = struct{}{}
 	r.generation.Add(1)
 	return nil
@@ -249,6 +302,12 @@ func validateProcedureSpec(spec ProcedureSpec) error {
 	}
 	if spec.MaxArgs >= 0 && spec.MaxArgs < spec.MinArgs {
 		return fmt.Errorf("procedure %q: MaxArgs(%d) < MinArgs(%d)", spec.Name, spec.MaxArgs, spec.MinArgs)
+	}
+	// A registration declares what its handler reads with a known image, so a
+	// value outside the declared contracts is a programmer error and is
+	// refused rather than read as some other image.
+	if spec.NodeImages > MetadataNodeImages {
+		return fmt.Errorf("procedure %q: unsupported node image contract %d", spec.Name, uint8(spec.NodeImages))
 	}
 	return nil
 }

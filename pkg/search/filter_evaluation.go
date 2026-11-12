@@ -41,7 +41,13 @@ func finalSearchError(err error) bool {
 // where is Where for node under ctx, the one place a node filter is asked: its
 // error is a filter evaluation error.
 func (opts *SearchOptions) where(ctx context.Context, node *storage.Node) (bool, error) {
-	admitted, err := opts.Where(ctx, node)
+	var admitted bool
+	var err error
+	if verdicts, ok := ctx.Value(filterVerdictKey{}).(*filterVerdicts); ok {
+		admitted, err = verdicts.evaluate(ctx, opts, node)
+	} else {
+		admitted, err = opts.Where(ctx, node)
+	}
 	if err != nil {
 		return false, filterEvaluationFailed(err)
 	}

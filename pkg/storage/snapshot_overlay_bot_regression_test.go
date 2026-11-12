@@ -115,7 +115,7 @@ func TestSnapshotOverlayCascadeInvalidatesAdjacency(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:edge", StartNode: "test:hub", EndNode: "test:peer", Type: "R"}))
-			edges, err := b.GetIncomingEdges(context.Background(), "test:peer")
+			edges, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:peer"})
 			require.NoError(t, err)
 			require.Len(t, edges, 1, "warm both the adjacency IDs and edge body")
 			if writer == "engine" {
@@ -131,7 +131,7 @@ func TestSnapshotOverlayCascadeInvalidatesAdjacency(t *testing.T) {
 			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			_, err = b.GetEdge(t.Context(), "test:edge")
 			require.ErrorIs(t, err, ErrNotFound, "the record was physically deleted")
-			edges, err = b.GetIncomingEdges(context.Background(), "test:peer")
+			edges, err = b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:peer"})
 			require.NoError(t, err)
 			require.Empty(t, edges, "a retired cascade must also disappear from a warm traversal")
 		})

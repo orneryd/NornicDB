@@ -45,11 +45,12 @@ func (e *StorageExecutor) evaluateKnowledgePolicyFunction(ctx context.Context, e
 		return disabled(localization.CypherKnowledgePolicyReasonEntityNotFound().Fallback), true
 	}
 	be, now, available := e.getDecayContext(ctx, ent.engine)
-	var meta *knowledgepolicy.AccessMetaEntry
-	if available {
-		result, _ := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: ent.entityID})
-		meta = result.Entry
-	}
+	// The entity's stored access metadata is one point read, reported where it
+	// happens through the same ctx-first owner kp.resolve reads through: a
+	// stored entry is one row, an entity the store holds no entry for is an
+	// observed zero, and an engine that exposes no store reads nothing, so
+	// nothing is reported.
+	meta := loadAccessMeta(ctx, ent.engine, ent.entityID)
 	if name == "policy" {
 		if meta != nil {
 			return accessMetaToMap(meta), true

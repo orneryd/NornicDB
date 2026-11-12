@@ -44,12 +44,30 @@ func (s *cancellationTraversalEngine) adjacent(id storage.NodeID, incoming bool)
 	return s.edges, nil
 }
 
-func (s *cancellationTraversalEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return s.adjacent(id, false)
-}
-
-func (s *cancellationTraversalEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return s.adjacent(id, true)
+func (s *cancellationTraversalEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		return s.adjacent(request.Node, true)
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := s.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := s.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
+	return s.adjacent(request.Node, false)
 }
 
 // A high-fanout DFS must stop sibling expansion after cancellation. Counting

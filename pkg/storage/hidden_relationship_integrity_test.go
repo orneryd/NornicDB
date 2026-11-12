@@ -108,9 +108,9 @@ func requireHubDeleted(t *testing.T, engine *BadgerEngine) {
 	_, err := engine.GetStoredNode(t.Context(), "test:hub")
 	require.ErrorIs(t, err, ErrNotFound)
 
-	require.Equal(t, []string{"test:e4"}, storedEdgeIDs(engine.GetStoredIncomingEdges(context.Background(), "test:peer1")))
-	require.Empty(t, storedEdgeIDs(engine.GetStoredOutgoingEdges(context.Background(), "test:peer2")))
-	require.Empty(t, storedEdgeIDs(engine.GetStoredIncomingEdges(context.Background(), "test:hiddenPeer")))
+	require.Equal(t, []string{"test:e4"}, storedEdgeIDs(engine.ReadStoredAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:peer1"})))
+	require.Empty(t, storedEdgeIDs(engine.ReadStoredAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:peer2"})))
+	require.Empty(t, storedEdgeIDs(engine.ReadStoredAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:hiddenPeer"})))
 	require.Empty(t, storedEdgeIDs(engine.GetStoredEdgesByType(context.Background(), "DECAYED")))
 	require.Equal(t, []string{"test:e4"}, storedEdgeIDs(engine.GetStoredEdgesByType(context.Background(), "SUPPRESSED")))
 

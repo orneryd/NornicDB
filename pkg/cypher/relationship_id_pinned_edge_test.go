@@ -54,70 +54,17 @@ func (s *adjacencyReadSpy) reset() {
 	s.calls, s.entries, s.streams = 0, 0, 0
 }
 
-func (s *adjacencyReadSpy) OutgoingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
-	if reader, ok := s.Engine.(storage.EdgeHeaderReader); ok {
-		edges, answered, err := reader.OutgoingEdgeHeaders(ctx, id)
-		if err == nil && answered {
-			s.count(edges)
-		}
-		return edges, answered, err
-	}
-	edges, err := s.Engine.GetOutgoingEdges(ctx, id)
-	if err == nil {
-		s.count(edges)
-	}
-	return edges, err == nil, err
-}
-
-func (s *adjacencyReadSpy) IncomingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
-	if reader, ok := s.Engine.(storage.EdgeHeaderReader); ok {
-		edges, answered, err := reader.IncomingEdgeHeaders(ctx, id)
-		if err == nil && answered {
-			s.count(edges)
-		}
-		return edges, answered, err
-	}
-	edges, err := s.Engine.GetIncomingEdges(ctx, id)
-	if err == nil {
-		s.count(edges)
-	}
-	return edges, err == nil, err
-}
-
-func (s *adjacencyReadSpy) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := s.Engine.GetOutgoingEdges(ctx, id)
-	if err == nil {
-		s.count(edges)
-	}
-	return edges, err
-}
-
-func (s *adjacencyReadSpy) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := s.Engine.GetIncomingEdges(ctx, id)
-	if err == nil {
-		s.count(edges)
-	}
-	return edges, err
-}
-
-func (s *adjacencyReadSpy) GetAdjacentEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
-	s.calls++
+// ReadAdjacentEdges counts every relationship listing a query makes: one call
+// per adjacent-edge request and one entry per relationship it lists.
+func (s *adjacencyReadSpy) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
 	if s.fail {
-		return nil, nil, errEdgeRead
+		return nil, errEdgeRead
 	}
-	var outgoing, incoming []*storage.Edge
-	var err error
-	if adjacent, ok := s.Engine.(storage.AdjacentEdgesEngine); ok {
-		outgoing, incoming, err = adjacent.GetAdjacentEdges(ctx, id)
-	} else {
-		if outgoing, err = s.Engine.GetOutgoingEdges(ctx, id); err == nil {
-			incoming, err = s.Engine.GetIncomingEdges(ctx, id)
-		}
-	}
+	edges, err := s.Engine.ReadAdjacentEdges(ctx, request)
 	if err == nil {
-		s.entries += len(outgoing) + len(incoming)
+		s.count(edges)
 	}
-	return outgoing, incoming, err
+	return edges, err
 }
 
 func (s *adjacencyReadSpy) StreamEdgesByType(ctx context.Context, kind string, visit func(*storage.Edge) error) error {

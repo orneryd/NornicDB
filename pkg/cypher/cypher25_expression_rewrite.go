@@ -29,8 +29,8 @@ import (
 // client's text.
 
 func init() {
-	cypherfn.Register(interpolateFunction, fnInterpolate)
-	cypherfn.Register(mapFromPairsFunction, fnMapFromPairs)
+	cypherfn.Register(interpolateFunction, fnInterpolate, cypherfn.CanonicalReads)
+	cypherfn.Register(mapFromPairsFunction, fnMapFromPairs, cypherfn.CanonicalReads)
 }
 
 // interpolateFunction converts an interpolated value to its text.
@@ -107,7 +107,7 @@ func projectionAllEdits(ctx context.Context, query string, cypher25 bool) ([]lab
 		}
 		if query[next] == '(' {
 			if close := findMatchingParen(query, next); close > 0 {
-				if _, _, _, _, comprehension := parseListComprehension(query[next+1 : close]); comprehension {
+				if _, _, _, _, comprehension := parseListComprehension(query[next+1:close], nil); comprehension {
 					return // all(x IN list WHERE …), the list predicate
 				}
 			}

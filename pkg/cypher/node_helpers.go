@@ -40,39 +40,56 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// getQueryNode reads a node as query rows carry it: labels, properties and
-// embedding metadata, without the separately stored embedding vectors a row
-// never reads (n.has_embedding reads the metadata; storage.QueryNodeReader).
-// The transaction wrapper always reads it that way: a transaction's
-// UpdateNode reconciles embeddings against the stored node, so a row node
-// written back keeps them. Outside a transaction an engine's UpdateNode takes
-// the body as written and would clear them, so a store outside a transaction
-// reads it that way only for a statement that cannot write
-// (readOnlyQueryNodes); otherwise it reads the full node. Code that reads
-// vectors (link prediction, vector scoring, search indexing) reads with
-// GetNode.
+// profileKindNodeByIdSeek names the point node read a PROFILE statement
+// actually performed: the plan operator a point read is claimed as.
+const profileKindNodeByIdSeek = queryprofile.KindNodeByIDSeek
+
+// getQueryNode follows the admitted statement's node-image contract. Native
+// consumers retain full vectors; metadata consumers read settled embedding
+// metadata without separately stored vectors. Writes outside native staging
+// keep full images because those engines cannot reconcile omitted vectors.
+//
+// A PROFILE statement counts the point read here: one entity read attempt and
+// one row when the node exists. This is the one owner of a point read, so the
+// seek that hydrates the entries its index listed, the traversal that reads an
+// endpoint and the MERGE that reads its own pattern each report those reads
+// here, and never under the operator that named the node.
 func (e *StorageExecutor) getQueryNode(ctx context.Context, store storage.Engine, id storage.NodeID) (*storage.Node, error) {
-	if reader := e.queryNodeReader(store); reader != nil {
-		return reader.GetQueryNode(ctx, id)
+	reader := e.queryNodeReader(ctx, store)
+	counter := queryprofile.Access(ctx, profileKindNodeByIdSeek, "")
+	var (
+		node *storage.Node
+		err  error
+	)
+	if reader != nil {
+		node, err = reader.GetQueryNode(ctx, id)
+	} else {
+		node, err = store.GetNode(ctx, id)
 	}
-	return store.GetNode(ctx, id)
+	queryprofile.EntityReadResult(counter, node, err)
+	return node, err
 }
 
 // queryNodeReader is the shared read decision for point reads and MATCH scans.
-func (e *StorageExecutor) queryNodeReader(store storage.Engine) storage.QueryNodeReader {
-	if wrapper, ok := store.(*transactionStorageWrapper); ok {
-		return wrapper
+func (e *StorageExecutor) queryNodeReader(ctx context.Context, store storage.Engine) storage.QueryNodeReader {
+	statement, _ := ctx.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext)
+	if statement == nil || !statement.nodeImages.resolved || statement.nodeImages.images != MetadataNodeImages {
+		return nil
 	}
-	if e != nil && e.readOnlyQueryNodes {
-		reader, _ := store.(storage.QueryNodeReader)
-		return reader
+	if !statement.nodeImages.readOnly {
+		// Only native staging reconciles a metadata image against stored vectors.
+		if _, transactional := store.(*transactionStorageWrapper); !transactional {
+			return nil
+		}
 	}
-	return nil
+	reader, _ := store.(storage.QueryNodeReader)
+	return reader
 }
 
 // streamQueryNodes carries the query-node read contract to storage. Each
@@ -102,7 +119,7 @@ func nodeScanLabels(ctx context.Context, store storage.Engine, labels []string) 
 	smallest, smallestCount := 0, int64(0)
 	for i, label := range labels {
 		count, answered, err := countStoreRead(ctx, store, storage.CountStoreReadRequest{Kind: storage.CountStoreNodesByLabel, Name: label})
-		if err != nil || !answered {
+		if err != nil || !answered.available() {
 			return labels
 		}
 		if i == 0 || count < smallestCount {
@@ -116,25 +133,6 @@ func nodeScanLabels(ctx context.Context, store storage.Engine, labels []string) 
 	ordered = append(ordered, labels[smallest])
 	ordered = append(ordered, labels[:smallest]...)
 	return append(ordered, labels[smallest+1:]...)
-}
-
-// readsQueryNodesWithoutVectors reports whether an auto-commit statement
-// running without a transaction reads its row nodes without vectors: one
-// that matches nodes and cannot write. Whether it can write is the
-// statement-effect owner's answer (QueryInfo.ReadOnly). A statement with CALL
-// keeps full reads unless every CALL is a read-only CALL subquery run in line
-// (QueryInfo.callSubqueriesOnly), which reads like the same statement without
-// it. A procedure call keeps full reads whatever it does: it may write
-// outside a transaction, hand the nodes to native code, or add nodes it reads
-// in full (vector search) to the same rows, where a vector-free copy of the
-// same node would compare unequal. A store without the query-node read keeps
-// full reads.
-func (e *StorageExecutor) readsQueryNodesWithoutVectors(info *QueryInfo) bool {
-	if info == nil || !info.ReadOnly() || !info.HasMatch || info.HasCall && !info.callSubqueriesOnly() {
-		return false
-	}
-	_, ok := e.storage.(storage.QueryNodeReader)
-	return ok
 }
 
 type materializedAccessRecorder interface {

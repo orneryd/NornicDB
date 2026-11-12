@@ -1019,52 +1019,39 @@ func (c *CompositeEngine) GetFirstNodeByLabel(ctx context.Context, label string)
 	return nil, ErrNotFound
 }
 
-// GetOutgoingEdges returns outgoing edges from all constituents.
-// Each readable source is selected once; equal local IDs across databases remain distinct.
-func (c *CompositeEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	readConstituents, local, _ := c.constituentsForEntity("4", string(nodeID))
-	nodeID = NodeID(local)
+// ReadAdjacentEdges answers one adjacent-edge request from all constituents.
+// Each readable source is selected once; equal local IDs across databases
+// remain distinct. A between request is qualified to the one constituent that
+// owns both nodes when the pair names one.
+func (c *CompositeEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	if request.Direction == AdjacentBetween {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if engine, start, end, qualified := c.constituentForNodePair(request.Node, request.Other); qualified {
+			if engine == nil {
+				return nil, nil
+			}
+			local := request
+			local.Node, local.Other = start, end
+			edges, err := engine.ReadAdjacentEdges(ctx, local)
+			projected, projectionErr := entitiesFromDatabase(ctx, edges, nodePairDatabase(request.Node, request.Other))
+			if projectionErr != nil {
+				return nil, projectionErr
+			}
+			return projected, err
+		}
+		return materializeConstituents(c, ctx, c.getConstituentsForRead(),
+			func(engine Engine) ([]*Edge, error) { return engine.ReadAdjacentEdges(ctx, request) },
+			edgeFromDatabase,
+			compositeFanOutPublishesLocalizedQuery,
+		)
+	}
+	readConstituents, local, _ := c.constituentsForEntity("4", string(request.Node))
+	request.Node = NodeID(local)
 
 	return materializeConstituents(c, ctx, readConstituents,
-		func(engine Engine) ([]*Edge, error) { return engine.GetOutgoingEdges(ctx, nodeID) },
-		edgeFromDatabase,
-		compositeFanOutPublishesLocalizedQuery,
-	)
-}
-
-// GetIncomingEdges returns incoming edges from all constituents.
-// Each readable source is selected once; equal local IDs across databases remain distinct.
-func (c *CompositeEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	readConstituents, local, _ := c.constituentsForEntity("4", string(nodeID))
-	nodeID = NodeID(local)
-
-	return materializeConstituents(c, ctx, readConstituents,
-		func(engine Engine) ([]*Edge, error) { return engine.GetIncomingEdges(ctx, nodeID) },
-		edgeFromDatabase,
-		compositeFanOutPublishesLocalizedQuery,
-	)
-}
-
-// GetEdgesBetween returns edges between two nodes from all constituents.
-// Each readable source is selected once; equal local IDs across databases remain distinct.
-func (c *CompositeEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if engine, start, end, qualified := c.constituentForNodePair(startID, endID); qualified {
-		if engine == nil {
-			return nil, nil
-		}
-		edges, err := engine.GetEdgesBetween(ctx, start, end)
-		projected, projectionErr := entitiesFromDatabase(ctx, edges, nodePairDatabase(startID, endID))
-		if projectionErr != nil {
-			return nil, projectionErr
-		}
-		return projected, err
-	}
-
-	return materializeConstituents(c, ctx, c.getConstituentsForRead(),
-		func(engine Engine) ([]*Edge, error) { return engine.GetEdgesBetween(ctx, startID, endID) },
+		func(engine Engine) ([]*Edge, error) { return engine.ReadAdjacentEdges(ctx, request) },
 		edgeFromDatabase,
 		compositeFanOutPublishesLocalizedQuery,
 	)

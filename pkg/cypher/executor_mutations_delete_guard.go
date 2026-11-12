@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -293,6 +294,11 @@ func nodeHasResidualRelationships(ctx context.Context, store storage.Engine, nod
 	return false, nil
 }
 
+// profileKindIncidentRelationshipSeek names the relationships-connected-to-a-node
+// read a DELETE performs: the incidence read that keeps a non-DETACH DELETE
+// from removing a connected node and that DETACH DELETE removes with it.
+const profileKindIncidentRelationshipSeek = "IncidentRelationshipSeek"
+
 // connectingRelationships returns the relationships that connect nodeID for
 // a DELETE: those DETACH DELETE removes with the node, and those that keep a
 // non-DETACH DELETE from removing it. A store that lists the relationships the
@@ -305,10 +311,24 @@ func nodeHasResidualRelationships(ctx context.Context, store storage.Engine, nod
 // accepted, so ctx is the request's: the caller's cancellation stops the list
 // (native or fallback) rather than being replaced by a background lifetime.
 func connectingRelationships(ctx context.Context, store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	var (
+		edges []*storage.Edge
+		err   error
+	)
 	if lister, ok := store.(storage.IncidentEdgeLister); ok {
-		return lister.IncidentEdges(ctx, nodeID)
+		edges, err = lister.IncidentEdges(ctx, nodeID)
+	} else {
+		edges, err = undirectedIncidentEdges(ctx, store, storage.AdjacentEdgeRead{Node: nodeID})
 	}
-	return undirectedIncidentEdges(ctx, store, nodeID)
+	if err != nil {
+		return edges, err
+	}
+	// The incidence read is the acquisition itself, so it is reported here:
+	// every relationship it listed is one entity read and one row, counted
+	// before the residual check narrows them, and a read that failed listed
+	// nothing.
+	queryprofile.EntityPopulation(ctx, profileKindIncidentRelationshipSeek, "", edges)
+	return edges, nil
 }
 
 // residualRelationshipDeleteError builds the error returned when a

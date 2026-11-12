@@ -28,18 +28,43 @@ type relatedProbeEngine struct {
 	onNode   func(loaded int)
 }
 
-func (e *relatedProbeEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *relatedProbeEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		e.mu.Lock()
+		e.incoming = append(e.incoming, string(request.Node))
+		e.mu.Unlock()
+		return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node})
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	e.mu.Lock()
-	e.outgoing = append(e.outgoing, string(nodeID))
+	e.outgoing = append(e.outgoing, string(request.Node))
 	e.mu.Unlock()
-	return e.Engine.GetOutgoingEdges(ctx, nodeID)
+	return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 }
 
 func (e *relatedProbeEngine) GetIncomingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	e.mu.Lock()
 	e.incoming = append(e.incoming, string(nodeID))
 	e.mu.Unlock()
-	return e.Engine.GetIncomingEdges(ctx, nodeID)
+	return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: nodeID})
 }
 
 func (e *relatedProbeEngine) GetNode(ctx context.Context, nodeID storage.NodeID) (*storage.Node, error) {
@@ -259,15 +284,39 @@ type relatedPartialErrorEngine struct {
 	inCalls  int
 }
 
-func (e *relatedPartialErrorEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *relatedPartialErrorEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		e.inCalls++
+		rows, _ := e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node})
+		return rows, e.inErr
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	e.outCalls++
-	rows, _ := e.Engine.GetOutgoingEdges(ctx, nodeID)
+	rows, _ := e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 	return rows, e.outErr
 }
 
 func (e *relatedPartialErrorEngine) GetIncomingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	e.inCalls++
-	rows, _ := e.Engine.GetIncomingEdges(ctx, nodeID)
+	rows, _ := e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: nodeID})
 	return rows, e.inErr
 }
 
@@ -312,14 +361,32 @@ type relatedWideEngine struct {
 	inCalls  int
 }
 
-func (e *relatedWideEngine) GetOutgoingEdges(context.Context, storage.NodeID) ([]*storage.Edge, error) {
+func (e *relatedWideEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		e.inCalls++
+		return nil, nil
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	e.outCalls++
 	return e.out, nil
-}
-
-func (e *relatedWideEngine) GetIncomingEdges(context.Context, storage.NodeID) ([]*storage.Edge, error) {
-	e.inCalls++
-	return nil, nil
 }
 
 func (e *relatedWideEngine) GetNode(ctx context.Context, nodeID storage.NodeID) (*storage.Node, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -62,6 +63,12 @@ func identityGraphEngine(engine storage.Engine) storage.Engine {
 // Inside that view every node, edge and endpoint uses the canonical identity
 // key. Native values are restored at the result boundary; no identity cache or
 // graph-sized cross-stream seen set is retained by this adapter.
+//
+// The view also owns the population its bulk and adjacency reads actually
+// returned: a read reports the entities storage handed over, before this view
+// projects them into the identity key domain and before a consumer's own type
+// selection narrows them, so one physical read is one record wherever it is
+// read from.
 type graphIdentityStorage struct {
 	storage.Engine
 }
@@ -227,44 +234,59 @@ func (v *graphIdentityStorage) BatchGetNodes(ctx context.Context, keys []storage
 }
 
 func (v *graphIdentityStorage) AllNodes(ctx context.Context) ([]*storage.Node, error) {
-	return v.nodes(v.Engine.AllNodes(ctx))
+	nodes, err := v.Engine.AllNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// A PROFILE statement counts the nodes this scan returned, where the read
+	// hands them over: before the identity projection the algorithm runs over.
+	queryprofile.EntityPopulation(ctx, profileKindAllNodesScan, "", nodes)
+	return v.nodes(nodes, nil)
 }
 func (v *graphIdentityStorage) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	return v.edges(v.Engine.AllEdges(ctx))
 }
 func (v *graphIdentityStorage) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
-	return v.nodes(v.Engine.GetNodesByLabel(ctx, label))
+	nodes, err := v.Engine.GetNodesByLabel(ctx, label)
+	if err != nil {
+		return nil, err
+	}
+	// The label's population, where the read hands it over, before the identity
+	// projection: the algorithm orders it afterwards, not this reader.
+	queryprofile.EntityPopulation(ctx, profileKindNodeByLabelScan, label, nodes)
+	return v.nodes(nodes, nil)
 }
 func (v *graphIdentityStorage) GetFirstNodeByLabel(ctx context.Context, label string) (*storage.Node, error) {
 	node, err := v.Engine.GetFirstNodeByLabel(ctx, label)
 	return v.node(node), err
 }
-func (v *graphIdentityStorage) GetOutgoingEdges(ctx context.Context, key storage.NodeID) ([]*storage.Edge, error) {
-	id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(v.Engine)
-	if !ok {
+func (v *graphIdentityStorage) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	qualified := request
+	if id, ok := storage.EntityIdentityFromKey(string(request.Node)).NodeLookupID(v.Engine); ok {
+		qualified.Node = id
+	} else {
 		return nil, nil
 	}
-	return v.edges(v.Engine.GetOutgoingEdges(ctx, id))
-}
-func (v *graphIdentityStorage) GetIncomingEdges(ctx context.Context, key storage.NodeID) ([]*storage.Edge, error) {
-	id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(v.Engine)
-	if !ok {
-		return nil, nil
+	if request.Direction == storage.AdjacentBetween {
+		if id, ok := storage.EntityIdentityFromKey(string(request.Other)).NodeLookupID(v.Engine); ok {
+			qualified.Other = id
+		} else {
+			return nil, nil
+		}
 	}
-	return v.edges(v.Engine.GetIncomingEdges(ctx, id))
+	edges, err := v.Engine.ReadAdjacentEdges(ctx, qualified)
+	if err != nil {
+		return nil, err
+	}
+	// The entries this request returned, before the identity projection below
+	// and before the caller's own type selection narrows them.
+	recordAdjacentPopulation(ctx, request, edges)
+	return v.edges(edges, nil)
 }
 func (v *graphIdentityStorage) GetEdgesByType(ctx context.Context, kind string) ([]*storage.Edge, error) {
 	return v.edges(v.Engine.GetEdgesByType(ctx, kind))
 }
 
-func (v *graphIdentityStorage) GetEdgesBetween(ctx context.Context, start, end storage.NodeID) ([]*storage.Edge, error) {
-	left, leftOK := storage.EntityIdentityFromKey(string(start)).NodeLookupID(v.Engine)
-	right, rightOK := storage.EntityIdentityFromKey(string(end)).NodeLookupID(v.Engine)
-	if !leftOK || !rightOK {
-		return nil, nil
-	}
-	return v.edges(v.Engine.GetEdgesBetween(ctx, left, right))
-}
 func (v *graphIdentityStorage) GetEdgeBetween(ctx context.Context, start, end storage.NodeID, kind string) (*storage.Edge, error) {
 	left, leftOK := storage.EntityIdentityFromKey(string(start)).NodeLookupID(v.Engine)
 	right, rightOK := storage.EntityIdentityFromKey(string(end)).NodeLookupID(v.Engine)
@@ -275,11 +297,11 @@ func (v *graphIdentityStorage) GetEdgeBetween(ctx context.Context, start, end st
 	return v.edge(edge), err
 }
 func (v *graphIdentityStorage) GetInDegree(ctx context.Context, key storage.NodeID) (int, error) {
-	edges, err := v.GetIncomingEdges(ctx, key)
+	edges, err := v.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: key})
 	return len(edges), err
 }
 func (v *graphIdentityStorage) GetOutDegree(ctx context.Context, key storage.NodeID) (int, error) {
-	edges, err := v.GetOutgoingEdges(ctx, key)
+	edges, err := v.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: key})
 	return len(edges), err
 }
 func (v *graphIdentityStorage) StreamNodesWithOptions(ctx context.Context, options storage.StreamNodesOptions, visit func(*storage.Node) error) error {
@@ -303,8 +325,16 @@ func (v *graphIdentityStorage) inputKey(ctx context.Context, value interface{}) 
 		if !qualified {
 			if storage.CompositeDatabaseOf(v.Engine) == "" {
 				reference.Database = storage.DatabaseOf(v.Engine)
-			} else if node, err := v.Engine.GetNode(ctx, storage.NodeID(reference.LocalID)); err == nil && node != nil {
-				reference = node.Identity()
+			} else {
+				// A composite engine resolves an unqualified id by reading the
+				// node the id names. That read is what the statement performs, so
+				// it reports the attempt and the row here, once.
+				counter := queryprofile.Access(ctx, profileKindNodeByIdSeek, "")
+				node, err := v.Engine.GetNode(ctx, storage.NodeID(reference.LocalID))
+				queryprofile.EntityReadResult(counter, node, err)
+				if err == nil && node != nil {
+					reference = node.Identity()
+				}
 			}
 		}
 	}
@@ -393,6 +423,18 @@ func (c *linkPredictionConfig) identityRows(result *ExecuteResult) *ExecuteResul
 		}
 	}
 	return result
+}
+
+// readNode is a link prediction's one point read of a node's full image: the
+// semantic score reads the embeddings no projection replaces. A PROFILE
+// statement counts the attempt and the row it returned here, so the hybrid
+// score's input is the read that produced it; a node the read did not return is
+// a zero row for the attempt, not a missing record.
+func (c *linkPredictionConfig) readNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	counter := queryprofile.Access(ctx, profileKindNodeByIdSeek, "")
+	node, err := c.identityStore.GetNode(ctx, id)
+	queryprofile.EntityReadResult(counter, node, err)
+	return node, err
 }
 
 func (v *graphIdentityStorage) outputID(key storage.NodeID) string {

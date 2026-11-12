@@ -163,7 +163,7 @@ func TestMatchCreateWithInlineNodeReverse(t *testing.T) {
 	companies, _ := store.GetNodesByLabel(ctx, "Company")
 	persons, _ := store.GetNodesByLabel(ctx, "Person")
 
-	edges, _ := store.GetIncomingEdges(ctx, companies[0].ID)
+	edges, _ := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: companies[0].ID})
 	assert.Len(t, edges, 1)
 	assert.Equal(t, "WORKS_AT", edges[0].Type)
 	assert.Equal(t, persons[0].ID, edges[0].StartNode)
@@ -264,7 +264,7 @@ func TestMatchMatchWhereCreate_TwoMatchWithWhere(t *testing.T) {
 	assert.Equal(t, elemB, fmt.Sprint(result.Rows[0][1]))
 
 	// Verify relationship exists in store
-	edges, err := store.GetOutgoingEdges(ctx, persons[0].ID)
+	edges, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: persons[0].ID})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	assert.Equal(t, "KNOWS", edges[0].Type)
@@ -311,7 +311,7 @@ func TestMatchCreateRelationship_CommaSeparatedElementIDWhere(t *testing.T) {
 	assert.Equal(t, params["from"], fmt.Sprint(result.Rows[0][0]))
 	assert.Equal(t, params["to"], fmt.Sprint(result.Rows[0][1]))
 
-	edges, err := store.GetOutgoingEdges(ctx, alice.ID)
+	edges, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: alice.ID})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	assert.Equal(t, "KNOWS", edges[0].Type)

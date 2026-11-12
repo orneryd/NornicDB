@@ -676,7 +676,7 @@ func validatePolicyOnLabelChange(ctx context.Context, store storage.Engine, node
 	}
 
 	// Check outgoing edges (node is the source).
-	outgoing, _ := store.GetOutgoingEdges(ctx, node.ID)
+	outgoing, _ := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: node.ID})
 	for _, edge := range outgoing {
 		targetNode, err := store.GetNode(ctx, storage.NodeID(edge.EndNode))
 		if err != nil || targetNode == nil {
@@ -688,7 +688,7 @@ func validatePolicyOnLabelChange(ctx context.Context, store storage.Engine, node
 	}
 
 	// Check incoming edges (node is the target).
-	incoming, _ := store.GetIncomingEdges(ctx, node.ID)
+	incoming, _ := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: node.ID})
 	for _, edge := range incoming {
 		sourceNode, err := store.GetNode(ctx, storage.NodeID(edge.StartNode))
 		if err != nil || sourceNode == nil {

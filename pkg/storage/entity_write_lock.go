@@ -233,8 +233,7 @@ func (tx *BadgerTransaction) ownsEntityLocked(kind bufferedEntityKind, id string
 func (tx *BadgerTransaction) entityCommittedAfterSnapshot(ctx context.Context, kind bufferedEntityKind, id string) (bool, error) {
 	tx.mu.Lock()
 	// Saturated sequences are no longer unique: compare the entity head below.
-	unchanged := tx.readTS.CommitSequence < maxMVCCCommitSequence && tx.inflightAtBegin == nil && tx.namespace != "" && !tx.readTS.IsZero() &&
-		tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence == tx.readTS.CommitSequence
+	unchanged := tx.namespaceSnapshotCurrentLocked()
 	tx.mu.Unlock()
 	if unchanged {
 		return false, nil
@@ -331,4 +330,13 @@ func (sm *SchemaManager) releaseEntityWriteLocks(owner string, held []entityWrit
 	for at := range held {
 		sm.dropUniqueConstraintLockReferenceLocked(held[at].request)
 	}
+}
+
+// namespaceSnapshotCurrentLocked proves no namespace commit followed the
+// transaction's cut, excluding saturated counters and in-flight begin frames.
+// The caller holds tx.mu. A reader without entity authority must check again
+// after reading a current-only index; this is not a lock against peer writes.
+func (tx *BadgerTransaction) namespaceSnapshotCurrentLocked() bool {
+	return tx.readTS.CommitSequence < maxMVCCCommitSequence && tx.inflightAtBegin == nil && tx.namespace != "" && !tx.readTS.IsZero() &&
+		tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence == tx.readTS.CommitSequence
 }

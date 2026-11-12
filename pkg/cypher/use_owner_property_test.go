@@ -23,30 +23,58 @@ import (
 // must preserve the body contract and agree with that product. Dynamic needles
 // deliberately are outside the static guard's contract.
 type usePropertyStatement struct {
-	name, query, body, rewritten, selector string
-	writes                                 bool
-	uses                                   int
-	rows                                   [][]interface{}
+	name      string
+	query     string
+	body      string
+	rewritten string
+	selector  string
+	// reference is the exact graph-reference text the generator inserted, and
+	// insertions are the statement offsets that own those bytes, so the shared
+	// contract comparison removes exactly what was inserted and proves the
+	// reference's own callable arguments.
+	reference  string
+	insertions []int
+	writes     bool
+	uses       int
+	rows       [][]interface{}
 }
 
 func generatedUseStatements() []usePropertyStatement {
 	type shape struct {
-		name   string
-		build  func(string, string) string
+		name string
+		// build composes the statement around the selector and reports the
+		// statement offsets where that selector was inserted, so re-anchoring
+		// never has to match the reference text anywhere in the statement.
+		build  func(string, string) (string, []int)
 		writes bool
 		uses   int
 	}
 	shapes := []shape{
-		{"read", func(u, _ string) string { return u + "MATCH (n:UseProperty) RETURN abs(n.v) AS x" }, false, 1},
-		{"write", func(u, _ string) string { return u + "CREATE (:UsePropertyWrite) RETURN abs(-1) AS x" }, true, 1},
-		{"procedure", func(u, _ string) string { return u + "CALL db.ping() RETURN 1 AS x" }, false, 1},
-		{"call", func(u, _ string) string { return "CALL { " + u + "RETURN abs(-1) AS x } RETURN x" }, false, 1},
-		{"nested_write", func(u, _ string) string {
-			return "CALL { CALL { " + u + "CREATE (:UsePropertyWrite) RETURN 1 AS x } RETURN x } RETURN x"
+		{"read", func(u, _ string) (string, []int) {
+			return u + "MATCH (n:UseProperty) RETURN abs(n.v) AS x", []int{0}
+		}, false, 1},
+		{"write", func(u, _ string) (string, []int) {
+			return u + "CREATE (:UsePropertyWrite) RETURN abs(-1) AS x", []int{0}
 		}, true, 1},
-		{"union", func(u, _ string) string { return u + "RETURN abs(-1) AS x UNION ALL " + u + "RETURN abs(-1) AS x" }, false, 2},
-		{"skip_limit", func(u, _ string) string { return u + "MATCH (n:UseProperty) SKIP 0 LIMIT 1 RETURN n.v AS x" }, false, 1},
-		{"literal", func(u, payload string) string { return u + "RETURN '" + payload + "' AS x" }, false, 1},
+		{"procedure", func(u, _ string) (string, []int) {
+			return u + "CALL db.ping() RETURN 1 AS x", []int{0}
+		}, false, 1},
+		{"call", func(u, _ string) (string, []int) {
+			return "CALL { " + u + "RETURN abs(-1) AS x } RETURN x", []int{len("CALL { ")}
+		}, false, 1},
+		{"nested_write", func(u, _ string) (string, []int) {
+			return "CALL { CALL { " + u + "CREATE (:UsePropertyWrite) RETURN 1 AS x } RETURN x } RETURN x", []int{len("CALL { CALL { ")}
+		}, true, 1},
+		{"union", func(u, _ string) (string, []int) {
+			const branch = "RETURN abs(-1) AS x UNION ALL "
+			return u + branch + u + "RETURN abs(-1) AS x", []int{0, len(u) + len(branch)}
+		}, false, 2},
+		{"skip_limit", func(u, _ string) (string, []int) {
+			return u + "MATCH (n:UseProperty) SKIP 0 LIMIT 1 RETURN n.v AS x", []int{0}
+		}, false, 1},
+		{"literal", func(u, payload string) (string, []int) {
+			return u + "RETURN '" + payload + "' AS x", []int{0}
+		}, false, 1},
 	}
 	references := []string{"g", "graph", "match", "limit", "`limit`", "cmp.a", "`cmp`.`a`", "graph.byName('cmp.a')", "graph.byName(toLower('CMP.A'))", "`graph`.`byName`('cmp.a')", "graph.byElementId($element)", "graph /* reference */ . byName('cmp.a')"}
 	gaps := []string{" ", " /* USE GRAPH CREATE */ ", "\n// USE GRAPH CREATE\n", "\u000C", "\u00a0", "\u2003"}
@@ -62,7 +90,8 @@ func generatedUseStatements() []usePropertyStatement {
 				selector := keyword + gap + strings.ReplaceAll(graph, " ", gap) + reference
 				payload := []string{"CREATE (:Probe) USE GRAPH cmp.decoy", "USE cmp.decoy CREATE (:Probe) GRAPH", "GRAPH USE match CREATE"}[(r+g)%3]
 				for _, shape := range shapes {
-					query := shape.build(selector+gap, payload)
+					query, insertions := shape.build(selector+gap, payload)
+					body, _ := shape.build("", payload)
 					rewritten := query
 					if shape.name == "skip_limit" {
 						rewritten = strings.Replace(query, " SKIP 0", " WITH * SKIP 0", 1)
@@ -76,8 +105,9 @@ func generatedUseStatements() []usePropertyStatement {
 					}
 					statements = append(statements, usePropertyStatement{
 						name:  fmt.Sprintf("r%d/modifier%d/gap%d/%s", r, modifier, g, shape.name),
-						query: query, body: shape.build("", payload), rewritten: rewritten,
-						selector: selector, writes: shape.writes, uses: shape.uses,
+						query: query, body: body, rewritten: rewritten,
+						selector: selector, reference: selector + gap, insertions: insertions,
+						writes: shape.writes, uses: shape.uses,
 						rows: rows,
 					})
 				}
@@ -160,6 +190,21 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 			issues[consumer] = fmt.Errorf("got %#v, want %#v", got, want)
 		}
 	}
+	// The generator's declared insertions must be exactly what it spliced: the
+	// composed statement minus those byte windows is the independent body.
+	if statement.reference != "" {
+		remainder := statement.query
+		for index := len(statement.insertions) - 1; index >= 0; index-- {
+			start, end := statement.insertions[index], statement.insertions[index]+len(statement.reference)
+			if start < 0 || end > len(remainder) || remainder[start:end] != statement.reference {
+				return map[string]error{"baseline": fmt.Errorf("declared insertion %d does not own the reference bytes", index)}
+			}
+			remainder = remainder[:start] + remainder[end:]
+		}
+		if remainder != statement.body {
+			return map[string]error{"baseline": fmt.Errorf("removing the inserted reference does not leave the independent body")}
+		}
+	}
 	owner := cypherantlr.UseReference{}
 	if statement.uses > 0 {
 		var err error
@@ -184,12 +229,18 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 	if wantContract.writes != statement.writes {
 		return map[string]error{"baseline": fmt.Errorf("body write contract disagrees with generator")}
 	}
+	wantFacts, err := statementContractFactsOf(ctx, body, wantContract)
+	if err != nil {
+		return map[string]error{"baseline": err}
+	}
 	contractQuery, _ := desugarStandaloneOrderClauses(ctx, input("contract"))
 	contract, err := readStatementExecutionContract(ctx, contractQuery)
 	if err != nil {
 		issues["contract"] = err
-	} else {
-		check("contract", contract, wantContract)
+	} else if facts, factsErr := statementContractFactsOf(ctx, contractQuery, contract); factsErr != nil {
+		issues["contract"] = factsErr
+	} else if comparisonErr := compareStatementContractFacts(ctx, wantFacts, facts, statementGraphReference{text: statement.reference, insertions: statement.insertions}); comparisonErr != nil {
+		issues["contract"] = comparisonErr
 	}
 	permissionQuery, _ := desugarStandaloneOrderClauses(ctx, input("permissions"))
 	check("permissions", QueryPermissionRequirements(ctx, permissionQuery, RawSource), QueryPermissionRequirements(ctx, body, RawSource))
@@ -472,7 +523,7 @@ func TestUseOwnerUnicodeBoundary(t *testing.T) {
 	for _, gap := range []string{"\u00a0", "\u2003"} {
 		for _, selector := range []string{"USE" + gap + "cmp.a", "USE GRAPH" + gap + "cmp.a"} {
 			query := selector + " CREATE (:UsePropertyWrite) RETURN 1 AS x"
-			statement := usePropertyStatement{query: query, body: "CREATE (:UsePropertyWrite) RETURN 1 AS x", rewritten: query, selector: selector, writes: true, uses: 1, rows: [][]interface{}{{int64(1)}}}
+			statement := usePropertyStatement{query: query, body: "CREATE (:UsePropertyWrite) RETURN 1 AS x", rewritten: query, selector: selector, reference: selector + " ", insertions: []int{0}, writes: true, uses: 1, rows: [][]interface{}{{int64(1)}}}
 			require.Empty(t, fixture.check(t.Context(), statement, nil), query)
 		}
 	}

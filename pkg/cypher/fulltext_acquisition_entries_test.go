@@ -16,55 +16,59 @@ import (
 )
 
 func TestFulltextAcquisitionWorkEarlyReturns(t *testing.T) {
-	const count = 16
-	ctx := context.Background()
-	_, store := fulltextWorkFixture(t, count, true)
-	probe := &fulltextWorkProbe{NamespacedEngine: store}
-	exec := NewStorageExecutor(probe, QueryCachePolicy{MaxEntries: 0})
-	for _, relationships := range []bool{false, true} {
-		for _, mode := range []string{"empty", "unknown_field", "missing_index", "invalid_option", "wildcard_limit0", "presence_limit0", "ranked_limit0"} {
-			t.Run(fmt.Sprintf("relationships=%t/%s", relationships, mode), func(t *testing.T) {
-				q, query := "hotel", fulltextWorkQuery(relationships)
-				opts := map[string]any{}
-				wantError, acquired := false, int64(0)
-				switch mode {
-				case "empty":
-					q = ""
-				case "unknown_field":
-					q = "undeclared:*"
-				case "missing_index":
-					query = strings.ReplaceAll(query, "'work_nodes'", "'missing'")
-					query = strings.ReplaceAll(query, "'work_edges'", "'missing'")
-					wantError = true
-				case "invalid_option":
-					opts["skip"] = int64(-1)
-					wantError = true
-				case "wildcard_limit0", "presence_limit0":
-					q = "*"
-					if mode == "presence_limit0" {
-						q = "text:*"
-					}
-					opts["limit"] = int64(0)
-					if !relationships {
+	forEachParser(t, func(t *testing.T) {
+		const count = 16
+		ctx := context.Background()
+		_, store := fulltextWorkFixture(t, count, true)
+		probe := &fulltextWorkProbe{NamespacedEngine: store}
+		exec := NewStorageExecutor(probe, QueryCachePolicy{MaxEntries: 0})
+		for _, relationships := range []bool{false, true} {
+			for _, mode := range []string{"empty", "unknown_field", "missing_index", "invalid_option", "wildcard_limit0", "presence_limit0", "ranked_limit0"} {
+				t.Run(fmt.Sprintf("relationships=%t/%s", relationships, mode), func(t *testing.T) {
+					q, query := "hotel", fulltextWorkQuery(relationships)
+					opts := map[string]any{}
+					wantError, acquired := false, int64(0)
+					switch mode {
+					case "empty":
+						q = ""
+					case "unknown_field":
+						q = "undeclared:*"
+					case "missing_index":
+						query = strings.ReplaceAll(query, "'work_nodes'", "'missing'")
+						query = strings.ReplaceAll(query, "'work_edges'", "'missing'")
+						wantError = true
+					case "invalid_option":
+						opts["skip"] = int64(-1)
+						wantError = true
+					case "wildcard_limit0", "presence_limit0":
+						q = "*"
+						if mode == "presence_limit0" {
+							q = "text:*"
+						}
+						opts["limit"] = int64(0)
+						// An empty unranked window needs no entity acquisition.
+					case "ranked_limit0":
+						opts["limit"] = int64(0)
 						acquired = count
+						if !relationships {
+							// The declared Source label excludes the fixture's Other node.
+							acquired--
+						}
 					}
-				case "ranked_limit0":
-					opts["limit"] = int64(0)
-					acquired = count
-				}
-				probe.reset()
-				got, err := exec.Execute(ctx, query, map[string]any{"q": q, "opts": opts})
-				if wantError {
-					require.Error(t, err)
-				} else {
-					require.NoError(t, err)
-					require.Empty(t, got.Rows)
-				}
-				require.Equal(t, acquired, probe.nodes.Load()+probe.edges.Load())
-				require.Zero(t, probe.formatted.Load(), "undeclared work_meter must not be formatted into the index")
-			})
+					probe.reset()
+					got, err := exec.Execute(ctx, query, map[string]any{"q": q, "opts": opts})
+					if wantError {
+						require.Error(t, err)
+					} else {
+						require.NoError(t, err)
+						require.Empty(t, got.Rows)
+					}
+					require.Equal(t, acquired, probe.nodes.Load()+probe.edges.Load())
+					require.Zero(t, probe.formatted.Load(), "undeclared work_meter must not be formatted into the index")
+				})
+			}
 		}
-	}
+	})
 }
 
 func TestFulltextAcquisitionExplicitTransaction(t *testing.T) {

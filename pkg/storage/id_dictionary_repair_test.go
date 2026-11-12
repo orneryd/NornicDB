@@ -78,7 +78,7 @@ func TestCheckAndRepairIDDictionary(t *testing.T) {
 	require.NoError(t, err)
 	require.ElementsMatch(t, []NodeID{"test:b", "test:bare"}, report.Nodes)
 	require.ElementsMatch(t, []EdgeID{"test:link", "test:twin1", "test:twin2", "test:fromBare"}, report.Edges)
-	outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
+	outgoing, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.NoError(t, err)
 	require.Empty(t, outgoing, "lost relationships aren't traversed")
 
@@ -89,7 +89,7 @@ func TestCheckAndRepairIDDictionary(t *testing.T) {
 	require.Equal(t, []EdgeID{"test:link"}, report.RestoredEdges)
 	require.ElementsMatch(t, []EdgeID{"test:twin1", "test:twin2", "test:fromBare"}, report.UnresolvedEdges, "two alike aren't told apart, nor one from an unresolved node")
 
-	outgoing, err = engine.GetOutgoingEdges(context.Background(), "test:a")
+	outgoing, err = engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, EdgeID("test:link"), outgoing[0].ID)
@@ -163,7 +163,7 @@ func TestRepairIDDictionaryMismatchedAfterHeadRebuild(t *testing.T) {
 	require.Empty(t, report.Edges)
 	require.Equal(t, []NodeID{"test:lone"}, report.MismatchedNodes)
 	require.Equal(t, []EdgeID{"test:link"}, report.MismatchedEdges)
-	outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
+	outgoing, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.NoError(t, err)
 	require.Empty(t, outgoing)
 
@@ -179,11 +179,11 @@ func TestRepairIDDictionaryMismatchedAfterHeadRebuild(t *testing.T) {
 	require.False(t, stale, "the rebuild's number no longer resolves")
 	check := func(t *testing.T, engine *BadgerEngine) {
 		t.Helper()
-		outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
+		outgoing, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 		require.NoError(t, err)
 		require.Len(t, outgoing, 1)
 		require.Equal(t, "interpretation", outgoing[0].Properties["stage"])
-		outgoing, err = engine.GetOutgoingEdges(context.Background(), "test:c")
+		outgoing, err = engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:c"})
 		require.NoError(t, err)
 		require.Len(t, outgoing, 1)
 		docs, err := engine.GetNodesByLabel(context.Background(), "Doc")

@@ -34,17 +34,35 @@ type controlledAdjacencyEngine struct {
 	onOut    func()
 }
 
-func (e *controlledAdjacencyEngine) GetOutgoingEdges(context.Context, storage.NodeID) ([]*storage.Edge, error) {
+func (e *controlledAdjacencyEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		e.inCalls++
+		return e.in, e.inErr
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	e.outCalls++
 	if e.onOut != nil {
 		e.onOut()
 	}
 	return e.out, e.outErr
-}
-
-func (e *controlledAdjacencyEngine) GetIncomingEdges(context.Context, storage.NodeID) ([]*storage.Edge, error) {
-	e.inCalls++
-	return e.in, e.inErr
 }
 
 func newStorageTestEngine(t *testing.T) storage.Engine {

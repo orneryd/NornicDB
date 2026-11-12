@@ -111,12 +111,12 @@ func TestExecutionDeterminismCachedRegistryAndPluginDependencies(t *testing.T) {
 	require.True(t, exec.canUseResultCache(ctx, info, query))
 	original, found := globalProcedureRegistry.Get("db.labels")
 	require.True(t, found)
-	t.Cleanup(func() { require.NoError(t, globalProcedureRegistry.RegisterBuiltIn(original.Spec, original.Handler)) })
+	t.Cleanup(func() { require.NoError(t, globalProcedureRegistry.registerBuiltIn(original.Spec, original.Handler, original.reads)) })
 	changed := original.Spec
 	changed.ResultCache.Deterministic = false
 	require.NoError(t, globalProcedureRegistry.RegisterBuiltIn(changed, original.Handler))
 	require.False(t, exec.canUseResultCache(ctx, info, query), "cached policy must follow a replacement declaration")
-	require.NoError(t, globalProcedureRegistry.RegisterBuiltIn(original.Spec, original.Handler))
+	require.NoError(t, globalProcedureRegistry.registerBuiltIn(original.Spec, original.Handler, original.reads))
 	require.True(t, exec.canUseResultCache(ctx, info, query))
 
 	// Literal inner text was folded into the outer verdict, but its function

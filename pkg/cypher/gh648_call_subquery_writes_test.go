@@ -447,7 +447,7 @@ func TestPR771TransactionalCallChainedRows(t *testing.T) {
 	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{}}, clauses[0], nil)
 	secondRows, secondStats, secondHandled, secondErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, firstRows, clauses[1], nil)
 	t.Logf("step probes: first=%+v stats=%+v handled=%v err=%v second=%+v stats=%+v handled=%v err=%v", firstRows, firstStats, firstHandled, firstErr, secondRows, secondStats, secondHandled, secondErr)
-	manual, manualHandled, manualErr := runner.runPipelineClauseRows(ctx, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses, nil)
+	manual, manualHandled, manualErr := runner.runPipelineClauseRows(ctx, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses, nil, nil)
 	t.Logf("runner probe: handled=%v err=%v result=%+v", manualHandled, manualErr, manual)
 	probe := newGh648Executor(t).executePipeline(ctx, query)
 	t.Logf("pipeline probe: handled=%v err=%v result=%+v", probe.terminal(), probe.err, probe.result)

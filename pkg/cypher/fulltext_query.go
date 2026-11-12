@@ -336,6 +336,16 @@ type ftBooleanClause struct {
 	node  ftNode
 }
 
+// occurrence is the shared parser-established admission policy used by exact
+// evaluation and conservative candidate lowering. Optional clauses become
+// mandatory under the query's default-AND setting.
+func (n *ftBooleanNode) occurrence(clause ftBooleanClause) booleanOccur {
+	if clause.occur == occurShould && n.defaultAnd {
+		return occurMust
+	}
+	return clause.occur
+}
+
 func (n *ftBooleanNode) eval(ctx *ftEvalCtx, doc *ftDoc) (bool, float64) {
 	var (
 		total       float64
@@ -346,10 +356,7 @@ func (n *ftBooleanNode) eval(ctx *ftEvalCtx, doc *ftDoc) (bool, float64) {
 		positiveHit bool // any MUST or SHOULD matched
 	)
 	for _, c := range n.clauses {
-		occur := c.occur
-		if occur == occurShould && n.defaultAnd {
-			occur = occurMust
-		}
+		occur := n.occurrence(c)
 		matched, sc := c.node.eval(ctx, doc)
 		switch occur {
 		case occurMust:

@@ -46,7 +46,7 @@ unchanged.
 
 Each check is a boundary, not a preemption point. Work already in flight
 completes: the relationship callback currently running (in `apoc.algo.louvain`,
-one `GetOutgoingEdges` call), at most one stride of the arc, candidate or
+one `ReadAdjacentEdges` call), at most one stride of the arc, candidate or
 neighbour scan in flight, the `sort.Ints` calls that order a node's neighbours
 and an aggregate's targets, the `math.Pow` of a pass, and the reservation
 `NewGraph` makes once a level's arc counts are complete (the checks before it

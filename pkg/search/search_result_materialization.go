@@ -143,7 +143,7 @@ func (s *Service) hitNodes(ctx context.Context, ids []storage.NodeID, seenOrphan
 		return nodes, true
 	}
 	for index, id := range ids {
-		node, err := s.getNodeWithoutEmbeddings(ctx, id)
+		node, err := s.readNodeImage(ctx, id, metadataNodeImage)
 		if err != nil {
 			_ = s.handleOrphanedEmbedding(ctx, string(id), err, seenOrphans)
 			continue

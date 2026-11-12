@@ -10,6 +10,14 @@ import (
 // value programs, including CASE expressions, so skipped logical operands and
 // lazy function arguments do not evaluate their CASE branches. Unsupported
 // values continue through the text evaluator from that point.
+//
+// A PROFILE statement's collector compiles the same canonical program from the
+// predicate's own text as a position source (expression_provenance.go): every
+// operand keeps where it starts in that text, every text the predicate hands
+// back to the canonical predicate evaluator carries that position, and a
+// logical fold keeps its canonical compiled operands, whose value programs
+// report their individual positions.
+// An ordinary program carries neither a position nor a wrapper.
 
 // rowPredicateProgramsDisabled turns predicate programs off, for tests.
 var rowPredicateProgramsDisabled atomic.Bool
@@ -57,9 +65,12 @@ type rowPredicateNode interface {
 func compileRowPredicateProgram(ctx context.Context, expression string) *rowPredicateProgram {
 	p := &rowPredicateProgram{expression: expression, statementContext: rowPredicateNeedsStatementContext(ctx, expression)}
 	if mayContainCaseKeyword(expression) && len(caseBlockSpans(expression)) > 0 {
-		p.root = &rowPredicateStrictNode{text: expression, value: compileRowPredicateValue(ctx, expression), arithmetic: predicateIsArithmetic(expression)}
+		p.root = profileSourcePredicate(ctx, expression, &rowPredicateStrictNode{text: expression, value: compileRowPredicateValue(ctx, expression), arithmetic: predicateIsArithmetic(expression)})
 	} else {
 		p.root = compileRowPredicateParts(ctx, expression)
+	}
+	if profilePredicateSource(ctx) != "" {
+		p.root = &profileSourcePredicateProgramNode{root: p.root}
 	}
 	return p
 }
@@ -90,6 +101,15 @@ func prepareRowPredicate(expression string) *preparedRowPredicate {
 }
 
 func (p *preparedRowPredicate) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	// A statement PROFILE observes reports the occurrence of every subquery the
+	// predicate holds, and only the PROFILE entry evaluates the predicate from
+	// the collector's source-bearing program (evaluateRowPredicateMode). The
+	// program this selection compiled for the fast path holds no positions, so
+	// a profiled statement asks the entry for every row instead of answering
+	// from it here.
+	if profileRuntimeFromContext(ctx) != nil {
+		return e.evaluateRowPredicate(ctx, p.expression, values)
+	}
 	if p.plan != nil {
 		return e.evaluateRowPredicatePlan(ctx, p.plan, values)
 	}
@@ -107,9 +127,31 @@ func (p *preparedRowPredicate) holds(e *StorageExecutor, ctx context.Context, va
 	return held
 }
 
+// profileSourcePredicate wraps a predicate the program evaluates from its text
+// with where that text starts in the source-bearing (PROFILE) predicate program
+// being compiled, so a subquery the text evaluator reaches reports the
+// occurrence it was written at. A compilation that reports no source
+// occurrences returns the node as it is: an ordinary program carries neither a
+// position nor a wrapper.
+func profileSourcePredicate(ctx context.Context, text string, node rowPredicateNode) rowPredicateNode {
+	root := profilePredicateSource(ctx)
+	if root == "" {
+		return node
+	}
+	return &profileSourcePredicateNode{start: profilePredicateSourceFragment(root, text).start, inner: node}
+}
+
 func compileRowPredicateValue(ctx context.Context, expr string) rowValueNode {
+	if root := profilePredicateSource(ctx); root != "" {
+		// A source-bearing (PROFILE) compilation reports where each part of the
+		// predicate was written: the value compiler keeps those positions, and
+		// this part starts at the byte window it occupies in the predicate.
+		compiler := rowValueCompiler{origins: true}
+		node, _ := compiler.compile(ctx, profilePredicateSourceFragment(root, expr))
+		return node
+	}
 	compiler := rowValueCompiler{}
-	node, _ := compiler.compile(ctx, expr)
+	node, _ := compiler.compile(ctx, expressionPart(expr))
 	return node
 }
 
@@ -124,7 +166,7 @@ func compileRowPredicateParts(ctx context.Context, expr string) rowPredicateNode
 		return compileRowPredicateParts(ctx, inner)
 	}
 	if mayContainArithmetic(expr) && rowPredicateIsStrictLogical(ctx, expr) && !containsRelationshipPattern(expr) {
-		return &rowPredicateStrictNode{text: expr, value: compileRowPredicateValue(ctx, expr), arithmetic: predicateIsArithmetic(expr)}
+		return profileSourcePredicate(ctx, expr, &rowPredicateStrictNode{text: expr, value: compileRowPredicateValue(ctx, expr), arithmetic: predicateIsArithmetic(expr)})
 	}
 	return compileRowPredicateFromSubqueries(ctx, expr)
 }
@@ -133,7 +175,7 @@ func compileRowPredicateParts(ctx context.Context, expr string) rowPredicateNode
 // evaluateRowPredicatePartsFromSubqueries evaluates it.
 func compileRowPredicateFromSubqueries(ctx context.Context, expr string) rowPredicateNode {
 	if plan := planRowSubqueries(expr); plan != nil && !plan.logical {
-		return &rowPredicatePartsTextNode{text: expr}
+		return profileSourcePredicate(ctx, expr, &rowPredicatePartsTextNode{text: expr})
 	}
 	if variable, labels, ok := parseWithWhereLabelTest(expr); ok {
 		return &rowPredicateLabelNode{variable: variable, labels: labels}
@@ -157,10 +199,10 @@ func compileRowPredicateFromSubqueries(ctx context.Context, expr string) rowPred
 // operator, as evaluateRowPredicateTextFromSubqueries evaluates it.
 func compileRowPredicateLeaf(ctx context.Context, expr string) rowPredicateNode {
 	if plan := planRowSubqueries(expr); plan != nil {
-		return &rowPredicateLeafTextNode{text: expr}
+		return profileSourcePredicate(ctx, expr, &rowPredicateLeafTextNode{text: expr})
 	}
 	if isRelationshipPatternOperand(expr) {
-		return &rowPredicateLeafTextNode{text: expr}
+		return profileSourcePredicate(ctx, expr, &rowPredicateLeafTextNode{text: expr})
 	}
 	for _, predicate := range []struct {
 		operator string
@@ -171,7 +213,7 @@ func compileRowPredicateLeaf(ctx context.Context, expr string) rowPredicateNode 
 		}
 	}
 	if _, _, ok := splitByOperatorOutsideCase(expr, "=~", false, true); ok {
-		return &rowPredicateLeafTextNode{text: expr}
+		return profileSourcePredicate(ctx, expr, &rowPredicateLeafTextNode{text: expr})
 	}
 	for _, membership := range []struct {
 		operator string
@@ -182,10 +224,10 @@ func compileRowPredicateLeaf(ctx context.Context, expr string) rowPredicateNode 
 		}
 	}
 	if _, _, _, isTypePredicate, _ := splitTypePredicate(expr); isTypePredicate {
-		return &rowPredicateLeafTextNode{text: expr}
+		return profileSourcePredicate(ctx, expr, &rowPredicateLeafTextNode{text: expr})
 	}
 	if _, _, _, isNormalization := splitNormalizationPredicate(expr); isNormalization {
-		return &rowPredicateLeafTextNode{text: expr}
+		return profileSourcePredicate(ctx, expr, &rowPredicateLeafTextNode{text: expr})
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
 		if hasSuffixFoldASCII(expr, operator) {

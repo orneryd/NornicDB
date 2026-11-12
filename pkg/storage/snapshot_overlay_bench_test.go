@@ -60,7 +60,10 @@ func BenchmarkSnapshotOverlayReads(b *testing.B) {
 				{"point", func() error { _, err := engine.GetNode(b.Context(), ids[0]); return err }},
 				{"projection", func() error { _, err := engine.GetNodeProjected(b.Context(), ids[0], []string{"v"}); return err }},
 				{"batch", func() error { _, err := engine.BatchGetNodes(context.Background(), ids); return err }},
-				{"adjacency", func() error { _, err := engine.GetOutgoingEdges(context.Background(), ids[0]); return err }},
+				{"adjacency", func() error {
+					_, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: ids[0]})
+					return err
+				}},
 				{"label", func() error { _, err := engine.GetNodesByLabel(context.Background(), "L"); return err }},
 				{"stream", func() error { return engine.StreamNodes(context.Background(), func(*Node) error { return nil }) }},
 				{"counter", func() error {

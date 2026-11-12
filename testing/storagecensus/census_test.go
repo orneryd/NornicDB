@@ -67,7 +67,12 @@ func TestStoredEntityCensusIsCurrent(t *testing.T) {
 		got, err := os.ReadFile(path)
 		require.NoError(t, err, "the census artifact is missing: regenerate it")
 		got = bytes.ReplaceAll(got, []byte("\r\n"), []byte("\n"))
-		require.True(t, bytes.Equal(got, want), "%s is stale: regenerate it (NORNICDB_CENSUS_UPDATE=1)", artifact+ext)
+		if !bytes.Equal(got, want) {
+			// Preserve the generated report in CI logs so it can be reviewed and
+			// refreshed without repeating the expensive census on a laptop.
+			fmt.Printf("CENSUS-STALE-%s-BEGIN\n%sCENSUS-STALE-%s-END\n", ext, want, ext)
+			t.Errorf("%s is stale: regenerate it (NORNICDB_CENSUS_UPDATE=1)", artifact+ext)
+		}
 	}
 }
 

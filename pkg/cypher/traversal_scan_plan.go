@@ -100,14 +100,23 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 			if !validSource {
 				return nil
 			}
-			traversal := &TraversalContext{relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match), cancelCtx: ctx}
+			traversal := &TraversalContext{relTypes: match.Relationship.Types, relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match), cancelCtx: ctx}
 			var edges []*storage.Edge
 			var err error
 			switch match.Relationship.Direction {
 			case "incoming":
 				edges = e.traversalEdges(traversal, lookupID, false)
 			case "both":
-				edges, err = undirectedIncidentEdges(ctx, store, lookupID)
+				request := storage.AdjacentEdgeRead{
+					Direction: storage.AdjacentBoth,
+					Node:      lookupID,
+					Types:     traversal.relTypes,
+					Headers:   traversal.relationshipsNeedOnlyHeaders,
+				}
+				edges, err = undirectedIncidentEdges(ctx, store, request)
+				if err == nil {
+					recordAdjacentPopulation(ctx, request, edges)
+				}
 			default:
 				edges = e.traversalEdges(traversal, lookupID, true)
 			}

@@ -206,6 +206,16 @@ must be targeted through a constituent. The 202 response includes the selected
 database. Regeneration runs asynchronously; worker statistics remain server-wide.
 Omitting `database` preserves the legacy regeneration behavior.
 
+Clearing is per node and not atomic: the reset scans the selected nodes that
+currently hold managed vectors, clears each one through its own node update, and
+reports the number of nodes it actually cleared. A stored record the scan cannot
+decode, or that does not belong to the key holding it, fails the reset before any
+node is cleared; a node the reset cannot read or write stops it and returns the
+number already cleared together with the error, so a partial reset is never
+reported as complete (re-run it to finish). Hidden (suppressed) stored nodes are
+cleared too, and each cleared node is queued for regeneration by its own update,
+so a reset never rebuilds the pending queue of another database or namespace.
+
 ### Recover Terminal Failures
 
 Transient provider failures remain in the durable pending queue and retry

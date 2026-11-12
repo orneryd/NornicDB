@@ -19,8 +19,11 @@ type graphBuilderReadEngine struct {
 	read func(storage.NodeID) ([]*storage.Edge, error)
 }
 
-func (e *graphBuilderReadEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.read(id)
+func (e *graphBuilderReadEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction != storage.AdjacentOutgoing {
+		return e.Engine.ReadAdjacentEdges(ctx, request)
+	}
+	return e.read(request.Node)
 }
 
 func TestGraphBuilderPropagatesRelationshipReadFailure(t *testing.T) {

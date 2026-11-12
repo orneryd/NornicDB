@@ -7,6 +7,7 @@ import (
 
 	"context"
 	"github.com/orneryd/nornicdb/internal/collection"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"sort"
 	"strings"
 
@@ -70,7 +71,9 @@ func (category *schemaTypeCategory) add(properties map[string]interface{}, cyphe
 }
 
 // callDbSchemaTypeProperties is db.schema.nodeTypeProperties() (nodes) or
-// db.schema.relTypeProperties().
+// db.schema.relTypeProperties(). The scan is the population this call read, so
+// it reports that population through the canonical access owner: a PROFILE
+// statement states the entities read, not the category rows built from them.
 func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes bool) (*ExecuteResult, error) {
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	categories := make(map[string]*schemaTypeCategory)
@@ -87,6 +90,9 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		if err != nil {
 			return nil, err
 		}
+		// One record per node the scan returned, before the categories below
+		// group them: an empty population is an observed zero, not a gap.
+		queryprofile.EntityPopulation(ctx, profileKindAllNodesScan, "", all)
 		for _, node := range all {
 			labels := append([]string(nil), node.Labels...)
 			sort.Strings(labels)
@@ -97,6 +103,9 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		if err != nil {
 			return nil, err
 		}
+		// Likewise the relationship population: one record per edge read,
+		// whatever the type groups below build from them.
+		queryprofile.EntityPopulation(ctx, profileKindAllRelationshipsScan, "", all)
 		for _, edge := range all {
 			category(schemaTypeKey([]string{edge.Type}), nil).add(edge.Properties, cypher25)
 		}

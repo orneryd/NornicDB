@@ -419,10 +419,6 @@
     "reason": "Author: #1665 implementation lane (Codex). Typed lifecycle scheduler/debt control input retains its integer/time fields. The delta only binds property output before the existing HTTP response owner.",
     "sha256": "86875cd9ab36a104021bdfc67394af70c39e046fe89f341ce2384c590d27fffc"
   },
-  "pkg/storage/badger_relationship_unique_index.go:relationshipPropertyKey": {
-    "reason": "Schema property-name list encoded as a stable string key; no property values.",
-    "sha256": "801e3111fc7088abd649f6caa859c56c316b042a8a04528ff38d49efb4eb0c35"
-  },
   "pkg/storage/receipt.go:computeReceiptHash": {
     "reason": "Stable receipt hash over typed sequence counters and strings; changing bytes changes the hash contract.",
     "sha256": "8a6bee212022ea17fec7e5794622d4801e86b3386f1f7e292d7ba2d0df7d819e"

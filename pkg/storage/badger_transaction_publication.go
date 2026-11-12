@@ -398,6 +398,12 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		if err != nil {
 			return tx.abortCommitLocked(err)
 		}
+		if tx.knowledgeSchemaDirty {
+			// Match the live schema persister's namespace-only publication.
+			// Schema changes invalidate schema dependencies, not entity bodies;
+			// an absent declaration would revoke every durable cache instead.
+			cw.publishKeys = append(cw.publishKeys, namespaceWriteKey(namespace))
+		}
 		if len(operations) > 0 {
 			notification = engine.queueCommitOperations(nil, nil, notificationAtCommit)
 			capturePublicationOperations(notification, operations)

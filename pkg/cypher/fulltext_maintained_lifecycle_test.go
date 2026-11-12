@@ -21,22 +21,28 @@ import (
 // from this package's parser and evaluator over freshly read storage. It
 // records no captured output, so the maintained public path is compared with
 // storage as it stands after each write.
-func fulltextReleaseOracle(t *testing.T, store storage.Engine, text string) [][]any {
+//
+// fulltextReleaseOracle applies that sequence to a caller-declared label
+// and property scope: the corpus is the union of the declared labels, each
+// entity counted once, and empty labels select the whole store. A scoped
+// projection is therefore compared with the release reader's own statistics
+// instead of a restated scoring formula, and two corpora whose document
+// counts, frequencies or lengths differ are never compared with each other.
+func fulltextReleaseOracle(t *testing.T, store storage.Engine, text string, labels, properties []string) [][]any {
 	t.Helper()
 	parsed, err := ParseFulltextQuery(text)
 	require.NoError(t, err)
-	props := []string{"text", "title"}
 	nodes, err := store.AllNodes(context.Background())
 	require.NoError(t, err)
 	docs := make(map[string]*ftDoc)
 	identities := make(map[string]any)
-	ctx := &ftEvalCtx{DefaultFields: props, avgDocLen: 100, docFreq: make(map[string]int)}
+	ctx := &ftEvalCtx{DefaultFields: properties, avgDocLen: 100, docFreq: make(map[string]int)}
 	var length int
 	for _, node := range nodes {
-		if !matchesLabels(node, []string{"Source"}) {
+		if !matchesLabels(node, labels) {
 			continue
 		}
-		doc := buildFulltextDoc(node, nil, props)
+		doc := buildFulltextDoc(node, nil, properties)
 		if doc == nil {
 			continue
 		}
@@ -88,7 +94,7 @@ func TestFulltextMaintainedPublicMatchesRelease(t *testing.T) {
 	check := func() {
 		t.Helper()
 		for _, text := range queries {
-			expected := fulltextReleaseOracle(t, store, text)
+			expected := fulltextReleaseOracle(t, store, text, []string{"Source"}, []string{"text", "title"})
 			got, err := exec.Execute(ctx, "CALL db.index.fulltext.queryNodes('source_text', $query) YIELD node, score RETURN node.id, score", map[string]any{"query": text})
 			require.NoError(t, err, text)
 			require.Equal(t, expected, got.Rows, text)
@@ -323,7 +329,7 @@ func TestFulltextMaintainedPublicWildcardPresenceOrder(t *testing.T) {
 			}
 		}
 		// Presence-only rows must not change the ranked corpus's IDF/length.
-		want := fulltextReleaseOracle(t, store, "hotel")
+		want := fulltextReleaseOracle(t, store, "hotel", []string{"Source"}, []string{"text", "title"})
 		got, err := exec.Execute(ctx, "CALL db.index.fulltext.queryNodes('source_text', 'hotel') YIELD node, score RETURN node.id, score", nil)
 		require.NoError(t, err)
 		require.Equal(t, want, got.Rows)

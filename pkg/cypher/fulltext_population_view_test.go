@@ -65,9 +65,19 @@ func (p *fulltextPopulationProbe) AllEdges(ctx context.Context) ([]*storage.Edge
 }
 
 func (p *fulltextPopulationProbe) StreamNodes(ctx context.Context, visit func(*storage.Node) error) error {
+	return p.scanNodes(ctx, p.NamespacedEngine.StreamNodes, visit)
+}
+
+func (p *fulltextPopulationProbe) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	return p.scanNodes(ctx, func(ctx context.Context, visit func(*storage.Node) error) error {
+		return p.NamespacedEngine.StreamNodesWithOptions(ctx, opts, visit)
+	}, visit)
+}
+
+func (p *fulltextPopulationProbe) scanNodes(ctx context.Context, scan func(context.Context, func(*storage.Node) error) error, visit func(*storage.Node) error) error {
 	var rows []*storage.Node
 	first := true
-	err := p.NamespacedEngine.StreamNodes(ctx, func(node *storage.Node) error {
+	err := scan(ctx, func(node *storage.Node) error {
 		if first {
 			first = false
 			if err := p.cross(ctx); err != nil {
@@ -276,7 +286,7 @@ func fulltextPopulationWithWriter(t *testing.T, stage string, relationships, out
 		rows = adapted
 	}
 	if text == "hotel" {
-		expected = fulltextReleaseOracle(t, &fulltextCapturedEngine{Engine: probe, rows: rows}, text)
+		expected = fulltextReleaseOracle(t, &fulltextCapturedEngine{Engine: probe, rows: rows}, text, []string{"Source"}, []string{"text", "title"})
 	} else {
 		for _, row := range rows {
 			if matchesLabels(row, []string{"Source"}) {

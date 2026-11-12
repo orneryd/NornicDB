@@ -8,7 +8,7 @@ func TestFilterDecayedCandidates_NilFilter(t *testing.T) {
 		{ID: "a", Score: 0.9},
 		{ID: "b", Score: 0.8},
 	}
-	out := s.filterDecayedCandidates(input)
+	out := s.filterDecayedCandidates(t.Context(), input)
 	if len(out) != 2 {
 		t.Errorf("expected 2 results, got %d", len(out))
 	}
@@ -25,7 +25,7 @@ func TestFilterDecayedCandidates_SuppressSome(t *testing.T) {
 		{ID: "decayed", Score: 0.85},
 		{ID: "keep2", Score: 0.7},
 	}
-	out := s.filterDecayedCandidates(input)
+	out := s.filterDecayedCandidates(t.Context(), input)
 	if len(out) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(out))
 	}
@@ -44,7 +44,7 @@ func TestFilterDecayedCandidates_AllSuppressed(t *testing.T) {
 		{ID: "a", Score: 0.9},
 		{ID: "b", Score: 0.8},
 	}
-	out := s.filterDecayedCandidates(input)
+	out := s.filterDecayedCandidates(t.Context(), input)
 	if len(out) != 0 {
 		t.Errorf("expected 0 results, got %d", len(out))
 	}
@@ -63,7 +63,7 @@ func TestSetNodeDecayFilter(t *testing.T) {
 	})
 
 	input := []indexResult{{ID: "test", Score: 0.5}}
-	s.filterDecayedCandidates(input)
+	s.filterDecayedCandidates(t.Context(), input)
 	if !called {
 		t.Error("expected filter function to be called")
 	}

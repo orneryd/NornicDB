@@ -241,33 +241,38 @@ func (f *adjacencyRouteFixture) list(op string, start, end NodeID, v MVCCVersion
 	f.record(op, id, v)
 	return f.edges, f.err
 }
-func (f *adjacencyRouteFixture) GetOutgoingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
-	return f.list("out", id, "", MVCCVersion{})
+
+// ReadAdjacentEdges answers the one adjacent-edge request the route fixture
+// observes, recording the read point by direction.
+func (f *adjacencyRouteFixture) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	switch request.Direction {
+	case AdjacentBetween:
+		return f.list("between", request.Node, request.Other, MVCCVersion{})
+	case AdjacentIncoming:
+		return f.list("in", request.Node, "", MVCCVersion{})
+	case AdjacentBoth:
+		return f.list("both", request.Node, "", MVCCVersion{})
+	default:
+		return f.list("out", request.Node, "", MVCCVersion{})
+	}
 }
-func (f *adjacencyRouteFixture) GetIncomingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
-	return f.list("in", id, "", MVCCVersion{})
-}
-func (f *adjacencyRouteFixture) GetEdgesBetween(ctx context.Context, a, b NodeID) ([]*Edge, error) {
-	return f.list("between", a, b, MVCCVersion{})
-}
-func (f *adjacencyRouteFixture) GetOutgoingEdgesVisibleAt(ctx context.Context, id NodeID, v MVCCVersion) ([]*Edge, error) {
-	return f.list("out-at", id, "", v)
-}
-func (f *adjacencyRouteFixture) GetIncomingEdgesVisibleAt(ctx context.Context, id NodeID, v MVCCVersion) ([]*Edge, error) {
-	return f.list("in-at", id, "", v)
-}
-func (f *adjacencyRouteFixture) GetEdgesBetweenVisibleAt(ctx context.Context, a, b NodeID, v MVCCVersion) ([]*Edge, error) {
-	return f.list("between-at", a, b, v)
+
+// ReadAdjacentEdgesVisibleAt is the pinned read of the same request.
+func (f *adjacencyRouteFixture) ReadAdjacentEdgesVisibleAt(ctx context.Context, request AdjacentEdgeRead, v MVCCVersion) ([]*Edge, error) {
+	switch request.Direction {
+	case AdjacentBetween:
+		return f.list("between-at", request.Node, request.Other, v)
+	case AdjacentIncoming:
+		return f.list("in-at", request.Node, "", v)
+	default:
+		return f.list("out-at", request.Node, "", v)
+	}
 }
 func (f *adjacencyRouteFixture) GetNodesByLabelVisibleAt(ctx context.Context, label string, v MVCCVersion) ([]*Node, error) {
 	return nil, f.err
 }
 func (f *adjacencyRouteFixture) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, v MVCCVersion) ([]*Edge, error) {
 	return f.edges, f.err
-}
-func (f *adjacencyRouteFixture) GetAdjacentEdges(ctx context.Context, id NodeID) ([]*Edge, []*Edge, error) {
-	edges, err := f.list("both", id, "", MVCCVersion{})
-	return edges, edges, err
 }
 
 func TestNamespacedAdjacencyRoutingPreservesReadPoint(t *testing.T) {
@@ -279,21 +284,23 @@ func TestNamespacedAdjacencyRoutingPreservesReadPoint(t *testing.T) {
 		pinned bool
 		read   func(*NamespacedEngine) ([]*Edge, error)
 	}{
-		{"out", "tenant:a", false, func(n *NamespacedEngine) ([]*Edge, error) { return n.GetOutgoingEdges(context.Background(), "a") }},
+		{"out", "tenant:a", false, func(n *NamespacedEngine) ([]*Edge, error) {
+			return n.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "a"})
+		}},
 		{"in", "tenant:b", false, func(n *NamespacedEngine) ([]*Edge, error) {
-			return n.GetIncomingEdges(context.Background(), "tenant:b")
+			return n.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "tenant:b"})
 		}},
 		{"between", "tenant:a->tenant:b", false, func(n *NamespacedEngine) ([]*Edge, error) {
-			return n.GetEdgesBetween(context.Background(), "tenant:a", "b")
+			return n.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "tenant:a", Other: "b"})
 		}},
 		{"out-at", "tenant:a", true, func(n *NamespacedEngine) ([]*Edge, error) {
-			return n.GetOutgoingEdgesVisibleAt(context.Background(), "a", version)
+			return n.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "a"}, version)
 		}},
 		{"in-at", "tenant:b", true, func(n *NamespacedEngine) ([]*Edge, error) {
-			return n.GetIncomingEdgesVisibleAt(context.Background(), "tenant:b", version)
+			return n.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "tenant:b"}, version)
 		}},
 		{"between-at", "tenant:a->tenant:b", true, func(n *NamespacedEngine) ([]*Edge, error) {
-			return n.GetEdgesBetweenVisibleAt(context.Background(), "tenant:a", "b", version)
+			return n.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "tenant:a", Other: "b"}, version)
 		}},
 	}
 	for _, tc := range tests {
@@ -326,40 +333,26 @@ func TestNamespacedAdjacencyRoutingPreservesReadPoint(t *testing.T) {
 			})
 		}
 	}
-	for _, combined := range []bool{false, true} {
-		for _, failed := range []bool{false, true} {
-			t.Run(fmt.Sprintf("both/combined=%v/error=%v", combined, failed), func(t *testing.T) {
-				f := &adjacencyRouteFixture{edges: rows}
-				if failed {
-					f.err = injected
-				}
-				var engine Engine = f
-				if !combined {
-					engine = struct{ Engine }{f}
-				}
-				out, in, err := NewNamespacedEngine(engine, "tenant").GetAdjacentEdges(context.Background(), "a")
-				require.Equal(t, f.err, err)
-				wantCalls := []string{"both"}
-				if !combined {
-					wantCalls = []string{"out"}
-					if !failed {
-						wantCalls = append(wantCalls, "in")
-					}
-				}
-				require.Equal(t, wantCalls, f.calls)
-				for _, id := range f.ids {
-					require.Equal(t, "tenant:a", id)
-				}
-				if failed {
-					require.Nil(t, out)
-					require.Nil(t, in)
-				} else {
-					require.Len(t, out, 1)
-					require.Len(t, in, 1)
-					require.Equal(t, EdgeID("e"), out[0].ID)
-					require.Equal(t, EdgeID("e"), in[0].ID)
-				}
-			})
-		}
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("both/error=%v", failed), func(t *testing.T) {
+			f := &adjacencyRouteFixture{edges: rows}
+			if failed {
+				f.err = injected
+			}
+			// A both-direction request is one request: the fixture answers it in
+			// one read point and the namespace qualifies it once.
+			edges, err := NewNamespacedEngine(f, "tenant").ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "a"})
+			require.Equal(t, f.err, err)
+			require.Equal(t, []string{"both"}, f.calls)
+			for _, id := range f.ids {
+				require.Equal(t, "tenant:a", id)
+			}
+			if failed {
+				require.Nil(t, edges)
+			} else {
+				require.Len(t, edges, 1)
+				require.Equal(t, EdgeID("e"), edges[0].ID)
+			}
+		})
 	}
 }

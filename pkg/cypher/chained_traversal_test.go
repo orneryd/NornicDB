@@ -20,20 +20,15 @@ type danglingTraversalEngine struct {
 	missingNodeIDs map[storage.NodeID]error
 }
 
-func (e *danglingTraversalEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	if edges, ok := e.forcedOutgoing[nodeID]; ok {
-		return edges, nil
+// ReadAdjacentEdges forces the configured adjacency so both the full read and
+// the traversal's header fast path (relationshipsNeedOnlyHeaders) see it.
+func (e *danglingTraversalEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentOutgoing {
+		if edges, ok := e.forcedOutgoing[request.Node]; ok {
+			return edges, nil
+		}
 	}
-	return e.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
-}
-
-// OutgoingEdgeHeaders mirrors GetOutgoingEdges so the traversal's header fast
-// path (relationshipsNeedOnlyHeaders) sees the same forced adjacency.
-func (e *danglingTraversalEngine) OutgoingEdgeHeaders(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
-	if edges, ok := e.forcedOutgoing[nodeID]; ok {
-		return edges, true, nil
-	}
-	return e.MemoryEngine.OutgoingEdgeHeaders(ctx, nodeID)
+	return e.MemoryEngine.ReadAdjacentEdges(ctx, request)
 }
 
 func (e *danglingTraversalEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {

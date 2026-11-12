@@ -1296,6 +1296,8 @@ func hasPrefix(s, prefix []byte) bool {
 
 // ClearAllEmbeddings removes embeddings from all nodes, allowing them to be regenerated.
 // Returns the number of nodes that had their embeddings cleared.
+// See ClearAllEmbeddingsForPrefix for the per-node, non-atomic progress this
+// count reports and for the partial-count error.
 func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
 	return b.ClearAllEmbeddingsForPrefix("")
 }
@@ -1304,39 +1306,54 @@ func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
 // This is used to clear embeddings for a single logical database namespace (e.g., "nornic:").
 //
 // If idPrefix is empty, clears embeddings for all nodes.
+//
+// The reset is per node and not atomic. It first scans every in-scope node
+// record and collects the key IDs of the nodes that currently carry an
+// embedding, then clears each one through the native transaction mutation owner,
+// which is also the single owner of the node's pending-embedding marker. A
+// successful call reports the number of selected nodes reset successfully,
+// and leaves each queued for regeneration by its own update. A body the scan cannot decode, or that does not belong to the key it
+// was found under, fails the scan with ErrInvalidData before anything is
+// written. A node the reset cannot read or write stops the reset and returns
+// the number already cleared together with the error, so a partial reset is
+// never reported as a clean one. Concurrent disappearance is a read failure,
+// not a completed reset.
 func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error) {
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
 
-	cleared := 0
-
-	// First, collect all node IDs that have embeddings
+	// Collect first and write later: the scan reads every in-scope body before
+	// the reset changes any of them, so an unreadable or misattributed record
+	// cannot leave a half-cleared namespace behind.
 	var nodeIDs []NodeID
 	err := b.withView(func(txn *badger.Txn) error {
-		keyPrefix := []byte{prefixNode}
+		keyPrefix := nodeKey(NodeID(idPrefix))
 		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
-			// Extract nodeID from key (skip prefix byte)
 			key := item.Key()
+			// The iterator scopes acquisition to the requested namespace. A bare
+			// node key is invalid when the unscoped reset encounters it.
 			if len(key) <= 1 {
-				continue
+				return fmt.Errorf("clear embeddings: node record key %q has no ID: %w", key, ErrInvalidData)
 			}
 			nodeID := NodeID(key[1:])
-			if idPrefix != "" && !strings.HasPrefix(string(nodeID), idPrefix) {
-				continue
-			}
-
 			err := item.Value(func(val []byte) error {
-				node, err := b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				if err != nil {
-					return nil // Skip invalid nodes
+				node, decodeErr := b.decodeNodeWithEmbeddings(txn, val, nodeID)
+				if decodeErr != nil {
+					return fmt.Errorf("clear embeddings: decoding node %q: %v: %w", nodeID, decodeErr, ErrInvalidData)
+				}
+				// The body names the node whose vectors it holds. Clearing
+				// through a key whose body belongs to another node would write
+				// one node's image over another's.
+				if node.ID != nodeID {
+					return fmt.Errorf("clear embeddings: node %q decodes as %q: %w", nodeID, node.ID, ErrInvalidData)
 				}
 				if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
-					nodeIDs = append(nodeIDs, node.ID)
+					nodeIDs = append(nodeIDs, nodeID)
 				}
 				return nil
 			})
@@ -1350,22 +1367,26 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 		return 0, fmt.Errorf("error scanning nodes: %w", err)
 	}
 
-	// Now update each node to clear its embedding, hidden ones included: they
-	// must not keep an embedding of the model being replaced.
+	// Clear through the canonical node mutation owner. Hidden nodes are included:
+	// they must not keep an embedding of the model being replaced. Before is the
+	// stored image this reset read, so a concurrent writer is a conflict instead
+	// of a stale body written back over it, and the same write moves the node's
+	// pending-embedding marker: each cleared node is re-embedded from its own
+	// update rather than from a whole-keyspace index refresh.
+	cleared := 0
+	ctx := context.Background()
 	for _, id := range nodeIDs {
-		node, err := b.GetStoredNode(context.Background(), id)
+		_, err := b.inMutationTransaction(ctx, string(id), true, func(tx *BadgerTransaction) error {
+			node, err := tx.GetStoredNode(ctx, id)
+			if err != nil {
+				return err
+			}
+			before := *node
+			node.ChunkEmbeddings = nil
+			return tx.UpdateGraphNode(ctx, NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages})
+		})
 		if err != nil {
-			continue // Skip if node no longer exists
-		}
-		before := *node
-		node.ChunkEmbeddings = nil
-		if err := b.UpdateNode(context.Background(), NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages}); err != nil {
-			b.log.Warn("failed to clear embedding for node",
-				"subsystem", "embeddings_index",
-				"node_id", string(id),
-				slog.Any("error", err),
-			)
-			continue
+			return cleared, fmt.Errorf("clear embeddings: node %q after clearing %d of %d nodes: %w", id, cleared, len(nodeIDs), err)
 		}
 		cleared++
 	}
@@ -1374,16 +1395,6 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 		"subsystem", "embeddings_index",
 		"cleared", cleared,
 	)
-
-	// Refresh the pending embeddings index so nodes get re-processed
-	added := b.RefreshPendingEmbeddingsIndex()
-	if added > 0 {
-		b.log.Info("added nodes to pending embeddings queue",
-			"subsystem", "embeddings_index",
-			"added", added,
-		)
-	}
-
 	return cleared, nil
 }
 

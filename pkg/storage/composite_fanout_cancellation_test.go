@@ -59,17 +59,7 @@ func (p *compositeCancelProbe) GetEdgesByType(context.Context, string) ([]*Edge,
 	return p.edges, nil
 }
 
-func (p *compositeCancelProbe) GetOutgoingEdges(context.Context, NodeID) ([]*Edge, error) {
-	p.beginRead()
-	return p.edges, nil
-}
-
-func (p *compositeCancelProbe) GetIncomingEdges(context.Context, NodeID) ([]*Edge, error) {
-	p.beginRead()
-	return p.edges, nil
-}
-
-func (p *compositeCancelProbe) GetEdgesBetween(context.Context, NodeID, NodeID) ([]*Edge, error) {
+func (p *compositeCancelProbe) ReadAdjacentEdges(context.Context, AdjacentEdgeRead) ([]*Edge, error) {
 	p.beginRead()
 	return p.edges, nil
 }
@@ -79,22 +69,12 @@ func (p *compositeCancelProbe) GetNodesByLabelVisibleAt(context.Context, string,
 	return p.nodes, nil
 }
 
-func (p *compositeCancelProbe) GetOutgoingEdgesVisibleAt(context.Context, NodeID, MVCCVersion) ([]*Edge, error) {
-	p.beginRead()
-	return p.edges, nil
-}
-
-func (p *compositeCancelProbe) GetIncomingEdgesVisibleAt(context.Context, NodeID, MVCCVersion) ([]*Edge, error) {
+func (p *compositeCancelProbe) ReadAdjacentEdgesVisibleAt(context.Context, AdjacentEdgeRead, MVCCVersion) ([]*Edge, error) {
 	p.beginRead()
 	return p.edges, nil
 }
 
 func (p *compositeCancelProbe) GetEdgesByTypeVisibleAt(context.Context, string, MVCCVersion) ([]*Edge, error) {
-	p.beginRead()
-	return p.edges, nil
-}
-
-func (p *compositeCancelProbe) GetEdgesBetweenVisibleAt(context.Context, NodeID, NodeID, MVCCVersion) ([]*Edge, error) {
 	p.beginRead()
 	return p.edges, nil
 }
@@ -161,23 +141,23 @@ func TestCompositeMergeReadsStopOnCallerCancellation(t *testing.T) {
 			return len(edges), err
 		}},
 		{name: "outgoing edges", read: func(composite *CompositeEngine, ctx context.Context) (int, error) {
-			edges, err := composite.GetOutgoingEdges(ctx, "cancel-node")
+			edges, err := composite.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: "cancel-node"})
 			return len(edges), err
 		}},
 		{name: "incoming edges", read: func(composite *CompositeEngine, ctx context.Context) (int, error) {
-			edges, err := composite.GetIncomingEdges(ctx, "cancel-node")
+			edges, err := composite.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "cancel-node"})
 			return len(edges), err
 		}},
 		{name: "edges between", read: func(composite *CompositeEngine, ctx context.Context) (int, error) {
-			edges, err := composite.GetEdgesBetween(ctx, "cancel-start", "cancel-end")
+			edges, err := composite.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "cancel-start", Other: "cancel-end"})
 			return len(edges), err
 		}},
 		{name: "qualified edges between", read: func(composite *CompositeEngine, ctx context.Context) (int, error) {
-			edges, err := composite.GetEdgesBetween(ctx, NodeID(SourceNodeElementID("source-a", "cancel-start")), "cancel-end")
+			edges, err := composite.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: NodeID(SourceNodeElementID("source-a", "cancel-start")), Other: "cancel-end"})
 			return len(edges), err
 		}},
 		{name: "qualified edges between visible at", read: func(composite *CompositeEngine, ctx context.Context) (int, error) {
-			edges, err := composite.GetEdgesBetweenVisibleAt(ctx, NodeID(SourceNodeElementID("source-a", "cancel-start")), "cancel-end", MVCCVersion{})
+			edges, err := composite.ReadAdjacentEdgesVisibleAt(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: NodeID(SourceNodeElementID("source-a", "cancel-start")), Other: "cancel-end"}, MVCCVersion{})
 			return len(edges), err
 		}},
 		{name: "nodes by label visible at", read: func(composite *CompositeEngine, ctx context.Context) (int, error) {
@@ -189,15 +169,15 @@ func TestCompositeMergeReadsStopOnCallerCancellation(t *testing.T) {
 			return len(edges), err
 		}},
 		{name: "outgoing edges visible at", read: func(composite *CompositeEngine, ctx context.Context) (int, error) {
-			edges, err := composite.GetOutgoingEdgesVisibleAt(ctx, "cancel-node", MVCCVersion{})
+			edges, err := composite.ReadAdjacentEdgesVisibleAt(ctx, AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "cancel-node"}, MVCCVersion{})
 			return len(edges), err
 		}},
 		{name: "incoming edges visible at", read: func(composite *CompositeEngine, ctx context.Context) (int, error) {
-			edges, err := composite.GetIncomingEdgesVisibleAt(ctx, "cancel-node", MVCCVersion{})
+			edges, err := composite.ReadAdjacentEdgesVisibleAt(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "cancel-node"}, MVCCVersion{})
 			return len(edges), err
 		}},
 		{name: "edges between visible at", read: func(composite *CompositeEngine, ctx context.Context) (int, error) {
-			edges, err := composite.GetEdgesBetweenVisibleAt(ctx, "cancel-start", "cancel-end", MVCCVersion{})
+			edges, err := composite.ReadAdjacentEdgesVisibleAt(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "cancel-start", Other: "cancel-end"}, MVCCVersion{})
 			return len(edges), err
 		}},
 	}
@@ -434,15 +414,7 @@ func (p *compositeFailingReadProbe) GetEdgesByType(context.Context, string) ([]*
 	return nil, p.err
 }
 
-func (p *compositeFailingReadProbe) GetOutgoingEdges(context.Context, NodeID) ([]*Edge, error) {
-	return nil, p.err
-}
-
-func (p *compositeFailingReadProbe) GetIncomingEdges(context.Context, NodeID) ([]*Edge, error) {
-	return nil, p.err
-}
-
-func (p *compositeFailingReadProbe) GetEdgesBetween(context.Context, NodeID, NodeID) ([]*Edge, error) {
+func (p *compositeFailingReadProbe) ReadAdjacentEdges(context.Context, AdjacentEdgeRead) ([]*Edge, error) {
 	return nil, p.err
 }
 
@@ -450,19 +422,11 @@ func (p *compositeFailingReadProbe) GetNodesByLabelVisibleAt(context.Context, st
 	return nil, p.err
 }
 
-func (p *compositeFailingReadProbe) GetOutgoingEdgesVisibleAt(context.Context, NodeID, MVCCVersion) ([]*Edge, error) {
-	return nil, p.err
-}
-
-func (p *compositeFailingReadProbe) GetIncomingEdgesVisibleAt(context.Context, NodeID, MVCCVersion) ([]*Edge, error) {
+func (p *compositeFailingReadProbe) ReadAdjacentEdgesVisibleAt(context.Context, AdjacentEdgeRead, MVCCVersion) ([]*Edge, error) {
 	return nil, p.err
 }
 
 func (p *compositeFailingReadProbe) GetEdgesByTypeVisibleAt(context.Context, string, MVCCVersion) ([]*Edge, error) {
-	return nil, p.err
-}
-
-func (p *compositeFailingReadProbe) GetEdgesBetweenVisibleAt(context.Context, NodeID, NodeID, MVCCVersion) ([]*Edge, error) {
 	return nil, p.err
 }
 
@@ -490,15 +454,15 @@ func TestCompositeFanOutPreservesConstituentErrorRepresentation(t *testing.T) {
 			return err
 		}},
 		{name: "outgoing edges", read: func(composite *CompositeEngine) error {
-			_, err := composite.GetOutgoingEdges(context.Background(), "node-1")
+			_, err := composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "node-1"})
 			return err
 		}},
 		{name: "incoming edges", read: func(composite *CompositeEngine) error {
-			_, err := composite.GetIncomingEdges(context.Background(), "node-1")
+			_, err := composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "node-1"})
 			return err
 		}},
 		{name: "edges between", read: func(composite *CompositeEngine) error {
-			_, err := composite.GetEdgesBetween(context.Background(), "node-1", "node-2")
+			_, err := composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node-1", Other: "node-2"})
 			return err
 		}},
 	}
@@ -520,15 +484,15 @@ func TestCompositeFanOutPreservesConstituentErrorRepresentation(t *testing.T) {
 			return err
 		}},
 		{name: "outgoing edges visible at", read: func(composite *CompositeEngine) error {
-			_, err := composite.GetOutgoingEdgesVisibleAt(context.Background(), "node-1", MVCCVersion{})
+			_, err := composite.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "node-1"}, MVCCVersion{})
 			return err
 		}},
 		{name: "incoming edges visible at", read: func(composite *CompositeEngine) error {
-			_, err := composite.GetIncomingEdgesVisibleAt(context.Background(), "node-1", MVCCVersion{})
+			_, err := composite.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "node-1"}, MVCCVersion{})
 			return err
 		}},
 		{name: "edges between visible at", read: func(composite *CompositeEngine) error {
-			_, err := composite.GetEdgesBetweenVisibleAt(context.Background(), "node-1", "node-2", MVCCVersion{})
+			_, err := composite.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node-1", Other: "node-2"}, MVCCVersion{})
 			return err
 		}},
 	}
@@ -571,11 +535,13 @@ type compositePairCountProbe struct {
 	pairReads int
 }
 
-func (p *compositePairCountProbe) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
-	p.mu.Lock()
-	p.pairReads++
-	p.mu.Unlock()
-	return p.Engine.GetEdgesBetween(ctx, startID, endID)
+func (p *compositePairCountProbe) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	if request.Direction == AdjacentBetween {
+		p.mu.Lock()
+		p.pairReads++
+		p.mu.Unlock()
+	}
+	return p.Engine.ReadAdjacentEdges(ctx, request)
 }
 
 func (p *compositePairCountProbe) readCount() int {
@@ -634,14 +600,14 @@ func TestCompositeFanOutPreservesSourceIdentityAndPairRouting(t *testing.T) {
 	require.Equal(t, map[string]EdgeID{"one": relation, "two": relation}, streamedEdges)
 
 	routed := newCompositeReadOnly(map[string]Engine{"one": counted["one"], "two": counted["two"]})
-	routedEdges, err := routed.GetEdgesBetween(ctx, NodeID("4:one:raw:same"), NodeID("4:one:raw:target"))
+	routedEdges, err := routed.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: NodeID("4:one:raw:same"), Other: NodeID("4:one:raw:target")})
 	require.NoError(t, err)
 	require.Len(t, routedEdges, 1)
 	require.Equal(t, "one", routedEdges[0].Database)
 	require.Equal(t, 1, counted["one"].readCount(), "the qualified pair reaches its own constituent")
 	require.Zero(t, counted["two"].readCount(), "a qualified pair never fans out to another constituent")
 
-	crossSource, err := routed.GetEdgesBetween(ctx, NodeID("4:one:raw:same"), NodeID("4:two:raw:target"))
+	crossSource, err := routed.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: NodeID("4:one:raw:same"), Other: NodeID("4:two:raw:target")})
 	require.NoError(t, err)
 	require.Empty(t, crossSource)
 	require.Equal(t, 1, counted["one"].readCount())
@@ -703,15 +669,15 @@ func TestCompositeFanOutPreservesEmptyResults(t *testing.T) {
 			return len(edges), err
 		},
 		"incoming edges": func() (int, error) {
-			edges, err := empty.GetIncomingEdges(ctx, "node-1")
+			edges, err := empty.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "node-1"})
 			return len(edges), err
 		},
 		"outgoing edges": func() (int, error) {
-			edges, err := empty.GetOutgoingEdges(ctx, "node-1")
+			edges, err := empty.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: "node-1"})
 			return len(edges), err
 		},
 		"edges between": func() (int, error) {
-			edges, err := empty.GetEdgesBetween(ctx, "node-1", "node-2")
+			edges, err := empty.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node-1", Other: "node-2"})
 			return len(edges), err
 		},
 		"nodes by label visible at": func() (int, error) {

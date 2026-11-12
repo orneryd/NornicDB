@@ -57,6 +57,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/providerbatch"
 	"github.com/orneryd/nornicdb/pkg/embeddingsource"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/textchunk"
@@ -974,7 +975,7 @@ func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 		return [][]float32{}, nil
 	}
 	var results [][]float32
-	err := forProviderBatches(ctx, len(texts), 2048, 300000, func(i int) int { return min(len(texts[i]), 8192) }, func(start, end int) error {
+	err := providerbatch.ForBatches(ctx, "embedding inputs", len(texts), 2048, 300000, func(i int) int { return min(len(texts[i]), 8192) }, func(start, end int) error {
 		vectors, err := e.embedBatchRequest(ctx, texts[start:end])
 		if err == nil {
 			results = mergeProviderBatch(results, vectors, start, len(texts))

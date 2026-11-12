@@ -75,7 +75,7 @@ func TestTransactionWrapperVisibleAtPreservesRequestAndScope(t *testing.T) {
 		edges:        []*storage.Edge{{ID: "tenant:e1", StartNode: "tenant:n1", EndNode: "tenant:n2", Type: "REL"}},
 	}
 	wrapper := &transactionStorageWrapper{underlying: engine, namespace: "tenant", separator: ":"}
-	edges, err := wrapper.GetEdgesBetweenVisibleAt(context.Background(), "n1", "n2", version)
+	edges, err := wrapper.ReadAdjacentEdgesVisibleAt(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: "n1", Other: "n2"}, version)
 	require.NoError(t, err)
 	require.Equal(t, storage.NodeID("tenant:n1"), engine.node, "the read names the namespace-prefixed start node")
 	require.Equal(t, storage.NodeID("tenant:n2"), engine.other, "the read names the namespace-prefixed end node")
@@ -89,7 +89,7 @@ func TestTransactionWrapperVisibleAtPreservesRequestAndScope(t *testing.T) {
 		edges:        []*storage.Edge{{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL"}},
 	}
 	scopedWrapper := &transactionStorageWrapper{underlying: scoped, namespace: "tenant", separator: ":"}
-	outgoing, err := scopedWrapper.GetOutgoingEdgesVisibleAt(context.Background(), "n1", version)
+	outgoing, err := scopedWrapper.ReadAdjacentEdgesVisibleAt(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: "n1"}, version)
 	require.NoError(t, err)
 	require.Equal(t, storage.NodeID("n1"), scoped.node, "an engine scoped to the namespace is not prefixed twice")
 	require.Equal(t, version, scoped.version)

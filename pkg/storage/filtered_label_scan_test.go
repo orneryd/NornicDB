@@ -340,7 +340,13 @@ func TestStreamNodesWithOptionsFilteredLabelScanStopsAndCancels(t *testing.T) {
 // same rows. Pending rows are not filtered by the scan's option, so the caller
 // keeps doing its residual check.
 func TestStreamNodesWithOptionsFilteredLabelScanSeesWriteBehindOverlay(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
+	// The manual drain owner stops the background flusher: after an explicit
+	// flush the buffer adapts its rotation delay toward the measured drain
+	// latency (floor 5ms), so a running worker can retire a pending generation
+	// before the overlay assertions read it. Every write stays buffered until
+	// an explicit flush, which is still a non-cancellable waiter (the fixture
+	// stopped the worker).
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
 	keeps := func(properties map[string]interface{}) bool { return properties["keep"] == "yes" }
 	opts := StreamNodesOptions{
 		Label:                    "Record",

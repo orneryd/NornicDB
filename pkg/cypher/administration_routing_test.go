@@ -180,9 +180,15 @@ func TestSystemProceduresSeeNoSystemRecords(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, edges)
 	for _, read := range []func() ([]*storage.Edge, error){
-		func() ([]*storage.Edge, error) { return view.GetOutgoingEdges(context.Background(), "user:probe") },
-		func() ([]*storage.Edge, error) { return view.GetIncomingEdges(context.Background(), "user:probe") },
-		func() ([]*storage.Edge, error) { return view.GetEdgesBetween(context.Background(), "a", "b") },
+		func() ([]*storage.Edge, error) {
+			return view.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "user:probe"})
+		},
+		func() ([]*storage.Edge, error) {
+			return view.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "user:probe"})
+		},
+		func() ([]*storage.Edge, error) {
+			return view.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: "a", Other: "b"})
+		},
 		func() ([]*storage.Edge, error) { return view.GetEdgesByType(context.Background(), "R") },
 	} {
 		edges, err := read()

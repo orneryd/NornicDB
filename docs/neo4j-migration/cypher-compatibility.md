@@ -512,46 +512,78 @@ CREATE (a)-[:KNOWS]->(b)
 
 ### 16. **EXPLAIN / PROFILE**
 
-**Status**: Complete (27 passing tests)
-**Files**: `pkg/cypher/explain.go` (560 lines), `pkg/cypher/explain_test.go`
+`EXPLAIN` prepares the query without executing it. Index-seek diagnostics use
+applicable schema indexes and pure planning values; planning does not invoke a
+configured function to obtain a property value.
+
+`PROFILE` executes the query without serving or populating the result cache.
+Its plan records the clauses and readers that actually ran. Operator rows are
+the rows that operator emitted, rather than a copy of the final result count.
+Repeated executions of one retained clause aggregate; separate clause positions
+and UNION branches remain separate. Fused operations are reported together.
 
 ```cypher
--- EXPLAIN - show execution plan without executing
-EXPLAIN MATCH (n:Person) RETURN n
-EXPLAIN MATCH (n:Person) WHERE n.age > 25 RETURN n ORDER BY n.name LIMIT 10
-
--- PROFILE - execute and show plan with statistics
-PROFILE MATCH (n:Person) RETURN n
-PROFILE MATCH (n:Person)-[:KNOWS]->(m) RETURN n, m
+EXPLAIN MATCH (n:Person {name: 'Ada'}) RETURN n
+PROFILE MATCH (n:Person) WHERE n.age > 34 RETURN n
+PROFILE WITH 1 AS x RETURN x UNION ALL WITH 2 AS x RETURN x
 ```
 
-**Features Implemented**:
+For a five-person fixture with one age above 34, the label scan reports five
+rows and the filter reports one. The UNION ALL example returns two rows and
+keeps its two one-row branches under the union operator. A constant projection
+such as `PROFILE RETURN 1` has zero graph reads.
 
--  EXPLAIN mode (shows plan, doesn't execute)
--  PROFILE mode (executes and shows plan with stats)
--  Execution plan tree structure
--  Operator types: NodeByLabelScan, AllNodesScan, NodeIndexSeek, Filter, Expand, Sort, Limit, ProduceResults, etc.
--  Estimated rows per operator
--  DB hits estimation
--  Actual rows and timing (PROFILE only)
--  Visual plan formatting
+Database hits count the logical entity/index accesses reported by the runtime
+readers. They are not disk reads, cache misses or a promise of the same numeric
+count as another engine. Node scans count the entities received before residual
+filtering; a pushed-down storage predicate may narrow that input first. Point
+reads count attempts; index reads count their lookup and returned entries.
+Catalog operations are logical reads too: `gds.graph.exists` and
+`gds.util.nodeProperty` report one projection-catalog lookup and the projected
+property entry it answers; `gds.alpha.linkprediction.*` reports the adjacency
+entries each direction read returned, before its type filter and the
+neighbourhood's de-duplication, so a repeated or self-looping relationship stays
+visible; and `graph.names` / `graph.propertiesByName` report the one catalog
+acquisition that listed the composite database's graphs, before visibility
+filtering. Planning statistics do not become execution hits.
 
-**Example Output**:
+An absent measurement is **unobserved**, not zero or an estimate. Opaque Go
+callbacks can make reads outside the observed readers. Their known nested reads
+remain visible, but the plan does not advertise that partial sum as a complete
+total. Mutation access counts are likewise unobserved. Per-operator timing and
+execution estimates are not synthesized from the statement's elapsed time or
+final row count; unavailable values remain unavailable. Total elapsed time and
+returned cardinality are measured at statement completion.
 
+The graph-token listings `db.labels`, `db.relationshipTypes` and
+`db.propertyKeys` report the entity populations their scans actually read,
+including known empty populations. A custom registration replacing these names
+remains opaque. A `db.propertyKeys` scan failure fails the call with
+`Neo.ClientError.Procedure.ProcedureCallFailed`, rather than returning keys from
+only the readable part of the graph. Other procedure families remain unobserved
+until their actual accesses are covered.
+
+Go consumers inspect `PlanOperator.RowsObserved`, `DBHitsObserved` and
+`ExecutionPlan.TotalDBHitsObserved` before interpreting counters. `Unobserved`
+explains coverage boundaries. The Bolt/HTTP plan map omits unavailable operator
+counters and exposes completeness in its arguments; the text renderer prints
+`unobserved`, preserving any recorded partial hit sum.
+
+```go
+result, err := exec.Execute(ctx, "PROFILE MATCH (n:Person) RETURN n", nil)
+if err != nil {
+    return err
+}
+plan := result.Metadata["plan"].(*cypher.ExecutionPlan)
+if plan.TotalDBHitsObserved {
+    fmt.Println("Database hits:", plan.TotalDBHits)
+} else {
+    fmt.Println("Recorded hits (incomplete):", plan.TotalDBHits, plan.Unobserved)
+}
 ```
-+--------------------------------------------------------------+
-| PROFILE Query Plan                                           |
-+--------------------------------------------------------------+
-| Total Time: 1.234ms                                          |
-| Total Rows: 3                                                |
-| Total DB Hits: 2006                                          |
-+--------------------------------------------------------------+
-| +- ProduceResults (Return results)                           |
-| |   Est: 100, Actual: 3, Hits: 100                          |
-|   +- NodeByLabelScan (Scan all :Person nodes)               |
-|   |   Est: 1000, Actual: 3, Hits: 2000                      |
-+--------------------------------------------------------------+
-```
+
+These flags change diagnostic interpretation, not graph storage or Cypher
+result values. Native callbacks retain their declared node-image contract.
 
 ---
 
@@ -592,7 +624,7 @@ selected database. See [multi-database](../user-guides/multi-database.md).
 | WHERE after YIELD     | Complete | 6 tests   | integrated |
 | MATCH...CREATE        | Complete | 16+ tests | 427 lines  |
 | Composite Indexes     | Complete | multiple  | integrated |
-| EXPLAIN/PROFILE       | Complete | 27 tests  | 560 lines  |
+| EXPLAIN/PROFILE       | Runtime observations; explicit coverage limits | See section 16 | |
 
 ### Test Coverage
 
@@ -721,6 +753,7 @@ native extensions. Empty query collection returns no fabricated counter row.
 
 - [Neo4j Cypher manual](https://neo4j.com/docs/cypher-manual/current/)
 - [Neo4j Cypher functions](https://neo4j.com/docs/cypher-manual/current/functions/)
+- [Neo4j execution plans](https://neo4j.com/docs/cypher-manual/current/planning-and-tuning/execution-plans/)
 - [Neo4j APOC procedures and functions](https://neo4j.com/docs/apoc/current/overview/)
 
 These describe Neo4j behavior; check the NornicDB compatibility details above when migrating.

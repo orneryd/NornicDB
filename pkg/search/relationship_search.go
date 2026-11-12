@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -683,6 +684,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 
 	rs.mu.RLock()
 	bm25 := rs.fulltext.Search(query, depth)
+	recordIndexCandidates(queryprofile.Access(ctx, profileKindRelationshipFulltextCandidates, ""), len(bm25), nil)
 	type scored struct {
 		id    string
 		score float64
@@ -757,6 +759,10 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		c.rrf += vectorWeight / (rrfK + float64(rank))
 	}
 
+	if len(embedding) > 0 {
+		recordIndexCandidates(queryprofile.Access(ctx, profileKindRelationshipVectorCandidates, ""), rank, nil)
+	}
+
 	ordered := make([]*relationshipCandidate, 0, len(candidates))
 	for _, c := range candidates {
 		ordered = append(ordered, c)
@@ -776,12 +782,29 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		edge      *storage.Edge
 		candidate *relationshipCandidate
 	}
+	// The loop below makes this search's point reads: one relationship image
+	// per candidate, and both endpoint images of every candidate a filter
+	// examines. A PROFILE statement resolves one counter for each read before
+	// the loop, so one record owns every attempt the loop performs; a
+	// statement nobody profiles resolves none and adds nothing.
+	var edgeCounter *queryprofile.ReadCounter
+	if len(ordered) > 0 {
+		edgeCounter = queryprofile.Access(ctx, queryprofile.KindRelationshipByIDSeek, "")
+	}
+	// The endpoint read stays the full point read: a filter is a native
+	// predicate, which may read the vectors a node carries outside its
+	// properties, so it is never narrowed to an embedding-metadata image.
+	var endpointCounter *queryprofile.ReadCounter
+	if opts.RelationshipWhere != nil && len(ordered) > 0 {
+		endpointCounter = queryprofile.Access(ctx, queryprofile.KindNodeByIDSeek, "")
+	}
 	admitted := make([]admittedRelationship, 0, min(limit, len(ordered)))
 	for _, c := range ordered {
 		if len(admitted) >= limit {
 			break
 		}
 		edge, err := s.engine.GetEdge(ctx, storage.EdgeID(c.id))
+		queryprofile.EntityReadResult(edgeCounter, edge, err)
 		if err != nil {
 			continue // deleted, or hidden from reads
 		}
@@ -790,10 +813,14 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		}
 		if opts.RelationshipWhere != nil {
 			var start, end *storage.Node
-			if node, err := s.engine.GetNode(ctx, edge.StartNode); err == nil {
+			node, err := s.engine.GetNode(ctx, edge.StartNode)
+			queryprofile.EntityReadResult(endpointCounter, node, err)
+			if err == nil {
 				start = node
 			}
-			if node, err := s.engine.GetNode(ctx, edge.EndNode); err == nil {
+			node, err = s.engine.GetNode(ctx, edge.EndNode)
+			queryprofile.EntityReadResult(endpointCounter, node, err)
+			if err == nil {
 				end = node
 			}
 			passes, err := opts.relationshipWhere(ctx, edge, start, end)

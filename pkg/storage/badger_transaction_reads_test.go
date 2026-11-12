@@ -515,10 +515,10 @@ func TestTxReads_GetEdge_DeletedReturnsNotFound(t *testing.T) {
 func TestTxReads_GetOutgoingEdges(t *testing.T) {
 	tx := beginDirectionalReadFixture(t)
 
-	out := readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
+	out := readDirectionalEdges(t, tx, AdjacentEdgeRead{Node: "test:alice"})
 	require.Equal(t, []string{"test:e-knows-1", "test:e-knows-2"}, edgeIDs(out))
 	out[0].Type = "CALLER_MUTATION"
-	out = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
+	out = readDirectionalEdges(t, tx, AdjacentEdgeRead{Node: "test:alice"})
 	require.Equal(t, "KNOWS", out[0].Type, "mutating returned edge data must not corrupt the transaction snapshot cache")
 
 	updated, err := tx.GetEdge(t.Context(), "test:e-knows-2")
@@ -526,7 +526,7 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 	updated.EndNode = "test:dave"
 	updated.Type = "MENTIONS"
 	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: updated}))
-	out = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
+	out = readDirectionalEdges(t, tx, AdjacentEdgeRead{Node: "test:alice"})
 	foundUpdated := findEdgeByID(out, "test:e-knows-2")
 	require.NotNil(t, foundUpdated)
 	require.Equal(t, NodeID("test:dave"), foundUpdated.EndNode, "pending edge update must override the cached committed edge")
@@ -538,7 +538,7 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 		Type: "MENTIONS", Properties: map[string]any{},
 	}))
 	require.NoError(t, tx.DeleteEdge(t.Context(), "test:e-knows-1"))
-	out = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
+	out = readDirectionalEdges(t, tx, AdjacentEdgeRead{Node: "test:alice"})
 	require.Equal(t, []string{"test:e-knows-2", "test:e-new"}, edgeIDs(out))
 
 	// Pending edge from a different node must NOT show up under alice.
@@ -546,7 +546,7 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 		ID: "test:e-other", StartNode: "test:bob", EndNode: "test:dave",
 		Type: "REFERS",
 	}))
-	out = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
+	out = readDirectionalEdges(t, tx, AdjacentEdgeRead{Node: "test:alice"})
 	require.Equal(t, []string{"test:e-knows-2", "test:e-new"}, edgeIDs(out),
 		"alice's outgoing must not include bob→dave")
 }
@@ -554,11 +554,11 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 func TestTxReads_GetIncomingEdges(t *testing.T) {
 	tx := beginDirectionalReadFixture(t)
 
-	in := readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:carol"})
+	in := readDirectionalEdges(t, tx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:carol"})
 	require.Equal(t, []string{"test:e-follows", "test:e-knows-2"}, edgeIDs(in))
 
 	// alice has no incoming edges.
-	in = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:alice"})
+	in = readDirectionalEdges(t, tx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:alice"})
 	require.Empty(t, in)
 
 	// Pending edge into alice — must show up in subsequent read.
@@ -566,7 +566,7 @@ func TestTxReads_GetIncomingEdges(t *testing.T) {
 		ID: "test:e-incoming", StartNode: "test:dave", EndNode: "test:alice",
 		Type: "MENTIONS",
 	}))
-	in = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:alice"})
+	in = readDirectionalEdges(t, tx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:alice"})
 	require.Equal(t, []string{"test:e-incoming"}, edgeIDs(in))
 }
 
@@ -574,11 +574,11 @@ func TestTxReads_GetEdgesBetween(t *testing.T) {
 	tx := beginDirectionalReadFixture(t)
 
 	// alice→bob has exactly one edge.
-	got := readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:alice", Other: "test:bob"})
+	got := readDirectionalEdges(t, tx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:alice", Other: "test:bob"})
 	require.Equal(t, []string{"test:e-knows-1"}, edgeIDs(got))
 
 	// bob→alice has none (directed).
-	got = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:bob", Other: "test:alice"})
+	got = readDirectionalEdges(t, tx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:bob", Other: "test:alice"})
 	require.Empty(t, got)
 
 	// Add a second alice→bob edge as pending; the result must
@@ -587,7 +587,7 @@ func TestTxReads_GetEdgesBetween(t *testing.T) {
 		ID: "test:e-knows-3", StartNode: "test:alice", EndNode: "test:bob",
 		Type: "RIVALS",
 	}))
-	got = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:alice", Other: "test:bob"})
+	got = readDirectionalEdges(t, tx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:alice", Other: "test:bob"})
 	require.Equal(t, []string{"test:e-knows-1", "test:e-knows-3"}, edgeIDs(got))
 }
 
@@ -1060,7 +1060,7 @@ func TestTxReads_CreateEdgeSingleAndBulkAgree(t *testing.T) {
 }
 
 // readDirectionalEdges reads one transaction edge-read and returns its edges.
-func readDirectionalEdges(t *testing.T, tx *BadgerTransaction, request TransactionEdgeRead) []*Edge {
+func readDirectionalEdges(t *testing.T, tx *BadgerTransaction, request AdjacentEdgeRead) []*Edge {
 	t.Helper()
 	edges, err := tx.ReadEdges(context.Background(), request)
 	require.NoError(t, err)

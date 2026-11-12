@@ -1,12 +1,9 @@
 package cypher
 
-// NOR-413: an auto-commit read statement whose only CALLs are read-only CALL
-// subqueries reads its row nodes without their stored chunk vectors, as the
-// same statement without CALL and in a transaction do. A statement that calls a
-// procedure keeps the full read of the release head. Whether a statement can
-// write is the statement-effect owner's answer; statements that read vectors
-// (vector search, link prediction, property vectors) keep their results, and
-// writing procedures keep stored vectors.
+// Read-only row materialization omits stored vector payloads when the statement's
+// consumers require only metadata. Native procedures and graph-valued native
+// function arguments retain complete images; vector scoring reads its vectors
+// independently, and writes preserve stored vectors through transaction staging.
 
 import (
 	"context"
@@ -119,9 +116,9 @@ func nor413Allocated(tb testing.TB, before, statement, after func()) uint64 {
 // reproduction: the read chain with a read-only CALL subquery allocates about
 // what it allocates without CALL, auto-commit and in an explicit transaction,
 // far below the chunk vectors of the nodes it matches, and answers the same
-// rows. Before the fix it read every matched node with all its vectors. With a
-// READ procedure the auto-commit statement keeps that full read, as on the
-// release head; in a transaction it reads without vectors, as before.
+// rows. Before the fix it read every matched node with all its vectors. The bundled
+// read procedure declares metadata-only node inputs; native full-image
+// consumers have separate vector-preservation controls.
 func TestNOR413AutoCommitCallReadsLeaveVectorsInStorage(t *testing.T) {
 	g := newNOR413Graph(t, 16, 256)
 	exec := NewStorageExecutor(g.store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
@@ -140,7 +137,7 @@ func TestNOR413AutoCommitCallReadsLeaveVectorsInStorage(t *testing.T) {
 	}{
 		{"without-call", nor413WithoutCall, true},
 		{"call-subquery", nor413CallSubquery, true},
-		{"read-procedure", nor413ReadProcedure, false},
+		{"read-procedure", nor413ReadProcedure, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			autocommit := run(t, tc.query)
@@ -202,8 +199,7 @@ func TestNOR413CallSubqueryAfterFullReadsKeepsAllocationBound(t *testing.T) {
 // TestNOR413AutoCommitCallReadsUseQueryNodes: the reported statement's row
 // nodes, with a CALL subquery, are point-read without their vectors
 // (GetQueryNode), never with them (GetNode), as without CALL. With a READ
-// procedure they are read in full, never without vectors, as on the release
-// head.
+// procedure declaring metadata inputs, the same read policy applies.
 func TestNOR413AutoCommitCallReadsUseQueryNodes(t *testing.T) {
 	g := newNOR413Graph(t, 4, 2)
 	spy := storagefault.NewQueryNodeReadSpy(g.store)
@@ -214,7 +210,7 @@ func TestNOR413AutoCommitCallReadsUseQueryNodes(t *testing.T) {
 	}{
 		{nor413WithoutCall, true},
 		{nor413CallSubquery, true},
-		{nor413ReadProcedure, false},
+		{nor413ReadProcedure, true},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			spy.Full.Store(0)
@@ -228,8 +224,8 @@ func TestNOR413AutoCommitCallReadsUseQueryNodes(t *testing.T) {
 }
 
 // nor413RequireReadMode checks that one statement read every node in one
-// mode: without vectors (GetQueryNode) or, as on the release head for a
-// statement with a procedure call, in full (GetNode).
+// mode: metadata without vectors (GetQueryNode), or full images (GetNode)
+// when an admitted native consumer requires them.
 func nor413RequireReadMode(t *testing.T, spy *queryNodeReadSpy, vectorFree bool) {
 	t.Helper()
 	if vectorFree {

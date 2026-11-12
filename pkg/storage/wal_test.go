@@ -369,8 +369,7 @@ func buildAtomicWALRecord(t *testing.T, entry WALEntry) []byte {
 }
 
 func TestNewWAL(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("creates_wal_with_default_config", func(t *testing.T) {
 		dir := t.TempDir()
@@ -775,8 +774,7 @@ func newWALAppendFixture(t *testing.T) *WAL {
 }
 
 func TestWAL_Append(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("appends_entries_when_enabled", func(t *testing.T) {
 		wal := newWALAppendFixture(t)
@@ -909,8 +907,7 @@ func TestWAL_Append(t *testing.T) {
 }
 
 func TestWAL_Sync(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("immediate_sync_mode", func(t *testing.T) {
 		dir := t.TempDir()
@@ -952,8 +949,7 @@ func TestWAL_Sync(t *testing.T) {
 }
 
 func TestWAL_Checkpoint(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "none"}
@@ -974,8 +970,7 @@ func TestWAL_Checkpoint(t *testing.T) {
 }
 
 func TestWAL_Close(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("closes_cleanly", func(t *testing.T) {
 		dir := t.TempDir()
@@ -1001,8 +996,7 @@ func TestWAL_Close(t *testing.T) {
 }
 
 func TestWAL_Stats(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "none"}
@@ -1026,8 +1020,7 @@ func TestWAL_Stats(t *testing.T) {
 }
 
 func TestWAL_ReadEntries(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -1055,8 +1048,7 @@ func TestWAL_ReadEntries(t *testing.T) {
 }
 
 func TestWAL_ReadEntriesAfter(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -1174,8 +1166,7 @@ func TestCheckWALIntegrity(t *testing.T) {
 }
 
 func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("closed wal returns error", func(t *testing.T) {
 		wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
@@ -1304,8 +1295,7 @@ func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
 }
 
 func TestSnapshot_CreateAndLoad(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "none"}
@@ -1367,8 +1357,7 @@ func TestSnapshot_AtomicWrite(t *testing.T) {
 }
 
 func TestReplayWALEntry(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("replay_create_node", func(t *testing.T) {
 		baseEngine := newTestMemoryEngine(t)
@@ -1505,8 +1494,7 @@ func TestReplayWALEntry(t *testing.T) {
 }
 
 func TestRecoverFromWAL(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("recovery_with_snapshot_and_wal", func(t *testing.T) {
 		dir := t.TempDir()
@@ -1623,8 +1611,7 @@ func TestRecoverFromWAL(t *testing.T) {
 }
 
 func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("invalid snapshot payload returns load error", func(t *testing.T) {
 		requireRecoveryStoresClosed(t)
@@ -1754,8 +1741,7 @@ func TestSaveSnapshot_ErrorPaths(t *testing.T) {
 }
 
 func TestWALEngine(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("logs_and_executes_operations", func(t *testing.T) {
 		dir := t.TempDir()
@@ -1839,9 +1825,9 @@ func TestWALEngine(t *testing.T) {
 		walEngine.GetNode(t.Context(), "n1")
 		walEngine.GetEdge(t.Context(), "e1")
 		walEngine.GetNodesByLabel(context.Background(), "Test")
-		walEngine.GetOutgoingEdges(context.Background(), "n1")
-		walEngine.GetIncomingEdges(context.Background(), "n2")
-		walEngine.GetEdgesBetween(context.Background(), "n1", "n2")
+		walEngine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "n1"})
+		walEngine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "n2"})
+		walEngine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "n1", Other: "n2"})
 		walEngine.GetEdgeBetween(t.Context(), "n1", "n2", "TEST")
 		walEngine.AllNodes(context.Background())
 		walEngine.AllEdges(context.Background())
@@ -1892,8 +1878,7 @@ func TestWALEngine_WithFeatureFlagDisabled(t *testing.T) {
 }
 
 func TestWAL_SequenceRestoration(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 
@@ -1947,8 +1932,7 @@ func TestWAL_FeatureFlagIntegration(t *testing.T) {
 	t.Run("wal_enabled_by_default", func(t *testing.T) {
 		config.ResetFeatureFlags()
 		// After reset, WAL is disabled, but let's enable it
-		config.EnableWAL()
-		defer config.DisableWAL()
+		defer config.WithWALEnabled()()
 
 		assert.True(t, config.IsWALEnabled())
 	})
@@ -1985,8 +1969,7 @@ func mustMarshal(v interface{}) []byte {
 // Benchmarks
 
 func BenchmarkWAL_Append(b *testing.B) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := b.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "none"}
@@ -2003,8 +1986,7 @@ func BenchmarkWAL_Append(b *testing.B) {
 }
 
 func BenchmarkWAL_AppendWithSync(b *testing.B) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := b.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -2021,8 +2003,7 @@ func BenchmarkWAL_AppendWithSync(b *testing.B) {
 }
 
 func BenchmarkWALEngine_CreateNode(b *testing.B) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := b.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "none"}
@@ -2042,8 +2023,7 @@ func BenchmarkWALEngine_CreateNode(b *testing.B) {
 // ============================================================================
 
 func TestBatchWriter_AppendNode(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -2069,8 +2049,7 @@ func TestBatchWriter_AppendNode(t *testing.T) {
 }
 
 func TestBatchWriter_Commit(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -2098,8 +2077,7 @@ func TestBatchWriter_Commit(t *testing.T) {
 }
 
 func TestBatchWriter_Rollback(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -2123,8 +2101,7 @@ func TestBatchWriter_Rollback(t *testing.T) {
 }
 
 func TestBatchWriter_AppendEdge(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -2151,8 +2128,7 @@ func TestBatchWriter_AppendEdge(t *testing.T) {
 }
 
 func TestBatchWriter_CommitWithTxID(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -2179,8 +2155,7 @@ func TestBatchWriter_CommitWithTxID(t *testing.T) {
 }
 
 func TestWAL_TruncateAfterSnapshot(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("truncate_removes_old_entries", func(t *testing.T) {
 		dir := t.TempDir()
@@ -2543,8 +2518,26 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 }
 
 func TestWALEngine_AutoCompaction(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
+
+	awaitCompaction := func(t *testing.T, walEngine *WALEngine, walPath string, minimumSnapshots int64) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			entries, readErr := ReadWALEntries(t.Context(), walPath, nil)
+			if readErr != nil {
+				return false
+			}
+			for _, entry := range entries {
+				// Truncation keeps only the snapshot cycle's checkpoint marker.
+				if entry.Operation != OpCheckpoint {
+					return false
+				}
+			}
+			totalSnapshots, lastSnapshot := walEngine.GetSnapshotStats()
+			return totalSnapshots >= minimumSnapshots && !lastSnapshot.IsZero()
+		}, 10*time.Second, 10*time.Millisecond,
+			"an automatic snapshot should have truncated the created nodes out of the WAL")
+	}
 
 	t.Run("auto_compaction_truncates_wal_periodically", func(t *testing.T) {
 		dir := t.TempDir()
@@ -2572,7 +2565,8 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		// Add many nodes to WAL
 		for i := 1; i <= 50; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			walEngine.CreateNode(t.Context(), node)
+			_, err = walEngine.CreateNode(t.Context(), node)
+			require.NoError(t, err)
 		}
 
 		// Get WAL size before compaction
@@ -2581,8 +2575,13 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		require.NoError(t, err)
 		sizeBefore := statBefore.Size()
 
-		// Wait for at least one snapshot cycle
-		time.Sleep(250 * time.Millisecond)
+		// Await the compaction loop's durable result instead of a fixed
+		// sleep. The loop publishes the snapshot, truncates the WAL entries it
+		// covers and only then records the snapshot stats, so a wall-clock
+		// budget can observe a cycle that has not finished on a loaded runner.
+		// The bounded wait still fails the test if periodic truncation stops.
+
+		awaitCompaction(t, walEngine, walPath, 1)
 
 		// Check that snapshot was created
 		files, err := os.ReadDir(snapshotDir)
@@ -2597,11 +2596,13 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		// Add more nodes after first compaction
 		for i := 51; i <= 100; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			walEngine.CreateNode(t.Context(), node)
+			_, err = walEngine.CreateNode(t.Context(), node)
+			require.NoError(t, err)
 		}
 
-		// Wait for another snapshot cycle
-		time.Sleep(250 * time.Millisecond)
+		// Await the next cycle so the WAL size below observes a completed
+		// truncation instead of an arbitrary delay.
+		awaitCompaction(t, walEngine, walPath, totalSnapshots+1)
 
 		// WAL should have been truncated - size should be manageable
 		statAfter, err := os.Stat(walPath)
@@ -2641,17 +2642,17 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 
 			err = walEngine.EnableAutoCompaction(snapshotDir)
 			require.NoError(t, err)
+			defer walEngine.DisableAutoCompaction()
 
 			// Create nodes
 			for i := 1; i <= 100; i++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-				walEngine.CreateNode(t.Context(), node)
+				_, err = walEngine.CreateNode(t.Context(), node)
+				require.NoError(t, err)
 			}
 
-			// Wait for snapshot
-			time.Sleep(200 * time.Millisecond)
-
-			walEngine.DisableAutoCompaction()
+			// Wait for a durable completed cycle, not a scheduling budget.
+			awaitCompaction(t, walEngine, filepath.Join(walDir, "wal.log"), 1)
 		}()
 
 		// Find latest snapshot (filter for .json files only, not .tmp files)
@@ -2715,7 +2716,8 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		// Add nodes
 		for i := 1; i <= 20; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			walEngine.CreateNode(t.Context(), node)
+			_, err = walEngine.CreateNode(t.Context(), node)
+			require.NoError(t, err)
 		}
 
 		// Wait longer than snapshot interval
@@ -2729,8 +2731,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 }
 
 func TestBatchWriter_AppendDelete(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
@@ -2754,8 +2755,7 @@ func TestBatchWriter_AppendDelete(t *testing.T) {
 }
 
 func BenchmarkBatchWriter_Commit(b *testing.B) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := b.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "none"}
@@ -2778,8 +2778,7 @@ func BenchmarkBatchWriter_Commit(b *testing.B) {
 // ============================================================================
 
 func TestWALEngine_StreamNodes(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	engine := newTestMemoryEngine(t)
@@ -2826,8 +2825,7 @@ func TestWALEngine_StreamNodes(t *testing.T) {
 }
 
 func TestWALEngine_StreamNodesByPrefix(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("delegates to wrapped PrefixStreamingEngine", func(t *testing.T) {
 		nodes := []*Node{
@@ -2885,8 +2883,7 @@ func TestWALEngine_StreamNodesByPrefix(t *testing.T) {
 }
 
 func TestWALEngine_ForEachNodeIDByLabel(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	base := newTestMemoryEngine(t)
 
@@ -2916,8 +2913,7 @@ func TestWALEngine_ForEachNodeIDByLabel(t *testing.T) {
 }
 
 func TestWALEngine_StreamEdges(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	engine := newTestMemoryEngine(t)
@@ -2975,8 +2971,7 @@ func TestWALEngine_StreamEdges(t *testing.T) {
 }
 
 func TestWALEngine_StreamNodeChunks(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	engine := newTestMemoryEngine(t)
@@ -3354,8 +3349,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 // TestWALEngine_ImplementsStreamingEngine verifies the interface is implemented
 func TestWALEngine_ImplementsStreamingEngine(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	engine := newTestMemoryEngine(t)
@@ -3375,8 +3369,7 @@ func TestWALEngine_ImplementsStreamingEngine(t *testing.T) {
 // TestFullStorageChain_Streaming tests streaming through the full storage chain:
 // AsyncEngine -> WALEngine -> BadgerEngine
 func TestFullStorageChain_Streaming(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 

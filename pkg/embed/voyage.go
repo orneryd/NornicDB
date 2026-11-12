@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/orneryd/nornicdb/internal/providerbatch"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/textchunk"
 	voyageapi "github.com/orneryd/nornicdb/pkg/voyage"
@@ -195,7 +196,7 @@ func (e *VoyageEmbedder) embedBatchWithUsage(ctx context.Context, texts []string
 	}
 	var results [][]float32
 	var usage []providerBatchUsage
-	err := forProviderBatches(ctx, len(texts), 1000, budget, func(i int) int {
+	err := providerbatch.ForBatches(ctx, "embedding inputs", len(texts), 1000, budget, func(i int) int {
 		// The retrieval instruction is prepended by Voyage. Reserve 64 bytes
 		// per input as well as the input's conservative token upper bound.
 		return min(len(texts[i])+64, 32000)
@@ -225,7 +226,7 @@ func (e *VoyageEmbedder) embedBatchWithUsage(ctx context.Context, texts []string
 func (e *VoyageEmbedder) embedMultimodalBatch(ctx context.Context, inputs []any, inputType string) ([][]float32, []providerBatchUsage, error) {
 	var results [][]float32
 	var usage []providerBatchUsage
-	err := forProviderBatches(ctx, len(inputs), voyageapi.MultimodalMaxInputs, 320000, func(i int) int {
+	err := providerbatch.ForBatches(ctx, "embedding inputs", len(inputs), voyageapi.MultimodalMaxInputs, 320000, func(i int) int {
 		input := inputs[i].(voyageapi.MultimodalInput)
 		bytes := 64
 		for _, part := range input.Content {

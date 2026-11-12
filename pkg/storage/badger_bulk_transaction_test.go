@@ -62,7 +62,7 @@ func TestBulkOperations_BeyondOneBatchSurviveReopen(t *testing.T) {
 	byLabel, err := engine.GetNodesByLabel(context.Background(), "Bulk")
 	require.NoError(t, err)
 	require.Len(t, byLabel, n)
-	out, err := engine.GetOutgoingEdges(context.Background(), nodes[n/2].ID)
+	out, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: nodes[n/2].ID})
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 

@@ -495,10 +495,10 @@ func TestMemoryEngine_UpdateEdge(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify indexes updated
-		outgoing, _ := engine.GetOutgoingEdges(context.Background(), NodeID(prefixTestID("n1")))
+		outgoing, _ := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: NodeID(prefixTestID("n1"))})
 		assert.Empty(t, outgoing)
 
-		outgoing, _ = engine.GetOutgoingEdges(context.Background(), NodeID(prefixTestID("n2")))
+		outgoing, _ = engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: NodeID(prefixTestID("n2"))})
 		require.Len(t, outgoing, 1)
 		assert.Equal(t, prefixTestID("edge-1"), string(outgoing[0].ID))
 	})
@@ -564,10 +564,10 @@ func TestMemoryEngine_DeleteEdge(t *testing.T) {
 
 		require.NoError(t, engine.DeleteEdge(t.Context(), EdgeID(prefixTestID("edge-1"))))
 
-		outgoing, _ := engine.GetOutgoingEdges(context.Background(), NodeID(prefixTestID("n1")))
+		outgoing, _ := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: NodeID(prefixTestID("n1"))})
 		assert.Empty(t, outgoing)
 
-		incoming, _ := engine.GetIncomingEdges(context.Background(), NodeID(prefixTestID("n2")))
+		incoming, _ := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: NodeID(prefixTestID("n2"))})
 		assert.Empty(t, incoming)
 	})
 
@@ -730,7 +730,7 @@ func runMemoryDirectionalEdgeCases(t *testing.T, lookup func(*MemoryEngine, Node
 
 func TestMemoryEngine_GetOutgoingEdges(t *testing.T) {
 	runMemoryDirectionalEdgeCases(t, func(engine *MemoryEngine, id NodeID) ([]*Edge, error) {
-		return engine.GetOutgoingEdges(context.Background(), id)
+		return engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: id})
 	}, []memoryDirectionalEdgeCase{
 		{name: "returns outgoing edges", partners: [2]string{"target1", "target2"}, query: "center", wantCount: 2},
 		{name: "returns empty for node with no outgoing", isolated: "isolated", query: "isolated"},
@@ -740,7 +740,7 @@ func TestMemoryEngine_GetOutgoingEdges(t *testing.T) {
 
 func TestMemoryEngine_GetIncomingEdges(t *testing.T) {
 	runMemoryDirectionalEdgeCases(t, func(engine *MemoryEngine, id NodeID) ([]*Edge, error) {
-		return engine.GetIncomingEdges(context.Background(), id)
+		return engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: id})
 	}, []memoryDirectionalEdgeCase{
 		{name: "returns incoming edges", partners: [2]string{"source1", "source2"}, towardHub: true, query: "center", wantCount: 2},
 		{name: "empty ID", wantErr: ErrInvalidID},
@@ -774,7 +774,7 @@ func TestMemoryEngine_GetEdgesBetween(t *testing.T) {
 			EndNode:   NodeID(prefixTestID("n3")),
 		}))
 
-		edges, err := engine.GetEdgesBetween(context.Background(), NodeID(prefixTestID("n1")), NodeID(prefixTestID("n2")))
+		edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: NodeID(prefixTestID("n1")), Other: NodeID(prefixTestID("n2"))})
 		require.NoError(t, err)
 		assert.Len(t, edges, 2)
 	})
@@ -786,20 +786,20 @@ func TestMemoryEngine_GetEdgesBetween(t *testing.T) {
 		_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n2"))})
 		require.NoError(t, err)
 
-		edges, err := engine.GetEdgesBetween(context.Background(), NodeID(prefixTestID("n1")), NodeID(prefixTestID("n2")))
+		edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: NodeID(prefixTestID("n1")), Other: NodeID(prefixTestID("n2"))})
 		require.NoError(t, err)
 		assert.Empty(t, edges)
 	})
 
 	t.Run("empty start ID", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		_, err := engine.GetEdgesBetween(context.Background(), "", "n2")
+		_, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "", Other: "n2"})
 		assert.ErrorIs(t, err, ErrInvalidID)
 	})
 
 	t.Run("empty end ID", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		_, err := engine.GetEdgesBetween(context.Background(), "n1", "")
+		_, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "n1", Other: ""})
 		assert.ErrorIs(t, err, ErrInvalidID)
 	})
 }

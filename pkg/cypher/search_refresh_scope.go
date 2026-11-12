@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 
 	"github.com/orneryd/nornicdb/pkg/search"
 )
@@ -37,13 +38,19 @@ func (s cypherRefreshScope) PrepareSearchRefresh(_ context.Context, request sear
 // end it, not the request that produced the change. Without a service there
 // is no refresh work now; a transaction keeps the change for its commit, as
 // PrepareSearchRefresh does.
-func (e *StorageExecutor) refreshSearch(request search.RefreshRequest) {
+func (e *StorageExecutor) refreshSearch(ctx context.Context, request search.RefreshRequest) {
 	service := request.PostCommitService
 	if !request.PostCommit {
 		service = e.search()
 	}
 	if service != nil {
-		_ = search.RefreshIndexes(service.LifetimeContext(), cypherRefreshScope{executor: e}, request)
+		readCtx := ctx
+		// Post-commit refresh has its owner chosen by RefreshIndexes. Visible
+		// nontransactional Cypher mutations also use the service's lifetime.
+		if !request.PostCommit {
+			readCtx = queryprofile.OnLifetime(service.LifetimeContext(), ctx)
+		}
+		_ = search.RefreshIndexes(readCtx, cypherRefreshScope{executor: e}, request)
 		return
 	}
 	if request.PostCommit || (request.Node == "" && request.Edge == "") {

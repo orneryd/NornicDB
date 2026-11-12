@@ -69,9 +69,9 @@ func BenchmarkNOR160EdgeReads(b *testing.B) {
 				var found []*Edge
 				var err error
 				if historical {
-					found, err = engine.GetEdgesBetweenVisibleAt(b.Context(), "bench:n000", "bench:n001", head.Version)
+					found, err = engine.ReadAdjacentEdgesVisibleAt(b.Context(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "bench:n000", Other: "bench:n001"}, head.Version)
 				} else {
-					found, err = engine.GetEdgesBetween(b.Context(), "bench:n000", "bench:n001")
+					found, err = engine.ReadAdjacentEdges(b.Context(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "bench:n000", Other: "bench:n001"})
 				}
 				if err != nil || len(found) != 10 {
 					b.Fatalf("between rows: %d, %v", len(found), err)

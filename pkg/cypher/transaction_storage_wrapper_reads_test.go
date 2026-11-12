@@ -42,26 +42,14 @@ func (e *recordingVisibilityEngine) GetNodesByLabelVisibleAt(ctx context.Context
 	return e.nodes, e.readErr
 }
 
-func (e *recordingVisibilityEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	e.node, e.version = nodeID, version
-	e.cancelCaller(ctx)
-	return e.edges, e.readErr
-}
-
-func (e *recordingVisibilityEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	e.node, e.version = nodeID, version
+func (e *recordingVisibilityEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, request storage.AdjacentEdgeRead, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	e.node, e.other, e.version = request.Node, request.Other, version
 	e.cancelCaller(ctx)
 	return e.edges, e.readErr
 }
 
 func (e *recordingVisibilityEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	e.label, e.version = edgeType, version
-	e.cancelCaller(ctx)
-	return e.edges, e.readErr
-}
-
-func (e *recordingVisibilityEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	e.node, e.other, e.version = startID, endID, version
 	e.cancelCaller(ctx)
 	return e.edges, e.readErr
 }
@@ -130,16 +118,16 @@ func TestTransactionWrapperVisibleAtCancelsAtReadExit(t *testing.T) {
 			},
 		},
 		{
-			name: "GetOutgoingEdgesVisibleAt",
+			name: "ReadAdjacentEdgesVisibleAt/outgoing",
 			read: func(ctx context.Context) (int, error) {
-				edges, err := wrapper.GetOutgoingEdgesVisibleAt(ctx, "n1", version)
+				edges, err := wrapper.ReadAdjacentEdgesVisibleAt(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: "n1"}, version)
 				return len(edges), err
 			},
 		},
 		{
-			name: "GetIncomingEdgesVisibleAt",
+			name: "ReadAdjacentEdgesVisibleAt/incoming",
 			read: func(ctx context.Context) (int, error) {
-				edges, err := wrapper.GetIncomingEdgesVisibleAt(ctx, "n2", version)
+				edges, err := wrapper.ReadAdjacentEdgesVisibleAt(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "n2"}, version)
 				return len(edges), err
 			},
 		},
@@ -151,9 +139,9 @@ func TestTransactionWrapperVisibleAtCancelsAtReadExit(t *testing.T) {
 			},
 		},
 		{
-			name: "GetEdgesBetweenVisibleAt",
+			name: "ReadAdjacentEdgesVisibleAt/between",
 			read: func(ctx context.Context) (int, error) {
-				edges, err := wrapper.GetEdgesBetweenVisibleAt(ctx, "n1", "n2", version)
+				edges, err := wrapper.ReadAdjacentEdgesVisibleAt(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: "n1", Other: "n2"}, version)
 				return len(edges), err
 			},
 		},
@@ -272,35 +260,35 @@ func TestTransactionWrapperReadsRejectCanceledCaller(t *testing.T) {
 		{
 			name: "GetOutgoingEdges",
 			read: func(ctx context.Context) (int, error) {
-				edges, err := wrapper.GetOutgoingEdges(ctx, "x")
+				edges, err := wrapper.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: "x"})
 				return len(edges), err
 			},
 		},
 		{
 			name: "GetIncomingEdges",
 			read: func(ctx context.Context) (int, error) {
-				edges, err := wrapper.GetIncomingEdges(ctx, "y")
+				edges, err := wrapper.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "y"})
 				return len(edges), err
 			},
 		},
 		{
 			name: "GetEdgesBetween",
 			read: func(ctx context.Context) (int, error) {
-				edges, err := wrapper.GetEdgesBetween(ctx, "x", "y")
+				edges, err := wrapper.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: "x", Other: "y"})
 				return len(edges), err
 			},
 		},
 		{
 			name: "GetStoredOutgoingEdges",
 			read: func(ctx context.Context) (int, error) {
-				edges, err := wrapper.GetStoredOutgoingEdges(ctx, "x")
+				edges, err := wrapper.ReadStoredAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: "x"})
 				return len(edges), err
 			},
 		},
 		{
 			name: "GetStoredIncomingEdges",
 			read: func(ctx context.Context) (int, error) {
-				edges, err := wrapper.GetStoredIncomingEdges(ctx, "y")
+				edges, err := wrapper.ReadStoredAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "y"})
 				return len(edges), err
 			},
 		},
@@ -333,11 +321,11 @@ func TestTransactionWrapperVisibleAtCancellationAcrossScopes(t *testing.T) {
 			return len(v), e
 		}},
 		{"outgoing", func(ctx context.Context, w *transactionStorageWrapper) (int, error) {
-			v, e := w.GetOutgoingEdgesVisibleAt(ctx, "n1", storage.MVCCVersion{})
+			v, e := w.ReadAdjacentEdgesVisibleAt(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: "n1"}, storage.MVCCVersion{})
 			return len(v), e
 		}},
 		{"incoming", func(ctx context.Context, w *transactionStorageWrapper) (int, error) {
-			v, e := w.GetIncomingEdgesVisibleAt(ctx, "n2", storage.MVCCVersion{})
+			v, e := w.ReadAdjacentEdgesVisibleAt(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "n2"}, storage.MVCCVersion{})
 			return len(v), e
 		}},
 		{"type", func(ctx context.Context, w *transactionStorageWrapper) (int, error) {
@@ -345,7 +333,7 @@ func TestTransactionWrapperVisibleAtCancellationAcrossScopes(t *testing.T) {
 			return len(v), e
 		}},
 		{"between", func(ctx context.Context, w *transactionStorageWrapper) (int, error) {
-			v, e := w.GetEdgesBetweenVisibleAt(ctx, "n1", "n2", storage.MVCCVersion{})
+			v, e := w.ReadAdjacentEdgesVisibleAt(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: "n1", Other: "n2"}, storage.MVCCVersion{})
 			return len(v), e
 		}},
 	}

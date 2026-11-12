@@ -66,7 +66,7 @@ func remoteNativeContextEntries() []nativeContextEntry {
 			return value.ID, nil
 		}},
 		{name: "GetEdgesBetween", mode: RemoteAccessRead, columns: []string{"r"}, rows: [][]interface{}{{edge}}, want: int64(1), run: func(engine *RemoteEngine) (interface{}, error) {
-			values, err := engine.GetEdgesBetween(context.Background(), "node:a", "node:b")
+			values, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node:a", Other: "node:b"})
 			if err != nil {
 				return nil, err
 			}
@@ -271,7 +271,7 @@ func TestRemoteHTTPCallerContextSurvivesOneDerivation(t *testing.T) {
 			return remoteEngineMethodReplyHTTPServed("MATCH (a)-[r]->(b) WHERE a.id = $start AND b.id = $end RETURN r", map[string]interface{}{"start": "node:a", "end": "node:b"}), nil
 		})
 		t.Cleanup(func() { _ = engine.Close() })
-		edges, err := engine.GetEdgesBetween(ctx, "node:a", "node:b")
+		edges, err := engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node:a", Other: "node:b"})
 		require.NoError(t, err)
 		require.Len(t, edges, 1)
 		deadline, bounded := observed.Deadline()
@@ -289,7 +289,7 @@ func TestRemoteHTTPCallerContextSurvivesOneDerivation(t *testing.T) {
 			return remoteEngineMethodReplyHTTPServed("MATCH ()-[r]->() RETURN r", nil), nil
 		})
 		t.Cleanup(func() { _ = engine.Close() })
-		_, err := engine.GetEdgesBetween(ctx, "node:a", "node:b")
+		_, err := engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node:a", Other: "node:b"})
 		require.ErrorIs(t, err, context.Canceled)
 		require.Zero(t, requests, "a cancelled caller must not reach the transport")
 	})
@@ -303,7 +303,7 @@ func TestRemoteHTTPCallerContextSurvivesOneDerivation(t *testing.T) {
 			return remoteEngineMethodReplyHTTPServed("MATCH ()-[r]->() RETURN r", nil), nil
 		})
 		t.Cleanup(func() { _ = engine.Close() })
-		_, err := engine.GetEdgesBetween(ctx, "node:a", "node:b")
+		_, err := engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node:a", Other: "node:b"})
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.Zero(t, requests, "an expired caller deadline must not reach the transport")
 	})
@@ -321,7 +321,7 @@ func TestRemoteHTTPCallerContextSurvivesOneDerivation(t *testing.T) {
 			return nil, context.Canceled
 		})
 		t.Cleanup(func() { _ = engine.Close() })
-		_, err := engine.GetEdgesBetween(ctx, "node:a", "node:b")
+		_, err := engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node:a", Other: "node:b"})
 		require.ErrorIs(t, err, context.Canceled)
 	})
 }
@@ -432,7 +432,7 @@ func TestRemoteBoltCallerContextSurvivesOneDerivation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		engine, driver := newNativeLifetimeBoltEngine(remoteNativeContextEntries()[0])
-		_, err := engine.GetEdgesBetween(ctx, "node:a", "node:b")
+		_, err := engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node:a", Other: "node:b"})
 		require.ErrorIs(t, err, context.Canceled)
 		require.Zero(t, driver.sessions, "a cancelled caller must not open a Bolt session")
 	})
@@ -441,7 +441,7 @@ func TestRemoteBoltCallerContextSurvivesOneDerivation(t *testing.T) {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Millisecond))
 		defer cancel()
 		engine, driver := newNativeLifetimeBoltEngine(remoteNativeContextEntries()[0])
-		_, err := engine.GetEdgesBetween(ctx, "node:a", "node:b")
+		_, err := engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node:a", Other: "node:b"})
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.Zero(t, driver.sessions, "an expired caller deadline must not open a Bolt session")
 	})

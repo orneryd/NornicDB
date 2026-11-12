@@ -92,12 +92,12 @@ func TestTracedEngine_DelegatesAllMethods(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, byLabel, 2)
 
-	out, err := traced.GetOutgoingEdges(context.Background(), "test:n1")
+	out, err := traced.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:n1"})
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	require.Equal(t, EdgeID("test:e1"), out[0].ID)
 
-	in, err := traced.GetIncomingEdges(context.Background(), "test:n2")
+	in, err := traced.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:n2"})
 	require.NoError(t, err)
 	require.Len(t, in, 1)
 	require.Equal(t, EdgeID("test:e1"), in[0].ID)

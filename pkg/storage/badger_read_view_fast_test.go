@@ -110,7 +110,7 @@ func TestSnapshotOverlayBusyCachedBatchAndAdjacency(t *testing.T) {
 		require.Len(t, nodes, 4)
 		require.Equal(t, int64(2), nodes["test:a"].Properties["v"])
 	}
-	edges, err := b.GetOutgoingEdges(context.Background(), "test:a")
+	edges, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, EdgeID("test:r"), edges[0].ID)

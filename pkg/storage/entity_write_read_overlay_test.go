@@ -195,10 +195,10 @@ func warmRefreshedReadRoutes(t *testing.T, f *refreshedReadFixture) {
 		}), want, "warming stored edge type "+edgeType)
 	}
 
-	outgoing, err := tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: refreshedDocID})
+	outgoing, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Node: refreshedDocID})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 4)
-	incoming, err := tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadIncoming, Node: refreshedPartID})
+	incoming, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: refreshedPartID})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:edge", "test:own-edge"}, edgeIDs(incoming))
 	requireEdgePeers(t, incoming, map[EdgeID]interface{}{
@@ -206,7 +206,7 @@ func warmRefreshedReadRoutes(t *testing.T, f *refreshedReadFixture) {
 		refreshedOwnEdgeID: int64(1),
 	}, "warming incoming adjacency")
 
-	between, err := tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: refreshedDocID, Other: refreshedPartID})
+	between, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: refreshedDocID, Other: refreshedPartID})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:edge", "test:own-edge"}, edgeIDs(between))
 
@@ -481,7 +481,7 @@ func TestWriteOwnedReadImagesComposeLatestCommittedCollections(t *testing.T) {
 	})
 
 	t.Run("adjacency and between reads", func(t *testing.T) {
-		outgoing, err := f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: refreshedDocID})
+		outgoing, err := f.tx.ReadEdges(ctx, AdjacentEdgeRead{Node: refreshedDocID})
 		require.NoError(t, err)
 		require.Equal(t, []string{"test:doomed-edge", "test:edge", "test:link", "test:own-edge"}, edgeIDs(outgoing))
 		// The transaction holds doc's write lock, so doc's relationships are
@@ -493,21 +493,21 @@ func TestWriteOwnedReadImagesComposeLatestCommittedCollections(t *testing.T) {
 			refreshedDoomedEdgeID: int64(8),
 		}, "outgoing adjacency of the locked node")
 
-		incoming, err := f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadIncoming, Node: refreshedPartID})
+		incoming, err := f.tx.ReadEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: refreshedPartID})
 		require.NoError(t, err)
 		requireEdgePeers(t, incoming, map[EdgeID]interface{}{
 			refreshedEdgeID:    int64(2),
 			refreshedOwnEdgeID: int64(2),
 		}, "incoming adjacency")
 
-		incomingPartTwo, err := f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadIncoming, Node: refreshedPartTwoID})
+		incomingPartTwo, err := f.tx.ReadEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: refreshedPartTwoID})
 		require.NoError(t, err)
 		requireEdgePeers(t, incomingPartTwo, map[EdgeID]interface{}{
 			refreshedLinkID:       int64(1),
 			refreshedDoomedEdgeID: int64(1),
 		}, "incoming adjacency of an unlocked type")
 
-		storedOutgoing, err := f.tx.GetStoredOutgoingEdges(ctx, refreshedDocID)
+		storedOutgoing, err := f.tx.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Node: refreshedDocID})
 		require.NoError(t, err)
 		// The stored incidence read of the locked doc is current too, so it
 		// agrees with the outgoing adjacency above (NOR-213).
@@ -517,14 +517,14 @@ func TestWriteOwnedReadImagesComposeLatestCommittedCollections(t *testing.T) {
 			refreshedLinkID:       int64(9),
 			refreshedDoomedEdgeID: int64(8),
 		}, "stored outgoing adjacency of the locked node")
-		storedIncoming, err := f.tx.GetStoredIncomingEdges(ctx, refreshedPartID)
+		storedIncoming, err := f.tx.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: refreshedPartID})
 		require.NoError(t, err)
 		requireEdgePeers(t, storedIncoming, map[EdgeID]interface{}{
 			refreshedEdgeID:    int64(2),
 			refreshedOwnEdgeID: int64(2),
 		}, "stored incoming adjacency")
 
-		between, err := f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: refreshedDocID, Other: refreshedPartID})
+		between, err := f.tx.ReadEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: refreshedDocID, Other: refreshedPartID})
 		require.NoError(t, err)
 		require.Equal(t, []string{"test:edge", "test:own-edge"}, edgeIDs(between))
 		requireEdgePeers(t, between, map[EdgeID]interface{}{
@@ -534,7 +534,7 @@ func TestWriteOwnedReadImagesComposeLatestCommittedCollections(t *testing.T) {
 
 		// The between route keeps its documented current-view contract for a
 		// write it holds no lock for; only the locked image is the overlay's.
-		betweenUnlocked, err := f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: refreshedDocID, Other: refreshedPartTwoID})
+		betweenUnlocked, err := f.tx.ReadEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: refreshedDocID, Other: refreshedPartTwoID})
 		require.NoError(t, err)
 		require.Equal(t, []string{"test:doomed-edge", "test:link"}, edgeIDs(betweenUnlocked))
 
@@ -561,7 +561,7 @@ func TestWriteOwnedReadImagesComposeLatestCommittedCollections(t *testing.T) {
 		// doc is locked, so its relationships are read as last committed, and
 		// a relationship that read returned is the same entity to a later
 		// point read (NOR-213); unlocked nodes stay pinned (bystander above).
-		_, err = f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: refreshedDocID})
+		_, err = f.tx.ReadEdges(ctx, AdjacentEdgeRead{Node: refreshedDocID})
 		require.NoError(t, err)
 		returned, err := f.tx.GetEdge(ctx, refreshedLinkID)
 		require.NoError(t, err)
@@ -695,7 +695,7 @@ func TestWriteOwnedReadImagesYieldToOwnStagedWritesAndDeletes(t *testing.T) {
 		refreshedLinkID:    int64(1),
 	}, "AllEdges with a staged delete")
 
-	outgoing, err := f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: refreshedDocID})
+	outgoing, err := f.tx.ReadEdges(ctx, AdjacentEdgeRead{Node: refreshedDocID})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:edge", "test:link", "test:own-edge"}, edgeIDs(outgoing))
 	requireEdgePeers(t, outgoing, map[EdgeID]interface{}{
@@ -863,7 +863,7 @@ func TestWriteOwnedReadImagesApplyLiveVisibility(t *testing.T) {
 		},
 		"type": func() ([]*Edge, error) { return f.tx.GetEdgesByType(ctx, "HAS") },
 		"outgoing": func() ([]*Edge, error) {
-			return f.tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: refreshedDocID})
+			return f.tx.ReadEdges(ctx, AdjacentEdgeRead{Node: refreshedDocID})
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

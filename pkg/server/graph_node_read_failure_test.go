@@ -32,14 +32,6 @@ func (e *graphNodeReadFailureEngine) GetNodeVisibleAt(ctx context.Context, id st
 	return e.GetNode(ctx, id)
 }
 
-func (e *graphNodeReadFailureEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.GetOutgoingEdgesVisibleAt(ctx, id, storage.MVCCVersion{})
-}
-
-func (e *graphNodeReadFailureEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.GetIncomingEdgesVisibleAt(ctx, id, storage.MVCCVersion{})
-}
-
 func TestGraphCollectorsPropagateNodeReadFailures(t *testing.T) {
 	s := &Server{}
 	filters := newGraphFilterSet(nil, nil)

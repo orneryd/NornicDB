@@ -2328,6 +2328,8 @@ func (db *DB) ResetEmbedWorker() error {
 // ClearAllEmbeddings removes embeddings from all nodes, allowing them to be regenerated.
 // This is useful for re-embedding with a new model or fixing corrupted embeddings.
 // It clears both the node embeddings in storage AND the search index.
+// Storage resets are per node, not atomic. On failure, the returned count is
+// completed node resets; the error must be handled before reporting completion.
 func (db *DB) ClearAllEmbeddings() (int, error) {
 	return db.clearEmbeddings(db.defaultDatabaseName(), db.storage)
 }

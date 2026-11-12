@@ -183,14 +183,33 @@ func (e *legacyTestEngine) GetFirstNodeByLabel(ctx context.Context, label string
 	}
 	return nodes[0], nil
 }
-func (e *legacyTestEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.edgesForEndpoint(ctx, id, true)
-}
-func (e *legacyTestEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.edgesForEndpoint(ctx, id, false)
+func (e *legacyTestEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		return e.edgesForEndpoint(ctx, request.Node, false)
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
+	return e.edgesForEndpoint(ctx, request.Node, true)
 }
 func (e *legacyTestEngine) GetEdgesBetween(ctx context.Context, start, end storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := e.GetOutgoingEdges(ctx, start)
+	edges, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: start})
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +222,7 @@ func (e *legacyTestEngine) GetEdgesBetween(ctx context.Context, start, end stora
 	return result, nil
 }
 func (e *legacyTestEngine) GetEdgeBetween(ctx context.Context, start, end storage.NodeID, kind string) (*storage.Edge, error) {
-	edges, err := e.GetEdgesBetween(ctx, start, end)
+	edges, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: start, Other: end})
 	if err != nil {
 		return nil, err
 	}
@@ -228,11 +247,11 @@ func (e *legacyTestEngine) GetEdgesByType(ctx context.Context, kind string) ([]*
 	return result, nil
 }
 func (e *legacyTestEngine) GetInDegree(ctx context.Context, id storage.NodeID) (int, error) {
-	edges, err := e.GetIncomingEdges(ctx, id)
+	edges, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: id})
 	return len(edges), err
 }
 func (e *legacyTestEngine) GetOutDegree(ctx context.Context, id storage.NodeID) (int, error) {
-	edges, err := e.GetOutgoingEdges(ctx, id)
+	edges, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: id})
 	return len(edges), err
 }
 func applyLegacyCreates[T any](ctx context.Context, items []*T, create func(context.Context, *T) error) error {
@@ -402,9 +421,9 @@ func appendLegacySeeds[K comparable, T any](engine *legacyTestEngine, records ma
 func (e *legacyTestEngine) edgesForEndpoint(ctx context.Context, id storage.NodeID, outgoing bool) ([]*storage.Edge, error) {
 	if strings.Contains(string(id), ":") {
 		if outgoing {
-			return e.MemoryEngine.GetOutgoingEdges(ctx, id)
+			return e.MemoryEngine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: id})
 		}
-		return e.MemoryEngine.GetIncomingEdges(ctx, id)
+		return e.MemoryEngine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: id})
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()

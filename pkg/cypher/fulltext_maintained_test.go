@@ -27,6 +27,11 @@ func (s *fulltextCountingStore) StreamNodes(ctx context.Context, visit func(*sto
 	return s.NamespacedEngine.StreamNodes(ctx, func(node *storage.Node) error { s.nodeDocs.Add(1); return visit(node) })
 }
 
+func (s *fulltextCountingStore) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	s.scans.Add(1)
+	return s.NamespacedEngine.StreamNodesWithOptions(ctx, opts, func(node *storage.Node) error { s.nodeDocs.Add(1); return visit(node) })
+}
+
 func (s *fulltextCountingStore) StreamEdges(ctx context.Context, visit func(*storage.Edge) error) error {
 	s.scans.Add(1)
 	return s.NamespacedEngine.StreamEdges(ctx, visit)
@@ -38,13 +43,19 @@ func (s *fulltextCountingStore) GetInnerEngine() storage.Engine { return s.Names
 // PreservesEventView declares that counting changes no event, ID or committed read.
 func (s *fulltextCountingStore) PreservesEventView() {}
 
-func fulltextMaintainedFixture(tb testing.TB, count int) (*StorageExecutor, *fulltextCountingStore) {
+// fulltextFixtureBodies selects generated body diversity without changing the
+// public query shape, eligible population or expected result counts.
+type fulltextFixtureBodies uint8
+
+const fulltextDistinctBodies fulltextFixtureBodies = 1
+
+func fulltextMaintainedFixture(tb testing.TB, count int, bodies ...fulltextFixtureBodies) (*StorageExecutor, *fulltextCountingStore) {
 	tb.Helper()
 	// Use native Badger in memory, with the same capture/publication owner as disk.
-	return fulltextMaintainedFixtureOn(tb, fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed).BadgerEngine, count)
+	return fulltextMaintainedFixtureOn(tb, fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed).BadgerEngine, count, bodies...)
 }
 
-func fulltextMaintainedFixtureOn(tb testing.TB, base *storage.BadgerEngine, count int) (*StorageExecutor, *fulltextCountingStore) {
+func fulltextMaintainedFixtureOn(tb testing.TB, base *storage.BadgerEngine, count int, bodies ...fulltextFixtureBodies) (*StorageExecutor, *fulltextCountingStore) {
 	tb.Helper()
 	store := &fulltextCountingStore{NamespacedEngine: storage.NewNamespacedEngine(base, "fulltext_fixture")}
 	tb.Cleanup(func() { require.NoError(tb, base.Close()) })
@@ -56,6 +67,9 @@ func fulltextMaintainedFixtureOn(tb testing.TB, base *storage.BadgerEngine, coun
 		}
 		if i%40 == 0 {
 			text += " hotel services torrey pines la jolla"
+		}
+		if len(bodies) > 0 && bodies[0] == fulltextDistinctBodies {
+			text += fmt.Sprintf(" distinct-body-%06d", i)
 		}
 		nodes[i] = &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%06d", i)), Labels: []string{label}, Properties: map[string]any{
 			"id": fmt.Sprintf("n%06d", i), "text": text, "title": "Correspondence", "current": i%80 == 0,

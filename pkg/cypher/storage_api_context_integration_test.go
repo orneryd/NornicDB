@@ -23,6 +23,7 @@ type callerContextReadStore struct {
 
 func (s *callerContextReadStore) beforeRead(ctx context.Context) {
 	s.seen = ctx
+	s.reads++
 	if cancel := s.cancel; cancel != nil {
 		s.cancel = nil
 		cancel()
@@ -30,12 +31,11 @@ func (s *callerContextReadStore) beforeRead(ctx context.Context) {
 }
 func (s *callerContextReadStore) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	s.beforeRead(ctx)
-	s.reads++
 	return s.Engine.GetNode(ctx, id)
 }
 func (s *callerContextReadStore) GetQueryNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	s.beforeRead(ctx)
-	return s.Engine.GetNode(ctx, id)
+	return s.Engine.(storage.QueryNodeReader).GetQueryNode(ctx, id)
 }
 
 func TestStorageAPIRowEndpointUsesStatementContext(t *testing.T) {

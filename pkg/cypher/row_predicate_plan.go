@@ -608,6 +608,7 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 // evaluateRowPredicatePartScope reads the plan's value as a WHERE predicate.
 // Values and errors stay explicit inside a junction until its logical fold decides.
 func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) bool {
+	profileRuntimeRecordPredicate(ctx)
 	value, err := e.rowPredicatePartValue(ctx, part, scope, memberships)
 	if err != nil {
 		recordExpressionFailure(ctx, err)

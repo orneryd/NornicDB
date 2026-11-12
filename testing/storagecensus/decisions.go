@@ -173,7 +173,7 @@ func (d *decider) instrWrites(fn *ssa.Function, ins ssa.Instruction) bool {
 // reachable from only one successor within this iteration. The first is a
 // display representative; every instruction contributes to ownership proof.
 func (d *decider) gatedWrites(fn *ssa.Function, b *ssa.BasicBlock) []ssa.Instruction {
-	r0, r1 := reachable(b.Succs[0]), reachable(b.Succs[1])
+	r0, r1 := reachable(b, b.Succs[0]), reachable(b, b.Succs[1])
 	var writes []ssa.Instruction
 	for _, blk := range fn.Blocks {
 		if r0[blk] == r1[blk] {
@@ -207,12 +207,14 @@ func loopBound(b *ssa.BasicBlock) bool {
 	return false
 }
 
-// reachable is the set of blocks reachable from start, start included,
-// within one iteration: loop back edges (to a block that dominates the edge's
-// source) are not followed, so a decision inside a loop body still decides
-// that iteration's write.
-func reachable(start *ssa.BasicBlock) map[*ssa.BasicBlock]bool {
+// reachable is the set of blocks reachable over the edge from -> start,
+// within one iteration. Check that initial edge as well as every later edge:
+// an arm that jumps straight to the loop header starts the next iteration.
+func reachable(from, start *ssa.BasicBlock) map[*ssa.BasicBlock]bool {
 	seen := map[*ssa.BasicBlock]bool{}
+	if start.Dominates(from) {
+		return seen
+	}
 	stack := []*ssa.BasicBlock{start}
 	for len(stack) > 0 {
 		b := stack[len(stack)-1]
@@ -251,7 +253,7 @@ func (d *decider) propagatesError(iff *ssa.If) bool {
 		return false
 	}
 	switch errv.(type) {
-	case *ssa.Extract, *ssa.Call: // (v, err) or a lone error result
+	case *ssa.Extract, *ssa.Call, *ssa.Phi: // exact error, including a join of reader results
 	default:
 		return false
 	}
@@ -274,7 +276,9 @@ func returnsExactError(branch *ssa.BasicBlock, errv ssa.Value) bool {
 				switch ins.(type) {
 				case *ssa.Return, *ssa.DebugRef:
 				default:
-					return false
+					if !returnedAggregateTransfer(ins, ret) {
+						return false
+					}
 				}
 			}
 			return true
@@ -325,6 +329,44 @@ func returnsExactError(branch *ssa.BasicBlock, errv ssa.Value) bool {
 			}
 		}
 		if safe && stored {
+			return true
+		}
+	}
+	return false
+}
+
+// returnedAggregateTransfer recognizes only the local aggregate result's
+// return-time load and identity self-copy. SSA lowers `return r, err` for a
+// captured named r into load/store/load even though the source returns r
+// unchanged. All other stores, calls, pointer reads and defer execution remain
+// effects; in particular, an error-result cell is not an aggregate.
+func returnedAggregateTransfer(ins ssa.Instruction, ret *ssa.Return) bool {
+	var cell ssa.Value
+	switch value := ins.(type) {
+	case *ssa.UnOp:
+		if value.Op != token.MUL {
+			return false
+		}
+		cell = value.X
+	case *ssa.Store:
+		loaded, ok := value.Val.(*ssa.UnOp)
+		if !ok || loaded.Op != token.MUL || loaded.X != value.Addr || loaded.Block() != ret.Block() {
+			return false
+		}
+		cell = value.Addr
+	default:
+		return false
+	}
+	if _, ok := cell.(*ssa.Alloc); !ok {
+		return false
+	}
+	for _, result := range ret.Results {
+		loaded, ok := result.(*ssa.UnOp)
+		if !ok || loaded.Op != token.MUL || loaded.X != cell {
+			continue
+		}
+		switch loaded.Type().Underlying().(type) {
+		case *types.Struct, *types.Array:
 			return true
 		}
 	}

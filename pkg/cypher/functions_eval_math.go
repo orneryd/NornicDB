@@ -1093,7 +1093,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// optional; parseListComprehension finds the parts at the top level, so a
 	// list literal holding a nested comprehension or reduce isn't one.
 	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
-		if varName, listExpr, condition, projection, comprehension := parseListComprehension(inner); comprehension {
+		if varName, listExpr, condition, projection, comprehension := parseListComprehension(inner, nil); comprehension {
 			return e.evaluateListComprehension(ctx, varName, listExpr, condition, projection, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 	}

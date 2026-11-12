@@ -72,9 +72,9 @@ func seedCancellationHub(t *testing.T, b *BadgerEngine) (outgoing, incoming []Ed
 func warmCancellationAdjacency(t *testing.T, b *BadgerEngine) {
 	t.Helper()
 	ctx := context.Background()
-	_, err := b.GetOutgoingEdges(ctx, "test:hub")
+	_, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: "test:hub"})
 	require.NoError(t, err)
-	_, err = b.GetIncomingEdges(ctx, "test:hub")
+	_, err = b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:hub"})
 	require.NoError(t, err)
 }
 
@@ -88,43 +88,41 @@ func TestBulkReadCancellationHotAdjacencyCacheRetires(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("healthy-control-cached-route", func(t *testing.T) {
-		out, err := b.GetOutgoingEdges(ctx, "test:hub")
+		out, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: "test:hub"})
 		require.NoError(t, err)
 		require.ElementsMatch(t, outgoing, testEdgeIDs(out))
-		in, err := b.GetIncomingEdges(ctx, "test:hub")
+		in, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:hub"})
 		require.NoError(t, err)
 		require.ElementsMatch(t, incoming, testEdgeIDs(in))
-		out, in, err = b.GetAdjacentEdges(ctx, "test:hub")
+		both, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"})
 		require.NoError(t, err)
-		require.ElementsMatch(t, outgoing, testEdgeIDs(out))
-		require.ElementsMatch(t, incoming, testEdgeIDs(in))
+		require.ElementsMatch(t, append(append([]EdgeID{}, outgoing...), incoming...), testEdgeIDs(both))
 	})
 
 	t.Run("canceled-caller", func(t *testing.T) {
 		canceled, cancel := context.WithCancel(ctx)
 		cancel()
-		out, err := b.GetOutgoingEdges(canceled, "test:hub")
+		out, err := b.ReadAdjacentEdges(canceled, AdjacentEdgeRead{Node: "test:hub"})
 		require.ErrorIs(t, err, context.Canceled)
 		require.Nil(t, out)
-		in, err := b.GetIncomingEdges(canceled, "test:hub")
+		in, err := b.ReadAdjacentEdges(canceled, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:hub"})
 		require.ErrorIs(t, err, context.Canceled)
 		require.Nil(t, in)
-		out, in, err = b.GetAdjacentEdges(canceled, "test:hub")
+		both, err := b.ReadAdjacentEdges(canceled, AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"})
 		require.ErrorIs(t, err, context.Canceled)
-		require.Nil(t, out)
-		require.Nil(t, in)
+		require.Nil(t, both)
 	})
 
 	t.Run("expired-deadline", func(t *testing.T) {
 		expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
 		defer cancel()
-		out, err := b.GetOutgoingEdges(expired, "test:hub")
+		out, err := b.ReadAdjacentEdges(expired, AdjacentEdgeRead{Node: "test:hub"})
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.Nil(t, out)
 	})
 
 	t.Run("cache-not-poisoned-by-canceled-read", func(t *testing.T) {
-		out, err := b.GetOutgoingEdges(ctx, "test:hub")
+		out, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: "test:hub"})
 		require.NoError(t, err)
 		require.ElementsMatch(t, outgoing, testEdgeIDs(out))
 	})
@@ -395,12 +393,12 @@ func TestBulkReadCancellationHotAdjacencyKernelRetires(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("healthy-control-cached-adjacency", func(t *testing.T) {
-		out, in, complete, err := b.cachedAdjacency(ctx, nil, "test:hub", true, true, visibleRead)
+		out, in, complete, err := b.cachedAdjacency(ctx, nil, AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"}, visibleRead)
 		require.NoError(t, err)
 		require.True(t, complete, "the warmed caches must answer without a view")
 		require.ElementsMatch(t, outgoing, testEdgeIDs(out))
 		require.ElementsMatch(t, incoming, testEdgeIDs(in))
-		reader, err := b.captureAdjacencyReader(ctx, "test:hub", true, true, visibleRead)
+		reader, err := b.captureAdjacencyReader(ctx, AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"}, visibleRead)
 		require.NoError(t, err)
 		require.Nil(t, reader.view, "a complete cached result needs no physical view")
 		out, err = reader.read(ctx, true)
@@ -411,12 +409,12 @@ func TestBulkReadCancellationHotAdjacencyKernelRetires(t *testing.T) {
 	t.Run("canceled-caller", func(t *testing.T) {
 		canceled, cancel := context.WithCancel(ctx)
 		cancel()
-		out, in, complete, err := b.cachedAdjacency(canceled, nil, "test:hub", true, true, visibleRead)
+		out, in, complete, err := b.cachedAdjacency(canceled, nil, AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"}, visibleRead)
 		require.ErrorIs(t, err, context.Canceled)
 		require.False(t, complete)
 		require.Nil(t, out)
 		require.Nil(t, in)
-		reader, err := b.captureAdjacencyReader(canceled, "test:hub", true, true, visibleRead)
+		reader, err := b.captureAdjacencyReader(canceled, AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"}, visibleRead)
 		require.ErrorIs(t, err, context.Canceled)
 		require.Nil(t, reader.view)
 	})
@@ -424,9 +422,9 @@ func TestBulkReadCancellationHotAdjacencyKernelRetires(t *testing.T) {
 	t.Run("expired-deadline", func(t *testing.T) {
 		expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
 		defer cancel()
-		_, _, _, err := b.cachedAdjacency(expired, nil, "test:hub", true, true, visibleRead)
+		_, _, _, err := b.cachedAdjacency(expired, nil, AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"}, visibleRead)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
-		_, err = b.captureAdjacencyReader(expired, "test:hub", true, true, visibleRead)
+		_, err = b.captureAdjacencyReader(expired, AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"}, visibleRead)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 
@@ -447,13 +445,13 @@ func TestBulkReadCancellationHotAdjacencyKernelRetires(t *testing.T) {
 		// The materialize subtest dropped the body caches, so this healthy read
 		// re-warms them through the dispatcher: a canceled read must never have
 		// left a partial adjacency behind for it to serve.
-		out, err := b.GetOutgoingEdges(ctx, "test:hub")
+		out, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: "test:hub"})
 		require.NoError(t, err)
 		require.ElementsMatch(t, outgoing, testEdgeIDs(out))
-		in, err := b.GetIncomingEdges(ctx, "test:hub")
+		in, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:hub"})
 		require.NoError(t, err)
 		require.ElementsMatch(t, incoming, testEdgeIDs(in))
-		cachedOut, cachedIn, complete, err := b.cachedAdjacency(ctx, nil, "test:hub", true, true, visibleRead)
+		cachedOut, cachedIn, complete, err := b.cachedAdjacency(ctx, nil, AdjacentEdgeRead{Direction: AdjacentBoth, Node: "test:hub"}, visibleRead)
 		require.NoError(t, err)
 		require.True(t, complete)
 		require.ElementsMatch(t, outgoing, testEdgeIDs(cachedOut))

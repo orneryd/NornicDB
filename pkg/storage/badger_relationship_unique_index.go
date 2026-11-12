@@ -2,9 +2,10 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"sync/atomic"
+
+	"github.com/orneryd/nornicdb/internal/jsontext"
 )
 
 // Relationship constraint indexes are derived equality indexes, maintained
@@ -121,6 +122,60 @@ func (idx *relationshipUniqueIndex) put(ctx context.Context, edge *Edge) error {
 	return nil
 }
 
+// relationshipUniqueIndexLocked returns the exact-value index of one
+// (namespace, relationship type, property set), building it from every stored
+// relationship of the type when it is not retained yet, and reports whether it
+// built a new one. The caller holds set.mu, so one build serves every waiter and
+// a canceled build publishes nothing. The index is built from every stored
+// relationship of the type: one hidden from reads still holds its value.
+func (b *BadgerEngine) relationshipUniqueIndexLocked(ctx context.Context, key relationshipUniqueIndexKey, properties []string) (*relationshipUniqueIndex, bool, error) {
+	set := &b.relationshipUniqueIndexes
+	if idx := set.entries[key]; idx != nil {
+		return idx, false, nil
+	}
+	set.active.Store(true) // Mutations must join publication before the build reads storage.
+	if hook := getUniqueConstraintScanHook(); hook != nil {
+		hook()
+	}
+	// This scan prepares a constraint decision before the write is accepted.
+	// Its caller supplies the preparation lifetime, not a detached write lifetime.
+	edges, err := b.GetStoredEdgesByType(ctx, key.relType)
+	if err != nil {
+		return nil, false, err
+	}
+	owned := append([]string(nil), properties...)
+	idx := &relationshipUniqueIndex{key: key, properties: owned, keys: make(map[EdgeID][]interface{}), index: &CompositeIndex{Properties: append([]string(nil), owned...), values: make(map[interface{}][]NodeID), fullIndex: make(map[string][]NodeID), prefixIndex: make(map[string][]NodeID)}}
+	for _, existing := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		// The insertion prepares this local cache under the caller's
+		// preparation lifetime, so cancellation stops it before the cache is
+		// queried or published.
+		if err := idx.put(ctx, existing); err != nil {
+			return nil, false, err
+		}
+	}
+	return idx, true, nil
+}
+
+// publishRelationshipUniqueIndexLocked registers a completely built index under
+// its own key, dropping an entry when the bound is reached. The caller
+// holds set.mu.
+func (b *BadgerEngine) publishRelationshipUniqueIndexLocked(idx *relationshipUniqueIndex) {
+	set := &b.relationshipUniqueIndexes
+	if set.entries == nil {
+		set.entries = make(map[relationshipUniqueIndexKey]*relationshipUniqueIndex)
+	}
+	if len(set.entries) >= relationshipUniqueIndexLimit {
+		for old := range set.entries {
+			delete(set.entries, old)
+			break
+		}
+	}
+	set.entries[idx.key] = idx
+}
+
 // relationshipUniqueCandidates returns the exact-value equality candidates.
 // Unsupported keys, decay-filtered query views and write-behind use the old
 // complete scan, rather than trusting an incomplete index miss. The index is
@@ -146,32 +201,13 @@ func (b *BadgerEngine) relationshipUniqueCandidates(ctx context.Context, edge *E
 		return nil, false, err
 	}
 	defer set.mu.Unlock()
-	idx := set.entries[key]
-	building := idx == nil
+	idx, building, err := b.relationshipUniqueIndexLocked(ctx, key, c.Properties)
+	if err != nil {
+		set.active.Store(len(set.entries) > 0)
+		return nil, false, err
+	}
 	if building {
-		set.active.Store(true) // Mutations must join publication before the build reads storage.
 		defer func() { set.active.Store(len(set.entries) > 0) }()
-		if hook := getUniqueConstraintScanHook(); hook != nil {
-			hook()
-		}
-		// This scan prepares a constraint decision before the write is accepted.
-		// Its caller supplies the preparation lifetime, not a detached write lifetime.
-		edges, err := b.GetStoredEdgesByType(ctx, edge.Type)
-		if err != nil {
-			return nil, false, err
-		}
-		idx = &relationshipUniqueIndex{key: key, properties: append([]string(nil), c.Properties...), keys: make(map[EdgeID][]interface{}), index: &CompositeIndex{Properties: append([]string(nil), c.Properties...), values: make(map[interface{}][]NodeID), fullIndex: make(map[string][]NodeID), prefixIndex: make(map[string][]NodeID)}}
-		for _, existing := range edges {
-			if err := ctx.Err(); err != nil {
-				return nil, false, err
-			}
-			// The insertion prepares this local cache under the caller's
-			// preparation lifetime, so cancellation stops it before the cache is
-			// queried or published.
-			if err := idx.put(ctx, existing); err != nil {
-				return nil, false, err
-			}
-		}
 	}
 	ids, err := idx.index.LookupFull(ctx, values...)
 	if err != nil {
@@ -180,16 +216,7 @@ func (b *BadgerEngine) relationshipUniqueCandidates(ctx context.Context, edge *E
 	if building {
 		// Publish only the completely built, successfully queried cache. Cancellation
 		// above discards the local index without replacing any reusable entry.
-		if set.entries == nil {
-			set.entries = make(map[relationshipUniqueIndexKey]*relationshipUniqueIndex)
-		}
-		if len(set.entries) >= relationshipUniqueIndexLimit {
-			for old := range set.entries {
-				delete(set.entries, old)
-				break
-			}
-		}
-		set.entries[key] = idx
+		b.publishRelationshipUniqueIndexLocked(idx)
 	}
 	return ids, true, nil
 }
@@ -224,6 +251,6 @@ func (b *BadgerEngine) resetRelationshipUniqueIndexes() {
 }
 
 func relationshipPropertyKey(properties []string) string {
-	data, _ := json.Marshal(properties)
+	data, _ := jsontext.Marshal(properties)
 	return string(data)
 }

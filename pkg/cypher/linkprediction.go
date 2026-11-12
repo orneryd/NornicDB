@@ -301,13 +301,15 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 
 	// The semantic score: the best cosine similarity between the nodes'
 	// embeddings, every chunk, each named embedding with its namesake
-	// (#1186). The source's embeddings are read once.
+	// (#1186). The source's full image is read once, through the config's one
+	// point-read owner, which reports the read it performed; each candidate's
+	// image is read the same way when it is scored.
 	var sourceEmbeddings map[string][][]float32
-	if sourceNode, err := config.identityStore.GetNode(ctx, config.SourceNode); err == nil {
+	if sourceNode, err := config.readNode(ctx, config.SourceNode); err == nil {
 		sourceEmbeddings = nodeEmbeddingGroups(sourceNode)
 	}
 	scorer.SetSemanticScorer(func(ctx context.Context, source, target storage.NodeID) float64 {
-		targetNode, err := config.identityStore.GetNode(ctx, target)
+		targetNode, err := config.readNode(ctx, target)
 		if err != nil || source != config.SourceNode {
 			return 0.0
 		}
@@ -352,7 +354,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 	var graph linkpredict.Graph
 	var degree linkpredict.DegreeFunc
 	if config.GraphName != "" {
-		projection, err := e.graphProjection(config.GraphName)
+		projection, err := lookupGraphProjection(ctx, e.databaseName(), config.GraphName)
 		if err != nil {
 			return nil, nil, err
 		}

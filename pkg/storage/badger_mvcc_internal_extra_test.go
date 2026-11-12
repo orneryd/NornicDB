@@ -95,9 +95,9 @@ func TestBadgerEngine_AdjacencySnapshotReaderAcquisitionErrors(t *testing.T) {
 	engine.lifecycleController = ctrl
 	engine.mu.Unlock()
 
-	_, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
+	_, err := engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:n1"}, MVCCVersion{})
 	require.ErrorIs(t, err, context.Canceled)
-	_, err = engine.GetIncomingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
+	_, err = engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:n1"}, MVCCVersion{})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -152,9 +152,9 @@ func TestBadgerEngine_VisibleAdjacencyReaders_PropagateEdgeLookupErrors(t *testi
 		return txn.Set(mvccEdgeHeadKey(edgeNum), []byte("bad-head"))
 	}))
 
-	_, err = engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:ga", head.Version)
+	_, err = engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:ga"}, head.Version)
 	require.Error(t, err)
-	_, err = engine.GetIncomingEdgesVisibleAt(context.Background(), "test:gb", head.Version)
+	_, err = engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:gb"}, head.Version)
 	require.Error(t, err)
 }
 

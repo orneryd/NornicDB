@@ -245,26 +245,24 @@ func (e *namespacedMVCCVisibleEngine) GetNodesByLabelVisibleAtInScope(ctx contex
 	return e.GetNodesByLabelVisibleAt(ctx, label, version)
 }
 
-func (e *namespacedMVCCVisibleEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	e.lastOutgoingNodeID = nodeID
+func (e *namespacedMVCCVisibleEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, request AdjacentEdgeRead, version MVCCVersion) ([]*Edge, error) {
+	if request.Direction == AdjacentBetween {
+		return e.edgesBetween, nil
+	}
+	if request.Direction == AdjacentIncoming {
+		e.lastIncomingNodeID = request.Node
+		return runtimeFixtureOwner.ReadWithFailure(ctx, e.incomingErr, func(context.Context) ([]*Edge, error) {
+			return e.incoming, nil
+		})
+	}
+	e.lastOutgoingNodeID = request.Node
 	return runtimeFixtureOwner.ReadWithFailure(ctx, e.outgoingErr, func(context.Context) ([]*Edge, error) {
 		return e.outgoing, nil
 	})
 }
 
-func (e *namespacedMVCCVisibleEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	e.lastIncomingNodeID = nodeID
-	return runtimeFixtureOwner.ReadWithFailure(ctx, e.incomingErr, func(context.Context) ([]*Edge, error) {
-		return e.incoming, nil
-	})
-}
-
 func (e *namespacedMVCCVisibleEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, version MVCCVersion) ([]*Edge, error) {
 	return e.edgesByType, nil
-}
-
-func (e *namespacedMVCCVisibleEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return e.edgesBetween, nil
 }
 
 func (e *namespacedPrefixStreamingEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
@@ -447,7 +445,7 @@ func TestNamespacedEngine_Edges(t *testing.T) {
 	assert.Equal(t, "KNOWS", retrieved.Type)
 
 	// Get outgoing edges (NamespacedEngine receives unprefixed IDs)
-	outgoing, err := tenantA.GetOutgoingEdges(context.Background(), NodeID("n1"))
+	outgoing, err := tenantA.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: NodeID("n1")})
 	require.NoError(t, err)
 	assert.Len(t, outgoing, 1)
 	assert.Equal(t, "e1", string(outgoing[0].ID))
@@ -790,7 +788,7 @@ func TestNamespacedEngine_QueryDelegateMethods(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, first)
 
-	incoming, err := tenantA.GetIncomingEdges(context.Background(), "n2")
+	incoming, err := tenantA.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "n2"})
 	require.NoError(t, err)
 	assert.Len(t, incoming, 1)
 
@@ -1298,13 +1296,13 @@ func TestNamespacedEngine_OptionalDelegateFallbackBranches(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = ns.GetNodesByLabelVisibleAt(context.Background(), "Doc", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetOutgoingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
+	_, err = ns.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "n1"}, MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetIncomingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
+	_, err = ns.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "n1"}, MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = ns.GetEdgesByTypeVisibleAt(context.Background(), "REL", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetEdgesBetweenVisibleAt(context.Background(), "n1", "n2", MVCCVersion{})
+	_, err = ns.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "n1", Other: "n2"}, MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = ns.GetNodeCurrentHead(context.Background(), "n1")
 	require.ErrorIs(t, err, ErrNotImplemented)
@@ -1354,7 +1352,7 @@ func TestNamespacedEngine_MVCCIndexedVisibilityFiltersAndStripsNamespace(t *test
 	require.Len(t, nodes, 1)
 	require.Equal(t, NodeID("n1"), nodes[0].ID)
 
-	outgoing, err := ns.GetOutgoingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
+	outgoing, err := ns.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "n1"}, MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, NodeID("tenant_a:n1"), inner.lastOutgoingNodeID)
 	require.Len(t, outgoing, 1)
@@ -1362,7 +1360,7 @@ func TestNamespacedEngine_MVCCIndexedVisibilityFiltersAndStripsNamespace(t *test
 	require.Equal(t, NodeID("n1"), outgoing[0].StartNode)
 	require.Equal(t, NodeID("n3"), outgoing[0].EndNode)
 
-	incoming, err := ns.GetIncomingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
+	incoming, err := ns.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "n1"}, MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, NodeID("tenant_a:n1"), inner.lastIncomingNodeID)
 	require.Len(t, incoming, 1)
@@ -1380,9 +1378,9 @@ func TestNamespacedEngine_MVCCIndexedVisibilityPropagatesProviderErrors(t *testi
 	t.Cleanup(func() { _ = inner.Close() })
 	ns := NewNamespacedEngine(inner, "tenant_a")
 
-	_, err := ns.GetOutgoingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
+	_, err := ns.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "n1"}, MVCCVersion{})
 	require.EqualError(t, err, "outgoing boom")
-	_, err = ns.GetIncomingEdgesVisibleAt(context.Background(), "n1", MVCCVersion{})
+	_, err = ns.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "n1"}, MVCCVersion{})
 	require.EqualError(t, err, "incoming boom")
 }
 

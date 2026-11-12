@@ -68,7 +68,11 @@ func (e *StorageExecutor) materializePropertyMap(ctx context.Context, text strin
 	if err != nil {
 		return nil, err
 	}
-	return e.materializePropertyExpressions(ctx, expressions, row, retainNull, orderedValue)
+	starts, err := propertyExpressionValueStarts(row, text)
+	if err != nil {
+		return nil, err
+	}
+	return e.materializePropertyExpressions(ctx, expressions, row, retainNull, orderedValue, starts)
 }
 
 type propertyExpressionPlan struct {
@@ -81,12 +85,9 @@ var propertyExpressionPlans = newBoundedCache[string, propertyExpressionPlan](51
 // parsePropertyExpressions returns a read-only syntax plan. Row values, errors
 // from evaluation and property maps are never cached with the expression text.
 func parsePropertyExpressions(text string) ([]pipelinePropertyExpression, error) {
-	text = strings.TrimSpace(text)
+	text = propertyExpressionText(text)
 	if text == "" {
 		return nil, nil
-	}
-	if !strings.HasPrefix(text, "{") {
-		text = "{" + text + "}"
 	}
 	if plan, cached := propertyExpressionPlans.get(text); cached {
 		return plan.expressions, plan.err
@@ -94,17 +95,64 @@ func parsePropertyExpressions(text string) ([]pipelinePropertyExpression, error)
 	var expressions []pipelinePropertyExpression
 	err := forEachMapEntry(text, mapSourceText, func(key, expr string) {
 		expressions = append(expressions, pipelinePropertyExpression{key: key, expr: expr})
-	})
+	}, nil)
 	propertyExpressionPlans.put(text, propertyExpressionPlan{expressions: expressions, err: err})
 	return expressions, err
 }
 
+// propertyExpressionText is the one normalization of a map literal text for the
+// entry reader: trimmed, and enclosed in braces when the caller wrote the entry
+// list alone.
+func propertyExpressionText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" || strings.HasPrefix(text, "{") {
+		return text
+	}
+	return "{" + text + "}"
+}
+
+// propertyExpressionValueStarts returns where each entry's value starts in text,
+// in entry order, for a row a statement is profiling. It is the PROFILE sidecar:
+// the entry positions a map literal's scalar subqueries report, read from the
+// same map scanner that produced the entries and never cached with them. An
+// ordinary row binds no expression origin, so it reads no positions and
+// allocates nothing.
+//
+// Each position is an offset in text because a reader only measures entries when
+// its text begins at the byte the row's origin names: the map literal the row
+// evaluator hands this reader, trimmed and braced. Text the normalizer would
+// change has no such offset and reports none.
+func propertyExpressionValueStarts(row pipelineRow, text string) ([]int, error) {
+	if text == "" || row == nil || !rowExpressionOrigin(row).had {
+		return nil, nil
+	}
+	if propertyExpressionText(text) != text {
+		return nil, nil
+	}
+	var starts []int
+	if err := forEachMapEntry(text, mapSourceText, func(string, string) {}, &starts); err != nil {
+		return nil, err
+	}
+	return starts, nil
+}
+
 // materializePropertyExpressions adapts text expressions to the same checked
 // materializer used by compiled maps. Only syntax plans, never values, are cached.
-func (e *StorageExecutor) materializePropertyExpressions(ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow, retainNull, orderedValue bool) (map[string]interface{}, error) {
+func (e *StorageExecutor) materializePropertyExpressions(ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow, retainNull, orderedValue bool, starts []int) (map[string]interface{}, error) {
 	ctx = withExpressionFailureSlot(ctx)
+	origin := rowExpressionOriginBinding{}
+	if starts != nil {
+		origin = rowExpressionOrigin(row)
+	}
 	return materializePropertyEntries(ctx, expressions, retainNull, orderedValue, func(index int) (interface{}, bool, error) {
+		saved, bound := rowExpressionOriginBinding{}, false
+		if starts != nil {
+			saved, bound = bindRowExpressionOrigin(row, origin.previous+starts[index])
+		}
 		value, resolved := e.evaluateRowExpressionWithContext(ctx, expressions[index].expr, row)
+		if bound {
+			restoreRowExpressionOrigin(row, saved)
+		}
 		return value, resolved, nil
 	})
 }

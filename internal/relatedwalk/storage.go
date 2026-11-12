@@ -33,7 +33,7 @@ func (s StorageSource) EachIncidentEdge(ctx context.Context, nodeID string, visi
 	}
 
 	var readErr error
-	out, err := s.Engine.GetOutgoingEdges(ctx, storage.NodeID(nodeID))
+	out, err := s.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: storage.NodeID(nodeID)})
 	if err != nil {
 		readErr = err
 	}
@@ -44,7 +44,7 @@ func (s StorageSource) EachIncidentEdge(ctx context.Context, nodeID string, visi
 		}
 	}
 
-	in, err := s.Engine.GetIncomingEdges(ctx, storage.NodeID(nodeID))
+	in, err := s.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: storage.NodeID(nodeID)})
 	if err != nil && readErr == nil {
 		readErr = err
 	}

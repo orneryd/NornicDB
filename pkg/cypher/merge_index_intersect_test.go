@@ -8,10 +8,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The candidate sets of a two-property index lookup are intersected starting
+// The candidate sets of a two-property inline seek are intersected starting
 // from the smaller set. The properties come from a map, so the smaller set is
-// visited first or second at random; repeating the lookup exercises both.
-func TestLookupPatternCandidatesUsingPropertyIndex_IntersectsSets(t *testing.T) {
+// visited first or second at random; repeating the lookup exercises both, and
+// the node the inline property set selects is the one the canonical collector
+// answers.
+func TestCollectPipelineIndexedNodeCandidates_IntersectsInlinePropertySets(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_intersect_idx")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
@@ -26,7 +28,7 @@ func TestLookupPatternCandidatesUsingPropertyIndex_IntersectsSets(t *testing.T) 
 
 	pattern := nodePatternInfo{variable: "n", labels: []string{"P"}, properties: map[string]interface{}{"a": int64(1), "b": int64(2)}}
 	for i := 0; i < 32; i++ {
-		nodes, ok, lookupErr := exec.lookupPatternCandidatesUsingPropertyIndex(ctx, pattern, store)
+		nodes, _, ok, lookupErr := exec.collectPipelineIndexedNodeCandidates(ctx, pattern, "", pipelineMatchPhysicalHint{})
 		require.NoError(t, lookupErr)
 		require.True(t, ok)
 		require.Len(t, nodes, 1)

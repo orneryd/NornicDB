@@ -90,10 +90,10 @@ func TestFulltextPopulationDuringDeliveryIsReusedNotRefreshed(t *testing.T) {
 		fulltextWaitSettled(t, store)
 	}
 	update("firstafterdelivery")
-	require.Equal(t, fulltextReleaseOracle(t, store.NamespacedEngine, "firstafterdelivery"), fulltextBaselineRun(t, exec, "firstafterdelivery"))
+	require.Equal(t, fulltextReleaseOracle(t, store.NamespacedEngine, "firstafterdelivery", []string{"Source"}, []string{"text", "title"}), fulltextBaselineRun(t, exec, "firstafterdelivery"))
 	require.Equal(t, before+2, store.scans.Load(), "an uncovered baseline must not refresh by ID")
 	update("secondafterdelivery")
-	require.Equal(t, fulltextReleaseOracle(t, store.NamespacedEngine, "secondafterdelivery"), fulltextBaselineRun(t, exec, "secondafterdelivery"))
+	require.Equal(t, fulltextReleaseOracle(t, store.NamespacedEngine, "secondafterdelivery", []string{"Source"}, []string{"text", "title"}), fulltextBaselineRun(t, exec, "secondafterdelivery"))
 	require.Equal(t, before+2, store.scans.Load(), "a covered baseline must refresh by ID")
 }
 
@@ -125,7 +125,7 @@ func TestFulltextWriteDuringPopulationConvergesAtNextRead(t *testing.T) {
 			fulltextBaselineRun(t, exec, "hotel")
 			fulltextWaitSettled(t, probe)
 			for _, text := range []string{"hotel", "duringpopulation"} {
-				require.Equal(t, fulltextReleaseOracle(t, probe.NamespacedEngine, text), fulltextBaselineRun(t, exec, text))
+				require.Equal(t, fulltextReleaseOracle(t, probe.NamespacedEngine, text, []string{"Source"}, []string{"text", "title"}), fulltextBaselineRun(t, exec, text))
 			}
 		})
 	}
@@ -177,7 +177,7 @@ func TestFulltextConcurrentWritersEndEqualToRebuild(t *testing.T) {
 	}
 	require.Positive(t, writes.Load())
 	fulltextWaitSettled(t, store)
-	require.Equal(t, fulltextReleaseOracle(t, store.NamespacedEngine, "hotel"), fulltextBaselineRun(t, exec, "hotel"))
+	require.Equal(t, fulltextReleaseOracle(t, store.NamespacedEngine, "hotel", []string{"Source"}, []string{"text", "title"}), fulltextBaselineRun(t, exec, "hotel"))
 }
 
 // A restore moves no event, only the revision: the next read rebuilds.

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -96,7 +97,8 @@ func (c *retainedPredicateContext) Value(key any) any {
 	case expressionOperandFailureKey:
 		return &c.failure
 	case statementContextKey, ctxKeyRunningTransaction, memoryScopeKey, expressionFailureKey,
-		rowFallbackExpressionKey, ctxKeyTxStorageType, compositeStatementKey, retrievalExecutorKey:
+		rowFallbackExpressionKey, ctxKeyTxStorageType, compositeStatementKey, retrievalExecutorKey,
+		queryprofile.ObserverKey, profileRuntimeFrameKey:
 		return c.Context.Value(key)
 	}
 	return c.compiling.Value(key)

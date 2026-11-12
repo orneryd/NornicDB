@@ -42,14 +42,31 @@ func TestAllDatabaseOperationsIncludeSystemAdmission(t *testing.T) {
 				require.Equal(t, http.StatusForbidden, response.Code, "%s: %s", operation.path, response.Body.String())
 			}
 		}
+		// The fixture opens without an auto-embed worker, so the permitted cases
+		// must report that operational failure instead of a status for work that
+		// was never queued. Regeneration is staged (clear, reset, trigger) and
+		// stops at its first failing stage.
 		for _, regenerate := range []string{"false", "true"} {
 			response := makeRequest(t, s, http.MethodPost, "/graphql", map[string]any{"query": "mutation { triggerEmbedding(regenerate: " + regenerate + ") { total } }"}, token)
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-			if readable {
-				require.NotContains(t, response.Body.String(), `"errors"`)
-			} else {
-				require.Contains(t, response.Body.String(), "read permission")
+			body := response.Body.String()
+			if !readable {
+				require.Contains(t, body, "read permission")
+				require.NotContains(t, body, "failed to ", "denied admission must not start a stage")
+				continue
 			}
+			if regenerate == "true" {
+				// Clearing this storage succeeds, then the reset stage reports
+				// the missing worker, so the trigger stage never runs.
+				require.Contains(t, body, "failed to reset embedding worker: ")
+				require.NotContains(t, body, "failed to clear existing embeddings")
+				require.NotContains(t, body, "failed to trigger embedding")
+				continue
+			}
+			// An explicit trigger with no worker reports the missing worker.
+			require.Contains(t, body, "failed to trigger embedding: ")
+			require.NotContains(t, body, "failed to clear existing embeddings")
+			require.NotContains(t, body, "failed to reset embedding worker")
 		}
 		if !readable {
 			node, err := s.db.GetStorage().GetNode(t.Context(), "population-vector")

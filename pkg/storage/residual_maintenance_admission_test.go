@@ -81,7 +81,7 @@ func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 					return b.deleteEdgeBetweenIndexesInTxn(txn, edge)
 				}))
 				run = func(ctx context.Context) error {
-					_, err := b.GetEdgesBetween(ctx, edge.StartNode, edge.EndNode)
+					_, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: edge.StartNode, Other: edge.EndNode})
 					return err
 				}
 			case "label-scan-repair":

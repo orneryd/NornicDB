@@ -201,8 +201,7 @@ func TestWALCurrentPayloadRecordsReadBack(t *testing.T) {
 }
 
 func TestWALCurrentFrameEndToEndViaAppend(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	wal, err := NewWAL(dir, nil)

@@ -101,7 +101,7 @@ func TestUnwindRewrittenOperatorsPreserveExecutionErrors(t *testing.T) {
 			if fixture.create {
 				result, handled, err = exec.executeSetBasedUnwindCreateOperator(ctx, plan)
 			} else {
-				result, handled, err = exec.executeUnwindBatchOperator(ctx, plan)
+				result, handled, err = exec.executeUnwindBatchOperator(ctx, plan, "")
 			}
 			require.Error(t, err)
 			require.Equal(t, expectedErr.Error(), err.Error())
@@ -130,8 +130,8 @@ func TestPipelineSimpleNodeReadPlan_HandlesBoundedLabelStream(t *testing.T) {
 	clauses, ok := canExecuteAsPipeline(t.Context(), query)
 	require.True(t, ok)
 
-	result, handled, err := exec.tryExecutePipelineSimpleNodeReadPlan(context.Background(), clauses, nil)
-	require.NoError(t, err)
-	require.True(t, handled, "bounded single-node reads must use the pipeline's fused physical operator")
-	require.Len(t, result.Rows, 3)
+	outcome := exec.tryExecutePipelineSimpleNodeReadPlan(context.Background(), clauses, nil)
+	require.NoError(t, outcome.err)
+	require.True(t, outcome.handled(), "bounded single-node reads must use the pipeline's fused physical operator")
+	require.Len(t, outcome.result.Rows, 3)
 }

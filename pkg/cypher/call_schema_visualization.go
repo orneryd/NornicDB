@@ -5,6 +5,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/collection"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,10 +19,15 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
+	// The two scans are the populations this call read, so they are the
+	// populations PROFILE reports: the virtual nodes and relationships below
+	// are built from them, not read from the database.
+	queryprofile.EntityPopulation(ctx, profileKindAllNodesScan, "", nodes)
 	edges, err := store.AllEdges(ctx)
 	if err != nil {
 		return nil, err
 	}
+	queryprofile.EntityPopulation(ctx, profileKindAllRelationshipsScan, "", edges)
 	labels := make(map[string]bool)
 	nodesByID := make(map[string]*storage.Node, len(nodes))
 	for _, node := range nodes {
@@ -87,6 +93,11 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	}, nil
 }
 
+// schemaVisualizationLabelMetadata is the metadata of one label's virtual node.
+// Each catalog it asks for is an acquisition of the schema owner's catalog, so
+// it reports that acquisition through the canonical access owner - the
+// entries the request returned, before the node/relationship and per-label
+// filtering below narrows them. An empty catalog is an observed zero.
 func schemaVisualizationLabelMetadata(ctx context.Context, schema *storage.SchemaManager, label string) ([]string, []string, error) {
 	indexes := []string{}
 	constraints := []string{}
@@ -95,6 +106,7 @@ func schemaVisualizationLabelMetadata(ctx context.Context, schema *storage.Schem
 	if err != nil {
 		return nil, nil, err
 	}
+	queryprofile.Access(ctx, profileKindSchemaConstraintCatalog, "").Add(int64(len(discovered)), 1)
 	for _, constraint := range discovered {
 		if constraint.EffectiveEntityType() != storage.ConstraintEntityNode {
 			continue
@@ -104,7 +116,8 @@ func schemaVisualizationLabelMetadata(ctx context.Context, schema *storage.Schem
 		}
 		ownedIndexes[constraint.OwnedIndex] = true
 	}
-	for _, raw := range schema.GetIndexes() {
+	catalog := readSchemaIndexCatalog(ctx, schema)
+	for _, raw := range catalog {
 		index, ok := raw.(map[string]interface{})
 		if !ok || index["entityType"] == string(storage.ConstraintEntityRelationship) {
 			continue

@@ -26,18 +26,6 @@ func (w *transactionStorageWrapper) GetStoredEdge(ctx context.Context, id storag
 	return w.toUserEdge(edge), nil
 }
 
-// GetStoredOutgoingEdges is GetOutgoingEdges' stored read: the same read exit
-// over the transaction's physically stored adjacency instead of its live,
-// pending-inclusive view.
-func (w *transactionStorageWrapper) GetStoredOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return w.adjacencyEdges(ctx, adjacencyRead{kind: storage.TransactionReadOutgoing, node: id, stored: true})
-}
-
-// GetStoredIncomingEdges is GetStoredOutgoingEdges for the incoming side.
-func (w *transactionStorageWrapper) GetStoredIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return w.adjacencyEdges(ctx, adjacencyRead{kind: storage.TransactionReadIncoming, node: id, stored: true})
-}
-
 func (w *transactionStorageWrapper) GetStoredNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	nodes, err := w.tx.GetStoredNodesByLabel(ctx, label)
 	return projectTransactionRead(ctx, w, nodes, err, readScanned)

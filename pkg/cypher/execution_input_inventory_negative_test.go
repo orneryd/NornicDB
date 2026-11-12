@@ -52,24 +52,47 @@ func TestExecutionInputInventoryDoesNotTrustMutableBindings(t *testing.T) {
 func TestExecutionInputInventoryFactoryBindingProvenance(t *testing.T) {
 	for _, tc := range []struct {
 		name, globalWrite, factoryWrite string
-		want                            bool
+		canonical, want                 bool
+		argument, spec                  string
 	}{
-		{name: "immutable data", want: false},
-		{name: "global changed before registration", globalWrite: "data.scope=1;", want: true},
-		{name: "factory changes captured value", factoryWrite: "d.scope=1;", want: true},
+		{name: "immutable data", argument: "data"},
+		{name: "global changed before registration", globalWrite: "data.scope=1;", argument: "data", want: true},
+		{name: "factory changes captured value", factoryWrite: "d.scope=1;", argument: "data", want: true},
+		{name: "canonical graph declaration", canonical: true, argument: "graph"},
+		{name: "canonical query declaration", canonical: true, argument: "query", want: true},
+		{name: "canonical global mutation", canonical: true, argument: "graph", globalWrite: "graph.scope=queryScope;", want: true},
+		{name: "canonical factory mutation", canonical: true, argument: "graph", factoryWrite: "d.scope=queryScope;", want: true},
+		{name: "canonical unknown name", canonical: true, argument: "graph", spec: `ProcedureSpec{Name:runtimeName()}`, want: true},
+		{name: "canonical unknown declaration", canonical: true, argument: "runtimeDeclaration()", want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
+			registration := `registerBuiltInProcedure("fixture",factory(` + tc.argument + `))`
+			if tc.canonical {
+				spec := tc.spec
+				if spec == "" {
+					spec = `ProcedureSpec{Name:"fixture"}`
+				}
+				registration = `registerProcedure(` + spec + `,factory(` + tc.argument + `),policy)`
+			}
 			text := `package cypher
-   type StorageExecutor struct{}
-   func(e *StorageExecutor) executeUserStatement(){}
-   type declaration struct{scope int}
-   var data=declaration{scope:0}
-   func registerBuiltInProcedure(name string, handler func(*StorageExecutor)){}
-   func factory(d declaration)func(*StorageExecutor){` + tc.factoryWrite + `return func(e *StorageExecutor){e.read(d.scope)}}
-   func(e *StorageExecutor)read(scope int){if scope==1{e.executeUserStatement()}}
-   func init(){` + tc.globalWrite + `registerBuiltInProcedure("fixture",factory(data))}
-  `
+ type StorageExecutor struct{}
+ func(e *StorageExecutor) executeUserStatement(){}
+ type declaration struct{scope int}
+ type ProcedureSpec struct{Name string}
+ const ( graphScope int=iota; queryScope )
+ const policy=0
+ var data=declaration{scope:0}
+ var graph=declaration{scope:graphScope}
+ var query=declaration{scope:queryScope}
+ func runtimeName()string{return "fixture"}
+ func runtimeDeclaration()declaration{return query}
+ func registerBuiltInProcedure(name string,handler func(*StorageExecutor)){}
+ func registerProcedure(spec ProcedureSpec,handler func(*StorageExecutor),policy int){}
+ func factory(d declaration)func(*StorageExecutor){` + tc.factoryWrite + `return func(e *StorageExecutor){e.read(d.scope)}}
+ func(e *StorageExecutor)read(scope int){if scope==queryScope{e.executeUserStatement()}}
+ func init(){` + tc.globalWrite + registration + `}
+ `
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "fixture.go"), []byte(text), 0600))
 			source, err := loadInventorySource(dir)
 			require.NoError(t, err)

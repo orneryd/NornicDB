@@ -272,7 +272,7 @@ func nor136RequireNativeGraph(t *testing.T, f *protocolServerFixture, ids nor136
 	require.Error(t, err, "the deleted Doc must not survive")
 	require.Nil(t, deleted)
 
-	edges, err := f.engine.GetOutgoingEdges(ctx, ids.holder)
+	edges, err := f.engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: ids.holder})
 	require.NoError(t, err)
 	require.Len(t, edges, 1, "the cascade removes the a->b edge and keeps the a->c edge")
 	require.Equal(t, "LINK", edges[0].Type)

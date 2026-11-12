@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -40,6 +41,19 @@ const txlogRecentEntries = 1000
 
 // errTxlogLimitReached stops a WAL visit once enough rows are collected.
 var errTxlogLimitReached = errors.New("txlog limit reached")
+
+// profileKindWALEntryScan names the WAL entries db.txlog.entries and
+// db.txlog.byTxId read: every entry the WAL visit handed the procedure, counted
+// where the visit handed it over, before the statement selects by database,
+// sequence range or transaction id, and including the older entries a
+// range-less db.txlog.entries() keeps out of its rows. It is the entries the
+// WAL read, never a page or a record's own field count.
+//
+// Resolving the WAL and its directory (txlogWAL) is configuration, not a read
+// of entries, and the segment listing the visit performs before it streams a
+// segment is storage's own setup: the procedures report the entries the visit
+// handed them and claim no other access, so no catalog count is invented here.
+const profileKindWALEntryScan = "WALEntryScan"
 
 // txlogWAL returns the WAL directory and the database whose entries the
 // txlog procedures return. An empty database (an executor not bound to one)
@@ -143,7 +157,13 @@ func (e *StorageExecutor) callDBTxlog(ctx context.Context, args []interface{}, s
 		return nil, err
 	}
 	var rows [][]interface{}
+	// One counter for the whole visit: the read is the WAL walk, so the
+	// statement resolves its counter once instead of once per entry.
+	entries := queryprofile.Access(ctx, profileKindWALEntryScan, database)
 	err = storage.VisitWALEntriesAfterFromDir(ctx, walDir, uint64(fromSeq-1), func(entry storage.WALEntry) error {
+		// The WAL handed this entry over, so it is one entry read; the
+		// selections below decide whether it becomes a row.
+		entries.Add(1, 1)
 		if err := ctx.Err(); err != nil {
 			return err
 		}

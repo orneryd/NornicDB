@@ -137,7 +137,7 @@ func TestChangeDataCaptureFull(t *testing.T) {
 	require.Len(t, rest, 2)
 	_, err = exec.Execute(ctx, "CALL db.cdc.query($from, [], -1)", map[string]interface{}{"from": start})
 	require.Error(t, err)
-	require.Equal(t, start, cdcID(t, exec, "db.cdc.earliest"))
+	require.Equal(t, cdcRows(t, exec, start), cdcRows(t, exec, cdcID(t, exec, "db.cdc.earliest")), "the live earliest marker returns the complete retained population")
 }
 
 // DIFF records only the changed properties and labels of an update; creates
@@ -320,6 +320,9 @@ func TestChangeDataCaptureIdentifiers(t *testing.T) {
 
 	for id, code := range map[string]string{
 		"not-an-id": "Neo.ClientError.ChangeDataCapture.InvalidIdentifier",
+		// A zero position is the earliest marker of the database it names, not
+		// of any other: the same bytes for another database stay invalid.
+		encodeChangeID(exec.databaseChangeTag("other"), changePosition{}):             "Neo.ClientError.ChangeDataCapture.InvalidIdentifier",
 		encodeChangeID(exec.databaseChangeTag("other"), changePosition{commitSeq: 1}): "Neo.ClientError.ChangeDataCapture.InvalidIdentifier",
 		encodeChangeID(exec.databaseChangeTag("test"), changePosition{commitSeq: 99}): "Neo.TransientError.ChangeDataCapture.FutureIdentifier",
 	} {
@@ -330,7 +333,7 @@ func TestChangeDataCaptureIdentifiers(t *testing.T) {
 
 	// Retention: events of transactions committed before the cutoff go, but
 	// the last transaction's stay, where db.cdc.current() stands; an
-	// identifier older than db.cdc.earliest() is invalid.
+	// ordinary position older than the retained feed is invalid.
 	capture, _ := storage.ChangeCaptureOf(store)
 	start := encodeChangeID(exec.databaseChangeTag("test"), changePosition{commitSeq: 0, seq: ^uint32(0)})
 	require.Len(t, cdcRows(t, exec, start), 1)
@@ -345,7 +348,8 @@ func TestChangeDataCaptureIdentifiers(t *testing.T) {
 	require.Equal(t, 1, pruned)
 	_, err = exec.Execute(ctx, "CALL db.cdc.query($from)", map[string]interface{}{"from": start})
 	requireStatusCode(t, err, "Neo.ClientError.ChangeDataCapture.InvalidIdentifier")
-	require.Equal(t, current, cdcID(t, exec, "db.cdc.earliest"))
+	require.NotEqual(t, current, cdcID(t, exec, "db.cdc.earliest"), "earliest is a live retained-feed marker, not a fixed current position")
+	require.Len(t, cdcRows(t, exec, cdcID(t, exec, "db.cdc.earliest")), 2)
 	require.Len(t, cdcRows(t, exec, current), 2)
 	require.Equal(t, latest, cdcID(t, exec, "db.cdc.current"))
 

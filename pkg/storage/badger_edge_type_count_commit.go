@@ -132,8 +132,8 @@ func (tx *BadgerTransaction) positionalChangesPendingLocked(ctx context.Context)
 //     deleted again nets to nothing, whatever happened to its end node.
 //   - An existing node the transaction leaves with other labels also moves
 //     the relationships stored at it now, read here
-//     (storedIncidentEdgesLocked), including those another transaction
-//     committed while this one was open.
+//     through the shared stored adjacent-edge reader, including those
+//     another transaction committed while this one was open.
 //   - A node the transaction deletes takes its stored labels: its
 //     relationships all go with it (the delete's cascade, checked at commit).
 //
@@ -256,21 +256,20 @@ func (tx *BadgerTransaction) derivePositionalCountDeltasLocked(ctx context.Conte
 
 // storedIncidenceLocked counts the relationships stored at nodeID now, by
 // namespace, type and position, from one current read of both directions
-// (storedIncidentEdgesLocked); a self-loop counts once at each position. The
-// caller holds nodeID's exclusive commit authority, which keeps that
+// through readAdjacentEdges with stored visibility. A self-loop counts once
+// at each position. The caller holds nodeID's exclusive commit authority,
+// which keeps that
 // population fixed until the commit is published. Caller holds tx.mu.
 func (tx *BadgerTransaction) storedIncidenceLocked(ctx context.Context, nodeID NodeID) (map[positionalNetKey]int64, error) {
-	outgoing, incoming, err := tx.storedIncidentEdgesLocked(ctx, nodeID)
+	edges, err := readAdjacentEdges(ctx, tx.engine, AdjacentEdgeRead{Direction: AdjacentBoth, Node: nodeID}, nil, storedRead)
 	if err != nil {
 		return nil, err
 	}
 	counts := make(map[positionalNetKey]int64)
-	for _, edge := range outgoing {
+	for _, edge := range edges {
 		if edge.StartNode == nodeID && edge.Type != "" {
 			counts[positionalEdgeChangeOf(edge, 1).netKey(false)]++
 		}
-	}
-	for _, edge := range incoming {
 		if edge.EndNode == nodeID && edge.Type != "" {
 			counts[positionalEdgeChangeOf(edge, 1).netKey(true)]++
 		}

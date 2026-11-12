@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"context"
-	"errors"
+	"sort"
 	"strings"
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
@@ -18,58 +18,119 @@ func nativePluginFunction(function *PluginFunctionHandler) bool {
 	return function != nil && !strings.HasPrefix(function.Symbol(), bundledAPOCSymbolPrefix)
 }
 
-var errNativeFunctionFound = errors.New("native function found")
-
-// callsNativeFunction reports whether text calls a plugin function outside the
-// bundled APOC library (nativePluginFunction), with the shared function-call
-// scanner. A scan the caller's context stops counts as a call, so the
-// statement keeps full node reads.
-func callsNativeFunction(ctx context.Context, text string) bool {
-	if PluginFunctionLookup == nil {
-		return false
-	}
-	err := forEachFunctionInvocation(ctx, text, func(name, _ string, _ int) error {
-		if handler, found := pluginFunctionHandler(name); found && nativePluginFunction(handler) {
-			return errNativeFunctionFound
-		}
-		return nil
-	})
-	return err != nil
+// nativeFunctionInputs is the scoped type walk's immutable proof for retained
+// invocation sites. A missing site requires full images, never an inferred
+// scalar result. Source and original spans distinguish equal text in different
+// bindings and different constituent fragments.
+type nativeFunctionInputs struct {
+	generation uint64
+	uncertain  bool
+	sites      map[nativeInputSite]bool // true when an argument may contain an entity
 }
 
-// callSubqueryRunsSeparately reports whether text has a CALL subquery that
-// runs IN TRANSACTIONS or selects a graph with USE in its body: that part of
-// the statement runs on an executor of its own (transaction_batch.go,
-// pipeline_call_operator.go). A USE that selects the graph of the whole
-// statement doesn't count. It reads the statement with the effect owner's
-// grammar and arguments (readStatementExecutionContract), so the parse is the
-// cached one; text it cannot read counts as such a subquery. The keyword
-// tokens are only a cheap hint (a property or label may be named after them);
-// the grammar-owned clauses decide.
-func callSubqueryRunsSeparately(ctx context.Context, text string) bool {
-	_, body := parseExecutionMode(text)
-	structure, err := cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
-	if err != nil {
-		return true
+type nativeInputSite struct {
+	source     string
+	start, end int
+}
+type nativeFunctionInputsKey struct{}
+
+func nativeInputSiteFor(node cypherantlr.SyntaxNode) nativeInputSite {
+	start, end := node.Span()
+	return nativeInputSite{node.Source(), start, end}
+}
+
+func (inputs *nativeFunctionInputs) merge(other nativeFunctionInputs) {
+	inputs.uncertain = inputs.uncertain || other.uncertain || inputs.generation != other.generation
+	if len(other.sites) == 0 {
+		return
 	}
-	for i := 0; i < structure.TokenCount(); i++ {
-		if kind := structure.Token(i).Kind(); kind != cypherantlr.CypherParserUSE && kind != cypherantlr.CypherParserTRANSACTIONS {
+	if inputs.sites == nil {
+		inputs.sites = make(map[nativeInputSite]bool, len(other.sites))
+	}
+	for site, reaches := range other.sites {
+		inputs.sites[site] = inputs.sites[site] || reaches
+	}
+}
+
+// recordNativeFunctionInputs reads the existing grammar's sorted invocation
+// sites and the semantic walk's actual clause scope. Nested clauses belong to
+// their own scope; local expression binders conservatively keep full images.
+func recordNativeFunctionInputs(ctx context.Context, clause pipelineClause, scope staticTypeScope, projected func() staticTypeScope) error {
+	inputs, _ := ctx.Value(nativeFunctionInputsKey{}).(*nativeFunctionInputs)
+	if inputs == nil || !clause.syntax.Valid() {
+		return nil
+	}
+	effects := clause.syntax.Statement().Effects()
+	start, end := clause.syntax.Span()
+	first := sort.Search(effects.FunctionCount(), func(index int) bool {
+		at, _ := effects.Function(index).Span()
+		return at >= start
+	})
+	var ordinary, afterProjection *staticOperatorChecker
+	for index := first; index < effects.FunctionCount(); index++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		call := effects.Function(index)
+		at, _ := call.Span()
+		if at >= end {
+			break
+		}
+		owned, local, after := false, false, false
+		for parent, ok := call.Parent(); ok; parent, ok = parent.Parent() {
+			if _, isClause := querySyntaxClauseKind(parent); isClause {
+				owned = parent.ID() == clause.syntax.ID()
+				break
+			}
+			switch parent.Rule() {
+			case cypherantlr.CypherParserRULE_listComprehension, cypherantlr.CypherParserRULE_patternComprehension,
+				cypherantlr.CypherParserRULE_filterWith, cypherantlr.CypherParserRULE_reduceExpression:
+				local = true
+			case cypherantlr.CypherParserRULE_orderSt, cypherantlr.CypherParserRULE_skipSt, cypherantlr.CypherParserRULE_limitSt, cypherantlr.CypherParserRULE_where:
+				after = projected != nil
+			case cypherantlr.CypherParserRULE_functionInvocation:
+				if name := parent.ChildRule(cypherantlr.CypherParserRULE_invocationName); name.Valid() {
+					local = local || isQuantifierOrReduceFunction(lowerASCII(name.QualifiedName()))
+				}
+			}
+		}
+		if !owned {
 			continue
 		}
-		found, depth := false, 0
-		structure.Walk(func(node cypherantlr.SyntaxNode) func() {
-			switch node.Rule() {
-			case cypherantlr.CypherParserRULE_transactionBatch:
-				found = true
-			case cypherantlr.CypherParserRULE_useClause:
-				found = found || depth > 0
-			case cypherantlr.CypherParserRULE_callSubquery:
-				depth++
-				return func() { depth-- }
+		reaches := local
+		arguments := call.ChildRule(cypherantlr.CypherParserRULE_expressionChain)
+		if !local && arguments.Valid() {
+			checker := &ordinary
+			if after {
+				checker = &afterProjection
 			}
-			return nil
-		})
-		return found
+			if *checker == nil {
+				selected := scope
+				if after {
+					selected = projected()
+				}
+				*checker = &staticOperatorChecker{scope: selected, checked: make(map[string]staticCheckResult)}
+			}
+			for arg := 0; arg < arguments.ChildCount(); arg++ {
+				expression := arguments.Child(arg)
+				if expression.Rule() != cypherantlr.CypherParserRULE_expression {
+					continue
+				}
+				operand, err := (*checker).check(ctx, expression.Code())
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if err != nil || operand.mayReachGraphEntity() {
+					reaches = true
+					break
+				}
+			}
+		}
+		if inputs.sites == nil {
+			inputs.sites = make(map[nativeInputSite]bool)
+		}
+		site := nativeInputSiteFor(call)
+		inputs.sites[site] = inputs.sites[site] || reaches
 	}
-	return false
+	return nil
 }

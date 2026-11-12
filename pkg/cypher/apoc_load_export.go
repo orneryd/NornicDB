@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	apocload "github.com/orneryd/nornicdb/apoc/load"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/apocio"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -282,10 +283,12 @@ func (e *StorageExecutor) readExportSource(ctx context.Context, scope exportScop
 	if err != nil {
 		return exportSource{}, fmt.Errorf("failed to read nodes: %w", err)
 	}
+	queryprofile.EntityPopulation(ctx, queryprofile.KindAllNodesScan, "", nodes)
 	edges, err := e.storage.AllEdges(ctx)
 	if err != nil {
 		return exportSource{}, fmt.Errorf("failed to read relationships: %w", err)
 	}
+	queryprofile.EntityPopulation(ctx, queryprofile.KindAllRelationshipsScan, "", edges)
 	return exportSource{nodes: nodes, edges: edges}, nil
 }
 

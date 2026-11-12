@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/ctxsort"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strconv"
@@ -125,96 +124,74 @@ func (e *StorageExecutor) entitySeekLookup(value, kind, function string) (string
 	return id, found, true
 }
 
-// tryCollectNodesFromIDEquality attempts to satisfy:
-//
-//	MATCH (n[:Label]) WHERE id(n) = <id>
-//	MATCH (n[:Label]) WHERE elementId(n) = <element-id>
-//
-// via a direct node lookup instead of scanning all nodes.
-func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+// resolveIDEqualityCandidates resolves the WHERE that is one
+// id(<variable>) = <value> or elementId(<variable>) = <value> comparison to the
+// node ID the value names. The pattern labels and inline properties the listed
+// node must still carry are admitted when the plan is read. The one ID stays in
+// the result's own array, so an ordinary id lookup lists it without allocating.
+func (e *StorageExecutor) resolveIDEqualityCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string) (nodeIDResults, bool, error) {
 	varName, lookupID, empty, ok := e.idEqualityLookup(ctx, whereClause, "4")
 	if !ok || varName != nodePattern.variable {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 	if empty {
-		return []*storage.Node{}, true, nil
+		return nodeIDResults{}, true, nil
 	}
-
-	node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(lookupID))
-	if err != nil || node == nil {
-		return []*storage.Node{}, true, nil
-	}
-
-	if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-		return []*storage.Node{}, true, nil
-	}
-
-	if len(nodePattern.properties) > 0 {
-		for k, v := range nodePattern.properties {
-			if node.Properties[k] != v {
-				return []*storage.Node{}, true, nil
-			}
-		}
-	}
-
-	return []*storage.Node{node}, true, nil
+	return singleIDResult(storage.NodeID(lookupID)), true, nil
 }
 
-// tryCollectNodesFromIDEqualityParam attempts to satisfy:
-//
-//	MATCH (n[:Label]) WHERE id(n) = $param
-//	MATCH (n[:Label]) WHERE elementId(n) = $param
-//
-// via a direct node lookup using the parameter value. This complements
-// tryCollectNodesFromIDEquality which only handles literal values on the RHS.
-// The parameter-aware variant is critical for app workloads that always pass
-// IDs as parameters (e.g., attach/read-by-id paths).
-func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
+// resolveIDEqualityParamCandidates resolves the WHERE that is one
+// id(<variable>) = <param> or elementId(<variable>) = <param> comparison to the
+// node ID the parameter names. It complements resolveIDEqualityCandidates,
+// which only handles literal values on the RHS. The parameter-aware variant is
+// what app workloads use: they always pass IDs as parameters (e.g.
+// attach/read-by-id paths).
+func (e *StorageExecutor) resolveIDEqualityParamCandidates(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
-) ([]*storage.Node, bool, error) {
+) (nodeIDResults, bool, error) {
 	if params == nil || strings.TrimSpace(whereClause) == "" {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 	clause := strings.TrimSpace(whereClause)
 
 	upper := upperASCII(clause)
 	if strings.Contains(upper, " AND ") || strings.Contains(upper, " OR ") || strings.Contains(upper, " IN ") {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 
 	eqIdx := strings.Index(clause, "=")
 	if eqIdx <= 0 {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 	if eqIdx > 0 {
 		prev := clause[eqIdx-1]
 		if prev == '!' || prev == '<' || prev == '>' {
-			return nil, false, nil
+			return nodeIDResults{}, false, nil
 		}
 	}
 	if eqIdx+1 < len(clause) {
 		next := clause[eqIdx+1]
 		if next == '=' {
-			return nil, false, nil
+			return nodeIDResults{}, false, nil
 		}
 	}
 
 	left := strings.TrimSpace(clause[:eqIdx])
 	right := strings.TrimSpace(clause[eqIdx+1:])
 	if left == "" || right == "" {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 
 	// RHS must be a parameter reference ($paramName).
 	if !strings.HasPrefix(right, "$") {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 	paramName := strings.TrimSpace(right[1:])
 	if paramName == "" {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 
 	kind := ""
@@ -228,53 +205,37 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 		kind = "elementId"
 		varName = strings.TrimSpace(left[10 : len(left)-1])
 	default:
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 
 	if varName == "" || varName != nodePattern.variable {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 
 	raw, ok := params[paramName]
 	if !ok {
-		return []*storage.Node{}, true, nil
+		return nodeIDResults{}, true, nil
 	}
 	idValue, ok := raw.(string)
 	if !ok || strings.TrimSpace(idValue) == "" {
-		return []*storage.Node{}, true, nil
+		return nodeIDResults{}, true, nil
 	}
 	idValue = strings.TrimSpace(idValue)
 
 	lookupID, found, applicable := e.entitySeekLookup(idValue, "4", kind)
 	if !applicable {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 	if !found {
-		return []*storage.Node{}, true, nil
+		return nodeIDResults{}, true, nil
 	}
 
-	node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(lookupID))
-	if err != nil || node == nil {
-		return []*storage.Node{}, true, nil
-	}
-
-	if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-		return []*storage.Node{}, true, nil
-	}
-
-	if len(nodePattern.properties) > 0 {
-		for k, v := range nodePattern.properties {
-			if node.Properties[k] != v {
-				return []*storage.Node{}, true, nil
-			}
-		}
-	}
-
-	return []*storage.Node{node}, true, nil
+	return singleIDResult(storage.NodeID(lookupID)), true, nil
 }
 
-// tryCollectNodesFromIDEqualityCompound attempts ID/elementId direct seeks from
-// simple and compound predicates over a single MATCH variable.
+// resolveIDEqualityCompoundCandidates resolves the ID/elementId direct seeks
+// of a simple or compound predicate over a single MATCH variable to the node
+// IDs they name.
 //
 // Supported safe forms:
 //   - id(n) = '...'
@@ -283,26 +244,26 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 //   - (... AND id(n) = ...)
 //   - (id(n) = ... OR n.id = ... ) where every OR branch is an ID-equality form
 //
-// For OR predicates, this helper only engages when all disjuncts are recognized
+// For OR predicates, it only engages when all disjuncts are recognized
 // ID-equality predicates; otherwise it returns (nil, false, nil) to avoid unsafe
 // pruning.
-func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
+func (e *StorageExecutor) resolveIDEqualityCompoundCandidates(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
-) ([]*storage.Node, bool, error) {
+) (nodeIDResults, bool, error) {
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 
 	// 1) Simple clause (literal or param).
-	if nodes, used, err := e.tryCollectNodesFromIDEquality(ctx, nodePattern, clause); used || err != nil {
-		return nodes, used, err
+	if ids, used, err := e.resolveIDEqualityCandidates(ctx, nodePattern, clause); used || err != nil {
+		return ids, used, err
 	}
-	if nodes, used, err := e.tryCollectNodesFromIDEqualityParam(ctx, nodePattern, clause, params); used || err != nil {
-		return nodes, used, err
+	if ids, used, err := e.resolveIDEqualityParamCandidates(ctx, nodePattern, clause, params); used || err != nil {
+		return ids, used, err
 	}
 
 	// 2) Conjunction: any recognized id-conjunct is safe to use as a pruning seek.
@@ -312,11 +273,11 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 			if term == "" {
 				continue
 			}
-			if nodes, used, err := e.tryCollectNodesFromIDEquality(ctx, nodePattern, term); used || err != nil {
-				return nodes, used, err
+			if ids, used, err := e.resolveIDEqualityCandidates(ctx, nodePattern, term); used || err != nil {
+				return ids, used, err
 			}
-			if nodes, used, err := e.tryCollectNodesFromIDEqualityParam(ctx, nodePattern, term, params); used || err != nil {
-				return nodes, used, err
+			if ids, used, err := e.resolveIDEqualityParamCandidates(ctx, nodePattern, term, params); used || err != nil {
+				return ids, used, err
 			}
 		}
 	}
@@ -324,45 +285,42 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 	// 3) Disjunction: only safe when every branch is recognized as an ID seek.
 	orTerms := splitTopLevelOrTerms(clause)
 	if len(orTerms) > 1 {
-		merged := make([]*storage.Node, 0, len(orTerms))
+		merged := newIDResults(len(orTerms))
 		seen := make(map[storage.NodeID]struct{}, len(orTerms))
 		for _, raw := range orTerms {
 			term := unwrapOuterParens(strings.TrimSpace(raw))
 			if term == "" {
-				return nil, false, nil
+				return nodeIDResults{}, false, nil
 			}
 
-			nodes, used, err := e.tryCollectNodesFromIDEquality(ctx, nodePattern, term)
+			ids, used, err := e.resolveIDEqualityCandidates(ctx, nodePattern, term)
 			if err != nil {
-				return nil, true, err
+				return nodeIDResults{}, true, err
 			}
 			if !used {
-				nodes, used, err = e.tryCollectNodesFromIDEqualityParam(ctx, nodePattern, term, params)
+				ids, used, err = e.resolveIDEqualityParamCandidates(ctx, nodePattern, term, params)
 				if err != nil {
-					return nil, true, err
+					return nodeIDResults{}, true, err
 				}
 			}
 			if !used {
 				// At least one OR branch is not a recognized ID-equality predicate.
 				// Bail out to preserve semantics.
-				return nil, false, nil
+				return nodeIDResults{}, false, nil
 			}
 
-			for _, node := range nodes {
-				if node == nil {
+			for _, id := range ids.ids() {
+				if _, ok := seen[id]; ok {
 					continue
 				}
-				if _, ok := seen[node.ID]; ok {
-					continue
-				}
-				seen[node.ID] = struct{}{}
-				merged = append(merged, node)
+				seen[id] = struct{}{}
+				merged.add(id)
 			}
 		}
 		return merged, true, nil
 	}
 
-	return nil, false, nil
+	return nodeIDResults{}, false, nil
 }
 
 // indexSeekPostings is a set of arity-1 index postings a WHERE seek reads:
@@ -394,7 +352,8 @@ func (p *indexSeekPostings) valueAt(i int) interface{} {
 // equality, IN or OR seek, whose candidates are the union of its postings
 // (two sets for an OR), or the inline pattern-property seek, whose
 // candidates are the intersection of its reads. It is planned without
-// reading the index; collectNodeIndexSeek reads it.
+// reading the index; planNodeIndexSeek lists its candidate IDs and
+// readNodeIndexCandidatePlan reads the nodes they name.
 type nodeIndexSeek struct {
 	schema   *storage.SchemaManager
 	postings [2]indexSeekPostings
@@ -552,128 +511,6 @@ func bestNodeIndexSeek(ctx context.Context, seeks *nodeIndexSeekSet) (int, error
 	return bestAt, nil
 }
 
-// collectRankedNodeIndexSeek reads the best of seeks (bestNodeIndexSeek), or,
-// when it cannot decide, the others in order; used is false when none does.
-func (e *StorageExecutor) collectRankedNodeIndexSeek(ctx context.Context, seeks *nodeIndexSeekSet) (nodes []*storage.Node, chosen int, used bool, err error) {
-	if seeks.n == 0 {
-		return nil, 0, false, ctx.Err()
-	}
-	bestAt, err := bestNodeIndexSeek(ctx, seeks)
-	if err != nil {
-		return nil, 0, false, err
-	}
-	for i := -1; i < seeks.n; i++ {
-		at := i
-		if i < 0 {
-			at = bestAt
-		} else if i == bestAt {
-			continue
-		}
-		nodes, used, err := e.collectNodeIndexSeek(ctx, seeks.at(at))
-		if err != nil {
-			return nil, 0, false, err
-		}
-		if used {
-			return nodes, at, true, nil
-		}
-	}
-	return nil, 0, false, nil
-}
-
-// collectBestNodeIndexSeek is collectRankedNodeIndexSeek returning the
-// nodes only.
-func (e *StorageExecutor) collectBestNodeIndexSeek(ctx context.Context, seeks *nodeIndexSeekSet) ([]*storage.Node, bool, error) {
-	nodes, _, used, err := e.collectRankedNodeIndexSeek(ctx, seeks)
-	return nodes, used, err
-}
-
-// collectPlannedSeek reads a planned seek, or reports that none applies.
-func (e *StorageExecutor) collectPlannedSeek(ctx context.Context, seek nodeIndexSeek, planned bool, err error) ([]*storage.Node, bool, error) {
-	if err != nil || !planned {
-		return nil, false, err
-	}
-	return e.collectNodeIndexSeek(ctx, &seek)
-}
-
-// collectNodeIndexSeek reads seek and returns its candidate nodes. A WHERE
-// seek reads the union of its postings and returns the nodes they list in
-// ID order that it admits; no posting entry yields an empty, used candidate
-// set. The inline seek reads its reads (readPatternPropertySeek) and keeps
-// the nodes that carry every pattern label.
-func (e *StorageExecutor) collectNodeIndexSeek(ctx context.Context, seek *nodeIndexSeek) ([]*storage.Node, bool, error) {
-	if seek.isInline() {
-		nodes, used, err := e.readPatternPropertySeek(ctx, seek)
-		if err != nil || !used {
-			return nil, false, err
-		}
-		e.markMergeSchemaLookupUsed()
-		if len(seek.patternLabels) < 2 {
-			return nodes, true, nil
-		}
-		labelled := nodes[:0]
-		for _, node := range nodes {
-			if mergeNodeHasLabels(node, seek.patternLabels) {
-				labelled = append(labelled, node)
-			}
-		}
-		return labelled, true, nil
-	}
-
-	idSet := make(map[storage.NodeID]struct{})
-	for g := range seek.postings {
-		postings := &seek.postings[g]
-		for _, label := range postings.labels {
-			for i := 0; i < postings.valueCount(); i++ {
-				lookupIDs, lookupErr := propertyIndexLookup(ctx, e.storage, seek.schema, label, postings.property, postings.valueAt(i))
-				if lookupErr != nil {
-					return nil, false, lookupErr
-				}
-				for _, id := range lookupIDs {
-					if err := ctx.Err(); err != nil {
-						return nil, false, err
-					}
-					idSet[id] = struct{}{}
-				}
-			}
-		}
-	}
-	if len(idSet) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(idSet))
-	ids := make([]string, 0, len(idSet))
-	for id := range idSet {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		ids = append(ids, string(id))
-	}
-	if err := ctxsort.Sort(ctx, ids, strings.Compare, false); err != nil {
-		return nil, false, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
-		}
-		if !seek.admits(node) {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return nodes, true, nil
-}
-
 // smallestLabelPosting narrows postings' labels, the indexed labels of a
 // labelled pattern, to the one whose index lists the fewest nodes under the
 // postings' values: every match carries every pattern label, so one label's
@@ -710,30 +547,14 @@ func smallestLabelPosting(ctx context.Context, store storage.Engine, schema *sto
 	return labels[bestAt : bestAt+1], nil
 }
 
-// tryCollectNodesFromPropertyIndex attempts to satisfy MATCH node candidates from a schema property index.
-// It only applies to simple equality predicates:
+// planPropertyIndexEquality plans the seek of a simple equality predicate on
+// an indexed property:
 //   - <var>.<prop> = <value>
 //   - <value> = <var>.<prop>
 //
-// It returns (nodes, true, nil) when index planning was used (including empty matches),
-// and (nil, false, nil) when the predicate is not eligible for index lookup.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return e.tryCollectNodesFromPropertyIndexAnyOf(ctx, nodePattern, whereClause, nil)
-}
-
-// tryCollectNodesFromPropertyIndexAnyOf is tryCollectNodesFromPropertyIndex
-// for a node that must carry one of anyOf (a WHERE label disjunction, #858;
-// nil when there is none): see seekCandidateLabels.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) ([]*storage.Node, bool, error) {
-	seek, planned, err := e.planPropertyIndexEquality(ctx, nodePattern, whereClause, anyOf)
-	return e.collectPlannedSeek(ctx, seek, planned, err)
-}
-
-// planPropertyIndexEquality plans tryCollectNodesFromPropertyIndexAnyOf's
-// seek; planned is false when the predicate is not eligible.
+// anyOf names the labels a pattern without labels must carry one of (a WHERE
+// label disjunction, #858; nil when there is none): see seekCandidateLabels.
+// planned is false when the predicate is not eligible for an index read.
 func (e *StorageExecutor) planPropertyIndexEquality(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) (nodeIndexSeek, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nodeIndexSeek{}, false, err
@@ -766,37 +587,14 @@ func (e *StorageExecutor) planPropertyIndexEquality(ctx context.Context, nodePat
 	return seek, true, nil
 }
 
-// tryCollectNodesFromPropertyIndexIn attempts to satisfy simple IN-list predicates:
+// planPropertyIndexInParam plans the seek of a simple IN-list predicate:
 //
 //	<var>.<prop> IN $param
 //
-// where $param is a list value from params. This path is used heavily by Fabric
-// batched correlated APPLY lookups.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-	params map[string]interface{},
-) ([]*storage.Node, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return e.tryCollectNodesFromPropertyIndexInAnyOf(ctx, nodePattern, whereClause, params, nil)
-}
-
-// tryCollectNodesFromPropertyIndexInAnyOf is tryCollectNodesFromPropertyIndexIn
-// for a node that must carry one of anyOf (see seekCandidateLabels).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-	params map[string]interface{},
-	anyOf []string,
-) ([]*storage.Node, bool, error) {
-	seek, planned, err := e.planPropertyIndexInParam(ctx, nodePattern, whereClause, params, anyOf)
-	return e.collectPlannedSeek(ctx, seek, planned, err)
-}
-
-// planPropertyIndexInParam plans tryCollectNodesFromPropertyIndexInAnyOf's
-// seek; planned is false when the predicate is not eligible.
+// where $param is a list value from params; batched correlated APPLY lookups in
+// Fabric read their nodes through that seek. anyOf names the labels a pattern
+// without labels must carry one of (see seekCandidateLabels). planned is false
+// when the predicate is not eligible.
 func (e *StorageExecutor) planPropertyIndexInParam(ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
@@ -837,37 +635,13 @@ func (e *StorageExecutor) planPropertyIndexInList(ctx context.Context, nodePatte
 	return seek, true, nil
 }
 
-// tryCollectNodesFromPropertyIndexInLiteral attempts to satisfy simple IN-list
-// predicates with literal lists:
+// planPropertyIndexInLiteral plans the seek of a simple IN-list predicate with
+// a literal list:
 //
 //	<var>.<prop> IN ['a', 'b', ...]
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
-	ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-) ([]*storage.Node, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return e.tryCollectNodesFromPropertyIndexInLiteralAnyOf(ctx, nodePattern, whereClause, nil)
-}
-
-// tryCollectNodesFromPropertyIndexInLiteralAnyOf is
-// tryCollectNodesFromPropertyIndexInLiteral for a node that must carry one of
-// anyOf (see seekCandidateLabels).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
-	ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-	anyOf []string,
-) ([]*storage.Node, bool, error) {
-	seek, planned, err := e.planPropertyIndexInLiteral(ctx, nodePattern, whereClause, anyOf)
-	return e.collectPlannedSeek(ctx, seek, planned, err)
-}
-
-// planPropertyIndexInLiteral plans
-// tryCollectNodesFromPropertyIndexInLiteralAnyOf's seek; planned is false
-// when the predicate is not eligible.
+//
+// anyOf names the labels a pattern without labels must carry one of (see
+// seekCandidateLabels). planned is false when the predicate is not eligible.
 func (e *StorageExecutor) planPropertyIndexInLiteral(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) (nodeIndexSeek, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nodeIndexSeek{}, false, err
@@ -879,9 +653,10 @@ func (e *StorageExecutor) planPropertyIndexInLiteral(ctx context.Context, nodePa
 	return e.planPropertyIndexInList(ctx, nodePattern, property, listValues, anyOf)
 }
 
-// tryCollectNodesFromPropertyIndexInCompound attempts to satisfy an IN-list
-// start-node predicate from a schema property index, including when the
-// IN-list conjunct is combined with other predicates via AND — e.g. a
+// addPropertyIndexInCompoundSeeks adds to seeks the indexed IN-list seeks that
+// narrow a start-node predicate: the whole clause's when it is a simple IN
+// list, otherwise one per indexed IN-list conjunct, including when the IN-list
+// conjunct is combined with other predicates via AND — e.g. a
 // relationship-pattern traversal's WHERE clause that also filters a bound
 // relationship variable, as in `WHERE s.uid IN $u AND rel.evidence_source =
 // $e`. Only a single AND conjunct needs to match an indexed property IN-list
@@ -889,30 +664,13 @@ func (e *StorageExecutor) planPropertyIndexInLiteral(ctx context.Context, nodePa
 // always re-applies the full WHERE clause via filterPathsByWhere afterward,
 // so seeding from one recognized conjunct can only over-fetch, never
 // under-fetch, and correctness does not depend on this helper understanding
-// the rest of the clause.
+// the rest of the clause. Each seek answers an IN list (inList).
 //
-// Mirrors tryCollectNodesFromIDEqualityCompound's AND-conjunct handling
+// Mirrors resolveIDEqualityCompoundCandidates' AND-conjunct handling
 // (match_index_seek.go) for the IN-list case. Tries the param-bound form
 // first, then the literal-list form, at both the top level and inside each
-// top-level AND conjunct; of several indexed conjuncts it reads the one that
-// reads the fewest index entries (bestNodeIndexSeek).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
-	ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-	params map[string]interface{},
-) ([]*storage.Node, bool, error) {
-	var seeks nodeIndexSeekSet
-	if err := e.addPropertyIndexInCompoundSeeks(ctx, nodePattern, whereClause, params, &seeks); err != nil {
-		return nil, false, err
-	}
-	return e.collectBestNodeIndexSeek(ctx, &seeks)
-}
-
-// addPropertyIndexInCompoundSeeks adds
-// tryCollectNodesFromPropertyIndexInCompound's seeks to seeks: the whole
-// clause's when it is a simple IN list, otherwise one per indexed IN-list
-// conjunct. Each answers an IN list (inList).
+// top-level AND conjunct; the caller then reads the conjunct that reads the
+// fewest index entries (bestNodeIndexSeek).
 func (e *StorageExecutor) addPropertyIndexInCompoundSeeks(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
@@ -970,38 +728,21 @@ func (e *StorageExecutor) addPropertyIndexInCompoundSeeks(
 	return nil
 }
 
-// tryCollectNodesFromPropertyIndexEqualityCompound attempts to satisfy a
-// start-node predicate from a schema property index when an equality on an
-// indexed property is combined with other predicates via AND — e.g.
-// `WHERE n.repo_id = $repo_id AND n.evidence_source = 'x' AND
+// addPropertyIndexEqualityCompoundSeeks adds to seeks the indexed equality
+// seeks that narrow a start-node predicate: the whole clause's when it is a
+// simple equality, otherwise one per indexed equality conjunct, including when
+// an equality on an indexed property is combined with other predicates via AND
+// — e.g. `WHERE n.repo_id = $repo_id AND n.evidence_source = 'x' AND
 // n.generation_id <> $gen`. Only a single AND conjunct needs to match an
-// indexed property equality for pruning to be safe: every caller
-// re-applies the full WHERE clause afterward, so seeding from one
-// recognized conjunct can only over-fetch, never under-fetch, and
-// correctness does not depend on this helper understanding the rest of the
-// clause.
+// indexed property equality for pruning to be safe: every caller re-applies
+// the full WHERE clause afterward, so seeding from one recognized conjunct can
+// only over-fetch, never under-fetch, and correctness does not depend on this
+// helper understanding the rest of the clause.
 //
-// Mirrors tryCollectNodesFromPropertyIndexInCompound's AND-conjunct handling
+// Mirrors addPropertyIndexInCompoundSeeks' AND-conjunct handling
 // (match_index_seek.go) for the plain-equality case. Tries the whole clause
-// first (the simple form), then each top-level AND conjunct; of several
-// indexed conjuncts it reads the one that reads the fewest index entries
-// (bestNodeIndexSeek).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
-	ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-) ([]*storage.Node, bool, error) {
-	var seeks nodeIndexSeekSet
-	if err := e.addPropertyIndexEqualityCompoundSeeks(ctx, nodePattern, whereClause, &seeks); err != nil {
-		return nil, false, err
-	}
-	return e.collectBestNodeIndexSeek(ctx, &seeks)
-}
-
-// addPropertyIndexEqualityCompoundSeeks adds
-// tryCollectNodesFromPropertyIndexEqualityCompound's seeks to seeks: the
-// whole clause's when it is a simple equality, otherwise one per indexed
-// equality conjunct.
+// first (the simple form), then each top-level AND conjunct; the caller then
+// reads the conjunct that reads the fewest index entries (bestNodeIndexSeek).
 func (e *StorageExecutor) addPropertyIndexEqualityCompoundSeeks(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
@@ -1049,24 +790,14 @@ func (e *StorageExecutor) addPropertyIndexEqualityCompoundSeeks(
 	return nil
 }
 
-// tryCollectNodesFromPropertyIndexInOrParam attempts to satisfy OR-combined IN
-// predicates backed by indexes, e.g.:
+// planPropertyIndexInOrParam plans the seek of OR-combined IN predicates whose
+// branches are both indexed, e.g.:
 //
 //	n.textKey IN $keys OR n.textKey128 IN $keys
 //
-// This is important for cleanup/read paths that pass large key lists and would
-// otherwise full-scan labels.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-	params map[string]interface{},
-) ([]*storage.Node, bool, error) {
-	seek, planned, err := e.planPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
-	return e.collectPlannedSeek(ctx, seek, planned, err)
-}
-
-// planPropertyIndexInOrParam plans tryCollectNodesFromPropertyIndexInOrParam's
-// seek; planned is false when the predicate is not eligible.
+// Cleanup and read paths that pass large key lists read their nodes through
+// that seek rather than a full label scan. planned is false when the predicate
+// is not eligible.
 func (e *StorageExecutor) planPropertyIndexInOrParam(ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
@@ -1147,27 +878,15 @@ func (e *StorageExecutor) orIndexSeek(ctx context.Context, schema *storage.Schem
 	return seek, true, nil
 }
 
-// tryCollectNodesFromPropertyIndexOrEquality attempts to satisfy OR-combined
-// equality predicates backed by indexes, e.g.:
+// planPropertyIndexOrEquality plans the seek of OR-combined equality predicates
+// whose branches are both indexed, e.g.:
 //
 //	a.prop1 = $x OR a.prop2 = $x
 //	a.prop1 = 'val1' OR a.prop2 = 'val2'
 //
-// It splits the OR into two branches, attempts index lookup on each, and merges
-// results with deduplication. This removes a major source of slow scans for
-// dual-key lookup workloads.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
-	ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-	params map[string]interface{},
-) ([]*storage.Node, bool, error) {
-	seek, planned, err := e.planPropertyIndexOrEquality(ctx, nodePattern, whereClause)
-	return e.collectPlannedSeek(ctx, seek, planned, err)
-}
-
-// planPropertyIndexOrEquality plans tryCollectNodesFromPropertyIndexOrEquality's
-// seek; planned is false when the predicate is not eligible.
+// The seek splits the OR into its two branches and lists the union of their
+// postings, so a dual-key lookup reads its nodes instead of scanning the label.
+// planned is false when the predicate is not eligible.
 func (e *StorageExecutor) planPropertyIndexOrEquality(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
@@ -1223,7 +942,7 @@ func (e *StorageExecutor) planPropertyIndexOrEquality(
 	})
 }
 
-// tryCollectNodesFromIDIn attempts to satisfy simple id/elementId IN-list predicates:
+// resolveIDInCandidates resolves simple id()/elementId() IN-list predicates:
 //
 //	id(<var>) IN $param
 //	elementId(<var>) IN $param
@@ -1233,32 +952,32 @@ func (e *StorageExecutor) planPropertyIndexOrEquality(
 // parameters, or a parameter the executor already substituted into the query
 // text (#940). A missing or non-list $param selects nothing, as before; a
 // constant that isn't a list leaves the predicate to the evaluator. This
-// provides direct node seeks for batched correlated lookups and avoids full
-// scans.
-func (e *StorageExecutor) tryCollectNodesFromIDIn(
+// gives batched correlated lookups the node IDs the list names without reading
+// a node body.
+func (e *StorageExecutor) resolveIDInCandidates(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
-) ([]*storage.Node, bool, error) {
+) (nodeIDResults, bool, error) {
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 	upper := upperASCII(clause)
 	inIdx := strings.Index(upper, " IN ")
 	if inIdx <= 0 {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 	// Keep this strict/simple to avoid semantic drift for complex predicates.
 	if strings.Contains(upper, " AND ") || strings.Contains(upper, " OR ") {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 
 	left := strings.TrimSpace(clause[:inIdx])
 	right := strings.TrimSpace(clause[inIdx+4:])
 	if left == "" || right == "" {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 
 	kind := ""
@@ -1272,39 +991,39 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		kind = "elementId"
 		varName = strings.TrimSpace(left[10 : len(left)-1])
 	default:
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 	if varName == "" || varName != nodePattern.variable {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 
 	var list []interface{}
 	if paramName := strings.TrimPrefix(right, "$"); paramName != right && cyphertext.IsIdentifier(paramName) {
 		if params == nil {
-			return nil, false, nil
+			return nodeIDResults{}, false, nil
 		}
 		raw, ok := params[paramName]
 		if !ok {
-			return []*storage.Node{}, true, nil
+			return nodeIDResults{}, true, nil
 		}
 		list = toAnySlice(raw)
 	} else {
 		value, constant := e.indexSeekConstant(ctx, right)
 		if !constant {
-			return nil, false, nil
+			return nodeIDResults{}, false, nil
 		}
 		if value != nil {
 			if list = toAnySlice(value); list == nil {
-				return nil, false, nil
+				return nodeIDResults{}, false, nil
 			}
 		}
 	}
 	if len(list) == 0 {
-		return []*storage.Node{}, true, nil
+		return nodeIDResults{}, true, nil
 	}
 
 	seen := make(map[string]struct{}, len(list))
-	nodes := make([]*storage.Node, 0, len(list))
+	ids := newIDResults(len(list))
 	for _, item := range list {
 		s, ok := item.(string)
 		if !ok {
@@ -1316,7 +1035,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		}
 		lookupID, found, applicable := e.entitySeekLookup(lookupID, "4", kind)
 		if !applicable {
-			return nil, false, nil
+			return nodeIDResults{}, false, nil
 		}
 		if !found {
 			continue
@@ -1325,24 +1044,13 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 			continue
 		}
 		seen[lookupID] = struct{}{}
-
-		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(lookupID))
-		if err != nil || node == nil {
-			continue
-		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-			continue
-		}
-		if len(nodePattern.properties) > 0 && !e.nodeMatchesProps(node, nodePattern.properties) {
-			continue
-		}
-		nodes = append(nodes, node)
+		ids.add(storage.NodeID(lookupID))
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nodeIDResults{}, false, err
 	}
-	return nodes, true, nil
+	return ids, true, nil
 }
 
 // indexOrderMode selects the lookup policy of tryCollectNodesFromPropertyIndexOrderLimit.
@@ -1474,36 +1182,6 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		// qualifying nodes whose first sort property is absent.
 		return nil, false, nil
 	}
-	return nodes, used, err
-}
-
-// tryCollectNodesFromPropertyIndexNotNull attempts to satisfy:
-//
-//	MATCH (n:Label) WHERE n.prop IS NOT NULL
-//
-// from schema index entries, avoiding label scans.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-) ([]*storage.Node, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	if len(nodePattern.labels) == 0 {
-		return nil, false, nil
-	}
-	property, ok := e.parseSimpleIndexedIsNotNull(ctx, nodePattern.variable, whereClause)
-	if !ok {
-		return nil, false, nil
-	}
-
-	schema := orderedPropertyIndexSchema(e.storage)
-	if schema == nil {
-		return nil, false, nil
-	}
-	nodes, used, err := e.collectNodesFromIndexedProperty(ctx, schema, nodePattern, property, func(label string) ([]storage.NodeID, bool, error) {
-		return schema.PropertyIndexNonNilCandidates(ctx, label, property)
-	})
 	return nodes, used, err
 }
 
@@ -2188,91 +1866,6 @@ found:
 	return fmt.Sprintf("(%s <> %s AND %s IS NOT NULL)", varProp, rhs, varProp)
 }
 
-// collectNodesFromIndexedProperty is the shared tail of the index seeks that
-// read one indexed property per candidate label: it gathers lookup(label)
-// for every label of the pattern that indexes property, de-duplicates the
-// IDs in lookup order, and loads the nodes that carry all pattern labels.
-// used is false when no candidate label indexes property.
-func (e *StorageExecutor) collectNodesFromIndexedProperty(ctx context.Context,
-	schema *storage.SchemaManager,
-	nodePattern nodePatternInfo,
-	property string,
-	lookup func(label string) ([]storage.NodeID, bool, error),
-) (nodes []*storage.Node, used bool, err error) {
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	labels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, property)
-	if err != nil {
-		return nil, false, err
-	}
-	if len(labels) == 0 {
-		return nil, false, nil
-	}
-	idSet := make(map[storage.NodeID]struct{})
-	ordered := make([]storage.NodeID, 0)
-	for _, label := range labels {
-		ids, ok, err := lookup(label)
-		if err != nil {
-			return nil, false, err
-		}
-		if !ok {
-			return nil, false, nil
-		}
-		for _, id := range ids {
-			if err := ctx.Err(); err != nil {
-				return nil, false, err
-			}
-			if _, exists := idSet[id]; exists {
-				continue
-			}
-			idSet[id] = struct{}{}
-			ordered = append(ordered, id)
-		}
-	}
-	nodes = make([]*storage.Node, 0, len(ordered))
-	for _, id := range ordered {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		// An ID the index still lists for a node that is gone or lost a
-		// pattern label is skipped.
-		if node, err := e.getQueryNode(ctx, e.storage, id); err == nil && node != nil && mergeNodeHasLabels(node, nodePattern.labels) {
-			nodes = append(nodes, node)
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return nodes, true, nil
-}
-
-// tryCollectNodesFromPropertyIndexRange seeds a MATCH from a property index
-// when its WHERE bounds an indexed property with <, <=, > or >= against a
-// number or string literal or parameter (p.age > 30, 18 <= p.age < 65,
-// p.name >= $from AND p.name < $to). Only the bounds narrow the seed; the
-// caller still evaluates the whole WHERE on every candidate (#820).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(ctx context.Context, nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	if len(nodePattern.labels) == 0 {
-		return nil, false, nil
-	}
-	property, bounds, ok := parseIndexedRangeBounds(ctx, nodePattern.variable, whereClause, params)
-	if !ok {
-		return nil, false, nil
-	}
-	schema := orderedPropertyIndexSchema(e.storage)
-	if schema == nil {
-		return nil, false, nil
-	}
-	nodes, used, err := e.collectNodesFromIndexedProperty(ctx, schema, nodePattern, property, func(label string) ([]storage.NodeID, bool, error) {
-		return schema.PropertyIndexRange(ctx, label, property, bounds)
-	})
-	return nodes, used, err
-}
-
 // parseIndexedRangeBounds finds, among the top-level AND conjuncts of a
 // WHERE, comparisons of variable.property with a literal or parameter, and
 // returns the bounds they place on the first such property.
@@ -2360,107 +1953,15 @@ func mirroredComparison(operator string) string {
 // and range and IS NOT NULL seeks are the fallbacks. Row reads and the
 // filtered count (tryStreamPipelineFilteredNodeCount) both seed from it, so a
 // lookup that uses an index for rows uses it for count(*) too (#820).
+//
+// The operator is prepared once (planPipelineIndexedNodeCandidates) and then
+// read (readNodeIndexCandidatePlan): a caller that needs only the size of the
+// candidate set reads the preparation alone, and one that drops the plan reads
+// no candidate node at all (NOR-414).
 func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
-	params := getParamsFromContext(ctx)
-	if hint.limit > 0 && hint.orderExpr != "" {
-		orderedPlans := []func() ([]*storage.Node, bool, error){
-			func() ([]*storage.Node, bool, error) {
-				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit, indexOrderExplicitNotNull)
-			},
-			func() ([]*storage.Node, bool, error) {
-				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit, indexOrderGeneral)
-			},
-		}
-		for _, plan := range orderedPlans {
-			nodes, used, err := plan()
-			if err != nil {
-				return nil, false, false, err
-			}
-			if used {
-				e.markOuterIndexTopKUsed()
-				return nodes, false, true, nil
-			}
-		}
-	}
-	if nodes, used, err := e.tryCollectNodesFromIDEqualityCompound(ctx, nodePattern, whereClause, params); err != nil || used {
-		return nodes, false, used, err
-	}
-	// When an id IN list predicate is the whole WHERE, its seek returns
-	// exactly the nodes it selects: the caller need not
-	// evaluate the WHERE again on each of them. Evaluating it per row checked
-	// every node against the whole list: CALL { … } IN TRANSACTIONS batches,
-	// which select their rows by id(n) IN $ids, were quadratic in the batch
-	// size (#703).
-	if nodes, used, err := e.tryCollectNodesFromIDIn(ctx, nodePattern, whereClause, params); err != nil || used {
-		return nodes, used, used, err
-	}
-	// An id IN list among AND conditions seeks the same way; the caller
-	// still evaluates the whole WHERE on the nodes it selects.
-	if findTopLevelKeyword(whereClause, " AND ") > 0 {
-		for _, conjunct := range splitTopLevelAndConjuncts(ctx, whereClause) {
-			if nodes, used, err := e.tryCollectNodesFromIDIn(ctx, nodePattern, conjunct, params); err != nil || used {
-				return nodes, false, used, err
-			}
-		}
-	}
-	// The point seeks (equality, IN and OR from the WHERE, and the pattern's
-	// inline properties) compete: the one that reads the fewest index entries
-	// is read, whichever predicate or pattern label names it (NOR-414). A
-	// non-selective WHERE equality used to win over a unique inline lookup
-	// only because its plan was tried first. Range and IS NOT NULL seeks
-	// remain the fallbacks they were.
-	var seeks nodeIndexSeekSet
-	if seek, planned, err := e.planPropertyIndexInOrParam(ctx, nodePattern, whereClause, params); err != nil {
-		return nil, false, false, err
-	} else if planned {
-		seeks.add(seek)
-	}
-	if seek, planned, err := e.planPropertyIndexOrEquality(ctx, nodePattern, whereClause); err != nil {
-		return nil, false, false, err
-	} else if planned {
-		seeks.add(seek)
-	}
-	if err := e.addPropertyIndexInCompoundSeeks(ctx, nodePattern, whereClause, params, &seeks); err != nil {
+	plan, used, err := e.planPipelineIndexedNodeCandidates(ctx, nodePattern, whereClause, hint)
+	if err != nil || !used {
 		return nil, false, false, err
 	}
-	if err := e.addPropertyIndexEqualityCompoundSeeks(ctx, nodePattern, whereClause, &seeks); err != nil {
-		return nil, false, false, err
-	}
-	if seek, planned, err := e.planPatternPropertySeek(ctx, nodePattern, e.getStorage(ctx)); err != nil {
-		return nil, false, false, err
-	} else if planned {
-		seeks.add(seek)
-	}
-	nodes, chosen, used, err := e.collectRankedNodeIndexSeek(ctx, &seeks)
-	if err != nil {
-		return nil, false, false, err
-	}
-	inList := used && seeks.at(chosen).inList
-	pointSeek := used
-	if !used {
-		if nodes, used, err = e.tryCollectNodesFromPropertyIndexRange(ctx, nodePattern, whereClause, params); err != nil {
-			return nil, false, false, err
-		}
-		if !used {
-			if nodes, used, err = e.tryCollectNodesFromPropertyIndexNotNull(ctx, nodePattern, whereClause); err != nil || !used {
-				return nil, false, false, err
-			}
-		}
-	}
-	if len(nodePattern.properties) > 0 {
-		if pointSeek {
-			// A point seek builds its own slice (collectNodeIndexSeek).
-			nodes = e.filterOwnedNodesByProperties(nodes, nodePattern.properties)
-		} else {
-			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
-		}
-	}
-	// A WHERE that is exactly <variable>.<property> IN <list> on an indexed
-	// property is answered by the index: one lookup per list value returns
-	// exactly the nodes it selects, so the caller doesn't test each of them
-	// against the whole list again (quadratic in the list for a list that
-	// names every node). Checked only once the index answered, so a read that
-	// takes another route doesn't parse its WHERE for it.
-	exact := inList && e.whereIsSimpleIndexedIn(ctx, nodePattern.variable, whereClause, params)
-	return nodes, exact, true, nil
+	return e.readNodeIndexCandidatePlan(ctx, plan)
 }

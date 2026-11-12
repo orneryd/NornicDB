@@ -8,7 +8,7 @@ import (
 // by value keeps directional state out of escaping higher-order callbacks.
 type nativeAdjacencyReader struct {
 	engine              *BadgerEngine
-	nodeID              NodeID
+	request             AdjacentEdgeRead
 	visibility          readVisibility
 	adjGen, edgeGen     uint64
 	out, in             adjacencyDirection
@@ -23,20 +23,24 @@ type adjacencyDirection struct {
 	deleted    bool
 }
 
-// captureAdjacencyReader selects both native directions at one cache/overlay
-// boundary. A nil view means the captured cache result is already complete.
+// captureAdjacencyReader selects the request's native directions at one
+// cache/overlay boundary. A nil view means the captured cache result is
+// already complete.
 //
 // ctx is the adjacency read's own context, so the overlay capture and the
 // cache fast path observe the caller's cancellation before they return a
 // population; a canceled read closes the captured view and publishes nothing.
-func (b *BadgerEngine) captureAdjacencyReader(ctx context.Context, nodeID NodeID, wantOut, wantIn bool, v readVisibility) (reader nativeAdjacencyReader, err error) {
+func (b *BadgerEngine) captureAdjacencyReader(ctx context.Context, request AdjacentEdgeRead, v readVisibility) (reader nativeAdjacencyReader, err error) {
 	if err := ctx.Err(); err != nil {
 		return reader, err
 	}
+	nodeID := request.Node
 	if nodeID == "" {
 		return reader, ErrInvalidID
 	}
-	reader.engine, reader.nodeID, reader.visibility = b, nodeID, v
+	wantOut := request.Direction != AdjacentIncoming
+	wantIn := request.Direction != AdjacentOutgoing
+	reader.engine, reader.request, reader.visibility = b, request, v
 	reader.adjGen, reader.edgeGen = b.adjCacheGen.current(), b.edgeCacheGen.current()
 	var captureErr error
 	reader.view, err = b.captureReadView(ctx, func(w *WriteBehindBuffer) {
@@ -63,7 +67,12 @@ func (b *BadgerEngine) captureAdjacencyReader(ctx context.Context, nodeID NodeID
 			}
 		}
 	}, readViewOptions{scope: namespaceForNodeID(nodeID), cached: func(w *WriteBehindBuffer) (bool, error) {
-		cachedOut, cachedIn, complete, cacheErr := b.cachedAdjacency(ctx, w, nodeID, wantOut, wantIn, v)
+		// A header read answers from the adjacency entries' own values, so the
+		// in-memory body cache cannot stand in for it.
+		if request.Headers {
+			return false, nil
+		}
+		cachedOut, cachedIn, complete, cacheErr := b.cachedAdjacency(ctx, w, request, v)
 		if cacheErr != nil {
 			return false, cacheErr
 		}
@@ -82,6 +91,11 @@ func (b *BadgerEngine) captureAdjacencyReader(ctx context.Context, nodeID NodeID
 }
 
 // read hydrates one captured direction; it never selects a later view or cache.
+//
+// A full request rejects an entry of another type before its relationship is
+// read, both from the adjacency value and from a cached body. A header request
+// answers from the entries' values, reading a relationship record only for an
+// entry written before those values existed.
 func (r *nativeAdjacencyReader) read(ctx context.Context, outgoing bool) (edges []*Edge, err error) {
 	if r.view == nil {
 		if outgoing {
@@ -89,7 +103,8 @@ func (r *nativeAdjacencyReader) read(ctx context.Context, outgoing bool) (edges 
 		}
 		return r.cachedIn, nil
 	}
-	b, nodeID, v := r.engine, r.nodeID, r.visibility
+	b, nodeID, v := r.engine, r.request.Node, r.visibility
+	request := r.request
 	adjGen, edgeGen, txn := r.adjGen, r.edgeGen, r.view.txn
 	d := &r.in
 	if outgoing {
@@ -99,22 +114,26 @@ func (r *nativeAdjacencyReader) read(ctx context.Context, outgoing bool) (edges 
 		if d.deleted {
 			return nil
 		}
-		if !d.hit {
+		if request.Headers {
+			edges, err = b.readAdjacentEdgeHeadersInTxn(ctx, txn, request, outgoing, edgeGen)
+			if err != nil {
+				return err
+			}
+		} else if !d.hit {
 			prefix := b.incomingIndexPrefixString(nodeID)
 			if outgoing {
 				prefix = b.outgoingIndexPrefixString(nodeID)
 			}
 			if prefix != nil {
 				var err error
-				edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, DecayScoringTime(), edgeGen, v)
+				edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, DecayScoringTime(), edgeGen, v, request.Types)
 				if err != nil {
 					return err
 				}
 			}
 			b.adjCacheStore(adjGen, nodeID, d.ids, txn.ReadTs(), outgoing)
-		}
-		// Read cached IDs from this transaction, never a later body cache.
-		if edges == nil {
+		} else {
+			// Read cached IDs from this transaction, never a later body cache.
 			var cancel bulkReadCancellation
 			for _, id := range d.ids {
 				if err := cancel.check(ctx); err != nil {
@@ -127,11 +146,12 @@ func (r *nativeAdjacencyReader) read(ctx context.Context, outgoing bool) (edges 
 				if err != nil {
 					return err
 				}
-				if edge != nil && !b.filterEntityByDecay(v, edge, DecayScoringTime()) {
+				if edge != nil && adjacentTypesAdmit(request.Types, edge.Type) && !b.filterEntityByDecay(v, edge, DecayScoringTime()) {
 					edges = append(edges, edge)
 				}
 			}
-		} else if len(d.suppressed) != 0 {
+		}
+		if len(d.suppressed) != 0 {
 			visible := edges[:0]
 			var cancel bulkReadCancellation
 			for _, edge := range edges {
@@ -144,23 +164,28 @@ func (r *nativeAdjacencyReader) read(ctx context.Context, outgoing bool) (edges 
 			}
 			edges = visible
 		}
-		attached := edges[:0]
-		var attachCancel bulkReadCancellation
-		for _, edge := range edges {
-			if err := attachCancel.check(ctx); err != nil {
-				return err
+		if !request.Headers {
+			attached := edges[:0]
+			var attachCancel bulkReadCancellation
+			for _, edge := range edges {
+				if err := attachCancel.check(ctx); err != nil {
+					return err
+				}
+				if attachedAt(edge, nodeID, outgoing) {
+					attached = append(attached, edge)
+				}
 			}
-			if attachedAt(edge, nodeID, outgoing) {
-				attached = append(attached, edge)
-			}
+			edges = attached
 		}
-		edges = attached
 		var liveCancel bulkReadCancellation
 		for _, edge := range d.live {
 			if err := liveCancel.check(ctx); err != nil {
 				return err
 			}
-			edges = append(edges, copyEdge(edge))
+			if !adjacentTypesAdmit(request.Types, edge.Type) {
+				continue
+			}
+			edges = append(edges, request.header(copyEdge(edge)))
 		}
 		return nil
 	})
@@ -187,10 +212,13 @@ func attachedAt(edge *Edge, nodeID NodeID, outgoing bool) bool {
 // The cached population is copied under the read's own context: a caller that
 // was canceled before or during the copy gets its own error and no edges,
 // instead of a complete-looking adjacency nobody asked for any more.
-func (b *BadgerEngine) cachedAdjacency(ctx context.Context, w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility) ([]*Edge, []*Edge, bool, error) {
+func (b *BadgerEngine) cachedAdjacency(ctx context.Context, w *WriteBehindBuffer, request AdjacentEdgeRead, v readVisibility) ([]*Edge, []*Edge, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, false, err
 	}
+	id := request.Node
+	wantOut := request.Direction != AdjacentIncoming
+	wantIn := request.Direction != AdjacentOutgoing
 	var outIDs, inIDs []EdgeID
 	var outHit, inHit = !wantOut, !wantIn
 	if wantOut {
@@ -233,13 +261,16 @@ func (b *BadgerEngine) cachedAdjacency(ctx context.Context, w *WriteBehindBuffer
 			if edge == nil {
 				return nil, false, nil
 			}
-			if attachedAt(edge, id, outgoing) && !b.filterEntityByDecay(v, edge, now) {
+			if attachedAt(edge, id, outgoing) && adjacentTypesAdmit(request.Types, edge.Type) && !b.filterEntityByDecay(v, edge, now) {
 				result = append(result, edge)
 			}
 		}
 		for _, edge := range live {
 			if err := cancel.check(ctx); err != nil {
 				return nil, false, err
+			}
+			if !adjacentTypesAdmit(request.Types, edge.Type) {
+				continue
 			}
 			result = append(result, copyEdge(edge))
 		}

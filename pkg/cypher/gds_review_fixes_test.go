@@ -46,7 +46,7 @@ func TestGDSGraphDropNeedsWriteOnItsDatabase(t *testing.T) {
 	var denied *PermissionDeniedError
 	require.ErrorAs(t, err, &denied)
 	require.Equal(t, "write", denied.Permission)
-	_, err = lookupGraphProjection("private", "secretGraph")
+	_, err = lookupGraphProjection(t.Context(), "private", "secretGraph")
 	require.NoError(t, err, "the other database's graph stays")
 
 	result, err := exec.Execute(ctx, "CALL gds.graph.drop('mine', true, 'allowed') YIELD graphName RETURN graphName", nil)

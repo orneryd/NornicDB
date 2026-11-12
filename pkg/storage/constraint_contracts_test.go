@@ -911,7 +911,7 @@ func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
 		t.Fatalf("expected deleted edge to be hidden, edge=%v err=%v", edge, err)
 	}
 
-	outgoing, err := tx.currentDirectedEdgesLocked(t.Context(), "tenant::n1", adjacencyOutgoing)
+	outgoing, err := tx.currentDirectedEdgesLocked(t.Context(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "tenant::n1"})
 	if err != nil {
 		t.Fatalf("currentDirectedEdgesLocked outgoing: %v", err)
 	}
@@ -919,7 +919,7 @@ func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
 		t.Fatalf("unexpected outgoing edges: %+v", outgoing)
 	}
 
-	incoming, err := tx.currentDirectedEdgesLocked(t.Context(), "tenant::n1", adjacencyIncoming)
+	incoming, err := tx.currentDirectedEdgesLocked(t.Context(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "tenant::n1"})
 	if err != nil {
 		t.Fatalf("currentDirectedEdgesLocked incoming: %v", err)
 	}

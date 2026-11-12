@@ -135,7 +135,10 @@ func (e *StorageExecutor) apocNodes(ctx context.Context, argument string, value 
 		if !valid {
 			return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
 		}
-		node, err := view.GetNode(ctx, id)
+		// The point read is the statement's one point-read owner, so the read
+		// this argument performs is reported there instead of leaving one
+		// unobserved read on the identity view.
+		node, err := e.getQueryNode(ctx, view, id)
 		if err != nil || node == nil {
 			return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
 		}
@@ -459,8 +462,7 @@ func (e *StorageExecutor) apocSteps(ctx context.Context, node storage.NodeID, st
 	if len(steps) == 0 {
 		steps = []apocRelationshipStep{{direction: "both"}}
 	}
-	out, _ := e.storage.GetOutgoingEdges(ctx, node)
-	in, _ := e.storage.GetIncomingEdges(ctx, node)
+	out, in := e.readGraphAdjacency(ctx, node)
 	var edges []*storage.Edge
 	seen := make(map[storage.EdgeID]bool)
 	take := func(edge *storage.Edge, step apocRelationshipStep) {
@@ -787,7 +789,16 @@ func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []in
 	}
 	relationships := make([]interface{}, 0)
 	for _, value := range nodes {
-		edges, _ := e.storage.GetOutgoingEdges(ctx, value.(*storage.Node).ID)
+		node := value.(*storage.Node)
+		edges, err := e.storage.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: node.ID})
+		if err != nil {
+			// The relationships between the nodes this call returns are what
+			// this read returned, so a failed read is the statement's failure:
+			// recorded on the statement's failure owner, which the public route
+			// returns, instead of answered with a list the read never returned.
+			recordExpressionFailure(ctx, err)
+			break
+		}
 		for _, edge := range edges {
 			if members[edge.EndNode] {
 				relationships = append(relationships, edge)

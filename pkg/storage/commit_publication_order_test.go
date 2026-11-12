@@ -224,7 +224,13 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 						got, e := b.GetEdge(t.Context(), "db:e")
 						require.NoError(t, e)
 						require.Equal(t, c.final, got.Properties["v"], "public relationship cache")
-						for _, read := range []func() ([]*Edge, error){func() ([]*Edge, error) { return b.GetEdgesByType(context.Background(), "LINK") }, func() ([]*Edge, error) { return b.GetOutgoingEdges(context.Background(), "db:a") }, func() ([]*Edge, error) { return b.GetIncomingEdges(context.Background(), "db:b") }, func() ([]*Edge, error) { return b.GetEdgesBetween(context.Background(), "db:a", "db:b") }} {
+						for _, read := range []func() ([]*Edge, error){func() ([]*Edge, error) { return b.GetEdgesByType(context.Background(), "LINK") }, func() ([]*Edge, error) {
+							return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "db:a"})
+						}, func() ([]*Edge, error) {
+							return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "db:b"})
+						}, func() ([]*Edge, error) {
+							return b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "db:a", Other: "db:b"})
+						}} {
 							edges, e := read()
 							require.NoError(t, e)
 							require.Len(t, edges, 1)

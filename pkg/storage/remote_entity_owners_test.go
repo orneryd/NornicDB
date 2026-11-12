@@ -78,10 +78,14 @@ func TestRemotePublicEdgeListDirectionsAndValues(t *testing.T) {
 		params          map[string]interface{}
 		run             func(*RemoteEngine) ([]*Edge, error)
 	}{
-		{"outgoing", "MATCH (n)-[r]->() WHERE n.id = $id RETURN r", map[string]interface{}{"id": "node:start"}, func(e *RemoteEngine) ([]*Edge, error) { return e.GetOutgoingEdges(context.Background(), "node:start") }},
-		{"incoming", "MATCH ()-[r]->(n) WHERE n.id = $id RETURN r", map[string]interface{}{"id": "node:end"}, func(e *RemoteEngine) ([]*Edge, error) { return e.GetIncomingEdges(context.Background(), "node:end") }},
+		{"outgoing", "MATCH (n)-[r]->() WHERE n.id = $id RETURN r", map[string]interface{}{"id": "node:start"}, func(e *RemoteEngine) ([]*Edge, error) {
+			return e.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "node:start"})
+		}},
+		{"incoming", "MATCH ()-[r]->(n) WHERE n.id = $id RETURN r", map[string]interface{}{"id": "node:end"}, func(e *RemoteEngine) ([]*Edge, error) {
+			return e.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "node:end"})
+		}},
 		{"between", "MATCH (a)-[r]->(b) WHERE a.id = $start AND b.id = $end RETURN r", map[string]interface{}{"start": "node:start", "end": "node:end"}, func(e *RemoteEngine) ([]*Edge, error) {
-			return e.GetEdgesBetween(context.Background(), "node:start", "node:end")
+			return e.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node:start", Other: "node:end"})
 		}},
 		{"type escaped", "MATCH ()-[r:`REL``TYPE`]->() RETURN r", nil, func(e *RemoteEngine) ([]*Edge, error) { return e.GetEdgesByType(context.Background(), edgeType) }},
 		{"all", "MATCH ()-[r]->() RETURN r", nil, func(e *RemoteEngine) ([]*Edge, error) { return e.AllEdges(context.Background()) }},

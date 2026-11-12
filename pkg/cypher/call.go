@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/collection"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"runtime"
 	"sort"
@@ -155,7 +156,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	}
 	if _, all, _, union := parseTopLevelUnionBranches(ctx, tail); union {
 		first := true
-		return e.executeUnion(ctx, tail, all, func(branch string) (*ExecuteResult, error) {
+		return e.executeUnion(ctx, tail, all, func(ctx context.Context, branch string) (*ExecuteResult, error) {
 			if first {
 				first = false
 				return e.executeCallTail(ctx, seed, branch)
@@ -263,7 +264,7 @@ func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *Exe
 	for _, column := range seed.Columns {
 		scope[column] = struct{}{}
 	}
-	result, ok, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, clauses, nil)
+	result, ok, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, clauses, nil, nil)
 	if ok {
 		e.markCallTailPipelineUsed()
 	}
@@ -1336,54 +1337,101 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	return nil, unknownProcedureError(procName)
 }
 
+// callDbLabels lists the distinct node labels the graph holds, in the schema
+// token order.
 func (e *StorageExecutor) callDbLabels(ctx context.Context) (*ExecuteResult, error) {
-	nodes, err := e.storage.AllNodes(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	labelSet := make(map[string]bool)
-	for _, node := range nodes {
-		for _, label := range node.Labels {
-			labelSet[label] = true
-		}
+	if err := e.readGraphTokenKeys(ctx, graphTokenLabels, labelSet); err != nil {
+		return nil, err
 	}
 
 	result := &ExecuteResult{
 		Columns: columnNames(dbLabelsColumns),
 		Rows:    make([][]interface{}, 0, len(labelSet)),
 	}
-	for _, label := range e.storage.GetSchema().OrderTokens(collection.SortedKeys(labelSet), false) {
+	for _, label := range readSchemaTokenOrder(ctx, e.storage.GetSchema(), collection.SortedKeys(labelSet), false) {
 		result.Rows = append(result.Rows, []interface{}{label})
 	}
 	return result, nil
 }
 
+// callDbRelationshipTypes lists the distinct relationship types the graph
+// holds, in the schema token order.
 func (e *StorageExecutor) callDbRelationshipTypes(ctx context.Context) (*ExecuteResult, error) {
-	edges, err := e.storage.AllEdges(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	typeSet := make(map[string]bool)
-	for _, edge := range edges {
-		typeSet[edge.Type] = true
+	if err := e.readGraphTokenKeys(ctx, graphTokenRelationshipTypes, typeSet); err != nil {
+		return nil, err
 	}
 
 	result := &ExecuteResult{
 		Columns: columnNames(dbRelationshipTypesColumns),
 		Rows:    make([][]interface{}, 0, len(typeSet)),
 	}
-	for _, relType := range e.storage.GetSchema().OrderTokens(collection.SortedKeys(typeSet), true) {
+	for _, relType := range readSchemaTokenOrder(ctx, e.storage.GetSchema(), collection.SortedKeys(typeSet), true) {
 		result.Rows = append(result.Rows, []interface{}{relType})
 	}
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
+// The schema catalogs db.indexes, db.index.stats and db.constraints read, and
+// the population-state lookup a VECTOR index entry adds. Each record is one
+// request the procedure actually made: Rows is the catalog population that
+// request returned, never the rows the statement builds from it and never a
+// planner's estimate, and Hits is the one acquisition, as the composite
+// database's catalog listing reports its own.
+const (
+	// profileKindSchemaIndexCatalog is one acquisition of this database's
+	// index catalog: Rows is the index entries it returned and Hits the one
+	// acquisition.
+	profileKindSchemaIndexCatalog = "SchemaIndexCatalog"
+	// profileKindSchemaIndexStatsCatalog is one acquisition of the statistics
+	// the schema owner derives for its indexes: Rows is the statistics entries
+	// it returned, not the entries those statistics count.
+	profileKindSchemaIndexStatsCatalog = "SchemaIndexStatsCatalog"
+	// profileKindSchemaConstraintCatalog is one acquisition of the schema's
+	// constraints: Rows is the constraint entries it returned.
+	profileKindSchemaConstraintCatalog = queryprofile.KindSchemaConstraintCatalog
+	// profileKindSchemaPropertyTypeConstraintCatalog is one acquisition of the
+	// schema's property type constraints: the schema owner keeps them apart
+	// from its other constraints, so the request is its own record.
+	profileKindSchemaPropertyTypeConstraintCatalog = "SchemaPropertyTypeConstraintCatalog"
+)
+
+// readSchemaIndexCatalog records one acquisition before callers apply their
+// distinct index filters. Empty catalogs still represent one actual request.
+func readSchemaIndexCatalog(ctx context.Context, schema *storage.SchemaManager) []interface{} {
+	indexes := schema.GetIndexes()
+	queryprofile.Access(ctx, profileKindSchemaIndexCatalog, "").Add(int64(len(indexes)), 1)
+	return indexes
+}
+
+// These acquisitions share one observation owner before CALL and SHOW apply
+// their distinct projection/filter contracts. Returned catalog entries are not
+// graph entities, and even an empty catalog requires one metadata request.
+func readSchemaConstraintCatalog(ctx context.Context, schema *storage.SchemaManager) []storage.Constraint {
+	entries := schema.GetAllConstraints()
+	queryprofile.Access(ctx, profileKindSchemaConstraintCatalog, "").Add(int64(len(entries)), 1)
+	return entries
+}
+func readSchemaPropertyTypeConstraintCatalog(ctx context.Context, schema *storage.SchemaManager) []storage.PropertyTypeConstraint {
+	entries := schema.GetAllPropertyTypeConstraints()
+	queryprofile.Access(ctx, profileKindSchemaPropertyTypeConstraintCatalog, "").Add(int64(len(entries)), 1)
+	return entries
+}
+func readSchemaTokenOrder(ctx context.Context, schema *storage.SchemaManager, names []string, relationships bool) []string {
+	ordered := schema.OrderTokens(names, relationships)
+	detail := "node labels"
+	if relationships {
+		detail = "relationship types"
+	}
+	queryprofile.Access(ctx, "SchemaTokenOrder", detail).Add(int64(len(ordered)), 1)
+	return ordered
+}
+
+func (e *StorageExecutor) callDbIndexes(ctx context.Context) (*ExecuteResult, error) {
 	// Get indexes from schema manager
 	schema := e.storage.GetSchema()
-	indexes := schema.GetIndexes()
+	indexes := readSchemaIndexCatalog(ctx, schema)
 
 	rows := make([][]interface{}, 0, len(indexes))
 	for _, idx := range indexes {
@@ -1409,7 +1457,7 @@ func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
 
 		state := "ONLINE"
 		if vectorName, ok := name.(string); ok && idxType == "VECTOR" {
-			state, _, _ = e.vectorIndexShowState(vectorName)
+			state, _, _ = e.vectorIndexShowState(ctx, vectorName)
 		}
 		rows = append(rows, []interface{}{name, idxType, labels, properties, state})
 	}
@@ -1422,9 +1470,12 @@ func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
 
 // callDbIndexStats returns statistics for all indexes.
 // Syntax: CALL db.index.stats() YIELD name, type, totalEntries, uniqueValues, selectivity
-func (e *StorageExecutor) callDbIndexStats() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexStats(ctx context.Context) (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
 	stats := schema.GetIndexStats()
+	// The statistics entries the schema owner returned: what this procedure
+	// read, not the entry counts those statistics describe.
+	queryprofile.Access(ctx, profileKindSchemaIndexStatsCatalog, "").Add(int64(len(stats)), 1)
 
 	rows := make([][]interface{}, 0, len(stats))
 	for _, s := range stats {
@@ -1448,8 +1499,10 @@ func (e *StorageExecutor) callDbIndexStats() (*ExecuteResult, error) {
 // callDbConstraints returns all constraints in the database.
 // Syntax: CALL db.constraints() YIELD name, type, labelsOrTypes, properties
 // Returns constraints in Neo4j-compatible format.
-func (e *StorageExecutor) callDbConstraints() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbConstraints(ctx context.Context) (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
+	// A missing schema answers without acquiring a catalog, so this request is
+	// not reported.
 	if schema == nil {
 		return &ExecuteResult{
 			Columns: columnNames(dbConstraintsColumns),
@@ -1458,7 +1511,7 @@ func (e *StorageExecutor) callDbConstraints() (*ExecuteResult, error) {
 	}
 
 	// Get all constraints from schema
-	allConstraints := schema.GetAllConstraints()
+	allConstraints := readSchemaConstraintCatalog(ctx, schema)
 
 	rows := make([][]interface{}, 0, len(allConstraints))
 	for _, constraint := range allConstraints {
@@ -1480,7 +1533,8 @@ func (e *StorageExecutor) callDbConstraints() (*ExecuteResult, error) {
 		})
 	}
 
-	for _, constraint := range schema.GetAllPropertyTypeConstraints() {
+	propertyTypeConstraints := readSchemaPropertyTypeConstraintCatalog(ctx, schema)
+	for _, constraint := range propertyTypeConstraints {
 		rows = append(rows, []interface{}{
 			constraint.Name,
 			string(storage.ConstraintPropertyType),
@@ -1525,48 +1579,55 @@ func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbStats(ctx context.Context) (*ExecuteResult, error) {
+// profileKindNodeCountRequest names the node count request database info and
+// statistics make: one logical request and the one count it returned, not the graph
+// cardinality and not a physical count-store read.
+const profileKindNodeCountRequest = "NodeCountRequest"
+
+// profileKindRelationshipCountRequest names the one relationship count request
+// nornicdb.stats makes, in the same request unit as the node count.
+const profileKindRelationshipCountRequest = "RelationshipCountRequest"
+
+// readGraphCounts owns the two scalar count requests shared by statistics
+// and database identity. Counts are one API response each, not entity scans.
+func (e *StorageExecutor) readGraphCounts(ctx context.Context) (int64, int64, error) {
 	nodeCount, err := e.storage.NodeCount(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	queryprofile.Access(ctx, profileKindNodeCountRequest, "").Add(1, 1)
+	edgeCount, err := e.storage.EdgeCount(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	queryprofile.Access(ctx, profileKindRelationshipCountRequest, "").Add(1, 1)
+	return nodeCount, edgeCount, nil
+}
+
+func (e *StorageExecutor) callNornicDbStats(ctx context.Context) (*ExecuteResult, error) {
+	nodeCount, edgeCount, err := e.readGraphCounts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	edgeCount, err := e.storage.EdgeCount(ctx)
-	if err != nil {
+
+	// Both token counts are the population reads db.labels and
+	// db.relationshipTypes make: a population that cannot be read fails the
+	// call instead of reporting zero tokens for it.
+	labelSet := make(map[string]bool)
+	if err := e.readGraphTokenKeys(ctx, graphTokenLabels, labelSet); err != nil {
+		return nil, err
+	}
+	typeSet := make(map[string]bool)
+	if err := e.readGraphTokenKeys(ctx, graphTokenRelationshipTypes, typeSet); err != nil {
 		return nil, err
 	}
 
 	return &ExecuteResult{
 		Columns: columnNames(nornicdbStatsColumns),
 		Rows: [][]interface{}{
-			{nodeCount, edgeCount, e.countLabels(ctx), e.countRelTypes(ctx)},
+			{nodeCount, edgeCount, len(labelSet), len(typeSet)},
 		},
 	}, nil
-}
-
-func (e *StorageExecutor) countLabels(ctx context.Context) int {
-	nodes, err := e.storage.AllNodes(ctx)
-	if err != nil {
-		return 0
-	}
-	labelSet := make(map[string]bool)
-	for _, node := range nodes {
-		for _, label := range node.Labels {
-			labelSet[label] = true
-		}
-	}
-	return len(labelSet)
-}
-
-func (e *StorageExecutor) countRelTypes(ctx context.Context) int {
-	edges, err := e.storage.AllEdges(ctx)
-	if err != nil {
-		return 0
-	}
-	typeSet := make(map[string]bool)
-	for _, edge := range edges {
-		typeSet[edge.Type] = true
-	}
-	return len(typeSet)
 }
 
 func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
@@ -1583,7 +1644,7 @@ func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo(ctx context.Context) (*ExecuteResult, error) {
 	enabled := false
 	if be := unwrapBadgerEngine(e.storage); be != nil {
 		enabled = be.IsDecayEnabled()
@@ -1596,11 +1657,11 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo() (*ExecuteResult, err
 		return nil, err
 	}
 	if schema != nil {
-		bundles, bindings := schema.ShowDecayProfiles()
+		bundles, bindings := readKnowledgePolicyDecayProfiles(ctx, schema)
 		decayProfiles = len(bundles)
 		decayBindings = len(bindings)
-		promotionProfiles = len(schema.ShowPromotionProfiles())
-		promotionPolicies = len(schema.ShowPromotionPolicies())
+		promotionProfiles = len(readKnowledgePolicyPromotionProfiles(ctx, schema))
+		promotionPolicies = len(readKnowledgePolicyPromotionPolicies(ctx, schema))
 	}
 
 	return &ExecuteResult{
@@ -1626,7 +1687,11 @@ func (e *StorageExecutor) callDbSchemaVisualization() (*ExecuteResult, error) {
 }
 
 func (e *StorageExecutor) callDbSchemaNodeProperties(ctx context.Context) (*ExecuteResult, error) {
-	nodes, _ := e.storage.AllNodes(ctx)
+	nodes, err := e.storage.AllNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	queryprofile.EntityPopulation(ctx, profileKindAllNodesScan, "", nodes)
 
 	// Collect properties per label
 	labelProps := make(map[string]map[string]bool)
@@ -1656,7 +1721,11 @@ func (e *StorageExecutor) callDbSchemaNodeProperties(ctx context.Context) (*Exec
 }
 
 func (e *StorageExecutor) callDbSchemaRelProperties(ctx context.Context) (*ExecuteResult, error) {
-	edges, _ := e.storage.AllEdges(ctx)
+	edges, err := e.storage.AllEdges(ctx)
+	if err != nil {
+		return nil, err
+	}
+	queryprofile.EntityPopulation(ctx, profileKindAllRelationshipsScan, "", edges)
 
 	// Collect properties per relationship type
 	typeProps := make(map[string]map[string]bool)
@@ -1683,20 +1752,14 @@ func (e *StorageExecutor) callDbSchemaRelProperties(ctx context.Context) (*Execu
 	return result, nil
 }
 
+// callDbPropertyKeys lists every property key the graph holds. Both
+// populations are the shared graph token read, so a population that fails
+// fails the call instead of leaving the keys of the half of the graph the
+// other population returned.
 func (e *StorageExecutor) callDbPropertyKeys(ctx context.Context) (*ExecuteResult, error) {
-	nodes, _ := e.storage.AllNodes(ctx)
-	edges, _ := e.storage.AllEdges(ctx)
-
 	propSet := make(map[string]bool)
-	for _, node := range nodes {
-		for prop := range node.Properties {
-			propSet[prop] = true
-		}
-	}
-	for _, edge := range edges {
-		for prop := range edge.Properties {
-			propSet[prop] = true
-		}
+	if err := e.readGraphTokenKeys(ctx, graphTokenPropertyKeys, propSet); err != nil {
+		return nil, err
 	}
 
 	result := &ExecuteResult{

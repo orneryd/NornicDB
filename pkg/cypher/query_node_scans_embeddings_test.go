@@ -6,6 +6,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -211,17 +212,20 @@ func TestFabricFragmentQueryNodeEligibility(t *testing.T) {
 	}{
 		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) RETURN n", true},
 		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) SET n.seen = 1 RETURN n", false},
-		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) CALL db.labels() YIELD label RETURN n LIMIT 1", false},
-		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) CALL { WITH n RETURN n.title AS title } RETURN n, title", false},
+		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) CALL db.labels() YIELD label RETURN n LIMIT 1", true},
+		{"MATCH (:Hub)-[:HAS]->(n:Doc {k: 0}) CALL { WITH n RETURN n.title AS title } RETURN n, title", true},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			g := newLargeEmbeddingGraph(t, 2)
 			spy := storagefault.NewQueryNodeReadSpy(g.store)
 			exec := g.exec.cloneWithStorage(spy, selectedDatabaseStorage)
 			fabric := &cypherFabricExecutor{base: g.exec}
-			_, _, err := fabric.executeFragmentQuery(context.Background(), exec, tc.query, nil, nil)
+			info, err := exec.analyzer.Analyze(t.Context(), tc.query)
 			require.NoError(t, err)
-			require.Equal(t, tc.eligible, exec.readOnlyQueryNodes)
+			statement := exec.newStatementExecutionContext(t.Context(), time.Time{}, nil)
+			require.NoError(t, exec.resolveStatementNodeImages(statement, info, tc.query))
+			_, _, err = fabric.executeFragmentQuery(statement, exec, tc.query, nil, nil)
+			require.NoError(t, err)
 			if tc.eligible {
 				require.Positive(t, spy.Query.Load())
 				require.Zero(t, spy.Full.Load())

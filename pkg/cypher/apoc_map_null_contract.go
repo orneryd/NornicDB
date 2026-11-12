@@ -131,7 +131,7 @@ func bundledAPOCMapHandler(name string, handler *PluginFunctionHandler, argument
 
 func init() {
 	for _, name := range []string{"apoc.map.frompairs", "apoc.map.fromlists", "apoc.map.merge", "apoc.map.setkey", "apoc.map.clean"} {
-		cypherfn.Register(name, apocMapConstructor(name))
+		cypherfn.Register(name, apocMapConstructor(name), cypherfn.CanonicalReads)
 	}
 }
 

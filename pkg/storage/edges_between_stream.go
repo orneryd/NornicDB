@@ -19,12 +19,14 @@ import (
 // match sees each candidate with its ID, Type, StartNode, EndNode and at
 // least the listed properties it has; the candidate is valid only during the
 // call, and match must not change or keep it. The edges it accepts are
-// returned whole, as GetEdgesBetween returns them, from the same read.
+// returned whole, as a between adjacent-edge request returns them, from the
+// same read.
 type EdgesBetweenMatcher interface {
 	MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error)
 }
 
-// MatchEdgesBetween is engine's EdgesBetweenMatcher, or GetEdgesBetween and
+// MatchEdgesBetween is engine's EdgesBetweenMatcher, or the between
+// adjacent-edge request and
 // the same filter for an engine without one: both give the same edges.
 func MatchEdgesBetween(ctx context.Context, engine Engine, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	if err := ctx.Err(); err != nil {
@@ -55,7 +57,7 @@ func MatchEdgesBetween(ctx context.Context, engine Engine, startID, endID NodeID
 		}
 		return wrapped.toUserEdgesInNamespace(ctx, edges, true, true)
 	}
-	edges, err := engine.GetEdgesBetween(ctx, startID, endID)
+	edges, err := engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: startID, Other: endID})
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +80,8 @@ func filterEdgesBetween(edges []*Edge, startID, endID NodeID, edgeType string, p
 }
 
 // MatchEdgesBetween matches the engine's edges between two nodes. Under
-// write-behind it overlays the buffer the same way GetEdgesBetween does: a
+// write-behind it overlays the buffer the same way a between adjacent-edge
+// request does: a
 // buffered endpoint delete hides committed rows, a buffered edge delete
 // hides that row, and buffered live edges of the type are appended
 // (PR #1043 read-overlay parity — MERGE identity reads).
@@ -138,7 +141,8 @@ func (b *BadgerEngine) MatchEdgesBetween(ctx context.Context, startID, endID Nod
 // committedMatchEdgesBetween reads the typed edge-between set index, matches
 // each candidate from the edge cache or, on a miss, from its decoded header and
 // only the requested properties, and returns the accepted ones whole. A pair with no set-index entry at all may
-// predate the index: its legacy outgoing index is read as GetEdgesBetween
+// predate the index: its legacy outgoing index is read as a between
+// adjacent-edge request
 // reads it.
 func (b *BadgerEngine) committedMatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool, views ...func(context.Context, func(*badger.Txn) error) error) ([]*Edge, error) {
 	if startID == "" || endID == "" {
@@ -252,7 +256,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(ctx context.Context, startID, 
 
 // MatchEdgesBetween matches the engine's edges as this transaction sees
 // them: its deleted edges are gone, and its created or updated ones replace
-// the stored versions, as in GetEdgesBetween.
+// the stored versions, as in a between adjacent-edge request.
 func (tx *BadgerTransaction) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	if err := tx.mu.LockContext(ctx); err != nil {
 		return nil, err
@@ -322,7 +326,7 @@ func (w *WALEngine) MatchEdgesBetween(ctx context.Context, startID, endID NodeID
 }
 
 // MatchEdgesBetween matches the edges of every readable constituent, each
-// once, as GetEdgesBetween reads them.
+// once, as a between adjacent-edge request reads them.
 func (c *CompositeEngine) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	seen := make(map[EdgeID]struct{})
 	var matched []*Edge

@@ -110,7 +110,7 @@ func (form reduceForm) appendPlan(ctx context.Context) *reduceAppendPlan {
 	// arithmetic split doesn't skip; a step with one has no plan.
 	if !containsIdentifierToken(strings.ToLower(form.step), "case") {
 		compiler := rowValueCompiler{}
-		node, _ = compiler.compile(ctx, form.step)
+		node, _ = compiler.compile(ctx, expressionPart(form.step))
 	}
 	var terms, texts []string
 	for node != nil {

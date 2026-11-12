@@ -60,6 +60,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/security"
 )
 
@@ -430,6 +431,9 @@ func (c Capability) openRemote(ctx context.Context, source string, request Reque
 	for key, value := range request.Headers {
 		req.Header.Set(key, value)
 	}
+	if c.record.httpClient != nil {
+		queryprofile.Callback(ctx, "APOC HTTP client", "")
+	}
 	resp, err := c.record.remoteHTTPClient().Do(req)
 	if err != nil {
 		return nil, err
@@ -539,6 +543,7 @@ func (p *policy) remoteURL(ctx context.Context, rawURL string) (*url.URL, error)
 
 func (p *policy) lookupHost(ctx context.Context, hostname string) ([]net.IPAddr, error) {
 	if p.hostResolver != nil {
+		queryprofile.Callback(ctx, "APOC host resolver", "")
 		return p.hostResolver(ctx, hostname)
 	}
 	return net.DefaultResolver.LookupIPAddr(ctx, hostname)

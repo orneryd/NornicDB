@@ -155,7 +155,7 @@ case strings.Contains(upper, "GDS.LINKPREDICTION.COMMONNEIGHBORS.STREAM"):
 
 Leverages existing `Engine` interface:
 - `AllNodes()` - Get all nodes for graph construction
-- `GetOutgoingEdges(nodeID)` - Build adjacency lists
+- `ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: nodeID})` - Build adjacency lists
 - `GetNode(id)` - Fetch embeddings for semantic scoring
 
 No changes to storage layer required

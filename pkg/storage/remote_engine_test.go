@@ -650,13 +650,13 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 	if _, err := engine.GetFirstNodeByLabel(t.Context(), "Person"); err != nil {
 		t.Fatalf("GetFirstNodeByLabel failed: %v", err)
 	}
-	if edges, err := engine.GetOutgoingEdges(context.Background(), "n1"); err != nil || len(edges) == 0 {
-		t.Fatalf("GetOutgoingEdges failed: len=%d err=%v", len(edges), err)
+	if edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "n1"}); err != nil || len(edges) == 0 {
+		t.Fatalf("ReadAdjacentEdges(outgoing) failed: len=%d err=%v", len(edges), err)
 	}
-	if edges, err := engine.GetIncomingEdges(context.Background(), "n1"); err != nil || len(edges) == 0 {
-		t.Fatalf("GetIncomingEdges failed: len=%d err=%v", len(edges), err)
+	if edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "n1"}); err != nil || len(edges) == 0 {
+		t.Fatalf("ReadAdjacentEdges(incoming) failed: len=%d err=%v", len(edges), err)
 	}
-	if edges, err := engine.GetEdgesBetween(context.Background(), "n1", "n2"); err != nil || len(edges) == 0 {
+	if edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "n1", Other: "n2"}); err != nil || len(edges) == 0 {
 		t.Fatalf("GetEdgesBetween failed: len=%d err=%v", len(edges), err)
 	}
 	edge, err := engine.GetEdgeBetween(t.Context(), "n1", "n2", "KNOWS")
@@ -883,13 +883,13 @@ func TestRemoteEngineAdditionalErrorBranches(t *testing.T) {
 	if err := engine.BulkDeleteEdges(t.Context(), []EdgeID{"e1"}); err == nil {
 		t.Fatalf("expected BulkDeleteEdges error")
 	}
-	if _, err := engine.GetOutgoingEdges(context.Background(), "n1"); err == nil {
-		t.Fatalf("expected GetOutgoingEdges conversion error")
+	if _, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "n1"}); err == nil {
+		t.Fatalf("expected ReadAdjacentEdges(outgoing) conversion error")
 	}
-	if _, err := engine.GetIncomingEdges(context.Background(), "n1"); err == nil {
-		t.Fatalf("expected GetIncomingEdges conversion error")
+	if _, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "n1"}); err == nil {
+		t.Fatalf("expected ReadAdjacentEdges(incoming) conversion error")
 	}
-	if _, err := engine.GetEdgesBetween(context.Background(), "a", "b"); err == nil {
+	if _, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "a", Other: "b"}); err == nil {
 		t.Fatalf("expected GetEdgesBetween conversion error")
 	}
 	if _, err := engine.GetEdgesByType(context.Background(), "REL"); err == nil {
@@ -935,13 +935,13 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 	if _, err := queryErrEngine.GetNodesByLabel(context.Background(), "Person"); err == nil {
 		t.Fatalf("expected GetNodesByLabel query error")
 	}
-	if _, err := queryErrEngine.GetOutgoingEdges(context.Background(), "n1"); err == nil {
-		t.Fatalf("expected GetOutgoingEdges query error")
+	if _, err := queryErrEngine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "n1"}); err == nil {
+		t.Fatalf("expected ReadAdjacentEdges(outgoing) query error")
 	}
-	if _, err := queryErrEngine.GetIncomingEdges(context.Background(), "n1"); err == nil {
-		t.Fatalf("expected GetIncomingEdges query error")
+	if _, err := queryErrEngine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "n1"}); err == nil {
+		t.Fatalf("expected ReadAdjacentEdges(incoming) query error")
 	}
-	if _, err := queryErrEngine.GetEdgesBetween(context.Background(), "a", "b"); err == nil {
+	if _, err := queryErrEngine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "a", Other: "b"}); err == nil {
 		t.Fatalf("expected GetEdgesBetween query error")
 	}
 	if _, err := queryErrEngine.GetEdgesByType(context.Background(), "REL"); err == nil {

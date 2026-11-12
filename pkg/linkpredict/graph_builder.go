@@ -303,7 +303,7 @@ schedule:
 			defer wg.Done()
 			defer func() { <-sem }() // Release semaphore
 
-			edges, err := b.storage.GetOutgoingEdges(ctx, nodeID)
+			edges, err := b.storage.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: nodeID})
 			if err != nil {
 				firstError.Do(func() { readErr = fmt.Errorf("failed to read relationships of node %q: %w", nodeID, err) })
 				return
@@ -867,7 +867,7 @@ func (s *GraphStreamer) StreamNodes(ctx context.Context, fn func(node *storage.N
 
 // StreamEdges iterates over all edges for a node.
 func (s *GraphStreamer) StreamEdges(ctx context.Context, nodeID storage.NodeID, fn func(edge *storage.Edge) error) error {
-	edges, err := s.engine.GetOutgoingEdges(ctx, nodeID)
+	edges, err := s.engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: nodeID})
 	if err != nil {
 		return err
 	}

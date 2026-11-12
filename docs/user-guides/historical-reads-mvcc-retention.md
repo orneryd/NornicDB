@@ -123,7 +123,7 @@ For label and relationship scans against a snapshot, use:
 
 - `GetNodesByLabelVisibleAt`
 - `GetEdgesByTypeVisibleAt`
-- `GetEdgesBetweenVisibleAt`
+- `ReadAdjacentEdgesVisibleAt` (a between read is `AdjacentBetween`)
 
 ## Retention Policy
 

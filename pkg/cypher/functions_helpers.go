@@ -37,7 +37,7 @@ func pluginFunctionHandler(name string) (*PluginFunctionHandler, bool) {
 // built-in of the same name; when its handler can't take a call, the
 // built-in answers instead: handled is false (#1163).
 func callPluginFunction(ctx context.Context, name string, handler *PluginFunctionHandler, args []interface{}) (value interface{}, handled bool, err error) {
-	if nativeAPOCForeignGraphHandler(name, handler) {
+	if nativeAPOCOwnsBundledHandler(name, handler) {
 		return nil, false, nil
 	}
 	if bundledAPOCMapHandler(name, handler, len(args)) {
@@ -100,6 +100,10 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 	return result, handled
 }
 
+// callPluginHandlerContext is the dispatch owner for one plugin handler call:
+// it keeps the caller's lifetime and panic boundary, and delegates admission,
+// argument binding, invocation and the opaque-callback report to the typed
+// adapter.
 func callPluginHandlerContext(ctx context.Context, handler *PluginFunctionHandler, args []interface{}) (result interface{}, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

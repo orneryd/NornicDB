@@ -193,15 +193,20 @@ func (tx *BadgerTransaction) GetEdge(ctx context.Context, edgeID EdgeID) (*Edge,
 	return readTransactionEntity(ctx, tx, edgeID, (*BadgerTransaction).edgeReadState, cloneTransactionEdge, loadTransactionEdge, visibleRead)
 }
 
-// ReadEdges returns the requested native transaction adjacency, including pending
-// writes and excluding pending deletions. Directional reads retain the pinned
-// snapshot or write-behind view; between reads retain the engine's current view.
-// For example, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: id}
-// reads outgoing edges, while TransactionReadBetween also supplies Other.
+// ReadEdges answers one adjacent-edge request from the transaction's view: its
+// snapshot (or write-behind, read-committed) view of the committed adjacency
+// overlaid with its own pending writes and excluding its pending deletes, just
+// as the transaction's other adjacent-edge reads merge them.
+//
+// The request's direction selects the adjacency (a between read keeps the
+// engine's current view, as the engine's own between read answers it), its type
+// set filters the relationships before they are hydrated, and Headers asks for
+// ID, type and endpoints without the relationship records.
+//
 // Admission follows IncidentEdges: the caller's context ends a wait for the
 // transaction's lock, and a closed transaction reports ErrTransactionClosed
 // first.
-func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request TransactionEdgeRead) ([]*Edge, error) {
+func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
 	if err := tx.clientOwnershipError(transactionRead); err != nil {
 		return nil, err
 	}
@@ -215,53 +220,46 @@ func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request TransactionE
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var direction EdgeDirection
-	switch request.Kind {
-	case TransactionReadOutgoing:
-		direction = Outgoing
-	case TransactionReadIncoming:
-		direction = Incoming
-	case TransactionReadBetween:
-	default:
-		return nil, ErrInvalidData
+	if err := request.validate(); err != nil {
+		return nil, err
 	}
 	if err := tx.pinNamespaceFromIDLocked(string(request.Node)); err != nil {
 		return nil, err
 	}
-	if request.Kind == TransactionReadBetween {
+	if request.Direction == AdjacentBetween {
 		if err := tx.pinNamespaceFromIDLocked(string(request.Other)); err != nil {
 			return nil, err
 		}
 	}
+	// Decay/promotion can inspect relationship properties. A header hint must
+	// never remove those inputs before either committed or pending visibility
+	// is decided; the record remains a valid answer to a header request.
+	if request.Headers && tx.engine.visibilityFiltered() {
+		request.Headers = false
+	}
 	var committed []*Edge
 	var err error
-	if request.Kind == TransactionReadBetween {
-		committed, err = tx.engine.GetEdgesBetween(ctx, request.Node, request.Other)
+	if request.Direction == AdjacentBetween {
+		committed, err = tx.engine.ReadAdjacentEdges(ctx, request)
 	} else {
-		committed, err = tx.getCommittedAdjacentEdgesLocked(ctx, request.Node, direction)
+		committed, err = tx.getCommittedAdjacentEdgesLocked(ctx, request)
 	}
 	if err != nil {
 		return nil, err
 	}
 	now := DecayScoringTime()
-	return tx.mergePendingAdjacentEdgesLocked(ctx, committed, request.Node, func(edge *Edge) bool {
-		if tx.engine.filterEntityByDecay(visibleRead, edge, now) {
-			return false
-		}
-		switch request.Kind {
-		case TransactionReadOutgoing:
-			return edge.StartNode == request.Node
-		case TransactionReadIncoming:
-			return edge.EndNode == request.Node
-		default:
-			return edge.StartNode == request.Node && edge.EndNode == request.Other
-		}
+	return tx.mergePendingAdjacentEdgesLocked(ctx, committed, request, func(edge *Edge) bool {
+		return !tx.engine.filterEntityByDecay(visibleRead, edge, now) && request.admits(edge)
 	})
 }
 
 // GetEdgeBetween returns a matching edge including pending transaction writes.
 func (tx *BadgerTransaction) GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error) {
-	edges, err := tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: startID, Other: endID})
+	request := AdjacentEdgeRead{Direction: AdjacentBetween, Node: startID, Other: endID}
+	if edgeType != "" {
+		request.Types = []string{edgeType}
+	}
+	edges, err := tx.ReadEdges(ctx, request)
 	if err != nil {
 		return nil, err
 	}

@@ -96,15 +96,15 @@ func BenchmarkCompositeConstituentFanOut(b *testing.B) {
 				}
 			})
 
-			b.Run("GetOutgoingEdges", func(b *testing.B) {
+			b.Run("ReadAdjacentEdges", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
-					edges, err := composite.GetOutgoingEdges(ctx, NodeID(compositeFanOutBenchmarkID(0)))
+					edges, err := composite.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Node: NodeID(compositeFanOutBenchmarkID(0))})
 					if err != nil {
 						b.Fatal(err)
 					}
 					if len(edges) != workload.constituents {
-						b.Fatalf("GetOutgoingEdges returned %d edges, want %d", len(edges), workload.constituents)
+						b.Fatalf("ReadAdjacentEdges returned %d edges, want %d", len(edges), workload.constituents)
 					}
 				}
 			})

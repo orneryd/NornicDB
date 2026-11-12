@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -252,6 +253,11 @@ func (m *Manager) Generate(ctx context.Context, prompt string, params GeneratePa
 	m.mu.Unlock()
 
 	safePrompt, credentials := redactGeneratorPrompt(prompt)
+	// The configured generator is an arbitrary provider: the database state it
+	// reads through its own path is outside the readers observed around this
+	// call, so an actual invocation is reported at the boundary. A closed
+	// manager or a missing generator returned above and reports nothing.
+	queryprofile.Callback(ctx, "inference provider", "")
 	result, err := gen.Generate(ctx, safePrompt, params)
 	if err != nil {
 		m.mu.Lock()
@@ -293,6 +299,10 @@ func (m *Manager) GenerateStream(ctx context.Context, prompt string, params Gene
 	// a credential split across callbacks cannot reach a consumer early.
 	var response strings.Builder
 	var chunks []string
+	// The same inference provider boundary: only a call that reaches the
+	// generator is reported, and a closed manager or missing generator
+	// returned above.
+	queryprofile.Callback(ctx, "inference provider", "")
 	err := gen.GenerateStream(ctx, safePrompt, params, func(token string) error {
 		chunks = append(chunks, token)
 		response.WriteString(token)
@@ -372,6 +382,9 @@ func (m *Manager) GenerateWithTools(ctx context.Context, messages []ToolRoundMes
 	m.mu.Unlock()
 
 	safeMessages, safeTools, credentials := redactToolRoundInput(messages, tools)
+	// The same inference provider boundary: only a generator that supports
+	// tools reaches this call; one that does not returned above.
+	queryprofile.Callback(ctx, "inference provider", "")
 	content, toolCalls, err = gwt.GenerateWithTools(ctx, safeMessages, safeTools, params)
 	if err != nil {
 		m.mu.Lock()

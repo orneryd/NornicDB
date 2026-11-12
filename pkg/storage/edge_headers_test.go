@@ -36,13 +36,11 @@ func TestEdgeHeadersFromAdjacencyEntries(t *testing.T) {
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "L"}))
 	require.NoError(t, tx.Commit())
 
-	out, answered, err := eng.OutgoingEdgeHeaders(context.Background(), "test:a")
+	out, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 	require.NoError(t, err)
-	require.True(t, answered)
 	require.Equal(t, []string{"test:e1:K:test:a->test:b", "test:e2:L:test:a->test:c"}, headerSummary(out))
-	in, answered, err := eng.IncomingEdgeHeaders(context.Background(), "test:c")
+	in, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:c", Headers: true})
 	require.NoError(t, err)
-	require.True(t, answered)
 	require.Equal(t, []string{"test:e2:L:test:a->test:c"}, headerSummary(in))
 
 	// A type change and an endpoint change rewrite the entries, in and out of
@@ -59,10 +57,10 @@ func TestEdgeHeadersFromAdjacencyEntries(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:b", EndNode: "test:c", Type: "L2"}}))
 	require.NoError(t, tx.Commit())
-	out, _, err = eng.OutgoingEdgeHeaders(context.Background(), "test:a")
+	out, err = eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e1:K2:test:a->test:c"}, headerSummary(out))
-	out, _, err = eng.OutgoingEdgeHeaders(context.Background(), "test:b")
+	out, err = eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:b", Headers: true})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e2:L2:test:b->test:c"}, headerSummary(out))
 	require.NoError(t, eng.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "L2"}}))
@@ -76,23 +74,25 @@ func TestEdgeHeadersFromAdjacencyEntries(t *testing.T) {
 	eng.edgeCacheMu.Lock()
 	clear(eng.edgeCache)
 	eng.edgeCacheMu.Unlock()
-	out, _, err = eng.OutgoingEdgeHeaders(context.Background(), "test:a")
+	out, err = eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e1:K2:test:a->test:c", "test:e2:L2:test:a->test:c"}, headerSummary(out))
 
 	// Unknown and empty node IDs.
-	out, answered, err = eng.OutgoingEdgeHeaders(context.Background(), "test:missing")
+	out, err = eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:missing", Headers: true})
 	require.NoError(t, err)
-	require.True(t, answered)
 	require.Empty(t, out)
-	_, _, err = eng.OutgoingEdgeHeaders(context.Background(), "")
+	_, err = eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "", Headers: true})
 	require.ErrorIs(t, err, ErrInvalidID)
 
-	// Decay filtering can hide a relationship, so headers aren't answered.
+	// Decay filtering decides each relationship's visibility, so a header
+	// request falls back to the record read and lists what that read lists.
 	eng.SetDecayEnabled(true)
-	_, answered, err = eng.OutgoingEdgeHeaders(context.Background(), "test:a")
+	decayedHeaders, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 	require.NoError(t, err)
-	require.False(t, answered)
+	decayedFull, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a"})
+	require.NoError(t, err)
+	require.Equal(t, headerSummary(decayedFull), headerSummary(decayedHeaders))
 }
 
 // Every layer of the server's stack lists headers the way it lists full
@@ -116,44 +116,47 @@ func TestEdgeHeadersAcrossStack(t *testing.T) {
 	require.NoError(t, namespaced.DeleteEdge(t.Context(), "dropped"))
 	require.NoError(t, namespaced.CreateEdge(t.Context(), &Edge{ID: "staged", StartNode: "a", EndNode: "c", Type: "L"}))
 
-	out, answered, err := namespaced.OutgoingEdgeHeaders(context.Background(), "a")
+	out, err := namespaced.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "a", Headers: true})
 	require.NoError(t, err)
-	require.True(t, answered)
 	require.Equal(t, []string{"flushed:K:a->b", "staged:L:a->c"}, headerSummary(out))
-	in, answered, err := namespaced.IncomingEdgeHeaders(context.Background(), "c")
+	in, err := namespaced.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "c", Headers: true})
 	require.NoError(t, err)
-	require.True(t, answered)
 	require.Equal(t, []string{"staged:L:a->c"}, headerSummary(in))
-	walOut, answered, err := wal.OutgoingEdgeHeaders(context.Background(), "ns:a")
+	walOut, err := wal.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "ns:a", Headers: true})
 	require.NoError(t, err)
-	require.True(t, answered)
 	require.Equal(t, []string{"ns:flushed:K:ns:a->ns:b", "ns:staged:L:ns:a->ns:c"}, headerSummary(walOut))
-	_, answered, err = wal.IncomingEdgeHeaders(context.Background(), "ns:b")
+	_, err = wal.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "ns:b", Headers: true})
 	require.NoError(t, err)
-	require.True(t, answered)
 
-	// Layers above an engine without headers don't answer.
+	// A layer above an engine that answers only the engine contract answers the
+	// same header request itself.
 	plain := nonHeaderEngine{Engine: badger}
-	for _, reader := range []EdgeHeaderReader{
-		NewNamespacedEngine(plain, "ns"),
-		NewWALEngine(plain, walBacking),
+	for _, layer := range []struct {
+		name   string
+		engine Engine
+		node   NodeID
+		want   []string
+	}{
+		{"namespaced", NewNamespacedEngine(plain, "ns"), "a", []string{"flushed:K:a->b", "staged:L:a->c"}},
+		{"wal", NewWALEngine(plain, walBacking), "ns:a", []string{"ns:flushed:K:ns:a->ns:b", "ns:staged:L:ns:a->ns:c"}},
 	} {
-		_, answered, err = reader.OutgoingEdgeHeaders(context.Background(), "a")
-		require.NoError(t, err)
-		require.False(t, answered)
-		_, answered, err = reader.IncomingEdgeHeaders(context.Background(), "a")
-		require.NoError(t, err)
-		require.False(t, answered)
+		listed, err := layer.engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: layer.node, Headers: true})
+		require.NoError(t, err, layer.name)
+		require.Equal(t, layer.want, headerSummary(listed), layer.name)
 	}
 
-	// Decay below makes every layer decline.
+	// Decay below makes every layer answer from the records, which decide each
+	// relationship's visibility.
 	badger.SetDecayEnabled(true)
-	_, answered, err = namespaced.OutgoingEdgeHeaders(context.Background(), "a")
+	decayedHeaders, err := namespaced.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "a", Headers: true})
 	require.NoError(t, err)
-	require.False(t, answered)
+	decayedFull, err := namespaced.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "a"})
+	require.NoError(t, err)
+	require.Equal(t, headerSummary(decayedFull), headerSummary(decayedHeaders))
 }
 
-// nonHeaderEngine hides EdgeHeaderReader from the engine it wraps.
+// nonHeaderEngine answers only the engine contract, without any optional
+// reader the engine it wraps may implement.
 type nonHeaderEngine struct{ Engine }
 
 // Header listing skips entries it can't resolve and answers an entry without
@@ -201,13 +204,11 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 				tx, err := eng.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
-				headers, answered, err := tx.OutgoingEdgeHeaders(context.Background(), "test:a")
+				headers, err := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 				require.NoError(t, err)
-				require.True(t, answered)
 				require.Equal(t, []string{"test:odd:K:test:a->test:b"}, headerSummary(headers))
-				headers, answered, err = tx.OutgoingEdgeHeaders(context.Background(), "test:missing")
+				headers, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:missing", Headers: true})
 				require.NoError(t, err)
-				require.True(t, answered)
 				require.Empty(t, headers)
 				require.NoError(t, tx.Rollback())
 			}
@@ -224,26 +225,28 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 			eng.edgeCacheMu.Lock()
 			clear(eng.edgeCache)
 			eng.edgeCacheMu.Unlock()
-			var reader EdgeHeaderReader = eng
+			readHeaders := func(ctx context.Context) ([]*Edge, error) {
+				return eng.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
+			}
 			if transactional {
 				tx, err := eng.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer func() { _ = tx.Rollback() }()
 				require.NoError(t, tx.SetNamespace("test"))
-				_, fullErr := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
+				_, fullErr := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 				require.Error(t, fullErr)
-				reader = tx
+				readHeaders = func(ctx context.Context) ([]*Edge, error) {
+					return tx.ReadEdges(ctx, AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
+				}
 			} else {
 				eng.cacheStoreEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"}, eng.db.oracle.published.Load())
 			}
-			_, answered, err := reader.OutgoingEdgeHeaders(context.Background(), "test:a")
+			_, err := readHeaders(context.Background())
 			require.Error(t, err)
 			if !transactional {
-				require.True(t, answered)
 				require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Delete(edgeKey("test:corrupt")) }))
-				out, answered, err := reader.OutgoingEdgeHeaders(context.Background(), "test:a")
+				out, err := readHeaders(context.Background())
 				require.NoError(t, err)
-				require.True(t, answered)
 				require.Equal(t, []string{"test:cached:K:test:a->test:b", "test:odd:K:test:a->test:b"}, headerSummary(out))
 			}
 		})
@@ -287,11 +290,10 @@ func TestAdjacencyHeaderMatchesRecord(t *testing.T) {
 		record, err := eng.GetEdge(t.Context(), "test:e")
 		require.NoError(t, err)
 		record.Properties = nil
-		out, answered, err := eng.OutgoingEdgeHeaders(context.Background(), "test:a")
+		out, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 		require.NoError(t, err)
-		require.True(t, answered)
 		require.Len(t, out, 1, stage)
-		in, _, err := eng.IncomingEdgeHeaders(context.Background(), "test:b")
+		in, err := eng.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:b", Headers: true})
 		require.NoError(t, err)
 		require.Len(t, in, 1, stage)
 		for _, header := range []*Edge{out[0], in[0]} {

@@ -102,15 +102,22 @@ func TestSnapshotOverlayPublicReadsReachCapture(t *testing.T) {
 		}
 	}
 	require.Contains(t, calls, "snapshotNodeRef", "an unnamed BadgerEngine receiver must remain in the inspected population")
-	readers := []string{"GetNode", "GetNodeProjected", "GetNodeWithoutEmbeddings", "GetEdge", "BatchGetNodes", "BatchGetNodesWithoutEmbeddings", "HasLabelBatch", "RelationshipEndpointVisible", "GetNodesByLabelInScope", "GetFirstNodeByLabelInScope", "ForEachNodeIDByLabelInScope", "AllNodes", "AllEdges", "GetEdgesByType", "GetOutgoingEdges", "GetIncomingEdges", "GetAdjacentEdges", "OutgoingEdgeHeaders", "IncomingEdgeHeaders", "GetEdgesBetween", "GetEdgeBetween", "MatchEdgesBetween", "StreamNodesWithOptions", "StreamNodesByLabelProjectedInScope", "StreamEdges", "StreamEdgesByTypeInScope", "IterateNodes", "StreamNodeChunks", "GetNodeEmbeddingMeta"}
+	readers := []string{"GetNode", "GetNodeProjected", "GetNodeWithoutEmbeddings", "GetEdge", "BatchGetNodes", "BatchGetNodesWithoutEmbeddings", "HasLabelBatch", "RelationshipEndpointVisible", "GetNodesByLabelInScope", "GetFirstNodeByLabelInScope", "ForEachNodeIDByLabelInScope", "AllNodes", "AllEdges", "GetEdgesByType", "ReadAdjacentEdges", "ReadStoredAdjacentEdges", "ReadAdjacentEdgesVisibleAt", "GetEdgeBetween", "MatchEdgesBetween", "StreamNodesWithOptions", "StreamNodesByLabelProjectedInScope", "StreamEdges", "StreamEdgesByTypeInScope", "IterateNodes", "StreamNodeChunks", "GetNodeEmbeddingMeta"}
 	if _, ok := calls["GetQueryNode"]; ok {
 		readers = append(readers, "GetQueryNode")
 	}
 	for _, reader := range readers {
+		owner := "captureReadView"
+		if reader == "ReadAdjacentEdgesVisibleAt" {
+			// This migrated entry point owns an explicit historical version.
+			// Capturing the current overlay would admit newer acknowledged
+			// writes into that cut; require its registered history owner.
+			owner = "beginMVCCHistoryRead"
+		}
 		seen := map[string]bool{}
 		var reaches func(string) bool
 		reaches = func(name string) bool {
-			if name == "captureReadView" {
+			if name == owner {
 				return true
 			}
 			if seen[name] {
@@ -124,6 +131,6 @@ func TestSnapshotOverlayPublicReadsReachCapture(t *testing.T) {
 			}
 			return false
 		}
-		require.True(t, reaches(reader), "%s must reach the shared snapshot/overlay capture", reader)
+		require.True(t, reaches(reader), "%s must reach its shared read owner %s", reader, owner)
 	}
 }

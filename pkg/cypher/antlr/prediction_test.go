@@ -421,22 +421,107 @@ func TestValidatePredictionWorkingSetKeepsGeneration(t *testing.T) {
 
 // Generations rotate safely while other parses run (go test -race): the
 // budget retires them, and so does a retirer between parses.
+// gatedPredictionTokens holds a real Script invocation at its first lookahead.
+// The gate is armed after construction, since construction can inspect input.
+type gatedPredictionTokens struct {
+	antlr.TokenStream
+	armed           bool
+	once            sync.Once
+	entered, resume chan struct{}
+}
+
+func (s *gatedPredictionTokens) wait() {
+	if s.armed {
+		s.once.Do(func() { close(s.entered); <-s.resume })
+	}
+}
+func (s *gatedPredictionTokens) LA(k int) int         { s.wait(); return s.TokenStream.LA(k) }
+func (s *gatedPredictionTokens) LT(k int) antlr.Token { s.wait(); return s.TokenStream.LT(k) }
+
+type heldPredictionParse struct {
+	prediction *parserPrediction
+	done       <-chan error
+	resume     func()
+}
+
+func startHeldPredictionParse(t *testing.T, query string) heldPredictionParse {
+	t.Helper()
+	prediction := acquirePrediction()
+	lexer := NewCypherLexer(antlr.NewInputStream(query))
+	listener := &parseErrorListener{}
+	lexer.RemoveErrorListeners()
+	lexer.AddErrorListener(listener)
+	stream := &gatedPredictionTokens{TokenStream: antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel), entered: make(chan struct{}), resume: make(chan struct{})}
+	parser := NewCypherParser(stream)
+	parser.RemoveErrorListeners()
+	parser.AddErrorListener(listener)
+	usePrediction(parser, prediction)
+	stream.armed = true
+	var once sync.Once
+	resume := func() { once.Do(func() { close(stream.resume) }) }
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		var parseErr error
+		func() {
+			defer prediction.release()
+			tree := parser.Script()
+			if len(listener.errors) != 0 {
+				parseErr = fmt.Errorf("held parse: %v", listener.fallbacks())
+			} else if tree == nil || tree.GetChildCount() == 0 {
+				parseErr = fmt.Errorf("held parse produced no script")
+			}
+		}()
+		done <- parseErr // completion is published only after releasing the lease
+	}()
+
+	t.Cleanup(func() {
+		resume()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("held parser did not finish after release")
+		}
+	})
+	select {
+	case <-stream.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("parser did not reach controlled lookahead")
+	}
+	return heldPredictionParse{prediction: prediction, done: done, resume: resume}
+}
+func finishHeldPredictionParse(t *testing.T, held heldPredictionParse) {
+	t.Helper()
+	select {
+	case err := <-held.done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("held parser did not complete")
+	}
+}
+
 func TestValidatePredictionGenerationConcurrent(t *testing.T) {
 	setMaxParserDFAStates(t, 400)
+	retireCurrentPredictionForTest()
 	made := generationsMade()
-	stop := make(chan struct{})
-	retirer := make(chan struct{})
-	go func() {
-		defer close(retirer)
-		for {
-			select {
-			case <-stop:
-				return
-			case <-time.After(25 * time.Millisecond):
-				retireCurrentPredictionForTest()
-			}
-		}
-	}()
+	const query = "MATCH (n:HeldGeneration) WHERE n.v=1 RETURN [x IN n.xs WHERE x>0 | x*2] AS v"
+	old := startHeldPredictionParse(t, query)
+	retireCurrentPredictionForTest()
+	next := startHeldPredictionParse(t, query)
+	predictions.mu.Lock()
+	_, retained := predictions.retired[old.prediction]
+	overlap := retained && old.prediction.retired && old.prediction.readers == 1 && next.prediction != old.prediction && predictions.current == next.prediction && next.prediction.readers == 1 && old.prediction.shared && next.prediction.shared
+	predictions.mu.Unlock()
+	if !overlap {
+		t.Fatal("old and new active parses did not overlap across retirement")
+	}
+	checkLedger(t)
+
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for worker := 0; worker < 8; worker++ {
@@ -460,15 +545,27 @@ func TestValidatePredictionGenerationConcurrent(t *testing.T) {
 			}
 		}(worker)
 	}
+	old.resume()
+	next.resume()
 	wg.Wait()
-	close(stop)
-	<-retirer
+	finishHeldPredictionParse(t, old)
+	finishHeldPredictionParse(t, next)
 	close(errs)
 	for err := range errs {
 		t.Fatal(err)
 	}
 	if generationsMade()-made < 2 {
 		t.Fatalf("generations never rotated while parses ran")
+	}
+	if old.prediction.countStates() == 0 || next.prediction.countStates() == 0 {
+		t.Fatal("both overlapping generations must perform actual prediction work")
+	}
+	predictions.mu.Lock()
+	_, retained = predictions.retired[old.prediction]
+	readers := old.prediction.readers + next.prediction.readers
+	predictions.mu.Unlock()
+	if retained || readers != 0 {
+		t.Fatal("completed parses retained prediction leases")
 	}
 	checkLedger(t)
 }

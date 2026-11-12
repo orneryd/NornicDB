@@ -742,6 +742,7 @@ func (p *VectorSearchPipeline) searchWithEvidence(ctx context.Context, query []f
 // is never exhausted: a short page from an approximate generator is no
 // evidence that nothing else matches.
 func (p *VectorSearchPipeline) selectCandidates(ctx context.Context, query []float32, k int, minSimilarity float64, entryIDs []string) ([]Candidate, candidateEvidence, error) {
+	observeVectorProvider(ctx, p.candidateGen, "vector candidate generator")
 	if generator, ok := p.candidateGen.(candidateGeneratorWithEntryEvidence); ok {
 		return generator.searchCandidatesWithEntryEvidence(ctx, query, k, minSimilarity, entryIDs)
 	}
@@ -1256,6 +1257,7 @@ func (p *VectorSearchPipeline) scoreFinal(ctx context.Context, query []float32, 
 	if cpu, ok := p.exactScorer.(*CPUExactScorer); ok {
 		scored, err = cpu.scoreCandidateValues(ctx, query, pool)
 	} else {
+		observeVectorProvider(ctx, p.exactScorer, "vector exact scorer")
 		scored, err = p.exactScorer.ScoreCandidates(ctx, query, pool)
 	}
 	if err != nil {

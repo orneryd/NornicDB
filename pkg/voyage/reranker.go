@@ -3,8 +3,11 @@ package voyage
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/providerbatch"
 )
 
 // Candidate is a document submitted for provider-native reranking.
@@ -98,8 +101,50 @@ func (r *Reranker) Enabled() bool {
 // IsAvailable performs the cheap local availability check required by search.
 func (r *Reranker) IsAvailable(context.Context) bool { return r.Enabled() }
 
+// rerankCapabilities is what Voyage publishes for one reranker model: the
+// documents in one request, the aggregate request budget, and the query and
+// query-plus-document limits those totals are counted under. The published
+// amounts are tokens; text is measured in UTF-8 bytes here, a conservative
+// upper bound on tokens, so a request stays inside the published budget without
+// a provider tokenizer.
+//
+// A zero field means Voyage publishes no such limit for the configured model.
+type rerankCapabilities struct {
+	documentsPerRequest int
+	requestBudget       int
+	pairLimit           int
+	queryLimit          int
+}
+
+// Limits: https://docs.voyageai.com/docs/reranker (verified 2026-11-10).
+// rerankCapabilitiesFor combines the API's 1000-document request cap with
+// published model limits. An undocumented model keeps that API cap, with no
+// invented token budget; its provider remains authoritative for token limits.
+func rerankCapabilitiesFor(model string) rerankCapabilities {
+	limits := rerankCapabilities{documentsPerRequest: 1000}
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "rerank-3", "rerank-3-lite", "rerank-2.5", "rerank-2.5-lite":
+		limits.requestBudget, limits.pairLimit, limits.queryLimit = 600_000, 32_000, 8000
+	case "rerank-2":
+		limits.requestBudget, limits.pairLimit, limits.queryLimit = 600_000, 16_000, 4000
+	case "rerank-2-lite":
+		limits.requestBudget, limits.pairLimit, limits.queryLimit = 600_000, 8000, 2000
+	case "rerank-1":
+		limits.requestBudget, limits.pairLimit, limits.queryLimit = 300_000, 8000, 2000
+	case "rerank-lite-1":
+		limits.requestBudget, limits.pairLimit, limits.queryLimit = 300_000, 4000, 1000
+	}
+	return limits
+}
+
 // Rerank applies Voyage's native reranking. It preserves the provider's raw
 // indexed result set so search.Service can validate the batch before filtering.
+//
+// The provider bounds one rerank request by a document count and by an
+// aggregate budget in which the query is counted once per document. A window
+// larger than that budget is split into consecutive requests that each stay
+// inside the model's own published limits, and the answers are merged by score.
+// A single request keeps the provider's own order.
 func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candidate) ([]RankedCandidate, error) {
 	if !r.Enabled() {
 		return PassThrough(candidates), nil
@@ -112,41 +157,87 @@ func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candid
 		topK = r.config.TopK
 	}
 	head := candidates[:topK]
-	documents := make([]string, len(head))
-	for i, candidate := range head {
-		documents[i] = candidate.Content
+	limits := rerankCapabilitiesFor(r.config.Model)
+	truncating := !r.config.DisableTruncation
+	// One document costs the query plus that document. With truncation enabled
+	// the provider shortens an over-limit query or pair, so the effective cost
+	// is the model's limit; with truncation disabled the real size is counted
+	// and the provider's refusal of an over-limit input stays visible instead of
+	// being masked or shortened here.
+	cost := func(index int) int {
+		queryBytes := len(query)
+		if truncating && limits.queryLimit > 0 && queryBytes > limits.queryLimit {
+			queryBytes = limits.queryLimit
+		}
+		size := queryBytes + len(head[index].Content)
+		if truncating && limits.pairLimit > 0 && size > limits.pairLimit {
+			size = limits.pairLimit
+		}
+		return size
 	}
-	resp, err := r.client.Rerank(ctx, query, documents, RerankOptions{
-		Model: r.config.Model, TopK: topK, ReturnDocuments: false, Truncation: !r.config.DisableTruncation,
+	var results []RankedCandidate
+	requests := 0
+	err := providerbatch.ForBatches(ctx, "rerank documents", len(head), limits.documentsPerRequest, limits.requestBudget, cost, func(start, end int) error {
+		documents := make([]string, end-start)
+		for index := start; index < end; index++ {
+			documents[index-start] = head[index].Content
+		}
+		// Every document of the request is scored: the window is already
+		// bounded by TopK, and a merged answer needs each request's complete
+		// answer to rank the window as one request would.
+		resp, err := r.client.Rerank(ctx, query, documents, RerankOptions{
+			Model: r.config.Model, TopK: end - start, ReturnDocuments: false, Truncation: truncating,
+		})
+		if err != nil {
+			return err
+		}
+		requests++
+		for rank, item := range resp.Data {
+			result := rankedCandidateForIndex(head, start, end-start, item.Index, rank+1, item.RelevanceScore)
+			result.Filtered = r.config.MinScore > 0 && item.RelevanceScore < r.config.MinScore
+			results = append(results, result)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	results := make([]RankedCandidate, 0, len(resp.Data))
-	for rank, item := range resp.Data {
-		result := rankedCandidateForIndex(head, item.Index, rank+1, item.RelevanceScore)
-		result.Filtered = r.config.MinScore > 0 && item.RelevanceScore < r.config.MinScore
-		results = append(results, result)
+	if requests > 1 {
+		// Separate requests return separate provider orders, so the merged
+		// answer is ordered by provider score. Equal scores keep the order the
+		// requests produced them in, which is the candidate window's own order.
+		sort.SliceStable(results, func(i, j int) bool { return results[i].CrossScore > results[j].CrossScore })
+		for index := range results {
+			results[index].NewRank = index + 1
+		}
 	}
 	return results, nil
 }
 
-// rankedCandidateForIndex preserves the provider's raw candidate index.
-// Invalid indices intentionally produce an unmapped result; search.Service is
-// the single owner that validates the complete provider batch.
-func rankedCandidateForIndex(candidates []Candidate, index, newRank int, score float64) RankedCandidate {
+// rankedCandidateForIndex maps one provider result of the request that started
+// at offset onto the candidate window. The provider's index is local to that
+// request, so a valid index is remapped to the candidate's position in the
+// window before any merge.
+//
+// An index the request could not have produced keeps an unmappable rank instead
+// of being offset onto another request's candidate: search.Service is the single
+// owner that validates the complete provider batch, and a provider error must
+// stay visible there.
+func rankedCandidateForIndex(candidates []Candidate, offset, count, index, newRank int, score float64) RankedCandidate {
 	result := RankedCandidate{
-		OriginalRank: index + 1,
+		OriginalRank: len(candidates) + 1,
 		NewRank:      newRank,
 		CrossScore:   score,
 		FinalScore:   score,
 	}
-	if index >= 0 && index < len(candidates) {
-		candidate := candidates[index]
-		result.ID = candidate.ID
-		result.Content = candidate.Content
-		result.BiScore = candidate.Score
+	if index < 0 || index >= count {
+		return result
 	}
+	candidate := candidates[offset+index]
+	result.OriginalRank = offset + index + 1
+	result.ID = candidate.ID
+	result.Content = candidate.Content
+	result.BiScore = candidate.Score
 	return result
 }
 

@@ -85,9 +85,9 @@ func warmCacheFixture(t *testing.T) *BadgerEngine {
 	require.Equal(t, NodeID("caches:a"), streamedFirst)
 	_, err = engine.GetEdge(t.Context(), "caches:r")
 	require.NoError(t, err)
-	_, err = engine.GetOutgoingEdges(context.Background(), "caches:a")
+	_, err = engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "caches:a"})
 	require.NoError(t, err)
-	_, err = engine.GetIncomingEdges(context.Background(), "caches:b")
+	_, err = engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "caches:b"})
 	require.NoError(t, err)
 	state := snapshotWarmCaches(engine)
 	require.NotZero(t, state.edges)
@@ -110,6 +110,14 @@ func readOnlyTransaction(t *testing.T, engine *BadgerEngine, id NodeID) {
 	require.NoError(t, tx.Commit())
 }
 
+// requireWarmCachesUnchanged pins the shared cache contract for metadata-only
+// and empty publications, including identity of the resident node image.
+func requireWarmCachesUnchanged(t *testing.T, before, after warmCacheState) {
+	t.Helper()
+	require.Equal(t, before, after, "publication changed an unaffected cache")
+	require.Same(t, before.nodeImage, after.nodeImage, "publication rebuilt an unaffected node cache image")
+}
+
 // TestReadOnlyTransactionCommitKeepsWarmCaches is the read-in-transaction
 // regression: BEGIN, a read, COMMIT. The commit moved no entity and no raw key,
 // so it must not recreate the capacity-sized caches nor advance their
@@ -120,19 +128,7 @@ func TestReadOnlyTransactionCommitKeepsWarmCaches(t *testing.T) {
 
 	readOnlyTransaction(t, engine, "caches:a")
 
-	after := snapshotWarmCaches(engine)
-	require.Equal(t, before.nodeGen, after.nodeGen, "empty commit advanced the node cache generation")
-	require.Equal(t, before.edgeGen, after.edgeGen, "empty commit advanced the edge cache generation")
-	require.Equal(t, before.edgeTypeGen, after.edgeTypeGen, "empty commit advanced the edge type cache generation")
-	require.Equal(t, before.adjGen, after.adjGen, "empty commit advanced the adjacency cache generation")
-	require.Equal(t, before.labelFirstGen, after.labelFirstGen, "empty commit advanced the label first-node cache generation")
-	require.Equal(t, before.nodes, after.nodes)
-	require.Equal(t, before.edges, after.edges)
-	require.Equal(t, before.edgeTypes, after.edgeTypes)
-	require.Equal(t, before.outgoing, after.outgoing)
-	require.Equal(t, before.incoming, after.incoming)
-	require.Equal(t, before.labelFirst, after.labelFirst)
-	require.Same(t, before.nodeImage, after.nodeImage, "empty commit rebuilt the node cache")
+	requireWarmCachesUnchanged(t, before, snapshotWarmCaches(engine))
 }
 
 // TestReadOnlyTransactionCommitKeepsLaterInvalidation proves the empty commit

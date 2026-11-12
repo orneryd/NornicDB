@@ -87,7 +87,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_FilterAndBetweenGuards(t *testing.T) {
 	_, err = engine.GetEdgeLatestVisible(t.Context(), edgeID)
 	require.ErrorIs(t, err, ErrNotFound)
 
-	_, err = engine.GetEdgesBetweenVisibleAt(context.Background(), "", end, MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
+	_, err = engine.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "", Other: end}, MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
 	require.ErrorIs(t, err, ErrInvalidID)
 }
 

@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -19,13 +20,22 @@ const (
 // rerankOutcome is the one service-owned rerank result consumed by node,
 // graph, explicit rerank and their protocol projections.
 //
-// Completeness contract: when reranking is enabled, TopK defines both the
-// provider input and the final output population. Results contains each
-// eligible candidate from that bounded prefix at most once, up to the
-// requested result limit.
+// Completeness contract: when reranking is enabled, the provider input and the
+// final output population are the bounded candidates this call submitted.
+// Results contains each eligible candidate from that population at most once,
+// up to the requested result limit. A single search submits its TopK prefix
+// and is capped there; a ranked continuation submits the windows its candidates
+// were first admitted in and concatenates their outcomes, so its page covers
+// the whole fused prefix without a global rerank.
 // Provider-ranked candidates come first in provider order; a valid unique
 // subset is completed by omitted candidates from the same prefix in their
-// original order. Candidates beyond TopK are not part of this outcome.
+// original order. Candidates beyond the submitted population are not part of
+// this outcome.
+// A continuation's memo retains each candidate's decision - ranked, omitted by
+// a valid subset, or in a batch that failed - so a window it already decided
+// submits nothing and is completed from those decisions. A retained failure is
+// reported as rerank_failed again, and a window the provider omitted wholly is
+// completed in its own order rather than read as an empty provider response.
 // Candidates explicitly below a configured minimum score are ineligible.
 // The request minimum governs rerank output, and for explicit candidates every
 // outcome, through selectEligibleRerankResults. An outcome may therefore be
@@ -53,6 +63,18 @@ type rerankRunOptions struct {
 	// search candidates carry fused scores, which a rerank minimum doesn't
 	// govern, so a search fallback is returned unfiltered with its reason.
 	minimumGovernsCandidates bool
+	// continuationWindow marks this call as one bounded window of a ranked
+	// continuation, the batch its candidates were first admitted in. A
+	// flat-score verdict is not evidence about the provider there: a window may
+	// hold a single provider input (no order to derive, though its score and
+	// filtering still stand) and may rebuild scores recalled from an earlier
+	// provider batch, which the memo orders by provider ordinal rather than by
+	// one score scale. Only the ranked continuation window producer sets it.
+	continuationWindow bool
+	// memoizedCandidates is how many of a continuation window's candidates
+	// the memo already ranked, so their scores came from an earlier provider
+	// batch. Ignored unless continuationWindow is set.
+	memoizedCandidates int
 }
 
 // runRerank is the single owner of provider invocation, validation, filtering,
@@ -69,17 +91,21 @@ func (s *Service) runRerank(ctx context.Context, reranker Reranker, query string
 	if providerLimit <= 0 || providerLimit > len(candidates) {
 		providerLimit = len(candidates)
 	}
-	// TopK has always capped both provider work and caller-visible rerank
-	// output. Bound the canonical population here so validation, subset
-	// completion, filtering, fallback, memo rebinding and every projection all
-	// share that contract. A provider subset can only be completed from the
-	// candidates it was eligible to rank.
+	// The caller providerLimit bounds both provider work and this outcome's
+	// caller-visible population: a single search passes its TopK, a ranked
+	// continuation passes one window. Bound the canonical population here so
+	// validation, subset completion, filtering, fallback, memo rebinding and
+	// every projection all share that contract. A provider subset can only be
+	// completed from the candidates it was eligible to rank.
 	candidates = candidates[:providerLimit]
 
 	var raw []RerankResult
 	var pending []RerankCandidate
 	var pendingPositions []int
 	rankable := 0
+	// retainedFailure records that a candidate's retained decision is a failed
+	// batch: the window reports that failure and submits nothing again.
+	retainedFailure := false
 	if options.memo == nil {
 		allRankable := true
 		for index := 0; index < providerLimit; index++ {
@@ -111,6 +137,7 @@ func (s *Service) runRerank(ctx context.Context, reranker Reranker, query string
 			candidate := candidates[index]
 			if entry, ok := options.memo.get(query, candidate.ID); ok {
 				rankable++
+				retainedFailure = retainedFailure || entry.failed
 				if entry.returned {
 					result := entry.bind(candidate, index)
 					result.NewRank = int(entry.providerOrder) + 1
@@ -129,14 +156,42 @@ func (s *Service) runRerank(ctx context.Context, reranker Reranker, query string
 	if rankable == 0 {
 		return originalrerankOutcome(candidates, options, SearchFallbackRerankNoCandidates)
 	}
+	// Nothing was submitted: the memo already decided every candidate of this
+	// window, so its retained decisions are the canonical result and there is
+	// no provider response to validate. A retained failure is reported again;
+	// otherwise the window completes in its own order, because a valid subset
+	// response that omitted these candidates is a decision, not an empty
+	// response to reject.
+	if len(pending) == 0 && options.memo != nil {
+		// Rebuild the window in provider order: the memo's ordinal is the only
+		// order comparable across provider batches, and it is what the window
+		// was first ranked in.
+		sort.SliceStable(raw, func(i, j int) bool { return raw[i].NewRank < raw[j].NewRank })
+		if retainedFailure && len(raw) == 0 {
+			return originalrerankOutcome(candidates, options, SearchFallbackRerankFailed)
+		}
+		outcome := completererankOutcome(candidates, raw, rankable, options)
+		if retainedFailure {
+			outcome.FallbackTriggered = true
+			outcome.FallbackReason = SearchFallbackRerankFailed
+		}
+		return outcome
+	}
 
 	if len(pending) > 0 {
+		// The configured reranker is an arbitrary provider: whatever database
+		// state it reads while ranking is outside the readers observed around
+		// this call, so its actual invocation is the one fact this outcome
+		// reports. A missing, disabled, memo-decided or ineligible batch never
+		// reaches it and reports nothing.
+		queryprofile.Callback(ctx, "rerank provider", "")
 		providerResults, err := reranker.Rerank(ctx, query, pending)
 		if err == nil {
 			err = validateRerankResults(providerResults, pending)
 		}
 		if err != nil {
 			s.logPrintf("⚠️ Reranking failed (%s): %v", reranker.Name(), err)
+			retainFailedRerankBatch(options.memo, query, pending)
 			return failedrerankOutcome(candidates, options, reranker.Name(), err)
 		}
 
@@ -170,7 +225,7 @@ func (s *Service) runRerank(ctx context.Context, reranker Reranker, query string
 		if options.memo != nil {
 			for index, candidate := range pending {
 				if !returned[index] {
-					_ = options.memo.put(query, candidate, RerankResult{}, false)
+					_ = options.memo.putUnranked(query, candidate, false)
 				}
 			}
 		}
@@ -184,10 +239,20 @@ func (s *Service) runRerank(ctx context.Context, reranker Reranker, query string
 	}
 	if err := validateRerankResults(raw, candidates); err != nil {
 		s.logPrintf("⚠️ Reranking failed (%s): %v", reranker.Name(), err)
+		retainFailedRerankBatch(options.memo, query, pending)
 		return failedrerankOutcome(candidates, options, reranker.Name(), err)
 	}
 
 	return completererankOutcome(candidates, raw, rankable, options)
+}
+
+// retainFailedRerankBatch keeps a failed provider batch as every candidate's
+// retained decision, so a deeper pull rebuilds those candidates in fused order
+// instead of repeating the call that failed.
+func retainFailedRerankBatch(memo *rerankMemo, query string, pending []RerankCandidate) {
+	for _, candidate := range pending {
+		memo.putUnranked(query, candidate, true)
+	}
 }
 
 func completererankOutcome(candidates []RerankCandidate, raw []RerankResult, rankable int, options rerankRunOptions) rerankOutcome {
@@ -234,7 +299,13 @@ func completererankOutcome(candidates []RerankCandidate, raw []RerankResult, ran
 	// Explicit filtering is a meaningful provider decision even when every row
 	// is removed or the surviving scores are equal. Flat-score fallback applies
 	// only when the provider made no eligibility decision at all.
-	if !providerFiltered && rerankScoresFlat(len(results), rankable, func() float64 { return scoreMax - scoreMin }) {
+	flatVerdict := rerankScoresFlat(len(results), rankable, func() float64 { return scoreMax - scoreMin })
+	// A continuation window has no flat-score evidence when it held one provider
+	// input, or when some of its scores came from an earlier provider batch.
+	if options.continuationWindow && (rankable == 1 || options.memoizedCandidates > 0) {
+		flatVerdict = false
+	}
+	if !providerFiltered && flatVerdict {
 		return originalrerankOutcome(candidates, options, SearchFallbackRerankScoresFlat)
 	}
 

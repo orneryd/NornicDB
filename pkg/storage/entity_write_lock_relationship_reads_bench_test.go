@@ -25,13 +25,13 @@ func BenchmarkLockedHubRelationshipReads(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					if headers {
-						edges, answered, err := tx.OutgoingEdgeHeaders(ctx, hub)
-						if err != nil || !answered || len(edges) != degree {
-							b.Fatalf("headers: %d answered %v: %v", len(edges), answered, err)
+						edges, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Node: hub, Headers: true})
+						if err != nil || len(edges) != degree {
+							b.Fatalf("headers: %d: %v", len(edges), err)
 						}
 						continue
 					}
-					edges, err := tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: hub})
+					edges, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Node: hub})
 					if err != nil || len(edges) != degree {
 						b.Fatalf("edges: %d: %v", len(edges), err)
 					}

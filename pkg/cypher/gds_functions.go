@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -19,6 +20,10 @@ import (
 func init() {
 	// One scoring for these functions and the gds.linkPrediction.*.stream
 	// procedures: linkpredict.PairScore (#1192).
+	//
+	// A link-prediction function reads storage only through gdsNeighbors,
+	// which reports each adjacency request it makes, so its whole access is
+	// observed without the opaque-callback hook.
 	for name, algorithm := range map[string]string{
 		"adamicadar":             "adamic_adar",
 		"commonneighbors":        "common_neighbors",
@@ -26,19 +31,50 @@ func init() {
 		"resourceallocation":     "resource_allocation",
 		"totalneighbors":         "total_neighbors",
 	} {
-		cypherfn.Register("gds.alpha.linkprediction."+name, gdsLinkPrediction("gds.alpha.linkprediction."+name, algorithm))
+		cypherfn.Register("gds.alpha.linkprediction."+name, gdsLinkPrediction("gds.alpha.linkprediction."+name, algorithm), cypherfn.CanonicalReads)
 	}
-	cypherfn.Register("gds.alpha.linkprediction.samecommunity", fnGDSSameCommunity)
-	cypherfn.Register("gds.util.asnode", gdsNodeFunction("gds.util.asNode", false))
-	cypherfn.Register("gds.util.asnodes", gdsNodeFunction("gds.util.asNodes", true))
-	cypherfn.Register("gds.util.nan", constantFunction("gds.util.NaN", math.NaN(), gdsConstantArguments))
-	cypherfn.Register("gds.util.infinity", constantFunction("gds.util.infinity", math.Inf(1), gdsConstantArguments))
-	cypherfn.Register("gds.util.isfinite", fnGDSIsFinite(true))
-	cypherfn.Register("gds.util.isinfinite", fnGDSIsFinite(false))
-	cypherfn.Register("gds.version", constantFunction("gds.version", gdsVersion, gdsConstantArguments))
-	cypherfn.Register("gds.graph.exists", fnGDSGraphExists)
-	cypherfn.Register("gds.util.nodeproperty", fnGDSNodeProperty)
+	cypherfn.Register("gds.alpha.linkprediction.samecommunity", fnGDSSameCommunity, cypherfn.CanonicalReads)
+	// gds.util.asNode/asNodes read each node through the point-read owner
+	// (getQueryNode), which records the read it performs; their whole access
+	// is therefore already observed.
+	cypherfn.Register("gds.util.asnode", gdsNodeFunction("gds.util.asNode", false), cypherfn.CanonicalReads)
+	cypherfn.Register("gds.util.asnodes", gdsNodeFunction("gds.util.asNodes", true), cypherfn.CanonicalReads)
+	cypherfn.Register("gds.util.nan", constantFunction("gds.util.NaN", math.NaN(), gdsConstantArguments), cypherfn.CanonicalReads)
+	cypherfn.Register("gds.util.infinity", constantFunction("gds.util.infinity", math.Inf(1), gdsConstantArguments), cypherfn.CanonicalReads)
+	cypherfn.Register("gds.util.isfinite", fnGDSIsFinite(true), cypherfn.CanonicalReads)
+	cypherfn.Register("gds.util.isinfinite", fnGDSIsFinite(false), cypherfn.CanonicalReads)
+	cypherfn.Register("gds.version", constantFunction("gds.version", gdsVersion, gdsConstantArguments), cypherfn.CanonicalReads)
+	// gds.graph.exists asks only the projection catalog, and
+	// gds.util.nodeProperty only that catalog and the projected property it
+	// reads; each records the requests it actually made.
+	cypherfn.Register("gds.graph.exists", fnGDSGraphExists, cypherfn.CanonicalReads)
+	cypherfn.Register("gds.util.nodeproperty", fnGDSNodeProperty, cypherfn.CanonicalReads)
 }
+
+// The catalog readers GDS's functions and its graph-catalog procedures report
+// to a PROFILE statement. Each record is one request the reader actually made
+// and the population that request returned, never the statement's row count and
+// never GDS's plan numbers: the abstract logical catalog/entity operations
+// below, not disk reads, page-cache misses or promised Neo4j-identical counts
+// (https://neo4j.com/docs/cypher-manual/current/planning-and-tuning/execution-plans/).
+const (
+	// profileKindGraphCatalogSeek is one lookup in this database's projection
+	// catalog: Rows is the projection the lookup returned (1 when the catalog
+	// holds it, 0 when it does not) and Hits the one lookup, whatever the
+	// statement then does with the answer.
+	profileKindGraphCatalogSeek = "GraphCatalogSeek"
+	// profileKindProjectedPropertySeek is one read of a projected node's
+	// property: Rows is the entry the projection holds for that node and key
+	// (1, or 0 when it holds none and the reader answers with GDS's
+	// missing-value sentinel) and Hits the one read that asked for it.
+	profileKindProjectedPropertySeek = "ProjectedPropertySeek"
+	// profileKindGraphProjectionCatalog is one acquisition of this database's
+	// projection catalog as a list: Rows is the population the acquisition
+	// returned, every scoped projection the catalog listed, and Hits the one
+	// acquisition. A caller's own name or label filter narrows those rows; it
+	// never changes what the acquisition listed.
+	profileKindGraphProjectionCatalog = "GraphProjectionCatalog"
+)
 
 // fnGDSGraphExists is gds.graph.exists(graphName): whether this database's
 // catalog holds the graph (#1161).
@@ -54,8 +90,11 @@ func fnGDSGraphExists(workCtx context.Context, ctx cypherfn.Context, args []stri
 	if !ok {
 		return nil, fmt.Errorf("gds.graph.exists expects a graph name, got %s", cypherTypeSystemName(values[0]))
 	}
-	_, missing := lookupGraphProjection(graphFunctionDatabase(ctx), name)
-	return missing == nil, nil
+	// The function's whole database access is this one catalog request, which
+	// the lookup owner records: the record keeps what the catalog returned, not
+	// the one row the statement produces from it.
+	_, lookupErr := lookupGraphProjection(workCtx, graphFunctionDatabase(ctx), name)
+	return lookupErr == nil, nil
 }
 
 // fnGDSNodeProperty is gds.util.nodeProperty(graphName, nodeId, propertyKey,
@@ -85,9 +124,12 @@ func fnGDSNodeProperty(workCtx context.Context, ctx cypherfn.Context, args []str
 			return nil, fmt.Errorf("%s expects a node label as argument 4, got %s", name, cypherTypeSystemName(values[3]))
 		}
 	}
-	projection, err := lookupGraphProjection(graphFunctionDatabase(ctx), graph)
-	if err != nil {
-		return nil, err
+	// The lookup owner records the catalog request, which runs before any
+	// property can be read: the statement then fails with the error the lookup
+	// returned, and the property read below reports on its own record.
+	projection, lookupErr := lookupGraphProjection(workCtx, graphFunctionDatabase(ctx), graph)
+	if lookupErr != nil {
+		return nil, lookupErr
 	}
 	projected := false
 	for projectedLabel, keys := range projection.NodePropertyKeys {
@@ -112,6 +154,16 @@ func fnGDSNodeProperty(workCtx context.Context, ctx cypherfn.Context, args []str
 		kind = "Float"
 	}
 	value, err := projection.nodePropertyValue(string(id), key, kind)
+	if profileRuntimeFromContext(workCtx) != nil {
+		// One projected property read: the entry this node and key hold is what
+		// the reader converted, and an absent entry is the read that answered
+		// with GDS's missing-value sentinel.
+		held := int64(0)
+		if _, present := projection.NodeProperties[string(id)][key]; present {
+			held = 1
+		}
+		queryprofile.Access(workCtx, profileKindProjectedPropertySeek, key).Add(held, 1)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +320,11 @@ func gdsLinkPredictionConfig(name string, values []interface{}) (gdsLinkConfig, 
 }
 
 // gdsNeighbors returns a node's neighbourhood under config, or the error a
-// read of its relationships gives.
+// read of its relationships gives. The adjacency reads are reported by the
+// identity graph reader they go through, where it hands the entries over: this
+// function's relationshipQuery filter and the neighbourhood's de-duplication
+// run on what the read returned, so they never hide the repeated work a
+// parallel relationship or a self-loop costs.
 func gdsNeighbors(ctx context.Context, store storage.Engine, id storage.NodeID, config gdsLinkConfig) (gdsNeighborhood, error) {
 	neighbors := gdsNeighborhood{nodes: map[storage.NodeID]struct{}{}}
 	if store == nil {
@@ -296,14 +352,14 @@ func gdsNeighbors(ctx context.Context, store storage.Engine, id storage.NodeID, 
 		}
 	}
 	if config.direction != "INCOMING" {
-		edges, err := store.GetOutgoingEdges(ctx, id)
+		edges, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: id})
 		if err != nil {
 			return neighbors, err
 		}
 		add(edges, true)
 	}
 	if config.direction == "BOTH" || config.direction == "INCOMING" {
-		edges, err := store.GetIncomingEdges(ctx, id)
+		edges, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: id})
 		if err != nil {
 			return neighbors, err
 		}

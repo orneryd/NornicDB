@@ -290,33 +290,48 @@ func (c *CompositeEngine) GetNodesByLabelVisibleAt(ctx context.Context, label st
 	)
 }
 
-func (c *CompositeEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	aliases, local, _ := c.constituentsForEntity("4", string(nodeID))
-	nodeID = NodeID(local)
+// ReadAdjacentEdgesVisibleAt answers one adjacent-edge request at version from
+// the constituents that can resolve it, one direction per call.
+func (c *CompositeEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, request AdjacentEdgeRead, version MVCCVersion) ([]*Edge, error) {
+	if request.Direction == AdjacentBoth {
+		return readBothAdjacentEdges(ctx, request, func(direction AdjacentEdgeRead) ([]*Edge, error) {
+			return c.ReadAdjacentEdgesVisibleAt(ctx, direction, version)
+		})
+	}
+	visible := func(engine Engine, local AdjacentEdgeRead) ([]*Edge, error) {
+		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+			return provider.ReadAdjacentEdgesVisibleAt(ctx, local, version)
+		}
+		return engine.ReadAdjacentEdges(ctx, local)
+	}
+	if request.Direction == AdjacentBetween {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if engine, start, end, qualified := c.constituentForNodePair(request.Node, request.Other); qualified {
+			if engine == nil {
+				return nil, nil
+			}
+			local := request
+			local.Node, local.Other = start, end
+			edges, err := visible(engine, local)
+			projected, projectionErr := entitiesFromDatabase(ctx, edges, nodePairDatabase(request.Node, request.Other))
+			if projectionErr != nil {
+				return nil, projectionErr
+			}
+			return projected, err
+		}
+		return materializeConstituents(c, ctx, c.getConstituentsForRead(),
+			func(engine Engine) ([]*Edge, error) { return visible(engine, request) },
+			edgeFromDatabase,
+			compositeFanOutPublishesRaw,
+		)
+	}
+	aliases, local, _ := c.constituentsForEntity("4", string(request.Node))
+	request.Node = NodeID(local)
 
 	return materializeConstituents(c, ctx, aliases,
-		func(engine Engine) ([]*Edge, error) {
-			if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-				return provider.GetOutgoingEdgesVisibleAt(ctx, nodeID, version)
-			}
-			return engine.GetOutgoingEdges(ctx, nodeID)
-		},
-		edgeFromDatabase,
-		compositeFanOutPublishesRaw,
-	)
-}
-
-func (c *CompositeEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	aliases, local, _ := c.constituentsForEntity("4", string(nodeID))
-	nodeID = NodeID(local)
-
-	return materializeConstituents(c, ctx, aliases,
-		func(engine Engine) ([]*Edge, error) {
-			if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-				return provider.GetIncomingEdgesVisibleAt(ctx, nodeID, version)
-			}
-			return engine.GetIncomingEdges(ctx, nodeID)
-		},
+		func(engine Engine) ([]*Edge, error) { return visible(engine, request) },
 		edgeFromDatabase,
 		compositeFanOutPublishesRaw,
 	)
@@ -329,40 +344,6 @@ func (c *CompositeEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType 
 				return provider.GetEdgesByTypeVisibleAt(ctx, edgeType, version)
 			}
 			return engine.GetEdgesByType(ctx, edgeType)
-		},
-		edgeFromDatabase,
-		compositeFanOutPublishesRaw,
-	)
-}
-
-func (c *CompositeEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if engine, start, end, qualified := c.constituentForNodePair(startID, endID); qualified {
-		if engine == nil {
-			return nil, nil
-		}
-		var edges []*Edge
-		var err error
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-			edges, err = provider.GetEdgesBetweenVisibleAt(ctx, start, end, version)
-		} else {
-			edges, err = engine.GetEdgesBetween(ctx, start, end)
-		}
-		projected, projectionErr := entitiesFromDatabase(ctx, edges, nodePairDatabase(startID, endID))
-		if projectionErr != nil {
-			return nil, projectionErr
-		}
-		return projected, err
-	}
-
-	return materializeConstituents(c, ctx, c.getConstituentsForRead(),
-		func(engine Engine) ([]*Edge, error) {
-			if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-				return provider.GetEdgesBetweenVisibleAt(ctx, startID, endID, version)
-			}
-			return engine.GetEdgesBetween(ctx, startID, endID)
 		},
 		edgeFromDatabase,
 		compositeFanOutPublishesRaw,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -19,8 +20,35 @@ import (
 // The routes that recognise a plain count (the pipeline's simple read plans,
 // the traversal route) check only what their parse knows (no WHERE, no path
 // variable, one RETURN item) and call nodeCountFromStore or
-// relationshipCountFromStore; ok=false sends the statement to the general
+// relationshipCountFromStore; a declined reduction sends the statement to the general
 // path (#1076).
+
+// profileKindNodeCountFromCountStore and
+// profileKindRelationshipCountFromCountStore name the count a PROFILE statement
+// answered from the store's counters: the plan operators that claim them.
+const (
+	profileKindNodeCountFromCountStore         = "NodeCountFromCountStore"
+	profileKindRelationshipCountFromCountStore = "RelationshipCountFromCountStore"
+)
+
+// countReductionKind preserves how a scalar count was obtained. A scan-backed
+// undirected count is an answered reduction, but cannot inherit the complete
+// counter-read observation merely because it shares the count router.
+type countReductionKind uint8
+
+const (
+	countReductionNotApplicable countReductionKind = iota
+	countReductionCounter
+	countReductionVisibility
+	countReductionTraversal
+	countReductionObservedScan
+)
+
+func (kind countReductionKind) available() bool { return kind != countReductionNotApplicable }
+
+func (kind countReductionKind) fullyObserved() bool {
+	return kind == countReductionCounter || kind == countReductionVisibility || kind == countReductionObservedScan
+}
 
 // countStoreVisibilityPrefix reports the label prefix of the nodes this read
 // hides, and whether the counters can answer the read at all: not with decay
@@ -62,30 +90,30 @@ func countsRows(item returnItem, variables ...string) bool {
 
 // countStoreRead answers one count-store request through the store: the counter
 // value and its visibility proof come from the store's one consistent read, so
-// a commit that lands while the read runs cannot separate them. answered is
-// false when the counters do not describe the read's rows, which leaves the
+// a commit that lands while the read runs cannot separate them. It declines
+// when the counters do not describe the read's rows, which leaves the
 // count to those rows.
-func countStoreRead(ctx context.Context, store storage.Engine, request storage.CountStoreReadRequest) (int64, bool, error) {
+func countStoreRead(ctx context.Context, store storage.Engine, request storage.CountStoreReadRequest) (int64, countReductionKind, error) {
 	reader, ok := store.(storage.CountStoreReadEngine)
 	if !ok {
 		// An unproven store is not a described one: the rows answer.
-		return 0, false, nil
+		return 0, countReductionNotApplicable, nil
 	}
 	answer, err := reader.ReadCountStore(ctx, request)
 	if err != nil {
-		return 0, true, err
+		return 0, countReductionCounter, err
 	}
 	if !answer.DescribesRows {
-		return 0, false, nil
+		return 0, countReductionNotApplicable, nil
 	}
-	return answer.Count, true, nil
+	return answer.Count, countReductionCounter, nil
 }
 
 // nodeCountFromStore answers count over a one-label node pattern from the
 // label counter.
-func (e *StorageExecutor) nodeCountFromStore(ctx context.Context, node nodePatternInfo, item returnItem) (int64, bool, error) {
+func (e *StorageExecutor) nodeCountFromStore(ctx context.Context, node nodePatternInfo, item returnItem) (int64, countReductionKind, error) {
 	if len(node.labels) != 1 || len(node.properties) > 0 || !countsRows(item, node.variable) {
-		return 0, false, nil
+		return 0, countReductionNotApplicable, nil
 	}
 	store := e.getStorage(ctx)
 	// A label that is itself internal names exactly the nodes a MATCH hides,
@@ -93,41 +121,67 @@ func (e *StorageExecutor) nodeCountFromStore(ctx context.Context, node nodePatte
 	// without a store read, which the label counter cannot (it counts the
 	// hidden nodes carrying the label).
 	if shouldHideSystemNodes(store) && isInternalLabel(node.labels[0]) {
-		return 0, true, nil
+		foldCtx, fold := profileRuntimeInvocation(ctx, "CountVisibilityFold", node.labels[0], 0)
+		fold.invocationRows(1)
+		profileRuntimeRecordHits(foldCtx, 0)
+		return 0, countReductionVisibility, nil
 	}
 	hiddenPrefix, eligible := countStoreVisibilityPrefix(ctx, store)
 	if !eligible {
-		return 0, false, nil
+		return 0, countReductionNotApplicable, nil
 	}
-	return countStoreRead(ctx, store, storage.CountStoreReadRequest{
+	count, answered, err := countStoreRead(ctx, store, storage.CountStoreReadRequest{
 		Kind:              storage.CountStoreNodesByLabel,
 		Name:              node.labels[0],
 		HiddenLabelPrefix: hiddenPrefix,
 	})
+	if err == nil && answered.available() {
+		// The accepted route read one counter and answers one count row. A route
+		// the counters do not describe answers from its rows instead, and a
+		// planner's count-store statistic (nodeScanLabels) is no statement read
+		// at all: neither records a counter access.
+		queryprofile.Access(ctx, profileKindNodeCountFromCountStore, node.labels[0]).Add(1, 1)
+	}
+	return count, answered, err
+}
+
+// countStoreRelationshipDetail names the relationship scope a counter read
+// answered, so a record keeps a typed, a labelled-endpoint and an untyped read
+// apart. Formatting it allocates, so it runs only while a statement is
+// profiled.
+func countStoreRelationshipDetail(label string, types []string) string {
+	switch {
+	case len(types) == 0:
+		return label
+	case label == "":
+		return strings.Join(types, "|")
+	default:
+		return label + ":" + strings.Join(types, "|")
+	}
 }
 
 // relationshipCountFromStore answers count over a single relationship
 // pattern from the relationship counters: the per-type counters, or, with one
 // labelled endpoint, the positional (label, type) counters.
-func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matches *TraversalMatch, item returnItem) (int64, bool, error) {
+func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matches *TraversalMatch, item returnItem) (int64, countReductionKind, error) {
 	if matches == nil || matches.IsChained || matches.PathVariable != "" ||
 		matches.Relationship.MinHops != 1 || matches.Relationship.MaxHops != 1 ||
 		len(matches.Relationship.Properties) > 0 ||
 		len(matches.StartNode.properties) > 0 || len(matches.EndNode.properties) > 0 ||
 		!countsRows(item, matches.Relationship.Variable) {
-		return 0, false, nil
+		return 0, countReductionNotApplicable, nil
 	}
 	// A repeated endpoint variable requires self-loops only, which the
 	// counters can't express.
 	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
-		return 0, false, nil
+		return 0, countReductionNotApplicable, nil
 	}
 	start, end := matches.StartNode.labels, matches.EndNode.labels
 	// A counter holds one label: two labelled endpoints, or an endpoint with
 	// two labels, would count the relationships of one label whatever the
 	// other (#1076).
 	if len(start) > 1 || len(end) > 1 || (len(start) > 0 && len(end) > 0) {
-		return 0, false, nil
+		return 0, countReductionNotApplicable, nil
 	}
 	store := e.getStorage(ctx)
 	types := matches.Relationship.Types
@@ -137,16 +191,18 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 	// such an endpoint keeps no row, whatever the counters hold, so the
 	// visibility decision answers it without a store read.
 	if shouldHideSystemNodes(store) {
-		if len(start) == 1 && isInternalLabel(start[0]) {
-			return 0, true, nil
-		}
-		if len(end) == 1 && isInternalLabel(end[0]) {
-			return 0, true, nil
+		for _, labels := range [2][]string{start, end} {
+			if len(labels) == 1 && isInternalLabel(labels[0]) {
+				foldCtx, fold := profileRuntimeInvocation(ctx, "CountVisibilityFold", labels[0], 0)
+				fold.invocationRows(1)
+				profileRuntimeRecordHits(foldCtx, 0)
+				return 0, countReductionVisibility, nil
+			}
 		}
 	}
 	hiddenPrefix, eligible := countStoreVisibilityPrefix(ctx, store)
 	if !eligible {
-		return 0, false, nil
+		return 0, countReductionNotApplicable, nil
 	}
 
 	if len(start) > 0 || len(end) > 0 {
@@ -167,14 +223,18 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 			}
 		}
 		if direction == "both" || len(types) == 0 {
-			return 0, false, nil
+			return 0, countReductionNotApplicable, nil
 		}
-		return countStoreRead(ctx, store, storage.CountStoreReadRequest{
+		count, answered, err := countStoreRead(ctx, store, storage.CountStoreReadRequest{
 			Kind:              kind,
 			Name:              label,
 			Types:             types,
 			HiddenLabelPrefix: hiddenPrefix,
 		})
+		if err == nil && answered.available() && profileRuntimeFromContext(ctx) != nil {
+			queryprofile.Access(ctx, profileKindRelationshipCountFromCountStore, countStoreRelationshipDetail(label, types)).Add(1, 1)
+		}
+		return count, answered, err
 	}
 
 	if direction == "both" {
@@ -182,31 +242,38 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 	}
 	// Every relationship type the scope holds is one request, so a multi-type
 	// or untyped count is one snapshot too.
-	return countStoreRead(ctx, store, storage.CountStoreReadRequest{
+	count, answered, err := countStoreRead(ctx, store, storage.CountStoreReadRequest{
 		Kind:              storage.CountStoreRelationshipsByType,
 		Types:             types,
 		HiddenLabelPrefix: hiddenPrefix,
 	})
+	if err == nil && answered.available() && profileRuntimeFromContext(ctx) != nil {
+		queryprofile.Access(ctx, profileKindRelationshipCountFromCountStore, countStoreRelationshipDetail("", types)).Add(1, 1)
+	}
+	return count, answered, err
 }
 
 // countUndirectedRelationshipMatches is an undirected pattern's cardinality,
 // not the number of relationships: a relationship matches once from each
 // endpoint, a self-loop once.
-func (e *StorageExecutor) countUndirectedRelationshipMatches(ctx context.Context, store storage.Engine, types []string) (int64, bool, error) {
+func (e *StorageExecutor) countUndirectedRelationshipMatches(ctx context.Context, store storage.Engine, types []string) (int64, countReductionKind, error) {
+	ctx, reduction := profileRuntimeInvocation(ctx, "UndirectedRelationshipCount", "", 0)
 	var candidates []*storage.Edge
 	if len(types) == 0 {
 		edges, err := store.AllEdges(ctx)
 		if err != nil {
-			return 0, true, err
+			return 0, countReductionTraversal, err
 		}
+		queryprofile.EntityPopulation(ctx, profileKindAllRelationshipsScan, "", edges)
 		candidates = edges
 	} else {
 		seen := make(map[storage.EntityIdentity]struct{})
 		for _, relationshipType := range types {
 			edges, err := store.GetEdgesByType(ctx, relationshipType)
 			if err != nil {
-				return 0, true, err
+				return 0, countReductionTraversal, err
 			}
+			queryprofile.EntityPopulation(ctx, "RelationshipTypeScan", relationshipType, edges)
 			for _, edge := range edges {
 				if edge == nil {
 					continue
@@ -229,18 +296,19 @@ func (e *StorageExecutor) countUndirectedRelationshipMatches(ctx context.Context
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
-			return 0, true, err
+			return 0, countReductionTraversal, err
 		}
 		if _, err := reader.read(ctx, edge.EndNode, nil); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
-			return 0, true, err
+			return 0, countReductionTraversal, err
 		}
 		count++
 		if edge.StartNode != edge.EndNode {
 			count++
 		}
 	}
-	return count, true, nil
+	reduction.invocationRows(1)
+	return count, countReductionObservedScan, nil
 }

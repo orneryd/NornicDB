@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -37,16 +38,13 @@ func (e *StorageExecutor) callInfo(ctx context.Context, scope infoScope) (*Execu
 	if scope == infoScopeDBMS {
 		name = "system"
 		if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
+			queryprofile.Callback(ctx, "system database provider", "")
 			name = manager.SystemDatabaseName()
 		}
 		columns = columnNames(dbmsInfoColumns)
 		row = make([]interface{}, 3)
 	} else {
-		nodeCount, err := e.storage.NodeCount(ctx)
-		if err != nil {
-			return nil, err
-		}
-		edgeCount, err := e.storage.EdgeCount(ctx)
+		nodeCount, edgeCount, err := e.readGraphCounts(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -60,6 +58,7 @@ func (e *StorageExecutor) callInfo(ctx context.Context, scope infoScope) (*Execu
 	}
 	row[1] = name
 	if provider, ok := e.dbManager.(DatabaseIdentityProvider); ok {
+		queryprofile.Callback(ctx, "database identity provider", "")
 		databaseID, createdAt := provider.DatabaseIdentity(name)
 		if databaseID != "" {
 			row[0] = databaseID
@@ -80,10 +79,6 @@ func (e *StorageExecutor) callDbPing() (*ExecuteResult, error) {
 }
 
 // callDbmsListConfig lists DBMS configuration - Neo4j dbms.listConfig()
-func (e *StorageExecutor) callDbmsListConfig() (*ExecuteResult, error) {
-	return e.callDbmsListConfigArguments(context.Background(), nil)
-}
-
 func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
 	searchString := ""
 	if len(arguments) > 0 {
@@ -133,10 +128,6 @@ func (e *StorageExecutor) callDbmsClientConfig() (*ExecuteResult, error) {
 }
 
 // callDbmsListConnections lists active connections - Neo4j dbms.listConnections()
-func (e *StorageExecutor) callDbmsListConnections() (*ExecuteResult, error) {
-	return e.callDbmsListConnectionsWithContext(context.Background())
-}
-
 func (e *StorageExecutor) callDbmsListConnectionsWithContext(ctx context.Context) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: columnNames(dbmsListConnectionsColumns),
@@ -152,9 +143,13 @@ func (e *StorageExecutor) callDbmsListConnectionsWithContext(ctx context.Context
 	// neither a resolver nor a signed-in user (an embedded caller) lists
 	// every connection.
 	viewAll := true
-	if allows := principalPermissions(ctx); allows != nil {
+	if allows, opaque := principalPermissions(ctx); allows != nil {
+		if opaque {
+			queryprofile.Callback(ctx, "permission resolver", "")
+		}
 		viewAll = allows("admin")
 	}
+	queryprofile.Callback(ctx, "connection snapshot provider", "")
 	for _, connection := range identity.Connections() {
 		if !viewAll && (identity.User == nil || connection.Username != identity.User.Name) {
 			continue
@@ -223,12 +218,10 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(ctx context.Cont
 	var targetTypes []string
 	var targetProperties []string
 	declared := false
-	if schema := e.storage.GetSchema(); schema != nil {
-		if ftIdx, exists := schema.GetFulltextIndex(indexName); exists {
-			targetTypes = ftIdx.RelationshipTypes
-			targetProperties = ftIdx.Properties
-			declared = true
-		}
+	if ftIdx, exists := readFulltextIndexDefinition(ctx, e.storage.GetSchema(), indexName); exists {
+		targetTypes = ftIdx.RelationshipTypes
+		targetProperties = ftIdx.Properties
+		declared = true
 	}
 	if err := requireFulltextIndex(indexName, declared); err != nil {
 		return nil, err
@@ -244,9 +237,6 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(ctx context.Cont
 	}
 
 	if wildcard || isPresenceQuery {
-		if opts.limit == 0 {
-			return result, nil
-		}
 		if err := e.fulltextUnrankedRows(ctx, indexName, targetTypes, targetProperties, true, wildcard, presenceProp, opts, result); err != nil {
 			return nil, err
 		}
@@ -435,8 +425,13 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 		if err != nil {
 			return nil, err
 		}
+		var counter *queryprofile.ReadCounter
+		if len(hits) > 0 {
+			counter = queryprofile.Access(ctx, queryprofile.KindRelationshipByIDSeek, "")
+		}
 		for _, hit := range hits {
 			edge, err := e.storage.GetEdge(ctx, storage.EdgeID(hit.ID))
+			queryprofile.EntityReadResult(counter, edge, err)
 			if err != nil {
 				continue
 			}
@@ -454,7 +449,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 	}
 	var scoredEdges []scoredEdge
 
-	if err := storage.StreamEdgesWithFallback(ctx, e.storage, storage.StreamChunkSize, func(edge *storage.Edge) error {
+	if err := storage.StreamEdgesWithFallback(ctx, e.storage, storage.StreamChunkSize, queryprofile.EntityVisitor(ctx, queryprofile.KindAllRelationshipsScan, "", func(edge *storage.Edge) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -488,7 +483,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 
 		scoredEdges = append(scoredEdges, scoredEdge{edge: edge, score: score})
 		return nil
-	}); err != nil {
+	})); err != nil {
 		return nil, err
 	}
 
@@ -668,7 +663,7 @@ func (e *StorageExecutor) callDbIndexFulltextDrop(ctx context.Context, args []in
 	}
 
 	if err := e.dropIndexOfKind(ctx, indexName, "fulltext", func(schema *storage.SchemaManager) bool {
-		_, ok := schema.GetFulltextIndex(indexName)
+		_, ok := readFulltextIndexDefinition(ctx, schema, indexName)
 		return ok
 	}); err != nil {
 		return nil, err
@@ -688,7 +683,7 @@ func (e *StorageExecutor) callDbIndexVectorDrop(ctx context.Context, args []inte
 	}
 
 	if err := e.dropIndexOfKind(ctx, indexName, "vector", func(schema *storage.SchemaManager) bool {
-		_, ok := schema.GetVectorIndex(indexName)
+		_, ok := readVectorIndexDefinition(ctx, schema, indexName)
 		return ok
 	}); err != nil {
 		return nil, err
@@ -715,26 +710,6 @@ func (e *StorageExecutor) dropIndexOfKind(ctx context.Context, name, kind string
 		}
 		return e.dropIndexByName(ctx, name, false)
 	})
-}
-
-// callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
-// Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
-func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setNodeVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
-	if err != nil {
-		return nil, err
-	}
-	return e.callSetVectorProperty(ctx, arguments, false)
-}
-
-// callDbCreateSetRelationshipVectorProperty sets a vector property on a relationship - Neo4j db.create.setRelationshipVectorProperty()
-// Syntax: CALL db.create.setRelationshipVectorProperty(relationship, propertyKey, vector)
-func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setRelationshipVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
-	if err != nil {
-		return nil, err
-	}
-	return e.callSetVectorProperty(ctx, arguments, true)
 }
 
 func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments []interface{}, relationship bool) (*ExecuteResult, error) {
@@ -769,6 +744,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		} else {
 			var err error
 			edge, err = store.GetEdge(ctx, storage.EdgeID(identifier))
+			queryprofile.EntityReadResult(queryprofile.Access(ctx, queryprofile.KindRelationshipByIDSeek, ""), edge, err)
 			if err != nil {
 				return nil, localizedError(localization.CypherProceduresRelationshipNotFound(identifier), err)
 			}
@@ -782,7 +758,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 			if err := mutateEdgeWithObservation(ctx, store, before, edge); err != nil {
 				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
 			}
-			e.notifyEdgeMutated(string(edge.ID))
+			e.notifyEdgeMutated(ctx, string(edge.ID))
 		} else {
 			// Preserve the typed vector in the returned row without a storage
 			// write or mutation of an earlier observation's property map.
@@ -802,6 +778,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	} else {
 		var err error
 		node, err = store.GetNode(ctx, storage.NodeID(identifier))
+		queryprofile.EntityReadResult(queryprofile.Access(ctx, queryprofile.KindNodeByIDSeek, ""), node, err)
 		if err != nil {
 			return nil, localizedError(localization.CypherProceduresNodeNotFound(identifier), err)
 		}
@@ -815,7 +792,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		if err := mutateNodeWithObservation(ctx, store, before, node); err != nil {
 			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 		}
-		e.notifyNodeMutated(string(node.ID))
+		e.notifyNodeMutated(ctx, string(node.ID))
 	} else {
 		// Keep result values typed while leaving the stored image untouched.
 		node.Properties = cloneStringAnyMap(node.Properties)

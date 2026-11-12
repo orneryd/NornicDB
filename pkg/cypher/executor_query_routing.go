@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"maps"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -366,6 +367,17 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		// Innermost value bindings retain their precedence over parameters.
 		for name, value := range bindings {
 			row[name] = value
+		}
+	}
+
+	// PROFILE attaches synchronous expression metadata to its input row.
+	// Parameter projections (including the parameter-free Cypher 25 marker)
+	// are shared immutable maps, and a parameter-free Cypher 5 row is nil.
+	// Own the evaluation envelope before any projection binds provenance.
+	if profileRuntimeFromContext(ctx) != nil {
+		row = maps.Clone(row)
+		if row == nil {
+			row = make(pipelineRow)
 		}
 	}
 

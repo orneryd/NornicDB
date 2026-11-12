@@ -221,6 +221,18 @@ func (s *Service) SearchTextContinuation(
 		response, err := SearchTextChunksWithErrorPolicy(withRerankMemo(stepCtx, rerankMemo), query, &stepOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
 		if err != nil {
 			err = execution.observe(stepCtx, step, nil, 0, err)
+			return response, step, err
+		}
+		// This producer owns Stage-2 reranking after the step's chunk fusion:
+		// the fused order is the candidate list, the original query is the memo
+		// key, and the accepted windows stay stable for every deeper pull.
+		if stepOptions.RerankEnabled {
+			s.mu.RLock()
+			reranker := s.reranker
+			s.mu.RUnlock()
+			if err := s.applyContinuationRerank(withRerankMemo(stepCtx, rerankMemo), query, response, &stepOptions, reranker); err != nil {
+				return nil, step, execution.observe(stepCtx, step, nil, 0, err)
+			}
 		}
 		return response, step, err
 	}

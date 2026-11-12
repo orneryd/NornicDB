@@ -164,8 +164,10 @@ type inventoryCall struct {
 }
 
 // inventoryRegistrars publish one procedure as (name, ..., handler): their last
-// argument is the handler expression the registry keeps.
+// argument is the handler expression the registry keeps. The canonical
+// registerProcedure binds a literal ProcedureSpec.Name to argument 1 instead.
 var inventoryRegistrars = map[string]bool{
+	"registerProcedure":                    true,
 	"registerBuiltInProcedure":             true,
 	"registerBuiltInProcedureLiteral":      true,
 	"registerStatementProcedureLiteral":    true,
@@ -200,12 +202,38 @@ func loadInventorySource(directory string) (*inventorySource, error) {
 			if !ok || !inventoryRegistrars[registrar.Name] || len(call.Args) < 2 {
 				return true
 			}
-			name, ok := call.Args[0].(*ast.BasicLit)
+			nameArgument, handler := call.Args[0], call.Args[len(call.Args)-1]
+			if registrar.Name == "registerProcedure" {
+				// Bind only the actual canonical spec/handler/policy shape.
+				// Unknown specs/names retain the existing conservative walk.
+				if len(call.Args) != 3 {
+					return true
+				}
+				spec, ok := nameArgument.(*ast.CompositeLit)
+				if !ok {
+					return true
+				}
+				kind, ok := spec.Type.(*ast.Ident)
+				if !ok || kind.Name != "ProcedureSpec" {
+					return true
+				}
+				nameArgument, handler = nil, call.Args[1]
+				for _, element := range spec.Elts {
+					entry, ok := element.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					if key, ok := entry.Key.(*ast.Ident); ok && key.Name == "Name" {
+						nameArgument = entry.Value
+					}
+				}
+			}
+			name, ok := nameArgument.(*ast.BasicLit)
 			if !ok || name.Kind != token.STRING {
 				return true
 			}
 			if registered, err := strconv.Unquote(name.Value); err == nil {
-				source.handlers[registered] = call.Args[len(call.Args)-1]
+				source.handlers[registered] = handler
 			}
 			return true
 		})

@@ -18,7 +18,7 @@ func (e *StorageExecutor) admitIndexCreationForTargets(ctx context.Context, quer
 
 func admitSchemaIndexCreation(ctx context.Context, schema *storage.SchemaManager, query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
 	guarded := keywordIndexFrom(ctx, query, "IF NOT EXISTS", 0, defaultKeywordScanOpts()) >= 0
-	for _, constraint := range schema.GetAllConstraints() {
+	for _, constraint := range readSchemaConstraintCatalog(ctx, schema) {
 		if constraint.Name != name {
 			continue
 		}
@@ -28,7 +28,7 @@ func admitSchemaIndexCreation(ctx context.Context, schema *storage.SchemaManager
 		message := localizedError(localization.StorageSchemaConstraintAlreadyExists(name), nil)
 		return false, newSemanticError("Neo.ClientError.Schema.ConstraintWithNameAlreadyExists", "ConstraintWithNameAlreadyExists", message.Error())
 	}
-	for _, item := range schema.GetIndexes() {
+	for _, item := range readSchemaIndexCatalog(ctx, schema) {
 		index, ok := item.(map[string]interface{})
 		if !ok {
 			continue
@@ -72,7 +72,7 @@ func admitSchemaIndexCreation(ctx context.Context, schema *storage.SchemaManager
 		if owner, ok := index["owningConstraint"].(string); ok && owner != "" {
 			code = "ConstraintAlreadyExists"
 			diagnostic = localization.StorageSchemaConstraintAlreadyExists(owner)
-			if uniqueness, ok := uniquenessConstraintNamed(schema, owner); ok && equivalent && len(uniqueness.Properties) == 1 {
+			if uniqueness, ok := uniquenessConstraintNamed(ctx, schema, owner); ok && equivalent && len(uniqueness.Properties) == 1 {
 				// Neo4j's wording for the index a uniqueness constraint owns (#884).
 				diagnostic = localization.StorageSchemaUniquenessConstraintIndexExists(uniqueness.Label, uniqueness.Properties[0])
 			}
@@ -84,8 +84,8 @@ func admitSchemaIndexCreation(ctx context.Context, schema *storage.SchemaManager
 }
 
 // uniquenessConstraintNamed returns the uniqueness constraint called name.
-func uniquenessConstraintNamed(schema *storage.SchemaManager, name string) (storage.Constraint, bool) {
-	for _, constraint := range schema.GetAllConstraints() {
+func uniquenessConstraintNamed(ctx context.Context, schema *storage.SchemaManager, name string) (storage.Constraint, bool) {
+	for _, constraint := range readSchemaConstraintCatalog(ctx, schema) {
 		if constraint.Name == name && constraint.Type == storage.ConstraintUnique {
 			return constraint, true
 		}

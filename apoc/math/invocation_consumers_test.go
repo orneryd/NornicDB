@@ -101,7 +101,7 @@ func TestInvocationAdmissionNOR184(t *testing.T) {
 		t.Run(entry.name, func(t *testing.T) {
 			r := registry.NewFunctionRegistry()
 			var err error
-			require.NotPanics(t, func() { err = r.RegisterFunction("probe", "probe", entry.function, "", nil) })
+			require.NotPanics(t, func() { err = r.RegisterFunction("probe", "probe", entry.function, registry.OpaqueReads, "", nil) })
 			if entry.reject {
 				require.Error(t, err)
 				_, published := r.Get("probe")

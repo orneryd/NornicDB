@@ -89,7 +89,10 @@ func TestCoreV2PointAndScalarReadsRejectCancelledRequest(t *testing.T) {
 		"node prefix":         func() error { _, err := e.NodeCountByPrefix(ctx, "test:"); return err },
 		"edge prefix":         func() error { _, err := e.EdgeCountByPrefix(ctx, "test:"); return err },
 		"embedding candidate": func() error { _, err := e.FindNodeNeedingEmbedding(ctx); return err },
-		"headers":             func() error { _, _, err := e.OutgoingEdgeHeaders(ctx, "test:a"); return err },
+		"headers": func() error {
+			_, err := e.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
+			return err
+		},
 		"matching": func() error {
 			_, err := e.MatchEdgesBetween(ctx, "test:a", "test:b", "R", nil, func(*Edge) bool { t.Error("canceled match invoked predicate"); return true })
 			return err

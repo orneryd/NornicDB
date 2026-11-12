@@ -42,7 +42,7 @@ func TestManualSuppression(t *testing.T) {
 		docs, err := engine.GetNodesByLabel(context.Background(), "Doc")
 		require.NoError(t, err)
 		require.Len(t, docs, 1)
-		outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
+		outgoing, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 		require.NoError(t, err)
 		require.Empty(t, outgoing)
 	}
@@ -68,7 +68,7 @@ func TestManualSuppression(t *testing.T) {
 	require.False(t, engine.HasManualSuppressions())
 	_, err = engine.GetNode(t.Context(), "test:b")
 	require.NoError(t, err)
-	outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
+	outgoing, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 
@@ -77,7 +77,7 @@ func TestManualSuppression(t *testing.T) {
 	require.NoError(t, engine.DeleteEdge(t.Context(), "test:r"))
 	require.False(t, engine.manuallySuppressed(manualSuppressionEdge, "test:r"))
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "CITES"}))
-	outgoing, err = engine.GetOutgoingEdges(context.Background(), "test:a")
+	outgoing, err = engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:a", true))

@@ -40,7 +40,7 @@ func TestCallableInvocationPoliciesNOR184(t *testing.T) {
 		{"query_variadic", func(v ...int64) int { return len(v) }, []interface{}{1, 2, 3}, registry.CypherArguments, 3, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			handler, err := registry.Compile(tc.function)
+			handler, err := registry.Compile(tc.function, registry.OpaqueReads)
 			require.NoError(t, err)
 			value, err := handler.CallWithPolicy(tc.args, nil, tc.policy)
 			if tc.fails {
@@ -54,7 +54,7 @@ func TestCallableInvocationPoliciesNOR184(t *testing.T) {
 	}
 	type key struct{}
 	ctx := context.WithValue(context.Background(), key{}, "caller")
-	handler, err := registry.Compile(func(got context.Context, v string) string { require.Same(t, ctx, got); return v })
+	handler, err := registry.Compile(func(got context.Context, v string) string { require.Same(t, ctx, got); return v }, registry.OpaqueReads)
 	require.NoError(t, err)
 	value, err := handler.CallWithPolicy([]interface{}{"value"}, []reflect.Value{reflect.ValueOf(ctx)}, registry.CypherArguments)
 	require.NoError(t, err)

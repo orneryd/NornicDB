@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -183,6 +184,8 @@ func (e *StorageExecutor) awaitVectorIndexOnline(ctx context.Context, name strin
 		return nil
 	}
 	err := svc.AwaitVectorIndexOnline(ctx, name, vectorIndexOnlineQueryTimeout)
+	// One lifecycle request, not the number of internal readiness polls.
+	queryprofile.Access(ctx, "VectorIndexOnlineWait", name).Add(1, 1)
 	switch {
 	case err == nil:
 		return nil
@@ -204,12 +207,38 @@ func (e *StorageExecutor) awaitVectorIndexOnline(ctx context.Context, name strin
 // since a DROP and a CREATE of the name committed during the wait replace it,
 // until the entry waited for is still the current one: a query never reads a
 // definition other than the one whose population it waited for.
+func readVectorIndexDefinition(ctx context.Context, schema *storage.SchemaManager, name string) (*storage.VectorIndex, bool) {
+	if schema == nil {
+		return nil, false
+	}
+	index, exists := schema.GetVectorIndex(name)
+	var rows int64
+	if index != nil {
+		rows = 1
+	}
+	queryprofile.Access(ctx, "VectorIndexByNameSeek", name).Add(rows, 1)
+	return index, exists
+}
+
+func readVectorIndexPopulation(ctx context.Context, service *search.Service, name string) *search.VectorIndexPopulation {
+	if service == nil {
+		return nil
+	}
+	population := service.VectorIndexPopulationOf(name)
+	var rows int64
+	if population != nil {
+		rows = 1
+	}
+	queryprofile.Access(ctx, "VectorIndexPopulationByNameSeek", name).Add(rows, 1)
+	return population
+}
+
 func (e *StorageExecutor) awaitVectorIndexDefinition(ctx context.Context, name string) (*storage.VectorIndex, error) {
 	var waited *storage.VectorIndex
 	for {
 		var current *storage.VectorIndex
 		if schema := e.storage.GetSchema(); schema != nil {
-			current, _ = schema.GetVectorIndex(name)
+			current, _ = readVectorIndexDefinition(ctx, schema, name)
 		}
 		if current == nil || current == waited {
 			return current, nil
@@ -225,15 +254,28 @@ func (e *StorageExecutor) awaitVectorIndexDefinition(ctx context.Context, name s
 // query now: its population state, which the search service owns, is ONLINE.
 // A MATCH does not read an index that is POPULATING or FAILED; it reads
 // storage, as with no index.
-func (e *StorageExecutor) vectorIndexOnline(name string) bool {
-	state, _ := e.search().VectorIndexState(name)
+func (e *StorageExecutor) vectorIndexOnline(ctx context.Context, name string) bool {
+	state, _ := readVectorIndexState(ctx, e.search(), name)
 	return state == search.VectorIndexOnline
+}
+
+const profileKindVectorIndexPopulationStateSeek = "VectorIndexPopulationStateSeek"
+
+// readVectorIndexState observes the one resolved service that answered a state
+// request. Nil services retain their existing ONLINE default without a read.
+func readVectorIndexState(ctx context.Context, service *search.Service, name string) (string, error) {
+	state, failure := service.VectorIndexState(name)
+	if service != nil {
+		queryprofile.Access(ctx, profileKindVectorIndexPopulationStateSeek, name).Add(1, 1)
+	}
+	return state, failure
 }
 
 // vectorIndexShowState is a vector index's state, populationPercent and
 // failureMessage as SHOW INDEXES reports them.
-func (e *StorageExecutor) vectorIndexShowState(name string) (string, float64, string) {
-	state, failure := e.search().VectorIndexState(name)
+func (e *StorageExecutor) vectorIndexShowState(ctx context.Context, name string) (string, float64, string) {
+	service := e.search()
+	state, failure := readVectorIndexState(ctx, service, name)
 	switch state {
 	case search.VectorIndexPopulating:
 		return state, 0.0, ""

@@ -74,8 +74,7 @@ func (e *snapshotErrorEngine) StreamStoredEdgesByType(ctx context.Context, edgeT
 // TestWALCompactionConfig tests WAL configuration options for compaction.
 
 func TestWALCompactionConfig(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("default_snapshot_interval_is_1_hour", func(t *testing.T) {
 		cfg := DefaultWALConfig()
@@ -230,8 +229,7 @@ func TestSnapshotAndSaveSnapshot_ErrorBranches(t *testing.T) {
 
 // TestPruneOldSnapshotFiles tests snapshot file retention pruning.
 func TestPruneOldSnapshotFiles(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	dir := t.TempDir()
 	// Create 4 snapshot files (minimal valid JSON)
@@ -305,8 +303,7 @@ func TestPruneOldSnapshotFiles_AdditionalBranches(t *testing.T) {
 
 // TestWALTruncateAfterSnapshot tests WAL truncation functionality.
 func TestWALTruncateAfterSnapshot(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("truncate_removes_entries_before_snapshot", func(t *testing.T) {
 		dir := t.TempDir()
@@ -464,8 +461,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 
 // TestWALAutoCompactionEnabled tests that auto-compaction is properly enabled.
 func TestWALAutoCompactionEnabled(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("enable_auto_compaction_creates_snapshot_directory", func(t *testing.T) {
 		dir := t.TempDir()
@@ -618,8 +614,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 
 // TestWALCompactionUnderLoad tests compaction behavior under concurrent writes.
 func TestWALCompactionUnderLoad(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("compaction_safe_during_concurrent_writes", func(t *testing.T) {
 		dir := t.TempDir()
@@ -688,8 +683,7 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 
 // TestWALCompactionDiskSpace tests that compaction actually saves disk space.
 func TestWALCompactionDiskSpace(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("compaction_reduces_wal_size", func(t *testing.T) {
 		dir := t.TempDir()
@@ -760,8 +754,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 
 // TestWALSnapshotRecovery tests recovery scenarios after compaction.
 func TestWALSnapshotRecovery(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("recovery_uses_latest_snapshot", func(t *testing.T) {
 		dir := t.TempDir()
@@ -856,8 +849,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 
 // TestWALCompactionEdgeCases tests edge cases in compaction.
 func TestWALCompactionEdgeCases(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	t.Run("compaction_with_empty_wal", func(t *testing.T) {
 		dir := t.TempDir()
@@ -924,8 +916,7 @@ func TestWALCompactionEdgeCases(t *testing.T) {
 
 // BenchmarkWALCompaction benchmarks compaction performance.
 func BenchmarkWALCompaction(b *testing.B) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	defer config.WithWALEnabled()()
 
 	b.Run("truncate_after_snapshot", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {

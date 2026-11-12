@@ -230,12 +230,12 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 	defer txRead.Rollback()
 	require.False(t, txRead.readTS.IsZero(), "read tx must pin a snapshot version")
 
-	outBefore, err := txRead.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
+	outBefore, err := txRead.ReadEdges(context.Background(), AdjacentEdgeRead{Node: start})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(outBefore),
 		"outgoing adjacency must return only start's own edge, not the 200 unrelated edges")
 
-	inBefore, err := txRead.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: target})
+	inBefore, err := txRead.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: target})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(inBefore))
 
@@ -250,7 +250,7 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 	require.NoError(t, txInsert.Commit())
 
 	// The read snapshot must not observe the post-begin edge.
-	outAfter, err := txRead.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
+	outAfter, err := txRead.ReadEdges(context.Background(), AdjacentEdgeRead{Node: start})
 	require.NoError(t, err)
 	require.Equal(t, sortedEdgeIDStrings(outBefore), sortedEdgeIDStrings(outAfter),
 		"snapshot read must be stable across a concurrent commit")
@@ -259,15 +259,15 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 	txFresh, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer txFresh.Rollback()
-	freshOut, err := txFresh.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
+	freshOut, err := txFresh.ReadEdges(context.Background(), AdjacentEdgeRead{Node: start})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(edgeID), string(laterEdgeID)}, sortedEdgeIDStrings(freshOut))
 }
 
 // TestTransaction_SnapshotAdjacencyRejectsUnknownDirection covers the defensive
-// guard in the snapshot branch: an EdgeDirection outside Outgoing/Incoming
-// returns ErrInvalidData rather than silently resolving. The callers only pass
-// Outgoing/Incoming, so this guard is reachable only from within the package.
+// guard in the snapshot branch: a direction outside outgoing/incoming returns
+// ErrInvalidData rather than silently resolving. The callers only pass
+// outgoing/incoming, so this guard is reachable only from within the package.
 func TestTransaction_SnapshotAdjacencyRejectsUnknownDirection(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	start, _, _ := seedSnapshotAdjacencyGraph(t, engine, 1)
@@ -278,7 +278,7 @@ func TestTransaction_SnapshotAdjacencyRejectsUnknownDirection(t *testing.T) {
 	require.False(t, tx.readTS.IsZero(), "read tx must pin a snapshot version")
 
 	tx.mu.Lock()
-	_, err = tx.getCommittedAdjacentEdgesLocked(context.Background(), start, EdgeDirection(99))
+	_, err = tx.getCommittedAdjacentEdgesLocked(context.Background(), AdjacentEdgeRead{Direction: AdjacentEdgeDirection(99), Node: start})
 	tx.mu.Unlock()
 	require.ErrorIs(t, err, ErrInvalidData)
 }
@@ -302,9 +302,9 @@ func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) 
 	tx.mu.Lock()
 	tx.readTS = MVCCVersion{} // force the no-snapshot path deterministically
 	zeroed := tx.readTS.IsZero()
-	out, outErr := tx.getCommittedAdjacentEdgesLocked(context.Background(), start, Outgoing)
-	in, inErr := tx.getCommittedAdjacentEdgesLocked(context.Background(), target, Incoming)
-	_, badDirErr := tx.getCommittedAdjacentEdgesLocked(context.Background(), start, EdgeDirection(99))
+	out, outErr := tx.getCommittedAdjacentEdgesLocked(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: start})
+	in, inErr := tx.getCommittedAdjacentEdgesLocked(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: target})
+	_, badDirErr := tx.getCommittedAdjacentEdgesLocked(context.Background(), AdjacentEdgeRead{Direction: AdjacentEdgeDirection(99), Node: start})
 	nodes, nodesErr := tx.getAllCommittedNodesLocked(context.Background())
 	tx.mu.Unlock()
 
@@ -338,7 +338,7 @@ func BenchmarkTransaction_SnapshotAdjacency(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				edges, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
+				edges, err := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Node: start})
 				if err != nil {
 					b.Fatal(err)
 				}

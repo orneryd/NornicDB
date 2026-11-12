@@ -927,7 +927,7 @@ func TestOptionalMatchAggregateCaseTreatsNullBindingAsNull(t *testing.T) {
 	}
 	require.True(t, exec.evaluateRowPredicate(ctx, "n IS NULL", pipelineRow{"n": nil}))
 	caseExpression := `CASE WHEN n IS NULL THEN null ELSE {value: n.value} END`
-	parsed, err := parseCaseExpression(caseExpression)
+	parsed, err := parseCaseExpression(caseExpression, nil)
 	require.NoError(t, err)
 	require.Equal(t, "n IS NULL", parsed.whenClauses[0].condition)
 	direct, evaluated := rowValue(t, exec, caseExpression, pipelineRow{"n": nil})

@@ -173,7 +173,14 @@ func (w *callerCopyWalker) value(value any) any {
 	case []bool:
 		return slices.Clone(value)
 	case []any:
-		return w.list(value)
+		_, boxed := callerCopySlice(w, value, w.value)
+		return boxed
+	case [][]any:
+		_, boxed := callerCopySlice(w, value, func(row []any) []any {
+			copied, _ := callerCopySlice(w, row, w.value)
+			return copied
+		})
+		return boxed
 	case map[string]any:
 		return w.mapping(value)
 	default:
@@ -204,20 +211,26 @@ func (w *callerCopyWalker) mapping(m map[string]any) map[string]any {
 	return out
 }
 
-func (w *callerCopyWalker) list(l []any) []any {
-	if l == nil {
-		return nil
+// callerCopySlice is the typed slice owner for mutable value graphs. It
+// preserves aliases/cycles before copying elements; a matrix uses the same
+// owner recursively. The boxed header used by reference tracking is also the
+// interface result, so delivery does not allocate a second identical header.
+func callerCopySlice[S ~[]E, E any](w *callerCopyWalker, source S, copyItem func(E) E) (S, any) {
+	if source == nil {
+		return nil, S(nil)
 	}
-	key := w.referenceKey(reflect.ValueOf(l))
+	key := w.referenceKey(reflect.ValueOf(source))
 	if previous, ok := w.copied(key); ok {
-		return previous.Interface().([]any)
+		boxed := previous.Interface()
+		return boxed.(S), boxed
 	}
-	out := make([]any, len(l))
-	w.remember(key, reflect.ValueOf(out))
-	for i, item := range l {
-		out[i] = w.value(item)
+	out := make(S, len(source))
+	boxed := any(out)
+	w.remember(key, reflect.ValueOf(boxed))
+	for i, item := range source {
+		out[i] = copyItem(item)
 	}
-	return out
+	return out, boxed
 }
 
 // copierCopy is the one protocol dispatch, and it invokes at most one
@@ -260,15 +273,19 @@ func (w *callerCopyWalker) reference(value reflect.Value) reflect.Value {
 		return value
 	}
 	if value.CanInterface() {
-		switch entity := value.Interface().(type) {
+		boxed := value.Interface()
+		if callerCopyScalar(boxed) {
+			return value
+		}
+		switch entity := boxed.(type) {
 		case *Node:
 			return reflect.ValueOf(copyNode(entity))
 		case *Edge:
 			return reflect.ValueOf(copyEdge(entity))
 		case map[string]any:
 			return reflect.ValueOf(w.mapping(entity))
-		case []any:
-			return reflect.ValueOf(w.list(entity))
+		case []any, [][]any:
+			return reflect.ValueOf(w.value(boxed))
 		}
 	}
 	if copied, ok := copierCopy(value); ok {

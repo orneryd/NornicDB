@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -27,6 +28,9 @@ func embedQueryChunked(ctx context.Context, embedder QueryEmbedder, text string)
 		queryChunkOverlap = 50
 	)
 
+	// The host-installed provider may perform database reads in either its
+	// chunker or embedder. Cached embeddings never enter this callback owner.
+	queryprofile.Callback(ctx, "query embedding provider", "")
 	chunks, err := embedder.ChunkText(text, queryChunkSize, queryChunkOverlap)
 	if err != nil {
 		return nil, err

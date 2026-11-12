@@ -17,11 +17,15 @@ import (
 // body pass from a retained-count reuse without timing or private state.
 type fulltextCountingContext struct {
 	context.Context
-	checks int
+	checks  int
+	onCheck func(int)
 }
 
 func (c *fulltextCountingContext) Err() error {
 	c.checks++
+	if c.onCheck != nil {
+		c.onCheck(c.checks)
+	}
 	return c.Context.Err()
 }
 

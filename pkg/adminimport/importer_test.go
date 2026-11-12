@@ -62,7 +62,7 @@ u1,u2,KNOWS,2024
 	require.Equal(t, []float32{0.4, 0.5, 0.6}, alice.NamedEmbeddings["default"])
 	require.Equal(t, "u1", alice.Properties["id"])
 
-	edges, err := engine.GetOutgoingEdges(context.Background(), "u1")
+	edges, err := engine.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "u1"})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, storage.NodeID("u1"), edges[0].StartNode)
@@ -199,7 +199,7 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 	require.Equal(t, []float32{0.4, 0.5, 0.6}, alice.NamedEmbeddings["default"])
 	require.ElementsMatch(t, []string{"Person", "User"}, alice.Labels)
 
-	edges, err := dest.GetOutgoingEdges(context.Background(), "u1")
+	edges, err := dest.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "u1"})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, "KNOWS", edges[0].Type)
@@ -492,7 +492,7 @@ func TestImporterPreservesEmptyStringPropertiesUnlessIgnored(t *testing.T) {
 	node, err := keep.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	require.Equal(t, "", node.Properties["nickname"])
-	edges, err := keep.GetOutgoingEdges(context.Background(), "n1")
+	edges, err := keep.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "n1"})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, "", edges[0].Properties["note"])
@@ -512,7 +512,7 @@ func TestImporterPreservesEmptyStringPropertiesUnlessIgnored(t *testing.T) {
 	require.NoError(t, err)
 	_, exists := node.Properties["nickname"]
 	require.False(t, exists)
-	edges, err = drop.GetOutgoingEdges(context.Background(), "n1")
+	edges, err = drop.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "n1"})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	_, exists = edges[0].Properties["note"]
@@ -760,7 +760,7 @@ u1,u2,WORKS_WITH,2025
 	require.Equal(t, "admin", alphaAlice.Properties["role"])
 	require.ElementsMatch(t, []string{"Imported", "Person", "User"}, alphaAlice.Labels)
 
-	alphaEdges, err := alpha.GetOutgoingEdges(context.Background(), "u1")
+	alphaEdges, err := alpha.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "u1"})
 	require.NoError(t, err)
 	require.Len(t, alphaEdges, 1)
 	require.Equal(t, storage.NodeID("u1"), alphaEdges[0].StartNode)
@@ -801,7 +801,7 @@ u1,u2,WORKS_WITH,2025
 	require.Equal(t, "owner", betaCarol.Properties["role"])
 	require.ElementsMatch(t, []string{"Imported", "Person", "User"}, betaCarol.Labels)
 
-	betaEdges, err := beta.GetOutgoingEdges(context.Background(), "u1")
+	betaEdges, err := beta.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "u1"})
 	require.NoError(t, err)
 	require.Len(t, betaEdges, 1)
 	require.Equal(t, storage.NodeID("u1"), betaEdges[0].StartNode)

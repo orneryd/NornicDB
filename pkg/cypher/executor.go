@@ -114,6 +114,7 @@ import (
 	"context"
 	"errors"
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"io"
 	"log/slog"
 	"maps"
@@ -339,7 +340,7 @@ type StorageExecutor struct {
 	queryCacheTTL                time.Duration
 	planCache                    *QueryPlanCache // Parsed query plan cache
 	semanticValidationCache      *semanticValidationCache
-	matchSemanticValidationCache *semanticValidationCache
+	matchSemanticValidationCache *boundedCache[string, nativeFunctionInputs]
 	mergeSemanticValidationCache *semanticValidationCache
 	// fabricPlanCache caches planned Fabric fragment trees (query + sessionDB).
 	fabricPlanCache *fabric.PlanCache
@@ -360,12 +361,6 @@ type StorageExecutor struct {
 	// commit-time UNIQUE shape.
 	nodeLookupCache   map[string]*storage.Node
 	nodeLookupCacheMu *sync.RWMutex
-
-	// readOnlyQueryNodes is set on the clone that runs an auto-commit
-	// statement which cannot write (readsQueryNodesWithoutVectors): its row
-	// nodes are read without vectors (getQueryNode). Never set on an
-	// executor that writes outside a transaction; clones don't inherit it.
-	readOnlyQueryNodes bool
 
 	// deferFlush when true, writes are not auto-flushed (Bolt layer handles it)
 	deferFlush bool
@@ -783,7 +778,7 @@ func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *
 		queryCacheTTL:                queryCacheTTL,
 		planCache:                    NewQueryPlanCache(500), // Cache 500 parsed query plans
 		semanticValidationCache:      newSemanticValidationCache(500),
-		matchSemanticValidationCache: newSemanticValidationCache(500),
+		matchSemanticValidationCache: newBoundedCache[string, nativeFunctionInputs](500, boundedCacheStringShardIndex),
 		mergeSemanticValidationCache: newSemanticValidationCache(500),
 		fabricPlanCache:              fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
 		analyzer:                     NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
@@ -1316,9 +1311,10 @@ func (e *StorageExecutor) GetDefaultEmbeddingDimensions() int {
 //
 // Search reads the node itself after reserving the refresh, so a later write or
 // delete that commits first is not overwritten by this notification.
-func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
-	e.refreshSearch(search.RefreshRequest{Node: storage.NodeID(nodeID)})
+func (e *StorageExecutor) notifyNodeMutated(ctx context.Context, nodeID string) {
+	e.refreshSearch(ctx, search.RefreshRequest{Node: storage.NodeID(nodeID)})
 	if e.onNodeMutated != nil {
+		queryprofile.Callback(ctx, "node mutation callback", "")
 		e.onNodeMutated(nodeID)
 	}
 }
@@ -1327,21 +1323,22 @@ func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
 // mutation so relationship vector queries can use client-supplied vectors before
 // a full search warmup/build has run. Call it after deleting one too, so its
 // vectors leave search.
-func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
-	e.refreshSearch(search.RefreshRequest{Edge: storage.EdgeID(edgeID)})
+func (e *StorageExecutor) notifyEdgeMutated(ctx context.Context, edgeID string) {
+	e.refreshSearch(ctx, search.RefreshRequest{Edge: storage.EdgeID(edgeID)})
 }
 
 // refreshSearchAfterCommit refreshes what the committed transaction changed.
 // The service is captured once, before the publish, so resets mid-publish do
-// not defer or skip the remaining changes.
-func (e *StorageExecutor) refreshSearchAfterCommit(tx *transactionStorageWrapper) {
+// not defer or skip the remaining changes. ctx supplies observation attribution
+// only: RefreshIndexes gives actual reads the captured service's own lifetime.
+func (e *StorageExecutor) refreshSearchAfterCommit(ctx context.Context, tx *transactionStorageWrapper) {
 	nodes, edges := tx.takeSearchRefreshes()
 	service := e.search()
 	for id := range nodes {
-		e.refreshSearch(search.RefreshRequest{Node: id, PostCommit: true, PostCommitService: service})
+		e.refreshSearch(ctx, search.RefreshRequest{Node: id, PostCommit: true, PostCommitService: service})
 	}
 	for id := range edges {
-		e.refreshSearch(search.RefreshRequest{Edge: id, PostCommit: true, PostCommitService: service})
+		e.refreshSearch(ctx, search.RefreshRequest{Edge: id, PostCommit: true, PostCommitService: service})
 	}
 }
 
@@ -1349,12 +1346,12 @@ func (e *StorageExecutor) refreshSearchAfterCommit(tx *transactionStorageWrapper
 // indexes), which removes it. Call after successfully deleting a node via Cypher so
 // embeddings are not left orphaned.
 // nodeID may be prefixed (e.g. "nornic:xyz") or local ("xyz"); the search service expects local ID.
-func (e *StorageExecutor) removeNodeFromSearch(nodeID string) {
+func (e *StorageExecutor) removeNodeFromSearch(ctx context.Context, nodeID string) {
 	localID := nodeID
 	if _, unprefixed, ok := storage.ParseDatabasePrefix(nodeID); ok {
 		localID = unprefixed
 	}
-	e.refreshSearch(search.RefreshRequest{Node: storage.NodeID(localID)})
+	e.refreshSearch(ctx, search.RefreshRequest{Node: storage.NodeID(localID)})
 }
 
 // Flush persists all pending writes to storage.
@@ -1476,11 +1473,6 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 		}
 		return statementExec.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
-	// Check if this is a write operation using cached analysis
-	info, err := e.analyzer.Analyze(ctx, cypher)
-	if err != nil {
-		return nil, err
-	}
 	contract, err := readStatementExecutionContract(ctx, cypher)
 	if err != nil {
 		return nil, err
@@ -1501,12 +1493,11 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 		return e.executeWithImplicitTransaction(ctx, cypher, upperQuery)
 	}
 
-	// Read-only operations don't need transaction wrapping. One that cannot
-	// write reads its row nodes without vectors, on a clone so concurrent
-	// statements of this executor keep their own reads.
-	if e.readsQueryNodesWithoutVectors(info) {
+	// Retain MATCH's execution-workspace isolation. The immutable statement
+	// context, rather than a mutable field on this clone, owns image policy.
+	if statement, _ := ctx.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); statement != nil &&
+		statement.nodeImages.hasMatch && statement.nodeImages.readOnly && e.queryNodeReader(ctx, e.storage) != nil {
 		readExec := e.cloneWithStorage(e.storage)
-		readExec.readOnlyQueryNodes = true
 		return readExec.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
@@ -1713,7 +1704,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// accepted. The implicit and explicit paths share that one lifetime.
 	receipt, completionErr, bookkeepingErr := bookkeeping.finishCommitted(commitCtx, tx.OperationCount(), func(admittedCtx context.Context) error {
 		completionErr := txWrapper.completeCommitActions(admittedCtx)
-		txExec.refreshSearchAfterCommit(txWrapper)
+		txExec.refreshSearchAfterCommit(ctx, txWrapper)
 		return completionErr
 	})
 

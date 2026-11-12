@@ -2792,11 +2792,11 @@ func TestSearchHelpers_TryRestoreAndMaybeRebuildBranches(t *testing.T) {
 		svc.hnswRebuildInFlight.Store(false)
 	})
 
-	t.Run("transition build preserves each branch", func(t *testing.T) {
+	t.Run("snapshot build preserves each source", func(t *testing.T) {
 		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 
 		// Nil indexes should return a deterministic error.
-		_, err := svc.buildHNSWForTransition(context.Background(), 2, nil, nil)
+		_, _, err := svc.buildHNSWSnapshot(t.Context(), 2, svc.hnswConfig(), nil, nil, nil)
 		require.Error(t, err)
 
 		vi := NewVectorIndex(2)
@@ -2806,28 +2806,38 @@ func TestSearchHelpers_TryRestoreAndMaybeRebuildBranches(t *testing.T) {
 		// Cancelled context should short-circuit during build.
 		cancelled, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err = svc.buildHNSWForTransition(cancelled, 2, vi, nil)
+		_, _, err = svc.buildHNSWSnapshot(cancelled, 2, svc.hnswConfig(), vi, nil, nil)
 		require.ErrorIs(t, err, context.Canceled)
 
-		rebuilt, err := svc.buildHNSWForTransition(context.Background(), 2, vi, nil)
+		rebuilt, _, err := svc.buildHNSWSnapshot(t.Context(), 2, svc.hnswConfig(), vi, nil, nil)
 		require.NoError(t, err)
-		require.Equal(t, 2, rebuilt.Size())
+		require.EqualValues(t, 2, rebuilt.Size())
+		memoryCoordinates := rebuilt.construction
+		t.Cleanup(func() { require.NoError(t, memoryCoordinates.Close()) })
+		memoryVector, memoryPresent := rebuilt.vectorLookup("n1")
+		require.True(t, memoryPresent, "the build resolves its supplied source, not an unrelated service index")
+		require.Equal(t, []float32{1, 0}, memoryVector)
 
 		// File-store build path.
 		dir := t.TempDir()
 		vfs, err := NewVectorFileStore(filepath.Join(dir, "transition_vectors"), 2)
 		require.NoError(t, err)
-		defer vfs.Close()
+		t.Cleanup(func() { require.NoError(t, vfs.Close()) })
 		require.NoError(t, vfs.Add("vf1", []float32{1, 0}))
 		require.NoError(t, vfs.Add("vf2", []float32{0, 1}))
 
-		rebuilt, err = svc.buildHNSWForTransition(context.Background(), 2, nil, vfs)
+		rebuilt, _, err = svc.buildHNSWSnapshot(t.Context(), 2, svc.hnswConfig(), nil, vfs, nil)
 		require.NoError(t, err)
 		require.Equal(t, 2, rebuilt.Size())
+		fileCoordinates := rebuilt.construction
+		t.Cleanup(func() { require.NoError(t, fileCoordinates.Close()) })
+		fileVector, filePresent := rebuilt.vectorLookup("vf2")
+		require.True(t, filePresent, "the build resolves its supplied source, not an unrelated service index")
+		require.Equal(t, []float32{0, 1}, fileVector)
 
 		cancelledVFS, cancelVFS := context.WithCancel(context.Background())
 		cancelVFS()
-		_, err = svc.buildHNSWForTransition(cancelledVFS, 2, nil, vfs)
+		_, _, err = svc.buildHNSWSnapshot(cancelledVFS, 2, svc.hnswConfig(), nil, vfs, nil)
 		require.ErrorIs(t, err, context.Canceled)
 
 	})
@@ -3638,7 +3648,7 @@ func TestService_RerankerPlumbingAndStage2(t *testing.T) {
 	// Cross-encoder wiring and availability.
 	assert.False(t, svc.CrossEncoderAvailable(ctx))
 	ce := NewCrossEncoder(&CrossEncoderConfig{Enabled: false})
-	svc.SetCrossEncoder(ce)
+	svc.SetReranker(ce)
 	assert.False(t, svc.CrossEncoderAvailable(ctx))
 
 	// Generic reranker wiring.

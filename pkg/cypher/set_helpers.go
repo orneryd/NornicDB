@@ -303,7 +303,7 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 				restore()
 				return wrap(*state, err)
 			}
-			e.notifyNodeMutated(string(node.ID))
+			e.notifyNodeMutated(ctx, string(node.ID))
 			continue
 		}
 		relationship := state.relationship
@@ -316,7 +316,7 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 			relationship.Properties = state.properties
 			return wrap(*state, err)
 		}
-		e.notifyEdgeMutated(string(relationship.ID))
+		e.notifyEdgeMutated(ctx, string(relationship.ID))
 	}
 	return nil
 }

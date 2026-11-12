@@ -101,8 +101,10 @@ func requireCascadeEdgeConflict(t *testing.T, err error) {
 // The window is reproduced deterministically: the buffer's write lock holds the
 // primary cascade commit inside bufferedWriteConflictLocked, its own buffered
 // conflict scan. The peer cascade then tries to commit there. It must wait for
-// the exclusive entity authority the primary already holds on the relationship
-// it cascades, so it cannot be acknowledged in the window; once the primary is
+// the primary's entity authority, so it cannot be acknowledged in the window.
+// The current footprint also protects cascaded relationships' endpoints for
+// positional counts: the peer meets the primary's node identity before the
+// relationship identity in the canonical registry order. Once the primary is
 // acknowledged and releases that authority, the peer's own validation observes
 // the acknowledged removal and rejects it as an ordinary conflict.
 //
@@ -170,14 +172,20 @@ func TestNodeCascadeValidationWindowBlocksPeerAcknowledgement(t *testing.T) {
 	select {
 	case <-peerWait:
 	case <-time.After(10 * time.Second):
-		t.Fatal("peer commit did not wait for the cascaded relationship's entity authority")
+		t.Fatal("peer commit did not wait for the cascade's entity authority")
 	}
-	// The wait is on the cascaded relationship's own entity key, held by the
-	// primary commit: the relationship every derived count delta of the peer's
-	// cascade would name.
+	// Both identities remain protected throughout the conflict-scan window.
+	// NOR-213 added endpoint stability to the footprint, so the peer's shared
+	// endpoint request first meets the primary's exclusive deleted-node key.
+	// Do not require it to bypass that earlier authority to wait on the edge.
 	schema := engine.GetSchemaForNamespace("test")
 	schema.uniqueConstraintCommitLocksMu.Lock()
 	relationshipLock := schema.uniqueConstraintCommitLocks[uniqueConstraintLockKey{entityKind: 2, entityID: "test:r2"}]
+	nodeLock := schema.uniqueConstraintCommitLocks[uniqueConstraintLockKey{entityKind: 1, entityID: "test:n3"}]
+	nodeHolder := ""
+	if nodeLock != nil {
+		nodeHolder = nodeLock.owner
+	}
 	waiter := schema.uniqueConstraintLockWaits[peer.ID]
 	holder := ""
 	if relationshipLock != nil {
@@ -186,7 +194,9 @@ func TestNodeCascadeValidationWindowBlocksPeerAcknowledgement(t *testing.T) {
 	schema.uniqueConstraintCommitLocksMu.Unlock()
 	require.NotNil(t, relationshipLock, "the cascaded relationship has entity authority")
 	require.Equal(t, primary.ID, holder, "the primary cascade commit holds the relationship's entity authority")
-	require.Same(t, relationshipLock, waiter, "the peer waits on that authority inside the validation window")
+	require.NotNil(t, nodeLock, "the primary's deleted node has identity authority")
+	require.Equal(t, primary.ID, nodeHolder, "the primary holds the endpoint identity the peer must stabilize")
+	require.Same(t, nodeLock, waiter, "the peer waits on the earlier endpoint authority inside the validation window")
 	select {
 	case err := <-peerDone:
 		t.Fatalf("peer commit returned %v inside the primary's validation window", err)

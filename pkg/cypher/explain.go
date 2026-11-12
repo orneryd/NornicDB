@@ -61,6 +61,9 @@ type PlanOperator struct {
 	ActualRows int64         `json:"rows,omitempty"`
 	DBHits     int64         `json:"dbHits,omitempty"`
 	Time       time.Duration `json:"time,omitempty"`
+	// Observed flags distinguish a measured zero from an unavailable counter.
+	RowsObserved   bool `json:"rowsObserved,omitempty"`
+	DBHitsObserved bool `json:"dbHitsObserved,omitempty"`
 }
 
 // ExecutionPlan represents the complete query execution plan
@@ -78,6 +81,12 @@ type ExecutionPlan struct {
 	TotalDBHits int64         `json:"totalDbHits,omitempty"`
 	TotalTime   time.Duration `json:"totalTime,omitempty"`
 	TotalRows   int64         `json:"totalRows,omitempty"`
+	// Unobserved identifies execution boundaries without captured measurements.
+	// Such boundaries must never be populated with planner estimates.
+	Unobserved []string `json:"unobserved,omitempty"`
+	// TotalDBHitsObserved is false when an actual callback's accesses cannot
+	// be fully measured, even if some of its nested readers were observed.
+	TotalDBHitsObserved bool `json:"totalDbHitsObserved,omitempty"`
 }
 
 // parseExecutionMode extracts EXPLAIN or PROFILE prefix from a query
@@ -140,19 +149,17 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	if err != nil {
 		return nil, err
 	}
-	// Build the plan first
-	plan, err := e.buildExecutionPlan(ctx, query)
-	if err != nil {
-		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
-	}
-	plan.Mode = ModeProfile
-
 	// PROFILE's inner execution must bypass the result cache on both read and
 	// write: Neo4j profiles actual execution, and a result object shared with
 	// the cache would otherwise be mutated by attachPlanMetadata below,
 	// leaking plan metadata into ordinary cached reads of the same query.
 	ctx = context.WithValue(ctx, profileExecutionKey{}, true)
-
+	collector := newProfileRuntimeCollector()
+	ctx = withProfileRuntimeCollector(ctx, collector)
+	contract, contractErr := e.analyzer.Analyze(ctx, query)
+	if contractErr != nil {
+		return nil, contractErr
+	}
 	// Execute the actual query to collect statistics
 	startTime := time.Now()
 	result, execErr := e.executeRouted(ctx, query, nil)
@@ -164,15 +171,16 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 		return nil, execErr
 	}
 
-	// Update plan with actual statistics
-	plan.TotalTime = totalTime
-	if result != nil {
-		plan.TotalRows = int64(len(result.Rows))
-		e.updatePlanWithStats(plan.Root, result)
+	// A write whose route is outside the clause pipeline - ordinary schema
+	// DDL, a catalog or administration command, a registered procedure -
+	// completes its work where nothing reports reads or mutation requests, so
+	// its storage accesses stay unknown as a whole. A statement the pipeline
+	// executed by clauses reports both, so its own records certify it.
+	if contract.Writes() && !profileExecutedClauses(collector) {
+		collector.UnobservedRead(ctx, "write statement storage accesses", "")
 	}
 
-	// Calculate total DB hits (estimate based on operations)
-	plan.TotalDBHits = e.estimateDBHits(plan.Root)
+	plan := observedExecutionPlan(query, result, totalTime, collector)
 
 	// TRC-16: emit per-operator spans with estimated/actual rows.
 	emitOperatorSpans(ctx, plan.Root)
@@ -189,6 +197,13 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	}
 
 	return e.attachPlanMetadata(result, plan), nil
+}
+
+// profileExecutedClauses reports whether the statement ran clauses the
+// collector observed. A route outside the clause pipeline runs none, so its
+// accesses can never be certified by the statement's own records.
+func profileExecutedClauses(collector *profileRuntimeCollector) bool {
+	return len(collector.observation().Clauses) > 0
 }
 
 // buildExecutionPlan creates an execution plan for a query
@@ -224,7 +239,11 @@ func (e *StorageExecutor) analyzeQuery(ctx context.Context, query string) (*Plan
 	}
 
 	if idx := findKeywordIndex(ctx, query, "MATCH"); idx >= 0 {
-		add(idx, e.analyzeMatchClause(query))
+		op, err := e.analyzeMatchClause(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		add(idx, op)
 	}
 	if idx := findKeywordIndex(ctx, query, "CALL"); idx >= 0 {
 		add(idx, e.analyzeCallClause(ctx, query))
@@ -323,7 +342,7 @@ func (e *StorageExecutor) analyzeQuery(ctx context.Context, query string) (*Plan
 }
 
 // analyzeMatchClause analyzes a MATCH clause and returns appropriate operators
-func (e *StorageExecutor) analyzeMatchClause(query string) *PlanOperator {
+func (e *StorageExecutor) analyzeMatchClause(ctx context.Context, query string) (*PlanOperator, error) {
 	upper := upperASCII(query)
 
 	// Check for shortestPath
@@ -335,7 +354,7 @@ func (e *StorageExecutor) analyzeMatchClause(query string) *PlanOperator {
 			Arguments: map[string]interface{}{
 				"algorithm": "BFS",
 			},
-		}
+		}, nil
 	}
 
 	// Check for variable-length path
@@ -344,76 +363,143 @@ func (e *StorageExecutor) analyzeMatchClause(query string) *PlanOperator {
 			OperatorType:  "VarLengthExpand",
 			Description:   "Variable length path expansion",
 			EstimatedRows: 100,
-		}
+		}, nil
 	}
 
 	// Check for relationship pattern
 	if containsRelationshipPattern(query) {
+		scan, err := e.analyzeNodeScan(ctx, query)
+		if err != nil {
+			return nil, err
+		}
 		return &PlanOperator{
 			OperatorType:  "Expand",
 			Description:   "Expand relationships",
 			EstimatedRows: 100,
 			Children: []*PlanOperator{
-				e.analyzeNodeScan(query),
+				scan,
 			},
-		}
+		}, nil
 	}
 
 	// Simple node scan
-	return e.analyzeNodeScan(query)
+	return e.analyzeNodeScan(ctx, query)
 }
 
-// analyzeNodeScan determines the type of node scan needed.
-// When the storage schema is available, it checks for actual index existence
-// and reports index usage or rejection reasons in the plan arguments.
-func (e *StorageExecutor) analyzeNodeScan(query string) *PlanOperator {
-	// Check for label in pattern (n:Label)
-	if label, ok := extractFirstNodeLabelFromQuery(query); ok {
-
-		// Check for property filter (n:Label {prop: value})
-		if strings.Contains(query, "{") {
-			args := map[string]interface{}{
-				"label": label,
-			}
-			// Check actual index availability from schema.
-			e.annotateIndexDiagnostics(args, label, query)
-
-			return &PlanOperator{
-				OperatorType:  "NodeIndexSeek",
-				Description:   fmt.Sprintf("Index seek on :%s", label),
-				EstimatedRows: 10,
-				Arguments:     args,
-				Identifiers:   []string{"n"},
-			}
-		}
-
-		args := map[string]interface{}{
-			"label": label,
-		}
-		e.annotateIndexDiagnostics(args, label, query)
-
+// analyzeNodeScan determines the type of node scan needed and the index
+// diagnostics that accompany it.
+//
+// An index seek is claimed only when a canonical index-seek planner plans one
+// for the MATCH's first node pattern: parseNodePattern reads the pattern, and
+// planPatternPropertySeek (inline equality) and
+// addPropertyIndexEqualityCompoundSeeks (WHERE equality) decide whether a
+// declared index answers it. Otherwise the plan scans and the arguments name
+// the indexes that exist and why none applies. Reading the plan performs no
+// statement read.
+func (e *StorageExecutor) analyzeNodeScan(ctx context.Context, query string) (*PlanOperator, error) {
+	pattern, whereClause, ok, err := e.explainNodePattern(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || len(pattern.labels) == 0 {
+		// No label - full scan
 		return &PlanOperator{
-			OperatorType:  "NodeByLabelScan",
-			Description:   fmt.Sprintf("Scan all :%s nodes", label),
-			EstimatedRows: 1000,
+			OperatorType:  "AllNodesScan",
+			Description:   "Scan all nodes",
+			EstimatedRows: 10000,
+			Identifiers:   []string{"n"},
+		}, nil
+	}
+
+	planned, err := e.explainPlansNodeIndexSeek(ctx, pattern, whereClause)
+	if err != nil {
+		return nil, err
+	}
+
+	label := pattern.labels[0]
+	args := map[string]interface{}{
+		"label": label,
+	}
+	e.annotateIndexDiagnostics(args, label, query, planned)
+	if planned {
+		return &PlanOperator{
+			OperatorType:  "NodeIndexSeek",
+			Description:   fmt.Sprintf("Index seek on :%s", label),
+			EstimatedRows: 10,
 			Arguments:     args,
 			Identifiers:   []string{"n"},
-		}
+		}, nil
 	}
 
-	// No label - full scan
 	return &PlanOperator{
-		OperatorType:  "AllNodesScan",
-		Description:   "Scan all nodes",
-		EstimatedRows: 10000,
+		OperatorType:  "NodeByLabelScan",
+		Description:   fmt.Sprintf("Scan all :%s nodes", label),
+		EstimatedRows: 1000,
+		Arguments:     args,
 		Identifiers:   []string{"n"},
+	}, nil
+}
+
+// explainNodePattern reads the MATCH pattern through its canonical syntax
+// owner. Only literals and supplied parameters become planning values:
+// EXPLAIN must never execute a user function to discover an access path.
+// Expressions requiring execution remain runtime-dependent, not assumed values.
+func (e *StorageExecutor) explainNodePattern(ctx context.Context, query string) (nodePatternInfo, string, bool, error) {
+	matchClause := extractMatchClause(ctx, query)
+	if matchClause == "" {
+		return nodePatternInfo{}, "", false, nil
 	}
+	parts := e.splitNodePatterns(strings.TrimSpace(matchClause[len("MATCH"):]))
+	if len(parts) == 0 {
+		return nodePatternInfo{}, "", false, nil
+	}
+	pattern, err := readNodePattern(ctx, parts[0], func(ctx context.Context, source string, _ bool) (map[string]interface{}, error) {
+		expressions, err := parsePropertyExpressions(source)
+		if err != nil {
+			return nil, err
+		}
+		values := make(map[string]interface{}, len(expressions))
+		params := getParamsFromContext(ctx)
+		for _, expression := range expressions {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if value, known := rangeBoundValue(expression.expr, params); known {
+				values[expression.key] = value
+			}
+		}
+		return values, nil
+	})
+	if err != nil {
+		return nodePatternInfo{}, "", false, err
+	}
+	whereClause, _ := explainWhereClause(ctx, query)
+	return pattern, whereClause, true, nil
+}
+
+// explainPlansNodeIndexSeek reports whether a canonical index-seek planner
+// plans a point seek for pattern: its inline equality or the MATCH's WHERE
+// equality on an indexed property. It plans without reading index postings,
+// so EXPLAIN reports applicability without estimating or executing.
+func (e *StorageExecutor) explainPlansNodeIndexSeek(ctx context.Context, pattern nodePatternInfo, whereClause string) (bool, error) {
+	if _, planned, err := e.planPatternPropertySeek(ctx, pattern, e.storage); err != nil {
+		return false, err
+	} else if planned {
+		return true, nil
+	}
+	var seeks nodeIndexSeekSet
+	if err := e.addPropertyIndexEqualityCompoundSeeks(ctx, pattern, whereClause, &seeks); err != nil {
+		return false, err
+	}
+	return seeks.n > 0, nil
 }
 
 // annotateIndexDiagnostics adds index usage/rejection diagnostics to the plan
 // operator arguments. This makes tuning deterministic by exposing whether an
 // index was available, which properties are indexed, and why it was rejected.
-func (e *StorageExecutor) annotateIndexDiagnostics(args map[string]interface{}, label, query string) {
+// seekPlanned reports whether a canonical index-seek planner planned a seek
+// for the pattern; only then is the index status "available".
+func (e *StorageExecutor) annotateIndexDiagnostics(args map[string]interface{}, label, query string, seekPlanned bool) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
 		args["indexStatus"] = "no_schema"
@@ -450,7 +536,11 @@ func (e *StorageExecutor) annotateIndexDiagnostics(args map[string]interface{}, 
 		return
 	}
 
-	args["indexStatus"] = "available"
+	if seekPlanned {
+		args["indexStatus"] = "available"
+	} else {
+		args["indexStatus"] = "no_applicable_index"
+	}
 	args["availableIndexes"] = labelIndexes
 
 	// Check WHERE clause for predicate shapes that prevent index use.
@@ -463,12 +553,12 @@ func (e *StorageExecutor) annotateIndexDiagnostics(args map[string]interface{}, 
 	}
 }
 
-// analyzeWhereClause analyzes WHERE conditions
-func (e *StorageExecutor) analyzeWhereClause(ctx context.Context, query string) *PlanOperator {
-	// Extract WHERE clause
+// explainWhereClause returns the statement's WHERE body and whether the
+// statement has a WHERE clause.
+func explainWhereClause(ctx context.Context, query string) (string, bool) {
 	whereIdx := findKeywordIndex(ctx, query, "WHERE")
 	if whereIdx < 0 {
-		return nil
+		return "", false
 	}
 
 	// Find end of WHERE clause
@@ -481,7 +571,15 @@ func (e *StorageExecutor) analyzeWhereClause(ctx context.Context, query string) 
 		}
 	}
 
-	whereClause := strings.TrimSpace(query[whereIdx+5 : endIdx])
+	return strings.TrimSpace(query[whereIdx+5 : endIdx]), true
+}
+
+// analyzeWhereClause analyzes WHERE conditions
+func (e *StorageExecutor) analyzeWhereClause(ctx context.Context, query string) *PlanOperator {
+	whereClause, ok := explainWhereClause(ctx, query)
+	if !ok {
+		return nil
+	}
 
 	return &PlanOperator{
 		OperatorType:  "Filter",
@@ -619,42 +717,6 @@ func containsVariableLengthPathPattern(query string) bool {
 	return false
 }
 
-func extractFirstNodeLabelFromQuery(query string) (string, bool) {
-	for i := 0; i < len(query); i++ {
-		if query[i] != '(' {
-			continue
-		}
-		inside, _, ok := extractParenSection(query[i:])
-		if !ok {
-			continue
-		}
-		if label, ok := extractLabelFromNodeSection(inside); ok {
-			return label, true
-		}
-	}
-	return "", false
-}
-
-func extractLabelFromNodeSection(inside string) (string, bool) {
-	s := strings.TrimSpace(inside)
-	if s == "" {
-		return "", false
-	}
-	if strings.HasPrefix(s, ":") {
-		label, _, ok := parseIdentifierToken(strings.TrimSpace(s[1:]))
-		return label, ok
-	}
-	if varName, rest, ok := parseIdentifierToken(s); ok {
-		_ = varName
-		rest = strings.TrimSpace(rest)
-		if strings.HasPrefix(rest, ":") {
-			label, _, ok := parseIdentifierToken(strings.TrimSpace(rest[1:]))
-			return label, ok
-		}
-	}
-	return "", false
-}
-
 func isAllDigits(s string) bool {
 	token, ok := cyphertext.ScanNumber(s, 0)
 	return ok && !token.Invalid && token.End == len(s) && token.Base == 10 && !token.Fraction && !token.Exponent && !token.Grouped && token.Suffix == 0
@@ -747,56 +809,6 @@ func parseProcedureNameToken(s string) (string, string, bool) {
 	return "", "", false
 }
 
-// updatePlanWithStats updates plan operators with actual execution statistics
-func (e *StorageExecutor) updatePlanWithStats(op *PlanOperator, result *ExecuteResult) {
-	if op == nil {
-		return
-	}
-
-	// Update actual rows for leaf operators
-	op.ActualRows = int64(len(result.Rows))
-
-	// Recursively update children
-	for _, child := range op.Children {
-		e.updatePlanWithStats(child, result)
-	}
-}
-
-// estimateDBHits estimates database hits based on the plan
-func (e *StorageExecutor) estimateDBHits(op *PlanOperator) int64 {
-	if op == nil {
-		return 0
-	}
-
-	var hits int64
-
-	// Estimate based on operator type
-	switch op.OperatorType {
-	case "AllNodesScan":
-		hits = op.EstimatedRows * 2 // Read node + properties
-	case "NodeByLabelScan":
-		hits = op.EstimatedRows * 2
-	case "NodeIndexSeek":
-		hits = op.EstimatedRows + 1 // Index lookup + node reads
-	case "Expand":
-		hits = op.EstimatedRows * 3 // Node + relationships + target nodes
-	case "Filter":
-		hits = op.EstimatedRows // Property access for filter
-	case "ShortestPath":
-		hits = op.EstimatedRows * 10 // BFS traversal hits
-	default:
-		hits = op.EstimatedRows
-	}
-
-	// Add child hits
-	for _, child := range op.Children {
-		hits += e.estimateDBHits(child)
-	}
-
-	op.DBHits = hits
-	return hits
-}
-
 // planToResult converts an execution plan to an ExecuteResult
 func (e *StorageExecutor) attachPlanMetadata(result *ExecuteResult, plan *ExecutionPlan) *ExecuteResult {
 	// Add plan as metadata
@@ -861,8 +873,12 @@ func neo4jPlanOperatorMap(op *PlanOperator, profile bool) map[string]any {
 		node["children"] = children
 	}
 	if profile {
-		node["rows"] = op.ActualRows
-		node["dbHits"] = op.DBHits
+		if op.RowsObserved {
+			node["rows"] = op.ActualRows
+		}
+		if op.DBHitsObserved {
+			node["dbHits"] = op.DBHits
+		}
 	}
 	return node
 }
@@ -878,10 +894,17 @@ func formatPlan(plan *ExecutionPlan) string {
 	if plan.Mode == ModeProfile {
 		sb.WriteString(fmt.Sprintf("| Total Time: %-47s |\n", plan.TotalTime.String()))
 		sb.WriteString(fmt.Sprintf("| Total Rows: %-47d |\n", plan.TotalRows))
-		sb.WriteString(fmt.Sprintf("| Total DB Hits: %-44d |\n", plan.TotalDBHits))
+		if plan.TotalDBHitsObserved {
+			sb.WriteString(fmt.Sprintf("| Total DB Hits: %-44d |\n", plan.TotalDBHits))
+		} else {
+			sb.WriteString(fmt.Sprintf("| Total DB Hits: unobserved (recorded: %d) |\n", plan.TotalDBHits))
+		}
 		sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
 	}
 
+	for _, reason := range plan.Unobserved {
+		sb.WriteString(fmt.Sprintf("| Unobserved: %s |\n", reason))
+	}
 	formatOperator(&sb, plan.Root, 0, plan.Mode == ModeProfile)
 
 	sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
@@ -911,8 +934,18 @@ func formatOperator(sb *strings.Builder, op *PlanOperator, depth int, showStats 
 
 	// Statistics line for PROFILE mode
 	if showStats {
-		statsLine := fmt.Sprintf("%s|   Est: %d, Actual: %d, Hits: %d",
-			indent, op.EstimatedRows, op.ActualRows, op.DBHits)
+		rows, hits := "unobserved", "unobserved"
+		estimate := "unobserved"
+		if op.EstimatedRows > 0 {
+			estimate = fmt.Sprint(op.EstimatedRows)
+		}
+		if op.RowsObserved {
+			rows = fmt.Sprint(op.ActualRows)
+		}
+		if op.DBHitsObserved {
+			hits = fmt.Sprint(op.DBHits)
+		}
+		statsLine := fmt.Sprintf("%s|   Est: %s, Actual: %s, Hits: %s", indent, estimate, rows, hits)
 		sb.WriteString(fmt.Sprintf("| %-60s |\n", statsLine))
 	} else {
 		// Just show estimates for EXPLAIN

@@ -314,14 +314,37 @@ func (s *algorithmCancelStorage) GetFirstNodeByLabel(ctx context.Context, label 
 	return s.MemoryEngine.GetFirstNodeByLabel(ctx, label)
 }
 
-func (s *algorithmCancelStorage) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+func (s *algorithmCancelStorage) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		s.probe.observe("GetIncomingEdges")
+		return s.MemoryEngine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node})
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := s.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := s.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	s.probe.observe("GetOutgoingEdges")
-	return s.MemoryEngine.GetOutgoingEdges(ctx, id)
+	return s.MemoryEngine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 }
 
 func (s *algorithmCancelStorage) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	s.probe.observe("GetIncomingEdges")
-	return s.MemoryEngine.GetIncomingEdges(ctx, id)
+	return s.MemoryEngine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: id})
 }
 
 func (s *algorithmCancelStorage) AllNodes(ctx context.Context) ([]*storage.Node, error) {

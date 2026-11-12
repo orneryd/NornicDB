@@ -865,15 +865,8 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	previousIdentityScope := exec.graphIdentityScope
 	exec.graphIdentityScope = &graphIdentityScope{database: exec.executionDatabaseName(ctx), manager: exec.dbManager, authToken: c.authToken}
 	defer func() { exec.graphIdentityScope = previousIdentityScope }()
-	// Local fragments bypass implicit execution's decision. Classify this
-	// fragment itself: writes and procedures must retain full node reads. A
-	// fragment with CALL keeps them too, because it cannot see whether the rest
-	// of its statement calls a procedure whose nodes meet its rows.
-	info, analyzeErr := exec.analyzer.Analyze(ctx, query)
-	if analyzeErr != nil {
-		return nil, nil, analyzeErr
-	}
-	exec.readOnlyQueryNodes = !info.HasCall && exec.readsQueryNodesWithoutVectors(info)
+	// Fragments retain the enclosing admitted image requirement. Selecting a
+	// graph changes storage identity, never a native consumer's input contract.
 	query, names := canonicalizeQuotedVariablesWithBindings(ctx, query, recordBindings)
 	if names != nil {
 		params = names.parameterValues(params)

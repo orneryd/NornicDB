@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,14 @@ type embeddingFreeReadSpy struct {
 	lightBatchReads int
 	projectedScans  int
 }
+
+// GetInnerEngine is the canonical EngineUnwrapper forwarding: the spy counts
+// reads on the wrapper, but the WAL must still resolve the engine it decorates
+// through the one accessor for wrapped engines. Without it UnwrapEngine stops
+// at the spy, the WAL's native mutation admission rejects every write with
+// ErrInvalidData, and these tests only passed while another test's leaked
+// config.DisableWAL() switched that admission off.
+func (s *embeddingFreeReadSpy) GetInnerEngine() Engine { return s.Engine }
 
 type engineWithoutLightRead struct{ Engine }
 
@@ -260,6 +269,12 @@ func TestEmbeddingFreePrefixScansTraverseNamespacedWALStack(t *testing.T) {
 }
 
 func TestEmbeddingFreeBatchCapabilityRejectsUnsupportedInnerEngine(t *testing.T) {
+	// The WAL journals only onto the Badger engine UnwrapEngine reaches, and
+	// this fixture's inner engine is the memory engine that lacks batched
+	// embedding-free reads. Disable WAL for this test and restore the setting
+	// instead of running on whatever another test left behind: the capability
+	// forwarding below is what this test decides.
+	t.Cleanup(config.WithWALDisabled())
 	base := newEngineWithoutEmbeddingFreeReads(t)
 	walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 	require.NoError(t, err)

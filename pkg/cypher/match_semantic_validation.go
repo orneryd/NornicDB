@@ -36,21 +36,34 @@ func (e *StorageExecutor) validateMatchSemanticScopes(ctx context.Context, cyphe
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	cacheable := len(e.fabricRecordBindings) == 0 && len(valueBindingsFromContext(ctx)) == 0 && e.inputBindingRole == boundOrdinaryBody
+	cacheable := e.matchSemanticValidationCache != nil && len(e.fabricRecordBindings) == 0 && len(valueBindingsFromContext(ctx)) == 0 && e.inputBindingRole == boundOrdinaryBody
 	key := semanticCacheKey(cypher, cypher25)
-	if cacheable && e.matchSemanticValidationCache.contains(key) {
-		return nil
+	parent, _ := ctx.Value(nativeFunctionInputsKey{}).(*nativeFunctionInputs)
+	generation := globalProcedureRegistry.generation.Load()
+	if cacheable {
+		if inputs, found := e.matchSemanticValidationCache.get(key); found && inputs.generation == generation {
+			if parent != nil {
+				parent.merge(inputs)
+			}
+			return nil
+		}
 	}
+	inputs := nativeFunctionInputs{generation: generation}
+	walkCtx := context.WithValue(ctx, nativeFunctionInputsKey{}, &inputs)
 	if err := checkedWithoutUnaryPlus(cypher, cypher25, func(text string) error {
-		return e.validateMatchSemanticScopesUncached(ctx, text, cypher25)
+		return e.validateMatchSemanticScopesUncached(walkCtx, text, cypher25)
 	}); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if cacheable {
-		e.matchSemanticValidationCache.add(key)
+	inputs.uncertain = generation != globalProcedureRegistry.generation.Load()
+	if cacheable && !inputs.uncertain {
+		e.matchSemanticValidationCache.put(key, inputs)
+	}
+	if parent != nil {
+		parent.merge(inputs)
 	}
 	return nil
 }
@@ -1328,7 +1341,10 @@ func (e *StorageExecutor) validateStaticClauseTypes(ctx context.Context, clause 
 	} else if err := validateStaticFunctionVariablesTyped(ctx, clause.text, func() staticTypeScope { return scope }, staticTypeScope.staticExpressionType); err != nil {
 		return err
 	}
-	return e.validateStaticOperatorTypes(ctx, clause, scope, projectedScope, nil)
+	if err := e.validateStaticOperatorTypes(ctx, clause, scope, projectedScope, nil); err != nil {
+		return err
+	}
+	return recordNativeFunctionInputs(ctx, clause, scope, projectedScope)
 }
 
 // validateQuantifiedGroupPredicates checks each quantified group's

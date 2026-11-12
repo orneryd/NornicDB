@@ -190,7 +190,7 @@ func (a *APOCStorageAdapter) GetNodeRelationships(ctx context.Context, nodeID in
 	var result []*apocstorage.Relationship
 
 	if direction == apocstorage.DirectionOutgoing || direction == apocstorage.DirectionBoth {
-		outgoing, err := a.engine.GetOutgoingEdges(ctx, nID)
+		outgoing, err := a.engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: nID})
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +202,7 @@ func (a *APOCStorageAdapter) GetNodeRelationships(ctx context.Context, nodeID in
 	}
 
 	if direction == apocstorage.DirectionIncoming || direction == apocstorage.DirectionBoth {
-		incoming, err := a.engine.GetIncomingEdges(ctx, nID)
+		incoming, err := a.engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: nID})
 		if err != nil {
 			return nil, err
 		}

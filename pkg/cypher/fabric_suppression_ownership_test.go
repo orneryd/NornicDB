@@ -38,7 +38,7 @@ func TestFabricSuppressionOwnsCompletionAndWriter(t *testing.T) {
 				assertHidden := func(hidden bool) {
 					t.Helper()
 					if edge {
-						edges, err := leaf.GetOutgoingEdges(ctx, id)
+						edges, err := leaf.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: id})
 						require.NoError(t, err)
 						found := false
 						for _, candidate := range edges {

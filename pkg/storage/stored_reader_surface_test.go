@@ -93,8 +93,8 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 				edge, err := GetStoredEdge(t.Context(), engine, "ns:x")
 				require.NoError(t, err)
 				require.Equal(t, EdgeID("ns:x"), edge.ID)
-				require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(GetStoredOutgoingEdges(ctx, engine, "ns:a")))
-				require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(GetStoredIncomingEdges(ctx, engine, "ns:b")))
+				require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(ReadStoredAdjacentEdges(ctx, engine, AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "ns:a"})))
+				require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(ReadStoredAdjacentEdges(ctx, engine, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "ns:b"})))
 				require.Equal(t, []string{"ns:a", "ns:h", "other:z"}, idsOf(t).nodes(GetStoredNodesByLabel(ctx, engine, "A")))
 				var streamed []*Node
 				require.NoError(t, StreamStoredNodesByLabelProjected(ctx, engine, "A", []string{"id"}, func(node *Node) error {
@@ -142,8 +142,8 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 				edge, err := ns.GetStoredEdge(t.Context(), "x")
 				require.NoError(t, err)
 				require.Equal(t, EdgeID("x"), edge.ID)
-				require.Equal(t, []string{"r", "x"}, idsOf(t).edges(ns.GetStoredOutgoingEdges(ctx, "a")))
-				require.Equal(t, []string{"r", "x"}, idsOf(t).edges(ns.GetStoredIncomingEdges(ctx, "b")))
+				require.Equal(t, []string{"r", "x"}, idsOf(t).edges(ns.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Node: "a"})))
+				require.Equal(t, []string{"r", "x"}, idsOf(t).edges(ns.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "b"})))
 				require.Equal(t, []string{"a", "h"}, idsOf(t).nodes(ns.GetStoredNodesByLabel(ctx, "A")))
 				var nodes []*Node
 				require.NoError(t, ns.StreamStoredNodesByLabelProjected(ctx, "A", []string{"id"}, func(node *Node) error {
@@ -171,8 +171,8 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 		require.ErrorIs(t, err, ErrNotFound)
 		_, err = GetStoredEdge(t.Context(), engine, "ns:x")
 		require.ErrorIs(t, err, ErrNotFound)
-		require.Equal(t, []string{"ns:r"}, idsOf(t).edges(GetStoredOutgoingEdges(ctx, engine, "ns:a")))
-		require.Equal(t, []string{"ns:r"}, idsOf(t).edges(GetStoredIncomingEdges(ctx, engine, "ns:b")))
+		require.Equal(t, []string{"ns:r"}, idsOf(t).edges(ReadStoredAdjacentEdges(ctx, engine, AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "ns:a"})))
+		require.Equal(t, []string{"ns:r"}, idsOf(t).edges(ReadStoredAdjacentEdges(ctx, engine, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "ns:b"})))
 		require.Equal(t, []string{"ns:a", "other:z"}, idsOf(t).nodes(GetStoredNodesByLabel(ctx, engine, "A")))
 		var edges []*Edge
 		require.NoError(t, StreamStoredEdgesByType(ctx, engine, "", func(edge *Edge) error {
@@ -196,8 +196,8 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 		edge, err := tx.GetStoredEdge(t.Context(), "ns:x")
 		require.NoError(t, err)
 		require.Equal(t, EdgeID("ns:x"), edge.ID)
-		require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(tx.GetStoredOutgoingEdges(ctx, "ns:a")))
-		require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(tx.GetStoredIncomingEdges(ctx, "ns:b")))
+		require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(tx.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Node: "ns:a"})))
+		require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(tx.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "ns:b"})))
 		require.Equal(t, []string{"ns:a", "ns:h"}, idsOf(t).nodes(tx.GetStoredNodesByLabel(ctx, "A")))
 		var edges []*Edge
 		require.NoError(t, tx.StreamStoredEdgesByType(ctx, "LINK", func(edge *Edge) error {

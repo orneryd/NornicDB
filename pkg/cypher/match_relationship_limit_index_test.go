@@ -29,9 +29,12 @@ func (e *relationshipScanGuardEngine) AllNodes(ctx context.Context) ([]*storage.
 	})
 }
 
-func (e *relationshipScanGuardEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *relationshipScanGuardEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction != storage.AdjacentOutgoing {
+		return e.MemoryEngine.ReadAdjacentEdges(ctx, request)
+	}
 	e.outgoingCalls++
-	return e.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
+	return e.MemoryEngine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 }
 
 func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, count int) {

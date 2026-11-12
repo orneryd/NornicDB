@@ -49,13 +49,14 @@ Published handlers are now opaque `*registry.Callable` values. This is a Go API
 compatibility change: `apoc.Function.Handler`, `registry.FunctionDescriptor.Handler`,
 `nornicdb.PluginFunction.Handler` and `cypher.PluginFunctionLookup` no longer expose
 arbitrary raw functions. `FunctionDescriptor.Function` is removed. Registrations
-still accept Go functions, but validate their result protocol before publication.
-The shared Go protocol permits a single capability value, such as a function;
-it does not impose Cypher's narrower result-value domain. Cypher rejects declared
-function, channel and unsafe-pointer results before invoking the producer.
+still accept Go functions, but validate their result protocol and read-observation
+policy before publication. The shared Go protocol permits a single capability
+value, such as a function; it does not impose Cypher's narrower result-value
+domain. Cypher rejects declared function, channel and unsafe-pointer results
+before invoking the producer.
 
 ```go
-handler, err := registry.Compile(apocmath.Lcm)
+handler, err := registry.Compile(apocmath.Lcm, registry.CanonicalReads)
 if err != nil {
     return err
 }
@@ -65,6 +66,16 @@ if err != nil {
 }
 ```
 
+`Compile(function, observation)` admits a Go function under the read-observation
+policy the caller declares for it. `registry.CanonicalReads` states that a
+reviewed implementation reads no database state or reports every read itself;
+`registry.OpaqueReads` is the zero value and the policy for a custom
+implementation, a plugin closure or an unreviewed storage-backed callback.
+`handler.ReadObservation()` returns the admitted policy. An already admitted
+handler keeps its identity when it is recompiled under the same policy, and a
+redeclaration under another policy is rejected: an admitted handler is never
+retagged.
+
 Use `Signature()` and `Symbol()` for metadata. Published handlers expose no
 raw function view. Ordinary and error-bearing functions both use `Call`,
 `CallWithPolicy` or `InvokeValues`, converging on the same checked invoker;
@@ -73,11 +84,31 @@ argument admission for Go, root APOC or Cypher consumers, without providing an
 alternative invocation implementation. A caller may supply an already-bound
 prefix such as its own context; the callable never creates a request lifetime.
 An unsupported error-result position fails registration. Existing non-scalar
-declarations can retain type metadata but cannot execute.
+declarations can retain type metadata but cannot execute; that metadata is
+opaque and reports `OpaqueReads`.
+
+A call the admitted owner refuses before entering the implementation (a metadata
+descriptor, a policy that cannot express the signature, an argument count the
+signature does not accept, an argument the consumer policy cannot bind) reports
+`registry.ErrNotInvoked`, which is still an `registry.ErrUnsupportedSignature`.
+
+`registry.InvocationStarted(err)` is the phase proof dispatch uses to report an
+opaque callback only when the implementation actually ran: `nil`, and any error
+other than the outermost pre-entry rejection the boundary returns, mean the
+implementation ran. `errors.Is(err, registry.ErrNotInvoked)` only classifies the
+cause chain — an implementation can return a rejection a nested call produced,
+or wrap it in its own error — so that match never proves this call was
+refused. The boundary returns its rejection receipt outermost, and an
+implementation's own rejection is returned as that call's entered result, so
+the two readings stay separate. A panicking implementation is reported as one
+entered opaque invocation before the existing recovery turns the panic into the
+call's error.
 
 The bundled plugin's `Functions` method now returns `(map, error)` so failed
 initialization/admission is reported by plugin loading. The host also continues
 to accept legacy single-map providers and their direct-function or descriptor
-transports. Plugin binaries must be rebuilt against the matching Go and NornicDB
-version. Cypher's context forwarding, cancellation and scalar input policies are
-unchanged; ordinary and error-bearing invocations share one execution and result owner.
+transports; a published value that is already an admitted handler keeps its
+policy, and a raw plugin function is admitted as opaque. Plugin binaries must be
+rebuilt against the matching Go and NornicDB version. Cypher's context
+forwarding, cancellation and scalar input policies are unchanged; ordinary and
+error-bearing invocations share one execution and result owner.

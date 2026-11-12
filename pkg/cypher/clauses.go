@@ -486,7 +486,7 @@ func parseUnwindWithClause(ctx context.Context, clause string) (unwindMergeChain
 	}
 	plan := unwindMergeChainWithPlan{projection: pipelineRowWith{clause: trimmed}}
 	for _, projection := range projectionPlan.projections {
-		plan.projection.projections = append(plan.projection.projections, pipelineRowProjection{projection.expr, projection.alias})
+		plan.projection.projections = append(plan.projection.projections, pipelineRowProjection{expression: projection.expr, alias: projection.alias, expressionStart: -1})
 		if name := simpleSemanticIdentifier(projection.expr); name != "" && name == projection.alias {
 			continue
 		}
@@ -815,6 +815,15 @@ func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context
 	if !ok {
 		return nil, false, nil
 	}
+	if !e.cachedUnwindMergeChainPlan(ctx, stages[0]).supported {
+		// The first stage declines before it runs anything, so this route
+		// reports no operator for a body it never ran.
+		return nil, false, nil
+	}
+	// PROFILE: the stages below re-run the body over the same UNWIND items,
+	// so the leading operator ran once: it is reported here, and every
+	// stage's clauses are reported under it.
+	ctx = profileUnwindRouteOperator(ctx, len(items))
 
 	result := &ExecuteResult{
 		Columns: []string{},
@@ -1936,7 +1945,7 @@ func normalizeMultiMatchWhereClauses(ctx context.Context, query string) string {
 // executeUnion handles UNION / UNION ALL
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
-func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool, runBranch func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(ctx, cypher)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1972,18 +1981,25 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 	// Execute all queries and combine results
 	var combinedResult *ExecuteResult
 	var seen cypherValueIndex // Shared equivalence for UNION and DISTINCT.
+	operator := "Union"
+	if unionAll {
+		operator = "UnionAll"
+	}
+	ctx, unionRecord := profileRuntimeInvocation(ctx, operator, cypher, 0)
 
 	for i, query := range queries {
+		branchCtx, branchRecord := profileRuntimeInvocation(ctx, "UnionBranch", query, i)
 		var result *ExecuteResult
 		var err error
 		if runBranch == nil {
-			result, err = e.executeInternal(ctx, query, nil)
+			result, err = e.executeInternal(branchCtx, query, nil)
 		} else {
-			result, err = runBranch(query)
+			result, err = runBranch(branchCtx, query)
 		}
 		if err != nil {
 			return nil, localizedError(localization.CypherResidualUnionBranchFailed(i+1, truncateQuery(query, 50), err), err)
 		}
+		branchRecord.invocationRows(len(result.Rows))
 		// A branch runner owns its admitted header, including a legitimate
 		// zero-column unit branch. Recompiling that branch as a root would lose
 		// its CALL/scalar frame and cannot repair an execution contract failure.
@@ -2021,9 +2037,11 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 	}
 
 	if combinedResult == nil {
+		unionRecord.invocationRows(0)
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 
+	unionRecord.invocationRows(len(combinedResult.Rows))
 	return combinedResult, nil
 }
 

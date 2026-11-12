@@ -22,7 +22,10 @@ type graphOutgoingErrorEngine struct {
 	storage.Engine
 }
 
-func (e *graphOutgoingErrorEngine) GetOutgoingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
+func (e *graphOutgoingErrorEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction != storage.AdjacentOutgoing {
+		return e.Engine.ReadAdjacentEdges(ctx, request)
+	}
 	return nil, fmt.Errorf("boom")
 }
 
@@ -37,7 +40,36 @@ type graphEdgesStubEngine struct {
 	incomingCalls int
 }
 
-func (e *graphEdgesStubEngine) GetOutgoingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
+func (e *graphEdgesStubEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		e.incomingCalls++
+		if e.cancelIn != nil {
+			e.cancelIn()
+		}
+		if e.inErr != nil {
+			return nil, e.inErr
+		}
+		return e.incoming, nil
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	if e.cancel != nil {
 		e.cancel()
 	}
@@ -45,17 +77,6 @@ func (e *graphEdgesStubEngine) GetOutgoingEdges(ctx context.Context, _ storage.N
 		return nil, e.outErr
 	}
 	return e.outgoing, nil
-}
-
-func (e *graphEdgesStubEngine) GetIncomingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
-	e.incomingCalls++
-	if e.cancelIn != nil {
-		e.cancelIn()
-	}
-	if e.inErr != nil {
-		return nil, e.inErr
-	}
-	return e.incoming, nil
 }
 
 type graphNeighborhoodStubEngine struct {
@@ -218,25 +239,52 @@ func (e *graphSnapshotIndexEngine) GetNodesByLabelVisibleAt(ctx context.Context,
 	return out, nil
 }
 
-// visibleEdgesMatching is the one directional-filter kernel behind both
-// adjacency directions: nil entries are skipped, insertion order is kept and
-// the result is always non-nil, exactly as the two direction spies returned it.
-func (e *graphSnapshotIndexEngine) visibleEdgesMatching(keep func(*storage.Edge) bool) []*storage.Edge {
+// ReadAdjacentEdges answers current reads from this fixture's fixed snapshot.
+func (e *graphSnapshotIndexEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	return e.ReadAdjacentEdgesVisibleAt(ctx, request, storage.MVCCVersion{})
+}
+
+func (e *graphSnapshotIndexEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, request storage.AdjacentEdgeRead, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if request.Direction == storage.AdjacentBetween {
+		e.getEdgesBetweenCalls++
+	}
 	out := make([]*storage.Edge, 0, len(e.edges))
 	for _, edge := range e.edges {
-		if edge != nil && keep(edge) {
-			out = append(out, edge)
+		if edge == nil {
+			continue
 		}
+		matches := false
+		switch request.Direction {
+		case storage.AdjacentOutgoing:
+			matches = edge.StartNode == request.Node
+		case storage.AdjacentIncoming:
+			matches = edge.EndNode == request.Node
+		case storage.AdjacentBoth:
+			matches = edge.StartNode == request.Node || edge.EndNode == request.Node
+		case storage.AdjacentBetween:
+			matches = edge.StartNode == request.Node && edge.EndNode == request.Other
+		}
+		if !matches {
+			continue
+		}
+		if len(request.Types) > 0 {
+			matches = false
+			for _, typ := range request.Types {
+				if edge.Type == typ {
+					matches = true
+					break
+				}
+			}
+			if !matches {
+				continue
+			}
+		}
+		out = append(out, edge)
 	}
-	return out
-}
-
-func (e *graphSnapshotIndexEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
-	return e.visibleEdgesMatching(func(edge *storage.Edge) bool { return edge.StartNode == nodeID }), nil
-}
-
-func (e *graphSnapshotIndexEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
-	return e.visibleEdgesMatching(func(edge *storage.Edge) bool { return edge.EndNode == nodeID }), nil
+	return out, nil
 }
 
 func (e *graphSnapshotIndexEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType string, _ storage.MVCCVersion) ([]*storage.Edge, error) {
@@ -247,17 +295,6 @@ func (e *graphSnapshotIndexEngine) GetEdgesByTypeVisibleAt(ctx context.Context, 
 			continue
 		}
 		if edgeType == "" || edge.Type == edgeType {
-			out = append(out, edge)
-		}
-	}
-	return out, nil
-}
-
-func (e *graphSnapshotIndexEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
-	e.getEdgesBetweenCalls++
-	out := make([]*storage.Edge, 0)
-	for _, edge := range e.edges {
-		if edge != nil && edge.StartNode == startID && edge.EndNode == endID {
 			out = append(out, edge)
 		}
 	}

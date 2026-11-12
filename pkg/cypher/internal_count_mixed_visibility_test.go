@@ -120,13 +120,13 @@ func TestInternalLabelAbsentKeepsCounterRoute(t *testing.T) {
 	require.NoError(t, err)
 	count, ok, err := exec.nodeCountFromStore(ctx, nodePattern, returnItem{expr: "count(n)"})
 	require.NoError(t, err)
-	require.True(t, ok, "no internal label in the scope: the counters describe the read")
+	require.True(t, ok.available(), "no internal label in the scope: the counters describe the read")
 	require.Equal(t, int64(5), count)
 
 	matches := exec.parseTraversalPattern(ctx, "(:Nor177Plain)-[r:NOR177_PLAIN]->()")
 	count, ok, err = exec.relationshipCountFromStore(ctx, matches, returnItem{expr: "count(r)"})
 	require.NoError(t, err)
-	require.True(t, ok)
+	require.True(t, ok.available())
 	require.Equal(t, int64(1), count)
 
 	// One internal-label node anywhere in the scope is enough to make the
@@ -135,10 +135,10 @@ func TestInternalLabelAbsentKeepsCounterRoute(t *testing.T) {
 	require.NoError(t, err)
 	_, ok, err = exec.nodeCountFromStore(ctx, nodePattern, returnItem{expr: "count(n)"})
 	require.NoError(t, err)
-	require.False(t, ok, "the counters no longer describe the read")
+	require.False(t, ok.available(), "the counters no longer describe the read")
 	_, ok, err = exec.relationshipCountFromStore(ctx, matches, returnItem{expr: "count(r)"})
 	require.NoError(t, err)
-	require.True(t, ok, "the hidden node has no relationship of the counted type")
+	require.True(t, ok.available(), "the hidden node has no relationship of the counted type")
 
 	// The rows the read returns are unchanged by the eligibility decision.
 	result, err := exec.Execute(ctx, "MATCH (n:Nor177Plain) RETURN count(n) AS v", nil)

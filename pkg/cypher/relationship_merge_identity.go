@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"strconv"
@@ -14,6 +15,17 @@ import (
 )
 
 const relationshipMergeEdgeIDDomain = "nornicdb:cypher:relationship-merge:v1\x00"
+
+// readMergeRelationshipByID is the relationship MERGE preparation's point read
+// of one candidate id: the deterministic identity a create would overwrite. It
+// records the one read attempt and the one row an existing relationship
+// answered, as the canonical node point reader does for a node.
+func readMergeRelationshipByID(ctx context.Context, store storage.Engine, id storage.EdgeID) (*storage.Edge, error) {
+	counter := queryprofile.Access(ctx, queryprofile.KindRelationshipByIDSeek, "")
+	candidate, err := store.GetEdge(ctx, id)
+	queryprofile.EntityReadResult(counter, candidate, err)
+	return candidate, err
+}
 
 // relationshipMergeIdentityKey returns the full Cypher MERGE identity for a
 // bound relationship pattern. Relationship properties in the pattern are
@@ -194,7 +206,7 @@ func selectRelationshipMergeCreateID(
 		return nil, nil
 	}
 
-	candidate, err := store.GetEdge(ctx, edge.ID)
+	candidate, err := readMergeRelationshipByID(ctx, store, edge.ID)
 	if err == nil {
 		if candidate.StartNode == edge.StartNode &&
 			candidate.EndNode == edge.EndNode &&
@@ -207,7 +219,8 @@ func selectRelationshipMergeCreateID(
 		return nil, nil
 	}
 
-	edges, err := store.GetEdgesBetween(ctx, edge.StartNode, edge.EndNode)
+	edges, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: edge.StartNode, Other: edge.EndNode})
+	profileRelationshipBetweenRead(ctx, edges, err)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +233,7 @@ func selectRelationshipMergeCreateID(
 			matchProps,
 			firstOrdinal+offset,
 		)
-		candidate, err = store.GetEdge(ctx, edge.ID)
+		candidate, err = readMergeRelationshipByID(ctx, store, edge.ID)
 		switch {
 		case err == storage.ErrNotFound:
 			return nil, nil

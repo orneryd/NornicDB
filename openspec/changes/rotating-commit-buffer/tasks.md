@@ -19,9 +19,10 @@
       checks all run synchronously before the buffered ACK. (Overlay-aware
       reads for validation still gap — see read-overlay parity below.)
 - [x] Read-overlay parity for committed reads (monster retest part 1):
-      adjacency (`GetOutgoingEdges`/`GetIncomingEdges`/`GetAdjacentEdges` and
-      the transaction-level readers), between-index (`GetEdgesBetween`,
-      `GetEdgeBetween`, `MatchEdgesBetween` — MERGE identity reads), DETACH
+      adjacency (`ReadAdjacentEdges` in each direction, the one adjacent-edge
+      request, and the transaction-level readers), between-index
+      (`ReadAdjacentEdges` with `AdjacentBetween`, `GetEdgeBetween`,
+      `MatchEdgesBetween` — MERGE identity reads), DETACH
       DELETE enumeration over buffered incident edges, and every counter
       (`EdgeCount`, `NodeCount`, prefix-scoped namespace counts, per-type and
       positional label/type counts) now fold the buffered generation in.

@@ -12,6 +12,8 @@ import (
 type statementExecutionContract struct {
 	writes, transaction, calls, dynamic bool
 	unknownProcedure                    bool
+	nodeImages                          ProcedureNodeImages
+	functions                           cypherantlr.StatementEffects
 	selectsDatabase                     bool
 	// stateChange covers catalog/extension mutations whose existing owner
 	// completes them without the data-write transaction wrapper.
@@ -89,13 +91,17 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 	}
 	ensureBuiltInProceduresRegistered()
 	effects := structure.Effects()
-	contract := statementExecutionContract{writes: effects.Writes(), transaction: effects.Writes(), calls: effects.CallCount() > 0}
+	contract := statementExecutionContract{writes: effects.Writes(), transaction: effects.Writes(), calls: effects.CallCount() > 0, nodeImages: MetadataNodeImages, functions: effects}
 	for i := 0; i < effects.CallCount(); i++ {
 		if _, known := globalProcedureRegistry.Get(effects.Call(i).Name()); !known {
 			contract.unknownProcedure = true
+			contract.nodeImages = FullNodeImages
 		}
 	}
 	visitStatementProcedureSyntax(structure, func(spec ProcedureSpec, _ string) bool {
+		if spec.NodeImages == FullNodeImages {
+			contract.nodeImages = FullNodeImages
+		}
 		// SCHEMA procedures keep their existing schema-transaction owner;
 		// this contract admits registered data WRITE procedures.
 		fixedWrite := spec.Mode == ProcedureModeWrite

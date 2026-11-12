@@ -21,15 +21,11 @@ func (b *BadgerEngine) nativeDeletionFootprint(ctx context.Context, id string, i
 	} else {
 		// Preflight uses the caller's preparation context; final validation
 		// passes the actual write owner's selected lifetime.
-		outgoing, err := b.GetStoredOutgoingEdges(ctx, NodeID(id))
+		incident, err := b.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBoth, Node: NodeID(id)})
 		if err != nil {
 			return writtenEntities{}, err
 		}
-		incoming, err := b.GetStoredIncomingEdges(ctx, NodeID(id))
-		if err != nil {
-			return writtenEntities{}, err
-		}
-		edges = append(outgoing, incoming...)
+		edges = incident
 	}
 	nodes := make([]NodeID, 0, len(edges)*2)
 	identifiers := make([]EdgeID, 0, len(edges))

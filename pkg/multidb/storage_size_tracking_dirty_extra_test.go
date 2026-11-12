@@ -181,11 +181,8 @@ func (e *dirtyBranchEngine) GetStoredNode(ctx context.Context, id storage.NodeID
 func (e *dirtyBranchEngine) GetStoredEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	return e.GetEdge(ctx, id)
 }
-func (e *dirtyBranchEngine) GetStoredOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.GetOutgoingEdges(ctx, id)
-}
-func (e *dirtyBranchEngine) GetStoredIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.GetIncomingEdges(ctx, id)
+func (e *dirtyBranchEngine) ReadStoredAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	return e.ReadAdjacentEdges(ctx, request)
 }
 func (e *dirtyBranchEngine) GetStoredNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	return storage.GetStoredNodesByLabel(ctx, e.Engine, label)
@@ -197,14 +194,42 @@ func (e *dirtyBranchEngine) StreamStoredEdgesByType(ctx context.Context, kind st
 	return storage.StreamStoredEdgesByType(ctx, e.Engine, kind, visit)
 }
 
-func (e *dirtyBranchEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+func (e *dirtyBranchEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction == storage.AdjacentIncoming {
+		if e.failIncomingEdges {
+			return nil, errors.New("incoming unavailable")
+		}
+		if e.incomingEdges != nil {
+			return e.incomingEdges, nil
+		}
+		return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node})
+	}
+	if request.Direction == storage.AdjacentBoth {
+		incoming, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		outgoing, err := e.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: request.Node, Types: request.Types, Headers: request.Headers})
+		if err != nil {
+			return nil, err
+		}
+		combined := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+		combined = append(combined, outgoing...)
+		for _, edge := range incoming {
+			if edge.StartNode == edge.EndNode {
+				continue
+			}
+			combined = append(combined, edge)
+		}
+		return combined, nil
+	}
 	if e.failOutgoingEdges {
 		return nil, errors.New("outgoing unavailable")
 	}
 	if e.outgoingEdges != nil {
 		return e.outgoingEdges, nil
 	}
-	return e.Engine.GetOutgoingEdges(ctx, id)
+	return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 }
 
 func (e *dirtyBranchEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
@@ -214,7 +239,7 @@ func (e *dirtyBranchEngine) GetIncomingEdges(ctx context.Context, id storage.Nod
 	if e.incomingEdges != nil {
 		return e.incomingEdges, nil
 	}
-	return e.Engine.GetIncomingEdges(ctx, id)
+	return e.Engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: id})
 }
 
 func TestSizeTrackingEngine_MarksDirtyWhenCreatedNodeCannotBeReadBack(t *testing.T) {

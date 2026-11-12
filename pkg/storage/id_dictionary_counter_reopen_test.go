@@ -127,13 +127,13 @@ func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 
 	// The user-visible symptom: adjacency is keyed by numID, so an alias makes
 	// one tenant's relationships appear under the other tenant's node.
-	outA, err := engine2.GetOutgoingEdges(context.Background(), "tenant-a:1")
+	outA, err := engine2.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "tenant-a:1"})
 	require.NoError(t, err)
 	require.Len(t, outA, 1, "tenant-a:1 must own exactly its own relationship after reopen")
 	require.Equal(t, EdgeID("tenant-a:e1"), outA[0].ID)
 	require.Equal(t, NodeID("tenant-a:1"), outA[0].StartNode)
 
-	outB, err := engine2.GetOutgoingEdges(context.Background(), "tenant-b:1")
+	outB, err := engine2.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "tenant-b:1"})
 	require.NoError(t, err)
 	require.Len(t, outB, 1, "tenant-b:1 must own exactly its own relationship")
 	require.Equal(t, EdgeID("tenant-b:e1"), outB[0].ID)

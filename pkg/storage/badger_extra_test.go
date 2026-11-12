@@ -231,9 +231,9 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 
 	t.Run("edge query helpers validate ids and reject corrupt payloads", func(t *testing.T) {
 		b := createTestBadgerEngine(t)
-		_, err := b.GetOutgoingEdges(context.Background(), "")
+		_, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: ""})
 		require.ErrorIs(t, err, ErrInvalidID)
-		_, err = b.GetIncomingEdges(context.Background(), "")
+		_, err = b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: ""})
 		require.ErrorIs(t, err, ErrInvalidID)
 
 		start := testNode(prefixTestID("edge-start"))
@@ -270,11 +270,11 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 			return txn.Set(edgeKey(corruptID), []byte("not-an-edge"))
 		}))
 
-		outgoing, err := b.GetOutgoingEdges(context.Background(), start.ID)
+		outgoing, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: start.ID})
 		require.Error(t, err)
 		require.Nil(t, outgoing)
 
-		incoming, err := b.GetIncomingEdges(context.Background(), end.ID)
+		incoming, err := b.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: end.ID})
 		require.Error(t, err)
 		require.Nil(t, incoming)
 
@@ -717,13 +717,13 @@ func TestBadgerEngine_GetEdgesByType_CacheEviction(t *testing.T) {
 
 func TestBadgerEngine_GetOutgoingEdges_EmptyID(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	_, err := engine.GetOutgoingEdges(context.Background(), "")
+	_, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: ""})
 	assert.ErrorIs(t, err, ErrInvalidID)
 }
 
 func TestBadgerEngine_GetIncomingEdges_EmptyID(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	_, err := engine.GetIncomingEdges(context.Background(), "")
+	_, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: ""})
 	assert.ErrorIs(t, err, ErrInvalidID)
 }
 

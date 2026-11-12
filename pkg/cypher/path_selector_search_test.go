@@ -226,7 +226,7 @@ func TestSelectedPathSearchStorage(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (a:S {id: 1}) RETURN a", nil)
 	require.NoError(t, err)
 	first := "selected_dangling:" + result.Rows[0][0].(*storage.Node).ID
-	edges, err := inner.MemoryEngine.GetOutgoingEdges(ctx, first)
+	edges, err := inner.MemoryEngine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: first})
 	require.NoError(t, err)
 	inner.forcedOutgoing[first] = append(edges, &storage.Edge{ID: "selected_dangling:dangling", Type: "T", StartNode: first, EndNode: "selected_dangling:missing"})
 	result, err = exec.Execute(ctx, "MATCH p = SHORTEST 1 (a:S {id: 1})(()-[:T]->())+(b) RETURN b.id AS b", nil)

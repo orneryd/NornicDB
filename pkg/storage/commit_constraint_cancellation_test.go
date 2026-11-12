@@ -10,7 +10,7 @@ import (
 
 // Commit-time constraint validation enumerates committed state through the
 // canonical bulk readers (GetStoredNodesByLabel, GetStoredEdgesByType,
-// GetStoredOutgoingEdges, GetStoredIncomingEdges). #1115 requires the caller
+// ReadStoredAdjacentEdges). #1115 requires the caller
 // context through commit preparation, so a terminated statement stops
 // inside such an enumeration instead of after it.
 //

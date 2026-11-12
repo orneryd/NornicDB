@@ -244,7 +244,7 @@ func TestSearchMatchesReadBadgerSidecarMeta(t *testing.T) {
 	embeddingutil.RecordChunkSpans(node, embeddingutil.BuildEmbedText(properties, nil, &embeddingutil.EmbedTextOptions{}), chunks)
 	require.NoError(t, badgerEngine.UpdateNodeEmbeddingSidecar(t.Context(), node))
 
-	light, err := service.getNodeWithoutEmbeddings(t.Context(), "doc")
+	light, err := service.readNodeImage(t.Context(), "doc", metadataNodeImage)
 	require.NoError(t, err)
 	require.Empty(t, light.EmbedMeta)
 	// The matched chunk's window; without its chunk texts the reranker would

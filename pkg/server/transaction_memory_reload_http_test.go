@@ -17,7 +17,7 @@ func TestHTTPTransactionMemoryPoolReloadPreservesRunningStatement(t *testing.T) 
 	cypher.ConfigureTransactionMemory(64<<20, cypher.TransactionMemoryLimits{DatabaseTotalMax: 64 << 20})
 	entered, proceed := make(chan struct{}), make(chan struct{})
 	var once, release sync.Once
-	barrier, err := registry.Compile(func() int64 { once.Do(func() { close(entered); <-proceed }); return 1 })
+	barrier, err := registry.Compile(func() int64 { once.Do(func() { close(entered); <-proceed }); return 1 }, registry.OpaqueReads)
 	require.NoError(t, err)
 	previous := cypher.PluginFunctionLookup
 	cypher.PluginFunctionLookup = func(name string) (*cypher.PluginFunctionHandler, bool) {

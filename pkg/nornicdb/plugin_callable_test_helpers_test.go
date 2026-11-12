@@ -5,7 +5,7 @@ package nornicdb
 import "github.com/orneryd/nornicdb/apoc/registry"
 
 func mustCallableForTest(function interface{}) *registry.Callable {
-	handler, err := registry.Compile(function)
+	handler, err := registry.Compile(function, registry.AdmissionObservation(function))
 	if err != nil {
 		panic(err)
 	}

@@ -19,18 +19,22 @@ type adjacentFallbackEngine struct {
 	inErr    error
 }
 
-func (e *adjacentFallbackEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+func (e *adjacentFallbackEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	if request.Direction == AdjacentBoth {
+		return readBothAdjacentEdges(ctx, request, func(direction AdjacentEdgeRead) ([]*Edge, error) {
+			return e.ReadAdjacentEdges(ctx, direction)
+		})
+	}
+	if request.Direction == AdjacentIncoming {
+		if e.inErr != nil {
+			return nil, e.inErr
+		}
+		return e.incoming, nil
+	}
 	if e.outErr != nil {
 		return nil, e.outErr
 	}
 	return e.outgoing, nil
-}
-
-func (e *adjacentFallbackEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	if e.inErr != nil {
-		return nil, e.inErr
-	}
-	return e.incoming, nil
 }
 
 type adjacentDirectEngine struct {
@@ -63,11 +67,14 @@ func (e *namespaceLifecycleRecorder) RecordMaterializedAccess(entityID string) {
 	e.accesses = append(e.accesses, entityID)
 }
 
-func (e *adjacentDirectEngine) GetAdjacentEdges(ctx context.Context, nodeID NodeID) ([]*Edge, []*Edge, error) {
-	if e.adjErr != nil {
-		return nil, nil, e.adjErr
+func (e *adjacentDirectEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	if request.Direction != AdjacentBoth {
+		return e.adjacentFallbackEngine.ReadAdjacentEdges(ctx, request)
 	}
-	return e.adjOut, e.adjIn, nil
+	if e.adjErr != nil {
+		return nil, e.adjErr
+	}
+	return combineAdjacentEdgeHalves(ctx, request.Node, e.adjOut, e.adjIn)
 }
 
 func TestRemoteExtraNormalizeBoltValues(t *testing.T) {
@@ -112,35 +119,36 @@ func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 		incoming: []*Edge{{ID: "tenant:e3", StartNode: "tenant:n3", EndNode: "tenant:n1"}},
 	}
 	ns := NewNamespacedEngine(fallback, "tenant")
-	out, in, err := ns.GetAdjacentEdges(context.Background(), "n1")
+	both, err := ns.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "n1"})
 	require.NoError(t, err)
-	require.Equal(t, []*Edge{{Database: "tenant", ID: "e1", StartNode: "n1", EndNode: "n2"}}, out)
-	require.Equal(t, []*Edge{{Database: "tenant", ID: "e3", StartNode: "n3", EndNode: "n1"}}, in)
+	require.Equal(t, []*Edge{
+		{Database: "tenant", ID: "e1", StartNode: "n1", EndNode: "n2"},
+		{Database: "tenant", ID: "e3", StartNode: "n3", EndNode: "n1"},
+	}, both)
 	require.Empty(t, fallback.outgoing[0].Database, "source annotations must not mutate the stored input")
 	require.Empty(t, fallback.incoming[0].Database)
 
 	wantErr := errors.New("adjacent failed")
 	direct := &adjacentDirectEngine{adjacentFallbackEngine: &adjacentFallbackEngine{Engine: newTestMemoryEngine(t)}, adjErr: wantErr}
 	ns = NewNamespacedEngine(direct, "tenant")
-	_, _, err = ns.GetAdjacentEdges(context.Background(), "n1")
+	_, err = ns.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "n1"})
 	require.ErrorIs(t, err, wantErr)
 
 	direct.adjErr = nil
 	direct.adjOut = []*Edge{{ID: "tenant:e4", StartNode: "tenant:n1", EndNode: "tenant:n4"}}
 	direct.adjIn = []*Edge{{ID: "other:e5", StartNode: "other:n5", EndNode: "other:n1"}}
-	out, in, err = ns.GetAdjacentEdges(context.Background(), "n1")
+	both, err = ns.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "n1"})
 	require.NoError(t, err)
-	require.Equal(t, []*Edge{{Database: "tenant", ID: "e4", StartNode: "n1", EndNode: "n4"}}, out)
-	require.Empty(t, in)
+	require.Equal(t, []*Edge{{Database: "tenant", ID: "e4", StartNode: "n1", EndNode: "n4"}}, both)
 
 	fallback.outErr = wantErr
 	ns = NewNamespacedEngine(fallback, "tenant")
-	_, _, err = ns.GetAdjacentEdges(context.Background(), "n1")
+	_, err = ns.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "n1"})
 	require.ErrorIs(t, err, wantErr)
 
 	fallback.outErr = nil
 	fallback.inErr = wantErr
-	_, _, err = ns.GetAdjacentEdges(context.Background(), "n1")
+	_, err = ns.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBoth, Node: "n1"})
 	require.ErrorIs(t, err, wantErr)
 }
 

@@ -54,7 +54,7 @@ func TestCreateThenEditKeepsTransactionCreationTimes(t *testing.T) {
 			for _, node := range nodes {
 				within(fmt.Sprint("node ", node.Properties["id"]), node.CreatedAt, node.UpdatedAt)
 				require.Equal(t, "x", node.Properties["payload"], "node %v keeps its same-statement edit", node.Properties["id"])
-				outgoing, err := storage.GetStoredOutgoingEdges(ctx, store, node.ID)
+				outgoing, err := storage.ReadStoredAdjacentEdges(ctx, store, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: node.ID})
 				require.NoError(t, err)
 				for _, edge := range outgoing {
 					edges++

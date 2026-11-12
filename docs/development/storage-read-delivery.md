@@ -24,7 +24,7 @@ A native transaction relationship read already returns an independent image.
 Its Cypher namespace wrapper therefore copies only the header when removing
 prefixes, retaining the property map that this delivery already owns. Buffered
 between-edge reads detach through the same edge-copy owner before delivery.
-Header-only reads may omit properties, as declared by `EdgeHeaderReader`.
+Header-only reads may omit properties, as declared by `AdjacentEdgeRead.Headers`.
 
 ## Go custom values
 

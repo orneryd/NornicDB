@@ -142,6 +142,49 @@ func (operand staticOperand) isPropertyValue() bool {
 	return operand.operandCategory == "" && operand.display == staticPropertyValueType
 }
 
+// mayReachGraphEntity covers nested native arguments, not just MATCH binding
+// kinds. Unknown values, maps and aggregate-only nonEntity hints are not proof
+// that a value cannot hold an entity. Stored property values are such proof.
+func (operand staticOperand) mayReachGraphEntity() bool {
+	if !operand.proven {
+		return true
+	}
+	if operand.isPropertyValue() {
+		return false
+	}
+	name := operand.typeName()
+	if name == "" {
+		return true
+	}
+	for choice := range staticTypeChoices(name) {
+		if graphEntityTypeChoice(choice) {
+			return true
+		}
+	}
+	return false
+}
+
+func graphEntityTypeChoice(choice string) bool {
+	if isListTypeName(choice) {
+		element := elementOfType(choice)
+		if element == "" {
+			return true
+		}
+		for nested := range staticTypeChoices(element) {
+			if graphEntityTypeChoice(nested) {
+				return true
+			}
+		}
+		return false
+	}
+	switch choice {
+	case "Null", "Boolean", "Integer", "Float", "Number", "String", "Point", "Duration", "Date", "DateTime", "LocalDateTime", "Time", "LocalTime", "Vector", "UUID":
+		return false
+	default:
+		return true
+	}
+}
+
 // withoutTemporalListElements is a CASE result's choices as Neo4j 5.26 types
 // them: when its branches mix a temporal value or duration (or a list of
 // them) with a list of other values, every list's elements are of unknown

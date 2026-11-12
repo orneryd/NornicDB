@@ -17,9 +17,9 @@ func TestDirectionalReadFaultPreemptsNilBackend(t *testing.T) {
 		var rows []*storage.Edge
 		var err error
 		if incoming {
-			rows, err = engine.GetIncomingEdges(t.Context(), "node")
+			rows, err = engine.ReadAdjacentEdges(t.Context(), storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "node"})
 		} else {
-			rows, err = engine.GetOutgoingEdges(t.Context(), "node")
+			rows, err = engine.ReadAdjacentEdges(t.Context(), storage.AdjacentEdgeRead{Node: "node"})
 		}
 		require.Nil(t, rows)
 		require.Same(t, fault, err)
@@ -43,10 +43,10 @@ func TestSingleShotLookupPreservesSelectedNilResult(t *testing.T) {
 					return len(rows), err
 				}
 				if operation == "outgoing" {
-					rows, err := engine.GetOutgoingEdges(context.Background(), "nornic:a")
+					rows, err := engine.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: "nornic:a"})
 					return len(rows), err
 				}
-				rows, err := engine.GetIncomingEdges(context.Background(), "nornic:b")
+				rows, err := engine.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "nornic:b"})
 				return len(rows), err
 			}
 			first, err := read()

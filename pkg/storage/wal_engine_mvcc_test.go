@@ -64,7 +64,7 @@ func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {
 		require.Len(t, edgesByType, 1)
 		require.Equal(t, edgeID, edgesByType[0].ID)
 
-		edgesBetween, err := wal.GetEdgesBetweenVisibleAt(context.Background(), start, end, edgeHead.Version)
+		edgesBetween, err := wal.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: start, Other: end}, edgeHead.Version)
 		require.NoError(t, err)
 		require.Len(t, edgesBetween, 1)
 		require.Equal(t, edgeID, edgesBetween[0].ID)

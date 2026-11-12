@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -132,6 +133,9 @@ func (o *fulltextDocumentOwner) admitDocuments(name string, projection *fulltext
 	// The estimate is the resident documents plus their hash table and the one
 	// retained frequency set this view may hold.
 	bytes := view.retainedBytes + int64(len(view.documents))*192 + fulltextFrequencyBytes(view.frequencies)
+	if view.literals != nil {
+		bytes += view.literals.retainedBytes()
+	}
 	// The read reaches here after it materialized this generation, so the
 	// physical usage the budget observes already contains it. Admitting the
 	// corpus as forecast growth would charge it twice and demand room for a
@@ -266,10 +270,21 @@ func (d FulltextDocuments) Entity(ctx context.Context, id string, document *Full
 	var node *storage.Node
 	var edge *storage.Edge
 	var err error
+	kind := queryprofile.KindNodeByIDSeek
+	if d.view.relationships {
+		kind = queryprofile.KindRelationshipByIDSeek
+	}
+	counter := queryprofile.Access(ctx, kind, "")
 	if d.view.relationships {
 		edge, err = d.snapshot.ReadEdge(ctx, storage.EdgeID(id))
+		queryprofile.EntityReadResult(counter, edge, err)
 	} else {
-		node, err = d.snapshot.ReadNode(ctx, storage.NodeID(id))
+		if reader, ok := d.snapshot.(storage.QueryNodeReader); d.view.queryNodes && ok {
+			node, err = reader.GetQueryNode(ctx, storage.NodeID(id))
+		} else {
+			node, err = d.snapshot.ReadNode(ctx, storage.NodeID(id))
+		}
+		queryprofile.EntityReadResult(counter, node, err)
 	}
 	if err != nil {
 		if ctx.Err() != nil {

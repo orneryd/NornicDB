@@ -14,6 +14,7 @@ import (
 func httpRows(t *testing.T, server *Server, token, endpoint, statement string, params map[string]any) [][]any {
 	t.Helper()
 	response := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{"statements": []any{map[string]any{"statement": statement, "parameters": params}}}, token)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var body struct {
 		Results []struct {
 			Data []struct {

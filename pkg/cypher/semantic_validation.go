@@ -632,7 +632,7 @@ func invalidAggregationInListComprehension(cypher string) bool {
 		if end < 0 {
 			continue
 		}
-		_, _, predicate, projection, comprehension := parseListComprehension(cypher[start+1 : end])
+		_, _, predicate, projection, comprehension := parseListComprehension(cypher[start+1:end], nil)
 		if comprehension && (containsAggregateFunc(predicate) || containsAggregateFunc(projection)) {
 			return true
 		}

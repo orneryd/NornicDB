@@ -37,7 +37,7 @@ func TestAPOCExportFileSignatureAdmitsCallerGraphOnItsContext(t *testing.T) {
 	) error {
 		gotContext, gotNodes, gotRels, gotPath = callerContext, graph, relationships, destination
 		return nil
-	})
+	}, registry.OpaqueReads)
 	require.NoError(t, err)
 	value, err := graphHandler.CallWithPolicy(
 		[]interface{}{nodes, []*apocexport.Relationship(nil), path},
@@ -56,7 +56,7 @@ func TestAPOCExportFileSignatureAdmitsCallerGraphOnItsContext(t *testing.T) {
 	csvHandler, err := registry.Compile(func(_ context.Context, _ []*apocexport.Node, destination string) error {
 		csvPath = destination
 		return nil
-	})
+	}, registry.OpaqueReads)
 	require.NoError(t, err)
 	value, err = csvHandler.CallWithPolicy(
 		[]interface{}{nodes, path},
@@ -71,7 +71,7 @@ func TestAPOCExportFileSignatureAdmitsCallerGraphOnItsContext(t *testing.T) {
 	rawHandler, err := registry.Compile(func(_ context.Context, data string, _ string) error {
 		rawData = data
 		return nil
-	})
+	}, registry.OpaqueReads)
 	require.NoError(t, err)
 	value, err = rawHandler.CallWithPolicy(
 		[]interface{}{"raw content", path},
@@ -85,7 +85,7 @@ func TestAPOCExportFileSignatureAdmitsCallerGraphOnItsContext(t *testing.T) {
 	destinationErr := errors.New("destination refused the export")
 	failing, err := registry.Compile(func(context.Context, []*apocexport.Node, []*apocexport.Relationship, string) error {
 		return destinationErr
-	})
+	}, registry.OpaqueReads)
 	require.NoError(t, err)
 	value, err = failing.CallWithPolicy(
 		[]interface{}{nil, nil, path},
@@ -130,7 +130,7 @@ func TestAPOCExportFileSignatureRejectsSupersededContextFreeShapes(t *testing.T)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			handler, err := registry.Compile(tc.function)
+			handler, err := registry.Compile(tc.function, registry.OpaqueReads)
 			require.NoError(t, err)
 			_, err = handler.CallWithPolicy(tc.args, nil, registry.APOCArguments)
 			require.ErrorIs(t, err, registry.ErrUnsupportedSignature)

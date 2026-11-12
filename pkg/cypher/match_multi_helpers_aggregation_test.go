@@ -181,7 +181,7 @@ func TestGh713AggregateSingleKeyIdentity(t *testing.T) {
 			require.Len(t, groups, 2)
 			for index, group := range groups {
 				require.Equal(t, test.values[index], group.first["value"])
-				count, ok := group.value(ctx, exec, 1)
+				count, ok := group.value(ctx, exec, 1, -1)
 				require.True(t, ok)
 				require.Equal(t, []int64{2, 1}[index], count)
 			}

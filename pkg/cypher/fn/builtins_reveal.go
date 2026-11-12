@@ -5,7 +5,7 @@ import (
 )
 
 func init() {
-	Register("reveal", evalReveal)
+	Register("reveal", evalReveal, CanonicalReads)
 }
 
 func evalReveal(workCtx context.Context, ctx Context, args []string) (interface{}, error) {

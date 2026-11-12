@@ -19,28 +19,28 @@ func TestPatternPropertyAdmissionIsStructural(t *testing.T) {
 		{kind: pipelineClauseMatch, text: "MATCH (a:CodeIntel {id:inspection.value()})-[r:T]->()"},
 		{kind: pipelineClauseReturn, text: "RETURN r"},
 	}
-	_, handled, err := exec.tryExecutePipelineSimpleRelationshipCountPlan(ctx, clauses, nil)
-	require.NoError(t, err)
-	require.False(t, handled)
+	outcome := exec.tryExecutePipelineSimpleRelationshipCountPlan(ctx, clauses, nil)
+	require.NoError(t, outcome.err)
+	require.False(t, outcome.handled())
 	require.Zero(t, calls)
 	clauses[0].text = "MATCH (a:CodeIntel {id:inspection.value()})"
 	clauses[1].text = "RETURN a.id + 1"
-	_, handled, err = exec.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, nil)
-	require.NoError(t, err)
-	require.False(t, handled)
+	outcome = exec.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, nil)
+	require.NoError(t, outcome.err)
+	require.False(t, outcome.handled())
 	require.Zero(t, calls)
 	for _, projection := range []string{"RETURN a.id", "RETURN count(a)", "RETURN a.id LIMIT 2"} {
 		clauses[1].text = projection
-		_, handled, err = exec.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, nil)
-		require.NoError(t, err)
-		require.False(t, handled, "dynamic properties belong to the row source")
+		outcome = exec.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, nil)
+		require.NoError(t, outcome.err)
+		require.False(t, outcome.handled(), "dynamic properties belong to the row source")
 		require.Zero(t, calls)
 	}
 	for _, query := range []string{
 		"MATCH (a:CodeIntel {id:inspection.value()}) RETURN a.id",
 		"MATCH (a:CodeIntel {id:inspection.value()}) WITH a AS node RETURN node",
 	} {
-		_, handled = exec.tryFastPathMatchVectorCosine(ctx, query, upperASCII(query))
+		_, handled := exec.tryFastPathMatchVectorCosine(ctx, query, upperASCII(query))
 		require.False(t, handled)
 		require.Zero(t, calls)
 		_, handled = exec.tryFastPathMatchWithVectorCosineProjection(ctx, query, upperASCII(query))

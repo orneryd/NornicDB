@@ -44,11 +44,17 @@ func TestProcedureArgumentErrorsAndCalls(t *testing.T) {
 			_, err := exec.callGdsGraphProject(context.Background(), []interface{}{"g", "*", int64(1)})
 			return err
 		},
-		"graph.drop name":      func() error { _, err := exec.callGdsGraphDrop(context.Background(), nil); return err },
-		"fastRP.stream name":   func() error { _, err := exec.callGdsFastRPStream(nil); return err },
-		"fastRP.stream config": func() error { _, err := exec.callGdsFastRPStream([]interface{}{"g", int64(1)}); return err },
-		"fastRP.stats name":    func() error { _, err := exec.callGdsFastRPStats(nil); return err },
-		"fastRP.stats config":  func() error { _, err := exec.callGdsFastRPStats([]interface{}{"g", int64(1)}); return err },
+		"graph.drop name":    func() error { _, err := exec.callGdsGraphDrop(context.Background(), nil); return err },
+		"fastRP.stream name": func() error { _, err := exec.callGdsFastRPStream(context.Background(), nil); return err },
+		"fastRP.stream config": func() error {
+			_, err := exec.callGdsFastRPStream(context.Background(), []interface{}{"g", int64(1)})
+			return err
+		},
+		"fastRP.stats name": func() error { _, err := exec.callGdsFastRPStats(context.Background(), nil); return err },
+		"fastRP.stats config": func() error {
+			_, err := exec.callGdsFastRPStats(context.Background(), []interface{}{"g", int64(1)})
+			return err
+		},
 	} {
 		require.Error(t, call(), name)
 	}

@@ -160,7 +160,7 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 		return nil, err
 	}
 	view := graphIdentityView(store)
-	outgoing, incoming, err := incidentEdgeListsContext(ctx, view, storage.NodeID(node.IdentityKey()), "both")
+	outgoing, incoming, err := incidentEdgeListsContext(ctx, view, storage.AdjacentEdgeRead{Node: storage.NodeID(node.IdentityKey())}, "both")
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +281,16 @@ func (e *StorageExecutor) nativeAPOCPath(ctx context.Context, name string, args 
 // through reflection would invoke the foreign helper and panic instead of
 // applying the function's null contract. Native/custom compatible handlers
 // remain eligible for ordinary plugin precedence.
-func nativeAPOCForeignGraphHandler(name string, handler *PluginFunctionHandler) bool {
+func nativeAPOCOwnsBundledHandler(name string, handler *PluginFunctionHandler) bool {
+	// The bundled Go collection helpers compare Go object representations.
+	// Cypher already owns collection value/identity semantics; loading the
+	// bundle must not replace that owner with structural comparisons of node
+	// snapshots, private provenance or numeric representations. Third-party
+	// handlers retain their explicit override contract.
+	if handler != nil && strings.HasPrefix(handler.Symbol(), bundledAPOCSymbolPrefix+"coll.") {
+		_, owned := builtInCypherFunctions[lowerASCII(name)]
+		return owned
+	}
 	if !isNativeAPOCFunction(name) {
 		return false
 	}

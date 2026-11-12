@@ -100,7 +100,7 @@ func TestAutoTLP_ServerSideEmbeddingsTriggerInferenceOnEmbedded(t *testing.T) {
 	db.SetEmbedder(&staticTestEmbedder{dims: 3})
 
 	require.Eventually(t, func() bool {
-		out, err := db.storage.GetEdgesBetween(ctx, storage.NodeID(a.ID), storage.NodeID(b.ID))
+		out, err := db.storage.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: storage.NodeID(a.ID), Other: storage.NodeID(b.ID)})
 		if err != nil {
 			return false
 		}

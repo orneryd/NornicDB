@@ -63,21 +63,16 @@ func (e *compositeErrorEngine) GetFirstNodeByLabel(ctx context.Context, label st
 	return e.MemoryEngine.GetFirstNodeByLabel(ctx, label)
 }
 
-func (e *compositeErrorEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	return fixtureowner.ReadWithFailure(ctx, e.outgoingErr, func(ctx context.Context) ([]*Edge, error) {
-		return e.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
-	})
-}
-
-func (e *compositeErrorEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	return fixtureowner.ReadWithFailure(ctx, e.incomingErr, func(ctx context.Context) ([]*Edge, error) {
-		return e.MemoryEngine.GetIncomingEdges(ctx, nodeID)
-	})
-}
-
-func (e *compositeErrorEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
-	return fixtureowner.ReadWithFailure(ctx, e.betweenErr, func(ctx context.Context) ([]*Edge, error) {
-		return e.MemoryEngine.GetEdgesBetween(ctx, startID, endID)
+func (e *compositeErrorEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	injected := e.outgoingErr
+	if request.Direction == AdjacentIncoming {
+		injected = e.incomingErr
+	}
+	if request.Direction == AdjacentBetween {
+		injected = e.betweenErr
+	}
+	return fixtureowner.ReadWithFailure(ctx, injected, func(ctx context.Context) ([]*Edge, error) {
+		return e.MemoryEngine.ReadAdjacentEdges(ctx, request)
 	})
 }
 
@@ -875,7 +870,7 @@ func TestCompositeEngine_GetOutgoingEdges(t *testing.T) {
 	engine2.CreateEdge(t.Context(), edge2)
 
 	// Get outgoing edges
-	edges, err := composite.GetOutgoingEdges(context.Background(), node1.ID)
+	edges, err := composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: node1.ID})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(edges), 1)
 }
@@ -890,13 +885,13 @@ func TestCompositeEngine_AdjacencyReadsReturnConstituentEdges(t *testing.T) {
 		{
 			name: "TestCompositeEngine_GetIncomingEdges",
 			read: func(ctx context.Context, composite *CompositeEngine, node1, node2 NodeID) ([]*Edge, error) {
-				return composite.GetIncomingEdges(ctx, node2)
+				return composite.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentIncoming, Node: node2})
 			},
 		},
 		{
 			name: "TestCompositeEngine_GetEdgesBetween",
 			read: func(ctx context.Context, composite *CompositeEngine, node1, node2 NodeID) ([]*Edge, error) {
-				return composite.GetEdgesBetween(ctx, node1, node2)
+				return composite.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: node1, Other: node2})
 			},
 		},
 	} {
@@ -1548,17 +1543,17 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		errEngine.returnNilFirstNode = false
 
 		errEngine.outgoingErr = boom
-		_, err = composite.GetOutgoingEdges(context.Background(), okNode.ID)
+		_, err = composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: okNode.ID})
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.outgoingErr = nil
 
 		errEngine.incomingErr = boom
-		_, err = composite.GetIncomingEdges(context.Background(), okNode.ID)
+		_, err = composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: okNode.ID})
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.incomingErr = nil
 
 		errEngine.betweenErr = boom
-		_, err = composite.GetEdgesBetween(context.Background(), okNode.ID, okNode.ID)
+		_, err = composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: okNode.ID, Other: okNode.ID})
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.betweenErr = nil
 

@@ -217,6 +217,11 @@ mutation TriggerEmbedding {
   }
 }
 
+`triggerEmbedding` returns a GraphQL error instead of a status when the embedding
+worker is unavailable, and `regenerate: true` stops at the first failing stage
+(clear stored embeddings, reset the worker, trigger the worker), so a returned
+status means every stage ran.
+
 # Rebuild search index
 mutation RebuildIndex {
   rebuildSearchIndex

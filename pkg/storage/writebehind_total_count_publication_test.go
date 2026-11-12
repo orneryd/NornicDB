@@ -139,7 +139,7 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 		}
 		child, childErr := engine.GetNode(t.Context(), "test:c")
 		_, goneErr := engine.GetNode(t.Context(), "test:b")
-		edges, edgeErr := engine.GetOutgoingEdges(context.Background(), "test:a")
+		edges, edgeErr := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "test:a"})
 		got.visible = childErr == nil && child.Properties["body"] == "new" && goneErr != nil && edgeErr == nil && len(edges) == 1 && edges[0].ID == "test:new"
 		return got
 	}

@@ -96,9 +96,12 @@ func (e *scanCountingEngine) GetNodesByLabel(ctx context.Context, label string) 
 	return e.MemoryEngine.GetNodesByLabel(ctx, label)
 }
 
-func (e *scanCountingEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *scanCountingEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+	if request.Direction != storage.AdjacentOutgoing {
+		return e.MemoryEngine.ReadAdjacentEdges(ctx, request)
+	}
 	atomic.AddInt64(&e.outgoingEdgeCalls, 1)
-	return e.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
+	return e.MemoryEngine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: request.Node})
 }
 
 func (e *scanCountingEngine) AllNodesCalls() int64 { return atomic.LoadInt64(&e.allNodesCalls) }

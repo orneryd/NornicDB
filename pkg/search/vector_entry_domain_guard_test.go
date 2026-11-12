@@ -300,7 +300,7 @@ func domainParam(fn *types.Func, n int) vectorDomain {
 			return domainNode
 		case "vectorEntryOwner", "decodeVectorEntryKey", "vectorEntryChunkIndexForNode", "lexicalHintForVectorID", "vectorIDInSeedNodeSet", "vectorEntryIdentity", "collapseCandidatesByNodeID", "collapseIndexResultsByNodeID", "collapseIndexResultsByNodeIDSlow", "Service.clusterTextTokens",
 			"Service.addVectorLocked", "Service.removeVectorLocked", "Service.hnswUpdateLive", "Service.hnswRemoveLive", "Service.storedVectorEqualsLocked", "Service.getVectorForCypher", "Service.getVectorForCypherLocked", "getTransitionDeltaVector",
-			"Service.trackIVFPQAdd", "Service.trackIVFPQRemove", "Service.appendStrategyDelta", "Service.admitClusterVectorLocked", "Service.admitClusterVectorsLocked", "Service.admitCanonicalLocked", "Service.retireClusterVectorLocked", "HNSWIndex.setBuildLexicalHint":
+			"Service.trackIVFPQAdd", "Service.trackIVFPQRemove", "Service.appendStrategyDelta", "Service.admitClusterVectorLocked", "Service.admitClusterVectorsLocked", "Service.admitCanonicalLocked", "Service.retireClusterVectorLocked", "HNSWIndex.setBuildLexicalHint", "hnswConstructionCoordinates.lookup":
 			return domainEntry
 		}
 	}
@@ -907,5 +907,40 @@ func TestVectorEntryDomainGuardRejectsBypasses(t *testing.T) {
 	for issue := range g.violations {
 		require.False(t, strings.Contains(issue, "domainFixtureValidRerank"), "an unrelated Candidate type is not a vector entry")
 		require.True(t, strings.Contains(issue, "domainFixture") || strings.Contains(issue, "vector-domain-fixture.go"), "production violation: %s", issue)
+	}
+}
+
+const vectorDomainConstructionCoordinateFixture = `
+package search
+import "github.com/orneryd/nornicdb/pkg/storage"
+func domainFixtureConstructionCoordinateValid(id vectorEntryID) {
+ coordinates := &hnswConstructionCoordinates{}
+ coordinates.lookup(id.entryKeyString())
+}
+func domainFixtureConstructionCoordinateNode(id storage.NodeID) {
+ coordinates := &hnswConstructionCoordinates{}
+ coordinates.lookup(string(id))
+}
+func domainFixtureConstructionCoordinateAlias(id storage.NodeID) {
+ coordinates := &hnswConstructionCoordinates{}
+ lookup := coordinates.lookup
+ lookup(string(id))
+}
+`
+
+func TestVectorEntryDomainGuardConstructionCoordinateContract(t *testing.T) {
+	g := newVectorDomainGuard(t, vectorDomainConstructionCoordinateFixture)
+	for _, name := range []string{"domainFixtureConstructionCoordinateNode", "domainFixtureConstructionCoordinateAlias"} {
+		found := false
+		for issue := range g.violations {
+			if strings.Contains(issue, name) {
+				found = true
+			}
+		}
+		require.True(t, found, "guard must reject node identities supplied to %s", name)
+	}
+	for issue := range g.violations {
+		require.False(t, strings.Contains(issue, "domainFixtureConstructionCoordinateValid"), "typed entry provenance must remain valid: %s", issue)
+		require.True(t, strings.Contains(issue, "domainFixtureConstructionCoordinateNode") || strings.Contains(issue, "domainFixtureConstructionCoordinateAlias"), "unexpected production violation: %s", issue)
 	}
 }

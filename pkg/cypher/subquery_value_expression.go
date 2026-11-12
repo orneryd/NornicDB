@@ -291,6 +291,17 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+	// A statement profiling its rows reports this body's program as the
+	// occurrence of the expression that wrote it: two equal bodies in one
+	// projection stay two operators, and one correlated body stays one however
+	// many rows it runs for. The origin is where the writing expression starts
+	// and the body starts at that origin, so the expression's own occurrence is
+	// the subquery's. Only a row carrying a bound origin reports one, and the
+	// first position of a text is an occurrence like any other: it replaces the
+	// occurrence the context carried instead of reading as unknown.
+	if rowExpressionOrigin(values).had {
+		ctx = withProfileRuntimeSubqueryOccurrence(ctx, rowExpressionOccurrence(values, 0))
+	}
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil, false, nil
@@ -397,7 +408,7 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnion) joins them, as for a top-level UNION.
 	if _, unionAll, _, union := parseTopLevelUnionBranches(ctx, query); union {
-		return e.executeUnion(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
+		return e.executeUnion(ctx, query, unionAll, func(ctx context.Context, branch string) (*ExecuteResult, error) {
 			return e.runCorrelatedSubquery(ctx, branch, values)
 		})
 	}
@@ -973,9 +984,9 @@ func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Nod
 	var edges []*storage.Edge
 	var err error
 	if shape.outgoing {
-		edges, err = store.GetOutgoingEdges(ctx, node.ID)
+		edges, err = store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: node.ID})
 	} else {
-		edges, err = store.GetIncomingEdges(ctx, node.ID)
+		edges, err = store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: node.ID})
 	}
 	if err != nil {
 		recordExpressionFailure(ctx, err)

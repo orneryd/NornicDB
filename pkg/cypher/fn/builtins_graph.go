@@ -3,6 +3,7 @@ package fn
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"strings"
 )
 
@@ -62,18 +63,33 @@ func argumentCount(args []string) int {
 	return len(args)
 }
 
+// profileKindCompositeGraphCatalog names the one catalog acquisition
+// graph.names() and graph.propertiesByName() perform: the graphs this
+// database's catalog listed for the composite database the statement runs on,
+// read before either function filters them by the statement's visibility. Rows
+// is that listed population and Hits the one acquisition - abstract logical
+// catalog operations, not disk reads, page-cache hits or promised Neo4j
+// numbers.
+// (https://neo4j.com/docs/cypher-manual/current/planning-and-tuning/execution-plans/)
+const profileKindCompositeGraphCatalog = "CompositeGraphCatalog"
+
 func init() {
 	for _, name := range []string{"graph.byName", "graph.byElementId"} {
 		Register(name, func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
 			return nil, &GraphSelectionContextError{Function: name}
-		})
+		}, CanonicalReads)
 	}
 	// graph.names() lists the graphs of the composite database the query
 	// runs on, as their qualified names (composite.alias), the names
 	// USE graph.byName(…) takes (Cypher Manual, "Composite databases").
 	// Neo4j knows the function only on a composite database.
+	//
+	// A call's whole database access is the one catalog acquisition
+	// compositeGraphs performs and records, so it is observed without the
+	// opaque-callback hook; the visibility filter that follows reads
+	// permission metadata, not the database.
 	Register("graph.names", func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
-		graphs, composite := compositeGraphs(ctx)
+		graphs, composite := compositeGraphs(workCtx, ctx)
 		if !composite {
 			return nil, &UnknownFunctionError{Function: "graph.names"}
 		}
@@ -87,13 +103,13 @@ func init() {
 			}
 		}
 		return out, nil
-	})
+	}, CanonicalReads)
 	// graph.propertiesByName(name) is the map of properties of the alias
 	// that added the graph to the composite database. NornicDB aliases have
 	// no properties, so it is an empty map for each of the composite's
-	// graphs.
+	// graphs. Its whole database access is the same one catalog acquisition.
 	Register("graph.propertiesByName", func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
-		graphs, composite := compositeGraphs(ctx)
+		graphs, composite := compositeGraphs(workCtx, ctx)
 		if !composite {
 			return nil, &UnknownFunctionError{Function: "graph.propertiesByName"}
 		}
@@ -114,12 +130,18 @@ func init() {
 			}
 		}
 		return nil, &GraphNotFoundError{Name: name}
-	})
+	}, CanonicalReads)
 }
 
-func compositeGraphs(ctx Context) ([]string, bool) {
+// compositeGraphs acquires the graphs of the composite database the statement
+// runs on: the one catalog request both graph functions make, recorded before
+// either filters what the catalog listed. A context that carries no catalog
+// lists nothing and performs no request, so it records none.
+func compositeGraphs(workCtx context.Context, ctx Context) ([]string, bool) {
 	if ctx.Graphs == nil {
 		return nil, false
 	}
-	return ctx.Graphs.CompositeGraphs()
+	graphs, composite := ctx.Graphs.CompositeGraphs()
+	queryprofile.Access(workCtx, profileKindCompositeGraphCatalog, "").Add(int64(len(graphs)), 1)
+	return graphs, composite
 }

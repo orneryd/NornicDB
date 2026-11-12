@@ -1,12 +1,8 @@
 package cypher
 
-// NOR-413 review rounds 1-4: an auto-commit read reads its row nodes without
-// their stored vectors with CALL only when every CALL is a read-only CALL
-// subquery run in line and it calls no plugin function outside the bundled
-// APOC library. Any procedure call keeps the release head's full read: native
-// code receives the stored vectors, and nodes a procedure reads in full (vector
-// search) meet full copies in the same rows. Statements without CALL, explicit
-// transactions and Fabric fragments with CALL read as on the release head.
+// Native consumers retain complete node images across automatic, explicit and
+// Fabric execution. Metadata-only consumers share a consistent body-only image,
+// including vector-search output after scoring, without a newer-snapshot read.
 
 import (
 	"context"
@@ -114,9 +110,9 @@ func TestNOR413NativePluginFunctionReceivesStoredVectors(t *testing.T) {
 // third-party nor413.title.
 func nor413CallLookup(t *testing.T) {
 	t.Helper()
-	setKey, err := registry.Compile(apocmap.SetKey)
+	setKey, err := registry.Compile(apocmap.SetKey, registry.CanonicalReads)
 	require.NoError(t, err)
-	contains, err := registry.Compile(apoccoll.Contains)
+	contains, err := registry.Compile(apoccoll.Contains, registry.CanonicalReads)
 	require.NoError(t, err)
 	previous := PluginFunctionLookup
 	t.Cleanup(func() { PluginFunctionLookup = previous })
@@ -151,13 +147,9 @@ func nor413RegisterNodeTitle(t *testing.T) {
 	}))
 }
 
-// TestNOR413CallStatementEligibility is the one eligibility decision over
-// read-only auto-commit statements with CALL: vector-free only when every CALL
-// is a CALL subquery run in line, whatever its form, and no plugin function
-// outside the bundled APOC library is called. Any procedure call, nested ones
-// included, a subquery IN TRANSACTIONS or under USE, and a third-party plugin
-// function keep the full read. Every statement is read-only, so a full read
-// comes from the CALL rule, not from text the effect owner cannot read.
+// TestNOR413CallStatementEligibility checks the admitted image declaration:
+// metadata-only procedures and ordinary subqueries avoid stored vectors;
+// native procedures and entity-valued native function inputs retain them.
 func TestNOR413CallStatementEligibility(t *testing.T) {
 	nor413CallLookup(t)
 	nor413RegisterNodeTitle(t)
@@ -173,51 +165,50 @@ func TestNOR413CallStatementEligibility(t *testing.T) {
 		{match + "CALL { WITH n CALL { WITH n RETURN n AS m } RETURN m } RETURN m", true},
 		{match + "CALL { WITH n RETURN apoc.map.setKey({}, 'node', n) AS m } RETURN m", true},
 		{match + "CALL { WITH n RETURN n.use AS u, n.transactions AS tx } RETURN u, tx", true},
-		{match + "CALL db.ping() YIELD success RETURN n", false},
-		{match + "CALL { WITH n CALL db.ping() YIELD success RETURN success } RETURN n", false},
-		{match + "CALL { WITH n RETURN n AS m } WITH m WHERE EXISTS { CALL db.labels() YIELD label RETURN label } RETURN m", false},
-		{match + "CALL apoc.path.subgraphNodes(n, {maxLevel: 0}) YIELD node RETURN node", false},
-		{match + "CALL db.index.vector.queryNodes('doc_chunks', 1, $q) YIELD node AS m RETURN apoc.coll.contains([n], m)", false},
+		{match + "CALL db.ping() YIELD success RETURN n", true},
+		{match + "CALL { WITH n CALL db.ping() YIELD success RETURN success } RETURN n", true},
+		{match + "CALL { WITH n RETURN n AS m } WITH m WHERE EXISTS { CALL db.labels() YIELD label RETURN label } RETURN m", true},
+		{match + "CALL apoc.path.subgraphNodes(n, {maxLevel: 0}) YIELD node RETURN node", true},
+		{match + "CALL db.index.vector.queryNodes('doc_chunks', 1, $q) YIELD node AS m RETURN apoc.coll.contains([n], m)", true},
 		{match + "CALL nor413.nodeTitle(n) YIELD title RETURN title", false},
 		{match + "CALL { WITH n RETURN n.title AS title } RETURN title, nor413.title(n)", false},
-		{match + "CALL { WITH n RETURN n AS m } IN TRANSACTIONS RETURN m", false},
-		{match + "CALL { USE neo4j MATCH (m:Doc {k: 3}) RETURN m } RETURN n, m", false},
+		{match + "CALL { WITH n RETURN n AS m } IN TRANSACTIONS RETURN m", true},
+		{match + "CALL { USE neo4j MATCH (m:Doc {k: 3}) RETURN m } RETURN n, m", true},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			info, err := g.exec.analyzer.Analyze(t.Context(), tc.query)
 			require.NoError(t, err)
 			require.True(t, info.ReadOnly(), "the effect owner reads the statement as read-only")
-			require.Equal(t, tc.vectorFree, g.exec.readsQueryNodesWithoutVectors(info))
+			statement := &statementExecutionContext{Context: t.Context()}
+			require.NoError(t, g.exec.resolveStatementNodeImages(statement, info, tc.query))
+			require.Equal(t, tc.vectorFree, statement.nodeImages.images == MetadataNodeImages)
 		})
 	}
 }
 
-// TestNOR413SeparateExecutorSyntax: the grammar fact behind the USE and IN
-// TRANSACTIONS exclusions. A CALL subquery IN TRANSACTIONS and a USE inside a
-// CALL body run that part on another executor; a USE that selects the graph of
-// the whole statement and names that merely spell a keyword don't count.
-func TestNOR413SeparateExecutorSyntax(t *testing.T) {
-	for _, tc := range []struct {
-		query    string
-		separate bool
-	}{
-		{"USE g MATCH (n) RETURN n", false},
-		{"MATCH (n) RETURN n.use AS u, n.transactions AS tx", false},
-		{"USE g MATCH (n) CALL { WITH n RETURN n AS m } RETURN m", false},
-		{"MATCH (n) CALL { USE g MATCH (m) RETURN m } RETURN n, m", true},
-		{"USE g CALL { USE g.one MATCH (m) RETURN m } RETURN m", true},
-		{"MATCH (n) CALL { WITH n RETURN n AS m } IN TRANSACTIONS RETURN m", true},
-		{"MATCH (n) CALL { WITH n CALL { USE g MATCH (m) RETURN m } RETURN m } RETURN m", true},
+// Graph selection and batch ownership do not themselves imply a native node
+// consumer. The enclosing policy follows the actual registered consumers.
+func TestStatementNodeImagesAcrossSubqueryOwners(t *testing.T) {
+	exec := newLargeEmbeddingGraph(t, 2).exec
+	for _, query := range []string{
+		"USE g MATCH (n) RETURN n",
+		"MATCH (n) RETURN n.use AS u, n.transactions AS tx",
+		"USE g MATCH (n) CALL { WITH n RETURN n AS m } RETURN m",
+		"MATCH (n) CALL { USE g MATCH (m) RETURN m } RETURN n, m",
+		"USE g CALL { USE g.one MATCH (m) RETURN m } RETURN m",
+		"MATCH (n) CALL { WITH n RETURN n AS m } IN TRANSACTIONS RETURN m",
+		"MATCH (n) CALL { WITH n CALL { USE g MATCH (m) RETURN m } RETURN m } RETURN m",
 	} {
-		require.Equal(t, tc.separate, callSubqueryRunsSeparately(t.Context(), tc.query), tc.query)
+		info, err := exec.analyzer.Analyze(t.Context(), query)
+		require.NoError(t, err)
+		statement := &statementExecutionContext{Context: t.Context()}
+		require.NoError(t, exec.resolveStatementNodeImages(statement, info, query))
+		require.Equal(t, MetadataNodeImages, statement.nodeImages.images, query)
 	}
 }
 
-// TestNOR413CallStatementReadModes runs read-only auto-commit statements with
-// CALL and checks every node is read in one mode: without vectors when every
-// CALL is a CALL subquery and only bundled APOC functions are called, in full
-// (as on the release head) with any procedure call or a third-party plugin
-// function.
+// TestNOR413CallStatementReadModes verifies that each admitted statement uses
+// one consistent node representation, according to its actual consumers.
 func TestNOR413CallStatementReadModes(t *testing.T) {
 	nor413CallLookup(t)
 	nor413RegisterNodeTitle(t)
@@ -233,9 +224,9 @@ func TestNOR413CallStatementReadModes(t *testing.T) {
 		{match + "CALL (n) { RETURN n.title AS title } RETURN title", true},
 		{match + "CALL { WITH n CALL { WITH n RETURN n AS m } RETURN m } RETURN m.title", true},
 		{match + "CALL { WITH n RETURN apoc.map.setKey({}, 'node', n) AS m } RETURN m.node.title", true},
-		{match + "CALL db.ping() YIELD success RETURN n.title", false},
-		{match + "CALL { WITH n CALL db.ping() YIELD success RETURN success } RETURN n.title", false},
-		{match + "CALL apoc.path.subgraphNodes(n, {maxLevel: 0}) YIELD node RETURN node.title", false},
+		{match + "CALL db.ping() YIELD success RETURN n.title", true},
+		{match + "CALL { WITH n CALL db.ping() YIELD success RETURN success } RETURN n.title", true},
+		{match + "CALL apoc.path.subgraphNodes(n, {maxLevel: 0}) YIELD node RETURN node.title", true},
 		{match + "CALL nor413.nodeTitle(n) YIELD title RETURN title", false},
 		{match + "CALL { WITH n RETURN n.title AS title } RETURN nor413.title(n)", false},
 	} {
@@ -248,20 +239,18 @@ func TestNOR413CallStatementReadModes(t *testing.T) {
 			nor413RequireReadMode(t, spy, tc.vectorFree)
 		})
 	}
-	bundled, err := registry.Compile(apocconvert.ToString)
+	bundled, err := registry.Compile(apocconvert.ToString, registry.CanonicalReads)
 	require.NoError(t, err)
 	require.False(t, nativePluginFunction(bundled), bundled.Symbol())
-	thirdParty, err := registry.Compile(func(value interface{}) interface{} { return value })
+	thirdParty, err := registry.Compile(func(value interface{}) interface{} { return value }, registry.OpaqueReads)
 	require.NoError(t, err)
 	require.True(t, nativePluginFunction(thirdParty), thirdParty.Symbol())
 }
 
-// TestNOR413VectorSearchMembershipKeepsOneReadMode is the fourth review's
-// reproduction: vector search returns the matched Doc in full, so the
-// statement's MATCH reads it in full too, and the bundled apoc.coll.contains
-// (reflect.DeepEqual) finds the hit, with the search service and with exact
-// scoring, as on the release head. The same membership through a CALL
-// subquery, which reads both copies without vectors, holds as well.
+// TestNOR413VectorSearchMembershipKeepsOneReadMode preserves same-node
+// membership across MATCH and both service/exact vector scoring. The statement
+// returns consistent metadata images after scoring; native vector consumers
+// are verified independently with full images.
 func TestNOR413VectorSearchMembershipKeepsOneReadMode(t *testing.T) {
 	nor413CallLookup(t)
 	q := make([]interface{}, 2048)
@@ -286,17 +275,19 @@ func TestNOR413VectorSearchMembershipKeepsOneReadMode(t *testing.T) {
 			for _, query := range []string{vectorSearch, subquery} {
 				require.Equal(t, [][]interface{}{{true, true}}, g.run(t, query, params).Rows, query)
 			}
+			// Exact scoring projects its caller-owned image after scoring. That
+			// projection must never alter the retained stored vectors.
+			chunks := g.storedChunks(t, "doc-3")
+			require.Len(t, chunks, 1)
+			require.Equal(t, float32(1), chunks[0][3])
+			require.Equal(t, [][]interface{}{{true, true}}, g.run(t, vectorSearch, params).Rows)
 		})
 	}
 }
 
-// TestNOR413NativeConsumersAcrossFabric is the second review's
-// reproduction: constituents one and two of a composite each hold a Doc with
-// the local ID "doc" whose stored chunk vectors differ (component 1 and 2).
-// Native code given that node, in a fragment or at the coordinator,
-// auto-commit or in a transaction, sees its own vectors or, where the release
-// head reads the node without them, none; never another constituent's. A
-// fragment with CALL keeps the release head's full read.
+// TestNOR413NativeConsumersAcrossFabric distinguishes equal local IDs in two
+// constituents. Native consumers at either the fragment or coordinator receive
+// the originating node's complete image in automatic and explicit transactions.
 func TestNOR413NativeConsumersAcrossFabric(t *testing.T) {
 	const name = "nor413.fabricScore"
 	cleanupAdmissionProcedure(t, name)
@@ -367,7 +358,7 @@ func TestNOR413NativeConsumersAcrossFabric(t *testing.T) {
 				result, err := exec.Execute(t.Context(), query, nil)
 				require.NoError(t, err)
 				require.Len(t, result.Rows, 1)
-				require.Contains(t, []interface{}{float64(1), nil}, result.Rows[0][0], "never another constituent's vectors")
+				require.Equal(t, float64(1), result.Rows[0][0], "the native consumer receives the exact vectors of its own constituent")
 			})
 		}
 	}

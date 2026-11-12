@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -11,6 +10,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -113,16 +113,22 @@ func (s *Service) newIDContinuationStream(ctx context.Context, options SearchOpt
 }
 
 func (s *Service) streamCompleteContinuationNodes(ctx context.Context, options *SearchOptions, request SearchContinuationRequest, visit storage.NodeVisitor) error {
+	// This build reads the whole node population. The profile observes the
+	// nodes this scan hands over, before the eligibility rule and the
+	// projection narrow them, so the one wrapper covers the single callback
+	// both the projected reader and the fallback stream call: one observation
+	// of this scan, never two.
+	observed := queryprofile.EntityVisitor(ctx, queryprofile.KindAllNodesScan, "", visit)
 	// A Where may read any property, so it gets whole nodes.
 	if request.AuthorizeNode == nil && options.Where == nil {
 		if reader, ok := s.engine.(storage.ProjectedPrefixNodeReader); ok {
-			return reader.StreamNodesByPrefixProjected(ctx, "", s.completeContinuationProjectionProperties(options, request), visit)
+			return reader.StreamNodesByPrefixProjected(ctx, "", s.completeContinuationProjectionProperties(ctx, options, request), observed)
 		}
 	}
-	return storage.StreamNodesWithFallback(ctx, s.engine, 1000, visit)
+	return storage.StreamNodesWithFallback(ctx, s.engine, 1000, observed)
 }
 
-func (s *Service) completeContinuationProjectionProperties(options *SearchOptions, request SearchContinuationRequest) []string {
+func (s *Service) completeContinuationProjectionProperties(ctx context.Context, options *SearchOptions, request SearchContinuationRequest) []string {
 	properties := make(map[string]struct{}, len(options.Filters)+4)
 	if len(options.Types) > 0 {
 		properties["type"] = struct{}{}
@@ -133,14 +139,15 @@ func (s *Service) completeContinuationProjectionProperties(options *SearchOption
 	if request.GroupBy != "" {
 		properties[request.GroupBy] = struct{}{}
 	}
-	if schema := s.engine.GetSchema(); schema != nil {
-		for _, constraint := range schema.GetAllConstraints() {
-			if constraint.Type != storage.ConstraintTemporal {
-				continue
-			}
-			for _, property := range constraint.Properties {
-				properties[property] = struct{}{}
-			}
+	// The temporal properties come from the schema's constraint catalog. Its
+	// one acquisition is reported here, before the temporal filter decides
+	// which of the catalog's entries select a property.
+	for _, constraint := range s.schemaConstraints(ctx) {
+		if constraint.Type != storage.ConstraintTemporal {
+			continue
+		}
+		for _, property := range constraint.Properties {
+			properties[property] = struct{}{}
 		}
 	}
 	projected := make([]string, 0, len(properties))
@@ -456,24 +463,43 @@ func searchPassageFromResult(result SearchResult) SearchPassage {
 	return result
 }
 
+// authorizeContinuationNode reports the actual invocation of the caller's node
+// authorization callback and returns its decision. The callback is the
+// caller's own function, so whatever database state it reads while deciding is
+// not part of the reads observed around this call: one report immediately
+// before the call is the complete record of that invocation. A nil callback
+// leaves the decision to the remaining eligibility rules and reports nothing.
+func authorizeContinuationNode(ctx context.Context, authorizeNode NodeAuthorizationFunc, node *storage.Node) (bool, error) {
+	if authorizeNode == nil {
+		return true, nil
+	}
+	queryprofile.Callback(ctx, "node authorization callback", "")
+	return authorizeNode(node)
+}
+
 // continuationNodeEligible is the single eligibility rule for a catalog
 // candidate, applied in this order: suppression and decay, then authorization
 // and its error, then the Types predicate, then the property filters and Where,
 // then whether the node is current enough to index (shouldIndexNode).
+//
+// The decay filter and the authorization callback are the installer's own
+// functions, so each of their actual invocations is reported from here, where
+// it happens. The Where closure is first-party Cypher whose expression
+// evaluation owns its own metrics and is not reported as foreign work.
 //
 // wantedTypes is wantedTypesLower(options.Types), compiled once by the caller
 // for the whole build; its nil/empty value means Types doesn't constrain the
 // candidate. The membership test itself is nodeMatchesType, so every Type
 // decision on this path is the canonical one.
 func (s *Service) continuationNodeEligible(ctx context.Context, node *storage.Node, options *SearchOptions, wantedTypes map[string]struct{}, decayFilter NodeDecayFilterFunc, authorizeNode NodeAuthorizationFunc) (bool, error) {
-	if node == nil || node.RuntimeMetadata().VisibilitySuppressed || (decayFilter != nil && decayFilter(string(node.ID))) {
+	if node == nil || node.RuntimeMetadata().VisibilitySuppressed {
 		return false, nil
 	}
-	if authorizeNode != nil {
-		authorized, err := authorizeNode(node)
-		if err != nil || !authorized {
-			return false, err
-		}
+	if nodeDecaySuppresses(ctx, decayFilter, string(node.ID)) {
+		return false, nil
+	}
+	if authorized, err := authorizeContinuationNode(ctx, authorizeNode, node); err != nil || !authorized {
+		return false, err
 	}
 	if len(options.Types) > 0 && !nodeMatchesType(node, wantedTypes) {
 		return false, nil
@@ -586,7 +612,7 @@ func hydrateContinuationResultsContext(ctx context.Context, engine storage.Engin
 	}
 	if authorizeNode != nil {
 		for _, node := range nodes {
-			authorized, authorizeErr := authorizeNode(node)
+			authorized, authorizeErr := authorizeContinuationNode(ctx, authorizeNode, node)
 			if authorizeErr != nil {
 				return nil, authorizeErr
 			}
@@ -640,17 +666,26 @@ func hydrateContinuationResultsContext(ctx context.Context, engine storage.Engin
 	return results, nil
 }
 
+// batchContinuationNodesWithoutEmbeddings hydrates a continuation page through
+// the shared optional-capability owner, then falls back to this caller's own
+// contract: the engine's bulk node read. That fallback is not the point-read
+// fallback Service.batchGetNodesWithoutEmbeddings uses, and neither replaces
+// the other.
 func batchContinuationNodesWithoutEmbeddings(ctx context.Context, engine storage.Engine, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
-	if reader, ok := engine.(storage.BatchNodeWithoutEmbeddingsReader); ok {
-		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ctx, ids)
-		if err == nil {
-			return nodes, nil
-		}
-		if !errors.Is(err, storage.ErrNotImplemented) {
-			return nil, err
-		}
+	nodes, answered, err := optionalBatchNodesWithoutEmbeddings(ctx, engine, ids)
+	if err != nil {
+		return nil, err
 	}
-	return engine.BatchGetNodes(ctx, ids)
+	if answered {
+		return nodes, nil
+	}
+	nodes, err = engine.BatchGetNodes(ctx, ids)
+	rows := int64(0)
+	if err == nil {
+		rows = int64(len(nodes))
+	}
+	queryprofile.Access(ctx, queryprofile.KindNodeBatchByIDSeek, "").Add(rows, 1)
+	return nodes, err
 }
 
 func (s *catalogContinuationStream) Close() error {

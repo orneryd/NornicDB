@@ -69,11 +69,11 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 			}
 			_, err = storage.GetStoredEdge(t.Context(), wrapper, "deleted")
 			require.ErrorIs(t, err, storage.ErrNotFound)
-			outgoing, err := storage.GetStoredOutgoingEdges(context.Background(), wrapper, "x")
+			outgoing, err := storage.ReadStoredAdjacentEdges(context.Background(), wrapper, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: "x"})
 			require.NoError(t, err)
 			require.Len(t, outgoing, 1)
 			require.Equal(t, storage.EdgeID("hidden"), outgoing[0].ID)
-			incoming, err := storage.GetStoredIncomingEdges(context.Background(), wrapper, "z")
+			incoming, err := storage.ReadStoredAdjacentEdges(context.Background(), wrapper, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: "z"})
 			require.NoError(t, err)
 			require.Len(t, incoming, 1)
 			require.Equal(t, storage.EdgeID("pending"), incoming[0].ID)

@@ -714,6 +714,15 @@ type GraphEdge struct {
 	CreatedAt  time.Time              `json:"created_at"`
 }
 
+// graphEdgeResult projects a detached stored relationship into the public Go
+// result without changing its identity, properties or creation time.
+func graphEdgeResult(edge *storage.Edge) *GraphEdge {
+	return &GraphEdge{
+		ID: string(edge.ID), Source: string(edge.StartNode), Target: string(edge.EndNode),
+		Type: edge.Type, Properties: edge.Properties, CreatedAt: edge.CreatedAt,
+	}
+}
+
 // ListEdges returns edges with optional type filter.
 func (db *DB) ListEdges(ctx context.Context, relType string, limit, offset int) ([]*GraphEdge, error) {
 	db.mu.RLock()
@@ -747,14 +756,7 @@ func (db *DB) ListEdges(ctx context.Context, relType string, limit, offset int) 
 			break
 		}
 
-		edges = append(edges, &GraphEdge{
-			ID:         string(e.ID),
-			Source:     string(e.StartNode),
-			Target:     string(e.EndNode),
-			Type:       e.Type,
-			Properties: e.Properties,
-			CreatedAt:  e.CreatedAt,
-		})
+		edges = append(edges, graphEdgeResult(e))
 		count++
 	}
 
@@ -775,14 +777,7 @@ func (db *DB) GetEdge(ctx context.Context, id string) (*GraphEdge, error) {
 		return nil, ErrNotFound
 	}
 
-	return &GraphEdge{
-		ID:         string(e.ID),
-		Source:     string(e.StartNode),
-		Target:     string(e.EndNode),
-		Type:       e.Type,
-		Properties: e.Properties,
-		CreatedAt:  e.CreatedAt,
-	}, nil
+	return graphEdgeResult(e), nil
 }
 
 // GetEdgesForNode returns all edges (both incoming and outgoing) for a given node.
@@ -799,36 +794,21 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
 		return nil, ErrInvalidID
 	}
 
-	var edges []*GraphEdge
 	storageNodeID := storage.NodeID(nodeID)
-
-	// Get outgoing edges
-	outgoing, err := db.storage.GetOutgoingEdges(ctx, storageNodeID)
-	if err == nil {
-		for _, e := range outgoing {
-			edges = append(edges, &GraphEdge{
-				ID:         string(e.ID),
-				Source:     string(e.StartNode),
-				Target:     string(e.EndNode),
-				Type:       e.Type,
-				Properties: e.Properties,
-				CreatedAt:  e.CreatedAt,
-			})
-		}
+	outgoing, err := db.storage.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: storageNodeID})
+	if err != nil {
+		return nil, err
 	}
-
-	// Get incoming edges
-	incoming, err := db.storage.GetIncomingEdges(ctx, storageNodeID)
-	if err == nil {
-		for _, e := range incoming {
-			edges = append(edges, &GraphEdge{
-				ID:         string(e.ID),
-				Source:     string(e.StartNode),
-				Target:     string(e.EndNode),
-				Type:       e.Type,
-				Properties: e.Properties,
-				CreatedAt:  e.CreatedAt,
-			})
+	incoming, err := db.storage.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: storageNodeID})
+	if err != nil {
+		return nil, err
+	}
+	// Publish no partial adjacency if either directional read fails. The
+	// projection is shared with individual and listed relationship results.
+	var edges []*GraphEdge
+	for _, batch := range [][]*storage.Edge{outgoing, incoming} {
+		for _, edge := range batch {
+			edges = append(edges, graphEdgeResult(edge))
 		}
 	}
 

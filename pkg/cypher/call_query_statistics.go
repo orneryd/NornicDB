@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/collection"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"runtime"
 	"strings"
 	"sync"
@@ -182,6 +183,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 	}
 	collector.mu.Lock()
 	defer collector.mu.Unlock()
+	queryprofile.Access(ctx, "QueryStatisticsState", "").Add(1, 1)
 	if !collector.deadline.IsZero() && !time.Now().Before(collector.deadline) {
 		collector.active.Store(false)
 	}
@@ -232,6 +234,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 			}
 			maximum = toInt64(value)
 		}
+		queryprofile.Access(ctx, "QueryStatisticsCatalog", "").Add(int64(len(collector.order)), 1)
 		for _, query := range collector.order {
 			record := collector.queries[query]
 			invocations := record.invocations
@@ -267,10 +270,12 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section string) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
 	nodes, err := store.AllNodes(ctx)
+	queryprofile.EntityPopulation(ctx, profileKindAllNodesScan, "", nodes)
 	if err != nil {
 		return nil, err
 	}
 	edges, err := store.AllEdges(ctx)
+	queryprofile.EntityPopulation(ctx, profileKindAllRelationshipsScan, "", edges)
 	if err != nil {
 		return nil, err
 	}
@@ -292,8 +297,8 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 			properties[key] = true
 		}
 	}
-	orderedLabels := store.GetSchema().OrderTokens(collection.SortedKeys(labels), false)
-	orderedRelationships := store.GetSchema().OrderTokens(collection.SortedKeys(relationships), true)
+	orderedLabels := readSchemaTokenOrder(ctx, store.GetSchema(), collection.SortedKeys(labels), false)
+	orderedRelationships := readSchemaTokenOrder(ctx, store.GetSchema(), collection.SortedKeys(relationships), true)
 	tokens := map[string]interface{}{"labels": orderedLabels, "relationshipTypes": orderedRelationships, "propertyKeys": collection.SortedKeys(properties)}
 	result := &ExecuteResult{Columns: legacyProcedureColumns("db.stats.retrieveAllAnTheStats"), Rows: [][]interface{}{}}
 	if section == "GRAPH COUNTS" || section == "ALL" {
@@ -318,7 +323,7 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 			}
 			constraintRows = append(constraintRows, values)
 		}
-		result.Rows = append(result.Rows, []interface{}{"GRAPH COUNTS", map[string]interface{}{"nodes": nodeRows, "relationships": edgeRows, "indexes": store.GetSchema().GetIndexes(), "constraints": constraintRows, "nodeCount": int64(len(nodes)), "relationshipCount": int64(len(edges))}})
+		result.Rows = append(result.Rows, []interface{}{"GRAPH COUNTS", map[string]interface{}{"nodes": nodeRows, "relationships": edgeRows, "indexes": readSchemaIndexCatalog(ctx, store.GetSchema()), "constraints": constraintRows, "nodeCount": int64(len(nodes)), "relationshipCount": int64(len(edges))}})
 	}
 	if section == "TOKENS" || section == "ALL" {
 		result.Rows = append(result.Rows, []interface{}{"TOKENS", tokens})

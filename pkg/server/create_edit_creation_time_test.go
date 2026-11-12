@@ -46,7 +46,7 @@ func readStampImages(t *testing.T, h *hiddenDeleteServer, label string) stampIma
 	for _, node := range nodes {
 		id, _ := node.Properties["id"].(string)
 		images.nodes[id] = node
-		outgoing, err := storage.GetStoredOutgoingEdges(t.Context(), store, node.ID)
+		outgoing, err := storage.ReadStoredAdjacentEdges(t.Context(), store, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: node.ID})
 		require.NoError(t, err)
 		for _, edge := range outgoing {
 			images.edges[edge.Type] = edge

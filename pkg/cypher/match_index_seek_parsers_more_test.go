@@ -123,25 +123,25 @@ func TestMatchIndexSeek_IDEqualityCompoundAndIDInAdditionalBranches(t *testing.T
 
 	// The value side `'n1' OR` is no constant: the seek leaves the predicate
 	// to the row filter instead of looking up its text (#844).
-	nodes, used, err := exec.tryCollectNodesFromIDEqualityCompound(ctx, nodePatternInfo{variable: "n"}, "(id(n) = 'n1' OR )", nil)
+	ids, used, err := exec.resolveIDEqualityCompoundCandidates(ctx, nodePatternInfo{variable: "n"}, "(id(n) = 'n1' OR )", nil)
 	require.NoError(t, err)
 	require.False(t, used)
-	require.Empty(t, nodes)
+	require.Zero(t, ids.len(), "no listing")
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(ctx, nodePatternInfo{variable: "n"}, "(id(n) = 'n1' AND elementId(n) = '4:nornic:n2')", nil)
+	ids, used, err = exec.resolveIDEqualityCompoundCandidates(ctx, nodePatternInfo{variable: "n"}, "(id(n) = 'n1' AND elementId(n) = '4:nornic:n2')", nil)
 	require.NoError(t, err)
 	require.True(t, used)
-	require.Len(t, nodes, 1)
-	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
+	require.Equal(t, 1, ids.len())
+	require.Equal(t, []storage.NodeID{"n1"}, ids.ids())
 
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids OR n.k='v1'", map[string]interface{}{"ids": []interface{}{"n1"}})
+	ids, used, err = exec.resolveIDInCandidates(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids OR n.k='v1'", map[string]interface{}{"ids": []interface{}{"n1"}})
 	require.NoError(t, err)
 	require.False(t, used)
-	require.Nil(t, nodes)
+	require.Zero(t, ids.len(), "the predicate is no IN list")
 
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"ids": []interface{}{nil, 7, "", "n2"}})
+	ids, used, err = exec.resolveIDInCandidates(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"ids": []interface{}{nil, 7, "", "n2"}})
 	require.NoError(t, err)
 	require.True(t, used)
-	require.Len(t, nodes, 1)
-	require.Equal(t, storage.NodeID("n2"), nodes[0].ID)
+	require.Equal(t, 1, ids.len())
+	require.Equal(t, []storage.NodeID{"n2"}, ids.ids())
 }

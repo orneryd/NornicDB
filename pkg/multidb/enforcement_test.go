@@ -1238,7 +1238,7 @@ func TestSizeTrackingEngine_UpdateEdge(t *testing.T) {
 	err = store.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
-	outgoing, err := store.GetOutgoingEdges(context.Background(), idA)
+	outgoing, err := store.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: idA})
 	require.NoError(t, err)
 	require.NotEmpty(t, outgoing)
 
@@ -1261,14 +1261,14 @@ func TestSizeTrackingEngine_DeleteEdge(t *testing.T) {
 	err = store.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
-	outgoing, err := store.GetOutgoingEdges(context.Background(), idA)
+	outgoing, err := store.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: idA})
 	require.NoError(t, err)
 	require.NotEmpty(t, outgoing)
 
 	err = store.DeleteEdge(t.Context(), outgoing[0].ID)
 	require.NoError(t, err)
 
-	outgoing, err = store.GetOutgoingEdges(context.Background(), idA)
+	outgoing, err = store.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: idA})
 	require.NoError(t, err)
 	assert.Empty(t, outgoing)
 }
@@ -1345,9 +1345,9 @@ func TestSizeTrackingEngine_BulkDeleteEdges(t *testing.T) {
 	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "st-bde-e2", StartNode: idB, EndNode: idA, Type: "LIKES"})
 	require.NoError(t, err)
 
-	outgoing, err := store.GetOutgoingEdges(context.Background(), idA)
+	outgoing, err := store.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Node: idA})
 	require.NoError(t, err)
-	incoming, err := store.GetIncomingEdges(context.Background(), idA)
+	incoming, err := store.ReadAdjacentEdges(context.Background(), storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: idA})
 	require.NoError(t, err)
 
 	var edgeIDs []storage.EdgeID

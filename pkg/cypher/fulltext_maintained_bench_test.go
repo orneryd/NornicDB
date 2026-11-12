@@ -1,9 +1,11 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"runtime/pprof"
 	"strings"
 	"testing"
 
@@ -88,31 +90,53 @@ func BenchmarkNOR148CorpusReadState(b *testing.B) {
 		}{{"cold", 0}, {"first-reuse", 1}} {
 			b.Run(fmt.Sprintf("nodes=%d/%s", size, state.name), func(b *testing.B) {
 				exec, store := fulltextMaintainedFixture(b, size)
-				query := "CALL db.index.fulltext.queryNodes('source_text', 'hotel') YIELD node, score RETURN count(node) AS n"
-				_, err := exec.Execute(b.Context(), query, nil)
-				require.NoError(b, err)
-				if service := exec.search(); service != nil {
-					require.NoError(b, service.Close())
-				}
-				b.ReportAllocs()
-				b.ResetTimer()
-				b.StopTimer()
-				for i := 0; i < b.N; i++ {
-					service := search.NewService(store, search.DefaultVectorDimensions, nil)
-					exec.SetSearchService(service)
-					for j := 0; j < state.priorReads; j++ {
-						_, err := exec.Execute(b.Context(), query, nil)
-						require.NoError(b, err)
-					}
-					b.StartTimer()
-					got, err := exec.Execute(b.Context(), query, nil)
-					b.StopTimer()
-					require.NoError(b, err)
-					require.Equal(b, int64(size/40), got.Rows[0][0])
-					require.NoError(b, service.Close())
-				}
+				benchmarkFulltextCorpusReadState(b, exec, store, state.priorReads, int64(size/40))
 			})
 		}
+	}
+}
+
+// benchmarkFulltextCorpusReadState owns service reset, the untimed prior read
+// and the same timed public query for each body-diversity control.
+func benchmarkFulltextCorpusReadState(b *testing.B, exec *StorageExecutor, store *fulltextCountingStore, priorReads int, expected int64) {
+	query := "CALL db.index.fulltext.queryNodes('source_text', 'hotel') YIELD node, score RETURN count(node) AS n"
+	_, err := exec.Execute(b.Context(), query, nil)
+	require.NoError(b, err)
+	if service := exec.search(); service != nil {
+		require.NoError(b, service.Close())
+	}
+	labels := pprof.Labels("phase", "fulltext-corpus-read", "workload", b.Name())
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.StopTimer()
+	for i := 0; i < b.N; i++ {
+		service := search.NewService(store, search.DefaultVectorDimensions, nil)
+		exec.SetSearchService(service)
+		for j := 0; j < priorReads; j++ {
+			_, err := exec.Execute(b.Context(), query, nil)
+			require.NoError(b, err)
+		}
+		var got *ExecuteResult
+		pprof.Do(b.Context(), labels, func(ctx context.Context) {
+			b.StartTimer()
+			got, err = exec.Execute(ctx, query, nil)
+			b.StopTimer()
+		})
+		require.NoError(b, err)
+		require.Equal(b, expected, got.Rows[0][0])
+		require.NoError(b, service.Close())
+	}
+}
+
+func BenchmarkFulltextDistinctBodyCorpusReadState(b *testing.B) {
+	for _, state := range []struct {
+		name       string
+		priorReads int
+	}{{"cold", 0}, {"first-reuse", 1}} {
+		b.Run(state.name, func(b *testing.B) {
+			exec, store := fulltextMaintainedFixture(b, 4000, fulltextDistinctBodies)
+			benchmarkFulltextCorpusReadState(b, exec, store, state.priorReads, 100)
+		})
 	}
 }
 

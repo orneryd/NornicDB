@@ -47,17 +47,17 @@ func TestCompositeEngineLocalizedQueryWrappersPreserveCause(t *testing.T) {
 	}{
 		{name: "outgoing edges", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.outgoingErr = ErrConflict
-			_, err := composite.GetOutgoingEdges(context.Background(), "node-1")
+			_, err := composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: "node-1"})
 			return err
 		}},
 		{name: "incoming edges", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.incomingErr = ErrConflict
-			_, err := composite.GetIncomingEdges(context.Background(), "node-1")
+			_, err := composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "node-1"})
 			return err
 		}},
 		{name: "edges between", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {
 			engine.betweenErr = ErrConflict
-			_, err := composite.GetEdgesBetween(context.Background(), "node-1", "node-2")
+			_, err := composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "node-1", Other: "node-2"})
 			return err
 		}},
 		{name: "edges by type", run: func(engine *compositeErrorEngine, composite *CompositeEngine) error {

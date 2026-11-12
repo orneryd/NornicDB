@@ -80,17 +80,23 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			for _, database := range []string{"one", "two"} {
 				source, target := NodeID("4:"+database+":"+string(same)), NodeID("4:"+database+":"+string(localTarget))
 				adjacency := []func() ([]*Edge, error){
-					func() ([]*Edge, error) { return composite.GetOutgoingEdges(context.Background(), source) },
-					func() ([]*Edge, error) { return composite.GetIncomingEdges(context.Background(), target) },
 					func() ([]*Edge, error) {
-						return composite.GetOutgoingEdgesVisibleAt(context.Background(), source, version)
+						return composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: source})
 					},
 					func() ([]*Edge, error) {
-						return composite.GetIncomingEdgesVisibleAt(context.Background(), target, version)
+						return composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: target})
 					},
-					func() ([]*Edge, error) { return composite.GetEdgesBetween(context.Background(), source, target) },
 					func() ([]*Edge, error) {
-						return composite.GetEdgesBetweenVisibleAt(context.Background(), source, target, version)
+						return composite.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: source}, version)
+					},
+					func() ([]*Edge, error) {
+						return composite.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: target}, version)
+					},
+					func() ([]*Edge, error) {
+						return composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: source, Other: target})
+					},
+					func() ([]*Edge, error) {
+						return composite.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: source, Other: target}, version)
 					},
 				}
 				for _, read := range adjacency {
@@ -118,7 +124,7 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 					require.Equal(t, database, edge.Database)
 				}
 			}
-			edges, err := composite.GetEdgesBetween(context.Background(), NodeID("4:one:"+string(same)), NodeID("4:two:"+string(localTarget)))
+			edges, err := composite.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: NodeID("4:one:" + string(same)), Other: NodeID("4:two:" + string(localTarget))})
 			require.NoError(t, err)
 			require.Empty(t, edges)
 			one, two := NodeID("4:one:"+string(same)), NodeID("4:two:"+string(same))

@@ -744,15 +744,11 @@ func (tx *BadgerTransaction) revalidateEndpointsLocked(ctx context.Context) erro
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		out, err := tx.engine.GetStoredOutgoingEdges(ctx, id)
+		incident, err := tx.engine.ReadStoredAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBoth, Node: id})
 		if err != nil {
 			return err
 		}
-		in, err := tx.engine.GetStoredIncomingEdges(ctx, id)
-		if err != nil {
-			return err
-		}
-		for _, edge := range append(out, in...) {
+		for _, edge := range incident {
 			if _, deleted := tx.deletedEdges[edge.ID]; deleted {
 				continue
 			}

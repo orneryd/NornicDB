@@ -283,13 +283,13 @@ func TestMetadataPropertyKeysIsOneOwnerForBothCypherNames(t *testing.T) {
 func TestBoundHandlerAddsNoPerRowAllocations(t *testing.T) {
 	first := apocrel.New(apocstorage.NewInMemoryStorage()).StartNode
 	second := apocrel.New(apocstorage.NewInMemoryStorage()).StartNode
-	firstHandler, err := registry.Compile(first)
+	firstHandler, err := registry.Compile(first, registry.OpaqueReads)
 	require.NoError(t, err)
-	secondHandler, err := registry.Compile(second)
+	secondHandler, err := registry.Compile(second, registry.OpaqueReads)
 	require.NoError(t, err)
-	legacyHandler, err := registry.Compile(apocrel.ID)
+	legacyHandler, err := registry.Compile(apocrel.ID, registry.CanonicalReads)
 	require.NoError(t, err)
-	freeHandler, err := registry.Compile(func(context.Context, *apocstorage.Relationship) (*apocstorage.Node, error) { return nil, nil })
+	freeHandler, err := registry.Compile(func(context.Context, *apocstorage.Relationship) (*apocstorage.Node, error) { return nil, nil }, registry.OpaqueReads)
 	require.NoError(t, err)
 
 	relationship := &apocstorage.Relationship{ID: 1, StartNode: 1, EndNode: 2, Type: "KNOWS"}
@@ -317,4 +317,24 @@ func TestBoundHandlerAddsNoPerRowAllocations(t *testing.T) {
 		"an independently built instance must not add allocations per call")
 	require.LessOrEqual(t, secondAllocs, freeAllocs,
 		"binding must not cost more per call than a free helper of the same shape")
+}
+
+// Callback arguments cross an implementation boundary: a pure adapter cannot
+// certify graph reads performed by the caller's closure. Inspect every admitted
+// bundled signature, including future additions, rather than trusting names.
+func TestBundledCallbackConsumersKeepOpaqueReadPolicy(t *testing.T) {
+	callbacks := 0
+	for _, name := range List() {
+		function, found := GetInfo(name)
+		require.True(t, found, name)
+		signature := function.Handler.Signature()
+		for i := 0; i < signature.NumIn(); i++ {
+			if signature.In(i).Kind() == reflect.Func {
+				callbacks++
+				require.Equal(t, registry.OpaqueReads, function.Handler.ReadObservation(), name)
+				break
+			}
+		}
+	}
+	require.Positive(t, callbacks, "the fixture must exercise callback consumers")
 }

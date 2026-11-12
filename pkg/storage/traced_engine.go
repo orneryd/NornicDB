@@ -134,16 +134,10 @@ func (t *TracedEngine) GetNodesByLabel(ctx context.Context, label string) ([]*No
 	return t.Engine.GetNodesByLabel(ctx, label)
 }
 
-func (t *TracedEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	span := t.startOperation("nornicdb.storage.GetOutgoingEdges", "edge")
+func (t *TracedEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
+	span := t.startOperation("nornicdb.storage.ReadAdjacentEdges", "edge")
 	defer span.End()
-	return t.Engine.GetOutgoingEdges(ctx, nodeID)
-}
-
-func (t *TracedEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
-	span := t.startOperation("nornicdb.storage.GetIncomingEdges", "edge")
-	defer span.End()
-	return t.Engine.GetIncomingEdges(ctx, nodeID)
+	return t.Engine.ReadAdjacentEdges(ctx, request)
 }
 
 func (t *TracedEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {

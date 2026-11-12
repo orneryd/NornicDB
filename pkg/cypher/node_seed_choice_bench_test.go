@@ -6,11 +6,45 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"runtime/pprof"
 	"sort"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
+
+// BenchmarkNodeCandidatePlanning qualifies the ordinary selected node routes
+// alongside deferred traversal planning. Every arm reuses the existing seed
+// corpus and measured statement lifecycle, with result caching disabled and
+// complete expected rows asserted outside the timer.
+func BenchmarkNodeCandidatePlanning(b *testing.B) {
+	for _, parser := range relationshipEqualityParsers {
+		b.Run(parser.name, func(b *testing.B) {
+			b.Cleanup(parser.setup())
+			exec := newSeedBenchExecutor(b, seedCaseStatements()...)
+			for _, tc := range []struct {
+				name, query string
+				want        [][]interface{}
+			}{
+				{"inline", "MATCH (c:Case {id: $id}) RETURN c.id AS id", [][]interface{}{{"c-101"}}},
+				{"where", "MATCH (c:Case) WHERE c.id = $id RETURN c.id AS id", [][]interface{}{{"c-101"}}},
+				{"inline-and-where", "MATCH (c:Case {id: $id}) WHERE c.status = 'pending' RETURN c.id AS id", [][]interface{}{{"c-101"}}},
+				{"in", "MATCH (c:Case) WHERE c.id IN [$id, 'c-102'] RETURN c.id AS id ORDER BY id", [][]interface{}{{"c-101"}, {"c-102"}}},
+				{"or", "MATCH (c:Case) WHERE c.id = $id OR c.id = 'c-102' RETURN c.id AS id ORDER BY id", [][]interface{}{{"c-101"}, {"c-102"}}},
+			} {
+				b.Run(tc.name, func(b *testing.B) {
+					benchmarkStatementRead(b, exec, tc.query, []map[string]interface{}{{"id": "c-101"}}, false,
+						pprof.Labels("phase", "node-candidate-query", "parser", parser.name, "route", tc.name),
+						func(result *ExecuteResult) {
+							require.Equal(b, []string{"id"}, result.Columns)
+							require.Equal(b, tc.want, result.Rows)
+						})
+				})
+			}
+		})
+	}
+}
 
 // newSeedBenchExecutor is an executor without a query result cache over a
 // memory store holding statements' data.

@@ -67,7 +67,7 @@ var httpLoadBinaryNames = []string{"apoc.load.binary", "apoc.load.stream"}
 // open: opening a database publishes its own lookup.
 func withBundledLoadBinaryHandler(t *testing.T) {
 	t.Helper()
-	handler, err := registry.Compile(apocload.Binary)
+	handler, err := registry.Compile(apocload.Binary, registry.CanonicalReads)
 	require.NoError(t, err)
 	previous := cypher.PluginFunctionLookup
 	cypher.PluginFunctionLookup = func(name string) (*cypher.PluginFunctionHandler, bool) {

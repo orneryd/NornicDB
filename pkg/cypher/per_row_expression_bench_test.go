@@ -97,14 +97,15 @@ func perRowLongPredicate() string {
 func runPerRowBench(b *testing.B, exec *StorageExecutor, query string, params map[string]interface{}, want int64) {
 	b.Helper()
 	ctx := context.Background()
-	run := func(nonce int) {
-		p := make(map[string]interface{}, len(params)+1)
-		for k, v := range params {
-			p[k] = v
-		}
-		// A different parameter on every run: the result cache can't serve it.
-		p["nonce"] = int64(nonce)
-		res, err := exec.Execute(ctx, query, p)
+	// A nonce restarts with each repeated benchmark sample, so it cannot
+	// prevent result-cache reuse across samples. Disable that cache through
+	// its existing executor policy; syntax/program caches remain warm.
+	exec = NewStorageExecutor(exec.storage, QueryCachePolicy{MaxEntries: 0})
+	if exec.cache != nil {
+		b.Fatal("per-row execution benchmark requires disabled result caching")
+	}
+	run := func() {
+		res, err := exec.Execute(ctx, query, params)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -115,11 +116,11 @@ func runPerRowBench(b *testing.B, exec *StorageExecutor, query string, params ma
 			b.Fatalf("got %v, want %d", res.Rows[0][0], want)
 		}
 	}
-	run(-1)
+	run()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		run(i)
+		run()
 	}
 }
 

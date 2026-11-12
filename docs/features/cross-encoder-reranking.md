@@ -62,8 +62,24 @@ When reranking is **enabled**, the server loads the configured reranker at start
 
 The byte ceiling is enforced before calling any local or hosted reranker, so
 request size scales with candidate count rather than source-document length.
-Ranked continuation streams retain scores for the lifetime of the query and
-only submit newly discovered candidates during expansion.
+`rerankTopK` bounds the provider work and the returned rows of one search. A
+ranked continuation reranks after its chunk fusion instead: the continuation
+producer reranks the fused order it retrieved - the chunked owner's outer RRF
+for a multi-chunk query, that query's own fused list for a single chunk - in
+`rerankTopK`-sized windows, and the chunk searches themselves don't rerank. One
+stream keys its retained scores by the original query, not by a chunk's text,
+and keeps the provider's order inside each window.
+
+A window is the batch its candidates were first admitted in, so a deeper pull
+adds windows for the newly retrieved rows instead of re-forming an earlier one
+over a longer prefix. That keeps an accepted window's membership, order and
+scores stable for the life of the stream, and every candidate reaches the
+provider once per query. Retained decisions - ranked, filtered, omitted by a
+valid subset, or in a batch that failed - are rebuilt without provider input,
+so a deeper pull neither repeats the work nor turns a wholly omitted window
+into a failed rerank. `rerankMinScore` applies inside each window: excluded
+rows do not consume page slots, so page counts and the reported total include
+only rows above the threshold.
 
 Local GGUF rerankers default to llama.cpp rank pooling (`4`), non-causal
 attention (`1`), and disabled flash attention (`0`). Override these with
@@ -200,6 +216,11 @@ opts := localllm.DefaultRerankerOptions("models/bge-reranker-v2-m3.gguf")
 opts.Features.PoolingType = 4 // Override only when the model requires it.
 model, err := localllm.LoadRerankerModel(opts)
 ```
+
+Go embedding migration: `Service.SetCrossEncoder` is retired. Pass a
+`*search.CrossEncoder` to `Service.SetReranker`, as in the example above. Provider
+replacement and removal advance the revision used by search and Cypher result
+caches; reinstalling the same comparable provider preserves cached results.
 
 ## CrossEncoderConfig Options (HTTP/API)
 

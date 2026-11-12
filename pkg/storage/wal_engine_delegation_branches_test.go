@@ -70,24 +70,19 @@ func (e *walOptionalEngine) GetNodesByLabelVisibleAt(_ context.Context, label st
 	}
 	return nil, nil
 }
-func (e *walOptionalEngine) GetOutgoingEdgesVisibleAt(_ context.Context, nodeID NodeID, _ MVCCVersion) ([]*Edge, error) {
+func (e *walOptionalEngine) ReadAdjacentEdgesVisibleAt(_ context.Context, request AdjacentEdgeRead, _ MVCCVersion) ([]*Edge, error) {
+	if request.Direction == AdjacentIncoming {
+		return singletonVisibleEdge(e.edge, func(edge *Edge) bool {
+			return edge.EndNode == request.Node
+		}), nil
+	}
 	return singletonVisibleEdge(e.edge, func(edge *Edge) bool {
-		return edge.StartNode == nodeID
-	}), nil
-}
-func (e *walOptionalEngine) GetIncomingEdgesVisibleAt(_ context.Context, nodeID NodeID, _ MVCCVersion) ([]*Edge, error) {
-	return singletonVisibleEdge(e.edge, func(edge *Edge) bool {
-		return edge.EndNode == nodeID
+		return edge.StartNode == request.Node
 	}), nil
 }
 func (e *walOptionalEngine) GetEdgesByTypeVisibleAt(_ context.Context, edgeType string, _ MVCCVersion) ([]*Edge, error) {
 	return singletonVisibleEdge(e.edge, func(edge *Edge) bool {
 		return edge.Type == edgeType
-	}), nil
-}
-func (e *walOptionalEngine) GetEdgesBetweenVisibleAt(_ context.Context, startID, endID NodeID, _ MVCCVersion) ([]*Edge, error) {
-	return singletonVisibleEdge(e.edge, func(edge *Edge) bool {
-		return edge.StartNode == startID && edge.EndNode == endID
 	}), nil
 }
 func (e *walOptionalEngine) GetNodeCurrentHead(ctx context.Context, _ NodeID) (MVCCHead, error) {
@@ -149,16 +144,16 @@ func TestWALEngine_OptionalDelegationAndFallbackBranches(t *testing.T) {
 	nodes, err := we.GetNodesByLabelVisibleAt(context.Background(), "L", MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
-	edges, err := we.GetOutgoingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
+	edges, err := we.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:n1"}, MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
-	edges, err = we.GetIncomingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
+	edges, err = we.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:n1"}, MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	edges, err = we.GetEdgesByTypeVisibleAt(context.Background(), "R", MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
-	edges, err = we.GetEdgesBetweenVisibleAt(context.Background(), "test:n1", "test:n1", MVCCVersion{})
+	edges, err = we.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:n1", Other: "test:n1"}, MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 
@@ -214,13 +209,13 @@ func TestWALEngine_OptionalFallbackBranches(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = we.GetNodesByLabelVisibleAt(context.Background(), "L", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = we.GetOutgoingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
+	_, err = we.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:n1"}, MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = we.GetIncomingEdgesVisibleAt(context.Background(), "test:n1", MVCCVersion{})
+	_, err = we.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentIncoming, Node: "test:n1"}, MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = we.GetEdgesByTypeVisibleAt(context.Background(), "R", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = we.GetEdgesBetweenVisibleAt(context.Background(), "test:n1", "test:n1", MVCCVersion{})
+	_, err = we.ReadAdjacentEdgesVisibleAt(context.Background(), AdjacentEdgeRead{Direction: AdjacentBetween, Node: "test:n1", Other: "test:n1"}, MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
 
 	_, err = we.GetNodeCurrentHead(context.Background(), "test:n1")

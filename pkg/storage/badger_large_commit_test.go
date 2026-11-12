@@ -91,7 +91,7 @@ func TestLargeCommit_CommitsBeyondOneBatchAndSurvivesReopen(t *testing.T) {
 	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(n), count)
-	edges, err := engine.GetOutgoingEdges(context.Background(), largeCommitNodeID(n/2))
+	edges, err := engine.ReadAdjacentEdges(context.Background(), AdjacentEdgeRead{Node: largeCommitNodeID(n / 2)})
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	requireNoLargeCommitIntent(t, engine)

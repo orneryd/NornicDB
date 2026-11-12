@@ -12,6 +12,15 @@ import (
 // A corrupt/hidden/missing row is absent, just as it is in that stream. No
 // physical body cache is consulted or filled with an old snapshot's image.
 func (s *badgerReadSnapshot) ReadNode(ctx context.Context, id NodeID) (*Node, error) {
+	return s.readNode(ctx, id, fullNodeStreamOptions(""))
+}
+
+// GetQueryNode reads metadata at this snapshot without loading stored vectors.
+func (s *badgerReadSnapshot) GetQueryNode(ctx context.Context, id NodeID) (*Node, error) {
+	return s.readNode(ctx, id, StreamNodesOptions{QueryNodes: true, ApplyDecayFilter: true})
+}
+
+func (s *badgerReadSnapshot) readNode(ctx context.Context, id NodeID, opts StreamNodesOptions) (*Node, error) {
 	return snapshotEntity(ctx, s.view, id, s.prefix, s.nodesTouched, s.overlayNodes,
 		func(node *Node) NodeID { return node.ID }, copyNode,
 		func(node *Node) bool { return s.b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) },
@@ -20,7 +29,7 @@ func (s *badgerReadSnapshot) ReadNode(ctx context.Context, id NodeID) (*Node, er
 			if err != nil {
 				return nil, err
 			}
-			node, err := s.b.readStreamNodeItem(ctx, txn, item, fullNodeStreamOptions(""), nil, DecayScoringTime(), false)
+			node, err := s.b.readStreamNodeItem(ctx, txn, item, opts, nil, DecayScoringTime(), false)
 			if err != nil {
 				return nil, err
 			}
@@ -83,6 +92,19 @@ func snapshotEntity[ID ~string, T any](ctx context.Context, view *badgerReadView
 type namespacedEntityReadSnapshot struct {
 	*namespacedReadSnapshot
 	reader EntityReadSnapshot
+}
+
+// GetQueryNode preserves namespace identity on the captured query-node read.
+func (s *namespacedEntityReadSnapshot) GetQueryNode(ctx context.Context, id NodeID) (*Node, error) {
+	reader, ok := s.reader.(QueryNodeReader)
+	if !ok {
+		return s.ReadNode(ctx, id)
+	}
+	node, err := reader.GetQueryNode(ctx, s.n.PrefixNodeID(id))
+	if err != nil || node == nil {
+		return nil, err
+	}
+	return s.n.toUserNode(node, nodeUserView{}), nil
 }
 
 func (s *namespacedEntityReadSnapshot) ReadNode(ctx context.Context, id NodeID) (*Node, error) {

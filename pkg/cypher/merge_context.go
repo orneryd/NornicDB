@@ -6,6 +6,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 
 	"strings"
 
@@ -14,32 +15,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
-
-// lookupPatternCandidatesUsingPropertyIndex returns a narrowed node candidate
-// set when the pattern carries inline equality on one or more indexed
-// properties. It is the pattern-inline counterpart of
-// `lookupWhereCandidatesUsingPropertyIndex`: same correctness contract, same
-// safety story, but the source of the equality is the parsed `nodeInfo`
-// rather than a WHERE-clause string.
-//
-// Returned `(nodes, true)` means: "use these as the candidate set; you still
-// need to apply the full `nodeMatchesProps` filter to enforce residual
-// non-indexed predicates". Returned `(nil, false)` means: "no usable index;
-// fall back to the existing label-scan / AllNodes path".
-//
-// The function is shape-agnostic: it works for labelled and labelless
-// patterns, single-property and N-property patterns, and any property type
-// the index can key (string / int / float / bool — same set
-// `indexValueKey` accepts on insert). An index on any of the pattern's labels
-// serves it, as in Neo4j: every match carries every pattern label, so one
-// label's index lists every match (NOR-414). It deliberately does NOT
-// attempt to short-circuit when the residual filter is empty; the caller's
-// uniform `nodeMatchesProps` step keeps the post-condition trivially
-// correct even when the index narrows partially.
-func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.Context, nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool, error) {
-	seek, planned, err := e.planPatternPropertySeek(ctx, nodeInfo, store)
-	return e.collectPlannedSeek(ctx, seek, planned, err)
-}
 
 // patternPropertyRead is one candidate ID set the inline pattern-property seek
 // can read: label's arity-1 index on property under value, the property's
@@ -144,8 +119,9 @@ func (r *patternPropertyReads) add(read patternPropertyRead) {
 // filter that drops them anyway.
 const patternPropertyIntersectFactor = 16
 
-// planPatternPropertySeek plans lookupPatternCandidatesUsingPropertyIndex's
-// seek; planned is false when no index serves an inline property.
+// planPatternPropertySeek plans the pattern's inline seek: the reads the
+// pattern's indexed inline properties are served by. planned is false when no
+// index serves one.
 func (e *StorageExecutor) planPatternPropertySeek(ctx context.Context, nodeInfo nodePatternInfo, store storage.Engine) (nodeIndexSeek, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nodeIndexSeek{}, false, err
@@ -274,19 +250,20 @@ func (e *StorageExecutor) patternPropertyIndexLabel(ctx context.Context, store s
 	return chosen[0], true, nil
 }
 
-// readPatternPropertySeek reads the inline seek: the reads in order of
-// posting size, intersected, each further read made only while it is short
-// enough to narrow the candidates (patternPropertyIntersectFactor), and a
-// composite read only while it is worth its key hash (worthCounting). The
-// single-property reads are counted first. The nodes are read last, once.
+// resolvePatternPropertySeek lists the inline seek's candidate IDs: the
+// reads in order of posting size, intersected, each further read made only
+// while it is short enough to narrow the candidates
+// (patternPropertyIntersectFactor), and a composite read only while it is worth
+// its key hash (worthCounting). The single-property reads are counted first. No
+// node body is read.
 //
-// A posting of several nodes is read through a set, as the release read it,
-// and so in an order that differs from one read to the next. Storage keeps a
-// bounded number of nodes cached; a read of more nodes than that, repeated in
-// the same order, never finds one still cached and decodes every node again
-// (measured: 39% more allocations on a repeated 12,000-node read inside a
-// transaction). One listed node needs no set.
-func (e *StorageExecutor) readPatternPropertySeek(ctx context.Context, seek *nodeIndexSeek) ([]*storage.Node, bool, error) {
+// A posting of several nodes is kept as a set, as the release read it, and so
+// in an order that differs from one read to the next. Storage keeps a bounded
+// number of nodes cached; a read of more nodes than that, repeated in the same
+// order, never finds one still cached and decodes every node again (measured:
+// 39% more allocations on a repeated 12,000-node read inside a transaction).
+// One listed node needs no set.
+func (e *StorageExecutor) resolvePatternPropertySeek(ctx context.Context, seek *nodeIndexSeek) (nodeIDResults, bool, error) {
 	store, schema, reads := seek.store, seek.schema, seek.inlineReads()
 	var countBuf [4]int64
 	var orderBuf [4]int
@@ -308,7 +285,7 @@ func (e *StorageExecutor) readPatternPropertySeek(ctx context.Context, seek *nod
 			}
 			count, err := reads[i].count(ctx, store, schema)
 			if err != nil {
-				return nil, false, err
+				return nodeIDResults{}, false, err
 			}
 			counts[i] = count
 			shortest = min(shortest, count)
@@ -345,11 +322,18 @@ func (e *StorageExecutor) readPatternPropertySeek(ctx context.Context, seek *nod
 			ids, err = compositeIndexLookup(ctx, store, schema, read.composite, read.compositeValues(buf[:0]), read.full)
 		case read.anyLabel:
 			ids, err = schema.PropertyIndexLookupAnyLabel(ctx, read.property, read.value)
+			// The any-label read is one lookup over the pattern's labels; the
+			// label and composite reads below are counted by
+			// propertyIndexLookup and compositeIndexLookup themselves, so no read
+			// is counted twice.
+			if err == nil && profileRuntimeFromContext(ctx) != nil {
+				queryprofile.Access(ctx, profileKindNodeIndexSeek, strings.Join(read.labels, "|")+"("+read.property+")").Add(int64(len(ids)), 1+int64(len(ids)))
+			}
 		default:
 			ids, err = propertyIndexLookup(ctx, store, schema, read.label, read.property, read.value)
 		}
 		if err != nil {
-			return nil, false, err
+			return nodeIDResults{}, false, err
 		}
 		// A probe that finds nothing for a string, boolean or number means no
 		// node holds the value (#821); for other values the scan decides, and
@@ -371,7 +355,7 @@ func (e *StorageExecutor) readPatternPropertySeek(ctx context.Context, seek *nod
 		next := make(map[storage.NodeID]struct{}, len(ids))
 		for _, id := range ids {
 			if err := ctx.Err(); err != nil {
-				return nil, false, err
+				return nodeIDResults{}, false, err
 			}
 			if made {
 				if _, ok := candidates[id]; !ok {
@@ -383,7 +367,7 @@ func (e *StorageExecutor) readPatternPropertySeek(ctx context.Context, seek *nod
 		candidates, made = next, true
 	}
 	if !made {
-		return nil, false, nil
+		return nodeIDResults{}, false, nil
 	}
 	if len(single) > 1 {
 		candidates = make(map[storage.NodeID]struct{}, len(single))
@@ -392,28 +376,19 @@ func (e *StorageExecutor) readPatternPropertySeek(ctx context.Context, seek *nod
 		}
 		single = nil
 	}
-
-	out := make([]*storage.Node, 0, len(single)+len(candidates))
-	for _, id := range single {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		if n, err := e.getQueryNode(ctx, store, id); err == nil && n != nil {
-			out = append(out, n)
-		}
+	// An inline seek the index answered seeded this lookup.
+	e.markMergeSchemaLookupUsed()
+	if candidates == nil {
+		// The seek's one read already listed the candidates in a slice this
+		// call owns — the index lookup built it — so the result keeps that
+		// listing instead of copying it into a second one.
+		return nodeIDResults{overflow: single}, true, nil
 	}
+	ids := newIDResults(len(candidates))
 	for id := range candidates {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		if n, err := e.getQueryNode(ctx, store, id); err == nil && n != nil {
-			out = append(out, n)
-		}
+		ids.add(id)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, false, err
-	}
-	return out, true, nil
+	return ids, true, nil
 }
 
 // propertyIndexMissIsAuthoritative reports whether a property index lookup
@@ -566,10 +541,10 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			if created {
 				result.Stats.RelationshipsCreated = 1
 				countCreatedEntity(result.Stats, nil, edge.Properties)
-				e.notifyEdgeMutated(string(edge.ID))
-				e.notifyNodeMutated(string(edge.StartNode))
+				e.notifyEdgeMutated(ctx, string(edge.ID))
+				e.notifyNodeMutated(ctx, string(edge.StartNode))
 				if edge.EndNode != edge.StartNode {
-					e.notifyNodeMutated(string(edge.EndNode))
+					e.notifyNodeMutated(ctx, string(edge.EndNode))
 				}
 			}
 		}
@@ -639,7 +614,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			node = recoveredNode
 		} else {
 			node.ID = actualID
-			e.notifyNodeMutated(string(node.ID))
+			e.notifyNodeMutated(ctx, string(node.ID))
 			result.Stats.NodesCreated = 1
 			countCreatedEntity(result.Stats, node.Labels, node.Properties)
 		}

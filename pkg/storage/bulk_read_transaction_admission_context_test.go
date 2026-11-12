@@ -33,7 +33,7 @@ func transactionBulkReadCases() []transactionBulkReadCase {
 			name:  "ReadEdges",
 			items: 2,
 			run: func(ctx context.Context, tx *BadgerTransaction, hub NodeID) (any, error) {
-				return tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: hub})
+				return tx.ReadEdges(ctx, AdjacentEdgeRead{Node: hub})
 			},
 		},
 		{

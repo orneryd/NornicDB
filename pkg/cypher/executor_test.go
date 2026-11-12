@@ -1970,7 +1970,7 @@ func TestExecuteMultipleMatchCreateBlocksWithDifferentCategories(t *testing.T) {
 
 	for _, product := range products {
 		productID := product.Properties["productID"]
-		edges, _ := store.GetOutgoingEdges(ctx, product.ID)
+		edges, _ := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: product.ID})
 
 		// Find the PART_OF edge
 		for _, edge := range edges {

@@ -49,7 +49,7 @@ func projectTransactionRead[T *storage.Node | *storage.Edge](ctx context.Context
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if w.namespace == "" || scope == readUserSpace {
+	if records == nil || w.namespace == "" || scope == readUserSpace {
 		return records, nil
 	}
 	filtered := scope == readScanned
@@ -86,29 +86,10 @@ func projectTransactionRead[T *storage.Node | *storage.Edge](ctx context.Context
 	return out, nil
 }
 
-// visibleAtEdgeKind selects which relationship-shaped snapshot-visible read a
-// visibleAtEdgeRequest names.
-type visibleAtEdgeKind uint8
-
-const (
-	visibleAtOutgoing visibleAtEdgeKind = iota
-	visibleAtIncoming
-	visibleAtType
-	visibleAtBetween
-)
-
 // visibleAtEdgeRequest describes one relationship-shaped
 // storage.MVCCIndexedVisibilityEngine read in the caller's namespace: which
 // read, the relationship type or node ID(s) it names, and the exact snapshot
 // version it asks for.
-type visibleAtEdgeRequest struct {
-	kind    visibleAtEdgeKind
-	label   string // relationship type of a visibleAtType read
-	node    storage.NodeID
-	other   storage.NodeID
-	version storage.MVCCVersion
-}
-
 // GetNodesByLabelVisibleAt answers the snapshot-visible node collection read. The
 // immediate underlying engine capability answers it with the exact requested
 // version: the wrapper neither unwraps further nor substitutes the latest state
@@ -122,42 +103,34 @@ func (w *transactionStorageWrapper) GetNodesByLabelVisibleAt(ctx context.Context
 	return projectTransactionRead(ctx, w, nodes, err, w.visibleAtScope())
 }
 
-// visibleAtEdges dispatches the four relationship-shaped
-// snapshot-visible reads. An underlying engine scoped to the wrapper's
-// namespace names the caller's own node IDs and answers in the caller's ID
-// space, so those reads are neither prefixed twice nor detagged; any other
-// engine names namespace-prefixed IDs.
-func (w *transactionStorageWrapper) visibleAtEdges(ctx context.Context, request visibleAtEdgeRequest) ([]*storage.Edge, error) {
+// visibleAtEdges answers one snapshot-visible adjacent-edge request. An
+// underlying engine scoped to the wrapper's namespace names the caller's own
+// node IDs and answers in the caller's ID space, so the request is neither
+// prefixed twice nor detagged; any other engine names namespace-prefixed IDs.
+func (w *transactionStorageWrapper) visibleAtEdges(ctx context.Context, request storage.AdjacentEdgeRead, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine)
 	if !ok {
 		return nil, storage.ErrNotImplemented
 	}
-	node, other := request.node, request.other
+	qualified := request
 	if !w.underlyingIsNamespaced() {
-		// Only the node-shaped reads name IDs; a type read names its
-		// relationship type, so it prefixes nothing.
-		switch request.kind {
-		case visibleAtOutgoing, visibleAtIncoming:
-			node = w.prefixNodeID(node)
-		case visibleAtBetween:
-			node = w.prefixNodeID(node)
-			other = w.prefixNodeID(other)
+		qualified.Node = w.prefixNodeID(request.Node)
+		if request.Direction == storage.AdjacentBetween {
+			qualified.Other = w.prefixNodeID(request.Other)
 		}
 	}
-	var (
-		edges []*storage.Edge
-		err   error
-	)
-	switch request.kind {
-	case visibleAtOutgoing:
-		edges, err = provider.GetOutgoingEdgesVisibleAt(ctx, node, request.version)
-	case visibleAtIncoming:
-		edges, err = provider.GetIncomingEdgesVisibleAt(ctx, node, request.version)
-	case visibleAtType:
-		edges, err = provider.GetEdgesByTypeVisibleAt(ctx, request.label, request.version)
-	case visibleAtBetween:
-		edges, err = provider.GetEdgesBetweenVisibleAt(ctx, node, other, request.version)
+	edges, err := provider.ReadAdjacentEdgesVisibleAt(ctx, qualified, version)
+	return projectTransactionRead(ctx, w, edges, err, w.visibleAtScope())
+}
+
+// visibleAtTypeEdges answers the snapshot-visible relationship-type population
+// read, which is a different operation from an adjacent-edge read.
+func (w *transactionStorageWrapper) visibleAtTypeEdges(ctx context.Context, edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine)
+	if !ok {
+		return nil, storage.ErrNotImplemented
 	}
+	edges, err := provider.GetEdgesByTypeVisibleAt(ctx, edgeType, version)
 	return projectTransactionRead(ctx, w, edges, err, w.visibleAtScope())
 }
 
@@ -172,38 +145,26 @@ func (w *transactionStorageWrapper) visibleAtScope() readScope {
 	return readScanned
 }
 
-// adjacencyRead describes one adjacency read of the transaction's view in the
-// caller's namespace: the direction (with the far endpoint of a between read),
-// and whether the physically stored view answers it instead of the live,
-// pending-inclusive one. The stored view answers only the two directional
-// reads.
-type adjacencyRead struct {
-	kind   storage.TransactionEdgeReadKind
-	node   storage.NodeID
-	other  storage.NodeID
-	stored bool
-}
-
-// adjacencyEdges answers one adjacency read of the transaction in the caller's
-// namespace. Prefixing is idempotent, so a read names its namespace-prefixed
-// node exactly once whatever the caller passed. The read's own error and result
-// are preserved for the caller.
-func (w *transactionStorageWrapper) adjacencyEdges(ctx context.Context, read adjacencyRead) ([]*storage.Edge, error) {
-	node, other := w.prefixNodeID(read.node), read.other
-	if read.kind == storage.TransactionReadBetween {
-		other = w.prefixNodeID(other)
+// adjacentEdges answers one adjacent-edge read of the transaction in the
+// caller's namespace. Prefixing is idempotent, so a read names its
+// namespace-prefixed node exactly once whatever the caller passed. The stored
+// view answers a stored request over the physically stored relationships; every
+// other request reads the transaction's live, pending-inclusive view. The
+// read's own error and result are preserved for the caller.
+func (w *transactionStorageWrapper) adjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead, stored bool) ([]*storage.Edge, error) {
+	qualified := request
+	qualified.Node = w.prefixNodeID(request.Node)
+	if request.Direction == storage.AdjacentBetween {
+		qualified.Other = w.prefixNodeID(request.Other)
 	}
 	var (
 		edges []*storage.Edge
 		err   error
 	)
-	switch {
-	case !read.stored:
-		edges, err = w.tx.ReadEdges(ctx, storage.TransactionEdgeRead{Kind: read.kind, Node: node, Other: other})
-	case read.kind == storage.TransactionReadIncoming:
-		edges, err = w.tx.GetStoredIncomingEdges(ctx, node)
-	default:
-		edges, err = w.tx.GetStoredOutgoingEdges(ctx, node)
+	if stored {
+		edges, err = w.tx.ReadStoredAdjacentEdges(ctx, qualified)
+	} else {
+		edges, err = w.tx.ReadEdges(ctx, qualified)
 	}
 	return projectTransactionRead(ctx, w, edges, err, readOwnAdjacency)
 }

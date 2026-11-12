@@ -165,7 +165,7 @@ func (s *Service) RefreshNodeWithMutation(ctx context.Context, mutation NodeMuta
 	if mutation.mutation.owner() != s || mutation.mutation.retire() {
 		return nil
 	}
-	node, err := s.engine.GetNode(ctx, mutation.mutation.id)
+	node, err := s.readNodeImage(ctx, mutation.mutation.id, fullNodeImage)
 	if errors.Is(err, storage.ErrNotFound) {
 		return s.applyReservedNodeRemoval(mutation)
 	}
@@ -290,7 +290,7 @@ func (s *Service) RefreshEdgeWithMutation(ctx context.Context, mutation EdgeMuta
 	if mutation.mutation.owner() != s || mutation.mutation.retire() {
 		return nil
 	}
-	edge, err := s.engine.GetEdge(ctx, mutation.mutation.id)
+	edge, err := s.readEdgeImage(ctx, mutation.mutation.id)
 	if errors.Is(err, storage.ErrNotFound) {
 		return s.applyReservedEdgeRemoval(mutation)
 	}

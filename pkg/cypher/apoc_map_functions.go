@@ -18,8 +18,8 @@ import (
 // empty is dropped. Like APOC, a null map or a null key list fails the call
 // (ProcedureCallFailed). An argument of the wrong type is a type error.
 func init() {
-	cypherfn.Register("apoc.map.removekey", apocMapRemovalFunction(false))
-	cypherfn.Register("apoc.map.removekeys", apocMapRemovalFunction(true))
+	cypherfn.Register("apoc.map.removekey", apocMapRemovalFunction(false), cypherfn.CanonicalReads)
+	cypherfn.Register("apoc.map.removekeys", apocMapRemovalFunction(true), cypherfn.CanonicalReads)
 }
 
 // apocMapRemovalFunction binds the key shape to the one removal owner. A

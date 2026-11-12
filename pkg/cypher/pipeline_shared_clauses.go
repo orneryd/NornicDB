@@ -67,9 +67,10 @@ func usesSharedGrammarClauses(ctx context.Context, query string) bool {
 // trailing names the keyword an UNWIND form leaves after its variable, which
 // Neo4j rejects (UNWIND takes no WHERE).
 type iterationClause struct {
-	expression string
-	variable   string
-	trailing   string
+	expression      string
+	expressionStart int
+	variable        string
+	trailing        string
 }
 
 // iterationClauseFor reads an iteration clause's binding from its retained
@@ -110,6 +111,8 @@ func iterationClauseFor(clause pipelineClause) (iterationClause, bool) {
 			return iterationClause{}, false
 		}
 		iteration.expression = strings.TrimSpace(source[start:boundary])
+		clauseStart, _ := node.Span()
+		iteration.expressionStart = start - clauseStart + leadingExpressionSpace(source[start:boundary])
 		if node.ChildRule(cypherantlr.CypherParserRULE_where).Valid() {
 			iteration.trailing = "WHERE"
 		}
@@ -124,6 +127,8 @@ func iterationClauseFor(clause pipelineClause) (iterationClause, bool) {
 			return iterationClause{}, false
 		}
 		iteration.expression = strings.TrimSpace(source[start:end])
+		clauseStart, _ := node.Span()
+		iteration.expressionStart = start - clauseStart + leadingExpressionSpace(source[start:end])
 	default:
 		return iterationClause{}, false
 	}
@@ -157,7 +162,7 @@ func parsePipelineLet(clause string) ([]pipelineRowProjection, error) {
 		if expression == "" || pipelineExpressionContainsAggregate(expression) {
 			return nil, sharedClauseSyntaxError("LET requires a non-aggregate expression")
 		}
-		projections = append(projections, pipelineRowProjection{expression: expression, alias: normalizeProjectionColumnName(name)})
+		projections = append(projections, pipelineRowProjection{expression: expression, alias: normalizeProjectionColumnName(name), expressionStart: -1})
 	}
 	if len(projections) == 0 {
 		return nil, sharedClauseSyntaxError("LET requires at least one binding")
