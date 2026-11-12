@@ -22,9 +22,9 @@ type PreparedEntityCommit struct {
 	// Author: NOR-288 lane (Codex), 2026-10-26. The retained authority owner
 	// is reused by applications of this same accepted logical command.
 	accepted             atomic.Bool
+	mode                 EntityCommitMode
 	application          acceptedEntityApplication
 	authorityOwner       string
-	mode                 EntityCommitMode
 	markRecoveryPending  func()
 	hooksMu              sync.Mutex
 	appliedHooks         []func()
@@ -38,9 +38,31 @@ type PreparedEntityCommit struct {
 	decide               chan bool
 	finished             chan error
 	once                 sync.Once
+	// parked is the transaction while it waits at its prepared hand-off, for
+	// the journal's question before a record of more than one frame. It is nil
+	// for an accepted application, which is not measured: storeValueLimitError
+	// returns nil without it.
+	parked *BadgerTransaction
+	// capture is the change-capture decision of the commit this frame
+	// prepares; a retry of its application carries it (NOR-412).
+	capture changeCaptureDecision
 }
 
 func (p *PreparedEntityCommit) Namespace() string { return p.namespace }
+
+// storeValueLimitError decides the store's value limit on the parked
+// transaction's staged state (storeValueLimitErrorLocked). The journal asks
+// it before it writes a record of more than one frame, while the transaction
+// waits at its hand-off with its lock released.
+func (p *PreparedEntityCommit) storeValueLimitError(ctx context.Context) error {
+	tx := p.parked
+	if tx == nil {
+		return nil
+	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	return tx.storeValueLimitErrorLocked(ctx)
+}
 func (p *PreparedEntityCommit) LogicalID() string { return p.logicalID }
 
 // Operations returns detached diagnostic images, including before-images and
@@ -227,6 +249,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
 			prepared = &PreparedEntityCommit{engine: tx.engine, authorityOwner: tx.ID, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
+			prepared.capture = tx.capture
 			prepared.retainAuthority = func(admission context.Context) (func(), error) {
 				keyContext := admission
 				entityKeys, err := entityCommitKeys(keyContext, entityAuthorityFootprint{nodes: nodes, edges: edges, endpoints: endpoints, nodeBodies: nodes, edgeBodies: edges})
@@ -271,6 +294,13 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			}
 			prepared.markRecoveryPending = func() { schema.markCommitOwnerRecoveryPending(owner) }
 			tx.commitReleaseAcceptedAuthority = func() { drainReleaseCallbacks(&prepared.hooksMu, &prepared.appliedHooks) }
+			// The transaction stays parked, its lock released, until the
+			// decision below; the journal owner measures its staged state in
+			// that window, before a record of more than one frame is written
+			// (storeValueLimitError, NOR-412).
+			if !tx.acceptedApplication {
+				prepared.parked = tx
+			}
 			// Frontend cleanup must never wait behind an accepted command.
 			// Ownership is already detached, so ordinary methods reject it;
 			// only this private native continuation may use the staged state.

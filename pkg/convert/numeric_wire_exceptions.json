@@ -432,8 +432,8 @@
     "sha256": "4e196d323cd39aa8c0ab405450de76fa279d236a243635a8b80f3584b40f3712"
   },
   "pkg/storage/wal_repair.go:truncateWALFile": {
-    "reason": "Typed repair diagnostic report; no recovered property payload.",
-    "sha256": "f4f571883bc9e35b2b5ecbe9f212557a41e50b87fef1e34b0886d9a2f0493bfa"
+    "reason": "Typed repair diagnostic report; no recovered property payload. NOR-412: the cut of an incomplete spanned record is reported with the incomplete-tail action; the JSON written is the same typed report.",
+    "sha256": "c2801df6bb8d7555db3a478ba04fbed9e21533723a223cee7b08e247ddb80fc6"
   },
   "pkg/storage/wal_segments.go:accessWALManifest": {
     "reason": "Typed WAL segment manifest read and write (one release owner, accessWALManifest, replacing loadWALManifest/writeWALManifest); segment metadata, not WAL entity data or graph properties. Reviewed by the L6 / #1665 lane (Claude Opus 5.5).",
@@ -640,8 +640,8 @@
     "sha256": "37d7e0cd69fa01fdfda682f394ea463a6efe253ba350710f7ea59f73491717f3"
   },
   "pkg/storage/wal_v4_file_migration.go:scanV4MigrationWAL": {
-    "reason": "Historical WAL framing reads typed WALEntry wrappers (uint64 sequence, uint32 checksum, opaque Data bytes); semantic property decoding remains with the WAL migration owner. Oversized embedding audit frames use the existing bounded streaming reader and do not add a JSON property decoder.",
-    "sha256": "1da8422e313ac9e61e8b05712c8ab22cc185977318e16b92401908db0f88d4a6"
+    "reason": "Historical WAL framing reads typed WALEntry wrappers (uint64 sequence, uint32 checksum, opaque Data bytes); semantic property decoding remains with the WAL migration owner. Oversized embedding audit frames use the existing bounded streaming reader and do not add a JSON property decoder. NOR-412: frames of the spanned version (7) are accepted as a known version; the JSON read is the same typed WALEntry wrapper. NOR-412 upgrade (#1796): a store journal carries a complete old record over one frame whole through the same bounded reader (readOversizedFrame); the JSON read is still the typed WALEntry header and no property decoder is added.",
+    "sha256": "8406de9eece5e7684bc426b147fdea31fa7f8b78f43e8924aab66373587fe0f4"
   },
   "pkg/storage/wal_v4_gob_entity.go:decodeV4EntityChange": {
     "reason": "Author: #1665 implementation lane (Codex). Version-4-only fallback retains historical untagged JSON property meaning; current typed MessagePack paths do not enter it. Reject-trailing rules are retained.",

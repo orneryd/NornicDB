@@ -94,11 +94,19 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	}
 	// The release owner decides publication; the accepted handle settles what
 	// it decided. Journal entry transfers the mutation lease to the receipt.
-	journalStarted := false
+	journalStarted, record := false, &walEntityCommitData{Payload: payload}
 	err = DecidePublication(ctx, func() error {
 		releaseMutation = nil
 		journalStarted = true
-		return w.wal.AppendWithDatabase(OpEntityCommit, &walEntityCommitData{Payload: payload}, prepared.Namespace())
+		// For a record of more than one frame, which the standard policy
+		// refuses here, the journal first asks whether the values commit
+		// admission measures are within the store's value limit (NOR-412,
+		// commit_admission.go). A refusal is returned as the frame refusal
+		// is (walRecordRejection): nothing of the commit is journaled.
+		_, err := w.wal.appendDecidingLargeRecord(OpEntityCommit, record, prepared.Namespace(), func() error {
+			return prepared.storeValueLimitError(ctx)
+		})
+		return err
 	})
 	if err != nil {
 		var rejection *walRecordRejection

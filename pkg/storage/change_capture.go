@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"strings"
@@ -347,12 +348,91 @@ type txChangeCapture struct {
 	wrote     bool
 }
 
-// beginChangeCaptureLocked takes the database's change log for a commit in
-// a capturing database, before any of the commit's writes and locks (so a
-// large commit's publication locks are always taken after it), and
-// allocates the commit's place in the change order.
+// changeCaptureDecision is a commit's change-capture mode, decided once by
+// changeCaptureLocked.
+type changeCaptureDecision struct {
+	mode    ChangeCaptureMode
+	decided bool
+}
+
+// changeCaptureLocked returns the mode in which the commit captures its
+// changes, deciding it on the first call; every later call returns the same
+// mode. PublishCommit decides it before it chooses the commit's route and
+// before the journal holds the commit, so the store-limit check before a
+// record of more than one frame (storeValueLimitErrorLocked) measures the
+// change events that the application then writes (beginChangeCaptureLocked),
+// whatever the database's mode is set to in between (NOR-412). A retry of an
+// accepted application carries the decision of the commit it applies
+// (prepareAcceptedEntityApplication).
+//
+// The decision is the database's mode when it is made. A commit applied from
+// the journal without the decision of the process that journaled it (recovery
+// from the journal, or an application on another server) decides here too. On
+// an engine whose journal writes records larger than one frame, such a commit
+// was not measured in that mode: when one of its change events would exceed
+// the store's value limit it takes DIFF, and no change events when a DIFF
+// event would exceed it too (recoveredChangeCaptureLocked), so the journaled
+// commit is applied.
+func (tx *BadgerTransaction) changeCaptureLocked(ctx context.Context) (ChangeCaptureMode, error) {
+	if tx.capture.decided {
+		return tx.capture.mode, nil
+	}
+	mode := ChangeCaptureOff
+	if tx.namespace != "" {
+		mode = tx.engine.ChangeCapture(tx.namespace)
+	}
+	if mode != ChangeCaptureOff && tx.acceptedApplication && tx.engine.journalsLargeRecords() {
+		var err error
+		if mode, err = tx.recoveredChangeCaptureLocked(ctx, mode); err != nil {
+			return ChangeCaptureOff, err
+		}
+	}
+	tx.capture = changeCaptureDecision{mode: mode, decided: true}
+	return mode, nil
+}
+
+// recoveredChangeCaptureLocked returns the first mode, from mode down to DIFF,
+// in which every change event of a commit applied from the journal fits the
+// store's value limit, measured as commit admission measures them
+// (storeValueLimitErrorLocked); ChangeCaptureOff when there is none. A DIFF
+// event holds no more than the FULL event of the same change (nodeChangeEvent,
+// edgeChangeEvent).
+func (tx *BadgerTransaction) recoveredChangeCaptureLocked(ctx context.Context, mode ChangeCaptureMode) (ChangeCaptureMode, error) {
+	limit := storeValueLimit(tx.badgerDB)
+	operations := tx.physicalOperationsLocked()
+	for ; mode != ChangeCaptureOff; mode = smallerChangeCapture(mode) {
+		measure := &storeValueMeasure{txn: tx.badgerTx, limit: limit, what: "a change event of this commit"}
+		err := tx.changeEventsLocked(ctx, operations, math.MaxUint64, mode, time.Now(),
+			func(read func(*badger.Txn) error) error { return read(tx.badgerTx) }, measure.Set)
+		if err == nil {
+			return mode, nil
+		}
+		if !errors.Is(err, ErrStoreValueTooLarge) {
+			return ChangeCaptureOff, err
+		}
+	}
+	return ChangeCaptureOff, nil
+}
+
+// smallerChangeCapture is the capture mode below mode: FULL, then DIFF, then
+// off.
+func smallerChangeCapture(mode ChangeCaptureMode) ChangeCaptureMode {
+	if mode == ChangeCaptureFull {
+		return ChangeCaptureDiff
+	}
+	return ChangeCaptureOff
+}
+
+// beginChangeCaptureLocked takes the database's change log for a commit that
+// captures changes, in the mode the commit decided (changeCaptureLocked),
+// before any of the commit's writes and locks (so a large commit's
+// publication locks are always taken after it), and allocates the commit's
+// place in the change order.
 func (tx *BadgerTransaction) beginChangeCaptureLocked(ctx context.Context) error {
-	mode := tx.engine.ChangeCapture(tx.namespace)
+	mode, err := tx.changeCaptureLocked(ctx)
+	if err != nil {
+		return err
+	}
 	if mode == ChangeCaptureOff {
 		return nil
 	}
@@ -396,14 +476,29 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 	if capture == nil {
 		return nil
 	}
+	return tx.changeEventsLocked(ctx, operations, capture.commitSeq, capture.mode, commitTime,
+		func(read func(*badger.Txn) error) error { return w.write(ctx, read) },
+		func(key, value []byte) error {
+			capture.wrote = true
+			return w.write(ctx, func(txn *badger.Txn) error { return txn.Set(key, value) })
+		})
+}
+
+// changeEventsLocked builds a commit's change events for operations as the
+// change log's commit commitSeq in mode, reads a cascaded relationship's
+// stored record through view, and hands each event's key and encoded value
+// to emit. The commit writes them (writeChangeEventsLocked) and commit
+// admission measures them before the journal (storeValueLimitErrorLocked),
+// both in the mode the commit decided once (changeCaptureLocked, NOR-412).
+func (tx *BadgerTransaction) changeEventsLocked(ctx context.Context, operations []Operation, commitSeq uint64, mode ChangeCaptureMode, commitTime time.Time, view func(func(*badger.Txn) error) error, emit func(key, value []byte) error) error {
 	b := tx.engine
 	states, err := newCommitStates(ctx, operations)
 	if err != nil {
 		return err
 	}
 	base := ChangeEvent{
-		CommitSeq: capture.commitSeq, StartTime: tx.StartTime.UnixNano(), CommitTime: commitTime.UnixNano(),
-		Mode: capture.mode, TxMetadata: copyChangeMetadata(tx.Metadata),
+		CommitSeq: commitSeq, StartTime: tx.StartTime.UnixNano(), CommitTime: commitTime.UnixNano(),
+		Mode: mode, TxMetadata: copyChangeMetadata(tx.Metadata),
 	}
 	seq := uint32(0)
 	write := func(event ChangeEvent) error {
@@ -416,9 +511,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 		if err != nil {
 			return fmt.Errorf("encoding change event: %w", err)
 		}
-		key := changeEventKey(tx.namespace, event.CommitSeq, event.Seq)
-		capture.wrote = true
-		return w.write(ctx, func(txn *badger.Txn) error { return txn.Set(key, value) })
+		return emit(changeEventKey(tx.namespace, event.CommitSeq, event.Seq), value)
 	}
 	labels := newChangeEndpointLabels(b, states)
 	keys := changeKeys{schema: b.GetSchemaForNamespace(tx.namespace)}
@@ -484,7 +577,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 						continue
 					}
 					var edge *Edge
-					err := w.write(ctx, func(txn *badger.Txn) error {
+					err := view(func(txn *badger.Txn) error {
 						var loadErr error
 						edge, loadErr = b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
 						if loadErr == ErrNotFound {

@@ -269,8 +269,9 @@ func TestRecoveryMaterializedSnapshotKeepsLargeEntitySupport(t *testing.T) {
 	assert.Equal(t, node.Properties, snapshot.Nodes[0].Properties)
 	file, err := os.Open(path)
 	require.NoError(t, err)
+	// ReadSnapshot reads this snapshot, whose record is over 16 MiB (NOR-412).
 	_, err = ReadSnapshot(t.Context(), file, &recoveryFieldsVisitor{})
-	require.ErrorContains(t, err, "reader limit")
+	require.NoError(t, err)
 	require.NoError(t, file.Close())
 	// Memory recovery retains its pre-existing 64KiB Badger value ceiling;
 	// its storage error must be reached after the large frame was decoded.

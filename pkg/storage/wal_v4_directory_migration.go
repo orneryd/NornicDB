@@ -20,9 +20,26 @@ const v4WALBackupSuffix = ".before-v4-v6"
 // WALV4UpgradeOptions selects an optional application payload conversion.
 // Transform is invoked only for records using an older frame and must return
 // the complete replacement payload without modifying its input.
+//
+// OneFrameRecords keeps the converted journal to one-frame records: an old record
+// whose converted form does not fit one frame is refused, in every historical format,
+// by validation before anything changes unless it is a property-epoch control or its
+// conversion gives other bytes the second time. The replication journal sets it, as
+// its transport carries one-frame records only; a store journal carries such a record whole.
 type WALV4UpgradeOptions struct {
-	Transform    func(version uint8, operation OperationType, payload []byte) ([]byte, error)
-	afterPublish func(string) error
+	Transform       func(version uint8, operation OperationType, payload []byte) ([]byte, error)
+	OneFrameRecords bool
+	afterPublish    func(string) error
+}
+
+// records is the conversion this upgrade applies to every file of the
+// journal, in validation and in conversion alike.
+func (o WALV4UpgradeOptions) records() *v4UpgradeRecords {
+	policy := WALRecordsLarge
+	if o.OneFrameRecords {
+		policy = WALRecordsStandard
+	}
+	return &v4UpgradeRecords{policy: policy, transform: o.Transform}
 }
 
 // backupV4WALDirectory publishes a durable, immutable copy before any source
@@ -173,7 +190,8 @@ func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 	} else if !errors.Is(err, ErrWALUnsupportedVersion) {
 		return false, err
 	}
-	if err := ValidateWALFormat(dir, WALValidateV4Upgrade); err != nil {
+	records := options.records()
+	if err := validateWALFormat(dir, WALValidateV4Upgrade, records); err != nil {
 		return false, err
 	}
 	backup := dir + v4WALBackupSuffix
@@ -242,7 +260,7 @@ func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
 			return false, err
 		}
-		if err := upgradeWALFileV4(filepath.Join(backup, rel), dest, rel == "wal.log", options.Transform); err != nil {
+		if err := upgradeWALFileV4(filepath.Join(backup, rel), dest, rel == "wal.log", records); err != nil {
 			return false, fmt.Errorf("wal: convert %s: %w", rel, err)
 		}
 		original, converted := filepath.Join(dir, rel), dest
@@ -335,13 +353,13 @@ func walV5OrLaterOnly(dir string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if err := scanV4MigrationWAL(path, false, visit); err != nil {
+		if err := scanV4MigrationWAL(path, false, true, visit); err != nil {
 			return false, err
 		}
 	}
 	active := walActivePath(dir)
 	if _, err := os.Stat(active); err == nil {
-		if err := scanV4MigrationWAL(active, true, visit); err != nil {
+		if err := scanV4MigrationWAL(active, true, true, visit); err != nil {
 			return false, err
 		}
 	} else if !os.IsNotExist(err) {

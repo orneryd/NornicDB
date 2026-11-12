@@ -30,8 +30,17 @@ const (
 
 // ValidateWALFormat checks the active file and retained segments without
 // repairing or rewriting them. Upgrade validation also checks checksums and
-// historical property-authority boundaries before the storage is opened.
+// historical property-authority boundaries before the storage is opened. It
+// validates a store journal, whose upgrade has no payload transform: a record
+// over one frame is admitted whole.
 func ValidateWALFormat(dir string, mode WALFormatValidation) error {
+	return validateWALFormat(dir, mode, nil)
+}
+
+// validateWALFormat is ValidateWALFormat for a journal whose upgrade converts
+// its records with records (UpgradeWALV4): upgrade validation runs that conversion on
+// every record other than a property-epoch control and refuses a record it refuses.
+func validateWALFormat(dir string, mode WALFormatValidation, records *v4UpgradeRecords) error {
 	if mode != WALValidateCurrent && mode != WALValidateV4Upgrade {
 		return fmt.Errorf("wal: unknown validation mode %d", mode)
 	}
@@ -45,7 +54,7 @@ func ValidateWALFormat(dir string, mode WALFormatValidation) error {
 			return err
 		}
 		if mode == WALValidateV4Upgrade {
-			if _, err := planV4WALMigration(path, false); err != nil {
+			if _, err := planV4WALMigration(path, false, records, true); err != nil {
 				return err
 			}
 		} else if err := validateWALFileVersion(path, false); err != nil {
@@ -59,7 +68,7 @@ func ValidateWALFormat(dir string, mode WALFormatValidation) error {
 		} else if err != nil {
 			return err
 		}
-		_, err := planV4WALMigration(active, true)
+		_, err := planV4WALMigration(active, true, records, true)
 		return err
 	}
 	return validateWALFileVersion(active, true)
@@ -97,7 +106,7 @@ func validateWALFileVersion(path string, optional bool) error {
 			}
 			return nil // a damaged current tail is handled by the repair owner
 		}
-		if n >= 5 && header[4] != walFormatVersionCurrent {
+		if n >= 5 && !walFrameVersionReadable(header[4]) {
 			return fmt.Errorf("%s: %w", path, unsupportedWALVersion(header[4]))
 		}
 		if n < len(header) {

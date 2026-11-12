@@ -202,7 +202,7 @@ func (a *acceptedEntityApplication) apply(current *PreparedEntityCommit, startEr
 			}
 			var err error
 			current, _, err = prepareAcceptedEntityApplication(a.ctx, p.engine,
-				EntityTransactionEnvelope{Namespace: p.namespace, LogicalTxID: p.logicalID, Mode: p.mode}, p.Operations(), p.authorityOwner)
+				EntityTransactionEnvelope{Namespace: p.namespace, LogicalTxID: p.logicalID, Mode: p.mode}, p.Operations(), p.authorityOwner, p.capture)
 			if err != nil {
 				current = nil
 				outcome = CommitOutcome{State: CommitRecoveryPending, Err: err}

@@ -1,8 +1,10 @@
 # Change Data Capture
 
-NornicDB records every committed change to the nodes and relationships of a
+NornicDB records the committed changes to the nodes and relationships of a
 database whose change capture is on, and serves them through Neo4j's
-Change Data Capture procedures and event format. An application can follow
+Change Data Capture procedures and event format. A commit that is applied
+from the journal when the server starts again can be recorded with less
+detail, or not at all (see "Exactness"). An application can follow
 a database's changes from a stored cursor instead of polling for them.
 
 ## Turning it on
@@ -17,12 +19,19 @@ SHOW DATABASES YIELD name, options
 ```
 
 - `OFF` (the default) captures nothing.
-- `FULL` records each entity's whole state before and after the change.
+- `FULL` records each entity's whole state before and after the change
+  (a commit applied from the journal can be recorded otherwise; see
+  "Exactness").
 - `DIFF` records only the properties and labels an update changed. A create
   records the whole state after it, and a delete the whole state before it,
   in both modes.
 
 The option is kept with the database's metadata and survives restarts.
+
+A commit records its changes in the mode the database has when the commit is
+made, before it is written to the journal, and keeps that mode until it is
+applied: changing the option while a commit is being written does not change
+how that commit is recorded. Commits made after the change use the new mode.
 Seeding options Neo4j defines (`seedURI`, `existingData`, `storeFormat`, …)
 are not supported by NornicDB and are rejected.
 
@@ -99,10 +108,26 @@ CALL db.cdc.query($cursor, [
 ## Exactness
 
 - Changes are written in the same storage commit as the data, so a rolled
-  back transaction leaves no changes, and no committed change is missing.
+  back transaction leaves no changes.
+- A commit that was written to the journal but not yet applied when the
+  server stopped is applied from the journal at the next start. This happens
+  before the databases' capture options are loaded, so no changes are recorded
+  for such a commit: the feed has no entry for it, and nothing in the feed
+  shows that one is missing.
+- A program that embeds NornicDB's storage, sets a database's capture mode
+  itself and then applies the journal, with the journal opened under the
+  record policy of a single-node server (records larger than one 16 MiB frame
+  are written across several frames), records such a
+  commit's changes in that mode when every change fits in one stored value
+  (the store's value limit: 256 MiB with the default storage profile, 32 MiB
+  with the low-memory one). Otherwise it records them in `DIFF` mode when
+  those fit, and else records none. A change recorded this way says so in
+  `metadata.captureMode` (`DIFF` in a `FULL` database); for a commit recorded
+  without changes, nothing in the feed shows it.
 - Writes through Bolt and HTTP, auto-commit and explicit transactions, and
   through NornicDB's other APIs (MCP, the Qdrant-compatible API, imports) are
-  all captured. With async writes on (the write-behind buffer), a capturing
+  all captured, apart from the commits applied from the journal described
+  above. With async writes on (the write-behind buffer), a capturing
   database's commits still go straight to storage, with their events; other
   databases keep the buffer.
 
