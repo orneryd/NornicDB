@@ -49,6 +49,12 @@ type commitWriter struct {
 	db                  *managedBadgerDB
 	large               *largeCommit
 	pendingEmbeddingIDs map[NodeID]struct{}
+	// chunkDecodes is the committing transaction's chunk-decode memo, which
+	// the publication capture decodes chunk values through
+	// (embeddingChunkDecodes); the transaction binds it when it flushes its
+	// writes into the writer (flushBufferedWrites). Nil for a writer no
+	// transaction owns.
+	chunkDecodes *embeddingChunkDecodes
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn

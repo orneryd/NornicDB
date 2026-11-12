@@ -171,8 +171,13 @@ func (b *BadgerEngine) captureStoredEntityChanges(ctx context.Context, request s
 		if err != nil {
 			return nil, err
 		}
-		before = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx}, acknowledged: b.writeBehind, boundaries: b.storedEntityObservers.Load()}
-		after = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, stagedWrites: tx.pendingWrites, stagedDeletes: tx.pendingDeletes}}
+		// Both images decode chunk values through the transaction's memo
+		// (embeddingChunkDecodes), which its update-target reads may already
+		// have filled: a value byte-identical to the one it keeps under that
+		// chunk key's hash is not decoded again.
+		decodes := &tx.chunkDecodes
+		before = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, decodes: decodes}, acknowledged: b.writeBehind, boundaries: b.storedEntityObservers.Load()}
+		after = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, stagedWrites: tx.pendingWrites, stagedDeletes: tx.pendingDeletes, decodes: decodes}}
 	}
 	seen := make(map[any]struct{}, len(keys))
 	changes := make([]StoredEntityChange, 0, len(keys))
@@ -408,7 +413,7 @@ func (cw *commitWriter) prepareStoredEntityPublication(ctx context.Context) erro
 	}
 	prior := cw.db.newTxnAt(readTs, false)
 	defer prior.Discard()
-	changes, err := cw.engine.captureStoredEntityChanges(ctx, storedEntityCapture{keys: keys, before: storedEntityView{read: embeddingRecordReader{txn: prior}, boundaries: registry}, after: storedEntityView{read: embeddingRecordReader{txn: cw.txn}}})
+	changes, err := cw.engine.captureStoredEntityChanges(ctx, storedEntityCapture{keys: keys, before: storedEntityView{read: embeddingRecordReader{txn: prior, decodes: cw.chunkDecodes}, boundaries: registry}, after: storedEntityView{read: embeddingRecordReader{txn: cw.txn, decodes: cw.chunkDecodes}}})
 	if err != nil {
 		return err
 	}

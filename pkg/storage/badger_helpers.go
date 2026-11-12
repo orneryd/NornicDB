@@ -1008,7 +1008,9 @@ func encodeNodeV1Body(n *Node) ([]byte, bool, error) {
 // Returns: (nodeData, embeddingsStoredSeparately, error). The
 // embeddings-separate logic mirrors V1 — if the encoded body exceeds
 // maxNodeSize, ChunkEmbeddings are dropped from the inline body and
-// persisted under their own keys by the caller.
+// persisted under their own keys by the caller. The body is encoded with
+// its ChunkEmbeddings to measure it only when they hold at most maxNodeSize
+// values; with more it cannot fit, and it is encoded only without them.
 func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Node) ([]byte, bool, error) {
 	if err := validatePropertiesForStorage(n.Properties); err != nil {
 		return nil, false, fmt.Errorf("invalid node properties: %w", err)
@@ -1031,14 +1033,27 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 		return out
 	}
 
-	bodyBytes, err := encodeValue(&bodyCopy)
-	if err != nil {
-		return nil, false, err
-	}
-	data := assemble(bodyBytes)
-
-	if len(data) <= maxNodeSize {
-		return data, false, nil
+	if chunkEmbeddingValues(bodyCopy.ChunkEmbeddings) <= maxNodeSize {
+		bodyBytes, err := encodeValue(&bodyCopy)
+		if err != nil {
+			return nil, false, err
+		}
+		data := assemble(bodyBytes)
+		if len(data) <= maxNodeSize {
+			return data, false, nil
+		}
+	} else {
+		// Every chunk vector value encodes as at least one MessagePack byte,
+		// so a body holding more of them than maxNodeSize bytes is never
+		// stored inline: encoding it with them would only measure that
+		// (NOR-412, bug 35). That encoding fails only for a field other than
+		// the chunk vectors, which cannot fail to encode; the body without
+		// them answers it, before the separate branch below changes anything.
+		probe := bodyCopy
+		probe.ChunkEmbeddings = nil
+		if _, err := encodeValue(&probe); err != nil {
+			return nil, false, err
+		}
 	}
 
 	chunkCount := len(bodyCopy.ChunkEmbeddings)
@@ -1055,11 +1070,20 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 		bodyCopy.EmbedMeta["chunk_count"] = chunkCount
 	}
 
-	bodyBytes, err = encodeValue(&bodyCopy)
+	bodyBytes, err := encodeValue(&bodyCopy)
 	if err != nil {
 		return nil, false, err
 	}
 	return assemble(bodyBytes), true, nil
+}
+
+// chunkEmbeddingValues counts the vector values of chunks.
+func chunkEmbeddingValues(chunks [][]float32) int {
+	values := 0
+	for _, chunk := range chunks {
+		values += len(chunk)
+	}
+	return values
 }
 
 // encodeEmbedding serializes a single embedding chunk.
@@ -1258,6 +1282,11 @@ type embeddingRecordReader struct {
 	commit        *bufferedCommit
 	stagedWrites  map[string][]byte
 	stagedDeletes map[string]bool
+	// decodes, when set, is a transaction's memo (embeddingChunkDecodes)
+	// that loadEmbeddingChunksFrom decodes each chunk's own stored value
+	// through; a sharded chunk's assembled parts are decoded directly, and
+	// nil decodes every value directly.
+	decodes *embeddingChunkDecodes
 }
 
 type embeddingRecord struct {
@@ -1320,7 +1349,7 @@ func loadEmbeddingChunksFrom(read embeddingRecordReader, node *Node, nodeID Node
 			return fmt.Errorf("failed to get embedding chunk %d: %w", i, err)
 		}
 
-		emb, err := decodeEmbedding(embData)
+		emb, err := read.decodes.decode(embKey, embData)
 		if err != nil {
 			partCount, sharded := parseEmbeddingShardMarker(embData)
 			if !sharded {

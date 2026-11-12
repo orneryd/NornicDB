@@ -39,7 +39,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 
 	item, err := view.txn.Get(nodeKey("test:a"))
 	require.NoError(t, err)
-	old, err := b.readNodeItemInTxn(view.txn, item, "test:a", nodeItemFullEmbeddings)
+	old, err := b.readNodeItemInTxn(view.txn, item, "test:a", nodeItemFullEmbeddings, false, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), old.Properties["v"])
 	edge, err := b.readIndexedEdgeInTxn(view.txn, "test:r", edgeGen)
@@ -68,7 +68,7 @@ func TestSnapshotOverlayBodyCacheHydratesSidecarsAtReadPoint(t *testing.T) {
 	require.Equal(t, "new", current.EmbedMeta["status"])
 	item, err := view.txn.Get(nodeKey("test:a"))
 	require.NoError(t, err)
-	old, err := b.readNodeItemInTxn(view.txn, item, "test:a", nodeItemFullEmbeddings)
+	old, err := b.readNodeItemInTxn(view.txn, item, "test:a", nodeItemFullEmbeddings, false, nil)
 	require.NoError(t, err)
 	require.Empty(t, old.ChunkEmbeddings)
 	require.Empty(t, old.EmbedMeta)

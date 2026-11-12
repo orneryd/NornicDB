@@ -1281,7 +1281,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(ctx context.Context, tx
 			} else {
 				if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
 					var readErr error
-					body, readErr = b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
+					body, readErr = b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, false, nil)
 					if readErr != nil {
 						return readErr
 					}
