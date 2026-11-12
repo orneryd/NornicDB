@@ -1627,8 +1627,8 @@
     },
     {
       "path": "user-guides/hybrid-search.md",
-      "sha256": "4373b682ea40a4e35b296092cedafc267324ade15f417899b3eaf8272340fb26",
-      "bytes": 16142
+      "sha256": "4d2c59c49c8c33b7db45e28f87e08558b09a3c4cc4bb6e8f3d2fa8e8b88c7458",
+      "bytes": 17385
     },
     {
       "path": "user-guides/infinigraph-topology.md",

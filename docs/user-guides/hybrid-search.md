@@ -197,6 +197,26 @@ The search automatically falls back when needed:
 2. **Vector Only** (if BM25 returns no results)
 3. **Full-Text Only** (if no embedding or vector search fails)
 
+## Index persistence and startup
+
+Loading a search index is different from generating embeddings. Node embeddings
+are stored with the database and survive a restart.
+
+With `NORNICDB_PERSIST_SEARCH_INDEXES=true`, startup loads reusable saved BM25,
+vector and HNSW indexes from disk instead of rebuilding the search population.
+The saved artifacts must match the database source and index settings. If they
+are missing, stale or incompatible, startup rebuilds the derived indexes from
+database data, including the stored node vectors. Rebuilding an index does not
+require generating those embeddings again.
+
+Disabling search-index persistence also leaves stored node embeddings intact;
+it changes whether the derived indexes can be restored on startup. New nodes or
+changes that invalidate their embedded content are separate embedding work.
+
+Relationship search stores its vectors separately; see
+[Relationship search](#relationship-search) below. For checkpoint validation and
+recovery details, see [Vector checkpoints](../architecture/vector-checkpoints.md).
+
 ## Caching
 
 Search results are cached so that **repeated identical requests** (same query and options) return immediately from memory. The cache is shared by all entry points (HTTP `/nornicdb/search`, Cypher vector procedures, MCP, etc.).
@@ -290,12 +310,15 @@ NORNICDB_SEARCH_RELATIONSHIPS_ENABLED=true   # or search.relationships_enabled: 
   Setting both relationship lists to an opt-in property (for example
   `search_text`) indexes just the relationships that carry it, whatever the
   nodes' lists are.
-- **Persistence**: the keyword index is built from storage when the database
-  opens. With `NORNICDB_PERSIST_SEARCH_INDEXES`, the vectors are kept beside
-  the BM25 index (`bm25.v2.relationships`), so a restart embeds only
-  relationships that changed; without it, every relationship is embedded
-  again at startup. Existing gob snapshots are converted during the authorized
-  v1.4.4 upgrade; see [Recovery format compatibility](../operations/recovery-format-compatibility.md#persisted-relationship-search-vectors).
+- **Persistence**: relationship search loads saved vectors from
+  `bm25.v2.relationships` when search-index persistence is enabled. It reuses
+  vectors whose embedding source still matches and rebuilds the relationship
+  keyword index from stored relationships. Missing or changed vectors are
+  queued for embedding. Unlike node vectors, relationship vectors currently
+  live in this optional search snapshot rather than the stored relationship
+  body. With persistence disabled, they are not restored after a restart and
+  eligible relationships are queued for embedding again. This is specific to
+  relationship search, not the node-index startup behavior described above.
 
 Search with `relationships: true` over HTTP, or with
 `db.retrieveRelationships` in Cypher. Results are ranked by keyword and vector
