@@ -34,17 +34,21 @@ def violations(name, workflow):
     if name == "release-verification.yml":
         expected = {"pull_request_target": {"branches": ["main"], "types": ["opened", "reopened", "synchronize"]}}
         jobs = workflow.get("jobs", {})
-        expected_jobs = {"prepare", "build", "tests", "lint", "checks", "verify"}
-        guard = "${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}"
-        guarded = jobs.get("prepare", {}).get("if") == guard
+        expected["workflow_dispatch"] = {"inputs": {key: {"description": description, "required": True, "type": "string"} for key, description in (("head", "Full commit SHA to verify"), ("base", "Full ancestor commit SHA used as the verification baseline"))}}
+        expected_jobs = {"authorize", "prepare", "build", "tests", "lint", "checks", "verify"}
+        guard = "${{ always() && ((github.event_name == 'workflow_dispatch' && needs.authorize.result == 'success') || (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/'))) }}"
+        authorize = jobs.get("authorize", {})
+        guarded = (jobs.get("prepare", {}).get("if") == guard and jobs.get("prepare", {}).get("needs") == "authorize"
+                   and authorize.get("if") == "${{ github.event_name == 'workflow_dispatch' }}"
+                   and authorize.get("environment") == GATE)
         dependents = (all(jobs.get(name, {}).get("needs") == "prepare" for name in ("build", "tests", "lint"))
                       and set(jobs.get("checks", {}).get("needs", [])) == {"prepare", "build", "lint"}
                       and jobs.get("checks", {}).get("if") == "${{ !cancelled() && needs.prepare.result == 'success' }}")
         final = jobs.get("verify", {})
-        final_guard = final.get("if", "") == "${{ always() && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}"
-        final_needs = set(final.get("needs", [])) == expected_jobs - {"verify"}
+        final_guard = final.get("if", "") == "${{ always() && (github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/'))) }}"
+        final_needs = set(final.get("needs", [])) == expected_jobs - {"verify", "authorize"}
         if (triggers != expected or set(jobs) != expected_jobs or not guarded or not dependents
-                or not final_guard or not final_needs or any("environment" in job for job in jobs.values())
+                or not final_guard or not final_needs or any("environment" in job for name, job in jobs.items() if name != "authorize")
                 or workflow.get("permissions") != {"contents": "read"}):
             errors.append(f"{name}: invalid release-to-main verification policy")
         return errors
