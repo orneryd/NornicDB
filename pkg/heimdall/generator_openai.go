@@ -24,6 +24,8 @@ const defaultVLLMBaseURL = "http://localhost:8000"
 const defaultLiteLLMBaseURL = "http://localhost:4000"
 const defaultOrcaBaseURL = "https://api.orcarouter.ai"
 const defaultOrcaModel = "orcarouter/auto"
+const defaultUberLLMBaseURL = "https://api.uberllm.dev"
+const defaultUberLLMModel = "openai/gpt-4o-mini"
 const defaultOpenAIModel = "gpt-4o-mini"
 const openAIChatPath = "/v1/chat/completions"
 
@@ -90,7 +92,7 @@ type openAIChatChunk struct {
 }
 
 func init() {
-	for _, provider := range []string{"openai", "vllm", "litellm", "orca"} {
+	for _, provider := range []string{"openai", "vllm", "litellm", "orca", "uberllm"} {
 		RegisterHeimdallProvider(provider, newOpenAIGenerator)
 	}
 }
@@ -102,15 +104,19 @@ func newOpenAIGenerator(cfg Config) (Generator, error) {
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
 	baseURL, apiKey, model := cfg.APIURL, cfg.APIKey, strings.TrimSpace(cfg.Model)
 	modelPrefix := "openai"
-	if provider == "orca" {
-		// Orca historically validates credentials before processing its URL and
-		// only strips a terminal /v1; it does not normalize the configured URL.
+	if provider == "orca" || provider == "uberllm" {
+		// Hosted gateways validate credentials before processing their URL and
+		// only strip a terminal /v1; they do not normalize the configured URL.
+		defaultURL, defaultModel := defaultOrcaBaseURL, defaultOrcaModel
+		if provider == "uberllm" {
+			defaultURL, defaultModel = defaultUberLLMBaseURL, defaultUberLLMModel
+		}
 		if strings.TrimSpace(apiKey) == "" {
-			return nil, fmt.Errorf("orca provider requires NORNICDB_HEIMDALL_API_KEY")
+			return nil, fmt.Errorf("%s provider requires NORNICDB_HEIMDALL_API_KEY", provider)
 		}
 		baseURL = strings.TrimSpace(baseURL)
 		if baseURL == "" {
-			baseURL = defaultOrcaBaseURL
+			baseURL = defaultURL
 		}
 		if parsed, err := url.Parse(baseURL); err == nil {
 			parsed.Path = strings.TrimSuffix(strings.TrimSuffix(parsed.Path, "/"), "/v1")
@@ -118,9 +124,9 @@ func newOpenAIGenerator(cfg Config) (Generator, error) {
 			baseURL = parsed.String()
 		}
 		if looksLikeLocalModel(model) {
-			model = defaultOrcaModel
+			model = defaultModel
 		}
-		modelPrefix = "orca"
+		modelPrefix = provider
 	} else {
 		defaultURL := defaultOpenAIBaseURL
 		switch provider {

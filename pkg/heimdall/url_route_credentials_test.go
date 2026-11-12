@@ -21,6 +21,7 @@ func TestR73ReviewHeimdallAPIURLQueryCredentialsReachProviders(t *testing.T) {
 		{provider: "ollama", basePath: "/proxy", expectedPath: "/proxy/api/chat"},
 		{provider: "openai", basePath: "/proxy", expectedPath: "/proxy/v1/chat/completions"},
 		{provider: "orca", basePath: "/proxy/v1", expectedPath: "/proxy/v1/chat/completions"},
+		{provider: "uberllm", basePath: "/proxy/v1", expectedPath: "/proxy/v1/chat/completions"},
 		{provider: "vllm", basePath: "/proxy", expectedPath: "/proxy/v1/chat/completions"},
 		{provider: "litellm", basePath: "/proxy", expectedPath: "/proxy/v1/chat/completions"},
 	}
