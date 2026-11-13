@@ -912,6 +912,12 @@ type Service struct {
 	buildMu        sync.RWMutex
 	ready          atomic.Bool
 	buildAttempted atomic.Bool
+	// buildFailure is the outcome of the service's last completed build: the
+	// error that left it not ready, or nil when the build succeeded. BuildIndexes
+	// is its only writer (recordBuildOutcome, under buildMu), and it is the state
+	// of an index this service holds no population record for
+	// (vectorIndexBuildState).
+	buildFailure atomic.Pointer[error]
 	// fulltextRebuilt records that the current build replaced the saved
 	// fulltext checkpoint from source. The checkpoint must then be written even
 	// when the rebuilt index holds no rows and is therefore not dirty: a
@@ -4167,6 +4173,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			resultErr = ctx.Err()
 		}
 		resultErr, notifications = s.endBuildWrites(ctx, resultErr)
+		s.recordBuildOutcome(resultErr)
 	}()
 	s.startBuildWrites()
 	if err := s.beginPopulationPersistence(); err != nil {

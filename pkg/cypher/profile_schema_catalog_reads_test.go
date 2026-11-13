@@ -336,6 +336,7 @@ func TestProfileVectorIndexStateObservesTheServiceItResolved(t *testing.T) {
 	exec, _ := newProfileRuntimeTestExecutor(t)
 	service := search.NewService(exec.storage, 3, nil)
 	t.Cleanup(func() { _ = service.Close() })
+	require.NoError(t, service.BuildIndexes(t.Context()))
 	resolutions := 0
 	exec.SetSearchServiceResolver("profile-state", func(string) *search.Service {
 		resolutions++

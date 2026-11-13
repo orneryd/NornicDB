@@ -45,12 +45,15 @@ type VectorIndexTarget struct {
 // every stored node with the index's label (relationship of its type) whose
 // property holds a vector the index can read is served with that vector.
 //
-// The service holds a record only while an index is POPULATING or FAILED; a
-// name without one is ONLINE. A population that succeeds removes its record,
-// the committed drop of its index removes it (Retire), and a new population
-// of the name replaces it. An index the service found published when it
-// started is populated by the service's own build, and Cypher answers it from
-// storage until that build is ready.
+// The service holds a record only while an index is POPULATING or FAILED. A
+// population that succeeds removes its record, the committed drop of its
+// index removes it (Retire), and a new population of the name replaces it.
+// A name without one is the service's own build state (vectorIndexBuildState):
+// an index the service found published when it started (a restart, a restore, a
+// replacement) is served by that build, so it is ONLINE once the build is
+// ready, POPULATING while the build has not completed, and FAILED, with that
+// build's error, when the build failed. Cypher answers such an index from
+// storage until the build is ready.
 type VectorIndexPopulation struct {
 	svc      *Service
 	name     string
@@ -187,17 +190,67 @@ func (p *VectorIndexPopulation) end(event populationEvent) {
 }
 
 // VectorIndexState reports the population state of the index named name, and
-// the cause of a FAILED population.
+// the cause of a FAILED population. An index this service holds no population
+// record for takes the state of the service's own build
+// (vectorIndexBuildState): a service that did not create the index serves it
+// through that build, so its outcome is the index's population state.
 func (s *Service) VectorIndexState(name string) (string, error) {
 	if s == nil {
 		return VectorIndexOnline, nil
 	}
 	s.vectorIndexPopulations.mu.Lock()
-	defer s.vectorIndexPopulations.mu.Unlock()
-	if p := s.vectorIndexPopulations.records[name]; p != nil {
-		return p.state, p.failure
+	p := s.vectorIndexPopulations.records[name]
+	state, failure := VectorIndexOnline, error(nil)
+	if p != nil {
+		state, failure = p.state, p.failure
 	}
-	return VectorIndexOnline, nil
+	s.vectorIndexPopulations.mu.Unlock()
+	if p != nil {
+		return state, failure
+	}
+	return s.vectorIndexBuildState()
+}
+
+// vectorIndexBuildState is the state of an index this service holds no
+// population record for, read from the build that serves it. The build
+// publishes every published index the service did not populate itself (a
+// restart, a restore, a replacement), so its outcome is that index's
+// population state: ONLINE once its indexes are ready, POPULATING while the
+// build has not completed, and FAILED, with the error that ended the last
+// attempt, when that attempt failed. A later attempt is POPULATING again while
+// it runs; a successful one is ONLINE.
+func (s *Service) vectorIndexBuildState() (string, error) {
+	if s.IsReady() {
+		return VectorIndexOnline, nil
+	}
+	if s.BuildInProgress() {
+		return VectorIndexPopulating, nil
+	}
+	if failure := s.buildFailureError(); failure != nil {
+		return VectorIndexFailed, failure
+	}
+	return VectorIndexPopulating, nil
+}
+
+// buildFailureError is the error of the service's last completed build: nil
+// when it succeeded, or when no build has completed.
+func (s *Service) buildFailureError() error {
+	if failure := s.buildFailure.Load(); failure != nil {
+		return *failure
+	}
+	return nil
+}
+
+// recordBuildOutcome records the outcome of the build BuildIndexes just
+// completed: the error that left the service not ready, or nil for a
+// successful build. BuildIndexes is its only writer, and it holds buildMu, so
+// the last completed attempt is the one reported.
+func (s *Service) recordBuildOutcome(err error) {
+	if err == nil {
+		s.buildFailure.Store(nil)
+		return
+	}
+	s.buildFailure.Store(&err)
 }
 
 // AwaitVectorIndexOnline waits, at most timeout, for the index named name to
@@ -205,6 +258,9 @@ func (s *Service) VectorIndexState(name string) (string, error) {
 // A FAILED index is an ErrVectorIndexFailed error carrying its cause; an
 // index still populating when the wait ends is ErrVectorIndexNotOnline. An
 // index already ONLINE costs a lookup: the wait starts only for a population.
+// An index this service holds no population record for waits on nothing: a
+// failed build refuses it (vectorIndexBuildState) and an unfinished one leaves
+// the read to storage.
 func (s *Service) AwaitVectorIndexOnline(ctx context.Context, name string, timeout time.Duration) error {
 	if s == nil {
 		return nil
@@ -223,6 +279,18 @@ func (s *Service) AwaitVectorIndexOnline(ctx context.Context, name string, timeo
 			state, failure = p.state, p.failure
 		}
 		s.vectorIndexPopulations.mu.Unlock()
+		if p == nil {
+			// The service's own build is the population of an index whose
+			// population this service did not record. A failed build is FAILED,
+			// as a failed population is. A build that has not finished is not
+			// waited for here: it has no completion this query joined, and a
+			// schema-bound read answers from storage until the service is ready
+			// (vectorIndexServiceAnswers).
+			if buildState, buildFailure := s.vectorIndexBuildState(); buildState == VectorIndexFailed {
+				return fmt.Errorf("%w: %w", ErrVectorIndexFailed, buildFailure)
+			}
+			return nil
+		}
 		switch state {
 		case VectorIndexOnline:
 			return nil

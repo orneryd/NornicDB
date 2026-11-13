@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Statement cancellation now interrupts materialized ranges, reduce folds and
   recursive expression admission instead of finishing their remaining work.
 
+- Embedding resets publish committed per-node search refreshes instead of
+  clearing the entire index, preserving refused and unrelated vectors.
+  Replacement search services report a failed build as a failed vector index.
+
 - Temporal epochs support a null start (unbounded past) or null end (unbounded
   future), with at least one bound required. Malformed bounds and non-positive
   finite spans are rejected. Node and relationship constraints, blocks, indexed

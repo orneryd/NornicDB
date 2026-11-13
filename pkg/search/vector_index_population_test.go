@@ -39,7 +39,7 @@ func TestVectorIndexPopulationLifecycle(t *testing.T) {
 		state, _ := svc.VectorIndexState(name)
 		return state
 	}
-	require.Equal(t, VectorIndexOnline, state("docs"), "a name without a population is ONLINE")
+	require.Equal(t, VectorIndexOnline, state("docs"), "a built service serves a name without a population record")
 	require.NoError(t, svc.AwaitVectorIndexOnline(ctx, "docs", time.Millisecond))
 
 	population := svc.BeginVectorIndexPopulation("docs", populationDocs)
@@ -113,6 +113,48 @@ func TestVectorIndexPopulationRecordsEndWithTheirIndex(t *testing.T) {
 	svc.vectorIndexPopulations.mu.Lock()
 	defer svc.vectorIndexPopulations.mu.Unlock()
 	require.Empty(t, svc.vectorIndexPopulations.records)
+}
+
+// An index this service holds no population record for takes the state of the
+// service's own build: an unfinished build is POPULATING (and waits for
+// nothing), a failed one is FAILED with the build's cause, and a replacement
+// service whose build succeeds serves the same index ONLINE.
+func TestVectorIndexStateFollowsTheServiceBuildWithoutAPopulationRecord(t *testing.T) {
+	ctx := context.Background()
+	engine := newNamespacedMemoryEngine(t)
+	_, err := engine.CreateNode(ctx, populationNode("a", []float64{1, 0, 0}, "short"))
+	require.NoError(t, err)
+	_, err = engine.CreateNode(ctx, populationNode("b", []float64{0, 1, 0}, "short"))
+	require.NoError(t, err)
+	// One 3-dimensional vector fits the vector budget; a second does not.
+	svc := NewService(engine, 3, &ServiceOptions{VectorMemoryMaxBytes: 40})
+	t.Cleanup(func() { _ = svc.Close() })
+
+	// No build has completed: the service cannot serve the index, so it is not
+	// ONLINE, and a query waits for nothing and reads storage.
+	state, failure := svc.VectorIndexState("docs")
+	require.Equal(t, VectorIndexPopulating, state)
+	require.NoError(t, failure)
+	require.NoError(t, svc.AwaitVectorIndexOnline(ctx, "docs", time.Millisecond))
+
+	// The build fails: the index is FAILED with that build's cause, and a query
+	// is refused as a failed population's is.
+	require.ErrorIs(t, svc.BuildIndexes(ctx), ErrIndexMemoryBudgetExceeded)
+	state, failure = svc.VectorIndexState("docs")
+	require.Equal(t, VectorIndexFailed, state)
+	require.ErrorIs(t, failure, ErrIndexMemoryBudgetExceeded)
+	err = svc.AwaitVectorIndexOnline(ctx, "docs", time.Second)
+	require.ErrorIs(t, err, ErrVectorIndexFailed)
+	require.ErrorIs(t, err, ErrIndexMemoryBudgetExceeded)
+
+	// A replacement service whose build succeeds serves the same index ONLINE.
+	replaced := NewService(engine, 3, nil)
+	t.Cleanup(func() { _ = replaced.Close() })
+	require.NoError(t, replaced.BuildIndexes(ctx))
+	state, failure = replaced.VectorIndexState("docs")
+	require.Equal(t, VectorIndexOnline, state)
+	require.NoError(t, failure)
+	require.NoError(t, replaced.AwaitVectorIndexOnline(ctx, "docs", time.Millisecond))
 }
 
 // A query of an ONLINE index waits for nothing: no timer, no allocation.
