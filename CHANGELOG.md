@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prepared journal acceptance, preventing acknowledged writes that cannot flush
   or recover. Stored key encodings and storage versions are unchanged.
 
+- Bound-endpoint relationship MERGE waits for endpoint writers before deciding
+  whether to create, preventing a stale ON CREATE branch after a lock wait.
+
 - Temporal epochs support a null start (unbounded past) or null end (unbounded
   future), with at least one bound required. Malformed bounds and non-positive
   finite spans are rejected. Node and relationship constraints, blocks, indexed
