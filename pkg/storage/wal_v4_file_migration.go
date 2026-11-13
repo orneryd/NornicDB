@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +21,14 @@ func historicalHeaderlessChecksum(data []byte) uint32 {
 		sum ^= sum << 16
 	}
 	return sum
+}
+
+// walFrameCutShort reports whether the journal ended inside a frame's declared
+// extent. readOversizedFrame wraps the short read it got from the file, so only
+// the end of the file returns these; damage inside a frame that is complete in
+// its declared length reports its own corruption error and is not a torn tail.
+func walFrameCutShort(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // scanV4MigrationWAL accepts historical framing only at the one-time storage
@@ -112,6 +121,16 @@ func scanV4MigrationWAL(path string, allowTornTail, carryOversized bool, visit f
 		if size > walMaxEntrySize {
 			entry, length, err := readOversizedFrame(reader, size, version, carryOversized)
 			if err != nil {
+				// A journal that ends inside this frame's declared extent is the
+				// torn tail any other frame may leave here: the active journal
+				// tolerates it whatever the final frame's size, and the records
+				// before it stand. readOversizedFrame wraps the short read it got
+				// from the file, so the end of the file is what admits the frame;
+				// a frame whose lengths, envelope, checksums or trailer disagree
+				// reports its own corruption error and is still refused.
+				if allowTornTail && walFrameCutShort(err) {
+					return nil
+				}
 				return fmt.Errorf("wal: historical frame at %d: %w", offset, err)
 			}
 			entry.framingVersion = version
@@ -124,14 +143,14 @@ func scanV4MigrationWAL(path string, allowTornTail, carryOversized bool, visit f
 		}
 		payload := make([]byte, int(size))
 		if _, err := io.ReadFull(reader, payload); err != nil {
-			if allowTornTail && (err == io.EOF || err == io.ErrUnexpectedEOF) {
+			if allowTornTail && walFrameCutShort(err) {
 				return nil
 			}
 			return fmt.Errorf("wal: incomplete historical payload at %d: %w", offset, err)
 		}
 		var crc [4]byte
 		if _, err := io.ReadFull(reader, crc[:]); err != nil {
-			if allowTornTail && (err == io.EOF || err == io.ErrUnexpectedEOF) {
+			if allowTornTail && walFrameCutShort(err) {
 				return nil
 			}
 			return fmt.Errorf("wal: incomplete historical checksum at %d: %w", offset, err)
@@ -143,7 +162,7 @@ func scanV4MigrationWAL(path string, allowTornTail, carryOversized bool, visit f
 		if version >= 2 {
 			var trailer [8]byte
 			if _, err := io.ReadFull(reader, trailer[:]); err != nil {
-				if allowTornTail && (err == io.EOF || err == io.ErrUnexpectedEOF) {
+				if allowTornTail && walFrameCutShort(err) {
 					return nil
 				}
 				return fmt.Errorf("wal: incomplete historical trailer at %d: %w", offset, err)
@@ -155,7 +174,7 @@ func scanV4MigrationWAL(path string, allowTornTail, carryOversized bool, visit f
 			length = alignUp(rawLength)
 			var padding [7]byte
 			if _, err := io.ReadFull(reader, padding[:int(length-rawLength)]); err != nil {
-				if allowTornTail && (err == io.EOF || err == io.ErrUnexpectedEOF) {
+				if allowTornTail && walFrameCutShort(err) {
 					return nil
 				}
 				return fmt.Errorf("wal: incomplete historical padding at %d: %w", offset, err)
