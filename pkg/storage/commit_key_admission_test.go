@@ -136,21 +136,6 @@ func keyAdmissionJournalOperations(t *testing.T, dir string) map[OperationType]i
 	return counts
 }
 
-// requireKeyRefusal checks a refusal by the store's key limit: the error is
-// ErrStoreKeyTooLong, its message names the store's limit and, when names is
-// set, the key, and the journal holds no entity commit record of the commit's
-// logical ID.
-func requireKeyRefusal(t *testing.T, err error, dir, logicalID, names string) {
-	t.Helper()
-	require.ErrorIs(t, err, ErrStoreKeyTooLong)
-	require.Contains(t, err.Error(), fmt.Sprint(storeKeyLimit), "the error names the store's limit")
-	if names != "" {
-		require.Contains(t, err.Error(), names, "the error names the key")
-	}
-	t.Logf("refused: %v", err)
-	require.Zero(t, admissionRecords(t, dir, logicalID), "the journal holds no entity commit record of the refused commit")
-}
-
 func TestStoreKeyLimitRefusesTheCommitBeforeTheJournal(t *testing.T) {
 	for _, c := range keyAdmissionCases() {
 		for _, async := range []bool{false, true} {
@@ -164,7 +149,7 @@ func TestStoreKeyLimitRefusesTheCommitBeforeTheJournal(t *testing.T) {
 					want := c.nodes
 					if c.refused {
 						want = 0
-						requireKeyRefusal(t, err, dir, "key-admission", c.names)
+						requireCommitCapacityRefusal(t, err, ErrStoreKeyTooLong, storeKeyLimit, dir, "key-admission", c.names)
 						require.Equal(t, before, keyAdmissionJournalOperations(t, dir), "the journal gained no record of the refused commit")
 					} else {
 						require.NoError(t, err, "the commit is applied")
@@ -242,7 +227,7 @@ func TestStoreKeyLimitRefusesAPositionalCountKeyOverTheLimit(t *testing.T) {
 					if over {
 						// The relationship's own keys fit the store: the
 						// refusal is the positional count key's.
-						requireKeyRefusal(t, err, dir, "positional-edge", "")
+						requireCommitCapacityRefusal(t, err, ErrStoreKeyTooLong, storeKeyLimit, dir, "positional-edge", "")
 						require.Equal(t, before, keyAdmissionJournalOperations(t, dir), "the journal gained no record of the refused commit")
 					} else {
 						require.NoError(t, err, "the commit is applied")
