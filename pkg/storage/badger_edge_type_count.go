@@ -576,8 +576,12 @@ func edgeTypeLabelCountNamespacePrefix(sub byte, namespace string) []byte {
 	return append(key, 0)
 }
 
+func edgeTypeLabelCountKeySize(namespace, label, edgeType string) int {
+	return 4 + len(namespace) + len(label) + len(edgeType)
+}
+
 func edgeTypeLabelCountKey(sub byte, namespace, label, edgeType string) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(4, len(namespace), len(label), len(edgeType)))
+	key := make([]byte, 0, util.SafePreallocCap(edgeTypeLabelCountKeySize(namespace, label, edgeType)))
 	key = append(key, prefixMVCCMeta, sub)
 	key = append(key, namespace...)
 	key = append(key, 0)
