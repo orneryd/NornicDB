@@ -28,7 +28,14 @@ func TestLegacyRecoveryPreservesExactIntegerLexemes(t *testing.T) {
 	require.Equal(t, int64(9007199254740993), snapshot.Nodes[0].Properties["integer"])
 }
 
-func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
+// A snapshot is the store's last copy once automatic compaction truncates the
+// journal, so it carries the vectors and the embedding metadata its reads
+// return (reports 45, 53.5). The frame holds those vectors inline, so a
+// restored entity is settled: it never claims separate storage again, the
+// metadata that describes the vectors is restored with them, metadata
+// unrelated to the vectors is restored as stored, and the stored entity itself
+// is not modified.
+func TestSnapshotRestoresStoredVectorsAndMetadata(t *testing.T) {
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
@@ -39,6 +46,10 @@ func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
 	}
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:large", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "kept"}, ChunkEmbeddings: vectors, EmbedMeta: map[string]interface{}{"has_embedding": true, "has_chunks": true, "chunk_count": int64(16), "unrelated": "kept"}})
 	require.NoError(t, err)
+	source, err := engine.GetNode(t.Context(), "test:large")
+	require.NoError(t, err)
+	require.Equal(t, vectors, source.ChunkEmbeddings, "the store keeps the vectors the test wrote")
+
 	var output bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), engine, &output, SnapshotOptions{}))
 	visitor := &recoveryFieldsVisitor{}
@@ -46,15 +57,19 @@ func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, visitor.nodes, 1)
 	restored := visitor.nodes[0]
-	require.Empty(t, restored.ChunkEmbeddings)
-	require.False(t, restored.RuntimeMetadata().EmbeddingsStoredSeparately)
-	require.NotEqual(t, true, restored.EmbedMeta["has_embedding"])
-	require.NotEqual(t, true, restored.EmbedMeta["has_chunks"])
-	require.NotContains(t, restored.EmbedMeta, "chunk_count")
-	require.Equal(t, "kept", restored.EmbedMeta["unrelated"])
+	require.Equal(t, source.ChunkEmbeddings, restored.ChunkEmbeddings, "a snapshot carries the stored vectors")
+	require.Empty(t, restored.NamedEmbeddings)
+	require.Equal(t, source.EmbedMeta, restored.EmbedMeta, "embedding metadata is restored with the vectors it describes")
+	require.False(t, restored.RuntimeMetadata().EmbeddingsStoredSeparately, "a frame holds its vectors inline, so it never claims separate storage")
+	require.Equal(t, true, restored.EmbedMeta["has_embedding"])
+	require.Equal(t, int64(16), restored.EmbedMeta["chunk_count"])
+	require.Equal(t, "kept", restored.EmbedMeta["unrelated"], "metadata unrelated to the vectors is restored")
+	require.False(t, NodeNeedsEmbedding(restored), "a restored node holds the vectors it was embedded with")
+
 	original, err := engine.GetNode(t.Context(), "test:large")
 	require.NoError(t, err)
 	require.True(t, original.EmbedMeta["has_embedding"].(bool), "snapshot must not mutate stored metadata")
+	require.Equal(t, source.ChunkEmbeddings, original.ChunkEmbeddings, "snapshot must not mutate stored vectors")
 }
 
 func TestLegacyRecoveryIntegerRangeAndMalformedValues(t *testing.T) {
@@ -89,4 +104,38 @@ func TestLegacyRecoveryIntegerRangeAndMalformedValues(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`{"nodes":[]} {"nodes":[]}`), 0600))
 	_, err := LoadSnapshot(t.Context(), path)
 	require.Error(t, err, "extra JSON values must not be silently ignored")
+}
+
+// A flagged body can survive without its sidecar records. Export must not
+// advertise missing chunks, while a real named vector still backs availability.
+func TestSnapshotMetadataDoesNotAdvertiseUnavailableVectors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		vector []float32
+	}{{"nil", nil}, {"empty", []float32{}}, {"present", []float32{1, 2}}} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := &Node{ID: "test:missing", NamedEmbeddings: map[string][]float32{"title": tc.vector}, EmbedMeta: map[string]any{
+				"has_embedding": true, "has_chunks": true, "chunk_count": int64(16), "embedding_dimensions": 2, "embedded_at": "before", "unrelated": "kept",
+			}}
+			metadata := node.RuntimeMetadata()
+			metadata.EmbeddingsStoredSeparately = true
+			node.SetRuntimeMetadata(metadata)
+			exported := snapshotNodeVectorMetadata(node)
+			require.NotSame(t, node, exported)
+			require.Empty(t, exported.ChunkEmbeddings)
+			require.False(t, exported.RuntimeMetadata().EmbeddingsStoredSeparately)
+			require.NotContains(t, exported.EmbedMeta, "has_chunks")
+			require.NotContains(t, exported.EmbedMeta, "chunk_count")
+			require.Equal(t, len(tc.vector) > 0, exported.EmbedMeta["has_embedding"] == true)
+			if len(tc.vector) == 0 {
+				require.NotContains(t, exported.EmbedMeta, "embedding_dimensions")
+				require.NotContains(t, exported.EmbedMeta, "embedded_at")
+			}
+			require.Equal(t, node.NamedEmbeddings, exported.NamedEmbeddings)
+			require.Equal(t, "kept", exported.EmbedMeta["unrelated"])
+			require.True(t, node.RuntimeMetadata().EmbeddingsStoredSeparately)
+			require.Equal(t, true, node.EmbedMeta["has_chunks"], "export does not mutate the source")
+			require.Equal(t, int64(16), node.EmbedMeta["chunk_count"])
+		})
+	}
 }

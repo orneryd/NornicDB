@@ -149,6 +149,12 @@ func copyNode(node *Node) *Node {
 	return nodeCopy
 }
 
+// copyNodeWithoutEmbeddings copies the body image of node. A copy holds the
+// value it copies: an absent label list stays absent, as an absent property or
+// embedding-metadata map does. A cached body is a copy of a decoded body, so
+// inventing an empty label list here would make a cache hit differ from the
+// decode it replaces (snapshot frames, CDC events and caller comparisons read
+// that image).
 func copyNodeWithoutEmbeddings(node *Node) *Node {
 	if node == nil {
 		return nil
@@ -160,11 +166,12 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	nodeCopy := &Node{
 		runtime: node.runtime,
 		ID:      node.ID,
-		Labels:  make([]string, 0, len(node.Labels)),
 	}
 	nodeCopy.CreatedAt = node.CreatedAt
 	nodeCopy.UpdatedAt = node.UpdatedAt
-	nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)
+	if node.Labels != nil {
+		nodeCopy.Labels = append(make([]string, 0, len(node.Labels)), node.Labels...)
+	}
 
 	if node.Properties != nil {
 		nodeCopy.Properties = ownedEntries(nil, node.Properties)

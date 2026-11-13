@@ -1323,10 +1323,12 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 }
 
 // clearEmbeddingsForPrefix is ClearAllEmbeddingsForPrefix. journal, when set,
-// is called with each selected node's ID and the transaction that clears it;
-// the journal wrapper records the removal there
-// (WALEngine.ClearAllEmbeddingsForPrefix). An error from journal stops the
-// reset like a failed read or write of the node.
+// is called with each selected node's ID and, once that node's write authority
+// is held, the function that stages its removal in the same transaction; the
+// journal wrapper records the removal there
+// (WALEngine.ClearAllEmbeddingsForPrefix), so the record and the removal it
+// describes share the node's accepted-write order. An error from journal stops
+// the reset like a failed read or write of the node.
 func (b *BadgerEngine) clearEmbeddingsForPrefix(idPrefix string, journal func(id NodeID, clear func() error) error) (int, error) {
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
@@ -1376,33 +1378,37 @@ func (b *BadgerEngine) clearEmbeddingsForPrefix(idPrefix string, journal func(id
 		return 0, fmt.Errorf("error scanning nodes: %w", err)
 	}
 
-	// Clear through the canonical node mutation owner. Hidden nodes are included:
-	// they must not keep an embedding of the model being replaced. Before is the
-	// stored image this reset read, so a concurrent writer is a conflict instead
-	// of a stale body written back over it, and the same write moves the node's
-	// pending-embedding marker: each cleared node is re-embedded from its own
-	// update rather than from a whole-keyspace index refresh.
+	// Hold each node's existing write authority from its reset record through
+	// removal. Otherwise a client update can commit between those steps and
+	// recovery restores vectors the live store cleared. LockNodeForWrite uses
+	// the latest committed image after a competing write, avoiding stale-body
+	// replacement. Hidden nodes participate, and only one node is held at a
+	// time; ordinary writes retain the same lock order. The canonical update
+	// also publishes the node's pending-embedding marker.
 	cleared := 0
 	ctx := context.Background()
 	for _, id := range nodeIDs {
-		clear := func() error {
-			_, err := b.inMutationTransaction(ctx, string(id), true, func(tx *BadgerTransaction) error {
-				node, err := tx.GetStoredNode(ctx, id)
-				if err != nil {
+		_, err := b.inMutationTransaction(ctx, string(id), true, func(tx *BadgerTransaction) error {
+			node, err := tx.LockNodeForWrite(ctx, id)
+			if err != nil {
+				return err
+			}
+			if node == nil {
+				if node, err = tx.GetStoredNode(ctx, id); err != nil {
 					return err
 				}
-				before := *node
-				node.ChunkEmbeddings = nil
-				return tx.UpdateGraphNode(ctx, NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages})
-			})
-			return err
-		}
-		var err error
-		if journal != nil {
-			err = journal(id, clear)
-		} else {
-			err = clear()
-		}
+			}
+			before := *node
+			clear := func() error {
+				after := *node
+				after.ChunkEmbeddings = nil
+				return tx.UpdateGraphNode(ctx, NodeUpdateRequest{Before: &before, After: &after, Policy: StoredNodeImages})
+			}
+			if journal != nil {
+				return journal(id, clear)
+			}
+			return clear()
+		})
 		if err != nil {
 			return cleared, fmt.Errorf("clear embeddings: node %q after clearing %d of %d nodes: %w", id, cleared, len(nodeIDs), err)
 		}
