@@ -16,5 +16,5 @@
 - [x] Register test-owned storage with existing fixture lifetime owners.
 - [x] Align epoch grammar coverage and test query-body rejection without schema/graph effects.
 - [x] Integrate approved exact lexical, counter and local-endpoint inventory updates with rejection controls.
-- [ ] Refresh the generated full census report from exact-head CI output; no local full census run.
+- [x] Refresh the generated full census report from exact-head CI output; no local full census run.
 - [ ] Push shared correction and obtain exact-head regular make-test CI success.
