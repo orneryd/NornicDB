@@ -28,7 +28,10 @@ import (
 // service that replaced the one which populated it) has no population record in
 // that service: its state is the service's own build, so a failed build leaves
 // it FAILED with that build's cause and a build that succeeded serves it
-// ONLINE. Cypher answers such an index from storage until that build is ready.
+// ONLINE. An index whose population the service served keeps that population's
+// outcome, ONLINE or FAILED, whatever build the service runs later: only a name
+// this service never populated takes the build's state. Cypher answers an index
+// served by a build from storage until that build is ready.
 
 // vectorIndexOnlineQueryTimeout is how long a vector query waits for its
 // index to come ONLINE: Neo4j 5.26's INDEX_ONLINE_QUERY_TIMEOUT_SECONDS.
@@ -252,13 +255,17 @@ func (e *StorageExecutor) awaitVectorIndexDefinition(ctx context.Context, name s
 	}
 }
 
-// vectorIndexOnline reports whether the vector index named name may answer a
-// query now: its population state, which the search service owns, is ONLINE.
-// A MATCH does not read an index that is POPULATING or FAILED; it reads
-// storage, as with no index.
-func (e *StorageExecutor) vectorIndexOnline(ctx context.Context, name string) bool {
-	state, _ := readVectorIndexState(ctx, e.search(), name)
-	return state == search.VectorIndexOnline
+// vectorIndexCanPlanRead admits a committed definition for exact stored reads
+// while this service's global startup is unfinished. That is not an ONLINE
+// claim: source selection still requires readiness before using served entries.
+// A named population that is pending or failed cannot supply that shortcut.
+func (e *StorageExecutor) vectorIndexCanPlanRead(ctx context.Context, name string) bool {
+	svc := e.search()
+	state, _ := readVectorIndexState(ctx, svc, name)
+	if state == search.VectorIndexOnline {
+		return true
+	}
+	return state == search.VectorIndexPopulating && readVectorIndexPopulation(ctx, svc, name) == nil
 }
 
 const profileKindVectorIndexPopulationStateSeek = "VectorIndexPopulationStateSeek"

@@ -7,7 +7,9 @@
 - [x] Report absent per-index state from replacement service build outcome; no persisted layout change.
 - [x] Verify old-refresh ordering against newest vectors and text with eager/lazy rebuilds.
 - [x] Focused search/cypher/nornicdb checks pass under default and ANTLR.
-- [ ] Complete successful per-index population vs not-ready/failed global build state contract; source review identified an additional boundary, not yet resolved.
+- [x] Preserve a successful per-index population across unfinished and failed global builds, while a failed replacement with no local population stays FAILED. Public CREATE/SHOW/query and component controls pass.
+- [x] Separate schema-plan eligibility from service ONLINE state; exact storage reads remain usable before startup, and warm requests finish lazy startup. Original Graphiti scan-budget and ready-source zero-allocation assertions pass unchanged.
+- [x] Parent ran all three previously excluded cases directly without skips. Earlier worker full-package timeout/canceled/excluded runs are incomplete, not qualification.
 - [ ] Reproduce remaining report49 workload variants if qualification does not match the original scheduling.
 - [ ] Exact-head CI, race/census and broader affected-package qualification.
 

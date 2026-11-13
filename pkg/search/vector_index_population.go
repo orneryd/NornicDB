@@ -7,6 +7,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -45,11 +46,14 @@ type VectorIndexTarget struct {
 // every stored node with the index's label (relationship of its type) whose
 // property holds a vector the index can read is served with that vector.
 //
-// The service holds a record only while an index is POPULATING or FAILED. A
-// population that succeeds removes its record, the committed drop of its
-// index removes it (Retire), and a new population of the name replaces it.
-// A name without one is the service's own build state (vectorIndexBuildState):
-// an index the service found published when it started (a restart, a restore, a
+// The service holds the record of every index whose population it served: it
+// is POPULATING from Begin, ONLINE once Populate served what storage holds, and
+// FAILED, with the cause, when it could not. The committed drop of the index
+// removes it (Retire) and a new population of the name replaces it, so an
+// index keeps the outcome of its own population whatever the service's build
+// does later. A name without one is an index this service did not populate,
+// whose state is the service's own build state (vectorIndexBuildState): an
+// index the service found published when it started (a restart, a restore, a
 // replacement) is served by that build, so it is ONLINE once the build is
 // ready, POPULATING while the build has not completed, and FAILED, with that
 // build's error, when the build failed. Cypher answers such an index from
@@ -60,8 +64,12 @@ type VectorIndexPopulation struct {
 	target   VectorIndexTarget
 	previous *VectorIndexPopulation
 	done     chan struct{}
-	state    string
-	failure  error
+	// served records whether this population made the service serve the
+	// index (Populate); a population that served it keeps its record, so a
+	// build the service runs later does not decide the index's state.
+	served  atomic.Bool
+	state   string
+	failure error
 }
 
 type vectorIndexPopulations struct {
@@ -129,7 +137,9 @@ func (p *VectorIndexPopulation) transition(event populationEvent, err error) {
 		p.state, p.failure = VectorIndexOnline, nil
 		if err != nil {
 			p.state, p.failure = VectorIndexFailed, err
-		} else if current == p {
+		} else if current == p && !p.served.Load() {
+			// A population that did not serve the index leaves no record:
+			// its state stays the service's build (vectorIndexBuildState).
 			delete(populations.records, p.name)
 		}
 		close(p.done)
@@ -140,7 +150,8 @@ func (p *VectorIndexPopulation) transition(event populationEvent, err error) {
 // records the outcome: ONLINE, or FAILED with what it could not serve as the
 // cause. served is whether the index's queries read the service, decided by
 // the queries' own source decision; an index they read from storage has
-// nothing in the service to populate.
+// nothing in the service to populate, so its record ends with it and its
+// state stays the service's build.
 func (p *VectorIndexPopulation) Populate(ctx context.Context, served bool) error {
 	if p == nil {
 		return nil
@@ -149,6 +160,7 @@ func (p *VectorIndexPopulation) Populate(ctx context.Context, served bool) error
 	if served {
 		err = p.svc.populateVectorIndex(ctx, p.target)
 	}
+	p.served.Store(served)
 	p.transition(populationFinished, err)
 	return err
 }
@@ -160,7 +172,8 @@ func (p *VectorIndexPopulation) Abort() {
 }
 
 // VectorIndexPopulationOf is the population record of the index named name:
-// nil while it is ONLINE.
+// nil for an index whose population this service did not serve, whose state is
+// the service's build (vectorIndexBuildState).
 func (s *Service) VectorIndexPopulationOf(name string) *VectorIndexPopulation {
 	if s == nil {
 		return nil
@@ -190,10 +203,11 @@ func (p *VectorIndexPopulation) end(event populationEvent) {
 }
 
 // VectorIndexState reports the population state of the index named name, and
-// the cause of a FAILED population. An index this service holds no population
-// record for takes the state of the service's own build
-// (vectorIndexBuildState): a service that did not create the index serves it
-// through that build, so its outcome is the index's population state.
+// the cause of a FAILED population. The record of a population this service
+// served is the index's state, whatever build the service runs later. An index
+// this service holds no population record for takes the state of the service's
+// own build (vectorIndexBuildState): a service that did not populate the index
+// serves it through that build, so its outcome is the index's state.
 func (s *Service) VectorIndexState(name string) (string, error) {
 	if s == nil {
 		return VectorIndexOnline, nil
@@ -214,8 +228,8 @@ func (s *Service) VectorIndexState(name string) (string, error) {
 // vectorIndexBuildState is the state of an index this service holds no
 // population record for, read from the build that serves it. The build
 // publishes every published index the service did not populate itself (a
-// restart, a restore, a replacement), so its outcome is that index's
-// population state: ONLINE once its indexes are ready, POPULATING while the
+// restart, a restore, a replacement), so its outcome is that index's state:
+// ONLINE once its indexes are ready, POPULATING while the
 // build has not completed, and FAILED, with the error that ended the last
 // attempt, when that attempt failed. A later attempt is POPULATING again while
 // it runs; a successful one is ONLINE.
