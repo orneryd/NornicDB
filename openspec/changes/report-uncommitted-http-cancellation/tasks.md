@@ -1,0 +1,6 @@
+- [x] Reproduce public empty-200 cancellation on release ce22592d2.
+- [x] Correct the canonical transaction response owner in both race branches.
+- [x] Verify pre-admission cancellation, absent mutation and admitted outcome.
+- [x] Run focused public, component and existing Fabric owner/admission checks.
+- [ ] Publish the isolated fix PR against release/v1.5.0; link from #1803.
+- [ ] Obtain full CI and advisory duplicate-review results.

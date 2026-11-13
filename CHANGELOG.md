@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reopen. Records the batch writer commits now count toward the active
   segment, so a segment's name covers them. The journal format is unchanged.
 
+- An HTTP transaction canceled before commit admission returns a structured
+  failure instead of empty success. Cancellation after commit admission still
+  waits for the accepted outcome.
+
 - Relationship uniqueness indexes preserve distinct escaped UTF-16 property names, preventing a duplicate value from bypassing its constraint in a native transaction. Existing stored data and storage formats are unchanged.
 
 - A store rebuilt at start from its latest snapshot and the journal

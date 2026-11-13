@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -336,6 +337,8 @@ func (s *Server) serveRequestTimeout(next http.Handler, w http.ResponseWriter, r
 // serveTransactionRequest returns the timeout response while an unadmitted
 // transaction handler remains retained. After COMMIT admission, it waits for
 // the storage outcome instead of replacing that result with a timeout.
+// A context that ends before COMMIT admission never publishes the interrupted
+// handler response; the caller receives the cancellation error instead.
 func (s *Server) serveTransactionRequest(next http.Handler, w http.ResponseWriter, r *http.Request) {
 	// The phase owner controls when the caller may stop waiting. The shared
 	// handler owner retains this real worker before it can be dispatched.
@@ -365,9 +368,9 @@ func (s *Server) serveTransactionRequest(next http.Handler, w http.ResponseWrite
 	case recovered := <-panicCh:
 		panic(recovered)
 	case <-done:
-		if r.Context().Err() == context.DeadlineExceeded && !txphase.CommitAdmitted(r.Context()) {
+		if err := r.Context().Err(); err != nil && !txphase.CommitAdmitted(r.Context()) {
 			response.markTimedOut()
-			s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request timeout: transaction busy")
+			s.writeUncommittedTransactionResponse(w, err)
 			return
 		}
 		writeResponse()
@@ -382,9 +385,23 @@ func (s *Server) serveTransactionRequest(next http.Handler, w http.ResponseWrite
 			return
 		}
 		response.markTimedOut()
-		if r.Context().Err() == context.DeadlineExceeded {
-			s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request timeout: transaction busy")
-		}
+		s.writeUncommittedTransactionResponse(w, r.Context().Err())
+	}
+}
+
+// writeUncommittedTransactionResponse owns the response for a transaction
+// request whose context ended before terminal COMMIT admission. The interrupted
+// handler response is discarded, so a transaction that never committed is
+// never published as a success. The message names the owner that ended the
+// request: its deadline, the server's shutdown, or another cancellation.
+func (s *Server) writeUncommittedTransactionResponse(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request timeout: transaction busy")
+	case s.shutdown.work.Closing():
+		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request canceled before commit: server shutting down")
+	default:
+		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request canceled before commit")
 	}
 }
 
