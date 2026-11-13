@@ -650,10 +650,11 @@ func ensureBuiltInProceduresRegistered() {
 				return e.callDbTemporalAssertNoOverlap(ctx, args)
 			}, cypherfn.CanonicalReads)
 		registerProcedure(ProcedureSpec{
-			Name:        "db.temporal.asOf",
-			Signature:   procedureReturnSignature("db.temporal.asOf(at :: DATETIME, query :: STRING, parameters = {} :: MAP)", historicalQueryColumns),
-			Description: "Reads retained historical states of currently existing entities. The six-to-eight argument interval lookup is deprecated since v1.5.0.",
-			Mode:        ProcedureModeRead, MinArgs: 2, MaxArgs: 8, ExecutesReadOnlyStatements: true,
+			Name:               "db.temporal.asOf",
+			Signature:          procedureReturnSignature("db.temporal.asOf(at :: DATETIME, query :: STRING, parameters = {} :: MAP)", historicalQueryColumns),
+			Description:        localization.CypherProcedureMetadata("db.temporal.asOf").Fallback,
+			DescriptionMessage: localization.CypherProcedureMetadata("db.temporal.asOf"),
+			Mode:               ProcedureModeRead, MinArgs: 2, MaxArgs: 8, ExecutesReadOnlyStatements: true,
 			Returns:       append(append([]ProcedureColumn{}, historicalQueryColumns...), ProcedureColumn{Name: "node", Type: "NODE", IsDeprecated: true, Description: "Deprecated interval-signature output only."}),
 			ResultSchemas: func() [][]string { return [][]string{columnNames(historicalQueryColumns), columnNames(nodeColumns)} },
 		}, func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

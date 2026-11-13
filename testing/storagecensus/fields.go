@@ -227,6 +227,13 @@ var fieldClasses = map[string]fieldRow{
 	// database manager (NOR-284); not entity state.
 	"pkg/storage.CompositeEngine.transactionTimeout": {class: "configuration"},
 
+	// The pinned historical read counts the reads in flight on it so that a
+	// Close while they run retires the snapshot once, after the last read
+	// ends: reader bookkeeping, not a stored entity count, quota, suppression
+	// or publication-order value. Classify only this field so another field on
+	// the type still needs its own row.
+	"pkg/storage.historicalReadEngine.active": {class: "snapshot readers"},
+
 	// Not entity state.
 	"pkg/storage.BadgerEngine.activeMVCCSnapshotReaders": {class: "snapshot readers"},
 	"pkg/storage.BadgerEngine.adjCacheMaxNodes":          {class: "configuration"},

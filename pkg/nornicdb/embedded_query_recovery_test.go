@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -58,9 +59,8 @@ func TestEmbeddedCypherMutationsSurviveJournalRebuild(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, db.Close())
-			rebuilt, err := storage.NewBadgerEngine(t.TempDir())
+			rebuilt, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = rebuilt.Close() })
 			result, _, err := storage.RecoverIntoEngine(t.Context(), rebuilt, filepath.Join(root, "wal"), "")
 			require.NoError(t, err)
 			require.Zero(t, result.Failed)
