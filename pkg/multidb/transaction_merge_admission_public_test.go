@@ -10,6 +10,7 @@ import (
 	"time"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -42,9 +43,8 @@ func newMergeAdmissionFixture(t *testing.T) *mergeAdmissionFixture {
 	t.Helper()
 	ctx := context.Background()
 
-	badger, err := storage.NewBadgerEngine(t.TempDir())
+	badger, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = badger.Close() })
 
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
