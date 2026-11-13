@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Statement cancellation now interrupts materialized ranges, reduce folds and
   recursive expression admission instead of finishing their remaining work.
+- Load persisted change-capture options before journal replay so recovered
+  commits publish their change events. Streaming snapshots now include
+  separately stored vectors instead of restoring stale or missing embeddings.
 
 - Temporal epochs support a null start (unbounded past) or null end (unbounded
   future), with at least one bound required. Malformed bounds and non-positive
