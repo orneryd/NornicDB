@@ -42,15 +42,12 @@ analyzer, pre-journal admission, WAL migration or search-refresh change.
 - [ ] Profile the automatic snapshot after the correction: each node's sidecar
   vectors are now read and written. Report snapshot bytes and time on one named
   fixture; no measurement exists yet in this checkout.
-- [ ] Escalated to the parent (report 46, not corrected here): an ordinary node
-  update that journals between the embedding-reset record and the store clear
-  leaves journal order (reset, update) while the store ends cleared, so a
-  rebuild restores vectors the live store does not hold. `WALEngine.ClearAllEmbeddingsForPrefix`
-  appends the reset record outside the node's commit publication, and the
-  clear write (`BadgerEngine.clearEmbeddingsForPrefix` -> `inMutationTransaction`)
-  is not journaled. Ordering it needs the journaled native commit route or the
-  entity-authority region owned by pre-journal admission (outside this group's
-  files). No lock-order, wrapper or format change was attempted.
+- [x] Report46 correction: retain each node's existing write authority across
+  the reset record and its transaction. The public reset plus concurrent update
+  and snapshot/journal replay regression reproduces the old vector resurrection.
+  Parent uses the canonical lock-wait hook to prove the interleaving, without a
+  timing-only negative observation. Five repeats pass; no whole-store lock or
+  storage format change.
 
 ## Parent validation
 
@@ -58,6 +55,9 @@ analyzer, pre-journal admission, WAL migration or search-refresh change.
 - [x] Managed public query writer avoids dependence on the separate embedded-journal fix.
 - [x] Focused storage/nornicdb/multidb checks pass under default and ANTLR parsers.
 - [ ] Snapshot vector I/O/memory/record-size qualification.
-- [ ] Clear/update replay ordering (report46).
+- [x] Clear/update replay ordering (report46), including post-reset retry and replay comparison.
+- [x] Correct nil-label body-copy drift; cold/warm snapshots and stored-stream encoders agree.
+- [x] Full snapshot vector/metadata assertions replace the superseded embedding-free expectations. Missing-vector metadata component controls retain no-false-availability coverage.
+- [x] Fresh integrated focused storage checks (2.007s) and public recovered-commit/embedding-clear checks (1.387s) pass on the working tree.
 - [ ] Journaled-but-unapplied capture-option changes remain correctly ordered with recovered commits.
 - [ ] Exact-head CI, race/census and integrated release qualification.
