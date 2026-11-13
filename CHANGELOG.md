@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An HTTP transaction canceled before commit admission returns a structured
   failure instead of empty success. Cancellation after commit admission still
   waits for the accepted outcome.
+- Upgrading an old WAL now preserves the complete record prefix when the
+  active file ends inside an oversized historical frame. Complete corrupt
+  frames and incomplete sealed segments remain rejected; normal WAL readers
+  and integrity checks keep their existing strict behavior.
 
 - Relationship uniqueness indexes preserve distinct escaped UTF-16 property names, preventing a duplicate value from bypassing its constraint in a native transaction. Existing stored data and storage formats are unchanged.
 
