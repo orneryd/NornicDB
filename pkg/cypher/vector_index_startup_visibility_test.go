@@ -8,8 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The same failed startup must not publish a new index ONLINE or make an
-// already committed index read the failed build's partial serving population.
+// The same failed startup must not publish a new index ONLINE, must not report
+// an already committed index ONLINE for a service that cannot serve it, and
+// must not make that index read the failed build's partial serving population.
 func TestVectorIndexPopulationAfterFailedStartup(t *testing.T) {
 	for _, existing := range []bool{false, true} {
 		name := "created_after_failure"
@@ -34,15 +35,16 @@ func TestVectorIndexPopulationAfterFailedStartup(t *testing.T) {
 			require.Equal(t, 1, svc.CountPropertyVectorEntries("emb"))
 			reader := NewStorageExecutor(store)
 			reader.SetSearchService(svc)
-			state := "ONLINE"
+			// The committed index is served by this service's own build, which
+			// failed, so the index is FAILED for this service too; creating it
+			// after the failure reports the same state.
 			if !existing {
 				_, err = reader.Execute(ctx, create, nil)
 				require.ErrorIs(t, err, search.ErrIndexMemoryBudgetExceeded)
-				state = "FAILED"
 			}
 			shown, err := reader.Execute(ctx, "SHOW VECTOR INDEXES YIELD name,state RETURN name,state", nil)
 			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{"docs", state}}, shown.Rows)
+			require.Equal(t, [][]interface{}{{"docs", "FAILED"}}, shown.Rows)
 			const query = "MATCH (n:Doc) RETURN n.id,vector.similarity.cosine(n.emb,[1.0,0.0,0.0]) AS score ORDER BY score DESC LIMIT 10"
 			want, err := writer.Execute(ctx, query, nil)
 			require.NoError(t, err)

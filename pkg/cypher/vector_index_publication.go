@@ -24,9 +24,11 @@ import (
 // The index becomes visible at the commit of its schema change, so its
 // population begins just before that commit (beginVectorIndexPublications)
 // and runs after it (populate); a failed commit aborts it. An index the
-// search service found published when it started (a restart, a restore) is
-// populated by the service's own build, and Cypher answers it from storage
-// until that build is ready.
+// search service found published when it started (a restart, a restore, or a
+// service that replaced the one which populated it) has no population record in
+// that service: its state is the service's own build, so a failed build leaves
+// it FAILED with that build's cause and a build that succeeded serves it
+// ONLINE. Cypher answers such an index from storage until that build is ready.
 
 // vectorIndexOnlineQueryTimeout is how long a vector query waits for its
 // index to come ONLINE: Neo4j 5.26's INDEX_ONLINE_QUERY_TIMEOUT_SECONDS.

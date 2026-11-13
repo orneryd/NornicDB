@@ -2368,17 +2368,19 @@ func (db *DB) ResetEmbedWorker() error {
 	return nil
 }
 
-// ClearAllEmbeddings removes embeddings from all nodes, allowing them to be regenerated.
-// This is useful for re-embedding with a new model or fixing corrupted embeddings.
-// It clears both the node embeddings in storage AND the search index.
+// ClearAllEmbeddings removes embeddings from all nodes, allowing them to be
+// regenerated. This is useful for re-embedding with a new model or fixing
+// corrupted embeddings. The search index follows each cleared node through the
+// storage commit that resets it (clearEmbeddings).
 // Storage resets are per node, not atomic. On failure, the returned count is
 // completed node resets; the error must be handled before reporting completion.
 func (db *DB) ClearAllEmbeddings() (int, error) {
 	return db.clearEmbeddings(db.defaultDatabaseName(), db.storage)
 }
 
-// ClearDatabaseEmbeddings clears managed embeddings and the vector index only
-// in the supplied database namespace. It does not reset the shared worker.
+// ClearDatabaseEmbeddings clears managed embeddings only in the supplied
+// database namespace. The vector index follows through the same per-node
+// storage commits (clearEmbeddings). It does not reset the shared worker.
 func (db *DB) ClearDatabaseEmbeddings(database string, engine storage.Engine) (int, error) {
 	namespace, ok := engine.(*storage.NamespacedEngine)
 	if !ok || database == "" || namespace.Namespace() != database {
@@ -2397,15 +2399,25 @@ func (db *DB) ClearDatabaseEmbeddings(database string, engine storage.Engine) (i
 	return count, nil
 }
 
+// clearEmbeddings resets the stored embeddings. The serving vector index
+// follows each reset through the storage commit that performs it: the node
+// update is published to the database's search service
+// (indexNodeFromEvent -> RefreshNodeWithMutation), which reads the reset node
+// from storage and removes exactly the vectors it no longer holds.
+//
+// There is no wholesale index clear here. The storage reset already publishes
+// every node it clears, and a clear that ran after it would delete a vector an
+// embedding worker published between the two, and would also drop the vectors
+// of nodes this reset did not clear (a property vector, which the reset leaves
+// in storage). A reset the journal refuses therefore clears no node and leaves
+// every node's serving entries as storage holds them; a completed reset
+// publishes its cleared nodes as their refreshes apply.
 func (db *DB) clearEmbeddings(database string, scopedStorage storage.Engine) (int, error) {
-	// First, clear the search service's vector index
-	// This ensures EmbeddingCount() returns 0 immediately
-	if svc, _ := db.GetOrCreateSearchService(database, scopedStorage); svc != nil {
-		if err := svc.ClearVectorIndex(); err != nil {
-			return 0, err
-		}
+	ctx, release, admitted := db.RetainBackground()
+	if !admitted {
+		return 0, storage.ErrStorageClosed
 	}
-
+	defer release()
 	// Unwrap storage layers to find the BadgerEngine
 	// The storage chain is: WALEngine -> BadgerEngine
 	engine := scopedStorage
@@ -2417,20 +2429,28 @@ func (db *DB) clearEmbeddings(database string, scopedStorage storage.Engine) (in
 		engine = namespacedEngine.GetInnerEngine()
 	}
 
-	// The journal wrapper records each node it clears.
-	if walEngine, ok := engine.(*storage.WALEngine); ok {
-		return walEngine.ClearAllEmbeddingsForPrefix(idPrefix)
+	// Storage publishes each accepted reset through the existing per-node
+	// refresh owner. Catch up those reservations before returning, including
+	// completed nodes of a partial reset, without discarding newer vectors.
+	var count int
+	var err error
+	switch native := engine.(type) {
+	case *storage.WALEngine:
+		count, err = native.ClearAllEmbeddingsForPrefix(idPrefix)
+	case *storage.BadgerEngine:
+		count, err = native.ClearAllEmbeddingsForPrefix(idPrefix)
+	default:
+		return 0, localizedError(localization.NornicDBCoreClearEmbeddingsUnsupported(), nil)
 	}
-
-	// Now check if we have a BadgerEngine
-	if badgerStorage, ok := engine.(*storage.BadgerEngine); ok {
-		if idPrefix != "" {
-			return badgerStorage.ClearAllEmbeddingsForPrefix(idPrefix)
+	if count > 0 {
+		db.searchServicesMu.RLock()
+		entry := db.searchServices[database]
+		db.searchServicesMu.RUnlock()
+		if entry != nil && entry.svc != nil {
+			err = errors.Join(err, entry.svc.CatchUpPendingRefreshes(ctx))
 		}
-		return badgerStorage.ClearAllEmbeddings()
 	}
-
-	return 0, localizedError(localization.NornicDBCoreClearEmbeddingsUnsupported(), nil)
+	return count, err
 }
 
 // DecayInfo contains decay system information for monitoring.
