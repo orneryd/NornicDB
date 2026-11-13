@@ -1,0 +1,8 @@
+- [x] Reproduce durable embedded data loss on current release; retain async control.
+- [x] Reuse native WAL mutation publication at the existing transaction capability.
+- [x] Assert complete embedded/explicit CRUD replay and rollback exclusion.
+- [x] Assert foreign/canceled/closed-journal admission rejects before publication.
+- [x] Run focused storage/Cypher/nornicdb checks with default parser and ANTLR.
+- [ ] Publish the line-item PR against release/v1.5.0 and link from #1803.
+- [ ] Obtain exact-head CI and advisory duplicate-review results.
+- [ ] Integrate and reverify the combined release candidate before shipping.

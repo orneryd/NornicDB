@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Embedded Cypher transactions now retain their WAL publication owner when
+  committing native storage. Durable create, update, delete and relationship
+  changes can be rebuilt from the journal instead of leaving only transaction
+  begin/commit markers. Existing WAL and storage formats are unchanged.
+
 - Relationship uniqueness indexes preserve distinct escaped UTF-16 property names, preventing a duplicate value from bypassing its constraint in a native transaction. Existing stored data and storage formats are unchanged.
 
 - A store rebuilt at start from its latest snapshot and the journal
