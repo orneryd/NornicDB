@@ -126,8 +126,8 @@ CREATE CONSTRAINT fv_valid_from_type IF NOT EXISTS
 FOR (fv:FactVersion) REQUIRE fv.valid_from IS :: DATETIME
 
 // Temporal no‑overlap (NornicDB extension)
-CREATE CONSTRAINT fv_temporal IF NOT EXISTS
-FOR (fv:FactVersion) REQUIRE (fv.fact_key, fv.valid_from, fv.valid_to) IS TEMPORAL NO OVERLAP
+CREATE NO OVERLAP CONSTRAINT fv_temporal IF NOT EXISTS
+FOR (fv:FactVersion) REQUIRE temporal.interval(fv.valid_from, fv.valid_to) GROUP BY fv.fact_key
 
 // Domain/enum (NornicDB extension)
 CREATE CONSTRAINT entity_status_domain IF NOT EXISTS
@@ -154,9 +154,9 @@ CREATE CONSTRAINT has_version_rk IF NOT EXISTS
 FOR ()-[r:HAS_VERSION]-() REQUIRE (r.fact_key, r.version) IS RELATIONSHIP KEY
 
 // Temporal no‑overlap on relationships (NornicDB extension)
-// The last two properties are always the time range; preceding properties form the grouping key
-CREATE CONSTRAINT has_version_temporal IF NOT EXISTS
-FOR ()-[r:HAS_VERSION]-() REQUIRE (r.fact_key, r.valid_from, r.valid_to) IS TEMPORAL NO OVERLAP
+// temporal.interval names the time range; GROUP BY names the grouping key
+CREATE NO OVERLAP CONSTRAINT has_version_temporal IF NOT EXISTS
+FOR ()-[r:HAS_VERSION]-() REQUIRE temporal.interval(r.valid_from, r.valid_to) GROUP BY r.fact_key
 
 // Domain/enum on relationships (NornicDB extension)
 CREATE CONSTRAINT affects_op_domain IF NOT EXISTS
@@ -404,21 +404,24 @@ You can use the receipt to fetch the associated WAL entries via `db.txlog.byTxId
 
 ## Step 7 — As‑of reads (temporal queries)
 
-Use the temporal helper procedure. Positional args: `label, keyProp, keyValue, validFromProp, validToProp, asOf` (plus two optional MVCC selectors `systemTime` and `systemSequence`).
+Read the fact graph as it was at a chosen instant. `query` is an ordinary read-only `MATCH` query, and `parameters` is an optional map bound to its `$parameters`:
 
 ```cypher
 CALL db.temporal.asOf(
-  'FactVersion',                        -- label
-  'fact_key',                           -- keyProp
-  'product-123|price',                  -- keyValue
-  'valid_from',                         -- validFromProp
-  'valid_to',                           -- validToProp
-  datetime('2024-02-15T00:00:00Z')      -- asOf
-) YIELD node
-RETURN node;
+  datetime('2024-02-15T00:00:00Z'),
+  'MATCH (fv:FactVersion) WHERE fv.fact_key = $factKey
+   RETURN fv.fact_key AS fact_key, fv.value_json AS value_json,
+          fv.valid_from AS valid_from, fv.valid_to AS valid_to',
+  {factKey: 'product-123|price'}
+) YIELD row
+RETURN row;
 ```
 
-See [Historical Reads & MVCC Retention](historical-reads-mvcc-retention.md) for the full set of as-of read patterns including the MVCC snapshot selectors.
+Each yielded `row` is one row of the inner query resolved against the historical view: the properties, labels, and relationships of entity incarnations that still exist. Deleted nodes and relationships are not resurrected, an identifier that was deleted and later reused does not expose the earlier incarnation, and no temporal constraint is required to read history. If the requested instant is outside retained MVCC history, the call fails with an explicit error. Historical embedding vectors are not retained, so a historical read does not return them.
+
+The older positional `db.temporal.asOf(label, keyProp, keyValue, validFromProp, validToProp, asOf)` form, and the tuple DDL `REQUIRE (fv.fact_key, fv.valid_from, fv.valid_to) IS TEMPORAL NO OVERLAP`, are deprecated starting in 1.5.0. Both remain accepted for compatibility, and no removal version is set.
+
+See [Historical Reads & MVCC Retention](historical-reads-mvcc-retention.md) for the historical read contract, retention policy, and maintenance details.
 
 ---
 

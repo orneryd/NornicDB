@@ -152,6 +152,93 @@ func constraintListRequirementKind(ctx context.Context, suffix string) (constrai
 	return "", false
 }
 
+// constraintTemporalIntervalCall is the call a temporal no-overlap
+// declaration's head states its validity window with:
+// temporal.interval(valid_from, valid_to).
+const constraintTemporalIntervalCall = "TEMPORAL.INTERVAL"
+
+// constraintTemporalGroupingKeyword names the grouping key that follows the
+// window: GROUP BY key, …
+const constraintTemporalGroupingKeyword = "GROUP BY"
+
+// constraintTemporalIntervalError is the refusal of a window that is not
+// temporal.interval( <valid_from>, <valid_to> ) [GROUP BY …]. The call states
+// the window, so nothing else the expression could hold is a temporal
+// requirement.
+func constraintTemporalIntervalError() error {
+	return localizedError(localization.CypherSchemaUnsupportedPredicate("temporal.interval"), nil)
+}
+
+// constraintTemporalRequirementError is the refusal of a declaration whose
+// CREATE head declares the temporal no-overlap family but whose REQUIRE is not
+// that family's requirement. The head declares the family, so no other predicate
+// — IS UNIQUE, IS NOT NULL, the deprecated tuple form, a contract block, … — is
+// a requirement it admits.
+func constraintTemporalRequirementError() error {
+	return localizedError(localization.CypherSchemaInvalidSyntax(constraintDeclarationHeadTemporal), nil)
+}
+
+// parseConstraintTemporalIntervalRequirement reads the REQUIRE expression of a
+// temporal no-overlap declaration:
+//
+//	temporal.interval(n.starts_at, n.ends_at) GROUP BY n.accountId
+//
+// and returns the requirement of the constraint it declares. A temporal
+// constraint's properties are its grouping key followed by its validity window
+// (storage's temporalKeySpec), so the key the GROUP BY names comes first and
+// the interval's two references last: the deprecated tuple spelling compiles to
+// that one definition too. A declaration without GROUP BY names no key, and the
+// temporal arity rule refuses it for the FOR pattern's entity. Residual text
+// after the requirement — the old IS NO OVERLAP suffix, for one — is not part
+// of it, so the requirement is refused.
+func parseConstraintTemporalIntervalRequirement(ctx context.Context, variable, requireExpr string) (constraintPropertyRequirement, bool, error) {
+	expr := strings.TrimSpace(requireExpr)
+	if keywordIndexFrom(ctx, expr, constraintTemporalIntervalCall, 0, defaultKeywordScanOpts()) != 0 {
+		return constraintPropertyRequirement{}, false, nil
+	}
+	callEnd, ok := keywordSpanAt(expr, 0, constraintTemporalIntervalCall)
+	if !ok {
+		return constraintPropertyRequirement{}, true, constraintTemporalIntervalError()
+	}
+	inside, rest, ok := extractParenSection(strings.TrimSpace(expr[callEnd:]))
+	if !ok {
+		return constraintPropertyRequirement{}, true, constraintTemporalIntervalError()
+	}
+	window, err := constraintBoundPropertyList(inside, variable)
+	if err != nil {
+		return constraintPropertyRequirement{}, true, err
+	}
+	if len(window) != 2 {
+		return constraintPropertyRequirement{}, true, constraintTemporalIntervalError()
+	}
+	keys, err := constraintTemporalGroupingKey(ctx, strings.TrimSpace(rest), variable)
+	if err != nil {
+		return constraintPropertyRequirement{}, true, err
+	}
+	return constraintPropertyRequirement{kind: constraintRequirementTemporal, properties: append(keys, window...)}, true, nil
+}
+
+// constraintTemporalGroupingKey reads the grouping key that follows a temporal
+// interval: the properties after GROUP BY, bound to the FOR variable. Absent
+// GROUP BY names no key; any other text is not part of the requirement.
+func constraintTemporalGroupingKey(ctx context.Context, tail, variable string) ([]string, error) {
+	if tail == "" {
+		return nil, nil
+	}
+	if keywordIndexFrom(ctx, tail, constraintTemporalGroupingKeyword, 0, defaultKeywordScanOpts()) != 0 {
+		return nil, constraintTemporalIntervalError()
+	}
+	end, ok := keywordSpanAt(tail, 0, constraintTemporalGroupingKeyword)
+	if !ok {
+		return nil, constraintTemporalIntervalError()
+	}
+	list := strings.TrimSpace(tail[end:])
+	if list == "" {
+		return nil, constraintTemporalIntervalError()
+	}
+	return constraintBoundPropertyList(list, variable)
+}
+
 // splitConstraintRequirementReference splits a scalar predicate into the one
 // property reference before keyword and requires keyword to end the expression.
 func splitConstraintRequirementReference(ctx context.Context, requireExpr, keyword string) (string, bool) {
@@ -208,17 +295,40 @@ func parseConstraintPropertyTypeRequirement(ctx context.Context, requireExpr, va
 // parseConstraintPropertyRequirement is the one reader of a constraint's
 // REQUIRE property predicates, for the native declaration and the contract
 // primitive alike. variable is the FOR pattern's decoded variable, and every
-// reference the predicate names is bound to it here.
+// reference the predicate names is bound to it here. family is the requirement
+// kind the declaration's CREATE head declares, and "" when its head declares
+// none (createConstraintHeadAt).
+//
+// The two spellings of a temporal no-overlap requirement belong to the heads
+// that declare them: the interval form (temporal.interval(n.from, n.to) GROUP
+// BY n.key) is the one requirement a CREATE NO OVERLAP CONSTRAINT head admits,
+// and the deprecated tuple form ((n.key, n.from, n.to) IS TEMPORAL NO OVERLAP)
+// is what CREATE CONSTRAINT admits. Neither head admits the other's spelling.
 //
 // recognized is false when requireExpr is not a property predicate at all: a
 // contract boolean expression, MAX COUNT, ALLOWED, or any other expression. A
 // recognized predicate that does not bind, or whose type is inadmissible,
 // returns its error with recognized set, so no consumer falls through to
 // another reading of a malformed primitive.
-func parseConstraintPropertyRequirement(ctx context.Context, variable, requireExpr string) (requirement constraintPropertyRequirement, recognized bool, err error) {
+func parseConstraintPropertyRequirement(ctx context.Context, variable, requireExpr string, family constraintRequirementKind) (requirement constraintPropertyRequirement, recognized bool, err error) {
 	requireExpr = strings.TrimSpace(requireExpr)
 	if requireExpr == "" {
 		return constraintPropertyRequirement{}, false, nil
+	}
+
+	// The head that declares a requirement family admits that family's one
+	// requirement and nothing else. The temporal no-overlap head states its
+	// window in a call, so every other predicate is refused here, before the
+	// declaration registers anything.
+	if family == constraintRequirementTemporal {
+		requirement, recognized, err := parseConstraintTemporalIntervalRequirement(ctx, variable, requireExpr)
+		if err != nil {
+			return constraintPropertyRequirement{}, true, err
+		}
+		if !recognized {
+			return constraintPropertyRequirement{}, true, constraintTemporalRequirementError()
+		}
+		return requirement, recognized, nil
 	}
 
 	// Grouped forms: one parenthesized property list and the suffix that says
@@ -326,7 +436,7 @@ func (e *StorageExecutor) parseCreateConstraintPropertyDDL(ctx context.Context, 
 	if err != nil {
 		return parsedConstraintPropertyDeclaration{}, false, err
 	}
-	requirement, recognized, err := parseConstraintPropertyRequirement(ctx, parsed.variable, parsed.requireExpr)
+	requirement, recognized, err := parseConstraintPropertyRequirement(ctx, parsed.variable, parsed.requireExpr, parsed.family)
 	if !recognized {
 		return parsedConstraintPropertyDeclaration{}, false, err
 	}
@@ -461,7 +571,10 @@ func (e *StorageExecutor) executeCreateConstraintProperty(ctx context.Context, d
 
 	case constraintRequirementTemporal:
 		// A temporal constraint is (key…, valid_from, valid_to) with a 1..n
-		// property grouping key, for nodes and relationships alike.
+		// property grouping key, for nodes and relationships alike. Both spellings
+		// of the requirement reach here as that one layout: the interval form's
+		// GROUP BY key followed by temporal.interval's two references, and the
+		// deprecated tuple form's list.
 		if len(decl.requirement.properties) < 3 {
 			if decl.isRelationship {
 				return nil, localizedError(localization.CypherSchemaTemporalRelationshipArityRequired(), nil)

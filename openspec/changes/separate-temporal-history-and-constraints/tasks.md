@@ -1,0 +1,12 @@
+# NOR-394 implementation
+
+- [x] Preserve original duplicate-ticket history; reuse NOR-394 for v1.5.0 and assign to maintainer.
+- [x] Branch from current main without disturbing active PR worktrees.
+- [x] Implement canonical new temporal constraint DDL and deprecated spelling compatibility.
+- [x] Implement one historical read scope with current-incarnation, retention and endpoint eligibility.
+- [x] Integrate parameterized read-only asOf execution and canonical effect/result metadata.
+- [ ] Verify public paths, both parsers, cancellation and unchanged storage formats.
+- [x] Update API/deprecation examples and migration guidance.
+- [ ] Run focused/package checks and workload-scoped allocation profiles.
+- [ ] Review integrated duplicate/reuse candidates; record unavailable checks honestly.
+- [ ] Push candidate, open v1.5.0 PR and trigger CI with exact-head evidence.

@@ -267,6 +267,9 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 // transaction (explicit, or the one the statement is nested in) stays on
 // that transaction's database. It returns db's executor and ctx scoped to db.
 func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*StorageExecutor, context.Context, error) {
+	if ctx.Value(historicalQueryScopeKey{}) != nil {
+		return nil, ctx, historicalReadOnlyError()
+	}
 	selection := e
 	if owner := e.membership(ctx).statement; owner != nil && owner.executor.nativeOrigin != nil {
 		// Issued storage carries the statement's catalog authority. Rebuilding

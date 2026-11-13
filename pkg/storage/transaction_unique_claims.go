@@ -102,7 +102,7 @@ func nodeClaimPreimage(operation *Operation) (NodeID, *Node) {
 func sameNodeUniqueClaim(ctx context.Context, before, after *Node, label, property string) (bool, error) {
 	var old, next interface{}
 	if before != nil && hasLabel(before.Labels, label) {
-		key, present, err := constraintLockValue(ctx, before, property)
+		key, present, err := constraintLockValue(ctx, before.Properties, property)
 		if err != nil {
 			return false, err
 		}
@@ -111,7 +111,7 @@ func sameNodeUniqueClaim(ctx context.Context, before, after *Node, label, proper
 		}
 	}
 	if after != nil && hasLabel(after.Labels, label) {
-		key, present, err := constraintLockValue(ctx, after, property)
+		key, present, err := constraintLockValue(ctx, after.Properties, property)
 		if err != nil {
 			return false, err
 		}

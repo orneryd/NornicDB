@@ -696,7 +696,7 @@ func TestRenderConstraintStatement_HandlesEveryConstraintType(t *testing.T) {
 				EntityType: storage.ConstraintEntityRelationship,
 				Type:       storage.ConstraintTemporal, Properties: []string{"validFrom", "validTo"},
 			},
-			expect: "CREATE CONSTRAINT `rel_temporal` IF NOT EXISTS FOR ()-[r:`WORKS_AT`]-() REQUIRE (r.`validFrom`, r.`validTo`) IS TEMPORAL NO OVERLAP",
+			expect: "CREATE NO OVERLAP CONSTRAINT `rel_temporal` IF NOT EXISTS FOR ()-[r:`WORKS_AT`]-() REQUIRE temporal.interval(r.`validFrom`, r.`validTo`)",
 			ok:     true,
 		},
 		{

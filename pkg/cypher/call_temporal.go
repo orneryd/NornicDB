@@ -128,6 +128,24 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 //
 // The registry checks the argument count (6 to 8) before the call.
 func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	if len(args) == 2 || len(args) == 3 {
+		return e.callHistoricalQuery(ctx, args)
+	}
+	if len(args) < 6 || len(args) > 8 {
+		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "TemporalArguments", "db.temporal.asOf expects (at, query [, parameters]); the deprecated interval signature accepts six to eight arguments")
+	}
+
+	// The deprecated positional overload retains its STRING argument contract.
+	for _, parameter := range [...]struct {
+		index int
+		name  string
+	}{{0, "label"}, {1, "keyProp"}, {3, "validFromProp"}, {4, "validToProp"}} {
+		if args[parameter.index] != nil {
+			if _, ok := args[parameter.index].(string); !ok {
+				return nil, procedureArgumentTypeError("db.temporal.asOf", parameter.name, "STRING", args[parameter.index])
+			}
+		}
+	}
 	label, err := coerceStringArg(args[0], "label")
 	if err != nil {
 		return nil, err

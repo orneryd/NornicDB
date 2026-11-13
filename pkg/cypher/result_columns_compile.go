@@ -154,7 +154,7 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 	// and no records. Its native syntax has no graph body to compose, so EXPLAIN
 	// and PROFILE read that declaration instead of projecting graph variables.
 	if schema := query.ChildRule(cypherantlr.CypherParserRULE_schemaCommand); schema.Valid() {
-		if startsWithKeywords(ctx, schema.Code(), "CREATE", "CONSTRAINT") {
+		if isCreateConstraintStatement(ctx, schema.Code()) {
 			if _, err := compiler.executor.canonicalConstraintRequirement(ctx, schema.Code()); err != nil {
 				return programFailure(resultmetadata.ReasonUnsupportedSyntax, start, err)
 			}

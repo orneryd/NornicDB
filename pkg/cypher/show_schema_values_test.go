@@ -93,7 +93,7 @@ func TestShowSchemaValuesMatchNeo4j(t *testing.T) {
 		"s_key":      {"type": "NODE_KEY", "createStatement": "CREATE CONSTRAINT `s_key` FOR (n:`SC`) REQUIRE (n.`k1`, n.`k2`) IS NODE KEY"},
 		"s_relkey":   {"type": "RELATIONSHIP_KEY", "createStatement": "CREATE CONSTRAINT `s_relkey` FOR ()-[r:`SR`]-() REQUIRE (r.`k1`, r.`k2`) IS RELATIONSHIP KEY"},
 		"s_type":     {"type": "NODE_PROPERTY_TYPE", "propertyType": "INTEGER", "createStatement": "CREATE CONSTRAINT `s_type` FOR (n:`SC`) REQUIRE (n.`w`) IS :: INTEGER"},
-		"s_temporal": {"type": "TEMPORAL_NO_OVERLAP", "createStatement": "CREATE CONSTRAINT `s_temporal` FOR (n:`ST`) REQUIRE (n.`key`, n.`from`, n.`to`) IS TEMPORAL NO OVERLAP"},
+		"s_temporal": {"type": "TEMPORAL_NO_OVERLAP", "createStatement": "CREATE NO OVERLAP CONSTRAINT `s_temporal` FOR (n:`ST`) REQUIRE temporal.interval(n.`from`, n.`to`) GROUP BY n.`key`"},
 		"s_domain":   {"type": "DOMAIN", "createStatement": "CREATE CONSTRAINT `s_domain` FOR (n:`SD`) REQUIRE n.`status` IN ['a', 'b', 3]"},
 		"s_card":     {"type": "CARDINALITY", "createStatement": "CREATE CONSTRAINT `s_card` FOR ()-[r:`SCARD`]->() REQUIRE MAX COUNT 2"},
 		"s_cardin":   {"type": "CARDINALITY", "createStatement": "CREATE CONSTRAINT `s_cardin` FOR ()<-[r:`SCARD2`]-() REQUIRE MAX COUNT 5"},

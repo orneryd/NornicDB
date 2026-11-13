@@ -33,18 +33,31 @@ type temporalKeySpec struct {
 	endProp   string
 }
 
-// splitTemporalKeySpec returns the key/window split of temporal constraint
-// properties, or false when fewer than three properties are given.
-func splitTemporalKeySpec(properties []string) (temporalKeySpec, bool) {
+// TemporalKeyAndWindow splits a temporal no-overlap constraint's properties
+// into the grouping key and the validity window: the last two properties are
+// always (valid_from, valid_to) and every property before them forms the key
+// (the layout temporalKeySpec and enforcement read). It is how a rendered
+// declaration finds the two parts the two spellings of the requirement name
+// separately: SHOW CONSTRAINTS and the Neo4j CSV schema export write the key
+// after GROUP BY and the window in temporal.interval( … ). ok is false when
+// properties name no window (fewer than two), which no declaration admits.
+func TemporalKeyAndWindow(properties []string) (keyProps []string, startProp, endProp string, ok bool) {
 	n := len(properties)
-	if n < 3 {
+	if n < 2 {
+		return nil, "", "", false
+	}
+	return properties[:n-2], properties[n-2], properties[n-1], true
+}
+
+// splitTemporalKeySpec returns the key/window split of temporal constraint
+// properties, or false when the properties name no grouping key: a temporal
+// constraint groups the windows it holds by at least one key property.
+func splitTemporalKeySpec(properties []string) (temporalKeySpec, bool) {
+	keyProps, startProp, endProp, ok := TemporalKeyAndWindow(properties)
+	if !ok || len(keyProps) == 0 {
 		return temporalKeySpec{}, false
 	}
-	return temporalKeySpec{
-		keyProps:  properties[:n-2],
-		startProp: properties[n-2],
-		endProp:   properties[n-1],
-	}, true
+	return temporalKeySpec{keyProps: keyProps, startProp: startProp, endProp: endProp}, true
 }
 
 func (s temporalKeySpec) composite() bool { return len(s.keyProps) > 1 }

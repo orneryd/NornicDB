@@ -55,24 +55,36 @@ FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager', 'director']
 Prevent overlapping validity windows for the same logical key.
 
 ```cypher
+CREATE NO OVERLAP CONSTRAINT fact_version_no_overlap
+FOR (n:FactVersion)
+REQUIRE temporal.interval(n.valid_from, n.valid_to) GROUP BY n.fact_key
+```
+
+`temporal.interval(valid_from, valid_to)` names the validity window and `GROUP BY`
+names the grouping key, so two windows conflict only when **all** key values
+match. Node and relationship constraints both accept one key property or a
+composite key of several:
+
+```cypher
+CREATE NO OVERLAP CONSTRAINT tenant_fact_version_no_overlap
+FOR (n:FactVersion)
+REQUIRE temporal.interval(n.valid_from, n.valid_to) GROUP BY n.tenant, n.fact_key
+
+CREATE NO OVERLAP CONSTRAINT employment_no_overlap
+FOR ()-[r:WORKS_AT]-()
+REQUIRE temporal.interval(r.valid_from, r.valid_to) GROUP BY r.from_id, r.to_id
+```
+
+The earlier tuple spelling of the same requirement is deprecated but still
+accepted: it lists the grouping key first and the validity window as the last two
+properties, `(key…, valid_from, valid_to) IS TEMPORAL NO OVERLAP`. Both spellings
+declare one constraint, and `SHOW CONSTRAINTS` reports it in the interval
+spelling.
+
+```cypher
 CREATE CONSTRAINT fact_version_no_overlap
 FOR (n:FactVersion)
 REQUIRE (n.fact_key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP
-```
-
-The last two properties are always the validity window `(valid_from, valid_to)`;
-every property before them forms the grouping key. Node and relationship
-constraints both accept a composite key of one or more properties, and two
-windows conflict only when **all** key values match:
-
-```cypher
-CREATE CONSTRAINT tenant_fact_version_no_overlap
-FOR (n:FactVersion)
-REQUIRE (n.tenant, n.fact_key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP
-
-CREATE CONSTRAINT employment_no_overlap
-FOR ()-[r:WORKS_AT]-()
-REQUIRE (r.from_id, r.to_id, r.valid_from, r.valid_to) IS TEMPORAL NO OVERLAP
 ```
 
 - Every key property must be non-null; a null key property is a violation.
@@ -80,8 +92,8 @@ REQUIRE (r.from_id, r.to_id, r.valid_from, r.valid_to) IS TEMPORAL NO OVERLAP
   for the same key.
 - Windows are half-open: a window ending exactly when the next one starts
   (`valid_to` = next `valid_from`) does not overlap.
-- Creating the constraint validates existing data, and the same form is accepted
-  inside a `REQUIRE { ... }` contract.
+- Creating the constraint validates existing data; inside a `REQUIRE { ... }`
+  contract the deprecated tuple spelling declares the same constraint.
 - `db.temporal.asOf` and `db.temporal.assertNoOverlap` address a single key
   property, so they apply to single-key constraints.
 
@@ -162,7 +174,7 @@ Inside a block, primitive entries compile into the existing primitive constraint
 - `n.name IS NOT NULL`
 - `n.age IS :: INTEGER`
 - `(n.tenant, n.externalId) IS NODE KEY`
-- `(n.key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP` (or a composite key such as `(n.tenant, n.key, n.valid_from, n.valid_to)`)
+- `(n.key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP` (or a composite key such as `(n.tenant, n.key, n.valid_from, n.valid_to)`); the interval spelling is written under its own `CREATE NO OVERLAP CONSTRAINT` head
 - `r.id IS UNIQUE`
 - `r.startedAt IS NOT NULL`
 - `r.role IS :: STRING`
@@ -388,3 +400,5 @@ The following are not supported in block contracts:
 - For property type and value examples, see [Property Data Types](property-data-types.md).
 - For a domain-model walkthrough that includes constraint examples, see [Canonical Graph Ledger](canonical-graph-ledger.md).
 - For feature parity and Neo4j comparison, see [Cypher Compatibility](../neo4j-migration/cypher-compatibility.md).
+
+See [temporal read and constraint costs](../performance/temporal-read-and-constraint-costs.md) for N-arity examples, applicable indexes, scaling costs and scoped measurements.

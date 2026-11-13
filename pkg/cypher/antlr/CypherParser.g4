@@ -182,6 +182,12 @@ schemaCommand
     | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS (mapLit | parameter))?
     | CREATE LOOKUP INDEX name? (IF NOT EXISTS)? FOR (nodePattern | relationshipsChainPattern) ON EACH functionInvocation
     | DROP CONSTRAINT name? (IF EXISTS)?
+    // CREATE NO OVERLAP CONSTRAINT declares a temporal no-overlap constraint in
+    // its own head. Its one requirement names the validity window in a
+    // temporal.interval( … ) call and the grouping key after GROUP BY.
+    //   CREATE NO OVERLAP CONSTRAINT c FOR (n:N)
+    //   REQUIRE temporal.interval(n.from, n.to) GROUP BY n.key
+    | CREATE NO OVERLAP CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE constraintNoOverlapRequirement (OPTIONS (mapLit | parameter))?
     | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE constraintRequirement (OPTIONS (mapLit | parameter))?
     | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS ((NODE | RELATIONSHIP | REL)? (UNIQUE | KEY) | NOT NULL_W | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS (mapLit | parameter))?
     ;
@@ -193,6 +199,14 @@ constraintRequirement
     | ALLOWED
     | DISALLOWED
     | constraintBlock
+    ;
+
+// The one requirement a NO OVERLAP head admits: temporal.interval(from, to),
+// the validity window, and the grouping key it groups windows by. The earlier
+// tuple spelling of the same constraint ((key…, from, to) IS TEMPORAL NO
+// OVERLAP) is admitted only under CREATE CONSTRAINT, as it always was.
+constraintNoOverlapRequirement
+    : functionInvocation (GROUP BY expression (COMMA expression)*)?
     ;
 
 // A contract block holds its predicates one after another, with or without
