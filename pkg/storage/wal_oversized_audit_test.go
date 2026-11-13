@@ -129,7 +129,15 @@ func TestOversizedEmbeddingAuditRejectsCorruptAndSemanticFrames(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, entries, 1, "no resynchronization past a corrupt/semantic oversized frame")
 			require.Error(t, sealWALPropertyEpochFile(file))
-			require.Error(t, ValidateWALFormat(dir, WALValidateV4Upgrade))
+			// Normal readers and integrity/repair checks still reject every
+			// unauthenticated frame above. Only upgrade of an active journal
+			// may keep the complete prefix before an interrupted final write.
+			switch fault {
+			case "short_header", "short_json", "short_data_length", "short_data", "short_crc", "short_trailer", "truncated":
+				require.NoError(t, ValidateWALFormat(dir, WALValidateV4Upgrade))
+			default:
+				require.Error(t, ValidateWALFormat(dir, WALValidateV4Upgrade))
+			}
 			f, err := os.Open(file)
 			require.NoError(t, err)
 			offset, _, _, valid, err := scanAtomicWALForRepair(f, int64(len(raw)))
