@@ -566,26 +566,27 @@ func TestRebuildFromSnapshotDoesNotPresentReplacedVectorsAsCurrent(t *testing.T)
 // The recovery fixture's snapshot holds the fixture's writes even when a
 // periodic snapshot is already being written as the node is created: that
 // snapshot reads the store as it was before the node existed, and a rebuild
-// from it alone has no node. The store is filled first so that writing a
-// snapshot takes long enough to create the node while one is under way; the
-// provider and its indexes are set up before, so creating the node is one
-// statement. The case only counts when that snapshot is still being written
-// after the node is created.
+// from it alone has no node. The snapshot boundary itself orders the phases:
+// a periodic snapshot holds the store's write barrier while it writes, so the
+// statement that creates the node is admitted only after that snapshot
+// completed, and the file that snapshot writes cannot hold a node created
+// after its own cut. The store is filled first so that writing a snapshot
+// takes long enough to reach it while it is under way; the provider and its
+// indexes are set up before, so creating the node is one statement.
 func TestRebuildFixtureSnapshotHoldsWritesMadeDuringASnapshot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "data")
 	lab := rsvOpen(t, root)
 	lab.setProvider(&rsvProvider{chunks: 3})
 	lab.exec("UNWIND range(1, $n) AS i CREATE (:_Fill {i: i, pad: $pad})", map[string]any{"n": 20000, "pad": strings.Repeat("p", 1024)})
-	key := ""
-	for attempt := 1; key == ""; attempt++ {
-		require.LessOrEqual(t, attempt, 20, "no periodic snapshot was still being written after the node was created")
-		inFlight := lab.awaitSnapshotInFlight()
-		candidate := fmt.Sprintf("d%d", attempt)
-		lab.exec("CREATE (:Doc {key:$key, text:'small text'}) WITH EMBEDDING", map[string]any{"key": candidate})
-		if _, err := os.Stat(inFlight); err == nil {
-			key = candidate
-		}
-	}
+	// The snapshot being written now cut the store before the statement below,
+	// and that statement is admitted only once this snapshot released the
+	// store, so the file this snapshot writes holds no node.
+	inFlight := lab.awaitSnapshotInFlight()
+	key := "d"
+	lab.exec("CREATE (:Doc {key:$key, text:'small text'}) WITH EMBEDDING", map[string]any{"key": key})
+	during, err := storage.LoadSnapshot(context.Background(), strings.TrimSuffix(inFlight, ".tmp"))
+	require.NoError(t, err, "the snapshot that was being written when the node was created completed")
+	require.Nil(t, rsvSnapshotDoc(during, key), "the snapshot that was being written when the node was created holds no node")
 	vectors := rsvPrint(lab.node(key).ChunkEmbeddings)
 	require.NotEqual(t, "none", vectors)
 	lab.snapshot()

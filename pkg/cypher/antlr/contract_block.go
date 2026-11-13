@@ -533,10 +533,12 @@ func (block *contractBlockReading) search(ctx context.Context, at, first, limit,
 // earlierRequirementMayRead reports whether a requirement by an alternative
 // before choice may read from the statement's tokens first up to after, the
 // run an entry was read from by choice. Before an expression come all
-// requirements, and every requirement holds IS or IN, or starts with MAX,
-// ALLOWED, DISALLOWED or a block; before the requirement with IN come those
-// with IS (constraintRequirement; TestContractRequirementWordsAreTheGrammars
-// holds the rule to these lists).
+// requirements. The forms that can extend an expression hold IS or IN, or
+// start with MAX, ALLOWED, DISALLOWED or a block; before the requirement with
+// IN come those with IS. An epoch invocation alone has the same expression
+// span, while GROUP BY cannot extend an expression. It therefore needs no
+// earlier-span search (TestContractEpochEntriesRetainTheirGroupingBoundaries).
+// TestContractRequirementWordsAreTheGrammars pins these alternatives.
 func (entries *contractEntryParser) earlierRequirementMayRead(choice, first, after int) bool {
 	if choice != contractExpression && choice != contractRequirementIN {
 		return false

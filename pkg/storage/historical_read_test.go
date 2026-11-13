@@ -537,8 +537,7 @@ func TestOpenHistoricalRead_TargetResolution(t *testing.T) {
 	require.Error(t, err)
 
 	// An in-memory engine is a wrapper over the native store, so it opens.
-	memory := NewMemoryEngine()
-	t.Cleanup(func() { _ = memory.Close() })
+	memory := newTestMemoryEngine(t)
 	historicalPutNode(t, memory.BadgerEngine, &Node{ID: "tenant:node", Labels: []string{"L"}}, version, version)
 	historical, err := OpenHistoricalRead(t.Context(), memory, historicalCutoff(version))
 	require.NoError(t, err)

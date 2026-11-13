@@ -19,6 +19,7 @@ esac
 # The sweep corpus is generated from its human-readable generator, not
 # checked in: the ratchet regenerates it before comparing.
 if [[ "${mode}" == "ratchet" ]]; then
+  python3 -m unittest discover -s scripts/cypher-tck/differential -p test_extract_issue_corpus.py
   python3 scripts/cypher-tck/differential/gen_sweep.py
 fi
 

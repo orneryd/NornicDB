@@ -38,7 +38,11 @@ func TestSharedHeaderSiblingsReadOneDeclaration(t *testing.T) {
 		{apocExportColumns, []string{"apoc.export.json.all", "apoc.export.json.query", "apoc.export.csv.all", "apoc.export.csv.query"}},
 		{queryStatisticsOutcomeColumns, []string{"db.stats.collect", "db.stats.clear", "db.stats.stop"}},
 		{cdcPositionColumns, []string{"db.cdc.current", "db.cdc.earliest"}},
-		{nodeColumns, []string{"db.temporal.asOf", "apoc.path.subgraphNodes", "apoc.neighbors.tohop"}},
+		// db.temporal.asOf is not listed here: it serves two approved shapes, the
+		// historical query row and the deprecated interval signature's node,
+		// declared as a closed set of result schemas. See
+		// TestTemporalAsOfDeclaresBothApprovedHeaders.
+		{nodeColumns, []string{"apoc.path.subgraphNodes", "apoc.neighbors.tohop"}},
 		{pathColumns, []string{"apoc.path.expand", "apoc.path.expandConfig", "apoc.path.spanningTree", "apoc.algo.allSimplePaths"}},
 		{valueMapColumns, []string{"apoc.cypher.run", "apoc.cypher.doIt", "apoc.cypher.doitall", "apoc.load.json", "apoc.load.jsonArray"}},
 	}
@@ -63,6 +67,41 @@ func TestSharedHeaderSiblingsReadOneDeclaration(t *testing.T) {
 					require.NoError(t, err, name)
 					require.Equal(t, names, static, name)
 				}
+			}
+		})
+	}
+}
+
+// TestTemporalAsOfDeclaresBothApprovedHeaders: db.temporal.asOf returns the
+// historical query's row and, for the deprecated interval signature, its
+// node. Its registration declares both approved shapes once - the returns
+// describe every legal YIELD field and the result schemas name the closed set
+// of headers - and each shape's static header is its declaration.
+func TestTemporalAsOfDeclaresBothApprovedHeaders(t *testing.T) {
+	ensureBuiltInProceduresRegistered()
+	procedure, found := globalProcedureRegistry.Get("db.temporal.asOf")
+	require.True(t, found)
+	require.NotNil(t, procedure.Spec.ResultSchemas)
+	require.Equal(t, "db.temporal.asOf(at :: DATETIME, query :: STRING, parameters = {} :: MAP) :: (row :: MAP)", procedure.Spec.Signature)
+
+	declared := procedureDeclaredReturns(procedure.Spec)
+	require.Equal(t, []string{"row", "node"}, columnNames(declared))
+	require.Equal(t, "MAP", declared[0].Type)
+	require.False(t, declared[0].IsDeprecated, "the historical query row is the approved output")
+	require.Equal(t, "NODE", declared[1].Type)
+	require.True(t, declared[1].IsDeprecated, "the interval signature's node is deprecated")
+	require.Equal(t, [][]string{{"row"}, {"node"}}, procedure.Spec.ResultSchemas())
+
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			defer config.SetParserType(previous)
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+			for _, column := range declared {
+				static, err := exec.StatementResultColumns("CALL db.temporal.asOf YIELD "+column.Name, RawSource)
+				require.NoError(t, err, column.Name)
+				require.Equal(t, []string{column.Name}, static, column.Name)
 			}
 		})
 	}

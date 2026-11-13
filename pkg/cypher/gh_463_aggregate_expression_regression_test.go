@@ -40,9 +40,23 @@ func TestGH463_AggregateWrappedInArithmeticUsesAllRows(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			average, err := exec.Execute(ctx, "MATCH (i:I) RETURN avg(i.price) AS av", nil)
+			average, err := exec.Execute(ctx, "MATCH (i:I) WITH i ORDER BY i.sku RETURN avg(i.price) AS av", nil)
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{float64(11.916666666666666)}}, average.Rows)
+
+			// Verify the ordered population itself, so a scan-order coincidence
+			// cannot make the bit-exact average appear deterministic.
+			for _, ordering := range []struct {
+				direction string
+				prices    []interface{}
+			}{
+				{"ASC", []interface{}{10.5, 20.0, 5.25}},
+				{"DESC", []interface{}{5.25, 20.0, 10.5}},
+			} {
+				ordered, err := exec.Execute(ctx, "MATCH (i:I) WITH i ORDER BY i.sku "+ordering.direction+" RETURN collect(i.price) AS prices", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{ordering.prices}}, ordered.Rows, ordering.direction)
+			}
 
 			rounded, err := exec.Execute(ctx, "MATCH (i:I) RETURN round(avg(i.price) * 100) / 100 AS av", nil)
 			require.NoError(t, err)
