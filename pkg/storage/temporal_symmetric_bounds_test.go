@@ -7,12 +7,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSymmetricTemporalEpochs(t *testing.T) {
 	for _, relationship := range []bool{false, true} {
 		for _, indexed := range []bool{false, true} {
+			if relationship && indexed {
+				continue
+			} // Relationship enforcement uses type scans, not the node temporal index.
 			t.Run(fmt.Sprintf("relationship=%t/indexed=%t", relationship, indexed), func(t *testing.T) {
 				engine, cleanup := setupTestBadgerEngine(t)
 				defer cleanup()
@@ -24,6 +28,7 @@ func TestSymmetricTemporalEpochs(t *testing.T) {
 				require.NoError(t, schema.AddConstraint(c))
 				if indexed {
 					require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, schema, []Constraint{c}))
+					require.True(t, engine.temporalIndexAuthoritative(schema, c))
 				}
 				for _, id := range []NodeID{"test:a", "test:b"} {
 					_, err := engine.CreateNode(t.Context(), &Node{ID: id})
@@ -53,6 +58,32 @@ func TestSymmetricTemporalEpochs(t *testing.T) {
 					require.Error(t, write(fmt.Sprintf("invalid-%d", i), p))
 				}
 				if !relationship {
+					// Force each canonical coverage kernel; merely omitting an
+					// index mark does not guarantee a public write takes a scan.
+					mode := temporalOverlapFullLabel
+					if indexed {
+						mode = temporalOverlapIndexed
+					}
+					for _, tc := range []struct {
+						start, end time.Time
+						hasEnd     bool
+						exclude    NodeID
+						overlap    bool
+					}{
+						{time.Time{}, cut, true, "test:past", false},
+						{time.Time{}, cut, true, "", true},
+						{cut, time.Time{}, false, "test:future", false},
+						{cut.Add(-time.Hour), cut.Add(time.Hour), true, "", true},
+					} {
+						err := engine.withView(func(txn *badger.Txn) error {
+							return engine.scanForTemporalOverlapInTxn(t.Context(), txn, "test", c, "asset", tc.start, tc.end, tc.hasEnd, tc.exclude, mode)
+						})
+						if tc.overlap {
+							require.Error(t, err)
+						} else {
+							require.NoError(t, err)
+						}
+					}
 					for _, at := range []time.Time{time.Date(1500, 1, 1, 0, 0, 0, 0, time.UTC), cut.Add(-time.Nanosecond), cut, cut.Add(time.Hour)} {
 						got, err := engine.GetTemporalNodeAsOfInNamespace(t.Context(), "test", c.Label, "key", "asset", "start", "end", at)
 						require.NoError(t, err)
