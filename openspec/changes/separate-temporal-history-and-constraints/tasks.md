@@ -16,4 +16,4 @@
 - [x] Implement symmetric epoch bounds across shared validators, index readers and deprecated interval consumers without changing persisted layouts.
 - [x] Verify direct/indexed/scan/native, restart/write-behind and concurrent open-bound claims; preserve finite-key byte encodings.
 - [x] Execute documented ownership, fact-ledger, constraint-block, historical-read and downloadable-script examples through both parsers and HTTP/Bolt.
-- [ ] Verify the dedicated docs-site section, generated navigation/search and rendered mobile/desktop guides.
+- [x] Verify the dedicated docs-site section, generated navigation/search and rendered mobile/desktop guides (39 Node checks, 3 browser cases).
