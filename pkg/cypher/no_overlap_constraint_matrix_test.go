@@ -26,7 +26,7 @@ func TestNoOverlapConstraintNodeAndRelationshipContracts(t *testing.T) {
 						require.NoError(t, err)
 						create = "MATCH (a:Endpoint {id:1}), (b:Endpoint {id:2}) CREATE (a)-[:INTERVAL %s]->(b)"
 					}
-					ddl := fmt.Sprintf("CREATE NO OVERLAP CONSTRAINT intervals FOR %s REQUIRE temporal.interval(%s.starts, %s.ends) GROUP BY %s.tenant, %s.key", pattern, variable, variable, variable, variable)
+					ddl := fmt.Sprintf("CREATE CONSTRAINT intervals FOR %s REQUIRE temporal.epoch(%s.starts, %s.ends) GROUP BY %s.tenant, %s.key", pattern, variable, variable, variable, variable)
 					_, err := exec.Execute(ctx, ddl, nil)
 					require.NoError(t, err)
 					run := func(q string) error { _, err := exec.Execute(ctx, q, nil); return err }
@@ -47,7 +47,7 @@ func TestNoOverlapConstraintNodeAndRelationshipContracts(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, [][]interface{}{{"adjacent", "a"}, {"first", "a"}, {"other", "b"}}, result.Rows)
 					rendered := constraintCreateStatements(t, exec)["intervals"]
-					require.True(t, strings.HasPrefix(rendered, "CREATE NO OVERLAP CONSTRAINT "), rendered)
+					require.True(t, strings.HasPrefix(rendered, "CREATE CONSTRAINT "), rendered)
 					require.NotContains(t, rendered, "IS NO OVERLAP")
 					recreated, recreatedEngine := newConstraintGapExecutor(t)
 					_, err = recreated.Execute(ctx, rendered, nil)
@@ -85,7 +85,7 @@ func TestNoOverlapConstraintArbitraryGroupingWidth(t *testing.T) {
 								}
 								keys[i] = fmt.Sprintf("%s.k%d", variable, index)
 							}
-							ddl := fmt.Sprintf("CREATE NO OVERLAP CONSTRAINT intervals FOR %s REQUIRE temporal.interval(%s.starts,%s.ends) GROUP BY %s", pattern, variable, variable, strings.Join(keys, ","))
+							ddl := fmt.Sprintf("CREATE CONSTRAINT intervals FOR %s REQUIRE temporal.epoch(%s.starts,%s.ends) GROUP BY %s", pattern, variable, variable, strings.Join(keys, ","))
 							_, err := exec.Execute(ctx, ddl, nil)
 							require.NoError(t, err)
 							properties := func(changed int) map[string]interface{} {
@@ -133,7 +133,7 @@ func TestNoOverlapConstraintConcurrentWritesAdmitOneInterval(t *testing.T) {
 						create = "MATCH (a:Endpoint {id:1}), (b:Endpoint {id:2}) CREATE (a)-[:INTERVAL {tenant:'t', account:'a', region:'r', category:'c', starts:datetime('2026-01-01T00:00:00Z'), ends:datetime('2026-02-01T00:00:00Z')}]->(b)"
 						count = "MATCH ()-[r:INTERVAL]->() RETURN count(r) AS count"
 					}
-					_, err := owner.Execute(t.Context(), fmt.Sprintf("CREATE NO OVERLAP CONSTRAINT intervals FOR %s REQUIRE temporal.interval(%s.starts,%s.ends) GROUP BY %s.tenant,%s.account,%s.region,%s.category", pattern, variable, variable, variable, variable, variable, variable), nil)
+					_, err := owner.Execute(t.Context(), fmt.Sprintf("CREATE CONSTRAINT intervals FOR %s REQUIRE temporal.epoch(%s.starts,%s.ends) GROUP BY %s.tenant,%s.account,%s.region,%s.category", pattern, variable, variable, variable, variable, variable, variable), nil)
 					require.NoError(t, err)
 					executors := []*StorageExecutor{NewStorageExecutor(engine), NewStorageExecutor(engine)}
 					start := make(chan struct{})

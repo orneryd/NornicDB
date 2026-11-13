@@ -1295,11 +1295,6 @@ func isSchemaCommandStatement(cypher string) bool {
 			continue
 		}
 		rest := strings.TrimSpace(trimmed[len(command):])
-		// CREATE NO OVERLAP CONSTRAINT declares a constraint under its own head
-		// (createConstraintHeadAt), as CREATE CONSTRAINT does.
-		if command == "CREATE" && startsWithKeywordFold(rest, "NO OVERLAP CONSTRAINT") {
-			return true
-		}
 		for _, keyword := range schemaCommandKeywords {
 			if startsWithKeywordFold(rest, keyword) {
 				return true

@@ -202,12 +202,12 @@ func (s *BaseCypherParserListener) EnterConstraintRequirement(ctx *ConstraintReq
 // ExitConstraintRequirement is called when production constraintRequirement is exited.
 func (s *BaseCypherParserListener) ExitConstraintRequirement(ctx *ConstraintRequirementContext) {}
 
-// EnterConstraintNoOverlapRequirement is called when production constraintNoOverlapRequirement is entered.
-func (s *BaseCypherParserListener) EnterConstraintNoOverlapRequirement(ctx *ConstraintNoOverlapRequirementContext) {
+// EnterConstraintEpochRequirement is called when production constraintEpochRequirement is entered.
+func (s *BaseCypherParserListener) EnterConstraintEpochRequirement(ctx *ConstraintEpochRequirementContext) {
 }
 
-// ExitConstraintNoOverlapRequirement is called when production constraintNoOverlapRequirement is exited.
-func (s *BaseCypherParserListener) ExitConstraintNoOverlapRequirement(ctx *ConstraintNoOverlapRequirementContext) {
+// ExitConstraintEpochRequirement is called when production constraintEpochRequirement is exited.
+func (s *BaseCypherParserListener) ExitConstraintEpochRequirement(ctx *ConstraintEpochRequirementContext) {
 }
 
 // EnterConstraintBlock is called when production constraintBlock is entered.

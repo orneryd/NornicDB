@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Temporal no-overlap constraints accept the interval spelling
-  `CREATE NO OVERLAP CONSTRAINT name FOR (n:Account) REQUIRE temporal.interval(n.starts_at, n.ends_at) GROUP BY n.accountId`,
+  `CREATE CONSTRAINT name FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.accountId`,
   with one or more grouping key properties and both node (`FOR (n:Account)`) and
   relationship (`FOR ()-[r:OWNS]-()`) contracts. It compiles to the existing
   temporal constraint definition, so declaration-time validation, write-time

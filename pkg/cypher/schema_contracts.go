@@ -248,7 +248,7 @@ func (e *StorageExecutor) parseConstraintContractEntry(ctx context.Context, rawE
 	// bound to the contract's FOR variable exactly as a declaration binds them. A
 	// block is the CREATE CONSTRAINT primitive and declares no requirement family
 	// of its own: the temporal no-overlap head refuses a block before this reader.
-	requirement, recognized, err := parseConstraintPropertyRequirement(ctx, variable, entryText, "")
+	requirement, recognized, err := parseConstraintPropertyRequirement(ctx, variable, entryText)
 	if err != nil {
 		return storage.ConstraintContractEntry{}, nil, nil, err
 	}

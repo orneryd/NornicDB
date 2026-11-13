@@ -55,24 +55,24 @@ FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager', 'director']
 Prevent overlapping validity windows for the same logical key.
 
 ```cypher
-CREATE NO OVERLAP CONSTRAINT fact_version_no_overlap
+CREATE CONSTRAINT fact_version_no_overlap
 FOR (n:FactVersion)
-REQUIRE temporal.interval(n.valid_from, n.valid_to) GROUP BY n.fact_key
+REQUIRE temporal.epoch(n.valid_from, n.valid_to) GROUP BY n.fact_key
 ```
 
-`temporal.interval(valid_from, valid_to)` names the validity window and `GROUP BY`
+`temporal.epoch(valid_from, valid_to)` reserves the half-open span `[valid_from, valid_to)` and `GROUP BY`
 names the grouping key, so two windows conflict only when **all** key values
 match. Node and relationship constraints both accept one key property or a
 composite key of several:
 
 ```cypher
-CREATE NO OVERLAP CONSTRAINT tenant_fact_version_no_overlap
+CREATE CONSTRAINT tenant_fact_version_no_overlap
 FOR (n:FactVersion)
-REQUIRE temporal.interval(n.valid_from, n.valid_to) GROUP BY n.tenant, n.fact_key
+REQUIRE temporal.epoch(n.valid_from, n.valid_to) GROUP BY n.tenant, n.fact_key
 
-CREATE NO OVERLAP CONSTRAINT employment_no_overlap
+CREATE CONSTRAINT employment_no_overlap
 FOR ()-[r:WORKS_AT]-()
-REQUIRE temporal.interval(r.valid_from, r.valid_to) GROUP BY r.from_id, r.to_id
+REQUIRE temporal.epoch(r.valid_from, r.valid_to) GROUP BY r.from_id, r.to_id
 ```
 
 The earlier tuple spelling of the same requirement is deprecated but still
@@ -174,7 +174,7 @@ Inside a block, primitive entries compile into the existing primitive constraint
 - `n.name IS NOT NULL`
 - `n.age IS :: INTEGER`
 - `(n.tenant, n.externalId) IS NODE KEY`
-- `(n.key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP` (or a composite key such as `(n.tenant, n.key, n.valid_from, n.valid_to)`); the interval spelling is written under its own `CREATE NO OVERLAP CONSTRAINT` head
+- `(n.key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP` (or a composite key such as `(n.tenant, n.key, n.valid_from, n.valid_to)`); the preferred spelling is `temporal.epoch(start, end) GROUP BY key…`
 - `r.id IS UNIQUE`
 - `r.startedAt IS NOT NULL`
 - `r.role IS :: STRING`

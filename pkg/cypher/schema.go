@@ -2,7 +2,6 @@
 //
 // This file implements Neo4j schema management commands:
 //   - CREATE CONSTRAINT
-//   - CREATE NO OVERLAP CONSTRAINT (NornicDB's temporal no-overlap head)
 //   - CREATE INDEX
 //   - CREATE RANGE INDEX
 //   - CREATE FULLTEXT INDEX
@@ -59,7 +58,7 @@ func isCompositeAllowedCommand(cypher string) bool {
 		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX", "SHOW LOOKUP INDEX",
 		"SHOW CONSTRAINT",
 		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX", "CREATE LOOKUP INDEX", "CREATE TEXT INDEX", "CREATE POINT INDEX",
-		"CREATE CONSTRAINT", "CREATE NO OVERLAP CONSTRAINT",
+		"CREATE CONSTRAINT",
 		"DROP INDEX", "DROP CONSTRAINT",
 		"CREATE DATABASE", "DROP DATABASE",
 		"CREATE COMPOSITE", "DROP COMPOSITE", "ALTER COMPOSITE",
@@ -189,40 +188,17 @@ func pauseAsyncWritesForSchemaDDL(_ storage.Engine) (func(), error) {
 	return func() {}, nil
 }
 
-// constraintDeclarationHead is the CREATE head a statement declares a
-// constraint with, and the REQUIRE family that head declares. A head that
-// declares no family admits every requirement, as Neo4j's CREATE CONSTRAINT
-// does.
-type constraintDeclarationHead struct {
-	text   string
-	family constraintRequirementKind
-}
-
-// constraintDeclarationHeadTemporal is the head that declares the temporal
-// no-overlap family.
-const constraintDeclarationHeadTemporal = "CREATE NO OVERLAP CONSTRAINT"
-
-// createConstraintHeadAt returns the CREATE head cypher declares a constraint
-// with, or the zero head when it declares none. CREATE CONSTRAINT is Neo4j's
-// head and declares no family: it admits every requirement, including the
-// deprecated tuple spelling of a temporal no-overlap constraint. CREATE NO
-// OVERLAP CONSTRAINT declares the temporal no-overlap family, whose one
-// requirement names the validity window in a temporal.interval( … ) call and
-// the grouping key after GROUP BY.
-func createConstraintHeadAt(ctx context.Context, cypher string) constraintDeclarationHead {
-	switch {
-	case startsWithKeywords(ctx, cypher, "CREATE", "NO OVERLAP CONSTRAINT"):
-		return constraintDeclarationHead{text: constraintDeclarationHeadTemporal, family: constraintRequirementTemporal}
-	case startsWithKeywords(ctx, cypher, "CREATE", "CONSTRAINT"):
-		return constraintDeclarationHead{text: "CREATE CONSTRAINT"}
+func createConstraintHeadAt(ctx context.Context, cypher string) string {
+	if startsWithKeywords(ctx, cypher, "CREATE", "CONSTRAINT") {
+		return "CREATE CONSTRAINT"
 	}
-	return constraintDeclarationHead{}
+	return ""
 }
 
 // isCreateConstraintStatement reports whether cypher declares a constraint, in
-// either head createConstraintHeadAt reads.
+// the standard CREATE CONSTRAINT head.
 func isCreateConstraintStatement(ctx context.Context, cypher string) bool {
-	return createConstraintHeadAt(ctx, cypher).text != ""
+	return createConstraintHeadAt(ctx, cypher) != ""
 }
 
 // executeCreateConstraint handles CREATE CONSTRAINT and CREATE NO OVERLAP
@@ -236,10 +212,10 @@ func isCreateConstraintStatement(ctx context.Context, cypher string) bool {
 //
 //	CREATE CONSTRAINT FOR (n:Label) REQUIRE (n.first, n.last) IS UNIQUE
 //
-// Supported syntax (NornicDB temporal no-overlap, interval spelling):
+// Supported syntax (NornicDB temporal no-overlap, epoch spelling):
 //
-//	CREATE NO OVERLAP CONSTRAINT name FOR (n:Account)
-//	REQUIRE temporal.interval(n.starts_at, n.ends_at) GROUP BY n.accountId
+//	CREATE CONSTRAINT name FOR (n:Account)
+//	REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.accountId
 //
 // The tuple spelling of that requirement — CREATE CONSTRAINT name FOR
 // (n:Account) REQUIRE (n.accountId, n.starts_at, n.ends_at) IS TEMPORAL NO
@@ -259,20 +235,6 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 	}
 	// Detect IF NOT EXISTS to pass through to AddConstraint for duplicate-schema handling.
 	ifNotExists := strings.Contains(upperASCII(cypher), "IF NOT EXISTS")
-	// A head that declares a requirement family admits only that family's one
-	// requirement. Read it here, before any shape parses, binds or registers
-	// anything: a contract block, MAX COUNT, ALLOWED, IS UNIQUE and every other
-	// shape are refused for a head that declared the temporal no-overlap family.
-	if head := createConstraintHeadAt(ctx, cypher); head.family == constraintRequirementTemporal {
-		declaration, recognized, err := e.parseCreateConstraintPropertyDDL(ctx, cypher)
-		if err != nil {
-			return nil, err
-		}
-		if !recognized || declaration.requirement.kind != head.family {
-			return nil, constraintTemporalRequirementError()
-		}
-		return e.executeCreateConstraintProperty(ctx, declaration, ifNotExists)
-	}
 	// Select the contract shape before execution; stored-data validation does
 	// not participate in the syntax decision.
 	if contract, err := e.parseCreateConstraintContractDDL(ctx, cypher); err == nil {
@@ -966,9 +928,6 @@ type parsedConstraintForRequireDDL struct {
 	isRelationship bool
 	requireExpr    string
 	options        schemaOptions
-	// family is the requirement kind the declaration's CREATE head declares,
-	// and "" when its head declares none (createConstraintHeadAt).
-	family constraintRequirementKind
 }
 
 type parsedCardinalityConstraintDDL struct {
@@ -1010,7 +969,7 @@ func (e *StorageExecutor) parseCreateConstraintForRequireParts(ctx context.Conte
 	if q == "" {
 		return "", "", "", localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
-	header := createConstraintHeadAt(ctx, q).text
+	header := createConstraintHeadAt(ctx, q)
 	if header == "" {
 		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
@@ -1072,7 +1031,7 @@ func (e *StorageExecutor) parseCreateConstraintForRequireDDL(ctx context.Context
 	if !ok {
 		return parsedConstraintForRequireDDL{}, localizedError(localization.CypherSchemaInvalidPattern("FOR"), nil)
 	}
-	return parsedConstraintForRequireDDL{name: name, label: target.name, variable: cyphertext.SymbolicNameValue(target.variableSource), isRelationship: target.isRelationship, requireExpr: requireExpr, options: options, family: createConstraintHeadAt(ctx, cypher).family}, nil
+	return parsedConstraintForRequireDDL{name: name, label: target.name, variable: cyphertext.SymbolicNameValue(target.variableSource), isRelationship: target.isRelationship, requireExpr: requireExpr, options: options}, nil
 }
 
 func parseCardinalityRequireExpr(ctx context.Context, requireExpr string) (int, bool) {

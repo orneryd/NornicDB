@@ -126,8 +126,8 @@ CREATE CONSTRAINT fv_valid_from_type IF NOT EXISTS
 FOR (fv:FactVersion) REQUIRE fv.valid_from IS :: DATETIME
 
 // Temporal no‑overlap (NornicDB extension)
-CREATE NO OVERLAP CONSTRAINT fv_temporal IF NOT EXISTS
-FOR (fv:FactVersion) REQUIRE temporal.interval(fv.valid_from, fv.valid_to) GROUP BY fv.fact_key
+CREATE CONSTRAINT fv_temporal IF NOT EXISTS
+FOR (fv:FactVersion) REQUIRE temporal.epoch(fv.valid_from, fv.valid_to) GROUP BY fv.fact_key
 
 // Domain/enum (NornicDB extension)
 CREATE CONSTRAINT entity_status_domain IF NOT EXISTS
@@ -154,9 +154,9 @@ CREATE CONSTRAINT has_version_rk IF NOT EXISTS
 FOR ()-[r:HAS_VERSION]-() REQUIRE (r.fact_key, r.version) IS RELATIONSHIP KEY
 
 // Temporal no‑overlap on relationships (NornicDB extension)
-// temporal.interval names the time range; GROUP BY names the grouping key
-CREATE NO OVERLAP CONSTRAINT has_version_temporal IF NOT EXISTS
-FOR ()-[r:HAS_VERSION]-() REQUIRE temporal.interval(r.valid_from, r.valid_to) GROUP BY r.fact_key
+// temporal.epoch names the time range; GROUP BY names the grouping key
+CREATE CONSTRAINT has_version_temporal IF NOT EXISTS
+FOR ()-[r:HAS_VERSION]-() REQUIRE temporal.epoch(r.valid_from, r.valid_to) GROUP BY r.fact_key
 
 // Domain/enum on relationships (NornicDB extension)
 CREATE CONSTRAINT affects_op_domain IF NOT EXISTS

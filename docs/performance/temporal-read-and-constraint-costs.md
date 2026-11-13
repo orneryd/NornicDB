@@ -8,14 +8,14 @@ historical matches after a property or label changes.
 ## Grouping width and comparison scope
 
 ```cypher
-CREATE NO OVERLAP CONSTRAINT account_intervals
+CREATE CONSTRAINT account_intervals
 FOR (n:Account)
-REQUIRE temporal.interval(n.starts_at, n.ends_at)
+REQUIRE temporal.epoch(n.starts_at, n.ends_at)
 GROUP BY n.tenantId, n.accountId
 
-CREATE NO OVERLAP CONSTRAINT ownership_intervals
+CREATE CONSTRAINT ownership_intervals
 FOR ()-[r:OWNS]-()
-REQUIRE temporal.interval(r.starts_at, r.ends_at)
+REQUIRE temporal.epoch(r.starts_at, r.ends_at)
 GROUP BY r.tenantId, r.accountId, r.assetId
 ```
 

@@ -39,7 +39,7 @@ type temporalKeySpec struct {
 // (the layout temporalKeySpec and enforcement read). It is how a rendered
 // declaration finds the two parts the two spellings of the requirement name
 // separately: SHOW CONSTRAINTS and the Neo4j CSV schema export write the key
-// after GROUP BY and the window in temporal.interval( … ). ok is false when
+// after GROUP BY and the window in temporal.epoch( … ). ok is false when
 // properties name no window (fewer than two), which no declaration admits.
 func TemporalKeyAndWindow(properties []string) (keyProps []string, startProp, endProp string, ok bool) {
 	n := len(properties)

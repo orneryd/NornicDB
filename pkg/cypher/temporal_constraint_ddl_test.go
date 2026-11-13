@@ -12,8 +12,8 @@ import (
 // A temporal no-overlap constraint is declared under its own head, which names
 // the validity window in one call and the grouping key after GROUP BY:
 //
-//	CREATE NO OVERLAP CONSTRAINT name FOR (n:Account)
-//	REQUIRE temporal.interval(n.starts_at, n.ends_at) GROUP BY n.accountId
+//	CREATE CONSTRAINT name FOR (n:Account)
+//	REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.accountId
 //
 // It compiles to the definition the tuple spelling already produced — the
 // grouping key followed by the validity window in the stored constraint's
@@ -78,7 +78,7 @@ func testCreateNoOverlapConstraint(t *testing.T) {
 
 	t.Run("node grouping key", func(t *testing.T) {
 		exec, engine := newConstraintGapExecutor(t)
-		_, err := exec.Execute(ctx, `CREATE NO OVERLAP CONSTRAINT acct_no_overlap FOR (n:Account) REQUIRE temporal.interval(n.starts_at, n.ends_at) GROUP BY n.accountId`, nil)
+		_, err := exec.Execute(ctx, `CREATE CONSTRAINT acct_no_overlap FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.accountId`, nil)
 		require.NoError(t, err)
 
 		constraint := temporalConstraintNamed(t, engine, "acct_no_overlap")
@@ -103,7 +103,7 @@ func testCreateNoOverlapConstraint(t *testing.T) {
 
 	t.Run("composite grouping key", func(t *testing.T) {
 		exec, engine := newConstraintGapExecutor(t)
-		_, err := exec.Execute(ctx, `CREATE NO OVERLAP CONSTRAINT acct_tenant_no_overlap FOR (n:Account) REQUIRE temporal.interval(n.starts_at, n.ends_at) GROUP BY n.tenant, n.accountId`, nil)
+		_, err := exec.Execute(ctx, `CREATE CONSTRAINT acct_tenant_no_overlap FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.tenant, n.accountId`, nil)
 		require.NoError(t, err)
 
 		constraint := temporalConstraintNamed(t, engine, "acct_tenant_no_overlap")
@@ -125,7 +125,7 @@ func testCreateNoOverlapConstraint(t *testing.T) {
 
 	t.Run("relationship grouping key", func(t *testing.T) {
 		exec, engine := newConstraintGapExecutor(t)
-		_, err := exec.Execute(ctx, `CREATE NO OVERLAP CONSTRAINT owns_no_overlap FOR ()-[r:OWNS]-() REQUIRE temporal.interval(r.starts_at, r.ends_at) GROUP BY r.accountId`, nil)
+		_, err := exec.Execute(ctx, `CREATE CONSTRAINT owns_no_overlap FOR ()-[r:OWNS]-() REQUIRE temporal.epoch(r.starts_at, r.ends_at) GROUP BY r.accountId`, nil)
 		require.NoError(t, err)
 
 		constraint := temporalConstraintNamed(t, engine, "owns_no_overlap")
@@ -148,7 +148,7 @@ func testCreateNoOverlapConstraint(t *testing.T) {
 
 	t.Run("IF NOT EXISTS and OPTIONS", func(t *testing.T) {
 		exec, engine := newConstraintGapExecutor(t)
-		ddl := `CREATE NO OVERLAP CONSTRAINT acct_no_overlap IF NOT EXISTS FOR (n:Account) REQUIRE temporal.interval(n.starts_at, n.ends_at) GROUP BY n.accountId OPTIONS {}`
+		ddl := `CREATE CONSTRAINT acct_no_overlap IF NOT EXISTS FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.accountId OPTIONS {}`
 		_, err := exec.Execute(ctx, ddl, nil)
 		require.NoError(t, err)
 		_, err = exec.Execute(ctx, ddl, nil)
@@ -162,8 +162,8 @@ func testCreateNoOverlapConstraint(t *testing.T) {
 
 	t.Run("window and grouping key must name the FOR variable", func(t *testing.T) {
 		for name, ddl := range map[string]string{
-			"grouping key": `CREATE NO OVERLAP CONSTRAINT misbound FOR (n:Account) REQUIRE temporal.interval(n.starts_at, n.ends_at) GROUP BY other.accountId`,
-			"window":       `CREATE NO OVERLAP CONSTRAINT misbound FOR (n:Account) REQUIRE temporal.interval(other.starts_at, other.ends_at) GROUP BY n.accountId`,
+			"grouping key": `CREATE CONSTRAINT misbound FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY other.accountId`,
+			"window":       `CREATE CONSTRAINT misbound FOR (n:Account) REQUIRE temporal.epoch(other.starts_at, other.ends_at) GROUP BY n.accountId`,
 		} {
 			exec, engine := newConstraintGapExecutor(t)
 			_, err := exec.Execute(ctx, ddl, nil)
@@ -174,27 +174,22 @@ func testCreateNoOverlapConstraint(t *testing.T) {
 
 	t.Run("no grouping key is refused", func(t *testing.T) {
 		exec, engine := newConstraintGapExecutor(t)
-		_, err := exec.Execute(ctx, `CREATE NO OVERLAP CONSTRAINT no_key FOR (n:Account) REQUIRE temporal.interval(n.starts_at, n.ends_at)`, nil)
+		_, err := exec.Execute(ctx, `CREATE CONSTRAINT no_key FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at)`, nil)
 		require.ErrorContains(t, err, "at least 3 properties")
 		require.Empty(t, engine.GetSchema().GetAllConstraints())
 	})
 }
 
-// The head declares the temporal no-overlap family, so its REQUIRE must be that
-// family's one requirement. Every other requirement and every other constraint
-// shape is refused before the declaration registers, binds or writes anything.
+// Reject unshipped spellings and malformed epoch declarations before schema effects.
 func TestCreateNoOverlapConstraintRejectsOtherRequirements(t *testing.T) {
 	withParserTypes(t, func(t *testing.T) {
 		ctx := context.Background()
 		for name, ddl := range map[string]string{
-			"redundant no-overlap suffix":   `CREATE NO OVERLAP CONSTRAINT refused FOR (n:Account) REQUIRE temporal.interval(n.starts_at, n.ends_at) IS NO OVERLAP GROUP BY n.accountId`,
-			"unique requirement":            `CREATE NO OVERLAP CONSTRAINT refused FOR (n:Account) REQUIRE n.accountId IS UNIQUE`,
-			"existence requirement":         `CREATE NO OVERLAP CONSTRAINT refused FOR (n:Account) REQUIRE n.accountId IS NOT NULL`,
-			"deprecated tuple requirement":  `CREATE NO OVERLAP CONSTRAINT refused FOR (n:Account) REQUIRE (n.accountId, n.starts_at, n.ends_at) IS TEMPORAL NO OVERLAP`,
-			"contract block":                `CREATE NO OVERLAP CONSTRAINT refused FOR (n:Account) REQUIRE { n.accountId IS UNIQUE }`,
-			"cardinality requirement":       `CREATE NO OVERLAP CONSTRAINT refused FOR ()-[r:OWNS]->() REQUIRE MAX COUNT 2`,
-			"window names another variable": `CREATE NO OVERLAP CONSTRAINT refused FOR (n:Account) REQUIRE temporal.interval(other.starts_at, other.ends_at) GROUP BY n.accountId`,
-			"key names another variable":    `CREATE NO OVERLAP CONSTRAINT refused FOR (n:Account) REQUIRE temporal.interval(n.starts_at, n.ends_at) GROUP BY other.accountId`,
+			"unshipped head":                `CREATE NO OVERLAP CONSTRAINT refused FOR (n:Account) REQUIRE temporal.epoch(n.starts_at,n.ends_at) GROUP BY n.accountId`,
+			"unshipped interval":            `CREATE CONSTRAINT refused FOR (n:Account) REQUIRE temporal.interval(n.starts_at,n.ends_at) GROUP BY n.accountId`,
+			"redundant suffix":              `CREATE CONSTRAINT refused FOR (n:Account) REQUIRE temporal.epoch(n.starts_at,n.ends_at) IS NO OVERLAP GROUP BY n.accountId`,
+			"window names another variable": `CREATE CONSTRAINT refused FOR (n:Account) REQUIRE temporal.epoch(other.starts_at,n.ends_at) GROUP BY n.accountId`,
+			"key names another variable":    `CREATE CONSTRAINT refused FOR (n:Account) REQUIRE temporal.epoch(n.starts_at,n.ends_at) GROUP BY other.accountId`,
 		} {
 			t.Run(name, func(t *testing.T) {
 				exec, engine := newConstraintGapExecutor(t)
@@ -217,7 +212,7 @@ func TestTemporalConstraintSpellingsCompileToOneDefinition(t *testing.T) {
 func testTemporalConstraintSpellingsCompileToOneDefinition(t *testing.T) {
 	ctx := context.Background()
 	const name = "acct_tenant_no_overlap"
-	intervalDDL := `CREATE NO OVERLAP CONSTRAINT acct_tenant_no_overlap FOR (n:Account) REQUIRE temporal.interval(n.starts_at, n.ends_at) GROUP BY n.tenant, n.accountId`
+	intervalDDL := `CREATE CONSTRAINT acct_tenant_no_overlap FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.tenant, n.accountId`
 	tupleDDL := `CREATE CONSTRAINT acct_tenant_no_overlap FOR (n:Account) REQUIRE (n.tenant, n.accountId, n.starts_at, n.ends_at) IS TEMPORAL NO OVERLAP`
 
 	intervalExec, intervalEngine := newConstraintGapExecutor(t)
@@ -236,7 +231,7 @@ func testTemporalConstraintSpellingsCompileToOneDefinition(t *testing.T) {
 	require.Equal(t, []string{"tenant", "accountId", "starts_at", "ends_at"}, intervalConstraint.Properties)
 
 	// The unnamed declaration names both constraints the same way.
-	unnamed := `CREATE NO OVERLAP CONSTRAINT FOR (n:Account) REQUIRE temporal.interval(n.starts_at, n.ends_at) GROUP BY n.tenant, n.accountId`
+	unnamed := `CREATE CONSTRAINT FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.tenant, n.accountId`
 	unnamedTuple := `CREATE CONSTRAINT FOR (n:Account) REQUIRE (n.tenant, n.accountId, n.starts_at, n.ends_at) IS TEMPORAL NO OVERLAP`
 	unnamedIntervalExec, unnamedIntervalEngine := newConstraintGapExecutor(t)
 	_, err = unnamedIntervalExec.Execute(ctx, unnamed, nil)
@@ -255,7 +250,7 @@ func testTemporalConstraintSpellingsCompileToOneDefinition(t *testing.T) {
 	// constraint it describes.
 	intervalStatement := constraintCreateStatements(t, intervalExec)[name]
 	require.Equal(t,
-		"CREATE NO OVERLAP CONSTRAINT `acct_tenant_no_overlap` FOR (n:`Account`) REQUIRE temporal.interval(n.`starts_at`, n.`ends_at`) GROUP BY n.`tenant`, n.`accountId`",
+		"CREATE CONSTRAINT `acct_tenant_no_overlap` FOR (n:`Account`) REQUIRE temporal.epoch(n.`starts_at`, n.`ends_at`) GROUP BY n.`tenant`, n.`accountId`",
 		intervalStatement)
 	require.Equal(t, intervalStatement, constraintCreateStatements(t, tupleExec)[name])
 
@@ -294,7 +289,7 @@ func testDeprecatedTemporalTupleSpellingStaysAccepted(t *testing.T) {
 	require.Equal(t, storage.ConstraintTemporal, constraint.Type)
 	require.Equal(t, []string{"accountId", "starts_at", "ends_at"}, constraint.Properties)
 	require.Equal(t,
-		"CREATE NO OVERLAP CONSTRAINT `legacy_no_overlap` FOR ()-[r:`OWNS`]-() REQUIRE temporal.interval(r.`starts_at`, r.`ends_at`) GROUP BY r.`accountId`",
+		"CREATE CONSTRAINT `legacy_no_overlap` FOR ()-[r:`OWNS`]-() REQUIRE temporal.epoch(r.`starts_at`, r.`ends_at`) GROUP BY r.`accountId`",
 		constraintCreateStatements(t, exec)["legacy_no_overlap"])
 
 	run := func(query string) error {

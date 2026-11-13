@@ -425,7 +425,6 @@ func analyzeQuery(cypher string) *QueryInfo {
 		containsKeyword(upper, "CREATE POINT INDEX") ||
 		containsKeyword(upper, "DROP INDEX") ||
 		containsKeyword(upper, "CREATE CONSTRAINT") ||
-		containsKeyword(upper, "CREATE NO OVERLAP CONSTRAINT") ||
 		containsKeyword(upper, "DROP CONSTRAINT")
 
 	// Path functions

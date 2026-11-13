@@ -44,7 +44,7 @@ These are source observations, not fresh performance measurements. Graph retriev
 - [ ] Reject mutating statements, nested mutating procedures and other write routes using the canonical effect/admission machinery.
 - [ ] Preserve database authorization, suppression policy, cancellation and resource ownership. Historical time is not a permission bypass.
 - [ ] Stream results through existing execution/result owners; avoid precollecting a graph-wide node list. Explicit collect() remains caller-directed materialization.
-- [ ] Support CREATE NO OVERLAP CONSTRAINT with temporal.interval(...) and explicit GROUP BY for nodes and relationships.
+- [ ] Support CREATE CONSTRAINT with temporal.epoch(...) and explicit GROUP BY for nodes and relationships.
 - [ ] Support arbitrary configured property names and composite grouping keys without assigning domain meaning.
 - [ ] Enforce constraints atomically during writes, including concurrent writes; preflight assertions are not enforcement.
 - [ ] Deprecate the old asOf signature and tuple DDL in v1.5.0, documenting compatibility behavior and a separately approved removal schedule.
@@ -132,20 +132,20 @@ RETURN row.a, row.r, row.asset
 ### NornicDB: interval values and constraint DDL
 
 ```cypher
-CREATE NO OVERLAP CONSTRAINT account_intervals
+CREATE CONSTRAINT account_intervals
 FOR (n:Account)
-REQUIRE temporal.interval(n.starts_at, n.ends_at)
+REQUIRE temporal.epoch(n.starts_at, n.ends_at)
 GROUP BY n.accountId
 ```
 
 ```cypher
-CREATE NO OVERLAP CONSTRAINT ownership_intervals
+CREATE CONSTRAINT ownership_intervals
 FOR ()-[r:OWNS]-()
-REQUIRE temporal.interval(r.starts_at, r.ends_at)
+REQUIRE temporal.epoch(r.starts_at, r.ends_at)
 GROUP BY r.tenantId, r.accountId, r.assetId
 ```
 
-- NO OVERLAP in the declaration head states the rule; temporal.interval(start,end) supplies two user-configured bounds; GROUP BY supplies grouping keys. No reserved bound names or application intent.
+- temporal.epoch(start,end) declares an exclusive half-open span using two user-configured bounds; GROUP BY supplies grouping keys. No reserved bound names or application intent.
 - Represent interval values independently of storage MVCC. Preserve the established [start,end) overlap convention, subject to exact source/test verification of malformed/null/reversed/zero-length cases; do not silently change those semantics while renaming syntax.
 - Keep supported DDL bound/group expressions scoped to existing property-based constraint capabilities. General computed-expression constraints are not implied by the expression spelling.
 - Parse both spellings to the existing canonical constraint definition and index/enforcement owners; do not change Badger keys, existing serialized definitions, WAL or storage version.
@@ -167,7 +167,7 @@ Historical reads preserve the existing labels/properties/metadata payload. Embed
 
 ## Final constraint spelling
 
-The canonical declaration is `CREATE NO OVERLAP CONSTRAINT name FOR (n:Label) REQUIRE temporal.interval(n.start, n.end) GROUP BY n.key`. There is no `IS NO OVERLAP` suffix. This supersedes the unshipped `CREATE TEMPORAL CONSTRAINT` proposal; only the previously shipped tuple syntax remains as deprecated compatibility. No general `AS OF` query/DDL clause is in scope.
+The canonical declaration is `CREATE CONSTRAINT name FOR (n:Label) REQUIRE temporal.epoch(n.start, n.end) GROUP BY n.key`. There is no `IS NO OVERLAP` suffix. This supersedes the unshipped `CREATE TEMPORAL CONSTRAINT` proposal; only the previously shipped tuple syntax remains as deprecated compatibility. No general `AS OF` query/DDL clause is in scope.
 
 ## N-arity qualification and cost documentation
 
@@ -175,3 +175,6 @@ The canonical declaration is `CREATE NO OVERLAP CONSTRAINT name FOR (n:Label) RE
 - Verify creation and updates, movement between groups, adjacent intervals, wrong/missing references, legacy-definition equivalence and SHOW/export/recreation under both parsers.
 - Document the actual cost of initial constraint validation, ongoing indexed versus complete-scan validation, scalar/composite/list-valued keys, and historical query acquisition. Ordinary property indexes and the constraint-owned temporal index are different capabilities.
 - Profile the canonical overlap owner with identical generated populations and inputs in indexed and complete label-scan modes; report ns/op, B/op, allocations and limits. Do not describe a kernel benchmark as end-to-end query or commit performance.
+
+
+Approved refinement: the unshipped dedicated NO OVERLAP declaration head is removed. The preferred CREATE CONSTRAINT / temporal.epoch form and deprecated ≤1.4.x tuple syntax share the same stored definition and enforcement.

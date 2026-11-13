@@ -558,11 +558,6 @@ type constraintStatementRequest struct {
 // shared by every constraint kind.
 const constraintStatementFormat = "CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s"
 
-// temporalConstraintStatementFormat renders the maintained CREATE NO OVERLAP
-// CONSTRAINT prefix: a temporal no-overlap constraint is exported in the
-// interval spelling of its declaration.
-const temporalConstraintStatementFormat = "CREATE NO OVERLAP CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s"
-
 // constraintPropertyTypeSuffix completes a property-type requirement after the
 // rendered property reference with its IS :: type.
 const constraintPropertyTypeSuffix = " IS :: %s"
@@ -639,8 +634,8 @@ func renderConstraintStatement(request constraintStatementRequest) (string, bool
 		case storage.ConstraintTemporal:
 			keys, startProp, endProp, _ := storage.TemporalKeyAndWindow(c.Properties)
 			pattern = cypherPattern(entity, c.Label)
-			format = temporalConstraintStatementFormat
-			requirement = "temporal.interval(" + strings.Join(cypherPropertyRefs(entityVariable(entity), []string{startProp, endProp}), ", ") + ")"
+			format = constraintStatementFormat
+			requirement = "temporal.epoch(" + strings.Join(cypherPropertyRefs(entityVariable(entity), []string{startProp, endProp}), ", ") + ")"
 			if len(keys) > 0 {
 				requirement += " GROUP BY " + strings.Join(cypherPropertyRefs(entityVariable(entity), keys), ", ")
 			}
