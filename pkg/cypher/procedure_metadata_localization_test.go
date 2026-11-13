@@ -273,6 +273,34 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 	require.Equal(t, 6, kpAliasCount)
 }
 
+// TestShowProceduresReportsBothTemporalAsOfHeaders: the public listing reports
+// db.temporal.asOf's localized metadata and both approved result shapes, the
+// historical query row and the deprecated interval signature's node.
+func TestShowProceduresReportsBothTemporalAsOfHeaders(t *testing.T) {
+	const query = "SHOW PROCEDURES YIELD name, signature, description, returnDescription WHERE name = 'db.temporal.asOf' RETURN *"
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{
+		"db.temporal.asOf",
+		"db.temporal.asOf(at :: DATETIME, query :: STRING, parameters = {} :: MAP) :: (row :: MAP)",
+		localization.CypherProcedureMetadata("db.temporal.asOf").Fallback,
+		[]interface{}{
+			map[string]interface{}{"name": "row", "type": "MAP", "description": "", "isDeprecated": false},
+			map[string]interface{}{"name": "node", "type": "NODE", "description": "Deprecated interval-signature output only.", "isDeprecated": true},
+		},
+	}}, result.Rows)
+
+	// The listing renders the registration's metadata descriptor, so the
+	// description follows the caller's language.
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	executor.SetLocalizationRenderer(manager)
+	localized, err := executor.Execute(localization.WithPreferences(ctx, language.EuropeanSpanish), query, nil)
+	require.NoError(t, err)
+	require.Equal(t, "Lee el grafo temporal en un instante", requireProcedureMetadataRow(t, localized, "db.temporal.asOf")[2])
+}
+
 // The Change Data Capture procedures carry descriptors with their English
 // text (#937).
 func TestChangeDataCaptureProcedureDescriptors(t *testing.T) {

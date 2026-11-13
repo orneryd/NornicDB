@@ -140,6 +140,7 @@ var queryBodyManifest = map[string]string{
 	"shellCommand":                    "exempt: a shell command (:param, :use, …) is the client's, never an engine statement",
 	"shellCommandElement":             "exempt: a shell command's element (see shellCommand)",
 	"schemaCommand":                   "exempt: CREATE/DROP INDEX and CONSTRAINT take no query body, and the semantic entry skips schema statements",
+	"constraintEpochRequirement":      "exempt: an epoch schema requirement accepts bound properties, not query bodies; TestEpochConstraintRejectsQueryBodyOperandsWithoutEffects checks argument and grouping positions",
 	"constraintRequirement":           "exempt: a schema constraint's requirement (see schemaCommand)",
 	"constraintBlockEntry":            "exempt: an entry of a schema constraint's block (see schemaCommand)",
 	"constraintBlockRequirementEntry": "exempt: a requirement read alone from a schema constraint's block (see schemaCommand)",
