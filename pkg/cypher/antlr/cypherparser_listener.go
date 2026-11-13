@@ -97,6 +97,9 @@ type CypherParserListener interface {
 	// EnterConstraintRequirement is called when entering the constraintRequirement production.
 	EnterConstraintRequirement(c *ConstraintRequirementContext)
 
+	// EnterConstraintEpochRequirement is called when entering the constraintEpochRequirement production.
+	EnterConstraintEpochRequirement(c *ConstraintEpochRequirementContext)
+
 	// EnterConstraintBlock is called when entering the constraintBlock production.
 	EnterConstraintBlock(c *ConstraintBlockContext)
 
@@ -576,6 +579,9 @@ type CypherParserListener interface {
 
 	// ExitConstraintRequirement is called when exiting the constraintRequirement production.
 	ExitConstraintRequirement(c *ConstraintRequirementContext)
+
+	// ExitConstraintEpochRequirement is called when exiting the constraintEpochRequirement production.
+	ExitConstraintEpochRequirement(c *ConstraintEpochRequirementContext)
 
 	// ExitConstraintBlock is called when exiting the constraintBlock production.
 	ExitConstraintBlock(c *ConstraintBlockContext)

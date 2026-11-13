@@ -2031,6 +2031,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "storage.validation.required_property_missing", Constructor: "StorageValidationRequiredPropertyMissing", Fields: []string{"Property"}, PluralForms: []string{"other"}},
 	{ID: "storage.validation.scan_edges_failed", Constructor: "StorageValidationScanEdgesFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "storage.validation.scan_nodes_failed", Constructor: "StorageValidationScanNodesFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "storage.validation.temporal_bounds_invalid", Constructor: "StorageValidationTemporalBoundsInvalid", Fields: []string{"EndProperty", "StartProperty"}, PluralForms: []string{"other"}},
 	{ID: "storage.validation.temporal_creation_failed", Constructor: "StorageValidationTemporalCreationFailed", Fields: []string{"Detail"}, PluralForms: []string{"other"}},
 	{ID: "storage.validation.temporal_edge_invalid", Constructor: "StorageValidationTemporalEdgeInvalid", Fields: []string{"EdgeID", "Property"}, PluralForms: []string{"other"}},
 	{ID: "storage.validation.temporal_edge_overlap", Constructor: "StorageValidationTemporalEdgeOverlap", Fields: []string{"EdgeID", "Key"}, PluralForms: []string{"other"}},

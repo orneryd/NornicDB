@@ -519,7 +519,10 @@ type syntaxValidationCacheShard struct {
 // from another view of the same statement/transaction storage.
 type storageCloneScope uint8
 
-const selectedDatabaseStorage storageCloneScope = 1
+const (
+	selectedDatabaseStorage storageCloneScope = 1
+	historicalReadStorage   storageCloneScope = 2
+)
 
 func (e *StorageExecutor) cloneWithStorage(override storage.Engine, scope ...storageCloneScope) *StorageExecutor {
 	selected := len(scope) > 0 && scope[0] == selectedDatabaseStorage
@@ -598,6 +601,17 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine, scope ...sto
 			database: e.database,
 		}
 	}
+	if len(scope) > 0 && scope[0] == historicalReadStorage {
+		// Historical views share syntax and callable declarations, but never current
+		// entity/result/index state. In particular they must not run the public
+		// constructor: that reloads the procedure catalog from the selected store.
+		cloned.nodeLookupCache = make(map[string]*storage.Node)
+		cloned.nodeLookupCacheMu = &sync.RWMutex{}
+		cloned.cache = nil
+		cloned.planCache = NewQueryPlanCache(500)
+		cloned.searchService = &atomic.Pointer[search.Service]{}
+		cloned.searchResolver = nil
+	}
 	cloned.graphIdentityScope = e.graphIdentityScope
 	cloned.resolvedMode = e.resolvedMode
 	cloned.readScope = e.readScope
@@ -623,6 +637,10 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine, scope ...sto
 	cloned.apocIO = e.apocIO
 	if !selected || e.queryEmbedder != nil {
 		cloned.queryEmbedder = e.queryEmbedder
+	}
+	if len(scope) > 0 && scope[0] == historicalReadStorage {
+		cloned.vectorRegistry = vectorspace.NewIndexRegistry()
+		cloned.vectorIndexSpaces = make(map[string]vectorspace.VectorSpaceKey)
 	}
 	cloned.UseStatementCaches(e.StatementCaches())
 	cloned.statementCacheScope = e.statementCacheScope

@@ -97,7 +97,7 @@ func TestBundledProcedureNodeImagesFollowTheirReviewedHandlers(t *testing.T) {
 	}
 
 	for _, spec := range globalProcedureRegistry.ListBuiltIns() {
-		if spec.ExecutesStatements || spec.OwnsTransactions {
+		if spec.ExecutesStatements || spec.ExecutesReadOnlyStatements || spec.OwnsTransactions {
 			require.Equal(t, FullNodeImages, spec.NodeImages, spec.Name)
 			continue
 		}

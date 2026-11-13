@@ -650,17 +650,15 @@ func ensureBuiltInProceduresRegistered() {
 				return e.callDbTemporalAssertNoOverlap(ctx, args)
 			}, cypherfn.CanonicalReads)
 		registerProcedure(ProcedureSpec{
-			Name:               "db.temporal.asOf",
-			Signature:          procedureReturnSignature("db.temporal.asOf(label :: STRING, keyProp :: STRING, keyValue :: ANY, validFromProp :: STRING, validToProp :: STRING, asOf :: ANY, systemTime = null :: ANY, systemSequence = null :: INTEGER)", nodeColumns),
-			Description:        localization.CypherProcedureMetadata("db.temporal.asOf").Fallback,
-			DescriptionMessage: localization.CypherProcedureMetadata("db.temporal.asOf"),
-			Mode:               ProcedureModeRead,
-			MinArgs:            6,
-			MaxArgs:            8,
-		},
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbTemporalAsOf(ctx, args)
-			}, cypherfn.CanonicalReads)
+			Name:        "db.temporal.asOf",
+			Signature:   procedureReturnSignature("db.temporal.asOf(at :: DATETIME, query :: STRING, parameters = {} :: MAP)", historicalQueryColumns),
+			Description: "Reads retained historical states of currently existing entities. The six-to-eight argument interval lookup is deprecated since v1.5.0.",
+			Mode:        ProcedureModeRead, MinArgs: 2, MaxArgs: 8, ExecutesReadOnlyStatements: true,
+			Returns:       append(append([]ProcedureColumn{}, historicalQueryColumns...), ProcedureColumn{Name: "node", Type: "NODE", IsDeprecated: true, Description: "Deprecated interval-signature output only."}),
+			ResultSchemas: func() [][]string { return [][]string{columnNames(historicalQueryColumns), columnNames(nodeColumns)} },
+		}, func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+			return e.callDbTemporalAsOf(ctx, args)
+		}, cypherfn.CanonicalReads)
 
 		// The apoc.path expanders report every read they make - each node
 		// argument they resolve and each adjacency request, where the read hands
@@ -1229,7 +1227,7 @@ func registerProcedure(spec ProcedureSpec, handler ProcedureHandler, reads cyphe
 	// metadata image for its node arguments. A procedure that delegates statement
 	// text or owns transaction batches keeps the native full image: that text can hand the node to a
 	// native consumer this review cannot see.
-	if !spec.ExecutesStatements && !spec.OwnsTransactions {
+	if !spec.ExecutesStatements && !spec.ExecutesReadOnlyStatements && !spec.OwnsTransactions {
 		spec.NodeImages = MetadataNodeImages
 	}
 	_ = globalProcedureRegistry.registerBuiltIn(spec, handler, reads)

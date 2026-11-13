@@ -208,3 +208,6 @@
   other: "las longitudes de las listas de fila y REST de HTTP remoto son distintas"
 - id: storage.remote.rest_row_length_mismatch
   other: "las longitudes de fila y REST de HTTP remoto son distintas"
+
+- id: storage.validation.temporal_bounds_invalid
+  other: "La época TEMPORAL requiere al menos un límite de tiempo válido ({{.StartProperty}}, {{.EndProperty}}); si ambos están presentes, el inicio debe ser anterior al final"

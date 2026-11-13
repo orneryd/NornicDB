@@ -15,7 +15,7 @@
 - [Functions](#functions)
 - [Aggregations](#aggregations)
 - [Advanced Queries](#advanced-queries)
-- [Temporal Snapshot Queries](#temporal-snapshot-queries)
+- [Historical Reads](#historical-reads)
 
 ## Introduction
 
@@ -219,29 +219,30 @@ SKIP 20
 LIMIT 10
 ```
 
-## Temporal Snapshot Queries
+## Historical Reads
 
-For historical and temporal reads, use the temporal procedures rather than trying to express MVCC snapshot selection directly in plain `MATCH` syntax.
+Use `db.temporal.asOf` to read properties, labels, and relationships as they were at a past instant. The query is an ordinary read-only `MATCH` query that runs against the historical view:
 
 ```cypher
 CALL db.temporal.asOf(
-  'Account',
-  'accountId',
-  'acct-42',
-  'valid_from',
-  'valid_to',
   datetime('2026-03-01T00:00:00Z'),
-  datetime('2026-03-15T12:30:00Z')
-) YIELD node
-RETURN node
+  'MATCH (a:Account) WHERE a.accountId = $accountId
+   RETURN a.accountId AS accountId, a.balance AS balance',
+  {accountId: 'acct-42'}
+) YIELD row
+RETURN row
 ```
 
-The final optional argument pair is the MVCC snapshot selector:
+- `at` is the instant to read at.
+- `query` is the read-only `MATCH` query; mutating clauses are not accepted.
+- `parameters` is an optional map bound to the query's `$parameters` and defaults to `{}`.
+- each yielded `row` carries one row of the inner query's result.
 
-- `systemTime`
-- `systemSequence`
+Only entities that still exist are readable: deleted nodes and relationships are not resurrected, an identifier that was deleted and later reused does not expose the earlier incarnation, and no temporal constraint is needed for a historical read. When the requested instant is outside retained MVCC history, the call fails with an explicit error. Historical embedding vectors are not retained, so a historical read returns properties, labels, and relationships only.
 
-See [Historical Reads & MVCC Retention](historical-reads-mvcc-retention.md) for pruning, retention policy, and maintenance details.
+The older positional form `db.temporal.asOf(label, keyProp, keyValue, validFromProp, validToProp, asOf [, systemTime [, systemSequence]]) YIELD node` is deprecated starting in 1.5.0. It remains accepted for compatibility, and no removal version is set.
+
+See [Historical Reads & MVCC Retention](historical-reads-mvcc-retention.md) for the historical read contract, retention policy, and maintenance details.
 
 ## Updating Data
 

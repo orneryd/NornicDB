@@ -35,26 +35,26 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 		return nil, fmt.Errorf("%s inner query failed: %w", procedure, err)
 	}
 
-	// Transform result to match APOC format (YIELD value)
-	// Each row becomes a map under the "value" column
-	result := &ExecuteResult{
-		Columns: columnNames(valueMapColumns),
-		Rows:    make([][]interface{}, 0, len(innerResult.Rows)),
-		Stats:   innerResult.Stats,
-	}
+	return procedureRowsAsMaps(ctx, innerResult, valueMapColumns)
+}
 
-	for _, row := range innerResult.Rows {
-		// Convert row to a map with column names as keys
-		valueMap := make(map[string]interface{})
-		for i, col := range innerResult.Columns {
+// procedureRowsAsMaps is the shared row projection for nested statement
+// procedures: every result row becomes a map in the declared output column.
+func procedureRowsAsMaps(ctx context.Context, inner *ExecuteResult, columns []ProcedureColumn) (*ExecuteResult, error) {
+	result := &ExecuteResult{Columns: columnNames(columns), Rows: make([][]interface{}, 0, len(inner.Rows)), Stats: inner.Stats}
+	for _, row := range inner.Rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		value := make(map[string]interface{}, len(inner.Columns))
+		for i, col := range inner.Columns {
 			if i < len(row) {
-				valueMap[col] = row[i]
+				value[col] = row[i]
 			}
 		}
-		result.Rows = append(result.Rows, []interface{}{valueMap})
+		result.Rows = append(result.Rows, []interface{}{value})
 	}
-
-	mergeOptimisticMetadata(result, innerResult)
+	mergeOptimisticMetadata(result, inner)
 	return result, nil
 }
 

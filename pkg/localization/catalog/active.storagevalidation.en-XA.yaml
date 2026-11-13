@@ -208,3 +208,6 @@
   other: "[!! remote HTTP row/REST list lengths differ !!]"
 - id: storage.remote.rest_row_length_mismatch
   other: "[!! remote HTTP row/REST lengths differ !!]"
+
+- id: storage.validation.temporal_bounds_invalid
+  other: "[!! TEMPORAL epoch requires at least one valid time bound ({{.StartProperty}}, {{.EndProperty}}); when both are present, start must be before end !!]"

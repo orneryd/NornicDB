@@ -152,6 +152,84 @@ func constraintListRequirementKind(ctx context.Context, suffix string) (constrai
 	return "", false
 }
 
+// constraintTemporalEpochCall is the call a temporal no-overlap
+// declaration's head states its validity window with:
+// temporal.epoch(valid_from, valid_to).
+const constraintTemporalEpochCall = "TEMPORAL.EPOCH"
+
+// constraintTemporalGroupingKeyword names the grouping key that follows the
+// window: GROUP BY key, …
+const constraintTemporalGroupingKeyword = "GROUP BY"
+
+// constraintTemporalEpochError is the refusal of a window that is not
+// temporal.epoch( <valid_from>, <valid_to> ) [GROUP BY …]. The call states
+// the window, so nothing else the expression could hold is a temporal
+// requirement.
+func constraintTemporalEpochError() error {
+	return localizedError(localization.CypherSchemaUnsupportedPredicate("temporal.epoch"), nil)
+}
+
+// parseConstraintTemporalEpochRequirement reads the REQUIRE expression of a
+// temporal no-overlap declaration:
+//
+//	temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.accountId
+//
+// and returns the requirement of the constraint it declares. A temporal
+// constraint's properties are its grouping key followed by its validity window
+// (storage's temporalKeySpec), so the key the GROUP BY names comes first and
+// the interval's two references last: the deprecated tuple spelling compiles to
+// that one definition too. A declaration without GROUP BY names no key, and the
+// temporal arity rule refuses it for the FOR pattern's entity. Residual text
+// after the requirement — the old IS NO OVERLAP suffix, for one — is not part
+// of it, so the requirement is refused.
+func parseConstraintTemporalEpochRequirement(ctx context.Context, variable, requireExpr string) (constraintPropertyRequirement, bool, error) {
+	expr := strings.TrimSpace(requireExpr)
+	if keywordIndexFrom(ctx, expr, constraintTemporalEpochCall, 0, defaultKeywordScanOpts()) != 0 {
+		return constraintPropertyRequirement{}, false, nil
+	}
+	callEnd, ok := keywordSpanAt(expr, 0, constraintTemporalEpochCall)
+	if !ok {
+		return constraintPropertyRequirement{}, true, constraintTemporalEpochError()
+	}
+	inside, rest, ok := extractParenSection(strings.TrimSpace(expr[callEnd:]))
+	if !ok {
+		return constraintPropertyRequirement{}, true, constraintTemporalEpochError()
+	}
+	window, err := constraintBoundPropertyList(inside, variable)
+	if err != nil {
+		return constraintPropertyRequirement{}, true, err
+	}
+	if len(window) != 2 {
+		return constraintPropertyRequirement{}, true, constraintTemporalEpochError()
+	}
+	keys, err := constraintTemporalGroupingKey(ctx, strings.TrimSpace(rest), variable)
+	if err != nil {
+		return constraintPropertyRequirement{}, true, err
+	}
+	return constraintPropertyRequirement{kind: constraintRequirementTemporal, properties: append(keys, window...)}, true, nil
+}
+
+// constraintTemporalGroupingKey reads the grouping key that follows a temporal
+// interval: the properties after GROUP BY, bound to the FOR variable. Absent
+// GROUP BY names no key; any other text is not part of the requirement.
+func constraintTemporalGroupingKey(ctx context.Context, tail, variable string) ([]string, error) {
+	if tail == "" {
+		return nil, nil
+	}
+	if keywordIndexFrom(ctx, tail, constraintTemporalGroupingKeyword, 0, defaultKeywordScanOpts()) != 0 {
+		return nil, constraintTemporalEpochError()
+	}
+	end, ok := keywordSpanAt(tail, 0, constraintTemporalGroupingKeyword)
+	if !ok {
+		return nil, constraintTemporalEpochError()
+	}
+	list := strings.TrimSpace(tail[end:])
+	if list == "" {
+		return nil, constraintTemporalEpochError()
+	}
+	return constraintBoundPropertyList(list, variable)
+}
+
 // splitConstraintRequirementReference splits a scalar predicate into the one
 // property reference before keyword and requires keyword to end the expression.
 func splitConstraintRequirementReference(ctx context.Context, requireExpr, keyword string) (string, bool) {
@@ -208,7 +286,8 @@ func parseConstraintPropertyTypeRequirement(ctx context.Context, requireExpr, va
 // parseConstraintPropertyRequirement is the one reader of a constraint's
 // REQUIRE property predicates, for the native declaration and the contract
 // primitive alike. variable is the FOR pattern's decoded variable, and every
-// reference the predicate names is bound to it here.
+// reference the predicate names is bound to it here. The epoch call and the
+// deprecated tuple spelling resolve to the same temporal requirement.
 //
 // recognized is false when requireExpr is not a property predicate at all: a
 // contract boolean expression, MAX COUNT, ALLOWED, or any other expression. A
@@ -219,6 +298,10 @@ func parseConstraintPropertyRequirement(ctx context.Context, variable, requireEx
 	requireExpr = strings.TrimSpace(requireExpr)
 	if requireExpr == "" {
 		return constraintPropertyRequirement{}, false, nil
+	}
+
+	if requirement, recognized, err := parseConstraintTemporalEpochRequirement(ctx, variable, requireExpr); recognized || err != nil {
+		return requirement, recognized, err
 	}
 
 	// Grouped forms: one parenthesized property list and the suffix that says
@@ -461,7 +544,10 @@ func (e *StorageExecutor) executeCreateConstraintProperty(ctx context.Context, d
 
 	case constraintRequirementTemporal:
 		// A temporal constraint is (key…, valid_from, valid_to) with a 1..n
-		// property grouping key, for nodes and relationships alike.
+		// property grouping key, for nodes and relationships alike. Both spellings
+		// of the requirement reach here as that one layout: the interval form's
+		// GROUP BY key followed by temporal.epoch's two references, and the
+		// deprecated tuple form's list.
 		if len(decl.requirement.properties) < 3 {
 			if decl.isRelationship {
 				return nil, localizedError(localization.CypherSchemaTemporalRelationshipArityRequired(), nil)

@@ -14,7 +14,8 @@ func validateStaticMapKeys(ctx context.Context, query string) error {
 	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(ctx, query, "OPTIONS") >= 0 {
 		return nil
 	}
-	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && findKeywordIndex(ctx, query, "REQUIRE") >= 0 {
+	if strings.HasPrefix(upper, "CREATE CONSTRAINT") &&
+		findKeywordIndex(ctx, query, "REQUIRE") >= 0 {
 		return nil
 	}
 	var patternContext *mapPatternContext

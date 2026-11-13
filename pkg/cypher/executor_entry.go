@@ -116,6 +116,9 @@ func (e *StorageExecutor) executeRouted(ctx context.Context, cypher string, para
 }
 
 func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}, outcome *statementOutcome, clientText bool) (result *ExecuteResult, retErr error) {
+	if err := admitHistoricalStatement(ctx, cypher); err != nil {
+		return nil, err
+	}
 	member := e.membership(ctx)
 	if member.statement != nil && member.statement.executor.nativeOrigin != nil {
 		var release func()

@@ -193,6 +193,12 @@ constraintRequirement
     | ALLOWED
     | DISALLOWED
     | constraintBlock
+    | constraintEpochRequirement
+    ;
+
+// temporal.epoch reserves a half-open span within the declared grouping tuple.
+constraintEpochRequirement
+    : functionInvocation (GROUP BY expression (COMMA expression)*)?
     ;
 
 // A contract block holds its predicates one after another, with or without

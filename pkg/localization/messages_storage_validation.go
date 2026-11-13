@@ -3,6 +3,7 @@ package localization
 import "fmt"
 
 const (
+	MessageStorageValidationTemporalBoundsInvalid           MessageID = "storage.validation.temporal_bounds_invalid"
 	MessageStorageRemoteURIRequired                         MessageID = "storage.remote.uri_required"
 	MessageStorageRemoteDatabaseRequired                    MessageID = "storage.remote.database_required"
 	MessageStorageRemoteURISchemeUnsupported                MessageID = "storage.remote.uri_scheme_unsupported"
@@ -423,4 +424,10 @@ func StorageValidationLabelChangeAllowed(sourceLabels, relationshipType, targetL
 // the rollback; reads continue unaffected.
 func StorageTransactionLargeCommitUnrecoverable(cause error) Message {
 	return storageValidationMessage(MessageStorageTransactionLargeCommitUnrecoverable, "storage refuses writes until restart: a failed large commit could not be rolled back: "+storageErrorText(cause), map[string]any{"Cause": storageErrorText(cause)})
+}
+
+func StorageValidationTemporalBoundsInvalid(startProperty, endProperty string) Message {
+	return storageValidationMessage(MessageStorageValidationTemporalBoundsInvalid,
+		fmt.Sprintf("TEMPORAL epoch requires at least one valid time bound (%s, %s); when both are present, start must be before end", startProperty, endProperty),
+		map[string]any{"StartProperty": startProperty, "EndProperty": endProperty})
 }
