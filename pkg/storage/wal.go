@@ -686,26 +686,19 @@ func (w *WAL) appendWithDatabase(op OperationType, data interface{}, database st
 		return 0, &walRecordRejection{cause: fmt.Errorf("wal: failed to marshal data: %w", err)}
 	}
 
-	// Create entry
-	seq := w.sequence.Add(1)
-	entry := WALEntry{
-		Sequence:  seq,
-		Timestamp: time.Now(),
-		Operation: op,
-		Data:      dataBytes,
-		Checksum:  crc32Checksum(dataBytes),
-		Database:  database, // Store database name for proper recovery
-	}
+	// The entry is created under w.mu, by encodeNextRecordLocked, which gives
+	// it its sequence number. The database name is stored for recovery.
+	timestamp, checksum := time.Now(), crc32Checksum(dataBytes)
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if err := w.prepareUnboundWALRecordLocked(op); err != nil {
-		return 0, err
-	}
-
-	record, err := w.encodeNewRecord(entryBuf, &entry)
+	entry, record, err := w.encodeNextRecordLocked(entryBuf, op, dataBytes, checksum, timestamp, database)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
+	}
+	seq := entry.Sequence
+	if err := w.prepareUnboundWALRecordLocked(op); err != nil {
+		return 0, err
 	}
 	if holdLarge && record.parts != nil {
 		return 0, errLargeRecordHeld
@@ -714,22 +707,9 @@ func (w *WAL) appendWithDatabase(op OperationType, data interface{}, database st
 	// Write atomically: each frame in one Write when using bufio so the last record
 	// is never split across a buffer flush (avoids partial-write on recovery after close).
 	// A spanned record's parts are all written under this hold of w.mu.
-	alignedRecordLen, err := record.write(w.writer, writeAtomicRecordBufio)
-	if err != nil {
+	if err := w.appendRecordLocked(&entry, record, writeAtomicRecordBufio); err != nil {
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
-
-	w.entries.Add(1)
-	w.bytes.Add(alignedRecordLen)
-	w.totalWrites.Add(1)
-	w.lastEntryTime.Store(time.Now().UnixNano())
-
-	if w.segmentEntries == 0 {
-		w.segmentFirstSeq = seq
-		w.segmentCreatedAt = entry.Timestamp
-	}
-	w.segmentEntries++
-	w.segmentBytes += alignedRecordLen
 
 	// Immediate sync if configured
 	if w.config.SyncMode == "immediate" {
@@ -847,17 +827,15 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	// proportional to the data instead of several times larger.
 	dataBytes = compressWALBufferedCommitPayload(dataBytes)
 
-	seq := w.sequence.Add(1)
-	entry := WALEntry{
-		Sequence:  seq,
-		Timestamp: time.Now(),
-		Operation: op,
-		Data:      dataBytes,
-		Checksum:  crc32Checksum(dataBytes),
-		Database:  database,
-	}
+	timestamp, checksum := time.Now(), crc32Checksum(dataBytes)
 
 	w.mu.Lock()
+	entry, record, err := w.encodeNextRecordLocked(entryBuf, op, dataBytes, checksum, timestamp, database)
+	if err != nil {
+		w.mu.Unlock()
+		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
+	}
+	seq := entry.Sequence
 	if len(dictionaries) != 0 {
 		if err := w.ensurePropertyEpochLocked(dictionaries[0], false); err != nil {
 			w.mu.Unlock()
@@ -867,26 +845,10 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 		w.mu.Unlock()
 		return 0, err
 	}
-	record, err := w.encodeNewRecord(entryBuf, &entry)
-	if err != nil {
-		w.mu.Unlock()
-		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
-	}
-	alignedRecordLen, err := record.write(w.writer, writeAtomicRecordBufio)
-	if err != nil {
+	if err := w.appendRecordLocked(&entry, record, writeAtomicRecordBufio); err != nil {
 		w.mu.Unlock()
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
-	w.entries.Add(1)
-	w.bytes.Add(alignedRecordLen)
-	w.totalWrites.Add(1)
-	w.lastEntryTime.Store(time.Now().UnixNano())
-	if w.segmentEntries == 0 {
-		w.segmentFirstSeq = seq
-		w.segmentCreatedAt = entry.Timestamp
-	}
-	w.segmentEntries++
-	w.segmentBytes += alignedRecordLen
 
 	// Forced write(2): the record must be in the kernel page cache before
 	// the caller acknowledges, even when DeferAppendFlush is set.
@@ -986,6 +948,65 @@ func (w *WAL) syncLocked() error {
 
 	w.totalSyncs.Add(1)
 	w.lastSyncTime.Store(time.Now().UnixNano())
+	return nil
+}
+
+// encodeNextRecordLocked creates a new journal record from its fields, with
+// the journal's next sequence number, and encodes it under this WAL's record
+// policy. It and appendRecordLocked are
+// the journal's one record order: every appender of new records (the append
+// paths, the write-behind commit append and BatchWriter) numbers, writes and
+// accounts its records through them, and each record's number is taken here
+// while the caller holds w.mu, the lock that orders the writes to the active
+// file and the segment roll-overs. After NewWAL loads w.sequence, nothing
+// else advances it. The caller writes the record with
+// appendRecordLocked before it releases w.mu, or not at all; a number that
+// is not written stays consumed. The append paths number their record before
+// they write a property-epoch control for it, so the control carries the
+// number of the record it precedes.
+//
+// Taken under w.mu, the numbers of the records written reach the file in
+// increasing order, and a roll-over after an append (maybeRotateLocked) names
+// its segment up to the record that append wrote. A number taken before the
+// lock let a waiting appender write a lower number after a higher one; a
+// roll-over between the two sealed a segment whose range overlapped the
+// previous one, the manifest refused it, the active file was left closed and
+// the journal could not be reopened. A record refused after it took its number
+// leaves that number unwritten; when no later record takes a number before a
+// snapshot's seal (ManageSnapshot), which names its segment up to the last
+// number taken, the seal names it past its last record.
+func (w *WAL) encodeNextRecordLocked(buf *bytes.Buffer, op OperationType, data []byte, checksum uint32, timestamp time.Time, database string) (WALEntry, walRecordFrames, error) {
+	entry := WALEntry{
+		Sequence:  w.sequence.Add(1),
+		Timestamp: timestamp,
+		Operation: op,
+		Data:      data,
+		Checksum:  checksum,
+		Database:  database,
+	}
+	record, err := w.encodeNewRecord(buf, &entry)
+	return entry, record, err
+}
+
+// appendRecordLocked writes a record numbered by encodeNextRecordLocked to the
+// active file with writeFrame and accounts it to the WAL's statistics and to
+// the active segment, whose roll-over limits maybeRotateLocked checks. The
+// caller holds w.mu.
+func (w *WAL) appendRecordLocked(entry *WALEntry, record walRecordFrames, writeFrame func(io.Writer, []byte, uint8) (int64, error)) error {
+	alignedRecordLen, err := record.write(w.writer, writeFrame)
+	if err != nil {
+		return err
+	}
+	w.entries.Add(1)
+	w.bytes.Add(alignedRecordLen)
+	w.totalWrites.Add(1)
+	w.lastEntryTime.Store(time.Now().UnixNano())
+	if w.segmentEntries == 0 {
+		w.segmentFirstSeq = entry.Sequence
+		w.segmentCreatedAt = entry.Timestamp
+	}
+	w.segmentEntries++
+	w.segmentBytes += alignedRecordLen
 	return nil
 }
 
