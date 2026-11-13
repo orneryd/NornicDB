@@ -245,9 +245,8 @@ func (e *StorageExecutor) parseConstraintContractEntry(ctx context.Context, rawE
 	entryName := storage.ConstraintContractEntryName(contractName, index)
 	// The entry reads its REQUIRE expression with the one property requirement
 	// owner a native declaration uses, so the properties a contract compiles are
-	// bound to the contract's FOR variable exactly as a declaration binds them. A
-	// block is the CREATE CONSTRAINT primitive and declares no requirement family
-	// of its own: the temporal no-overlap head refuses a block before this reader.
+	// bound to the contract's FOR variable exactly as a declaration binds them. An
+	// epoch entry includes its own GROUP BY; no grouping escapes the entry.
 	requirement, recognized, err := parseConstraintPropertyRequirement(ctx, variable, entryText)
 	if err != nil {
 		return storage.ConstraintContractEntry{}, nil, nil, err
@@ -314,10 +313,10 @@ func compileConstraintContractPrimitive(requirement constraintPropertyRequiremen
 		return storage.ConstraintContractEntry{Kind: primitiveKind, PrimitiveType: string(storage.ConstraintNodeKey), Properties: requirement.properties, Expression: entryText}, constraint, nil, true, nil
 
 	case constraintRequirementTemporal:
-		if entityType != storage.ConstraintEntityNode {
-			return storage.ConstraintContractEntry{}, nil, nil, false, nil
-		}
 		if len(requirement.properties) < 3 {
+			if entityType == storage.ConstraintEntityRelationship {
+				return storage.ConstraintContractEntry{}, nil, nil, true, localizedError(localization.CypherSchemaTemporalRelationshipArityRequired(), nil)
+			}
 			return storage.ConstraintContractEntry{}, nil, nil, true, localizedError(localization.CypherSchemaTemporalNodeArityRequired(), nil)
 		}
 		constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintTemporal, EntityType: entityType, Label: labelOrType, Properties: requirement.properties}

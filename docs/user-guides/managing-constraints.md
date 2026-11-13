@@ -78,8 +78,7 @@ REQUIRE temporal.epoch(r.valid_from, r.valid_to) GROUP BY r.from_id, r.to_id
 The earlier tuple spelling of the same requirement is deprecated but still
 accepted: it lists the grouping key first and the validity window as the last two
 properties, `(key…, valid_from, valid_to) IS TEMPORAL NO OVERLAP`. Both spellings
-declare one constraint, and `SHOW CONSTRAINTS` reports it in the interval
-spelling.
+declare one constraint, and `SHOW CONSTRAINTS` reports the `temporal.epoch` spelling.
 
 ```cypher
 CREATE CONSTRAINT fact_version_no_overlap
@@ -92,10 +91,11 @@ REQUIRE (n.fact_key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP
   for the same key.
 - Windows are half-open: a window ending exactly when the next one starts
   (`valid_to` = next `valid_from`) does not overlap.
-- Creating the constraint validates existing data; inside a `REQUIRE { ... }`
-  contract the deprecated tuple spelling declares the same constraint.
-- `db.temporal.asOf` and `db.temporal.assertNoOverlap` address a single key
-  property, so they apply to single-key constraints.
+- Creating the constraint validates existing data. Standalone declarations and
+  block entries use the same native enforcement.
+- The deprecated positional `db.temporal.asOf` and `db.temporal.assertNoOverlap`
+  accept one key property. The new historical-query `asOf` is independent of
+  interval constraints.
 
 ### Cardinality constraints
 
@@ -126,6 +126,40 @@ FOR (:MutationEvent)-[r:AFFECTS]->(:Entity) REQUIRE DISALLOWED
 ## Managing block-style constraint contracts
 
 Block-style contracts let you group multiple checks under a single `CREATE CONSTRAINT` statement using `REQUIRE { ... }`.
+
+### Epoch entries with their own grouping
+
+```cypher
+CREATE CONSTRAINT employment_contract
+FOR ()-[r:WORKS_AT]-()
+REQUIRE {
+  r.id IS UNIQUE
+  temporal.epoch(r.startedAt, r.endedAt) GROUP BY r.tenant, r.employeeId
+  r.hoursPerWeek > 0
+}
+
+CREATE CONSTRAINT price_contract
+FOR (p:Price)
+REQUIRE {
+  p.id IS UNIQUE
+  temporal.epoch(p.starts_at, p.ends_at) GROUP BY p.productId, p.currency
+  p.amount >= 0
+}
+```
+
+Keep `GROUP BY` on the same entry as `temporal.epoch`, inside the braces. It
+belongs only to that epoch; it does not group the other checks. Separate entries
+with a newline or semicolon. Each epoch can name its own grouping tuple.
+
+The first contract rejects overlapping employment epochs for the same tenant
+and employee. The second rejects overlapping prices for the same product and
+currency. Adjacent half-open epochs are allowed. Each epoch compiles to the same
+native constraint as a standalone declaration, including concurrent-write
+protection; it is not evaluated as a general boolean function.
+
+`SHOW CONSTRAINT CONTRACTS` reports three entries, two compiled and one runtime
+check for each example. `SHOW CONSTRAINTS` lists the compiled primitives. An
+invalid epoch declaration fails before any contract or primitive is registered.
 
 Each block entry must be either:
 

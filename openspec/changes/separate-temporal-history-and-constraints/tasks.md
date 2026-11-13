@@ -10,3 +10,5 @@
 - [ ] Run focused/package checks and workload-scoped allocation profiles.
 - [ ] Review integrated duplicate/reuse candidates; record unavailable checks honestly.
 - [ ] Push candidate, open v1.5.0 PR and trigger CI with exact-head evidence.
+
+- [x] Compile block-local temporal.epoch/GROUP BY entries for nodes and relationships; verify grouping isolation, mixed predicates and complete-declaration framing.

@@ -377,6 +377,7 @@ REQUIRE {
   r.startedAt IS NOT NULL
   r.role IS :: STRING
   (r.tenant, r.externalId) IS RELATIONSHIP KEY
+  temporal.epoch(r.startedAt, r.endedAt) GROUP BY r.tenant, r.employeeId
   startNode(r) <> endNode(r)
   startNode(r).tenant = endNode(r).tenant
   r.status IN ['active', 'inactive']
@@ -390,14 +391,19 @@ Expected `SHOW CONSTRAINT CONTRACTS` row:
 
 ```text
 name               | targetEntityType | targetLabelOrType | entryCount | compiledEntryCount | runtimeEntryCount | definition
-works_at_contract   | RELATIONSHIP     | WORKS_AT          | 8          | 4                  | 4                 | CREATE CONSTRAINT works_at_contract ...
+works_at_contract   | RELATIONSHIP     | WORKS_AT          | 9          | 5                  | 4                 | CREATE CONSTRAINT works_at_contract ...
 ```
+
+The epoch entry reserves employment time per `(tenant, employeeId)`. Its inline
+`GROUP BY` belongs only to that entry. A second relationship for the same employee
+cannot overlap even if it has a different external ID. Adjacent epochs are
+allowed; the remaining checks still apply independently.
 
 Runtime enforcement rejects invalid writes as soon as they are attempted:
 
 ```cypher
 MATCH (a:Person {id: 'p-1'}), (b:Person {id: 'p-2'})
-CREATE (a)-[:WORKS_AT {id: 'w-1', startedAt: '2024-01-01', role: 'Engineer', tenant: 't1', externalId: 'rel-1', status: 'paused', hoursPerWeek: 40}]->(b)
+CREATE (a)-[:WORKS_AT {id: 'w-1', startedAt: '2024-01-01', endedAt: null, role: 'Engineer', tenant: 't1', employeeId: 'p-1', externalId: 'rel-1', status: 'paused', hoursPerWeek: 40}]->(b)
 ```
 
 Expected error:
