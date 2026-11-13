@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reopen. Records the batch writer commits now count toward the active
   segment, so a segment's name covers them. The journal format is unchanged.
 
+- An HTTP transaction canceled before commit admission returns a structured
+  failure instead of empty success. Cancellation after commit admission still
+  waits for the accepted outcome.
 - Upgrading an old WAL now preserves the complete record prefix when the
   active file ends inside an oversized historical frame. Complete corrupt
   frames and incomplete sealed segments remain rejected; normal WAL readers
