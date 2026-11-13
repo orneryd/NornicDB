@@ -1,12 +1,147 @@
-# Canonical Graph + Mutation Log Guide
+# Canonical Graph Ledger Patterns
 
-**Build a canonical truth store with constraints, temporal validity, and an audit‑grade mutation log.**
+## Start with ownership of an epoch
 
-Last Updated: January 21, 2026
+An account owns an asset for a span of time. Put that span on the relationship:
 
----
+```text
+(Account) ──OWNS {starts_at, ends_at}──> (Asset)
+```
 
-## Overview
+Each `OWNS` relationship records one ownership epoch. Keep old relationships when
+ownership changes. The graph then answers who owns the asset now and who owned it
+before, without separate fact-key nodes or current pointers.
+
+### Prevent conflicting ownership
+
+```cypher
+CREATE CONSTRAINT account_id IF NOT EXISTS
+FOR (a:Account) REQUIRE a.id IS NODE KEY;
+
+CREATE CONSTRAINT asset_id IF NOT EXISTS
+FOR (a:Asset) REQUIRE a.id IS NODE KEY;
+
+CREATE CONSTRAINT asset_ownership IF NOT EXISTS
+FOR ()-[r:OWNS]-()
+REQUIRE temporal.epoch(r.starts_at, r.ends_at)
+GROUP BY r.assetId;
+```
+
+`temporal.epoch` reserves the half-open span `[starts_at, ends_at)`. A null end
+means the epoch is still open. `GROUP BY r.assetId` makes ownership exclusive per
+asset: overlapping epochs for the same asset are rejected, even for different
+accounts. Different assets may be owned at the same time. Adjacent epochs may
+share a boundary.
+
+The constraint groups by relationship properties, not endpoints. Each write must
+set `r.assetId` to the destination asset's ID. Grouping by account instead would
+enforce a different rule: one asset per account at a time.
+
+### Record the first owner
+
+Run this after declaring the constraints, in an empty example database:
+
+```cypher
+CREATE (alice:Account {id:'alice'}), (bob:Account {id:'bob'}),
+       (asset:Asset {id:'asset-42'})
+CREATE (alice)-[:OWNS {
+  assetId:asset.id,
+  starts_at:datetime('2026-01-01T00:00:00Z'), ends_at:null
+}]->(asset);
+```
+
+Alice owns `asset-42` from January 1 onward. Bob exists but has no ownership epoch.
+The identifiers and property names are application choices, not reserved names.
+
+### Transfer ownership
+
+```cypher
+MATCH (:Account {id:'alice'})-[old:OWNS]->(asset:Asset {id:'asset-42'}),
+      (next:Account {id:'bob'})
+WHERE old.ends_at IS NULL
+WITH old, asset, next, datetime('2026-02-01T00:00:00Z') AS boundary
+SET old.ends_at=boundary
+CREATE (next)-[:OWNS {
+  assetId:asset.id, starts_at:boundary, ends_at:null
+}]->(asset);
+```
+
+Submit this as one statement: closing Alice's epoch and opening Bob's commit
+together. Both use the same boundary, so there is no gap or overlap. Alice's
+relationship remains in the graph. If the expected open ownership or next account
+is missing, `MATCH` returns no rows and nothing changes; the application must
+check that the transfer occurred. Handle concurrent transaction conflicts through
+the normal retry contract.
+
+This preserves ownership history, but closing an epoch changes its end property.
+It is not an immutable event log. Use explicit change events when that is needed.
+
+### Find the owner at a time
+
+```cypher
+MATCH (owner:Account)-[r:OWNS]->(:Asset {id:'asset-42'})
+WHERE r.starts_at <= datetime('2026-01-15T00:00:00Z')
+  AND (r.ends_at IS NULL OR datetime('2026-01-15T00:00:00Z') < r.ends_at)
+RETURN owner.id AS owner;
+```
+
+After the transfer, this returns `alice`. February 1 returns `bob`. These queries
+read the explicit epochs in the current graph; they do not require MVCC history.
+Deleting an ownership relationship deletes that application history.
+
+### Keep database history separate
+
+```cypher
+CALL db.temporal.asOf(
+  $recordedAt,
+  'MATCH (owner:Account)-[r:OWNS]->(:Asset {id:$id})
+   RETURN owner.id AS owner, r.starts_at AS starts_at, r.ends_at AS ends_at',
+  {id:'asset-42'}
+) YIELD row
+RETURN row;
+```
+
+`$recordedAt` asks what the database had recorded at that instant. It does not
+select the owner by the epoch's bounds; add that predicate inside the query when
+both questions matter. The constraint, the epoch-selection query and `asOf` are
+independent.
+
+`asOf` requires retained MVCC versions. It excludes currently deleted entities,
+never crosses deletion/recreation boundaries, and has no historical embedding
+vectors. Explicit ownership epochs last as long as you keep their relationships;
+MVCC history follows its own retention policy. See
+[Historical Reads & MVCC Retention](historical-reads-mvcc-retention.md).
+
+### Adapt the pattern
+
+Use `EMPLOYED_BY`, `ASSIGNED_TO` or another relationship type for your domain.
+Choose the grouping tuple to express what must be exclusive. For example,
+`GROUP BY r.tenantId, r.assetId` scopes exclusivity by tenant and asset. Every
+component must match before two epochs compete. Extra constraints can require
+fields and types; see [Managing Constraints](managing-constraints.md).
+
+Relationship epoch validation currently scans the relevant relationship type;
+an ordinary property index does not turn it into a neighboring-epoch lookup.
+See [algorithmic costs and measured limits](../performance/temporal-read-and-constraint-costs.md).
+
+## Alternative: a generic fact ledger
+
+Use this model when one schema must represent many predicates, when facts need
+independent links/provenance, or when explicit mutation events are required:
+
+```text
+Entity ──HAS_FACT──> FactKey ──HAS_VERSION──> FactVersion
+                       └────CURRENT──────> FactVersion
+MutationEvent ──AFFECTS───────────────────> FactVersion
+```
+
+It adds a stable identity for each `(subject, predicate)` slot and an explicit
+current pointer. Those are useful capabilities, but they add constraints and
+write coordination. They are not prerequisites for historical reads or exclusive
+periods. The following sections describe this more configurable alternative;
+its bootstrap script is not required for the recommended pattern.
+
+### Overview
 
 This guide shows how to implement a **canonical graph** in NornicDB with:
 
@@ -16,34 +151,34 @@ This guide shows how to implement a **canonical graph** in NornicDB with:
 - **Receipts** for auditability (tx_id, wal_seq_start/end, hash)
 - **Vector search** for semantic retrieval over canonical facts
 
-Everything here works **as‑is** with current NornicDB features.
+The epoch constraint spelling and historical-query signature shown here target v1.5.0. The ≤1.4.x tuple constraint and positional asOf forms remain accepted but deprecated.
 
 ---
 
-## Where This Pattern Is Useful
+### Where This Pattern Is Useful
 
 The canonical graph ledger pattern is especially useful when you need both **graph intelligence** and **auditability**:
 
 - **Financial systems**: track rate/risk/collateral fact versions with non-overlapping validity windows and reconstruct state "as of" a regulator-requested timestamp.
-- **Compliance and RegTech**: model KYC/AML assertions as immutable fact versions, keep actor/tx provenance, and prove mutation history with WAL-backed receipts.
+- **Compliance and RegTech**: model KYC/AML assertions as retained fact versions, keep actor/transaction provenance, and correlate changes with WAL-backed receipts.
 - **Audit platforms**: correlate graph-level mutation events to WAL sequence ranges and receipt hashes for investigation and reconciliation workflows.
 - **AI governance**: store model-produced assertions (`asserted_by=model:vX`) and human overrides as separate versions, then explain who changed what and when.
 - **Data lineage systems**: preserve derivation chains and temporal validity so downstream reports can be replayed against historical truth states.
 
-### Graph-RAG / RAG Pipeline Simplification
+#### Graph-RAG / RAG Pipeline Simplification
 
 Canonical graph ledger modeling also simplifies LLM retrieval pipelines:
 
 - Keep **facts, relationships, vector embeddings, and provenance** in one database.
 - Run **hybrid retrieval** (vector + keyword) and **graph traversal** without moving data across separate vector and graph stores.
-- Apply **as-of temporal reads** to answer time-bounded prompts ("what was true last quarter?").
+- Filter explicit fact periods for "what applied last quarter?"; use **as-of reads** for "what had been recorded then?", subject to retention.
 - Return **audit context** (tx_id, WAL range, receipt hash) with retrieved facts for high-trust inference paths.
 
 This reduces ETL glue code and lowers the risk of retrieval/lineage drift between systems.
 
 ---
 
-## Prerequisites
+### Prerequisites
 
 - **Persistent storage** (Badger) — schema and constraints persist across restarts.
 - **Embeddings enabled** (optional) if you want vector search.
@@ -57,7 +192,7 @@ If you use vector search:
 
 ---
 
-## Step 1 — Configure WAL retention (optional, opt‑in)
+### Step 1 — Configure WAL retention (optional, opt‑in)
 
 By default, auto‑compaction (snapshots + truncation) is enabled. For **ledger‑grade** retention, enable sealed segment retention and/or disable auto‑compaction.
 
@@ -86,15 +221,15 @@ export NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS=false
 
 ---
 
-## Step 2 — Bootstrap the canonical schema
+### Step 2 — Bootstrap the canonical schema
 
-Run the [bootstrap script](../examples/canonical-bootstrap.cypher) once per database, using your configured administrator password:
+The [bootstrap script](../examples/canonical-bootstrap.cypher) is a starting point for the generic schema. It retains older temporal guidance; apply the epoch declarations below for native no-overlap enforcement. Use your configured administrator password:
 
 ```bash
 cat docs/examples/canonical-bootstrap.cypher | cypher-shell -u admin -p "$NORNICDB_PASSWORD"
 ```
 
-This creates:
+The generic schema can combine:
 - Required fields (EXISTS) for nodes and relationships
 - Uniqueness constraints (single and composite) for nodes and relationships
 - NODE KEY and RELATIONSHIP KEY constraints
@@ -106,7 +241,7 @@ This creates:
 - Vector indexes
 - Property indexes for lookup speed
 
-### Node constraints
+#### Node constraints
 
 ```cypher
 // Uniqueness
@@ -134,7 +269,7 @@ CREATE CONSTRAINT entity_status_domain IF NOT EXISTS
 FOR (e:Entity) REQUIRE e.status IN ['active', 'archived', 'deleted']
 ```
 
-### Relationship constraints
+#### Relationship constraints
 
 ```cypher
 // Uniqueness — each CURRENT edge carries a unique fact_key
@@ -182,11 +317,11 @@ CALL db.constraints();
 SHOW INDEXES;
 ```
 
-### Block-style constraint contracts
+#### Block-style constraint contracts
 
 NornicDB also supports grouping several related checks into a single contract with `REQUIRE { ... }`. The block can mix primitive constraints that compile into existing schema objects with boolean predicates that are checked at creation time and on every write. Use [Managing Constraints](managing-constraints.md) for the operational guide; this section keeps the canonical-graph examples in one place.
 
-#### Node contract example
+##### Node contract example
 
 ```cypher
 CREATE CONSTRAINT person_contract
@@ -232,7 +367,7 @@ Expected error:
 constraint contract person_contract violated: predicate `n.status IN ['active', 'inactive']` evaluated to false
 ```
 
-#### Relationship contract example
+##### Relationship contract example
 
 ```cypher
 CREATE CONSTRAINT works_at_contract
@@ -273,12 +408,12 @@ constraint contract works_at_contract violated: predicate `r.status IN ['active'
 
 ---
 
-## Step 3 — Write canonical entities and facts
+### Step 3 — Write canonical entities and facts
 
 Canonical model:
 - `(:Entity)` — canonical identity
 - `(:FactKey)` — slot per `(subject_entity_id, predicate)`
-- `(:FactVersion)` — immutable, versioned assertion
+- `(:FactVersion)` — retained assertion whose end is closed when superseded
 
 **Create entity + fact key:**
 
@@ -309,43 +444,45 @@ CREATE (fv:FactVersion {
 })
 WITH fv
 MATCH (fk:FactKey {subject_entity_id: 'product-123', predicate: 'price'})
-MERGE (fk)-[:CURRENT]->(fv)
-MERGE (fk)-[:HAS_VERSION]->(fv);
+MERGE (fk)-[:CURRENT {fact_key:fv.fact_key}]->(fv)
+MERGE (fk)-[:HAS_VERSION {fact_key:fv.fact_key, version:1, valid_from:fv.valid_from, valid_to:fv.valid_to}]->(fv);
 ```
 
 **Important:** The temporal no‑overlap constraint prevents overlapping validity windows for a given `fact_key`.
 
 ---
 
-## Step 4 — Update facts with new versions
+### Step 4 — Update facts with new versions
 
-Close the previous version and create a new one:
+Close the previous version and create a new one in one statement. This two-version example uses version numbers 1 and 2; applications must allocate subsequent numbers transactionally:
 
 ```cypher
 MATCH (fk:FactKey {subject_entity_id: 'product-123', predicate: 'price'})
-MATCH (fv_old:FactVersion)-[:CURRENT]-(fk)
+MATCH (fk)-[current:CURRENT]->(fv_old:FactVersion)
+MATCH (fk)-[previous:HAS_VERSION]->(fv_old)
 WHERE fv_old.valid_to IS NULL
-SET fv_old.valid_to = datetime()
-REMOVE fv_old:CURRENT
+WITH fk, fv_old, current, previous, datetime() AS boundary
+SET fv_old.valid_to = boundary, previous.valid_to = boundary
+DELETE current
 
 CREATE (fv_new:FactVersion {
   fact_key: 'product-123|price',
   value_json: '{"amount": 89.99, "currency": "USD"}',
-  valid_from: datetime(),
+  valid_from: boundary,
   valid_to: null,
   asserted_at: datetime(),
   asserted_by: 'user:alice'
 })
 WITH fv_new, fk
-MERGE (fk)-[:CURRENT]->(fv_new)
-MERGE (fk)-[:HAS_VERSION]->(fv_new);
+MERGE (fk)-[:CURRENT {fact_key:fv_new.fact_key}]->(fv_new)
+MERGE (fk)-[:HAS_VERSION {fact_key:fv_new.fact_key, version:2, valid_from:fv_new.valid_from, valid_to:fv_new.valid_to}]->(fv_new);
 ```
 
 ---
 
-## Step 5 — Mutation log (events + WAL)
+### Step 5 — Mutation log (events + WAL)
 
-### Graph‑native events
+#### Graph‑native events
 
 ```cypher
 CREATE (me:MutationEvent {
@@ -358,10 +495,10 @@ CREATE (me:MutationEvent {
 WITH me
 MATCH (fv:FactVersion {fact_key: 'product-123|price'})
 WHERE fv.valid_to IS NULL
-MERGE (me)-[:AFFECTS]->(fv);
+MERGE (me)-[:AFFECTS {op_type:'UPDATE_FACT'}]->(fv);
 ```
 
-### WAL txlog queries (ledger view)
+#### WAL txlog queries (ledger view)
 
 ```cypher
 // The 1,000 most recent entries of the current database
@@ -387,7 +524,7 @@ ORDER BY seq;
 
 ---
 
-## Step 6 — Receipts (proof of mutation)
+### Step 6 — Receipts (proof of mutation)
 
 Receipts provide:
 - `tx_id`
@@ -402,7 +539,7 @@ You can use the receipt to fetch the associated WAL entries via `db.txlog.byTxId
 
 ---
 
-## Step 7 — As‑of reads (temporal queries)
+### Step 7 — As‑of reads (temporal queries)
 
 Read the fact graph as it was at a chosen instant. `query` is an ordinary read-only `MATCH` query, and `parameters` is an optional map bound to its `$parameters`:
 
@@ -425,7 +562,7 @@ See [Historical Reads & MVCC Retention](historical-reads-mvcc-retention.md) for 
 
 ---
 
-## Step 8 — Vector search over canonical facts
+### Step 8 — Vector search over canonical facts
 
 Create a vector index (already in bootstrap):
 
@@ -437,7 +574,7 @@ RETURN node, score;
 
 ---
 
-## Operational Checklist
+### Operational Checklist
 
 -  Run `canonical-bootstrap.cypher`
 -  Ensure `FactVersion` validity windows don’t overlap
@@ -447,7 +584,7 @@ RETURN node, score;
 
 ---
 
-## Related Guides
+### Related Guides
 
 - [Cypher Queries](cypher-queries.md)
 - [Transactions](transactions.md)
