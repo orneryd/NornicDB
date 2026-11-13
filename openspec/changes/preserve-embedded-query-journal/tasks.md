@@ -18,3 +18,11 @@
 - [x] Integrate approved exact lexical, counter and local-endpoint inventory updates with rejection controls.
 - [x] Refresh the generated full census report from exact-head CI output; no local full census run.
 - [ ] Push shared correction and obtain exact-head regular make-test CI success.
+
+## Deterministic release qualification
+
+- [x] Reproduce the unordered average fixture's missing sort in a fail-first extraction test.
+- [x] Order only issue463's bare-average replay by its unique SKU and hash its actual replay text.
+- [x] Preserve the original rounded-average statement, all285 issues and all2019 statements.
+- [x] Verify the ascending/descending input population and exact average through both parsers/transaction modes (ten repetitions each parser).
+- [x] Run the differential package, focused TCK ratchet controls and Python extractor controls; no new CI requested.

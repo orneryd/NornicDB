@@ -25,7 +25,9 @@ NornicDB's Cypher, or when they would make the run slow or unrepeatable:
 - data generators larger than MAX_RANGE rows.
 
 The output is JSON: [{"issue", "title", "statements": [{"id", "query"}]}].
-A statement's id is a hash of the issue number, its position and its text.
+A statement's id is a hash of the issue number, its position and its replay text.
+The bare-average companion in issue 463 adds explicit input ordering for exact
+floating-point comparison; its original rounded-average regression is retained.
 """
 import hashlib
 import json
@@ -38,6 +40,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUT = os.path.join(HERE, "..", "..", "..", "testing", "cypher", "tck", "testdata", "differential", "issues.json")
 REPO = "orneryd/NornicDB"
 MAX_RANGE = 2000
+
+# This companion check compares every floating-point bit. Running averages
+# depend on input order, which MATCH alone does not specify. Order by the
+# fixture's unique SKU; retain the original rounded-average regression.
+ORDERED_REPLAYS = {
+    (463, "MATCH (i:I) RETURN avg(i.price) AS av"):
+        "MATCH (i:I) WITH i ORDER BY i.sku RETURN avg(i.price) AS av",
+}
 
 # A statement's first clause; after a complete statement, a line starting with
 # one of these begins the next statement.
@@ -186,6 +196,7 @@ def main():
     for issue in issues():
         kept = []
         for index, statement in enumerate(s for s in statements(issue["body"]) if keep(s)):
+            statement = ORDERED_REPLAYS.get((issue["number"], statement), statement)
             digest = hashlib.sha1(f"{issue['number']}:{index}:{statement}".encode()).hexdigest()[:12]
             kept.append({"id": digest, "query": statement})
         if kept:
