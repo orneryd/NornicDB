@@ -16,12 +16,20 @@ const (
 	metadataNodeID = "databases:metadata"
 )
 
+// readCatalogMetadataNode reads the catalog metadata node of systemDatabase
+// within inner, or storage.ErrNotFound when the store holds none. The
+// manager's load and the pre-recovery change-capture load
+// (LoadChangeCaptureModes) read this one record.
+func readCatalogMetadataNode(ctx context.Context, inner storage.Engine, systemDatabase string) (*storage.Node, error) {
+	if systemDatabase == "" {
+		systemDatabase = DefaultConfig().SystemDatabase
+	}
+	return storage.NewNamespacedEngine(inner, systemDatabase).GetNode(ctx, storage.NodeID(metadataNodeID))
+}
+
 // loadMetadata loads database metadata from storage.
 func (m *DatabaseManager) loadMetadata(ctx context.Context) (bool, error) {
-	// Use system namespace to load metadata
-	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
-
-	node, err := systemEngine.GetNode(ctx, storage.NodeID(metadataNodeID))
+	node, err := readCatalogMetadataNode(ctx, m.inner, m.config.SystemDatabase)
 	if err == storage.ErrNotFound {
 		// No existing metadata - start fresh
 		return false, nil

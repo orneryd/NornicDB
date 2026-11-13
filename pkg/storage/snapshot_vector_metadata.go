@@ -2,8 +2,14 @@ package storage
 
 import "maps"
 
-// A lightweight snapshot omits sidecar vectors. Keep metadata consistent with
-// the vectors actually exported without mutating the source entity or its map.
+// A streaming snapshot reads each stored node with the managed vectors its
+// reads return (WriteSnapshot asks for embeddings), so a node that keeps a
+// vector beside its body holds that vector when it is exported. A node whose
+// body flags separate storage but holds no vectors to name (a body flagged
+// before its vectors were stored, or a clearing that left the flag) still
+// exports without claiming an embedding it does not carry. Keep metadata
+// consistent with the vectors actually exported without mutating the source
+// entity or its map.
 func snapshotNodeVectorMetadata(node *Node) *Node {
 	if node == nil || !node.RuntimeMetadata().EmbeddingsStoredSeparately {
 		return node

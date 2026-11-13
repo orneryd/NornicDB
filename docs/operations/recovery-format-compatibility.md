@@ -139,12 +139,15 @@ ID; bare IDs without colons use the configured default database on restore.
 Callers constructing snapshots must qualify local IDs that themselves contain
 colons. This preserves existing snapshot qualification semantics.
 
-Streaming snapshot export retains its established embedding-free enumeration
-contract: separately stored vectors are not fetched by that route. The new
-codec does not change which sidecars that route loads. Exported nodes clear the
-separate-storage flag, and metadata no longer advertises omitted chunk vectors or
-unavailable embeddings. Inline vectors and unrelated metadata remain intact;
-the source node is unchanged.
+Streaming snapshot export reads each node with the managed vectors its reads
+return: a vector kept beside the node's body is fetched and exported, so a
+rebuild from that snapshot holds the store's vectors instead of an older inline
+image or none. The codec does not change the snapshot bytes beyond the vectors
+the enumeration now supplies. A node whose body flags separate storage but
+carries no vector to export still clears the flag, and its metadata no longer
+advertises unavailable embeddings. Inline vectors and unrelated metadata remain
+intact; the source node is unchanged. Reading each node's sidecar vectors makes
+an automatic snapshot larger than the embedding-free enumeration it replaces.
 
 ## Local validation
 

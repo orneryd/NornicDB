@@ -46,8 +46,13 @@ type SnapshotVisitor interface {
 	VisitEdge(context.Context, *Edge) error
 }
 
-// WriteSnapshot writes lossless NDS2 v2 entity frames using streaming enumeration.
-// Its existing lightweight route does not fetch separately stored embeddings.
+// WriteSnapshot writes lossless NDS2 v2 entity frames using streaming
+// enumeration. A node is exported with the managed vectors its reads return:
+// a vector kept beside the node's body (EmbeddingSidecarUpdater) is part of
+// the store's state, and automatic compaction truncates the journal after this
+// snapshot, so a snapshot that left the vector out would rebuild the node
+// without it (or with an older inline image) and leave it unable to say it
+// needs embedding.
 //
 // A record may be as large as the frame format carries
 // (materializedSnapshotRecordSize), the limit the recovery readers read with
@@ -77,7 +82,7 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	// once the snapshot is written.
 	return writeSnapshotRecords(writer, options.Sequence, time.Now(), maxRecordBytes, nil,
 		func(write func(byte, any) error) error {
-			if err := StreamStoredNodes(ctx, engine, StreamNodesOptions{}, func(node *Node) error {
+			if err := StreamStoredNodes(ctx, engine, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
 				return write(streamSnapshotNode, snapshotNodeVectorMetadata(node))
 			}); err != nil {
 				return fmt.Errorf("stream snapshot nodes: %w", err)
