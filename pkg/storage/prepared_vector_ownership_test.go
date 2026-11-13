@@ -5,15 +5,15 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPreparedVectorImagesStayDetachedFromCallers(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 
 	engine.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:owned", Properties: map[string]any{"text": "same"}, ChunkEmbeddings: [][]float32{{1, 2}}, NamedEmbeddings: map[string][]float32{"title": {3, 4}}})
 	require.NoError(t, err)
 	input, err := engine.GetNode(t.Context(), "test:owned")

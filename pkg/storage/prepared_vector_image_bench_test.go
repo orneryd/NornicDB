@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,11 +14,10 @@ import (
 func BenchmarkPreparedVectorPropertyUpdate(b *testing.B) {
 	for _, chunks := range []int{0, 256} {
 		b.Run(fmt.Sprintf("chunks=%d", chunks), func(b *testing.B) {
-			engine, err := NewBadgerEngine(b.TempDir())
+			engine, err := fixtureowner.OwnResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
 			require.NoError(b, err)
 
 			engine.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
-			b.Cleanup(func() { require.NoError(b, engine.Close()) })
 			vectors := make([][]float32, chunks)
 			for i := range vectors {
 				vectors[i] = make([]float32, 1024)
