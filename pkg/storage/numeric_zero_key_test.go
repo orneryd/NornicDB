@@ -26,7 +26,7 @@ func TestNumericKeyZeroSignsSerializeAlike(t *testing.T) {
 		hashes = append(hashes, composite.Hash)
 
 		props := map[string]interface{}{"tenant": zero, "v": int64(9007199254740993)}
-		lock, ok, err := nodeConstraintLockKey(t.Context(), tuple, &Node{Properties: props})
+		lock, ok, err := constraintPropertyLockKey(t.Context(), tuple, tuple.Label, props)
 		require.NoError(t, err)
 		require.True(t, ok)
 		locks = append(locks, lock)

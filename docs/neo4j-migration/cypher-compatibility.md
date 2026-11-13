@@ -56,7 +56,7 @@ All constraint DDL supports `IF NOT EXISTS` for idempotent creation and named or
 | Existence | `REQUIRE var.prop IS NOT NULL` |
 | Node key | `REQUIRE (var.p1, var.p2) IS NODE KEY` |
 | Property type | `REQUIRE var.prop IS :: TYPE` |
-| Temporal no-overlap | `REQUIRE (var.key, var.from, var.to) IS TEMPORAL NO OVERLAP` |
+| Temporal no-overlap | `CREATE CONSTRAINT … REQUIRE temporal.epoch(var.from, var.to) GROUP BY var.key` (the deprecated tuple form `REQUIRE (var.key, var.from, var.to) IS TEMPORAL NO OVERLAP` is still accepted) |
 | Domain/enum | `REQUIRE var.prop IN ['val1', 'val2']` |
 
 **Cardinality constraints** (`FOR ()-[var:TYPE]->()` or `FOR ()<-[var:TYPE]-()`):
@@ -86,7 +86,7 @@ ALLOWED policies form a union whitelist: once any ALLOWED policy exists for a re
 | Existence | `REQUIRE var.prop IS NOT NULL` |
 | Relationship key | `REQUIRE (var.p1, var.p2) IS RELATIONSHIP KEY` |
 | Property type | `REQUIRE var.prop IS :: TYPE` |
-| Temporal no-overlap | `REQUIRE (var.key, var.from, var.to) IS TEMPORAL NO OVERLAP` |
+| Temporal no-overlap | `CREATE CONSTRAINT … REQUIRE temporal.epoch(var.from, var.to) GROUP BY var.key` (the deprecated tuple form `REQUIRE (var.key, var.from, var.to) IS TEMPORAL NO OVERLAP` is still accepted) |
 | Domain/enum | `REQUIRE var.prop IN ['val1', 'val2']` |
 
 Temporal no-overlap, domain/enum, cardinality, and endpoint policy constraints are NornicDB extensions not available in Neo4j.

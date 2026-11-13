@@ -45,7 +45,7 @@ func isMetadataCommand(ctx context.Context, cypher string, purpose metadataComma
 		startsWithKeywords(ctx, cypher, "CREATE", "DECAY PROFILE") ||
 		startsWithKeywords(ctx, cypher, "CREATE", "PROMOTION PROFILE") ||
 		startsWithKeywords(ctx, cypher, "CREATE", "PROMOTION POLICY") ||
-		startsWithKeywords(ctx, cypher, "CREATE", "CONSTRAINT") ||
+		isCreateConstraintStatement(ctx, cypher) ||
 		startsWithKeywords(ctx, cypher, "CREATE", "INDEX") ||
 		startsWithKeywords(ctx, cypher, "CREATE", "RANGE INDEX") ||
 		startsWithKeywords(ctx, cypher, "CREATE", "FULLTEXT INDEX") ||
@@ -261,7 +261,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeRequiredPipeline(ctx, cypher)
 	case startsWithMatch:
 		return e.executeRequiredPipeline(ctx, cypher)
-	case startsWithKeywords(ctx, cypher, "CREATE", "CONSTRAINT"),
+	case isCreateConstraintStatement(ctx, cypher),
 		startsWithKeywords(ctx, cypher, "CREATE", "RANGE INDEX"),
 		startsWithKeywords(ctx, cypher, "CREATE", "FULLTEXT INDEX"),
 		startsWithKeywords(ctx, cypher, "CREATE", "VECTOR INDEX"),

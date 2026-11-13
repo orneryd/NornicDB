@@ -93,6 +93,18 @@ var (
 	// would expose peer commits that landed between the reader's
 	// begin and the read.
 	ErrNotVisibleAtSnapshot = errors.New("entity not visible at snapshot")
+	// ErrHistoryNotRetained reports a historical read at a time before the
+	// retained history of the entity: a persisted prune floor says the store
+	// discarded the versions that answer it. Distinct from ErrNotFound, which
+	// reports an entity that did not exist at the requested time.
+	ErrHistoryNotRetained = errors.New("history not retained at requested time")
+	// ErrHistoryUnavailable reports a historical read whose retained records
+	// hold no state of the entity at or after its creation floor: the record
+	// the read needs is missing, so the answer cannot be given.
+	ErrHistoryUnavailable = errors.New("history unavailable at requested time")
+	// ErrHistoricalReadOnly reports a mutation attempted through a historical
+	// read engine, which answers reads only.
+	ErrHistoricalReadOnly = errors.New("historical read is read-only")
 )
 
 // NodeID is a strongly-typed unique identifier for graph nodes.

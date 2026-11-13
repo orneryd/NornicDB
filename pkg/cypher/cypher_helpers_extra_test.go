@@ -994,7 +994,7 @@ func TestCypherHelpers_ComparisonConversionAndTemporalHelpers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "12", s)
 
-	_, ok := coerceDateTimeOptional(nil)
+	_, _, _, ok := storage.ReadTemporalBounds(nil, nil)
 	assert.False(t, ok)
 
 	assert.True(t, valuesEqual(int64(1), "1"))

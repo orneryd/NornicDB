@@ -9,6 +9,9 @@ import (
 // already evaluated their arguments using the normal evaluator. Nested dynamic
 // calls execute through the same gate, with no argument-shape prediction.
 func (e *StorageExecutor) admitResolvedStatementWrite(ctx context.Context, statement string) error {
+	if err := admitHistoricalStatement(ctx, statement); err != nil {
+		return err
+	}
 	state := e.resolvedStatementModeOf(ctx)
 	if state == nil {
 		return nil

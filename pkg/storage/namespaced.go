@@ -745,31 +745,23 @@ func (n *NamespacedEngine) NodeCount(ctx context.Context) (int64, error) {
 		return stats.NodeCountByPrefix(ctx, n.scope)
 	}
 
-	// Fallback: streaming scan (correct but slower; should be rare in production).
-	if streamer, ok := ResolveStreamingEngine(n.inner); ok {
-		var count int64
-		var cancel bulkReadCancellation
-		err := streamer.StreamNodes(ctx, func(node *Node) error {
-			if err := cancel.check(ctx); err != nil {
-				return err
-			}
-			if n.hasNodePrefix(node.ID) {
-				count++
-			}
-			return nil
-		})
-		if err != nil {
-			return 0, err
+	// Every engine exposes the canonical streaming kernel. Keep count reads
+	// streaming even for scoped readers that intentionally have no current
+	// counters, rather than materializing AllNodes through an optional alias.
+	var count int64
+	err := n.inner.StreamNodesWithOptions(ctx, StreamNodesOptions{Prefix: n.scope, Projection: []string{}, ApplyDecayFilter: true}, func(node *Node) error {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		return count, nil
-	}
-
-	// Last resort: load and filter on the same caller context.
-	nodes, err := n.AllNodes(ctx)
+		if node != nil && n.hasNodePrefix(node.ID) {
+			count++
+		}
+		return nil
+	})
 	if err != nil {
 		return 0, err
 	}
-	return int64(len(nodes)), nil
+	return count, nil
 }
 
 // ReadCountStore answers a count-store read for this namespace: the inner

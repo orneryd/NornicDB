@@ -195,6 +195,13 @@ func (e *namespacedLabelStatsEngine) NodeCountByLabelInNamespace(ctx context.Con
 	return e.count, nil
 }
 
+func (e *namespacedStreamingOnlyEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, visit func(*Node) error) error {
+	if e.streamNodeErr != nil {
+		return e.streamNodeErr
+	}
+	return e.Engine.StreamNodesWithOptions(ctx, opts, visit)
+}
+
 func (e *namespacedStreamingOnlyEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
 	if e.streamNodeErr != nil {
 		return e.streamNodeErr
@@ -1154,11 +1161,11 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), edgeCount)
 
-		fallbackInner.allNodesErr = errors.New("all nodes failed")
+		fallbackInner.streamNodesErr = errors.New("node stream failed")
 		_, err = tenantAFallback.NodeCount(t.Context())
-		require.ErrorContains(t, err, "all nodes failed")
+		require.ErrorContains(t, err, "node stream failed")
 
-		fallbackInner.allNodesErr = nil
+		fallbackInner.streamNodesErr = nil
 		fallbackInner.allEdgesErr = errors.New("all edges failed")
 		_, err = tenantAFallback.EdgeCount(t.Context())
 		require.ErrorContains(t, err, "all edges failed")

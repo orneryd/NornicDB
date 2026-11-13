@@ -88,6 +88,11 @@ func makeTemporalDescriptor(namespace string, c Constraint, keyValue interface{}
 
 func encodeTemporalSortTime(t time.Time) []byte {
 	buf := make([]byte, 8)
+	// Open starts use the lowest sort position. Existing finite encodings and
+	// the history-key layout remain byte-for-byte unchanged.
+	if t.IsZero() {
+		return buf
+	}
 	value := uint64(t.UTC().UnixNano()) ^ (1 << 63)
 	binary.BigEndian.PutUint64(buf, value)
 	return buf
@@ -224,7 +229,7 @@ func nodeMatchesTemporalLookup(node *Node, c Constraint, keyValue interface{}, a
 	if !ok || !temporalKeyValuesEqual(c, value, keyValue) {
 		return false
 	}
-	if asOf.Before(start) {
+	if !start.IsZero() && asOf.Before(start) {
 		return false
 	}
 	if hasEnd && !asOf.Before(end) {
@@ -1125,7 +1130,7 @@ func (b *BadgerEngine) refreshTemporalCurrentPointers(ctx context.Context, w *ba
 				continue
 			}
 			_, start, end, hasEnd, ok := temporalNodeState(node, c)
-			if !ok || now.Before(start) || (hasEnd && !now.Before(end)) {
+			if !ok || (!start.IsZero() && now.Before(start)) || (hasEnd && !now.Before(end)) {
 				continue
 			}
 			if best, seen := bestPending[key]; !seen || start.After(best.start) {

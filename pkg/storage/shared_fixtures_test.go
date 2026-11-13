@@ -36,9 +36,17 @@ func makeEdge(id, from, to string) *Edge {
 // fall back to AllNodes/AllEdges, and injects scan errors. Moved out of the
 // deleted async engine test file because composite tests still use it.
 type nonStreamingCountEngine struct {
+	streamNodesErr error
 	Engine
 	allNodesErr error
 	allEdgesErr error
+}
+
+func (e *nonStreamingCountEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, visit func(*Node) error) error {
+	if e.streamNodesErr != nil {
+		return e.streamNodesErr
+	}
+	return e.Engine.StreamNodesWithOptions(ctx, opts, visit)
 }
 
 func (e *nonStreamingCountEngine) AllNodes(ctx context.Context) ([]*Node, error) {

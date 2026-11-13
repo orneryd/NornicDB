@@ -189,12 +189,7 @@ func (v nodeConstraintValidation) validate(node *Node) error {
 			}
 			interval, ok := spec.interval(node.Properties)
 			if !ok {
-				return &ConstraintViolationError{
-					Type:       ConstraintTemporal,
-					Label:      c.Label,
-					Properties: c.Properties,
-					Message:    fmt.Sprintf("TEMPORAL start property %s must be a datetime", spec.startProp),
-				}
+				return temporalBoundsViolation(c, node.Properties)
 			}
 
 			if err := v.engine.scanForTemporalOverlapInTxn(v.ctx, v.native, v.namespace, c, keyVal, interval.start, interval.end, interval.hasEnd, v.exclude); err != nil {
@@ -603,16 +598,10 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 		}
 	}
 
-	start, ok := CoerceTemporalTime(edge.Properties[startProp])
+	start, end, hasEnd, ok := ReadTemporalBounds(edge.Properties[startProp], edge.Properties[endProp])
 	if !ok {
-		return &ConstraintViolationError{
-			Type:       ConstraintTemporal,
-			Label:      edge.Type,
-			Properties: c.Properties,
-			Message:    fmt.Sprintf("TEMPORAL start property %s must be a datetime", startProp),
-		}
+		return temporalBoundsViolation(c, edge.Properties)
 	}
-	end, hasEnd := CoerceTemporalTime(edge.Properties[endProp])
 
 	newInterval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
 
@@ -662,11 +651,10 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 			continue
 		}
 
-		existingStart, ok := CoerceTemporalTime(existingEdge.Properties[startProp])
+		existingStart, existingEnd, existingHasEnd, ok := ReadTemporalBounds(existingEdge.Properties[startProp], existingEdge.Properties[endProp])
 		if !ok {
 			continue
 		}
-		existingEnd, existingHasEnd := CoerceTemporalTime(existingEdge.Properties[endProp])
 
 		existingInterval := temporalInterval{start: existingStart, end: existingEnd, hasEnd: existingHasEnd}
 

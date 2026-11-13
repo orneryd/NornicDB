@@ -20,7 +20,8 @@ func isOrdinarySchemaDDL(ctx context.Context, query string) bool {
 			return true
 		}
 	}
-	return startsWithKeywords(ctx, query, "DROP", "INDEX") || startsWithKeywords(ctx, query, "DROP", "CONSTRAINT")
+	return isCreateConstraintStatement(ctx, query) ||
+		startsWithKeywords(ctx, query, "DROP", "INDEX") || startsWithKeywords(ctx, query, "DROP", "CONSTRAINT")
 }
 
 // prepareSchemaTransaction gives the statement its transaction's isolated

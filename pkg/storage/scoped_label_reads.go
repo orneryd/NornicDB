@@ -69,7 +69,9 @@ func streamNodesByLabelProjectedInScope(ctx context.Context, engine Engine, scop
 	if reader, ok := engine.(ProjectedLabelNodeReader); ok {
 		return reader.StreamNodesByLabelProjected(ctx, label, properties, visit)
 	}
-	return ErrNotImplemented
+	// The mandatory stream kernel expresses this read without requiring an
+	// optional alias. A scoped historical reader must keep its own view here.
+	return engine.StreamNodesWithOptions(ctx, StreamNodesOptions{Prefix: scope, Label: label, Projection: properties, ApplyDecayFilter: true}, visit)
 }
 
 func getNodesByLabelVisibleAtInScope(ctx context.Context, engine Engine, scope, label string, version MVCCVersion) ([]*Node, error) {

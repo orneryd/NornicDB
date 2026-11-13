@@ -15,6 +15,14 @@ func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher s
 	if unclosed >= 0 {
 		return unclosedCommentError(cypher, unclosed, ModeNormal)
 	}
+	// Contract entries permit semicolons inside their REQUIRE block. The
+	// canonical contract parser admits only a whole declaration with no tail,
+	// so this cannot admit a second statement after the closing brace.
+	if multiple {
+		if _, err := e.parseCreateConstraintContractDDL(ctx, cypher); err == nil {
+			multiple = false
+		}
+	}
 	if multiple {
 		statements := e.splitBySemicolon(cypher)
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",

@@ -184,6 +184,9 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 			}
 		}
 		for _, input := range declaration.CypherInputs {
+			if input.MaxArguments > 0 && len(arguments) > input.MaxArguments {
+				continue
+			}
 			dependency := executionTextPolicy{}
 			var known bool
 			switch {

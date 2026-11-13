@@ -28,6 +28,9 @@ import (
 // data statement (ForbiddenDueToTransactionType), in auto-commit as in an
 // explicit transaction.
 func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (result *ExecuteResult, err error) {
+	if err := admitHistoricalStatement(ctx, statement); err != nil {
+		return nil, err
+	}
 	if totals, ok := ctx.Value(procedureStatementStatsKey{}).(*procedureStatementStats); ok && totals != nil {
 		// Every nested procedure installs its own invocation collector. Its
 		// completed summary enters this collector only through this result.

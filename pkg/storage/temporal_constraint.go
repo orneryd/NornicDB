@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 type temporalInterval struct {
@@ -74,20 +76,67 @@ func intervalsOverlap(a temporalInterval, b temporalInterval) bool {
 	return TemporalIntervalsOverlap(a.start, a.end, a.hasEnd, b.start, b.end, b.hasEnd)
 }
 
-// TemporalIntervalsOverlap reports whether the half-open validity intervals
-// [aStart, aEnd) and [bStart, bEnd) overlap; an interval without an end is
-// open-ended. An interval with a zero start overlaps nothing. The TEMPORAL
-// NO OVERLAP constraint and db.temporal.assertNoOverlap both decide overlap
-// with it.
+// ReadTemporalBounds reads a half-open epoch. A nil start is unbounded past;
+// a nil end is unbounded future. At least one bound must be present. Non-nil
+// bounds must be valid temporal values; two finite bounds must increase.
+// A zero start in the returned representation denotes unbounded past only.
+func ReadTemporalBounds(startValue, endValue interface{}) (start, end time.Time, hasEnd, ok bool) {
+	hasStart := startValue != nil && startValue != (*time.Time)(nil)
+	hasEnd = endValue != nil && endValue != (*time.Time)(nil)
+	if !hasStart && !hasEnd {
+		return start, end, false, false
+	}
+	if hasStart {
+		start, ok = CoerceTemporalTime(startValue)
+		if !ok || start.IsZero() {
+			return start, end, false, false
+		}
+	}
+	if hasEnd {
+		end, ok = CoerceTemporalTime(endValue)
+		if !ok || end.IsZero() {
+			return start, end, false, false
+		}
+		hasEnd = true
+	}
+	return start, end, hasEnd, validTemporalBounds(start, end, hasEnd)
+}
+
+// validTemporalBounds also protects direct overlap callers from treating an
+// empty/invalid representation as an all-time claim.
+func validTemporalBounds(start, end time.Time, hasEnd bool) bool {
+	if start.IsZero() {
+		return hasEnd && !end.IsZero()
+	}
+	return !hasEnd || (!end.IsZero() && start.Before(end))
+}
+
+// TemporalIntervalsOverlap compares half-open epochs. A zero start denotes
+// unbounded past and hasEnd=false denotes unbounded future. Callers admitting
+// external values validate them with ReadTemporalBounds first.
 func TemporalIntervalsOverlap(aStart, aEnd time.Time, aHasEnd bool, bStart, bEnd time.Time, bHasEnd bool) bool {
-	if aStart.IsZero() || bStart.IsZero() {
+	if !validTemporalBounds(aStart, aEnd, aHasEnd) || !validTemporalBounds(bStart, bEnd, bHasEnd) {
 		return false
 	}
-	if bHasEnd && !aStart.Before(bEnd) {
+	if bHasEnd && !aStart.IsZero() && !aStart.Before(bEnd) {
 		return false
 	}
-	if aHasEnd && !bStart.Before(aEnd) {
+	if aHasEnd && !bStart.IsZero() && !bStart.Before(aEnd) {
 		return false
 	}
 	return true
+}
+
+// temporalBoundsViolation keeps bounds errors consistent across DDL, direct
+// writes and transaction preparation. Invalid supplied starts retain their
+// existing specific error; symmetric shape errors name both properties.
+func temporalBoundsViolation(c Constraint, props map[string]interface{}) error {
+	spec, _ := splitTemporalKeySpec(c.Properties)
+	message := localization.StorageValidationTemporalBoundsInvalid(spec.startProp, spec.endProp)
+	if value := props[spec.startProp]; value != nil {
+		if start, ok := CoerceTemporalTime(value); !ok || start.IsZero() {
+			message = localization.StorageValidationTemporalStartInvalid(spec.startProp)
+		}
+	}
+	return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
 }

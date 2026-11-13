@@ -632,8 +632,13 @@ func renderConstraintStatement(request constraintStatementRequest) (string, bool
 			pattern = cypherPattern(entity, c.Label)
 			requirement = "(" + strings.Join(props, ", ") + ") IS RELATIONSHIP KEY"
 		case storage.ConstraintTemporal:
+			keys, startProp, endProp, _ := storage.TemporalKeyAndWindow(c.Properties)
 			pattern = cypherPattern(entity, c.Label)
-			requirement = "(" + strings.Join(props, ", ") + ") IS TEMPORAL NO OVERLAP"
+			format = constraintStatementFormat
+			requirement = "temporal.epoch(" + strings.Join(cypherPropertyRefs(entityVariable(entity), []string{startProp, endProp}), ", ") + ")"
+			if len(keys) > 0 {
+				requirement += " GROUP BY " + strings.Join(cypherPropertyRefs(entityVariable(entity), keys), ", ")
+			}
 		case storage.ConstraintDomain:
 			if len(props) != 1 {
 				return "", false

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Temporal epochs support a null start (unbounded past) or null end (unbounded
+  future), with at least one bound required. Malformed bounds and non-positive
+  finite spans are rejected. Node and relationship constraints, blocks, indexed
+  lookups and deprecated interval reads share the same bounds rules. Existing
+  finite index-key encoding and storage payload formats are unchanged.
+
+- Temporal no-overlap constraints accept the epoch spelling
+  `CREATE CONSTRAINT name FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.accountId`,
+  with one or more grouping key properties and both node (`FOR (n:Account)`) and
+  relationship (`FOR ()-[r:OWNS]-()`) contracts. It compiles to the existing
+  temporal constraint definition, so declaration-time validation, write-time
+  enforcement and persistence are the same; `SHOW CONSTRAINTS` and the Neo4j CSV
+  schema export now spell a temporal constraint this way. The earlier tuple
+  spelling `REQUIRE (n.accountId, n.starts_at, n.ends_at) IS TEMPORAL NO OVERLAP`
+  is deprecated and stays accepted, and stored definitions need no migration.
+
 - Go USE/clause preparation scanners now require operation contexts and explicit
   errors across thirteen existing Cypher APIs. Fabric keyword-name and import
   readers are context-first stateless callbacks; canceled preparation is not

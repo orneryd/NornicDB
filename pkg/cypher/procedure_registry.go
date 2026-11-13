@@ -106,6 +106,10 @@ type ProcedureSpec struct {
 	// handler resolves arguments normally; actual inner writes promote a
 	// Fabric participant at the shared execution boundary.
 	ExecutesStatements bool
+	// ExecutesReadOnlyStatements declares nested executable text whose owner
+	// enforces read-only admission. It preserves full argument images without
+	// requesting a write rollback owner for an otherwise fixed READ procedure.
+	ExecutesReadOnlyStatements bool
 	// OwnsTransactions owns autocommit batch boundaries. Native explicit
 	// transactions retain shipped folding; Fabric-managed scopes reject it
 	// before invocation because their rollback cannot undo committed batches.

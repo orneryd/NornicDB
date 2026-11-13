@@ -106,6 +106,19 @@ export default defineConfig({
         ["Constraints", "/user-guides/managing-constraints"],
         ["Import and export", "/user-guides/data-import-export"],
       ]),
+      section("Temporal patterns", [
+        ["Overview", "/temporal-patterns/index"],
+        ["Epoch records", "/user-guides/canonical-graph-ledger"],
+        ["Independent constraints", "/user-guides/managing-constraints"],
+        [
+          "Retained as-of history",
+          "/user-guides/historical-reads-mvcc-retention",
+        ],
+        [
+          "Read and constraint costs",
+          "/performance/temporal-read-and-constraint-costs",
+        ],
+      ]),
       section("Search and retrieval", [
         ["Hybrid search", "/user-guides/hybrid-search"],
         ["BM25 stemming", "/user-guides/bm25-stemmers"],

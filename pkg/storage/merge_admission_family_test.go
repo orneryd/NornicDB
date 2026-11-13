@@ -23,7 +23,7 @@ func TestMergeAdmissionCanonicalTuple(t *testing.T) {
 			keys, keyErr := schema.uniqueMergeKeys(t.Context(), []string{"Tuple"}, props)
 			require.NoError(t, keyErr)
 			require.Len(t, keys, 1)
-			canonical, ok, canonicalErr := nodeConstraintLockKey(t.Context(), c, &Node{Properties: props})
+			canonical, ok, canonicalErr := constraintPropertyLockKey(t.Context(), c, c.Label, props)
 			require.NoError(t, canonicalErr)
 			require.True(t, ok)
 			require.Equal(t, canonical, keys[0].lock)
