@@ -1,0 +1,12 @@
+- [x] Reproduce active-file oversized-tail rejection on release ce22592d2.
+- [x] Preserve the ordinary active-file policy in the canonical migration scanner.
+- [x] Verify nine cut positions and recovered prefix state.
+- [x] Verify deterministic conversion and repeat-upgrade idempotence.
+- [x] Retain complete-corruption, interior-corruption and sealed-tail rejection.
+- [x] Run focused V4/oversized-audit storage checks.
+- [x] Publish a dedicated release-targeted fix PR and link from #1803.
+- [x] Review all seven advisory owner relationships against the rebased source; no copied-body finding.
+- [x] Rebase onto release d71d1ba3f containing merged #1801/#1804; preserve all changelog entries.
+- [x] Run focused migration, corruption, replay, rollover and transaction-admission checks after rebase.
+- [ ] Fresh full-suite CI on the rebased candidate (not requested; local focused validation only).
+- [ ] Integrate and qualify the combined release before shipping.
