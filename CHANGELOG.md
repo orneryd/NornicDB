@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Embedding resets publish committed per-node search refreshes instead of
   clearing the entire index, preserving refused and unrelated vectors.
   Replacement search services report a failed build as a failed vector index.
+  Successful per-index populations retain their own state across unrelated
+  global build failures; stored reads and lazy startup keep their existing paths.
 
 - Temporal epochs support a null start (unbounded past) or null end (unbounded
   future), with at least one bound required. Malformed bounds and non-positive

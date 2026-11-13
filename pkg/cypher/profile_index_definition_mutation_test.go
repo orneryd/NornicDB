@@ -172,7 +172,9 @@ func TestProfileIndexProceduresObserveAdmissionDropAndPopulation(t *testing.T) {
 									population := planOperatorOfType(plan.Root, "VectorIndexPopulationByNameSeek")
 									require.NotNil(t, population)
 									require.EqualValues(t, 1, population.DBHits)
-									require.Zero(t, population.ActualRows)
+									// The drop reads the record of the population this service served:
+									// the created index is ONLINE, so the lookup finds it.
+									require.EqualValues(t, 1, population.ActualRows)
 								}
 								require.Equal(t, total, plan.TotalDBHits)
 							}

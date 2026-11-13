@@ -22,9 +22,10 @@ func populationNode(id string, vector []float64, text string) *storage.Node {
 // until Populate; ONLINE when the index serves every stored node of its label
 // as storage holds it; FAILED, with the cause, when a stored vector cannot be
 // served; a wait for ONLINE ends at its timeout while populating; Abort makes
-// the name's previous record current again. A record exists only while its
-// index is POPULATING or FAILED: ONLINE and the committed drop (Retire)
-// remove it.
+// the name's previous record current again. The record of a population that
+// served the index keeps its outcome, ONLINE or FAILED, so a build the service
+// runs later does not decide the index's state; the committed drop (Retire)
+// removes it.
 func TestVectorIndexPopulationLifecycle(t *testing.T) {
 	ctx := context.Background()
 	engine := newNamespacedMemoryEngine(t)
@@ -50,7 +51,8 @@ func TestVectorIndexPopulationLifecycle(t *testing.T) {
 	require.NoError(t, population.Populate(ctx, true))
 	require.NoError(t, <-waited)
 	require.Equal(t, VectorIndexOnline, state("docs"))
-	require.Nil(t, svc.VectorIndexPopulationOf("docs"), "an ONLINE index keeps no record")
+	require.Same(t, population, svc.VectorIndexPopulationOf("docs"),
+		"an ONLINE index keeps the record of the population that served it")
 
 	// A stored node of the label whose vector the budget refuses: the index
 	// cannot serve storage, so its population fails, with the cause.
@@ -85,7 +87,8 @@ func TestVectorIndexPopulationLifecycle(t *testing.T) {
 	fresh := svc.BeginVectorIndexPopulation("docs", populationDocs)
 	require.NoError(t, fresh.Populate(ctx, true))
 	require.Equal(t, VectorIndexOnline, state("docs"))
-	require.Nil(t, svc.VectorIndexPopulationOf("docs"))
+	require.Same(t, fresh, svc.VectorIndexPopulationOf("docs"),
+		"the created index keeps its population's outcome")
 
 	// A drop and a new creation of the name in one transaction: the new
 	// population no longer restores the dropped one.
@@ -285,4 +288,51 @@ func TestVectorIndexPopulationFollowsTheTemporalDecision(t *testing.T) {
 		require.Empty(t, held(svc, "v1"), "the installer does not index the closed version")
 		require.Len(t, held(svc, "v2"), 1)
 	})
+}
+
+// A population the service served is the index's state: a build it runs later,
+// and fails, does not fail that index, while a name it never populated takes
+// the failed build's state.
+func TestVectorIndexStateOfAPopulatedIndexOutlivesAFailedBuild(t *testing.T) {
+	ctx := context.Background()
+	engine := newNamespacedMemoryEngine(t)
+	_, err := engine.CreateNode(ctx, populationNode("a", []float64{1, 0, 0}, "short"))
+	require.NoError(t, err)
+	// One 3-dimensional vector fits the vector budget; a second does not.
+	svc := NewService(engine, 3, &ServiceOptions{VectorMemoryMaxBytes: 40})
+	t.Cleanup(func() { _ = svc.Close() })
+	require.False(t, svc.IsReady())
+
+	docs := svc.BeginVectorIndexPopulation("docs", populationDocs)
+	require.NoError(t, docs.Populate(ctx, true))
+	state, failure := svc.VectorIndexState("docs")
+	require.Equal(t, VectorIndexOnline, state)
+	require.NoError(t, failure)
+	require.False(t, svc.IsReady(), "local population success does not claim global startup completed")
+	require.NoError(t, svc.BuildIndexes(ctx))
+	require.True(t, svc.IsReady())
+
+	// A vector of another label, which this index does not read, exhausts the
+	// budget of the service's next build.
+	_, err = engine.CreateNode(ctx, &storage.Node{ID: "x", Labels: []string{"Other"}, Properties: map[string]any{"emb": []float64{0, 1, 0}}})
+	require.NoError(t, err)
+	require.ErrorIs(t, svc.BuildIndexes(ctx), ErrIndexMemoryBudgetExceeded)
+	require.False(t, svc.IsReady())
+
+	state, failure = svc.VectorIndexState("docs")
+	require.Equal(t, VectorIndexOnline, state, "a served population is not failed by a later build")
+	require.NoError(t, failure)
+	require.NoError(t, svc.AwaitVectorIndexOnline(ctx, "docs", time.Millisecond))
+
+	// A name this service never populated takes the failed build's state.
+	state, failure = svc.VectorIndexState("notes")
+	require.Equal(t, VectorIndexFailed, state)
+	require.ErrorIs(t, failure, ErrIndexMemoryBudgetExceeded)
+	require.ErrorIs(t, svc.AwaitVectorIndexOnline(ctx, "notes", time.Millisecond), ErrVectorIndexFailed)
+
+	// A population the service did not serve (the index's queries read
+	// storage) leaves the index's state to the build.
+	unserved := svc.BeginVectorIndexPopulation("notes", VectorIndexTarget{Label: "Note", Property: "emb"})
+	require.NoError(t, unserved.Populate(ctx, false))
+	require.Nil(t, svc.VectorIndexPopulationOf("notes"))
 }
