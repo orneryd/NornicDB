@@ -26,7 +26,7 @@ func (a *writeAdmission) Lock() {
 }
 func (a *writeAdmission) Unlock() { a.gate.Release(writeAdmissionCapacity) }
 
-func (a *writeAdmission) acquire(ctx context.Context, exclusive, holdsMergeKey bool) (func(), error) {
+func (a *writeAdmission) acquire(ctx context.Context, exclusive, tryOnce bool) (func(), error) {
 	a.init()
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -35,9 +35,10 @@ func (a *writeAdmission) acquire(ctx context.Context, exclusive, holdsMergeKey b
 	if exclusive {
 		weight = writeAdmissionCapacity
 	}
-	// A writer may hold admission while waiting for this transaction's MERGE
-	// key. Never wait in the opposite order, including a pending exclusive lease.
-	if holdsMergeKey {
+	// Native ordinary publication can hold admission while acquiring entity
+	// authority. Its caller requests try-once when waiting could invert that
+	// order; prepared-only submission routes can wait normally.
+	if tryOnce {
 		if !a.gate.TryAcquire(weight) {
 			return nil, storage.ErrConflict
 		}
