@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prepared journal acceptance, preventing acknowledged writes that cannot flush
   or recover. Stored key encodings and storage versions are unchanged.
 
+- Prepared commits reuse transaction-owned after-images rather than copying
+  every vector again. Before-images, diagnostics and listener payloads retain
+  their required detachment; diagnostic deletion facts are now detached too.
+
 - Temporal epochs support a null start (unbounded past) or null end (unbounded
   future), with at least one bound required. Malformed bounds and non-positive
   finite spans are rejected. Node and relationship constraints, blocks, indexed
