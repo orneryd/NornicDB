@@ -102,11 +102,12 @@ func (l *cruLab) snapshotPeriodic(t *testing.T) string {
 // report 46 and asserts the corrected order.
 func TestClearEmbeddingsDoesNotResurrectVectorsAnUpdateCarriedBack(t *testing.T) {
 	variants := []struct {
-		name  string
-		apply func(node *Node)
+		name     string
+		apply    func(node *Node)
+		wantFlag bool
 	}{
 		{name: "the update changes nothing", apply: func(node *Node) {}},
-		{name: "the update changes a property", apply: func(node *Node) { node.Properties["flag"] = true }},
+		{name: "the update changes a property", apply: func(node *Node) { node.Properties["flag"] = true }, wantFlag: true},
 	}
 	for _, variant := range variants {
 		t.Run(variant.name, func(t *testing.T) {
@@ -158,7 +159,9 @@ func TestClearEmbeddingsDoesNotResurrectVectorsAnUpdateCarriedBack(t *testing.T)
 				}
 			}
 
+			require.NoError(t, lab.interpose.update(t.Context()), "a fresh update after reset succeeds")
 			live := rrvRead(t, lab.engine)
+			require.Equal(t, variant.wantFlag, live.Properties["flag"])
 			require.Empty(t, live.ChunkEmbeddings, "the clear removed the live node's managed vectors")
 			crashClose(t, lab.engine, lab.wal)
 
