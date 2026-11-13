@@ -307,7 +307,17 @@ const (
 
 // expressionTextAccepted owns shared pattern/map-projection exclusion and the
 // whole-operand grammar required by subscript and static operand validation.
-func expressionTextAccepted(text string, policy expressionTextPolicy) bool {
+//
+// An arithmetic chain is recognised by splitting it at its operators and
+// recognising both sides, so recognising one long operand re-enters this scan
+// once per term. A canceled statement therefore stops recognising the form
+// (false, as the keyword scanners stop finding a keyword in a canceled
+// statement): the owner that asked for the form observes the cancellation at
+// its next entry and reports it instead of finishing every remaining term.
+func expressionTextAccepted(ctx context.Context, text string, policy expressionTextPolicy) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	text = strings.TrimSpace(text)
 	if text == "" && policy == expressionTextOperand {
 		return false
@@ -357,7 +367,7 @@ func expressionTextAccepted(text string, policy expressionTextPolicy) bool {
 		return true
 	}
 	if text[0] == '-' || text[0] == '+' {
-		return expressionTextAccepted(text[1:], expressionTextOperand)
+		return expressionTextAccepted(ctx, text[1:], expressionTextOperand)
 	}
 	if text[0] == '$' {
 		return simpleSemanticIdentifier(text[1:]) != ""
@@ -373,7 +383,7 @@ func expressionTextAccepted(text string, policy expressionTextPolicy) bool {
 	}
 	for _, tier := range []string{"+-", "*/%", "^"} {
 		if left, right, _, arithmetic := splitRowArithmeticTier(text, tier); arithmetic {
-			return expressionTextAccepted(left, expressionTextOperand) && expressionTextAccepted(right, expressionTextOperand)
+			return expressionTextAccepted(ctx, left, expressionTextOperand) && expressionTextAccepted(ctx, right, expressionTextOperand)
 		}
 	}
 	return false

@@ -253,7 +253,7 @@ func TestRangeReturnsEmptyWhenDirectionAndStepDisagree(t *testing.T) {
 		{int64(0), int64(1), int64(-1)},
 		{int64(0), int64(-1), int64(1)},
 	} {
-		values, err := evaluateCypherRange(arguments)
+		values, err := evaluateCypherRange(context.Background(), arguments)
 		require.NoError(t, err)
 		require.Empty(t, values)
 	}
