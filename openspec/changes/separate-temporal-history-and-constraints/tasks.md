@@ -12,3 +12,8 @@
 - [ ] Push candidate, open v1.5.0 PR and trigger CI with exact-head evidence.
 
 - [x] Compile block-local temporal.epoch/GROUP BY entries for nodes and relationships; verify grouping isolation, mixed predicates and complete-declaration framing.
+
+- [x] Implement symmetric epoch bounds across shared validators, index readers and deprecated interval consumers without changing persisted layouts.
+- [x] Verify direct/indexed/scan/native, restart/write-behind and concurrent open-bound claims; preserve finite-key byte encodings.
+- [x] Execute documented ownership, fact-ledger, constraint-block, historical-read and downloadable-script examples through both parsers and HTTP/Bolt.
+- [ ] Verify the dedicated docs-site section, generated navigation/search and rendered mobile/desktop guides.

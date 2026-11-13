@@ -7,12 +7,16 @@ historical matches after a property or label changes.
 
 ## Grouping width and comparison scope
 
+<!-- temporal-example: cost-node -->
 ```cypher
 CREATE CONSTRAINT account_intervals
 FOR (n:Account)
 REQUIRE temporal.epoch(n.starts_at, n.ends_at)
 GROUP BY n.tenantId, n.accountId
+```
 
+<!-- temporal-example: cost-relationship -->
+```cypher
 CREATE CONSTRAINT ownership_intervals
 FOR ()-[r:OWNS]-()
 REQUIRE temporal.epoch(r.starts_at, r.ends_at)
@@ -25,7 +29,9 @@ comparison scope, not result aggregation. One or more grouping properties are
 supported; the tests cover widths 1, 2, 4, 8 and 16, forward and reverse order,
 for nodes and relationships. Changing a component or interval is checked again
 on updates. Missing/null grouping values are rejected. Adjacent half-open
-intervals `[start, end)` are permitted.
+intervals `[start, end)` are permitted. Null start is unbounded past; null end
+is unbounded future. Both-null, malformed non-null bounds and non-positive
+finite spans are rejected.
 
 Property order defines the stored key layout, so preserve it when replacing a
 constraint. Reordering all key components consistently preserves which records
@@ -89,3 +95,22 @@ Apple M2 Max, macOS arm64, Go 1.27.3, 10 iterations per sample, three samples pe
 | 4 | 1000 | 7.50 | 7224 | 121 | 2034.62 | 1937533 | 40037 |
 | 8 | 100 | 7.85 | 8360 | 131 | 235.74 | 240968 | 4245 |
 | 8 | 1000 | 8.39 | 8360 | 131 | 2427.78 | 2393813 | 42045 |
+
+## Symmetric-bound qualification
+
+After adding open-past epochs, the four-component, 1,000-interval finite workload
+was repeated against `716b68357` on the same machine. Both runs used CPU profiling,
+10 iterations and three samples per mode. These are descriptive median kernel
+measurements; timing ranges overlap and do not establish a throughput regression
+or improvement.
+
+| Mode | Previous ns/op | Symmetric ns/op | Previous / symmetric B/op | Previous / symmetric allocs/op |
+| --- | --- | --- | --- | --- |
+| Indexed | 7304 | 7642 | 7224 / 7224 | 121 / 121 |
+| Complete label scan | 2032846 | 2063700 | 1937518 / 1937518 | 40037 / 40037 |
+
+Open-start correctness is qualified separately by native index/scan, restart,
+write-behind and concurrent-claim tests. An open start occupies the lowest position
+in the existing temporal history key layout; finite key encodings are unchanged.
+The indexed neighbor strategy is retained. This sample does not measure historical
+`asOf` execution or end-to-end ingest latency.

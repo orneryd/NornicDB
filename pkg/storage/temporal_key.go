@@ -198,13 +198,8 @@ func (s temporalKeySpec) groupString(keyValue interface{}) string {
 	return strings.Join(parts, "\x00")
 }
 
-// interval reads the validity window from props; ok is false when the start
-// property is missing or not a temporal value.
+// interval uses the shared epoch reader; no bounds are persisted here.
 func (s temporalKeySpec) interval(props map[string]interface{}) (temporalInterval, bool) {
-	start, ok := CoerceTemporalTime(props[s.startProp])
-	if !ok {
-		return temporalInterval{}, false
-	}
-	end, hasEnd := CoerceTemporalTime(props[s.endProp])
-	return temporalInterval{start: start, end: end, hasEnd: hasEnd}, true
+	start, end, hasEnd, ok := ReadTemporalBounds(props[s.startProp], props[s.endProp])
+	return temporalInterval{start: start, end: end, hasEnd: hasEnd}, ok
 }

@@ -178,3 +178,21 @@ The canonical declaration is `CREATE CONSTRAINT name FOR (n:Label) REQUIRE tempo
 
 
 Approved refinement: the unshipped dedicated NO OVERLAP declaration head is removed. The preferred CREATE CONSTRAINT / temporal.epoch form and deprecated ≤1.4.x tuple syntax share the same stored definition and enforcement.
+
+
+## Approved symmetric epochs
+
+A null/missing start reserves unbounded past; a null/missing end reserves
+unbounded future. At least one bound must be present. Supplied bounds must parse;
+two finite bounds must increase. The epoch remains half-open, so adjacent claims
+can hand over at one instant. Exclusivity uses the full grouping tuple regardless
+of owner identity. Nodes, relationships, block entries, DDL validation, direct and
+transactional writes, indexed/scan lookups and deprecated interval consumers use
+one bounds/overlap owner. Existing finite index-key bytes and payload formats stay
+unchanged; no migration is introduced. Explicit EXISTS/type entries can narrow
+these rules for an application.
+
+The dedicated temporal docs-site section links ownership epochs, constraints,
+retained history and costs. Guide fences and the downloadable script are executed
+through unit, authenticated loopback HTTP and Neo4j-driver Bolt scenarios. The
+verification map documents native lifecycle, restart and concurrency controls.

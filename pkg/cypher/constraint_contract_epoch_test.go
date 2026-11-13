@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testfixture/temporalguide"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -102,19 +103,7 @@ func TestConstraintContractEpochRejectsInvalidGroupingWithoutEffects(t *testing.
 func TestEmploymentContractWithEpoch(t *testing.T) {
 	withParserTypes(t, func(t *testing.T) {
 		exec, _ := newConstraintGapExecutor(t)
-		ddl := `CREATE CONSTRAINT works_at_contract
-FOR ()-[r:WORKS_AT]-()
-REQUIRE {
-  r.id IS UNIQUE
-  r.startedAt IS NOT NULL
-  r.role IS :: STRING
-  (r.tenant, r.externalId) IS RELATIONSHIP KEY
-  temporal.epoch(r.startedAt, r.endedAt) GROUP BY r.tenant, r.employeeId
-  startNode(r) <> endNode(r)
-  startNode(r).tenant = endNode(r).tenant
-  r.status IN ['active', 'inactive']
-  r.hoursPerWeek > 0
-}`
+		ddl := temporalguide.Example(t, "managing-constraints", "employment-contract")
 		_, err := exec.Execute(t.Context(), ddl, nil)
 		require.NoError(t, err)
 		shown, err := exec.Execute(t.Context(), "SHOW CONSTRAINT CONTRACTS", nil)

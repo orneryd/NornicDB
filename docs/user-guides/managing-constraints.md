@@ -54,6 +54,7 @@ FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager', 'director']
 
 Prevent overlapping validity windows for the same logical key.
 
+<!-- temporal-example: epoch-single -->
 ```cypher
 CREATE CONSTRAINT fact_version_no_overlap
 FOR (n:FactVersion)
@@ -65,11 +66,15 @@ names the grouping key, so two windows conflict only when **all** key values
 match. Node and relationship constraints both accept one key property or a
 composite key of several:
 
+<!-- temporal-example: epoch-composite-node -->
 ```cypher
 CREATE CONSTRAINT tenant_fact_version_no_overlap
 FOR (n:FactVersion)
 REQUIRE temporal.epoch(n.valid_from, n.valid_to) GROUP BY n.tenant, n.fact_key
+```
 
+<!-- temporal-example: epoch-composite-relationship -->
+```cypher
 CREATE CONSTRAINT employment_no_overlap
 FOR ()-[r:WORKS_AT]-()
 REQUIRE temporal.epoch(r.valid_from, r.valid_to) GROUP BY r.from_id, r.to_id
@@ -80,6 +85,7 @@ accepted: it lists the grouping key first and the validity window as the last tw
 properties, `(key…, valid_from, valid_to) IS TEMPORAL NO OVERLAP`. Both spellings
 declare one constraint, and `SHOW CONSTRAINTS` reports the `temporal.epoch` spelling.
 
+<!-- temporal-example: epoch-deprecated -->
 ```cypher
 CREATE CONSTRAINT fact_version_no_overlap
 FOR (n:FactVersion)
@@ -87,8 +93,9 @@ REQUIRE (n.fact_key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP
 ```
 
 - Every key property must be non-null; a null key property is a violation.
-- A null `valid_to` is an open-ended window that overlaps every later window
-  for the same key.
+- A null end reserves all time from its start onward. A null start reserves all
+  time before its end. At least one must be present; both-null is invalid.
+- Non-null bounds must be valid times. Finite end must be later than finite start.
 - Windows are half-open: a window ending exactly when the next one starts
   (`valid_to` = next `valid_from`) does not overlap.
 - Creating the constraint validates existing data. Standalone declarations and
@@ -96,6 +103,29 @@ REQUIRE (n.fact_key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP
 - The deprecated positional `db.temporal.asOf` and `db.temporal.assertNoOverlap`
   accept one key property. The new historical-query `asOf` is independent of
   interval constraints.
+
+### Require datetime-typed epoch bounds
+
+The epoch primitive accepts supported temporal values, ISO strings and Unix
+seconds. Null start means unbounded past; null end means unbounded future. At
+least one bound is required. Non-null bounds must parse, and two finite bounds
+must increase. These rules apply equally to nodes, relationships and block entries.
+
+Add type checks if your application permits only datetime-typed properties:
+
+<!-- temporal-example: ownership-shape -->
+```cypher
+CREATE CONSTRAINT ownership_shape
+FOR ()-[r:OWNS]-()
+REQUIRE {
+  r.starts_at IS :: DATETIME
+  r.ends_at IS :: DATETIME
+}
+```
+
+Type checks permit null bounds. The separate epoch constraint rejects both-null,
+reversed and zero-length epochs. Do not add `starts_at IS NOT NULL` when you want
+to allow an unbounded past. See the [ownership pattern](canonical-graph-ledger.md).
 
 ### Cardinality constraints
 
@@ -129,15 +159,25 @@ Block-style contracts let you group multiple checks under a single `CREATE CONST
 
 ### Epoch entries with their own grouping
 
+<!-- temporal-example: employment-contract -->
 ```cypher
-CREATE CONSTRAINT employment_contract
+CREATE CONSTRAINT works_at_contract
 FOR ()-[r:WORKS_AT]-()
 REQUIRE {
   r.id IS UNIQUE
+  r.startedAt IS NOT NULL
+  r.role IS :: STRING
+  (r.tenant, r.externalId) IS RELATIONSHIP KEY
   temporal.epoch(r.startedAt, r.endedAt) GROUP BY r.tenant, r.employeeId
+  startNode(r) <> endNode(r)
+  startNode(r).tenant = endNode(r).tenant
+  r.status IN ['active', 'inactive']
   r.hoursPerWeek > 0
 }
+```
 
+<!-- temporal-example: price-contract -->
+```cypher
 CREATE CONSTRAINT price_contract
 FOR (p:Price)
 REQUIRE {
@@ -151,14 +191,17 @@ Keep `GROUP BY` on the same entry as `temporal.epoch`, inside the braces. It
 belongs only to that epoch; it does not group the other checks. Separate entries
 with a newline or semicolon. Each epoch can name its own grouping tuple.
 
-The first contract rejects overlapping employment epochs for the same tenant
-and employee. The second rejects overlapping prices for the same product and
+The first contract requires a known start (`startedAt IS NOT NULL`); remove that
+entry if you need open-past employment epochs. It rejects overlapping epochs for
+the same tenant and employee. Store the employee endpoint ID in `employeeId`; the epoch grouping
+does not infer it from `startNode(r)`. The second rejects overlapping prices for the same product and
 currency. Adjacent half-open epochs are allowed. Each epoch compiles to the same
 native constraint as a standalone declaration, including concurrent-write
 protection; it is not evaluated as a general boolean function.
 
-`SHOW CONSTRAINT CONTRACTS` reports three entries, two compiled and one runtime
-check for each example. `SHOW CONSTRAINTS` lists the compiled primitives. An
+`SHOW CONSTRAINT CONTRACTS` reports nine entries for `works_at_contract`: five
+compiled primitives and four runtime checks. `price_contract` has three entries:
+two compiled and one runtime check. `SHOW CONSTRAINTS` lists the compiled primitives. An
 invalid epoch declaration fails before any contract or primitive is registered.
 
 Each block entry must be either:

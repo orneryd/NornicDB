@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Temporal no-overlap constraints accept the interval spelling
+- Temporal epochs support a null start (unbounded past) or null end (unbounded
+  future), with at least one bound required. Malformed bounds and non-positive
+  finite spans are rejected. Node and relationship constraints, blocks, indexed
+  lookups and deprecated interval reads share the same bounds rules. Existing
+  finite index-key encoding and storage payload formats are unchanged.
+
+- Temporal no-overlap constraints accept the epoch spelling
   `CREATE CONSTRAINT name FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.accountId`,
   with one or more grouping key properties and both node (`FOR (n:Account)`) and
   relationship (`FOR ()-[r:OWNS]-()`) contracts. It compiles to the existing

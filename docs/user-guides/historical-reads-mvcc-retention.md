@@ -59,7 +59,7 @@ Atomic commit visibility contract:
 - a single MVCC Version ID covers all node, edge, and property mutations produced by one committed transaction
 - snapshot queries that use one selector are guaranteed to be cross-entity consistent for that committed version
 
-If a requested object was tombstoned at that snapshot, or if the requested snapshot predates the retained floor for that logical key, the read returns not found.
+Those low-level storage selectors differ from the public `asOf` contract below: raw visibility can report not-found below a retained floor. Public historical queries report unavailable history explicitly and exclude currently deleted entity incarnations.
 
 ## Querying Historical State
 
@@ -77,15 +77,34 @@ YIELD row
 - `parameters` is an optional map bound to that query's `$parameters`; it defaults to `{}`.
 - each yielded `row` is one row of the query's result, resolved against the historical view.
 
+For a runnable example, enable retention and create an account:
+
+<!-- temporal-example: history-first -->
+```cypher
+CREATE (:Account {accountId:'acct-42', balance:100});
+```
+
+Capture the client timestamp `$at` after that statement commits, then update it:
+
+<!-- temporal-example: history-update -->
+```cypher
+MATCH (a:Account {accountId:'acct-42'}) SET a.balance=200;
+```
+
+<!-- temporal-example: history-read -->
 ```cypher
 CALL db.temporal.asOf(
-  datetime('2026-03-01T00:00:00Z'),
+  $at,
   'MATCH (a:Account) WHERE a.accountId = $accountId
    RETURN a.accountId AS accountId, a.balance AS balance',
-  {accountId: 'acct-42'}
+  {accountId:'acct-42'}
 ) YIELD row
 RETURN row
 ```
+
+The result is `{accountId: 'acct-42', balance: 100}`; a normal current read returns
+`200`. This test captures real commit ordering rather than assuming a fixed
+calendar date has retained records.
 
 `at` is read the same way the `TEMPORAL NO OVERLAP` constraint reads its bounds: `datetime()`, `date()` and `localdatetime()` values, ISO 8601 strings, and Unix seconds are accepted, with a date or local date-time taken as UTC.
 
@@ -121,12 +140,12 @@ It reads one label and one key value per call and yields a single `node`. Withou
 If you embed NornicDB, the storage and DB layers expose explicit MVCC visibility methods:
 
 ```go
-head, err := engine.GetNodeCurrentHead(nodeID)
+head, err := engine.GetNodeCurrentHead(ctx, nodeID)
 if err != nil {
     return err
 }
 
-node, err := engine.GetNodeVisibleAt(nodeID, head.Version)
+node, err := engine.GetNodeVisibleAt(ctx, nodeID, head.Version)
 if err != nil {
     return err
 }
@@ -256,11 +275,11 @@ if err := db.RebuildMVCCHeads(ctx); err != nil {
 
 The main failure and degradation modes to plan for are:
 
-1. snapshots older than the retained floor
-  Reads below the Minimum Retained Snapshot for a logical key return `ErrNotFound`. This is expected after pruning and should be treated as history no longer being retained.
+1. requested history older than the retained floor
+  Public `asOf` queries return an explicit unavailable-history error. Raw storage visibility APIs can return `ErrNotFound`; do not interpret that as proof of an empty historical query result.
 
 2. long-running historical queries during aggressive pruning
-  Active snapshot readers prevent the most aggressive tombstone compaction path, but pruning still enforces retention policy. If a query depends on versions outside the retained window, it can still lose access to those older versions.
+  Historical readers register their cutoff and pin their admitted read view. Pruning does not make a newly started reader recover history already removed; close abandoned readers to release their resources.
 
 3. startup and restore rebuild cost
   `RebuildMVCCHeads` is correctness-first. The current implementation scans stored MVCC version records and then current records to restore missing head state. On large stores, that can increase startup or restore time.
