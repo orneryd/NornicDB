@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Statement cancellation now interrupts materialized ranges, reduce folds and
   recursive expression admission instead of finishing their remaining work.
+- Persist each newly journaled semantic commit's admitted CDC mode so recovery
+  preserves DIFF/FULL/OFF decisions across pending catalog-option changes.
+  Settle the recovered catalog before new statements. No Badger storage migration.
 - Load persisted change-capture options before journal replay so recovered
   commits publish their change events. Streaming snapshots now include
   separately stored vectors instead of restoring stale or missing embeddings.

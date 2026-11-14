@@ -960,6 +960,12 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 			fmt.Printf("♻️  Recovered %d accepted commits from the WAL\n", recovered)
 		}
 
+		// Replayed commits carry their admitted capture decision. Settle the
+		// final recovered catalog for new statements before exposing the DB.
+		if err := multidb.LoadChangeCaptureModes(context.Background(), badgerEngine, "system"); err != nil {
+			return nil, fmt.Errorf("failed to load recovered database change-capture modes: %w", err)
+		}
+
 		// Enable auto-compaction to prevent unbounded WAL growth
 		// This creates periodic snapshots and truncates the WAL
 		if config.Database.WALAutoCompactionEnabled {

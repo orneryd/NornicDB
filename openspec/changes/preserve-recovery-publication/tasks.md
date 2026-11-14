@@ -1,7 +1,9 @@
 ## Recovery publication corrections (report items 13, 45, 46, 53.5)
 
 Scope: journaled-commit recovery publication and streaming-snapshot vector
-fidelity. No WAL/snapshot format, Badger key layout, wire payload, hook,
+fidelity. The follow-up adds optional admitted-mode metadata to the existing WAL
+record map; framing and semantic payloads remain unchanged. No snapshot format,
+Badger key layout, entity payload, storage version, hook,
 analyzer, pre-journal admission, WAL migration or search-refresh change.
 
 - [x] Source review (report 13): the replayed record is the accepted semantic
@@ -91,3 +93,23 @@ analyzer, pre-journal admission, WAL migration or search-refresh change.
 - [x] Retired catalog endpoint fingerprints are removed only for expressions eliminated by the transaction-owned extraction; no new exemptions. Endpoint guard passes.
 - [x] Provider timeout/cleanup test is ordered after RUN admission instead of racing a250ms BEGIN timer;30 repetitions pass. Actual deadline-clock behavior remains covered by separate lifecycle tests.
 - [ ] Fresh exact-head CI, canonical artifact freshness and the remaining recovery-publication AC.
+
+## Pending catalog-option recovery correction
+
+- [x] Reproduce public DIFF-to-FULL catalog update followed by a data update
+  using an earlier closed store and the later WAL. Replayed catalog is FULL,
+  but the event is DIFF and omits an unchanged property (parent fail-first1.065s).
+- [x] Prototype a commit-owned decision in optional WAL metadata. Both native
+  and prepared writers persist OFF/DIFF/FULL; both replay routes use the existing
+  accepted-transaction application owner. No post-hoc event rewriting.
+- [x] Settle recovered catalog options for future statements after replay.
+- [x] Initial public regression passes1.034s; focused semantic/prepared/native
+  storage controls pass3.852s; codec/native mode controls pass1.121s.
+- [x] Before/after-option and OFF controls fail independently on pre-fix source (1.426s), then pass three repeated default runs4.024s and ANTLR2.931s. Final runtime mode and exact second-restart feed are asserted. An independently applied catalog with earlier outstanding data is not qualified by this sequential crash-copy fixture.
+- [x] Independent source review of both writer/replay paths finds no blocking
+  route/lifecycle/conflict defect; comments and Go keyed-literal guidance updated.
+- [x] Parent race controls pass nornicdb3.618s/storage7.666s, alongside default
+  and ANTLR public checks. Codec adds ten encoded bytes, no extra allocations.
+- [ ] CI on the pushed correction; snapshot cost qualification remains open.
+- [x] Earlier source36077272c passed all seven make-test shards, lint and aggregate
+  in CI43635884110. This does not qualify this newer uncommitted correction.

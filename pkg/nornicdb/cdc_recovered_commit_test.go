@@ -16,13 +16,7 @@ import (
 // manager, which owns the persisted option and the engine's capture mode.
 func openChangeCapturingStore(t *testing.T, dir string) (*DB, *cypher.StorageExecutor) {
 	t.Helper()
-	cfg := DefaultConfig()
-	cfg.Memory.DecayEnabled = false
-	cfg.Memory.AutoLinksEnabled = false
-	cfg.Memory.EmbeddingEnabled = false
-	cfg.Database.AsyncWritesEnabled = false
-	cfg.Database.StrictDurability = true
-	cfg.Database.WALAutoCompactionEnabled = false
+	cfg := replayOrderConfig()
 	db, err := Open(dir, cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
