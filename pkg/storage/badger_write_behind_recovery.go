@@ -101,7 +101,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 			if err := decodeRecoveryPayload(entry.Data, &record); err != nil {
 				return err
 			}
-			envelope, ops, err := DecodeEntityTransaction(record.Payload)
+			envelope, ops, err := record.decode()
 			if err != nil {
 				return err
 			}

@@ -668,7 +668,11 @@ func replayEmbeddingOutcome(ctx context.Context, engine Engine, entry WALEntry) 
 // engine's ClearAllEmbeddingsForPrefix does, and journals each node's removal
 // with the OpUpdateEmbedding record of an embedding reset. Without that
 // record a rebuild from an earlier snapshot would restore the removed vectors
-// as current.
+// as current. The store appends the record inside that node's transaction,
+// under the node's write authority and before its removal
+// (BadgerEngine.clearEmbeddingsForPrefix), so the record and the removal it
+// describes keep the order the store applied them in against ordinary writes
+// of the node.
 func (w *WALEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error) {
 	clearer, ok := w.engine.(interface {
 		clearEmbeddingsForPrefix(string, func(NodeID, func() error) error) (int, error)

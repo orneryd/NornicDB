@@ -82,32 +82,19 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 		release()
 		return err
 	}
-	previous, readErr := tx.GetNode(ctx, qualified.ID)
-	operation := storage.Operation{Type: storage.OpUpdateNode, Node: qualified}
-	var apply func() error
-	if errors.Is(readErr, storage.ErrNotFound) {
-		operation.Type = storage.OpCreateNode
-		apply = func() error { _, err := tx.CreateNode(ctx, qualified); return err }
-	} else if readErr != nil {
-		_ = tx.Rollback()
-		release()
-		return readErr
-	} else {
-		qualified.CreatedAt = previous.CreatedAt
-		operation.OldNode = previous
-		apply = func() error {
-			return tx.UpdateGraphNode(ctx, storage.NodeUpdateRequest{Before: previous, After: qualified, Policy: storage.ClientNodeEdits})
+	err = tx.UpsertGraphNode(ctx, qualified, func(operation storage.Operation, apply func() error) error {
+		for i := len(owner.writeBoundaries) - 1; i >= 0; i-- {
+			policy, next := owner.writeBoundaries[i], apply
+			apply = func() error { return policy.WithEntityChange(operation, next) }
 		}
-	}
-	for i := len(owner.writeBoundaries) - 1; i >= 0; i-- {
-		policy, next := owner.writeBoundaries[i], apply
-		apply = func() error { return policy.WithEntityChange(operation, next) }
-	}
-	if err = apply(); err != nil {
+		return apply()
+	})
+	if err != nil {
 		_ = tx.Rollback()
 		release()
 		return err
 	}
+
 	logicalID := uuid.NewString()
 	prepared, err := tx.PrepareEntityCommit(ctx, storage.EntityCommitRequest{LogicalID: logicalID})
 	if err != nil {

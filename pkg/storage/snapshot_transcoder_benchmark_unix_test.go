@@ -21,13 +21,6 @@ type snapshotPressureObject struct {
 	v    any
 }
 
-type snapshotByteCounter int64
-
-func (w *snapshotByteCounter) Write(data []byte) (int, error) {
-	*w += snapshotByteCounter(len(data))
-	return len(data), nil
-}
-
 func snapshotProcessCPU() float64 {
 	var usage syscall.Rusage
 	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
