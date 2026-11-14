@@ -1,0 +1,83 @@
+{
+  "allocated_bytes": 10662529384,
+  "allocations": 41907812,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": false,
+  "file_bytes": 79526693,
+  "gc_cycles": 37,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 266744488,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 991756,
+  "phases": {
+    "adjacency_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 557056,
+      "wall_ms": 806.915646,
+      "ops_second": 690352.210620043,
+      "p50_ns": 4800,
+      "p95_ns": 8001,
+      "p99_ns": 13801
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 1495.218516,
+      "ops_second": 5821.222722204438,
+      "p50_ns": 139710,
+      "p95_ns": 345123,
+      "p99_ns": 460331
+    },
+    "create_node": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 259.272955,
+      "ops_second": 16785.39900160431,
+      "p50_ns": 393627,
+      "p95_ns": 883960,
+      "p99_ns": 1626410
+    },
+    "full_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 557056,
+      "wall_ms": 758.591756,
+      "ops_second": 734329.0980873776,
+      "p50_ns": 4300,
+      "p95_ns": 8500,
+      "p99_ns": 18502
+    },
+    "mixed_80_read_20_write": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 205.836016,
+      "ops_second": 21143.044276566252,
+      "p50_ns": 2000,
+      "p95_ns": 422128,
+      "p99_ns": 1152279
+    },
+    "projected_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 557056,
+      "wall_ms": 142.355094,
+      "ops_second": 3913144.1267567147,
+      "p50_ns": 700,
+      "p95_ns": 1400,
+      "p99_ns": 3801
+    }
+  },
+  "read_rounds": 128,
+  "seed_flush_ms": 172.323834,
+  "sync_writes": false,
+  "workers": 8
+}

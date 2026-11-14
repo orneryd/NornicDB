@@ -1,0 +1,82 @@
+{
+  "allocated_bytes": 5394523224,
+  "allocations": 12769303,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": false,
+  "file_bytes": 79528783,
+  "gc_cycles": 20,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 266919640,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 990908,
+  "phases": {
+    "adjacency_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 22.055449,
+      "ops_second": 591962.5576427848,
+      "p50_ns": 4901,
+      "p95_ns": 7401,
+      "p99_ns": 18702
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 1376.635298,
+      "ops_second": 6322.6622277122515,
+      "p50_ns": 142714,
+      "p95_ns": 257326,
+      "p99_ns": 348435
+    },
+    "create_node": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 231.69853,
+      "ops_second": 18783.028101214106,
+      "p50_ns": 711873,
+      "p95_ns": 1575260,
+      "p99_ns": 2788485
+    },
+    "full_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 23.865434,
+      "ops_second": 547067.3611047677,
+      "p50_ns": 4700,
+      "p95_ns": 10001,
+      "p99_ns": 18502
+    },
+    "mixed_80_read_20_write": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 347.758367,
+      "ops_second": 12514.43649664941,
+      "p50_ns": 2200,
+      "p95_ns": 872289,
+      "p99_ns": 6465960
+    },
+    "projected_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 3.497757,
+      "ops_second": 3732677.8275334733,
+      "p50_ns": 900,
+      "p95_ns": 1600,
+      "p99_ns": 2100
+    }
+  },
+  "seed_flush_ms": 159.382855,
+  "sync_writes": false,
+  "workers": 16
+}

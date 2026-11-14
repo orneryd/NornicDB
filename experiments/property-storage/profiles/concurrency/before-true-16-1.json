@@ -1,0 +1,82 @@
+{
+  "allocated_bytes": 3878664368,
+  "allocations": 12738857,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": true,
+  "file_bytes": 52936756,
+  "gc_cycles": 19,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 281525352,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 626756,
+  "phases": {
+    "adjacency_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 14.001228,
+      "ops_second": 932489.6359090789,
+      "p50_ns": 3700,
+      "p95_ns": 5101,
+      "p99_ns": 10601
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 966.94521,
+      "ops_second": 9001.5441516071,
+      "p50_ns": 109535,
+      "p95_ns": 149077,
+      "p99_ns": 195906
+    },
+    "create_node": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 274.033172,
+      "ops_second": 15881.288999566812,
+      "p50_ns": 922988,
+      "p95_ns": 1816472,
+      "p99_ns": 2642151
+    },
+    "full_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 15.581789,
+      "ops_second": 837901.2191732284,
+      "p50_ns": 4201,
+      "p95_ns": 6401,
+      "p99_ns": 14901
+    },
+    "mixed_80_read_20_write": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 341.91197,
+      "ops_second": 12728.422464998812,
+      "p50_ns": 1900,
+      "p95_ns": 1160718,
+      "p99_ns": 1615964
+    },
+    "projected_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 4.367645,
+      "ops_second": 2989253.934328454,
+      "p50_ns": 900,
+      "p95_ns": 1800,
+      "p99_ns": 2400
+    }
+  },
+  "seed_flush_ms": 334.359434,
+  "sync_writes": false,
+  "workers": 16
+}

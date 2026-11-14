@@ -1,0 +1,18 @@
+goos: windows
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: Intel(R) Core(TM) i9-9900KF CPU @ 3.60GHz
+BenchmarkExperimentalProjectedPropertySkip/low-range/enabled=false         	    4575	     85007 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/low-range/enabled=false         	    4819	     80758 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/low-range/enabled=false         	    4632	     84349 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/low-range/enabled=true          	  274884	      1650 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/low-range/enabled=true          	  265861	      1620 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/low-range/enabled=true          	  253161	      1643 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/random-int64/enabled=false      	    4728	     88512 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/random-int64/enabled=false      	    4770	     86113 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/random-int64/enabled=false      	    4191	     84444 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/random-int64/enabled=true       	    4212	     81812 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/random-int64/enabled=true       	    4132	     86036 ns/op	     720 B/op	      16 allocs/op
+BenchmarkExperimentalProjectedPropertySkip/random-int64/enabled=true       	    4716	     86323 ns/op	     720 B/op	      16 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	6.536s

@@ -77,12 +77,17 @@ func encodeExperimentalProperty(value any, raw []byte) ([]byte, error) {
 			payload = append([]byte{2}, encoded...)
 		}
 	}
-	compressed, err := forkcodec.EncodePayload(raw, 6)
-	if err != nil {
-		return nil, err
-	}
-	if compressed != nil && (payload == nil || len(compressed) < len(payload)) {
-		payload = compressed
+	// A native integer column already saving 75% does not need a second
+	// compression contest. Keep the typed packed representation and avoid
+	// recompressing the much larger MessagePack array on every write.
+	if payload == nil || len(payload)+6 > len(raw)/4 {
+		compressed, err := forkcodec.EncodePayload(raw, 6)
+		if err != nil {
+			return nil, err
+		}
+		if compressed != nil && (payload == nil || len(compressed) < len(payload)) {
+			payload = compressed
+		}
 	}
 	if payload == nil {
 		return raw, nil

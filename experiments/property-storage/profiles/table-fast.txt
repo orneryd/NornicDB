@@ -1,0 +1,12 @@
+goos: linux
+goarch: amd64
+pkg: github.com/dgraph-io/badger/v4/table
+cpu: Intel(R) Core(TM) i9-9900KF CPU @ 3.60GHz
+BenchmarkColumnarPhysicalCodec/encode         	    7537	     67853 ns/op	  144479 B/op	      17 allocs/op
+BenchmarkColumnarPhysicalCodec/encode         	    8409	     66452 ns/op	  144479 B/op	      17 allocs/op
+BenchmarkColumnarPhysicalCodec/encode         	    8901	     67430 ns/op	  144479 B/op	      17 allocs/op
+BenchmarkColumnarPhysicalCodec/decode         	   66909	      9018 ns/op	   28672 B/op	       1 allocs/op
+BenchmarkColumnarPhysicalCodec/decode         	   67100	      9068 ns/op	   28672 B/op	       1 allocs/op
+BenchmarkColumnarPhysicalCodec/decode         	   66982	      8941 ns/op	   28672 B/op	       1 allocs/op
+PASS
+ok  	github.com/dgraph-io/badger/v4/table	3.788s

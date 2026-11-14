@@ -1,0 +1,83 @@
+{
+  "allocated_bytes": 5412834176,
+  "allocations": 12726287,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": false,
+  "file_bytes": 79522750,
+  "gc_cycles": 19,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 266956536,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 998636,
+  "phases": {
+    "adjacency_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 27.090672,
+      "ops_second": 481937.10366431664,
+      "p50_ns": 5400,
+      "p95_ns": 12001,
+      "p99_ns": 22002
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 1407.32063,
+      "ops_second": 6184.802392898909,
+      "p50_ns": 144210,
+      "p95_ns": 264419,
+      "p99_ns": 347224
+    },
+    "create_node": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 241.026952,
+      "ops_second": 18056.07200310113,
+      "p50_ns": 748952,
+      "p95_ns": 1529706,
+      "p99_ns": 2621381
+    },
+    "full_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 21.41438,
+      "ops_second": 609683.7732402246,
+      "p50_ns": 5200,
+      "p95_ns": 11701,
+      "p99_ns": 20301
+    },
+    "mixed_80_read_20_write": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 342.114737,
+      "ops_second": 12720.878492878253,
+      "p50_ns": 2101,
+      "p95_ns": 911763,
+      "p99_ns": 1510505
+    },
+    "projected_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 4.465909,
+      "ops_second": 2923480.9755415977,
+      "p50_ns": 900,
+      "p95_ns": 1700,
+      "p99_ns": 3800
+    }
+  },
+  "read_rounds": 3,
+  "seed_flush_ms": 152.096708,
+  "sync_writes": false,
+  "workers": 16
+}

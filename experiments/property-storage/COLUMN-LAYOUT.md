@@ -1,5 +1,7 @@
 # Cross-record layout checkpoint
 
+Historical checkpoint before profiling. See [the current latency/concurrency report](PROFILE.md) for the selected dependency, optimizations, Northwind results and remaining limitations. The measurements and outstanding checks below describe this earlier checkpoint.
+
 Dependency: public Badger fork `adf08d82495becf400f8d1afa1369cb3d993ab64`.
 
 `NORNICDB_EXPERIMENTAL_PROPERTY_STORAGE_ENABLED` is the single default-off switch for property encodings and new SST column layouts. Existing table codecs remain readable after disabling it. Node property tokens, node metadata and compact relationship/adjacency fields supply pure byte-span annotations; the fork retains the authoritative keys, versions and values.

@@ -18,21 +18,24 @@ Use disposable test databases for this experiment. Stock release binaries cannot
 
 - Existing tokenized node and edge properties remain the outer representation. Property dictionary allocation still commits atomically with each body.
 - Large property values can be independently Zstd-compressed through the fork. Small values remain unchanged. Compression is accepted only when the full extension saves at least 12.5%.
-- Eligible `[]int64` values also try the fork's exact constant/FOR/raw column codec. The smaller accepted representation wins. Integer widths and API value semantics are preserved through the existing strict property decoder.
+- Eligible `[]int64` values try the fork's exact constant/FOR/raw column codec. If the complete native frame already saves 75%, it avoids a second compression attempt. Otherwise the smaller accepted representation wins. Integer widths and API value semantics are preserved through the existing strict property decoder.
 - Compressed values use reserved internal MessagePack extension 60. Individual values remain skippable in ordinary point projections, projected scans, hinted filters and WAL token rebinding. Compressed string equality uses the decoded string, preserving the existing scan contract.
 - Float payloads retain their MessagePack representation and IEEE bits; no float-to-integer numeric casts or quantization are introduced.
 - Physical property compression is bounded to 64 MiB per value; larger properties retain ordinary encoding.
+- Independent property Zstd uses a 128 KiB history window and retains at most 128 KiB of output scratch per pooled encoder. Accepted payloads own their bytes; scratch does not escape into stored records.
 - Newly built SST blocks try byte-column layouts across records, grouping property tokens and relationship/adjacency fields. The fork compares raw, ordinary Zstd and column-transposed Zstd payloads and stores the smallest complete payload. Record bytes, keys, timestamps and checksums reconstruct exactly before the existing reader sees them. Value-log pointers remain opaque.
 
-The SST layout reconstructs a whole block; it does not yet provide independently addressable compressed property columns or physical partial reads. Badger still retrieves the enclosing Item value before Nornic selects properties. Decode currently uses a temporary Go buffer before copying into Badger's block allocation; memory and CPU costs need qualification. The directory prototype and test-only patched/delta candidates are not silently promoted into a new production format.
+The SST layout reconstructs a whole block; it does not yet provide independently addressable compressed property columns or physical partial reads. Badger still retrieves the enclosing Item value before Nornic selects properties. Restoration writes directly into Badger's destination allocation. Transposed blocks still need a temporary decoded column frame; the second restored-block buffer/copy is removed. The directory prototype and test-only patched/delta candidates are not silently promoted into a new production format.
 
 ## Dependency
 
-The branch pins `github.com/dgraph-io/badger/v4` to the public `orneryd/nornic-badger/v4` repository at commit `adf08d82495becf400f8d1afa1369cb3d993ab64`. The upstream module path is retained. The repository name is provisional pending the maintainer's naming choice.
+The branch pins `github.com/dgraph-io/badger/v4` to the public `orneryd/nornic-badger/v4` repository at commit `4af841ebc969f1fdf4d0581e48ec21b6d31c24aa`. The upstream module path is retained. The repository name is provisional pending the maintainer's naming choice.
 
-The fork is public, so normal dependency downloads do not require GitHub credentials or GOPRIVATE. The local Linux laboratory primes Go's module cache with the checksum-verified archive of that exact fork revision and runs with GOWORK=off. This avoids copying host credentials into the container and lets source-analysis tests create independent temporary modules.
+The fork is public, so normal dependency downloads do not require GitHub credentials or GOPRIVATE. Final Linux checks use the published module with GOWORK=off and no local replacement. This lets source-analysis tests create independent temporary modules.
 
 ## Validation
+
+See the [latency/concurrency profile](../../experiments/property-storage/PROFILE.md) for repeated public-API measurements, CPU/allocation profiles, the rejected Snappy policy, workload limits and reproduction commands. Priority is latency and concurrency, then storage size, then memory. Full suites remain deferred while the experiment is under development.
 
 The integration tests cover public node/edge writes reaching the fork, selected and omitted properties, compressed string filtering, mixed old/new records, byte-exact float special values, logical snapshots, native backup/restore, reopen and reads with the feature disabled. A deliberately damaged omitted compressed payload verifies that projection skips decompression while a selected corrupt payload remains an error. Configuration tests exercise default-off and explicit startup environment values in fresh processes.
 

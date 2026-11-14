@@ -1,0 +1,82 @@
+{
+  "allocated_bytes": 5122008536,
+  "allocations": 9766531,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": false,
+  "file_bytes": 79519259,
+  "gc_cycles": 19,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 266641728,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 1001920,
+  "phases": {
+    "adjacency_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 25.062832,
+      "ops_second": 520930.75515169237,
+      "p50_ns": 4800,
+      "p95_ns": 8100,
+      "p99_ns": 19900
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 1378.475958,
+      "ops_second": 6314.219663742586,
+      "p50_ns": 140301,
+      "p95_ns": 271401,
+      "p99_ns": 394602
+    },
+    "create_node": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 335.040522,
+      "ops_second": 12989.473553888505,
+      "p50_ns": 267904,
+      "p95_ns": 577909,
+      "p99_ns": 1076918
+    },
+    "full_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 20.629209,
+      "ops_second": 632889.0264284976,
+      "p50_ns": 4600,
+      "p95_ns": 8900,
+      "p99_ns": 16600
+    },
+    "mixed_80_read_20_write": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 148.954589,
+      "ops_second": 29216.95819656822,
+      "p50_ns": 2000,
+      "p95_ns": 317602,
+      "p99_ns": 493203
+    },
+    "projected_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 5.037327,
+      "ops_second": 2591850.797059631,
+      "p50_ns": 1000,
+      "p95_ns": 3900,
+      "p99_ns": 6500
+    }
+  },
+  "seed_flush_ms": 152.413906,
+  "sync_writes": false,
+  "workers": 4
+}

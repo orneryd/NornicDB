@@ -1,0 +1,83 @@
+{
+  "allocated_bytes": 8650974112,
+  "allocations": 37521944,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": true,
+  "file_bytes": 52913051,
+  "gc_cycles": 36,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 252303280,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 678076,
+  "phases": {
+    "adjacency_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 557056,
+      "wall_ms": 662.203268,
+      "ops_second": 841216.0237179621,
+      "p50_ns": 3700,
+      "p95_ns": 6500,
+      "p99_ns": 12000
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 1023.446796,
+      "ops_second": 8504.59450751947,
+      "p50_ns": 113008,
+      "p95_ns": 173213,
+      "p99_ns": 231418
+    },
+    "create_node": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 261.280348,
+      "ops_second": 16656.43831735864,
+      "p50_ns": 418931,
+      "p95_ns": 920468,
+      "p99_ns": 1314197
+    },
+    "full_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 557056,
+      "wall_ms": 765.189018,
+      "ops_second": 727997.9023431306,
+      "p50_ns": 4400,
+      "p95_ns": 8500,
+      "p99_ns": 18200
+    },
+    "mixed_80_read_20_write": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 228.077334,
+      "ops_second": 19081.2472404645,
+      "p50_ns": 1800,
+      "p95_ns": 540593,
+      "p99_ns": 870390
+    },
+    "projected_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 557056,
+      "wall_ms": 142.270575,
+      "ops_second": 3915468.817076194,
+      "p50_ns": 700,
+      "p95_ns": 1500,
+      "p99_ns": 5200
+    }
+  },
+  "read_rounds": 128,
+  "seed_flush_ms": 406.535349,
+  "sync_writes": false,
+  "workers": 8
+}

@@ -1,0 +1,30 @@
+File: concurrency-selected
+Build ID: f4d8daa71318353e4141ebe577bd4dcb77c8592b
+Type: alloc_space
+Time: 2026-11-14 20:59:16 UTC
+Showing nodes accounting for 3111.76MB, 84.52% of 3681.57MB total
+Dropped 351 nodes (cum <= 18.41MB)
+Showing top 22 nodes out of 196
+      flat  flat%   sum%        cum   cum%
+  517.39MB 14.05% 14.05%   517.39MB 14.05%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+  358.25MB  9.73% 23.78%   358.25MB  9.73%  github.com/dgraph-io/ristretto/v2/z.Calloc (inline)
+  352.08MB  9.56% 33.35%   352.08MB  9.56%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize
+  249.61MB  6.78% 40.13%   249.61MB  6.78%  github.com/dgraph-io/badger/v4/skl.newArena
+  217.57MB  5.91% 46.04%   217.57MB  5.91%  bytes.growSlice
+  203.32MB  5.52% 51.56%   203.32MB  5.52%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+  142.56MB  3.87% 55.43%   142.56MB  3.87%  slices.Clone[go.shape.[]uint8,go.shape.uint8]
+  126.50MB  3.44% 58.87%   127.81MB  3.47%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+  118.21MB  3.21% 62.08%   120.37MB  3.27%  github.com/dgraph-io/badger/v4/experimental/nornic.DecodePayload
+  117.15MB  3.18% 65.26%   236.39MB  6.42%  github.com/klauspost/compress/zstd.(*Encoder).encodeAll
+  116.39MB  3.16% 68.42%   129.89MB  3.53%  github.com/dgraph-io/badger/v4/experimental/columnar.Transpose
+   97.98MB  2.66% 71.08%    97.98MB  2.66%  github.com/klauspost/compress/zstd.(*blockEnc).encodeLits
+   64.45MB  1.75% 72.83%   312.13MB  8.48%  github.com/orneryd/nornicdb/pkg/storage.init.1.func1
+   63.06MB  1.71% 74.55%    83.07MB  2.26%  github.com/orneryd/nornicdb/experiments/property-storage/corpus.Replicate
+   53.60MB  1.46% 76.00%    53.60MB  1.46%  slices.Clone[go.shape.[]int64,go.shape.int64]
+   53.09MB  1.44% 77.45%    53.09MB  1.44%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).encodeNodeInTxn.func1
+   49.73MB  1.35% 78.80%    52.39MB  1.42%  github.com/klauspost/compress/zstd.(*Decoder).DecodeAll
+   49.06MB  1.33% 80.13%   405.53MB 11.02%  github.com/dgraph-io/badger/v4/table.compressColumnarBlock
+   43.51MB  1.18% 81.31%   983.70MB 26.72%  github.com/dgraph-io/badger/v4.(*Txn).Get
+   41.02MB  1.11% 82.43%    41.52MB  1.13%  github.com/dgraph-io/badger/v4/experimental/columnar.groups
+   39.15MB  1.06% 83.49%    39.15MB  1.06%  github.com/vmihailenco/msgpack/v5.readN
+   38.06MB  1.03% 84.52%    38.06MB  1.03%  github.com/dgraph-io/badger/v4.(*Txn).modify

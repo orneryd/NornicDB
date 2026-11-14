@@ -1,0 +1,16 @@
+{
+  "allocated_bytes": 1188423056,
+  "allocations": 3188365,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "enabled": true,
+  "file_bytes": 42197515,
+  "full_p50_ns": 3701,
+  "full_p95_ns": 8001,
+  "gc_cycles": 14,
+  "live_heap_bytes": 121679984,
+  "nodes": 4352,
+  "peak_rss_kib": 369372,
+  "projected_p50_ns": 5800,
+  "projected_p95_ns": 9201,
+  "seed_ms": 63330.810658
+}

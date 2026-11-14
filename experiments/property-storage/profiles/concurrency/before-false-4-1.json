@@ -1,0 +1,82 @@
+{
+  "allocated_bytes": 5069865456,
+  "allocations": 9733919,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": false,
+  "file_bytes": 79528801,
+  "gc_cycles": 18,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 266634616,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 995476,
+  "phases": {
+    "adjacency_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 22.178559,
+      "ops_second": 588676.658388852,
+      "p50_ns": 4900,
+      "p95_ns": 9001,
+      "p99_ns": 18603
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 1506.216384,
+      "ops_second": 5778.71817918029,
+      "p50_ns": 140015,
+      "p95_ns": 356039,
+      "p99_ns": 490855
+    },
+    "create_node": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 325.491585,
+      "ops_second": 13370.54535526625,
+      "p50_ns": 260329,
+      "p95_ns": 552762,
+      "p99_ns": 901600
+    },
+    "full_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 20.015919,
+      "ops_second": 652280.8170836422,
+      "p50_ns": 4900,
+      "p95_ns": 9801,
+      "p99_ns": 17202
+    },
+    "mixed_80_read_20_write": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 140.916523,
+      "ops_second": 30883.53237327606,
+      "p50_ns": 1701,
+      "p95_ns": 307534,
+      "p99_ns": 439549
+    },
+    "projected_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 3.33427,
+      "ops_second": 3915699.6883875635,
+      "p50_ns": 900,
+      "p95_ns": 1500,
+      "p99_ns": 2000
+    }
+  },
+  "seed_flush_ms": 159.532886,
+  "sync_writes": false,
+  "workers": 4
+}

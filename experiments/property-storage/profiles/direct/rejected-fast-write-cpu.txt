@@ -1,0 +1,28 @@
+File: concurrency-final
+Build ID: 71fb86b21aa31a62108391815e6d3986731ee328
+Type: cpu
+Time: 2026-11-14 20:34:34 UTC
+Duration: 2.83s, Total samples = 5220ms (184.49%)
+Active filters:
+   focus=CreateNode
+Showing nodes accounting for 0, 0% of 5220ms total
+Showing top 18 nodes out of 319
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     1690ms 32.38%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).CreateNode (inline)
+         0     0%     0%     1690ms 32.38%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).createNodeWithWriteContext
+         0     0%     0%     1690ms 32.38%  main.measure.func1
+         0     0%     0%     1650ms 31.61%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).commitEngineWrite
+         0     0%     0%     1650ms 31.61%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).withPublishingUpdate (inline)
+         0     0%     0%     1620ms 31.03%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).commitEngineWrite.func1
+         0     0%     0%     1620ms 31.03%  github.com/orneryd/nornicdb/pkg/storage.recoverBadgerClosedPanic
+         0     0%     0%     1520ms 29.12%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).createNodeWithWriteContext.func5
+         0     0%     0%     1520ms 29.12%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).withPublishingUpdate.func1
+         0     0%     0%      950ms 18.20%  main.run.func9
+         0     0%     0%      810ms 15.52%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).allocateMVCCVersion
+         0     0%     0%      810ms 15.52%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).namespaceMVCC
+         0     0%     0%      810ms 15.52%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).recoverNamespaceMVCCFloor
+         0     0%     0%      810ms 15.52%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).recoverNamespaceMVCCFloor.func2
+         0     0%     0%      810ms 15.52%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).withView
+         0     0%     0%      810ms 15.52%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).withView.func1
+         0     0%     0%      810ms 15.52%  github.com/orneryd/nornicdb/pkg/storage.(*managedBadgerDB).View
+         0     0%     0%      740ms 14.18%  main.run.func4

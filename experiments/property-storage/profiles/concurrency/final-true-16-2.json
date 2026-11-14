@@ -1,0 +1,82 @@
+{
+  "allocated_bytes": 4080250168,
+  "allocations": 13309286,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": true,
+  "file_bytes": 54658820,
+  "gc_cycles": 20,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 249783992,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 694240,
+  "phases": {
+    "adjacency_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 18.382992,
+      "ops_second": 710221.709284321,
+      "p50_ns": 3700,
+      "p95_ns": 7000,
+      "p99_ns": 18001
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 953.434897,
+      "ops_second": 9129.097358810017,
+      "p50_ns": 107804,
+      "p95_ns": 147206,
+      "p99_ns": 187107
+    },
+    "create_node": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 240.856968,
+      "ops_second": 18068.815015557284,
+      "p50_ns": 808230,
+      "p95_ns": 1595461,
+      "p99_ns": 2130680
+    },
+    "full_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 18.076881,
+      "ops_second": 722248.4896592504,
+      "p50_ns": 4300,
+      "p95_ns": 8700,
+      "p99_ns": 14800
+    },
+    "mixed_80_read_20_write": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 437.572528,
+      "ops_second": 9945.77977710703,
+      "p50_ns": 1900,
+      "p95_ns": 860199,
+      "p99_ns": 1886996
+    },
+    "projected_read": {
+      "workers": 16,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 3.336126,
+      "ops_second": 3913521.2518951623,
+      "p50_ns": 800,
+      "p95_ns": 1500,
+      "p99_ns": 1900
+    }
+  },
+  "seed_flush_ms": 300.052497,
+  "sync_writes": false,
+  "workers": 16
+}

@@ -1,0 +1,34 @@
+--- FAIL: TestExperimentalColumnLayoutDeclinesMalformed (0.00s)
+    experimental_column_layout_test.go:74: 
+        	Error Trace:	C:/Data/src/NornicDB-projected-badger/pkg/storage/experimental_column_layout_test.go:74
+        	Error:      	func (assert.PanicTestFunc)(0x7ff7c7b87f80) should not panic
+        	            		Panic value:	runtime error: slice bounds out of range [52:51]
+        	            		Panic stack:	goroutine 147 [running]:
+        	            	runtime/debug.Stack()
+        	            		C:/Users/timot/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.3.windows-amd64/src/runtime/debug/stack.go:26 +0x5e
+        	            	github.com/stretchr/testify/assert.didPanic.func1()
+        	            		C:/Users/timot/go/pkg/mod/github.com/stretchr/testify@v1.12.1/assert/assertions.go:1287 +0x67
+        	            	panic({0x7ff7cc1a0710?, 0x2409c03ed68?})
+        	            		C:/Users/timot/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.3.windows-amd64/src/runtime/panic.go:859 +0x125
+        	            	github.com/orneryd/nornicdb/pkg/storage.decodeEdgeCompactHeaderInto({0x2409c044240?, 0x3?, 0x60}, 0x18?, 0x7ff7cc7917e0?)
+        	            		C:/Data/src/NornicDB-projected-badger/pkg/storage/edge_compact.go:155 +0x552
+        	            	github.com/orneryd/nornicdb/pkg/storage.experimentalColumnLayout({0x2409c700d87?, 0x2409cc47c98?, 0x2409c11c5a0?}, {0x2409c044240, 0x34, 0x60})
+        	            		C:/Data/src/NornicDB-projected-badger/pkg/storage/experimental_column_layout.go:34 +0x20f
+        	            	github.com/orneryd/nornicdb/pkg/storage.TestExperimentalColumnLayoutDeclinesMalformed.func1()
+        	            		C:/Data/src/NornicDB-projected-badger/pkg/storage/experimental_column_layout_test.go:74 +0x34
+        	            	github.com/stretchr/testify/assert.didPanic(0x7ff7c92cbb90?)
+        	            		C:/Users/timot/go/pkg/mod/github.com/stretchr/testify@v1.12.1/assert/assertions.go:1292 +0x70
+        	            	github.com/stretchr/testify/assert.NotPanics({0x7ff7cc2edd78, 0x2409bff4600}, 0x2409c6d3a80, {0x0, 0x0, 0x0})
+        	            		C:/Users/timot/go/pkg/mod/github.com/stretchr/testify@v1.12.1/assert/assertions.go:1369 +0x7e
+        	            	github.com/stretchr/testify/require.NotPanics({0x7ff7cc2fcaa8, 0x2409bff4600}, 0x2409c6d3a80, {0x0, 0x0, 0x0})
+        	            		C:/Users/timot/go/pkg/mod/github.com/stretchr/testify@v1.12.1/require/require.go:1683 +0xa5
+        	            	github.com/orneryd/nornicdb/pkg/storage.TestExperimentalColumnLayoutDeclinesMalformed(0x2409bff4600)
+        	            		C:/Data/src/NornicDB-projected-badger/pkg/storage/experimental_column_layout_test.go:74 +0x2c8
+        	            	testing.tRunner(0x2409bff4600, 0x7ff7cc336df8)
+        	            		C:/Users/timot/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.3.windows-amd64/src/testing/testing.go:2195 +0xc3
+        	            	created by testing.(*T).Run in goroutine 1
+        	            		C:/Users/timot/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.3.windows-amd64/src/testing/testing.go:2260 +0x4b4
+        	Test:       	TestExperimentalColumnLayoutDeclinesMalformed
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	0.131s
+FAIL

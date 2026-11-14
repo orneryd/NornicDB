@@ -1,0 +1,4 @@
+exit status 0xffffffff
+FAIL	github.com/orneryd/nornicdb/pkg/storage	800.737s
+ok  	github.com/orneryd/nornicdb/pkg/config	1.704s
+FAIL

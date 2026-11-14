@@ -1,0 +1,83 @@
+{
+  "allocated_bytes": 3594004360,
+  "allocations": 9975731,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": true,
+  "file_bytes": 52917582,
+  "gc_cycles": 19,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 245091952,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 626444,
+  "phases": {
+    "adjacency_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 14.172286,
+      "ops_second": 921234.5841736471,
+      "p50_ns": 3600,
+      "p95_ns": 5000,
+      "p99_ns": 10201
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 989.123496,
+      "ops_second": 8799.710081904675,
+      "p50_ns": 109308,
+      "p95_ns": 164012,
+      "p99_ns": 241716
+    },
+    "create_node": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 342.522857,
+      "ops_second": 12705.721417008966,
+      "p50_ns": 279020,
+      "p95_ns": 568039,
+      "p99_ns": 838959
+    },
+    "full_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 22.774484,
+      "ops_second": 573273.1419952258,
+      "p50_ns": 4400,
+      "p95_ns": 7900,
+      "p99_ns": 31302
+    },
+    "mixed_80_read_20_write": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 239.97439,
+      "ops_second": 18135.2685176114,
+      "p50_ns": 1700,
+      "p95_ns": 328322,
+      "p99_ns": 521336
+    },
+    "projected_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 3.58465,
+      "ops_second": 3642196.588230371,
+      "p50_ns": 900,
+      "p95_ns": 1500,
+      "p99_ns": 2200
+    }
+  },
+  "read_rounds": 3,
+  "seed_flush_ms": 348.917903,
+  "sync_writes": false,
+  "workers": 4
+}

@@ -1,0 +1,13 @@
+{
+  "selected_badger_commit": "4af841ebc969f1fdf4d0581e48ec21b6d31c24aa",
+  "baseline_nornic_commit": "7a2055be4",
+  "baseline_badger_commit": "adf08d82495becf400f8d1afa1369cb3d993ab64",
+  "corpus_release_commit": "ddc59dc20",
+  "priority": [
+    "latency and concurrency",
+    "storage size",
+    "memory"
+  ],
+  "full_suites": "deferred by maintainer",
+  "qualification": "focused checks; exact public module pin; see PROFILE.md for baseline failures and regressions"
+}

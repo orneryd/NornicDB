@@ -1,0 +1,82 @@
+{
+  "allocated_bytes": 3922953776,
+  "allocations": 10030139,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": true,
+  "file_bytes": 52921729,
+  "gc_cycles": 20,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 281367776,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 636228,
+  "phases": {
+    "adjacency_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 15.202086,
+      "ops_second": 858829.5053718286,
+      "p50_ns": 3600,
+      "p95_ns": 5001,
+      "p99_ns": 10201
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 992.021878,
+      "ops_second": 8774.000042769218,
+      "p50_ns": 108612,
+      "p95_ns": 147616,
+      "p99_ns": 195721
+    },
+    "create_node": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 359.142716,
+      "ops_second": 12117.745414611167,
+      "p50_ns": 285231,
+      "p95_ns": 598166,
+      "p99_ns": 924503
+    },
+    "full_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 23.62512,
+      "ops_second": 552632.113614661,
+      "p50_ns": 4900,
+      "p95_ns": 9501,
+      "p99_ns": 22703
+    },
+    "mixed_80_read_20_write": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 269.686698,
+      "ops_second": 16137.243817639088,
+      "p50_ns": 1700,
+      "p95_ns": 351539,
+      "p99_ns": 668574
+    },
+    "projected_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 3.202955,
+      "ops_second": 4076235.8509563827,
+      "p50_ns": 800,
+      "p95_ns": 1400,
+      "p99_ns": 1900
+    }
+  },
+  "seed_flush_ms": 335.754222,
+  "sync_writes": false,
+  "workers": 4
+}

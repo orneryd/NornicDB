@@ -1,0 +1,2 @@
+ok  	github.com/orneryd/nornicdb/pkg/config	6.142s
+ok  	github.com/orneryd/nornicdb/pkg/storage	6.813s

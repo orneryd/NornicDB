@@ -1,0 +1,32 @@
+// compressColumnarBlock compares raw, Snappy and byte-column+Snappy payloads.
+// Property payloads may already be Zstd-compressed, so the table hot path avoids
+// recompressing each block three times with Zstd. Historical modes remain readable.
+func compressColumnarBlock(data []byte, _ int, annotated ...[]columnar.Span) ([]byte, error) {
+	mode := byte(0)
+	chosen := data
+	compressed := s2.EncodeSnappy(nil, data)
+	if len(compressed) < len(chosen) {
+		mode, chosen = 3, compressed
+	}
+	var spans []columnar.Span
+	if len(annotated) > 0 && len(annotated[0]) >= 4 {
+		spans = annotated[0]
+	} else {
+		var err error
+		spans, err = physicalValueSpans(data)
+		if err != nil {
+			return nil, err
+		}
+	}
+	frame, err := columnar.Transpose(data, spans)
+	if err != nil {
+		return nil, err
+	}
+	if frame != nil {
+		encoded := s2.EncodeSnappy(nil, frame)
+		if len(encoded) < len(chosen) {
+			mode, chosen = 4, encoded
+		}
+	}
+	return append([]byte{mode}, chosen...), nil
+}

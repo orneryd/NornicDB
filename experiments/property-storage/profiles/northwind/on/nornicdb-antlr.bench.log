@@ -1,0 +1,33 @@
+[nornicdb-antlr] seeding Northwind (categories=96 suppliers=144 customers=1200 products=48000 orders=48000, batch_size=2000 parallel=4 seed=42)
+  .. wrote 20000 / 48000 rows
+  .. wrote 40000 / 48000 rows
+  .. wrote 48000 / 48000 rows
+  .. wrote 20000 / 48000 rows
+  .. wrote 40000 / 48000 rows
+  .. wrote 48000 / 48000 rows
+  .. wrote 20000 / 168050 rows
+  .. wrote 40000 / 168050 rows
+  .. wrote 60000 / 168050 rows
+  .. wrote 80000 / 168050 rows
+  .. wrote 100000 / 168050 rows
+  .. wrote 120000 / 168050 rows
+  .. wrote 140000 / 168050 rows
+  .. wrote 160000 / 168050 rows
+  .. wrote 168050 / 168050 rows
+[nornicdb-antlr] seeded in 16964.5ms (97440 nodes, 312050 rels, ~35.4 MiB payload)
+[nornicdb-antlr] seed verified: categories=96 suppliers=144 customers=1200 products=48000 orders=48000 part_of=48000 supplies=48000 purchased=48000 orders_edges=168050
+[nornicdb-antlr] products_per_category              mean=   0.42ms p95=   0.47ms ops/s=  2137.9 rows=96
+[nornicdb-antlr] customer_category_distinct_orders  mean=   0.36ms p95=   0.40ms ops/s=  2661.7 rows=10
+[nornicdb-antlr] optional_match_orders_count        mean=   0.46ms p95=   0.64ms ops/s=  1886.2 rows=100
+[nornicdb-antlr] revenue_by_product                 mean=   0.32ms p95=   0.41ms ops/s=  3002.9 rows=10
+[nornicdb-antlr] products_by_supplier               mean=   0.39ms p95=   0.50ms ops/s=  2440.3 rows=25
+[nornicdb-antlr] orders_by_customer                 mean=   0.37ms p95=   0.47ms ops/s=  2599.3 rows=25
+[nornicdb-antlr] revenue_by_category                mean=   0.41ms p95=   0.45ms ops/s=  2118.2 rows=96
+[nornicdb-antlr] revenue_by_supplier                mean=   0.38ms p95=   0.45ms ops/s=  2505.8 rows=25
+[nornicdb-antlr] revenue_by_customer                mean=   0.36ms p95=   0.40ms ops/s=  2609.6 rows=25
+[nornicdb-antlr] order_line_sales_by_country        mean=   0.39ms p95=   0.48ms ops/s=  2481.6 rows=15
+[nornicdb-antlr] low_stock_products                 mean=   0.57ms p95=   0.70ms ops/s=  1490.2 rows=100
+[nornicdb-antlr] products_in_category               mean=   0.43ms p95=   0.48ms ops/s=  1975.1 rows=100
+[nornicdb-antlr] order_line_quantity_distribution   mean=   0.38ms p95=   0.46ms ops/s=  2508.6 rows=25
+[nornicdb-antlr] customer_order_details             mean=   0.52ms p95=   0.70ms ops/s=  1594.1 rows=100
+[nornicdb-antlr] wrote /lab-results/profile-selected-true/20261114_205144/nornicdb-antlr.results.json

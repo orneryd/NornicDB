@@ -2,14 +2,10 @@ package storage
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	"github.com/orneryd/nornicdb/experiments/property-storage/corpus"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -35,40 +31,7 @@ func TestExperimentalDocsStorage(t *testing.T) {
 	if root == "" || out == "" {
 		t.Skip("set NORNIC_STORAGE_DOCS_ROOT and NORNIC_STORAGE_DOCS_RESULTS")
 	}
-	var paths []string
-	require.NoError(t, filepath.WalkDir(root, func(p string, d os.DirEntry, e error) error {
-		if e != nil {
-			return e
-		}
-		if !d.IsDir() && strings.HasSuffix(p, ".md") {
-			paths = append(paths, p)
-		}
-		return nil
-	}))
-	sort.Strings(paths)
-	require.NotEmpty(t, paths)
-	var nodes []*Node
-	digest := sha256.New()
-	for _, path := range paths {
-		relative, e := filepath.Rel(root, path)
-		require.NoError(t, e)
-		relative = filepath.ToSlash(relative)
-		body, e := os.ReadFile(path)
-		require.NoError(t, e)
-		hash := sha256.Sum256(body)
-		fmt.Fprintf(digest, "%s\x00%x\n", relative, hash)
-		id := sha256.Sum256([]byte(relative))
-		noise := make([]byte, 4096)
-		for i := 0; i < len(noise); i += 32 {
-			h := sha256.Sum256([]byte(fmt.Sprintf("%s/%x/%d", relative, hash, i)))
-			copy(noise[i:], h[:])
-		}
-		metrics := make([]int64, 256)
-		for i := range metrics {
-			metrics[i] = int64((len(body) + i) % 64)
-		}
-		nodes = append(nodes, &Node{ID: NodeID("docs:" + hex.EncodeToString(id[:16])), Labels: []string{"Documentation"}, Properties: map[string]any{"path": relative, "body": string(body), "noise": noise, "metrics": metrics, "status": "current"}})
-	}
+	nodes, corpus := loadExperimentalDocs(t, root)
 	previous := config.IsExperimentalPropertyStorageEnabled()
 	t.Cleanup(func() { config.SetExperimentalPropertyStorageEnabled(previous) })
 	var results []experimentalDocsMeasurement
@@ -77,7 +40,7 @@ func TestExperimentalDocsStorage(t *testing.T) {
 		directory := t.TempDir()
 		engine, e := NewBadgerEngine(directory)
 		require.NoError(t, e)
-		row := experimentalDocsMeasurement{Enabled: enabled, Documents: len(nodes), CorpusSHA256: hex.EncodeToString(digest.Sum(nil))}
+		row := experimentalDocsMeasurement{Enabled: enabled, Documents: len(nodes), CorpusSHA256: corpus}
 		begin := time.Now()
 		for _, node := range nodes {
 			_, e = engine.CreateNode(context.Background(), node)
@@ -125,4 +88,16 @@ func TestExperimentalDocsStorage(t *testing.T) {
 	data, e := json.MarshalIndent(results, "", "  ")
 	require.NoError(t, e)
 	require.NoError(t, os.WriteFile(out, data, 0600))
+}
+
+// loadExperimentalDocs is shared by size checks and process-isolated profiles.
+func loadExperimentalDocs(t *testing.T, root string) ([]*Node, string) {
+	t.Helper()
+	records, digest, err := corpus.Load(root)
+	require.NoError(t, err)
+	nodes := make([]*Node, len(records))
+	for i, record := range records {
+		nodes[i] = &Node{ID: NodeID(record.ID), Labels: []string{"Documentation"}, Properties: record.Properties}
+	}
+	return nodes, digest
 }

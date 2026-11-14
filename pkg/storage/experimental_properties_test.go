@@ -47,6 +47,28 @@ func TestExperimentalPropertyValueRoundtrip(t *testing.T) {
 	require.Equal(t, small, got)
 }
 
+func TestExperimentalNativeColumnWritePolicy(t *testing.T) {
+	values := make([]int64, 256)
+	for i := range values {
+		values[i] = int64(i % 64)
+	}
+	var raw bytes.Buffer
+	require.NoError(t, msgpack.NewEncoder(&raw).Encode(values))
+	encoded, err := encodeExperimentalProperty(values, raw.Bytes())
+	require.NoError(t, err)
+	decoder := msgpack.NewDecoder(bytes.NewReader(encoded))
+	id, _, err := decoder.DecodeExtHeader()
+	require.NoError(t, err)
+	require.Equal(t, experimentalPropertyExtension, id)
+	var mode [1]byte
+	require.NoError(t, decoder.ReadFull(mode[:]))
+	require.Equal(t, byte(2), mode[0], "strong native compression avoids a second codec")
+	decoded, err := decodeStrictTypedValue(msgpack.NewDecoder(bytes.NewReader(encoded)))
+	require.NoError(t, err)
+	require.Equal(t, values, decoded)
+	require.LessOrEqual(t, len(encoded), raw.Len()/4)
+}
+
 func TestExperimentalPropertyStoragePublicLifecycle(t *testing.T) {
 	experimentalStorageFlag(t, true)
 	ctx := context.Background()

@@ -1,0 +1,83 @@
+{
+  "allocated_bytes": 5198349456,
+  "allocations": 10740871,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": false,
+  "file_bytes": 79529456,
+  "gc_cycles": 19,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 266720928,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 1001700,
+  "phases": {
+    "adjacency_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 26.963992,
+      "ops_second": 484201.3007569502,
+      "p50_ns": 5200,
+      "p95_ns": 9201,
+      "p99_ns": 18001
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 1423.733513,
+      "ops_second": 6113.503630085584,
+      "p50_ns": 146210,
+      "p95_ns": 266417,
+      "p99_ns": 355123
+    },
+    "create_node": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 274.013709,
+      "ops_second": 15882.417036295072,
+      "p50_ns": 431429,
+      "p95_ns": 947263,
+      "p99_ns": 1465497
+    },
+    "full_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 21.473927,
+      "ops_second": 607993.1258032124,
+      "p50_ns": 5300,
+      "p95_ns": 11301,
+      "p99_ns": 19601
+    },
+    "mixed_80_read_20_write": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 212.785541,
+      "ops_second": 20452.517495067957,
+      "p50_ns": 2001,
+      "p95_ns": 420128,
+      "p99_ns": 679146
+    },
+    "projected_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 3.796253,
+      "ops_second": 3439180.6868509557,
+      "p50_ns": 900,
+      "p95_ns": 1700,
+      "p99_ns": 4500
+    }
+  },
+  "read_rounds": 3,
+  "seed_flush_ms": 155.915061,
+  "sync_writes": false,
+  "workers": 8
+}

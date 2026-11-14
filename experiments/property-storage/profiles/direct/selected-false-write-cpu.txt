@@ -1,0 +1,32 @@
+File: concurrency-selected
+Build ID: f4d8daa71318353e4141ebe577bd4dcb77c8592b
+Type: cpu
+Time: 2026-11-14 20:59:10 UTC
+Duration: 2.94s, Total samples = 5040ms (171.41%)
+Active filters:
+   focus=CreateNode
+Showing nodes accounting for 0, 0% of 5040ms total
+Showing top 22 nodes out of 276
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     1160ms 23.02%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).CreateNode (inline)
+         0     0%     0%     1160ms 23.02%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).createNodeWithWriteContext
+         0     0%     0%     1160ms 23.02%  main.measure.func1
+         0     0%     0%     1090ms 21.63%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).commitEngineWrite
+         0     0%     0%     1090ms 21.63%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).withPublishingUpdate (inline)
+         0     0%     0%     1070ms 21.23%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).commitEngineWrite.func1
+         0     0%     0%     1070ms 21.23%  github.com/orneryd/nornicdb/pkg/storage.recoverBadgerClosedPanic
+         0     0%     0%      960ms 19.05%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).withPublishingUpdate.func1
+         0     0%     0%      940ms 18.65%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).createNodeWithWriteContext.func5
+         0     0%     0%      730ms 14.48%  main.run.func9
+         0     0%     0%      660ms 13.10%  github.com/orneryd/nornicdb/pkg/storage.(*managedBadgerDB).View
+         0     0%     0%      650ms 12.90%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).allocateMVCCVersion
+         0     0%     0%      650ms 12.90%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).namespaceMVCC
+         0     0%     0%      650ms 12.90%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).recoverNamespaceMVCCFloor
+         0     0%     0%      650ms 12.90%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).recoverNamespaceMVCCFloor.func2
+         0     0%     0%      650ms 12.90%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).withView
+         0     0%     0%      650ms 12.90%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).withView.func1
+         0     0%     0%      460ms  9.13%  github.com/dgraph-io/badger/v4.(*Txn).Get
+         0     0%     0%      430ms  8.53%  main.run.func4
+         0     0%     0%      420ms  8.33%  github.com/dgraph-io/badger/v4.(*DB).get
+         0     0%     0%      400ms  7.94%  github.com/dgraph-io/badger/v4.(*levelHandler).get
+         0     0%     0%      400ms  7.94%  github.com/dgraph-io/badger/v4.(*levelsController).get

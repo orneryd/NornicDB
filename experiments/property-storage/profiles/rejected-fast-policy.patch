@@ -1,0 +1,93 @@
+--- a/table/columnar.go
++++ b/table/columnar.go
+@@ -6,6 +6,8 @@
+ 
+ 	"github.com/dgraph-io/badger/v4/experimental/columnar"
+ 	"github.com/dgraph-io/badger/v4/y"
++	"github.com/klauspost/compress/s2"
++	"github.com/klauspost/compress/snappy"
+ 	"github.com/klauspost/compress/zstd"
+ )
+ 
+@@ -52,40 +54,34 @@
+ 	return spans, nil
+ }
+ 
+-// compressColumnarBlock selects raw, Zstd, or byte-column+Zstd using complete
+-// encoded sizes. This is a physical multi-record layout, not property schemas.
+-func compressColumnarBlock(data []byte, level int, annotated ...[]columnar.Span) ([]byte, error) {
++// compressColumnarBlock compares raw, Snappy and byte-column+Snappy payloads.
++// Property payloads may already be Zstd-compressed, so the table hot path avoids
++// recompressing each block three times with Zstd. Historical modes remain readable.
++func compressColumnarBlock(data []byte, _ int, annotated ...[]columnar.Span) ([]byte, error) {
+ 	mode := byte(0)
+ 	chosen := data
+-	zstd, err := y.ZSTDCompress(nil, data, level)
++	compressed := s2.EncodeSnappy(nil, data)
++	if len(compressed) < len(chosen) {
++		mode, chosen = 3, compressed
++	}
++	var spans []columnar.Span
++	if len(annotated) > 0 && len(annotated[0]) >= 4 {
++		spans = annotated[0]
++	} else {
++		var err error
++		spans, err = physicalValueSpans(data)
++		if err != nil {
++			return nil, err
++		}
++	}
++	frame, err := columnar.Transpose(data, spans)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	if len(zstd) < len(chosen) {
+-		mode, chosen = 1, zstd
+-	}
+-	spans, err := physicalValueSpans(data)
+-	if err != nil {
+-		return nil, err
+-	}
+-	candidates := [][]columnar.Span{spans}
+-	if len(annotated) > 0 && len(annotated[0]) >= 4 {
+-		candidates = append(candidates, annotated[0])
+-	}
+-	for _, candidate := range candidates {
+-		frame, err := columnar.Transpose(data, candidate)
+-		if err != nil {
+-			return nil, err
+-		}
+-		if frame == nil {
+-			continue
+-		}
+-		encoded, err := y.ZSTDCompress(nil, frame, level)
+-		if err != nil {
+-			return nil, err
+-		}
++	if frame != nil {
++		encoded := s2.EncodeSnappy(nil, frame)
+ 		if len(encoded) < len(chosen) {
+-			mode, chosen = 2, encoded
++			mode, chosen = 4, encoded
+ 		}
+ 	}
+ 	return append([]byte{mode}, chosen...), nil
+@@ -118,6 +114,18 @@
+ 			return nil, err
+ 		}
+ 		return columnar.RestoreWithAllocator(frame, allocate)
++	case 3:
++		size, err := snappy.DecodedLen(data[1:])
++		if err != nil {
++			return nil, err
++		}
++		return snappy.Decode(allocate(size), data[1:])
++	case 4:
++		frame, err := snappy.Decode(nil, data[1:])
++		if err != nil {
++			return nil, err
++		}
++		return columnar.RestoreWithAllocator(frame, allocate)
+ 	default:
+ 		return nil, fmt.Errorf("%w: unknown physical codec %d", columnar.ErrFormat, data[0])
+ 	}

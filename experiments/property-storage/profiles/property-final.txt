@@ -1,0 +1,14 @@
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: Intel(R) Core(TM) i9-9900KF CPU @ 3.60GHz
+BenchmarkExperimentalPropertyEncode/text         	   80991	      7575 ns/op	     336 B/op	       4 allocs/op
+BenchmarkExperimentalPropertyEncode/text         	   80512	      7486 ns/op	     336 B/op	       4 allocs/op
+BenchmarkExperimentalPropertyEncode/text         	   82081	      7506 ns/op	     336 B/op	       4 allocs/op
+BenchmarkExperimentalPropertyEncode/random-bytes 	  524892	      1128 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalPropertyEncode/random-bytes 	  529268	      1136 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalPropertyEncode/random-bytes 	  515068	      1137 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalPropertyEncode/integer-array         	  280293	      2259 ns/op	     784 B/op	       5 allocs/op
+BenchmarkExperimentalPropertyEncode/integer-array         	  254623	      2260 ns/op	     784 B/op	       5 allocs/op
+BenchmarkExperimentalPropertyEncode/integer-array         	  259194	      2329 ns/op	     784 B/op	       5 allocs/op
+PASS

@@ -1,0 +1,72 @@
+--- FAIL: TestExperimentalPropertyValueRoundtrip (0.00s)
+    experimental_properties_test.go:40: 
+        	Error Trace:	C:/Data/src/NornicDB-projected-badger/pkg/storage/experimental_properties_test.go:40
+        	Error:      	Not equal: 
+        	            	expected: map[string]interface {}{"at":time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC), "nested":"valuevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevalue"}
+        	            	actual  : map[string]interface {}{"at":time.Date(2026, time.January, 1, 0, 0, 0, 0, time.Location("")), "nested":"valuevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevalue"}
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -4,3 +4,28 @@
+        	            	   ext: (int64) 63902822400,
+        	            	-  loc: (*time.Location)(<nil>)
+        	            	+  loc: (*time.Location)({
+        	            	+   name: (string) "",
+        	            	+   zone: ([]time.zone) (len=1) {
+        	            	+    (time.zone) {
+        	            	+     name: (string) "",
+        	            	+     offset: (int) 0,
+        	            	+     isDST: (bool) false
+        	            	+    }
+        	            	+   },
+        	            	+   tx: ([]time.zoneTrans) (len=1) {
+        	            	+    (time.zoneTrans) {
+        	            	+     when: (int64) -9223372036854775808,
+        	            	+     index: (uint8) 0,
+        	            	+     isstd: (bool) false,
+        	            	+     isutc: (bool) false
+        	            	+    }
+        	            	+   },
+        	            	+   extend: (string) "",
+        	            	+   cacheStart: (int64) -9223372036854775808,
+        	            	+   cacheEnd: (int64) 9223372036854775807,
+        	            	+   cacheZone: (*time.zone)({
+        	            	+    name: (string) "",
+        	            	+    offset: (int) 0,
+        	            	+    isDST: (bool) false
+        	            	+   })
+        	            	+  })
+        	            	  },
+        	Test:       	TestExperimentalPropertyValueRoundtrip
+--- FAIL: TestExperimentalPropertyStoragePublicLifecycle (0.06s)
+    experimental_properties_test.go:116: 
+        	Error Trace:	C:/Data/src/NornicDB-projected-badger/pkg/storage/experimental_properties_test.go:116
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/badger_stats.go:932
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/badger_stats.go:1015
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/badger_stats.go:1059
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/badger_stats.go:942
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/badger_read_view.go:172
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/badger_read_view.go:224
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/badger_txn_helpers.go:276
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/badger_read_view.go:224
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/badger_read_view.go:219
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/badger_stats.go:938
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/experimental_properties_test.go:116
+        	            				C:/Data/src/NornicDB-projected-badger/pkg/storage/experimental_properties_test.go:119
+        	Error:      	Not equal: 
+        	            	expected: "test:a"
+        	            	actual  : "test:b"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1,2 +1,2 @@
+        	            	-(storage.NodeID) (len=6) "test:a"
+        	            	+(storage.NodeID) (len=6) "test:b"
+        	            	 
+        	Test:       	TestExperimentalPropertyStoragePublicLifecycle
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	0.639s
+ok  	github.com/orneryd/nornicdb/pkg/config	0.071s
+FAIL

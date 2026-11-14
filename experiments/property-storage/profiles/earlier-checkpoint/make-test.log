@@ -1,0 +1,11 @@
+Access is denied.
+Access is denied.
+-n was unexpected at this time.
+'tr' is not recognized as an internal or external command,
+operable program or batch file.
+'tr' is not recognized as an internal or external command,
+operable program or batch file.
+Access is denied.
+"LOG-09 violation: slog.Default() forbidden in business packages — use injected *slog.Logger"; exit 1
+fmt\.(Print was unexpected at this time.
+make: *** [Makefile:808: lint-slog] Error 255

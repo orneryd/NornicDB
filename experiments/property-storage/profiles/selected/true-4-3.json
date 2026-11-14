@@ -1,0 +1,83 @@
+{
+  "allocated_bytes": 3587872344,
+  "allocations": 9959909,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": true,
+  "file_bytes": 52922710,
+  "gc_cycles": 19,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 251008488,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 618020,
+  "phases": {
+    "adjacency_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 16.596103,
+      "ops_second": 786690.7068484691,
+      "p50_ns": 3700,
+      "p95_ns": 6601,
+      "p99_ns": 16801
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 948.665614,
+      "ops_second": 9174.992612307333,
+      "p50_ns": 107007,
+      "p95_ns": 148109,
+      "p99_ns": 193413
+    },
+    "create_node": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 342.986882,
+      "ops_second": 12688.53191883881,
+      "p50_ns": 273819,
+      "p95_ns": 585039,
+      "p99_ns": 908961
+    },
+    "full_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 16.09367,
+      "ops_second": 811250.6345662611,
+      "p50_ns": 4301,
+      "p95_ns": 6500,
+      "p99_ns": 14801
+    },
+    "mixed_80_read_20_write": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 251.052783,
+      "ops_second": 17335.000026667698,
+      "p50_ns": 1701,
+      "p95_ns": 339022,
+      "p99_ns": 618641
+    },
+    "projected_read": {
+      "workers": 4,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 3.576838,
+      "ops_second": 3650151.334782285,
+      "p50_ns": 800,
+      "p95_ns": 1500,
+      "p99_ns": 2001
+    }
+  },
+  "read_rounds": 3,
+  "seed_flush_ms": 349.819246,
+  "sync_writes": false,
+  "workers": 4
+}

@@ -1,0 +1,11 @@
+publisher.go:126:9: range var m copies lock: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex
+publisher.go:127:32: call of p.indexer.AddMatch copies lock value: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex
+publisher.go:139:10: range var m copies lock: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex
+publisher.go:140:30: call of p.indexer.DeleteMatch copies lock value: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex
+publisher.go:151:10: range var m copies lock: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex
+publisher.go:152:30: call of p.indexer.DeleteMatch copies lock value: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex
+db_test.go:1942:20: literal copies lock value from match: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex
+publisher_test.go:46:18: literal copies lock value from match: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex
+publisher_test.go:108:18: literal copies lock value from match: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex
+publisher_test.go:151:18: literal copies lock value from match1: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex
+publisher_test.go:151:26: literal copies lock value from match2: github.com/dgraph-io/badger/v4/pb.Match contains google.golang.org/protobuf/runtime/protoimpl.MessageState contains sync.Mutex

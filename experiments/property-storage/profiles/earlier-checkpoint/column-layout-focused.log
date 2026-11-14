@@ -1,0 +1,16 @@
+--- FAIL: TestWALBindingGenuinePreIdentityUpgrade (0.03s)
+    --- FAIL: TestWALBindingGenuinePreIdentityUpgrade/release (0.02s)
+        wal_binding_base_upgrade_test.go:24: 
+            	Error Trace:	C:/Data/src/NornicDB-projected-badger/pkg/storage/wal_binding_base_upgrade_test.go:24
+            	Error:      	Received unexpected error:
+            	            	Read-only mode is not supported on Windows
+            	Test:       	TestWALBindingGenuinePreIdentityUpgrade/release
+    --- FAIL: TestWALBindingGenuinePreIdentityUpgrade/develop (0.01s)
+        wal_binding_base_upgrade_test.go:24: 
+            	Error Trace:	C:/Data/src/NornicDB-projected-badger/pkg/storage/wal_binding_base_upgrade_test.go:24
+            	Error:      	Received unexpected error:
+            	            	Read-only mode is not supported on Windows
+            	Test:       	TestWALBindingGenuinePreIdentityUpgrade/develop
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	1.641s
+FAIL

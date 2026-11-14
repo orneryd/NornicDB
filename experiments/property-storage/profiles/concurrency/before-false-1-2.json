@@ -1,0 +1,82 @@
+{
+  "allocated_bytes": 4994173376,
+  "allocations": 8975991,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": false,
+  "file_bytes": 79459572,
+  "gc_cycles": 19,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 266629416,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 974940,
+  "phases": {
+    "adjacency_read": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 75.360072,
+      "ops_second": 173248.2421195139,
+      "p50_ns": 4301,
+      "p95_ns": 10501,
+      "p99_ns": 27402
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 1383.464694,
+      "ops_second": 6291.450759638974,
+      "p50_ns": 140395,
+      "p95_ns": 273290,
+      "p99_ns": 391586
+    },
+    "create_node": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 656.863455,
+      "ops_second": 6625.425675416819,
+      "p50_ns": 132896,
+      "p95_ns": 260191,
+      "p99_ns": 494782
+    },
+    "full_read": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 49.146378,
+      "ops_second": 265655.3856318771,
+      "p50_ns": 3200,
+      "p95_ns": 7101,
+      "p99_ns": 11801
+    },
+    "mixed_80_read_20_write": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 182.007123,
+      "ops_second": 23911.152092657387,
+      "p50_ns": 1600,
+      "p95_ns": 145514,
+      "p99_ns": 224222
+    },
+    "projected_read": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 13.361272,
+      "ops_second": 977152.4747045041,
+      "p50_ns": 700,
+      "p95_ns": 3500,
+      "p99_ns": 5100
+    }
+  },
+  "seed_flush_ms": 163.879025,
+  "sync_writes": false,
+  "workers": 1
+}

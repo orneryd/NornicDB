@@ -1,0 +1,30 @@
+File: concurrency-selected
+Build ID: f4d8daa71318353e4141ebe577bd4dcb77c8592b
+Type: alloc_space
+Time: 2026-11-14 20:59:13 UTC
+Showing nodes accounting for 4988.73MB, 92.71% of 5381.05MB total
+Dropped 345 nodes (cum <= 26.91MB)
+Showing top 22 nodes out of 172
+      flat  flat%   sum%        cum   cum%
+ 1115.03MB 20.72% 20.72%  1115.03MB 20.72%  github.com/dgraph-io/ristretto/v2/z.Calloc (inline)
+  967.66MB 17.98% 38.70%   967.66MB 17.98%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+  848.12MB 15.76% 54.47%   848.12MB 15.76%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+  672.97MB 12.51% 66.97%   672.97MB 12.51%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize
+  334.30MB  6.21% 73.18%   334.30MB  6.21%  bytes.growSlice
+  332.81MB  6.18% 79.37%   332.81MB  6.18%  github.com/dgraph-io/badger/v4/skl.newArena
+  125.99MB  2.34% 81.71%   125.99MB  2.34%  slices.Clone[go.shape.[]uint8,go.shape.uint8] (inline)
+  124.07MB  2.31% 84.02%   124.07MB  2.31%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).encodeNodeInTxn.func1
+  108.36MB  2.01% 86.03%   111.43MB  2.07%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+   58.62MB  1.09% 87.12%    84.62MB  1.57%  github.com/orneryd/nornicdb/experiments/property-storage/corpus.Replicate
+   55.61MB  1.03% 88.15%    55.61MB  1.03%  slices.Clone[go.shape.[]int64,go.shape.int64] (inline)
+   46.01MB  0.86% 89.01%    46.01MB  0.86%  github.com/dgraph-io/badger/v4/table.(*Table).NewIterator (inline)
+   42.01MB  0.78% 89.79%  2389.36MB 44.40%  github.com/dgraph-io/badger/v4.(*Txn).Get
+   41.11MB  0.76% 90.55%    41.11MB  0.76%  github.com/dgraph-io/badger/v4.(*Txn).modify
+   38.15MB  0.71% 91.26%    38.15MB  0.71%  github.com/vmihailenco/msgpack/v5.readN
+      29MB  0.54% 91.80%       29MB  0.54%  fmt.Sprintf
+      11MB   0.2% 92.00%   622.03MB 11.56%  github.com/dgraph-io/badger/v4/table.(*Table).block
+    9.50MB  0.18% 92.18%   170.52MB  3.17%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+       8MB  0.15% 92.33%   176.02MB  3.27%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+    7.41MB  0.14% 92.47%   143.41MB  2.67%  github.com/dgraph-io/badger/v4/table.(*Builder).addHelper
+       7MB  0.13% 92.60%   174.11MB  3.24%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+       6MB  0.11% 92.71%    34.01MB  0.63%  github.com/dgraph-io/badger/v4.(*logFile).encodeEntry

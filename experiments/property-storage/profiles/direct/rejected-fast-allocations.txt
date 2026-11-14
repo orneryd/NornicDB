@@ -1,0 +1,26 @@
+File: concurrency-final
+Build ID: 71fb86b21aa31a62108391815e6d3986731ee328
+Type: alloc_space
+Time: 2026-11-14 20:34:37 UTC
+Showing nodes accounting for 3170.25MB, 82.42% of 3846.40MB total
+Dropped 333 nodes (cum <= 19.23MB)
+Showing top 18 nodes out of 189
+      flat  flat%   sum%        cum   cum%
+  553.83MB 14.40% 14.40%   553.83MB 14.40%  github.com/dgraph-io/badger/v4/y.SafeCopy
+  420.42MB 10.93% 25.33%   420.42MB 10.93%  github.com/dgraph-io/ristretto/v2/z.Calloc
+  356.58MB  9.27% 34.60%   356.58MB  9.27%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize
+  249.61MB  6.49% 41.09%   249.61MB  6.49%  github.com/dgraph-io/badger/v4/skl.newArena
+  226.93MB  5.90% 46.99%   226.93MB  5.90%  bytes.growSlice
+  221.67MB  5.76% 52.75%   221.67MB  5.76%  github.com/dgraph-io/badger/v4/y.Copy
+  159.24MB  4.14% 56.89%   159.24MB  4.14%  github.com/klauspost/compress/s2.Decode
+  128.39MB  3.34% 60.23%   128.39MB  3.34%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+  114.95MB  2.99% 63.22%   114.95MB  2.99%  slices.Clone[go.shape.[]uint8,go.shape.uint8]
+  110.88MB  2.88% 66.10%   134.90MB  3.51%  github.com/dgraph-io/badger/v4/experimental/columnar.Transpose
+  106.57MB  2.77% 68.87%   109.86MB  2.86%  github.com/dgraph-io/badger/v4/experimental/nornic.DecodePayload
+  100.51MB  2.61% 71.48%   100.51MB  2.61%  github.com/klauspost/compress/s2.EncodeSnappy
+   99.41MB  2.58% 74.07%    99.41MB  2.58%  github.com/dgraph-io/badger/v4/experimental/columnar.frameSpans
+   95.56MB  2.48% 76.55%    96.56MB  2.51%  github.com/dgraph-io/badger/v4/experimental/columnar.groups
+   62.46MB  1.62% 78.18%   300.22MB  7.81%  github.com/orneryd/nornicdb/pkg/storage.init.1.func1
+   60.12MB  1.56% 79.74%    60.12MB  1.56%  slices.Clone[go.shape.[]int64,go.shape.int64]
+   59.60MB  1.55% 81.29%    84.60MB  2.20%  github.com/orneryd/nornicdb/experiments/property-storage/corpus.Replicate
+   43.51MB  1.13% 82.42%    43.51MB  1.13%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).encodeNodeInTxn.func1

@@ -16,6 +16,7 @@ off = med(False, 'DirectoryBytes')
 on = med(True, 'DirectoryBytes')
 lines = ['# Experimental property storage: integration results', '',
 'Branch: `experiment/projected-badger-v1.5.0`, based on release head `ddc59dc20`. Production implementation: `0621c3dbb`; additional numeric and projection checks: `a6ef83d44`. These measurements used public Badger fork `2f4175a83c6c`, before cross-record SST integration. They do not qualify the newer `adf08d82495b` layout. The repository has not been renamed.', '',
+'Current profiling and optimization results are in [PROFILE.md](PROFILE.md). The receipts below describe the earlier property-only implementation.', '',
 '## Feature flag', '',
 '`NORNICDB_EXPERIMENTAL_PROPERTY_STORAGE_ENABLED` defaults to false. It controls new per-property encodings through the existing node/edge property owner. This branch reads its experimental records with the flag disabled. Stock release binaries cannot read those physical extensions; use disposable test stores. No cross-entity column segments or physical partial disk reads are claimed.', '',
 '## Documentation-derived Nornic store', '',

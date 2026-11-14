@@ -1,0 +1,82 @@
+{
+  "allocated_bytes": 5188449904,
+  "allocations": 10731340,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": false,
+  "file_bytes": 79525276,
+  "gc_cycles": 19,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 266742792,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 983264,
+  "phases": {
+    "adjacency_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 20.548064,
+      "ops_second": 635388.3266082878,
+      "p50_ns": 4900,
+      "p95_ns": 8200,
+      "p99_ns": 16701
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 1374.638412,
+      "ops_second": 6331.846923538465,
+      "p50_ns": 141804,
+      "p95_ns": 262307,
+      "p99_ns": 372910
+    },
+    "create_node": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 272.169667,
+      "ops_second": 15990.025809893063,
+      "p50_ns": 416612,
+      "p95_ns": 976527,
+      "p99_ns": 1747648
+    },
+    "full_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 16.347448,
+      "ops_second": 798656.7689342091,
+      "p50_ns": 4200,
+      "p95_ns": 6200,
+      "p99_ns": 16300
+    },
+    "mixed_80_read_20_write": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 205.140227,
+      "ops_second": 21214.756674711098,
+      "p50_ns": 1900,
+      "p95_ns": 441712,
+      "p99_ns": 706919
+    },
+    "projected_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 3.468395,
+      "ops_second": 3764277.136831301,
+      "p50_ns": 800,
+      "p95_ns": 1600,
+      "p99_ns": 2100
+    }
+  },
+  "seed_flush_ms": 159.435974,
+  "sync_writes": false,
+  "workers": 8
+}

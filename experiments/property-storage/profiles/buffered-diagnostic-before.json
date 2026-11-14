@@ -1,0 +1,20 @@
+{
+  "allocated_bytes": 1184733416,
+  "allocations": 3177287,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "enabled": true,
+  "file_bytes": 42193797,
+  "flush_ms": 73.407593,
+  "full_p50_ns": 4900,
+  "full_p95_ns": 10301,
+  "gc_cycles": 14,
+  "live_heap_bytes": 122927384,
+  "nodes": 4352,
+  "peak_rss_kib": 413836,
+  "projected_p50_ns": 6001,
+  "projected_p95_ns": 12601,
+  "seed_ms": 1643.15124,
+  "sync_writes": false,
+  "write_p50_ns": 335722,
+  "write_p95_ns": 600840
+}

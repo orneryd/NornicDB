@@ -1,0 +1,4 @@
+ok  	github.com/dgraph-io/badger/v4	4.153s
+ok  	github.com/dgraph-io/badger/v4/experimental/nornic	1.059s
+ok  	github.com/dgraph-io/badger/v4/experimental/columnar	1.017s
+ok  	github.com/dgraph-io/badger/v4/table	1.128s

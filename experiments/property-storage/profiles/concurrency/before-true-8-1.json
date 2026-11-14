@@ -1,0 +1,82 @@
+{
+  "allocated_bytes": 3847925328,
+  "allocations": 10886799,
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "correctness_ok": true,
+  "edge_workers": 1,
+  "edges": 8704,
+  "enabled": true,
+  "file_bytes": 52873568,
+  "gc_cycles": 20,
+  "gomaxprocs": 4,
+  "live_heap_bytes": 290536864,
+  "low_memory": false,
+  "mixed_writes": 871,
+  "nodes": 4352,
+  "peak_rss_kib": 626496,
+  "phases": {
+    "adjacency_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 14.902738,
+      "ops_second": 876080.6235740036,
+      "p50_ns": 3700,
+      "p95_ns": 5301,
+      "p99_ns": 15702
+    },
+    "create_edge": {
+      "workers": 1,
+      "conflict_retries": 0,
+      "operations": 8704,
+      "wall_ms": 974.22368,
+      "ops_second": 8934.293200510174,
+      "p50_ns": 109111,
+      "p95_ns": 152916,
+      "p99_ns": 205821
+    },
+    "create_node": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 275.009793,
+      "ops_second": 15824.891006699532,
+      "p50_ns": 428244,
+      "p95_ns": 990503,
+      "p99_ns": 1628769
+    },
+    "full_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 21.089277,
+      "ops_second": 619082.3895954328,
+      "p50_ns": 4001,
+      "p95_ns": 8001,
+      "p99_ns": 22702
+    },
+    "mixed_80_read_20_write": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 4352,
+      "wall_ms": 259.20206,
+      "ops_second": 16789.990017826247,
+      "p50_ns": 1800,
+      "p95_ns": 688371,
+      "p99_ns": 1188023
+    },
+    "projected_read": {
+      "workers": 8,
+      "conflict_retries": 0,
+      "operations": 13056,
+      "wall_ms": 3.463257,
+      "ops_second": 3769861.722650095,
+      "p50_ns": 801,
+      "p95_ns": 1500,
+      "p99_ns": 3500
+    }
+  },
+  "seed_flush_ms": 368.26322,
+  "sync_writes": false,
+  "workers": 8
+}
