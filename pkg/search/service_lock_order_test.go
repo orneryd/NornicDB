@@ -167,18 +167,19 @@ func TestServicePipelineDimensionsVersusClose(t *testing.T) {
 
 type serviceLockBuildEngine struct {
 	storage.Engine
-	lastWrite func() time.Time
+	count func(context.Context) (int64, error)
 }
 
-func (e *serviceLockBuildEngine) LastWriteTime() time.Time { return e.lastWrite() }
+func (e *serviceLockBuildEngine) NodeCount(ctx context.Context) (int64, error) { return e.count(ctx) }
 
 // A base build keeps its source until retirement joins the build owner. The engine
-// callback stages shutdown or persistence disable during the supported freshness
-// check; no service pointer is changed by this test. Old retirement reached the
+// callback stages shutdown or persistence disable during the supported node-count
+// read, before rejected population retirement; no service pointer is changed. Old retirement reached the
 // file lock directly; Close now joins the lifetime before delegated disposal.
-func TestServiceBuildResumeVersusRetirement(t *testing.T) {
+func TestServiceRebuildVersusRetirement(t *testing.T) {
 	for _, closeService := range []bool{false, true} {
 		t.Run(fmt.Sprintf("close=%t", closeService), func(t *testing.T) {
+			dir := t.TempDir()
 			engine := &serviceLockBuildEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 			svc := NewService(engine, 2, nil)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -222,17 +223,12 @@ func TestServiceBuildResumeVersusRetirement(t *testing.T) {
 					t.Errorf("Close cleanup: %v", err)
 				}
 			})
-			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
+			svc.SetVectorIndexPath(filepath.Join(dir, "vectors"))
 			svc.SetPersistenceEnabled(true)
 			if err := svc.IndexNode(&storage.Node{ID: "live", ChunkEmbeddings: [][]float32{{1, 0}}}); err != nil {
 				t.Fatal(err)
 			}
-			calls := 0
-			engine.lastWrite = func() time.Time {
-				calls++
-				if calls != 2 {
-					return time.Time{}
-				}
+			engine.count = func(ctx context.Context) (int64, error) {
 				svc.mu.RLock()
 				vfs := svc.vectorFileStore
 				svc.mu.RUnlock()
@@ -242,7 +238,7 @@ func TestServiceBuildResumeVersusRetirement(t *testing.T) {
 				heldMu.Lock()
 				if cleaning {
 					heldMu.Unlock()
-					return time.Time{}
+					return engine.Engine.NodeCount(ctx)
 				}
 				vfs.mu.Lock()
 				unlock = sync.OnceFunc(vfs.mu.Unlock)
@@ -283,7 +279,7 @@ func TestServiceBuildResumeVersusRetirement(t *testing.T) {
 					return serviceLockStack("(*Service).SetPersistenceEnabled", "sync.(*RWMutex)")
 				})
 				// Check identity before returning from the callback: the build
-				// subsequently holds svc.mu while waiting on this VFS.Count.
+				// subsequently holds svc.mu while retiring this rejected store.
 				svc.mu.RLock()
 				current := svc.vectorFileStore
 				svc.mu.RUnlock()
@@ -292,7 +288,7 @@ func TestServiceBuildResumeVersusRetirement(t *testing.T) {
 				}
 				staged <- vfs
 				transferred = true
-				return time.Time{}
+				return engine.Engine.NodeCount(ctx)
 			}
 			buildStarted = true
 			go func() {
@@ -325,11 +321,11 @@ func TestServiceBuildResumeVersusRetirement(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("build never staged")
 			}
-			serviceLockWait(t, "resume read or build cancellation", func() bool {
-				return serviceLockStack(fmt.Sprintf("goroutine %d [", buildID), "(*Service).BuildIndexes", "(*VectorFileStore).Count") || len(built) > 0
+			serviceLockWait(t, "rejected store retirement or build cancellation", func() bool {
+				return serviceLockStack(fmt.Sprintf("goroutine %d [", buildID), "(*Service).BuildIndexes", "(*VectorFileStore).Close") || len(built) > 0
 			})
 			// The fixture still owns this VFS lock, so disposal cannot have
-			// completed. Do not recursively acquire svc.mu behind VFS.Count.
+			// completed. Do not recursively acquire svc.mu behind store retirement.
 			if vfs.closed {
 				t.Fatal("retirement closed the held build source")
 			}

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Rebuild rejected vector populations from their pinned database source instead
+  of reusing stale live entries. Earlier producer certificates are invalidated
+  once; current certified checkpoints retain warm loading. This changes derived
+  search-index policy, not Badger data, WAL encoding or storage versions.
+
 - Reject commits whose physical keys exceed the backend limit before buffered or
   prepared journal acceptance, preventing acknowledged writes that cannot flush
   or recover. Stored key encodings and storage versions are unchanged.
