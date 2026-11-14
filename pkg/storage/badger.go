@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	badgeroptions "github.com/dgraph-io/badger/v4/options"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -1037,6 +1039,15 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 			WithIndexCacheSize(32 << 20)  // 32MB index cache
 	}
 
+	// Both property encodings and future table layouts read the same flag.
+	// A table captures its codec at creation; existing tables keep their codec.
+	ordinaryCompression := badgerOpts.Compression
+	badgerOpts = badgerOpts.WithCompressionSelector(func() badgeroptions.CompressionType {
+		if config.IsExperimentalPropertyStorageEnabled() {
+			return badgeroptions.NornicColumnar
+		}
+		return ordinaryCompression
+	}).WithColumnarValueLayout(experimentalColumnLayout)
 	db, err := openManagedBadger(badgerOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)

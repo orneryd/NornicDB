@@ -149,7 +149,7 @@ func decodeEdgeCompactHeaderInto(data []byte, expectedFormat byte, edge *Edge) (
 		return 0, 0, 0, fmt.Errorf("compact edge: invalid type length varint")
 	}
 	offset += n
-	if offset+int(typeLen) > len(data) {
+	if typeLen > uint64(len(data)-offset) {
 		return 0, 0, 0, fmt.Errorf("compact edge: type exceeds payload")
 	}
 	edgeType := string(data[offset : offset+int(typeLen)])

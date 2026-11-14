@@ -10,7 +10,7 @@ The feature is off by default. Set this before starting the server:
 NORNICDB_EXPERIMENTAL_PROPERTY_STORAGE_ENABLED=true
 ```
 
-The runtime API is `config.SetExperimentalPropertyStorageEnabled(bool)`. `config.GetFeatureStatus()` reports its state. The flag controls new writes; disabling it does not rewrite existing records. This branch can read its experimental records with the flag off. No special build tag is required.
+The runtime API is `config.SetExperimentalPropertyStorageEnabled(bool)`. `config.GetFeatureStatus()` reports its state. This single flag controls both property-value encoding and the cross-record SST layout, including adjacency fields. It defaults to false. Disabling it does not rewrite existing records or tables; newly built tables use ordinary compression. This branch can read its experimental records and tables with the flag off. No special build tag is required.
 
 Use disposable test databases for this experiment. Stock release binaries cannot decode experimental physical property extensions. Turning the write flag off is not a downgrade conversion. Logical snapshots expand values to ordinary typed MessagePack; native Badger backups retain physical encoding.
 
@@ -22,12 +22,13 @@ Use disposable test databases for this experiment. Stock release binaries cannot
 - Compressed values use reserved internal MessagePack extension 60. Individual values remain skippable in ordinary point projections, projected scans, hinted filters and WAL token rebinding. Compressed string equality uses the decoded string, preserving the existing scan contract.
 - Float payloads retain their MessagePack representation and IEEE bits; no float-to-integer numeric casts or quantization are introduced.
 - Physical property compression is bounded to 64 MiB per value; larger properties retain ordinary encoding.
+- Newly built SST blocks try byte-column layouts across records, grouping property tokens and relationship/adjacency fields. The fork compares raw, ordinary Zstd and column-transposed Zstd payloads and stores the smallest complete payload. Record bytes, keys, timestamps and checksums reconstruct exactly before the existing reader sees them. Value-log pointers remain opaque.
 
-This is per-property compression and integer-array encoding, not immutable cross-entity column segments. Independently compressed disk blocks, true physical partial reads, delta overlays and segment compaction remain work in the fork's implementation plan. Badger still retrieves the enclosing Item value before Nornic selects properties. The directory prototype and test-only patched/delta candidates are not silently promoted into a new production format.
+The SST layout reconstructs a whole block; it does not yet provide independently addressable compressed property columns or physical partial reads. Badger still retrieves the enclosing Item value before Nornic selects properties. Decode currently uses a temporary Go buffer before copying into Badger's block allocation; memory and CPU costs need qualification. The directory prototype and test-only patched/delta candidates are not silently promoted into a new production format.
 
 ## Dependency
 
-The branch pins `github.com/dgraph-io/badger/v4` to the public `orneryd/nornic-badger/v4` repository at commit `2f4175a83c6cb848853c6db2ab972187ef41f400`. The upstream module path is retained. The repository name is provisional pending the maintainer's naming choice.
+The branch pins `github.com/dgraph-io/badger/v4` to the public `orneryd/nornic-badger/v4` repository at commit `adf08d82495becf400f8d1afa1369cb3d993ab64`. The upstream module path is retained. The repository name is provisional pending the maintainer's naming choice.
 
 The fork is public, so normal dependency downloads do not require GitHub credentials or GOPRIVATE. The local Linux laboratory primes Go's module cache with the checksum-verified archive of that exact fork revision and runs with GOWORK=off. This avoids copying host credentials into the container and lets source-analysis tests create independent temporary modules.
 

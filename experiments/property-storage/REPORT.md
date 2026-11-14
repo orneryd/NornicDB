@@ -1,6 +1,6 @@
 # Experimental property storage: integration results
 
-Branch: `experiment/projected-badger-v1.5.0`, based on release head `ddc59dc20`. Production implementation: `0621c3dbb`; additional numeric and projection checks: `a6ef83d44`. The Badger fork is pinned to `2f4175a83c6c` and is now public. The repository has not been renamed.
+Branch: `experiment/projected-badger-v1.5.0`, based on release head `ddc59dc20`. Production implementation: `0621c3dbb`; additional numeric and projection checks: `a6ef83d44`. These measurements used public Badger fork `2f4175a83c6c`, before cross-record SST integration. They do not qualify the newer `adf08d82495b` layout. The repository has not been renamed.
 
 ## Feature flag
 
@@ -48,7 +48,7 @@ The initial stock-release versus feature-on full-size receipts also match all 14
 - Passed: focused configuration and storage tests; fresh-process default-off/environment tests; packed integer and compressed float-array type checks; projection skip/corruption checks; logical snapshot, native backup/restore and reopen checks.
 - Passed: the Cypher large-property regression under both Nornic and ANTLR, including string equality, unique constraints, updates and reads after disabling writes.
 - Passed: focused config/storage race tests, fork package race tests and affected Nornic/fork package vet.
-- Full `make test` with `noui,nolocalllm`: **running at publication**. The final result will be appended after completion. This is not a full-suite pass or a production-readiness claim.
+- Full `make test` with `noui,nolocalllm`: **stopped at the maintainer request while the broader storage implementation continues**. Full suites are deferred. This is not a full-suite pass or a production-readiness claim.
 - The first Linux full run was superseded after temporary-module source-analysis checks inherited the laboratory Go workspace. The same workcensus package passed with `GOWORK=off` and the exact dependency in the module cache. A Windows make attempt failed at Unix-shell lint recipes; an older Windows storage run was canceled when superseded. Neither is counted as a pass.
 
 ## Reproduce

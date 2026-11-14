@@ -295,6 +295,8 @@ github.com/orneryd/go-json v0.11.3-0.20261103144209-3e94695582bd h1:JlNNi+Q7R0Vz
 github.com/orneryd/go-json v0.11.3-0.20261103144209-3e94695582bd/go.mod h1:RthGEXzQqswFJ7+diFa5fDOZTLzPQXbFpIcfJWFzlwA=
 github.com/orneryd/nornic-badger/v4 v4.0.0-20261114172859-2f4175a83c6c h1:nD+KduK90ABrHlhLBFcSdicPMABdWRzPUhpHPfmv5ys=
 github.com/orneryd/nornic-badger/v4 v4.0.0-20261114172859-2f4175a83c6c/go.mod h1:Xa9dAupjbwAacupWFCpa6YEn9E1PjBXkfZYr2I/8aWg=
+github.com/orneryd/nornic-badger/v4 v4.0.0-20261114192004-adf08d82495b h1:Mo08AOltHQejwByA6NW3mnSg3V7zCJ8eR3GbMJojq50=
+github.com/orneryd/nornic-badger/v4 v4.0.0-20261114192004-adf08d82495b/go.mod h1:Xa9dAupjbwAacupWFCpa6YEn9E1PjBXkfZYr2I/8aWg=
 github.com/pierrec/lz4/v4 v4.1.26 h1:GrpZw1gZttORinvzBdXPUXATeqlJjqUG/D87TKMnhjY=
 github.com/pierrec/lz4/v4 v4.1.26/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=

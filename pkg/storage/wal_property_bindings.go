@@ -356,6 +356,13 @@ func rewriteWALPropertyPayloads(writes map[string][]byte, transform func(string,
 // remapPropertyTokens changes only key varints. Values retain their exact
 // msgpack bytes (including temporal extensions, integer widths and vectors).
 func remapPropertyTokens(data []byte, resolve func(uint64) (uint64, error)) ([]byte, error) {
+	return walkPhysicalPropertyValues(data, resolve, nil)
+}
+
+// walkPhysicalPropertyValues owns raw token/value spans for physical consumers.
+// A nil resolver observes the original frame without allocating a replacement.
+// Values remain opaque: token rebinding and column layout use the same framing.
+func walkPhysicalPropertyValues(data []byte, resolve func(uint64) (uint64, error), visit func(token uint64, start, end int)) ([]byte, error) {
 	if len(data) == 0 {
 		return data, nil
 	}
@@ -378,9 +385,12 @@ func remapPropertyTokens(data []byte, resolve func(uint64) (uint64, error)) ([]b
 		if _, err := reader.Seek(int64(size), io.SeekCurrent); err != nil {
 			return nil, err
 		}
-		mapped, err := resolve(id)
-		if err != nil {
-			return nil, err
+		mapped := id
+		if resolve != nil {
+			mapped, err = resolve(id)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if mapped != id {
 			out = append(out, data[unchanged:offset]...)
@@ -389,6 +399,9 @@ func remapPropertyTokens(data []byte, resolve func(uint64) (uint64, error)) ([]b
 		}
 		if err := dec.Skip(); err != nil {
 			return nil, err
+		}
+		if visit != nil {
+			visit(id, offset+size, len(data)-reader.Len())
 		}
 	}
 	if reader.Len() != 0 {
