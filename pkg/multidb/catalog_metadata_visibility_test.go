@@ -9,7 +9,7 @@ import (
 )
 
 func TestCatalogReloadIncludesSuppressedMetadata(t *testing.T) {
-	for _, route := range []string{"pre_recovery", "manager"} {
+	for _, route := range []string{"pre_recovery", "manager", "transition"} {
 		t.Run(route, func(t *testing.T) {
 			inner, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), LowMemory: true}))
 			require.NoError(t, err)
@@ -23,6 +23,7 @@ func TestCatalogReloadIncludesSuppressedMetadata(t *testing.T) {
 			require.ErrorIs(t, err, storage.ErrNotFound, "fixture must hide the catalog from ordinary entity reads")
 			before, err := storage.GetStoredNode(t.Context(), inner, metadataID)
 			require.NoError(t, err)
+			wantCapture := storage.ChangeCaptureFull
 			inner.SetChangeCapture("captured", storage.ChangeCaptureOff)
 			if route == "pre_recovery" {
 				require.NoError(t, LoadChangeCaptureModes(t.Context(), inner, ""))
@@ -33,11 +34,35 @@ func TestCatalogReloadIncludesSuppressedMetadata(t *testing.T) {
 				options, err := reloaded.DatabaseOptions("captured")
 				require.NoError(t, err)
 				require.Equal(t, "FULL", options[OptionTxLogEnrichment])
+				if route == "transition" {
+					dbID, dbCreated := reloaded.DatabaseIdentity("captured")
+					serverID, serverCreated := reloaded.ServerIdentity()
+					require.NoError(t, reloaded.SetDatabaseOption(t.Context(), "captured", OptionTxLogEnrichment, "DIFF"))
+					wantCapture = storage.ChangeCaptureDiff
+					verified, err := NewDatabaseManager(t.Context(), inner, nil)
+					require.NoError(t, err)
+					gotID, gotCreated := verified.DatabaseIdentity("captured")
+					require.Equal(t, dbID, gotID)
+					require.Equal(t, dbCreated, gotCreated)
+					gotServer, gotServerCreated := verified.ServerIdentity()
+					require.Equal(t, serverID, gotServer)
+					require.Equal(t, serverCreated, gotServerCreated)
+					options, err = verified.DatabaseOptions("captured")
+					require.NoError(t, err)
+					require.Equal(t, "DIFF", options[OptionTxLogEnrichment])
+				}
 			}
-			require.Equal(t, storage.ChangeCaptureFull, inner.ChangeCapture("captured"))
+			require.Equal(t, wantCapture, inner.ChangeCapture("captured"))
 			after, err := storage.GetStoredNode(t.Context(), inner, metadataID)
 			require.NoError(t, err)
-			require.Equal(t, before.Properties, after.Properties, "loading must preserve the persisted catalog")
+			if route != "transition" {
+				require.Equal(t, before.Properties, after.Properties, "loading must preserve the persisted catalog")
+			} else {
+				require.Equal(t, before.CreatedAt, after.CreatedAt)
+				require.Equal(t, before.Properties["server_id"], after.Properties["server_id"])
+				_, err = inner.GetNode(t.Context(), metadataID)
+				require.ErrorIs(t, err, storage.ErrNotFound, "catalog writes must not clear manual suppression")
+			}
 		})
 	}
 }

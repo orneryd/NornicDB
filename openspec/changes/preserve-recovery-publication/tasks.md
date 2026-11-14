@@ -63,3 +63,12 @@ analyzer, pre-journal admission, WAL migration or search-refresh change.
 - [ ] Exact-head CI, race/census and integrated release qualification.
 
 - [x] Reproduce hidden persisted catalog failure in both pre-recovery capture-mode loading and manager reload; share the stored-inclusive catalog read owner and verify options/catalog preservation.
+
+## Approved CI correction follow-up
+
+- [x] Reproduce suppressed catalog transition rejection; reuse stored-inclusive transaction reads without clearing suppression. Full multidb package passes.
+- [x] Prove exact single-error fmt.Errorf propagation, retaining lookalike, side-effect, swallowed-error and sparse-argument rejection controls. Sparse-array negative control fails before tightening and passes after.
+- [x] Register the one reviewed catalog data-reader and two exact non-network expressions; lexical population and endpoint inventories pass. Refresh the renamed snapshot evidence test reference without changing its classification.
+- [x] Validate complete snapshot vectors instead of the obsolete sub-MiB size assumption; focused compaction tests pass.
+- [x] Correct prune progress assertions to count committed deletions; independent three-repeat layout regression passes.
+- [ ] Complete integrated affected-package checks, rebase on current release, push and run CI.
