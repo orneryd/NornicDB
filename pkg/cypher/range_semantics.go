@@ -9,14 +9,26 @@ import (
 	"strings"
 )
 
-func evaluateCypherRange(arguments []interface{}) ([]interface{}, error) {
+// evaluateCypherRange materializes range(start, end[, step]) for a row value.
+// A range can hold millions of values in one call, so the caller's
+// cancellation is observed every readProjectionCancellationInterval values,
+// the amortization the transaction wrapper's projection uses: a canceled
+// statement stops building the list instead of finishing it first.
+func evaluateCypherRange(ctx context.Context, arguments []interface{}) ([]interface{}, error) {
 	sequence, err := newCypherRange(arguments)
 	if err != nil {
 		return nil, err
 	}
 	values := make([]interface{}, 0)
+	produced := 0
 	for value := range sequence.values() {
+		if produced%readProjectionCancellationInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		values = append(values, value)
+		produced++
 	}
 	return values, nil
 }
