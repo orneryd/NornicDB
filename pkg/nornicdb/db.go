@@ -943,6 +943,15 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		walEngine := storage.NewWALEngine(badgerEngine, wal)
 		db.baseStorage = walEngine
 
+		// A database's change-capture mode (its txLogEnrichment option) is a
+		// persisted catalog option, and a commit the journal holds is applied
+		// here in its database's mode. Load the persisted modes before the
+		// replay: the server creates the database manager, which loads this same
+		// catalog record, only after Open returns.
+		if err := multidb.LoadChangeCaptureModes(context.Background(), badgerEngine, "system"); err != nil {
+			return nil, fmt.Errorf("failed to load database change-capture modes: %w", err)
+		}
+
 		// Replay accepted semantic transactions and buffered ACKs before traffic.
 		// Semantic records can precede physical publication in either mode.
 		if recovered, recErr := storage.RecoverBufferedCommitsAtOpen(badgerEngine, wal); recErr != nil {

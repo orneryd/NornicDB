@@ -2,6 +2,7 @@ package storagecensus
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -23,12 +24,14 @@ const (
 // standalone package on the analyzer's real path, with mode selecting the
 // builder features a given fixture needs. Importable fixtures register the
 // checked package so field-type discovery uses the same source and SSA owner.
+// Imports in a fixture resolve through the standard importer, so a fixture can
+// exercise a real standard-library call such as fmt.Errorf.
 func ssaFixture(t *testing.T, source, packagePath string, mode ssa.BuilderMode, visibility fixturePackageVisibility) (*program, *ssa.Package) {
 	t.Helper()
 	set := token.NewFileSet()
 	file, err := parser.ParseFile(set, "coverage.go", source, 0)
 	require.NoError(t, err)
-	pkg, info, err := ssautil.BuildPackage(&types.Config{}, set, types.NewPackage(Module+packagePath, file.Name.Name), []*ast.File{file}, mode)
+	pkg, info, err := ssautil.BuildPackage(&types.Config{Importer: importer.Default()}, set, types.NewPackage(Module+packagePath, file.Name.Name), []*ast.File{file}, mode)
 	require.NoError(t, err)
 	if visibility == importableFixture {
 		prog := ssa.NewProgram(set, mode)

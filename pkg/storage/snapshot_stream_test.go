@@ -16,7 +16,7 @@ type collectingSnapshotVisitor struct {
 	edges []*Edge
 }
 
-type embeddingFreeSnapshotSpy struct {
+type snapshotNodeStreamSpy struct {
 	*MemoryEngine
 	fullNodeStreams  int
 	lightNodeStreams int
@@ -24,7 +24,7 @@ type embeddingFreeSnapshotSpy struct {
 
 // StreamNodesWithOptions counts the snapshot's node streams by whether they
 // load separately stored embeddings; a snapshot reads stored nodes.
-func (s *embeddingFreeSnapshotSpy) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(*Node) error) error {
+func (s *snapshotNodeStreamSpy) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(*Node) error) error {
 	if opts.ApplyDecayFilter {
 		return errors.New("a snapshot must read stored nodes")
 	}
@@ -70,8 +70,11 @@ func TestStreamingSnapshotRoundTripAndFooter(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestWriteSnapshotUsesEmbeddingFreeNodeStream(t *testing.T) {
-	engine := &embeddingFreeSnapshotSpy{MemoryEngine: newTestMemoryEngine(t)}
+// A snapshot holds the vectors its reads return, not only the node body: the
+// automatic snapshot truncates the journal afterwards, so the snapshot is the
+// last copy of a vector kept beside the node's body (reports 45, 53.5).
+func TestWriteSnapshotReadsNodeVectors(t *testing.T) {
+	engine := &snapshotNodeStreamSpy{MemoryEngine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	_, err := engine.CreateNode(t.Context(), &Node{
 		ID:              "nornic:document",
@@ -83,15 +86,15 @@ func TestWriteSnapshotUsesEmbeddingFreeNodeStream(t *testing.T) {
 
 	var output bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), engine, &output, SnapshotOptions{}))
-	require.Equal(t, 1, engine.lightNodeStreams)
-	require.Zero(t, engine.fullNodeStreams, "snapshot must not decode separately stored embeddings")
+	require.Equal(t, 1, engine.fullNodeStreams, "a snapshot reads the vectors its reads return")
+	require.Zero(t, engine.lightNodeStreams)
 
 	visitor := &collectingSnapshotVisitor{}
 	_, err = ReadSnapshot(t.Context(), &output, visitor)
 	require.NoError(t, err)
 	require.Len(t, visitor.nodes, 1)
 	require.Equal(t, "preserved", visitor.nodes[0].Properties["body"])
-	require.Empty(t, visitor.nodes[0].ChunkEmbeddings)
+	require.Equal(t, [][]float32{{1, 2, 3}}, visitor.nodes[0].ChunkEmbeddings)
 }
 
 type materializingOnlyEngine struct{ Engine }
