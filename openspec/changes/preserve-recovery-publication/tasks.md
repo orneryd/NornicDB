@@ -72,3 +72,11 @@ analyzer, pre-journal admission, WAL migration or search-refresh change.
 - [x] Validate complete snapshot vectors instead of the obsolete sub-MiB size assumption; focused compaction tests pass.
 - [x] Correct prune progress assertions to count committed deletions; independent three-repeat layout regression passes.
 - [ ] Complete integrated affected-package checks, rebase on current release, push and run CI.
+
+## Stored catalog disposition ownership
+
+- [x] Move catalog insert/update selection into BadgerTransaction.UpsertGraphNode, retaining the existing create/update kernels and accounting boundary order.
+- [x] Preserve the stored predecessor and creation timestamp for suppressed catalog updates. Public catalog regression and new transaction create/suppressed-update/refusal/cancellation controls pass.
+- [x] Full multidb package passes32.338s; storage fixture constructor inventory passes56.045s.
+- [ ] Recheck the catalog finding in exact-head CI; do not infer census success from focused runtime tests.
+- [ ] Two constructor cleanup-error paths need an additional approved proof scope: they compose, rather than discard, the original startup error. Existing direct-wrap approval does not cover captured error cells and deferred cleanup. No extra analyzer change applied while that decision is pending.
